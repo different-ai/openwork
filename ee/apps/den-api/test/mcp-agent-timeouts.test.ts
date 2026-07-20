@@ -106,9 +106,15 @@ test("agent MCP server exposes steering instructions during initialize", async (
 
   expect(client.getInstructions()).toBe(agentModule.AGENT_MCP_INSTRUCTIONS)
   expect(client.getInstructions()).toContain("search_capabilities and execute_capability")
-  expect(client.getInstructions()).toContain("authorization_required")
-  expect(client.getInstructions()).toContain("data.connect_url")
-  expect(client.getInstructions()).toContain("Present it as a Markdown link")
+  // Generic connect/sign-in relay: the agent is told what to do, never how the
+  // protocol expresses it. Protocol dialect matching lives entirely in code.
+  expect(client.getInstructions()).toContain("sign in or connect")
+  expect(client.getInstructions()).toContain("present the link as a Markdown link")
+  expect(client.getInstructions()).toContain("do not open the link or retry")
+  expect(client.getInstructions()).not.toContain("-32001")
+  expect(client.getInstructions()).not.toContain("data.connect_url")
+  expect(client.getInstructions()).not.toContain("Salesforce")
+  expect(client.getInstructions()).not.toContain("Blue Yonder")
   expect(client.getInstructions()).toContain("add a public GitHub plugin to an organization marketplace")
   expect(client.getInstructions()).toContain("Preview first")
   expect(client.getInstructions()).toContain("Do not choose one authentication type for every server")

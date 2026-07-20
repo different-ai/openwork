@@ -1,5 +1,4 @@
 import { StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
-import { McpError } from "@modelcontextprotocol/sdk/types.js"
 import { beforeAll, expect, test } from "bun:test"
 
 function seedRequiredEnv() {
@@ -44,55 +43,6 @@ test("upstreamErrorMessage falls back without throwing when JSON-looking content
 
 test("upstreamErrorMessage handles non-Error inputs", () => {
   expect(externalCapabilities.upstreamErrorMessage("plain failure")).toBe("plain failure")
-})
-
-test("authorization-required JSON-RPC errors preserve a safe plain connect URL", () => {
-  const connectUrl = "https://connect.example.test/salesforce/start"
-  const error = new Error("Enterprise MCP tool execution failed.", {
-    cause: new McpError(
-      -32001,
-      "Authorization required — connect your salesforce account to use this connector.",
-      {
-        connect_url: `[${connectUrl}](${connectUrl})`,
-        provider: "salesforce",
-      },
-    ),
-  })
-
-  expect(externalCapabilities.externalMcpAuthorizationRequired(error)).toEqual({
-    code: -32001,
-    data: {
-      connect_url: connectUrl,
-      provider: "salesforce",
-    },
-  })
-})
-
-test("authorization-required extraction supports flattened JSON-RPC responses", () => {
-  const connectUrl = "https://connect.example.test/salesforce/start"
-  const error = new Error(`MCP request failed: ${JSON.stringify({
-    jsonrpc: "2.0",
-    id: 1,
-    error: {
-      code: -32001,
-      message: "Authorization required",
-      data: { connect_url: connectUrl, provider: "salesforce" },
-    },
-  })}`)
-
-  expect(externalCapabilities.externalMcpAuthorizationRequired(error)?.data.connect_url).toBe(connectUrl)
-})
-
-test("authorization-required extraction rejects timeout-shaped and unsafe responses", () => {
-  const timeout = new McpError(-32001, "Request timed out", {
-    connect_url: "https://connect.example.test/start",
-  })
-  const unsafe = new McpError(-32001, "Authorization required", {
-    connect_url: "javascript:alert(1)",
-  })
-
-  expect(externalCapabilities.externalMcpAuthorizationRequired(timeout)).toBeNull()
-  expect(externalCapabilities.externalMcpAuthorizationRequired(unsafe)).toBeNull()
 })
 
 test("externalConnectionErrorHint gives reconnect guidance for HTTP auth errors", () => {

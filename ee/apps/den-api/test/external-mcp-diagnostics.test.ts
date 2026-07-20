@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import type { OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js"
 import type { OAuthClientInformationMixed, OAuthTokens } from "@modelcontextprotocol/sdk/shared/auth.js"
+import { McpError } from "@modelcontextprotocol/sdk/types.js"
 import { EnterpriseMcpOAuthContractError } from "@openwork/enterprise-mcp-client"
 import {
   ExternalMcpDiagnosticTracker,
@@ -451,6 +452,67 @@ describe("external MCP diagnostics", () => {
     })
     expect(error.diagnostic.operatorAction).toContain("do not retry the same arguments")
     expect(JSON.stringify(error.diagnostic)).not.toContain("private argument detail")
+  })
+
+  test("classifies a locally generated SDK request timeout as an OpenWork timeout", () => {
+    const tracker = new ExternalMcpDiagnosticTracker("req_local_timeout")
+    tracker.begin("MCP_TOOL_EXECUTION")
+    // Exactly what the pinned MCP SDK produces for its own client timeout.
+    const localTimeout = new McpError(-32001, "Request timed out", { timeout: 30_000 })
+
+    const error = tracker.error(localTimeout)
+    expect(error.diagnostic).toMatchObject({
+      phase: "MCP_TOOL_EXECUTION",
+      category: "request_timeout",
+      code: "MCP_REQUEST_TIMEOUT",
+      jsonRpcCode: -32001,
+    })
+  })
+
+  test("classifies an OpenWork lifecycle-deadline abort as an OpenWork timeout", () => {
+    const tracker = new ExternalMcpDiagnosticTracker("req_lifecycle_abort")
+    tracker.begin("MCP_TOOL_EXECUTION")
+    const abort = new Error("Enterprise MCP tool-execution exceeded its lifecycle deadline.")
+
+    expect(tracker.error(abort).diagnostic.code).toBe("MCP_REQUEST_TIMEOUT")
+  })
+
+  test("does not treat a remote -32001 as a timeout merely because the code matches", () => {
+    const tracker = new ExternalMcpDiagnosticTracker("req_remote_32001")
+    tracker.begin("MCP_TOOL_EXECUTION")
+    // A provider that independently uses -32001 for its own meaning, delivered
+    // on the wire with the provider's own message and data.
+    const remote = new McpError(-32001, "Salesforce rejected this operation", { detail: "private provider text" })
+
+    const error = tracker.error(remote)
+    expect(error.diagnostic).toMatchObject({
+      phase: "PROVIDER_EXECUTION",
+      category: "provider_declared_error",
+      code: "MCP_PROVIDER_DECLARED_ERROR",
+      actionOwner: "provider_admin",
+      retryable: false,
+      jsonRpcCode: -32001,
+    })
+    expect(error.diagnostic.code).not.toBe("MCP_REQUEST_TIMEOUT")
+    expect(error.diagnostic.message).not.toMatch(/timed out|timeout|latency|reconnect|credential/i)
+    expect(JSON.stringify(error.diagnostic)).not.toContain("private provider text")
+  })
+
+  test("classifies an unknown remote server-defined error honestly, preserving its code", () => {
+    const tracker = new ExternalMcpDiagnosticTracker("req_remote_unknown")
+    tracker.begin("MCP_TOOL_EXECUTION")
+    const remote = new McpError(-32077, "provider said something unrecognized", { secret: "must not escape" })
+
+    const error = tracker.error(remote)
+    expect(error.diagnostic).toMatchObject({
+      category: "provider_declared_error",
+      code: "MCP_PROVIDER_DECLARED_ERROR",
+      jsonRpcCode: -32077,
+      retryable: false,
+    })
+    expect(error.diagnostic.message).toContain("JSON-RPC -32077")
+    expect(error.diagnostic.message).not.toMatch(/latency|reconnect|credential|timed out/i)
+    expect(JSON.stringify(error.diagnostic)).not.toContain("must not escape")
   })
 
   test("classifies structured provider validation errors as correctable tool input", () => {

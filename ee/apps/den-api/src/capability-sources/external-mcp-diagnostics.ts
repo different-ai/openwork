@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto"
+import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js"
 import { PrivateUrlError } from "./url-guard.js"
 
 export const EXTERNAL_MCP_DIAGNOSTIC_PHASES = [
@@ -228,6 +229,51 @@ function numericErrorCode(value: unknown): number | undefined {
   return undefined
 }
 
+// The MCP SDK generates a request timeout locally with a fixed message; OpenWork
+// pins this SDK, so those exact strings are a reliable local-provenance marker.
+const LOCAL_SDK_TIMEOUT_SUFFIXES = ["Request timed out", "Maximum total timeout exceeded"]
+
+/**
+ * True only for a timeout OpenWork's own runtime produced — the pinned MCP
+ * SDK's client request timeout (`ErrorCode.RequestTimeout` with its fixed local
+ * message), an abort/timeout from OpenWork's bounded deadline signal, or the
+ * enterprise client's lifecycle-deadline abort. Classification is by
+ * PROVENANCE, never the bare numeric code: the SDK reserves -32001 for its own
+ * timeout, but a remote provider may return -32001 for something unrelated, and
+ * that response must not be mistaken for a local timeout.
+ */
+function isLocalMcpTimeout(error: unknown): boolean {
+  let current: unknown = error
+  const seen = new Set<unknown>()
+  for (let depth = 0; depth < 5 && current && !seen.has(current); depth += 1) {
+    seen.add(current)
+    if (current instanceof McpError && current.code === ErrorCode.RequestTimeout) {
+      const message = current.message
+      if (LOCAL_SDK_TIMEOUT_SUFFIXES.some((suffix) => message.endsWith(suffix))) return true
+    }
+    if (current instanceof DOMException && (current.name === "TimeoutError" || current.name === "AbortError")) return true
+    const name = current instanceof Error ? current.name : stringProperty(current, "name")
+    if (name === "AbortError" || name === "TimeoutError") return true
+    const message = current instanceof Error ? current.message : stringProperty(current, "message")
+    if (message && /exceeded its lifecycle deadline\.?$/i.test(message)) return true
+    current = errorCause(current)
+  }
+  return false
+}
+
+/**
+ * Returns a remote provider-declared server-defined JSON-RPC code (-32099..
+ * -32000) when the error carries one, or undefined otherwise. Server-defined
+ * codes have no standard meaning, so the classifier preserves the number as
+ * evidence but never infers timeout, authorization, or transport failure from
+ * it. Callers must rule out `isLocalMcpTimeout` first.
+ */
+function remoteProviderDeclaredJsonRpcCode(error: unknown): number | undefined {
+  const code = numericErrorCode(error)
+  if (code === undefined || code < -32099 || code > -32000) return undefined
+  return code
+}
+
 function safeNativeToken(value: string | undefined, pattern: RegExp, maxLength = 64): string | undefined {
   if (!value || value.length > maxLength || !pattern.test(value)) return undefined
   return value
@@ -433,9 +479,15 @@ function safeMessageFor(input: {
   code: string
   providerStatus?: number
   providerCode?: string
+  jsonRpcCode?: number
 }): string {
   const message = safeBaseMessageFor(input)
   const details = [
+    // For an otherwise-unrecognized provider-declared error, the JSON-RPC code
+    // is the only safe evidence to relay; never echo the provider's own text.
+    ...(input.code === "MCP_PROVIDER_DECLARED_ERROR" && input.jsonRpcCode !== undefined
+      ? [`JSON-RPC ${input.jsonRpcCode}`]
+      : []),
     ...(input.providerStatus === undefined ? [] : [`provider status ${input.providerStatus}`]),
     ...(input.providerCode ? [`code ${input.providerCode}`] : []),
   ]
@@ -452,6 +504,9 @@ function safeBaseMessageFor(input: {
   }
   if (input.code === "MCP_REQUEST_TIMEOUT") {
     return "The MCP server did not answer the current protocol request within its bounded timeout."
+  }
+  if (input.code === "MCP_PROVIDER_DECLARED_ERROR") {
+    return "The MCP connection is established, but the provider declared an unrecognized error for this operation."
   }
   if (input.code === "MCP_RESPONSE_BODY_LIMIT") {
     return "The MCP server returned a response body larger than OpenWork can safely process."
@@ -864,7 +919,7 @@ function classifyError(error: unknown, fallbackPhase: ExternalMcpDiagnosticPhase
     if (classified) return classified
   }
 
-  if (numericErrorCode(error) === -32001) {
+  if (isLocalMcpTimeout(error)) {
     return {
       phase: fallbackPhase,
       category: "request_timeout",
@@ -872,6 +927,20 @@ function classifyError(error: unknown, fallbackPhase: ExternalMcpDiagnosticPhase
       retryable: true,
       actionOwner: "provider_admin",
       operatorAction: "Check provider latency and retry after the current MCP request can complete within its bounded timeout.",
+    }
+  }
+  // A remote provider-declared server-defined JSON-RPC error (including a
+  // remote -32001 that only coincidentally matches the SDK timeout code).
+  // Preserve the code as evidence, classify it as a provider-declared error,
+  // and never invent latency, reconnect, or credential remediation from it.
+  if (remoteProviderDeclaredJsonRpcCode(error) !== undefined) {
+    return {
+      phase: fallbackPhase === "MCP_TOOL_EXECUTION" ? "PROVIDER_EXECUTION" : fallbackPhase,
+      category: "provider_declared_error",
+      code: "MCP_PROVIDER_DECLARED_ERROR",
+      retryable: false,
+      actionOwner: "provider_admin",
+      operatorAction: "Inspect the provider's declared MCP error and server logs using the diagnostic reference; do not retry unchanged unless the provider documents this code as retryable.",
     }
   }
   if (numericErrorCode(error) === -32602 && fallbackPhase === "MCP_TOOL_EXECUTION") {
@@ -1234,6 +1303,7 @@ export class ExternalMcpDiagnosticTracker {
             : "Reconnect the organization-managed provider account, then retry.",
         }
       : classified
+    const jsonRpcCode = numericErrorCode(source.error)
     const diagnosticWithoutMessage = {
       referenceId: this.referenceId,
       highestPassed: this.highestPassed,
@@ -1241,12 +1311,12 @@ export class ExternalMcpDiagnosticTracker {
     }
     const diagnostic: ExternalMcpDiagnostic = {
       ...diagnosticWithoutMessage,
-      message: safeMessageFor(diagnosticWithoutMessage),
+      message: safeMessageFor({ ...diagnosticWithoutMessage, ...(jsonRpcCode === undefined ? {} : { jsonRpcCode }) }),
       ...(this.lastHttpStatus === null ? {} : { httpStatus: this.lastHttpStatus }),
       ...(classification.phase === source.phase ? {} : { operationPhase: source.phase }),
       ...(this.outbound ? { outbound: this.outbound } : {}),
       ...(this.providerRequestId ? { providerRequestId: this.providerRequestId } : {}),
-      ...(numericErrorCode(source.error) === undefined ? {} : { jsonRpcCode: numericErrorCode(source.error) }),
+      ...(jsonRpcCode === undefined ? {} : { jsonRpcCode }),
     }
     return new ExternalMcpDiagnosticError(diagnostic, error)
   }

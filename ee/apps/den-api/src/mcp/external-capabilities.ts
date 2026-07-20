@@ -30,6 +30,10 @@ import { db } from "../db.js"
 import { listTeamsForMember } from "../orgs.js"
 import { openworkOrganizationConnectionsUrl, openworkYourConnectionsUrl } from "./connection-navigation.js"
 import {
+  externalMcpConnectionActionRequired,
+  type ExternalMcpConnectionActionData,
+} from "./external-mcp-remote-action.js"
+import {
   externalMcpToolSchemaDigest,
   validateExternalMcpToolArguments,
   type ExternalMcpArgumentIssue,
@@ -193,8 +197,6 @@ export type ExternalConnectionStatus = {
 }
 
 const ERROR_MESSAGE_LIMIT = 300
-const AUTHORIZATION_REQUIRED_CODE = -32001
-const AUTHORIZATION_REQUIRED_PATTERN = /\bauthori[sz]ation required\b/i
 const LIVE_PROBE_HINT = "This is a live probe, not a cached result — repeating the same search without changing anything will return the same error."
 const INVALID_REFRESH_TOKEN_PATTERN = /\binvalid[ _-]?refresh[ _-]?token\b/i
 const INVALID_GRANT_PATTERN = /\binvalid[ _-]?grant\b/i
@@ -207,75 +209,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function cappedErrorMessage(message: string): string {
   return message.length > ERROR_MESSAGE_LIMIT ? `${message.slice(0, ERROR_MESSAGE_LIMIT)}...` : message
-}
-
-function safeHttpUrl(value: unknown): string | null {
-  if (typeof value !== "string") return null
-  const trimmed = value.trim()
-  const markdownDestination = /^\[[^\]]*\]\((https?:\/\/[^)\s]+)\)$/i.exec(trimmed)?.[1]
-  try {
-    const url = new URL(markdownDestination ?? trimmed)
-    return url.protocol === "http:" || url.protocol === "https:" ? url.toString() : null
-  } catch {
-    return null
-  }
-}
-
-function parsedJsonRpcError(value: unknown): Record<string, unknown> | null {
-  if (isRecord(value)) {
-    if (isRecord(value.error)) return value.error
-    if (typeof value.code === "number") return value
-  }
-  const message = value instanceof Error ? value.message : typeof value === "string" ? value : null
-  const jsonStart = message?.indexOf("{") ?? -1
-  if (!message || jsonStart < 0) return null
-  try {
-    const parsed: unknown = JSON.parse(message.slice(jsonStart))
-    if (!isRecord(parsed)) return null
-    return isRecord(parsed.error) ? parsed.error : parsed
-  } catch {
-    return null
-  }
-}
-
-function safeProviderName(value: unknown): string | null {
-  if (typeof value !== "string") return null
-  const provider = value.trim()
-  return /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$/.test(provider) ? provider : null
-}
-
-export type ExternalMcpAuthorizationRequired = {
-  code: typeof AUTHORIZATION_REQUIRED_CODE
-  data: {
-    connect_url: string
-    provider?: string
-  }
-}
-
-/**
- * Some OpenWork Connect providers use a connector-specific -32001 response
- * for user authorization. The MCP SDK normally assigns -32001 to request
- * timeouts, so only recognize the narrower shape that also includes an
- * authorization message and a safe HTTP(S) connect_url.
- */
-export function externalMcpAuthorizationRequired(error: unknown): ExternalMcpAuthorizationRequired | null {
-  for (const current of errorCauseChain(error)) {
-    const rpcError = parsedJsonRpcError(current)
-    if (!rpcError || rpcError.code !== AUTHORIZATION_REQUIRED_CODE) continue
-    if (typeof rpcError.message !== "string" || !AUTHORIZATION_REQUIRED_PATTERN.test(rpcError.message)) continue
-    if (!isRecord(rpcError.data)) continue
-    const connectUrl = safeHttpUrl(rpcError.data.connect_url)
-    if (!connectUrl) continue
-    const provider = safeProviderName(rpcError.data.provider)
-    return {
-      code: AUTHORIZATION_REQUIRED_CODE,
-      data: {
-        connect_url: connectUrl,
-        ...(provider ? { provider } : {}),
-      },
-    }
-  }
-  return null
 }
 
 function parsedErrorMessage(value: unknown): string | null {
@@ -866,7 +799,7 @@ export type ExternalCapabilityExecuteResult =
         | "provider_error"
         | "invalid_capability_arguments"
       message: string
-      data?: ExternalMcpAuthorizationRequired["data"]
+      data?: ExternalMcpConnectionActionData
       diagnostic?: ExternalMcpDiagnostic
       actionOwner?: ExternalMcpDiagnostic["actionOwner"]
       operatorAction?: string
@@ -1097,13 +1030,17 @@ export async function executeExternalCapability(input: {
       ...(schemaGuidance ? { schemaGuidance } : {}),
     }
   } catch (error) {
-    const authorization = externalMcpAuthorizationRequired(error)
-    if (authorization) {
+    // Standards-first URL elicitation, then the compatibility connect_url
+    // dialect, normalized to one connect action bound to this connection's
+    // origin. Recognized before generic diagnosis so a legitimate sign-in
+    // prompt is never buried as an opaque provider failure.
+    const connectionAction = externalMcpConnectionActionRequired(error, { connectionUrl: connection.url })
+    if (connectionAction) {
       return {
         ok: false,
         error: "authorization_required",
-        message: `Authorization required for "${connection.name}". Ask the user to open ${authorization.data.connect_url} in a browser, sign in, then retry this request. Do not open the URL on the user's behalf.`,
-        data: authorization.data,
+        message: `"${connection.name}" needs the user to sign in before this capability can run. Ask the user to open ${connectionAction.connect_url} in a browser, sign in, then retry this request once they confirm. Do not open the URL on the user's behalf and do not retry automatically.`,
+        data: connectionAction,
         ...(schemaGuidance ? { schemaGuidance } : {}),
       }
     }
