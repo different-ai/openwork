@@ -21,7 +21,9 @@ export function denApiBase(ctx) {
 }
 
 export function denWebBase(ctx) {
-  return cleanBase(envText(ctx, "OPENWORK_EVAL_DEN_WEB_URL") || denApiBase(ctx));
+  const value = cleanBase(envText(ctx, "OPENWORK_EVAL_DEN_WEB_URL"));
+  ctx.assert(Boolean(value), "Missing OPENWORK_EVAL_DEN_WEB_URL for the Blue Yonder desktop handoff deep link.");
+  return value;
 }
 
 export function workspaceFolder(ctx, envName, fallback) {
@@ -51,11 +53,12 @@ export function assertEvidence(ctx, condition, assertion, actual = "") {
 }
 
 async function denApiFetch(ctx, pathname, init = {}) {
-  const response = await fetch(`${denApiBase(ctx)}${pathname}`, {
+  const url = `${denApiBase(ctx)}${pathname}`;
+  const response = await fetch(url, {
     ...init,
     headers: {
       "content-type": "application/json",
-      origin: denWebBase(ctx),
+      Origin: denWebBase(ctx),
       ...(init.headers ?? {}),
     },
   });
@@ -66,7 +69,11 @@ async function denApiFetch(ctx, pathname, init = {}) {
   } catch {
     body = text;
   }
-  return { response, body, text };
+  return { response, body, text, url };
+}
+
+function httpFailureMessage(label, result) {
+  return `${label}: ${result.response.status} ${result.response.statusText} ${result.text.slice(0, 1_000)} (url: ${result.url})`;
 }
 
 export async function signInByEmail(ctx, email) {
@@ -74,7 +81,7 @@ export async function signInByEmail(ctx, email) {
     method: "POST",
     body: JSON.stringify({ email, password: envText(ctx, "OPENWORK_EVAL_BLUE_YONDER_PASSWORD") || DEFAULT_PASSWORD }),
   });
-  ctx.assert(result.response.ok, `Blue Yonder sign-in failed for ${email}: ${result.response.status} ${result.text.slice(0, 400)}`);
+  ctx.assert(result.response.ok, httpFailureMessage(`Blue Yonder sign-in failed for ${email}`, result));
   const token = result.body?.token;
   ctx.assert(typeof token === "string" && token.trim().length > 0, `Blue Yonder sign-in for ${email} returned no bearer token.`);
   return token.trim();
@@ -86,23 +93,24 @@ export async function createDesktopHandoff(ctx, token) {
     headers: { authorization: `Bearer ${token}` },
     body: JSON.stringify({ desktopScheme: "openwork" }),
   });
-  ctx.assert(result.response.ok, `Desktop handoff create failed: ${result.response.status} ${result.text.slice(0, 400)}`);
+  ctx.assert(result.response.ok, httpFailureMessage("Desktop handoff create failed", result));
   const openworkUrl = result.body?.openworkUrl;
   ctx.assert(typeof openworkUrl === "string" && openworkUrl.length > 0, "Desktop handoff response did not include openworkUrl.");
   const url = new URL(openworkUrl);
-  if (!url.searchParams.get("denBaseUrl")) url.searchParams.set("denBaseUrl", denApiBase(ctx));
+  url.searchParams.set("denBaseUrl", denWebBase(ctx));
   return url.toString();
 }
 
 export async function configureDesktopForDen(ctx) {
   await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 120_000, label: "OpenWork control API" });
   const apiBase = denApiBase(ctx);
+  const webBase = denWebBase(ctx);
   const result = await ctx.eval(`(async () => {
     const bridge = window.__OPENWORK_ELECTRON__?.invokeDesktop;
     if (bridge) {
-      await bridge("setDesktopBootstrapConfig", { baseUrl: ${JSON.stringify(apiBase)}, apiBaseUrl: ${JSON.stringify(apiBase)}, requireSignin: false, handoff: null });
+      await bridge("setDesktopBootstrapConfig", { baseUrl: ${JSON.stringify(webBase)}, apiBaseUrl: ${JSON.stringify(apiBase)}, requireSignin: false, handoff: null });
     }
-    localStorage.setItem("openwork.den.baseUrl", ${JSON.stringify(apiBase)});
+    localStorage.setItem("openwork.den.baseUrl", ${JSON.stringify(webBase)});
     localStorage.setItem("openwork.den.apiBaseUrl", ${JSON.stringify(apiBase)});
     let prefs = {};
     try { prefs = JSON.parse(localStorage.getItem("openwork.preferences") || "{}"); } catch {}
@@ -126,13 +134,55 @@ export async function resetDesktopDenSession(ctx) {
 }
 
 export async function deliverDesktopDeepLink(ctx, openworkUrl) {
+  const webBase = denWebBase(ctx);
   await ctx.eval(`(() => {
     const url = ${JSON.stringify(openworkUrl)};
+    const redact = (value) => String(value ?? "")
+      .replace(/("token"\\s*:\\s*")[^"]+/gi, "$1<redacted>")
+      .replace(/Bearer\\s+[A-Za-z0-9._~+/-]+=*/gi, "Bearer <redacted>");
+    window.__blueYonderHandoffDiagnostics = { events: [], exchanges: [] };
+    window.addEventListener("openwork-den-session-updated", (event) => {
+      const detail = event.detail ?? null;
+      window.__blueYonderHandoffDiagnostics.events.push(detail?.token ? { ...detail, token: "<redacted>" } : detail);
+    });
+    if (!window.__blueYonderFetchWrapped) {
+      window.__blueYonderFetchWrapped = true;
+      const originalFetch = window.fetch.bind(window);
+      window.fetch = async (...args) => {
+        const response = await originalFetch(...args);
+        const requestUrl = typeof args[0] === "string" ? args[0] : args[0] instanceof URL ? args[0].toString() : args[0]?.url;
+        if (typeof requestUrl === "string" && requestUrl.includes("/v1/auth/desktop-handoff/exchange")) {
+          response.clone().text().then((text) => {
+            window.__blueYonderHandoffDiagnostics.exchanges.push({ status: response.status, statusText: response.statusText, url: requestUrl, body: redact(text).slice(0, 1_000) });
+          }).catch((error) => {
+            window.__blueYonderHandoffDiagnostics.exchanges.push({ status: response.status, statusText: response.statusText, url: requestUrl, body: error instanceof Error ? error.message : String(error) });
+          });
+        }
+        return response;
+      };
+    }
     window.__OPENWORK__ = window.__OPENWORK__ || {};
     window.__OPENWORK__.deepLinks = [...(window.__OPENWORK__.deepLinks || []), url];
-    window.dispatchEvent(new CustomEvent("openwork:deep-link", { detail: { urls: [url], denBaseUrl: ${JSON.stringify(denApiBase(ctx))} } }));
+    window.dispatchEvent(new CustomEvent("openwork:deep-link", { detail: { urls: [url], denBaseUrl: ${JSON.stringify(webBase)} } }));
     return true;
   })()`);
+}
+
+async function waitForDesktopDenToken(ctx, openworkUrl) {
+  try {
+    await ctx.waitFor("Boolean((localStorage.getItem('openwork.den.authToken') ?? '').trim())", { timeoutMs: 60_000, label: "desktop Den token" });
+  } catch (error) {
+    const diagnostics = await ctx.eval(`(() => ({
+      authToken: Boolean((localStorage.getItem("openwork.den.authToken") ?? "").trim()),
+      baseUrl: localStorage.getItem("openwork.den.baseUrl") || "",
+      apiBaseUrl: localStorage.getItem("openwork.den.apiBaseUrl") || "",
+      activeOrgId: localStorage.getItem("openwork.den.activeOrgId") || "",
+      events: window.__blueYonderHandoffDiagnostics?.events ?? [],
+      exchanges: window.__blueYonderHandoffDiagnostics?.exchanges ?? [],
+    }))()`);
+    const redactedUrl = openworkUrl.replace(/([?&]grant=)[^&]+/, "$1<redacted>");
+    throw new Error(`Timed out waiting for desktop Den token after deep-link handoff ${redactedUrl}. Diagnostics: ${JSON.stringify(diagnostics)}. ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 export async function clickExactText(ctx, text, selector = "button, [role=button], a", timeout = 20_000) {
@@ -151,6 +201,17 @@ export async function clickExactIfVisible(ctx, text, selector = "button, [role=b
     const normalize = (value) => (value ?? "").replace(/\\s+/g, " ").trim();
     const element = [...document.querySelectorAll(${JSON.stringify(selector)})]
       .find((entry) => normalize(entry.textContent) === ${JSON.stringify(text)} && entry.disabled !== true && entry.getAttribute("aria-disabled") !== "true");
+    element?.scrollIntoView({ block: "center", inline: "center" });
+    element?.click();
+    return Boolean(element);
+  })()`));
+}
+
+async function clickTextStartingWithIfVisible(ctx, text, selector = "button, [role=button], a") {
+  return Boolean(await ctx.eval(`(() => {
+    const normalize = (value) => (value ?? "").replace(/\\s+/g, " ").trim();
+    const element = [...document.querySelectorAll(${JSON.stringify(selector)})]
+      .find((entry) => normalize(entry.textContent).startsWith(${JSON.stringify(text)}) && entry.disabled !== true && entry.getAttribute("aria-disabled") !== "true");
     element?.scrollIntoView({ block: "center", inline: "center" });
     element?.click();
     return Boolean(element);
@@ -181,7 +242,7 @@ export async function completeBlueYonderOrgOnboarding(ctx) {
         activeOrgName: localStorage.getItem("openwork.den.activeOrgName") || "",
         hasChoose: text.includes("Choose your organization"),
         hasBlueYonder: text.includes("Blue Yonder"),
-        hasContinueOrg: buttons.includes("Continue with organization"),
+        hasContinueOrg: buttons.some((button) => button.startsWith("Continue with organization")),
         hasContinueWorkspace: buttons.includes("Continue to workspace"),
         hasFolderInput: Boolean(document.querySelector('input[placeholder="/workspace/my-project"]')),
       };
@@ -192,7 +253,7 @@ export async function completeBlueYonderOrgOnboarding(ctx) {
       await sleep(750);
       continue;
     }
-    if (last.hasContinueOrg && await clickExactIfVisible(ctx, "Continue with organization", "button, [role=button]")) {
+    if (last.hasContinueOrg && await clickTextStartingWithIfVisible(ctx, "Continue with organization", "button, [role=button]")) {
       await sleep(1_000);
       continue;
     }
@@ -212,7 +273,7 @@ export async function desktopHandoffSignIn(ctx, email) {
   const token = await signInByEmail(ctx, email);
   const openworkUrl = await createDesktopHandoff(ctx, token);
   await deliverDesktopDeepLink(ctx, openworkUrl);
-  await ctx.waitFor("Boolean((localStorage.getItem('openwork.den.authToken') ?? '').trim())", { timeoutMs: 60_000, label: "desktop Den token" });
+  await waitForDesktopDenToken(ctx, openworkUrl);
   await completeBlueYonderOrgOnboarding(ctx);
   await ctx.waitFor("Boolean((localStorage.getItem('openwork.den.activeOrgId') ?? '').trim())", { timeoutMs: 60_000, label: "desktop active organization" });
   return token;
@@ -438,6 +499,6 @@ export async function retryAfterGatewayLoginIfNeeded(ctx, email, transcript, exp
 
 export async function listSkillsFor(ctx, token) {
   const result = await denApiFetch(ctx, "/v1/skills", { headers: { authorization: `Bearer ${token}` } });
-  ctx.assert(result.response.ok, `GET /v1/skills failed: ${result.response.status} ${result.text.slice(0, 400)}`);
+  ctx.assert(result.response.ok, httpFailureMessage("GET /v1/skills failed", result));
   return result.body?.skills ?? [];
 }

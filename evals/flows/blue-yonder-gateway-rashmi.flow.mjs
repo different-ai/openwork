@@ -3,9 +3,9 @@
  *
  * Required env:
  * - OPENWORK_EVAL_DEN_API_URL: Den API base URL for the Blue Yonder sandbox.
+ * - OPENWORK_EVAL_DEN_WEB_URL: Den web origin used by the desktop handoff deep link.
  *
  * Optional env:
- * - OPENWORK_EVAL_DEN_WEB_URL: Den web origin used as the handoff Origin.
  * - OPENWORK_EVAL_CDP_URL or --cdp-url: CDP endpoint for Rashmi's desktop app.
  *   This should be the SECOND app instance when run after Jahnavi's flow.
  * - OPENWORK_EVAL_BLUE_YONDER_RASHMI_WORKSPACE: workspace folder (default /workspace/rashmi-workspace).
@@ -47,7 +47,7 @@ export default {
   id: "blue-yonder-gateway-rashmi",
   title: "Blue Yonder gateway demo: Rashmi receives and uses the my-incidents skill",
   kind: "user-facing",
-  requiredEnv: ["OPENWORK_EVAL_DEN_API_URL"],
+  requiredEnv: ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_WEB_URL"],
   steps: [
     {
       name: "Desktop handoff signs in Rashmi to Blue Yonder",
