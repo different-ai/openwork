@@ -23,8 +23,10 @@ import { getToolActivityLabel, isToolPartInFlight } from "@/lib/tool-activity"
 import { cn } from "@/lib/utils"
 import {
   Bot,
+  Check,
   ChevronDown,
   CircleAlert,
+  Copy,
   ExternalLink,
   FilePen,
   KeyRound,
@@ -37,6 +39,7 @@ import {
   SquareCode,
   Wrench,
 } from "lucide-react"
+import { useCallback, useState } from "react"
 import type { DynamicToolUIPart, ToolUIPart } from "ai"
 
 function toolIcon(part: ToolPart) {
@@ -192,8 +195,14 @@ const Tool = ({
   const label = title ?? getToolActivityLabel(toolPart)
   const hasInput = input !== null && input !== undefined
   const hasOutput = "output" in toolPart && toolPart.output !== undefined
+  const resultText = hasOutput
+    ? formatValue(toolPart.output)
+    : isError && toolPart.errorText
+      ? toolPart.errorText
+      : null
   const inputDiff = getInputDiff(input)
   const Icon = toolIcon(toolPart)
+  const [copied, setCopied] = useState(false)
   const ReconnectIcon = reconnectState === "opening"
     ? LoaderCircle
     : reconnectState === "authorization_opened"
@@ -251,6 +260,17 @@ const Tool = ({
       })
     }
   }
+
+  const handleCopyResult = useCallback(async () => {
+    if (resultText === null) return
+    try {
+      await navigator.clipboard.writeText(resultText)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 2000)
+    } catch {
+      // Clipboard access can be unavailable outside a secure browser context.
+    }
+  }, [resultText])
 
   return (
     <Collapsible className={className} defaultOpen={defaultOpen}>
@@ -318,6 +338,19 @@ const Tool = ({
               aria-hidden="true"
             />
             {reconnectPresentation?.buttonLabel}
+          </Button>
+        ) : null}
+        {resultText !== null ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            data-testid="tool-result-copy-action"
+            title={copied ? "Copied" : "Copy tool result"}
+            aria-label={copied ? "Tool result copied" : "Copy tool result"}
+            onClick={() => void handleCopyResult()}
+          >
+            {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
           </Button>
         ) : null}
       </div>

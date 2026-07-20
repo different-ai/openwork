@@ -64,3 +64,33 @@ test("renders an inline reconnect button when Cloud capability discovery finds e
   expect(html).toContain("bg-amber-3/60")
   expect(html).toContain('data-testid="chat-mcp-reconnect-action"')
 })
+
+test("renders a copy action when a tool result is available", () => {
+  const toolPart: DynamicToolUIPart = {
+    type: "dynamic-tool",
+    toolName: "openwork-cloud_search_capabilities",
+    toolCallId: "call-copy",
+    state: "output-available",
+    input: { query: "Notion pages" },
+    output: { matches: [{ name: "searchPages" }] },
+  }
+
+  const html = renderToStaticMarkup(<Tool toolPart={toolPart} />)
+
+  expect(html).toContain('data-testid="tool-result-copy-action"')
+  expect(html).toContain('aria-label="Copy tool result"')
+})
+
+test("does not render a copy action before a tool has a result", () => {
+  const toolPart: DynamicToolUIPart = {
+    type: "dynamic-tool",
+    toolName: "openwork-cloud_search_capabilities",
+    toolCallId: "call-running",
+    state: "input-available",
+    input: { query: "Notion pages" },
+  }
+
+  const html = renderToStaticMarkup(<Tool toolPart={toolPart} />)
+
+  expect(html).not.toContain('data-testid="tool-result-copy-action"')
+})
