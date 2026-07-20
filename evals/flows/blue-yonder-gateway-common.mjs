@@ -322,6 +322,40 @@ export async function waitForOpenWorkConnectReady(ctx, timeout = 90_000) {
   throw new Error(`OpenWork Connect did not become Ready in the status bar within ${timeout}ms: ${JSON.stringify(last)}`);
 }
 
+export async function ensureLocalWorkspaceBeforeConnectPollIfNeeded(ctx, folderPath) {
+  const route = await ctx.eval(`(() => {
+    const text = document.body.innerText || "";
+    const hash = window.location.hash;
+    return {
+      hash,
+      hasConnectStatus: /OpenWork Connect: (Ready|Checking|Needs attention)/.test(text),
+      hasWorkspaceRoute: hash.includes("/workspace/"),
+    };
+  })()`);
+  if (route?.hash?.startsWith("#/welcome")) return ensureLocalWorkspace(ctx, folderPath);
+  if (route?.hasConnectStatus || route?.hasWorkspaceRoute) return "";
+
+  const probe = await ctx.eval(`(async () => {
+    try {
+      const s = ${localServerExpr()};
+      if (!s.base || !s.token) return { ok: false, reason: "missing local server base/token" };
+      const headers = { Authorization: "Bearer " + s.token };
+      if (s.hostToken) headers["X-OpenWork-Host-Token"] = s.hostToken;
+      const response = await fetch(s.base + "/workspaces", { headers });
+      const text = await response.text();
+      let payload = null;
+      try { payload = text ? JSON.parse(text) : null; } catch {}
+      if (!response.ok) return { ok: false, status: response.status, text: text.slice(0, 1_000) };
+      const workspaces = Array.isArray(payload?.workspaces) ? payload.workspaces : Array.isArray(payload?.items) ? payload.items : [];
+      return { ok: true, count: workspaces.length, activeId: typeof payload?.activeId === "string" ? payload.activeId : "" };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  })()`, { awaitPromise: true });
+  if (probe?.ok && probe.count === 0) return ensureLocalWorkspace(ctx, folderPath);
+  return "";
+}
+
 export async function ensureLocalWorkspace(ctx, folderPath) {
   await ctx.waitFor(`(() => { const s = ${localServerExpr()}; return Boolean(s.base && s.token); })()`, { timeoutMs: 60_000, label: "local OpenWork server URL/token" });
   let created = null;

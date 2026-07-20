@@ -23,6 +23,7 @@ import {
   createDesktopHandoff,
   deliverDesktopDeepLink,
   ensureLocalWorkspace,
+  ensureLocalWorkspaceBeforeConnectPollIfNeeded,
   envText,
   resetDesktopDenSession,
   retryAfterGatewayLoginIfNeeded,
@@ -137,6 +138,14 @@ export default {
           return text.includes('OpenWork Connect') || text.includes('Run task') || location.hash.includes('/workspace') || location.hash.includes('/welcome');
         })()`, { timeoutMs: 90_000, label: "desktop app shell after org provisioning" });
         assertEvidence(ctx, Boolean(shell), "The signed-in desktop app shell is visible after org provisioning", await desktopAuthState(ctx));
+        const folder = workspaceFolder(ctx, WORKSPACE_ENV, DEFAULT_WORKSPACE);
+        state.workspaceId = await ensureLocalWorkspaceBeforeConnectPollIfNeeded(ctx, folder);
+        if (state.workspaceId) {
+          assertEvidence(ctx, true, "A local workspace is created from the welcome route before polling OpenWork Connect", {
+            folder,
+            workspaceId: state.workspaceId,
+          });
+        }
         const ready = await waitForOpenWorkConnectReady(ctx);
         assertEvidence(ctx, ready.ready, "OpenWork Connect reaches Ready on the factory-fresh app", ready);
       },
@@ -145,6 +154,13 @@ export default {
       name: "Create Venkat's fresh workspace",
       run: async (ctx) => {
         const folder = workspaceFolder(ctx, WORKSPACE_ENV, DEFAULT_WORKSPACE);
+        if (state.workspaceId) {
+          assertEvidence(ctx, true, "A local workspace is available for Venkat's first run", {
+            folder,
+            workspaceId: state.workspaceId,
+          });
+          return;
+        }
         state.workspaceId = await ensureLocalWorkspace(ctx, folder);
         assertEvidence(ctx, state.workspaceId.length > 0, "A local workspace is created for Venkat's first run", {
           folder,
