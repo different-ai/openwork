@@ -2,6 +2,7 @@
 
 import { ShieldCheck, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { DenBrowserHandoffFallback } from "./browser-handoff-fallback";
 import { DenButton, buttonVariants } from "./ui/button";
 import { DenInput } from "./ui/input";
 import { DenNotice } from "./ui/notice";
@@ -69,6 +70,7 @@ export function ReauthDialog({
   const [busy, setBusy] = useState(false);
   const [loadingMethods, setLoadingMethods] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [pendingBrowserUrl, setPendingBrowserUrl] = useState<string | null>(null);
   const [providers, setProviders] = useState<string[]>([]);
   const [ssoUrl, setSsoUrl] = useState<string | null>(null);
   const [nonce, setNonce] = useState("");
@@ -123,6 +125,7 @@ export function ReauthDialog({
       stopPopupWatcher();
       setPassword("");
       setError(null);
+      setPendingBrowserUrl(null);
       setBusy(false);
       setLoadingMethods(false);
       return;
@@ -192,6 +195,7 @@ export function ReauthDialog({
       // the server-side freshness check, so a forged message cannot bypass reauth.
       setBusy(true);
       setError(null);
+      setPendingBrowserUrl(null);
       void (async () => {
         try {
           await onVerifiedRef.current();
@@ -240,13 +244,10 @@ export function ReauthDialog({
 
   async function continueSocial(provider: SocialAuthProvider) {
     const popup = window.open("", "openwork-reauth", "popup,width=480,height=640");
-    if (!popup) {
-      setError("OpenWork could not open the sign-in window. Allow popups for OpenWork, then try again.");
-      return;
-    }
 
     setBusy(true);
     setError(null);
+    setPendingBrowserUrl(null);
     try {
       const callbackURL = getReauthCompleteUrl(nonce);
       const errorCallbackURL = getReauthCompleteUrl(nonce, true);
@@ -269,8 +270,15 @@ export function ReauthDialog({
         return;
       }
 
-      popup.location.href = redirectUrl;
-      startPopupWatcher(popup);
+      const browserUrl = new URL(redirectUrl, window.location.origin).toString();
+      setPendingBrowserUrl(browserUrl);
+      if (popup) {
+        popup.location.href = browserUrl;
+        startPopupWatcher(popup);
+      } else {
+        setError("The sign-in window was blocked. Use the full link below.");
+        setBusy(false);
+      }
     } catch (nextError) {
       popup?.close();
       setError(nextError instanceof Error ? nextError.message : `${getSocialLabel(provider)} sign-in failed.`);
@@ -284,24 +292,54 @@ export function ReauthDialog({
       return;
     }
 
-    const popup = window.open("", "openwork-reauth", "popup,width=480,height=640");
-    if (!popup) {
-      setError("OpenWork could not open the sign-in window. Allow popups for OpenWork, then try again.");
-      return;
-    }
-
-    setBusy(true);
-    setError(null);
+    let popup: Window | null = null;
     try {
       const nextUrl = new URL(ssoUrl, window.location.origin);
       nextUrl.searchParams.set("callbackURL", getReauthCompleteUrl(nonce));
       nextUrl.searchParams.set("loginHint", user.email);
 
-      popup.location.href = nextUrl.toString();
+      const browserUrl = nextUrl.toString();
+      setPendingBrowserUrl(browserUrl);
+      popup = window.open("", "openwork-reauth", "popup,width=480,height=640");
+      if (!popup) {
+        setError("The sign-in window was blocked. Use the full link below.");
+        setBusy(false);
+        return;
+      }
+
+      setBusy(true);
+      setError(null);
+      popup.location.href = browserUrl;
       startPopupWatcher(popup);
     } catch (nextError) {
       popup?.close();
       setError(nextError instanceof Error ? nextError.message : "Organization SSO sign-in failed.");
+      setBusy(false);
+    }
+  }
+
+  function openPendingBrowser(url: string) {
+    const popup = window.open("", "openwork-reauth", "popup,width=480,height=640");
+    if (!popup) return false;
+    try {
+      popup.location.href = url;
+      setBusy(true);
+      setError(null);
+      startPopupWatcher(popup);
+      return true;
+    } catch {
+      popup.close();
+      return false;
+    }
+  }
+
+  async function verifyPendingBrowserSignIn() {
+    setBusy(true);
+    setError(null);
+    try {
+      await onVerifiedRef.current();
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "Re-authentication failed.");
       setBusy(false);
     }
   }
@@ -359,6 +397,27 @@ export function ReauthDialog({
 
           {error ? (
             <DenNotice message={error} tone="error" className="mb-5" />
+          ) : null}
+
+          {pendingBrowserUrl ? (
+            <div className="mb-5 space-y-3">
+              <DenBrowserHandoffFallback
+                url={pendingBrowserUrl}
+                title="Continue the security check in your browser"
+                description="If the sign-in window did not appear, open or copy this complete link. It remains available until verification succeeds or you cancel."
+                openLabel="Open sign-in again"
+                onOpen={openPendingBrowser}
+              />
+              <DenButton
+                className="w-full"
+                variant="secondary"
+                loading={busy}
+                disabled={busy}
+                onClick={() => void verifyPendingBrowserSignIn()}
+              >
+                I completed sign-in
+              </DenButton>
+            </div>
           ) : null}
 
           <div className="grid gap-4">

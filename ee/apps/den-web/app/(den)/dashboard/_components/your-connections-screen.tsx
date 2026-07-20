@@ -26,6 +26,7 @@ import {
   useMcpConnectionPresets,
 } from "./mcp-connections-data";
 import { McpToolRunner } from "./mcp-tool-runner";
+import { McpAuthorizationFallback } from "./mcp-authorization-fallback";
 import { usePlugin } from "./plugin-data";
 import { useMcpAccountAuthorization } from "./use-mcp-account-authorization";
 
@@ -118,6 +119,9 @@ export function YourConnectionsScreen() {
               polling={authorization.pollingConnectionId === connection.id}
               connecting={authorization.connectingConnectionId === connection.id}
               disconnecting={disconnectProvider.isPending && disconnectProvider.variables === connection.id}
+              authorizationUrl={authorization.pendingAuthorization?.connectionId === connection.id
+                ? authorization.pendingAuthorization.url
+                : null}
               errorMessage={
                 rowError?.connectionId === connection.id
                   ? rowError.message
@@ -153,6 +157,7 @@ function YourConnectionRow({
   polling,
   connecting,
   disconnecting,
+  authorizationUrl,
   errorMessage,
   highlighted,
   rowRef,
@@ -170,6 +175,7 @@ function YourConnectionRow({
   polling: boolean;
   connecting: boolean;
   disconnecting: boolean;
+  authorizationUrl: string | null;
   errorMessage: string | null;
   onConnect: () => void;
   onDisconnect: () => void;
@@ -306,6 +312,9 @@ function YourConnectionRow({
           ) : null}
         </div>
       </div>
+      {authorizationUrl ? (
+        <McpAuthorizationFallback url={authorizationUrl} connectionName={connection.name} />
+      ) : null}
       {toolRunnerOpen && canTestTools ? <McpToolRunner connection={connection} /> : null}
     </div>
   );

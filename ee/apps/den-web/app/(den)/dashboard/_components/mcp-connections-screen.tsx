@@ -13,6 +13,7 @@ import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-templ
 import { getPluginRoute } from "../../_lib/den-org";
 import { getRequestError, requestJson } from "../../_lib/den-flow";
 import { IntegrationIcon } from "./integration-icon";
+import { McpAuthorizationFallback } from "./mcp-authorization-fallback";
 import { Microsoft365Dialog } from "./microsoft-365-dialog";
 import { openMcpAuthorizationWindow, safeMcpAuthorizationUrl, showMcpAuthorizationError } from "./mcp-authorization-url";
 import {
@@ -275,6 +276,7 @@ export function McpConnectionsScreen() {
   const [pollingConnectionId, setPollingConnectionId] = useState<string | null>(null);
   const [oauthClientConfigurationRequiredIds, setOAuthClientConfigurationRequiredIds] = useState<string[]>([]);
   const [connectionActionError, setConnectionActionError] = useState<{ connectionId: string; message: string } | null>(null);
+  const [pendingAuthorization, setPendingAuthorization] = useState<{ connectionId: string; url: string } | null>(null);
   const [connectionActionNotice, setConnectionActionNotice] = useState<string | null>(null);
   const [toolsConnectionId, setToolsConnectionId] = useState<string | null>(null);
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -327,30 +329,49 @@ export function McpConnectionsScreen() {
   }
 
   function pollUntilConnected(connectionId: string) {
+    stopPolling();
     setPollingConnectionId(connectionId);
     const startedAt = Date.now();
     pollTimer.current = setInterval(async () => {
       const result = await refetch();
       const connection = result.data?.find((entry) => entry.id === connectionId);
-      if (connection?.connected || Date.now() - startedAt > OAUTH_POLL_TIMEOUT_MS) {
+      if (connection?.connected) {
         stopPolling();
+        setPendingAuthorization(null);
+        return;
+      }
+      if (Date.now() - startedAt > OAUTH_POLL_TIMEOUT_MS) {
+        stopPolling();
+        setConnectionActionError({
+          connectionId,
+          message: "Authorization is still incomplete. Use the link below or reconnect to start a new attempt.",
+        });
       }
     }, OAUTH_POLL_INTERVAL_MS);
   }
 
-  async function handleConnectOAuth(connectionId: string, pendingAuthorizationWindow?: Window) {
+  async function handleConnectOAuth(connectionId: string, pendingAuthorizationWindow?: Window | null) {
+    stopPolling();
     setConnectionActionError(null);
+    setPendingAuthorization(null);
     let authorizationWindow: Window | null = pendingAuthorizationWindow ?? null;
     try {
       authorizationWindow = authorizationWindow ?? openMcpAuthorizationWindow();
       const result = await startOAuth.mutateAsync(connectionId);
       if (result.status === "connected") {
-        authorizationWindow.close();
+        authorizationWindow?.close();
         void refetch();
         return;
       }
       if (!result.authorizeUrl) throw new Error("The MCP provider did not return an authorization URL.");
-      authorizationWindow.location.href = safeMcpAuthorizationUrl(result.authorizeUrl);
+      const authorizationUrl = safeMcpAuthorizationUrl(result.authorizeUrl);
+      setPendingAuthorization({ connectionId, url: authorizationUrl });
+      try {
+        if (authorizationWindow) authorizationWindow.location.href = authorizationUrl;
+      } catch {
+        // The durable URL below the row remains available when popup
+        // navigation is blocked or the popup was closed.
+      }
       pollUntilConnected(connectionId);
     } catch (connectError) {
       const message = connectError instanceof Error ? connectError.message : "Failed to connect the MCP server.";
@@ -555,6 +576,9 @@ export function McpConnectionsScreen() {
               setupHref={needsPluginSetup && setupPluginId ? getPluginRoute(orgSlug, setupPluginId) : null}
               polling={pollingConnectionId === connection.id}
               connecting={startOAuth.isPending && startOAuth.variables === connection.id}
+              authorizationUrl={pendingAuthorization?.connectionId === connection.id
+                ? pendingAuthorization.url
+                : null}
               errorMessage={connectionActionError?.connectionId === connection.id ? connectionActionError.message : null}
               onEdit={() => {
                 updateConnection.reset();
@@ -1329,6 +1353,7 @@ function ConnectionRow({
   setupHref,
   polling,
   connecting,
+  authorizationUrl,
   errorMessage,
   onEdit,
   onConfigure,
@@ -1347,6 +1372,7 @@ function ConnectionRow({
   setupHref: string | null;
   polling: boolean;
   connecting: boolean;
+  authorizationUrl: string | null;
   errorMessage: string | null;
   onEdit: () => void;
   onConfigure: () => void;
@@ -1556,6 +1582,9 @@ function ConnectionRow({
           </div>
         </div>
       </div>
+      {authorizationUrl ? (
+        <McpAuthorizationFallback url={authorizationUrl} connectionName={connection.name} />
+      ) : null}
       {toolsOpen && canInspectTools ? <McpToolCatalog connection={connection} /> : null}
     </div>
   );

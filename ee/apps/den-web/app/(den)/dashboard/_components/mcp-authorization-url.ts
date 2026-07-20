@@ -224,12 +224,12 @@ export function showMcpAuthorizationError(
   }
 }
 
-export function openMcpAuthorizationWindow(): Window {
+export function openMcpAuthorizationWindow(
+  openWindow: (url?: string | URL, target?: string, features?: string) => Window | null = (...args) => window.open(...args),
+): Window | null {
   const popupName = `openwork-mcp-authorization-${crypto.randomUUID()}`
-  const popup = window.open("", popupName, "popup,width=600,height=760")
-  if (!popup) {
-    throw new Error("OpenWork could not open the sign-in window. Allow popups for OpenWork, then try again.")
-  }
+  const popup = openWindow("", popupName, "popup,width=600,height=760")
+  if (!popup) return null
   try {
     popup.opener = null
     popup.document.open()

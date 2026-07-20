@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import {
   mcpAuthorizationErrorDocument,
   mcpAuthorizationPendingDocument,
+  openMcpAuthorizationWindow,
   safeMcpAuthorizationUrl,
 } from "../app/(den)/dashboard/_components/mcp-authorization-url"
 
@@ -24,6 +25,12 @@ describe("safeMcpAuthorizationUrl", () => {
     "rejects unsafe provider authorization URL %s",
     (url) => expect(() => safeMcpAuthorizationUrl(url)).toThrow(),
   )
+})
+
+describe("openMcpAuthorizationWindow", () => {
+  test("returns null instead of aborting OAuth when the popup is blocked", () => {
+    expect(openMcpAuthorizationWindow(() => null)).toBeNull()
+  })
 })
 
 describe("mcpAuthorizationPendingDocument", () => {

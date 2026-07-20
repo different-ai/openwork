@@ -16,6 +16,7 @@ export function useMcpAccountAuthorization(onConnected?: () => void) {
   const startOAuth = useStartMcpConnectionOAuth();
   const [pollingConnectionId, setPollingConnectionId] = useState<string | null>(null);
   const [error, setError] = useState<{ connectionId: string; message: string } | null>(null);
+  const [pendingAuthorization, setPendingAuthorization] = useState<{ connectionId: string; url: string } | null>(null);
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const onConnectedRef = useRef(onConnected);
 
@@ -39,6 +40,7 @@ export function useMcpAccountAuthorization(onConnected?: () => void) {
 
   function finishConnected() {
     stopPolling();
+    setPendingAuthorization(null);
     onConnectedRef.current?.();
   }
 
@@ -55,18 +57,24 @@ export function useMcpAccountAuthorization(onConnected?: () => void) {
       }
       if (Date.now() - startedAt > OAUTH_POLL_TIMEOUT_MS) {
         stopPolling();
+        setError({
+          connectionId,
+          message: "Authorization is still incomplete. Use the link below or reconnect to start a new attempt.",
+        });
       }
     }, OAUTH_POLL_INTERVAL_MS);
   }
 
   async function connect(connectionId: string) {
+    stopPolling();
     setError(null);
+    setPendingAuthorization(null);
     let authorizationWindow: Window | null = null;
     try {
       authorizationWindow = openMcpAuthorizationWindow();
       const result = await startOAuth.mutateAsync(connectionId);
       if (result.status === "connected") {
-        authorizationWindow.close();
+        authorizationWindow?.close();
         void refetch();
         finishConnected();
         return;
@@ -74,7 +82,14 @@ export function useMcpAccountAuthorization(onConnected?: () => void) {
       if (!result.authorizeUrl) {
         throw new Error("The MCP provider did not return an authorization URL.");
       }
-      authorizationWindow.location.href = safeMcpAuthorizationUrl(result.authorizeUrl);
+      const authorizationUrl = safeMcpAuthorizationUrl(result.authorizeUrl);
+      setPendingAuthorization({ connectionId, url: authorizationUrl });
+      try {
+        if (authorizationWindow) authorizationWindow.location.href = authorizationUrl;
+      } catch {
+        // The durable URL below the row remains available when popup
+        // navigation is blocked or the popup was closed.
+      }
       pollUntilConnected(connectionId);
     } catch (connectError) {
       const message = connectError instanceof Error ? connectError.message : "Failed to connect account.";
@@ -95,6 +110,7 @@ export function useMcpAccountAuthorization(onConnected?: () => void) {
     connect,
     connectingConnectionId: startOAuth.isPending ? startOAuth.variables ?? null : null,
     error,
+    pendingAuthorization,
     pollingConnectionId,
   };
 }
