@@ -70,6 +70,7 @@ describe("openwork runtime config file", () => {
     expect(mcp.posthog?.enabled).toBe(true);
     expect(parsed.default_agent).toBe("openwork");
     expect(Array.isArray(parsed.plugin)).toBe(true);
+    expect(parsed.plugin).toContainEqual(expect.stringContaining("openwork-mcp-authorization-actions"));
   });
 
   test("openwork prompt has a static search-first Memory Bank section, distinct from ## Memory", async () => {
@@ -101,8 +102,8 @@ describe("openwork runtime config file", () => {
     const prompt = agent.openwork?.prompt ?? "";
 
     expect(prompt).toContain("JSON-RPC code -32001");
-    expect(prompt).toContain("data.connect_url");
-    expect(prompt).toContain("show data.connect_url as a Markdown link");
+    expect(prompt).toContain("data.connect_url or the flattened error message");
+    expect(prompt).toContain("show that exact URL as a Markdown link");
     expect(prompt).toContain("Do not open the link yourself");
   });
 

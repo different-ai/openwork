@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 import { buildOpenworkRuntimeConfigObjectFromSnapshot } from "./openwork-runtime-config.js";
+import { openworkMcpAuthorizationActionsPluginPath } from "./openwork-extensions-plugin-path.js";
 
 const repoRoot = resolve(import.meta.dir, "../../..");
 const sidecarDir = join(repoRoot, "apps/desktop/resources/sidecars");
@@ -79,6 +80,7 @@ describeMaybe("authorization-required MCP tool errors", () => {
   let mcpPort = 0;
   let modelSawAuthorizationError = false;
   let modelSawAgentInstruction = false;
+  let modelSawNormalizedAuthorizationAction = false;
   let modelRequests: Array<{ hasToolError: boolean; toolNames: Array<string | undefined> }> = [];
   let engineLogs = "";
 
@@ -112,6 +114,8 @@ describeMaybe("authorization-required MCP tool errors", () => {
         if (hasToolError) {
           modelSawAuthorizationError = serialized.includes("Authorization required")
             && serialized.includes(connectUrl);
+          modelSawNormalizedAuthorizationAction = serialized.includes("[OpenWork authorization action]")
+            && serialized.includes(`present this exact URL as a Markdown link: ${connectUrl}`);
           return streamResponse([
             chunk({ role: "assistant" }),
             chunk({ content: `Salesforce needs authorization. [Connect Salesforce](${connectUrl}), then tell me to retry.` }),
@@ -122,7 +126,8 @@ describeMaybe("authorization-required MCP tool errors", () => {
         const requestedTool = body.tools?.find((tool) => tool.function?.name?.endsWith(toolName));
         if (requestedTool?.function?.name) {
           modelSawAgentInstruction = serialized.includes("JSON-RPC code -32001")
-            && serialized.includes("show data.connect_url as a Markdown link");
+            && serialized.includes("data.connect_url or the flattened error message")
+            && serialized.includes("show that exact URL as a Markdown link");
           return streamResponse([
             chunk({ role: "assistant" }),
             chunk({
@@ -153,6 +158,7 @@ describeMaybe("authorization-required MCP tool errors", () => {
       lsp: false,
       default_agent: "openwork",
       agent: runtime.agent,
+      plugin: [openworkMcpAuthorizationActionsPluginPath()],
       model: "test/test-model",
       provider: {
         test: {
@@ -200,7 +206,7 @@ describeMaybe("authorization-required MCP tool errors", () => {
     });
     await waitFor(async () => (await fetch(`http://127.0.0.1:${mcpPort}/health`)).ok ? true : null, "MCP mock");
 
-    engine = spawn(enginePath!, ["serve", "--pure", "--hostname", "127.0.0.1", "--port", String(enginePort)], {
+    engine = spawn(enginePath!, ["serve", "--hostname", "127.0.0.1", "--port", String(enginePort)], {
       env: {
         ...process.env,
         OPENCODE_CONFIG: configPath,
@@ -275,5 +281,6 @@ describeMaybe("authorization-required MCP tool errors", () => {
     expect(failedTool?.state?.error).toContain(connectUrl);
     expect(modelSawAgentInstruction).toBe(true);
     expect(modelSawAuthorizationError).toBe(true);
+    expect(modelSawNormalizedAuthorizationAction).toBe(true);
   }, 60_000);
 });
