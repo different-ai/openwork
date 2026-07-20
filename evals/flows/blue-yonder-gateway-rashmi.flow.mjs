@@ -21,6 +21,7 @@
 
 import {
   assertEvidence,
+  clickThroughLingeringOnboarding,
   desktopHandoffSignIn,
   ensureLocalWorkspace,
   readTranscriptSnapshot,
@@ -58,6 +59,7 @@ export default {
     {
       name: "Create Rashmi's fresh workspace with OpenWork Connect ready",
       run: async (ctx) => {
+        await clickThroughLingeringOnboarding(ctx);
         await waitForOpenWorkConnectReady(ctx);
         const folder = workspaceFolder(ctx, WORKSPACE_ENV, DEFAULT_WORKSPACE);
         state.workspaceId = await ensureLocalWorkspace(ctx, folder);

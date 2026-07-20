@@ -207,15 +207,28 @@ export async function clickExactIfVisible(ctx, text, selector = "button, [role=b
   })()`));
 }
 
-async function clickTextStartingWithIfVisible(ctx, text, selector = "button, [role=button], a") {
-  return Boolean(await ctx.eval(`(() => {
+export async function clickThroughLingeringOnboarding(ctx) {
+  return ctx.eval(`(() => {
     const normalize = (value) => (value ?? "").replace(/\\s+/g, " ").trim();
-    const element = [...document.querySelectorAll(${JSON.stringify(selector)})]
-      .find((entry) => normalize(entry.textContent).startsWith(${JSON.stringify(text)}) && entry.disabled !== true && entry.getAttribute("aria-disabled") !== "true");
-    element?.scrollIntoView({ block: "center", inline: "center" });
-    element?.click();
-    return Boolean(element);
-  })()`));
+    const click = (element) => {
+      element.scrollIntoView({ block: "center", inline: "center" });
+      element.click();
+      return true;
+    };
+    const findButton = (predicate) => [...document.querySelectorAll("button, [role=button]")]
+      .find((entry) => predicate(normalize(entry.textContent)) && entry.disabled !== true && entry.getAttribute("aria-disabled") !== "true");
+    const continueOrg = findButton((text) => text.startsWith("Continue with organization"));
+    const clickedContinueOrg = continueOrg ? click(continueOrg) : false;
+    const continueWorkspace = findButton((text) => text === "Continue to workspace");
+    const clickedContinueWorkspace = continueWorkspace ? click(continueWorkspace) : false;
+    return {
+      hash: window.location.hash,
+      hasContinueOrg: Boolean(continueOrg),
+      hasContinueWorkspace: Boolean(continueWorkspace),
+      clickedContinueOrg,
+      clickedContinueWorkspace,
+    };
+  })()`);
 }
 
 async function clickNearestExactIfVisible(ctx, text) {
@@ -253,11 +266,8 @@ export async function completeBlueYonderOrgOnboarding(ctx) {
       await sleep(750);
       continue;
     }
-    if (last.hasContinueOrg && await clickTextStartingWithIfVisible(ctx, "Continue with organization", "button, [role=button]")) {
-      await sleep(1_000);
-      continue;
-    }
-    if (last.hasContinueWorkspace && await clickExactIfVisible(ctx, "Continue to workspace", "button, [role=button]")) {
+    const onboardingClick = await clickThroughLingeringOnboarding(ctx);
+    if (onboardingClick.clickedContinueOrg || onboardingClick.clickedContinueWorkspace) {
       await sleep(1_000);
       continue;
     }
@@ -293,11 +303,18 @@ export async function waitForOpenWorkConnectReady(ctx, timeout = 90_000) {
   let last = null;
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
+    const onboardingClick = await clickThroughLingeringOnboarding(ctx);
+    if (onboardingClick.clickedContinueOrg || onboardingClick.clickedContinueWorkspace) await sleep(1_000);
     last = await ctx.eval(`(() => {
       const text = document.body.innerText || "";
       const match = text.match(/OpenWork Connect: (Ready|Checking|Needs attention)/);
       return { ready: text.includes("OpenWork Connect: Ready"), status: match?.[0] || "", hash: window.location.hash };
     })()`);
+    if ((last.hash === "#/onboarding" || last.hash === "#/welcome") && !onboardingClick.hasContinueOrg && !onboardingClick.hasContinueWorkspace) {
+      await ctx.eval("window.dispatchEvent(new Event('focus'))").catch(() => undefined);
+      await sleep(1_000);
+      continue;
+    }
     if (last?.ready) return last;
     await ctx.eval("window.dispatchEvent(new Event('focus'))").catch(() => undefined);
     await sleep(1_000);
