@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, ArrowLeft, Check, ChevronDown, ChevronRight, Loader2, Minus, MoreHorizontal, Pencil, Plug, Puzzle, RefreshCw, Search, Server, Trash2, Users, Wrench } from "lucide-react";
@@ -73,6 +74,12 @@ import {
 } from "./mcp-scope-selection";
 import { getPluginPartsSummary, pluginQueryKeys, usePlugins } from "./plugin-data";
 import { TelegramDialog } from "./telegram-dialog";
+import {
+  ConnectorQuickAddGrid,
+  GOOGLE_WORKSPACE_QUICK_ADD_ID,
+  MICROSOFT_365_QUICK_ADD_ID,
+  TELEGRAM_QUICK_ADD_ID,
+} from "./connector-quick-add-grid";
 
 const OAUTH_POLL_INTERVAL_MS = 2000;
 const OAUTH_POLL_TIMEOUT_MS = 90_000;
@@ -242,9 +249,9 @@ function importServerStatus(server: GithubPluginImportServer): string {
 }
 
 export function McpConnectionsScreen() {
+  const searchParams = useSearchParams();
   const { orgContext, orgSlug } = useOrgDashboard();
   const { data: connections = [], isLoading, error, refetch } = useMcpConnections();
-  const { data: usableConnections = [] } = useMcpConnections("usable");
   const { data: presets = [] } = useMcpConnectionPresets();
   const createConnection = useCreateMcpConnection();
   const updateConnection = useUpdateMcpConnection();
@@ -260,12 +267,9 @@ export function McpConnectionsScreen() {
   const [configuringOAuthClient, setConfiguringOAuthClient] = useState(false);
   const [issuerReviewConnection, setIssuerReviewConnection] = useState<ExternalMcpConnection | null>(null);
   const [issuerReviewPreview, setIssuerReviewPreview] = useState<McpIssuerReview | null>(null);
-  const [pluginDialogOpen, setPluginDialogOpen] = useState(false);
   const [googleDialogOpen, setGoogleDialogOpen] = useState(false);
   const [microsoftDialogOpen, setMicrosoftDialogOpen] = useState(false);
   const [telegramDialogOpen, setTelegramDialogOpen] = useState(false);
-  const googleConfigured = usableConnections.some((connection) => connection.id === "google-workspace");
-  const microsoftConfigured = usableConnections.some((connection) => connection.id === "microsoft-365");
   const telegramConnection = useTelegramConnection(true);
   const showStagingBanner = orgContext ? shouldShowMcpConnectionsStagingBanner(orgContext.capabilities) : false;
   const [pollingConnectionId, setPollingConnectionId] = useState<string | null>(null);
@@ -274,6 +278,39 @@ export function McpConnectionsScreen() {
   const [connectionActionNotice, setConnectionActionNotice] = useState<string | null>(null);
   const [toolsConnectionId, setToolsConnectionId] = useState<string | null>(null);
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const handledQuickAddId = useRef<string | null>(null);
+
+  function openQuickAdd(id: string) {
+    if (id === GOOGLE_WORKSPACE_QUICK_ADD_ID) {
+      setGoogleDialogOpen(true);
+      return;
+    }
+    if (id === MICROSOFT_365_QUICK_ADD_ID) {
+      setMicrosoftDialogOpen(true);
+      return;
+    }
+    if (id === TELEGRAM_QUICK_ADD_ID) {
+      setTelegramDialogOpen(true);
+      return;
+    }
+
+    const preset = presets.find((entry) => entry.presetId === id);
+    if (!preset) return;
+    setFormPreset(preset);
+    setFormOpen(true);
+  }
+
+  useEffect(() => {
+    const quickAddId = searchParams.get("quickAdd");
+    if (!quickAddId || handledQuickAddId.current === quickAddId) return;
+    const isKnownTarget = quickAddId === GOOGLE_WORKSPACE_QUICK_ADD_ID
+      || quickAddId === MICROSOFT_365_QUICK_ADD_ID
+      || quickAddId === TELEGRAM_QUICK_ADD_ID
+      || presets.some((preset) => preset.presetId === quickAddId);
+    if (!isKnownTarget) return;
+    handledQuickAddId.current = quickAddId;
+    openQuickAdd(quickAddId);
+  }, [presets, searchParams]);
 
   useEffect(() => {
     return () => {
@@ -435,23 +472,23 @@ export function McpConnectionsScreen() {
   return (
     <DashboardPageTemplate
       icon={Plug}
-      title="Connections"
-      badgeLabel="Alpha"
-      description="Connect any MCP server — Notion, Linear, Stripe, or a custom URL — once for the whole org. search_capabilities and execute_capability pick these up automatically."
+      title="Connectors"
+      badgeLabel="Beta"
+      description="Connectors is where you can add MCP servers that your whole team can use."
       colors={["#E2E8F0", "#020617", "#0F172A", "#94A3B8"]}
     >
       {showStagingBanner ? (
         <div data-testid="mcp-connections-staging-banner" className="mb-6 rounded-[24px] border border-amber-200 bg-amber-50 px-5 py-4 text-[14px] leading-6 text-amber-800">
-          <p className="font-semibold text-amber-900">OpenWork Connect (alpha) is staged for this org.</p>
+          <p className="font-semibold text-amber-900">OpenWork Connect (beta) is staged for this org.</p>
           <p className="mt-1">
-            Connections and marketplace capabilities you set up here stay staged and invisible to members until a platform admin enables OpenWork Connect (alpha) for this org. Admin management remains fully usable.
+            Connectors and marketplace capabilities you set up here stay staged and invisible to members until a platform admin enables OpenWork Connect (beta) for this org. Admin management remains fully usable.
           </p>
         </div>
       ) : null}
 
       {error ? (
         <div className="mb-6 rounded-[24px] border border-red-200 bg-red-50 px-5 py-4 text-[14px] text-red-700">
-          {error instanceof Error ? error.message : "Failed to load MCP connections."}
+          {error instanceof Error ? error.message : "Failed to load MCP connectors."}
         </div>
       ) : null}
 
@@ -467,140 +504,37 @@ export function McpConnectionsScreen() {
         </div>
       ) : null}
 
-      <div className="mb-6 rounded-2xl border border-gray-100 bg-white px-6 py-5">
-        <div>
-          <h2 className="text-[15px] font-semibold text-gray-900">Add a connection</h2>
-          <p className="mt-1 text-[13px] text-gray-500">
-            Add a single MCP server, or import a plugin bundle so its MCPs and skills become available through capabilities.
-          </p>
-        </div>
-        <div className="mt-4 grid gap-3 sm:grid-cols-2">
-          <button
-            type="button"
-            onClick={() => {
-              setFormPreset(null);
-              setFormOpen(true);
-            }}
-            className="flex items-start gap-3 rounded-2xl border border-gray-100 px-4 py-4 text-left transition hover:border-gray-300 hover:shadow-sm"
-          >
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gray-900 text-white">
-              <Server className="h-4 w-4" />
-            </span>
-            <span>
-              <span className="block text-[14px] font-semibold text-gray-900">MCP server</span>
-              <span className="mt-1 block text-[12px] leading-5 text-gray-500">Paste a server URL and we&apos;ll check it for you.</span>
-            </span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setPluginDialogOpen(true)}
-            className="flex items-start gap-3 rounded-2xl border border-gray-100 px-4 py-4 text-left transition hover:border-gray-300 hover:shadow-sm"
-          >
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gray-900 text-white">
-              <Puzzle className="h-4 w-4" />
-            </span>
-            <span>
-              <span className="block text-[14px] font-semibold text-gray-900">Plugin bundle</span>
-              <span className="mt-1 block text-[12px] leading-5 text-gray-500">Import from GitHub or choose from your plugin library.</span>
-            </span>
-          </button>
-        </div>
+      <div className="mb-6">
+        <DenButton
+          type="button"
+          icon={Server}
+          onClick={() => {
+            setFormPreset(null);
+            setFormOpen(true);
+          }}
+        >
+          Add MCP
+        </DenButton>
       </div>
 
       <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-400">Quick add</h3>
-      <div className="mb-8 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        <button
-          type="button"
-          onClick={() => setGoogleDialogOpen(true)}
-          className="rounded-2xl border border-gray-100 bg-white px-4 py-4 text-left transition hover:border-gray-300 hover:shadow-sm"
-        >
-          <div className="flex items-start gap-3">
-            <IntegrationIcon name="Google Workspace" iconUrl="/integrations/google.svg" />
-            <div className="min-w-0 flex-1">
-              <p className="text-[14px] font-semibold text-gray-900">Google Workspace</p>
-              <p className="mt-1 text-[12px] leading-[1.5] text-gray-500">
-                Your company&apos;s Google. Set it up once — every member connects their own account.
-              </p>
-            </div>
-          </div>
-          <p className="mt-2 text-[12px] font-medium text-gray-900">
-            {googleConfigured ? "Configured — tap to update" : "Tap to set up"}
-          </p>
-        </button>
-        <button
-          type="button"
-          data-testid="quick-add-microsoft-365"
-          onClick={() => setMicrosoftDialogOpen(true)}
-          className="rounded-2xl border border-gray-100 bg-white px-4 py-4 text-left transition hover:border-gray-300 hover:shadow-sm"
-        >
-          <div className="flex items-start gap-3">
-            <IntegrationIcon name="Microsoft 365" simpleIconSlug="microsoft" />
-            <div className="min-w-0 flex-1">
-              <p className="text-[14px] font-semibold text-gray-900">Microsoft 365</p>
-              <p className="mt-1 text-[12px] leading-[1.5] text-gray-500">
-                Outlook mail, calendar, and OneDrive. Each teammate connects their own work account.
-              </p>
-            </div>
-          </div>
-          <p className="mt-2 text-[12px] font-medium text-gray-900">
-            {microsoftConfigured ? "Configured — tap to update" : "Tap to set up"}
-          </p>
-        </button>
-        <button
-          type="button"
-          data-testid="quick-add-telegram"
-          onClick={() => setTelegramDialogOpen(true)}
-          className="rounded-2xl border border-gray-100 bg-white px-4 py-4 text-left transition hover:border-gray-300 hover:shadow-sm"
-        >
-          <div className="flex items-start gap-3">
-            <IntegrationIcon name="Telegram" simpleIconSlug="telegram" />
-            <div className="min-w-0 flex-1">
-              <p className="text-[14px] font-semibold text-gray-900">Telegram</p>
-              <p className="mt-1 text-[12px] leading-[1.5] text-gray-500">
-                Pair a private Telegram chat to a cloud worker for tasks and replies.
-              </p>
-            </div>
-          </div>
-          <p className="mt-2 text-[12px] font-medium text-gray-900">
-            {telegramConnection.data ? "Connected — tap to manage" : "Tap to set up"}
-          </p>
-        </button>
-        {presets.map((preset) => {
-          const alreadyAdded = connections.some((connection) => connection.url === preset.url);
-          return (
-            <button
-              key={preset.presetId}
-              type="button"
-              disabled={alreadyAdded}
-              onClick={() => {
-                setFormPreset(preset);
-                setFormOpen(true);
-              }}
-              className="rounded-2xl border border-gray-100 bg-white px-4 py-4 text-left transition hover:border-gray-300 hover:shadow-sm disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <div className="flex items-start gap-3">
-                <IntegrationIcon name={preset.displayName} serviceUrl={preset.url} />
-                <div className="min-w-0 flex-1">
-                  <p className="text-[14px] font-semibold text-gray-900">{preset.displayName}</p>
-                  <p className="mt-1 text-[12px] leading-[1.5] text-gray-500">{preset.description}</p>
-                </div>
-              </div>
-              <p className="mt-2 text-[12px] font-medium text-gray-900">
-                {alreadyAdded ? "Already added" : "Tap to add"}
-              </p>
-            </button>
-          );
-        })}
+      <div className="mb-8">
+        <ConnectorQuickAddGrid
+          connections={connections}
+          presets={presets}
+          telegramConnected={Boolean(telegramConnection.data)}
+          onSelect={openQuickAdd}
+        />
       </div>
 
-      <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-400">Your connections</h3>
+      <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-400">Your connectors</h3>
       {isLoading ? (
         <div className="rounded-[28px] border border-gray-200 bg-white px-6 py-10 text-[15px] text-gray-500">
-          Loading MCP connections…
+          Loading MCP connectors…
         </div>
       ) : connections.length === 0 ? (
         <div className="rounded-[28px] border border-gray-200 bg-white px-6 py-10 text-center text-[14px] text-gray-500">
-          No MCP connections yet.
+          No MCP connectors yet.
         </div>
       ) : (
         <div className="divide-y divide-gray-100 rounded-2xl border border-gray-100 bg-white">
@@ -683,12 +617,6 @@ export function McpConnectionsScreen() {
           reviewIssuer.reset();
         }}
         onConfirm={(issuer) => void handleConfirmIssuer(issuer)}
-      />
-
-      <ImportPluginConnectionDialog
-        open={pluginDialogOpen}
-        onClose={() => setPluginDialogOpen(false)}
-        onImported={() => void refetch()}
       />
 
       <GoogleWorkspaceDialog

@@ -3,7 +3,11 @@
 import { Check, Copy, Pencil, SlidersHorizontal } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { getErrorMessage, requestJson } from "../../_lib/den-flow";
-import { getAllowedDesktopVersionsFromMetadata, getRequireSsoFromMetadata } from "../../_lib/den-org";
+import {
+  getAllowedDesktopVersionsFromMetadata,
+  getOrgAccessFlags,
+  getRequireSsoFromMetadata,
+} from "../../_lib/den-org";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
 import { DenButton } from "../../_components/ui/button";
 import { DenCard } from "../../_components/ui/card";
@@ -12,7 +16,6 @@ import { DenTextarea } from "../../_components/ui/textarea";
 import { DenNotice } from "../../_components/ui/notice";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { EnterprisePlanNotice } from "./enterprise-plan-notice";
-import { EgressDiagnosticsCard } from "./egress-diagnostics-card";
 import {
   allPublishedDesktopVersionsAllowed,
   compareDesktopVersions,
@@ -121,10 +124,12 @@ export function OrgSettingsScreen() {
   const currentAllowedDomains =
     orgContext?.organization.allowedEmailDomains ?? null;
   const isOwner = orgContext?.currentMember.isOwner ?? false;
-  const canRunEgressDiagnostics = isOwner || (orgContext?.currentMember.role ?? "")
-    .split(",")
-    .map((role) => role.trim())
-    .includes("admin");
+  const access = getOrgAccessFlags(
+    orgContext?.currentMember.role ?? "member",
+    isOwner,
+    orgContext?.roles,
+  );
+  const canManageDesktopVersions = access.isAdmin;
   const draftAllowedDomains = useMemo(
     () => normalizeAllowedEmailDomainsInput(allowedDomainsDraft),
     [allowedDomainsDraft],
@@ -321,10 +326,15 @@ export function OrgSettingsScreen() {
 
     try {
       await updateOrganizationSettings({
-        name: orgNameDraft,
-        allowedEmailDomains: domainRestrictionsEnabled
-          ? draftAllowedDomains
-          : null,
+        ...(isOwner
+          ? {
+              name: orgNameDraft,
+              allowedEmailDomains: domainRestrictionsEnabled
+                ? draftAllowedDomains
+                : null,
+              requireSso: requireSsoEnabled,
+            }
+          : {}),
         ...(supportedDesktopVersionOptions.length > 0
           ? {
               allowedDesktopVersions: allDesktopVersionsAllowed
@@ -334,7 +344,6 @@ export function OrgSettingsScreen() {
                   ),
             }
           : {}),
-        requireSso: requireSsoEnabled,
       });
       setDomainEditModeEnabled(false);
     } catch (error) {
@@ -624,7 +633,7 @@ export function OrgSettingsScreen() {
                       <input
                         type="checkbox"
                         checked={checked}
-                        disabled={!isOwner || requiresServerUpgrade}
+                        disabled={!canManageDesktopVersions || requiresServerUpgrade}
                         aria-label={`Allow desktop version v${version}`}
                         onChange={(event) =>
                           setAllowedDesktopVersionsDraft((current) =>
@@ -644,13 +653,15 @@ export function OrgSettingsScreen() {
           ) : null}
         </DenCard>
 
-        <EgressDiagnosticsCard canRun={canRunEgressDiagnostics} />
-
         <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
           <p className="text-[13px] text-gray-500">
-            {!isOwner && "Only workspace owners can change these settings."}
+            {!isOwner && canManageDesktopVersions
+              ? "Admins can change allowed desktop versions. Other settings require a workspace owner."
+              : !isOwner
+                ? "Only workspace owners and admins can change these settings."
+                : null}
           </p>
-          {isOwner ? (
+          {access.isAdmin ? (
             <DenButton
               type="submit"
               loading={mutationBusy === "update-organization-settings"}

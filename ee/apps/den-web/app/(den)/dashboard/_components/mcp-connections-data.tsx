@@ -462,7 +462,7 @@ async function fetchConnections(scope: ExternalMcpConnectionScope, orgId: string
     15000,
   );
   if (!response.ok) {
-    throw getRequestError(payload, response, `Failed to load MCP connections (${response.status}).`);
+    throw getRequestError(payload, response, `Failed to load MCP connectors (${response.status}).`);
   }
   const record = payload as { connections?: ExternalMcpConnection[] };
   return (record.connections ?? []).map((connection) => ({

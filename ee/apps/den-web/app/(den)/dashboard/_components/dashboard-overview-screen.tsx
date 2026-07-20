@@ -6,10 +6,14 @@ import {
   Gauge,
   Users,
 } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { requestJson } from "../../_lib/den-flow";
+import { getMcpConnectionsRoute } from "../../_lib/den-org";
 import { useDenFlow } from "../../_providers/den-flow-provider";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
+import { ConnectorQuickAddGrid } from "./connector-quick-add-grid";
+import { useMcpConnectionPresets, useMcpConnections, useTelegramConnection } from "./mcp-connections-data";
 import { OrganizationDownloadCard } from "./organization-download-card";
 
 /* ── Types ── */
@@ -79,8 +83,12 @@ function StatCard({ icon, title, value, sub, tone }: {
 /* ── Main screen ── */
 
 export function DashboardOverviewScreen() {
+  const router = useRouter();
   const { activeOrg, orgContext } = useOrgDashboard();
   const { user } = useDenFlow();
+  const { data: connections = [] } = useMcpConnections();
+  const { data: presets = [] } = useMcpConnectionPresets();
+  const telegramConnection = useTelegramConnection(true);
 
   const { data: adoption } = useQuery({
     queryKey: ["telemetry", "adoption"],
@@ -118,6 +126,21 @@ export function DashboardOverviewScreen() {
         <StatCard icon={<Users className="h-5 w-5 text-[#6F3DFF]" />} title="OpenWork users" value={`${members}`} sub="Current workspace members" tone="violet" />
         <StatCard icon={<Gauge className="h-5 w-5 text-[#1D63FF]" />} title="Pending invites" value={`${pending}`} sub="Awaiting activation" tone="blue" />
       </div>
+
+      <section className="mt-7" aria-labelledby="dashboard-quick-add-heading">
+        <div className="mb-3">
+          <h2 id="dashboard-quick-add-heading" className="text-[16px] font-semibold tracking-[-0.02em] text-gray-950">Quick add</h2>
+          <p className="mt-0.5 text-[13px] text-gray-500">Add a connector your whole team can use.</p>
+        </div>
+        <ConnectorQuickAddGrid
+          connections={connections}
+          presets={presets}
+          telegramConnected={Boolean(telegramConnection.data)}
+          onSelect={(id) => {
+            router.push(`${getMcpConnectionsRoute(activeOrg?.slug)}?quickAdd=${encodeURIComponent(id)}`);
+          }}
+        />
+      </section>
     </div>
   );
 }

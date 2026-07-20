@@ -569,7 +569,7 @@ async function probeExternalMcpConnection(input: {
         score,
         summary: `[${connection.name}] OAuth provider settings changed and require administrator review.`,
         status: "error",
-        hint: `Ask an org admin to open OpenWork Cloud -> Connections, review the live OAuth issuer for "${connection.name}", and reconnect if requested.`,
+        hint: `Ask an org admin to open OpenWork Cloud -> Connectors, review the live OAuth issuer for "${connection.name}", and reconnect if requested.`,
         connectionStatus: buildExternalConnectionStatus({
           connection,
           state: "reauth_required",

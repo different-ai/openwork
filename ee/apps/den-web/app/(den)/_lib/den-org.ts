@@ -491,6 +491,10 @@ export function getOrgSettingsRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/org-settings`;
 }
 
+export function getDiagnosticsRoute(orgSlug?: string | null): string {
+  return `${getOrgDashboardRoute(orgSlug)}/diagnostics`;
+}
+
 export function getBrandAppearanceRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/brand-appearance`;
 }

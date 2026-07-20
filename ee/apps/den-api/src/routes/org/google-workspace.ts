@@ -351,7 +351,7 @@ export function missingScope(account: ConnectedAccountRow, anyOf: string[]): boo
 }
 
 function missingPermissionMessage(label: string): string {
-  return `Your connected Google account is missing the ${label} permission. An admin can enable it on the Google Workspace connection in OpenWork Cloud -> Connections; then reconnect your account in Settings -> Extensions.`
+  return `Your connected Google account is missing the ${label} permission. An admin can enable it on the Google Workspace connector in OpenWork Cloud -> Connectors; then reconnect your account in Settings -> Extensions.`
 }
 
 async function googleWorkspaceToken(input: {

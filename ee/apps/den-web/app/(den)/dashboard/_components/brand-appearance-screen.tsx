@@ -304,7 +304,6 @@ export function BrandAppearanceScreen() {
                       <p className="truncate text-[15px] font-medium">{appNameDraft.trim() || "OpenWork"}</p>
                     </div>
                   </div>
-                  <div className="mt-8 h-2 rounded-full bg-white/10"><div className="h-full w-2/3 rounded-full bg-violet-400" data-brand-accent={accentColorDraft || "default"} /></div>
                 </div>
               </div>
 

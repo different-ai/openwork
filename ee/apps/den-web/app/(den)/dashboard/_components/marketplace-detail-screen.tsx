@@ -11,6 +11,7 @@ import { type TabItem, UnderlineTabs } from "../../_components/ui/tabs";
 import {
   getGithubIntegrationSetupRoute,
   getMarketplacesRoute,
+  getNewPluginRoute,
   getOrgAccessFlags,
   getPluginRoute,
 } from "../../_lib/den-org";
@@ -219,13 +220,24 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
             ) : null}
 
             <section>
-              <div className="mb-3 flex items-baseline justify-between gap-3">
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
                 <h2 className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">
                   Plugins
                 </h2>
-                <p className="text-[11px] text-gray-400">
-                  {plugins.length} plugin{plugins.length === 1 ? "" : "s"}
-                </p>
+                <div className="flex items-center gap-3">
+                  <p className="text-[11px] text-gray-400">
+                    {plugins.length} plugin{plugins.length === 1 ? "" : "s"}
+                  </p>
+                  {access.isAdmin ? (
+                    <Link
+                      href={`${getNewPluginRoute(orgSlug)}?marketplaceId=${encodeURIComponent(marketplace.id)}`}
+                      className={buttonVariants({ variant: "primary", size: "sm" })}
+                    >
+                      <Plus className="h-4 w-4" aria-hidden />
+                      Add a plugin
+                    </Link>
+                  ) : null}
+                </div>
               </div>
 
               {plugins.length === 0 ? (

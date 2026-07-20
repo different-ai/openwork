@@ -37,7 +37,9 @@ describe("Den dashboard sidebar brand icon", () => {
     expect(markup).toContain(`src="${managedIconUrl}"`);
     expect(markup).toContain('alt="Acme icon"');
     expect(markup).toContain('data-sidebar-brand-icon="loading"');
+    expect(markup).toContain("object-contain");
     expect(markup).toContain("opacity-0");
+    expect(markup).not.toContain("bg-gray-100");
     expect(markup).not.toContain("<svg");
   });
 

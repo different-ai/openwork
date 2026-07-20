@@ -128,7 +128,7 @@ describe("Microsoft 365 injected routes", () => {
     expect(missingScopeResponse.status).toBe(409)
     expect(await missingScopeResponse.json()).toEqual({
       error: "needs_connection",
-      message: "Your connected Microsoft account is missing the Outlook mail read permission. An admin can enable it on the Microsoft 365 connection in OpenWork Cloud -> Connections; then reconnect your account.",
+      message: "Your connected Microsoft account is missing the Outlook mail read permission. An admin can enable it on the Microsoft 365 connector in OpenWork Cloud -> Connectors; then reconnect your account.",
     })
     expect(graphCalls).toBe(1)
 
@@ -295,7 +295,7 @@ describe("Microsoft 365 injected routes", () => {
     expect(denied.status).toBe(409)
     expect(await denied.json()).toEqual({
       error: "needs_connection",
-      message: "Your connected Microsoft account is missing the Outlook mail read/write permission. An admin can enable it on the Microsoft 365 connection in OpenWork Cloud -> Connections; then reconnect your account.",
+      message: "Your connected Microsoft account is missing the Outlook mail read/write permission. An admin can enable it on the Microsoft 365 connector in OpenWork Cloud -> Connectors; then reconnect your account.",
     })
     expect(graphCalls).toBe(1)
   })
