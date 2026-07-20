@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, ArrowLeft, Check, ChevronDown, ChevronRight, Loader2, Minus, MoreHorizontal, Pencil, Plug, Puzzle, RefreshCw, Search, Server, Trash2, Users, Wrench } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Check, ChevronDown, ChevronRight, Loader2, Minus, MoreHorizontal, Pencil, Play, Plug, Puzzle, RefreshCw, Search, Server, Trash2, Users, Wrench } from "lucide-react";
 import { buttonVariants, DenButton } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
 import { DenNotice } from "../../_components/ui/notice";
@@ -62,6 +62,7 @@ import {
   useTelegramConnection,
   useUpdateMcpConnection,
 } from "./mcp-connections-data";
+import { McpToolRunner } from "./mcp-tool-runner";
 import {
   classifySmartAddInput,
   planSmartAdd,
@@ -252,6 +253,7 @@ export function McpConnectionsScreen() {
   const searchParams = useSearchParams();
   const { orgContext, orgSlug } = useOrgDashboard();
   const { data: connections = [], isLoading, error, refetch } = useMcpConnections();
+  const { data: usableConnections = [] } = useMcpConnections("usable");
   const { data: presets = [] } = useMcpConnectionPresets();
   const createConnection = useCreateMcpConnection();
   const updateConnection = useUpdateMcpConnection();
@@ -270,6 +272,10 @@ export function McpConnectionsScreen() {
   const [googleDialogOpen, setGoogleDialogOpen] = useState(false);
   const [microsoftDialogOpen, setMicrosoftDialogOpen] = useState(false);
   const [telegramDialogOpen, setTelegramDialogOpen] = useState(false);
+  const usableConnectionIds = useMemo(
+    () => new Set(usableConnections.map((connection) => connection.id)),
+    [usableConnections],
+  );
   const telegramConnection = useTelegramConnection(true);
   const showStagingBanner = orgContext ? shouldShowMcpConnectionsStagingBanner(orgContext.capabilities) : false;
   const [pollingConnectionId, setPollingConnectionId] = useState<string | null>(null);
@@ -277,6 +283,7 @@ export function McpConnectionsScreen() {
   const [connectionActionError, setConnectionActionError] = useState<{ connectionId: string; message: string } | null>(null);
   const [connectionActionNotice, setConnectionActionNotice] = useState<string | null>(null);
   const [toolsConnectionId, setToolsConnectionId] = useState<string | null>(null);
+  const [toolRunnerConnectionId, setToolRunnerConnectionId] = useState<string | null>(null);
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const handledQuickAddId = useRef<string | null>(null);
 
@@ -405,6 +412,8 @@ export function McpConnectionsScreen() {
     setOAuthClientConfigurationRequiredIds((current) => current.filter((connectionId) => connectionId !== input.connectionId));
     setEditingConnection(null);
     setConfiguringOAuthClient(false);
+    setToolsConnectionId(null);
+    setToolRunnerConnectionId(null);
     setConnectionActionNotice(updated.reconnectionRequired
       ? `${updated.name} was saved securely. Reconnect it before the new identity can be used.`
       : updated.identityChanged
@@ -417,7 +426,11 @@ export function McpConnectionsScreen() {
     const confirmed = window.confirm(
       `Delete ${connection.name}? This can remove access grants, per-member authorization state, and plugin or marketplace bindings.`,
     );
-    if (confirmed) deleteConnection.mutate(connection.id);
+    if (confirmed) {
+      setToolsConnectionId(null);
+      setToolRunnerConnectionId(null);
+      deleteConnection.mutate(connection.id);
+    }
   }
 
   async function handleDisconnect(connection: ExternalMcpConnection) {
@@ -425,6 +438,8 @@ export function McpConnectionsScreen() {
       `Disconnect ${connection.name}? This signs out every associated account for this connection, but keeps the MCP server setup, access rules, and plugin or marketplace bindings so you can reconnect later.`,
     );
     if (!confirmed) return;
+    setToolsConnectionId(null);
+    setToolRunnerConnectionId(null);
     setConnectionActionError(null);
     setConnectionActionNotice(null);
     try {
@@ -572,8 +587,17 @@ export function McpConnectionsScreen() {
               onRemove={() => handleRemove(connection)}
               disconnecting={disconnectConnection.isPending && disconnectConnection.variables === connection.id}
               removing={deleteConnection.isPending && deleteConnection.variables === connection.id}
+              canRunTools={usableConnectionIds.has(connection.id) && connection.needsReconnect !== true}
               toolsOpen={toolsConnectionId === connection.id}
-              onToggleTools={() => setToolsConnectionId((current) => current === connection.id ? null : connection.id)}
+              onToggleTools={() => {
+                setToolRunnerConnectionId(null);
+                setToolsConnectionId((current) => current === connection.id ? null : connection.id);
+              }}
+              toolRunnerOpen={toolRunnerConnectionId === connection.id}
+              onToggleToolRunner={() => {
+                setToolsConnectionId(null);
+                setToolRunnerConnectionId((current) => current === connection.id ? null : connection.id);
+              }}
             />;
           })}
         </div>
@@ -1338,8 +1362,11 @@ function ConnectionRow({
   onRemove,
   disconnecting,
   removing,
+  canRunTools,
   toolsOpen,
   onToggleTools,
+  toolRunnerOpen,
+  onToggleToolRunner,
 }: {
   connection: ExternalMcpConnection;
   needsPluginSetup: boolean;
@@ -1356,8 +1383,11 @@ function ConnectionRow({
   onRemove: () => void;
   disconnecting: boolean;
   removing: boolean;
+  canRunTools: boolean;
   toolsOpen: boolean;
   onToggleTools: () => void;
+  toolRunnerOpen: boolean;
+  onToggleToolRunner: () => void;
 }) {
   const isPerMember = connection.credentialMode === "per_member";
   const creatorAttribution = formatConnectionCreatorAttribution(connection.createdByName);
@@ -1536,6 +1566,21 @@ function ConnectionRow({
                   {toolsOpen ? <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" /> : <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />}
                   {toolsOpen ? "Hide tools" : "View tools"}
                 </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setActionsOpen(false);
+                    onToggleToolRunner();
+                  }}
+                  disabled={!canRunTools && !toolRunnerOpen}
+                  title={canRunTools ? "Run a tool with this MCP connection" : "Connect or regain access before running tools"}
+                  className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-gray-600 transition hover:bg-gray-50 hover:text-gray-900 disabled:cursor-not-allowed disabled:opacity-50"
+                  data-testid={`toggle-managed-mcp-tool-runner-${connection.id}`}
+                >
+                  <Play className="h-3.5 w-3.5" aria-hidden="true" />
+                  {toolRunnerOpen ? "Hide tool runner" : "Run a tool"}
+                </button>
                 <div className="my-1 border-t border-gray-100" />
                 <button
                   type="button"
@@ -1557,6 +1602,7 @@ function ConnectionRow({
         </div>
       </div>
       {toolsOpen && canInspectTools ? <McpToolCatalog connection={connection} /> : null}
+      {toolRunnerOpen && canRunTools ? <McpToolRunner connection={connection} /> : null}
     </div>
   );
 }
