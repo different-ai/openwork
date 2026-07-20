@@ -4,20 +4,34 @@
 # registered on this customer-facing endpoint. These scenario-level failures
 # are expected until the framework supports an external fixture adapter.
 #
-# A passing entry is treated as stale and fails the run. Do not add auth,
-# transport, initialization, catalog, DNS-rebinding, or optional-capability
-# failures here.
+# The active suite also runs scenarios for optional capabilities even when the
+# server does not advertise them. Record those method-not-found results here so
+# the baseline matches the exact two-tool contract. A passing entry is treated
+# as stale and fails the run. Do not add auth, transport, initialization,
+# catalog, or DNS-rebinding failures here.
 server:
-  - tools-call-simple-text
+  - logging-set-level
+  - completion-complete
   - tools-call-image
   - tools-call-audio
   - tools-call-embedded-resource
   - tools-call-mixed-content
   - tools-call-with-logging
-  - tools-call-error
   - tools-call-with-progress
   - tools-call-sampling
   - tools-call-elicitation
   - json-schema-2020-12
   - elicitation-sep1034-defaults
   - elicitation-sep1330-enums
+  - server-sse-multiple-streams
+  - resources-list
+  - resources-read-text
+  - resources-read-binary
+  - resources-templates-read
+  - resources-subscribe
+  - resources-unsubscribe
+  - prompts-list
+  - prompts-get-simple
+  - prompts-get-with-args
+  - prompts-get-embedded-resource
+  - prompts-get-with-image

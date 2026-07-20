@@ -27,6 +27,26 @@ if (/[\r\n]/u.test(tokenValue) || tokenValue.length > 8 * 1024) {
   throw new Error("The conformance bearer token is invalid.");
 }
 const authorization = tokenValue.startsWith("Bearer ") ? tokenValue : `Bearer ${tokenValue}`;
+const allowedAuthorities = new Set([
+  `127.0.0.1:${port}`,
+  `localhost:${port}`,
+  `[::1]:${port}`,
+]);
+
+function hasAllowedLoopbackAuthority(request) {
+  const host = request.headers.host?.trim().toLowerCase();
+  if (!host || !allowedAuthorities.has(host)) return false;
+  const originValue = request.headers.origin?.trim();
+  if (!originValue) return true;
+  try {
+    const origin = new URL(originValue);
+    return origin.protocol === "http:"
+      && allowedAuthorities.has(origin.host.toLowerCase())
+      && (origin.hostname === "127.0.0.1" || origin.hostname === "localhost" || origin.hostname === "[::1]");
+  } catch {
+    return false;
+  }
+}
 
 function copyRequestHeaders(source) {
   const headers = new Headers();
@@ -116,6 +136,11 @@ function copyResponseHeaders(source, destination) {
 }
 
 const server = createServer(async (request, response) => {
+  if (!hasAllowedLoopbackAuthority(request)) {
+    response.writeHead(403, { "content-type": "application/json" });
+    response.end(JSON.stringify({ error: "invalid_loopback_origin" }));
+    return;
+  }
   if (request.url !== "/mcp") {
     response.writeHead(404, { "content-type": "application/json" });
     response.end(JSON.stringify({ error: "not_found" }));
