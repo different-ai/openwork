@@ -1,0 +1,11 @@
+# connect-agent-diagnostics — Verify what the agent actually receives
+
+1. In Settings → Debug, I click Run agent diagnostics. The client forwards one bounded request to the real OpenWork server. Diagnostics does not directly request a configuration mutation, provider operation, capability call, reconnect, or credential mint. It does read the selected engine’s config and agent APIs, which may initialize a cold engine and its configured bootstrap hooks; those possible hook side effects are disclosed, not inspected.
+
+2. When those engine reads succeed, the response reports the effective default agent, canonical base-prompt digest and markers, permission rules, exact canonical plugin match, and merged MCP configuration. OpenWork-managed dynamic MCP intent remains a separate source with its exact last registration status. If the engine is unavailable, the report falls back to bounded configured intent and labels that evidence clearly; raw prompts, configuration, errors, and credentials remain excluded.
+
+3. For OpenWork Cloud, the report shows the required `/mcp/agent` terminal route and the `search_capabilities` and `execute_capability` contract. Only when the exact runtime-managed MCP has a current connected registration and the effective OpenWork agent policy does not deny either candidate ID does the server send a bounded initialize and `tools/list` handshake to the trusted endpoint; otherwise it fails closed. The policy check alone does not claim live tool presence. Organization readiness mirrors the bounded client observation, and local Den topology is omitted from remote OpenWork requests.
+
+4. The cloud check identifies the observed or unavailable layer, responsible owner, and recommended action. The report also states that it does not start an LLM turn, so per-request Connect context-transform execution is not overclaimed. Copy report exports that exact real server response as sanitized JSON containing no tokens, authorization headers, raw prompts, provider responses, stack traces, full URLs, or secret-bearing paths.
+
+5. Back in Settings → Connect, the Run agent diagnostics button is gone. Connect stays focused on team connections, and the diagnostics report now lives with the rest of the debugging tools in Settings → Debug.

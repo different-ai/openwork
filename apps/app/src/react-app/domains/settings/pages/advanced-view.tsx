@@ -4,7 +4,7 @@ import { useEffect, useReducer, useState } from "react";
 import { Separator } from "@/components/ui/separator";
 
 import type { OpencodeConnectStatus } from "@/app/types";
-import type { OpenworkRuntimeConfigStatus, OpenworkServerStatus } from "@/app/lib/openwork-server";
+import type { OpenworkCloudMcpHealth, OpenworkRuntimeConfigStatus, OpenworkServerStatus } from "@/app/lib/openwork-server";
 import { t } from "@/i18n";
 import { LayoutStack } from "../settings-layout";
 import type { useDenSession } from "../cloud/use-den-session";
@@ -12,6 +12,7 @@ import type { useDenSession } from "../cloud/use-den-session";
 import { advancedLocalReducer, initialAdvancedLocalState } from "./advanced-view-state";
 import {
   AdvancedDeveloperSection,
+  AdvancedCloudMcpDiagnosticsSection,
   AdvancedOrganizationServerSection,
   AdvancedRuntimeMigrationSection,
   AdvancedRuntimeSection,
@@ -45,6 +46,8 @@ export type AdvancedViewProps = {
   getRuntimeConfigStatus: () => Promise<OpenworkRuntimeConfigStatus>;
   organizationServer: AdvancedOrganizationServerSession;
   cloudMcpUrl: string | null;
+  cloudMcpHealth: OpenworkCloudMcpHealth | null;
+  refreshCloudMcpHealth: () => Promise<OpenworkCloudMcpHealth | null>;
 };
 
 type AdvancedStatusTone = "ready" | "warning" | "error" | "neutral";
@@ -199,6 +202,11 @@ export function AdvancedView(props: AdvancedViewProps) {
         openworkStatusLabel={openworkStatusLabel}
         openworkTone={openworkTone}
         openworkDetailLines={openworkDetailLines}
+      />
+
+      <AdvancedCloudMcpDiagnosticsSection
+        cloudMcpHealth={props.cloudMcpHealth}
+        onRefresh={props.refreshCloudMcpHealth}
       />
 
       <AdvancedRuntimeMigrationSection

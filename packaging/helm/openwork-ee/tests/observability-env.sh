@@ -46,6 +46,10 @@ assert_file_not_contains() {
 
 default_rendered="$tmp_dir/default.yaml"
 helm template openwork-ee "$chart_dir" --set inference.enabled=true > "$default_rendered"
+assert_contains "$default_rendered" 'DEN_API_NODE_OPTIONS: ""'
+assert_count "$default_rendered" 'name: NODE_OPTIONS' 1
+assert_count "$default_rendered" 'valueFrom: null' 1
+assert_not_contains "$default_rendered" 'key: DEN_API_NODE_OPTIONS'
 assert_count "$default_rendered" 'name: DEN_OBSERVABILITY_BACKEND' 2
 assert_count "$default_rendered" 'value: "none"' 2
 assert_not_contains "$default_rendered" 'name: OTEL_EXPORTER_OTLP_HEADERS'
@@ -56,6 +60,8 @@ otel_rendered="$tmp_dir/otel.yaml"
 cat > "$otel_values" <<'YAML'
 inference:
   enabled: true
+config:
+  denApiNodeOptions: --max-old-space-size=4096
 observability:
   backend: otel
   otel:
@@ -77,6 +83,8 @@ denWeb:
     CUSTOM_DEN_WEB_ENV: web
 YAML
 helm template openwork-ee "$chart_dir" -f "$otel_values" > "$otel_rendered"
+assert_contains "$otel_rendered" 'DEN_API_NODE_OPTIONS: "--max-old-space-size=4096"'
+assert_contains "$otel_rendered" 'value: "--max-old-space-size=4096"'
 assert_count "$otel_rendered" 'name: DEN_OBSERVABILITY_BACKEND' 2
 assert_count "$otel_rendered" 'value: "otel"' 2
 assert_count "$otel_rendered" 'name: OTEL_EXPORTER_OTLP_HEADERS' 2
@@ -91,6 +99,19 @@ assert_contains "$otel_rendered" 'key: "otlp-headers"'
 assert_contains "$otel_rendered" 'name: CUSTOM_DEN_API_ENV'
 assert_contains "$otel_rendered" 'name: CUSTOM_DEN_WEB_ENV'
 assert_not_contains "$otel_rendered" 'name: SENTRY_AUTH_TOKEN'
+
+legacy_values="$tmp_dir/legacy-node-options-values.yaml"
+legacy_rendered="$tmp_dir/legacy-node-options.yaml"
+cat > "$legacy_values" <<'YAML'
+denApi:
+  env:
+    NODE_OPTIONS: --tls-max-v1.2
+YAML
+helm template openwork-ee "$chart_dir" -f "$legacy_values" > "$legacy_rendered"
+assert_count "$legacy_rendered" 'name: NODE_OPTIONS' 1
+assert_contains "$legacy_rendered" 'value: "--tls-max-v1.2"'
+assert_not_contains "$legacy_rendered" 'valueFrom: null'
+assert_not_contains "$legacy_rendered" 'key: DEN_API_NODE_OPTIONS'
 
 sentry_values="$tmp_dir/sentry-values.yaml"
 sentry_rendered="$tmp_dir/sentry.yaml"

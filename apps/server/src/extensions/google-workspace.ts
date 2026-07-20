@@ -5,10 +5,16 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:pat
 import { homedir } from "node:os";
 
 import { ApiError } from "../errors.js";
+import { externalFetch } from "../server-fetch.js";
 import type { ServerConfig } from "../types.js";
 
 export const GOOGLE_WORKSPACE_EXTENSION_ID = "google-workspace";
 
+const GMAIL_HARD_WRAP_MIN_LINE_LENGTH = 50;
+const GMAIL_QUOTE_BODY_LIMIT = 10_000;
+const GMAIL_REPLY_SUBJECT_RE = /^\s*(re|fwd?)\s*:/i;
+const UTC_WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const UTC_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const GOOGLE_WORKSPACE_DESKTOP_CLIENT_ID = "929071212606-pmkqimjhm2tnp68kbklnout0irllj99h.apps.googleusercontent.com";
 const GOOGLE_WORKSPACE_CLIENT_ID_ENV = "OPENWORK_GOOGLE_WORKSPACE_OAUTH_CLIENT_ID";
 const GOOGLE_WORKSPACE_CLIENT_SECRET_ENV = "GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET";
@@ -73,15 +79,15 @@ export const GOOGLE_WORKSPACE_EXTENSION_ACTIONS = [
     extensionId: GOOGLE_WORKSPACE_EXTENSION_ID,
     action: "gmail_create_draft",
     title: "Create Gmail draft",
-    description: "Create a Gmail draft for the connected account. This does not send email.",
+    description: "Create a brand-new Gmail draft for the connected account. This does not send email. Returns draftUrl; always share it with the user so they can review and send in Gmail. Subjects starting with Re: or Fwd: are rejected here — use gmail_create_reply_draft so the thread is preserved.",
     inputSchema: {
       type: "object",
       properties: {
         to: { type: "array", items: { type: "string" }, description: "Recipient email addresses." },
         cc: { type: "array", items: { type: "string" }, description: "Optional CC recipients." },
         bcc: { type: "array", items: { type: "string" }, description: "Optional BCC recipients." },
-        subject: { type: "string", description: "Draft subject." },
-        body: { type: "string", description: "Plain text draft body." },
+        subject: { type: "string", description: "Draft subject. Do not use Re: or Fwd: here; use gmail_create_reply_draft for replies." },
+        body: { type: "string", description: "Plain text draft body. Write plain prose with no markdown syntax, separate paragraphs with blank lines, and do not hard-wrap prose." },
         attachments: {
           type: "array",
           description: "Optional local files to attach. Paths may be relative to the active workspace/directory or absolute under an authorized workspace root.",
@@ -105,12 +111,12 @@ export const GOOGLE_WORKSPACE_EXTENSION_ACTIONS = [
     extensionId: GOOGLE_WORKSPACE_EXTENSION_ID,
     action: "gmail_create_reply_draft",
     title: "Create Gmail reply draft",
-    description: "Create a Gmail draft reply in an existing thread. This does not send email. Requires Gmail read access (gmail.readonly scope).",
+    description: "Create a Gmail draft reply in an existing thread. This does not send email. Requires Gmail read access (gmail.readonly scope). OpenWork appends the quoted conversation automatically; do not include quoted history. Returns draftUrl and threadUrl; always share draftUrl with the user so they can review and send in Gmail.",
     inputSchema: {
       type: "object",
       properties: {
         messageId: { type: "string", description: "Gmail message id to reply to." },
-        body: { type: "string", description: "Plain text reply body." },
+        body: { type: "string", description: "Plain text reply body. Write plain prose with no markdown syntax; do not include quoted history because OpenWork appends it automatically." },
         replyAll: { type: "boolean", description: "Reply to everyone on the original message. Defaults to true." },
       },
       required: ["messageId", "body"],
@@ -507,9 +513,9 @@ async function fetchGoogleJson(url: string, init: RequestInit = {}) {
   const timeout = setTimeout(() => controller.abort(), GOOGLE_WORKSPACE_API_TIMEOUT_MS);
   let response: Response;
   try {
-    response = await fetch(url, { ...init, signal: controller.signal });
+    response = await externalFetch(url, { ...init, signal: controller.signal });
   } catch (error) {
-    if ((error as { name?: string })?.name === "AbortError") throw new Error("Google request timed out. Check your connection and try again.");
+    if (error instanceof Error && error.name === "AbortError") throw new Error("Google request timed out. Check your connection and try again.");
     throw error;
   } finally {
     clearTimeout(timeout);
@@ -517,7 +523,7 @@ async function fetchGoogleJson(url: string, init: RequestInit = {}) {
   const text = await response.text();
   let payload: unknown = null;
   if (text.trim()) {
-    try { payload = JSON.parse(text) as unknown; } catch { payload = { raw: text }; }
+    try { payload = JSON.parse(text); } catch { payload = { raw: text }; }
   }
   if (!response.ok) {
     const details = isRecord(payload)
@@ -771,11 +777,12 @@ function gmailRawMessage(input: { to: string[]; cc?: string[]; bcc?: string[]; s
     ...(input.headers ?? []).map((header) => `${header.name}: ${header.value}`),
   ].filter((line): line is string => typeof line === "string");
   const attachments = input.attachments ?? [];
+  const body = normalizeGmailDraftBody(input.body);
   if (!attachments.length) return [
     ...headers,
     "Content-Type: text/plain; charset=UTF-8",
     "",
-    input.body,
+    body,
   ].filter((line): line is string => typeof line === "string").join("\r\n");
 
   const boundary = `openwork-${randomBytes(16).toString("hex")}`;
@@ -788,7 +795,7 @@ function gmailRawMessage(input: { to: string[]; cc?: string[]; bcc?: string[]; s
     "Content-Type: text/plain; charset=UTF-8",
     "Content-Transfer-Encoding: 8bit",
     "",
-    input.body,
+    body,
     ...attachments.flatMap((attachment) => [
       `--${boundary}`,
       `Content-Type: ${attachment.mimeType}; name="${gmailMimeParameter(attachment.filename)}"`,
@@ -800,6 +807,27 @@ function gmailRawMessage(input: { to: string[]; cc?: string[]; bcc?: string[]; s
     `--${boundary}--`,
     "",
   ].join("\r\n");
+}
+
+// Generated prose is sometimes hard-wrapped before it reaches Gmail. Those
+// literal breaks become visible after send, especially on narrow screens.
+function normalizeGmailDraftBody(body: string): string {
+  return body.replace(/\r\n?/g, "\n").replace(/[^\n]+(?:\n[^\n]+)*/g, (block) => {
+    const lines = block.split("\n");
+    const hasStructure = lines.some((line) => {
+      const trimmed = line.trimStart();
+      return trimmed.length !== line.length || /^(?:[-*+•]\s|\d+[.)]\s|>|```|~~~)/.test(trimmed);
+    });
+    if (hasStructure) return block;
+
+    const cleanedLines = lines.map((line) => line
+      .replace(/^#{1,6}\s+/, "")
+      .replace(/\*\*([^*\n]+)\*\*/g, "$1")
+      .replace(/__([^_\n]+)__/g, "$1")
+      .replace(/`([^`\n]+)`/g, "$1"));
+    const looksHardWrapped = lines.slice(0, -1).every((line) => line.trimEnd().length >= GMAIL_HARD_WRAP_MIN_LINE_LENGTH);
+    return lines.length > 1 && looksHardWrapped ? cleanedLines.map((line) => line.trim()).join(" ") : cleanedLines.join("\n");
+  });
 }
 
 function splitEmailHeader(value: string): string[] {
@@ -861,6 +889,44 @@ function gmailReplySubject(subject: string): string {
 function gmailReplyReferences(references: string, messageId: string): string {
   const entries = references.trim().split(/\s+/).filter(Boolean);
   return entries.includes(messageId) ? entries.join(" ") : [...entries, messageId].join(" ");
+}
+
+function formatGmailQuoteDate(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return `${UTC_WEEKDAYS[date.getUTCDay()]}, ${String(date.getUTCDate()).padStart(2, "0")} ${UTC_MONTHS[date.getUTCMonth()]} ${date.getUTCFullYear()} at ${String(date.getUTCHours()).padStart(2, "0")}:${String(date.getUTCMinutes()).padStart(2, "0")} UTC`;
+}
+
+function gmailBodyHasQuotedHistory(body: string): boolean {
+  return /^>\s?/m.test(body) && /^.*wrote:\s*$/m.test(body);
+}
+
+function buildGmailQuoteBlock(input: { from: string; date: string; body: string }): string {
+  const header = input.date ? `On ${formatGmailQuoteDate(input.date)}, ${input.from} wrote:` : `${input.from} wrote:`;
+  const truncated = input.body.length > GMAIL_QUOTE_BODY_LIMIT;
+  const quotedLines = input.body.slice(0, GMAIL_QUOTE_BODY_LIMIT).replace(/\r\n?/g, "\n").split("\n").map((line) => `> ${line}`);
+  if (truncated) quotedLines.push("> [message trimmed]");
+  return [header, ...quotedLines].join("\n");
+}
+
+function gmailDraftMessageId(value: unknown): string | null {
+  if (!isRecord(value)) return null;
+  const message = isRecord(value.message) ? value.message : null;
+  return typeof message?.id === "string" ? message.id : null;
+}
+
+function gmailDraftThreadId(value: unknown): string | null {
+  if (!isRecord(value)) return null;
+  const message = isRecord(value.message) ? value.message : null;
+  return typeof message?.threadId === "string" ? message.threadId : null;
+}
+
+function gmailDraftUrl(messageId: string | null): string | null {
+  return messageId ? `https://mail.google.com/mail/u/0/#drafts?compose=${encodeURIComponent(messageId)}` : null;
+}
+
+function gmailThreadUrl(threadId: string | null): string | null {
+  return threadId ? `https://mail.google.com/mail/u/0/#all/${encodeURIComponent(threadId)}` : null;
 }
 
 function requireScope(record: Record<string, unknown>, scope: string, code: string, message: string) {
@@ -1021,13 +1087,19 @@ async function googleWorkspaceCreateDraft(config: ServerConfig, args: Record<str
   const subject = readStringField(args, "subject");
   const body = typeof args.body === "string" ? args.body : "";
   if (!to.length || !subject || !body.trim()) throw new ApiError(400, "invalid_payload", "to, subject, and body are required");
+  if (GMAIL_REPLY_SUBJECT_RE.test(subject)) throw new ApiError(400, "invalid_payload", "Subject looks like a reply. Use gmail_create_reply_draft instead so the Gmail thread is preserved.");
   const attachments = await loadGmailDraftAttachments(config, context, gmailDraftAttachmentRequests(args.attachments));
   const { accessToken } = await googleWorkspaceAccessToken(config);
-  return fetchGoogleJson("https://gmail.googleapis.com/gmail/v1/users/me/drafts", {
+  const draft = await fetchGoogleJson("https://gmail.googleapis.com/gmail/v1/users/me/drafts", {
     method: "POST",
     headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
     body: JSON.stringify({ message: { raw: base64UrlString(gmailRawMessage({ to, cc, bcc, subject, body, attachments })) } }),
   });
+  return {
+    ...(isRecord(draft) ? draft : {}),
+    draftUrl: gmailDraftUrl(gmailDraftMessageId(draft)),
+    threadUrl: gmailThreadUrl(gmailDraftThreadId(draft)),
+  };
 }
 
 async function googleWorkspaceCreateReplyDraft(config: ServerConfig, args: Record<string, unknown>) {
@@ -1038,8 +1110,7 @@ async function googleWorkspaceCreateReplyDraft(config: ServerConfig, args: Recor
   const { record, accessToken } = await googleWorkspaceAccessToken(config);
   requireGmailReadScope(record);
   const url = new URL(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(messageId)}`);
-  url.searchParams.set("format", "metadata");
-  for (const header of ["Message-ID", "References", "Reply-To", "Subject", "From", "To", "Cc"]) url.searchParams.append("metadataHeaders", header);
+  url.searchParams.set("format", "full");
   const message = await fetchGoogleJson(url.toString(), { headers: { Authorization: `Bearer ${accessToken}` } });
   const payload = isRecord(message) ? message.payload : null;
   const threadId = isRecord(message) && typeof message.threadId === "string" ? message.threadId : "";
@@ -1051,7 +1122,11 @@ async function googleWorkspaceCreateReplyDraft(config: ServerConfig, args: Recor
   const to = uniqueEmailHeaders(replyAll ? [replyTarget, gmailHeader(payload, "To")] : [replyTarget], [ownEmail]);
   const cc = replyAll ? uniqueEmailHeaders([gmailHeader(payload, "Cc")], [ownEmail, ...to.map(emailHeaderKey)]) : [];
   if (!to.length) throw new ApiError(400, "invalid_payload", "Original message does not include reply recipients");
-  return fetchGoogleJson("https://gmail.googleapis.com/gmail/v1/users/me/drafts", {
+  const originalBody = gmailMessageText(payload);
+  const quotedBody = originalBody && !gmailBodyHasQuotedHistory(body)
+    ? `${body}\n\n${buildGmailQuoteBlock({ from: gmailHeader(payload, "From"), date: gmailHeader(payload, "Date"), body: originalBody })}`
+    : body;
+  const draft = await fetchGoogleJson("https://gmail.googleapis.com/gmail/v1/users/me/drafts", {
     method: "POST",
     headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -1061,7 +1136,7 @@ async function googleWorkspaceCreateReplyDraft(config: ServerConfig, args: Recor
           to,
           cc,
           subject: gmailReplySubject(gmailHeader(payload, "Subject")),
-          body,
+          body: quotedBody,
           headers: [
             { name: "In-Reply-To", value: originalMessageId },
             { name: "References", value: gmailReplyReferences(gmailHeader(payload, "References"), originalMessageId) },
@@ -1070,6 +1145,11 @@ async function googleWorkspaceCreateReplyDraft(config: ServerConfig, args: Recor
       },
     }),
   });
+  return {
+    ...(isRecord(draft) ? draft : {}),
+    draftUrl: gmailDraftUrl(gmailDraftMessageId(draft)),
+    threadUrl: gmailThreadUrl(threadId),
+  };
 }
 
 async function googleWorkspaceSearchFiles(config: ServerConfig, args: Record<string, unknown>) {
@@ -1096,7 +1176,7 @@ async function googleWorkspaceReadFile(config: ServerConfig, args: Record<string
   const url = exportMime
     ? `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}/export?mimeType=${encodeURIComponent(exportMime)}`
     : `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?alt=media`;
-  const response = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+  const response = await externalFetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
   const content = await response.text();
   if (!response.ok) throw new Error(`Google Drive read failed (${response.status}): ${content}`);
   return { metadata, content };
@@ -1234,7 +1314,7 @@ export async function googleWorkspaceRunScopeSmokeTest(config: ServerConfig) {
     body: multipartRelatedBody({ name: "OpenWork Google Workspace smoke test.txt", mimeType: "text/plain" }, `OpenWork Google Workspace smoke test created at ${createdAt}.`, driveBoundary),
   });
   if (isRecord(driveFile) && typeof driveFile.id === "string") {
-    const response = await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(driveFile.id)}?alt=media`, { headers: { Authorization: `Bearer ${accessToken}` } });
+    const response = await externalFetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(driveFile.id)}?alt=media`, { headers: { Authorization: `Bearer ${accessToken}` } });
     if (!response.ok) throw new Error(`Google Drive smoke read failed (${response.status}): ${await response.text()}`);
   }
   const draft = await fetchGoogleJson("https://gmail.googleapis.com/gmail/v1/users/me/drafts", {

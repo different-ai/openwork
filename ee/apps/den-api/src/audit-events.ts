@@ -19,6 +19,7 @@ export const ORGANIZATION_AUDIT_ACTIONS = {
   scimTokenRotated: "organization.scim.token_rotated",
   scimConnectionDeleted: "organization.scim.connection_deleted",
   scimReconciliationRun: "organization.scim.reconciliation_run",
+  scimGroupMappingUpdated: "organization.scim.group_mapping_updated",
   ssoConnectionRegistered: "organization.sso.connection_registered",
   ssoConnectionDeleted: "organization.sso.connection_deleted",
 }
@@ -59,6 +60,7 @@ export function isOrganizationAuditAlertAction(action: OrganizationAuditAction) 
     case ORGANIZATION_AUDIT_ACTIONS.memberRemoved:
     case ORGANIZATION_AUDIT_ACTIONS.scimTokenRotated:
     case ORGANIZATION_AUDIT_ACTIONS.scimConnectionDeleted:
+    case ORGANIZATION_AUDIT_ACTIONS.scimGroupMappingUpdated:
     case ORGANIZATION_AUDIT_ACTIONS.ssoConnectionRegistered:
     case ORGANIZATION_AUDIT_ACTIONS.ssoConnectionDeleted:
       return true

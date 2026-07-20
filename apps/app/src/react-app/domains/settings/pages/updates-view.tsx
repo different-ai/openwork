@@ -122,6 +122,8 @@ export function UpdatesView(props: UpdatesViewProps) {
                     ? t("settings.update_checking")
                     : updateState === "available"
                       ? t("settings.update_available_version", undefined, { version: updateVersion ?? "" })
+                      : updateState === "blocked"
+                        ? t("settings.update_blocked_version", undefined, { version: updateVersion ?? "" })
                       : updateState === "downloading"
                         ? t("settings.update_downloading")
                         : updateState === "ready"
@@ -131,7 +133,7 @@ export function UpdatesView(props: UpdatesViewProps) {
                             : t("settings.update_uptodate")}
                 </LayoutSectionItemTitle>
                 <LayoutSectionItemDescription>
-                  {updateState === "idle" && updateLastCheckedAt
+                  {(updateState === "idle" || updateState === "blocked") && updateLastCheckedAt
                     ? t("settings.update_last_checked", undefined, {
                         time: formatRelativeTime(updateLastCheckedAt),
                       })
@@ -186,6 +188,13 @@ export function UpdatesView(props: UpdatesViewProps) {
               {updateState === "error" && updateErrorMessage ? (
                 <Alert variant="destructive">
                   <CircleAlert />
+                  <AlertDescription>{updateErrorMessage}</AlertDescription>
+                </Alert>
+              ) : null}
+
+              {updateState === "blocked" && updateErrorMessage ? (
+                <Alert>
+                  <Info />
                   <AlertDescription>{updateErrorMessage}</AlertDescription>
                 </Alert>
               ) : null}

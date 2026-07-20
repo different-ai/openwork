@@ -61,20 +61,21 @@ export default {
             const route = await ctx.eval("window.__openworkControl.snapshot().route");
             ctx.assert(route === "/onboarding", `Expected /onboarding, got ${route}`);
             await ctx.expectText("Agent Bootstrap Workspace");
-            await ctx.expectText("First skill ready");
             await ctx.expectText("Claim this workspace");
             const marker = await ctx.eval(`(() => {
               const prepared = document.querySelector('[data-openwork-prepared="true"]');
               const provisional = document.querySelector('[data-openwork-provisional="true"]');
-              const skill = document.querySelector('[data-openwork-prepared-skill="First OpenWork Skill"]');
-              return Boolean(prepared && provisional && skill);
+              return Boolean(prepared && provisional);
             })()`);
             ctx.assert(marker === true, "Prepared/provisional markers were not rendered.");
+            await ctx.expectNoText("First skill ready");
+            await ctx.expectNoText("Try asking");
+            await ctx.expectNoText("Open your workspace and try a task");
           },
           screenshot: {
             name: "agent-bootstrap-workspace-ready",
-            requireText: ["Setup complete", "Agent Bootstrap Workspace", "First skill ready", "Claim this workspace"],
-            rejectText: ["Something went wrong"],
+            requireText: ["Setup complete", "Agent Bootstrap Workspace", "Claim this workspace"],
+            rejectText: ["First skill ready", "Try asking", "Open your workspace and try a task", "Something went wrong"],
           },
         });
       },

@@ -31,6 +31,7 @@ import { downloadTextAsFile } from "../../../../app/lib/download";
 
 import {
   writeOpenworkServerSettings,
+  type OpenworkRuntimeConfigStatus,
 } from "../../../../app/lib/openwork-server";
 import {
   clearStartupPreference,
@@ -40,10 +41,11 @@ import {
   safeStringify,
 } from "../../../../app/utils";
 import { t } from "../../../../i18n";
-import { resetFirstRunClientState } from "../../../shell/session-memory";
 import type { DebugViewProps } from "../pages/debug-view";
 import type { ReleaseChannel } from "../../../../app/types";
 import type { OpenworkServerStore, OpenworkServerStoreSnapshot } from "../../connections/openwork-server-store";
+
+type DebugViewModelProps = Omit<DebugViewProps, "agentContextDiagnostics">;
 
 const STARTUP_PREFERENCE_KEY = "openwork.startupPreference";
 const ENGINE_SOURCE_KEY = "openwork.engineSource";
@@ -51,6 +53,13 @@ const ENGINE_CUSTOM_BIN_KEY = "openwork.engineCustomBinPath";
 const OPENCODE_ENABLE_EXA_KEY = "openwork.opencodeEnableExa";
 
 type ResetModalMode = "onboarding" | "all";
+
+const ONBOARDING_LOCAL_STORAGE_KEYS = [
+  "openwork.acknowledgedProviders",
+  "openwork.orgOnboardingSeen",
+  "openwork.reloadAfterOrgOnboarding",
+  "openwork.seenProviderIds",
+];
 
 type UseDebugViewModelOptions = {
   developerMode: boolean;
@@ -90,18 +99,23 @@ function clearStoredString(key: string): void {
 
 function clearOpenworkLocalStorageForReset(mode: ResetModalMode): void {
   if (typeof window === "undefined") return;
-  if (mode === "all") {
-    try {
+  try {
+    if (mode === "all") {
       window.localStorage.clear();
-    } catch {
-      // ignore persistence failures
+      return;
     }
-    return;
+    for (const key of ONBOARDING_LOCAL_STORAGE_KEYS) {
+      window.localStorage.removeItem(key);
+    }
+    const raw = window.localStorage.getItem("openwork.preferences");
+    if (raw) {
+      const prefs = JSON.parse(raw);
+      prefs.hasCompletedOnboarding = false;
+      window.localStorage.setItem("openwork.preferences", JSON.stringify(prefs));
+    }
+  } catch {
+    // ignore persistence failures
   }
-  // Single source of truth so this can't drift from the recovery-disabled boot
-  // reset (both must clear the workspace-memory keys or the first-run loader and
-  // auto-session-create stay silently suppressed).
-  resetFirstRunClientState();
 }
 
 function readEngineSource(): "path" | "sidecar" | "custom" {
@@ -241,6 +255,8 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
   const [appBuild, setAppBuild] = useState<AppBuildInfo | null>(null);
   const [bootstrapPrepared, setBootstrapPrepared] = useState<DesktopBootstrapConfig["prepared"]>(null);
   const [bootstrapConfigDebug, setBootstrapConfigDebug] = useState<unknown>(null);
+  const [runtimeConfigStatus, setRuntimeConfigStatus] = useState<OpenworkRuntimeConfigStatus | null>(null);
+  const [runtimeConfigStatusError, setRuntimeConfigStatusError] = useState<string | null>(null);
   const [runtimeDebugStatus, setRuntimeDebugStatus] = useState<string | null>(null);
   const [sandboxProbeBusy, setSandboxProbeBusy] = useState(false);
   const [sandboxProbeResult, setSandboxProbeResult] = useState<SandboxDebugProbeResult | null>(null);
@@ -324,6 +340,34 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       cancelled = true;
     };
   }, [developerMode]);
+
+  useEffect(() => {
+    if (!developerMode) return;
+    const client = openworkServerSnapshot.openworkServerClient;
+    const workspaceId = runtimeWorkspaceId?.trim();
+    if (!client || !workspaceId) {
+      setRuntimeConfigStatus(null);
+      setRuntimeConfigStatusError(null);
+      return;
+    }
+    let cancelled = false;
+    void client.getRuntimeConfigStatus(workspaceId)
+      .then((status) => {
+        if (!cancelled) {
+          setRuntimeConfigStatus(status);
+          setRuntimeConfigStatusError(null);
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setRuntimeConfigStatus(null);
+          setRuntimeConfigStatusError(error instanceof Error ? error.message : safeStringify(error));
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [developerMode, openworkServerSnapshot.openworkServerClient, runtimeWorkspaceId]);
 
   useEffect(() => {
     if (!developerMode || !isDesktopRuntime()) return;
@@ -922,7 +966,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
     setWorkspaceDebugEventsStatus("Workspace debug events are not retained in the React route yet.");
   }, []);
 
-  const debugProps: DebugViewProps = useMemo(
+  const debugProps: DebugViewModelProps = useMemo(
     () => ({
       developerMode,
       busy: false,
@@ -935,6 +979,8 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       runtimeSummary,
       runtimeDebugReportJson,
       bootstrapConfigDebugJson,
+      runtimeConfigStatus,
+      runtimeConfigStatusError,
       runtimeDebugStatus,
       onCopyRuntimeDebugReport,
       onExportRuntimeDebugReport,
@@ -1083,6 +1129,8 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       openworkServerSnapshot.openworkServerDiagnostics,
       openworkServerSnapshot.openworkServerStatus,
       resetModalBusy,
+      runtimeConfigStatus,
+      runtimeConfigStatusError,
       runtimeDebugReportJson,
       runtimeDebugStatus,
       runtimeSummary,

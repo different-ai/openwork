@@ -3,7 +3,9 @@
 import { ArrowRight, CheckCircle2 } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { isSingleOrgSignupDisabled, resolveVisibleAuthMode } from "../_lib/auth-ui-policy";
 import { isSamePathname } from "../_lib/client-route";
+import { getDesktopGrant } from "../_lib/desktop-handoff";
 import { getErrorMessage, getSocialCallbackUrl, requestJson, type AuthMode } from "../_lib/den-flow";
 import { getMcpOAuthSelectOrganizationRoute } from "../_lib/mcp-oauth-route";
 import { useDenFlow } from "../_providers/den-flow-provider";
@@ -41,17 +43,6 @@ function readLoginOption(payload: unknown): LoginOption | null {
     signInPath: typeof payload.signInPath === "string" ? payload.signInPath : null,
     signInUrl: typeof payload.signInUrl === "string" ? payload.signInUrl : null,
   };
-}
-
-function getDesktopGrant(url: string | null) {
-  if (!url) return null;
-  try {
-    const parsed = new URL(url);
-    const grant = parsed.searchParams.get("grant")?.trim() ?? "";
-    return grant || null;
-  } catch {
-    return null;
-  }
 }
 
 function GitHubLogo() {
@@ -104,6 +95,7 @@ export function AuthPanel({
   lockEmail = false,
   hideSocialAuth = false,
   hideEmailField = false,
+  hideLockedEmailSummary = false,
   emailFirstFlow = false,
   eyebrow = "Account",
   bare = false,
@@ -117,6 +109,7 @@ export function AuthPanel({
   lockEmail?: boolean;
   hideSocialAuth?: boolean;
   hideEmailField?: boolean;
+  hideLockedEmailSummary?: boolean;
   emailFirstFlow?: boolean;
   eyebrow?: string;
   // When true the panel renders without its own `den-frame`/padding, so a parent
@@ -168,8 +161,16 @@ export function AuthPanel({
   } = useDenFlow();
   const isSingleOrgMode = runtimeConfigLoaded && runtimeConfig.orgMode === "single_org";
   const isSingleOrgSsoMode = isSingleOrgMode && runtimeConfig.singleOrgSsoConfigured;
+  const isSingleOrgPrivateSignup = isSingleOrgSignupDisabled(runtimeConfig, runtimeConfigLoaded);
+  const visibleAuthMode = resolveVisibleAuthMode({ authMode, runtimeConfig, runtimeConfigLoaded });
   const singleOrgName = runtimeConfig.singleOrgName || "OpenWork";
   const singleOrgSlug = runtimeConfig.singleOrgSlug.trim();
+
+  useEffect(() => {
+    if (isSingleOrgPrivateSignup && authMode === "sign-up") {
+      setAuthMode("sign-in");
+    }
+  }, [authMode, isSingleOrgPrivateSignup, setAuthMode]);
 
   useEffect(() => {
     if (!isSingleOrgSsoMode || pathname === "/") {
@@ -216,12 +217,13 @@ export function AuthPanel({
     submitLabel: "Send reset link",
   };
 
-  const emailFirstStep: EmailFirstStep = loginOption?.nextStep ?? "email";
+  const requestedEmailFirstStep = loginOption?.nextStep ?? "email";
+  const emailFirstStep: EmailFirstStep = isSingleOrgPrivateSignup && requestedEmailFirstStep === "new_account" ? "password" : requestedEmailFirstStep;
   const emailFirstEmail = email.trim();
   const emailFirstContent: PanelContent =
     emailFirstStep === "email"
       ? {
-          title: "Continue to OpenWork.",
+          title: "Start using OpenWork",
           copy: "Enter your email and we'll send you to the right sign-in step.",
           submitLabel: "Next",
         }
@@ -266,16 +268,16 @@ export function AuthPanel({
       ? emailFirstContent
       : isSingleOrgSsoMode
       ? singleOrgSsoContent
-      : authMode === "sign-in"
+      : visibleAuthMode === "sign-in"
       ? resolvedSignInContent
       : resolvedSignUpContent;
-  const showLockedEmailSummary = Boolean(prefilledEmail && lockEmail && hideEmailField);
+  const showLockedEmailSummary = Boolean(prefilledEmail && lockEmail && hideEmailField && !hideLockedEmailSummary);
   const shellClass = (gap: string, padding: string) =>
     bare ? `grid ${gap}` : `den-frame grid ${gap} ${padding}`;
   // The segmented tabs are the primary sign-in/sign-up switch. Hide them for the
   // focused sub-flows (email verification, password reset) where switching mode
   // mid-step would be confusing.
-  const showModeTabs = !emailFirstFlow && !isSingleOrgSsoMode && !verificationRequired && !isPasswordResetRequest;
+  const showModeTabs = !emailFirstFlow && !isSingleOrgSsoMode && !isSingleOrgPrivateSignup && !verificationRequired && !isPasswordResetRequest;
   const showSingleOrgSso = isSingleOrgMode && Boolean(singleOrgSlug) && !verificationRequired && !isPasswordResetRequest && (!hideSocialAuth || isSingleOrgSsoMode);
   const showSingleOrgSsoDivider = showSingleOrgSso && !isSingleOrgSsoMode;
   const showEmailPasswordAuth = !isSingleOrgSsoMode;
@@ -704,10 +706,10 @@ export function AuthPanel({
         >
           <button
             type="button"
-            aria-pressed={authMode === "sign-in"}
+            aria-pressed={visibleAuthMode === "sign-in"}
             onClick={() => switchMode("sign-in")}
             className={`rounded-full px-4 py-2 text-sm font-semibold transition ${
-              authMode === "sign-in"
+              visibleAuthMode === "sign-in"
                 ? "bg-[var(--dls-surface)] text-[var(--dls-text-primary)] shadow-[0_1px_2px_rgba(15,23,42,0.08)]"
                 : "text-[var(--dls-text-secondary)] hover:text-[var(--dls-text-primary)]"
             }`}
@@ -716,10 +718,10 @@ export function AuthPanel({
           </button>
           <button
             type="button"
-            aria-pressed={authMode === "sign-up"}
+            aria-pressed={visibleAuthMode === "sign-up"}
             onClick={() => switchMode("sign-up")}
             className={`rounded-full px-4 py-2 text-sm font-semibold transition ${
-              authMode === "sign-up"
+              visibleAuthMode === "sign-up"
                 ? "bg-[var(--dls-surface)] text-[var(--dls-text-primary)] shadow-[0_1px_2px_rgba(15,23,42,0.08)]"
                 : "text-[var(--dls-text-secondary)] hover:text-[var(--dls-text-primary)]"
             }`}
@@ -834,7 +836,7 @@ export function AuthPanel({
               type="password"
               value={password}
               onChange={(event) => setPassword(event.target.value)}
-              autoComplete={authMode === "sign-up" ? "new-password" : "current-password"}
+              autoComplete={visibleAuthMode === "sign-up" ? "new-password" : "current-password"}
               required
             />
           </label>
@@ -859,11 +861,11 @@ export function AuthPanel({
         {showEmailPasswordAuth && !verificationRequired && !isPasswordResetRequest && !hideEmailField ? (
           // Always rendered (invisible in sign-up) so switching modes never
           // changes the card height.
-          <div className={`-mt-2 flex justify-end ${authMode === "sign-in" ? "" : "invisible"}`}>
+          <div className={`-mt-2 flex justify-end ${visibleAuthMode === "sign-in" ? "" : "invisible"}`}>
             <button
               type="button"
-              tabIndex={authMode === "sign-in" ? 0 : -1}
-              aria-hidden={authMode !== "sign-in"}
+              tabIndex={visibleAuthMode === "sign-in" ? 0 : -1}
+              aria-hidden={visibleAuthMode !== "sign-in"}
               className="text-sm font-medium text-[var(--dls-text-primary)] transition hover:opacity-70"
               onClick={() => {
                 setAuthMode("sign-in");
@@ -953,7 +955,7 @@ export function AuthPanel({
               <span>Waiting for your verification code</span>
             </div>
           ) : null}
-          {authError && authMode === "sign-in" && !verificationRequired && showEmailPasswordAuth ? (
+          {authError && visibleAuthMode === "sign-in" && !isSingleOrgPrivateSignup && !verificationRequired && showEmailPasswordAuth ? (
             <button
               type="button"
               className="mt-1 inline-flex items-center justify-center gap-1 font-medium text-[var(--dls-text-primary)] transition hover:opacity-70"

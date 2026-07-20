@@ -2,8 +2,8 @@
  * Which attachment media types can be sent to the model as file parts.
  *
  * Providers (via opencode + the AI SDK) accept images, PDFs, and text.
- * Anything else (e.g. Keynote `application/x-iwork-keynote-sffkey`, Office
- * binaries) is rejected by the provider with an UnsupportedFunctionalityError
+ * Anything else (e.g. Keynote `application/x-iwork-keynote-sffkey`) is
+ * rejected by the provider with an UnsupportedFunctionalityError
  * — and because the file part lives in server-side session history, every
  * later message in the session replays the failure. Blocking these at attach
  * time prevents poisoning the session.
@@ -15,6 +15,9 @@ export function isModelReadableAttachment(mimeType: string) {
   const mime = mimeType.toLowerCase();
   if (mime === "" || mime === "application/octet-stream") return true;
   if (mime.startsWith("image/") || mime.startsWith("text/")) return true;
+  if (mime === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") return true;
+  if (mime === "application/vnd.openxmlformats-officedocument.presentationml.presentation") return true;
+  if (mime === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") return true;
   if (mime === "application/pdf" || mime === "application/json") return true;
   return mime.endsWith("+json") || mime.endsWith("+xml") || mime === "application/xml" || mime === "application/javascript";
 }

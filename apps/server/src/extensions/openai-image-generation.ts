@@ -3,6 +3,7 @@ import { dirname, resolve, sep } from "node:path";
 
 import { ApiError } from "../errors.js";
 import type { EnvService } from "../env-file.js";
+import { externalFetch } from "../server-fetch.js";
 import type { ServerConfig, WorkspaceInfo } from "../types.js";
 
 export const OPENAI_IMAGE_GENERATION_EXTENSION_ID = "openai-image-generation";
@@ -112,7 +113,7 @@ async function fetchOpenAiImage(input: { apiKey: string; prompt: string }) {
   const timeout = setTimeout(() => controller.abort(), OPENAI_IMAGE_API_TIMEOUT_MS);
   let response: Response;
   try {
-    response = await fetch("https://api.openai.com/v1/images/generations", {
+    response = await externalFetch("https://api.openai.com/v1/images/generations", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${input.apiKey}`,

@@ -10,10 +10,13 @@ import {
   DenApiError,
   ensureDenActiveOrganization,
   initializeDenBootstrapConfig,
+  isDenSessionRevokedError,
+  mergePassiveDenSettings,
   normalizeDenBaseUrl,
   readDenSettings,
   resolveDenBaseUrls,
   writeDenSettings,
+  type DenSettings,
   type DenOrgSummary,
 } from "@/app/lib/den";
 import { clearDesktopBootstrapConfig } from "@/app/lib/desktop";
@@ -40,7 +43,27 @@ declare global {
 export type UseDenSessionProps = {
   developerMode: boolean;
   openLink: (url: string) => void;
+  onBeforeSignedOut?: (settings: DenSettings) => void | Promise<void>;
 };
+
+const SIGN_OUT_CLEANUP_TIMEOUT_MS = 5_000;
+
+async function runBeforeSignedOut(callback: UseDenSessionProps["onBeforeSignedOut"], settings: DenSettings): Promise<void> {
+  if (!callback) return;
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  try {
+    await Promise.race([
+      Promise.resolve(callback(settings)),
+      new Promise<void>((resolve) => {
+        timeout = setTimeout(resolve, SIGN_OUT_CLEANUP_TIMEOUT_MS);
+      }),
+    ]);
+  } catch {
+    // Best-effort cleanup must not trap the user in a signed-in state.
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
 
 function parseManualAuthInput(value: string) {
   const trimmed = value.trim();
@@ -71,6 +94,7 @@ function parseManualAuthInput(value: string) {
 
 export function useDenSession({
   developerMode,
+  onBeforeSignedOut,
   openLink,
 }: UseDenSessionProps) {
   const denAuth = useDenAuth();
@@ -128,13 +152,15 @@ export function useDenSession({
 
   const syncCurrentDenSettings = React.useCallback(() => {
     const resolved = resolveDenBaseUrls(baseUrl);
-    writeDenSettings({
-      baseUrl: resolved.baseUrl,
-      authToken: authToken || null,
-      activeOrgId: activeOrgId || null,
-      activeOrgSlug: activeOrg?.slug ?? null,
-      activeOrgName: activeOrg?.name ?? null,
-    });
+    writeDenSettings(
+      mergePassiveDenSettings(readDenSettings(), {
+        baseUrl: resolved.baseUrl,
+        authToken: authToken || null,
+        activeOrgId: activeOrgId || null,
+        activeOrgSlug: activeOrg?.slug ?? null,
+        activeOrgName: activeOrg?.name ?? null,
+      }),
+    );
   }, [activeOrg, activeOrgId, authToken, baseUrl]);
 
   React.useEffect(() => {
@@ -164,7 +190,9 @@ export function useDenSession({
       options?: { includeBaseUrls?: boolean },
     ) => {
       const includeBaseUrls = options?.includeBaseUrls ?? !developerMode;
-      clearDenSession({ includeBaseUrls });
+      const previousSettings = readDenSettings();
+      return runBeforeSignedOut(onBeforeSignedOut, previousSettings).then(() => {
+        clearDenSession({ includeBaseUrls });
       if (includeBaseUrls) {
         setBaseUrl(DEFAULT_DEN_BASE_URL);
         setBaseUrlDraft(DEFAULT_DEN_BASE_URL);
@@ -197,8 +225,9 @@ export function useDenSession({
       } catch {}
       // Notify provider auth store so it can clean up cloud-imported providers
       dispatchDenSessionUpdated({ status: "signed_out", ...eventDetail });
+      });
     },
-    [clearSessionState, developerMode, setAuthToken, setBaseUrl],
+    [clearSessionState, developerMode, onBeforeSignedOut, setAuthToken, setBaseUrl],
   );
 
   React.useEffect(() => {
@@ -252,7 +281,7 @@ export function useDenSession({
 
       setBaseUrl(persisted.baseUrl);
       setBaseUrlDraft(persisted.baseUrl);
-      clearSignedInState(t("den.status_base_url_updated"), {
+      await clearSignedInState(t("den.status_base_url_updated"), {
         baseUrl: persisted.baseUrl,
       }, { includeBaseUrls: false });
     } catch (error) {
@@ -275,7 +304,7 @@ export function useDenSession({
       setBaseUrlError(null);
       setBaseUrl(persisted.baseUrl);
       setBaseUrlDraft(persisted.baseUrl);
-      clearSignedInState(t("den.status_base_url_updated"), {
+      await clearSignedInState(t("den.status_base_url_updated"), {
         baseUrl: persisted.baseUrl,
       }, { includeBaseUrls: false });
     } catch (error) {
@@ -309,7 +338,7 @@ export function useDenSession({
       );
       setBaseUrl(resolved.baseUrl);
       setBaseUrlDraft(resolved.baseUrl);
-      clearSignedInState(t("den.status_server_config_cleared"), {
+      await clearSignedInState(t("den.status_server_config_cleared"), {
         baseUrl: resolved.baseUrl,
       }, { includeBaseUrls: false });
     } catch (error) {
@@ -339,10 +368,10 @@ export function useDenSession({
         setUser(nextUser);
         setStatusMessage(t("den.status_signed_in_as", { email: nextUser.email }));
       })
-      .catch((error) => {
+      .catch(async (error) => {
         if (cancelled) return;
-        if (error instanceof DenApiError && error.status === 401) {
-          clearSignedInState();
+        if (isDenSessionRevokedError(error)) {
+          await clearSignedInState();
         }
         // A timeout, offline state, or server failure does not invalidate the
         // last confirmed session. Keep it available while surfacing the error.
@@ -497,7 +526,7 @@ export function useDenSession({
       if (authToken.trim()) {
         await client.signOut();
       }
-      clearSignedInState(t("den.status_signed_out"));
+      await clearSignedInState(t("den.status_signed_out"));
     } catch (error) {
       setAuthError(
         error instanceof DenApiError

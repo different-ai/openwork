@@ -67,7 +67,7 @@ export async function callExperimentalExtensionAction(config: ServerConfig, env:
     return {
       ok: false,
       error: "use_openwork_cloud",
-      message: googleWorkspaceConnectGuidance(connectSnapshot.cloudMcpPresent),
+      message: googleWorkspaceConnectGuidance(connectSnapshot.cloudHealth),
     };
   }
 

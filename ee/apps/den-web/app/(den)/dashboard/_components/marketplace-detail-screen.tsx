@@ -3,23 +3,29 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useRef, useState, useEffect } from "react";
-import { Archive, ArrowLeft, BookOpen, Check, GitBranch, Github, Globe, Loader2, Pencil, Plus, Puzzle, Server, ShieldCheck, Users, X } from "lucide-react";
+import { Archive, ArrowLeft, Check, ChevronDown, GitBranch, Github, Globe, Loader2, Pencil, Plug, Plus, Puzzle, ShieldCheck, Users, X } from "lucide-react";
 import { PaperMeshGradient, StaticSeededGradient } from "@openwork/ui/react";
+import { buttonVariants, DenButton } from "../../_components/ui/button";
+import { DenInput } from "../../_components/ui/input";
+import { DenSelect } from "../../_components/ui/select";
 import {
   getGithubIntegrationSetupRoute,
   getMarketplacesRoute,
+  getOrgAccessFlags,
   getPluginRoute,
 } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
-import { DenButton } from "../../_components/ui/button";
-import { DenInput } from "../../_components/ui/input";
 import {
   type DenMarketplace,
   formatMarketplaceTimestamp,
   isSystemMarketplace,
+  type ConfiguredPluginMcpConnection,
+  type MarketplacePluginCloudReadinessConnection,
+  type MarketplacePluginCloudReadinessState,
   type MarketplacePluginSummary,
   useAddPluginToMarketplace,
   useArchiveMarketplace,
+  useConfigurePluginMcpConnection,
   useGrantMarketplaceAccess,
   useMarketplace,
   useMarketplaceAccess,
@@ -27,17 +33,22 @@ import {
   useRevokeMarketplaceAccess,
   useUpdateMarketplace,
 } from "./marketplace-data";
+import { IntegrationIcon } from "./integration-icon";
 import { usePlugins } from "./plugin-data";
-import { MarketplaceLogo } from "./marketplace-logo";
+import { type ExternalMcpAuthType, type ExternalMcpCredentialMode, type ExternalMcpPreset, useMcpConnectionPresets } from "./mcp-connections-data";
 import {
-  type PluginMcpConfigField,
-  type PluginMcpServerInstance,
-  type PluginMcpServerTemplate,
-  useConfigurePluginServerInstance,
-  usePluginServerTemplates,
-  useRemovePluginServerInstance,
-  useSetConfigObjectStatus,
-} from "./plugin-server-data";
+  findPresetForRequirement,
+  pluginReadinessConnectionAction,
+  pluginRequirementNeedsAdminSetup,
+  pluginSetupAuthLabel,
+  pluginSetupCredentialMode,
+  pluginSetupInitialState,
+  pluginSetupRequest,
+  pluginSetupSuccessCopy,
+  serviceNameForRequirement,
+} from "./marketplace-mcp-setup";
+import { MarketplaceLogo } from "./marketplace-logo";
+import { useMcpAccountAuthorization } from "./use-mcp-account-authorization";
 
 const COMPONENT_TYPE_LABELS: Record<string, { singular: string; plural: string }> = {
   skill: { singular: "skill", plural: "skills" },
@@ -59,9 +70,42 @@ function componentTypeLabel(type: string, count: number) {
   return count === 1 ? label.singular : label.plural;
 }
 
+export type PluginMcpSetupTarget = {
+  plugin: Pick<MarketplacePluginSummary, "id" | "name">;
+  connection: MarketplacePluginCloudReadinessConnection;
+};
+
+type MarketplaceDetailTab = "plugins" | "members" | "configure";
+
+function authTypeFromSelect(value: string): ExternalMcpAuthType {
+  if (value === "apikey" || value === "none") return value;
+  return "oauth";
+}
+
 export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: string }) {
-  const { orgSlug } = useOrgDashboard();
-  const { data, isLoading, error } = useMarketplace(marketplaceId);
+  const { orgContext, orgSlug } = useOrgDashboard();
+  const { data, isLoading, error, refetch } = useMarketplace(marketplaceId);
+  const { data: presets = [] } = useMcpConnectionPresets();
+  const [setupTarget, setSetupTarget] = useState<PluginMcpSetupTarget | null>(null);
+  const [activeTab, setActiveTab] = useState<MarketplaceDetailTab>("plugins");
+  const authorization = useMcpAccountAuthorization(() => {
+    void refetch();
+  });
+  const access = getOrgAccessFlags(
+    orgContext?.currentMember.role ?? "member",
+    orgContext?.currentMember.isOwner ?? false,
+    orgContext?.roles ?? [],
+  );
+  const configurationTargets = useMemo(() => (
+    data?.plugins.flatMap((plugin) => (
+      plugin.cloudReadiness?.connections
+        .filter((connection) => (
+          pluginRequirementNeedsAdminSetup(connection)
+          || pluginReadinessConnectionAction(connection, access.isAdmin) !== null
+        ))
+        .map((connection) => ({ plugin, connection })) ?? []
+    )) ?? []
+  ), [access.isAdmin, data]);
 
   if (isLoading && !data) {
     return (
@@ -84,11 +128,17 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
   }
 
   const { marketplace, plugins, source } = data;
-  // Seeded marketplaces are looked up by name and re-provisioned lazily, so
-  // renaming or archiving them would just respawn a copy — their identity is
-  // managed. "Your organization" additionally accepts custom composition.
   const managedIdentity = isSystemMarketplace(marketplace);
   const managedCatalog = managedIdentity && marketplace.name !== "Your organization";
+  const tabs: Array<{
+    id: MarketplaceDetailTab;
+    label: string;
+    icon: React.ComponentType<{ className?: string }>;
+  }> = [
+    { id: "plugins", label: "Plugins", icon: Puzzle },
+    { id: "members", label: "Members", icon: Users },
+    { id: "configure", label: "Configure", icon: Plug },
+  ];
 
   return (
     <div className="mx-auto max-w-[860px] px-6 py-8 md:px-8">
@@ -140,47 +190,121 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
         </div>
       </article>
 
-      <div className="mt-6 space-y-6">
-        {source ? (
-          <section>
-            <h2 className="mb-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">
-              Source
-            </h2>
-            <Link
-              href={getGithubIntegrationSetupRoute(orgSlug, source.connectorInstanceId)}
-              className="group flex items-center gap-4 rounded-2xl border border-gray-100 bg-white px-4 py-3 transition hover:-translate-y-0.5 hover:border-gray-200 hover:shadow-[0_8px_24px_-12px_rgba(15,23,42,0.08)]"
-            >
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-gray-50 text-gray-600 group-hover:bg-gray-100 group-hover:text-gray-800">
-                <Github className="h-4 w-4" aria-hidden />
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-[14px] font-semibold tracking-[-0.01em] text-gray-900">
-                  {source.repositoryFullName}
-                </p>
-                <p className="mt-0.5 truncate text-[12.5px] text-gray-500">
-                  {source.accountLogin ? `@${source.accountLogin}` : "GitHub connector"}
-                  {source.branch ? (
-                    <>
-                      <span className="mx-1.5 text-gray-300">·</span>
-                      <GitBranch className="mr-1 inline h-3 w-3 text-gray-400" aria-hidden />
-                      {source.branch}
-                    </>
-                  ) : null}
-                </p>
-              </div>
-            </Link>
-          </section>
+      <div className="mt-6">
+        <div
+          className="grid w-full grid-cols-3 gap-1 rounded-2xl border border-gray-100 bg-gray-50/80 p-1 shadow-[0_1px_2px_rgba(15,23,42,0.03)] sm:w-fit"
+          role="tablist"
+          aria-label="Marketplace sections"
+        >
+          {tabs.map((tab) => {
+            const Icon = tab.icon;
+            const active = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                role="tab"
+                id={`marketplace-${tab.id}-tab`}
+                aria-controls={`marketplace-${tab.id}-panel`}
+                aria-selected={active}
+                onClick={() => setActiveTab(tab.id)}
+                className={`inline-flex min-h-9 items-center justify-center gap-1.5 rounded-xl px-3.5 py-2 text-[12.5px] font-medium transition-all ${
+                  active
+                    ? "border border-gray-100 bg-white text-gray-950 shadow-[0_2px_8px_-3px_rgba(15,23,42,0.18)]"
+                    : "border border-transparent text-gray-500 hover:bg-white/70 hover:text-gray-800"
+                }`}
+              >
+                <Icon className={`h-3.5 w-3.5 ${active ? "text-gray-700" : "text-gray-400"}`} />
+                <span>{tab.label}</span>
+                {tab.id === "configure" ? (
+                  <span
+                    className={`inline-flex min-w-5 items-center justify-center rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${
+                      configurationTargets.length > 0
+                        ? "bg-amber-50 text-amber-700"
+                        : active
+                          ? "bg-gray-100 text-gray-500"
+                          : "bg-white text-gray-400"
+                    }`}
+                  >
+                    {configurationTargets.length}
+                  </span>
+                ) : null}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="mt-6">
+        {activeTab === "plugins" ? (
+          <div id="marketplace-plugins-panel" role="tabpanel" aria-labelledby="marketplace-plugins-tab" className="space-y-6">
+            {source ? (
+              <section>
+                <h2 className="mb-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">
+                  Source
+                </h2>
+                <Link
+                  href={getGithubIntegrationSetupRoute(orgSlug, source.connectorInstanceId)}
+                  className="group flex items-center gap-4 rounded-2xl border border-gray-100 bg-white px-4 py-3 transition hover:-translate-y-0.5 hover:border-gray-200 hover:shadow-[0_8px_24px_-12px_rgba(15,23,42,0.08)]"
+                >
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-gray-50 text-gray-600 group-hover:bg-gray-100 group-hover:text-gray-800">
+                    <Github className="h-4 w-4" aria-hidden />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-[14px] font-semibold tracking-[-0.01em] text-gray-900">
+                      {source.repositoryFullName}
+                    </p>
+                    <p className="mt-0.5 truncate text-[12.5px] text-gray-500">
+                      {source.accountLogin ? `@${source.accountLogin}` : "GitHub connector"}
+                      {source.branch ? (
+                        <>
+                          <span className="mx-1.5 text-gray-300">·</span>
+                          <GitBranch className="mr-1 inline h-3 w-3 text-gray-400" aria-hidden />
+                          {source.branch}
+                        </>
+                      ) : null}
+                    </p>
+                  </div>
+                </Link>
+              </section>
+            ) : null}
+
+            <MarketplacePluginsSection
+              managedCatalog={managedCatalog}
+              marketplaceId={marketplace.id}
+              orgSlug={orgSlug}
+              plugins={plugins}
+            />
+          </div>
         ) : null}
 
-        <MarketplaceAccessSection marketplaceId={marketplace.id} />
+        {activeTab === "members" ? (
+          <div id="marketplace-members-panel" role="tabpanel" aria-labelledby="marketplace-members-tab">
+            <MarketplaceAccessSection marketplaceId={marketplace.id} />
+          </div>
+        ) : null}
 
-        <MarketplacePluginsSection
-          managedCatalog={managedCatalog}
-          marketplaceId={marketplace.id}
-          orgSlug={orgSlug}
-          plugins={plugins}
-        />
+        {activeTab === "configure" ? (
+          <div id="marketplace-configure-panel" role="tabpanel" aria-labelledby="marketplace-configure-tab">
+            <MarketplaceConfigureSection
+              targets={configurationTargets}
+              presets={presets}
+              isAdmin={access.isAdmin}
+              connectingConnectionId={authorization.connectingConnectionId}
+              connectError={authorization.error}
+              pollingConnectionId={authorization.pollingConnectionId}
+              onConnect={(connectionId) => void authorization.connect(connectionId)}
+              onSetup={setSetupTarget}
+            />
+          </div>
+        ) : null}
       </div>
+
+      <PluginMcpSetupDialog
+        target={setupTarget}
+        presets={presets}
+        onClose={() => setSetupTarget(null)}
+      />
     </div>
   );
 }
@@ -744,6 +868,128 @@ function AccessAddPicker({
   );
 }
 
+function MarketplaceConfigureSection({
+  connectError,
+  connectingConnectionId,
+  isAdmin,
+  onConnect,
+  pollingConnectionId,
+  targets,
+  presets,
+  onSetup,
+}: {
+  connectError: { connectionId: string; message: string } | null;
+  connectingConnectionId: string | null;
+  isAdmin: boolean;
+  onConnect: (connectionId: string) => void;
+  pollingConnectionId: string | null;
+  targets: PluginMcpSetupTarget[];
+  presets: ExternalMcpPreset[];
+  onSetup: (target: PluginMcpSetupTarget) => void;
+}) {
+  if (targets.length === 0) {
+    return (
+      <div className="rounded-2xl border border-gray-100 bg-white px-5 py-10 text-center">
+        <p className="text-[14px] font-semibold tracking-[-0.01em] text-gray-900">Everything is configured</p>
+        <p className="mx-auto mt-1.5 max-w-[420px] text-[13px] leading-6 text-gray-500">
+          This marketplace has no MCP configuration actions waiting.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <section>
+      <div className="mb-3 flex items-baseline justify-between gap-3">
+        <div>
+          <h2 className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">
+            Actions required
+          </h2>
+          <p className="mt-1 text-[12.5px] text-gray-500">
+            Configure services that need setup, or connect accounts that are ready.
+          </p>
+        </div>
+        <p className="shrink-0 text-[11px] font-medium text-amber-700">
+          {targets.length} needed
+        </p>
+      </div>
+
+      <div className="divide-y divide-gray-100 overflow-hidden rounded-2xl border border-gray-100 bg-white">
+        {targets.map((target) => {
+          const preset = findPresetForRequirement(presets, target.connection);
+          const serviceName = serviceNameForRequirement(target.connection, preset);
+          const needsAdminSetup = pluginRequirementNeedsAdminSetup(target.connection);
+          const readinessAction = needsAdminSetup
+            ? null
+            : pluginReadinessConnectionAction(target.connection, isAdmin);
+
+          return (
+            <div key={`${target.plugin.id}:${target.connection.configObjectId}:${target.connection.serverName}`} className="px-4 py-3.5">
+              <div className="flex items-center gap-3">
+                <IntegrationIcon
+                  name={serviceName}
+                  serviceUrl={target.connection.url}
+                  className="h-9 w-9 rounded-[10px]"
+                  imageClassName="h-4 w-4"
+                />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-[13.5px] font-semibold text-gray-900">{serviceName}</p>
+                  <p className="mt-0.5 truncate text-[11.5px] text-gray-500">Required by {target.plugin.name}</p>
+                </div>
+                {needsAdminSetup ? (
+                  isAdmin ? (
+                    <DenButton
+                      variant="secondary"
+                      size="sm"
+                      icon={Plug}
+                      className="h-8 shrink-0 px-3 text-[11.5px]"
+                      onClick={() => onSetup(target)}
+                    >
+                      Configure
+                    </DenButton>
+                  ) : (
+                    <span className="shrink-0 text-[11px] font-medium text-gray-500">Admin setup needed</span>
+                  )
+                ) : readinessAction ? (
+                  <DenButton
+                    variant="secondary"
+                    size="sm"
+                    icon={Plug}
+                    className="h-8 shrink-0 px-3 text-[11.5px]"
+                    loading={connectingConnectionId === readinessAction.connectionId || pollingConnectionId === readinessAction.connectionId}
+                    onClick={() => onConnect(readinessAction.connectionId)}
+                  >
+                    Connect
+                  </DenButton>
+                ) : null}
+              </div>
+
+              {connectError && connectError.connectionId === readinessAction?.connectionId ? (
+                <p className="ml-12 mt-1.5 text-[11px] leading-4 text-red-600">{connectError.message}</p>
+              ) : null}
+
+              <details className="group/connection ml-12 mt-1.5">
+                <summary className="inline-flex cursor-pointer list-none items-center gap-1 text-[10.5px] text-gray-400 transition hover:text-gray-600 [&::-webkit-details-marker]:hidden">
+                  Details
+                  <ChevronDown className="h-2.5 w-2.5 transition-transform group-open/connection:rotate-180" aria-hidden="true" />
+                </summary>
+                <div className="mt-1.5 rounded-lg bg-gray-50 px-2.5 py-2">
+                  <p className="break-all font-mono text-[10px] leading-4 text-gray-500">
+                    Plugin-declared URL (read-only): {target.connection.url}
+                  </p>
+                  {readinessAction ? (
+                    <p className="mt-1 text-[11px] leading-4 text-gray-600">{readinessAction.note}</p>
+                  ) : null}
+                </div>
+              </details>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 function MarketplacePluginCard({
   orgSlug,
   plugin,
@@ -760,408 +1006,288 @@ function MarketplacePluginCard({
     .sort((a, b) => b[1] - a[1]);
 
   return (
-    <article className="overflow-hidden rounded-2xl border border-gray-100 bg-white">
-      <Link
-        href={getPluginRoute(orgSlug, plugin.id)}
-        className="group block transition hover:bg-gray-50/60"
-      >
-        <div className="flex items-stretch">
-          <div className="relative w-[64px] shrink-0 overflow-hidden">
-            <StaticSeededGradient seed={plugin.id} className="absolute inset-0" />
-            <div className="relative flex h-full items-center justify-center">
-              <div className="flex h-9 w-9 items-center justify-center rounded-[12px] border border-white/60 bg-white shadow-[0_8px_20px_-8px_rgba(15,23,42,0.3)]">
-                <Puzzle className="h-4 w-4 text-gray-700" aria-hidden />
-              </div>
+    <div id={`plugin-${plugin.id}`} className="group block self-start scroll-mt-6 overflow-hidden rounded-2xl border border-gray-100 bg-white transition hover:-translate-y-0.5 hover:border-gray-200 hover:shadow-[0_8px_24px_-12px_rgba(15,23,42,0.12)]">
+      <div className="flex items-stretch">
+        <div className="relative w-[64px] shrink-0 overflow-hidden">
+          <StaticSeededGradient seed={plugin.id} className="absolute inset-0" />
+          <div className="relative flex h-full items-center justify-center">
+            <div className="flex h-9 w-9 items-center justify-center rounded-[12px] border border-white/60 bg-white shadow-[0_8px_20px_-8px_rgba(15,23,42,0.3)]">
+              <Puzzle className="h-4 w-4 text-gray-700" aria-hidden />
             </div>
           </div>
-          <div className="min-w-0 flex-1 px-4 py-3">
+        </div>
+        <div className="min-w-0 flex-1 px-4 py-3">
+          <Link href={getPluginRoute(orgSlug, plugin.id)} className="block transition hover:text-gray-700">
             <p className="truncate text-[14px] font-semibold tracking-[-0.01em] text-gray-900">
               {plugin.name}
             </p>
-            {plugin.description ? (
-              <p className="mt-0.5 line-clamp-2 text-[12.5px] leading-[1.55] text-gray-500">
-                {plugin.description}
-              </p>
-            ) : null}
+          </Link>
+          {plugin.description ? (
+            <p className="mt-0.5 line-clamp-2 text-[12.5px] leading-[1.55] text-gray-500">
+              {plugin.description}
+            </p>
+          ) : null}
 
-            {orderedCountEntries.length > 0 ? (
-              <div className="mt-2.5 flex flex-wrap gap-1.5 border-t border-gray-50 pt-2.5">
-                {orderedCountEntries.map(([type, count]) => (
-                  <span
-                    key={type}
-                    className="inline-flex items-center gap-1 rounded-full bg-gray-50 px-2 py-0.5 text-[11.5px] text-gray-600"
-                  >
-                    <span className="font-semibold text-gray-900">{count}</span>
-                    <span className="text-gray-500">{componentTypeLabel(type, count)}</span>
-                  </span>
-                ))}
-              </div>
-            ) : plugin.memberCount > 0 ? (
-              <p className="mt-2 text-[11.5px] text-gray-400">
-                {plugin.memberCount} imported object{plugin.memberCount === 1 ? "" : "s"}
-              </p>
-            ) : (
-              <p className="mt-2 text-[11.5px] text-gray-400">
-                {plugin.sourceFormat === "openwork-builtin"
-                  ? "Built into the OpenWork desktop app"
-                  : "Content imports when the source repository is connected"}
-              </p>
-            )}
-          </div>
-        </div>
-      </Link>
-      <MarketplacePluginResourceSummary pluginId={plugin.id} />
-      {onRemove ? (
-        <div className="flex justify-end border-t border-gray-50 px-4 py-2">
-          <button
-            type="button"
-            disabled={removing}
-            onClick={onRemove}
-            className="rounded-full px-2.5 py-1 text-[11.5px] font-medium text-gray-400 transition hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            Remove from marketplace
-          </button>
-        </div>
-      ) : null}
-    </article>
-  );
-}
-
-function MarketplacePluginResourceSummary({ pluginId }: { pluginId: string }) {
-  const templatesQuery = usePluginServerTemplates(pluginId);
-  const statusMutation = useSetConfigObjectStatus();
-
-  if (templatesQuery.isLoading) {
-    return <div className="border-t border-gray-100 px-4 py-3 text-[12px] text-gray-400">Loading resources...</div>;
-  }
-
-  if (templatesQuery.error || !templatesQuery.data) {
-    return null;
-  }
-
-  const { instances, mcpTemplates, skills } = templatesQuery.data;
-  if (instances.length === 0 && mcpTemplates.length === 0 && skills.length === 0) {
-    return null;
-  }
-
-  async function toggleSkill(configObjectId: string, active: boolean) {
-    await statusMutation.mutateAsync({
-      configObjectId,
-      pluginId,
-      status: active ? "inactive" : "active",
-    });
-  }
-
-  return (
-    <div className="space-y-3 border-t border-gray-100 px-4 py-3">
-      {mcpTemplates.length > 0 ? (
-        <div>
-          <div className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-400">
-            <Server className="h-3.5 w-3.5" aria-hidden />
-            MCP servers
-          </div>
-          <div className="space-y-1.5">
-            {mcpTemplates.map((template) => {
-              const templateInstances = instances.filter((instance) => instance.serverKey === template.serverKey);
-              return (
-                <McpTemplateRow
-                  key={`${template.configObjectId}:${template.serverKey}`}
-                  instances={templateInstances}
-                  pluginId={pluginId}
-                  template={template}
-                />
-              );
-            })}
-          </div>
-        </div>
-      ) : null}
-
-      {skills.length > 0 ? (
-        <div>
-          <div className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-400">
-            <BookOpen className="h-3.5 w-3.5" aria-hidden />
-            Skills
-          </div>
-          <div className="space-y-1.5">
-            {skills.map((skill) => {
-              const active = skill.status === "active";
-              return (
-                <button
-                  key={skill.configObjectId}
-                  type="button"
-                  disabled={statusMutation.isPending}
-                  onClick={() => void toggleSkill(skill.configObjectId, active)}
-                  className="flex w-full items-center justify-between gap-3 rounded-xl bg-gray-50 px-3 py-2 text-left transition hover:bg-gray-100 disabled:opacity-60"
+          {orderedCountEntries.length > 0 ? (
+            <div className="mt-2.5 flex flex-wrap gap-1.5 border-t border-gray-50 pt-2.5">
+              {orderedCountEntries.map(([type, count]) => (
+                <span
+                  key={type}
+                  className="inline-flex items-center gap-1 rounded-full bg-gray-50 px-2 py-0.5 text-[11.5px] text-gray-600"
                 >
-                  <span className="min-w-0">
-                    <span className={`block truncate text-[12.5px] font-medium ${active ? "text-gray-900" : "text-gray-400"}`}>
-                      {skill.title}
-                    </span>
-                    {skill.description ? (
-                      <span className="mt-0.5 block truncate text-[11.5px] text-gray-400">{skill.description}</span>
-                    ) : null}
-                  </span>
-                  <span className={`relative inline-flex h-6 w-[42px] shrink-0 items-center rounded-full transition-colors ${active ? "bg-[#0f172a]" : "bg-gray-200"}`}>
-                    <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow-[0_2px_6px_-1px_rgba(15,23,42,0.3)] transition-transform ${active ? "translate-x-[18px]" : "translate-x-0.5"}`} />
-                  </span>
-                </button>
-              );
-            })}
-          </div>
+                  <span className="font-semibold text-gray-900">{count}</span>
+                  <span className="text-gray-500">{componentTypeLabel(type, count)}</span>
+                </span>
+              ))}
+            </div>
+          ) : plugin.memberCount > 0 ? (
+            <p className="mt-2 text-[11.5px] text-gray-400">
+              {plugin.memberCount} imported object{plugin.memberCount === 1 ? "" : "s"}
+            </p>
+          ) : (
+            <p className="mt-2 text-[11.5px] text-gray-400">
+              {plugin.sourceFormat === "openwork-builtin"
+                ? "Built into the OpenWork desktop app"
+                : "Content imports when the source repository is connected"}
+            </p>
+          )}
+
+          {plugin.cloudReadiness && plugin.cloudReadiness.state !== "needs_admin_setup" && plugin.cloudReadiness.state !== "needs_signin" ? (
+            <div className="mt-3 border-t border-gray-50 pt-3">
+              <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ${plugin.cloudReadiness.state === "ready" ? "bg-emerald-50 text-emerald-700" : "bg-gray-50 text-gray-600"}`}>
+                {cloudReadinessLabel(plugin.cloudReadiness.state)}
+              </span>
+            </div>
+          ) : null}
         </div>
-      ) : null}
+      </div>
     </div>
   );
 }
 
-function mcpAuthLabel(authType: "oauth" | "apikey" | "none") {
-  if (authType === "apikey") return "API key";
-  if (authType === "none") return "No auth";
-  return "OAuth";
-}
-
-function configFieldApplies(field: PluginMcpConfigField, authType: "oauth" | "apikey" | "none") {
-  if (field.placement === "bearer") return authType === "apikey";
-  if (field.placement === "oauth_client_id" || field.placement === "oauth_client_secret") return authType === "oauth";
-  return true;
-}
-
-function configFieldInputType(field: PluginMcpConfigField) {
-  if (field.kind === "secret") return "password";
-  if (field.kind === "url") return "url";
-  return "text";
-}
-
-function currentFieldValue(values: Array<{ key: string; value: string }>, key: string) {
-  return values.find((entry) => entry.key === key)?.value ?? "";
-}
-
-function updateFieldValues(values: Array<{ key: string; value: string }>, key: string, value: string) {
-  const next = values.filter((entry) => entry.key !== key);
-  return value ? [...next, { key, value }] : next;
-}
-
-function McpTemplateRow({
-  instances,
-  pluginId,
-  template,
-}: {
-  instances: PluginMcpServerInstance[];
-  pluginId: string;
-  template: PluginMcpServerTemplate;
-}) {
-  const configureMutation = useConfigurePluginServerInstance();
-  const removeMutation = useRemovePluginServerInstance();
-  const [configureOpen, setConfigureOpen] = useState(false);
-  const [instanceLabel, setInstanceLabel] = useState("");
-  const [apiKey, setApiKey] = useState("");
-  const [authType, setAuthType] = useState<"oauth" | "apikey" | "none">(template.authType);
-  const [credentialMode, setCredentialMode] = useState<"shared" | "per_member">(template.credentialModeDefault);
-  const [fieldValues, setFieldValues] = useState<Array<{ key: string; value: string }>>([]);
-
-  const busy = configureMutation.isPending || removeMutation.isPending;
-  const trimmedLabel = instanceLabel.trim();
-  const instanceName = trimmedLabel ? `${template.name} (${trimmedLabel})` : template.name;
-  const visibleConfigFields = template.configFields.filter((field) => configFieldApplies(field, authType));
-  const hasBearerField = visibleConfigFields.some((field) => field.placement === "bearer");
-  const missingRequiredField = visibleConfigFields.some((field) => field.required && !currentFieldValue(fieldValues, field.key).trim());
-  const apiKeyMissing = authType === "apikey" && !hasBearerField && !apiKey.trim();
-  const canConfigure = !busy && !missingRequiredField && !apiKeyMissing;
-
-  async function configure() {
-    await configureMutation.mutateAsync({
-      access: { orgWide: true, memberIds: [], teamIds: [] },
-      apiKey: authType === "apikey" && !hasBearerField ? apiKey.trim() : undefined,
-      authType,
-      configObjectId: template.configObjectId,
-      credentialMode: authType === "oauth" ? credentialMode : "shared",
-      fieldValues: fieldValues
-        .filter((entry) => entry.value.trim())
-        .map((entry) => ({ key: entry.key, value: entry.value.trim() })),
-      instanceLabel: trimmedLabel || null,
-      name: instanceName,
-      pluginId,
-      serverKey: template.serverKey,
-    });
-    setConfigureOpen(false);
-    setApiKey("");
-    setFieldValues([]);
-    setInstanceLabel("");
+function cloudReadinessLabel(state: MarketplacePluginCloudReadinessState) {
+  switch (state) {
+    case "ready":
+      return "Cloud ready";
+    case "needs_signin":
+      return "Members need sign-in";
+    case "needs_admin_setup":
+      return "Needs connection";
+    case "desktop_only":
+      return "Desktop only";
+    case "not_synced":
+      return "Sync pending";
   }
+}
 
-  async function remove(instanceId: string) {
-    await removeMutation.mutateAsync({ deleteConnection: true, instanceId, pluginId });
+export function PluginMcpSetupDialog({
+  target,
+  presets,
+  onClose,
+}: {
+  target: PluginMcpSetupTarget | null;
+  presets: ExternalMcpPreset[];
+  onClose: () => void;
+}) {
+  const configureConnection = useConfigurePluginMcpConnection();
+  const [authType, setAuthType] = useState<ExternalMcpAuthType>("oauth");
+  const [credentialMode, setCredentialMode] = useState<ExternalMcpCredentialMode>("per_member");
+  const [apiKey, setApiKey] = useState("");
+  const [clientId, setClientId] = useState("");
+  const [clientSecret, setClientSecret] = useState("");
+  const [result, setResult] = useState<ConfiguredPluginMcpConnection | null>(null);
+
+  const preset = target ? findPresetForRequirement(presets, target.connection) : null;
+  const authAssumed = pluginSetupInitialState(preset).authAssumed;
+  const serviceName = target ? serviceNameForRequirement(target.connection, preset) : "MCP server";
+  const requiresOAuthClient = authType === "oauth" && preset?.requiresOAuthClient === true;
+  const resolvedCredentialMode = pluginSetupCredentialMode(authType, credentialMode);
+  const successCopy = target ? pluginSetupSuccessCopy({
+    authType,
+    credentialMode: resolvedCredentialMode,
+    pluginName: target.plugin.name,
+    serviceName,
+  }) : null;
+
+  useEffect(() => {
+    if (!target) return;
+    const initialState = pluginSetupInitialState(preset);
+    setAuthType(initialState.authType);
+    setCredentialMode(initialState.credentialMode);
+    setApiKey("");
+    setClientId("");
+    setClientSecret("");
+    setResult(null);
+  }, [preset, target]);
+
+  if (!target) return null;
+
+  const activeTarget = target;
+  const trimmedApiKey = apiKey.trim();
+  const trimmedClientId = clientId.trim();
+  const trimmedClientSecret = clientSecret.trim();
+  const saveDisabled = configureConnection.isPending
+    || (authType === "apikey" && !trimmedApiKey)
+    || (requiresOAuthClient && (!trimmedClientId || !trimmedClientSecret));
+
+  async function submit() {
+    try {
+      const oauthClient = requiresOAuthClient
+        ? { clientId: trimmedClientId, clientSecret: trimmedClientSecret }
+        : undefined;
+      const setupRequest = pluginSetupRequest({
+        apiKey: trimmedApiKey,
+        authType,
+        credentialMode,
+        ...(oauthClient ? { oauthClient } : {}),
+      });
+      const configured = await configureConnection.mutateAsync({
+        pluginId: activeTarget.plugin.id,
+        configObjectId: activeTarget.connection.configObjectId,
+        serverName: activeTarget.connection.serverName,
+        ...setupRequest,
+      });
+      setApiKey("");
+      setResult(configured);
+    } catch {
+      setApiKey("");
+      // The mutation error is rendered below.
+    }
   }
 
   return (
-    <div className="rounded-xl bg-gray-50 px-3 py-2">
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-[12.5px] font-medium text-gray-900">{template.name}</p>
-          <p className="mt-0.5 truncate font-mono text-[11px] text-gray-400">{template.url}</p>
-        </div>
-        <span className="shrink-0 rounded-full bg-white px-2 py-0.5 text-[11.5px] text-gray-500">
-          {instances.length} configured
-        </span>
-      </div>
-
-      {instances.length > 0 ? (
-        <div className="mt-2 space-y-1.5">
-          {instances.map((instance) => (
-            <div
-              key={instance.id}
-              className="flex items-center justify-between gap-2 rounded-lg border border-gray-100 bg-white px-2.5 py-2"
-            >
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-[11.5px] font-medium text-gray-800">
-                  {instance.instanceLabel || instance.connection?.name || "Configured server"}
-                </p>
-                <p className="mt-0.5 truncate text-[10.5px] text-gray-400">
-                  {instance.connection?.credentialMode === "shared" ? "One org account" : "Individual accounts"}
-                  <span className="px-1 text-gray-300">·</span>
-                  {instance.connection ? mcpAuthLabel(instance.connection.authType) : "Configured"}
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-6" onClick={onClose}>
+      <div
+        className="max-h-[calc(100vh-3rem)] w-full max-w-xl overflow-y-auto rounded-[24px] border border-gray-200 bg-white p-5 shadow-[0_24px_80px_-32px_rgba(15,23,42,0.45)] sm:p-6"
+        onClick={(event) => event.stopPropagation()}
+      >
+        {result ? (
+          <>
+            <h2 className="text-[18px] font-semibold tracking-[-0.02em] text-gray-950">Connection configured</h2>
+            <p className="mt-2 text-[13px] leading-6 text-gray-600">
+              {successCopy?.body}
+            </p>
+            <div className="mt-6 flex justify-end">
+              <DenButton variant="primary" onClick={onClose}>Done</DenButton>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <h2 className="text-[18px] font-semibold tracking-[-0.02em] text-gray-950">Configure {serviceName}</h2>
+                <p className="mt-1 text-[12.5px] leading-5 text-gray-500">
+                  Required by {target.plugin.name}. Access follows this marketplace.
                 </p>
               </div>
               <button
                 type="button"
-                disabled={busy}
-                onClick={() => void remove(instance.id)}
-                className="rounded-full px-2 py-1 text-[11px] font-medium text-gray-500 transition hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-50"
+                aria-label="Close"
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-gray-400 transition hover:bg-gray-100 hover:text-gray-700"
+                onClick={onClose}
               >
-                Remove
+                <X className="h-4 w-4" aria-hidden />
               </button>
             </div>
-          ))}
-        </div>
-      ) : null}
 
-      {configureOpen ? (
-        <div className="mt-2 rounded-lg border border-gray-100 bg-white px-3 py-3">
-          <div className="grid gap-2 md:grid-cols-3">
-            <label className="min-w-0">
-              <span className="mb-1 block text-[10.5px] font-semibold uppercase tracking-[0.12em] text-gray-400">
-                Label
-              </span>
-              <input
-                value={instanceLabel}
-                onChange={(event) => setInstanceLabel(event.target.value)}
-                placeholder="Prod"
-                className="h-8 w-full rounded-lg border border-gray-200 px-2 text-[12px] text-gray-900 outline-none transition placeholder:text-gray-300 focus:border-gray-400"
-              />
-            </label>
-            <label className="min-w-0">
-              <span className="mb-1 block text-[10.5px] font-semibold uppercase tracking-[0.12em] text-gray-400">
-                Authentication
-              </span>
-              <select
-                value={authType}
-                onChange={(event) => {
-                  const next = event.target.value === "apikey" ? "apikey" : event.target.value === "none" ? "none" : "oauth";
-                  setAuthType(next);
-                  if (next !== "oauth") setCredentialMode("shared");
-                }}
-                className="h-8 w-full rounded-lg border border-gray-200 bg-white px-2 text-[12px] text-gray-900 outline-none transition focus:border-gray-400"
-              >
-                <option value="oauth">OAuth</option>
-                <option value="apikey">API key</option>
-                <option value="none">No auth</option>
-              </select>
-            </label>
-            <label className="min-w-0">
-              <span className="mb-1 block text-[10.5px] font-semibold uppercase tracking-[0.12em] text-gray-400">
-                Account
-              </span>
-              <select
-                value={authType === "oauth" ? credentialMode : "shared"}
-                disabled={authType !== "oauth"}
-                onChange={(event) => setCredentialMode(event.target.value === "shared" ? "shared" : "per_member")}
-                className="h-8 w-full rounded-lg border border-gray-200 bg-white px-2 text-[12px] text-gray-900 outline-none transition focus:border-gray-400 disabled:bg-gray-50 disabled:text-gray-400"
-              >
-                <option value="per_member">Individual accounts</option>
-                <option value="shared">One org account</option>
-              </select>
-            </label>
-          </div>
-          {authType === "apikey" && !hasBearerField ? (
-            <label className="mt-2 block min-w-0">
-              <span className="mb-1 block text-[10.5px] font-semibold uppercase tracking-[0.12em] text-gray-400">
-                API key
-              </span>
-              <input
-                type="password"
-                value={apiKey}
-                onChange={(event) => setApiKey(event.target.value)}
-                placeholder="Paste key"
-                className="h-8 w-full rounded-lg border border-gray-200 px-2 text-[12px] text-gray-900 outline-none transition placeholder:text-gray-300 focus:border-gray-400"
-              />
-            </label>
-          ) : null}
-          {visibleConfigFields.length > 0 ? (
-            <div className="mt-2 grid gap-2 md:grid-cols-2">
-              {visibleConfigFields.map((field) => (
-                <label key={field.key} className="min-w-0">
-                  <span className="mb-1 block truncate text-[10.5px] font-semibold uppercase tracking-[0.12em] text-gray-400">
-                    {field.label}{field.required ? "" : " (optional)"}
+            <div className="mt-4 space-y-4">
+              <div className="divide-y divide-gray-100 overflow-hidden rounded-xl border border-gray-100 bg-gray-50">
+                <div className="flex items-center gap-3 px-3.5 py-2.5">
+                  <span className="w-[92px] shrink-0 text-[11.5px] font-medium text-gray-500">MCP server</span>
+                  <span className="min-w-0 truncate font-mono text-[11.5px] text-gray-700" title={target.connection.url}>
+                    {target.connection.url}
                   </span>
-                  <input
-                    type={configFieldInputType(field)}
-                    value={currentFieldValue(fieldValues, field.key)}
-                    onChange={(event) => setFieldValues((current) => updateFieldValues(current, field.key, event.target.value))}
-                    placeholder={field.kind === "secret" ? "Paste secret" : field.label}
-                    className="h-8 w-full rounded-lg border border-gray-200 px-2 text-[12px] text-gray-900 outline-none transition placeholder:text-gray-300 focus:border-gray-400"
-                  />
-                  {field.description ? (
-                    <span className="mt-1 block text-[10.5px] leading-4 text-gray-400">{field.description}</span>
-                  ) : null}
-                </label>
-              ))}
-            </div>
-          ) : null}
-          <p className="mt-2 text-[11.5px] leading-5 text-gray-400">
-            Access defaults to everyone in the organization. Credentials are stored only on the External MCP Connection.
-          </p>
-          <div className="mt-3 flex items-center justify-end gap-2">
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => setConfigureOpen(false)}
-              className="rounded-full px-3 py-1.5 text-[11.5px] font-medium text-gray-500 transition hover:bg-gray-50 hover:text-gray-900 disabled:opacity-50"
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              disabled={!canConfigure}
-              onClick={() => void configure()}
-              className="inline-flex items-center gap-1.5 rounded-full bg-gray-950 px-3 py-1.5 text-[11.5px] font-medium text-white transition hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {configureMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" aria-hidden /> : <Plus className="h-3 w-3" aria-hidden />}
-              Configure
-            </button>
-          </div>
-        </div>
-      ) : (
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => setConfigureOpen(true)}
-          className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-white px-3 py-1.5 text-[11.5px] font-medium text-gray-700 shadow-[inset_0_0_0_1px_rgba(229,231,235,1)] transition hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          <Plus className="h-3 w-3" aria-hidden />
-          {instances.length === 0 ? "Configure" : "Add configuration"}
-        </button>
-      )}
+                </div>
+                {!authAssumed ? (
+                  <div className="flex items-center gap-3 px-3.5 py-2.5">
+                    <span className="w-[92px] shrink-0 text-[11.5px] font-medium text-gray-500">Authentication</span>
+                    <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-medium text-gray-700 ring-1 ring-gray-200">
+                      {pluginSetupAuthLabel(authType)}
+                    </span>
+                  </div>
+                ) : null}
+              </div>
 
-      {configureMutation.error ? (
-        <p className="mt-2 text-[11.5px] leading-5 text-red-600">
-          {configureMutation.error instanceof Error ? configureMutation.error.message : "Failed to configure MCP server."}
-        </p>
-      ) : null}
-      {removeMutation.error ? (
-        <p className="mt-2 text-[11.5px] leading-5 text-red-600">
-          {removeMutation.error instanceof Error ? removeMutation.error.message : "Failed to remove MCP server."}
-        </p>
-      ) : null}
+              {authAssumed ? (
+                <div>
+                  <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Authentication method</label>
+                  <DenSelect
+                    value={authType}
+                    onChange={(event) => {
+                      const nextAuthType = authTypeFromSelect(event.target.value);
+                      setAuthType(nextAuthType);
+                      setCredentialMode(pluginSetupCredentialMode(nextAuthType, credentialMode));
+                    }}
+                  >
+                    <option value="oauth">OAuth</option>
+                    <option value="apikey">API key</option>
+                    <option value="none">No authentication</option>
+                  </DenSelect>
+                  <p className="mt-1.5 text-[11.5px] leading-4 text-gray-500">
+                    No matching preset. Confirm how this server authenticates.
+                  </p>
+                </div>
+              ) : null}
+
+              {authType === "apikey" ? (
+                <div>
+                  <label className="mb-1.5 block text-[12px] font-medium text-gray-700">{serviceName} API key</label>
+                  <DenInput type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder="API key" autoComplete="off" />
+                  <p className="mt-1.5 text-[11.5px] leading-4 text-gray-500">
+                    Stored securely as a shared marketplace credential.
+                  </p>
+                </div>
+              ) : null}
+
+              {authType === "oauth" ? (
+                <div>
+                  <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Account access</label>
+                  <DenSelect value={credentialMode} onChange={(event) => setCredentialMode(event.target.value === "shared" ? "shared" : "per_member")}>
+                    <option value="per_member">Each user connects their own account</option>
+                    <option value="shared">Organization-shared account</option>
+                  </DenSelect>
+                  <p className="mt-1.5 text-[11.5px] leading-4 text-gray-500">
+                    {credentialMode === "per_member"
+                      ? "Each assigned member connects their own account."
+                      : "An admin connects one account for the organization."}
+                  </p>
+                </div>
+              ) : authType === "none" ? (
+                <div className="rounded-xl border border-gray-100 bg-gray-50 px-3.5 py-2.5 text-[12px] text-gray-600">
+                  No credentials are required.
+                </div>
+              ) : null}
+
+              {requiresOAuthClient ? (
+                <div className="rounded-xl border border-gray-100 bg-gray-50 p-3.5">
+                  <p className="text-[12.5px] font-semibold text-gray-900">OAuth credentials</p>
+                  <div className="mt-3 space-y-3">
+                    <div>
+                      <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Client ID</label>
+                      <DenInput value={clientId} onChange={(event) => setClientId(event.target.value)} placeholder="Client ID" />
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Client secret</label>
+                      <DenInput type="password" value={clientSecret} onChange={(event) => setClientSecret(event.target.value)} placeholder="Client secret" />
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+
+            {configureConnection.error ? (
+              <p className="mt-3 text-[13px] text-red-600">{configureConnection.error instanceof Error ? configureConnection.error.message : "Failed to configure connection."}</p>
+            ) : null}
+
+            <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <DenButton variant="secondary" onClick={onClose} disabled={configureConnection.isPending}>Cancel</DenButton>
+              <DenButton variant="primary" loading={configureConnection.isPending} disabled={saveDisabled} onClick={() => void submit()}>
+                Configure
+              </DenButton>
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }

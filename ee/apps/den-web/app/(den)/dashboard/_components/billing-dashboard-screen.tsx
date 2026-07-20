@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { CreditCard, RefreshCw } from "lucide-react";
 import { DenButton, buttonVariants } from "../../_components/ui/button";
+import { DenNotice } from "../../_components/ui/notice";
 import { formatMoneyMinor, formatSubscriptionStatus, getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
 import { getInferenceRoute, getMembersRoute } from "../../_lib/den-org";
@@ -182,16 +183,20 @@ export function BillingDashboardScreen() {
       attempts += 1;
       if (attempts === 1 && sessionId) {
         try {
-          const { response, payload } = await requestJson(
-            "/v1/billing/stripe/checkout/sync",
-            { method: "POST", body: JSON.stringify({ sessionId }) },
-            12000,
-          );
-          if (!response.ok) {
-            setStripeError(getErrorMessage(payload, `Stripe checkout sync failed (${response.status}).`));
-          }
+          await runReauthableAction("stripe-checkout-sync", async () => {
+            const { response, payload } = await requestJson(
+              "/v1/billing/stripe/checkout/sync",
+              { method: "POST", body: JSON.stringify({ sessionId }) },
+              12000,
+            );
+            if (!response.ok) {
+              setStripeError(getErrorMessage(payload, `Stripe checkout sync failed (${response.status}).`));
+            }
+          });
         } catch (error) {
-          setStripeError(error instanceof Error ? error.message : "Could not sync Stripe checkout session.");
+          if (!cancelled) {
+            setStripeError(error instanceof Error ? error.message : "Could not sync Stripe checkout session.");
+          }
         }
       }
       const billing = await refreshStripeBilling(true);
@@ -271,9 +276,7 @@ export function BillingDashboardScreen() {
         colors={["#F5F3FF", "#312E81", "#635BFF", "#C4B5FD"]}
       >
       {stripeError && stripeBilling ? (
-        <div className="mb-6 rounded-[20px] border border-red-200 bg-red-50 px-4 py-3 text-[13px] text-red-700">
-          {stripeError}
-        </div>
+        <DenNotice message={stripeError} className="mb-6" />
       ) : null}
 
       {isOwner ? null : (

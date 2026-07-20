@@ -161,6 +161,22 @@ describe("getMcpResourceUrl", () => {
     })
   })
 
+  test("keeps the external OAuth resource on the configured public API origin for proxied requests", () => {
+    runMcpResourceProbe({
+      betterAuthUrl: "https://app.example.com",
+      apiPublicUrl: "https://api.example.com",
+      route: "agent",
+      headers: {
+        "x-forwarded-host": "app.example.com",
+        "x-forwarded-prefix": "/api/den",
+        "x-forwarded-proto": "https",
+      },
+      requestUrl: "http://den-api.internal/mcp/agent",
+      expectedResource: "https://api.example.com/mcp/agent",
+      expectedMetadataUrl: "https://api.example.com/.well-known/oauth-protected-resource/mcp/agent",
+    })
+  })
+
   test("does not derive the agent OAuth resource from a spoofed request host", () => {
     runMcpResourceProbe({
       betterAuthUrl: "https://app.example.com",

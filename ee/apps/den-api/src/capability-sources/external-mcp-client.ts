@@ -17,18 +17,16 @@ import type { RequestOptions } from "@modelcontextprotocol/sdk/shared/protocol.j
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import type { ExternalMcpConnectionRow } from "./external-mcp-connections.js"
 import {
-  clearExternalMcpTokens,
+  clearExternalMcpTokensForIdentity,
+  deleteOrgOAuthClientForExternalMcpIdentity,
   getExternalMcpConnection,
-  saveExternalMcpPendingCodeVerifier,
-  saveExternalMcpTokens,
+  readConnectedAccountForExternalMcpIdentity,
+  readOrgOAuthClientForExternalMcpIdentity,
+  saveExternalMcpPendingCodeVerifierForIdentity,
+  saveExternalMcpTokensForIdentity,
+  upsertConnectedAccountForExternalMcpIdentity,
+  upsertOrgOAuthClientForExternalMcpIdentity,
 } from "./external-mcp-connections.js"
-import {
-  deleteOrgOAuthClient,
-  getConnectedAccount,
-  getOrgOAuthClient,
-  upsertConnectedAccount,
-  upsertOrgOAuthClient,
-} from "./oauth-credentials.js"
 import {
   ExternalMcpDiagnosticError,
   ExternalMcpDiagnosticTracker,
@@ -38,6 +36,10 @@ import {
   lifecycleDeadlineDiagnosticError,
   providerToolDiagnosticError,
 } from "./external-mcp-diagnostics.js"
+import {
+  withExternalMcpToolCallInspection,
+  type ExternalMcpToolCallInspector,
+} from "./external-mcp-tool-inspection.js"
 
 /**
  * Real MCP client for "add any MCP server" (External MCP Connections) —
@@ -58,6 +60,8 @@ import {
 const CLIENT_NAME = "OpenWork"
 const EXTERNAL_MCP_CALL_TIMEOUT_MS = 30_000
 const EXTERNAL_MCP_LIFECYCLE_TIMEOUT_MS = 45_000
+const EXTERNAL_MCP_TOOL_CALL_TIMEOUT_MS = 120_000
+const EXTERNAL_MCP_TOOL_LIFECYCLE_TIMEOUT_MS = 150_000
 const EXTERNAL_MCP_TOOL_PAGE_LIMIT = 20
 const EXTERNAL_MCP_TOOL_ITEM_LIMIT = 2_000
 const EXTERNAL_MCP_TOOL_NAME_LIMIT_BYTES = 512
@@ -121,6 +125,7 @@ export async function runExternalMcpRequestWithinDeadline<T>(input: {
   deadline: ExternalMcpLifecycleDeadline
   diagnostic: ExternalMcpDiagnosticTracker
   phase: ExternalMcpDiagnosticPhase
+  requestTimeoutMs?: number
   operation: (options: RequestOptions) => Promise<T>
 }): Promise<T> {
   input.diagnostic.begin(input.phase)
@@ -130,7 +135,7 @@ export async function runExternalMcpRequestWithinDeadline<T>(input: {
   const controller = new AbortController()
   const options: RequestOptions = {
     signal: AbortSignal.any([controller.signal, input.deadline.signal]),
-    timeout: Math.max(1, Math.min(EXTERNAL_MCP_CALL_TIMEOUT_MS, remaining)),
+    timeout: Math.max(1, Math.min(input.requestTimeoutMs ?? EXTERNAL_MCP_CALL_TIMEOUT_MS, remaining)),
     maxTotalTimeout: remaining,
     resetTimeoutOnProgress: false,
   }
@@ -180,6 +185,7 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
   private readonly member?: ExternalMcpMemberContext
   private readonly diagnostic: ExternalMcpDiagnosticTracker
   private readonly lifecycleDeadline?: ExternalMcpLifecycleDeadline
+  private tokenExchangeCodeVerifier: string | null = null
   /** Captured by redirectToAuthorization so the HTTP route can hand it back to the admin's browser instead of actually redirecting anything server-side. */
   lastAuthorizeUrl: string | null = null
 
@@ -208,11 +214,12 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
 
   private async memberAccount() {
     if (!this.member) return null
-    return getConnectedAccount({
-      organizationId: this.connection.organizationId,
+    const result = await readConnectedAccountForExternalMcpIdentity({
+      connection: this.connection,
       orgMembershipId: this.member.orgMembershipId,
-      providerId: this.connection.id,
     })
+    if (!result.current) throw new Error("The external MCP connection identity changed during authorization.")
+    return result.value
   }
 
   private assertLifecycleActive(phase: ExternalMcpDiagnosticPhase): void {
@@ -248,12 +255,15 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
       grant_types: ["authorization_code", "refresh_token"],
       response_types: ["code"],
       token_endpoint_auth_method: "none",
+      application_type: "web",
     }
   }
 
   async clientInformation(): Promise<OAuthClientInformationMixed | undefined> {
     this.assertLifecycleActive("AUTH_CLIENT_REGISTRATION")
-    const client = await getOrgOAuthClient(this.connection.organizationId, this.connection.id)
+    const result = await readOrgOAuthClientForExternalMcpIdentity(this.connection)
+    if (!result.current) throw new Error("The external MCP connection identity changed during authorization.")
+    const client = result.value
     this.assertLifecycleActive("AUTH_CLIENT_REGISTRATION")
     if (!client) return undefined
     this.diagnostic.passed("AUTH_CLIENT_REGISTRATION", "reachable")
@@ -264,14 +274,19 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
 
   async saveClientInformation(clientInformation: OAuthClientInformationMixed): Promise<void> {
     this.assertLifecycleActive("AUTH_CLIENT_REGISTRATION")
-    await upsertOrgOAuthClient({
-      organizationId: this.connection.organizationId,
-      providerId: this.connection.id,
+    const saved = await upsertOrgOAuthClientForExternalMcpIdentity({
+      connection: this.connection,
       clientId: clientInformation.client_id,
       clientSecret: clientInformation.client_secret ?? null,
-      extra: { clientInformation },
-      createdByOrgMembershipId: this.connection.createdByOrgMembershipId,
+      extra: {
+        clientInformation,
+        enterpriseMcpRegistrationSource: "dynamic",
+        registrationContractVersion: 2,
+        registeredRedirectUri: this.redirectUri,
+        authorizationServerIssuer: this.connection.oauthConfiguration?.authorizationServerIssuer ?? undefined,
+      },
     })
+    if (!saved) throw new Error("The external MCP connection identity changed during client registration.")
     this.diagnostic.passed("AUTH_CLIENT_REGISTRATION", "reachable")
   }
 
@@ -302,30 +317,37 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
     if (this.isPerMember && this.member) {
       const existing = await this.memberAccount()
       this.assertLifecycleActive(this.diagnostic.activePhase === "CONTINUITY_REFRESH" ? "CONTINUITY_REFRESH" : "AUTH_TOKEN_ACQUISITION")
-      await upsertConnectedAccount({
-        organizationId: this.connection.organizationId,
+      const saved = await upsertConnectedAccountForExternalMcpIdentity({
+        connection: this.connection,
         orgMembershipId: this.member.orgMembershipId,
-        providerId: this.connection.id,
-        accessToken: tokens.access_token,
-        // Most providers omit refresh_token on refresh responses; keep the existing one.
-        refreshToken: tokens.refresh_token ?? existing?.refreshToken ?? null,
-        tokenType: tokens.token_type ?? null,
-        scopes: tokens.scope ? tokens.scope.split(" ") : null,
-        expiresAt,
-        pendingCodeVerifier: null,
+        ...(this.tokenExchangeCodeVerifier ? { expectedPendingCodeVerifier: this.tokenExchangeCodeVerifier } : {}),
+        changes: {
+          accessToken: tokens.access_token,
+          // Most providers omit refresh_token on refresh responses; keep the existing one.
+          refreshToken: tokens.refresh_token ?? existing?.refreshToken ?? null,
+          tokenType: tokens.token_type ?? null,
+          scopes: tokens.scope ? tokens.scope.split(" ") : null,
+          expiresAt,
+          pendingCodeVerifier: null,
+        },
       })
+      if (!saved) throw new Error("The external MCP connection identity changed during token persistence.")
+      this.tokenExchangeCodeVerifier = null
       this.diagnostic.passed("AUTH_TOKEN_ACQUISITION")
       return
     }
     this.assertLifecycleActive(this.diagnostic.activePhase === "CONTINUITY_REFRESH" ? "CONTINUITY_REFRESH" : "AUTH_TOKEN_ACQUISITION")
-    await saveExternalMcpTokens({
-      connectionId: this.connection.id,
+    const saved = await saveExternalMcpTokensForIdentity({
+      connection: this.connection,
       accessToken: tokens.access_token,
       refreshToken: tokens.refresh_token ?? this.connection.refreshToken ?? null,
       tokenType: tokens.token_type ?? null,
       scope: tokens.scope ?? null,
       expiresAt,
+      ...(this.tokenExchangeCodeVerifier ? { expectedPendingCodeVerifier: this.tokenExchangeCodeVerifier } : {}),
     })
+    if (!saved) throw new Error("The external MCP connection identity changed during token persistence.")
+    this.tokenExchangeCodeVerifier = null
     // Refresh the in-memory row so a subsequent tokens()/refresh in the same
     // connection attempt sees the just-saved values.
     const refreshed = await getExternalMcpConnection({
@@ -338,26 +360,27 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
 
   async invalidateCredentials(scope: "all" | "client" | "tokens" | "verifier" | "discovery"): Promise<void> {
     if (scope === "all" || scope === "client") {
-      await deleteOrgOAuthClient(this.connection.organizationId, this.connection.id)
+      const deleted = await deleteOrgOAuthClientForExternalMcpIdentity(this.connection)
+      if (!deleted) throw new Error("The external MCP connection identity changed during credential invalidation.")
     }
     if (scope === "all" || scope === "tokens") {
       if (this.isPerMember && this.member) {
-        await upsertConnectedAccount({
-          organizationId: this.connection.organizationId,
+        const cleared = await upsertConnectedAccountForExternalMcpIdentity({
+          connection: this.connection,
           orgMembershipId: this.member.orgMembershipId,
-          providerId: this.connection.id,
-          accessToken: null,
-          refreshToken: null,
-          tokenType: null,
-          scopes: null,
-          expiresAt: null,
-          ...(scope === "all" ? { pendingCodeVerifier: null } : {}),
+          changes: {
+            accessToken: null,
+            refreshToken: null,
+            tokenType: null,
+            scopes: null,
+            expiresAt: null,
+            ...(scope === "all" ? { pendingCodeVerifier: null } : {}),
+          },
         })
+        if (!cleared) throw new Error("The external MCP connection identity changed during credential invalidation.")
       } else {
-        await clearExternalMcpTokens({
-          organizationId: this.connection.organizationId,
-          connectionId: this.connection.id,
-        })
+        const cleared = await clearExternalMcpTokensForIdentity(this.connection)
+        if (!cleared) throw new Error("The external MCP connection identity changed during credential invalidation.")
         const refreshed = await getExternalMcpConnection({
           organizationId: this.connection.organizationId,
           connectionId: this.connection.id,
@@ -366,15 +389,16 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
       }
     }
     if ((scope === "all" || scope === "verifier") && !this.isPerMember) {
-      await saveExternalMcpPendingCodeVerifier({ connectionId: this.connection.id, codeVerifier: null })
+      const cleared = await saveExternalMcpPendingCodeVerifierForIdentity({ connection: this.connection, codeVerifier: null })
+      if (!cleared) throw new Error("The external MCP connection identity changed during verifier invalidation.")
     }
     if (scope === "verifier" && this.isPerMember && this.member) {
-      await upsertConnectedAccount({
-        organizationId: this.connection.organizationId,
+      const cleared = await upsertConnectedAccountForExternalMcpIdentity({
+        connection: this.connection,
         orgMembershipId: this.member.orgMembershipId,
-        providerId: this.connection.id,
-        pendingCodeVerifier: null,
+        changes: { pendingCodeVerifier: null },
       })
+      if (!cleared) throw new Error("The external MCP connection identity changed during verifier invalidation.")
     }
   }
 
@@ -386,15 +410,16 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
   async saveCodeVerifier(codeVerifier: string): Promise<void> {
     this.assertLifecycleActive("AUTH_USER_OR_WORKLOAD")
     if (this.isPerMember && this.member) {
-      await upsertConnectedAccount({
-        organizationId: this.connection.organizationId,
+      const saved = await upsertConnectedAccountForExternalMcpIdentity({
+        connection: this.connection,
         orgMembershipId: this.member.orgMembershipId,
-        providerId: this.connection.id,
-        pendingCodeVerifier: codeVerifier,
+        changes: { pendingCodeVerifier: codeVerifier },
       })
+      if (!saved) throw new Error("The external MCP connection identity changed during verifier persistence.")
       return
     }
-    await saveExternalMcpPendingCodeVerifier({ connectionId: this.connection.id, codeVerifier })
+    const saved = await saveExternalMcpPendingCodeVerifierForIdentity({ connection: this.connection, codeVerifier })
+    if (!saved) throw new Error("The external MCP connection identity changed during verifier persistence.")
   }
 
   async codeVerifier(): Promise<string> {
@@ -405,11 +430,13 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
       if (!account?.pendingCodeVerifier) {
         throw new Error("No pending PKCE code verifier for this member on this external MCP connection.")
       }
+      this.tokenExchangeCodeVerifier = account.pendingCodeVerifier
       return account.pendingCodeVerifier
     }
     if (!this.connection.pendingCodeVerifier) {
       throw new Error("No pending PKCE code verifier for this external MCP connection.")
     }
+    this.tokenExchangeCodeVerifier = this.connection.pendingCodeVerifier
     return this.connection.pendingCodeVerifier
   }
 }
@@ -444,6 +471,7 @@ function buildTransport(
   member?: ExternalMcpMemberContext,
   diagnosticReferenceId?: string,
   lifecycleDeadline?: ExternalMcpLifecycleDeadline,
+  toolCallInspector?: ExternalMcpToolCallInspector,
 ) {
   const diagnostic = new ExternalMcpDiagnosticTracker(diagnosticReferenceId ?? randomUUID(), {
     authType: connection.authType,
@@ -456,15 +484,17 @@ function buildTransport(
   const lifecycleFetch = lifecycleDeadline
     ? bindExternalMcpFetchToLifecycle(guardedFetch, lifecycleDeadline, diagnostic)
     : guardedFetch
-  const headers = requestHeadersForConnection(connection)
-  const transport = new StreamableHTTPClientTransport(requestUrlForConnection(connection), {
+  const diagnosticFetch = createExternalMcpDiagnosticFetch({ fetch: lifecycleFetch, endpoint: connection.url, tracker: diagnostic })
+  const transport = new StreamableHTTPClientTransport(new URL(connection.url), {
     authProvider: provider,
     // SSRF guard: every outbound request (the MCP endpoint itself, but also
     // discovery documents and token endpoints the SDK follows to OTHER
     // hosts) is checked against private/reserved address ranges at request
     // time. Hosted-deployment protection; self-hosted/dev opt out via env.
-    fetch: createExternalMcpDiagnosticFetch({ fetch: lifecycleFetch, endpoint: connection.url, tracker: diagnostic }),
-    requestInit: headers ? { headers } : undefined,
+    fetch: toolCallInspector ? toolCallInspector.observeFetch(diagnosticFetch) : diagnosticFetch,
+    requestInit: connection.authType === "apikey" && connection.apiKey
+      ? { headers: { authorization: `Bearer ${connection.apiKey}` } }
+      : undefined,
   })
   return { transport, provider, diagnostic }
 }
@@ -881,6 +911,37 @@ export async function completeExternalMcpAuth(
   })
 }
 
+/**
+ * Compatibility cleanup for a version-one authorization that was started by
+ * the pre-enterprise runtime. Those flows stored one plaintext verifier slot,
+ * so they cannot be consumed by the version-two state-hash transaction store.
+ */
+export async function abandonExternalMcpAuth(
+  connection: ExternalMcpConnectionRow,
+  _signedState: string,
+  member?: ExternalMcpMemberContext,
+  _diagnosticReferenceId?: string,
+): Promise<void> {
+  if (connection.credentialMode === "per_member") {
+    if (!member) return
+    const existing = await readConnectedAccountForExternalMcpIdentity({
+      connection,
+      orgMembershipId: member.orgMembershipId,
+    })
+    if (!existing.current) throw new Error("The external MCP connection identity changed during authorization cleanup.")
+    if (!existing.value) return
+    const cleared = await upsertConnectedAccountForExternalMcpIdentity({
+      connection,
+      orgMembershipId: member.orgMembershipId,
+      changes: { pendingCodeVerifier: null },
+    })
+    if (!cleared) throw new Error("The external MCP connection identity changed during authorization cleanup.")
+    return
+  }
+  const cleared = await saveExternalMcpPendingCodeVerifierForIdentity({ connection, codeVerifier: null })
+  if (!cleared) throw new Error("The external MCP connection identity changed during authorization cleanup.")
+}
+
 export async function listExternalMcpTools(
   connection: ExternalMcpConnectionRow,
   redirectUri: string,
@@ -924,16 +985,21 @@ export async function listExternalMcpTools(
   }
 }
 
-export async function callExternalMcpTool(input: {
+type ExternalMcpToolCallInput = {
   connection: ExternalMcpConnectionRow
   redirectUri: string
   toolName: string
   args: Record<string, unknown>
   member?: ExternalMcpMemberContext
   diagnosticReferenceId?: string
-}) {
+}
+
+async function runExternalMcpToolCall(
+  input: ExternalMcpToolCallInput,
+  toolCallInspector?: ExternalMcpToolCallInspector,
+) {
   const client = buildClient()
-  const deadline = createExternalMcpLifecycleDeadline()
+  const deadline = createExternalMcpLifecycleDeadline(EXTERNAL_MCP_TOOL_LIFECYCLE_TIMEOUT_MS)
   const { transport, diagnostic } = buildTransport(
     input.connection,
     input.redirectUri,
@@ -941,6 +1007,7 @@ export async function callExternalMcpTool(input: {
     input.member,
     input.diagnosticReferenceId,
     deadline,
+    toolCallInspector,
   )
   let operationError: unknown
   try {
@@ -956,6 +1023,7 @@ export async function callExternalMcpTool(input: {
       deadline,
       diagnostic,
       phase: "MCP_TOOL_EXECUTION",
+      requestTimeoutMs: EXTERNAL_MCP_TOOL_CALL_TIMEOUT_MS,
       operation: (options) => client.callTool({ name: input.toolName, arguments: input.args }, undefined, options),
     })
     if (result.isError) {
@@ -973,4 +1041,12 @@ export async function callExternalMcpTool(input: {
       if (!operationError) throw diagnostic.error(error, "SHUTDOWN")
     }
   }
+}
+
+export function callExternalMcpTool(input: ExternalMcpToolCallInput) {
+  return runExternalMcpToolCall(input)
+}
+
+export function inspectExternalMcpToolCall(input: ExternalMcpToolCallInput) {
+  return withExternalMcpToolCallInspection((inspector) => runExternalMcpToolCall(input, inspector))
 }

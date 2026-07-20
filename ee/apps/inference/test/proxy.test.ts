@@ -32,6 +32,7 @@ type TestServerOptions = {
   organizationId?: string
   providerKey?: { encrypted_api_key: string } | null
   fetch?: typeof fetch
+  usageLimited?: boolean
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -152,6 +153,20 @@ function createTestServer(options: TestServerOptions = {}) {
     },
     async ensureUsableBuckets(_organizationId: string) {
       calls.ensureUsableBuckets += 1
+      if (options.usageLimited) {
+        return {
+          ok: false,
+          bucketIds: {},
+          bucketLimits: {},
+          limitedBy: "bucket_123",
+          windowType: "monthly",
+          limitedBucket: {
+            limitAmount: 100,
+            usedAmount: 100,
+            windowEndAt: new Date(Date.now() + 90_000),
+          },
+        }
+      }
       return {
         ok: true,
         bucketIds: {},
@@ -391,6 +406,34 @@ test("redacts credential-like incoming headers without redacting non-secret IDs"
   assert.equal(report.headers["true-client-ip"], "[REDACTED]")
   assert.equal(report.headers["x-inference-key-id"], "inference_key_123")
   assert.equal(report.headers["x-safe-header"], "safe-value")
+})
+
+test("returns usage-limit 429 without reporting a handled error or contacting provider/upstream", async () => {
+  const originalDateNow = Date.now
+  Date.now = () => 1_700_000_000_000
+  try {
+    const { app, upstreamRequests, calls, reports } = createTestServer({ usageLimited: true })
+    const response = await app.fetch(inferenceRequest({
+      method: "POST",
+      headers: authHeaders("application/json"),
+      body: JSON.stringify({ model: "z-ai/glm-5.2", messages: [] }),
+    }))
+
+    assert.equal(response.status, 429)
+    assert.equal(await readErrorCode(response), "rate_limit_exceeded")
+    assert.equal(response.headers.get("x-openwork-limit-bucket-id"), "bucket_123")
+    assert.equal(response.headers.get("x-openwork-limit-window-type"), "monthly")
+    assert.equal(response.headers.get("retry-after"), "90")
+    assert.equal(response.headers.get("x-ratelimit-limit-tokens"), "100")
+    assert.equal(response.headers.get("x-ratelimit-remaining-tokens"), "0")
+    assert.equal(response.headers.get("x-ratelimit-reset-tokens"), "90s")
+    assert.equal(calls.ensureUsableBuckets, 1)
+    assert.equal(calls.getOpenRouterProviderKey, 0)
+    assert.equal(upstreamRequests.length, 0)
+    assert.equal(reports.handledErrors.length, 0)
+  } finally {
+    Date.now = originalDateNow
+  }
 })
 
 test("reports handled upstream errors with searchable request context", async () => {

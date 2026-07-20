@@ -103,6 +103,8 @@ import {
   pluginDetailResponseSchema,
   pluginListQuerySchema,
   pluginListResponseSchema,
+  pluginMcpRequirementConfigureResponseSchema,
+  pluginMcpRequirementConfigureSchema,
   pluginMembershipListResponseSchema,
   pluginMembershipMutationResponseSchema,
   pluginMembershipWriteSchema,
@@ -118,6 +120,8 @@ import {
 } from "./schemas.js"
 import { requirePluginArchCapability, type PluginArchActorContext, PluginArchAuthorizationError } from "./access.js"
 import { pluginArchRoutePaths } from "./contracts.js"
+import { ensureOrganizationAdmin, orgAccessFailureStatus } from "../shared.js"
+import { isAgentOAuthClientConnection } from "../mcp-connections.js"
 import {
   PluginArchRouteFailure,
   addPluginMembership,
@@ -131,6 +135,7 @@ import {
   createGithubConnectorAccount,
   createMarketplace,
   createPluginBundle,
+  configureMarketplacePluginMcpRequirement,
   createResourceAccessGrant,
   createConnectorTarget,
   deleteConnectorMapping,
@@ -235,6 +240,38 @@ function routeErrorResponse(c: OrgContext, error: unknown) {
     return c.json({ error: failure.error, message: failure.message }, failure.status)
   }
   throw error
+}
+
+async function configurePluginMcpConnectionResponse(c: OrgContext) {
+  try {
+    const params = validParam<z.infer<typeof pluginParamsSchema>>(c)
+    const body = validJson<z.infer<typeof pluginMcpRequirementConfigureSchema>>(c)
+    if (isAgentPluginMcpSecretSetup({ apiKey: body.apiKey, oauthClient: body.oauthClient, sessionId: c.get("session")?.id })) {
+      return c.json({ error: "invalid_request", message: "Plugin MCP credentials cannot be set from the agent. Add them in the OpenWork Cloud dashboard under Connections." }, 400)
+    }
+    const admin = ensureOrganizationAdmin(c, "Only workspace owners and admins can configure plugin MCP requirements.")
+    if (!admin.ok) return c.json(admin.response, orgAccessFailureStatus(admin.response))
+    return c.json({ ok: true, item: await configureMarketplacePluginMcpRequirement({
+      authType: body.authType,
+      apiKey: body.apiKey,
+      configObjectId: body.configObjectId,
+      context: actorContext(c),
+      credentialMode: body.credentialMode ?? (body.authType === "oauth" ? "per_member" : "shared"),
+      oauthClient: body.oauthClient,
+      pluginId: normalizeDenTypeId("plugin", params.pluginId),
+      serverName: body.serverName,
+    }) })
+  } catch (error) {
+    return routeErrorResponse(c, error)
+  }
+}
+
+export function isAgentPluginMcpSecretSetup(input: { apiKey?: string | null; oauthClient?: unknown; sessionId?: string | null }) {
+  return isAgentOAuthClientConnection(input) || (input.sessionId === "mcp_internal" && Boolean(input.apiKey?.trim()))
+}
+
+export function isAgentPluginMcpOAuthClientSetup(input: { apiKey?: string | null; oauthClient?: unknown; sessionId?: string | null }) {
+  return isAgentPluginMcpSecretSetup(input)
 }
 
 function withPluginArchOrgContext(app: Hono<any>, method: "delete" | "get" | "patch" | "post" | "put", path: string, ...handlers: unknown[]) {
@@ -900,117 +937,29 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
       }
     })
 
-  withPluginArchOrgContext(app, "get", pluginArchRoutePaths.pluginServerTemplates,
+  withPluginArchOrgContext(app, "post", pluginArchRoutePaths.pluginMcpConnections,
     paramValidator(pluginParamsSchema),
+    jsonValidator(pluginMcpRequirementConfigureSchema),
     describeRoute({
       tags: ["Plugins"],
-      summary: "List plugin MCP server templates",
-      description: "Returns MCP server templates, configured instances, and imported skills for a plugin.",
+      summary: "Configure plugin MCP requirement",
+      description: "Admin-only privileged setup for one declared remote MCP server. The server name and URL are derived from the active plugin config object; the request never supplies a URL and does not start OAuth.",
       responses: {
-        200: jsonResponse("Plugin server templates returned successfully.", pluginServerTemplatesResponseSchema),
-        400: jsonResponse("The plugin path parameters were invalid.", invalidRequestSchema),
-        401: jsonResponse("The caller must be signed in to view plugin server templates.", unauthorizedSchema),
-        404: jsonResponse("The plugin could not be found.", notFoundSchema),
+        200: jsonResponse("Plugin MCP requirement configured successfully.", pluginMcpRequirementConfigureResponseSchema),
+        400: jsonResponse("The plugin MCP requirement request was invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to configure plugin MCP requirements.", unauthorizedSchema),
+        403: jsonResponse("Only workspace owners and admins can configure plugin MCP requirements.", forbiddenSchema),
+        404: jsonResponse("The plugin MCP requirement could not be found.", notFoundSchema),
       },
     }),
-    async (c: OrgContext) => {
-      try {
-        const params = validParam<z.infer<typeof pluginParamsSchema>>(c)
-        return c.json({ item: await listPluginServerTemplates({
-          context: actorContext(c),
-          pluginId: normalizeDenTypeId("plugin", params.pluginId),
-        }) })
-      } catch (error) {
-        return routeErrorResponse(c, error)
-      }
-    })
-
-  withPluginArchOrgContext(app, "post", pluginArchRoutePaths.pluginServerInstances,
-    paramValidator(pluginParamsSchema),
-    jsonValidator(pluginServerInstanceCreateSchema),
-    describeRoute({
-      tags: ["Plugins"],
-      summary: "Configure a plugin MCP server instance",
-      description: "Creates an External MCP Connection for one plugin MCP server template and binds it to the plugin as an instance. API-key, OAuth-client, and config-field credentials cannot be submitted through the agent surface; enter them in the OpenWork Cloud dashboard.",
-      responses: {
-        201: jsonResponse("Plugin MCP server instance configured successfully.", pluginServerInstanceMutationResponseSchema),
-        400: jsonResponse("The server instance request was invalid.", invalidRequestSchema),
-        401: jsonResponse("The caller must be signed in to configure plugin server instances.", unauthorizedSchema),
-        403: jsonResponse("The caller lacks permission to edit this plugin.", forbiddenSchema),
-        404: jsonResponse("The plugin or config object could not be found.", notFoundSchema),
-      },
-    }),
-    async (c: OrgContext) => {
-      try {
-        const params = validParam<z.infer<typeof pluginParamsSchema>>(c)
-        const body = validJson<z.infer<typeof pluginServerInstanceCreateSchema>>(c)
-        // Secrets must not travel through chat transcripts: when the caller
-        // is the agent (internal MCP principal), refuse credential material.
-        if (isAgentServerInstanceSecretWrite({
-          apiKey: body.apiKey,
-          fieldValueCount: body.fieldValues?.length ?? 0,
-          oauthClient: body.oauthClient,
-          sessionId: c.get("session")?.id,
-        })) {
-          return c.json({ error: "invalid_request", message: "MCP server credentials cannot be set from the agent. Configure this server in the OpenWork Cloud dashboard under Extensions -> Marketplaces." }, 400)
-        }
-        return c.json({ ok: true, item: await configurePluginServerInstance({
-          access: body.access,
-          apiKey: body.apiKey,
-          authType: body.authType,
-          configObjectId: normalizeDenTypeId("configObject", body.configObjectId),
-          context: actorContext(c),
-          credentialMode: body.credentialMode,
-          fieldValues: body.fieldValues,
-          instanceLabel: body.instanceLabel,
-          name: body.name,
-          oauthClient: body.oauthClient,
-          pluginId: normalizeDenTypeId("plugin", params.pluginId),
-          redirectUriBase: resolvePublicOrigin(c.req.raw, env.apiPublicUrl),
-          serverKey: body.serverKey,
-        }) }, 201)
-      } catch (error) {
-        return routeErrorResponse(c, error)
-      }
-    })
-
-  withPluginArchOrgContext(app, "delete", pluginArchRoutePaths.pluginServerInstance,
-    paramValidator(pluginServerInstanceParamsSchema),
-    queryValidator(pluginServerInstanceDeleteQuerySchema),
-    describeRoute({
-      tags: ["Plugins"],
-      summary: "Remove a plugin MCP server instance",
-      description: "Deletes a plugin MCP server instance binding and, by default, its External MCP Connection credentials.",
-      responses: {
-        204: emptyResponse("Plugin MCP server instance removed successfully."),
-        400: jsonResponse("The server instance deletion request was invalid.", invalidRequestSchema),
-        401: jsonResponse("The caller must be signed in to remove plugin server instances.", unauthorizedSchema),
-        403: jsonResponse("The caller lacks permission to edit this plugin.", forbiddenSchema),
-        404: jsonResponse("The plugin server instance could not be found.", notFoundSchema),
-      },
-    }),
-    async (c: OrgContext) => {
-      try {
-        const params = validParam<z.infer<typeof pluginServerInstanceParamsSchema>>(c)
-        const query = validQuery<z.infer<typeof pluginServerInstanceDeleteQuerySchema>>(c)
-        await removePluginServerInstance({
-          context: actorContext(c),
-          deleteConnection: query.deleteConnection,
-          instanceId: normalizeDenTypeId("pluginMcpServerInstance", params.instanceId),
-          pluginId: normalizeDenTypeId("plugin", params.pluginId),
-        })
-        return c.body(null, 204)
-      } catch (error) {
-        return routeErrorResponse(c, error)
-      }
-    })
+    configurePluginMcpConnectionResponse)
 
   withPluginArchOrgContext(app, "post", pluginArchRoutePaths.pluginGithubMcpImportPreview,
     jsonValidator(githubPluginMcpImportPreviewSchema),
     describeRoute({
       tags: ["GitHub"],
-      summary: "Preview GitHub plugin MCP import",
-      description: "Reads a public GitHub plugin URL and returns remote MCP servers that can be imported as Den External MCP Connections.",
+      summary: "Preview GitHub plugin marketplace import",
+      description: "Reads a public GitHub plugin URL and returns skills and remote MCP servers that can be imported into an organization marketplace.",
       responses: {
         200: jsonResponse("GitHub plugin MCP import preview returned successfully.", githubPluginMcpImportPreviewResponseSchema),
         400: jsonResponse("The GitHub plugin MCP import preview request was invalid.", invalidRequestSchema),
@@ -1033,8 +982,8 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
     jsonValidator(githubPluginMcpImportSchema),
     describeRoute({
       tags: ["GitHub"],
-      summary: "Import GitHub plugin MCPs",
-      description: "Creates/reuses Den External MCP Connections for selected remote MCP servers from a public GitHub plugin URL and publishes one marketplace plugin that references them.",
+      summary: "Create a plugin from GitHub",
+      description: "Creates one plugin from selected skills and remote MCP servers in a public GitHub plugin URL, applies the requested access grants, and optionally publishes it into an organization marketplace. Declared and known-server authentication requirements take precedence over the request-wide auth fallback.",
       responses: {
         200: jsonResponse("GitHub plugin MCPs imported successfully.", githubPluginMcpImportResponseSchema),
         400: jsonResponse("The GitHub plugin MCP import request was invalid.", invalidRequestSchema),
@@ -1053,8 +1002,10 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
           authType: body.authType,
           context,
           credentialMode: body.credentialMode,
+          description: body.description,
           githubUrl: body.githubUrl,
           marketplaceId: body.marketplaceId,
+          name: body.name,
           selectedSkillKeys: body.selectedSkillKeys,
           selectedServerKeys: body.selectedServerKeys,
           selectedServerNames: body.selectedServerNames,
@@ -1299,8 +1250,8 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
     paramValidator(marketplaceParamsSchema),
     describeRoute({
       tags: ["Marketplaces"],
-      summary: "Get marketplace resolved",
-      description: "Returns marketplace detail with plugins and derived source info.",
+      summary: "Get resolved marketplace plugin readiness",
+      description: "Returns marketplace detail with plugins, derived source info, and each plugin's cloud readiness or required setup state.",
       responses: {
         200: jsonResponse("Marketplace resolved detail returned successfully.", marketplaceResolvedResponseSchema),
         400: jsonResponse("The marketplace path parameters were invalid.", invalidRequestSchema),

@@ -1,7 +1,6 @@
 /**
- * Shared "you can return to OpenWork now" HTML page for OAuth callbacks.
- * Used by both external MCP connection callbacks and native provider
- * callbacks so every connect flow ends on the same deep-linking page.
+ * Shared completion page for OAuth callbacks. Used by both external MCP
+ * connection callbacks and native provider callbacks.
  */
 
 export function escapeHtml(value: string): string {
@@ -11,14 +10,15 @@ export function escapeHtml(value: string): string {
 export function connectCallbackPage(input:
   | { ok: true; name: string }
   | { ok: false; name: string; message: string; referenceId?: string }): string {
-  const title = input.ok ? "Connected" : "Connection failed"
-  const openWorkUrl = "openwork://settings/extensions"
+  const title = input.ok ? "You're connected" : "Connection failed"
+  const closeButton = `<button type="button" onclick="window.close()" style="margin-top:16px; border:0; border-radius:10px; background:#0f172a; color:white; padding:10px 14px; font:inherit; font-weight:600; cursor:pointer;">Close window</button>`
   const body = input.ok
-    ? `<p>${escapeHtml(input.name)} is connected. You can return to OpenWork now.</p>
-      <p><a href="${openWorkUrl}" style="display:inline-block; margin-top:16px; border-radius:10px; background:#0f172a; color:white; padding:10px 14px; text-decoration:none; font-weight:600;">Open OpenWork</a></p>
-      <script>setTimeout(() => { window.location.href = "${openWorkUrl}" }, 500)</script>`
+    ? `<p>${escapeHtml(input.name)} is connected to OpenWork.</p>
+      <p>You can close this window.</p>
+      ${closeButton}`
     : `<p>Could not connect ${escapeHtml(input.name)}: ${escapeHtml(input.message)}</p>
-      ${input.referenceId ? `<p style="font-size:12px; color:#64748b;">Diagnostic reference: <code>${escapeHtml(input.referenceId)}</code></p>` : ""}`
+      ${input.referenceId ? `<p style="font-size:12px; color:#64748b;">Diagnostic reference: <code>${escapeHtml(input.referenceId)}</code></p>` : ""}
+      ${closeButton}`
   return `<!doctype html>
 <html>
   <head><meta charset="utf-8"><title>${title} — OpenWork</title></head>

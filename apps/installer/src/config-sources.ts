@@ -51,12 +51,10 @@ function normalizeUrl(value: string, label: string): string {
 function toInstallerConfig(config: InstallConfig): InstallerConfig {
   return {
     appName: config.appName.trim(),
-    appVersion: config.appVersion?.trim() || null,
     clientName: config.clientName.trim(),
     webUrl: normalizeUrl(config.webUrl, "web URL"),
     apiUrl: normalizeUrl(config.apiUrl, "API URL"),
     logoUrl: config.logoUrl ? normalizeUrl(config.logoUrl, "logo URL") : null,
-    iconUrl: config.iconUrl ? normalizeUrl(config.iconUrl, "icon URL") : null,
     requireSignin: config.requireSignin,
   }
 }
@@ -89,13 +87,11 @@ function parseRequireSignin(value: string | undefined, fallback: boolean) {
 
 export function envOverrides(env: NodeJS.ProcessEnv = process.env): InstallerConfig | null {
   const appName = env.OPENWORK_INSTALLER_APP_NAME?.trim() || "OpenWork"
-  const appVersion = env.OPENWORK_INSTALLER_APP_VERSION?.trim() ?? ""
   const clientName = env.OPENWORK_INSTALLER_CLIENT_NAME?.trim() ?? ""
   const webUrl = env.OPENWORK_INSTALLER_WEB_URL?.trim() ?? ""
   const apiUrl = env.OPENWORK_INSTALLER_API_URL?.trim() ?? ""
   const logoUrl = env.OPENWORK_INSTALLER_LOGO_URL?.trim() ?? ""
-  const iconUrl = env.OPENWORK_INSTALLER_ICON_URL?.trim() ?? ""
-  const hasEnvOverride = Boolean(clientName || webUrl || apiUrl || logoUrl || iconUrl || appVersion || env.OPENWORK_INSTALLER_REQUIRE_SIGNIN !== undefined)
+  const hasEnvOverride = Boolean(clientName || webUrl || apiUrl || logoUrl || env.OPENWORK_INSTALLER_REQUIRE_SIGNIN !== undefined)
 
   if (!hasEnvOverride) {
     return null
@@ -106,19 +102,17 @@ export function envOverrides(env: NodeJS.ProcessEnv = process.env): InstallerCon
 
   return {
     appName,
-    appVersion: appVersion || null,
     clientName,
     webUrl: normalizeUrl(webUrl, "web URL"),
     apiUrl: normalizeUrl(apiUrl, "API URL"),
     logoUrl: logoUrl ? normalizeUrl(logoUrl, "logo URL") : null,
-    iconUrl: iconUrl ? normalizeUrl(iconUrl, "icon URL") : null,
     requireSignin: parseRequireSignin(env.OPENWORK_INSTALLER_REQUIRE_SIGNIN, BUILD_REQUIRE_SIGNIN),
   }
 }
 
-function appBundleDirectory(execPath: string) {
+function appBundleSidecarPath(execPath: string) {
   const match = /(.*)\/[^/]+\.app\/Contents\/MacOS\/[^/]+$/.exec(execPath)
-  return match ? match[1] : null
+  return match ? path.join(match[1], INSTALL_SIDECAR_FILENAME) : null
 }
 
 export function parseMountTableLine(line: string): { source: string; mountPoint: string; options: string } | null {
@@ -157,31 +151,34 @@ function readMountTable(options: ConfigSourceOptions) {
   }
 }
 
-export function installerBundleDirectories(options: ConfigSourceOptions = {}) {
-  const execPath = options.execPath ?? process.execPath
-  const directories = [path.dirname(execPath), appBundleDirectory(execPath)]
-
-  if (isTranslocatedPath(execPath)) {
-    const mountTable = readMountTable(options)
-    const originalAppPath = mountTable ? resolveTranslocatedOriginalPath(execPath, mountTable) : null
-    if (originalAppPath) {
-      warn(options, `translocated launch detected; original app at ${originalAppPath}`)
-      directories.push(path.dirname(originalAppPath))
-    }
-  }
-
-  return Array.from(new Set(directories.filter((value): value is string => Boolean(value))))
-}
-
 export function readSidecarConfig(options: ConfigSourceOptions = {}): InstallerConfig | null {
-  for (const directory of installerBundleDirectories(options)) {
-    const sidecarPath = path.join(directory, INSTALL_SIDECAR_FILENAME)
+  const execPath = options.execPath ?? process.execPath
+  const sidecarPaths = [
+    path.join(path.dirname(execPath), INSTALL_SIDECAR_FILENAME),
+    appBundleSidecarPath(execPath),
+  ].filter((value): value is string => Boolean(value))
+
+  for (const sidecarPath of sidecarPaths) {
     if (!existsSync(sidecarPath)) {
       continue
     }
     const config = readJsonConfigFile(sidecarPath, options)
     if (config) {
       return config
+    }
+  }
+
+  if (isTranslocatedPath(execPath)) {
+    const mountTable = readMountTable(options)
+    const originalAppPath = mountTable ? resolveTranslocatedOriginalPath(execPath, mountTable) : null
+    if (originalAppPath) {
+      warn(options, `translocated launch detected; origenal app at ${originalAppPath}`)
+      // The nullfs SOURCE for App Translocation is the original .app bundle, so
+      // the sidecar lives next to that bundle rather than next to its binary.
+      const sidecarPath = path.join(path.dirname(originalAppPath), INSTALL_SIDECAR_FILENAME)
+      if (existsSync(sidecarPath)) {
+        return readJsonConfigFile(sidecarPath, options)
+      }
     }
   }
 
@@ -288,12 +285,10 @@ export function buildConstantsConfig(): InstallerConfig | null {
 
   return {
     appName,
-    appVersion: null,
     clientName,
     webUrl: normalizeUrl(webUrl, "web URL"),
     apiUrl: normalizeUrl(apiUrl, "API URL"),
     logoUrl: logoUrl ? normalizeUrl(logoUrl, "logo URL") : null,
-    iconUrl: null,
     requireSignin: BUILD_REQUIRE_SIGNIN,
   }
 }
@@ -305,7 +300,6 @@ export function installerConfigSourceLabel(source: InstallerConfigSource) {
     case "build":
       return "built-in deployment config"
     case "sidecar":
-      return "organization setup file"
     case "filename":
     case "install-link":
       return "install link"

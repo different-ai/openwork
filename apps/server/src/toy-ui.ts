@@ -653,7 +653,7 @@ async function apiFetch(path, options) {
     headers.set("Content-Type", "application/json");
   }
   if (token) headers.set("Authorization", "Bearer " + token);
-  const res = await fetch(path, { ...opts, headers });
+  const res = await window.fetch(path, { ...opts, headers });
   const text = await res.text();
   let json = null;
   try { json = text ? JSON.parse(text) : null; } catch { json = null; }
@@ -830,7 +830,7 @@ async function listArtifacts(workspaceId) {
     btn.textContent = "Download";
     btn.onclick = async () => {
       try {
-        const res = await fetch(
+        const res = await window.fetch(
           "/workspace/" + encodeURIComponent(workspaceId) + "/artifacts/" + encodeURIComponent(item.id),
           { headers: { Authorization: "Bearer " + readToken() } },
         );
@@ -938,7 +938,7 @@ async function connectSse(workspaceId) {
   addCheckpoint("sse.connecting");
 
   const url = "/w/" + encodeURIComponent(workspaceId) + "/opencode/event";
-  const res = await fetch(url, {
+  const res = await window.fetch(url, {
     headers: { Authorization: "Bearer " + readToken() },
     signal: controller.signal,
   });

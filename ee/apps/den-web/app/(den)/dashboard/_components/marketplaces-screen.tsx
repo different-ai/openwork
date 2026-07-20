@@ -14,7 +14,6 @@ import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { useHasAnyIntegration } from "./integration-data";
 import { AddConnectionDialog, GoogleWorkspaceDialog, ImportPluginConnectionDialog } from "./mcp-connections-screen";
 import {
-  type CreatedMcpConnection,
   type CreateMcpConnectionInput,
   type ExternalMcpConnection,
   type ExternalMcpPreset,
@@ -328,17 +327,19 @@ function ConfiguredServersPanel() {
     }
   }
 
-  async function handleCreate(input: CreateMcpConnectionInput): Promise<CreatedMcpConnection> {
+  async function handleCreate(
+    input: CreateMcpConnectionInput,
+    options: { startOAuth: boolean },
+  ): Promise<void> {
     const created = await createConnection.mutateAsync(input);
     if (!input.oauthClient) {
       setFormOpen(false);
       setFormPreset(null);
       await queryClient.invalidateQueries({ queryKey: mcpConnectionQueryKeys.all });
-      if (input.authType === "oauth" && input.credentialMode === "shared") {
+      if (options.startOAuth) {
         await connect(created.id);
       }
     }
-    return created;
   }
 
   return (

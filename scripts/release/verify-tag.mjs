@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { readGeneratedDesktopVersions } from "./generate-desktop-versions.mjs";
 
 const root = resolve(fileURLToPath(new URL("../..", import.meta.url)));
 const args = process.argv.slice(2);
@@ -24,6 +25,7 @@ const desktopVersion = readJson(resolve(root, "apps", "desktop", "package.json")
 const orchestratorVersion =
   readJson(resolve(root, "apps", "orchestrator", "package.json")).version ?? null;
 const serverVersion = readJson(resolve(root, "apps", "server", "package.json")).version ?? null;
+const publishedDesktopVersions = readGeneratedDesktopVersions();
 
 
 const mismatches = [];
@@ -41,6 +43,7 @@ check("app", appVersion);
 check("desktop", desktopVersion);
 check("openwork-orchestrator", orchestratorVersion);
 check("openwork-server", serverVersion);
+check("desktop release inventory", publishedDesktopVersions[0] ?? null);
 
 if (mismatches.length) {
   console.error(`Release tag ${tag} does not match package versions:`);

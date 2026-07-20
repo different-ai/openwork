@@ -14,6 +14,7 @@ import type { ExternalMcpConnectionRow } from "./external-mcp-connections.js"
 import type { ExternalMcpMemberContext, ExternalMcpConnectResult } from "./external-mcp-client.js"
 import type { ExternalMcpLifecycleDeadline } from "./external-mcp-client.js"
 import { DenEnterpriseMcpOAuthPersistence } from "./enterprise-mcp-oauth-persistence.js"
+import { externalMcpClientMetadataUrl } from "./external-mcp-oauth-contract.js"
 import {
   ExternalMcpDiagnosticError,
   ExternalMcpDiagnosticTracker,
@@ -22,18 +23,37 @@ import {
   providerToolDiagnosticError,
   type ExternalMcpDiagnosticPhase,
 } from "./external-mcp-diagnostics.js"
+import {
+  withExternalMcpToolCallInspection,
+  type ExternalMcpToolCallInspector,
+} from "./external-mcp-tool-inspection.js"
 
 function toEnterpriseConnection(
   connection: ExternalMcpConnectionRow,
   member?: ExternalMcpMemberContext,
 ): EnterpriseMcpConnection {
   if (connection.authType === "oauth") {
+    const metadataUrl = externalMcpClientMetadataUrl()
     return {
       id: connection.id,
       serverUrl: connection.url,
       authorization: {
         type: "oauth",
         persistence: new DenEnterpriseMcpOAuthPersistence(connection, member),
+        configuration: {
+          applicationType: "web",
+          // CIMD client identifiers must be HTTPS URLs. Local HTTP development
+          // still exposes the document for inspection, but falls back to DCR
+          // or pre-registration instead of advertising a non-conforming ID.
+          // Client metadata has one fixed redirect URI, so scoped callback
+          // modes must use DCR or a pre-registered client bound to that URI.
+          clientMetadataUrl: connection.oauthConfiguration?.callbackMode === "shared-v1"
+            && new URL(metadataUrl).protocol === "https:"
+            ? metadataUrl
+            : undefined,
+          authorizationServerIssuer: connection.oauthConfiguration?.authorizationServerIssuer ?? undefined,
+          requestedScopes: connection.oauthConfiguration?.requestedScopes ?? [],
+        },
       },
     }
   }
@@ -155,16 +175,20 @@ function createOperationClient(input: {
   connection: ExternalMcpConnectionRow
   diagnosticReferenceId?: string
   lifecycleDeadline?: ExternalMcpLifecycleDeadline
+  toolCallInspector?: ExternalMcpToolCallInspector
 }): { client: EnterpriseMcpClient; tracker: ExternalMcpDiagnosticTracker } {
   const tracker = new ExternalMcpDiagnosticTracker(input.diagnosticReferenceId ?? randomUUID(), {
     authType: input.connection.authType,
     credentialMode: input.connection.credentialMode,
   })
-  const observedFetch = createExternalMcpDiagnosticFetch({
+  const diagnosticFetch = createExternalMcpDiagnosticFetch({
     fetch: guardedFetch,
     endpoint: input.connection.url,
     tracker,
   })
+  const observedFetch = input.toolCallInspector
+    ? input.toolCallInspector.observeFetch(diagnosticFetch)
+    : diagnosticFetch
   return {
     tracker,
     client: createEnterpriseMcpClient({
@@ -184,6 +208,7 @@ async function runEnterpriseMcpOperation<T>(input: {
   connection: ExternalMcpConnectionRow
   diagnosticReferenceId?: string
   lifecycleDeadline?: ExternalMcpLifecycleDeadline
+  toolCallInspector?: ExternalMcpToolCallInspector
   operation: (client: EnterpriseMcpClient) => Promise<T>
 }): Promise<T> {
   const { client, tracker } = createOperationClient(input)
@@ -268,17 +293,23 @@ export async function listExternalMcpTools(
   })
 }
 
-export async function callExternalMcpTool(input: {
+type ExternalMcpToolCallInput = {
   connection: ExternalMcpConnectionRow
   redirectUri: string
   toolName: string
   args: Record<string, unknown>
   member?: ExternalMcpMemberContext
   diagnosticReferenceId?: string
-}) {
+}
+
+function runExternalMcpToolCall(
+  input: ExternalMcpToolCallInput,
+  toolCallInspector?: ExternalMcpToolCallInspector,
+) {
   return runEnterpriseMcpOperation({
     connection: input.connection,
     diagnosticReferenceId: input.diagnosticReferenceId,
+    toolCallInspector,
     operation: (client) => client.callTool({
       connection: toEnterpriseConnection(input.connection, input.member),
       redirectUri: input.redirectUri,
@@ -286,4 +317,12 @@ export async function callExternalMcpTool(input: {
       arguments: input.args,
     }),
   })
+}
+
+export function callExternalMcpTool(input: ExternalMcpToolCallInput) {
+  return runExternalMcpToolCall(input)
+}
+
+export function inspectExternalMcpToolCall(input: ExternalMcpToolCallInput) {
+  return withExternalMcpToolCallInspection((inspector) => runExternalMcpToolCall(input, inspector))
 }

@@ -110,4 +110,39 @@ describe("diagnostics bundle", () => {
     expect(parsed.openworkServer.host).toBeNull();
     expect(parsed.openworkServer.settings.tokenPresent).toBe(false);
   });
+
+  test("includes sanitized Cloud health without Den or MCP tokens", () => {
+    const input = baseInputs();
+    input.cloudMcpHealth = {
+      desired: {
+        config: {
+          headers: {
+            Authorization: "Bearer owt_mcp_synthetic_secret",
+          },
+        },
+        token: {
+          present: true,
+          metadata: {
+            fingerprint: "sha256:abc123",
+            expiresAt: "2026-07-20T00:00:00.000Z",
+            scopes: "mcp:read mcp:write",
+          },
+        },
+      },
+      firstFailure: {
+        details: "den token Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJzZWNyZXQifQ.signatureee leaked",
+      },
+      opaque: "owt_den_synthetic_secret",
+    };
+
+    const json = composeDiagnosticsBundleJson(input);
+    const parsed = JSON.parse(json);
+
+    expect(parsed.cloudMcp.desired.config.headers.Authorization).toBe("[REDACTED]");
+    expect(JSON.stringify(parsed.cloudMcp)).toContain("sha256:abc123");
+    expect(JSON.stringify(parsed.cloudMcp)).toContain("mcp:read mcp:write");
+    expect(json).not.toContain("owt_mcp_synthetic_secret");
+    expect(json).not.toContain("owt_den_synthetic_secret");
+    expect(json).not.toContain("eyJhbGciOiJIUzI1NiJ9");
+  });
 });

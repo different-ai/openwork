@@ -50,6 +50,9 @@ export type ExternalMcpDiagnostic = {
   operationPhase?: ExternalMcpDiagnosticPhase
   outbound?: ExternalMcpSafeOutbound
   providerRequestId?: string
+  providerStatus?: number
+  providerCode?: string
+  payloadBytes?: number
   jsonRpcCode?: number
 }
 
@@ -156,6 +159,12 @@ const SAFE_ERROR_NAMES = new Set([
   "ServerError",
 ])
 
+const SAFE_PROVIDER_TOKEN_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]*$/
+const SAFE_PROVIDER_REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:/-]*$/
+const PROVIDER_STATUS_FIELDS = ["status", "statusCode", "httpStatus"]
+const PROVIDER_CODE_FIELDS = ["code", "error"]
+const PROVIDER_REQUEST_ID_FIELDS = ["requestId", "request_id", "transactionId", "transaction_id"]
+
 const TYPED_OAUTH_ERROR_NAMES = new Set([
   "InvalidClientError",
   "UnauthorizedClientError",
@@ -224,6 +233,129 @@ function safeNativeToken(value: string | undefined, pattern: RegExp, maxLength =
   return value
 }
 
+function safeProviderToken(value: unknown, maxLength = 64): string | undefined {
+  return typeof value === "string" ? safeNativeToken(value, SAFE_PROVIDER_TOKEN_PATTERN, maxLength) : undefined
+}
+
+function safeProviderRequestId(value: unknown): string | undefined {
+  return typeof value === "string" ? safeNativeToken(value, SAFE_PROVIDER_REQUEST_ID_PATTERN, 128) : undefined
+}
+
+function validProviderStatus(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 400 || value > 599) return undefined
+  return value
+}
+
+function providerStatusFromRecord(value: Record<string, unknown>): number | undefined {
+  for (const field of PROVIDER_STATUS_FIELDS) {
+    const status = validProviderStatus(value[field])
+    if (status !== undefined) return status
+  }
+  return undefined
+}
+
+function providerCodeFromRecord(value: Record<string, unknown>): string | undefined {
+  for (const field of PROVIDER_CODE_FIELDS) {
+    const code = safeProviderToken(value[field])
+    if (code) return code
+  }
+  return undefined
+}
+
+function providerRequestIdFromRecord(value: Record<string, unknown>): string | undefined {
+  for (const field of PROVIDER_REQUEST_ID_FIELDS) {
+    const requestId = safeProviderRequestId(value[field])
+    if (requestId) return requestId
+  }
+  return undefined
+}
+
+function providerStatusFromLeadingText(value: string): number | undefined {
+  const text = value.trimStart()
+  const statusMatch = /^(?:HTTP[ /])?([45]\d\d)\b/.exec(text) ?? /^([45]\d\d)\s+[A-Za-z]/.exec(text)
+  const statusText = statusMatch?.[1]
+  if (!statusText) return undefined
+  return validProviderStatus(Number(statusText))
+}
+
+function parsedTextRecord(value: string): Record<string, unknown> | null {
+  try {
+    const parsed: unknown = JSON.parse(value)
+    return isRecord(parsed) ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+function providerToolContentArray(result: unknown): unknown[] | null {
+  if (!isRecord(result) || !Array.isArray(result.content)) return null
+  return result.content
+}
+
+function isProviderToolTextContent(value: unknown): value is { type: "text"; text: string } {
+  return isRecord(value) && value.type === "text" && typeof value.text === "string"
+}
+
+function serializedContentPayloadBytes(content: unknown[] | null): number {
+  if (!content || content.length === 0) return 0
+  try {
+    const serialized = JSON.stringify(content)
+    return typeof serialized === "string" ? Buffer.byteLength(serialized, "utf8") : 0
+  } catch {
+    return 0
+  }
+}
+
+function sanitizedProviderToolExcerpt(texts: string[]): string | undefined {
+  const sanitized = texts
+    .join("\n")
+    .replace(/[\u0000-\u001F\u007F-\u009F]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+  if (!sanitized) return undefined
+  return sanitized.length > 512 ? sanitized.slice(0, 512) : sanitized
+}
+
+type ProviderToolContentEvidence = {
+  providerStatus?: number
+  providerCode?: string
+  providerRequestId?: string
+  payloadBytes: number
+  excerpt?: string
+}
+
+function providerToolContentEvidence(result: unknown): ProviderToolContentEvidence {
+  const content = providerToolContentArray(result)
+  const payloadBytes = serializedContentPayloadBytes(content)
+  if (!content) return { payloadBytes }
+
+  let providerStatus: number | undefined
+  let providerCode: string | undefined
+  let providerRequestId: string | undefined
+  const texts: string[] = []
+
+  for (const item of content) {
+    if (!isProviderToolTextContent(item)) continue
+    texts.push(item.text)
+    const parsed = parsedTextRecord(item.text)
+    if (parsed) {
+      providerStatus ??= providerStatusFromRecord(parsed)
+      providerCode ??= providerCodeFromRecord(parsed)
+      providerRequestId ??= providerRequestIdFromRecord(parsed)
+    }
+    providerStatus ??= providerStatusFromLeadingText(item.text)
+  }
+
+  const excerpt = sanitizedProviderToolExcerpt(texts)
+  return {
+    payloadBytes,
+    ...(providerStatus === undefined ? {} : { providerStatus }),
+    ...(providerCode ? { providerCode } : {}),
+    ...(providerRequestId ? { providerRequestId } : {}),
+    ...(excerpt ? { excerpt } : {}),
+  }
+}
+
 function errorName(value: unknown): string {
   const name = value instanceof Error ? value.name : stringProperty(value, "name")
   return name && SAFE_ERROR_NAMES.has(name) ? name : "Error"
@@ -290,6 +422,21 @@ export function safeExternalMcpCauseChain(error: unknown): ExternalMcpSafeCause[
 }
 
 function safeMessageFor(input: {
+  phase: ExternalMcpDiagnosticPhase
+  category: string
+  code: string
+  providerStatus?: number
+  providerCode?: string
+}): string {
+  const message = safeBaseMessageFor(input)
+  const details = [
+    ...(input.providerStatus === undefined ? [] : [`provider status ${input.providerStatus}`]),
+    ...(input.providerCode ? [`code ${input.providerCode}`] : []),
+  ]
+  return details.length === 0 ? message : `${message} Provider evidence: ${details.join(", ")}.`
+}
+
+function safeBaseMessageFor(input: {
   phase: ExternalMcpDiagnosticPhase
   category: string
   code: string
@@ -365,6 +512,26 @@ function safeMessageFor(input: {
 }
 
 type Classification = Omit<ExternalMcpDiagnostic, "referenceId" | "highestPassed" | "message">
+
+function logProviderToolEvidence(input: {
+  referenceId: string
+  evidence: ProviderToolContentEvidence
+  diagnosticCode: string
+  providerStatus?: number
+  providerCode?: string
+  providerRequestId?: string
+}): void {
+  if (!input.evidence.excerpt) return
+  console.error("external_mcp_provider_tool_evidence", {
+    referenceId: input.referenceId,
+    diagnosticCode: input.diagnosticCode,
+    excerpt: input.evidence.excerpt,
+    payloadBytes: input.evidence.payloadBytes,
+    ...(input.providerStatus === undefined ? {} : { providerStatus: input.providerStatus }),
+    ...(input.providerCode ? { providerCode: input.providerCode } : {}),
+    ...(input.providerRequestId ? { providerRequestId: input.providerRequestId } : {}),
+  })
+}
 
 function httpClassification(input: {
   phase: ExternalMcpDiagnosticPhase
@@ -536,6 +703,36 @@ function classifyByCode(code: string): Classification | null {
       retryable: true,
       actionOwner: "member",
       operatorAction: "Reconnect the provider account because the access token expired without a usable refresh token.",
+    }
+  }
+  if (code === "MCP_OAUTH_CREDENTIAL_CHANGED") {
+    return {
+      phase: "CONTINUITY_REFRESH",
+      category: "oauth_credential_changed",
+      code,
+      retryable: true,
+      actionOwner: "openwork",
+      operatorAction: "Retry with the newer OAuth credential after the concurrent refresh completes.",
+    }
+  }
+  if (code === "MCP_OAUTH_CONFIGURATION_REQUIRED") {
+    return {
+      phase: "AUTH_CLIENT_REGISTRATION",
+      category: "oauth_configuration_required",
+      code,
+      retryable: false,
+      actionOwner: "organization_admin",
+      operatorAction: "Create a provider OAuth application, allowlist the shared callback, and save its client ID and optional secret before reconnecting.",
+    }
+  }
+  if (code === "MCP_OAUTH_ISSUER_MISMATCH") {
+    return {
+      phase: "AUTH_ISSUER_DISCOVERY",
+      category: "oauth_issuer_mismatch",
+      code,
+      retryable: false,
+      actionOwner: "organization_admin",
+      operatorAction: "Repeat requirements discovery and select an authorization server advertised by the protected resource.",
     }
   }
   if (code === "MCP_OAUTH_PERSISTENCE_INVALID") {
@@ -919,7 +1116,7 @@ export class ExternalMcpDiagnosticTracker {
       "request-id",
       "x-request-id",
     ]) {
-      const value = safeNativeToken(headers.get(name) ?? undefined, /^[A-Za-z0-9][A-Za-z0-9_.:/-]*$/, 128)
+      const value = safeProviderRequestId(headers.get(name))
       if (value) {
         this.providerRequestId = value
         return
@@ -931,16 +1128,18 @@ export class ExternalMcpDiagnosticTracker {
     const structuredContent = isRecord(result) && isRecord(result.structuredContent)
       ? result.structuredContent
       : null
-    const providerStatus = structuredContent?.providerStatus
-    const providerCategory = structuredContent?.category
-    const requestId = safeNativeToken(
-      typeof structuredContent?.requestId === "string" ? structuredContent.requestId : undefined,
-      /^[A-Za-z0-9][A-Za-z0-9_.:/-]*$/,
-      128,
-    )
+    const structuredProviderStatus = validProviderStatus(structuredContent?.providerStatus)
+    const providerCategory = typeof structuredContent?.category === "string" ? structuredContent.category : undefined
+    const evidence = providerToolContentEvidence(result)
+    const providerStatus = structuredProviderStatus ?? evidence.providerStatus
+    const providerCode = evidence.providerCode
+    const requestId = safeProviderRequestId(structuredContent?.requestId) ?? evidence.providerRequestId
     if (requestId) this.providerRequestId = requestId
 
-    const classification: Classification = providerStatus === 403 && providerCategory === "provider_policy"
+    const providerPolicyDenied = structuredProviderStatus === 403
+      ? providerCategory === "provider_policy"
+      : evidence.providerStatus === 403
+    const classificationBase: Classification = providerPolicyDenied
       ? {
           phase: "PROVIDER_AUTHORIZATION",
           category: "provider_policy_denied",
@@ -966,6 +1165,20 @@ export class ExternalMcpDiagnosticTracker {
             actionOwner: "provider_admin",
             operatorAction: "Inspect the provider operation result and provider logs using the diagnostic reference.",
           }
+    const classification: Classification = {
+      ...classificationBase,
+      ...(providerStatus === undefined ? {} : { providerStatus }),
+      ...(providerCode ? { providerCode } : {}),
+      payloadBytes: evidence.payloadBytes,
+    }
+    logProviderToolEvidence({
+      referenceId: this.referenceId,
+      evidence,
+      diagnosticCode: classification.code,
+      ...(providerStatus === undefined ? {} : { providerStatus }),
+      ...(providerCode ? { providerCode } : {}),
+      ...(requestId ? { providerRequestId: requestId } : {}),
+    })
     this.failed(classification.phase, classification)
     return this.error(new Error("Provider returned an MCP tool error result."), classification.phase)
   }

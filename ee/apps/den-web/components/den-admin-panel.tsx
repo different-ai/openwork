@@ -1,17 +1,18 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Copy, Pencil, Trash2 } from "lucide-react";
 
 type AccessState = "loading" | "ready" | "signed-out" | "forbidden" | "error";
-type WorkerFilter = "all" | "with-workers" | "without-workers";
-type BillingFilter = "all" | "paid" | "unpaid" | "unavailable";
 type ViewMode = "users" | "companies" | "organizations";
-type ActivityFilter = "all" | "active-7d" | "active-30d" | "recurring" | "inactive-30d";
-type SortMode = "newest" | "recently-active" | "most-sign-ins" | "most-active-days" | "fastest-invite";
 
 const DEFAULT_FREE_SEAT_COUNT = 5;
 const ADMIN_OVERVIEW_CACHE_KEY = "den-admin-overview-cache";
+const ADMIN_PAGE_SIZE = 50;
+const ADMIN_MAX_PAGE_OFFSET = 100_000;
+const ADMIN_SCALE_FIXTURE_USERS = 50_000;
+const ADMIN_SCALE_FIXTURE_ORGANIZATIONS = 60_000;
+const ADMIN_SEARCH_DEBOUNCE_MS = 75;
 
 let cachedAdminOverviewPayload: unknown = null;
 
@@ -47,27 +48,28 @@ type ActivityPoint = {
 
 type AdminSummary = {
   totalUsers: number;
-  verifiedUsers: number;
-  recentUsers7d: number;
-  recentUsers30d: number;
-  totalWorkers: number;
-  cloudWorkers: number;
-  localWorkers: number;
-  usersWithWorkers: number;
-  usersWithoutWorkers: number;
+  totalOrganizations: number;
+  verifiedUsers: number | null;
+  recentUsers7d: number | null;
+  recentUsers30d: number | null;
+  totalWorkers: number | null;
+  cloudWorkers: number | null;
+  localWorkers: number | null;
+  usersWithWorkers: number | null;
+  usersWithoutWorkers: number | null;
   paidUsers: number | null;
   unpaidUsers: number | null;
   billingUnavailableUsers: number | null;
   adminCount: number;
   billingLoaded: boolean;
-  activeUsers1d: number;
-  activeUsers7d: number;
-  activeUsers30d: number;
-  realActiveUsers1d: number;
-  realActiveUsers7d: number;
-  realActiveUsers30d: number;
-  recurringUsers: number;
-  inviters: number;
+  activeUsers1d: number | null;
+  activeUsers7d: number | null;
+  activeUsers30d: number | null;
+  realActiveUsers1d: number | null;
+  realActiveUsers7d: number | null;
+  realActiveUsers30d: number | null;
+  recurringUsers: number | null;
+  inviters: number | null;
   medianHoursToFirstInvite: number | null;
   activitySeries: ActivityPoint[];
 };
@@ -119,6 +121,39 @@ type AdminOrganization = {
   capabilities: AdminOrganizationCapabilities;
 };
 
+type AdminPageInfo = {
+  total: number;
+  limit: number;
+  offset: number;
+  returned: number;
+  hasMore: boolean;
+  search: string;
+  durationMs: number;
+};
+
+type AdminUsersPayload = {
+  users: AdminUser[];
+  page: AdminPageInfo;
+  billing: {
+    loaded: boolean;
+    paidUsers: number | null;
+    unpaidUsers: number | null;
+    billingUnavailableUsers: number | null;
+  };
+  generatedAt: string | null;
+};
+
+type AdminOrganizationsPayload = {
+  organizations: AdminOrganization[];
+  page: AdminPageInfo;
+  generatedAt: string | null;
+};
+
+type AdminMetricsPayload = {
+  summary: AdminSummary;
+  generatedAt: string | null;
+};
+
 type AdminPayload = {
   viewer: {
     id: string;
@@ -129,6 +164,8 @@ type AdminPayload = {
   summary: AdminSummary;
   users: AdminUser[];
   organizations: AdminOrganization[];
+  userPage: AdminPageInfo;
+  organizationPage: AdminPageInfo;
   generatedAt: string | null;
 };
 
@@ -198,8 +235,54 @@ function parseActivitySeries(value: unknown): ActivityPoint[] {
   return points;
 }
 
+function parseAdminPageInfo(value: unknown, total: number, returned: number): AdminPageInfo {
+  if (!isRecord(value)) {
+    return { total, limit: returned, offset: 0, returned, hasMore: false, search: "", durationMs: 0 };
+  }
+
+  return {
+    total: toNumberValue(value.total),
+    limit: toNumberValue(value.limit),
+    offset: toNumberValue(value.offset),
+    returned: toNumberValue(value.returned),
+    hasMore: value.hasMore === true,
+    search: toStringValue(value.search) ?? "",
+    durationMs: toNumberValue(value.durationMs)
+  };
+}
+
+function parseAdminSummary(summary: Record<string, unknown>, organizationFallback: number): AdminSummary {
+  return {
+    totalUsers: toNumberValue(summary.totalUsers),
+    totalOrganizations: toNumberValue(summary.totalOrganizations) || organizationFallback,
+    verifiedUsers: toNullableNumberValue(summary.verifiedUsers),
+    recentUsers7d: toNullableNumberValue(summary.recentUsers7d),
+    recentUsers30d: toNullableNumberValue(summary.recentUsers30d),
+    totalWorkers: toNullableNumberValue(summary.totalWorkers),
+    cloudWorkers: toNullableNumberValue(summary.cloudWorkers),
+    localWorkers: toNullableNumberValue(summary.localWorkers),
+    usersWithWorkers: toNullableNumberValue(summary.usersWithWorkers),
+    usersWithoutWorkers: toNullableNumberValue(summary.usersWithoutWorkers),
+    paidUsers: toNullableNumberValue(summary.paidUsers),
+    unpaidUsers: toNullableNumberValue(summary.unpaidUsers),
+    billingUnavailableUsers: toNullableNumberValue(summary.billingUnavailableUsers),
+    adminCount: toNumberValue(summary.adminCount),
+    billingLoaded: summary.billingLoaded === true,
+    activeUsers1d: toNullableNumberValue(summary.activeUsers1d),
+    activeUsers7d: toNullableNumberValue(summary.activeUsers7d),
+    activeUsers30d: toNullableNumberValue(summary.activeUsers30d),
+    realActiveUsers1d: toNullableNumberValue(summary.realActiveUsers1d),
+    realActiveUsers7d: toNullableNumberValue(summary.realActiveUsers7d),
+    realActiveUsers30d: toNullableNumberValue(summary.realActiveUsers30d),
+    recurringUsers: toNullableNumberValue(summary.recurringUsers),
+    inviters: toNullableNumberValue(summary.inviters),
+    medianHoursToFirstInvite: toNullableNumberValue(summary.medianHoursToFirstInvite),
+    activitySeries: parseActivitySeries(summary.activitySeries)
+  };
+}
+
 function parseAdminPayload(payload: unknown): AdminPayload | null {
-  if (!isRecord(payload) || !isRecord(payload.summary) || !Array.isArray(payload.users) || !Array.isArray(payload.admins)) {
+  if (!isRecord(payload) || !isRecord(payload.summary) || !isRecord(payload.userPage) || !isRecord(payload.organizationPage) || !Array.isArray(payload.users) || !Array.isArray(payload.admins)) {
     return null;
   }
 
@@ -315,34 +398,81 @@ function parseAdminPayload(payload: unknown): AdminPayload | null {
       name: toStringValue(viewer.name)
     },
     admins,
-    summary: {
-      totalUsers: toNumberValue(summary.totalUsers),
-      verifiedUsers: toNumberValue(summary.verifiedUsers),
-      recentUsers7d: toNumberValue(summary.recentUsers7d),
-      recentUsers30d: toNumberValue(summary.recentUsers30d),
-      totalWorkers: toNumberValue(summary.totalWorkers),
-      cloudWorkers: toNumberValue(summary.cloudWorkers),
-      localWorkers: toNumberValue(summary.localWorkers),
-      usersWithWorkers: toNumberValue(summary.usersWithWorkers),
-      usersWithoutWorkers: toNumberValue(summary.usersWithoutWorkers),
-      paidUsers: toNullableNumberValue(summary.paidUsers),
-      unpaidUsers: toNullableNumberValue(summary.unpaidUsers),
-      billingUnavailableUsers: toNullableNumberValue(summary.billingUnavailableUsers),
-      adminCount: toNumberValue(summary.adminCount),
-      billingLoaded: summary.billingLoaded === true,
-      activeUsers1d: toNumberValue(summary.activeUsers1d),
-      activeUsers7d: toNumberValue(summary.activeUsers7d),
-      activeUsers30d: toNumberValue(summary.activeUsers30d),
-      realActiveUsers1d: toNumberValue(summary.realActiveUsers1d),
-      realActiveUsers7d: toNumberValue(summary.realActiveUsers7d),
-      realActiveUsers30d: toNumberValue(summary.realActiveUsers30d),
-      recurringUsers: toNumberValue(summary.recurringUsers),
-      inviters: toNumberValue(summary.inviters),
-      medianHoursToFirstInvite: toNullableNumberValue(summary.medianHoursToFirstInvite),
-      activitySeries: parseActivitySeries(summary.activitySeries)
-    },
+    summary: parseAdminSummary(summary, organizations.length),
     users,
     organizations,
+    userPage: parseAdminPageInfo(payload.userPage, toNumberValue(summary.totalUsers), users.length),
+    organizationPage: parseAdminPageInfo(payload.organizationPage, toNumberValue(summary.totalOrganizations), organizations.length),
+    generatedAt: toStringValue(payload.generatedAt)
+  };
+}
+
+function parseAdminUsersPayload(payload: unknown): AdminUsersPayload | null {
+  if (!isRecord(payload) || !Array.isArray(payload.users)) {
+    return null;
+  }
+
+  const parsed = parseAdminPayload({
+    viewer: {},
+    admins: [],
+    summary: {},
+    users: payload.users,
+    organizations: [],
+    userPage: payload.page,
+    organizationPage: {},
+    generatedAt: payload.generatedAt
+  });
+  if (!parsed) {
+    return null;
+  }
+
+  const billing = isRecord(payload.billing) ? payload.billing : {};
+  return {
+    users: parsed.users,
+    page: parseAdminPageInfo(payload.page, parsed.users.length, parsed.users.length),
+    billing: {
+      loaded: billing.loaded === true,
+      paidUsers: toNullableNumberValue(billing.paidUsers),
+      unpaidUsers: toNullableNumberValue(billing.unpaidUsers),
+      billingUnavailableUsers: toNullableNumberValue(billing.billingUnavailableUsers)
+    },
+    generatedAt: toStringValue(payload.generatedAt)
+  };
+}
+
+function parseAdminOrganizationsPayload(payload: unknown): AdminOrganizationsPayload | null {
+  if (!isRecord(payload) || !Array.isArray(payload.organizations)) {
+    return null;
+  }
+
+  const parsed = parseAdminPayload({
+    viewer: {},
+    admins: [],
+    summary: {},
+    users: [],
+    organizations: payload.organizations,
+    userPage: {},
+    organizationPage: payload.page,
+    generatedAt: payload.generatedAt
+  });
+  if (!parsed) {
+    return null;
+  }
+
+  return {
+    organizations: parsed.organizations,
+    page: parseAdminPageInfo(payload.page, parsed.organizations.length, parsed.organizations.length),
+    generatedAt: toStringValue(payload.generatedAt)
+  };
+}
+
+function parseAdminMetricsPayload(payload: unknown): AdminMetricsPayload | null {
+  if (!isRecord(payload) || !isRecord(payload.summary)) {
+    return null;
+  }
+
+  return {
+    summary: parseAdminSummary(payload.summary, 0),
     generatedAt: toStringValue(payload.generatedAt)
   };
 }
@@ -385,6 +515,11 @@ function storeAdminOverviewCache(payload: unknown) {
 }
 
 function readAdminOverviewCache(): AdminPayload | null {
+  if (shouldClearAdminCacheFromUrl()) {
+    clearAdminOverviewCache();
+    return null;
+  }
+
   const parsedCachedPayload = parseAdminPayload(cachedAdminOverviewPayload);
   if (parsedCachedPayload) {
     return parsedCachedPayload;
@@ -462,10 +597,304 @@ function getErrorMessage(payload: unknown, fallback: string): string {
   return fallback;
 }
 
-async function requestJson(path: string) {
+function isAdminScaleFixtureEnabled(): boolean {
+  if (process.env.NODE_ENV === "production" || typeof window === "undefined") {
+    return false;
+  }
+
+  return new URLSearchParams(window.location.search).get("adminScaleFixture") === "1";
+}
+
+function shouldClearAdminCacheFromUrl(): boolean {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  return new URLSearchParams(window.location.search).get("adminClearCache") === "1";
+}
+
+function fixturePageInfo(total: number, returned: number, offset: number, search: string, durationMs: number): AdminPageInfo {
+  return {
+    total,
+    limit: ADMIN_PAGE_SIZE,
+    offset,
+    returned,
+    search,
+    durationMs,
+    hasMore: offset + returned < total
+  };
+}
+
+function buildFixtureUser(index: number, includeBilling: boolean): AdminUser {
+  const target = index === ADMIN_SCALE_FIXTURE_USERS - 7;
+  const email = target ? "scale-search-target@example.com" : `user${index}@company${index % 997}.example`;
+  const organizationId = `org_${String(index % ADMIN_SCALE_FIXTURE_ORGANIZATIONS).padStart(5, "0")}`;
+  return {
+    id: `user_${String(index).padStart(5, "0")}`,
+    name: target ? "Scale Search Target" : `User ${index}`,
+    email,
+    emailVerified: index % 3 !== 0,
+    createdAt: "2026-07-01T12:00:00.000Z",
+    updatedAt: "2026-07-10T12:00:00.000Z",
+    lastSeenAt: "2026-07-12T12:00:00.000Z",
+    sessionCount: target ? 42 : index % 9,
+    activeDayCount: target ? 8 : index % 4,
+    isRecurring: target || index % 4 > 1,
+    lastActiveAt: "2026-07-12T12:00:00.000Z",
+    invitesSent: target ? 5 : index % 3,
+    firstInviteAt: target ? "2026-07-02T12:00:00.000Z" : null,
+    hoursToFirstInvite: target ? 24 : null,
+    authProviders: target ? ["scale-provider"] : [index % 2 === 0 ? "google" : "github"],
+    workerCount: target ? 3 : index % 2,
+    cloudWorkerCount: target ? 2 : index % 2,
+    localWorkerCount: target ? 1 : 0,
+    latestWorkerCreatedAt: target ? "2026-07-12T10:00:00.000Z" : null,
+    billing: includeBilling ? {
+      status: target ? "paid" : "unpaid",
+      featureGateEnabled: false,
+      subscriptionId: target ? "sub_scale_fixture" : null,
+      subscriptionStatus: target ? "active" : null,
+      currentPeriodEnd: target ? "2026-08-01T00:00:00.000Z" : null,
+      source: "subscription",
+      note: target ? "Covered by an active Stripe organization subscription." : "No cached Stripe organization subscription covers this user."
+    } : null,
+    organizations: [{
+      id: organizationId,
+      name: target ? "Scale Target Org" : `Organization ${index % ADMIN_SCALE_FIXTURE_ORGANIZATIONS}`,
+      role: target ? "owner" : "member",
+      memberCount: target ? 128 : 3,
+      joinedAt: "2026-07-01T12:00:00.000Z"
+    }]
+  };
+}
+
+function fixtureUserMatches(index: number, search: string): boolean {
+  if (!search) {
+    return true;
+  }
+
+  const user = buildFixtureUser(index, false);
+  const haystack = [
+    user.id,
+    user.name ?? "",
+    user.email,
+    ...user.authProviders,
+    ...user.organizations.flatMap((organization) => [organization.id, organization.name, organization.role])
+  ].join(" ").toLowerCase();
+  return haystack.includes(search.toLowerCase());
+}
+
+function fixtureUsers(search: string, offset: number, includeBilling: boolean) {
+  const rows: AdminUser[] = [];
+  let total = 0;
+
+  if (!search) {
+    for (let index = offset; index < Math.min(offset + ADMIN_PAGE_SIZE, ADMIN_SCALE_FIXTURE_USERS); index += 1) {
+      rows.push(buildFixtureUser(index, includeBilling));
+    }
+    return { rows, total: ADMIN_SCALE_FIXTURE_USERS };
+  }
+
+  for (let index = 0; index < ADMIN_SCALE_FIXTURE_USERS; index += 1) {
+    if (!fixtureUserMatches(index, search)) {
+      continue;
+    }
+    if (total >= offset && rows.length < ADMIN_PAGE_SIZE) {
+      rows.push(buildFixtureUser(index, includeBilling));
+    }
+    total += 1;
+  }
+
+  return { rows, total };
+}
+
+function buildFixtureOrganization(index: number): AdminOrganization {
+  const target = index === ADMIN_SCALE_FIXTURE_ORGANIZATIONS - 11;
+  return {
+    id: `org_${String(index).padStart(5, "0")}`,
+    name: target ? "Scale Performance Target Organization" : `Organization ${index}`,
+    slug: target ? "scale-performance-target" : `organization-${index}`,
+    createdAt: "2026-07-01T12:00:00.000Z",
+    updatedAt: "2026-07-10T12:00:00.000Z",
+    memberCount: target ? 128 : 4,
+    plan: { tier: target ? "enterprise" : "free", source: target ? "manual" : "default" },
+    seatLimit: target ? 500 : 5,
+    freeSeatCount: target ? 25 : DEFAULT_FREE_SEAT_COUNT,
+    seatsFreeAdditional: target ? 20 : 0,
+    billableSeatCount: target ? 103 : 0,
+    capabilities: { installLinks: target, mcpConnections: target }
+  };
+}
+
+function fixtureOrganizationMatches(index: number, search: string): boolean {
+  if (!search) {
+    return true;
+  }
+
+  const organization = buildFixtureOrganization(index);
+  return [organization.id, organization.name, organization.slug].some((value) => value.toLowerCase().includes(search.toLowerCase()));
+}
+
+function fixtureOrganizations(search: string, offset: number) {
+  const rows: AdminOrganization[] = [];
+  let total = 0;
+
+  if (!search) {
+    for (let index = offset; index < Math.min(offset + ADMIN_PAGE_SIZE, ADMIN_SCALE_FIXTURE_ORGANIZATIONS); index += 1) {
+      rows.push(buildFixtureOrganization(index));
+    }
+    return { rows, total: ADMIN_SCALE_FIXTURE_ORGANIZATIONS };
+  }
+
+  for (let index = 0; index < ADMIN_SCALE_FIXTURE_ORGANIZATIONS; index += 1) {
+    if (!fixtureOrganizationMatches(index, search)) {
+      continue;
+    }
+    if (total >= offset && rows.length < ADMIN_PAGE_SIZE) {
+      rows.push(buildFixtureOrganization(index));
+    }
+    total += 1;
+  }
+
+  return { rows, total };
+}
+
+function fixtureActivitySeries(): ActivityPoint[] {
+  const points: ActivityPoint[] = [];
+  for (let index = 29; index >= 0; index -= 1) {
+    const day = new Date(Date.now() - index * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    points.push({ day, activeUsers: 160 + (29 - index) * 3, realActiveUsers: 80 + (29 - index) * 2, signups: 11 + ((29 - index) % 5) });
+  }
+
+  return points;
+}
+
+function fixtureMetricsSummary(): AdminSummary {
+  return {
+    totalUsers: ADMIN_SCALE_FIXTURE_USERS,
+    totalOrganizations: ADMIN_SCALE_FIXTURE_ORGANIZATIONS,
+    verifiedUsers: 33_333,
+    recentUsers7d: 2_100,
+    recentUsers30d: 8_400,
+    totalWorkers: 25_002,
+    cloudWorkers: 25_001,
+    localWorkers: 1,
+    usersWithWorkers: 25_000,
+    usersWithoutWorkers: 25_000,
+    paidUsers: null,
+    unpaidUsers: null,
+    billingUnavailableUsers: null,
+    adminCount: 1,
+    billingLoaded: false,
+    activeUsers1d: 247,
+    activeUsers7d: 1_580,
+    activeUsers30d: 6_420,
+    realActiveUsers1d: 138,
+    realActiveUsers7d: 910,
+    realActiveUsers30d: 3_770,
+    recurringUsers: 25_001,
+    inviters: 33_333,
+    medianHoursToFirstInvite: 24,
+    activitySeries: fixtureActivitySeries()
+  };
+}
+
+function adminScaleFixturePayload(path: string): unknown | null {
+  if (!isAdminScaleFixtureEnabled()) {
+    return null;
+  }
+
+  const url = new URL(path, "http://admin.local");
+  const search = url.searchParams.get("search")?.trim() ?? "";
+  const offset = Math.min(ADMIN_MAX_PAGE_OFFSET, Math.max(0, Number(url.searchParams.get("offset") ?? "0") || 0));
+  const includeBilling = url.searchParams.get("includeBilling") === "1";
+  const generatedAt = new Date().toISOString();
+  const startedAt = performance.now();
+
+  if (url.pathname === "/v1/admin/users") {
+    const users = fixtureUsers(search, offset, includeBilling);
+    const durationMs = Math.round(performance.now() - startedAt);
+    return {
+      users: users.rows,
+      page: fixturePageInfo(users.total, users.rows.length, offset, search, durationMs),
+      billing: includeBilling
+        ? { loaded: true, paidUsers: users.rows.filter((user) => user.billing?.status === "paid").length, unpaidUsers: users.rows.filter((user) => user.billing?.status === "unpaid").length, billingUnavailableUsers: 0 }
+        : { loaded: false, paidUsers: null, unpaidUsers: null, billingUnavailableUsers: null },
+      generatedAt
+    };
+  }
+
+  if (url.pathname === "/v1/admin/organizations") {
+    const organizations = fixtureOrganizations(search, offset);
+    const durationMs = Math.round(performance.now() - startedAt);
+    return {
+      organizations: organizations.rows,
+      page: fixturePageInfo(organizations.total, organizations.rows.length, offset, search, durationMs),
+      generatedAt
+    };
+  }
+
+  if (url.pathname === "/v1/admin/overview") {
+    const users = fixtureUsers("", 0, false);
+    const durationMs = Math.round(performance.now() - startedAt);
+    return {
+      viewer: { id: "user_admin_fixture", email: "admin@example.com", name: "Admin Fixture" },
+      admins: [{ email: "admin@example.com", note: "Eval fixture admin" }],
+      users: users.rows,
+      organizations: [],
+      userPage: fixturePageInfo(ADMIN_SCALE_FIXTURE_USERS, users.rows.length, 0, "", durationMs),
+      organizationPage: fixturePageInfo(ADMIN_SCALE_FIXTURE_ORGANIZATIONS, 0, 0, "", 0),
+      summary: {
+        totalUsers: ADMIN_SCALE_FIXTURE_USERS,
+        totalOrganizations: ADMIN_SCALE_FIXTURE_ORGANIZATIONS,
+        verifiedUsers: null,
+        recentUsers7d: null,
+        recentUsers30d: null,
+        totalWorkers: null,
+        cloudWorkers: null,
+        localWorkers: null,
+        usersWithWorkers: null,
+        usersWithoutWorkers: null,
+        paidUsers: null,
+        unpaidUsers: null,
+        billingUnavailableUsers: null,
+        adminCount: 1,
+        billingLoaded: false,
+        activeUsers1d: null,
+        activeUsers7d: null,
+        activeUsers30d: null,
+        realActiveUsers1d: null,
+        realActiveUsers7d: null,
+        realActiveUsers30d: null,
+        recurringUsers: null,
+        inviters: null,
+        medianHoursToFirstInvite: null,
+        activitySeries: []
+      },
+      generatedAt
+    };
+  }
+
+  if (url.pathname === "/v1/admin/metrics") {
+    return {
+      summary: fixtureMetricsSummary(),
+      generatedAt
+    };
+  }
+
+  return null;
+}
+
+async function requestJson(path: string, signal?: AbortSignal) {
+  const fixturePayload = adminScaleFixturePayload(path);
+  if (fixturePayload) {
+    return { response: new Response(JSON.stringify(fixturePayload), { status: 200 }), payload: fixturePayload };
+  }
+
   const response = await fetch(`/api/den${path}`, {
     method: "GET",
     credentials: "include",
+    signal,
     headers: {
       Accept: "application/json"
     }
@@ -483,6 +912,10 @@ async function requestJson(path: string) {
   }
 
   return { response, payload };
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === "AbortError";
 }
 
 async function patchJson(path: string, body: unknown) {
@@ -611,19 +1044,6 @@ function formatRelativeTime(value: string | null): string {
   return `${Math.floor(diffMonths / 12)}y ago`;
 }
 
-function isWithinDays(value: string | null, days: number): boolean {
-  if (!value) {
-    return false;
-  }
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return false;
-  }
-
-  return Date.now() - date.getTime() <= days * 24 * 60 * 60 * 1000;
-}
-
 function formatHours(hours: number | null): string {
   if (hours === null) {
     return "-";
@@ -640,6 +1060,14 @@ function formatHours(hours: number | null): string {
   return `${Math.round(hours / 24)}d`;
 }
 
+function formatOptionalCount(value: number | null): string {
+  return value === null ? "Deferred" : String(value);
+}
+
+function formatOptionalDetail(value: number | null, label: string): string {
+  return value === null ? "Load analytics to calculate" : `${value} ${label}`;
+}
+
 function formatProvider(provider: string): string {
   return provider
     .split(/[-_]/g)
@@ -648,38 +1076,6 @@ function formatProvider(provider: string): string {
     .join(" ");
 }
 
-const PERSONAL_EMAIL_DOMAINS = new Set([
-  "gmail.com",
-  "googlemail.com",
-  "outlook.com",
-  "hotmail.com",
-  "live.com",
-  "msn.com",
-  "yahoo.com",
-  "ymail.com",
-  "icloud.com",
-  "me.com",
-  "mac.com",
-  "proton.me",
-  "protonmail.com",
-  "pm.me",
-  "gmx.com",
-  "gmx.de",
-  "gmx.net",
-  "aol.com",
-  "qq.com",
-  "163.com",
-  "126.com",
-  "mail.ru",
-  "yandex.ru",
-  "yandex.com",
-  "hey.com",
-  "fastmail.com",
-  "zoho.com",
-  "duck.com",
-  "mail.com"
-]);
-
 function getEmailDomain(email: string): string {
   const at = email.lastIndexOf("@");
   if (at === -1 || at === email.length - 1) {
@@ -687,58 +1083,6 @@ function getEmailDomain(email: string): string {
   }
 
   return email.slice(at + 1).trim().toLowerCase();
-}
-
-type DomainGroup = {
-  domain: string;
-  users: AdminUser[];
-  verifiedCount: number;
-  workerCount: number;
-  activeCount7d: number;
-  latestSignupAt: string | null;
-  isPersonal: boolean;
-};
-
-function buildDomainGroups(users: AdminUser[]): DomainGroup[] {
-  const groups = new Map<string, DomainGroup>();
-
-  for (const user of users) {
-    const domain = getEmailDomain(user.email);
-    const group = groups.get(domain) ?? {
-      domain,
-      users: [],
-      verifiedCount: 0,
-      workerCount: 0,
-      activeCount7d: 0,
-      latestSignupAt: null,
-      isPersonal: PERSONAL_EMAIL_DOMAINS.has(domain)
-    };
-
-    group.users.push(user);
-    if (user.emailVerified) {
-      group.verifiedCount += 1;
-    }
-    if (isWithinDays(user.lastActiveAt, 7)) {
-      group.activeCount7d += 1;
-    }
-    group.workerCount += user.workerCount;
-    if (user.createdAt && (!group.latestSignupAt || user.createdAt > group.latestSignupAt)) {
-      group.latestSignupAt = user.createdAt;
-    }
-    groups.set(domain, group);
-  }
-
-  return Array.from(groups.values()).sort((a, b) => {
-    const aTime = a.latestSignupAt ?? "";
-    const bTime = b.latestSignupAt ?? "";
-    if (aTime !== bTime) {
-      return aTime > bTime ? -1 : 1;
-    }
-    if (a.users.length !== b.users.length) {
-      return b.users.length - a.users.length;
-    }
-    return a.domain.localeCompare(b.domain);
-  });
 }
 
 function csvEscape(value: string): string {
@@ -893,7 +1237,7 @@ function DenAdminLoadingShell() {
             <p className="text-[0.7rem] font-semibold uppercase tracking-[0.18em] text-slate-500">Den admin</p>
             <h1 className="mt-2 text-3xl font-semibold tracking-[-0.04em] text-slate-950">User backoffice</h1>
             <p className="mt-2 max-w-3xl text-sm leading-7 text-slate-600">
-              Loading the latest signup, worker, and activity summaries.
+              Loading global totals and the first bounded user page.
             </p>
           </div>
 
@@ -940,16 +1284,15 @@ export function DenAdminPanel() {
   const [payload, setPayload] = useState<AdminPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-  const [query, setQuery] = useState("");
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
+  const [userQuery, setUserQuery] = useState("");
+  const [organizationQuery, setOrganizationQuery] = useState("");
   const [viewMode, setViewMode] = useState<ViewMode>("users");
-  const [hidePersonalDomains, setHidePersonalDomains] = useState(true);
-  const [activityFilter, setActivityFilter] = useState<ActivityFilter>("all");
-  const [sortMode, setSortMode] = useState<SortMode>("newest");
-  const [workerFilter, setWorkerFilter] = useState<WorkerFilter>("all");
-  const [billingFilter, setBillingFilter] = useState<BillingFilter>("all");
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [copiedOrgId, setCopiedOrgId] = useState<string | null>(null);
   const [includeBilling, setIncludeBilling] = useState(false);
+  const [usersLoading, setUsersLoading] = useState(false);
+  const [organizationsLoading, setOrganizationsLoading] = useState(false);
   const [orgDrafts, setOrgDrafts] = useState<Record<string, { tier: AdminOrganization["plan"]["tier"]; seatLimit: string }>>({});
   const [savingOrgId, setSavingOrgId] = useState<string | null>(null);
   const [freeSeatsDialog, setFreeSeatsDialog] = useState<{ org: AdminOrganization; totalFreeSeats: string } | null>(null);
@@ -958,15 +1301,41 @@ export function DenAdminPanel() {
   const [capabilityError, setCapabilityError] = useState<{ orgId: string; message: string } | null>(null);
   const [deleteUserDialog, setDeleteUserDialog] = useState<AdminUser | null>(null);
   const [deletingUserId, setDeletingUserId] = useState<string | null>(null);
-  const [orgRenderLimit, setOrgRenderLimit] = useState(200);
+  const mountedAtRef = useRef<number | null>(null);
+  const overviewRequestIdRef = useRef(0);
+  const userRequestIdRef = useRef(0);
+  const organizationRequestIdRef = useRef(0);
+  const payloadRef = useRef<AdminPayload | null>(null);
+  const includeBillingRef = useRef(includeBilling);
+  const userSearchStartedAtRef = useRef<number | null>(null);
+  const organizationSearchStartedAtRef = useRef<number | null>(null);
+  const [overviewUsableMs, setOverviewUsableMs] = useState<number | null>(null);
+  const [userVisibleDurationMs, setUserVisibleDurationMs] = useState<number | null>(null);
+  const [organizationVisibleDurationMs, setOrganizationVisibleDurationMs] = useState<number | null>(null);
 
-  const loadOverview = useCallback(async (loadBilling: boolean) => {
+  if (mountedAtRef.current === null && typeof performance !== "undefined") {
+    mountedAtRef.current = performance.now();
+  }
+
+  useEffect(() => {
+    payloadRef.current = payload;
+  }, [payload]);
+
+  useEffect(() => {
+    includeBillingRef.current = includeBilling;
+  }, [includeBilling]);
+
+  const loadOverview = useCallback(async () => {
+    const requestId = overviewRequestIdRef.current + 1;
+    overviewRequestIdRef.current = requestId;
     setRefreshing(true);
     setError(null);
 
     try {
-      const suffix = loadBilling ? "?includeBilling=1" : "";
-      const { response, payload: nextPayload } = await requestJson(`/v1/admin/overview${suffix}`);
+      const { response, payload: nextPayload } = await requestJson("/v1/admin/overview");
+      if (requestId !== overviewRequestIdRef.current) {
+        return;
+      }
 
       if (response.status === 401) {
         clearAdminOverviewCache();
@@ -999,26 +1368,233 @@ export function DenAdminPanel() {
 
       storeAdminOverviewCache(nextPayload);
       setIncludeBilling(parsed.summary.billingLoaded);
+      payloadRef.current = parsed;
       setAccessState("ready");
       setPayload(parsed);
     } catch (nextError) {
-      setAccessState("error");
-      setPayload(null);
+      if (requestId === overviewRequestIdRef.current) {
+        setAccessState("error");
+        setPayload(null);
+        setError(nextError instanceof Error ? nextError.message : "Unknown network error");
+      }
+    } finally {
+      if (requestId === overviewRequestIdRef.current) {
+        setRefreshing(false);
+      }
+    }
+  }, []);
+
+  const loadUsers = useCallback(async (search: string, offset: number, loadBilling: boolean, signal?: AbortSignal, existingRequestId?: number) => {
+    const requestId = existingRequestId ?? userRequestIdRef.current + 1;
+    userRequestIdRef.current = requestId;
+    setUsersLoading(true);
+    setError(null);
+
+    try {
+      const params = new URLSearchParams({
+        limit: "50",
+        offset: String(offset),
+      });
+      const trimmed = search.trim();
+      if (trimmed) {
+        params.set("search", trimmed);
+      }
+      if (loadBilling) {
+        params.set("includeBilling", "1");
+      }
+
+      const { response, payload: nextPayload } = await requestJson(`/v1/admin/users?${params.toString()}`, signal);
+      if (requestId !== userRequestIdRef.current) {
+        return;
+      }
+      if (response.status === 401) {
+        clearAdminOverviewCache();
+        setAccessState("signed-out");
+        setPayload(null);
+        return;
+      }
+      if (response.status === 403) {
+        clearAdminOverviewCache();
+        setAccessState("forbidden");
+        setPayload(null);
+        return;
+      }
+      if (!response.ok) {
+        setError(getErrorMessage(nextPayload, `User search failed with ${response.status}.`));
+        return;
+      }
+
+      const parsed = parseAdminUsersPayload(nextPayload);
+      if (requestId !== userRequestIdRef.current) {
+        return;
+      }
+      if (!parsed) {
+        setError("User search payload was missing required fields.");
+        return;
+      }
+
+      setIncludeBilling(parsed.billing.loaded);
+      setPayload((current) => {
+        if (!current) {
+          return current;
+        }
+        return {
+          ...current,
+          users: parsed.users,
+          userPage: parsed.page,
+          generatedAt: parsed.generatedAt,
+          summary: {
+            ...current.summary,
+            billingLoaded: parsed.billing.loaded,
+            paidUsers: parsed.billing.paidUsers,
+            unpaidUsers: parsed.billing.unpaidUsers,
+            billingUnavailableUsers: parsed.billing.billingUnavailableUsers
+          }
+        };
+      });
+    } catch (nextError) {
+      if (requestId === userRequestIdRef.current && !isAbortError(nextError)) {
+        setError(nextError instanceof Error ? nextError.message : "Unknown network error");
+      }
+    } finally {
+      if (requestId === userRequestIdRef.current) {
+        setUsersLoading(false);
+      }
+    }
+  }, []);
+
+  const loadOrganizations = useCallback(async (search: string, offset: number, signal?: AbortSignal, existingRequestId?: number) => {
+    const requestId = existingRequestId ?? organizationRequestIdRef.current + 1;
+    organizationRequestIdRef.current = requestId;
+    setOrganizationsLoading(true);
+    setError(null);
+
+    try {
+      const params = new URLSearchParams({
+        limit: "50",
+        offset: String(offset),
+      });
+      const trimmed = search.trim();
+      if (trimmed) {
+        params.set("search", trimmed);
+      }
+
+      const { response, payload: nextPayload } = await requestJson(`/v1/admin/organizations?${params.toString()}`, signal);
+      if (requestId !== organizationRequestIdRef.current) {
+        return;
+      }
+      if (response.status === 401) {
+        clearAdminOverviewCache();
+        setAccessState("signed-out");
+        setPayload(null);
+        return;
+      }
+      if (response.status === 403) {
+        clearAdminOverviewCache();
+        setAccessState("forbidden");
+        setPayload(null);
+        return;
+      }
+      if (!response.ok) {
+        setError(getErrorMessage(nextPayload, `Organization search failed with ${response.status}.`));
+        return;
+      }
+
+      const parsed = parseAdminOrganizationsPayload(nextPayload);
+      if (requestId !== organizationRequestIdRef.current) {
+        return;
+      }
+      if (!parsed) {
+        setError("Organization search payload was missing required fields.");
+        return;
+      }
+
+      setPayload((current) => {
+        if (!current) {
+          return current;
+        }
+        return {
+          ...current,
+          organizations: parsed.organizations,
+          organizationPage: parsed.page,
+          generatedAt: parsed.generatedAt
+        };
+      });
+    } catch (nextError) {
+      if (requestId === organizationRequestIdRef.current && !isAbortError(nextError)) {
+        setError(nextError instanceof Error ? nextError.message : "Unknown network error");
+      }
+    } finally {
+      if (requestId === organizationRequestIdRef.current) {
+        setOrganizationsLoading(false);
+      }
+    }
+  }, []);
+
+  const loadAnalytics = useCallback(async () => {
+    setAnalyticsLoading(true);
+    setError(null);
+
+    try {
+      const { response, payload: nextPayload } = await requestJson("/v1/admin/metrics");
+      if (response.status === 401) {
+        clearAdminOverviewCache();
+        setAccessState("signed-out");
+        setPayload(null);
+        return;
+      }
+      if (response.status === 403) {
+        clearAdminOverviewCache();
+        setAccessState("forbidden");
+        setPayload(null);
+        return;
+      }
+      if (!response.ok) {
+        setError(getErrorMessage(nextPayload, `Analytics request failed with ${response.status}.`));
+        return;
+      }
+
+      const parsed = parseAdminMetricsPayload(nextPayload);
+      if (!parsed) {
+        setError("Analytics payload was missing required fields.");
+        return;
+      }
+
+      setPayload((current) => {
+        if (!current) {
+          return current;
+        }
+
+        return {
+          ...current,
+          summary: {
+            ...parsed.summary,
+            billingLoaded: current.summary.billingLoaded,
+            paidUsers: current.summary.paidUsers,
+            unpaidUsers: current.summary.unpaidUsers,
+            billingUnavailableUsers: current.summary.billingUnavailableUsers
+          },
+          generatedAt: parsed.generatedAt
+        };
+      });
+    } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Unknown network error");
     } finally {
-      setRefreshing(false);
+      setAnalyticsLoading(false);
     }
   }, []);
 
   useEffect(() => {
     const cachedPayload = readAdminOverviewCache();
     if (cachedPayload) {
+      payloadRef.current = cachedPayload;
       setPayload(cachedPayload);
+      includeBillingRef.current = cachedPayload.summary.billingLoaded;
       setIncludeBilling(cachedPayload.summary.billingLoaded);
       setAccessState("ready");
     }
 
-    void loadOverview(false);
+    void loadOverview();
   }, [loadOverview]);
 
   useEffect(() => {
@@ -1039,122 +1615,99 @@ export function DenAdminPanel() {
     }
   }, []);
 
-  const filteredUsers = useMemo(() => {
-    if (!payload) {
-      return [] as AdminUser[];
+  const filteredUsers = payload?.users ?? [];
+  const filteredOrganizations = payload?.organizations ?? [];
+
+  useEffect(() => {
+    if (accessState !== "ready" || viewMode !== "users") {
+      return;
     }
 
-    const normalizedQuery = query.trim().toLowerCase();
-    const matches = payload.users.filter((user) => {
-      if (workerFilter === "with-workers" && user.workerCount === 0) {
-        return false;
-      }
-
-      if (workerFilter === "without-workers" && user.workerCount > 0) {
-        return false;
-      }
-
-      if (activityFilter === "active-7d" && !isWithinDays(user.lastActiveAt, 7)) {
-        return false;
-      }
-
-      if (activityFilter === "active-30d" && !isWithinDays(user.lastActiveAt, 30)) {
-        return false;
-      }
-
-      if (activityFilter === "recurring" && !user.isRecurring) {
-        return false;
-      }
-
-      if (activityFilter === "inactive-30d" && isWithinDays(user.lastActiveAt, 30)) {
-        return false;
-      }
-
-      if (payload.summary.billingLoaded && billingFilter !== "all") {
-        if (!user.billing || user.billing.status !== billingFilter) {
-          return false;
-        }
-      }
-
-      if (!normalizedQuery) {
-        return true;
-      }
-
-      const haystack = [
-        user.name ?? "",
-        user.email,
-        user.id,
-        ...user.authProviders,
-        ...user.organizations.flatMap((org) => [org.name, org.id, org.role])
-      ].join(" ").toLowerCase();
-      return haystack.includes(normalizedQuery);
-    });
-
-    if (sortMode === "newest") {
-      return matches;
+    const trimmedQuery = userQuery.trim();
+    const currentPayload = payloadRef.current;
+    if (currentPayload?.userPage.search === trimmedQuery) {
+      setUsersLoading(false);
+      return;
     }
 
-    // Server timestamps are ISO 8601, so lexicographic order is chronological.
-    return [...matches].sort((a, b) => {
-      if (sortMode === "recently-active") {
-        return (b.lastActiveAt ?? "").localeCompare(a.lastActiveAt ?? "");
-      }
+    const requestId = userRequestIdRef.current + 1;
+    userRequestIdRef.current = requestId;
+    setUsersLoading(true);
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => {
+      void loadUsers(trimmedQuery, 0, includeBillingRef.current, controller.signal, requestId);
+    }, ADMIN_SEARCH_DEBOUNCE_MS);
 
-      if (sortMode === "most-sign-ins") {
-        return b.sessionCount - a.sessionCount;
-      }
+    return () => {
+      controller.abort();
+      window.clearTimeout(timeout);
+    };
+  }, [accessState, loadUsers, userQuery, viewMode]);
 
-      if (sortMode === "most-active-days") {
-        return b.activeDayCount - a.activeDayCount;
-      }
-
-      const aHours = a.hoursToFirstInvite ?? Number.POSITIVE_INFINITY;
-      const bHours = b.hoursToFirstInvite ?? Number.POSITIVE_INFINITY;
-      return aHours - bHours;
-    });
-  }, [activityFilter, billingFilter, payload, query, sortMode, workerFilter]);
-
-  const domainGroups = useMemo(() => {
-    return payload ? buildDomainGroups(payload.users) : [];
-  }, [payload]);
-
-  const companyDomainCount = useMemo(() => {
-    return domainGroups.filter((group) => !group.isPersonal).length;
-  }, [domainGroups]);
-
-  const filteredDomains = useMemo(() => {
-    const normalizedQuery = query.trim().toLowerCase();
-    return domainGroups.filter((group) => {
-      if (hidePersonalDomains && group.isPersonal) {
-        return false;
-      }
-
-      if (!normalizedQuery) {
-        return true;
-      }
-
-      if (group.domain.includes(normalizedQuery)) {
-        return true;
-      }
-
-      return group.users.some((user) => `${user.name ?? ""} ${user.email}`.toLowerCase().includes(normalizedQuery));
-    });
-  }, [domainGroups, hidePersonalDomains, query]);
-
-  const filteredOrganizations = useMemo(() => {
-    if (!payload) {
-      return [] as AdminOrganization[];
+  useEffect(() => {
+    if (accessState !== "ready" || viewMode !== "organizations") {
+      return;
     }
 
-    const normalizedQuery = query.trim().toLowerCase();
-    if (!normalizedQuery) {
-      return payload.organizations;
+    const trimmedQuery = organizationQuery.trim();
+    const currentPayload = payloadRef.current;
+    if (currentPayload?.organizationPage.search === trimmedQuery && (currentPayload.organizations.length > 0 || currentPayload.organizationPage.total === 0 || currentPayload.organizationPage.offset > 0 || currentPayload.organizationPage.returned > 0)) {
+      setOrganizationsLoading(false);
+      return;
     }
 
-    return payload.organizations.filter((org) => `${org.name} ${org.slug} ${org.id}`.toLowerCase().includes(normalizedQuery));
-  }, [payload, query]);
-  const renderedOrganizations = filteredOrganizations.slice(0, orgRenderLimit);
-  const remainingOrganizationCount = filteredOrganizations.length - renderedOrganizations.length;
+    const requestId = organizationRequestIdRef.current + 1;
+    organizationRequestIdRef.current = requestId;
+    setOrganizationsLoading(true);
+    const controller = new AbortController();
+
+    if (trimmedQuery === "") {
+      void loadOrganizations(trimmedQuery, 0, controller.signal, requestId);
+      return () => {
+        controller.abort();
+      };
+    }
+
+    const timeout = window.setTimeout(() => {
+      void loadOrganizations(trimmedQuery, 0, controller.signal, requestId);
+    }, ADMIN_SEARCH_DEBOUNCE_MS);
+
+    return () => {
+      controller.abort();
+      window.clearTimeout(timeout);
+    };
+  }, [accessState, loadOrganizations, organizationQuery, viewMode]);
+
+  useEffect(() => {
+    if (accessState !== "ready" || !payload || overviewUsableMs !== null || mountedAtRef.current === null) {
+      return;
+    }
+
+    setOverviewUsableMs(Math.round(performance.now() - mountedAtRef.current));
+  }, [accessState, overviewUsableMs, payload]);
+
+  useEffect(() => {
+    if (!payload || usersLoading || userSearchStartedAtRef.current === null || payload.userPage.search !== userQuery.trim()) {
+      return;
+    }
+
+    setUserVisibleDurationMs(Math.round(performance.now() - userSearchStartedAtRef.current));
+    userSearchStartedAtRef.current = null;
+  }, [payload, userQuery, usersLoading]);
+
+  useEffect(() => {
+    if (!payload || organizationsLoading || organizationSearchStartedAtRef.current === null || payload.organizationPage.search !== organizationQuery.trim()) {
+      return;
+    }
+
+    const organizationPageLoaded = payload.organizations.length > 0 || payload.organizationPage.total === 0 || payload.organizationPage.offset > 0 || payload.organizationPage.returned > 0;
+    if (!organizationPageLoaded) {
+      return;
+    }
+
+    setOrganizationVisibleDurationMs(Math.round(performance.now() - organizationSearchStartedAtRef.current));
+    organizationSearchStartedAtRef.current = null;
+  }, [organizationQuery, organizationsLoading, payload]);
 
   useEffect(() => {
     if (!payload) {
@@ -1195,13 +1748,23 @@ export function DenAdminPanel() {
         return;
       }
 
-      await loadOverview(includeBilling);
+      setPayload((current) => {
+        if (!current) {
+          return current;
+        }
+        return {
+          ...current,
+          organizations: current.organizations.map((entry) => entry.id === org.id
+            ? { ...entry, plan: { ...entry.plan, tier: draft.tier, source: "manual" }, seatLimit }
+            : entry)
+        };
+      });
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Unknown network error");
     } finally {
       setSavingOrgId(null);
     }
-  }, [includeBilling, loadOverview, orgDrafts]);
+  }, [orgDrafts]);
 
   const saveOrganizationFreeSeats = useCallback(async () => {
     if (!freeSeatsDialog) {
@@ -1227,14 +1790,31 @@ export function DenAdminPanel() {
         return;
       }
 
+      const updatedOrganization = isRecord(nextPayload) && isRecord(nextPayload.organization) ? nextPayload.organization : null;
+      setPayload((current) => {
+        if (!current || !updatedOrganization) {
+          return current;
+        }
+        return {
+          ...current,
+          organizations: current.organizations.map((entry) => entry.id === freeSeatsDialog.org.id
+            ? {
+              ...entry,
+              memberCount: toNumberValue(updatedOrganization.memberCount),
+              freeSeatCount: toNumberValue(updatedOrganization.freeSeatCount),
+              seatsFreeAdditional: toNumberValue(updatedOrganization.seatsFreeAdditional),
+              billableSeatCount: toNumberValue(updatedOrganization.billableSeatCount)
+            }
+            : entry)
+        };
+      });
       setFreeSeatsDialog(null);
-      await loadOverview(includeBilling);
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Unknown network error");
     } finally {
       setSavingFreeSeatsOrgId(null);
     }
-  }, [freeSeatsDialog, includeBilling, loadOverview]);
+  }, [freeSeatsDialog]);
 
   const setOrganizationCapabilityLocally = useCallback((orgId: string, key: keyof AdminOrganizationCapabilities, enabled: boolean) => {
     setPayload((current) => {
@@ -1297,13 +1877,13 @@ export function DenAdminPanel() {
 
       setDeleteUserDialog(null);
       setSelectedUserId(null);
-      await loadOverview(includeBilling);
+      await loadOverview();
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Unknown network error");
     } finally {
       setDeletingUserId(null);
     }
-  }, [deleteUserDialog, includeBilling, loadOverview]);
+  }, [deleteUserDialog, loadOverview]);
 
   const exportCsv = useCallback(() => {
     const date = new Date().toISOString().slice(0, 10);
@@ -1328,23 +1908,6 @@ export function DenAdminPanel() {
       return;
     }
 
-    if (viewMode === "companies") {
-      downloadCsv(`den-companies-${date}.csv`, [
-        ["domain", "users", "active_7d", "verified", "workers", "latest_signup", "personal", "emails"],
-        ...filteredDomains.map((group) => [
-          group.domain,
-          String(group.users.length),
-          String(group.activeCount7d),
-          String(group.verifiedCount),
-          String(group.workerCount),
-          group.latestSignupAt ?? "",
-          group.isPersonal ? "yes" : "no",
-          group.users.map((user) => user.email).join("; ")
-        ])
-      ]);
-      return;
-    }
-
     downloadCsv(`den-users-${date}.csv`, [
       ["email", "name", "domain", "verified", "signed_up", "last_active", "sign_ins", "active_days", "recurring", "invites_sent", "hours_to_first_invite", "workers", "providers", "organizations"],
       ...filteredUsers.map((user) => [
@@ -1364,7 +1927,7 @@ export function DenAdminPanel() {
         user.organizations.map((org) => `${org.name} (${org.id}, ${org.role})`).join("; ")
       ])
     ]);
-  }, [filteredDomains, filteredOrganizations, filteredUsers, viewMode]);
+  }, [filteredOrganizations, filteredUsers, viewMode]);
 
   useEffect(() => {
     if (!payload) {
@@ -1416,7 +1979,7 @@ export function DenAdminPanel() {
           <button
             type="button"
             onClick={() => {
-              void loadOverview(includeBilling);
+              void loadOverview();
             }}
             className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700"
           >
@@ -1431,9 +1994,19 @@ export function DenAdminPanel() {
     return null;
   }
 
-  const billingDetail = payload.summary.billingLoaded
-    ? `${payload.summary.paidUsers ?? 0} paid / ${payload.summary.unpaidUsers ?? 0} unpaid`
-    : "Load billing only when you need it";
+  const billingValue = payload.summary.billingLoaded
+    ? formatOptionalCount(payload.summary.paidUsers)
+    : "On demand";
+  const billingDetail = payload.summary.billingLoaded && payload.summary.paidUsers !== null && payload.summary.unpaidUsers !== null
+    ? `${payload.summary.paidUsers} paid / ${payload.summary.unpaidUsers} unpaid on current page`
+    : payload.summary.billingLoaded
+      ? "Billing counts unavailable for this page"
+      : "Load billing only when you need it";
+  const inviterDetail = payload.summary.medianHoursToFirstInvite === null
+    ? "Load analytics to calculate"
+    : `Median time to invite ${formatHours(payload.summary.medianHoursToFirstInvite)}`;
+  const analyticsLoaded = payload.summary.verifiedUsers !== null || payload.summary.activitySeries.length > 0;
+  const pageDurationLabel = isAdminScaleFixtureEnabled() ? "fixture computation" : "server";
 
   return (
     <section className="mx-auto w-full max-w-6xl rounded-3xl border border-slate-200 bg-white shadow-sm">
@@ -1454,26 +2027,36 @@ export function DenAdminPanel() {
             <button
               type="button"
               onClick={() => {
-                void loadOverview(includeBilling);
+                void loadOverview();
               }}
               disabled={refreshing}
               className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {refreshing ? "Refreshing..." : "Refresh"}
             </button>
+            <button
+              type="button"
+              onClick={() => {
+                void loadAnalytics();
+              }}
+              disabled={analyticsLoading}
+              className="inline-flex items-center justify-center rounded-full bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {analyticsLoading ? "Loading analytics..." : analyticsLoaded ? "Refresh analytics" : "Load analytics"}
+            </button>
           </div>
         </div>
 
         <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
-          <StatCard label="Users" value={String(payload.summary.totalUsers)} detail={`${payload.summary.recentUsers7d} new in 7d`} />
-          <StatCard label="Active today" value={String(payload.summary.activeUsers1d)} detail={`${payload.summary.activeUsers7d} in 7d · ${payload.summary.activeUsers30d} in 30d`} />
-          <StatCard label="Real DAU" value={String(payload.summary.realActiveUsers1d)} detail={`Ran a task · ${payload.summary.realActiveUsers7d} in 7d · ${payload.summary.realActiveUsers30d} in 30d`} />
-          <StatCard label="Recurring" value={String(payload.summary.recurringUsers)} detail="Active on 2+ days" />
-          <StatCard label="Inviters" value={String(payload.summary.inviters)} detail={`Median time to invite ${formatHours(payload.summary.medianHoursToFirstInvite)}`} />
-          <StatCard label="Verified" value={String(payload.summary.verifiedUsers)} detail={`${payload.summary.totalUsers - payload.summary.verifiedUsers} still unverified`} />
-          <StatCard label="Worker creators" value={String(payload.summary.usersWithWorkers)} detail={`${payload.summary.usersWithoutWorkers} without workers`} />
-          <StatCard label="Workers" value={String(payload.summary.totalWorkers)} detail={`${payload.summary.cloudWorkers} cloud / ${payload.summary.localWorkers} local`} />
-          <StatCard label="Billing" value={payload.summary.billingLoaded ? String(payload.summary.paidUsers ?? 0) : "On demand"} detail={billingDetail} />
+          <StatCard label="Users" value={String(payload.summary.totalUsers)} detail={formatOptionalDetail(payload.summary.recentUsers7d, "new in 7d")} />
+          <StatCard label="Active today" value={formatOptionalCount(payload.summary.activeUsers1d)} detail="Load analytics to calculate" />
+          <StatCard label="Real DAU" value={formatOptionalCount(payload.summary.realActiveUsers1d)} detail="Load analytics to calculate" />
+          <StatCard label="Recurring" value={formatOptionalCount(payload.summary.recurringUsers)} detail="Load analytics to calculate" />
+          <StatCard label="Inviters" value={formatOptionalCount(payload.summary.inviters)} detail={inviterDetail} />
+          <StatCard label="Verified" value={formatOptionalCount(payload.summary.verifiedUsers)} detail="Load analytics to calculate" />
+          <StatCard label="Worker creators" value={formatOptionalCount(payload.summary.usersWithWorkers)} detail={payload.summary.usersWithoutWorkers === null ? "Load analytics to calculate" : `${payload.summary.usersWithoutWorkers} without workers`} />
+          <StatCard label="Workers" value={formatOptionalCount(payload.summary.totalWorkers)} detail="Load analytics to calculate" />
+          <StatCard label="Billing" value={billingValue} detail={billingDetail} />
           <StatCard label="Admins" value={String(payload.summary.adminCount)} detail="Whitelisted operator accounts" />
         </div>
 
@@ -1503,25 +2086,31 @@ export function DenAdminPanel() {
               onClick={() => setViewMode("companies")}
               className={`rounded-full px-4 py-1.5 text-sm font-semibold transition ${viewMode === "companies" ? "bg-slate-950 text-white" : "text-slate-600 hover:text-slate-900"}`}
             >
-              Companies ({companyDomainCount})
+              Companies (deferred)
             </button>
             <button
               type="button"
-              onClick={() => setViewMode("organizations")}
+              onClick={() => {
+                if (viewMode !== "organizations") {
+                  organizationSearchStartedAtRef.current = performance.now();
+                  setOrganizationVisibleDurationMs(null);
+                }
+                setViewMode("organizations");
+              }}
               className={`rounded-full px-4 py-1.5 text-sm font-semibold transition ${viewMode === "organizations" ? "bg-slate-950 text-white" : "text-slate-600 hover:text-slate-900"}`}
             >
-              Organizations ({payload.organizations.length})
+              Organizations ({payload.summary.totalOrganizations})
             </button>
           </div>
 
-          <button
-            type="button"
-            onClick={exportCsv}
-            disabled={viewMode === "organizations" ? filteredOrganizations.length === 0 : viewMode === "companies" ? filteredDomains.length === 0 : filteredUsers.length === 0}
-            className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            Export CSV
-          </button>
+            <button
+              type="button"
+              onClick={exportCsv}
+              disabled={viewMode === "companies" || (viewMode === "organizations" ? filteredOrganizations.length === 0 : filteredUsers.length === 0)}
+              className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              Export current page CSV
+            </button>
         </div>
 
         {error ? (
@@ -1530,134 +2119,136 @@ export function DenAdminPanel() {
           </div>
         ) : null}
 
+        {isAdminScaleFixtureEnabled() ? (
+          <div data-testid="admin-scale-eval-status" className="mt-4 rounded-2xl border border-violet-200 bg-violet-50 px-4 py-3 text-sm leading-6 text-violet-900">
+            Eval scale fixture active: 50,000 users · 60,000 organizations · first pages capped at 50. Browser usable {overviewUsableMs === null ? "measuring" : `${overviewUsableMs} ms`}. Real database budget command: pnpm benchmark:admin-scale:mysql (500 ms initial, 300 ms searches).
+          </div>
+        ) : null}
+
+        {(viewMode === "users" && usersLoading) || (viewMode === "organizations" && organizationsLoading) ? (
+          <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-6 text-slate-600" aria-busy="true">
+            Loading the bounded page…
+          </div>
+        ) : null}
+
         {viewMode === "organizations" ? (
-          <div className="mt-4" data-testid="admin-orgs-page">
-            <label className="grid w-full max-w-xl gap-2">
-              <span className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-slate-500">Search organizations</span>
-              <input
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="Org name, slug, or id"
-                className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400"
-              />
-            </label>
+          <div className="mt-4 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between" data-testid="admin-orgs-page">
+            <div className="grid w-full max-w-xl gap-2">
+              <label className="grid gap-2">
+                <span className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-slate-500">Search organizations</span>
+                <input
+                  value={organizationQuery}
+                  onChange={(event) => {
+                    overviewRequestIdRef.current += 1;
+                    setRefreshing(false);
+                    organizationRequestIdRef.current += 1;
+                    organizationSearchStartedAtRef.current = performance.now();
+                    setOrganizationVisibleDurationMs(null);
+                    setOrganizationQuery(event.target.value);
+                  }}
+                  placeholder="Org name, slug, or id"
+                  className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400"
+                />
+              </label>
+              <p className="text-xs leading-5 text-slate-500">
+                Search across all {payload.summary.totalOrganizations} organizations · page {payload.organizationPage.offset + 1}-{payload.organizationPage.offset + payload.organizationPage.returned} of {payload.organizationPage.total} · {pageDurationLabel} {payload.organizationPage.durationMs} ms{organizationVisibleDurationMs === null ? "" : ` · browser visible ${organizationVisibleDurationMs} ms`}
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  void loadOrganizations(organizationQuery, Math.max(0, payload.organizationPage.offset - payload.organizationPage.limit));
+                }}
+                disabled={organizationsLoading || payload.organizationPage.offset === 0}
+                className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Previous
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  void loadOrganizations(organizationQuery, payload.organizationPage.offset + payload.organizationPage.limit);
+                }}
+                disabled={organizationsLoading || !payload.organizationPage.hasMore}
+                className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Next
+              </button>
+            </div>
           </div>
         ) : viewMode === "companies" ? (
-          <div className="mt-4 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-            <label className="grid w-full max-w-xl gap-2">
-              <span className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-slate-500">Search companies</span>
-              <input
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="Domain, email, or name - try okta"
-                className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400"
-              />
-            </label>
-
-            <label className="flex items-center gap-2 pb-1 text-sm text-slate-600">
-              <input
-                type="checkbox"
-                checked={hidePersonalDomains}
-                onChange={(event) => setHidePersonalDomains(event.target.checked)}
-                className="h-4 w-4 rounded border-slate-300"
-              />
-              Hide personal email domains
-            </label>
+          <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 text-sm leading-6 text-slate-600">
+            Company-domain grouping is intentionally deferred at scale. It previously grouped only the loaded user list, which would be misleading now. Use server-side user search (for example, @acme.com) to find matching users across all {payload.summary.totalUsers} users.
           </div>
         ) : (
-        <div className="mt-4 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_10.5rem_11.5rem_10.5rem_10.5rem]">
-            <label className="grid gap-2">
-              <span className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-slate-500">Search users</span>
-              <input
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="Email, name, user id, provider"
-                className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400"
-              />
-            </label>
+          <div className="mt-4 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+            <div className="grid w-full max-w-xl gap-2">
+              <label className="grid gap-2">
+                <span className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-slate-500">Search users</span>
+                <input
+                  value={userQuery}
+                  onChange={(event) => {
+                    overviewRequestIdRef.current += 1;
+                    setRefreshing(false);
+                    userRequestIdRef.current += 1;
+                    userSearchStartedAtRef.current = performance.now();
+                    setUserVisibleDurationMs(null);
+                    setUserQuery(event.target.value);
+                  }}
+                  placeholder="Email, name, user id, provider, organization"
+                  className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400"
+                />
+              </label>
+              <p className="text-xs leading-5 text-slate-500">
+                Search across all {payload.summary.totalUsers} users · page {payload.userPage.offset + 1}-{payload.userPage.offset + payload.userPage.returned} of {payload.userPage.total} · {pageDurationLabel} {payload.userPage.durationMs} ms{userVisibleDurationMs === null ? "" : ` · browser visible ${userVisibleDurationMs} ms`}
+              </p>
+            </div>
 
-            <label className="grid gap-2">
-              <span className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-slate-500">Activity</span>
-              <select
-                value={activityFilter}
-                onChange={(event) => setActivityFilter(event.target.value as ActivityFilter)}
-                className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400"
+            <div className="flex flex-wrap gap-2">
+              {!payload.summary.billingLoaded ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    void loadUsers(userQuery, payload.userPage.offset, true);
+                  }}
+                  disabled={usersLoading}
+                  className="inline-flex items-center justify-center rounded-full bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  Load billing for page
+                </button>
+              ) : (
+                <p className="self-center text-sm text-slate-500">Billing loaded for this page only.</p>
+              )}
+              <button
+                type="button"
+                onClick={() => {
+                  void loadUsers(userQuery, Math.max(0, payload.userPage.offset - payload.userPage.limit), includeBilling);
+                }}
+                disabled={usersLoading || payload.userPage.offset === 0}
+                className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                <option value="all">All users</option>
-                <option value="active-7d">Active in 7d</option>
-                <option value="active-30d">Active in 30d</option>
-                <option value="recurring">Recurring</option>
-                <option value="inactive-30d">Inactive 30d+</option>
-              </select>
-            </label>
-
-            <label className="grid gap-2">
-              <span className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-slate-500">Sort</span>
-              <select
-                value={sortMode}
-                onChange={(event) => setSortMode(event.target.value as SortMode)}
-                className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400"
+                Previous
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  void loadUsers(userQuery, payload.userPage.offset + payload.userPage.limit, includeBilling);
+                }}
+                disabled={usersLoading || !payload.userPage.hasMore}
+                className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                <option value="newest">Newest signup</option>
-                <option value="recently-active">Recently active</option>
-                <option value="most-sign-ins">Most sign-ins</option>
-                <option value="most-active-days">Most active days</option>
-                <option value="fastest-invite">Fastest to invite</option>
-              </select>
-            </label>
-
-            <label className="grid gap-2">
-              <span className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-slate-500">Workers</span>
-              <select
-                value={workerFilter}
-                onChange={(event) => setWorkerFilter(event.target.value as WorkerFilter)}
-                className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400"
-              >
-                <option value="all">All users</option>
-                <option value="with-workers">With workers</option>
-                <option value="without-workers">Without workers</option>
-              </select>
-            </label>
-
-            <label className="grid gap-2">
-              <span className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-slate-500">Billing</span>
-              <select
-                value={billingFilter}
-                onChange={(event) => setBillingFilter(event.target.value as BillingFilter)}
-                disabled={!payload.summary.billingLoaded}
-                className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
-              >
-                <option value="all">All users</option>
-                <option value="paid">Paid</option>
-                <option value="unpaid">Unpaid</option>
-                <option value="unavailable">Unavailable</option>
-              </select>
-            </label>
+                Next
+              </button>
+            </div>
           </div>
-
-          {!payload.summary.billingLoaded ? (
-            <button
-              type="button"
-              onClick={() => {
-                void loadOverview(true);
-              }}
-              disabled={refreshing}
-              className="inline-flex items-center justify-center rounded-full bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              Load billing statuses
-            </button>
-          ) : (
-            <p className="text-sm text-slate-500">Billing loaded for {payload.summary.totalUsers} users.</p>
-          )}
-        </div>
         )}
 
         <div className="mt-6 grid gap-3">
           {viewMode === "organizations" ? (
             filteredOrganizations.length > 0 ? (
               <>
-                {renderedOrganizations.map((org) => {
+                {filteredOrganizations.map((org) => {
               const draft = orgDrafts[org.id] ?? { tier: org.plan.tier, seatLimit: String(org.seatLimit) };
               const changed = draft.tier !== org.plan.tier || draft.seatLimit !== String(org.seatLimit);
 
@@ -1743,8 +2334,8 @@ export function DenAdminPanel() {
                         Save failed — the change was reverted. {capabilityError.message}
                       </p>
                     ) : null}
-                    <p className="mt-1 text-xs text-slate-400">Off by default. Lets workspace admins mint desktop install links for this organization.</p>
-                    <p className="mt-1 text-xs text-slate-400">Off by default. Enables member-facing org connections, marketplace capabilities on the agent rail, and the desktop Connect tab.</p>
+                    <p className="mt-1 text-xs text-slate-400">On by default. Turn off to stop workspace admins from minting desktop install links for this organization.</p>
+                    <p className="mt-1 text-xs text-slate-400">On by default. Turn off to hide member-facing org connections, marketplace capabilities on the agent rail, and the desktop Connect tab.</p>
                   </div>
 
                   <div className="mt-4 grid gap-3 border-t border-slate-200 pt-4 lg:grid-cols-[12rem_10rem_auto] lg:items-end">
@@ -1789,20 +2380,6 @@ export function DenAdminPanel() {
                 </div>
               );
                 })}
-                {remainingOrganizationCount > 0 ? (
-                  <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
-                    <p className="text-sm text-slate-500">
-                      Showing {renderedOrganizations.length} of {filteredOrganizations.length} organizations
-                    </p>
-                    <button
-                      type="button"
-                      onClick={() => setOrgRenderLimit((current) => current + 200)}
-                      className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300"
-                    >
-                      Show more
-                    </button>
-                  </div>
-                ) : null}
               </>
             ) : (
               <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center">
@@ -1811,60 +2388,17 @@ export function DenAdminPanel() {
               </div>
             )
           ) : viewMode === "companies" ? (
-            filteredDomains.length > 0 ? filteredDomains.map((group) => (
-              <div key={group.domain} className="rounded-2xl border border-slate-200 bg-white px-4 py-4">
-                <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <p className="truncate text-base font-semibold text-slate-950">{group.domain}</p>
-                      {group.isPersonal ? (
-                        <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-100 px-2 py-0.5 text-[0.66rem] font-semibold uppercase tracking-[0.14em] text-slate-500">
-                          Personal
-                        </span>
-                      ) : null}
-                    </div>
-                    <p className="mt-1 truncate text-sm text-slate-500">
-                      {group.users.slice(0, 3).map((user) => user.email).join(", ")}
-                      {group.users.length > 3 ? ` +${group.users.length - 3} more` : ""}
-                    </p>
-                  </div>
-
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-slate-600">
-                      {group.users.length} {group.users.length === 1 ? "user" : "users"}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setQuery(`@${group.domain}`);
-                        setViewMode("users");
-                      }}
-                      className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300"
-                    >
-                      View users
-                    </button>
-                  </div>
-                </div>
-
-                <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-                  <MetaCell label="Latest signup" value={group.latestSignupAt ? `${formatRelativeTime(group.latestSignupAt)} · ${formatDateTime(group.latestSignupAt)}` : "-"} />
-                  <MetaCell label="Active 7d" value={`${group.activeCount7d} of ${group.users.length}`} />
-                  <MetaCell label="Verified" value={`${group.verifiedCount} of ${group.users.length}`} />
-                  <MetaCell label="Workers" value={String(group.workerCount)} />
-                </div>
-              </div>
-            )) : (
-              <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center">
-                <p className="text-base font-semibold text-slate-950">No company domains match</p>
-                <p className="mt-2 text-sm leading-7 text-slate-500">Try a different search, or include personal email domains.</p>
-              </div>
-            )
+            <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center">
+              <p className="text-base font-semibold text-slate-950">Company rollups are deferred at scale</p>
+              <p className="mt-2 text-sm leading-7 text-slate-500">This view no longer groups a partial user page. Search Users by domain to query the full user table server-side.</p>
+            </div>
           ) : filteredUsers.length > 0 ? filteredUsers.map((user) => {
             const isSelected = user.id === selectedUser?.id;
 
             return (
               <div
                 key={user.id}
+                data-testid={`admin-user-row-${user.id}`}
                 className={`rounded-2xl border px-4 py-4 transition ${isSelected ? "border-slate-900 bg-slate-50" : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50/70"}`}
               >
                 <button type="button" onClick={() => setSelectedUserId(user.id)} className="block w-full text-left">
@@ -1929,12 +2463,12 @@ export function DenAdminPanel() {
                             type="button"
                             onClick={(event) => {
                               event.stopPropagation();
-                              void loadOverview(true);
+                              void loadUsers(userQuery, payload.userPage.offset, true);
                             }}
-                            disabled={refreshing}
+                            disabled={usersLoading}
                             className="mt-3 inline-flex items-center justify-center rounded-full bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
                           >
-                            Load billing statuses
+                            Load billing for page
                           </button>
                         </div>
                       )}
@@ -2005,7 +2539,12 @@ export function DenAdminPanel() {
                                   <button
                                     type="button"
                                     onClick={() => {
-                                      setQuery(org.id);
+                                      overviewRequestIdRef.current += 1;
+                                      setRefreshing(false);
+                                      organizationRequestIdRef.current += 1;
+                                      organizationSearchStartedAtRef.current = performance.now();
+                                      setOrganizationVisibleDurationMs(null);
+                                      setOrganizationQuery(org.id);
                                       setViewMode("organizations");
                                     }}
                                     className="inline-flex items-center justify-center rounded-full bg-slate-950 px-3 py-1.5 text-xs font-semibold text-white"

@@ -1,6 +1,11 @@
 import { isReasoningUIPart, isToolUIPart, type DynamicToolUIPart, type FileUIPart, type ToolUIPart, type UIMessage } from "ai"
 import type { ThreadStatus } from "@/lib/messages"
 
+const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+const PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+const SAFE_DOWNLOAD_PROTOCOLS = new Set(["blob:", "data:"])
+
 interface MessageGroup {
   messages: UIMessageWithIndex[]
 }
@@ -29,7 +34,7 @@ export function getLastTextPart(message: UIMessage): UIMessage | null {
   return lastTextPart ? { ...message, parts: [lastTextPart] } : null
 }
 
-export function getFileTitle(part: FileUIPart) {
+export function getFileTitle(part: Pick<FileUIPart, "filename" | "url">) {
   if (part.filename) {
     return part.filename
   }
@@ -41,12 +46,35 @@ export function getFileTitle(part: FileUIPart) {
   return part.url || "File"
 }
 
-export function getMediaBadge(part: FileUIPart) {
-  if (part.mediaType && part.mediaType !== "application/octet-stream") {
-    return part.mediaType.replace(/^application\//, "").replace(/^text\//, "").toUpperCase()
+function extensionBadge(filename: string | undefined) {
+  const extension = filename?.split(".").pop()?.trim().toUpperCase() ?? ""
+  return /^[A-Z0-9]{1,8}$/.test(extension) ? extension : null
+}
+
+export function getMediaBadge(part: Pick<FileUIPart, "filename" | "mediaType">) {
+  const mime = part.mediaType?.trim().toLowerCase().split(";")[0] ?? ""
+
+  if (mime === DOCX_MIME) return "DOCX"
+  if (mime === PPTX_MIME) return "PPTX"
+  if (mime === XLSX_MIME) return "XLSX"
+
+  const fromExtension = extensionBadge(part.filename)
+  if (fromExtension === "DOCX" || fromExtension === "PPTX" || fromExtension === "XLSX") return fromExtension
+
+  if (mime && mime !== "application/octet-stream") {
+    return mime.replace(/^application\//, "").replace(/^text\//, "").toUpperCase()
   }
 
-  return part.filename?.split(".").pop()?.toUpperCase() ?? null
+  return fromExtension
+}
+
+export function getSafeFileDownloadUrl(part: Pick<FileUIPart, "url">) {
+  try {
+    const url = new URL(part.url)
+    return SAFE_DOWNLOAD_PROTOCOLS.has(url.protocol) ? part.url : null
+  } catch {
+    return null
+  }
 }
 
 export function getMessageCreated(message: UIMessage): number | null {

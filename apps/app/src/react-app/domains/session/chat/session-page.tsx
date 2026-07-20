@@ -107,6 +107,7 @@ type StatusBarOverrides = Pick<
   | "settingsOpen"
   | "reloadBusy"
   | "reloadError"
+  | "openWorkConnectState"
 >;
 
 export type SessionPageHistoryControls = {
@@ -131,7 +132,7 @@ export type SessionPageSidebarProps = {
   onSelectWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
   onOpenSession: (workspaceId: string, sessionId: string) => void;
   onPrefetchSession?: (workspaceId: string, sessionId: string) => void;
-  onCreateTaskInWorkspace: (workspaceId: string) => void;
+  onCreateTaskInWorkspace: (workspaceId: string, groupId?: string) => void;
   onCreateTaskWithPrompt?: (workspaceId: string, prompt: string) => void;
   onOpenRenameWorkspace: (workspaceId: string) => void;
   onShareWorkspace: (workspaceId: string) => void;
@@ -572,26 +573,33 @@ export function SessionPage(props: SessionPageProps) {
     if (!hasArtifactTargets || !props.selectedSessionId) return;
     const activeTab = sessionPanelState.tabs.find((tab) => tab.id === sessionPanelState.activeTabId);
     const artifactTargetIds = new Set(artifactFileTargets.map((target) => target.id));
+    const currentArtifactTab = activeTab?.type === "artifact" && artifactTargetIds.has(activeTab.id) ? activeTab : null;
     const artifactTab = sessionPanelState.tabs.find((tab) => (
       tab.type === "artifact" && artifactTargetIds.has(tab.id)
     ));
     const firstArtifact = artifactFileTargets[0];
+    const tabToSelect = currentArtifactTab?.id ?? artifactTab?.id ?? firstArtifact?.id ?? null;
+
+    for (const target of artifactFileTargets) {
+      if (sessionPanelState.tabs.some((tab) => tab.id === target.id)) continue;
+      openTab(props.selectedSessionId, {
+        id: target.id,
+        type: "artifact",
+        label: target.name,
+        preview: target.preview,
+      });
+    }
+
+    if (tabToSelect) {
+      selectTab(props.selectedSessionId, tabToSelect);
+    }
+
     if (panelRailActive && activeTab?.type === "artifact") {
       toggleCurrentSidePanel("panel");
       return;
     }
     if (!panelRailActive) {
       preserveSidePanelOnPanelOpenRef.current = true;
-    }
-    if (artifactTab) {
-      selectTab(props.selectedSessionId, artifactTab.id);
-    } else if (firstArtifact) {
-      openTab(props.selectedSessionId, {
-        id: firstArtifact.id,
-        type: "artifact",
-        label: firstArtifact.name,
-        preview: firstArtifact.preview,
-      });
     }
     if (!panelRailActive) {
       toggleCurrentSidePanel("panel");
@@ -1405,6 +1413,7 @@ export function SessionPage(props: SessionPageProps) {
               clientConnected={props.clientConnected}
               openworkServerStatus={props.openworkServerStatus}
               developerMode={props.developerMode}
+              showConnectionStatus={Boolean(props.selectedWorkspaceId)}
               settingsOpen={props.statusBar?.settingsOpen ?? false}
               onSendFeedback={props.onSendFeedback}
               onOpenSettings={props.onOpenSettings}
@@ -1414,6 +1423,7 @@ export function SessionPage(props: SessionPageProps) {
               showSettingsButton={props.statusBar?.showSettingsButton}
               reloadBusy={props.statusBar?.reloadBusy}
               reloadError={props.statusBar?.reloadError}
+              openWorkConnectState={props.statusBar?.openWorkConnectState}
             />
           ) : null}
               </main>

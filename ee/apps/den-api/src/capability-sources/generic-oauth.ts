@@ -58,11 +58,17 @@ export function createPkcePair() {
   return { verifier, challenge }
 }
 
-type OAuthStatePayload = {
+export type OAuthStatePayload = {
+  version?: 1 | 2
   organizationId: DenTypeId<"organization">
   orgMembershipId: DenTypeId<"member">
   providerId: string
+  binding?: string
+  callbackMode?: "shared-v1" | "isolated-v1" | "legacy-v1"
+  authorizationServerIssuer?: string
+  authorizationResponseIssuerRequired?: boolean
   nonce: string
+  iat?: number
   exp: number
 }
 
@@ -70,16 +76,29 @@ export function createOAuthStateToken(input: {
   organizationId: DenTypeId<"organization">
   orgMembershipId: DenTypeId<"member">
   providerId: string
+  binding?: string
+  version?: 1 | 2
+  callbackMode?: "shared-v1" | "isolated-v1" | "legacy-v1"
+  authorizationServerIssuer?: string
+  authorizationResponseIssuerRequired?: boolean
   secret: string
   ttlSeconds?: number
   now?: number
 }) {
   const nowMs = input.now ?? Date.now()
   const payload: OAuthStatePayload = {
+    ...(input.version ? { version: input.version } : {}),
     organizationId: input.organizationId,
     orgMembershipId: input.orgMembershipId,
     providerId: input.providerId,
+    ...(input.binding ? { binding: input.binding } : {}),
+    ...(input.callbackMode ? { callbackMode: input.callbackMode } : {}),
+    ...(input.authorizationServerIssuer ? { authorizationServerIssuer: input.authorizationServerIssuer } : {}),
+    ...(input.authorizationResponseIssuerRequired !== undefined
+      ? { authorizationResponseIssuerRequired: input.authorizationResponseIssuerRequired }
+      : {}),
     nonce: randomUUID(),
+    iat: Math.floor(nowMs / 1000),
     exp: Math.floor(nowMs / 1000) + (input.ttlSeconds ?? 10 * 60),
   }
   const encodedPayload = base64UrlEncode(JSON.stringify(payload))
@@ -106,9 +125,20 @@ export function verifyOAuthStateToken(input: { token: string; secret: string; no
       typeof payload.organizationId !== "string"
       || typeof payload.orgMembershipId !== "string"
       || typeof payload.providerId !== "string"
+      || (payload.binding !== undefined && typeof payload.binding !== "string")
+      || (payload.version !== undefined && payload.version !== 1 && payload.version !== 2)
+      || (payload.callbackMode !== undefined && payload.callbackMode !== "shared-v1" && payload.callbackMode !== "isolated-v1" && payload.callbackMode !== "legacy-v1")
+      || (payload.authorizationServerIssuer !== undefined && typeof payload.authorizationServerIssuer !== "string")
+      || (payload.authorizationResponseIssuerRequired !== undefined && typeof payload.authorizationResponseIssuerRequired !== "boolean")
       || typeof payload.nonce !== "string"
+      || (payload.iat !== undefined && typeof payload.iat !== "number")
       || typeof payload.exp !== "number"
       || payload.exp < nowSeconds
+      || (payload.version === 2 && (
+        typeof payload.binding !== "string"
+        || (payload.callbackMode !== "shared-v1" && payload.callbackMode !== "isolated-v1" && payload.callbackMode !== "legacy-v1")
+        || typeof payload.iat !== "number"
+      ))
     ) {
       return null
     }

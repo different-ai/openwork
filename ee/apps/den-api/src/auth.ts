@@ -39,6 +39,7 @@ import {
   getOrganizationSsoJitRole,
   ORGANIZATION_SSO_JIT_ROLE,
 } from "./sso-jit.js";
+import { isScimDeprovisionedIdentity } from "./scim-deprovisioning.js";
 import {
   ORGANIZATION_SAML_ALLOW_IDP_INITIATED,
   ORGANIZATION_SAML_DEPRECATED_ALGORITHM_BEHAVIOR,
@@ -55,6 +56,7 @@ import {
   findEnterpriseAuthRequirementForEmail,
   findEnterpriseAuthRequirementForUserId,
 } from "./enterprise-auth-requirement.js";
+import { getAuthBodyEmail, getSingleOrgEmailSignupPolicyViolation } from "./single-org-signup-policy.js";
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid";
 import * as schema from "@openwork-ee/den-db/schema";
 import { apiKey } from "@better-auth/api-key";
@@ -258,15 +260,6 @@ function throwMemberLifecycleError(message: string): never {
   throw new APIError("BAD_REQUEST", { message });
 }
 
-function getBodyEmail(body: unknown) {
-  if (!body || typeof body !== "object") {
-    return null;
-  }
-
-  const value = Object.getOwnPropertyDescriptor(body, "email")?.value;
-  return typeof value === "string" && value.trim() ? value.trim() : null;
-}
-
 function removedMemberIdentity(value: unknown): { id: string; organizationId: string } | null {
   if (!value || typeof value !== "object") {
     return null;
@@ -392,7 +385,14 @@ export const auth = betterAuth({
         return;
       }
 
-      const email = getBodyEmail(ctx.body);
+      const email = getAuthBodyEmail(ctx.body);
+      if (ctx.path === "/sign-up/email") {
+        const violation = await getSingleOrgEmailSignupPolicyViolation(email);
+        if (violation) {
+          throw new APIError("FORBIDDEN", { message: violation.message });
+        }
+      }
+
       if (!email) {
         return;
       }
@@ -761,9 +761,16 @@ export const auth = betterAuth({
         const remoteId = pickRemoteIdentity(userInfo);
         const displayName = maybeString(userInfo.name) ?? maybeString(userInfo.displayName) ?? maybeString(user.name);
         const email = maybeString(userInfo.email) ?? maybeString(user.email);
+        const organizationId = normalizeDenTypeId("organization", provider.organizationId);
+        const userId = normalizeDenTypeId("user", user.id);
+        if (await isScimDeprovisionedIdentity({ organizationId, userId, email })) {
+          throw new APIError("FORBIDDEN", {
+            message: "This user was deprovisioned by SCIM. Reactivate them in the identity provider before signing in.",
+          });
+        }
         const payload = {
-          organizationId: normalizeDenTypeId("organization", provider.organizationId),
-          userId: normalizeDenTypeId("user", user.id),
+          organizationId,
+          userId,
           source: "sso",
           ssoProviderId: provider.providerId,
           remoteId,

@@ -1,11 +1,23 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "bun:test";
 
-import { resolveConnectViewState } from "../src/react-app/domains/settings/pages/connect-view";
+import type { OpenworkCloudMcpHealth } from "../src/app/lib/openwork-server";
+import {
+  readyCloudMcpToolIds,
+  resolveConnectViewState,
+} from "../src/react-app/domains/settings/pages/connect-view";
 import {
   formatPluginConnectRowMeta,
   isDesktopInstallableMarketplacePlugin,
+  resolveConnectionRowGroup,
   resolveConnectRowGroup,
 } from "../src/react-app/domains/settings/connect-cloud-readiness";
+
+const connectViewSource = readFileSync(
+  fileURLToPath(new URL("../src/react-app/domains/settings/pages/connect-view.tsx", import.meta.url)),
+  "utf8",
+);
 
 describe("resolveConnectViewState", () => {
   test("shows loading while auth is being checked", () => {
@@ -31,6 +43,51 @@ describe("resolveConnectViewState", () => {
   test("signed-in users with no flag and no connections see the pitch", () => {
     expect(resolveConnectViewState({ authStatus: "signed_in", connectEnabled: false, connectionsCount: 0 })).toBe("pitch");
     expect(resolveConnectViewState({ authStatus: "signed_in", connectionsCount: 0 })).toBe("pitch");
+  });
+
+  test("signed-in users with an active org keep the Agent access card visible without catalog rollout", () => {
+    expect(resolveConnectViewState({ authStatus: "signed_in", connectEnabled: false, connectionsCount: 0, activeOrgSelected: true })).toBe("active");
+  });
+});
+
+function cloudHealth(usable: boolean): OpenworkCloudMcpHealth {
+  return {
+    schemaVersion: 1,
+    phase: usable ? "ready" : "cloud_tools_missing",
+    usable,
+    usableByCurrentModel: usable,
+    connectCatalogEnabled: true,
+    workspace: { id: "ws_1", type: "local", directory: "/workspace", path: "/workspace" },
+    desired: { present: true, name: "openwork-cloud", revision: "rev", config: null, token: { present: true, metadata: {} } },
+    delivery: { state: usable ? "ready" : "pending", desiredRevision: "rev", appliedRevision: usable ? "rev" : null, updatedAt: 1, appliedAt: usable ? 1 : null, lastAttemptAt: 1 },
+    engine: { status: usable ? "connected" : "failed" },
+    tools: {
+      expected: ["openwork-cloud_search_capabilities", "openwork-cloud_execute_capability"],
+      present: usable ? ["openwork-cloud_search_capabilities", "openwork-cloud_execute_capability", "other_tool"] : ["openwork-cloud_search_capabilities"],
+      missing: usable ? [] : ["openwork-cloud_execute_capability"],
+      providerProjection: { checked: true, present: [], missing: [] },
+    },
+    pluginCanaries: { expected: [], present: [], missing: [] },
+    toolDenies: [],
+    firstFailure: usable ? null : { code: "cloud_tools_missing", stage: "tool_ids", retryable: true, recommendedAction: "repair", message: "missing" },
+    checkedAt: "2026-07-09T12:00:00.000Z",
+  };
+}
+
+describe("Agent access card helpers", () => {
+  test("returns exact Cloud tools only when health is ready", () => {
+    expect(readyCloudMcpToolIds(cloudHealth(false))).toEqual([]);
+    expect(readyCloudMcpToolIds(cloudHealth(true))).toEqual([
+      "openwork-cloud_search_capabilities",
+      "openwork-cloud_execute_capability",
+    ]);
+  });
+
+  test("retries Agent access through the repair reconciler when connectivity returns", () => {
+    expect(connectViewSource).toContain('window.addEventListener("online", retryAfterReconnect)');
+    expect(connectViewSource).toContain('window.removeEventListener("online", retryAfterReconnect)');
+    expect(connectViewSource).toContain('mode: "repair"');
+    expect(connectViewSource).toContain('trigger: "desktop-connect-online-retry"');
   });
 });
 
@@ -64,7 +121,16 @@ describe("Connect cloud-readiness row resolution", () => {
     })).toBe("skills ready now · app needs setup · needs Sales");
   });
 
-  test("filters Extensions marketplace rows to desktop-installable plugins in Connect mode", () => {
+  test("never groups a connected account with missing features as ready", () => {
+    expect(resolveConnectionRowGroup({
+      credentialMode: "per_member",
+      connectedForMe: true,
+      needsReconnect: false,
+      missingFeatures: ["gmailDraft"],
+    })).toBe("needs_signin");
+  });
+
+  test("classifies desktop-only marketplace plugins for Connect exclusion", () => {
     expect(isDesktopInstallableMarketplacePlugin({ componentCounts: {}, cloudReadiness: { state: "desktop_only", hasInstructional: false, connections: [] } })).toBe(true);
     expect(isDesktopInstallableMarketplacePlugin({ componentCounts: {}, cloudReadiness: { state: "ready", hasInstructional: true, connections: [] } })).toBe(false);
     expect(isDesktopInstallableMarketplacePlugin({ componentCounts: { tool: 1 } })).toBe(true);

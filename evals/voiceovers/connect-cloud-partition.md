@@ -1,4 +1,4 @@
-# connect-cloud-partition — Connect lists cloud-runnable capabilities and Extensions keeps desktop installs
+# connect-cloud-partition — Connect lists cloud-runnable capabilities and Extensions stays local
 
 Cast is Alex, the Acme Robotics admin, using the OpenWork desktop app against the local Den stack. The proof seeds one organization marketplace with a ready cloud skill, one plugin that still needs an admin MCP connection, one desktop-only plugin, and one per-member team connection.
 
@@ -8,4 +8,4 @@ Cast is Alex, the Acme Robotics admin, using the OpenWork desktop app against th
 
 3. Because Alex is an admin, Connect also shows Needs admin setup. The plugin with an unmatched MCP dependency appears with the setup affordance that sends admins to Cloud connection management.
 
-4. Alex switches to Extensions and opens Marketplace while Connect mode is still on. The filtered marketplace shows only the desktop-only seeded plugin with its install action; the cloud-ready plugin is absent because it lives in Connect.
+4. Alex switches to Extensions and opens Marketplace. Organization marketplace plugins are absent there now — including the desktop-only seed — because legacy Extensions only keeps local/built-in affordances while marketplace delivery runs through Connect.

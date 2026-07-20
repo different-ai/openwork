@@ -5,6 +5,8 @@ RUN corepack enable
 
 WORKDIR /app
 
+ARG DEN_API_VERSION=dev
+ENV DEN_API_VERSION=${DEN_API_VERSION}
 ENV PORT=8788
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml /app/
@@ -13,6 +15,7 @@ COPY packages/types/package.json /app/packages/types/package.json
 COPY packages/email/package.json /app/packages/email/package.json
 COPY packages/enterprise-mcp-client/package.json /app/packages/enterprise-mcp-client/package.json
 COPY packages/install-config/package.json /app/packages/install-config/package.json
+COPY packages/connect-link/package.json /app/packages/connect-link/package.json
 COPY ee/packages/utils/package.json /app/ee/packages/utils/package.json
 COPY ee/packages/den-db/package.json /app/ee/packages/den-db/package.json
 COPY ee/apps/den-api/package.json /app/ee/apps/den-api/package.json
@@ -23,6 +26,7 @@ COPY packages/types /app/packages/types
 COPY packages/email /app/packages/email
 COPY packages/enterprise-mcp-client /app/packages/enterprise-mcp-client
 COPY packages/install-config /app/packages/install-config
+COPY packages/connect-link /app/packages/connect-link
 COPY ee/packages/utils /app/ee/packages/utils
 COPY ee/packages/den-db /app/ee/packages/den-db
 COPY ee/apps/den-api /app/ee/apps/den-api
@@ -31,6 +35,7 @@ COPY apps/desktop/package.json /app/apps/desktop/package.json
 RUN pnpm --dir /app/packages/email run build
 RUN pnpm --dir /app/packages/enterprise-mcp-client run build
 RUN pnpm --dir /app/packages/install-config run build
+RUN pnpm --dir /app/packages/connect-link run build
 RUN pnpm --dir /app/ee/packages/utils run build
 RUN pnpm --dir /app/ee/packages/den-db run build
 # Source-map upload is build-only; runtime Sentry still requires its own backend and DSN configuration.

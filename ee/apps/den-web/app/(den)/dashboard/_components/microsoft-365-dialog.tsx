@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Check } from "lucide-react";
 import { DenButton } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
+import { DenNotice } from "../../_components/ui/notice";
 import { useNativeProviderClient } from "./mcp-connections-data";
 import {
   MICROSOFT_365_DEFAULT_FEATURES,
@@ -224,7 +225,7 @@ export function Microsoft365Dialog({
         </div>
 
         {formError ? (
-          <p className="mt-3 text-[13px] text-red-600">{formError instanceof Error ? formError.message : "Failed to save the Microsoft 365 setup."}</p>
+          <DenNotice message={formError instanceof Error ? formError.message : "Failed to save the Microsoft 365 setup."} className="mt-3" />
         ) : null}
 
         <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">

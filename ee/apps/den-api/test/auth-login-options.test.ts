@@ -41,3 +41,11 @@ test("login option resolution prefers Google, then password, then GitHub compati
 test("login option resolution returns new account when no existing auth method matches", () => {
   expect(resolveLoginOptionKind({ requireSso: false, accounts: [] })).toBe("new_account")
 })
+
+test("login option resolution keeps private single-org unknown users in sign-in", () => {
+  expect(resolveLoginOptionKind({
+    requireSso: false,
+    accounts: [],
+    allowNewAccount: false,
+  })).toBe("password")
+})

@@ -14,6 +14,12 @@ import {
 } from "./cloud-mcp-user-state";
 
 const UNHEALTHY_REMINT_ATTEMPT_KEY = "openwork.den.mcp.unhealthyRemintAttempt";
+const scope = {
+  denBaseUrl: "https://cloud.openwork.test",
+  serverBaseUrl: "https://worker.openwork.test",
+  orgId: "org_1",
+  workspaceId: "ws_1",
+};
 
 function createStorageStub() {
   const values = new Map<string, string>();
@@ -42,13 +48,13 @@ describe("cloud MCP unhealthy re-mint attempt marker", () => {
     const { storage } = createStorageStub();
     __setCloudMcpUserStateStorageForTest(storage);
 
-    expect(readCloudMcpUnhealthyRemintAttempt()).toBe(null);
+    expect(readCloudMcpUnhealthyRemintAttempt(scope)).toBe(null);
 
-    writeCloudMcpUnhealthyRemintAttempt({ orgId: "org_1" });
-    expect(readCloudMcpUnhealthyRemintAttempt()).toEqual({ orgId: "org_1" });
+    writeCloudMcpUnhealthyRemintAttempt({ ...scope, attemptedAt: 123 });
+    expect(readCloudMcpUnhealthyRemintAttempt(scope)).toEqual({ ...scope, attemptedAt: 123 });
 
-    clearCloudMcpUnhealthyRemintAttempt();
-    expect(readCloudMcpUnhealthyRemintAttempt()).toBe(null);
+    clearCloudMcpUnhealthyRemintAttempt(scope);
+    expect(readCloudMcpUnhealthyRemintAttempt(scope)).toBe(null);
   });
 
   test("returns null for corrupt JSON", () => {
@@ -56,15 +62,16 @@ describe("cloud MCP unhealthy re-mint attempt marker", () => {
     __setCloudMcpUserStateStorageForTest(storage);
     values.set(UNHEALTHY_REMINT_ATTEMPT_KEY, "{");
 
-    expect(readCloudMcpUnhealthyRemintAttempt()).toBe(null);
+    expect(readCloudMcpUnhealthyRemintAttempt(scope)).toBe(null);
   });
 
-  test("returns the stored org so callers can compare org mismatches", () => {
+  test("keeps org-scoped markers separate", () => {
     const { storage } = createStorageStub();
     __setCloudMcpUserStateStorageForTest(storage);
 
-    writeCloudMcpUnhealthyRemintAttempt({ orgId: "org_a" });
+    writeCloudMcpUnhealthyRemintAttempt({ ...scope, orgId: "org_a", attemptedAt: 456 });
 
-    expect(readCloudMcpUnhealthyRemintAttempt()).toEqual({ orgId: "org_a" });
+    expect(readCloudMcpUnhealthyRemintAttempt(scope)).toBe(null);
+    expect(readCloudMcpUnhealthyRemintAttempt({ ...scope, orgId: "org_a" })).toEqual({ ...scope, orgId: "org_a", attemptedAt: 456 });
   });
 });

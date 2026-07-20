@@ -7,6 +7,7 @@ function seedRequiredEnv() {
   process.env.BETTER_AUTH_SECRET = process.env.BETTER_AUTH_SECRET ?? "y".repeat(32)
   process.env.BETTER_AUTH_URL = process.env.BETTER_AUTH_URL ?? "http://127.0.0.1:8790"
   process.env.DEN_ORG_MODE = ""
+  process.env.DEN_SINGLE_ORG_ALLOW_PUBLIC_SIGNUP = "false"
 }
 
 let authRoutesModule: typeof import("../src/routes/auth/index.js")
@@ -69,6 +70,23 @@ test("raw Better Auth organization creation is blocked in single_org mode", asyn
   await expect(response.json()).resolves.toEqual({
     error: "single_org_mode",
     message: "This deployment is configured for one organization. Additional organization changes are disabled.",
+  })
+})
+
+test("raw Better Auth email signup is blocked in private single_org mode before Better Auth validation", async () => {
+  const app = new Hono()
+  authRoutesModule.registerAuthRoutes(app)
+
+  const response = await app.request("http://den.local/api/auth/sign-up/email", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email: "invited@example.com", name: "Invited User", password: "x" }),
+  })
+
+  expect(response.status).toBe(403)
+  await expect(response.json()).resolves.toEqual({
+    error: "single_org_signup_disabled",
+    message: "Email signup is disabled for this deployment. Use your organization's SSO or a pre-provisioned account to sign in.",
   })
 })
 
@@ -154,6 +172,20 @@ test("single_org SSO-only guard recognizes email/password auth requests", () => 
   }))).toBe(false)
 
   expect(authRoutesModule.isBetterAuthEmailPasswordRequest(new Request("http://den.local/api/auth/sign-in/email", {
+    method: "GET",
+  }))).toBe(false)
+})
+
+test("single_org signup guard recognizes only the Better Auth email signup route", () => {
+  expect(authRoutesModule.isBetterAuthEmailSignupRequest(new Request("http://den.local/api/auth/sign-up/email", {
+    method: "POST",
+  }))).toBe(true)
+
+  expect(authRoutesModule.isBetterAuthEmailSignupRequest(new Request("http://den.local/api/auth/sign-in/email", {
+    method: "POST",
+  }))).toBe(false)
+
+  expect(authRoutesModule.isBetterAuthEmailSignupRequest(new Request("http://den.local/api/auth/sign-up/email", {
     method: "GET",
   }))).toBe(false)
 })

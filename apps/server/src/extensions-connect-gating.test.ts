@@ -293,8 +293,9 @@ describe("Connect-aware legacy extension gating", () => {
 
     const cloudGated = await callCalendarListEvents(base);
     const cloudBody = await readSchema(cloudGated, gatedCallSchema);
-    expect(cloudBody.message).toContain("call search_capabilities");
-    expect(cloudBody.message).toContain("execute_capability");
+    expect(cloudBody.message).toContain("agent access needs attention for this workspace");
+    expect(cloudBody.message).not.toContain("not ready");
+    expect(cloudBody.message).not.toContain("Repair and test");
     expect(cloudBody.message).toContain("Settings > Connect");
 
     const cloudStatus = await readSchema(
@@ -303,7 +304,7 @@ describe("Connect-aware legacy extension gating", () => {
     );
     expect(cloudStatus.connect).toEqual({
       enabled: true,
-      cloudMcpPresent: true,
+      cloudMcpPresent: false,
       guidance: cloudBody.message,
     });
   });
@@ -327,6 +328,8 @@ describe("Connect-aware legacy extension gating", () => {
     const get = await fetch(`${base}/experimental/connect/state`, { headers: clientHeaders() });
     expect(get.status).toBe(200);
     const getState = await readSchema(get, connectStateResponseSchema);
-    expect(getState).toEqual(putState);
+    expect(getState.connectEnabled).toBe(putState.connectEnabled);
+    expect(getState.cloudMcpPresent).toBe(putState.cloudMcpPresent);
+    expect(getState.googleWorkspace).toEqual(putState.googleWorkspace);
   });
 });

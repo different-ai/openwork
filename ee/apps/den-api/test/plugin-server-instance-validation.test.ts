@@ -183,7 +183,7 @@ beforeAll(async () => {
   const realAccess = { ...(await import("../src/routes/org/plugin-system/access.js")) }
   const realUrlGuard = { ...(await import("../src/capability-sources/url-guard.js")) }
   const realOauthCredentials = { ...(await import("../src/capability-sources/oauth-credentials.js")) }
-  const realClient = { ...(await import("../src/capability-sources/external-mcp-client.js")) }
+  const realClient = { ...(await import("../src/capability-sources/external-mcp-client-runtime.js")) }
   const realConnections = { ...(await import("../src/capability-sources/external-mcp-connections.js")) }
 
   mock.module("../src/db.js", () => ({
@@ -203,7 +203,7 @@ beforeAll(async () => {
     ...realOauthCredentials,
     upsertOrgOAuthClient: scopedFn(mockScope, () => realOauthCredentials.upsertOrgOAuthClient, async () => {}),
   }))
-  mock.module("../src/capability-sources/external-mcp-client.js", () => ({
+  mock.module("../src/capability-sources/external-mcp-client-runtime.js", () => ({
     ...realClient,
     connectExternalMcp: scopedFn(
       mockScope,

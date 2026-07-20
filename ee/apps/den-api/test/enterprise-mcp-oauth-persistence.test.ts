@@ -7,6 +7,7 @@ function seedRequiredEnv(): void {
   process.env.BETTER_AUTH_SECRET = process.env.BETTER_AUTH_SECRET ?? "local-dev-secret-not-for-production-use!!"
   process.env.BETTER_AUTH_URL = process.env.BETTER_AUTH_URL ?? "http://127.0.0.1:8790"
   process.env.CORS_ORIGINS = process.env.CORS_ORIGINS ?? "http://127.0.0.1:8790"
+  process.env.DEN_API_PUBLIC_URL = process.env.DEN_API_PUBLIC_URL ?? "http://127.0.0.1:8790"
   process.env.DEN_ALLOW_PRIVATE_MCP_URLS = "1"
 }
 
@@ -15,6 +16,7 @@ let schema: typeof import("@openwork-ee/den-db/schema")
 let drizzle: typeof import("@openwork-ee/den-db/drizzle")
 let DenEnterpriseMcpOAuthPersistence: typeof import("../src/capability-sources/enterprise-mcp-oauth-persistence.js").DenEnterpriseMcpOAuthPersistence
 let createExternalMcpConnection: typeof import("../src/capability-sources/external-mcp-connections.js").createExternalMcpConnection
+let confirmExternalMcpIssuerReview: typeof import("../src/capability-sources/external-mcp-connections.js").confirmExternalMcpIssuerReview
 
 const userId = createDenTypeId("user")
 const organizationId = createDenTypeId("organization")
@@ -35,6 +37,7 @@ beforeAll(async () => {
   drizzle = modules[2]
   DenEnterpriseMcpOAuthPersistence = modules[3].DenEnterpriseMcpOAuthPersistence
   createExternalMcpConnection = modules[4].createExternalMcpConnection
+  confirmExternalMcpIssuerReview = modules[4].confirmExternalMcpIssuerReview
 
   await db.insert(schema.AuthUserTable).values({
     id: userId,
@@ -83,6 +86,167 @@ function context(offsetMs = 30_000) {
 }
 
 describe("Den enterprise MCP OAuth persistence adapter", () => {
+  test("records reconnect-required health when a provider rejects a saved credential", async () => {
+    const rejected = await createExternalMcpConnection({
+      organizationId,
+      name: "Enterprise MCP rejected credential",
+      url: "https://mcp.example.test/rejected",
+      authType: "oauth",
+      credentialMode: "shared",
+      createdByOrgMembershipId: memberId,
+      access: { orgWide: true, memberIds: [], teamIds: [] },
+    })
+    await db.update(schema.ExternalMcpConnectionTable)
+      .set({ accessToken: "rejected-token", connectedAt: new Date() })
+      .where(drizzle.eq(schema.ExternalMcpConnectionTable.id, rejected.id))
+    const current = (await db.select()
+      .from(schema.ExternalMcpConnectionTable)
+      .where(drizzle.eq(schema.ExternalMcpConnectionTable.id, rejected.id))
+      .limit(1))[0]
+    if (!current) throw new Error("Expected the rejected credential connection.")
+    const persistence = new DenEnterpriseMcpOAuthPersistence(current)
+
+    await persistence.credentials.invalidate({
+      context: {
+        connectionId: current.id,
+        commitExpiresAt: Date.now() + 30_000,
+        signal: new AbortController().signal,
+      },
+      reason: "provider-rejected",
+    })
+
+    const after = (await db.select()
+      .from(schema.ExternalMcpConnectionTable)
+      .where(drizzle.eq(schema.ExternalMcpConnectionTable.id, rejected.id))
+      .limit(1))[0]
+    expect(after?.accessToken).toBeNull()
+    expect(after?.credentialHealth?.status).toBe("reconnect_required")
+    expect(after?.credentialHealth?.reason).toBe("authorization_rejected")
+  })
+
+  test("marks issuer mismatches for explicit administrator review", async () => {
+    const issuerConnection = await createExternalMcpConnection({
+      organizationId,
+      name: "Enterprise MCP changed issuer",
+      url: "https://mcp.example.test/issuer",
+      authType: "oauth",
+      credentialMode: "shared",
+      oauthConfiguration: {
+        version: 1,
+        authorizationServerIssuer: "https://login.old.example.test",
+        requestedScopes: [],
+      },
+      createdByOrgMembershipId: memberId,
+      access: { orgWide: true, memberIds: [], teamIds: [] },
+    })
+    const persistence = new DenEnterpriseMcpOAuthPersistence(issuerConnection)
+    await persistence.discovery.invalidate({
+      context: {
+        connectionId: issuerConnection.id,
+        commitExpiresAt: Date.now() + 30_000,
+        signal: new AbortController().signal,
+      },
+      reason: "issuer-mismatch",
+    })
+
+    const after = (await db.select()
+      .from(schema.ExternalMcpConnectionTable)
+      .where(drizzle.eq(schema.ExternalMcpConnectionTable.id, issuerConnection.id))
+      .limit(1))[0]
+    expect(after?.oauthConfiguration?.authorizationServerIssuer).toBe("https://login.old.example.test")
+    expect(after?.oauthIssuerReviewRequiredAt).not.toBeNull()
+  })
+
+  test("preserves credentials when an administrator confirms the same live issuer", async () => {
+    const issuer = "https://login.same.example.test"
+    const sameIssuer = await createExternalMcpConnection({
+      organizationId,
+      name: "Enterprise MCP same issuer review",
+      url: "https://mcp.example.test/same-issuer",
+      authType: "oauth",
+      credentialMode: "shared",
+      oauthConfiguration: { version: 1, authorizationServerIssuer: issuer, requestedScopes: [] },
+      createdByOrgMembershipId: memberId,
+      access: { orgWide: true, memberIds: [], teamIds: [] },
+    })
+    await db.update(schema.ExternalMcpConnectionTable).set({
+      accessToken: "still-valid-token",
+      connectedAt: new Date(),
+      oauthIssuerReviewRequiredAt: new Date(),
+    }).where(drizzle.eq(schema.ExternalMcpConnectionTable.id, sameIssuer.id))
+    const before = (await db.select().from(schema.ExternalMcpConnectionTable)
+      .where(drizzle.eq(schema.ExternalMcpConnectionTable.id, sameIssuer.id)).limit(1))[0]
+    if (!before) throw new Error("Expected the same-issuer connection.")
+
+    const result = await confirmExternalMcpIssuerReview({
+      organizationId,
+      connectionId: sameIssuer.id,
+      expectedUpdatedAt: before.updatedAt,
+      authorizationServerIssuer: issuer,
+    })
+
+    expect(result.status).toBe("confirmed")
+    if (result.status !== "confirmed") throw new Error("Expected issuer confirmation.")
+    expect(result.issuerChanged).toBe(false)
+    expect(result.connection.accessToken).toBe("still-valid-token")
+    expect(result.connection.oauthIssuerReviewRequiredAt).toBeNull()
+  })
+
+  test("invalidates issuer-bound OAuth state when an administrator confirms a changed live issuer", async () => {
+    const changedIssuer = await createExternalMcpConnection({
+      organizationId,
+      name: "Enterprise MCP changed issuer confirmation",
+      url: "https://mcp.example.test/changed-issuer",
+      authType: "oauth",
+      credentialMode: "per_member",
+      oauthConfiguration: {
+        version: 1,
+        authorizationServerIssuer: "https://login.old.example.test",
+        requestedScopes: [],
+      },
+      createdByOrgMembershipId: memberId,
+      access: { orgWide: true, memberIds: [], teamIds: [] },
+    })
+    await db.insert(schema.OrgOAuthClientTable).values({
+      id: createDenTypeId("orgOAuthClient"),
+      organizationId,
+      providerId: changedIssuer.id,
+      clientId: "issuer-bound-client",
+      createdByOrgMembershipId: memberId,
+    })
+    await db.insert(schema.ConnectedAccountTable).values({
+      id: createDenTypeId("connectedAccount"),
+      organizationId,
+      orgMembershipId: memberId,
+      providerId: changedIssuer.id,
+      accessToken: "issuer-bound-member-token",
+    })
+    await db.update(schema.ExternalMcpConnectionTable)
+      .set({ oauthIssuerReviewRequiredAt: new Date() })
+      .where(drizzle.eq(schema.ExternalMcpConnectionTable.id, changedIssuer.id))
+    const before = (await db.select().from(schema.ExternalMcpConnectionTable)
+      .where(drizzle.eq(schema.ExternalMcpConnectionTable.id, changedIssuer.id)).limit(1))[0]
+    if (!before) throw new Error("Expected the changed-issuer connection.")
+
+    const result = await confirmExternalMcpIssuerReview({
+      organizationId,
+      connectionId: changedIssuer.id,
+      expectedUpdatedAt: before.updatedAt,
+      authorizationServerIssuer: "https://login.new.example.test",
+    })
+
+    expect(result.status).toBe("confirmed")
+    if (result.status !== "confirmed") throw new Error("Expected issuer confirmation.")
+    expect(result.issuerChanged).toBe(true)
+    expect(result.reconnectionRequired).toBe(true)
+    expect(result.connection.oauthConfiguration?.authorizationServerIssuer).toBe("https://login.new.example.test")
+    expect(result.connection.oauthIssuerReviewRequiredAt).toBeNull()
+    expect(await db.select().from(schema.ConnectedAccountTable)
+      .where(drizzle.eq(schema.ConnectedAccountTable.providerId, changedIssuer.id))).toEqual([])
+    expect(await db.select().from(schema.OrgOAuthClientTable)
+      .where(drizzle.eq(schema.OrgOAuthClientTable.providerId, changedIssuer.id))).toEqual([])
+  })
+
   test("stores DCR secrets only in encrypted columns and returns the first registration", async () => {
     const persistence = new DenEnterpriseMcpOAuthPersistence(connection)
     const saved = await persistence.clientRegistrations.save({
@@ -184,6 +348,115 @@ describe("Den enterprise MCP OAuth persistence adapter", () => {
     })).rejects.toThrow("deadline expired")
     const after = await persistence.credentials.load(context())
     expect(after?.tokens.access_token).toBe(before?.tokens.access_token)
+  })
+
+  test("rejects late credential and client writes after the connection identity changes", async () => {
+    const oldIdentity = await createExternalMcpConnection({
+      organizationId,
+      name: "Enterprise MCP old identity",
+      url: "https://old-mcp.example.test/mcp",
+      authType: "oauth",
+      credentialMode: "shared",
+      createdByOrgMembershipId: memberId,
+      access: { orgWide: true, memberIds: [], teamIds: [] },
+    })
+    const persistence = new DenEnterpriseMcpOAuthPersistence(oldIdentity)
+    await db
+      .update(schema.ExternalMcpConnectionTable)
+      .set({ url: "https://replacement-mcp.example.test/mcp", updatedAt: new Date() })
+      .where(drizzle.eq(schema.ExternalMcpConnectionTable.id, oldIdentity.id))
+    const oldContext = {
+      connectionId: oldIdentity.id,
+      commitExpiresAt: Date.now() + 30_000,
+      signal: new AbortController().signal,
+    }
+
+    await expect(persistence.credentials.save({
+      context: oldContext,
+      tokens: { access_token: "late-enterprise-token", token_type: "Bearer" },
+      source: "refresh",
+    })).rejects.toThrow("identity changed")
+    await expect(persistence.clientRegistrations.save({
+      context: oldContext,
+      clientInformation: { client_id: "late-enterprise-client" },
+      source: "dynamic",
+    })).rejects.toThrow("identity changed")
+
+    const rows = await db
+      .select()
+      .from(schema.ExternalMcpConnectionTable)
+      .where(drizzle.eq(schema.ExternalMcpConnectionTable.id, oldIdentity.id))
+      .limit(1)
+    expect(rows[0]?.accessToken).toBeNull()
+    const clients = await db
+      .select()
+      .from(schema.OrgOAuthClientTable)
+      .where(drizzle.eq(schema.OrgOAuthClientTable.providerId, oldIdentity.id))
+    expect(clients).toEqual([])
+  })
+
+  test("advances a per-member connectedAt only after a fresh authorization callback commits", async () => {
+    const perMemberConnection = await createExternalMcpConnection({
+      organizationId,
+      name: "Enterprise MCP reconnect completion",
+      url: "https://mcp.example.test/reconnect",
+      authType: "oauth",
+      credentialMode: "per_member",
+      createdByOrgMembershipId: memberId,
+      access: { orgWide: true, memberIds: [], teamIds: [] },
+    })
+    const persistence = new DenEnterpriseMcpOAuthPersistence(
+      perMemberConnection,
+      { orgMembershipId: memberId },
+    )
+    const reconnectContext = {
+      connectionId: perMemberConnection.id,
+      commitExpiresAt: Date.now() + 30_000,
+      signal: new AbortController().signal,
+    }
+    const registration = await persistence.clientRegistrations.save({
+      context: reconnectContext,
+      clientInformation: { client_id: "per-member-reconnect-client" },
+      source: "dynamic",
+    })
+    await persistence.authorizations.begin({
+      context: reconnectContext,
+      id: "signed-state-per-member-reconnect",
+      codeVerifier: "r".repeat(43),
+      expiresAt: Date.now() + 600_000,
+      clientRegistrationRevision: registration.revision,
+    })
+    const pending = await persistence.authorizations.load({
+      context: reconnectContext,
+      id: "signed-state-per-member-reconnect",
+    })
+    if (!pending) throw new Error("Expected a pending per-member reconnect.")
+    const beforeRows = await db
+      .select()
+      .from(schema.ConnectedAccountTable)
+      .where(drizzle.and(
+        drizzle.eq(schema.ConnectedAccountTable.orgMembershipId, memberId),
+        drizzle.eq(schema.ConnectedAccountTable.providerId, perMemberConnection.id),
+      ))
+      .limit(1)
+    const before = beforeRows[0]
+    if (!before) throw new Error("Expected the pending account row.")
+
+    await persistence.credentials.save({
+      context: reconnectContext,
+      tokens: { access_token: "fresh-member-access", token_type: "Bearer" },
+      source: "authorization-code",
+      authorization: pending.handle,
+      clientRegistrationRevision: registration.revision,
+    })
+
+    const afterRows = await db
+      .select()
+      .from(schema.ConnectedAccountTable)
+      .where(drizzle.eq(schema.ConnectedAccountTable.id, before.id))
+      .limit(1)
+    expect(afterRows[0]?.accessToken).toBe("fresh-member-access")
+    expect(afterRows[0]?.connectedAt.getTime()).toBeGreaterThan(before.connectedAt.getTime())
   })
 
   test("removes a denied per-member authorization and keeps repeated cleanup idempotent", async () => {
@@ -294,12 +567,21 @@ describe("Den enterprise MCP OAuth persistence adapter", () => {
               },
             })
           }
-          const rpc: unknown = await request.json()
+          const body = await request.text()
+          if (!body) return new Response(null, { status: 202 })
+          const rpc: unknown = JSON.parse(body)
           if (typeof rpc !== "object" || rpc === null || !("method" in rpc)) {
             return Response.json({ error: "invalid_request" }, { status: 400 })
           }
           if (rpc.method === "notifications/initialized") return new Response(null, { status: 202 })
           const id = "id" in rpc && (typeof rpc.id === "string" || typeof rpc.id === "number") ? rpc.id : null
+          if (rpc.method === "tools/list") {
+            return Response.json({
+              jsonrpc: "2.0",
+              id,
+              result: { tools: [] },
+            })
+          }
           return Response.json({
             jsonrpc: "2.0",
             id,
@@ -361,6 +643,7 @@ describe("Den enterprise MCP OAuth persistence adapter", () => {
       expect(committedRows[0]?.accessToken).toBe("end-to-end-access-token")
       expect(committedRows[0]?.refreshToken).toBe("end-to-end-refresh-token")
       expect(committedRows[0]?.pendingCodeVerifier).toBeNull()
+      expect(committedRows[0]?.credentialHealth?.status).toBe("ready")
     } finally {
       server.stop(true)
     }

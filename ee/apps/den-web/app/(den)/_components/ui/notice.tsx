@@ -1,10 +1,10 @@
 import { CircleAlert, Info } from "lucide-react";
+import { WORKSPACE_REAUTH_SECURITY_MESSAGE } from "../../_lib/den-flow";
 
 type DenNoticeTone = "error" | "info";
 
 const ROUTINE_SECURITY_MESSAGES = new Set([
-  "For security, confirm it's you before changing workspace settings.",
-  "Confirm it's you before continuing.",
+  WORKSPACE_REAUTH_SECURITY_MESSAGE,
 ]);
 
 export function DenNotice({

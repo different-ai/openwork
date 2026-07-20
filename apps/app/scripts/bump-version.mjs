@@ -103,6 +103,25 @@ const syncLockfile = () => {
   }
 };
 
+const syncDesktopVersions = (nextVersion) => {
+  const result = spawnSync(
+    process.execPath,
+    [
+      path.join(REPO_ROOT, "scripts", "release", "generate-desktop-versions.mjs"),
+      "--version",
+      nextVersion,
+      ...(isDryRun ? ["--dry-run"] : []),
+    ],
+    {
+      cwd: REPO_ROOT,
+      stdio: "inherit",
+    },
+  );
+  if (result.status !== 0) {
+    throw new Error("desktop version inventory generation failed");
+  }
+};
+
 const main = async () => {
   if (explicit && !semverPattern.test(explicit)) {
     throw new Error(`Invalid explicit version: ${explicit}`);
@@ -113,6 +132,7 @@ const main = async () => {
 
   const nextVersion = await targetVersion();
   await updatePackageJson(nextVersion);
+  syncDesktopVersions(nextVersion);
   if (!isDryRun) syncLockfile();
 
   console.log(
@@ -126,6 +146,7 @@ const main = async () => {
           "apps/desktop/package.json",
           "apps/orchestrator/package.json",
           "apps/server/package.json",
+          "ee/apps/den-api/src/generated/desktop-versions.ts",
           "pnpm-lock.yaml",
         ],
       },

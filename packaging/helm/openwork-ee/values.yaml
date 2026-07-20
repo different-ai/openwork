@@ -10,7 +10,8 @@ imagePullSecrets: []
 config:
   databaseMode: mysql
   openworkDevMode: "0"
-  enterpriseMcpClientEnabled: "false"
+  # Passed to the den-api Node.js process as NODE_OPTIONS at container startup.
+  denApiNodeOptions: ""
   tenancy:
     mode: single_org
     singleOrgName: OpenWork
@@ -35,6 +36,8 @@ config:
     webAppHosts: openwork.example.com
     bootstrapAdminEmails: ""
     installLinksGatingEnabled: "false"
+    connectLinkMode: exchange
+    connectLinkKeyId: ""
     openworkAppConnectUrl: ""
     installerReleaseTag: ""
     installerReleaseRepo: ""
@@ -121,6 +124,12 @@ observability:
     release: ""
     dist: ""
 
+customCa:
+  enabled: false
+  existingSecret: ""
+  existingConfigMap: ""
+  key: ca.crt
+
 secret:
   create: true
   existingSecret: ""
@@ -142,6 +151,7 @@ secret:
     githubConnectorAppClientSecret: GITHUB_CONNECTOR_APP_CLIENT_SECRET
     githubConnectorAppPrivateKey: GITHUB_CONNECTOR_APP_PRIVATE_KEY
     githubConnectorAppWebhookSecret: GITHUB_CONNECTOR_APP_WEBHOOK_SECRET
+    connectLinkPrivateKey: DEN_CONNECT_LINK_PRIVATE_KEY
   values:
     databaseUrl: mysql://openwork:change-me@mysql:3306/openwork_den
     betterAuthSecret: CHANGE_ME_32_CHARS_MINIMUM_BETTER_AUTH
@@ -160,6 +170,7 @@ secret:
     githubConnectorAppClientSecret: ""
     githubConnectorAppPrivateKey: ""
     githubConnectorAppWebhookSecret: ""
+    connectLinkPrivateKey: ""
 
 installerArtifacts:
   enabled: false
@@ -261,10 +272,9 @@ migrations:
   podAnnotations: {}
   resources: {}
   command:
-    - sh
-    - -lc
+    - node
   args:
-    - pnpm --dir /app/ee/packages/den-db run db:bootstrap
+    - /app/ee/packages/den-db/dist/scripts/bootstrap.js
 
 ingress:
   enabled: false

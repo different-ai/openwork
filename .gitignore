@@ -1,6 +1,8 @@
 .turbo/
 node_modules/
 apps/desktop/dist-electron/
+apps/desktop/dist-electron-demo-a/
+apps/desktop/dist-electron-demo-b/
 packages/*/node_modules/
 apps/*/node_modules/
 ee/apps/*/node_modules/

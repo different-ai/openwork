@@ -573,27 +573,6 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
 
     const limits = await dependencies.ensureUsableBuckets(inferenceKey.organization_id)
     if (!limits.ok) {
-      logProxyError("Inference usage limit exceeded", {
-        path: c.req.path,
-        organizationId: inferenceKey.organization_id,
-        orgMembershipId: inferenceKey.org_membership_id,
-        inferenceKeyId: inferenceKey.id,
-        openworkRequestId,
-        limitedBy: limits.limitedBy,
-      })
-      reporter.handledError({
-        reason: "rate_limit_exceeded",
-        organizationId: inferenceKey.organization_id,
-        orgMembershipId: inferenceKey.org_membership_id,
-        inferenceKeyId: inferenceKey.id,
-        openworkRequestId,
-        route: c.req.path,
-        method: c.req.method,
-        headers: incomingHeaders,
-        incomingModel: prepared.incomingModel,
-        resolvedUpstreamModel: prepared.upstreamModel,
-        status: 429,
-      })
       c.header("x-openwork-limit-bucket-id", limits.limitedBy)
       c.header("x-openwork-limit-window-type", limits.windowType)
       const limitedBucket = "limitedBucket" in limits ? limits.limitedBucket : null

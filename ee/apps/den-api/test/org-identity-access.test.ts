@@ -111,3 +111,11 @@ test("reauth failures remain forbidden responses", () => {
   expect(sharedModule.orgAccessFailureStatus({ error: "forbidden" })).toBe(403)
   expect(sharedModule.orgAccessFailureStatus({ error: "organization_not_found" })).toBe(404)
 })
+
+test("freshness failures share the standardized reauth response", () => {
+  expect(sharedModule.getFreshPrivilegedSessionRequiredResponse()).toEqual({
+    error: "reauth",
+    reason: "fresh_auth_required",
+    message: sharedModule.WORKSPACE_REAUTH_SECURITY_MESSAGE,
+  })
+})

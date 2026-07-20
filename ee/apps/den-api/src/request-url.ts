@@ -2,7 +2,7 @@ type PublicRequestUrlOptions = {
   trustedOrigins?: readonly string[]
 }
 
-function firstForwardedValue(value: string | null): string | null {
+export function firstForwardedValue(value: string | null): string | null {
   const first = value?.split(",", 1)[0]?.trim()
   return first || null
 }
@@ -40,6 +40,13 @@ function forwardedOrigin(request: Request, protocol: string, trustedOrigins: rea
   }
 }
 
+export function trustedForwardedOrigin(request: Request, options: PublicRequestUrlOptions = {}): URL | null {
+  const url = new URL(request.url)
+  const proto = firstForwardedValue(request.headers.get("x-forwarded-proto"))?.toLowerCase()
+  const protocol = proto === "https" || proto === "http" ? `${proto}:` : url.protocol
+  return forwardedOrigin(request, protocol, options.trustedOrigins ?? [])
+}
+
 export function publicRequestUrl(request: Request, options: PublicRequestUrlOptions = {}): URL {
   const url = new URL(request.url)
   const proto = firstForwardedValue(request.headers.get("x-forwarded-proto"))?.toLowerCase()
@@ -47,7 +54,7 @@ export function publicRequestUrl(request: Request, options: PublicRequestUrlOpti
     url.protocol = `${proto}:`
   }
 
-  const forwarded = forwardedOrigin(request, url.protocol, options.trustedOrigins ?? [])
+  const forwarded = trustedForwardedOrigin(request, options)
   if (forwarded) {
     url.hostname = forwarded.hostname
     url.port = forwarded.port

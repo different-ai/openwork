@@ -257,5 +257,45 @@
       "output": 4.4,
       "cache_read": 0.26
     }
+  },
+  "moonshotai/kimi-k3": {
+    "id": "moonshotai/kimi-k3",
+    "name": "Kimi K3",
+    "description": "Kimi multimodal agent model for visual understanding, coding, and planning",
+    "family": "kimi-k3",
+    "attachment": true,
+    "reasoning": true,
+    "reasoning_options": [
+      {
+        "type": "effort",
+        "values": [
+          "max"
+        ]
+      }
+    ],
+    "tool_call": true,
+    "structured_output": true,
+    "temperature": false,
+    "release_date": "2026-07-16",
+    "last_updated": "2026-07-16",
+    "modalities": {
+      "input": [
+        "text",
+        "image"
+      ],
+      "output": [
+        "text"
+      ]
+    },
+    "open_weights": true,
+    "limit": {
+      "context": 1048576,
+      "output": 1048576
+    },
+    "cost": {
+      "input": 3,
+      "output": 15,
+      "cache_read": 0.3
+    }
   }
 }

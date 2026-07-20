@@ -45,7 +45,7 @@ export default {
             const source = await readFile(TEST_PATH, "utf8");
             witness(ctx, source.includes('toBe("PassaportoPaolo_small.jpg")'), "The test asserts the original JPEG filename");
             witness(ctx, source.includes('toBe("image/jpeg")'), "The test asserts the image/jpeg MIME type");
-            ctx.output("$ bun test — JPEG metadata", `${run.stdout.trim()}\n\n${source.split("\n").slice(27, 36).join("\n")}`);
+            ctx.output("$ bun test — JPEG metadata", `${run.stdout.trim()}\n\n${source.split("\n").slice(31, 40).join("\n")}`);
           },
         });
       },
@@ -63,7 +63,7 @@ export default {
             witness(ctx, source.includes('expect(part.filename).toBe("PassaportoPaolo_small.jpg")'), "The outbound part still uses the JPEG filename");
             witness(ctx, source.includes('data:image/jpeg;base64,'), "The outbound part carries an image/jpeg data URL");
             witness(ctx, source.includes("decodedDataUrlBytes"), "The request-data test decodes and compares the transmitted bytes");
-            ctx.output("$ bun test — provider-bound attachment part", `${run.stdout.trim()}\n\n${source.split("\n").slice(37, 49).join("\n")}`);
+            ctx.output("$ bun test — provider-bound attachment part", `${run.stdout.trim()}\n\n${source.split("\n").slice(41, 53).join("\n")}`);
           },
         });
       },
@@ -81,7 +81,7 @@ export default {
             );
             const output = `${run.stdout}\n${run.stderr}`.trim();
             witness(ctx, run.status === 0, "The complete attachment and Ollama capability regression suite passes", run.stderr.trim());
-            witness(ctx, output.includes("8 pass"), "All eight focused regression tests pass", output);
+            witness(ctx, output.includes("12 pass"), "All twelve focused regression tests pass", output);
             ctx.output("$ bun test — attachment request metadata suite", output);
           },
         });

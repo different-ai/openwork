@@ -5,6 +5,11 @@ export type GoogleWorkspaceAttachment = {
   size: number | null
 }
 
+export type GoogleWorkspaceAttachmentData = {
+  size: number
+  dataBase64: string
+}
+
 export type GoogleWorkspaceGmailMessage = {
   id: string
   threadId: string
@@ -39,11 +44,26 @@ export type GoogleWorkspaceDriveFile = {
   size: string | null
 }
 
+export type GoogleWorkspaceDriveUploadMetadata = {
+  name: string
+  parents?: string[]
+}
+
+export type GoogleWorkspaceDrivePermission = {
+  id: string
+  type: string
+  role: string
+}
+
 type GmailBodyState = {
   plain: string | null
   html: string | null
   attachments: GoogleWorkspaceAttachment[]
 }
+
+const GMAIL_QUOTE_BODY_LIMIT = 10_000
+const UTC_WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+const UTC_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -156,6 +176,45 @@ export function extractGmailThreadReplyContext(json: unknown): { lastMessageId: 
   return { lastMessageId, references }
 }
 
+function formatGmailQuoteDate(value: string): string {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return `${UTC_WEEKDAYS[date.getUTCDay()]}, ${String(date.getUTCDate()).padStart(2, "0")} ${UTC_MONTHS[date.getUTCMonth()]} ${date.getUTCFullYear()} at ${String(date.getUTCHours()).padStart(2, "0")}:${String(date.getUTCMinutes()).padStart(2, "0")} UTC`
+}
+
+export function gmailBodyHasQuotedHistory(body: string): boolean {
+  return /^>\s?/m.test(body) && /^.*wrote:\s*$/m.test(body)
+}
+
+export function buildGmailQuoteBlock(input: { from: string; date: string; body: string }): string {
+  const header = input.date ? `On ${formatGmailQuoteDate(input.date)}, ${input.from} wrote:` : `${input.from} wrote:`
+  const truncated = input.body.length > GMAIL_QUOTE_BODY_LIMIT
+  const quotedLines = input.body.slice(0, GMAIL_QUOTE_BODY_LIMIT).replace(/\r\n?/g, "\n").split("\n").map((line) => `> ${line}`)
+  if (truncated) quotedLines.push("> [message trimmed]")
+  return [header, ...quotedLines].join("\n")
+}
+
+export function extractGmailThreadQuoteInput(json: unknown): { from: string; date: string; body: string } | null {
+  const root = isRecord(json) ? json : {}
+  const messages = readArray(root, "messages")
+  const lastMessage = messages.at(-1)
+  if (!isRecord(lastMessage)) return null
+
+  const payload = readRecord(lastMessage, "payload")
+  if (!payload) return null
+
+  const headers = readGmailHeaders(payload)
+  const state: GmailBodyState = { plain: null, html: null, attachments: [] }
+  collectGmailPart(payload, state)
+  if (!state.plain) return null
+
+  return {
+    from: headers.get("from") ?? "",
+    date: headers.get("date") ?? "",
+    body: state.plain,
+  }
+}
+
 export function truncateText(text: string, maxCharacters: number): { text: string; truncated: boolean } {
   if (text.length <= maxCharacters) {
     return { text, truncated: false }
@@ -166,6 +225,24 @@ export function truncateText(text: string, maxCharacters: number): { text: strin
 export function buildDriveSearchQuery(text: string): string {
   const escaped = text.replace(/\\/g, "\\\\").replace(/'/g, "\\'")
   return `trashed = false and (name contains '${escaped}' or fullText contains '${escaped}')`
+}
+
+export function buildDriveMultipartUpload(input: { metadata: GoogleWorkspaceDriveUploadMetadata; content: Buffer; mimeType: string; boundary: string }): Buffer {
+  const metadataPart = Buffer.from(`--${input.boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(input.metadata)}\r\n`, "utf8")
+  const contentHeader = Buffer.from(`--${input.boundary}\r\nContent-Type: ${input.mimeType}\r\n\r\n`, "utf8")
+  const footer = Buffer.from(`\r\n--${input.boundary}--\r\n`, "utf8")
+  const body = Buffer.alloc(metadataPart.byteLength + contentHeader.byteLength + input.content.byteLength + footer.byteLength)
+  let offset = 0
+  for (const chunk of [metadataPart, contentHeader, input.content, footer]) {
+    for (let index = 0; index < chunk.byteLength; index += 1) {
+      const byte = chunk[index]
+      if (byte !== undefined) {
+        body[offset + index] = byte
+      }
+    }
+    offset += chunk.byteLength
+  }
+  return body
 }
 
 export function extractGmailMessage(payloadJson: unknown): GoogleWorkspaceGmailMessage {
@@ -187,6 +264,21 @@ export function extractGmailMessage(payloadJson: unknown): GoogleWorkspaceGmailM
     snippet,
     body,
     attachments: state.attachments,
+  }
+}
+
+/**
+ * Gmail's attachments.get returns base64url data. Normalize to standard
+ * base64 so callers can decode the bytes locally with any base64 decoder.
+ */
+export function extractGmailAttachmentData(json: unknown): GoogleWorkspaceAttachmentData | null {
+  const root = isRecord(json) ? json : {}
+  const data = readString(root, "data")
+  if (!data) return null
+  const bytes = Buffer.from(data, "base64url")
+  return {
+    size: readNumber(root, "size") ?? bytes.byteLength,
+    dataBase64: bytes.toString("base64"),
   }
 }
 
@@ -270,4 +362,13 @@ export function extractDriveFiles(json: unknown): GoogleWorkspaceDriveFile[] {
     })
   }
   return files
+}
+
+export function extractDrivePermission(json: unknown): GoogleWorkspaceDrivePermission {
+  const root = isRecord(json) ? json : {}
+  return {
+    id: readString(root, "id"),
+    type: readString(root, "type"),
+    role: readString(root, "role"),
+  }
 }

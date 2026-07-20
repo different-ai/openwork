@@ -318,7 +318,7 @@ export default {
             await waitForPanel(ctx, `(() => {
               const dialog = document.querySelector('[role="dialog"]');
               const passwordInput = dialog?.querySelector('input[autocomplete="current-password"]');
-              return Boolean(dialog && passwordInput && dialog.textContent?.includes("Confirm it's you to continue"));
+              return Boolean(dialog && passwordInput && dialog.textContent?.includes(${JSON.stringify(RAW_REAUTH_MESSAGE)}));
             })()`, { timeoutMs: 30_000, label: "Brand Appearance password reauth dialog" });
           },
           assert: async () => {
@@ -336,7 +336,7 @@ export default {
                 selectedIcon: document.querySelector('#brand-icon-upload')?.files?.[0]?.name ?? null,
               };
             })()`);
-            ctx.assert(state.dialogText.includes("Confirm it's you to continue"), `Reauth dialog was missing: ${JSON.stringify(state)}`);
+            ctx.assert(state.dialogText.includes(RAW_REAUTH_MESSAGE), `Reauth dialog was missing: ${JSON.stringify(state)}`);
             ctx.assert(state.dialogText.includes("Signing in as"), `Polished account context was missing: ${JSON.stringify(state)}`);
             ctx.assert(!state.rawMessageOutsideDialog, `Raw reauth response leaked into the page: ${JSON.stringify(state)}`);
             ctx.assert(state.interceptedReauth, `The brand upload did not receive the staged production reauth response: ${JSON.stringify(state)}`);
@@ -348,8 +348,8 @@ export default {
             sandboxCapture: true,
             targetId: adminPanelTargetId,
             textTargetId: adminPanelTargetId,
-            requireText: ["SECURITY CHECK", "Confirm it's you to continue", "SIGNING IN AS", "Verify password"],
-            rejectText: [RAW_REAUTH_MESSAGE],
+            requireText: ["SECURITY CHECK", RAW_REAUTH_MESSAGE, "SIGNING IN AS", "Verify password"],
+            rejectText: ["Confirm it's you to continue"],
           },
         });
       },

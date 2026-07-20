@@ -12,7 +12,7 @@ import {
   desktopPolicyDefaults,
   normalizeDesktopPolicyDocument,
   normalizeDesktopPolicyValue,
-  selectEffectiveOnboardingPrompts,
+  selectEffectiveOnboardingPromptConfig,
   type DesktopConfig,
   type DesktopPolicyValue,
 } from "@openwork/types/den/desktop-policies"
@@ -24,7 +24,7 @@ export type DesktopPolicyMemberRow = typeof DesktopPolicyMemberTable.$inferSelec
 export type OrgId = typeof DesktopPolicyTable.$inferSelect.organizationId
 export type OrgMemberId = typeof DesktopPolicyTable.$inferSelect.createdByOrgMemberId
 export type TeamId = typeof TeamTable.$inferSelect.id
-export type EffectiveDesktopPolicyConfig = Required<DesktopPolicyValue> & Pick<DesktopConfig, "onboardingPrompts">
+export type EffectiveDesktopPolicyConfig = Required<DesktopPolicyValue> & Pick<DesktopConfig, "onboardingPrompts" | "onboardingPromptDescriptions">
 
 export const DEFAULT_DESKTOP_POLICY_NAME = "Default desktop policy"
 
@@ -139,7 +139,7 @@ export async function calculateDesktopPolicyForOrgMember(input: {
     defaultPolicy: defaultPolicy?.policy ?? {},
     assignedPolicies: uniqueAssignedPolicies.map((row) => normalizeDesktopPolicyValue(row.policy)),
   })
-  const onboardingPrompts = selectEffectiveOnboardingPrompts({
+  const onboardingPromptConfig = selectEffectiveOnboardingPromptConfig({
     defaultPolicy: defaultPolicy?.policy ?? {},
     assignedPolicies: uniqueAssignedPolicies.map((row) => ({
       id: row.id,
@@ -151,6 +151,6 @@ export async function calculateDesktopPolicyForOrgMember(input: {
 
   return {
     ...effectivePolicy,
-    ...(onboardingPrompts !== undefined ? { onboardingPrompts } : {}),
+    ...(onboardingPromptConfig !== undefined ? onboardingPromptConfig : {}),
   }
 }

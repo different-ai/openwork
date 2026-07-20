@@ -25,6 +25,7 @@ import {
   type MemberLifecycleValidation,
 } from "./organization-member-guards.js"
 import { runPostOrganizationMemberChangeHooks } from "./organization-member-hooks.js"
+import { getScimManagedTeamIds } from "./scim-groups.js"
 import {
   DEFAULT_ORGANIZATION_LIMITS,
   normalizeOrganizationMetadata,
@@ -173,6 +174,7 @@ export type OrganizationContext = {
     createdAt: Date
     updatedAt: Date
     memberIds: MemberId[]
+    managedByScim: boolean
   }>
 }
 
@@ -1352,16 +1354,19 @@ export async function getOrganizationContextForUser(input: {
 }
 
 async function listOrganizationTeams(organizationId: OrgId) {
-  const teams = await db
-    .select({
-      id: TeamTable.id,
-      name: TeamTable.name,
-      createdAt: TeamTable.createdAt,
-      updatedAt: TeamTable.updatedAt,
-    })
-    .from(TeamTable)
-    .where(eq(TeamTable.organizationId, organizationId))
-    .orderBy(asc(TeamTable.createdAt))
+  const [teams, scimManagedTeamIds] = await Promise.all([
+    db
+      .select({
+        id: TeamTable.id,
+        name: TeamTable.name,
+        createdAt: TeamTable.createdAt,
+        updatedAt: TeamTable.updatedAt,
+      })
+      .from(TeamTable)
+      .where(eq(TeamTable.organizationId, organizationId))
+      .orderBy(asc(TeamTable.createdAt)),
+    getScimManagedTeamIds(organizationId),
+  ])
 
   if (teams.length === 0) {
     return []
@@ -1385,6 +1390,7 @@ async function listOrganizationTeams(organizationId: OrgId) {
   return teams.map((team) => ({
     ...team,
     memberIds: memberIdsByTeamId.get(team.id) ?? [],
+    managedByScim: scimManagedTeamIds.has(team.id),
   }))
 }
 

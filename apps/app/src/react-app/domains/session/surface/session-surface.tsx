@@ -11,6 +11,8 @@ import { createClient, unwrap } from "@/app/lib/opencode";
 import { abortSessionSafe } from "@/app/lib/opencode-session";
 import { t } from "@/i18n";
 import { readWorkspaceCloudImports, type CloudImportedPlugin } from "@/app/cloud/import-state";
+import { createDenClient, readDenSettings } from "@/app/lib/den";
+import { denSettingsChangedEvent } from "@/app/lib/den-session-events";
 import type {
   OpenworkServerClient,
   OpenworkSessionSnapshot,
@@ -33,9 +35,13 @@ import {
 } from "@/app/lib/app-inspector";
 import { useControlAction, type OpenworkControlAction } from "@/react-app/shell/control/control-provider";
 import { attemptSilentMcpReauth } from "@/react-app/domains/connections/mcp-silent-reauth";
+import type {
+  CloudMcpSubmissionGateState,
+  CloudMcpSubmissionResult,
+} from "@/react-app/domains/connections/cloud-mcp-submit-readiness";
 import { ReactSessionComposer } from "./composer/composer";
 import { decodeComposerMentionValue, encodeComposerMentionValue, type ComposerMentionKind } from "./composer/mention-encoding";
-import { desktopBridge } from "@/app/lib/desktop";
+import { desktopBridge, openDesktopUrl } from "@/app/lib/desktop";
 import { parseSlashCommandInvocation } from "./composer/slash-command";
 import { DevProfiler } from "@/react-app/shell/dev-profiler";
 import { PaperGrainGradient } from "@openwork/ui/react";
@@ -74,6 +80,17 @@ import {
 } from "./composer-state-store";
 import { MessageList } from "@/components/chat/message-list";
 import { MessageListProvider, type DispatchAction } from "@/components/chat/message-list-provider";
+import type {
+  ChatToolReconnectAction,
+  ChatToolReconnectProgress,
+  ChatToolReconnectResult,
+} from "@/components/tools/error-attribution";
+import { useChatMcpReconnectStore } from "@/components/tools/mcp-reconnect-state";
+import {
+  isChatMcpReconnectScopeCurrent,
+  waitForFreshMcpAuthorization,
+  type ChatMcpReconnectScope,
+} from "./mcp-chat-reconnect";
 import { OpenTargetProvider, type OpenTargetOptions } from "@/lib/target-provider";
 import type { ThreadStatus } from "@/lib/messages";
 import {
@@ -111,7 +128,9 @@ export type SessionSurfaceProps = {
   selectedModel: ModelRef;
   onModelPickerOpenChange: (open: boolean) => void;
   onModelChange: (model: ModelRef) => void;
-  onSendDraft: (draft: ComposerDraft, sessionId: string) => void;
+  onSendDraft: (draft: ComposerDraft, sessionId: string) => Promise<CloudMcpSubmissionResult>;
+  cloudMcpSubmissionState: CloudMcpSubmissionGateState;
+  onOpenConnect: () => void;
   onDraftChange: (draft: ComposerDraft) => void;
   attachmentsEnabled: boolean;
   attachmentsDisabledReason: string | null;
@@ -397,6 +416,10 @@ function revokeAttachmentPreview(attachment: { previewUrl?: string | undefined }
   URL.revokeObjectURL(attachment.previewUrl);
 }
 
+function sameAttachments(left: ComposerAttachment[], right: ComposerAttachment[]): boolean {
+  return left.length === right.length && left.every((attachment, index) => attachment.id === right[index]?.id);
+}
+
 // Combine multiple queued follow-up drafts into a single send. Their text and
 // parts are concatenated with blank-line separators and attachments are
 // merged, so the whole queue is delivered to the agent as one message.
@@ -459,7 +482,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const clearQueuedDrafts = useComposerStateStore((state) => state.clearQueuedDrafts);
   const prependQueuedDrafts = useComposerStateStore((state) => state.prependQueuedDrafts);
   const [error, setError] = useState<SessionError | null>(null);
-  const [sending, setSending] = useState(false);
   const [showDelayedLoading, setShowDelayedLoading] = useState(false);
   const [awaitingAssistantBaseline, setAwaitingAssistantBaseline] = useState<number | null>(null);
   const [rendered, setRendered] = useState<{ sessionId: string; snapshot: OpenworkSessionSnapshot } | null>(null);
@@ -469,6 +491,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const [toolMcpStatuses, setToolMcpStatuses] = useState<McpStatusMap>({});
   const [toolImportedPlugins, setToolImportedPlugins] = useState<CloudImportedPlugin[]>([]);
   const [verifiedOpenTargets, setVerifiedOpenTargets] = useState<OpenTarget[]>([]);
+  const [cloudQueueRetryVersion, setCloudQueueRetryVersion] = useState(0);
+  const sending = props.cloudMcpSubmissionState.status === "sending";
+  const cloudQueueBlockedRef = useRef(false);
   const composerShellRef = useRef<HTMLDivElement>(null);
   const hydratedKeyRef = useRef<string | null>(null);
   const autoOpenedTargetRef = useRef<string | null>(null);
@@ -508,7 +533,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
   useEffect(() => {
     hydratedKeyRef.current = null;
     setError(null);
-    setSending(false);
     setShowDelayedLoading(false);
     setAwaitingAssistantBaseline(null);
     // Composer draft state lives in the shared store keyed by session id, so
@@ -540,6 +564,13 @@ export function SessionSurface(props: SessionSurfaceProps) {
         lines: part.lines,
       })),
       sending,
+      cloudMcpSubmission: {
+        status: props.cloudMcpSubmissionState.status,
+        attempt: props.cloudMcpSubmissionState.attempt,
+        maxAttempts: props.cloudMcpSubmissionState.maxAttempts,
+        code: props.cloudMcpSubmissionState.issue?.code ?? null,
+        stage: props.cloudMcpSubmissionState.issue?.stage ?? null,
+      },
       error,
     }));
     return dispose;
@@ -551,6 +582,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     pasteParts,
     props.sessionId,
     props.workspaceId,
+    props.cloudMcpSubmissionState,
     sending,
   ]);
 
@@ -580,6 +612,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
     cachedRendered: rendered,
   });
   const liveStatus = statusState ?? snapshot?.status ?? IDLE_STATUS;
+  const preparingCloudTools = props.cloudMcpSubmissionState.status === "checking" ||
+    props.cloudMcpSubmissionState.status === "repairing";
   const chatStreaming = sending || liveStatus.type === "busy" || liveStatus.type === "retry";
   const status = useMemo((): ThreadStatus => {
     if (sending) {
@@ -672,7 +706,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     }
     void verifyTargets();
     return () => { cancelled = true; };
-  }, [openTargetsFingerprint, props.client, props.sessionId, props.workspaceId]);
+  }, [chatStreaming, openTargetsFingerprint, props.client, props.sessionId, props.workspaceId]);
 
   useEffect(() => {
     usePanelTabStore.getState().syncTranscriptArtifacts(props.sessionId, verifiedOpenTargets);
@@ -766,28 +800,26 @@ export function SessionSurface(props: SessionSurfaceProps) {
   // Core sender shared by initial send and steered follow-ups. OpenCode
   // accepts follow-up user turns mid-run (steering) — the running loop picks
   // up the new message — so this is safe to call while the agent is busy.
-  const sendDraft = useCallback(async (nextDraft: ComposerDraft, draftAttachments: ComposerAttachment[]) => {
+  const sendDraft = useCallback(async (nextDraft: ComposerDraft) => {
     setError(null);
-    // Record the prompt for Up/Down recall in the composer (#2012).
-    appendComposerHistory(props.sessionId, nextDraft.text);
-    useSessionActivityStore.getState().setRunStatus(props.workspaceId, props.sessionId, { type: "busy" });
-    setSending(true);
-    setAwaitingAssistantBaseline(renderedMessages.length);
     try {
-      await props.onSendDraft(nextDraft, props.sessionId);
-      draftAttachments.forEach(revokeAttachmentPreview);
-      setSending(false);
+      const result = await props.onSendDraft(nextDraft, props.sessionId);
+      if (result.outcome === "blocked" || result.outcome === "cancelled") return result;
+      // Only report a run after the pre-send gate released the exact queued
+      // submission and the route accepted or sent it.
+      appendComposerHistory(props.sessionId, nextDraft.text);
+      useSessionActivityStore.getState().setRunStatus(props.workspaceId, props.sessionId, { type: "busy" });
+      setAwaitingAssistantBaseline(renderedMessages.length);
+      return result;
     } catch (nextError) {
       const parsed = parseSessionError(nextError);
       captureAnalyticsEvent("task_send_failed", {});
       setError(parsed);
       useSessionActivityStore.getState().setError(props.workspaceId, props.sessionId, parsed.message);
-      setComposerDraft(props.sessionId, "");
       setAwaitingAssistantBaseline(null);
-      setSending(false);
       throw nextError;
     }
-  }, [appendComposerHistory, props.onSendDraft, props.sessionId, props.workspaceId, renderedMessages.length, setComposerDraft]);
+  }, [appendComposerHistory, props.onSendDraft, props.sessionId, props.workspaceId, renderedMessages.length]);
 
   const clearComposer = useCallback(() => {
     clearComposerSession(props.sessionId);
@@ -797,19 +829,40 @@ export function SessionSurface(props: SessionSurfaceProps) {
   // Initial send (agent idle) and explicit "Steer" follow-up (agent busy)
   // share the same immediate path.
   const handleSend = useCallback(async () => {
-    const text = draft.trim();
+    const originalDraft = draft;
+    const text = originalDraft.trim();
     if (!text && attachments.length === 0) return;
     const nextDraft = buildDraft(text, attachments);
     const sentAttachments = attachments;
     try {
-      await sendDraft(nextDraft, sentAttachments);
-      clearComposer();
+      const result = await sendDraft(nextDraft);
+      if (result.outcome === "blocked" || result.outcome === "cancelled") return;
+      const currentState = useComposerStateStore.getState();
+      const currentDraft = getComposerDraft(currentState, props.sessionId);
+      const currentAttachments = getComposerAttachments(currentState, props.sessionId);
+      if (currentDraft === originalDraft && sameAttachments(currentAttachments, sentAttachments)) {
+        clearComposer();
+        sentAttachments.forEach(revokeAttachmentPreview);
+      } else {
+        const retainedIds = new Set(currentAttachments.map((attachment) => attachment.id));
+        sentAttachments
+          .filter((attachment) => !retainedIds.has(attachment.id))
+          .forEach(revokeAttachmentPreview);
+      }
     } catch {
-      setComposerDraft(props.sessionId, "");
     }
-  }, [attachments, buildDraft, clearComposer, draft, props.sessionId, sendDraft, setComposerDraft]);
+  }, [attachments, buildDraft, clearComposer, draft, props.sessionId, sendDraft]);
 
   const handleSteer = handleSend;
+
+  const handleRetryCloudSubmission = useCallback(() => {
+    if (draft.trim() || attachments.length > 0) {
+      void handleSend();
+      return;
+    }
+    cloudQueueBlockedRef.current = false;
+    setCloudQueueRetryVersion((version) => version + 1);
+  }, [attachments.length, draft, handleSend]);
 
   // Queue: hold the draft locally and clear the composer. The drain effect
   // sends it once the session reports idle.
@@ -866,18 +919,13 @@ export function SessionSurface(props: SessionSurfaceProps) {
     useSessionActivityStore.getState().clearError(props.workspaceId, props.sessionId);
   }, [props.sessionId, props.workspaceId]);
 
-  useEffect(() => {
-    if (liveStatus.type === "idle") {
-      setSending(false);
-    }
-  }, [liveStatus.type]);
-
   // Drain the queued follow-ups once the session goes idle. OpenCode has no
   // server-side queue, so we send everything that's queued as a single merged
   // message. The ref guards against re-entrancy while the send is in flight.
   const drainingQueueRef = useRef(false);
   useEffect(() => {
     if (drainingQueueRef.current) return;
+    if (cloudQueueBlockedRef.current) return;
     if (queuedDrafts.length === 0) return;
     if (chatStreaming || liveStatus.type !== "idle") return;
     const merged = mergeDrafts(queuedDrafts);
@@ -887,7 +935,13 @@ export function SessionSurface(props: SessionSurfaceProps) {
     clearQueuedDrafts(props.sessionId);
     void (async () => {
       try {
-        await sendDraft(merged, merged.attachments);
+        const result = await sendDraft(merged);
+        if (result.outcome === "blocked") {
+          cloudQueueBlockedRef.current = true;
+          prependQueuedDrafts(props.sessionId, drained);
+        } else if (result.outcome === "cancelled") {
+          prependQueuedDrafts(props.sessionId, drained);
+        }
       } catch {
         // Restore the queue so the user can retry / edit on failure.
         prependQueuedDrafts(props.sessionId, drained);
@@ -895,7 +949,13 @@ export function SessionSurface(props: SessionSurfaceProps) {
         drainingQueueRef.current = false;
       }
     })();
-  }, [chatStreaming, clearQueuedDrafts, liveStatus.type, prependQueuedDrafts, props.sessionId, queuedDrafts, sendDraft]);
+  }, [chatStreaming, clearQueuedDrafts, cloudQueueRetryVersion, liveStatus.type, prependQueuedDrafts, props.sessionId, queuedDrafts, sendDraft]);
+
+  useEffect(() => {
+    if (props.cloudMcpSubmissionState.status !== "failed") {
+      cloudQueueBlockedRef.current = false;
+    }
+  }, [props.cloudMcpSubmissionState.status]);
 
   useEffect(() => {
     props.onDraftChange(buildDraft(draft, attachments));
@@ -921,7 +981,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         unreadable.length === 1
           ? `${unreadable[0]?.name ?? "File"} has a format the model can't read`
           : `${unreadable.length} files have formats the model can't read`,
-        { description: "Convert to PDF, image, or plain text and attach again." },
+        { description: t("composer.any_file_type_supported") },
       );
     }
     if (!accepted.length) return;
@@ -1215,6 +1275,113 @@ export function SessionSurface(props: SessionSurfaceProps) {
     void typeComposerText(prompt);
   }, [typeComposerText]);
 
+  useEffect(() => {
+    const resetReconnectState = () => useChatMcpReconnectStore.getState().reset();
+    window.addEventListener(denSettingsChangedEvent, resetReconnectState);
+    return () => window.removeEventListener(denSettingsChangedEvent, resetReconnectState);
+  }, []);
+
+  const handleMcpReconnect = useCallback(async (
+    action: ChatToolReconnectAction,
+    onProgress: (progress: ChatToolReconnectProgress) => void,
+  ): Promise<ChatToolReconnectResult> => {
+    const settings = readDenSettings();
+    const token = settings.authToken?.trim() ?? "";
+    const organizationId = settings.activeOrgId?.trim() ?? "";
+    if (!token || !organizationId) {
+      props.onOpenConnect();
+      throw new Error("Sign in to OpenWork Cloud, then try reconnecting again.");
+    }
+
+    const scope: ChatMcpReconnectScope = {
+      baseUrl: settings.baseUrl,
+      token,
+      organizationId,
+    };
+    const currentScope = (): ChatMcpReconnectScope => {
+      const current = readDenSettings();
+      return {
+        baseUrl: current.baseUrl,
+        token: current.authToken?.trim() ?? "",
+        organizationId: current.activeOrgId?.trim() ?? "",
+      };
+    };
+    try {
+      const denClient = createDenClient({ baseUrl: settings.baseUrl, token });
+      const connections = await denClient.listMcpConnections(organizationId, "usable");
+      const connection = connections.find((entry) => entry.id === action.connectionId);
+      if (!connection || connection.authType !== "oauth" || connection.credentialMode !== "per_member") {
+        throw new Error(`${action.connectionName} is no longer available as your reconnectable account.`);
+      }
+
+      recordInspectorEvent("mcp.chat_reconnect.started", {
+        workspaceId: props.workspaceId,
+        sessionId: props.sessionId,
+        connectionId: action.connectionId,
+      });
+      onProgress({ phase: "opening" });
+      const result = await denClient.startMcpConnectionConnect(organizationId, action.connectionId);
+      if (result.status === "connected") {
+        recordInspectorEvent("mcp.chat_reconnect.completed", {
+          workspaceId: props.workspaceId,
+          sessionId: props.sessionId,
+          connectionId: action.connectionId,
+          completion: "already_connected",
+        });
+        return "connected";
+      }
+      if (!result.authorizeUrl) throw new Error(`Could not start ${action.connectionName} authorization.`);
+
+      await openDesktopUrl(result.authorizeUrl);
+      onProgress({ phase: "authorization_opened", authorizeUrl: result.authorizeUrl });
+      await waitForFreshMcpAuthorization({
+        connectionId: action.connectionId,
+        connectionName: action.connectionName,
+        previousConnectedAt: connection.connectedAt,
+        listConnections: () => denClient.listMcpConnections(organizationId, "usable"),
+        isScopeCurrent: () => isChatMcpReconnectScopeCurrent(scope, currentScope()),
+      });
+      recordInspectorEvent("mcp.chat_reconnect.completed", {
+        workspaceId: props.workspaceId,
+        sessionId: props.sessionId,
+        connectionId: action.connectionId,
+        completion: "fresh_authorization",
+      });
+      return "connected";
+    } catch (error) {
+      recordInspectorEvent("mcp.chat_reconnect.failed", {
+        workspaceId: props.workspaceId,
+        sessionId: props.sessionId,
+        connectionId: action.connectionId,
+        errorType: error instanceof Error ? error.name : "unknown",
+      });
+      throw error;
+    }
+  }, [props.onOpenConnect, props.sessionId, props.workspaceId]);
+
+  const handleMcpReopenAuthorization = useCallback(async (
+    action: ChatToolReconnectAction,
+    authorizeUrl: string,
+  ) => {
+    await openDesktopUrl(authorizeUrl);
+    recordInspectorEvent("mcp.chat_reconnect.authorization_reopened", {
+      workspaceId: props.workspaceId,
+      sessionId: props.sessionId,
+      connectionId: action.connectionId,
+    });
+  }, [props.sessionId, props.workspaceId]);
+
+  const handleMcpRetry = useCallback(async (action: ChatToolReconnectAction) => {
+    const prompt = `The ${action.connectionName} connection is restored. Search for the capability again and retry the previous request. Before repeating any write action, confirm it did not already complete.`;
+    await typeComposerText(prompt);
+    props.onDraftChange(buildDraft(prompt, attachments));
+    recordInspectorEvent("mcp.chat_reconnect.retry_drafted", {
+      workspaceId: props.workspaceId,
+      sessionId: props.sessionId,
+      connectionId: action.connectionId,
+    });
+  }, [attachments, buildDraft, props.onDraftChange, props.sessionId, props.workspaceId, typeComposerText]);
+
   const handleRevertToUserMessage = useCallback((messageId: string) => {
     void props.onRevertToMessage?.(messageId, props.sessionId);
   }, [props.onRevertToMessage, props.sessionId]);
@@ -1404,6 +1571,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
                       onRevertToUserMessage={handleRevertToUserMessage}
                       onForkAtMessage={handleForkAtMessage}
                       onEditUserMessage={handleEditUserMessage}
+                      onMcpReconnect={handleMcpReconnect}
+                      onMcpReopenAuthorization={handleMcpReopenAuthorization}
+                      onMcpRetry={handleMcpRetry}
                     >
                       <MessageList
                         messages={renderedMessages}
@@ -1442,6 +1612,25 @@ export function SessionSurface(props: SessionSurfaceProps) {
           </button>
         ) : null}
         <DevProfiler id="SessionComposer">
+        {props.cloudMcpSubmissionState.status === "failed" ? (
+          <div
+            className="mx-3 mb-2 flex items-center gap-3 rounded-xl border border-red-7/40 bg-red-2/40 px-3 py-2 text-xs text-red-11"
+            data-testid="cloud-mcp-submission-failure"
+          >
+            <span className="min-w-0 flex-1">
+              {[
+                props.cloudMcpSubmissionState.issue?.message ?? "Connected service tools could not be prepared.",
+                props.cloudMcpSubmissionState.issue?.recommendedAction,
+              ].filter(Boolean).join(" ")}
+            </span>
+            <button type="button" className="font-medium hover:underline" onClick={handleRetryCloudSubmission}>
+              Retry
+            </button>
+            <button type="button" className="font-medium hover:underline" onClick={props.onOpenConnect}>
+              Open Connect
+            </button>
+          </div>
+        ) : null}
         <ReactSessionComposer
           draft={draft}
           mentions={mentions}
@@ -1451,6 +1640,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         onQueue={handleQueue}
         onStop={handleAbort}
         busy={chatStreaming}
+        submissionPreparing={preparingCloudTools}
         queuedCount={queuedMessages.length}
         disabled={model.transitionState !== "idle" || Boolean(props.modelUnavailable)}
         modelUnavailable={Boolean(props.modelUnavailable)}

@@ -39,6 +39,7 @@ type AppVariables = RequestIdVariables & AuthContextVariables & Partial<UserOrga
 const healthResponseSchema = z.object({
   ok: z.literal(true),
   service: z.literal("den-api"),
+  version: z.string(),
 }).meta({ ref: "DenApiHealthResponse" })
 
 const readinessResponseSchema = z.object({
@@ -139,7 +140,7 @@ app.get(
   }),
   publicRoute,
   (c) => {
-    return c.json({ ok: true, service: "den-api" })
+    return c.json({ ok: true, service: "den-api", version: env.serviceVersion })
   },
 )
 

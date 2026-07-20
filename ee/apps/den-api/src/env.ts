@@ -3,7 +3,6 @@ import path from "node:path"
 import { DEN_WORKER_POLL_INTERVAL_MS } from "./CONSTS.js"
 import { normalizeConfiguredPublicApiBaseUrl } from "./request-url.js"
 import { denApiAppVersion } from "./version.js"
-import { parseEnterpriseMcpClientEnabled } from "./enterprise-mcp-client-flag.js"
 import { z } from "zod"
 
 export const DEFAULT_DEN_DIAGNOSTICS_ORIGIN = "https://diagnostic.openworklabs.com"
@@ -37,6 +36,7 @@ const EnvSchema = z.object({
   DEN_SINGLE_ORG_NAME: z.string().optional(),
   DEN_SINGLE_ORG_SLUG: z.string().optional(),
   DEN_SINGLE_ORG_OWNER_EMAILS: z.string().optional(),
+  DEN_SINGLE_ORG_ALLOW_PUBLIC_SIGNUP: z.string().optional(),
   DEN_REQUIRE_EMAIL_VERIFICATION: z.string().optional(),
   DEN_PASSWORD_BREACH_SCREENING_ENABLED: z.string().optional(),
   RESEND_API_KEY: z.string().optional(),
@@ -49,7 +49,6 @@ const EnvSchema = z.object({
   LOOPS_MARKETING_ENABLED: z.string().optional(),
   OPENWORK_DEV_MODE: z.string().optional(),
   DEN_ALLOW_PRIVATE_MCP_URLS: z.string().optional(),
-  DEN_ENABLE_ENTERPRISE_MCP_CLIENT: z.string().optional(),
   DEN_DIAGNOSTICS_ORIGIN: z.string().optional(),
   DEN_DIAGNOSTICS_BEARER_TOKEN: z.string().optional(),
   DEN_GOOGLE_OAUTH_AUTHORIZE_URL: z.string().optional(),
@@ -61,6 +60,7 @@ const EnvSchema = z.object({
   PORT: z.string().optional(),
   CORS_ORIGINS: z.string().optional(),
   DEN_API_PUBLIC_URL: z.string().optional(),
+  DEN_API_VERSION: z.string().optional(),
   OPENWORK_INSTALLER_ARTIFACTS_DIR: z.string().optional(),
   OPENWORK_INSTALLER_RELEASE_TAG: z.string().optional(),
   OPENWORK_INSTALLER_RELEASE_REPO: z.string().optional(),
@@ -99,6 +99,9 @@ const EnvSchema = z.object({
   VERCEL_DNS_DOMAIN: z.string().optional(),
   DEN_PLAN_GATING_ENABLED: z.string().optional(),
   DEN_INSTALL_LINKS_GATING_ENABLED: z.string().optional(),
+  DEN_CONNECT_LINK_MODE: z.enum(["exchange", "signed"]).optional(),
+  DEN_CONNECT_LINK_PRIVATE_KEY: z.string().optional(),
+  DEN_CONNECT_LINK_KEY_ID: z.string().max(64).optional(),
   DEN_MCP_CONNECTIONS_GATING_ENABLED: z.string().optional(),
   SCIM_MAINTENANCE_INTERVAL_MS: z.string().optional(),
   POLAR_FEATURE_GATE_ENABLED: z.string().optional(),
@@ -223,6 +226,23 @@ export function normalizeSingleOrgSlug(value: string | undefined) {
   return normalized
 }
 
+export function parseSingleOrgAllowPublicSignup(value: string | undefined, orgMode: DenOrgMode) {
+  const normalized = value?.trim().toLowerCase()
+  if (!normalized) {
+    return orgMode === "multi_org"
+  }
+
+  if (["1", "true", "yes", "y", "on"].includes(normalized)) {
+    return true
+  }
+
+  if (["0", "false", "no", "n", "off"].includes(normalized)) {
+    return false
+  }
+
+  throw new Error("DEN_SINGLE_ORG_ALLOW_PUBLIC_SIGNUP must be true or false")
+}
+
 function normalizeOrigin(origin: string) {
   const value = origin.trim()
   if (value === "*") {
@@ -288,17 +308,31 @@ const polarFeatureGateEnabled =
 const planGatingEnabled =
   (parsed.DEN_PLAN_GATING_ENABLED ?? "false").toLowerCase() === "true"
 
-// Hosted deployments normally enable plan gating and retain per-org rollout.
-// Self-hosted deployments default to no gating, so install links work without
-// access to the hosted platform-admin control plane. An explicit setting wins.
+// Deprecated compatibility knob for organization install links. The environment
+// variable is still parsed so existing deployment configs keep starting, but
+// organizationInstallLinksEnabled ignores this value: install links are
+// default-on unless org metadata explicitly disables them.
 const installLinksGatingEnabled =
   (parsed.DEN_INSTALL_LINKS_GATING_ENABLED ?? String(planGatingEnabled)).toLowerCase() === "true"
 
-// Staged rollout for member-facing org MCP connections: when gating is
-// enabled (hosted deployments), GET /v1/mcp-connections?scope=usable returns
-// an empty list unless the organization opted in via the mcpConnections
-// organization capability. Off by default so local dev, evals, and self-hosted
-// deployments keep the feature working out of the box.
+// Exchange mode is the zero-config default. Signed mode is an explicit v2
+// opt-in because its public key must already be trusted by the desktop build.
+const connectLinkMode = parsed.DEN_CONNECT_LINK_MODE ?? "exchange"
+const connectLinkPrivateKeyPem = optionalString(parsed.DEN_CONNECT_LINK_PRIVATE_KEY)
+const connectLinkKid = optionalString(parsed.DEN_CONNECT_LINK_KEY_ID)
+if (connectLinkMode === "signed" && (!connectLinkPrivateKeyPem || !connectLinkKid)) {
+  throw new Error(
+    "DEN_CONNECT_LINK_MODE=signed requires DEN_CONNECT_LINK_PRIVATE_KEY and DEN_CONNECT_LINK_KEY_ID.",
+  )
+}
+const connectLink = connectLinkMode === "signed" && connectLinkPrivateKeyPem && connectLinkKid
+  ? { privateKeyPem: connectLinkPrivateKeyPem, kid: connectLinkKid }
+  : null
+
+// Deprecated compatibility knob for member-facing org MCP connections. The
+// environment variable is still parsed so existing deployment configs keep
+// starting, but memberFacingMcpConnectionsEnabled ignores this value: Connect is
+// default-on unless org metadata explicitly disables it.
 const mcpConnectionsGatingEnabled =
   (parsed.DEN_MCP_CONNECTIONS_GATING_ENABLED ?? "false").toLowerCase() === "true"
 
@@ -323,7 +357,6 @@ const orgMode = parseDenOrgMode(parsed.DEN_ORG_MODE)
 // (OPENWORK_DEV_MODE=1) is exempt automatically so evals against a local
 // stand-in server keep working.
 const allowPrivateMcpUrls = devMode || (parsed.DEN_ALLOW_PRIVATE_MCP_URLS ?? "0").trim() === "1"
-const enterpriseMcpClientEnabled = parseEnterpriseMcpClientEnabled(parsed.DEN_ENABLE_ENTERPRISE_MCP_CLIENT)
 const requireEmailVerification = parsed.DEN_REQUIRE_EMAIL_VERIFICATION === undefined
   ? orgMode === "multi_org" && !devMode
   : parsed.DEN_REQUIRE_EMAIL_VERIFICATION.trim().toLowerCase() !== "false"
@@ -364,13 +397,13 @@ export const env = {
   webAppHosts: splitCsv(parsed.DEN_WEB_APP_HOSTS).map((host) => host.toLowerCase()),
   devMode,
   allowPrivateMcpUrls,
-  enterpriseMcpClientEnabled,
   diagnostics: {
     origin: diagnosticsOrigin,
     bearerToken: diagnosticsBearerToken,
   },
   planGatingEnabled,
   installLinksGatingEnabled,
+  connectLink,
   mcpConnectionsGatingEnabled,
   scimMaintenanceIntervalMs: Number(parsed.SCIM_MAINTENANCE_INTERVAL_MS ?? "300000"),
   requireEmailVerification,
@@ -412,6 +445,7 @@ export const env = {
   singleOrg: {
     name: optionalString(parsed.DEN_SINGLE_ORG_NAME) ?? "OpenWork",
     slug: normalizeSingleOrgSlug(parsed.DEN_SINGLE_ORG_SLUG),
+    allowPublicSignup: parseSingleOrgAllowPublicSignup(parsed.DEN_SINGLE_ORG_ALLOW_PUBLIC_SIGNUP, orgMode),
     ownerEmails: splitCsv(parsed.DEN_SINGLE_ORG_OWNER_EMAILS)
       .map((email) => email.toLowerCase()),
   },
@@ -419,6 +453,7 @@ export const env = {
   workerProxyPort: Number(parsed.WORKER_PROXY_PORT ?? "8789"),
   corsOrigins,
   apiPublicUrl,
+  serviceVersion: parsed.DEN_API_VERSION?.trim() || "dev",
   publicUrlTrustedOrigins,
   installerArtifactsDir: optionalString(parsed.OPENWORK_INSTALLER_ARTIFACTS_DIR),
   // Standard desktop release assets: the release tag to download from,

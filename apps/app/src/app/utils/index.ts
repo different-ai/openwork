@@ -162,7 +162,7 @@ export function formatModelLabel(model: ModelRef, providers: ProviderListItem[] 
   return `${providerLabel} · ${modelLabel}`;
 }
 
-export { isDesktopRuntime, isDesktopWorkspaceRecoveryDisabled, isElectronRuntime } from "../lib/runtime-env";
+export { isDesktopRuntime, isElectronRuntime } from "../lib/runtime-env";
 
 export function isWindowsPlatform() {
   if (typeof navigator === "undefined") return false;

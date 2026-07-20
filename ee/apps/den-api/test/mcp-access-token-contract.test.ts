@@ -162,6 +162,13 @@ async function expectError(name, token, context, expected) {
   }
 }
 
+async function expectPrincipal(name, token, context) {
+  const principal = await verifyMcpRequest(new Headers({ authorization: "Bearer " + token }), context)
+  if (principal instanceof Response) {
+    throw new Error(name + " failed with " + JSON.stringify(await principal.json()))
+  }
+}
+
 await expectError("mismatched custom resource claim", signJwt({ [resourceClaim]: parentResource }), agentContext("req_mismatch"), {
   status: 401,
   error: "wrong_mcp_resource",
@@ -176,6 +183,12 @@ await expectError("multi audience", signJwt({ aud: [agentResource, parentResourc
   status: 401,
   error: "wrong_mcp_resource",
 })
+
+await expectPrincipal(
+  "OAuth token with standard userinfo audience",
+  signJwt({ aud: [agentResource, apiOrigin + "/api/auth/oauth2/userinfo"] }),
+  agentContext("req_userinfo_aud"),
+)
 
 await expectError("agent JWT on parent route", signJwt({}), parentContext("req_exact_agent_parent"), {
   status: 401,

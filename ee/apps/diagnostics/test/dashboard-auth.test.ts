@@ -110,6 +110,45 @@ describe("Diagnostics dashboard authentication", () => {
     expect(response.status).toBe(403)
   })
 
+  test("accepts an opaque browser origin only with a same-origin referrer", async () => {
+    configureLocalAuthentication()
+    const response = await POST(new Request("http://0.0.0.0:3010/api/dashboard-session", {
+      body: new URLSearchParams({ password: config.adminPassword, username: config.adminUsername }),
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        origin: "null",
+        referer: "https://diagnostics.example/login",
+        "x-forwarded-host": "diagnostics.example",
+        "x-forwarded-proto": "https",
+      },
+      method: "POST",
+    }))
+
+    expect(response.status).toBe(303)
+    expect(response.headers.get("location")).toBe("https://diagnostics.example/")
+    expect(response.headers.get("set-cookie")).toContain(`${DASHBOARD_SESSION_COOKIE}=`)
+  })
+
+  test("rejects an opaque browser origin without a same-origin referrer", async () => {
+    configureLocalAuthentication()
+    const body = { password: config.adminPassword, username: config.adminUsername }
+    const request = formRequest(body)
+    const headers = { ...Object.fromEntries(request.headers), origin: "null" }
+
+    const missingReferrer = await POST(new Request(request, { headers }))
+    const crossOriginRequest = formRequest(body)
+    const crossOriginReferrer = await POST(new Request(crossOriginRequest, {
+      headers: {
+        ...Object.fromEntries(crossOriginRequest.headers),
+        origin: "null",
+        referer: "https://attacker.example/login",
+      },
+    }))
+
+    expect(missingReferrer.status).toBe(403)
+    expect(crossOriginReferrer.status).toBe(403)
+  })
+
   test("redirects the dashboard to login while returning JSON for history clients", async () => {
     configureLocalAuthentication()
     const dashboard = proxy(new NextRequest("http://localhost:3010/?runId=4ab6c4c2-2b5d-4f85-83b7-137cc93acb57"))

@@ -32,14 +32,22 @@ function redirect(request: Request, pathname: string): NextResponse {
   return response
 }
 
-function requestOriginAllowed(request: Request): boolean {
-  const origin = request.headers.get("origin")
-  if (!origin) return true
+function matchesOrigin(value: string, expectedOrigin: string): boolean {
   try {
-    return new URL(origin).origin === requestPublicOrigin(request)
+    return new URL(value).origin === expectedOrigin
   } catch {
     return false
   }
+}
+
+function requestOriginAllowed(request: Request): boolean {
+  const origin = request.headers.get("origin")
+  if (!origin) return true
+  const expectedOrigin = requestPublicOrigin(request)
+  if (origin !== "null") return matchesOrigin(origin, expectedOrigin)
+
+  const referrer = request.headers.get("referer")
+  return Boolean(referrer && matchesOrigin(referrer, expectedOrigin))
 }
 
 export async function POST(request: Request): Promise<NextResponse> {

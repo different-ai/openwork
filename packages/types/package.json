@@ -9,6 +9,11 @@
       "development": "./src/index.ts",
       "default": "./src/index.ts"
     },
+    "./agent-context-diagnostics": {
+      "types": "./src/agent-context-diagnostics.ts",
+      "development": "./src/agent-context-diagnostics.ts",
+      "default": "./src/agent-context-diagnostics.ts"
+    },
     "./den/desktop-app-restrictions": {
       "types": "./src/den/desktop-app-restrictions.ts",
       "development": "./src/den/desktop-app-restrictions.ts",
@@ -34,6 +39,11 @@
       "development": "./src/den/microsoft-365.ts",
       "default": "./src/den/microsoft-365.ts"
     },
+    "./den/mcp-connection-action": {
+      "types": "./src/den/mcp-connection-action.ts",
+      "development": "./src/den/mcp-connection-action.ts",
+      "default": "./src/den/mcp-connection-action.ts"
+    },
     "./workspace": {
       "types": "./src/workspace.ts",
       "development": "./src/workspace.ts",
@@ -43,6 +53,11 @@
       "types": "./src/desktop-ipc.ts",
       "development": "./src/desktop-ipc.ts",
       "default": "./src/desktop-ipc.ts"
+    },
+    "./connect-link": {
+      "types": "./src/connect-link.ts",
+      "development": "./src/connect-link.ts",
+      "default": "./src/connect-link.ts"
     }
   },
   "files": [

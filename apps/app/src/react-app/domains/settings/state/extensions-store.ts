@@ -1616,8 +1616,8 @@ export function createExtensionsStore(options: {
                 title: "New extension available",
                 body: `${plugin.name ?? plugin.id} was added to ${marketplaceName}`,
                 dedupeKey: `new-marketplace-plugin:${plugin.id}`,
-                action: { type: "install-marketplace-plugin", pluginName: plugin.name ?? plugin.id },
-                actionLabel: "View and install",
+                action: { type: "open-extensions-marketplace", pluginName: plugin.name ?? plugin.id },
+                actionLabel: "View in Marketplace",
               });
             }
           }

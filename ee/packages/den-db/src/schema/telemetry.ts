@@ -33,6 +33,7 @@ export const TelemetryEventTable = mysqlTable(
   (table) => [
     index("telemetry_event_org_id_type_ts").on(table.org_id, table.event_type, table.event_timestamp),
     index("telemetry_event_org_id_member_id").on(table.org_id, table.member_id),
+    index("telemetry_event_member_ts").on(table.member_id, table.event_timestamp),
     index("telemetry_event_org_session_ts").on(table.org_id, table.session_id, table.event_timestamp),
   ],
 )

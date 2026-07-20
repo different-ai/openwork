@@ -78,7 +78,6 @@ Optional env vars (via `.env` or `export`):
 - `DEN_BETTER_AUTH_URL` — browser-facing auth base URL (defaults to `http://$DEN_PUBLIC_HOST:<DEN_WEB_PORT>`)
 - `DEN_MCP_RESOURCE_URL` — API-facing MCP resource URL (defaults to `http://localhost:<DEN_API_PORT>/mcp`)
 - `DEN_MCP_ADDITIONAL_RESOURCES` — extra public MCP resource URLs beyond the `DEN_API_PUBLIC_URL` API origin and web-app defaults
-- `DEN_ENABLE_ENTERPRISE_MCP_CLIENT` — set to `true` to enable the additive `@openwork/enterprise-mcp-client` Den runtime (defaults to `false`)
 - `DEN_BETTER_AUTH_TRUSTED_ORIGINS` — trusted origins for Better Auth (defaults to `DEN_CORS_ORIGINS`)
 - `DEN_CORS_ORIGINS` — trusted origins for Express CORS (defaults include hostname, localhost, `127.0.0.1`, `0.0.0.0`, and detected LAN IPv4)
 - `DEN_PROVISIONER_MODE` — `stub` or `render` (defaults to `stub`)
@@ -254,7 +253,7 @@ Caveats: `grafana/otel-lgtm` is intended for development, demos, and tests, not 
 Run the install-link migration once against the Den database:
 
 ```bash
-docker compose -f packaging/docker/docker-compose.den-dev.yml exec den sh -lc "pnpm --dir /app/ee/packages/den-db run db:bootstrap"
+docker compose -f packaging/docker/docker-compose.den-dev.yml exec den sh -lc "node /app/ee/packages/den-db/dist/scripts/bootstrap.js"
 ```
 
 Set `DEN_BOOTSTRAP_ADMIN_EMAILS` on the Den API service, restart it, open `/admin`, and toggle `Install links` for each org. Optional installer artifact env vars are `OPENWORK_INSTALLER_RELEASE_TAG`, `OPENWORK_INSTALLER_RELEASE_REPO`, and `OPENWORK_INSTALLER_ARTIFACTS_DIR`; see the [operator guide](../../docs/org-install-links.md).

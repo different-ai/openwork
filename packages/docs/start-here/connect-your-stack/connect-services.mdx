@@ -1,0 +1,64 @@
+---
+title: "Connect your services"
+description: "Sign in to OpenWork and connect the accounts your agent can use"
+---
+
+Use `Settings` > `Connect` for services your organization makes available,
+including Gmail, Google Calendar, Google Drive, Slack, Notion, and Linear. This
+is the recommended setup for everyday integrations.
+
+## Before you start
+
+Connect requires signing in to an OpenWork account and joining an organization
+that has Connect enabled. This is separate from signing in to an LLM provider
+such as ChatGPT.
+
+1. Open the OpenWork desktop app.
+2. Click `Sign in`, or open `Settings` > `Connect` and choose `Sign in`.
+3. Complete sign-in in your browser and return to OpenWork.
+4. Choose the OpenWork organization you want to use if prompted.
+
+If Connect is not available for your organization, ask an organization admin
+to enable it.
+
+## Connect an account
+
+1. Open `Settings` > `Connect`.
+2. Find the service under `Needs your sign-in`.
+3. Click `Connect` and approve access on the provider's sign-in page.
+4. Return to OpenWork. The service moves to `Ready to use` automatically.
+
+Some connections are managed by your organization. If a service is not
+listed, ask an organization admin to publish it from the OpenWork Cloud
+`Connections` dashboard and grant you access.
+
+## Ask your agent to use it
+
+You do not need to know an MCP server name or tool name. Ask for the outcome
+you want, for example:
+
+- “Summarize my five newest emails.”
+- “Find the Q3 launch page in Notion.”
+- “What meetings do I have tomorrow?”
+
+The agent searches the live capabilities available to your signed-in account,
+then executes an exact match. If an account still needs attention, it should
+send you back to `Settings` > `Connect` with the action to take instead of
+telling you to add an MCP server.
+
+## Connect, Connections, and MCP servers
+
+- **Connect** is the member-facing page in the desktop app for signing in to
+  services and checking connection readiness.
+- **Connections** is the organization-admin dashboard in OpenWork Cloud for
+  publishing a service, choosing whose account it uses, and granting member or
+  team access.
+- **OpenWork Connect MCP** is the hosted endpoint that lets external MCP
+  clients use capabilities from an OpenWork organization.
+- **Add an MCP server** is the advanced path for a custom or local server that
+  your organization does not provide through Connect.
+
+If you are building a custom integration, continue with
+[Add an MCP server](/start-here/connect-your-stack/add-an-mcp-server). If you
+are an organization admin, see
+[Sharing MCP connections with your team](/cloud/share-with-your-team/shared-mcp-connections).

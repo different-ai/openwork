@@ -1,8 +1,9 @@
-name: Release Generic Installer
+name: Legacy Generic Installer (manual)
 
-# Builds the GENERIC (unbranded) OpenWork installer. Organization downloads
-# combine this unchanged signed installer with the unchanged standard desktop
-# artifact and an explicit openwork-installer.json sidecar. The committed
+# Legacy recovery workflow for the GENERIC (unbranded) OpenWork installer.
+# Organization downloads now bundle the standard desktop installer with
+# desktop-bootstrap.json, so normal releases do not invoke this workflow.
+# The committed
 # apps/installer build-config placeholder stays empty, so the binary carries
 # no deployment values and resolves its config at run time (sidecar stamped by
 # den-api, filename tag, or pasted install link; see #2480) — and publishes it

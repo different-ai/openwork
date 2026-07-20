@@ -150,7 +150,7 @@ export default {
   id: "provider-sync-stable-engine",
   title: "Org cloud providers import once and the engine connection stays stable",
   kind: "user-facing",
-  requiredEnv: ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_TOKEN"],
+  requiredEnv: ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_TOKEN", "OPENWORK_EVAL_DEN_WEB_URL"],
   steps: [
     {
       name: "Frame 1",
@@ -194,7 +194,9 @@ export default {
               typeof payload?.openworkUrl === "string" && payload.openworkUrl.length > 0,
               "No openworkUrl in handoff response.",
             );
-            ctx.handoffUrl = payload.openworkUrl;
+            const handoffUrl = new URL(payload.openworkUrl);
+            handoffUrl.searchParams.set("denBaseUrl", ctx.env.OPENWORK_EVAL_DEN_WEB_URL.trim().replace(/\/+$/, ""));
+            ctx.handoffUrl = handoffUrl.toString();
 
             await ctx.navigateHash("/settings/cloud-account");
             await ctx.waitFor(

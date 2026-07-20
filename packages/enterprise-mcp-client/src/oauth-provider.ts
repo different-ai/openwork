@@ -1,4 +1,4 @@
-import type { OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js"
+import type { OAuthClientProvider, OAuthDiscoveryState } from "@modelcontextprotocol/sdk/client/auth.js"
 import {
   OAuthClientInformationFullSchema,
   OAuthClientInformationSchema,
@@ -12,10 +12,12 @@ import type {
   EnterpriseMcpOAuthAuthorizationHandle,
   EnterpriseMcpOAuthClientRegistration,
   EnterpriseMcpOAuthCredential,
+  EnterpriseMcpOAuthConfiguration,
   EnterpriseMcpOAuthPersistence,
   EnterpriseMcpPersistenceContext,
 } from "./contracts.js"
 import { EnterpriseMcpOAuthContractError } from "./errors.js"
+import { isAuthorizationServerDiscoveryBound } from "./oauth-discovery-binding.js"
 
 type OAuthFlowContext =
   | { kind: "connect"; authorizationId?: string }
@@ -62,8 +64,13 @@ export class EnterpriseMcpOAuthProvider implements OAuthClientProvider {
   private readonly lifecycle: EnterpriseMcpLifecycle
   private readonly authorizationTransactionTtlMs: number
   private readonly expirationSkewMs: number
+  private readonly applicationType: EnterpriseMcpOAuthConfiguration["applicationType"]
+  private readonly authorizationServerIssuer: string | undefined
+  private readonly requestedScopes: string[]
+  readonly clientMetadataUrl: string | undefined
   private loadedClient: EnterpriseMcpOAuthClientRegistration | undefined
   private loadedCredential: EnterpriseMcpOAuthCredential | undefined
+  private loadedDiscovery: OAuthDiscoveryState | undefined
   private authorizationHandle: EnterpriseMcpOAuthAuthorizationHandle | undefined
   authorizeUrl: string | null = null
 
@@ -77,6 +84,7 @@ export class EnterpriseMcpOAuthProvider implements OAuthClientProvider {
     lifecycle: EnterpriseMcpLifecycle
     authorizationTransactionTtlMs: number
     expirationSkewMs: number
+    oauthConfiguration?: EnterpriseMcpOAuthConfiguration
   }) {
     this.redirectUri = input.redirectUri
     this.connectionId = input.connectionId
@@ -87,6 +95,10 @@ export class EnterpriseMcpOAuthProvider implements OAuthClientProvider {
     this.lifecycle = input.lifecycle
     this.authorizationTransactionTtlMs = input.authorizationTransactionTtlMs
     this.expirationSkewMs = input.expirationSkewMs
+    this.applicationType = input.oauthConfiguration?.applicationType ?? "web"
+    this.clientMetadataUrl = input.oauthConfiguration?.clientMetadataUrl
+    this.authorizationServerIssuer = input.oauthConfiguration?.authorizationServerIssuer
+    this.requestedScopes = [...new Set(input.oauthConfiguration?.requestedScopes ?? [])]
   }
 
   private context(): EnterpriseMcpPersistenceContext {
@@ -119,19 +131,72 @@ export class EnterpriseMcpOAuthProvider implements OAuthClientProvider {
   }
 
   get clientMetadata() {
+    const scope = this.requestedScopes.join(" ")
     return {
       redirect_uris: [this.redirectUri],
       client_name: this.clientName,
       grant_types: ["authorization_code", "refresh_token"],
       response_types: ["code"],
       token_endpoint_auth_method: "none",
+      application_type: this.applicationType,
+      ...(scope ? { scope } : {}),
     }
+  }
+
+  private assertDiscoveryBinding(state: OAuthDiscoveryState): void {
+    const selectedIssuer = this.authorizationServerIssuer
+    if (!selectedIssuer) {
+      if ((state.resourceMetadata?.authorization_servers?.length ?? 0) > 1) {
+        throw new EnterpriseMcpOAuthContractError(
+          "MCP_OAUTH_CONFIGURATION_REQUIRED",
+          "This MCP resource advertises multiple authorization servers; an administrator must select one before connecting.",
+        )
+      }
+      return
+    }
+    if (!isAuthorizationServerDiscoveryBound(state, selectedIssuer)) {
+      throw new EnterpriseMcpOAuthContractError(
+        "MCP_OAUTH_ISSUER_MISMATCH",
+        "The OAuth authorization server does not match the issuer selected for this MCP connection.",
+      )
+    }
+  }
+
+  async discoveryState(): Promise<OAuthDiscoveryState | undefined> {
+    const state = await this.persistence.discovery?.load(this.context())
+    if (state) {
+      this.assertDiscoveryBinding(state)
+      this.loadedDiscovery = state
+    }
+    return state
+  }
+
+  async saveDiscoveryState(state: OAuthDiscoveryState): Promise<void> {
+    try {
+      this.assertDiscoveryBinding(state)
+    } catch (error) {
+      await this.persistence.discovery?.invalidate({
+        context: this.context(),
+        reason: "issuer-mismatch",
+      })
+      throw error
+    }
+    await this.persistence.discovery?.save({ context: this.context(), state })
+    this.loadedDiscovery = state
   }
 
   async clientInformation(): Promise<OAuthClientInformationMixed | undefined> {
     const record = await this.persistence.clientRegistrations.load(this.context())
     if (!record) {
       this.loadedClient = undefined
+      const metadata = this.loadedDiscovery?.authorizationServerMetadata
+      const canUseClientMetadata = metadata?.client_id_metadata_document_supported === true && Boolean(this.clientMetadataUrl)
+      if (metadata && !canUseClientMetadata && !metadata.registration_endpoint) {
+        throw new EnterpriseMcpOAuthContractError(
+          "MCP_OAUTH_CONFIGURATION_REQUIRED",
+          "The authorization server does not advertise client metadata documents or dynamic registration; an administrator must supply a pre-registered OAuth client.",
+        )
+      }
       return undefined
     }
     oauthClientInformationMixedSchema.parse(record.clientInformation)
@@ -157,11 +222,12 @@ export class EnterpriseMcpOAuthProvider implements OAuthClientProvider {
 
   async saveClientInformation(clientInformation: OAuthClientInformationMixed): Promise<void> {
     const validated = oauthClientInformationMixedSchema.parse(clientInformation)
+    const source = this.clientMetadataUrl === validated.client_id ? "client-metadata" : "dynamic"
     const saved = await this.persistence.clientRegistrations.save({
       context: this.context(),
       clientInformation: validated,
       expiresAt: clientExpiration(validated),
-      source: "dynamic",
+      source,
     })
     if (saved.clientInformation.client_id !== validated.client_id) {
       throw new EnterpriseMcpOAuthContractError(
@@ -215,6 +281,7 @@ export class EnterpriseMcpOAuthProvider implements OAuthClientProvider {
       source,
       authorization: this.authorizationHandle,
       clientRegistrationRevision: this.loadedClient?.revision,
+      expectedCredentialRevision: source === "refresh" ? existing?.revision : undefined,
     })
     this.loadedCredential = undefined
   }
@@ -304,6 +371,12 @@ export class EnterpriseMcpOAuthProvider implements OAuthClientProvider {
           reason: "provider-rejected",
         })
       }
+    }
+    if (scope === "all" || scope === "discovery") {
+      await this.persistence.discovery?.invalidate({
+        context: this.context(),
+        reason: "provider-rejected",
+      })
     }
   }
 }

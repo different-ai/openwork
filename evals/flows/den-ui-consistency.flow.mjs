@@ -521,7 +521,7 @@ export default {
             await ctx.screenshot("fresh-signin-security-dialog", {
               claim: "The protected action opens a calm, contextual fresh-sign-in dialog.",
               voiceover: vo[6],
-              requireText: ["Confirm it's you to continue", "SIGNING IN AS", "Verify password"],
+              requireText: ["For security, confirm it's you before changing workspace settings.", "SIGNING IN AS", "Verify password"],
               rejectText: ["Redirecting to your dashboard"],
               hashIncludes: "/dashboard/plugins/new",
             });

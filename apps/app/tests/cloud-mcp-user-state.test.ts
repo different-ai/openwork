@@ -3,14 +3,27 @@ import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import {
   __setCloudMcpUserStateStorageForTest,
   clearCloudMcpUserState,
+  clearCloudMcpUnhealthyRemintAttempt,
   isCloudMcpSyncMarkerFresh,
   readCloudMcpSyncMarker,
+  readCloudMcpUnhealthyRemintAttempt,
   readCloudMcpUserState,
   writeCloudMcpSyncMarker,
+  writeCloudMcpUnhealthyRemintAttempt,
   writeCloudMcpUserState,
 } from "../src/react-app/domains/connections/cloud-mcp-user-state";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+const scope = {
+  denBaseUrl: "https://cloud.openwork.test",
+  serverBaseUrl: "https://worker.openwork.test",
+  orgId: "organization_1",
+  workspaceId: "workspace_1",
+};
+const otherScope = {
+  ...scope,
+  workspaceId: "workspace_2",
+};
 
 // Bun on Linux exposes a readonly `globalThis.window`, so the storage is
 // injected via the test hook instead of stubbing the global.
@@ -37,20 +50,28 @@ describe("cloud MCP user state", () => {
     installStorageStub();
   });
 
-  test("round-trips disabled and removed intents", () => {
-    expect(readCloudMcpUserState()).toBeNull();
-    writeCloudMcpUserState("disabled");
-    expect(readCloudMcpUserState()).toBe("disabled");
-    writeCloudMcpUserState("removed");
-    expect(readCloudMcpUserState()).toBe("removed");
-    clearCloudMcpUserState();
-    expect(readCloudMcpUserState()).toBeNull();
+  test("round-trips disabled and removed intents per scope", () => {
+    expect(readCloudMcpUserState(scope)).toBeNull();
+    writeCloudMcpUserState("disabled", scope);
+    expect(readCloudMcpUserState(scope)).toBe("disabled");
+    expect(readCloudMcpUserState(otherScope)).toBeNull();
+    writeCloudMcpUserState("removed", scope);
+    expect(readCloudMcpUserState(scope)).toBe("removed");
+    clearCloudMcpUserState(scope);
+    expect(readCloudMcpUserState(scope)).toBeNull();
   });
 
   test("ignores corrupt stored values", () => {
     const backing = installStorageStub();
     backing.set("openwork.den.mcp.cloudControlUserState", "banana");
-    expect(readCloudMcpUserState()).toBeNull();
+    expect(readCloudMcpUserState(scope)).toBeNull();
+  });
+
+  test("migrates legacy global intent to only the active scope", () => {
+    const backing = installStorageStub();
+    backing.set("openwork.den.mcp.cloudControlUserState", "disabled");
+    expect(readCloudMcpUserState(scope)).toBe("disabled");
+    expect(readCloudMcpUserState(otherScope)).toBeNull();
   });
 
   test("rejects ambiguous legacy sync markers", () => {
@@ -86,6 +107,14 @@ describe("cloud MCP user state", () => {
     };
     writeCloudMcpSyncMarker(marker);
     expect(readCloudMcpSyncMarker(marker)).toEqual(marker);
+  });
+
+  test("scopes unhealthy remint attempts", () => {
+    writeCloudMcpUnhealthyRemintAttempt({ ...scope, attemptedAt: 123 });
+    expect(readCloudMcpUnhealthyRemintAttempt(scope)?.attemptedAt).toBe(123);
+    expect(readCloudMcpUnhealthyRemintAttempt(otherScope)).toBeNull();
+    clearCloudMcpUnhealthyRemintAttempt(scope);
+    expect(readCloudMcpUnhealthyRemintAttempt(scope)).toBeNull();
   });
 });
 

@@ -1,0 +1,10 @@
+extends: electron-builder.yml
+appId: com.differentai.openwork.demo.admin
+productName: OpenWork Demo A
+protocols: []
+directories:
+  output: dist-electron-demo-a
+mac:
+  identity: null
+  target:
+    - dir

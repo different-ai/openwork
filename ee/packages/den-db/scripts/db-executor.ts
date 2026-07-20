@@ -16,6 +16,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null
 }
 
+function recordsFromRows(rows: unknown): Record<string, unknown>[] {
+  return Array.isArray(rows) ? rows.filter(isRecord) : []
+}
+
 export async function createExecutor(): Promise<Executor> {
   const databaseUrl = process.env.DATABASE_URL?.trim()
 
@@ -25,7 +29,7 @@ export async function createExecutor(): Promise<Executor> {
     return {
       query: async (sql, args = []) => {
         const [rows] = await connection.query(sql, args)
-        return Array.isArray(rows) ? rows.filter(isRecord) : []
+        return recordsFromRows(rows)
       },
       close: () => connection.end(),
     }
@@ -44,7 +48,7 @@ export async function createExecutor(): Promise<Executor> {
   return {
     query: async (sql, args = []) => {
       const result = await client.execute(sql, args)
-      return result.rows.filter(isRecord)
+      return recordsFromRows(result.rows)
     },
     close: async () => {},
   }

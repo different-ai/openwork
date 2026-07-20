@@ -3,9 +3,14 @@ import { INFERENCE_MODEL_ALIASES } from "@openwork/types/den/inference";
 import {
   buildDenAuthUrl,
   getDenInferenceUrl,
+  isSelfHostedControlPlane,
+  HOSTED_DEFAULT_DEN_BASE_URL,
   readDenBootstrapConfig,
   readDenSettings,
 } from "../../../app/lib/den";
+import { isDefaultControlPlaneUrl } from "../settings/cloud/control-plane-url";
+import { denSettingsChangedEvent } from "../../../app/lib/den-session-events";
+import { useSyncExternalStore } from "react";
 
 export const OPENWORK_MODELS_PROVIDER_ID = "openwork";
 export const OPENWORK_MODELS_PROVIDER_NAME = "OpenWork Models";
@@ -18,7 +23,32 @@ export const OPENWORK_MODELS_PROMO_VISIBLE_MS = 14_000;
 export const OPENWORK_MODELS_PROMO_REPEAT_MS = 6 * 60 * 60 * 1000;
 
 export function areOpenWorkModelsPromosDisabled() {
-  return /^(1|true|yes|on)$/i.test(String(import.meta.env.VITE_DISABLE_OPENWORK_MODELS ?? "").trim());
+  if (/^(1|true|yes|on)$/i.test(String(import.meta.env.VITE_DISABLE_OPENWORK_MODELS ?? "").trim())) {
+    return true;
+  }
+  // OpenWork Models are a hosted OpenWork Cloud offering; self-hosted
+  // deployments should never see the upsell surfaces.
+  return isSelfHostedControlPlane();
+}
+
+export function isOpenWorkModelsPromoEligibleForDenBaseUrl(baseUrl: string) {
+  return !areOpenWorkModelsPromosDisabled() && isDefaultControlPlaneUrl(baseUrl, HOSTED_DEFAULT_DEN_BASE_URL);
+}
+
+export function isOpenWorkModelsPromoEligible() {
+  return isOpenWorkModelsPromoEligibleForDenBaseUrl(readDenSettings().baseUrl);
+}
+
+export function useOpenWorkModelsPromoEligibility() {
+  return useSyncExternalStore(
+    (notify) => {
+      if (typeof window === "undefined") return () => undefined;
+      window.addEventListener(denSettingsChangedEvent, notify);
+      return () => window.removeEventListener(denSettingsChangedEvent, notify);
+    },
+    isOpenWorkModelsPromoEligible,
+    isOpenWorkModelsPromoEligible,
+  );
 }
 
 export type OpenWorkModelPreview = {
@@ -71,7 +101,7 @@ export function hideOpenWorkModelsPromo() {
 }
 
 export function wasOpenWorkModelsStartupPromoShown() {
-  if (areOpenWorkModelsPromosDisabled()) return true;
+  if (!isOpenWorkModelsPromoEligible()) return true;
   if (typeof window === "undefined") return true;
   try {
     return window.localStorage.getItem(OPENWORK_MODELS_STARTUP_PROMO_SHOWN_KEY) === "1";
@@ -88,7 +118,7 @@ export function markOpenWorkModelsStartupPromoShown() {
 }
 
 export function shouldShowOpenWorkModelsPromo(now = Date.now()) {
-  if (areOpenWorkModelsPromosDisabled() || typeof window === "undefined" || isOpenWorkModelsPromoHidden()) return false;
+  if (!isOpenWorkModelsPromoEligible() || typeof window === "undefined" || isOpenWorkModelsPromoHidden()) return false;
   try {
     const lastShown = Number(window.localStorage.getItem(OPENWORK_MODELS_PROMO_LAST_SHOWN_KEY) ?? "0");
     return !Number.isFinite(lastShown) || now - lastShown >= OPENWORK_MODELS_PROMO_REPEAT_MS;

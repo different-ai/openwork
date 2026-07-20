@@ -11,6 +11,10 @@
  * Kept dependency-free so it stays unit-testable without booting env/db.
  */
 
+import { firstForwardedValue, trustedForwardedOrigin } from "../request-url.js"
+
+const DEN_WEB_PROXY_PREFIX = "/api/den"
+
 export function isHostedWebAppHost(hostname: string, webAppHosts: readonly string[]): boolean {
   const normalized = hostname.trim().toLowerCase()
   if (!normalized) return false
@@ -87,4 +91,22 @@ export function resolveMcpResourceFromRequest(
   const candidates = [bareResource, proxiedResource]
   const match = candidates.find((candidate) => resources.includes(candidate))
   return match ?? fallback
+}
+
+function normalizedForwardedPrefix(value: string | null): string | null {
+  const prefix = firstForwardedValue(value)
+  if (!prefix) return null
+  return prefix.replace(/\/+$/, "") || "/"
+}
+
+export function deriveFirstPartyMcpTokenResourceFromRequest(
+  request: Request,
+  options: { fallback: string; trustedOrigins: readonly string[] },
+): string {
+  if (normalizedForwardedPrefix(request.headers.get("x-forwarded-prefix")) !== DEN_WEB_PROXY_PREFIX) {
+    return options.fallback
+  }
+
+  const forwarded = trustedForwardedOrigin(request, { trustedOrigins: options.trustedOrigins })
+  return forwarded ? `${forwarded.origin}${DEN_WEB_PROXY_PREFIX}/mcp` : options.fallback
 }

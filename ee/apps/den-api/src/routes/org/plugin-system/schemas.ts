@@ -39,6 +39,7 @@ export const marketplaceIdSchema = denTypeIdSchema("marketplace")
 export const marketplacePluginIdSchema = denTypeIdSchema("marketplacePlugin")
 export const marketplaceAccessGrantIdSchema = denTypeIdSchema("marketplaceAccessGrant")
 export const externalMcpConnectionIdSchema = denTypeIdSchema("externalMcpConnection")
+export const pluginMcpRequirementBindingIdSchema = denTypeIdSchema("pluginMcpRequirementBinding")
 export const connectorAccountIdSchema = denTypeIdSchema("connectorAccount")
 export const connectorInstanceIdSchema = denTypeIdSchema("connectorInstance")
 export const connectorInstanceAccessGrantIdSchema = denTypeIdSchema("connectorInstanceAccessGrant")
@@ -410,10 +411,24 @@ export const githubPluginMcpImportSchema = githubPluginMcpImportPreviewSchema.ex
   access: githubPluginMcpImportAccessSchema.optional(),
   authType: z.enum(["oauth", "none"]).optional().default("oauth"),
   credentialMode: z.enum(["shared", "per_member"]).optional().default("per_member"),
-  marketplaceId: marketplaceIdSchema,
+  description: z.string().trim().max(65535).nullable().optional(),
+  marketplaceId: marketplaceIdSchema.optional(),
+  name: z.string().trim().min(1).max(255).optional(),
   selectedSkillKeys: z.array(z.string().trim().min(1).max(1024)).max(200).optional(),
   selectedServerKeys: z.array(z.string().trim().min(1).max(1024)).max(200).optional(),
   selectedServerNames: z.array(z.string().trim().min(1).max(255)).max(200).optional(),
+})
+
+export const pluginMcpRequirementConfigureSchema = z.object({
+  configObjectId: configObjectIdSchema,
+  serverName: z.string().trim().min(1).max(255),
+  authType: z.enum(["oauth", "apikey", "none"]).optional().default("oauth"),
+  credentialMode: z.enum(["shared", "per_member"]).optional(),
+  apiKey: z.string().trim().min(1).max(4096).optional(),
+  oauthClient: z.object({
+    clientId: z.string().trim().min(1).max(512),
+    clientSecret: z.string().trim().min(1).max(4096).optional(),
+  }).optional(),
 })
 
 const pluginMcpConfigFieldPlacementSchema = z.enum(["header", "query", "bearer", "oauth_client_id", "oauth_client_secret"])
@@ -674,11 +689,18 @@ const pluginCloudReadinessSchema = z.object({
   state: z.enum(["ready", "needs_signin", "needs_admin_setup", "desktop_only", "not_synced"]),
   hasInstructional: z.boolean(),
   connections: z.array(z.object({
+    authType: z.enum(["oauth", "apikey", "none"]).optional(),
+    authTypeMismatch: z.boolean().optional(),
+    configObjectId: configObjectIdSchema,
     id: z.string().nullable(),
     name: z.string(),
+    serverName: z.string(),
     url: z.string(),
     credentialMode: z.enum(["shared", "per_member"]).optional(),
     connectedForMe: z.boolean().optional(),
+    oauthClientConfigured: z.boolean().optional(),
+    oauthClientRequired: z.boolean().optional(),
+    requiredAuthType: z.enum(["oauth", "apikey", "none"]).optional(),
   })),
 }).meta({ ref: "PluginArchPluginCloudReadiness" })
 
@@ -922,7 +944,7 @@ export const marketplaceResolvedResponseSchema = pluginArchMutationResponseSchem
 )
 
 const githubPluginMcpImportServerSchema = z.object({
-  authType: z.literal("oauth"),
+  authType: z.literal("oauth").nullable(),
   connectionId: z.string().nullable(),
   name: z.string(),
   pluginKey: z.string(),
@@ -987,7 +1009,7 @@ export const githubPluginMcpImportResponseSchema = pluginArchMutationResponseSch
       skillId: denTypeIdSchema("skill"),
       sourcePath: z.string(),
     })),
-    marketplaceId: marketplaceIdSchema,
+    marketplaceId: marketplaceIdSchema.nullable(),
     plugin: pluginSchema,
     skipped: z.array(z.object({
       name: z.string(),
@@ -998,6 +1020,30 @@ export const githubPluginMcpImportResponseSchema = pluginArchMutationResponseSch
       reason: z.enum(["invalid_skill"]),
       sourcePath: z.string(),
     })),
+  }),
+)
+export const pluginMcpRequirementConfigureResponseSchema = pluginArchMutationResponseSchema(
+  "PluginArchPluginMcpRequirementConfigureResponse",
+  z.object({
+    binding: z.object({
+      id: pluginMcpRequirementBindingIdSchema,
+      configObjectId: configObjectIdSchema,
+      externalMcpConnectionId: z.string(),
+      pluginId: pluginIdSchema,
+      serverName: z.string(),
+    }),
+    connection: z.object({
+      id: z.string(),
+      name: z.string(),
+      url: z.string(),
+      authType: z.enum(["oauth", "apikey", "none"]),
+      credentialMode: z.enum(["shared", "per_member"]),
+      connected: z.boolean(),
+      connectedAt: nullableTimestampSchema,
+    }),
+    links: z.object({
+      yourConnections: z.string(),
+    }),
   }),
 )
 export const marketplacePluginListResponseSchema = pluginArchListResponseSchema("PluginArchMarketplacePluginListResponse", marketplacePluginSchema)

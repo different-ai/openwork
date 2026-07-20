@@ -27,6 +27,13 @@ describe("OpenWork capabilities knowledge plugin", () => {
     expect(knowledge).toContain("JWTs signed and validated with EdDSA");
     expect(knowledge).toContain("30-day inactivity window");
     expect(knowledge).toContain("reference_id");
+    expect(knowledge).toContain("OpenWork documentation tools answer product questions. Never use them as a substitute for performing an action against ServiceNow, Slack, Notion, Linear, Google Workspace, a marketplace, or another connected service.");
+    expect(knowledge).toContain("require the user to sign in to OpenWork first");
+    expect(knowledge).toContain("Runtime steering from the OpenWork extensions plugin is the source of truth");
+    expect(knowledge).not.toContain("First call `openwork-cloud_search_capabilities`");
+    expect(knowledge).not.toContain("then call `openwork-cloud_execute_capability`");
+    expect(knowledge).toContain("Settings > Connect");
+    expect(knowledge).toContain("custom or local MCP server");
     expect(knowledge).not.toContain("Access tokens are opaque");
     expect(knowledge).not.toContain("https://api.openworklabs.com/mcp`");
     expect(knowledge).not.toContain("openwork-ui-mcp");
@@ -39,7 +46,7 @@ describe("OpenWork capabilities knowledge plugin", () => {
     const search = await plugin.tool.openwork_docs_search.execute({ query: "how can i connect slack", limit: 3 });
 
     expect(search).toContain("start-here/connect-your-stack/connect-slack-mcp.mdx");
-    expect(search).toContain("Connect Slack MCP");
+    expect(search).toContain("Connect Slack as a custom MCP");
 
     const read = await plugin.tool.openwork_docs_read.execute({
       path: "start-here/connect-your-stack/connect-slack-mcp.mdx",
@@ -49,6 +56,24 @@ describe("OpenWork capabilities knowledge plugin", () => {
     expect(read).toContain("Advanced OAuth");
     expect(read).toContain("http://127.0.0.1:19876/mcp/oauth/callback");
     expect(read).toContain("search:read.public");
+  });
+
+  test("retrieves the Connect-first member flow from bundled docs", async () => {
+    process.env.OPENWORK_DOCS_DIR = resolve(import.meta.dir, "../../../../packages/docs");
+
+    const plugin = await OpenWorkCapabilitiesKnowledge();
+    const search = await plugin.tool.openwork_docs_search.execute({ query: "connect gmail calendar slack", limit: 3 });
+
+    expect(search).toContain("start-here/connect-your-stack/connect-services.mdx");
+
+    const read = await plugin.tool.openwork_docs_read.execute({
+      path: "start-here/connect-your-stack/connect-services.mdx",
+    });
+
+    expect(read).toContain("Settings` > `Connect");
+    expect(read).toContain("Needs your sign-in");
+    expect(read).toContain("Ready to use");
+    expect(read).toContain("advanced path for a custom or local server");
   });
 
   test("reads current Cloud MCP endpoint and proxy guidance from bundled docs", async () => {

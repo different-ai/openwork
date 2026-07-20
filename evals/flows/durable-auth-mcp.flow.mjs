@@ -33,6 +33,7 @@ const ECHO_TEXT = `durable auth refresh ${RUN_TAG}`;
 const LOCAL_DRAFT = "Local draft remains available while OpenWork Cloud reconnects";
 const WORKSPACE_PATH = `/tmp/openwork-durable-auth-mcp-${RUN_TAG}`;
 const COPY_INSTALL_LINK_SELECTOR = '[data-testid="copy-install-link"]';
+const SECURITY_MESSAGE = "For security, confirm it's you before changing workspace settings.";
 
 const state = {
   adminSession: null,
@@ -390,7 +391,7 @@ async function openSharedConnectionDialog(ctx, name) {
 
 async function submitSharedConnectionAndConsent(ctx) {
   await ctx.clickText("Add connection", { timeoutMs: 15_000 });
-  const noOpenWorkReauth = await ctx.eval("!document.body.innerText.includes(\"Confirm it's you to continue\")");
+  const noOpenWorkReauth = await ctx.eval(`!document.body.innerText.includes(${JSON.stringify(SECURITY_MESSAGE)})`);
   await ctx.switchToNewTab({ timeoutMs: 20_000, label: "provider consent" });
   await ctx.waitForText("Mock MCP OAuth", { timeoutMs: 30_000 });
   await ctx.clickText("Approve OpenWork", { timeoutMs: 15_000 });
@@ -588,7 +589,7 @@ async function completeSensitiveAction(ctx) {
   await ctx.trustedClick(COPY_INSTALL_LINK_SELECTOR);
   await ctx.waitFor(`(() => {
     const dialog = document.querySelector('[role="dialog"]');
-    return Boolean(dialog && dialog.textContent.includes("Confirm it's you to continue"));
+    return Boolean(dialog && dialog.textContent.includes(${JSON.stringify(SECURITY_MESSAGE)}));
   })()`, { timeoutMs: 30_000, label: "security check" });
   state.reauthDialogText = await ctx.eval("document.querySelector('[role=dialog]')?.textContent ?? ''");
   await ctx.fill('input[autocomplete="current-password"]', DEMO_PASSWORD);
@@ -698,7 +699,7 @@ export default {
             name: "shared-mcp-connected-once",
             claim: "The shared MCP appears Connected in OpenWork Cloud after one provider consent.",
             requireText: ["Connected", FIRST_CONNECTION],
-            rejectText: ["Connection failed", "Confirm it's you to continue"],
+            rejectText: ["Connection failed", SECURITY_MESSAGE],
           },
         });
         await ctx.switchBack();
@@ -764,7 +765,7 @@ export default {
             name: "mcp-silent-refresh-ready",
             claim: "The engine-facing Cloud Control MCP is Ready after refresh-only recovery.",
             requireText: ["OpenWork Cloud Control", "Ready"],
-            rejectText: ["Sign in needed", "Confirm it's you to continue", "Applying changes before sign-in", "Reloading OpenCode config"],
+            rejectText: ["Sign in needed", SECURITY_MESSAGE, "Applying changes before sign-in", "Reloading OpenCode config"],
             hashIncludes: "/settings/extensions/mcp",
           },
         });
@@ -831,7 +832,7 @@ export default {
             name: "stale-session-direct-provider-consent",
             claim: "The second shared MCP appears Connected without an intervening OpenWork security check.",
             requireText: ["Connected", SECOND_CONNECTION],
-            rejectText: ["Connection failed", "Confirm it's you to continue"],
+            rejectText: ["Connection failed", SECURITY_MESSAGE],
           },
         });
       },
@@ -848,19 +849,19 @@ export default {
             recordAssertion(
               ctx,
               "The security check appeared before the sensitive action",
-              state.reauthDialogText?.includes("Confirm it's you to continue") === true,
+              state.reauthDialogText?.includes(SECURITY_MESSAGE) === true,
               state.reauthDialogText,
             );
             const buttonText = await ctx.eval(`document.querySelector(${JSON.stringify(COPY_INSTALL_LINK_SELECTOR)})?.textContent ?? ''`);
             recordAssertion(ctx, "The queued action resumed without a second click", buttonText.includes("Copied"), buttonText);
-            await ctx.expectNoText("For security, confirm it's you before changing workspace settings.");
+            await ctx.expectNoText(SECURITY_MESSAGE);
           },
           screenshot: {
             name: "sensitive-action-resumed-after-reauth",
             claim: "After one identity confirmation, the original sensitive action resumes and reaches Copied.",
             targetUrlIncludes: "/dashboard/members",
             requireText: ["Members", "Copied"],
-            rejectText: ["Confirm it's you to continue", "For security, confirm it's you before changing workspace settings."],
+            rejectText: ["Confirm it's you to continue", SECURITY_MESSAGE],
           },
         });
       },

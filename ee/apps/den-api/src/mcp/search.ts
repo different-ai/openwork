@@ -1,4 +1,4 @@
-import { getParameters, hasJsonRequestBody, pathParameterNamesFromTemplate, type McpToolOperation } from "./catalog.js"
+import { getJsonRequestBodySchema, getParameters, hasJsonRequestBody, pathParameterNamesFromTemplate, type McpToolOperation } from "./catalog.js"
 
 /**
  * `search_capabilities` is the "search" half of a search+execute facade laid
@@ -31,6 +31,8 @@ export type CapabilityMatch = {
   queryParams: string[]
   /** Whether calling this tool requires a JSON `body`. */
   hasBody: boolean
+  /** Exact OpenAPI JSON schema for `body`, present only for JSON mutations. */
+  bodySchema?: unknown
 }
 
 export function compareCapabilityMatches(a: CapabilityMatch, b: CapabilityMatch): number {
@@ -122,6 +124,9 @@ export function searchCapabilities(
       pathParams: pathParameterNamesFromTemplate(operation.path),
       queryParams: getParameters(operation.operation, "query").map((parameter) => parameter.name as string),
       hasBody: hasJsonRequestBody(operation.operation),
+      ...(getJsonRequestBodySchema(operation.operation) === undefined
+        ? {}
+        : { bodySchema: getJsonRequestBodySchema(operation.operation) }),
     }))
     .filter((match) => match.score > 0)
     .sort(compareCapabilityMatches)

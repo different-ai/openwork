@@ -1,6 +1,16 @@
 import { describe, expect, test } from "bun:test"
 
-import { deriveDenMcpResource, isHostedWebAppHost } from "../src/mcp/resource.js"
+import { deriveDenMcpResource, deriveFirstPartyMcpTokenResourceFromRequest, isHostedWebAppHost } from "../src/mcp/resource.js"
+
+const DIRECT_API_MCP_RESOURCE = "https://api.example.com/mcp"
+const TRUSTED_WEB_ORIGINS = ["https://app.example.com"]
+
+function firstPartyTokenResource(headers: HeadersInit = {}) {
+  return deriveFirstPartyMcpTokenResourceFromRequest(new Request("http://den-api.internal/v1/mcp/token", { headers }), {
+    fallback: DIRECT_API_MCP_RESOURCE,
+    trustedOrigins: TRUSTED_WEB_ORIGINS,
+  })
+}
 
 describe("deriveDenMcpResource", () => {
   test("routes hosted web-app origins through the /api/den proxy", () => {
@@ -62,5 +72,27 @@ describe("isHostedWebAppHost", () => {
     expect(isHostedWebAppHost("127.0.0.1", [])).toBe(false)
     expect(isHostedWebAppHost("example.com", [])).toBe(false)
     expect(isHostedWebAppHost("", [])).toBe(false)
+  })
+})
+
+describe("deriveFirstPartyMcpTokenResourceFromRequest", () => {
+  test("uses the trusted den-web /api/den proxy origin", () => {
+    expect(firstPartyTokenResource({
+      "x-forwarded-host": "app.example.com",
+      "x-forwarded-prefix": "/api/den",
+      "x-forwarded-proto": "https",
+    })).toBe("https://app.example.com/api/den/mcp")
+  })
+
+  test("falls back for direct API calls", () => {
+    expect(firstPartyTokenResource()).toBe(DIRECT_API_MCP_RESOURCE)
+  })
+
+  test("rejects untrusted forwarded hosts", () => {
+    expect(firstPartyTokenResource({
+      "x-forwarded-host": "evil.example",
+      "x-forwarded-prefix": "/api/den",
+      "x-forwarded-proto": "https",
+    })).toBe(DIRECT_API_MCP_RESOURCE)
   })
 })

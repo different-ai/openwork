@@ -1,3 +1,4 @@
+{{- include "openwork-ee.customCa.validate" . }}
 {{- if .Values.migrations.enabled }}
 apiVersion: batch/v1
 kind: Job
@@ -30,10 +31,18 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- if .Values.customCa.enabled }}
+      volumes:
+        {{- include "openwork-ee.customCa.volume" . | nindent 8 }}
+      {{- end }}
       containers:
         - name: migrate
           image: "{{ .Values.denApi.image.repository }}:{{ default .Values.image.tag .Values.denApi.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- if .Values.customCa.enabled }}
+          volumeMounts:
+            {{- include "openwork-ee.customCa.volumeMount" . | nindent 12 }}
+          {{- end }}
           command:
             {{- toYaml .Values.migrations.command | nindent 12 }}
           args:
@@ -59,6 +68,9 @@ spec:
                   name: {{ include "openwork-ee.secretName" . }}
                   key: {{ .Values.secret.keys.denDbEncryptionKey }}
               {{- end }}
+            {{- if .Values.customCa.enabled }}
+            {{- include "openwork-ee.customCa.env" . | nindent 12 }}
+            {{- end }}
           {{- with .Values.migrations.resources }}
           resources:
             {{- toYaml . | nindent 12 }}

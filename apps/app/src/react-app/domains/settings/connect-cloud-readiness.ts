@@ -5,6 +5,7 @@ import type {
   DenPluginCloudReadiness,
 } from "@/app/lib/den";
 import { t } from "@/i18n";
+import { connectionNeedsReconnect } from "@/react-app/domains/connections/native-provider-connections";
 
 export type ConnectRowGroup = "needs_signin" | "ready" | "needs_admin_setup" | "excluded";
 export type ConnectOrgRole = DenOrgSummary["role"] | null | undefined;
@@ -50,8 +51,9 @@ export function resolveConnectRowGroup(
   }
 }
 
-export function resolveConnectionRowGroup(connection: Pick<DenExternalMcpConnection, "credentialMode" | "connectedForMe" | "needsReconnect">): Exclude<ConnectRowGroup, "needs_admin_setup" | "excluded"> {
-  if (connection.credentialMode === "per_member" && (!connection.connectedForMe || connection.needsReconnect === true)) return "needs_signin";
+export function resolveConnectionRowGroup(connection: Pick<DenExternalMcpConnection, "credentialMode" | "connectedForMe" | "needsReconnect" | "missingFeatures" | "reconnectActionOwner">): Exclude<ConnectRowGroup, "excluded"> {
+  if (connection.needsReconnect && connection.reconnectActionOwner === "organization_admin") return "needs_admin_setup";
+  if (connection.credentialMode === "per_member" && (!connection.connectedForMe || connectionNeedsReconnect(connection))) return "needs_signin";
   return "ready";
 }
 

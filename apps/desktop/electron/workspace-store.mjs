@@ -3,7 +3,7 @@
 // normalization/discovery, and the workspace-facing command operations.
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -120,6 +120,8 @@ const DEFAULT_DESKTOP_BOOTSTRAP_PATH = (() => {
 // LOCALAPPDATA and XDG_CONFIG_HOME. Keep reading that file when the canonical one
 // is missing so existing installs keep their deployment config.
 const LEGACY_DESKTOP_BOOTSTRAP_PATH = path.join(os.homedir(), ".config", "openwork", "desktop-bootstrap.json");
+const DESKTOP_BOOTSTRAP_FILENAME = "desktop-bootstrap.json";
+const STANDARD_DESKTOP_INSTALLER_PATTERN = /^openwork-(?:mac-(?:arm64|x64)-.+\.dmg|win-x64-.+\.exe)$/i;
 const HOSTED_DESKTOP_WEB_URL = "https://app.openworklabs.com";
 const HOSTED_DESKTOP_API_URL = "https://api.openworklabs.com";
 
@@ -342,6 +344,81 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
     }
   }
 
+  function bundleSearchRoots() {
+    const roots = [];
+    const override = process.env.OPENWORK_BOOTSTRAP_BUNDLE_DIR?.trim();
+    if (override) roots.push(path.resolve(override));
+    for (const name of ["downloads", "desktop"]) {
+      try {
+        const candidate = app.getPath(name);
+        if (candidate) roots.push(candidate);
+      } catch {
+        // Electron can omit a shell path in constrained environments.
+      }
+    }
+    return Array.from(new Set(roots));
+  }
+
+  async function directoryContainsStandardDesktopInstaller(directory) {
+    try {
+      const entries = await readdir(directory, { withFileTypes: true });
+      return entries.some((entry) => entry.isFile() && STANDARD_DESKTOP_INSTALLER_PATTERN.test(entry.name));
+    } catch {
+      return false;
+    }
+  }
+
+  async function bundledDesktopBootstrapPaths() {
+    const candidates = [];
+    for (const root of bundleSearchRoots()) {
+      candidates.push(path.join(root, DESKTOP_BOOTSTRAP_FILENAME));
+      try {
+        const entries = await readdir(root, { withFileTypes: true });
+        for (const entry of entries) {
+          if (entry.isDirectory()) {
+            candidates.push(path.join(root, entry.name, DESKTOP_BOOTSTRAP_FILENAME));
+          }
+        }
+      } catch {
+        // A missing Downloads/Desktop directory is normal in headless runs.
+      }
+    }
+    return Array.from(new Set(candidates));
+  }
+
+  async function importBundledDesktopBootstrapConfigIfPreferred() {
+    const configPath = desktopBootstrapPath();
+    const primary = await readDesktopBootstrapCandidate(configPath);
+    const legacyPath = legacyDesktopBootstrapPath();
+    const legacy = legacyPath ? await readDesktopBootstrapCandidate(legacyPath) : null;
+    const installedCandidates = [primary, legacy].filter((candidate) => candidate?.ok);
+    installedCandidates.sort((left, right) => compareDesktopBootstrapCandidates(right, left));
+    const installed = installedCandidates[0];
+    if (installed && !isHostedDesktopBootstrapConfig(installed.normalized)) return false;
+
+    const bundledCandidates = [];
+    for (const candidatePath of await bundledDesktopBootstrapPaths()) {
+      if (!(await directoryContainsStandardDesktopInstaller(path.dirname(candidatePath)))) continue;
+      const candidate = await readDesktopBootstrapCandidate(candidatePath);
+      if (candidate.ok) bundledCandidates.push(candidate);
+    }
+    bundledCandidates.sort((left, right) => compareDesktopBootstrapCandidates(right, left));
+    const newest = bundledCandidates[0];
+    if (!newest || (installed && compareDesktopBootstrapCandidates(newest, installed) <= 0)) return false;
+
+    try {
+      await writeJsonFileAtomic(configPath, newest.normalized);
+      console.info("[desktop-bootstrap] imported organization download bundle", {
+        from: newest.path,
+        to: configPath,
+      });
+      return true;
+    } catch (error) {
+      console.warn("[desktop-bootstrap] organization download import failed", error);
+      return false;
+    }
+  }
+
   async function getDesktopBootstrapConfig() {
     const configPath = desktopBootstrapPath();
     const primary = await readDesktopBootstrapCandidate(configPath);
@@ -503,6 +580,25 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
     });
   }
 
+  async function forgetWorkspaceToken(workspacePath) {
+    const workspaceKey = normalizeWorkspacePathKey(workspacePath);
+    if (!workspaceKey) return;
+
+    const store = await readJsonFile(openworkServerTokenStorePath(), null);
+    if (!isRecord(store) || !isRecord(store.workspaces)) return;
+
+    const workspaces = { ...store.workspaces };
+    let changed = false;
+    for (const storedPath of Object.keys(workspaces)) {
+      if (normalizeWorkspacePathKey(normalizeRecoveredWorkspacePath(storedPath)) !== workspaceKey) continue;
+      delete workspaces[storedPath];
+      changed = true;
+    }
+    if (changed) {
+      await writeJsonFileAtomic(openworkServerTokenStorePath(), { ...store, workspaces });
+    }
+  }
+
   async function recoverWorkspacesFromServerConfig() {
     const config = await readJsonFile(openworkServerConfigPath(), null);
     if (!isRecord(config) || !Array.isArray(config.workspaces)) return [];
@@ -552,32 +648,6 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
     const fromServerConfig = await recoverWorkspacesFromServerConfig();
     if (fromServerConfig.length > 0) return fromServerConfig;
     return recoverWorkspacesFromTokenStore();
-  }
-
-  function firstRunDefaultWorkspaceDir() {
-    // Dev mode sandboxes HOME under userData (see desktopBootstrapPath);
-    // mirror that so the dev default workspace never touches the real home.
-    if (process.env.OPENWORK_DEV_MODE === "1") {
-      return path.join(app.getPath("userData"), "openwork-dev-data", "home", "OpenWork");
-    }
-    return path.join(os.homedir(), "OpenWork");
-  }
-
-  // True first run: create the default "OpenWork" workspace under the user's
-  // home directory so the renderer lands directly in a ready workspace — no
-  // folder picker, no empty state. Cross-platform (os.homedir + path.join).
-  async function createDefaultFirstRunWorkspace() {
-    const folderPath = await normalizeLocalWorkspacePath(firstRunDefaultWorkspaceDir());
-    await mkdir(path.join(folderPath, ".opencode"), { recursive: true });
-    await writeWorkspaceOpenworkConfig(folderPath, defaultWorkspaceOpenworkConfig(folderPath, "starter"));
-    return normalizeWorkspaceEntry({
-      id: localWorkspaceId(folderPath),
-      name: "OpenWork",
-      displayName: "OpenWork",
-      path: folderPath,
-      preset: "starter",
-      workspaceType: "local",
-    });
   }
 
   function stableWorkspaceId(value) {
@@ -735,7 +805,7 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
   }
 
   async function readWorkspaceState() {
-    const stateFileExists = existsSync(workspaceStatePath());
+    const workspaceStateExists = existsSync(workspaceStatePath());
     const state = await readJsonFile(workspaceStatePath(), EMPTY_WORKSPACE_LIST);
     let selectedId =
       typeof state?.selectedId === "string"
@@ -754,7 +824,7 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
     let activeId = typeof state?.activeId === "string" ? state.activeId : null;
     let workspaces = Array.isArray(state?.workspaces) ? state.workspaces : [];
     let changed = false;
-    if (workspaces.length === 0 && process.env.OPENWORK_DESKTOP_DISABLE_WORKSPACE_RECOVERY !== "1") {
+    if (!workspaceStateExists && process.env.OPENWORK_DESKTOP_DISABLE_WORKSPACE_RECOVERY !== "1") {
       const recoveredWorkspaces = await recoverWorkspacesFromKnownState();
       if (recoveredWorkspaces.length > 0) {
         const selectedWorkspace = recoveredWorkspaces[0];
@@ -767,28 +837,6 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
         activeId = selectedWorkspace.id;
         workspaces = recoveredWorkspaces;
         changed = true;
-      }
-    }
-    // First run only (no persisted desktop state file, nothing recovered):
-    // create the default workspace before the renderer ever reads the list,
-    // so the UI never flashes an empty "create a workspace" state and the
-    // engine boots with a workspace from the start. Gated to packaged/dev
-    // runs so tests never mkdir into a real home directory.
-    if (
-      workspaces.length === 0 &&
-      !stateFileExists &&
-      (app.isPackaged || process.env.OPENWORK_DEV_MODE === "1")
-    ) {
-      try {
-        const defaultWorkspace = await createDefaultFirstRunWorkspace();
-        console.info("[first-run] created default workspace", { path: defaultWorkspace.path });
-        selectedId = defaultWorkspace.id;
-        watchedId = defaultWorkspace.id;
-        activeId = defaultWorkspace.id;
-        workspaces = [defaultWorkspace];
-        changed = true;
-      } catch (error) {
-        console.warn("[first-run] default workspace creation failed", error);
       }
     }
     const idMap = new Map();
@@ -1071,13 +1119,18 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
 
   async function forgetWorkspace(workspaceId) {
     if (!workspaceId) throw new Error("workspaceId is required");
-    return mutateWorkspaceState((state) => {
+    let workspacePath = "";
+    const nextState = await mutateWorkspaceState((state) => {
+      const workspace = state.workspaces.find((entry) => entry.id === workspaceId);
+      if (workspace?.workspaceType !== "remote") workspacePath = String(workspace?.path ?? "");
       state.workspaces = state.workspaces.filter((entry) => entry.id !== workspaceId);
       if (state.selectedId === workspaceId) state.selectedId = "";
       if (state.activeId === workspaceId) state.activeId = null;
       if (state.watchedId === workspaceId) state.watchedId = null;
       return state;
     });
+    await forgetWorkspaceToken(workspacePath);
+    return nextState;
   }
 
   async function addAuthorizedRoot(input = {}) {
@@ -1156,6 +1209,7 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
     forgetWorkspace,
     getDesktopBootstrapConfig,
     importConfig,
+    importBundledDesktopBootstrapConfigIfPreferred,
     listLocalWorkspacePaths,
     migrateLegacyElectronWorkspaceStateIfNeeded,
     readWorkspaceOpenworkConfig,

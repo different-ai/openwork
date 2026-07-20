@@ -489,6 +489,39 @@ test("shared invalid_grant recovery cannot reuse the cleared in-memory refresh t
   })).toMatchObject({ accessToken: null, refreshToken: null })
 })
 
+test("per-member OAuth reads JSON scopes returned as text by MySQL", async () => {
+  const { ExternalMcpOAuthProvider } = await import("../src/capability-sources/external-mcp-client.js")
+  const { ExternalMcpDiagnosticTracker } = await import("../src/capability-sources/external-mcp-diagnostics.js")
+  const seed = await seedOrganization("per-member-json-scopes")
+  const connection = await createGrantedConnection(seed, {
+    name: "Per-member OAuth",
+    authType: "oauth",
+    credentialMode: "per_member",
+    url: "https://mcp.example.test/mcp",
+  })
+  await db.insert(schema.ConnectedAccountTable).values({
+    id: createDenTypeId("connectedAccount"),
+    organizationId: seed.organizationId,
+    orgMembershipId: seed.memberId,
+    providerId: connection.id,
+    accessToken: "member-access-token",
+    tokenType: "Bearer",
+    scopes: ["tools.read", "tools.write"],
+  })
+  const provider = new ExternalMcpOAuthProvider(
+    connection,
+    `${redirectUriBase}/callback`,
+    "signed-state",
+    { orgMembershipId: seed.memberId },
+    new ExternalMcpDiagnosticTracker("req_per_member_json_scopes"),
+  )
+
+  expect(await provider.tokens()).toMatchObject({
+    access_token: "member-access-token",
+    scope: "tools.read tools.write",
+  })
+})
+
 test("the 16-connection fanout reports incomplete coverage when the only match is connection 17", async () => {
   if (!slackServer || !needleServer) throw new Error("Coverage MCP servers were not started")
   const { externalMcpSearchCoverageHint } = await import("../src/mcp/external-capabilities.js")

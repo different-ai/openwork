@@ -2,7 +2,8 @@
 // fed by a latest-values ref, lifecycle (start/dispose), Zen-restriction sync,
 // workspace-change resync, the post-onboarding auto-open latch, and cloud
 // provider auto-sync. Extracted verbatim from session-route.tsx.
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { ProviderListResponse } from "@opencode-ai/sdk/v2/client";
 
 import type { Client, ProviderListItem, WorkspaceDisplay } from "@/app/types";
 import type { ResolvedWorkspaceEndpoint } from "@/app/lib/workspace-endpoint";
@@ -125,6 +126,15 @@ export function useSessionProviderAuth(input: UseSessionProviderAuthInput) {
       }),
     [checkDesktopRestriction, markReloadRequired],
   );
+  const cloudProviderSyncContext = useMemo(() => ({
+    client: opencodeClient,
+    workspaceId: selectedWorkspaceEndpoint?.workspaceId ?? null,
+    workspaceRoot: selectedWorkspaceRoot,
+  }), [opencodeClient, selectedWorkspaceEndpoint?.workspaceId, selectedWorkspaceRoot]);
+  const [completedCloudProviderSync, setCompletedCloudProviderSync] = useState<{
+    context: typeof cloudProviderSyncContext;
+    providerList: ProviderListResponse | null;
+  } | null>(null);
 
   useEffect(() => {
     store.start();
@@ -157,6 +167,22 @@ export function useSessionProviderAuth(input: UseSessionProviderAuthInput) {
     store,
   ]);
 
+  useEffect(() => {
+    if (!cloudProviderSyncContext.client || !cloudProviderSyncContext.workspaceId) return;
+
+    let cancelled = false;
+    void (async () => {
+      await store.runCloudProviderSync("app_launch");
+      const providerList = await store.refreshProviders({ force: true });
+      if (!cancelled) {
+        setCompletedCloudProviderSync({ context: cloudProviderSyncContext, providerList });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [cloudProviderSyncContext, store]);
+
   // After onboarding, auto-open the provider modal if no providers are connected.
   // The welcome route appends ?onboarding=1 to the session URL after workspace creation.
   useEffect(() => {
@@ -178,6 +204,15 @@ export function useSessionProviderAuth(input: UseSessionProviderAuthInput) {
   // sync here so sign-in applies opencode.json changes before Settings opens.
   useCloudProviderAutoSync(store.runCloudProviderSync);
   const snapshot = useProviderAuthStoreSnapshot(store);
+  const currentCloudProviderSync =
+    completedCloudProviderSync?.context === cloudProviderSyncContext
+      ? completedCloudProviderSync
+      : null;
 
-  return { store, snapshot };
+  return {
+    store,
+    snapshot,
+    cloudProviderSyncReady: Boolean(currentCloudProviderSync),
+    cloudProviderList: currentCloudProviderSync?.providerList ?? null,
+  };
 }

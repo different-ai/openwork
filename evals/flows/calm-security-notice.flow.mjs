@@ -12,8 +12,8 @@ import {
 // Narration is loaded from the approved script (evals/voiceovers/calm-security-notice.md).
 // The runner fails this flow if the narration drifts from that script.
 const vo = await loadVoiceoverParagraphs("calm-security-notice");
-const GUIDANCE_MESSAGE = "Confirm it's you before continuing.";
-const RAW_REAUTH_MESSAGE = "For security, confirm it's you before changing workspace settings.";
+const GUIDANCE_MESSAGE = "For security, confirm it's you before changing workspace settings.";
+const OLD_REAUTH_TITLE = "Confirm it's you to continue";
 const COPY_INSTALL_LINK_SELECTOR = '[data-testid="copy-install-link"]';
 
 function recordAssertion(ctx, assertion, passed, actual) {
@@ -29,7 +29,7 @@ function recordAssertion(ctx, assertion, passed, actual) {
 async function cancelReauth(ctx) {
   await ctx.waitFor(`(() => {
     const dialog = document.querySelector('[role="dialog"]');
-    return Boolean(dialog && dialog.textContent.includes("Confirm it's you to continue"));
+    return Boolean(dialog && dialog.textContent.includes(${JSON.stringify(GUIDANCE_MESSAGE)}));
   })()`, { timeoutMs: 30_000, label: "reauth dialog" });
   await clickExactText(ctx, "Cancel", "button");
   await ctx.waitFor(`(() => {
@@ -56,7 +56,7 @@ async function readGuidanceNotice(ctx) {
       tone: notice?.getAttribute('data-notice-tone') ?? '',
       role: notice?.getAttribute('role') ?? '',
       className: notice?.getAttribute('class') ?? '',
-      rawServerMessageVisible: document.body.innerText.includes(${JSON.stringify(RAW_REAUTH_MESSAGE)}),
+      oldReauthTitleVisible: document.body.innerText.includes(${JSON.stringify(OLD_REAUTH_TITLE)}),
     };
   })()`);
 }
@@ -89,12 +89,12 @@ export default {
           assert: async () => {
             const actual = await readGuidanceNotice(ctx);
             recordAssertion(ctx, "The routine confirmation is an informational status", actual.text === GUIDANCE_MESSAGE && actual.tone === "info" && actual.role === "status", actual);
-            recordAssertion(ctx, "The routine confirmation has no aggressive red treatment", !actual.className.includes("red-") && actual.rawServerMessageVisible === false, actual);
+            recordAssertion(ctx, "The routine confirmation has no aggressive red treatment", !actual.className.includes("red-") && actual.oldReauthTitleVisible === false, actual);
           },
           screenshot: {
             name: "calm-security-members",
             requireText: ["Members", GUIDANCE_MESSAGE],
-            rejectText: [RAW_REAUTH_MESSAGE],
+            rejectText: [OLD_REAUTH_TITLE],
           },
         });
       },
@@ -121,7 +121,7 @@ export default {
           screenshot: {
             name: "calm-security-org-settings",
             requireText: ["Org settings", GUIDANCE_MESSAGE],
-            rejectText: [RAW_REAUTH_MESSAGE],
+            rejectText: [OLD_REAUTH_TITLE],
           },
         });
       },
@@ -159,7 +159,7 @@ export default {
           },
           screenshot: {
             name: "calm-security-real-error",
-            requireText: ["Confirm it's you to continue"],
+            requireText: [GUIDANCE_MESSAGE],
           },
         });
       },
