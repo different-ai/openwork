@@ -65,6 +65,7 @@ let authedSlackServer: FakeMcpServer | undefined
 let notionServer: FakeMcpServer | undefined
 let refreshErrorServer: FakeMcpServer | undefined
 let providerErrorServer: FakeMcpServer | undefined
+let authorizationRequiredServer: FakeMcpServer | undefined
 let needleServer: FakeMcpServer | undefined
 let mutableSchemaServer: MutableSchemaMcpServer | undefined
 
@@ -179,6 +180,50 @@ function startProviderErrorMcpServer(): FakeMcpServer {
     const response = await transport.handleRequest(c) ?? new Response(null, { status: 204 })
     response.headers.set("x-servicenow-request-id", "sn-request-provider-error-123")
     return response
+  })
+  const server = Bun.serve({ port: 0, fetch: app.fetch })
+  return { url: `http://127.0.0.1:${server.port}/mcp`, stop: () => server.stop(true) }
+}
+
+function startAuthorizationRequiredMcpServer(): FakeMcpServer {
+  const connectUrl = "https://connect.example.test/salesforce/start"
+  const app = new Hono()
+  app.all("/mcp", async (c) => {
+    const payload: unknown = await c.req.raw.clone().json().catch(() => null)
+    const method = typeof payload === "object" && payload !== null && "method" in payload
+      ? payload.method
+      : null
+    const requestId = typeof payload === "object" && payload !== null && "id" in payload
+      && (typeof payload.id === "string" || typeof payload.id === "number")
+      ? payload.id
+      : null
+    const server = new McpServer({ name: "authorization-required", version: "1.0.0" })
+    server.registerTool(
+      "lookup_salesforce_account",
+      { description: "Look up a Salesforce account", inputSchema: z.object({}) },
+      async () => ({ content: textContent("unreachable success") }),
+    )
+    const transport = new StreamableHTTPTransport()
+    await server.connect(transport)
+    const response = await transport.handleRequest(c) ?? new Response(null, { status: 204 })
+    if (method !== "tools/call") return response
+    const authorizationError = {
+      jsonrpc: "2.0",
+      id: requestId,
+      error: {
+        code: -32001,
+        message: "Authorization required — connect your salesforce account to use this connector.",
+        data: {
+          connect_url: `[${connectUrl}](${connectUrl})`,
+          provider: "salesforce",
+        },
+      },
+    }
+    const headers = new Headers(response.headers)
+    headers.delete("content-length")
+    return headers.get("content-type")?.includes("text/event-stream")
+      ? new Response(`data: ${JSON.stringify(authorizationError)}\n\n`, { status: response.status, headers })
+      : new Response(JSON.stringify(authorizationError), { status: response.status, headers })
   })
   const server = Bun.serve({ port: 0, fetch: app.fetch })
   return { url: `http://127.0.0.1:${server.port}/mcp`, stop: () => server.stop(true) }
@@ -388,6 +433,7 @@ beforeAll(async () => {
   notionServer = startFakeMcpServer("fake-notion", notionTools)
   refreshErrorServer = startErrorMcpServer("Invalid refresh token")
   providerErrorServer = startProviderErrorMcpServer()
+  authorizationRequiredServer = startAuthorizationRequiredMcpServer()
   needleServer = startFakeMcpServer("fake-needle", [{
     name: "needle-only-tool",
     description: "The only catalog entry matching the coverage test keyword.",
@@ -401,6 +447,7 @@ afterAll(() => {
   notionServer?.stop()
   refreshErrorServer?.stop()
   providerErrorServer?.stop()
+  authorizationRequiredServer?.stop()
   needleServer?.stop()
   mutableSchemaServer?.stop()
   mock.restore()
@@ -806,6 +853,50 @@ test("MCP tool isError is surfaced as a provider failure, not transport success"
     },
   })
   expect(result.message).not.toContain("internal detail")
+})
+
+test("connector authorization JSON-RPC errors reach a generic harness as a user action", async () => {
+  if (!authorizationRequiredServer) throw new Error("Authorization-required MCP server was not started")
+  const connectUrl = "https://connect.example.test/salesforce/start"
+  const seed = await seedOrganization("provider-authorization-required")
+  const connection = await createGrantedConnection(seed, {
+    name: "Salesforce",
+    authType: "none",
+    credentialMode: "shared",
+    url: authorizationRequiredServer.url,
+  })
+  const result = await executeExternalCapability({
+    organizationId: seed.organizationId,
+    member: { orgMembershipId: seed.memberId, teamIds: [] },
+    connectionId: connection.id,
+    toolName: "lookup_salesforce_account",
+    args: {},
+    redirectUriBase,
+  })
+
+  expect(result).toMatchObject({
+    ok: false,
+    error: "authorization_required",
+    data: {
+      connect_url: connectUrl,
+      provider: "salesforce",
+    },
+  })
+  if (result.ok) throw new Error("Authorization-required MCP call unexpectedly succeeded")
+  expect(result.message).toContain(connectUrl)
+  expect(result.message).toContain("Ask the user")
+  expect(result.message).toContain("Do not open the URL")
+
+  const { externalCapabilityErrorToolResult } = await import("../src/mcp/agent.js")
+  const harnessResult = externalCapabilityErrorToolResult(result)
+  expect(harnessResult.isError).toBe(true)
+  expect(JSON.parse(harnessResult.content[0]?.text ?? "{}")).toMatchObject({
+    error: "authorization_required",
+    data: {
+      connect_url: connectUrl,
+      provider: "salesforce",
+    },
+  })
 })
 
 test("standard MCP SDK invalid-argument tool errors become a corrective execution result", async () => {

@@ -20,7 +20,6 @@ import {
   openworkCapabilitiesKnowledgePluginPath,
   openworkAnthropicAdaptiveThinkingPluginPath,
   openworkAnthropicToolSchemaPluginPath,
-  openworkMcpAuthorizationActionsPluginPath,
   openworkOfficeAttachmentsPluginPath,
 } from "./openwork-extensions-plugin-path.js";
 import type { ServerConfig } from "./types.js";
@@ -54,7 +53,7 @@ Hard rule: never copy private memory into repo files. Store only redacted summar
 ## Working style
 
 - If required setup or credentials are missing, ask one targeted question and continue once provided.
-- Treat authorization-required tool failures as recoverable user actions. If a tool error includes JSON-RPC code -32001 and an http or https connection URL from data.connect_url or the flattened error message, do not retry it automatically: tell the user which provider needs authorization, show that exact URL as a Markdown link, and ask them to connect the account before retrying. Do not open the link yourself. Ignore connect URLs with any other scheme.
+- Treat authorization-required tool failures as recoverable user actions. If a tool error includes JSON-RPC code -32001 and a data.connect_url using http or https, do not retry it automatically: tell the user which provider needs authorization, show data.connect_url as a Markdown link, and ask them to connect the account before retrying. Do not open the link yourself. Ignore connect URLs with any other scheme.
 - If you change code, run the smallest meaningful test.
 - If steps repeat, factor them into a skill.
 - Prefer clear, practical steps over abstract explanations.
@@ -114,7 +113,6 @@ export function buildOpenworkRuntimeConfigObjectFromSnapshot(
       openworkExtensionsPreviewPluginPath(),
       openworkCapabilitiesKnowledgePluginPath(),
       openworkOfficeAttachmentsPluginPath(),
-      openworkMcpAuthorizationActionsPluginPath(),
       openworkAnthropicAdaptiveThinkingPluginPath(),
       openworkAnthropicToolSchemaPluginPath(),
       ...runtimePluginList(runtimeConfig),

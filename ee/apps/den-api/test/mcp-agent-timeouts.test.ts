@@ -106,6 +106,9 @@ test("agent MCP server exposes steering instructions during initialize", async (
 
   expect(client.getInstructions()).toBe(agentModule.AGENT_MCP_INSTRUCTIONS)
   expect(client.getInstructions()).toContain("search_capabilities and execute_capability")
+  expect(client.getInstructions()).toContain("authorization_required")
+  expect(client.getInstructions()).toContain("data.connect_url")
+  expect(client.getInstructions()).toContain("Present it as a Markdown link")
   expect(client.getInstructions()).toContain("add a public GitHub plugin to an organization marketplace")
   expect(client.getInstructions()).toContain("Preview first")
   expect(client.getInstructions()).toContain("Do not choose one authentication type for every server")
@@ -205,6 +208,28 @@ test("external capability failures preserve the safe MCP diagnostic envelope", (
       connectionId: "emc_test",
       state: "reauth_required",
       action: { type: "reconnect" },
+    },
+  })
+})
+
+test("authorization-required failures preserve the harness-neutral connect action", () => {
+  const result = agentModule.externalCapabilityErrorToolResult({
+    ok: false,
+    error: "authorization_required",
+    message: "Authorization required for Salesforce. Ask the user to open the link, sign in, then retry.",
+    data: {
+      connect_url: "https://connect.example.test/salesforce/start",
+      provider: "salesforce",
+    },
+  })
+
+  expect(result.isError).toBe(true)
+  expect(JSON.parse(result.content[0]?.text ?? "{}")).toEqual({
+    error: "authorization_required",
+    message: "Authorization required for Salesforce. Ask the user to open the link, sign in, then retry.",
+    data: {
+      connect_url: "https://connect.example.test/salesforce/start",
+      provider: "salesforce",
     },
   })
 })
