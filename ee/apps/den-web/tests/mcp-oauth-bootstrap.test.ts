@@ -12,7 +12,7 @@ describe("pre-registered MCP OAuth bootstrap UI contract", () => {
 
     expect(screen).toContain("Client ID (optional for now)")
     expect(screen).toContain("Add the pre-registered OAuth app")
-    expect(screen).toContain("How redirect URLs work")
+    expect(screen).toContain("Learn about OAuth client setup")
     expect(screen).toContain("#oauth-redirect-url")
     expect(screen).toContain("Register this Den instance's redirect URL with the provider")
     expect(screen).not.toContain("keepOpenForRedirect")

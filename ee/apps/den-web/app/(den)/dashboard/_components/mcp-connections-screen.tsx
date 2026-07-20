@@ -2011,7 +2011,7 @@ function EditConnectionDialog({
               <div className="flex items-center justify-between gap-3">
                 <p className="text-[13px] font-semibold text-gray-900">OAuth app</p>
                 <Link href={MCP_OAUTH_REDIRECT_DOCS_URL} target="_blank" rel="noreferrer" className="text-[11px] font-medium text-gray-500 underline underline-offset-2 hover:text-gray-900">
-                  How redirect URLs work
+                  Learn about OAuth client setup
                 </Link>
               </div>
               <p className="mt-1 text-[12px] leading-5 text-gray-500">Add the provider credentials here. The saved client secret remains hidden.</p>
@@ -2684,7 +2684,7 @@ function AddConnectionDialog({
               <div className="flex items-center justify-between gap-3">
                 <p className="text-[13px] font-semibold text-gray-900">OAuth app</p>
                 <Link href={MCP_OAUTH_REDIRECT_DOCS_URL} target="_blank" rel="noreferrer" className="text-[11px] font-medium text-gray-500 underline underline-offset-2 hover:text-gray-900">
-                  How redirect URLs work
+                  Learn about OAuth client setup
                 </Link>
               </div>
               <p className="mt-1 text-[12px] leading-5 text-gray-500">
