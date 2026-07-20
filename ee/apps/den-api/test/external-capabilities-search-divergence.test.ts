@@ -60,6 +60,8 @@ let listUsableExternalMcpConnections: typeof import("../src/capability-sources/e
 let saveExternalMcpTokens: typeof import("../src/capability-sources/external-mcp-connections.js").saveExternalMcpTokens
 let searchExternalCapabilities: typeof import("../src/mcp/external-capabilities.js").searchExternalCapabilities
 let executeExternalCapability: typeof import("../src/mcp/external-capabilities.js").executeExternalCapability
+let capabilitySearchToolResult: typeof import("../src/mcp/agent.js").capabilitySearchToolResult
+let searchCapabilitiesOutputSchema: typeof import("../src/mcp/agent.js").SEARCH_CAPABILITIES_OUTPUT_SCHEMA
 let slackServer: FakeMcpServer | undefined
 let authedSlackServer: FakeMcpServer | undefined
 let notionServer: FakeMcpServer | undefined
@@ -338,14 +340,19 @@ async function expectConnectionListed(seed: SeededOrganization, connectionId: De
   expect(connections.map((connection) => connection.id)).toContain(connectionId)
 }
 
-function search(seed: SeededOrganization, query: string) {
+function searchResult(seed: SeededOrganization, query: string, limit = 10) {
   return searchExternalCapabilities({
     organizationId: seed.organizationId,
     member: { orgMembershipId: seed.memberId, teamIds: [] },
     query,
     redirectUriBase,
-    limit: 10,
+    limit,
   })
+}
+
+async function search(seed: SeededOrganization, query: string) {
+  const result = await searchResult(seed, query)
+  return [...result.connectionIssues, ...result.matches]
 }
 
 function toolNames(tools: { name: string }[]): string[] {
@@ -361,12 +368,13 @@ beforeAll(async () => {
   }).db
   mock.module("../src/db.js", () => ({ db: realDb }))
 
-  const [dbMod, schemaMod, clientMod, connectionsMod, capabilitiesMod, envMod] = await Promise.all([
+  const [dbMod, schemaMod, clientMod, connectionsMod, capabilitiesMod, agentMod, envMod] = await Promise.all([
     import("../src/db.js"),
     import("@openwork-ee/den-db/schema"),
     import("../src/capability-sources/external-mcp-client.js"),
     import("../src/capability-sources/external-mcp-connections.js"),
     import("../src/mcp/external-capabilities.js"),
+    import("../src/mcp/agent.js"),
     import("../src/env.js"),
   ])
   // Another co-run test file's static src import may have parsed env.ts before
@@ -383,6 +391,8 @@ beforeAll(async () => {
   saveExternalMcpTokens = connectionsMod.saveExternalMcpTokens
   searchExternalCapabilities = capabilitiesMod.searchExternalCapabilities
   executeExternalCapability = capabilitiesMod.executeExternalCapability
+  capabilitySearchToolResult = agentMod.capabilitySearchToolResult
+  searchCapabilitiesOutputSchema = agentMod.SEARCH_CAPABILITIES_OUTPUT_SCHEMA
   slackServer = startFakeMcpServer("fake-slack", slackTools)
   authedSlackServer = startFakeMcpServer("fake-authed-slack", slackTools, "valid-key")
   notionServer = startFakeMcpServer("fake-notion", notionTools)
@@ -434,6 +444,44 @@ test("control-healthy: Connections list and search_capabilities both see Slack t
   if (process.env.OPENWORK_EVAL_VERBOSE === "1") {
     console.log("E2E_HEALTHY_DISCOVERY", JSON.stringify({ connectionName: "Slack", toolCount: matches.length, status: "available" }))
   }
+})
+
+test("duplicate provider keeps a healthy capability separate from a disconnected connection", async () => {
+  if (!slackServer) throw new Error("Slack MCP server was not started")
+
+  const seed = await seedOrganization("duplicate-provider-partial-availability")
+  const connected = await createGrantedConnection(seed, {
+    name: "Slack",
+    authType: "none",
+    credentialMode: "shared",
+    url: slackServer.url,
+  })
+  const disconnected = await createGrantedConnection(seed, {
+    name: "Slack",
+    authType: "oauth",
+    credentialMode: "shared",
+    url: slackServer.url,
+  })
+
+  const result = await searchResult(seed, "slack", 1)
+
+  expect(result.matches).toHaveLength(1)
+  expect(result.matches[0]?.name.startsWith(`mcp:${connected.id}:`)).toBe(true)
+  expect(result.connectionIssues).toHaveLength(1)
+  expect(result.connectionIssues[0]).toMatchObject({
+    name: `mcp:${disconnected.id}:*`,
+    kind: "connection_status",
+    status: "needs_connection",
+    connectionStatus: {
+      connectionId: disconnected.id,
+      connectionName: "Slack",
+      state: "needs_connection",
+    },
+  })
+
+  const response = capabilitySearchToolResult(result.matches, result.connectionIssues)
+  expect(response.structuredContent.availability).toBe("available_with_issues")
+  expect(searchCapabilitiesOutputSchema.safeParse(response.structuredContent).success).toBe(true)
 })
 
 test("external capability execution reports schema guidance but always attempts tools/call", async () => {
@@ -757,7 +805,7 @@ test("the 16-connection fanout reports incomplete coverage when the only match i
     })
   }
   let coverage: Parameters<typeof externalMcpSearchCoverageHint>[0] | undefined
-  const matches = await searchExternalCapabilities({
+  const result = await searchExternalCapabilities({
     organizationId: seed.organizationId,
     member: { orgMembershipId: seed.memberId, teamIds: [] },
     query: "needle",
@@ -768,7 +816,7 @@ test("the 16-connection fanout reports incomplete coverage when the only match i
     },
   })
 
-  expect(matches).toEqual([])
+  expect(result).toEqual({ matches: [], connectionIssues: [] })
   expect(coverage).toEqual({ eligibleConnections: 17, probedConnections: 16, truncated: true })
   if (!coverage) throw new Error("External MCP search did not report coverage")
   expect(externalMcpSearchCoverageHint(coverage)).toContain("16 of 17")
@@ -1031,7 +1079,7 @@ test("per-member-name-mismatch: needs_connection only appears when query matches
   expect(matches[0]?.status).toBe("needs_connection")
 })
 
-test("user-transcript-repro: Slack connection status ranks above Notion's summary-only Slack hit", async () => {
+test("user-transcript-repro: Slack connection status stays separate from Notion's callable Slack hit", async () => {
   if (!notionServer) throw new Error("Notion MCP server was not started")
   if (!slackServer) throw new Error("Slack MCP server was not started")
 
@@ -1051,11 +1099,12 @@ test("user-transcript-repro: Slack connection status ranks above Notion's summar
 
   await expectConnectionListed(seed, notionConnection.id)
   await expectConnectionListed(seed, slackConnection.id)
-  const matches = await search(seed, "slack")
-  expect(matches.length).toBe(2)
-  expect(matches[0]?.name).toBe(`mcp:${slackConnection.id}:*`)
-  expect(matches[0]?.status).toBe("needs_connection")
-  expect(matches[0]?.score).toBeGreaterThanOrEqual(7)
-  expect(matches[1]?.name).toBe(`mcp:${notionConnection.id}:notion-search`)
-  expect(matches[1]?.score).toBe(2)
+  const result = await searchResult(seed, "slack")
+  expect(result.connectionIssues).toHaveLength(1)
+  expect(result.connectionIssues[0]?.name).toBe(`mcp:${slackConnection.id}:*`)
+  expect(result.connectionIssues[0]?.status).toBe("needs_connection")
+  expect(result.connectionIssues[0]?.score).toBeGreaterThanOrEqual(7)
+  expect(result.matches).toHaveLength(1)
+  expect(result.matches[0]?.name).toBe(`mcp:${notionConnection.id}:notion-search`)
+  expect(result.matches[0]?.score).toBe(2)
 })

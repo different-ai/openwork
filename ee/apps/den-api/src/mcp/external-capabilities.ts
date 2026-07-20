@@ -169,6 +169,11 @@ export type ExternalCapabilityMatch = CapabilityMatch & {
   connectionStatus?: ExternalConnectionStatus
 }
 
+export type ExternalMcpSearchResult = {
+  matches: ExternalCapabilityMatch[]
+  connectionIssues: ExternalCapabilityMatch[]
+}
+
 export type ExternalConnectionStatus = {
   version: typeof OPENWORK_CLOUD_MCP_CONNECTION_ACTION_VERSION
   kind: typeof OPENWORK_CLOUD_MCP_CONNECTION_ACTION_KIND
@@ -504,8 +509,8 @@ export async function collectBoundedExternalMcpSearchMatches<T>(input: {
   limit: number
   concurrency?: number
   probe: (connection: T, deadline: ExternalMcpLifecycleDeadline) => Promise<ExternalCapabilityMatch[]>
-}): Promise<ExternalCapabilityMatch[]> {
-  const retained: ExternalCapabilityMatch[] = []
+}): Promise<ExternalMcpSearchResult> {
+  const retained: ExternalMcpSearchResult = { matches: [], connectionIssues: [] }
   const boundedLimit = Number.isFinite(input.limit)
     ? Math.max(0, Math.min(Math.floor(input.limit), EXTERNAL_MCP_SEARCH_MATCH_LIMIT))
     : 0
@@ -524,7 +529,17 @@ export async function collectBoundedExternalMcpSearchMatches<T>(input: {
       nextIndex += 1
       if (index >= input.connections.length) return
       const candidates = await input.probe(input.connections[index]!, input.deadline)
-      if (acceptingResults) mergeBoundedExternalCapabilityMatches(retained, candidates, boundedLimit)
+      if (!acceptingResults) continue
+      mergeBoundedExternalCapabilityMatches(
+        retained.matches,
+        candidates.filter((candidate) => candidate.kind !== "connection_status"),
+        boundedLimit,
+      )
+      mergeBoundedExternalCapabilityMatches(
+        retained.connectionIssues,
+        candidates.filter((candidate) => candidate.kind === "connection_status"),
+        boundedLimit,
+      )
     }
   }
   const workers = Promise.all(Array.from({ length: concurrency }, () => worker()))
@@ -707,7 +722,7 @@ async function probeExternalMcpConnection(input: {
  * Live-lists tools for a bounded set of external MCP connections the calling
  * member has been granted. All probes share one absolute deadline and run in
  * a small worker pool; one unreachable server cannot serialize the latency of
- * every other provider or let matches grow beyond the requested top-K.
+ * every other provider or consume the requested callable-match budget.
  */
 export async function searchExternalCapabilities(input: {
   organizationId: string
@@ -716,12 +731,12 @@ export async function searchExternalCapabilities(input: {
   redirectUriBase: string
   limit?: number
   reportCoverage?: (coverage: ExternalMcpSearchCoverage) => void
-}): Promise<ExternalCapabilityMatch[]> {
-  if (!input.member) return []
+}): Promise<ExternalMcpSearchResult> {
+  if (!input.member) return { matches: [], connectionIssues: [] }
   const queryTokens = tokenize(input.query)
-  if (queryTokens.length === 0) return []
+  if (queryTokens.length === 0) return { matches: [], connectionIssues: [] }
   const requestedLimit = input.limit ?? 5
-  if (!Number.isFinite(requestedLimit) || requestedLimit <= 0) return []
+  if (!Number.isFinite(requestedLimit) || requestedLimit <= 0) return { matches: [], connectionIssues: [] }
   const limit = Math.min(Math.max(1, Math.trunc(requestedLimit)), EXTERNAL_MCP_SEARCH_MATCH_LIMIT)
   const deadline = createExternalMcpLifecycleDeadline()
   const connections = await listUsableExternalMcpConnections({

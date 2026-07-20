@@ -1235,18 +1235,19 @@ describe("marketplace capabilities source", () => {
       createdByOrgMembershipId: owner.memberId,
     })
 
-    const matches = await externalCapabilities.searchExternalCapabilities({
+    const result = await externalCapabilities.searchExternalCapabilities({
       organizationId: owner.organizationId,
       member: owner.member,
       query: "calendar",
       redirectUriBase: "http://127.0.0.1:8790",
       limit: 5,
     })
-    expect(matches).toHaveLength(1)
-    expect(matches[0]?.name).toBe(externalCapabilities.buildExternalCapabilityName(connectionId, "*"))
-    expect(matches[0]?.method).toBe("MCP")
-    expect(matches[0]?.status).toBe("needs_connection")
-    expectYourConnectionsUrl(matches[0]?.connectionStatus?.action.url, connectionId)
+    expect(result.matches).toEqual([])
+    expect(result.connectionIssues).toHaveLength(1)
+    expect(result.connectionIssues[0]?.name).toBe(externalCapabilities.buildExternalCapabilityName(connectionId, "*"))
+    expect(result.connectionIssues[0]?.method).toBe("MCP")
+    expect(result.connectionIssues[0]?.status).toBe("needs_connection")
+    expectYourConnectionsUrl(result.connectionIssues[0]?.connectionStatus?.action.url, connectionId)
 
     const executeResult = await externalCapabilities.executeExternalCapability({
       organizationId: owner.organizationId,

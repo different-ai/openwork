@@ -94,8 +94,16 @@ const capabilityMatchOutputSchema = z.object({
   connectionStatus: connectionStatusOutputSchema.optional(),
 }).passthrough()
 
+const connectionIssueOutputSchema = capabilityMatchOutputSchema.extend({
+  kind: z.literal("connection_status"),
+  status: z.enum(["needs_connection", "error"]),
+  connectionStatus: connectionStatusOutputSchema,
+})
+
 export const SEARCH_CAPABILITIES_OUTPUT_SCHEMA = z.object({
+  availability: z.enum(["available", "available_with_issues", "unavailable", "no_matches"]),
   matches: z.array(capabilityMatchOutputSchema),
+  connectionIssues: z.array(connectionIssueOutputSchema),
   hint: z.string().optional(),
 })
 
@@ -112,7 +120,8 @@ export const AGENT_MCP_INSTRUCTIONS = [
   "External MCP matches include the provider-advertised argumentsSchema, schemaDigest, and invocation.argumentsField. Put an object matching argumentsSchema in execute_capability.body and copy schemaDigest into execute_capability.schemaDigest.",
   "OpenWork always attempts the downstream provider call when local schema checks find a mismatch. schemaGuidance is advisory and appears alongside the provider result: if the provider succeeded, accept that result and do not retry solely because of the warning; if it failed, use the warning to correct the arguments or search again.",
   "If the provider returns invalid_capability_arguments, correct the listed issues and retry once with changed arguments; never retry the same arguments unchanged. If it returns unknown_capability, call search_capabilities again before retrying.",
-  "When a match has kind connection_status, name connectionStatus.connectionName and relay connectionStatus.action exactly. Distinguish the member's Your Connections page, the organization Connections dashboard, and the provider's own admin console.",
+  "search_capabilities returns callable matches separately from connectionIssues. available_with_issues means at least one matching capability is usable: use the callable match and do not claim the provider is unavailable because another connection needs attention.",
+  "For each connectionIssues entry that affects the request, name connectionStatus.connectionName and relay connectionStatus.action exactly. Distinguish the member's Your Connections page, the organization Connections dashboard, and the provider's own admin console.",
   "Connection probes are live. After the requested human fixes that connector, search again in the same task; otherwise do not retry unchanged or improvise workarounds through other tools.",
 ].join("\n")
 
@@ -149,12 +158,21 @@ export function externalCapabilityErrorToolResult(
   }
 }
 
-export function capabilitySearchToolResult<T extends CapabilityMatch>(matches: T[], coverageHint?: string) {
+export function capabilitySearchToolResult<T extends CapabilityMatch, I extends CapabilityMatch>(
+  matches: T[],
+  connectionIssues: I[] = [],
+  coverageHint?: string,
+) {
+  const availability = matches.length > 0
+    ? connectionIssues.length > 0 ? "available_with_issues" : "available"
+    : connectionIssues.length > 0 ? "unavailable" : "no_matches"
   const hint = [
-    ...(matches.length === 0 ? ["No matches. Try broader or different keywords."] : []),
+    ...(availability === "no_matches" ? ["No matches. Try broader or different keywords."] : []),
     ...(coverageHint ? [coverageHint] : []),
   ].join(" ")
-  const result = hint ? { matches, hint } : { matches }
+  const result = hint
+    ? { availability, matches, connectionIssues, hint }
+    : { availability, matches, connectionIssues }
   return {
     content: textContent(JSON.stringify(result, null, 2)),
     structuredContent: result,
@@ -323,13 +341,14 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
           "there is no list of individually-named tools to browse. Always search first.",
           "Search covers native Google Workspace capabilities (Gmail, Calendar, Drive, Gmail drafts), org-connected external MCPs, and namespaced OpenWork Admin tools for allowlisted platform admins.",
           "Try 2-4 keyword variants before deciding a capability is unavailable.",
+          "Callable results are returned in matches; unhealthy connectors are returned separately in connectionIssues, so one disconnected account cannot hide a usable duplicate.",
           "Native API matches include pathParams, queryParams, hasBody, and bodySchema. External MCP matches include argumentsSchema, schemaDigest, and invocation.argumentsField.",
           "Skill matches use method SKILL and return stored SKILL.md content when executed.",
         ].join(" "),
         annotations: SEARCH_CAPABILITIES_ANNOTATIONS,
         inputSchema: z.object({
           query: z.string().min(1).describe("Keywords describing the capability you need, e.g. \"create organization\" or \"list workers\"."),
-          limit: z.number().int().min(1).max(20).optional().describe("Max number of matches to return. Defaults to 5."),
+          limit: z.number().int().min(1).max(20).optional().describe("Max number of callable matches to return. Connection issues are capped separately at the same limit. Defaults to 5."),
           type: searchCapabilityTypeSchema.optional().describe("Optional source filter. all searches every available source; api searches Den API capabilities; admin searches allowlisted platform-admin tools; mcp searches connected external MCP tools; marketplace searches marketplace plugin capabilities; skills searches native skills and marketplace skill objects. Defaults to all."),
         }),
         outputSchema: SEARCH_CAPABILITIES_OUTPUT_SCHEMA,
@@ -347,7 +366,7 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
         // Notion/Linear/Stripe/... connection an admin added in Den shows
         // up here exactly like any native capability, ranked together.
         let externalCoverageHint: string | undefined
-        const externalMatches = sourceFilter.mcp && externalMcpConnectionsEnabled
+        const externalSearch = sourceFilter.mcp && externalMcpConnectionsEnabled
           ? await searchExternalCapabilities({
             organizationId: principal.organizationId,
             member: memberIdentity,
@@ -358,7 +377,7 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
               externalCoverageHint = externalMcpSearchCoverageHint(coverage)
             },
           })
-          : []
+          : { matches: [], connectionIssues: [] }
         const marketplaceMatches = sourceFilter.marketplace && externalMcpConnectionsEnabled
           ? await searchMarketplaceCapabilities({
             organizationId: principal.organizationId,
@@ -377,10 +396,10 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
             limit: boundedLimit,
           })
           : []
-        const matches = [...restMatches, ...adminMatches, ...externalMatches, ...marketplaceMatches, ...skillMatches]
+        const matches = [...restMatches, ...adminMatches, ...externalSearch.matches, ...marketplaceMatches, ...skillMatches]
           .sort(compareCapabilityMatches)
           .slice(0, boundedLimit)
-        return capabilitySearchToolResult(matches, externalCoverageHint)
+        return capabilitySearchToolResult(matches, externalSearch.connectionIssues, externalCoverageHint)
       },
     )
 

@@ -165,6 +165,14 @@ Clients normally refresh automatically. The values matter when diagnosing reconn
 
 Search can include OpenWork Cloud resources such as config objects, connectors, plugins, marketplaces, skills, workers, members, roles, teams, model providers, and org-connected external MCP tools when those capabilities are enabled and shared with the member.
 
+Search results keep usable capabilities and connector health separate:
+
+- `availability` is `available`, `available_with_issues`, `unavailable`, or `no_matches`.
+- `matches` contains only callable capabilities.
+- `connectionIssues` contains matching downstream connections that need setup or returned an error, including their specific recovery action.
+
+`available_with_issues` means at least one matching capability is callable even though another matching connection needs attention. Clients should use the callable match and present the separate connection action without describing the provider as unavailable. The requested search limit applies independently to `matches` and `connectionIssues`, so an unhealthy duplicate connection cannot consume the callable-result budget.
+
 Availability is governed by organization membership, role, policy, and exposure allowlists. It intentionally does not expose authentication internals, admin-only system routes, webhooks, API-key creation or deletion, or credential-returning endpoints.
 
 ## Troubleshooting

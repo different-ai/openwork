@@ -115,6 +115,8 @@ test("agent MCP server exposes steering instructions during initialize", async (
   expect(client.getInstructions()).toContain("Settings > Connect")
   expect(client.getInstructions()).toContain("Never tell the user to reconnect OpenWork Cloud")
   expect(client.getInstructions()).toContain("connectionStatus.connectionName")
+  expect(client.getInstructions()).toContain("available_with_issues")
+  expect(client.getInstructions()).toContain("do not claim the provider is unavailable")
   expect(client.getInstructions()).toContain("schemaGuidance is advisory")
   expect(client.getInstructions()).toContain("always attempts the downstream provider call")
   expect(client.getInstructions()).toContain("invalid_capability_arguments")
@@ -137,16 +139,62 @@ test("capability search results include structured output alongside text compati
   }]
   const result = agentModule.capabilitySearchToolResult(matches)
 
-  expect(result.structuredContent).toEqual({ matches })
-  expect(JSON.parse(result.content[0]?.text ?? "{}")).toEqual({ matches })
+  expect(result.structuredContent).toEqual({
+    availability: "available",
+    matches,
+    connectionIssues: [],
+  })
+  expect(JSON.parse(result.content[0]?.text ?? "{}")).toEqual(result.structuredContent)
+})
+
+test("capability search keeps callable matches usable when another connection has an issue", () => {
+  const matches = [{
+    name: "mcp:connected:slack-search",
+    method: "MCP",
+    path: "https://mcp.slack.test",
+    score: 10,
+    summary: "[Slack] Search messages",
+    pathParams: [],
+    queryParams: [],
+    hasBody: true,
+  }]
+  const connectionIssues = [{
+    name: "mcp:disconnected:*",
+    method: "MCP",
+    path: "https://mcp.slack.test",
+    score: 7,
+    summary: "[Slack] Connection required",
+    pathParams: [],
+    queryParams: [],
+    hasBody: false,
+    kind: "connection_status",
+    status: "needs_connection",
+  }]
+  const result = agentModule.capabilitySearchToolResult(matches, connectionIssues)
+
+  expect(result.structuredContent).toEqual({
+    availability: "available_with_issues",
+    matches,
+    connectionIssues,
+  })
+  expect(JSON.parse(result.content[0]?.text ?? "{}")).toEqual(result.structuredContent)
+
+  const unavailable = agentModule.capabilitySearchToolResult([], connectionIssues)
+  expect(unavailable.structuredContent).toEqual({
+    availability: "unavailable",
+    matches: [],
+    connectionIssues,
+  })
 })
 
 test("capability search preserves the bounded-fanout coverage warning", () => {
-  const result = agentModule.capabilitySearchToolResult([], "External MCP search inspected 16 of 17 eligible connections. Results may be incomplete.")
+  const result = agentModule.capabilitySearchToolResult([], [], "External MCP search inspected 16 of 17 eligible connections. Results may be incomplete.")
   const structured = result.structuredContent
 
   expect(structured).toEqual({
+    availability: "no_matches",
     matches: [],
+    connectionIssues: [],
     hint: "No matches. Try broader or different keywords. External MCP search inspected 16 of 17 eligible connections. Results may be incomplete.",
   })
   expect(JSON.parse(result.content[0]?.text ?? "{}")).toEqual(structured)
@@ -277,6 +325,7 @@ test("successful provider output preserves advisory schema guidance as additiona
 
 test("structured search output remains compatible with marketplace match kinds and statuses", () => {
   const result = agentModule.SEARCH_CAPABILITIES_OUTPUT_SCHEMA.safeParse({
+    availability: "available",
     matches: [{
       name: "marketplace:plugin:skill",
       method: "MARKETPLACE",
@@ -289,6 +338,7 @@ test("structured search output remains compatible with marketplace match kinds a
       kind: "skill",
       status: "needs_install",
     }],
+    connectionIssues: [],
   })
 
   expect(result.success).toBe(true)
@@ -306,7 +356,7 @@ test("capability discovery is marked read-only while generic execution remains g
   })
 })
 
-test("connection status ranks above unrelated callable tools without distorting relevance scores", () => {
+test("connection status does not outrank a more relevant callable tool", () => {
   type ConnectionStatusMatch = CapabilityMatch & { kind: "connection_status" }
   const callableMatch: CapabilityMatch = {
     name: "slack_search_emojis",
@@ -333,6 +383,6 @@ test("connection status ranks above unrelated callable tools without distorting 
 
   matches.sort(compareCapabilityMatches)
 
-  expect(matches[0]?.kind).toBe("connection_status")
-  expect(matches[0]?.score).toBe(7)
+  expect(matches[0]?.name).toBe("slack_search_emojis")
+  expect(matches[0]?.score).toBe(20)
 })
