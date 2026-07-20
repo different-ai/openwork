@@ -21,6 +21,7 @@ import type { ComposerMentionKind } from "./mention-encoding";
 import {
   connectSkillSlashCommandOptions,
   getSlashCommandQuery,
+  skillMenuSlashCommandName,
   skillSlashCommandName,
   type ComposerSlashCommandOption,
 } from "./slash-command";
@@ -1521,7 +1522,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                                     <div className="min-w-0 flex-1">
                                       <div className="flex items-center justify-between gap-3">
                                         <div className="min-w-0 flex-1 truncate text-xs font-semibold text-gray-11">
-                                          /{skillSlashCommandName(skill)}
+                                          /{skillMenuSlashCommandName(skill)}
                                         </div>
                                         {isLocalCapability(skill.origin) ? (
                                           <span className="shrink-0 rounded-full bg-gray-3 px-2 py-0.5 text-[10px] font-medium text-gray-11">

@@ -5,6 +5,7 @@ import {
   connectSkillSlashCommandOptions,
   getSlashCommandQuery,
   parseSlashCommandInvocation,
+  skillMenuSlashCommandName,
   skillSlashCommandName,
 } from "../src/react-app/domains/session/surface/composer/slash-command";
 
@@ -102,5 +103,13 @@ describe("Connect skill slash commands", () => {
 
   test("falls back to a slash-safe slug when a skill has no trigger", () => {
     expect(skillSlashCommandName({ name: "Renewal Playbook" })).toBe("renewal-playbook");
+  });
+
+  test("does not normalize local skill labels", () => {
+    expect(skillMenuSlashCommandName({
+      name: "Local Playbook",
+      trigger: "local-playbook",
+      origin: "local",
+    })).toBe("Local Playbook");
   });
 });

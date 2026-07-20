@@ -18,6 +18,10 @@ export function skillSlashCommandName(skill: Pick<SkillCard, "name" | "trigger">
   return slug || "skill";
 }
 
+export function skillMenuSlashCommandName(skill: Pick<SkillCard, "name" | "trigger" | "origin">) {
+  return skill.origin === "openwork-connect" ? skillSlashCommandName(skill) : skill.name;
+}
+
 export function connectSkillSlashCommandOptions(skills: SkillCard[]): ComposerSlashCommandOption[] {
   return skills.flatMap((skill) => {
     if (skill.origin !== "openwork-connect" || !skill.connectCapabilityName) return [];
