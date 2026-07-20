@@ -22,8 +22,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { openDesktopUrl } from "@/app/lib/desktop";
-import { isDesktopRuntime } from "@/app/utils";
+import { tryOpenBrowserUrl } from "@/app/lib/browser-handoff";
+import { BrowserHandoffFallback } from "@/components/browser-handoff-fallback";
 import { compareProviders } from "@/app/utils/providers";
 import { Button } from "@/components/ui/button";
 import { ProviderIcon } from "../../../design-system/provider-icon";
@@ -155,11 +155,8 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
 
   const openExternalUrl = async (url: string) => {
     if (!url) return;
-    if (isDesktopRuntime()) {
-      await openDesktopUrl(url);
-      return;
-    }
-    window.open(url, "_blank", "noopener,noreferrer");
+    const result = await tryOpenBrowserUrl(url);
+    setLocalError(result.ok ? null : result.error);
   };
 
   const isClaudeProMaxMethod = (method: ProviderAuthMethod) => {
@@ -237,8 +234,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   const shouldStartOauthAutoPolling =
     props.open &&
     resolvedView === "oauth-auto" &&
-    oauthSession &&
-    (!isOpenAiHeadlessSession || oauthBrowserOpened);
+    oauthSession;
 
   const oauthDisplayCode = useMemo(() => {
     if (!oauthInstructions) return "";
@@ -391,13 +387,9 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
 
   const openOauthUrl = async (url: string) => {
     if (!url) return;
-    if (isDesktopRuntime()) {
-      await openDesktopUrl(url);
-      setOauthBrowserOpened(true);
-      return;
-    }
-    window.open(url, "_blank", "noopener,noreferrer");
-    setOauthBrowserOpened(true);
+    const result = await tryOpenBrowserUrl(url);
+    setOauthBrowserOpened(result.ok);
+    setLocalError(result.ok ? null : `${result.error} Use the authorization link shown below.`);
   };
 
   const copyOauthDisplayCode = async () => {
@@ -488,16 +480,15 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
       setOauthSession(nextSession);
 
       if (started.authorization.method === "code") {
-        await openOauthUrl(started.authorization.url);
         setView("oauth-code");
+        await openOauthUrl(started.authorization.url);
         return;
       }
 
+      setView("oauth-auto");
       if (!isOpenAiHeadlessMethod(selectedMethod)) {
         await openOauthUrl(started.authorization.url);
       }
-
-      setView("oauth-auto");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to start OAuth";
       setLocalError(message);
@@ -982,6 +973,16 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                       {oauthInstructions}
                     </div>
                   ) : null}
+                  <BrowserHandoffFallback
+                    url={oauthSession.authorization.url}
+                    title={`Finish connecting ${selectedEntry.name}`}
+                    description="Open the authorization page, then return here and paste the code. The full link stays available if browser launch or copy is blocked."
+                    openLabel="Open browser"
+                    onOpenResult={(result) => {
+                      setOauthBrowserOpened(result.ok);
+                      setLocalError(result.ok ? null : result.error);
+                    }}
+                  />
                   <TextInput
                     label="Authorization code"
                     type="text"
@@ -1001,15 +1002,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                     spellCheck={false}
                     disabled={actionDisabled}
                   />
-                  <div className="flex items-center justify-between gap-3">
-                    <Button
-                      variant="outline"
-                      onClick={() => {
-                        void openOauthUrl(oauthSession.authorization.url ?? "");
-                      }}
-                    >
-                      Open browser again
-                    </Button>
+                  <div className="flex items-center justify-end">
                     <Button
                       onClick={() => void handleOauthCodeSubmit()}
                       disabled={actionDisabled || !oauthCodeInput.trim()}
@@ -1054,9 +1047,19 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                       </Button>
                     </div>
                   ) : null}
+                  <BrowserHandoffFallback
+                    url={oauthSession.authorization.url}
+                    title={`Finish connecting ${selectedEntry.name}`}
+                    description="Keep this dialog open while you authorize in the browser. The full link stays available if browser launch or copy is blocked."
+                    openLabel={isOpenAiHeadlessSession && !oauthBrowserOpened ? "Open browser" : "Open browser again"}
+                    onOpenResult={(result) => {
+                      setOauthBrowserOpened(result.ok);
+                      setLocalError(result.ok ? null : result.error);
+                    }}
+                  />
                   {isOpenAiHeadlessSession && !oauthBrowserOpened ? (
                     <div className="flex items-center gap-2 text-xs text-gray-9">
-                      <span>Authorization checks will start after you click Open Browser.</span>
+                      <span>Use the browser link above. OpenWork is already checking for completion.</span>
                     </div>
                   ) : (
                     <div className="flex items-center gap-2 text-xs text-gray-9">
@@ -1064,19 +1067,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                       <span>Checking connection status automatically…</span>
                     </div>
                   )}
-                  <div className="flex items-center justify-between gap-3">
-                    <Button
-                      variant="outline"
-                      onClick={() => {
-                        void openOauthUrl(oauthSession.authorization.url ?? "");
-                      }}
-                    >
-                      {isOpenAiHeadlessSession
-                        ? oauthBrowserOpened
-                          ? "Reopen Browser"
-                          : "Open Browser"
-                        : "Open browser again"}
-                    </Button>
+                  <div className="flex items-center justify-end">
                     <div className="text-[11px] text-gray-9 text-right">
                       This window will close once the provider is connected.
                     </div>

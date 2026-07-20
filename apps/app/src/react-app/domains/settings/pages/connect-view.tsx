@@ -4,8 +4,9 @@ import { ArrowUpRight } from "lucide-react";
 
 import type { DenExternalMcpConnection, DenOrgPlugin } from "@/app/lib/den";
 import { mintCloudControlMcpToken, readDenSettings } from "@/app/lib/den";
-import { openDesktopUrl } from "@/app/lib/desktop";
+import { tryOpenBrowserUrl } from "@/app/lib/browser-handoff";
 import type { OpenworkCloudMcpHealth, OpenworkCloudMcpProviderModelContext, OpenworkServerClient } from "@/app/lib/openwork-server";
+import { BrowserHandoffFallback } from "@/components/browser-handoff-fallback";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
@@ -104,16 +105,33 @@ function denManageConnectionsUrl() {
 }
 
 function ManageInDenButton() {
+  const [handoffUrl, setHandoffUrl] = useState<string | null>(null);
+
+  const openManageConnections = () => {
+    const url = denManageConnectionsUrl();
+    setHandoffUrl(url);
+    void tryOpenBrowserUrl(url);
+  };
+
   return (
-    <Button
-      variant="outline"
-      size="sm"
-      className="w-fit"
-      onClick={() => void openDesktopUrl(denManageConnectionsUrl())}
-    >
-      {t("connect.manage_in_den_web")}
-      <ArrowUpRight size={13} />
-    </Button>
+    <div className="w-full space-y-2">
+      <Button
+        variant="outline"
+        size="sm"
+        className="w-fit"
+        onClick={openManageConnections}
+      >
+        {t("connect.manage_in_den_web")}
+        <ArrowUpRight size={13} />
+      </Button>
+      {handoffUrl ? (
+        <BrowserHandoffFallback
+          url={handoffUrl}
+          title="Manage connections in your browser"
+          description="If the browser did not appear, open or copy the complete management link below."
+        />
+      ) : null}
+    </div>
   );
 }
 
@@ -537,6 +555,7 @@ export function buildConnectRows(input: {
 function ConnectOrganizationRow(props: {
   connectingId: string | null;
   disconnectingId: string | null;
+  pendingAuthorization: ReturnType<typeof useOrgMcpConnections>["pendingAuthorization"];
   onConnect: (connectionId: string) => void;
   onDisconnect: (connectionId: string) => void;
   row: ConnectOrganizationRow;
@@ -554,70 +573,99 @@ function ConnectOrganizationRow(props: {
   const connecting = connectableConnectionId ? props.connectingId === connectableConnectionId : false;
   const disconnectableConnectionId = row.kind === "connection" && canDisconnectNativeProviderAccount(row.connection) ? row.connection.id : null;
   const disconnecting = disconnectableConnectionId ? props.disconnectingId === disconnectableConnectionId : false;
+  const pendingAuthorization = props.pendingAuthorization?.connectionId === connectableConnectionId
+    ? props.pendingAuthorization
+    : null;
+  const [setupUrl, setSetupUrl] = useState<string | null>(null);
 
   return (
-    <div
-      data-testid="connect-organization-row"
-      data-connect-row-kind={row.kind}
-      className="flex items-center gap-3 rounded-xl border border-dls-border bg-dls-surface px-3 py-3"
-    >
-      <ConnectRowIcon
-        name={row.name}
-        serviceUrl={row.kind === "connection" ? row.connection.url : undefined}
-        iconSlug={pluginManifest?.icon?.simpleIconSlug}
-        iconSrc={pluginManifest?.icon?.src}
-      />
-      <div className="min-w-0 flex-1">
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <span className="truncate text-sm font-semibold text-dls-text">{row.name}</span>
-          {row.kind === "plugin" && row.importedLocally ? (
-            <span className="shrink-0 rounded-md border border-amber-6/40 bg-amber-3/40 px-1.5 py-0.5 text-[10px] font-medium text-amber-11">
-              {t("connect.marketplace_local_copy_badge")}
-            </span>
-          ) : null}
+    <div className="space-y-2">
+      <div
+        data-testid="connect-organization-row"
+        data-connect-row-kind={row.kind}
+        className="flex items-center gap-3 rounded-xl border border-dls-border bg-dls-surface px-3 py-3"
+      >
+        <ConnectRowIcon
+          name={row.name}
+          serviceUrl={row.kind === "connection" ? row.connection.url : undefined}
+          iconSlug={pluginManifest?.icon?.simpleIconSlug}
+          iconSrc={pluginManifest?.icon?.src}
+        />
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <span className="truncate text-sm font-semibold text-dls-text">{row.name}</span>
+            {row.kind === "plugin" && row.importedLocally ? (
+              <span className="shrink-0 rounded-md border border-amber-6/40 bg-amber-3/40 px-1.5 py-0.5 text-[10px] font-medium text-amber-11">
+                {t("connect.marketplace_local_copy_badge")}
+              </span>
+            ) : null}
+          </div>
+          <div className="truncate text-xs text-dls-secondary">{row.meta}</div>
         </div>
-        <div className="truncate text-xs text-dls-secondary">{row.meta}</div>
-      </div>
-      {row.group === "needs_signin" && connectableConnectionId ? (
-        <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-          <Button
-            size="sm"
-            disabled={connecting}
-            className={needsReconnect ? "border border-amber-6 bg-amber-2 text-amber-11 hover:bg-amber-3" : undefined}
-            onClick={() => props.onConnect(connectableConnectionId)}
-          >
-            {connecting ? t("connect.waiting_for_browser") : needsReconnect ? t("mcp.org_connection_reconnect_action") : t("mcp.org_connection_connect_action")}
-          </Button>
-          {disconnectableConnectionId ? (
+        {row.group === "needs_signin" && connectableConnectionId ? (
+          <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+            <Button
+              size="sm"
+              disabled={connecting}
+              className={needsReconnect ? "border border-amber-6 bg-amber-2 text-amber-11 hover:bg-amber-3" : undefined}
+              onClick={() => props.onConnect(connectableConnectionId)}
+            >
+              {connecting ? t("connect.waiting_for_browser") : needsReconnect ? t("mcp.org_connection_reconnect_action") : t("mcp.org_connection_connect_action")}
+            </Button>
+            {disconnectableConnectionId ? (
+              <Button size="sm" variant="destructive" disabled={disconnecting} onClick={() => props.onDisconnect(disconnectableConnectionId)}>
+                {disconnecting ? t("mcp.org_connection_disconnecting_action") : t("mcp.org_connection_disconnect_action")}
+              </Button>
+            ) : null}
+          </div>
+        ) : row.group === "needs_admin_setup" ? (
+          row.kind === "connection" && !row.canManage ? (
+            <span className="shrink-0 rounded-md bg-amber-3 px-2 py-1 text-xs font-medium text-amber-11">
+              {t("connect.group_needs_admin_setup")}
+            </span>
+          ) : (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                const url = denManageConnectionsUrl();
+                setSetupUrl(url);
+                void tryOpenBrowserUrl(url);
+              }}
+              title={setupNames.join(t("connect.row_meta_list_separator"))}
+            >
+              {t("connect.row_action_set_up_connection")}
+            </Button>
+          )
+        ) : disconnectableConnectionId ? (
+          <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+            <span className="rounded-md bg-green-3 px-2 py-1 text-xs font-medium text-green-11">
+              {t("connect.row_chip_ready")}
+            </span>
             <Button size="sm" variant="destructive" disabled={disconnecting} onClick={() => props.onDisconnect(disconnectableConnectionId)}>
               {disconnecting ? t("mcp.org_connection_disconnecting_action") : t("mcp.org_connection_disconnect_action")}
             </Button>
-          ) : null}
-        </div>
-      ) : row.group === "needs_admin_setup" ? (
-        row.kind === "connection" && !row.canManage ? (
-          <span className="shrink-0 rounded-md bg-amber-3 px-2 py-1 text-xs font-medium text-amber-11">
-            {t("connect.group_needs_admin_setup")}
-          </span>
+          </div>
         ) : (
-          <Button size="sm" variant="outline" onClick={() => void openDesktopUrl(denManageConnectionsUrl())} title={setupNames.join(t("connect.row_meta_list_separator"))}>
-            {t("connect.row_action_set_up_connection")}
-          </Button>
-        )
-      ) : disconnectableConnectionId ? (
-        <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-          <span className="rounded-md bg-green-3 px-2 py-1 text-xs font-medium text-green-11">
+          <span className="shrink-0 rounded-md bg-green-3 px-2 py-1 text-xs font-medium text-green-11">
             {t("connect.row_chip_ready")}
           </span>
-          <Button size="sm" variant="destructive" disabled={disconnecting} onClick={() => props.onDisconnect(disconnectableConnectionId)}>
-            {disconnecting ? t("mcp.org_connection_disconnecting_action") : t("mcp.org_connection_disconnect_action")}
-          </Button>
-        </div>
-      ) : (
-        <span className="shrink-0 rounded-md bg-green-3 px-2 py-1 text-xs font-medium text-green-11">
-          {t("connect.row_chip_ready")}
-        </span>
-      )}
+        )}
+      </div>
+      {pendingAuthorization ? (
+        <BrowserHandoffFallback
+          url={pendingAuthorization.url}
+          title={`Finish connecting ${row.name}`}
+          description="Keep this page open while OpenWork waits for authorization. If the browser did not appear, use the link below."
+        />
+      ) : null}
+      {setupUrl ? (
+        <BrowserHandoffFallback
+          url={setupUrl}
+          title={`Set up ${row.name} in your browser`}
+          description="If the browser did not appear, open or copy the complete setup link below."
+        />
+      ) : null}
     </div>
   );
 }
@@ -625,6 +673,7 @@ function ConnectOrganizationRow(props: {
 function ConnectOrganizationList(props: {
   connectingId: string | null;
   disconnectingId: string | null;
+  pendingAuthorization: ReturnType<typeof useOrgMcpConnections>["pendingAuthorization"];
   connections: DenExternalMcpConnection[];
   items: ExtensionItem[];
   onConnect: (connectionId: string) => void;
@@ -684,6 +733,7 @@ function ConnectOrganizationList(props: {
                       row={row}
                       connectingId={props.connectingId}
                       disconnectingId={props.disconnectingId}
+                      pendingAuthorization={props.pendingAuthorization}
                       onConnect={props.onConnect}
                       onDisconnect={props.onDisconnect}
                     />
@@ -709,6 +759,7 @@ function ConnectActivePanel(props: {
   error: string | null;
   connectingId: string | null;
   disconnectingId: string | null;
+  pendingAuthorization: ReturnType<typeof useOrgMcpConnections>["pendingAuthorization"];
   onConnect: (connectionId: string) => void;
   onDisconnect: (connectionId: string) => void;
 }) {
@@ -743,6 +794,7 @@ function ConnectActivePanel(props: {
         role={activeOrganization?.role}
         connectingId={props.connectingId}
         disconnectingId={props.disconnectingId}
+        pendingAuthorization={props.pendingAuthorization}
         onConnect={props.onConnect}
         onDisconnect={props.onDisconnect}
       />
@@ -814,6 +866,7 @@ export function ConnectView(props: ConnectViewProps) {
           error={orgMcpConnections.error}
           connectingId={orgMcpConnections.connectingId}
           disconnectingId={orgMcpConnections.disconnectingId}
+          pendingAuthorization={orgMcpConnections.pendingAuthorization}
           onConnect={orgMcpConnections.connect}
           onDisconnect={orgMcpConnections.disconnect}
         />

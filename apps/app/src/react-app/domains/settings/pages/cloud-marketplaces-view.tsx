@@ -7,6 +7,8 @@ import type { CloudImportedPlugin } from "@/app/cloud/import-state";
 import type { PendingCloudPluginChange } from "@/app/cloud/desktop-cloud-sync";
 import { evaluateEnablement, type EnablementContext } from "@/app/enablement";
 import type { DenExternalMcpConnection, DenOrgMarketplaceResolved, DenOrgPlugin, DenOrgPluginResolved } from "@/app/lib/den";
+import type { PendingOrgMcpAuthorization } from "@/react-app/domains/connections/use-org-mcp-connections";
+import { BrowserHandoffFallback } from "@/components/browser-handoff-fallback";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { t } from "@/i18n";
@@ -124,6 +126,7 @@ export type CloudMarketplacesViewProps = {
   orgMcpConnections?: DenExternalMcpConnection[];
   orgMcpConnectingId?: string | null;
   orgMcpDisconnectingId?: string | null;
+  orgMcpPendingAuthorization?: PendingOrgMcpAuthorization | null;
   onConnectOrgMcp?: (connectionId: string) => void;
   onDisconnectOrgMcp?: (connectionId: string) => void;
   refreshOrgMcpConnections?: () => Promise<unknown> | void;
@@ -192,6 +195,7 @@ export function CloudMarketplacesView({
   orgMcpConnections = [],
   orgMcpConnectingId = null,
   orgMcpDisconnectingId = null,
+  orgMcpPendingAuthorization = null,
   onConnectOrgMcp,
   onDisconnectOrgMcp,
   refreshOrgMcpConnections,
@@ -483,6 +487,14 @@ export function CloudMarketplacesView({
 
       {actionError ?? extensions.cloudOrgMarketplacesStatus() ? (
         <SettingsNotice tone="error">{actionError ?? extensions.cloudOrgMarketplacesStatus()}</SettingsNotice>
+      ) : null}
+
+      {orgMcpPendingAuthorization ? (
+        <BrowserHandoffFallback
+          url={orgMcpPendingAuthorization.url}
+          title="Finish connecting your account"
+          description="OpenWork is waiting for authorization. If the browser did not appear, open or copy the full link below."
+        />
       ) : null}
 
       {busy ? (

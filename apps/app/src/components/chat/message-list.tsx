@@ -21,7 +21,7 @@ import {
   type UIMessage,
 } from "ai"
 import type { SessionStatus } from "@opencode-ai/sdk/v2/client"
-import { openDesktopUrl } from "@/app/lib/desktop"
+import { openBrowserUrlWithGlobalFallback } from "@/app/lib/browser-handoff"
 import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "@/app/types"
 import { ApplyPatchTool } from "@/components/tools/apply-patch"
 import { BashTool } from "@/components/tools/bash"
@@ -644,7 +644,7 @@ function RetryActionButton(props: { link: string; label: string }) {
       variant="outline"
       size="sm"
       className="h-7 border-amber-500/70 bg-amber-50 text-xs text-amber-950 hover:bg-amber-100"
-      onClick={() => void openDesktopUrl(props.link)}
+      onClick={() => void openBrowserUrlWithGlobalFallback(props.link)}
     >
       {props.label}
     </Button>

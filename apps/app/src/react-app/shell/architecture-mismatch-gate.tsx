@@ -1,7 +1,9 @@
 /** @jsxImportSource react */
 import { useCallback, useEffect, useReducer, type ReactNode } from "react";
 
+import { tryOpenBrowserUrl } from "../../app/lib/browser-handoff";
 import { isDesktopRuntime } from "../../app/utils";
+import { BrowserHandoffFallback } from "../../components/browser-handoff-fallback";
 import { useBootState } from "./boot-state";
 
 type ArchitectureInfo = {
@@ -86,12 +88,12 @@ export function ArchitectureMismatchGate({ children }: ArchitectureMismatchGateP
   const openDownload = useCallback(() => {
     const url = info?.downloadUrl || info?.releaseUrl;
     if (!url) return;
-    void window.__OPENWORK_ELECTRON__?.shell?.openExternal?.(url);
+    void tryOpenBrowserUrl(url);
   }, [info?.downloadUrl, info?.releaseUrl]);
 
   const openRelease = useCallback(() => {
     if (!info?.releaseUrl) return;
-    void window.__OPENWORK_ELECTRON__?.shell?.openExternal?.(info.releaseUrl);
+    void tryOpenBrowserUrl(info.releaseUrl);
   }, [info?.releaseUrl]);
 
   if (!checked) return null;
@@ -144,6 +146,22 @@ export function ArchitectureMismatchGate({ children }: ArchitectureMismatchGateP
                   Open release page
                 </button>
               </div>
+              <BrowserHandoffFallback
+                url={info.downloadUrl || info.releaseUrl}
+                title="Download link"
+                description="If neither download button opens a browser, copy or select this complete link."
+                openLabel="Open download again"
+                className="border-white/15 bg-white/[0.06] [&_div]:text-white/80 [&_span]:text-white/80"
+              />
+              {info.releaseUrl !== (info.downloadUrl || info.releaseUrl) ? (
+                <BrowserHandoffFallback
+                  url={info.releaseUrl}
+                  title="Release page link"
+                  description="Use this complete release-page URL if the browser button is blocked."
+                  openLabel="Open release page again"
+                  className="border-white/15 bg-white/[0.06] [&_div]:text-white/80 [&_span]:text-white/80"
+                />
+              ) : null}
             </div>
 
             <aside className="border-t border-white/10 bg-gradient-to-br from-emerald-300/12 via-sky-300/8 to-transparent p-8 sm:p-10 lg:border-l lg:border-t-0 lg:p-12">

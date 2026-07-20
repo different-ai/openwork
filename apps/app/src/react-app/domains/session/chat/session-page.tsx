@@ -8,6 +8,10 @@ import { resolveExtensionIconSrc } from "@/react-app/design-system/extension-ico
 import { t } from "../../../../i18n";
 import { OPENWORK_EXTENSION_CATALOG } from "../../../../app/constants";
 import { buildDenAuthUrl, readDenBootstrapConfig } from "../../../../app/lib/den";
+import {
+  openBrowserUrlWithGlobalFallback,
+  tryOpenBrowserUrl,
+} from "../../../../app/lib/browser-handoff";
 import { type OpenworkServerClient, type OpenworkServerStatus } from "../../../../app/lib/openwork-server";
 import { getDisplaySessionTitle } from "../../../../app/lib/session-title";
 import type { BootPhase } from "../../../../app/lib/startup-boot";
@@ -22,6 +26,7 @@ import type {
 } from "../../../../app/types";
 import type { ShareWorkspaceModalProps } from "../../workspace/types";
 import { Button } from "@/components/ui/button";
+import { BrowserHandoffFallback } from "@/components/browser-handoff-fallback";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   Dialog,
@@ -33,7 +38,6 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { ConfirmModal } from "../../../design-system/modals/confirm-modal";
-import { usePlatform } from "../../../kernel/platform";
 import { useDenAuth } from "../../cloud/den-auth-provider";
 import ProviderAuthModal, { type ProviderAuthModalProps } from "../../connections/provider-auth/provider-auth-modal";
 import { RenameSessionModal } from "../modals/rename-session-modal";
@@ -307,7 +311,6 @@ function controlStringArg(args: unknown, key: string) {
 
 export function SessionPage(props: SessionPageProps) {
   const { config: shellConfig } = useShellConfig();
-  const platform = usePlatform();
   const denAuth = useDenAuth();
   const sidebarOpen = useUiStateStore((state) => state.sidebarOpen);
   const setSidebarOpen = useUiStateStore((state) => state.setSidebarOpen);
@@ -349,11 +352,18 @@ export function SessionPage(props: SessionPageProps) {
   );
   const voiceExtensionEnabled = voiceExtension ? isOpenWorkExtensionEnabled(voiceExtension) : false;
   const showCloudSignIn = shellConfig.cloudSignin && !denAuth.isSignedIn && denAuth.status !== "checking";
+  const [cloudSignInUrl, setCloudSignInUrl] = useState<string | null>(null);
   const openCloudSignIn = useCallback(() => {
     const baseUrl = readDenBootstrapConfig().baseUrl;
     // Label stays "Sign in"; opens the sign-up tab so new users aren't defaulted into sign-in.
-    platform.openLink(buildDenAuthUrl(baseUrl, "sign-up"));
-  }, [platform]);
+    const url = buildDenAuthUrl(baseUrl, "sign-up");
+    setCloudSignInUrl(url);
+    void tryOpenBrowserUrl(url);
+  }, []);
+
+  useEffect(() => {
+    if (denAuth.isSignedIn) setCloudSignInUrl(null);
+  }, [denAuth.isSignedIn]);
 
   useReactRenderWatchdog("SessionPage", {
     selectedSessionId: props.selectedSessionId,
@@ -464,9 +474,14 @@ export function SessionPage(props: SessionPageProps) {
       const url = browserUrlForTarget(target);
       if (isElectronRuntime()) {
         setCurrentSidePanel("panel");
-        void window.__OPENWORK_ELECTRON__?.browser?.createTab?.(url);
+        const createTab = window.__OPENWORK_ELECTRON__?.browser?.createTab;
+        if (createTab) {
+          void createTab(url).catch(() => openBrowserUrlWithGlobalFallback(url));
+        } else {
+          void openBrowserUrlWithGlobalFallback(url);
+        }
       } else {
-        window.open(url, "_blank", "noopener,noreferrer");
+        void openBrowserUrlWithGlobalFallback(url);
       }
       return;
     }
@@ -1053,6 +1068,16 @@ export function SessionPage(props: SessionPageProps) {
               ) : null}
             </div>
           </header>
+          {cloudSignInUrl && showCloudSignIn ? (
+            <div className="shrink-0 border-b border-border bg-background px-4 py-3 md:px-6">
+              <BrowserHandoffFallback
+                url={cloudSignInUrl}
+                title="Continue OpenWork sign-in"
+                description="If the browser did not appear, open or copy the complete sign-in link below."
+                openLabel="Open sign-in again"
+              />
+            </div>
+          ) : null}
 
           <ResizablePanelGroup orientation="vertical" className="min-h-0 flex-1 overflow-hidden">
             <ResizablePanel minSize="180px" className="min-h-0">

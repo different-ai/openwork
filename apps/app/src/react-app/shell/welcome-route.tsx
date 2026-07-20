@@ -30,6 +30,7 @@ import {
 import { useDenAuth } from "../domains/cloud/den-auth-provider";
 import { resolveOpenworkConnection } from "./openwork-connection";
 import { captureAnalyticsEvent } from "../../app/lib/analytics";
+import { tryOpenBrowserUrl } from "../../app/lib/browser-handoff";
 import { buildOpenworkWorkspaceBaseUrl, createOpenworkServerClient } from "../../app/lib/openwork-server";
 import { buildDenAuthUrl, clearDenSession, DEFAULT_DEN_BASE_URL, readDenSettings } from "../../app/lib/den";
 import {
@@ -131,6 +132,7 @@ export function WelcomeRoute() {
   const denAuth = useDenAuth();
   const [state, dispatch] = useReducer(welcomeReducer, initialWelcomeState);
   const [manualFolder, setManualFolder] = useState("");
+  const [teamSignInUrl, setTeamSignInUrl] = useState<string | null>(null);
   const [organizationServerUrl, setOrganizationServerUrl] = useState(() => readDenSettings().baseUrl);
   const [organizationServerBusy, setOrganizationServerBusy] = useState(false);
   const [organizationServerError, setOrganizationServerError] = useState<string | null>(null);
@@ -359,8 +361,10 @@ export function WelcomeRoute() {
 
   const handleTeamSignIn = useCallback(() => {
     const settings = readDenSettings();
-    platform.openLink(buildDenAuthUrl(settings.baseUrl || DEFAULT_DEN_BASE_URL, "sign-in"));
-  }, [platform]);
+    const url = buildDenAuthUrl(settings.baseUrl || DEFAULT_DEN_BASE_URL, "sign-in");
+    setTeamSignInUrl(url);
+    void tryOpenBrowserUrl(url);
+  }, []);
 
   const finishOnboarding = useCallback(() => {
     markOnboardingComplete();
@@ -399,6 +403,7 @@ export function WelcomeRoute() {
         onUseManualFolder={handleUseManualFolder}
         showManualFolder={import.meta.env.DEV && isDesktopRuntime()}
         onTeamSignIn={handleTeamSignIn}
+        teamSignInUrl={teamSignInUrl}
         organizationServerBusy={organizationServerBusy}
         organizationServerError={organizationServerError}
         organizationServerUrl={organizationServerUrl}

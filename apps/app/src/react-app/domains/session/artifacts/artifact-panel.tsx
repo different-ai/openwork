@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Download, ExternalLink, FolderOpen, X } from "lucide-react";
 
 import type { OpenworkServerClient } from "@/app/lib/openwork-server";
+import { openBrowserUrlWithGlobalFallback } from "@/app/lib/browser-handoff";
 import { getDesktopFileIcon, openDesktopPath, revealDesktopItemInDir } from "@/app/lib/desktop";
 import { isElectronRuntime } from "@/app/utils";
 import { Button } from "@/components/ui/button";
@@ -192,7 +193,7 @@ function ArtifactPanelView({ client, workspaceId, workspaceRoot, isRemoteWorkspa
 
   const openExternal = async () => {
     if (target.kind === "url") {
-      window.open(target.value, "_blank", "noopener,noreferrer");
+      await openBrowserUrlWithGlobalFallback(target.value);
 
       return;
     }

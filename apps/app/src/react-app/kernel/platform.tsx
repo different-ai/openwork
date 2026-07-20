@@ -1,8 +1,14 @@
 /** @jsxImportSource react */
-import { createContext, use, type ReactNode } from "react";
+import { createContext, use, useEffect, useState, type ReactNode } from "react";
 
-import { desktopNotificationShow, openDesktopUrl, relaunchDesktopApp } from "../../app/lib/desktop";
+import {
+  browserHandoffRequiredEvent,
+  openBrowserUrlWithGlobalFallback,
+  type BrowserHandoffRequiredDetail,
+} from "../../app/lib/browser-handoff";
+import { desktopNotificationShow, relaunchDesktopApp } from "../../app/lib/desktop";
 import { isDesktopRuntime } from "../../app/utils";
+import { BrowserHandoffFallback } from "../../components/browser-handoff-fallback";
 
 export type SyncStorage = {
   getItem(key: string): string | null;
@@ -39,9 +45,37 @@ type PlatformProviderProps = {
 };
 
 export function PlatformProvider({ value, children }: PlatformProviderProps) {
+  const [browserHandoff, setBrowserHandoff] = useState<BrowserHandoffRequiredDetail | null>(null);
+
+  useEffect(() => {
+    const handleBrowserHandoff = (event: Event) => {
+      setBrowserHandoff((event as CustomEvent<BrowserHandoffRequiredDetail>).detail);
+    };
+    window.addEventListener(browserHandoffRequiredEvent, handleBrowserHandoff);
+    return () => window.removeEventListener(browserHandoffRequiredEvent, handleBrowserHandoff);
+  }, []);
+
   return (
     <PlatformContext.Provider value={value}>
       {children}
+      {browserHandoff ? (
+        <div className="fixed inset-x-4 bottom-4 z-[250] ml-auto max-w-2xl">
+          <button
+            type="button"
+            aria-label="Dismiss browser link"
+            className="absolute right-2 top-2 z-10 rounded-md px-2 py-1 text-xs text-amber-11 hover:bg-amber-3"
+            onClick={() => setBrowserHandoff(null)}
+          >
+            Dismiss
+          </button>
+          <BrowserHandoffFallback
+            url={browserHandoff.url}
+            title="Open this link manually"
+            description={`${browserHandoff.error} The complete link remains available here to copy or select.`}
+            className="pr-20 shadow-2xl"
+          />
+        </div>
+      ) : null}
     </PlatformContext.Provider>
   );
 }
@@ -62,23 +96,12 @@ export function createDefaultPlatform(): Platform {
   return {
     platform: isDesktopRuntime() ? "desktop" : "web",
     openLink(url: string) {
-      if (isDesktopRuntime()) {
-        void openDesktopUrl(url).catch(() => {
-          if (shouldOpenInCurrentTab(url)) {
-            window.location.href = url;
-            return;
-          }
-          window.open(url, "_blank");
-        });
-        return;
-      }
-
       if (shouldOpenInCurrentTab(url)) {
         window.location.href = url;
         return;
       }
 
-      window.open(url, "_blank");
+      void openBrowserUrlWithGlobalFallback(url);
     },
     restart: async () => {
       if (isDesktopRuntime()) {

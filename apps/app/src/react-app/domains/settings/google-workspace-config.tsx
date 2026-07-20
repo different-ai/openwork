@@ -15,8 +15,9 @@ import {
 } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
+import { BrowserHandoffFallback } from "@/components/browser-handoff-fallback";
+import { tryOpenBrowserUrl } from "@/app/lib/browser-handoff";
 import type { GoogleWorkspaceAuthStatus, OpenworkServerClient } from "../../../app/lib/openwork-server";
-import { usePlatform } from "../../kernel/platform";
 import type { ExtensionConfigContext } from "./extension-registry";
 import { registerExtensionRuntime } from "./extension-registry";
 
@@ -108,10 +109,10 @@ async function waitForGoogleWorkspaceConnection(client: OpenworkServerClient, fl
 }
 
 function GoogleWorkspaceConfig({ openworkServerClient, hostOpenworkServerClient, onExtensionConnectionChange, restartLocalServer }: ExtensionConfigContext) {
-  const platform = usePlatform();
   const [status, setStatus] = useState<GoogleWorkspaceAuthStatus | null>(null);
   const [busyAction, setBusyAction] = useState<BusyAction | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [pendingAuthUrl, setPendingAuthUrl] = useState<string | null>(null);
   const [clientSecret, setClientSecret] = useState("");
   const [customClientId, setCustomClientId] = useState("");
   const [customClientSecret, setCustomClientSecret] = useState("");
@@ -142,6 +143,7 @@ function GoogleWorkspaceConfig({ openworkServerClient, hostOpenworkServerClient,
 
   const runDesktopAction = async (action: Exclude<BusyAction, "status">, command: GoogleWorkspaceCommand) => {
     if (!openworkServerClient) return;
+    if (action === "connect") setPendingAuthUrl(null);
     setBusyAction(action);
     setError(null);
     try {
@@ -154,6 +156,7 @@ function GoogleWorkspaceConfig({ openworkServerClient, hostOpenworkServerClient,
       const next = normalizeGoogleWorkspaceAuthStatus(result);
       setStatus(next);
       onExtensionConnectionChange?.("google-workspace", next.connected);
+      if (action === "connect" && next.connected) setPendingAuthUrl(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : `Google Workspace ${action} failed.`);
       await loadStatus({ clearError: false });
@@ -166,7 +169,8 @@ function GoogleWorkspaceConfig({ openworkServerClient, hostOpenworkServerClient,
     if (!openworkServerClient) return null;
     const features = status?.customClient === true ? OPTIONAL_FEATURES.filter((feature) => optionalFeatures[feature.id]).map((feature) => feature.id) : [];
     const flow = await openworkServerClient.googleWorkspaceConnectStart({ features });
-    platform.openLink(flow.authUrl);
+    setPendingAuthUrl(flow.authUrl);
+    await tryOpenBrowserUrl(flow.authUrl);
     return waitForGoogleWorkspaceConnection(openworkServerClient, flow.flowId, flow.expiresAt);
   };
 
@@ -374,6 +378,14 @@ function GoogleWorkspaceConfig({ openworkServerClient, hostOpenworkServerClient,
           </CardContent>
         ) : null}
         <CardFooter className="flex-wrap gap-2 justify-between">
+          {pendingAuthUrl ? (
+            <BrowserHandoffFallback
+              url={pendingAuthUrl}
+              title="Finish connecting Google Workspace"
+              description="OpenWork is waiting for Google authorization. If the browser did not appear, use this link while the connection remains pending."
+              className="basis-full"
+            />
+          ) : null}
           <div className="flex flex-wrap gap-2">
             <Button disabled={Boolean(busyAction) || !canConnect} onClick={() => void runDesktopAction("connect", connectGoogleWorkspace)}>
               {busyAction === "connect" ? <Loader2 className="size-4 animate-spin" /> : null}

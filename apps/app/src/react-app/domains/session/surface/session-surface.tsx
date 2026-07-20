@@ -7,6 +7,7 @@ import { Check, Minimize2 } from "lucide-react";
 import { toast } from "@/components/ui/sonner";
 
 import { captureAnalyticsEvent } from "@/app/lib/analytics";
+import { tryOpenBrowserUrl } from "@/app/lib/browser-handoff";
 import { createClient, unwrap } from "@/app/lib/opencode";
 import { abortSessionSafe } from "@/app/lib/opencode-session";
 import { t } from "@/i18n";
@@ -41,7 +42,7 @@ import type {
 } from "@/react-app/domains/connections/cloud-mcp-submit-readiness";
 import { ReactSessionComposer } from "./composer/composer";
 import { decodeComposerMentionValue, encodeComposerMentionValue, type ComposerMentionKind } from "./composer/mention-encoding";
-import { desktopBridge, openDesktopUrl } from "@/app/lib/desktop";
+import { desktopBridge } from "@/app/lib/desktop";
 import { parseSlashCommandInvocation } from "./composer/slash-command";
 import { DevProfiler } from "@/react-app/shell/dev-profiler";
 import { PaperGrainGradient } from "@openwork/ui/react";
@@ -1394,8 +1395,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
       }
       if (!result.authorizeUrl) throw new Error(`Could not start ${action.connectionName} authorization.`);
 
-      await openDesktopUrl(result.authorizeUrl);
       onProgress({ phase: "authorization_opened", authorizeUrl: result.authorizeUrl });
+      await tryOpenBrowserUrl(result.authorizeUrl);
       await waitForFreshMcpAuthorization({
         connectionId: action.connectionId,
         connectionName: action.connectionName,
@@ -1425,7 +1426,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     action: ChatToolReconnectAction,
     authorizeUrl: string,
   ) => {
-    await openDesktopUrl(authorizeUrl);
+    await tryOpenBrowserUrl(authorizeUrl);
     recordInspectorEvent("mcp.chat_reconnect.authorization_reopened", {
       workspaceId: props.workspaceId,
       sessionId: props.sessionId,

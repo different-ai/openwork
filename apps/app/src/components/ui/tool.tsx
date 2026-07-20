@@ -5,6 +5,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible"
+import { BrowserHandoffFallback } from "@/components/browser-handoff-fallback"
 import { Button } from "@/components/ui/button"
 import {
   attributeChatToolError,
@@ -234,9 +235,9 @@ const Tool = ({
         })
       } catch (error) {
         setReconnectRecord(reconnectKey, {
-          phase: "failed",
+          phase: "authorization_opened",
           error: error instanceof Error ? error.message : "Could not reopen sign-in.",
-          authorizeUrl: null,
+          authorizeUrl: reconnectAuthorizeUrl,
         })
       }
       return
@@ -356,6 +357,14 @@ const Tool = ({
       </div>
       {reconnectError ? (
         <p className="mt-1 text-xs text-destructive" role="alert">{reconnectError}</p>
+      ) : null}
+      {reconnectAuthorizeUrl ? (
+        <BrowserHandoffFallback
+          url={reconnectAuthorizeUrl}
+          title={`Finish reconnecting ${reconnectAction?.connectionName ?? "this account"}`}
+          description="OpenWork is waiting for authorization. If the browser did not appear, open or copy the full link below."
+          className="mt-2"
+        />
       ) : null}
       <CollapsibleContent className="h-(--collapsible-panel-height) overflow-hidden text-sm transition-[height] duration-150 ease-out data-starting-style:h-0 data-ending-style:h-0 [&[hidden]:not([hidden='until-found'])]:hidden">
         <div className="bg-muted mt-2 flex flex-col gap-2 rounded-lg p-2 text-xs">

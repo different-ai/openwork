@@ -8,6 +8,7 @@ import {
 } from "react";
 import type { Agent } from "@opencode-ai/sdk/v2/client";
 
+import { openBrowserUrlWithGlobalFallback } from "@/app/lib/browser-handoff";
 import { t } from "@/i18n";
 import {
   Command,
@@ -148,7 +149,7 @@ export function CommandPalette(props: CommandPaletteProps) {
     if (props.onOpenUrl) {
       props.onOpenUrl(url);
     } else {
-      window.open(url, "_blank", "noopener");
+      void openBrowserUrlWithGlobalFallback(url);
     }
   };
 

@@ -2294,6 +2294,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                 orgMcpConnections={orgMcpConnections.connections}
                 orgMcpConnectingId={orgMcpConnections.connectingId}
                 orgMcpDisconnectingId={orgMcpConnections.disconnectingId}
+                orgMcpPendingAuthorization={orgMcpConnections.pendingAuthorization}
                 onConnectOrgMcp={(connectionId) => {
                   void orgMcpConnections.connect(connectionId);
                 }}
@@ -2343,6 +2344,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             orgMcpConnections={orgMcpConnections.connections}
             orgMcpConnectingId={orgMcpConnections.connectingId}
             orgMcpDisconnectingId={orgMcpConnections.disconnectingId}
+            orgMcpPendingAuthorization={orgMcpConnections.pendingAuthorization}
             onConnectOrgMcp={(connectionId) => {
               void orgMcpConnections.connect(connectionId);
             }}

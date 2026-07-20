@@ -360,7 +360,8 @@ export async function openDesktopUrl(url: string): Promise<void> {
     return;
   }
   if (typeof window !== "undefined") {
-    window.open(url, "_blank", "noopener,noreferrer");
+    const opened = window.open(url, "_blank", "noopener,noreferrer");
+    if (!opened) throw new Error("The browser blocked the new window.");
   }
 }
 

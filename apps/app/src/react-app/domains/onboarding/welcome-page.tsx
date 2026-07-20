@@ -13,6 +13,7 @@ import {
   PageTitlebarRegion,
 } from "@/components/page";
 import { Button } from "@/components/ui/button";
+import { BrowserHandoffFallback } from "@/components/browser-handoff-fallback";
 import { ScrollArea, ScrollAreaViewport } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import { OrganizationServerAffordance } from "../settings/cloud/organization-server-affordance";
@@ -129,6 +130,7 @@ type WelcomePageProps = {
   onUseManualFolder?: () => void;
   showManualFolder?: boolean;
   onTeamSignIn?: () => void;
+  teamSignInUrl?: string | null;
   organizationServerBusy: boolean;
   organizationServerError: string | null;
   organizationServerUrl: string;
@@ -165,6 +167,7 @@ export function WelcomePage({
   onUseManualFolder,
   showManualFolder,
   onTeamSignIn,
+  teamSignInUrl,
   organizationServerBusy,
   organizationServerError,
   organizationServerUrl,
@@ -231,6 +234,14 @@ export function WelcomePage({
                     >
                       {t("welcome.team_signin")}
                     </Button>
+                  ) : null}
+                  {teamSignInUrl ? (
+                    <BrowserHandoffFallback
+                      url={teamSignInUrl}
+                      title="Continue team sign-in"
+                      description="If the browser did not appear, open or copy the complete sign-in link below."
+                      openLabel="Open sign-in again"
+                    />
                   ) : null}
                   {error ? (
                     <p className="text-center text-xs text-destructive">{error}</p>

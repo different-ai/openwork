@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { tryOpenBrowserUrl } from "@/app/lib/browser-handoff";
 import { createDenClient, readDenSettings, type DenExternalMcpConnection } from "@/app/lib/den";
 import { denSettingsChangedEvent } from "@/app/lib/den-session-events";
-import { openDesktopUrl } from "@/app/lib/desktop";
-import { isDesktopRuntime } from "@/app/utils";
 import { connectionNeedsReconnect, isNativeProviderConnectionId } from "./native-provider-connections";
 
 // Mirrors the poll-until-connected pattern used for local MCP OAuth
@@ -14,15 +13,10 @@ import { connectionNeedsReconnect, isNativeProviderConnectionId } from "./native
 const CONNECT_POLL_INTERVAL_MS = 2_000;
 const CONNECT_TIMEOUT_MS = 90_000;
 
-async function openAuthorizationUrl(url: string) {
-  if (isDesktopRuntime()) {
-    await openDesktopUrl(url);
-    return;
-  }
-  if (typeof window !== "undefined") {
-    window.open(url, "_blank", "noopener,noreferrer");
-  }
-}
+export type PendingOrgMcpAuthorization = {
+  connectionId: string;
+  url: string;
+};
 
 export type OrgMcpConnectionCardState = {
   connected: boolean;
@@ -105,6 +99,7 @@ export function useOrgMcpConnections() {
   const [error, setError] = useState<string | null>(null);
   const [connectingId, setConnectingId] = useState<string | null>(null);
   const [disconnectingId, setDisconnectingId] = useState<string | null>(null);
+  const [pendingAuthorization, setPendingAuthorization] = useState<PendingOrgMcpAuthorization | null>(null);
   const pollRef = useRef<number | null>(null);
   const pollGenerationRef = useRef(0);
   const refreshRunRef = useRef(0);
@@ -134,6 +129,7 @@ export function useOrgMcpConnections() {
     const orgId = settings.activeOrgId?.trim() ?? "";
     if (!token || !orgId) {
       setConnections([]);
+      setPendingAuthorization(null);
       setError(null);
       setLoading(false);
       setLoaded(true);
@@ -180,22 +176,30 @@ export function useOrgMcpConnections() {
     };
     setDisconnectingId(null);
     setConnectingId(connectionId);
+    setPendingAuthorization(null);
+    setError(null);
     try {
       const client = createDenClient({ baseUrl: settings.baseUrl, token });
       const result = await client.startMcpConnectionConnect(orgId, connectionId);
       if (!isActionScopeCurrent(pollScope)) return;
       if (result.status === "connected") {
+        setPendingAuthorization(null);
         await refresh(pollScope);
         if (!isActionScopeCurrent(pollScope)) return;
         setConnectingId(null);
         return;
       }
       if (!result.authorizeUrl) {
+        setPendingAuthorization(null);
         setConnectingId(null);
         return;
       }
 
-      await openAuthorizationUrl(result.authorizeUrl);
+      // Preserve the URL before attempting the browser handoff. Browser launch
+      // can fail or report a false success, so the UI remains the source of
+      // truth while authorization is pending.
+      setPendingAuthorization({ connectionId, url: result.authorizeUrl });
+      await tryOpenBrowserUrl(result.authorizeUrl);
 
       if (!isActionScopeCurrent(pollScope)) return;
       const startedAt = Date.now();
@@ -204,6 +208,7 @@ export function useOrgMcpConnections() {
         if (Date.now() - startedAt >= CONNECT_TIMEOUT_MS) {
           stopPolling();
           setConnectingId(null);
+          setError("Authorization is still incomplete. Use the link below or reconnect to start a new attempt.");
           return;
         }
         const refreshedSettings = readDenSettings();
@@ -215,6 +220,7 @@ export function useOrgMcpConnections() {
           refreshedOrgId,
         )) {
           stopPolling();
+          setPendingAuthorization(null);
           setConnectingId(null);
           return;
         }
@@ -229,6 +235,7 @@ export function useOrgMcpConnections() {
           const match = polled.find((entry) => entry.id === connectionId);
           if (match?.connectedForMe && !connectionNeedsReconnect(match)) {
             stopPolling();
+            setPendingAuthorization(null);
             setConnectingId(null);
           }
         } catch {
@@ -238,6 +245,7 @@ export function useOrgMcpConnections() {
     } catch (connectError) {
       if (!isActionScopeCurrent(pollScope)) return;
       setError(connectError instanceof Error ? connectError.message : "Failed to start the connection.");
+      setPendingAuthorization(null);
       setConnectingId(null);
     }
   }, [isActionScopeCurrent, refresh, stopPolling]);
@@ -256,6 +264,7 @@ export function useOrgMcpConnections() {
       organizationId: orgId,
     };
     setConnectingId(null);
+    setPendingAuthorization(null);
     setDisconnectingId(connectionId);
     setError(null);
     try {
@@ -281,6 +290,7 @@ export function useOrgMcpConnections() {
       setLoaded(false);
       setConnectingId(null);
       setDisconnectingId(null);
+      setPendingAuthorization(null);
       void refresh();
     };
     window.addEventListener(denSettingsChangedEvent, handleSettingsChanged);
@@ -291,5 +301,16 @@ export function useOrgMcpConnections() {
     };
   }, [refresh, stopPolling]);
 
-  return { connections, loading, loaded, error, connectingId, disconnectingId, refresh, connect, disconnect };
+  return {
+    connections,
+    loading,
+    loaded,
+    error,
+    connectingId,
+    disconnectingId,
+    pendingAuthorization,
+    refresh,
+    connect,
+    disconnect,
+  };
 }

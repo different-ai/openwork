@@ -1,6 +1,7 @@
 /** @jsxImportSource react */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { openBrowserUrlWithGlobalFallback } from "../../../../app/lib/browser-handoff";
 import {
   appBuildInfo as appBuildInfoCmd,
   engineInfo as engineInfoCmd,
@@ -8,7 +9,6 @@ import {
   getDesktopBootstrapConfig,
   debugDesktopBootstrapConfig,
   nukeOpenworkAndOpencodeConfigAndExit,
-  openDesktopUrl,
   openworkServerInfo as openworkServerInfoCmd,
   openworkServerRestart as openworkServerRestartCmd,
   pickFile,
@@ -511,11 +511,11 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
   }, [developerLog]);
 
   const onOpenElectronPreviewRelease = useCallback(async () => {
-    try {
-      await openDesktopUrl(ELECTRON_ALPHA_RELEASE_PAGE_URL);
+    const result = await openBrowserUrlWithGlobalFallback(ELECTRON_ALPHA_RELEASE_PAGE_URL);
+    if (result.ok) {
       setElectronMigrationStatus("Opened the rolling Electron alpha release. Download links live there after dev builds finish.");
-    } catch (error) {
-      setElectronMigrationStatus(error instanceof Error ? error.message : safeStringify(error));
+    } else {
+      setElectronMigrationStatus(`${result.error} The release URL is available in the fallback panel.`);
     }
   }, []);
 

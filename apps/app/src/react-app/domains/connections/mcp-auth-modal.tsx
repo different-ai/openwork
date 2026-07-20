@@ -12,13 +12,17 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import type { McpDirectoryInfo } from "@/app/constants";
-import { openDesktopUrl, opencodeMcpAuth } from "@/app/lib/desktop";
+import { tryOpenBrowserUrl } from "@/app/lib/browser-handoff";
+import { opencodeMcpAuth } from "@/app/lib/desktop";
 import { unwrap } from "@/app/lib/opencode";
 import { validateMcpServerName } from "@/app/mcp";
 import type { Client } from "@/app/types";
 import { isDesktopRuntime, normalizeDirectoryPath } from "@/app/utils";
 import { t } from "@/i18n";
+import { BrowserHandoffFallback } from "@/components/browser-handoff-fallback";
 import { Button } from "@/components/ui/button";
+import { useGlobalSDK } from "@/react-app/kernel/global-sdk-provider";
+import { mcpBrowserOpenFailedUrl } from "./mcp-browser-handoff";
 import { TextInput } from "../../design-system/text-input";
 
 const MCP_AUTH_POLL_INTERVAL_MS = 2_000;
@@ -55,6 +59,7 @@ export type McpAuthModalProps = {
 };
 
 export function McpAuthModal(props: McpAuthModalProps) {
+  const globalSDK = useGlobalSDK();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [needsReload, setNeedsReload] = useState(false);
@@ -67,7 +72,6 @@ export function McpAuthModal(props: McpAuthModalProps) {
   const [manualAuthBusy, setManualAuthBusy] = useState(false);
   const [cliAuthBusy, setCliAuthBusy] = useState(false);
   const [cliAuthResult, setCliAuthResult] = useState<string | null>(null);
-  const [authUrlCopied, setAuthUrlCopied] = useState(false);
   const [resolvedDir, setResolvedDir] = useState("");
   const [awaitingReload, setAwaitingReload] = useState(false);
   const [reloadStarting, setReloadStarting] = useState(false);
@@ -75,7 +79,6 @@ export function McpAuthModal(props: McpAuthModalProps) {
   const [forceStopBusySessionID, setForceStopBusySessionID] = useState<string | null>(null);
 
   const statusPollRef = useRef<number | null>(null);
-  const authCopyTimeoutRef = useRef<number | null>(null);
   const previousOpenRef = useRef(false);
   const previousEntryNameRef = useRef<string | null>(null);
   const reloadAuthRunRef = useRef(false);
@@ -94,43 +97,45 @@ export function McpAuthModal(props: McpAuthModalProps) {
   }, [props.projectDir]);
 
   useEffect(() => {
-    return () => {
-      stopStatusPolling();
-      if (authCopyTimeoutRef.current !== null) {
-        window.clearTimeout(authCopyTimeoutRef.current);
-        authCopyTimeoutRef.current = null;
-      }
-    };
-  }, []);
+    if (!props.open || props.isRemoteWorkspace || !props.entry) return;
 
-  const openAuthorizationUrl = async (url: string) => {
-    if (isDesktopRuntime()) {
-      await openDesktopUrl(url);
+    let slug = "";
+    try {
+      slug = validateMcpServerName(props.entry.name).toLowerCase().replace(/[^a-z0-9]+/g, "-");
+    } catch {
       return;
     }
 
-    if (typeof window !== "undefined") {
-      window.open(url, "_blank", "noopener,noreferrer");
-    }
-  };
+    const onEvent = (payload: unknown) => {
+      const url = mcpBrowserOpenFailedUrl(payload, slug);
+      if (url) setAuthorizationUrl(url);
+    };
 
-  const handleCopyAuthorizationUrl = async () => {
-    if (!authorizationUrl) return;
+    const keys = new Set([
+      resolvedDir.trim(),
+      normalizeDirectoryPath(props.projectDir ?? "").trim(),
+      "global",
+    ]);
+    const unsubscribers = [...keys]
+      .filter(Boolean)
+      .map((key) => globalSDK.event.on(key, onEvent));
+    return () => {
+      for (const unsubscribe of unsubscribers) unsubscribe();
+    };
+  }, [
+    globalSDK.event,
+    props.entry,
+    props.isRemoteWorkspace,
+    props.open,
+    props.projectDir,
+    resolvedDir,
+  ]);
 
-    try {
-      await navigator.clipboard.writeText(authorizationUrl);
-      setAuthUrlCopied(true);
-      if (authCopyTimeoutRef.current !== null) {
-        window.clearTimeout(authCopyTimeoutRef.current);
-      }
-      authCopyTimeoutRef.current = window.setTimeout(() => {
-        setAuthUrlCopied(false);
-        authCopyTimeoutRef.current = null;
-      }, 2_000);
-    } catch {
-      // ignore clipboard failures
-    }
-  };
+  useEffect(() => {
+    return () => {
+      stopStatusPolling();
+    };
+  }, []);
 
   const fetchMcpStatus = async (slug: string) => {
     if (!props.entry || !props.client) return null;
@@ -290,7 +295,7 @@ export function McpAuthModal(props: McpAuthModalProps) {
       }
 
       setAuthorizationUrl(auth.authorizationUrl);
-      await openAuthorizationUrl(auth.authorizationUrl);
+      await tryOpenBrowserUrl(auth.authorizationUrl);
       startStatusPolling(slug);
     } catch (err) {
       const message = err instanceof Error ? err.message : t("mcp.auth.failed_to_start_oauth");
@@ -784,37 +789,35 @@ export function McpAuthModal(props: McpAuthModalProps) {
             </div>
           ) : null}
 
-          {!isBusy && authorizationUrl && props.isRemoteWorkspace && !alreadyConnected ? (
+          {authorizationUrl && !alreadyConnected ? (
             <div className="space-y-3 rounded-xl border border-gray-6/60 bg-gray-1/40 p-4">
-              <div className="text-xs font-medium text-gray-12">{t("mcp.auth.manual_finish_title")}</div>
-              <div className="text-xs text-gray-10">{t("mcp.auth.manual_finish_hint")}</div>
-              <div className="flex items-center gap-3 rounded-xl border border-gray-6/70 bg-gray-2/40 px-3 py-2">
-                <div className="min-w-0 flex-1">
-                  <div className="text-[10px] uppercase tracking-wide text-gray-8">
-                    {t("mcp.auth.authorization_link")}
-                  </div>
-                  <div className="truncate font-mono text-[11px] text-gray-11">{authorizationUrl}</div>
-                </div>
-                <Button variant="outline" size="sm" onClick={() => void handleCopyAuthorizationUrl()}>
-                  {authUrlCopied ? t("mcp.auth.copied") : t("mcp.auth.copy_link")}
-                </Button>
-              </div>
-              <TextInput
-                label={t("mcp.auth.callback_label")}
-                placeholder={t("mcp.auth.callback_placeholder")}
-                value={callbackInput}
-                onChange={(event) => setCallbackInput(event.currentTarget.value)}
+              <BrowserHandoffFallback
+                url={authorizationUrl}
+                title={t("mcp.auth.manual_finish_title")}
+                description={props.isRemoteWorkspace
+                  ? t("mcp.auth.manual_finish_hint")
+                  : "Keep this authorization link available while OpenWork waits. Open it again or copy it below whenever needed."}
               />
-              <div className="text-[11px] text-gray-9">{t("mcp.auth.port_forward_hint")}</div>
-              <div className="flex justify-end">
-                <Button
-                  onClick={() => void handleManualComplete()}
-                  disabled={manualAuthBusy || !callbackInput.trim()}
-                >
-                  {manualAuthBusy ? <Loader2 size={14} className="animate-spin" /> : null}
-                  {t("mcp.auth.complete_connection")}
-                </Button>
-              </div>
+              {props.isRemoteWorkspace ? (
+                <>
+                  <TextInput
+                    label={t("mcp.auth.callback_label")}
+                    placeholder={t("mcp.auth.callback_placeholder")}
+                    value={callbackInput}
+                    onChange={(event) => setCallbackInput(event.currentTarget.value)}
+                  />
+                  <div className="text-[11px] text-gray-9">{t("mcp.auth.port_forward_hint")}</div>
+                  <div className="flex justify-end">
+                    <Button
+                      onClick={() => void handleManualComplete()}
+                      disabled={manualAuthBusy || !callbackInput.trim()}
+                    >
+                      {manualAuthBusy ? <Loader2 size={14} className="animate-spin" /> : null}
+                      {t("mcp.auth.complete_connection")}
+                    </Button>
+                  </div>
+                </>
+              ) : null}
             </div>
           ) : null}
 
