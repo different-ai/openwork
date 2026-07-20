@@ -1647,6 +1647,8 @@ function parsePluginCloudReadinessConnection(value: unknown): DenPluginCloudRead
     id: value.id,
     name: value.name,
     url: value.url,
+    ...(typeof value.configObjectId === "string" ? { configObjectId: value.configObjectId } : {}),
+    ...(typeof value.serverName === "string" ? { serverName: value.serverName } : {}),
     ...(credentialMode ? { credentialMode } : {}),
     ...(typeof value.connectedForMe === "boolean" ? { connectedForMe: value.connectedForMe } : {}),
   };

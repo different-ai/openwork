@@ -97,6 +97,11 @@ import {
   EnvironmentVariableProvider,
   type ApplyEnvironmentChangesResult,
 } from "@/react-app/domains/settings/pages/environment-variable-provider";
+import {
+  EMPTY_CONNECT_CAPABILITY_INVENTORY,
+  listAssignedConnectCapabilities,
+  type ConnectCapabilityInventory,
+} from "./connect-capability-inventory";
 
 const EMPTY_TRANSCRIPT: UIMessage[] = [];
 const IDLE_STATUS: SessionStatus = { type: "idle" };
@@ -490,6 +495,10 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const [toolMcpStatus, setToolMcpStatus] = useState<string | null>(null);
   const [toolMcpStatuses, setToolMcpStatuses] = useState<McpStatusMap>({});
   const [toolImportedPlugins, setToolImportedPlugins] = useState<CloudImportedPlugin[]>([]);
+  const connectInventoryCacheRef = useRef<{
+    scope: string;
+    promise: Promise<ConnectCapabilityInventory>;
+  } | null>(null);
   const [verifiedOpenTargets, setVerifiedOpenTargets] = useState<OpenTarget[]>([]);
   const [cloudQueueRetryVersion, setCloudQueueRetryVersion] = useState(0);
   const sending = props.cloudMcpSubmissionState.status === "sending";
@@ -1140,34 +1149,74 @@ export function SessionSurface(props: SessionSurfaceProps) {
   }), [chatStreaming, handleAbort]);
   useControlAction(composerStopControlAction);
 
+  const loadConnectCapabilityInventory = async (): Promise<ConnectCapabilityInventory> => {
+    const settings = readDenSettings();
+    const token = settings.authToken?.trim() ?? "";
+    const organizationId = settings.activeOrgId?.trim() ?? "";
+    if (!token || !organizationId) return EMPTY_CONNECT_CAPABILITY_INVENTORY;
+
+    const scope = `${settings.baseUrl}\n${organizationId}`;
+    if (connectInventoryCacheRef.current?.scope === scope) {
+      try {
+        return await connectInventoryCacheRef.current.promise;
+      } catch {
+        connectInventoryCacheRef.current = null;
+        return EMPTY_CONNECT_CAPABILITY_INVENTORY;
+      }
+    }
+
+    const client = createDenClient({ baseUrl: settings.baseUrl, token });
+    const promise = listAssignedConnectCapabilities({ client, organizationId });
+    connectInventoryCacheRef.current = { scope, promise };
+    try {
+      return await promise;
+    } catch {
+      if (connectInventoryCacheRef.current?.promise === promise) {
+        connectInventoryCacheRef.current = null;
+      }
+      return EMPTY_CONNECT_CAPABILITY_INVENTORY;
+    }
+  };
+
   const listSkills = async (): Promise<SkillCard[]> => {
+    const connectPromise = loadConnectCapabilityInventory();
     const response = await props.client.listSkills(props.workspaceId, { includeGlobal: true });
-    const next = (response.items ?? []).map((skill) => ({
+    const localSkills = (response.items ?? []).map((skill) => ({
       name: skill.name,
       path: skill.path,
       description: skill.description,
       trigger: skill.trigger,
+      scope: skill.scope,
+      origin: "local",
     } satisfies SkillCard));
+    const connect = await connectPromise;
+    const next = [...localSkills, ...connect.skills];
     setToolSkills(next);
     return next;
   };
 
   const listMcp = async (): Promise<{ servers: McpServerEntry[]; statuses: McpStatusMap; status: string | null }> => {
+    const connectPromise = loadConnectCapabilityInventory();
     const response = await props.client.listMcp(props.workspaceId);
-    const servers = (response.items ?? []).map((entry) => ({
+    const localServers = (response.items ?? []).map((entry) => ({
       name: entry.name,
       config: entry.config as McpServerEntry["config"],
+      source: entry.source,
+      origin: entry.name === "openwork-cloud" ? "openwork-connect" : "local",
     } satisfies McpServerEntry));
 
-    let statuses: McpStatusMap = {};
+    let localStatuses: McpStatusMap = {};
     try {
       if (props.workspaceRoot.trim()) {
-        statuses = unwrap(await opencodeClient.mcp.status({ directory: props.workspaceRoot.trim() })) as McpStatusMap;
+        localStatuses = unwrap(await opencodeClient.mcp.status({ directory: props.workspaceRoot.trim() })) as McpStatusMap;
       }
     } catch {
-      statuses = {};
+      localStatuses = {};
     }
 
+    const connect = await connectPromise;
+    const servers = [...localServers, ...connect.mcpServers];
+    const statuses = { ...connect.mcpStatuses, ...localStatuses };
     const status = servers.length ? null : "No MCP servers loaded.";
     setToolMcpServers(servers);
     setToolMcpStatuses(statuses);
@@ -1178,12 +1227,17 @@ export function SessionSurface(props: SessionSurfaceProps) {
     // works. `mcp.connect` retries the refresh grant on a fresh transport
     // without ever opening a browser; on success the badge flips live.
     const directory = props.workspaceRoot.trim();
-    if (directory && servers.length) {
-      void attemptSilentMcpReauth({ client: opencodeClient, directory, servers, statuses })
+    if (directory && localServers.length) {
+      void attemptSilentMcpReauth({
+        client: opencodeClient,
+        directory,
+        servers: localServers,
+        statuses: localStatuses,
+      })
         .then(async (attempted) => {
           if (!attempted) return;
           const healed = unwrap(await opencodeClient.mcp.status({ directory })) as McpStatusMap;
-          setToolMcpStatuses(healed);
+          setToolMcpStatuses({ ...connect.mcpStatuses, ...healed });
         })
         .catch(() => {
           // Best-effort; the manual Sign in path is unaffected.
@@ -1276,7 +1330,15 @@ export function SessionSurface(props: SessionSurfaceProps) {
   }, [typeComposerText]);
 
   useEffect(() => {
-    const resetReconnectState = () => useChatMcpReconnectStore.getState().reset();
+    const resetReconnectState = () => {
+      useChatMcpReconnectStore.getState().reset();
+      connectInventoryCacheRef.current = null;
+      setToolSkills((current) => current.filter((skill) => skill.origin !== "openwork-connect"));
+      setToolMcpServers((current) => current.filter((server) => server.origin !== "openwork-connect"));
+      setToolMcpStatuses((current) => Object.fromEntries(
+        Object.entries(current).filter(([key]) => !key.startsWith("openwork-connect:")),
+      ));
+    };
     window.addEventListener(denSettingsChangedEvent, resetReconnectState);
     return () => window.removeEventListener(denSettingsChangedEvent, resetReconnectState);
   }, []);
