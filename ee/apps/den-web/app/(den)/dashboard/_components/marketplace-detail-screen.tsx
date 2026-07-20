@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useMemo, useRef, useState, useEffect } from "react";
-import { ArrowLeft, Check, ChevronDown, GitBranch, Github, Globe, Loader2, Plug, Plus, Puzzle, Users, X } from "lucide-react";
+import { ArrowLeft, Check, ChevronDown, GitBranch, Github, Globe, Loader2, Pencil, Plug, Plus, Puzzle, Users, X } from "lucide-react";
 import { PaperMeshGradient, StaticSeededGradient } from "@openwork/ui/react";
 import { buttonVariants, DenButton } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
@@ -26,6 +26,7 @@ import {
   useMarketplace,
   useMarketplaceAccess,
   useRevokeMarketplaceAccess,
+  useUpdateMarketplace,
 } from "./marketplace-data";
 import { IntegrationIcon } from "./integration-icon";
 import { McpCredentialInput } from "./mcp-credential-input";
@@ -82,6 +83,8 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
   const { data: presets = [] } = useMcpConnectionPresets();
   const [setupTarget, setSetupTarget] = useState<PluginMcpSetupTarget | null>(null);
   const [activeTab, setActiveTab] = useState<MarketplaceDetailTab>("plugins");
+  const [editOpen, setEditOpen] = useState(false);
+  const updateMarketplace = useUpdateMarketplace();
   const authorization = useMcpAccountAuthorization(() => {
     void refetch();
   });
@@ -138,6 +141,18 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
           <ArrowLeft className="h-4 w-4" />
           Back
         </Link>
+        {access.isAdmin ? (
+          <DenButton
+            variant="secondary"
+            icon={Pencil}
+            onClick={() => {
+              updateMarketplace.reset();
+              setEditOpen(true);
+            }}
+          >
+            Edit marketplace
+          </DenButton>
+        ) : null}
       </div>
 
       <article className="overflow-hidden rounded-2xl border border-gray-100 bg-white">
@@ -275,6 +290,101 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
         presets={presets}
         onClose={() => setSetupTarget(null)}
       />
+      {editOpen ? (
+        <EditMarketplaceDialog
+          marketplace={marketplace}
+          error={updateMarketplace.error}
+          isPending={updateMarketplace.isPending}
+          onClose={() => setEditOpen(false)}
+          onSave={async (input) => {
+            await updateMarketplace.mutateAsync({
+              marketplaceId: marketplace.id,
+              ...input,
+            });
+            setEditOpen(false);
+          }}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function EditMarketplaceDialog({
+  marketplace,
+  error,
+  isPending,
+  onClose,
+  onSave,
+}: {
+  marketplace: { name: string; description: string | null };
+  error: Error | null;
+  isPending: boolean;
+  onClose: () => void;
+  onSave: (input: { name: string; description: string | null }) => Promise<void>;
+}) {
+  const [name, setName] = useState(marketplace.name);
+  const [description, setDescription] = useState(marketplace.description ?? "");
+  const trimmedName = name.trim();
+
+  async function submit() {
+    try {
+      await onSave({
+        name: trimmedName,
+        description: description.trim() || null,
+      });
+    } catch {
+      // The mutation error is rendered in the dialog.
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-6" onClick={onClose}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="edit-marketplace-title"
+        className="w-full max-w-[440px] rounded-2xl border border-gray-100 bg-white p-6 shadow-[0_24px_60px_-24px_rgba(15,23,42,0.4)]"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <h2 id="edit-marketplace-title" className="text-[16px] font-semibold tracking-[-0.01em] text-gray-950">
+          Edit marketplace
+        </h2>
+        <p className="mt-1 text-[13px] leading-6 text-gray-500">
+          Update the name and description shown to your organization.
+        </p>
+
+        <label className="mt-4 block">
+          <span className="mb-1.5 block text-[12px] font-medium text-gray-700">Name</span>
+          <DenInput
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            placeholder="Engineering tools"
+            autoFocus
+          />
+        </label>
+        <label className="mt-3 block">
+          <span className="mb-1.5 block text-[12px] font-medium text-gray-700">Description (optional)</span>
+          <textarea
+            value={description}
+            onChange={(event) => setDescription(event.target.value)}
+            placeholder="What belongs in this marketplace?"
+            rows={2}
+            className="w-full resize-none rounded-xl border border-gray-200 px-3 py-2 text-[13px] text-gray-900 outline-none transition placeholder:text-gray-300 focus:border-gray-400"
+          />
+        </label>
+
+        {error ? <p className="mt-3 text-[12.5px] text-red-600">{error.message}</p> : null}
+
+        <div className="mt-5 flex items-center justify-end gap-2">
+          <DenButton variant="secondary" onClick={onClose} disabled={isPending}>
+            Cancel
+          </DenButton>
+          <DenButton disabled={!trimmedName || isPending} onClick={() => void submit()}>
+            {isPending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
+            Save changes
+          </DenButton>
+        </div>
+      </div>
     </div>
   );
 }

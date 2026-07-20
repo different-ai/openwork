@@ -99,7 +99,7 @@ export function MarketplacesScreen() {
               href={getMarketplaceRoute(orgSlug, marketplace.id)}
               className="group block overflow-hidden rounded-2xl border border-gray-100 bg-white transition hover:-translate-y-0.5 hover:border-gray-200 hover:shadow-[0_8px_24px_-12px_rgba(15,23,42,0.12)]"
             >
-              <div className="flex items-stretch">
+              <div className="flex h-full items-stretch">
                 <div className="relative w-[68px] shrink-0 overflow-hidden">
                   <StaticSeededGradient seed={marketplace.id} className="absolute inset-0" />
                   <div className="relative flex h-full items-center justify-center">
