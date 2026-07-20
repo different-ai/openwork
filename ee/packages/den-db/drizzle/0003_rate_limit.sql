@@ -1,5 +1,5 @@
 CREATE TABLE `rate_limit` (
-	`id` varchar(255) NOT NULL,
+	`id` varchar(64) NOT NULL,
 	`key` varchar(512) NOT NULL,
 	`count` int NOT NULL DEFAULT 0,
 	`last_request` bigint NOT NULL,

@@ -7,9 +7,11 @@ import { PaperMeshGradient, StaticSeededGradient } from "@openwork/ui/react";
 import { buttonVariants, DenButton } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
 import { DenSelect } from "../../_components/ui/select";
+import { type TabItem, UnderlineTabs } from "../../_components/ui/tabs";
 import {
   getGithubIntegrationSetupRoute,
   getMarketplacesRoute,
+  getNewPluginRoute,
   getOrgAccessFlags,
   getPluginRoute,
 } from "../../_lib/den-org";
@@ -27,6 +29,7 @@ import {
   useRevokeMarketplaceAccess,
 } from "./marketplace-data";
 import { IntegrationIcon } from "./integration-icon";
+import { McpCredentialInput } from "./mcp-credential-input";
 import { type ExternalMcpAuthType, type ExternalMcpCredentialMode, type ExternalMcpPreset, useMcpConnectionPresets } from "./mcp-connections-data";
 import {
   findPresetForRequirement,
@@ -120,14 +123,10 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
   }
 
   const { marketplace, plugins, source } = data;
-  const tabs: Array<{
-    id: MarketplaceDetailTab;
-    label: string;
-    icon: React.ComponentType<{ className?: string }>;
-  }> = [
-    { id: "plugins", label: "Plugins", icon: Puzzle },
-    { id: "members", label: "Members", icon: Users },
-    { id: "configure", label: "Configure", icon: Plug },
+  const tabs: readonly TabItem<MarketplaceDetailTab>[] = [
+    { value: "plugins", label: "Plugins", icon: Puzzle },
+    { value: "members", label: "Members", icon: Users },
+    { value: "configure", label: "Configure", icon: Plug, count: configurationTargets.length },
   ];
 
   return (
@@ -179,54 +178,16 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
         </div>
       </article>
 
-      <div className="mt-6">
-        <div
-          className="grid w-full grid-cols-3 gap-1 rounded-2xl border border-gray-100 bg-gray-50/80 p-1 shadow-[0_1px_2px_rgba(15,23,42,0.03)] sm:w-fit"
-          role="tablist"
-          aria-label="Marketplace sections"
-        >
-          {tabs.map((tab) => {
-            const Icon = tab.icon;
-            const active = activeTab === tab.id;
-            return (
-              <button
-                key={tab.id}
-                type="button"
-                role="tab"
-                id={`marketplace-${tab.id}-tab`}
-                aria-controls={`marketplace-${tab.id}-panel`}
-                aria-selected={active}
-                onClick={() => setActiveTab(tab.id)}
-                className={`inline-flex min-h-9 items-center justify-center gap-1.5 rounded-xl px-3.5 py-2 text-[12.5px] font-medium transition-all ${
-                  active
-                    ? "border border-gray-100 bg-white text-gray-950 shadow-[0_2px_8px_-3px_rgba(15,23,42,0.18)]"
-                    : "border border-transparent text-gray-500 hover:bg-white/70 hover:text-gray-800"
-                }`}
-              >
-                <Icon className={`h-3.5 w-3.5 ${active ? "text-gray-700" : "text-gray-400"}`} />
-                <span>{tab.label}</span>
-                {tab.id === "configure" ? (
-                  <span
-                    className={`inline-flex min-w-5 items-center justify-center rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${
-                      configurationTargets.length > 0
-                        ? "bg-amber-50 text-amber-700"
-                        : active
-                          ? "bg-gray-100 text-gray-500"
-                          : "bg-white text-gray-400"
-                    }`}
-                  >
-                    {configurationTargets.length}
-                  </span>
-                ) : null}
-              </button>
-            );
-          })}
-        </div>
-      </div>
+      <UnderlineTabs
+        className="mt-6"
+        tabs={tabs}
+        activeTab={activeTab}
+        onChange={setActiveTab}
+      />
 
       <div className="mt-6">
         {activeTab === "plugins" ? (
-          <div id="marketplace-plugins-panel" role="tabpanel" aria-labelledby="marketplace-plugins-tab" className="space-y-6">
+          <div role="tabpanel" aria-label="Plugins" className="space-y-6">
             {source ? (
               <section>
                 <h2 className="mb-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">
@@ -259,13 +220,24 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
             ) : null}
 
             <section>
-              <div className="mb-3 flex items-baseline justify-between gap-3">
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
                 <h2 className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">
                   Plugins
                 </h2>
-                <p className="text-[11px] text-gray-400">
-                  {plugins.length} plugin{plugins.length === 1 ? "" : "s"}
-                </p>
+                <div className="flex items-center gap-3">
+                  <p className="text-[11px] text-gray-400">
+                    {plugins.length} plugin{plugins.length === 1 ? "" : "s"}
+                  </p>
+                  {access.isAdmin ? (
+                    <Link
+                      href={`${getNewPluginRoute(orgSlug)}?marketplaceId=${encodeURIComponent(marketplace.id)}`}
+                      className={buttonVariants({ variant: "primary", size: "sm" })}
+                    >
+                      <Plus className="h-4 w-4" aria-hidden />
+                      Add a plugin
+                    </Link>
+                  ) : null}
+                </div>
               </div>
 
               {plugins.length === 0 ? (
@@ -289,13 +261,13 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
         ) : null}
 
         {activeTab === "members" ? (
-          <div id="marketplace-members-panel" role="tabpanel" aria-labelledby="marketplace-members-tab">
+          <div role="tabpanel" aria-label="Members">
             <MarketplaceAccessSection marketplaceId={marketplace.id} />
           </div>
         ) : null}
 
         {activeTab === "configure" ? (
-          <div id="marketplace-configure-panel" role="tabpanel" aria-labelledby="marketplace-configure-tab">
+          <div role="tabpanel" aria-label="Configure">
             <MarketplaceConfigureSection
               targets={configurationTargets}
               presets={presets}
@@ -1011,7 +983,13 @@ export function PluginMcpSetupDialog({
               {authType === "apikey" ? (
                 <div>
                   <label className="mb-1.5 block text-[12px] font-medium text-gray-700">{serviceName} API key</label>
-                  <DenInput type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder="API key" autoComplete="off" />
+                  <McpCredentialInput
+                    kind="secret"
+                    name="marketplace-mcp-api-key"
+                    value={apiKey}
+                    onChange={(event) => setApiKey(event.target.value)}
+                    placeholder="API key"
+                  />
                   <p className="mt-1.5 text-[11.5px] leading-4 text-gray-500">
                     Stored securely as a shared marketplace credential.
                   </p>
@@ -1043,11 +1021,23 @@ export function PluginMcpSetupDialog({
                   <div className="mt-3 space-y-3">
                     <div>
                       <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Client ID</label>
-                      <DenInput value={clientId} onChange={(event) => setClientId(event.target.value)} placeholder="Client ID" />
+                      <McpCredentialInput
+                        kind="identifier"
+                        name="marketplace-mcp-oauth-client-id"
+                        value={clientId}
+                        onChange={(event) => setClientId(event.target.value)}
+                        placeholder="Client ID"
+                      />
                     </div>
                     <div>
                       <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Client secret</label>
-                      <DenInput type="password" value={clientSecret} onChange={(event) => setClientSecret(event.target.value)} placeholder="Client secret" />
+                      <McpCredentialInput
+                        kind="secret"
+                        name="marketplace-mcp-oauth-client-secret"
+                        value={clientSecret}
+                        onChange={(event) => setClientSecret(event.target.value)}
+                        placeholder="Client secret"
+                      />
                     </div>
                   </div>
                 </div>

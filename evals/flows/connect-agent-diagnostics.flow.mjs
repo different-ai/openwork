@@ -38,6 +38,28 @@ async function setDesktopViewport(ctx) {
   }).catch((error) => ctx.log(`Viewport setup skipped: ${error instanceof Error ? error.message : String(error)}`));
 }
 
+async function navigateToDebugDiagnostics(ctx) {
+  await ctx.eval(`(() => {
+    localStorage.setItem("openwork.developerMode", "1");
+    return true;
+  })()`);
+  await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 60_000, label: "OpenWork control API" });
+  const workspaceId = await ctx.eval(`(() => {
+    const route = window.__openworkControl?.snapshot?.().route ?? location.hash;
+    return (String(route).match(/\\/workspace\\/([^/]+)/) ?? [])[1]
+      ?? localStorage.getItem("openwork.react.activeWorkspace")
+      ?? "";
+  })()`);
+  await ctx.navigateHash(workspaceId
+    ? `/workspace/${workspaceId}/settings/debug`
+    : "/settings/debug");
+  await ctx.waitFor("location.hash.includes('/settings/debug')", { timeoutMs: 30_000, label: "Settings Debug route" });
+  await ctx.waitFor(`(() => {
+    const button = document.querySelector(${JSON.stringify(RUN_BUTTON)});
+    return Boolean(button) && !button.disabled;
+  })()`, { timeoutMs: 45_000, label: "Run agent diagnostics button" });
+}
+
 async function navigateToConnect(ctx) {
   await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 60_000, label: "OpenWork control API" });
   const workspaceId = await ctx.eval(`(() => {
@@ -50,10 +72,7 @@ async function navigateToConnect(ctx) {
     ? `/workspace/${workspaceId}/settings/connect`
     : "/settings/connect");
   await ctx.waitFor("location.hash.includes('/settings/connect')", { timeoutMs: 30_000, label: "Settings Connect route" });
-  await ctx.waitFor(`(() => {
-    const button = document.querySelector(${JSON.stringify(RUN_BUTTON)});
-    return Boolean(button) && !button.disabled;
-  })()`, { timeoutMs: 45_000, label: "Run agent diagnostics button" });
+  await ctx.waitFor(`document.body.innerText.includes("Connect for teams")`, { timeoutMs: 30_000, label: "Connect header" });
 }
 
 async function installForwardingDiagnosticsObserver(ctx) {
@@ -218,7 +237,7 @@ function collectStringValues(value, strings = []) {
 
 export default {
   id: FLOW_ID,
-  title: "Settings Connect audits effective agent and MCP injection with a reality-backed bounded diagnostics report",
+  title: "Settings Debug audits effective agent and MCP injection with a reality-backed bounded diagnostics report",
   kind: "user-facing",
   spec: "evals/voiceovers/connect-agent-diagnostics.md",
   steps: [
@@ -229,7 +248,7 @@ export default {
           voiceover: vo[0],
           action: async () => {
             await setDesktopViewport(ctx);
-            await navigateToConnect(ctx);
+            await navigateToDebugDiagnostics(ctx);
             await installForwardingDiagnosticsObserver(ctx);
             await realClickSelector(ctx, RUN_BUTTON, "Run agent diagnostics");
             await ctx.waitFor(`Boolean(document.querySelector(${JSON.stringify(REPORT)}))`, {
@@ -258,7 +277,7 @@ export default {
               JSON.stringify(report.checks.map((check) => check.id)) === JSON.stringify(CHECK_IDS),
               `The real report did not contain the canonical checks: ${JSON.stringify(report.checks)}`,
             );
-            await ctx.expectHashIncludes("/settings/connect");
+            await ctx.expectHashIncludes("/settings/debug");
             ctx.output("agent-diagnostics-real-exchange", JSON.stringify({
               request: { method: exchange.method, pathname: exchange.pathname, body: request },
               responseStatus: exchange.responseStatus,
@@ -267,10 +286,10 @@ export default {
           },
           screenshot: {
             name: "agent-diagnostics-real-bounded-run",
-            claim: "Settings Connect displays the report returned by the real OpenWork diagnostics route.",
+            claim: "Settings Debug displays the report returned by the real OpenWork diagnostics route.",
             requireText: ["Agent diagnostics report", "Diagnostics directly requests no configuration mutation"],
             rejectText: ["Agent diagnostics could not complete", "Something went wrong"],
-            hashIncludes: "/settings/connect",
+            hashIncludes: "/settings/debug",
           },
         });
       },
@@ -499,6 +518,32 @@ export default {
             claim: "The real cloud check names an owner and recovery action, and the exact sanitized response is copyable.",
             requireText: ["OpenWork Cloud tool catalog", "Owner", "Recommended action"],
             rejectText: ["Bearer ", "https://", "Error:"],
+          },
+        });
+      },
+    },
+    {
+      name: "Frame 5",
+      run: async (ctx) => {
+        await ctx.prove("Connect no longer hosts the agent diagnostics launcher", {
+          voiceover: vo[4],
+          action: async () => {
+            await navigateToConnect(ctx);
+          },
+          assert: async () => {
+            const rendered = await ctx.eval(`(() => ({
+              buttonPresent: Boolean(document.querySelector(${JSON.stringify(RUN_BUTTON)})),
+              bodyText: document.body.innerText,
+            }))()`);
+            ctx.assert(rendered.buttonPresent === false, "The Run agent diagnostics button is still present on Connect.");
+            ctx.assert(!rendered.bodyText.includes("Run agent diagnostics"), "Connect still contains the diagnostics run label.");
+          },
+          screenshot: {
+            name: "connect-without-diagnostics",
+            claim: "The Connect tab no longer hosts agent diagnostics; the Run button is absent.",
+            requireText: ["Connect for teams"],
+            rejectText: ["Run agent diagnostics"],
+            hashIncludes: "/settings/connect",
           },
         });
       },

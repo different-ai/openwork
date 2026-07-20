@@ -30,6 +30,7 @@ function formatDateTime(value: string | null) {
 export function ScimScreen() {
   const { orgId, orgContext, runReauthableAction } = useOrgDashboard();
   const [baseUrl, setBaseUrl] = useState<string | null>(null);
+  const [ssoReady, setSsoReady] = useState(false);
   const [connection, setConnection] = useState<DenOrgScimConnection | null>(null);
   const [health, setHealth] = useState<DenOrgScimHealth>({
     unresolvedFailureCount: 0,
@@ -62,6 +63,7 @@ export function ScimScreen() {
     if (!orgId || !access.canManageScim) {
       if (isCurrent()) {
         setBaseUrl(null);
+        setSsoReady(false);
         setConnection(null);
         setHealth({
           unresolvedFailureCount: 0,
@@ -91,6 +93,7 @@ export function ScimScreen() {
       const parsed = parseOrgScimPayload(payload);
       if (isCurrent()) {
         setBaseUrl(parsed.baseUrl);
+        setSsoReady(parsed.ssoReady);
         setConnection(parsed.connection);
         setHealth(parsed.health);
       }
@@ -173,6 +176,7 @@ export function ScimScreen() {
           }
 
           setBaseUrl(parsed.baseUrl);
+          setSsoReady(parsed.ssoReady);
           setConnection(parsed.connection);
           setHealth(parsed.health);
           setVisibleToken(parsed.scimToken);
@@ -337,6 +341,15 @@ export function ScimScreen() {
             <DenNotice message={error} className="mb-6" />
           ) : null}
 
+          {!ssoReady ? (
+            <div className="mb-6 rounded-[28px] border border-amber-200 bg-amber-50 px-6 py-5 text-[14px] text-amber-900">
+              <p className="font-semibold">Configure SAML/SSO before enabling SCIM</p>
+              <p className="mt-1 leading-6">
+                Add an enabled SSO connection for this workspace before creating or rotating its SCIM connector token.
+              </p>
+            </div>
+          ) : null}
+
           {health.unresolvedFailureCount > 0 ? (
             <div className="mb-6 rounded-[28px] border border-amber-200 bg-amber-50 px-6 py-5 text-[14px] text-amber-900">
               <div className="flex flex-wrap items-start justify-between gap-4">
@@ -431,7 +444,7 @@ export function ScimScreen() {
               </div>
 
               <div className="flex flex-wrap gap-3">
-                <DenButton icon={RefreshCw} onClick={() => void handleRotateToken()} loading={rotating}>
+                <DenButton icon={RefreshCw} onClick={() => void handleRotateToken()} loading={rotating} disabled={!ssoReady}>
                   {connection ? "Rotate token" : "Create connector"}
                 </DenButton>
                 {connection ? (

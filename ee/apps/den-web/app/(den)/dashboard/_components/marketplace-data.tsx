@@ -422,6 +422,41 @@ export function useMarketplaces() {
   });
 }
 
+export function useCreateMarketplace() {
+  const queryClient = useQueryClient();
+  const { runReauthableAction } = useOrgDashboard();
+
+  return useMutation({
+    mutationFn: async (input: { name: string; description?: string }): Promise<DenMarketplace> => {
+      let created: DenMarketplace | null = null;
+      await runReauthableAction("create-marketplace", async () => {
+        const { response, payload } = await requestJson(
+          "/v1/marketplaces",
+          {
+            method: "POST",
+            body: JSON.stringify({
+              name: input.name,
+              ...(input.description ? { description: input.description } : {}),
+            }),
+          },
+          15000,
+        );
+        if (!response.ok) {
+          throw getRequestError(payload, response, `Failed to create marketplace (${response.status}).`);
+        }
+        created = isRecord(payload) && isRecord(payload.item) ? parseMarketplace(payload.item) : null;
+      });
+      if (!created) {
+        throw new Error("Marketplace create response was incomplete.");
+      }
+      return created;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: marketplaceQueryKeys.all });
+    },
+  });
+}
+
 export function formatMarketplaceTimestamp(value: string | null): string {
   if (!value) return "Recently added";
   const date = new Date(value);

@@ -16,13 +16,14 @@ const RUN_TAG = `${Date.now().toString(36)}-${randomBytes(2).toString("hex")}`;
 const MAYA_EMAIL = `maya.scim+${RUN_TAG}@acme.test`;
 const JORDAN_EMAIL = `jordan.scim+${RUN_TAG}@acme.test`;
 const TYPE_ID_ALPHABET = "0123456789abcdefghjkmnpqrstvwxyz";
-const TYPE_ID_PREFIXES = { organization: "org", member: "om", ssoConnection: "ssc" };
+const TYPE_ID_PREFIXES = { organization: "org", member: "om", ssoConnection: "ssc", ssoProvider: "ssp" };
 
 const state = {
   browserSignedIn: false,
   browserSession: null,
   orgId: null,
   orgSlug: null,
+  adminUserId: null,
   scimToken: null,
   maya: null,
   jordan: null,
@@ -32,6 +33,7 @@ const state = {
   secondOrgId: createDenTypeId("organization"),
   secondMemberId: createDenTypeId("member"),
   ssoConnectionId: createDenTypeId("ssoConnection"),
+  ssoProviderId: createDenTypeId("ssoProvider"),
 };
 
 function witness(ctx, condition, assertion, actual) {
@@ -218,14 +220,20 @@ async function setup(ctx) {
   });
   state.orgId = org.body?.organization?.id ?? null;
   state.orgSlug = org.body?.organization?.slug ?? null;
+  state.adminUserId = org.body?.owner?.userId ?? org.body?.currentMember?.userId ?? null;
   witness(ctx, Boolean(state.orgId), "The eval organization has an id", state.orgId);
+  witness(ctx, Boolean(state.adminUserId), "The eval organization has an SSO provider owner", state.adminUserId);
   state.browserSession = await createAdminBrowserSession(ctx);
 
-  mysqlQuery("DELETE tm FROM team_member tm INNER JOIN scim_group_member sgm ON sgm.team_member_id=tm.id; DELETE t FROM team t INNER JOIN scim_group sg ON sg.team_id=t.id; DELETE FROM scim_group_member; DELETE FROM scim_group; DELETE FROM scim_user_tombstone; DELETE FROM sso_connection; DELETE FROM account WHERE provider_id LIKE 'openwork-scim-%'; DELETE FROM scim_provider;");
+  mysqlQuery("DELETE tm FROM team_member tm INNER JOIN scim_group_member sgm ON sgm.team_member_id=tm.id; DELETE t FROM team t INNER JOIN scim_group sg ON sg.team_id=t.id; DELETE FROM scim_group_member; DELETE FROM scim_group; DELETE FROM scim_user_tombstone; DELETE FROM sso_connection; DELETE FROM sso_provider; DELETE FROM account WHERE provider_id LIKE 'openwork-scim-%'; DELETE FROM scim_provider;");
 
   mysqlQuery(`INSERT INTO sso_connection (id, organization_id, provider_id, kind, issuer, domain, status, sign_in_path, created_at, updated_at)
     VALUES (${sqlString(state.ssoConnectionId)}, ${sqlString(state.orgId)}, ${sqlString(`eval-saml-${RUN_TAG}`)}, 'saml', 'https://idp.example.test', 'saml.example.test', 'enabled', ${sqlString(`/sso/${state.orgSlug}`)}, NOW(3), NOW(3))
     ON DUPLICATE KEY UPDATE domain='saml.example.test', status='enabled', updated_at=NOW(3)`);
+
+  mysqlQuery(`INSERT INTO sso_provider (id, issuer, domain, user_id, provider_id, organization_id, domain_verified, created_at, updated_at)
+    VALUES (${sqlString(state.ssoProviderId)}, 'https://idp.example.test', 'saml.example.test', ${sqlString(state.adminUserId)}, ${sqlString(`eval-saml-${RUN_TAG}`)}, ${sqlString(state.orgId)}, 1, NOW(3), NOW(3))
+    ON DUPLICATE KEY UPDATE domain='saml.example.test', organization_id=${sqlString(state.orgId)}, updated_at=NOW(3)`);
 
   const rotated = await apiFetch("/v1/scim/token", {
     method: "POST",

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Download, FileText, Plus, Server, Terminal, Trash2 } from "lucide-react";
@@ -129,6 +129,7 @@ function createdItemId(payload: unknown): string | null {
 
 export function PluginEditorScreen() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const queryClient = useQueryClient();
   const { orgContext, orgSlug, runReauthableAction } = useOrgDashboard();
   const { data: marketplaces = [] } = useMarketplaces();
@@ -145,12 +146,13 @@ export function PluginEditorScreen() {
   const [saveError, setSaveError] = useState<string | null>(null);
 
   // Publishing is the happy path for non-technical creators: pre-select the
-  // first marketplace once the list loads, unless the user chose otherwise.
+  // requested marketplace, or the first marketplace when opened elsewhere.
   useEffect(() => {
-    if (!marketplaceTouched && !marketplaceId && marketplaces.length > 0) {
-      setMarketplaceId(marketplaces[0].id);
-    }
-  }, [marketplaceId, marketplaceTouched, marketplaces]);
+    if (marketplaceTouched || marketplaceId || marketplaces.length === 0) return;
+    const requestedMarketplaceId = searchParams.get("marketplaceId");
+    const requestedMarketplace = marketplaces.find((marketplace) => marketplace.id === requestedMarketplaceId);
+    setMarketplaceId(requestedMarketplace?.id ?? marketplaces[0].id);
+  }, [marketplaceId, marketplaceTouched, marketplaces, searchParams]);
 
   useEffect(() => {
     const draft = loadPluginImportDraft();

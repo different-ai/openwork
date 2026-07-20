@@ -79,6 +79,27 @@ Reusable scripts in this skill's directory: `screenshot-verify.mjs` (verify an
 existing PNG) and `capture-verify.mjs` (capture at 2x + verify regions + save
 only on pass); both use `sharp`.
 
+## Beautify (Screen.Studio-style framing)
+
+`scripts/beautify.mjs` turns a verified raw screenshot into a publication
+frame: gradient background, padding, rounded corners, soft shadow, optional
+window chrome. Zero extra deps (resolves `sharp` from the pnpm store — run
+from a repo root that has `node_modules`).
+
+```bash
+node scripts/beautify.mjs in.png out.png [flags]
+#  --bg paper|indigo|slate|peach|ocean|violet|"#hex,#hex[,#hex]"  --bg-angle 135
+#  --pad 7            padding as % of long side
+#  --radius 24        corner radius (output px; raws are usually 2x)
+#  --chrome none|mac|browser   --title "OpenWork"   --url app.openworklabs.com
+#  --width 1600       final width   --ratio 16:9    extend canvas, never crop
+```
+
+House style for packages/docs tutorials: cloud/dashboard shots use
+`--chrome browser --url app.openworklabs.com --bg paper --width 1600`;
+desktop shots use `--chrome mac --title OpenWork --bg indigo --width 1600`.
+Beautify AFTER verification — framing is presentation, not proof.
+
 ## Common failure modes
 
 | Symptom | Fix |

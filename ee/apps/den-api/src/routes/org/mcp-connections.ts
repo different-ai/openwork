@@ -52,7 +52,6 @@ import {
   disconnectExternalMcpMemberAccount,
   externalMcpIdentityBinding,
   getExternalMcpConnection,
-  isolateExternalMcpOAuthCallback,
   listActiveExternalMcpConnectionBindings,
   listDirectExternalMcpConnectionAccess,
   listExternalMcpConnections,
@@ -250,6 +249,7 @@ const createConnectionBodySchema = z.object({
   oauthClient: z.object({
     clientId: z.string().trim().min(1).max(512),
     clientSecret: z.string().trim().min(1).max(4096).optional(),
+    tokenEndpointAuthMethod: z.enum(["client_secret_basic", "client_secret_post"]).optional(),
   }).optional(),
   authorizationServerIssuer: z.string().trim().url().max(2048).nullable().optional(),
   requestedScopes: z.array(z.string().trim().min(1).max(255)).max(100).optional().default([]),
@@ -269,6 +269,7 @@ const updateConnectionBodySchema = z.object({
     clientId: z.string().trim().min(1).max(512),
     /** Omitted preserves the secret only when both identity and client id are unchanged. */
     clientSecret: z.string().trim().min(1).max(4096).optional(),
+    tokenEndpointAuthMethod: z.enum(["client_secret_basic", "client_secret_post"]).optional(),
   }).optional(),
   authorizationServerIssuer: z.string().trim().url().max(2048).nullable().optional(),
   requestedScopes: z.array(z.string().trim().min(1).max(255)).max(100).optional(),
@@ -672,21 +673,18 @@ function oauthAuthorizationServerMetadata(connection: ExternalMcpConnectionRow):
   return discovery.authorizationServerMetadata
 }
 
-function requiresIsolatedOAuthCallback(connection: ExternalMcpConnectionRow): boolean {
+function usesPinnedSharedOAuthCallback(connection: ExternalMcpConnectionRow): boolean {
   const metadata = oauthAuthorizationServerMetadata(connection)
   return connection.oauthConfiguration?.callbackMode === "shared-v1"
     && metadata !== undefined
     && metadata.authorization_response_iss_parameter_supported !== true
 }
 
-function assertIsolatedOAuthCallbackSafety(connection: ExternalMcpConnectionRow): void {
-  const methods = oauthAuthorizationServerMetadata(connection)?.code_challenge_methods_supported
-  if (!Array.isArray(methods) || !methods.includes("S256")) {
-    throw new EnterpriseMcpOAuthContractError(
-      "MCP_OAUTH_CONFIGURATION_REQUIRED",
-      "This authorization server omits response issuers and cannot use the isolated callback because it does not advertise PKCE S256.",
-    )
-  }
+function authorizationResponseIssuerRequired(connection: ExternalMcpConnectionRow): boolean | undefined {
+  const metadata = oauthAuthorizationServerMetadata(connection)
+  return metadata === undefined
+    ? undefined
+    : metadata.authorization_response_iss_parameter_supported === true
 }
 
 function parseJsonObject(value: string | null): Record<string, unknown> | null {
@@ -697,6 +695,10 @@ function parseJsonObject(value: string | null): Record<string, unknown> | null {
   } catch {
     return null
   }
+}
+
+function tokenEndpointAuthMethod(value: unknown): "client_secret_basic" | "client_secret_post" | undefined {
+  return value === "client_secret_basic" || value === "client_secret_post" ? value : undefined
 }
 
 function resolveCreatorName(context: PluginArchActorContext["organizationContext"], memberId: string): string | null {
@@ -1073,6 +1075,7 @@ async function handleExternalMcpOAuthCallback(input: {
   }
   const configuredIssuer = connection.oauthConfiguration?.authorizationServerIssuer ?? null
   const discovery = connection.oauthConfiguration?.discovery
+  const currentResponseIssuerRequired = authorizationResponseIssuerRequired(connection)
   const autoSelectedIssuer = statePayload.version === 2
     && statePayload.authorizationServerIssuer === undefined
     && configuredIssuer !== null
@@ -1088,6 +1091,9 @@ async function handleExternalMcpOAuthCallback(input: {
       && (statePayload.authorizationServerIssuer ?? null)
         !== configuredIssuer
       && !autoSelectedIssuer)
+    || (statePayload.version === 2
+      && statePayload.authorizationResponseIssuerRequired !== undefined
+      && statePayload.authorizationResponseIssuerRequired !== currentResponseIssuerRequired)
   ) {
     return invalidMcpOAuthCallback("This connection changed after authorization started. Start the connection flow again.")
   }
@@ -1106,6 +1112,8 @@ async function handleExternalMcpOAuthCallback(input: {
       ? (url.searchParams.get("iss") ?? "")
       : undefined
     try {
+      const usesPinnedSharedCallback = statePayload.authorizationResponseIssuerRequired === false
+        && usesPinnedSharedOAuthCallback(connection)
       const validation = validateMcpAuthorizationResponseIssuer({
         expectedIssuer: configuredIssuer,
         discoveryState: connection.oauthConfiguration?.discovery,
@@ -1114,7 +1122,9 @@ async function handleExternalMcpOAuthCallback(input: {
           ? "distinct-redirect-uri"
           : callbackMode === "legacy-v1"
             ? "legacy"
-            : "response-issuer",
+            : usesPinnedSharedCallback
+              ? "pinned-transaction"
+              : "response-issuer",
       })
       if (validation.ignoredResponseIssuer !== undefined) {
         logger.warn("external_mcp_connect_callback_untrusted_issuer_ignored", {
@@ -1174,6 +1184,15 @@ async function handleExternalMcpOAuthCallback(input: {
 
   const code = url.searchParams.get("code")
   if (!code) {
+    try {
+      await abandonAuthorization(connection, state, member, input.requestId)
+    } catch (error) {
+      logger.error("external_mcp_connect_callback_missing_code_cleanup_failed", {
+        connection_id: connection.id,
+        organization_id: statePayload.organizationId,
+        ...externalMcpDiagnosticForLog(error, input.requestId, "AUTH_USER_OR_WORKLOAD"),
+      })
+    }
     return invalidMcpOAuthCallback("Missing authorization code.")
   }
   try {
@@ -1186,6 +1205,15 @@ async function handleExternalMcpOAuthCallback(input: {
       state,
     )
   } catch (error) {
+    try {
+      await abandonAuthorization(connection, state, member, input.requestId)
+    } catch (cleanupError) {
+      logger.error("external_mcp_connect_callback_token_cleanup_failed", {
+        connection_id: connection.id,
+        organization_id: statePayload.organizationId,
+        ...externalMcpDiagnosticForLog(cleanupError, input.requestId, "AUTH_TOKEN_ACQUISITION"),
+      })
+    }
     const diagnostic = externalMcpDiagnosticForResponse(error, input.requestId, "AUTH_TOKEN_ACQUISITION")
     logger.error("external_mcp_connect_callback_token_exchange_failed", {
       connection_id: connection.id,
@@ -1824,6 +1852,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
             registrationContractVersion: 2,
             registeredRedirectUri: externalMcpCallbackUrl({ connectionId: created.id, callbackMode }),
             authorizationServerIssuer: body.authorizationServerIssuer ?? undefined,
+            tokenEndpointAuthMethod: body.oauthClient.tokenEndpointAuthMethod,
           },
           createdByOrgMembershipId: payload.currentMember.id,
         })
@@ -1962,6 +1991,13 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
       if (body.oauthClient && body.authType !== "oauth") {
         return c.json({ error: "invalid_request", message: "oauthClient is only allowed when authType is oauth." }, 400)
       }
+      const existingOAuthClient = body.oauthClient
+        ? await getOrgOAuthClient(payload.organization.id, externalMcpConnectionId)
+        : null
+      const preservedTokenEndpointAuthMethod = body.oauthClient
+        && existingOAuthClient?.clientId === body.oauthClient.clientId
+        ? tokenEndpointAuthMethod(existingOAuthClient.extra?.tokenEndpointAuthMethod)
+        : undefined
       if (body.authType !== "oauth" && (
         body.authorizationServerIssuer !== undefined
         || body.requestedScopes !== undefined
@@ -2059,6 +2095,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
                   ?? (connection.authType === "oauth" ? "legacy-v1" : "shared-v1"),
               }),
               authorizationServerIssuer: oauthConfiguration?.authorizationServerIssuer ?? undefined,
+              tokenEndpointAuthMethod: body.oauthClient.tokenEndpointAuthMethod ?? preservedTokenEndpointAuthMethod,
             },
           },
         } : {}),
@@ -2323,6 +2360,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
           : undefined
         const beginAuthorization = async (target: ExternalMcpConnectionRow) => {
           const callbackMode = target.oauthConfiguration?.callbackMode ?? "legacy-v1"
+          const responseIssuerRequired = authorizationResponseIssuerRequired(target)
           const signedState = createOAuthStateToken({
             organizationId: payload.organization.id,
             orgMembershipId: payload.currentMember.id,
@@ -2331,6 +2369,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
             version: 2,
             callbackMode,
             authorizationServerIssuer: target.oauthConfiguration?.authorizationServerIssuer ?? undefined,
+            authorizationResponseIssuerRequired: responseIssuerRequired,
             secret: env.betterAuthSecret,
           })
           const result = await connectExternalMcp(
@@ -2340,7 +2379,12 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
             member,
             c.get("requestId"),
           )
-          return { result, signedState }
+          return {
+            result,
+            signedState,
+            authorizationServerIssuer: target.oauthConfiguration?.authorizationServerIssuer,
+            authorizationResponseIssuerRequired: responseIssuerRequired,
+          }
         }
 
         let started: Awaited<ReturnType<typeof beginAuthorization>>
@@ -2414,19 +2458,23 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
             organizationId: payload.organization.id,
             connectionId: externalMcpConnectionId,
           })
-          if (discovered && requiresIsolatedOAuthCallback(discovered)) {
-            assertIsolatedOAuthCallbackSafety(discovered)
-            await abandonExternalMcpAuth(discovered, started.signedState, member, c.get("requestId"))
-            connection = await isolateExternalMcpOAuthCallback({
-              organizationId: payload.organization.id,
-              connectionId: externalMcpConnectionId,
-            })
-            logger.info("external_mcp_oauth_isolated_callback_selected", {
-              connection_id: connection.id,
-              organization_id: payload.organization.id,
-              authorization_server_issuer: connection.oauthConfiguration?.authorizationServerIssuer,
-            })
-            started = await beginAuthorization(connection)
+          if (discovered) {
+            const discoveredResponseIssuerRequired = authorizationResponseIssuerRequired(discovered)
+            const signedBindingChanged = started.authorizationServerIssuer
+              !== discovered.oauthConfiguration?.authorizationServerIssuer
+              || started.authorizationResponseIssuerRequired !== discoveredResponseIssuerRequired
+            if (signedBindingChanged) {
+              await abandonExternalMcpAuth(discovered, started.signedState, member, c.get("requestId"))
+              started = await beginAuthorization(discovered)
+            }
+            connection = discovered
+            if (usesPinnedSharedOAuthCallback(discovered)) {
+              logger.info("external_mcp_oauth_pinned_shared_callback_selected", {
+                connection_id: connection.id,
+                organization_id: payload.organization.id,
+                authorization_server_issuer: connection.oauthConfiguration?.authorizationServerIssuer,
+              })
+            }
           }
         }
 

@@ -20,7 +20,15 @@ describe("organization desktop version settings", () => {
     const source = readFileSync(settingsPath, "utf8");
 
     expect(source).toContain("requiresServerUpgrade");
-    expect(source).toContain("disabled={!isOwner || requiresServerUpgrade}");
+    expect(source).toContain("disabled={!canManageDesktopVersions || requiresServerUpgrade}");
     expect(source).toContain("Upgrade server to allow this version");
+  });
+
+  test("allows workspace admins to save desktop version settings", () => {
+    const source = readFileSync(settingsPath, "utf8");
+
+    expect(source).toContain("const canManageDesktopVersions = access.isAdmin");
+    expect(source).toContain("Admins can change allowed desktop versions");
+    expect(source).toContain("{access.isAdmin ? (");
   });
 });

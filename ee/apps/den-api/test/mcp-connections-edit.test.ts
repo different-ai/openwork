@@ -19,6 +19,7 @@ let session: typeof import("../src/session.js")
 let connections: typeof import("../src/capability-sources/external-mcp-connections.js")
 let genericOAuth: typeof import("../src/capability-sources/generic-oauth.js")
 let oauthCredentials: typeof import("../src/capability-sources/oauth-credentials.js")
+let DenEnterpriseMcpOAuthPersistence: typeof import("../src/capability-sources/enterprise-mcp-oauth-persistence.js").DenEnterpriseMcpOAuthPersistence
 let fakeServer: ReturnType<typeof Bun.serve> | undefined
 
 const adminUserId = createDenTypeId("user")
@@ -59,7 +60,7 @@ beforeAll(async () => {
   }).db
   mock.module("../src/db.js", () => ({ db: realDb }))
 
-  const [appMod, dbMod, schemaMod, drizzleMod, sessionMod, connectionsMod, genericOAuthMod, oauthCredentialsMod] = await Promise.all([
+  const [appMod, dbMod, schemaMod, drizzleMod, sessionMod, connectionsMod, genericOAuthMod, oauthCredentialsMod, enterprisePersistenceMod] = await Promise.all([
     import("../src/app.js"),
     import("../src/db.js"),
     import("@openwork-ee/den-db/schema"),
@@ -68,6 +69,7 @@ beforeAll(async () => {
     import("../src/capability-sources/external-mcp-connections.js"),
     import("../src/capability-sources/generic-oauth.js"),
     import("../src/capability-sources/oauth-credentials.js"),
+    import("../src/capability-sources/enterprise-mcp-oauth-persistence.js"),
   ])
   app = appMod.default
   db = dbMod.db
@@ -77,6 +79,7 @@ beforeAll(async () => {
   connections = connectionsMod
   genericOAuth = genericOAuthMod
   oauthCredentials = oauthCredentialsMod
+  DenEnterpriseMcpOAuthPersistence = enterprisePersistenceMod.DenEnterpriseMcpOAuthPersistence
 
   await db.insert(schema.AuthUserTable).values([
     { id: adminUserId, name: "MCP Edit Admin", email: `mcp-edit-admin+${adminUserId}@test.local` },
@@ -585,7 +588,11 @@ describe.serial("PUT /v1/mcp-connections/:connectionId", () => {
     const configuredClient = await humanRequest({
       connectionId: connection.id,
       body: updateBody(beforeClientConfiguration, {
-        oauthClient: { clientId: "marketplace-client", clientSecret: "marketplace-secret" },
+        oauthClient: {
+          clientId: "marketplace-client",
+          clientSecret: "marketplace-secret",
+          tokenEndpointAuthMethod: "client_secret_post",
+        },
       }),
     })
     expect(configuredClient.status).toBe(200)
@@ -593,6 +600,20 @@ describe.serial("PUT /v1/mcp-connections/:connectionId", () => {
     expect(await oauthCredentials.getOrgOAuthClient(organizationId, connection.id)).toMatchObject({
       clientId: "marketplace-client",
       clientSecret: "marketplace-secret",
+      extra: { tokenEndpointAuthMethod: "client_secret_post" },
+    })
+    const persistedRegistration = await new DenEnterpriseMcpOAuthPersistence(
+      await currentConnection(connection.id),
+      { orgMembershipId: adminMemberId },
+    ).clientRegistrations.load({
+      connectionId: connection.id,
+      commitExpiresAt: Date.now() + 30_000,
+      signal: new AbortController().signal,
+    })
+    expect(persistedRegistration?.clientInformation).toMatchObject({
+      client_id: "marketplace-client",
+      client_secret: "marketplace-secret",
+      token_endpoint_auth_method: "client_secret_post",
     })
 
     const fresh = await currentConnection(connection.id)

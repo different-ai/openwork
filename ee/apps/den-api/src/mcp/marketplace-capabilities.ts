@@ -1104,7 +1104,7 @@ async function mcpHint(input: {
 
   return {
     status: "needs_connection",
-    hint: `This plugin declares an MCP server but OpenWork will not auto-provision it. Ask an org admin to add it in OpenWork Cloud -> Connections, or install "${input.row.plugin.name}" locally.`,
+    hint: `This plugin declares an MCP server but OpenWork will not auto-provision it. Ask an org admin to add it in OpenWork Cloud -> Connectors, or install "${input.row.plugin.name}" locally.`,
   }
 }
 

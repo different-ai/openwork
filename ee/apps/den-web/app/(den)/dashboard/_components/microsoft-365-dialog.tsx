@@ -3,8 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Check } from "lucide-react";
 import { DenButton } from "../../_components/ui/button";
-import { DenInput } from "../../_components/ui/input";
 import { DenNotice } from "../../_components/ui/notice";
+import { McpCredentialInput } from "./mcp-credential-input";
 import { useNativeProviderClient } from "./mcp-connections-data";
 import {
   MICROSOFT_365_DEFAULT_FEATURES,
@@ -204,15 +204,34 @@ export function Microsoft365Dialog({
               <div className="mt-3 space-y-3">
                 <div>
                   <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Directory (tenant) ID</label>
-                  <DenInput data-testid="microsoft-tenant-id" value={tenantId} onChange={(event) => setTenantId(event.target.value)} placeholder="00000000-0000-0000-0000-000000000000" />
+                  <McpCredentialInput
+                    kind="identifier"
+                    name="microsoft-365-tenant-id"
+                    data-testid="microsoft-tenant-id"
+                    value={tenantId}
+                    onChange={(event) => setTenantId(event.target.value)}
+                    placeholder="00000000-0000-0000-0000-000000000000"
+                  />
                 </div>
                 <div>
                   <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Application (client) ID</label>
-                  <DenInput value={clientId} onChange={(event) => setClientId(event.target.value)} placeholder="00000000-0000-0000-0000-000000000000" />
+                  <McpCredentialInput
+                    kind="identifier"
+                    name="microsoft-365-oauth-client-id"
+                    value={clientId}
+                    onChange={(event) => setClientId(event.target.value)}
+                    placeholder="00000000-0000-0000-0000-000000000000"
+                  />
                 </div>
                 <div>
                   <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Client secret value</label>
-                  <DenInput type="password" value={clientSecret} onChange={(event) => setClientSecret(event.target.value)} placeholder="Paste the secret value, not its ID" />
+                  <McpCredentialInput
+                    kind="secret"
+                    name="microsoft-365-oauth-client-secret"
+                    value={clientSecret}
+                    onChange={(event) => setClientSecret(event.target.value)}
+                    placeholder="Paste the secret value, not its ID"
+                  />
                 </div>
               </div>
               {replacingCredentials ? (

@@ -3,6 +3,7 @@ import { describeRoute, resolver } from "hono-openapi"
 import { z } from "zod"
 import { deleteOrganizationScimConnection, getOrganizationScimConnection, getOrganizationScimHealth, getScimBaseUrl, reconcileOrganizationScimDrift, rotateOrganizationScimToken } from "../../scim.js"
 import { setScimGroupMappingMode } from "../../scim-groups.js"
+import { hasEnabledOrganizationSsoConnection } from "../../sso.js"
 import { ORGANIZATION_AUDIT_ACTIONS, recordOrganizationAuditEvent } from "../../audit-events.js"
 import { jsonValidator, orgMemberRoute } from "../../middleware/index.js"
 import type { OrgRouteVariables } from "./shared.js"
@@ -30,6 +31,11 @@ const forbiddenSchema = z.object({
   message: z.string(),
 }).meta({ ref: "ScimForbiddenError" })
 
+const ssoRequiredSchema = z.object({
+  error: z.literal("sso_required"),
+  message: z.string(),
+}).meta({ ref: "ScimSsoRequiredError" })
+
 const scimConnectionSchema = z.object({
   id: z.string(),
   providerId: z.string(),
@@ -50,12 +56,14 @@ const scimHealthSchema = z.object({
 
 const scimConnectionResponseSchema = z.object({
   baseUrl: z.string().url(),
+  ssoReady: z.boolean(),
   connection: scimConnectionSchema.nullable(),
   health: scimHealthSchema,
 }).meta({ ref: "OrganizationScimConnectionResponse" })
 
 const rotateScimTokenResponseSchema = z.object({
   baseUrl: z.string().url(),
+  ssoReady: z.literal(true),
   connection: scimConnectionSchema,
   scimToken: z.string().min(1),
   health: scimHealthSchema,
@@ -152,13 +160,15 @@ export function registerOrgScimRoutes<T extends { Variables: OrgRouteVariables }
       }
 
       const payload = c.get("organizationContext")
-      const [connection, health] = await Promise.all([
+      const [connection, health, ssoReady] = await Promise.all([
         getOrganizationScimConnection(payload.organization.id),
         getOrganizationScimHealth(payload.organization.id),
+        hasEnabledOrganizationSsoConnection(payload.organization.id),
       ])
 
       return c.json({
         baseUrl: getScimBaseUrl(),
+        ssoReady,
         connection: connection ? serializeConnection(connection) : null,
         health: serializeHealth(health),
       })
@@ -206,6 +216,14 @@ export function registerOrgScimRoutes<T extends { Variables: OrgRouteVariables }
             },
           },
         },
+        409: {
+          description: "An enabled SSO connection is required before creating or rotating a SCIM token.",
+          content: {
+            "application/json": {
+              schema: resolver(ssoRequiredSchema),
+            },
+          },
+        },
         404: {
           description: "Organization not found",
           content: {
@@ -224,6 +242,14 @@ export function registerOrgScimRoutes<T extends { Variables: OrgRouteVariables }
       }
 
       const payload = c.get("organizationContext")
+      const ssoReady = await hasEnabledOrganizationSsoConnection(payload.organization.id)
+      if (!ssoReady) {
+        return c.json({
+          error: "sso_required",
+          message: "Configure an enabled SSO connection before creating or rotating a SCIM token.",
+        }, 409)
+      }
+
       const rotated = await rotateOrganizationScimToken({
         organizationId: payload.organization.id,
         headers: c.req.raw.headers,
@@ -242,6 +268,7 @@ export function registerOrgScimRoutes<T extends { Variables: OrgRouteVariables }
 
       return c.json({
         baseUrl: getScimBaseUrl(),
+        ssoReady: true,
         connection: serializeConnection(rotated.connection),
         scimToken: rotated.scimToken,
         health: serializeHealth(health),
@@ -289,15 +316,17 @@ export function registerOrgScimRoutes<T extends { Variables: OrgRouteVariables }
         payload: { groupMappingMode: input.groupMappingMode },
       })
 
-      const [updated, health] = await Promise.all([
+      const [updated, health, ssoReady] = await Promise.all([
         getOrganizationScimConnection(payload.organization.id),
         getOrganizationScimHealth(payload.organization.id),
+        hasEnabledOrganizationSsoConnection(payload.organization.id),
       ])
       if (!updated) {
         return c.json({ error: "not_found", message: "SCIM connection not found." }, 404)
       }
       return c.json({
         baseUrl: getScimBaseUrl(),
+        ssoReady,
         connection: serializeConnection(updated),
         health: serializeHealth(health),
       })

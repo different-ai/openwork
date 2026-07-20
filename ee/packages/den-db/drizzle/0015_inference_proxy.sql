@@ -17,7 +17,6 @@ CREATE TABLE `inference_org_limit_policies` (
 	`id` varchar(64) NOT NULL,
 	`organization_id` varchar(64) NOT NULL,
 	`window_type` enum('five_hour','weekly','monthly') NOT NULL,
-	`limit_amount` bigint NOT NULL,
 	`reset_strategy` enum('anchored','activity_based') NOT NULL,
 	`anchor_at` timestamp(3),
 	`current_bucket_id` varchar(64),

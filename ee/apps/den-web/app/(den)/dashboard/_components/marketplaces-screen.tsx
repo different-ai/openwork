@@ -1,23 +1,36 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
-import { Cable, Search, Store } from "lucide-react";
+import { Cable, Loader2, Plus, Search, Store } from "lucide-react";
 import { StaticSeededGradient } from "@openwork/ui/react";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
 import { DenInput } from "../../_components/ui/input";
-import { buttonVariants } from "../../_components/ui/button";
-import { getIntegrationsRoute, getMarketplaceRoute } from "../../_lib/den-org";
+import { buttonVariants, DenButton } from "../../_components/ui/button";
+import { getIntegrationsRoute, getMarketplaceRoute, getOrgAccessFlags } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { useHasAnyIntegration } from "./integration-data";
-import { formatMarketplaceTimestamp, useMarketplaces } from "./marketplace-data";
+import {
+  type DenMarketplace,
+  formatMarketplaceTimestamp,
+  useCreateMarketplace,
+  useMarketplaces,
+} from "./marketplace-data";
 import { MarketplaceLogo } from "./marketplace-logo";
 
 export function MarketplacesScreen() {
-  const { orgSlug } = useOrgDashboard();
+  const { orgContext, orgSlug } = useOrgDashboard();
+  const router = useRouter();
   const { data: marketplaces = [], isLoading, error } = useMarketplaces();
   const { hasAny: hasAnyIntegration, isLoading: integrationsLoading } = useHasAnyIntegration();
   const [query, setQuery] = useState("");
+  const [createOpen, setCreateOpen] = useState(false);
+  const access = getOrgAccessFlags(
+    orgContext?.currentMember.role ?? "member",
+    orgContext?.currentMember.isOwner ?? false,
+    orgContext?.roles ?? [],
+  );
 
   const normalizedQuery = query.trim().toLowerCase();
   const filtered = useMemo(() => {
@@ -35,14 +48,21 @@ export function MarketplacesScreen() {
       description="Marketplaces contain plugins. OpenWork Marketplace is built in, and assigned marketplaces show up inside the desktop app after sign-in."
       colors={["#FEF3C7", "#92400E", "#F59E0B", "#FDE68A"]}
     >
-      <div className="mb-6">
-        <DenInput
-          type="search"
-          icon={Search}
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          placeholder="Search marketplaces..."
-        />
+      <div className="mb-6 flex flex-col gap-3 sm:flex-row">
+        <div className="min-w-0 flex-1">
+          <DenInput
+            type="search"
+            icon={Search}
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search marketplaces..."
+          />
+        </div>
+        {access.isAdmin ? (
+          <DenButton icon={Plus} onClick={() => setCreateOpen(true)}>
+            New marketplace
+          </DenButton>
+        ) : null}
       </div>
 
       {error ? (
@@ -117,7 +137,104 @@ export function MarketplacesScreen() {
           ))}
         </div>
       )}
+      {access.isAdmin ? (
+        <CreateMarketplaceDialog
+          open={createOpen}
+          onClose={() => setCreateOpen(false)}
+          onCreated={(marketplace) => {
+            setCreateOpen(false);
+            router.push(getMarketplaceRoute(orgSlug, marketplace.id));
+          }}
+        />
+      ) : null}
     </DashboardPageTemplate>
+  );
+}
+
+function CreateMarketplaceDialog({
+  open,
+  onClose,
+  onCreated,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onCreated: (marketplace: DenMarketplace) => void;
+}) {
+  const createMutation = useCreateMarketplace();
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+
+  if (!open) return null;
+
+  const trimmedName = name.trim();
+
+  async function submit() {
+    try {
+      const created = await createMutation.mutateAsync({
+        name: trimmedName,
+        description: description.trim() || undefined,
+      });
+      setName("");
+      setDescription("");
+      onCreated(created);
+    } catch {
+      // The mutation error is rendered in the dialog.
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-6" onClick={onClose}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="create-marketplace-title"
+        className="w-full max-w-[440px] rounded-2xl border border-gray-100 bg-white p-6 shadow-[0_24px_60px_-24px_rgba(15,23,42,0.4)]"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <h2 id="create-marketplace-title" className="text-[16px] font-semibold tracking-[-0.01em] text-gray-950">
+          New marketplace
+        </h2>
+        <p className="mt-1 text-[13px] leading-6 text-gray-500">
+          Create a catalog for your organization. You can add plugins and choose its audience after creation.
+        </p>
+
+        <label className="mt-4 block">
+          <span className="mb-1.5 block text-[12px] font-medium text-gray-700">Name</span>
+          <DenInput
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            placeholder="Engineering tools"
+            autoFocus
+          />
+        </label>
+        <label className="mt-3 block">
+          <span className="mb-1.5 block text-[12px] font-medium text-gray-700">Description (optional)</span>
+          <textarea
+            value={description}
+            onChange={(event) => setDescription(event.target.value)}
+            placeholder="What belongs in this marketplace?"
+            rows={2}
+            className="w-full resize-none rounded-xl border border-gray-200 px-3 py-2 text-[13px] text-gray-900 outline-none transition placeholder:text-gray-300 focus:border-gray-400"
+          />
+        </label>
+
+        {createMutation.error ? (
+          <p className="mt-3 text-[12.5px] text-red-600">
+            {createMutation.error instanceof Error ? createMutation.error.message : "Failed to create marketplace."}
+          </p>
+        ) : null}
+
+        <div className="mt-5 flex items-center justify-end gap-2">
+          <DenButton variant="secondary" onClick={onClose} disabled={createMutation.isPending}>
+            Cancel
+          </DenButton>
+          <DenButton disabled={!trimmedName || createMutation.isPending} onClick={() => void submit()}>
+            {createMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
+            Create marketplace
+          </DenButton>
+        </div>
+      </div>
+    </div>
   );
 }
 

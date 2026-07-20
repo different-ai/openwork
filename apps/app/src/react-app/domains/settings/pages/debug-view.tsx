@@ -25,6 +25,10 @@ import type { OpencodeExecutionSnapshot } from "../../../../app/lib/desktop-type
 import { formatRelativeTime, isDesktopRuntime } from "../../../../app/utils";
 import { t } from "../../../../i18n";
 import { Button } from "@/components/ui/button";
+import {
+  AgentContextDiagnosticsSection,
+  type AgentContextDiagnosticsSectionProps,
+} from "./agent-context-diagnostics-section";
 
 const sectionHeaderClass = "flex flex-col gap-1 pb-2";
 const sectionTitleClass = "text-[15px] font-semibold tracking-[-0.2px] text-dls-text";
@@ -69,6 +73,7 @@ type ServiceStatus = { tone: "success" | "error"; message: string } | null;
 
 export type DebugViewProps = {
   developerMode: boolean;
+  agentContextDiagnostics: AgentContextDiagnosticsSectionProps;
   busy: boolean;
   anyActiveRuns: boolean;
   startupPreference: StartupPreference | null;
@@ -588,6 +593,8 @@ export function DebugView(props: DebugViewProps) {
           <StatusBanner tone="error" message={props.serviceRestartError} />
         ) : null}
       </div>
+
+      <AgentContextDiagnosticsSection {...props.agentContextDiagnostics} />
 
       {/* Section: Diagnostics */}
       <div className={cardClass}>

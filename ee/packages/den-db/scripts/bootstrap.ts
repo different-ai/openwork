@@ -15,6 +15,7 @@ import { readMigrationFiles } from "drizzle-orm/migrator"
 import mysql from "mysql2/promise"
 import { ensureFulltextIndexes } from "../src/fulltext.ts"
 import { parseMySqlConnectionConfig } from "../src/mysql-config.ts"
+import { ensureSchemaRepairs } from "../src/schema-repairs.ts"
 import { createExecutor, type Executor } from "./db-executor.ts"
 
 const MIGRATIONS_TABLE = "__drizzle_migrations"
@@ -155,6 +156,8 @@ export async function bootstrapDenDb() {
   const indexExecutor = await createExecutor()
   try {
     await ensureFulltextIndexes(indexExecutor)
+    console.log("[den-db] ensuring schema repairs")
+    await ensureSchemaRepairs(indexExecutor)
   } finally {
     await indexExecutor.close()
   }

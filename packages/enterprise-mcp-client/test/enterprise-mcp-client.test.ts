@@ -22,7 +22,7 @@ import { EnterpriseMcpOAuthProvider } from "../src/oauth-provider.js"
 import { createEnterpriseMcpRequestObserver } from "../src/request-observer.js"
 import { collectEnterpriseMcpTools } from "../src/tool-catalog.js"
 import type { OAuthClientInformationMixed, OAuthTokens } from "@modelcontextprotocol/sdk/shared/auth.js"
-import type { OAuthDiscoveryState } from "@modelcontextprotocol/sdk/client/auth.js"
+import { selectClientAuthMethod, type OAuthDiscoveryState } from "@modelcontextprotocol/sdk/client/auth.js"
 
 const rpcRequestSchema = z.object({
   id: z.union([z.string(), z.number()]).optional(),
@@ -31,6 +31,7 @@ const rpcRequestSchema = z.object({
 
 type MockMcpOptions = {
   toolError?: boolean
+  toolErrorText?: string
   expectedApiKey?: string
 }
 
@@ -84,7 +85,7 @@ function mockMcpFetch(options: MockMcpOptions = {}): EnterpriseMcpFetch {
         jsonrpc: "2.0",
         id: request.id,
         result: {
-          content: [{ type: "text", text: options.toolError ? "Provider rejected the operation" : "Record found" }],
+          content: [{ type: "text", text: options.toolError ? (options.toolErrorText ?? "Provider rejected the operation") : "Record found" }],
           isError: options.toolError ?? false,
         },
       })
@@ -433,6 +434,28 @@ describe("enterprise MCP client", () => {
     )
   })
 
+  it("retains only a safe invalid-argument signal from standardized MCP SDK tool errors", async () => {
+    const privateText = "Input validation error: Invalid arguments for tool lookup-record: private provider detail"
+    const client = createEnterpriseMcpClient({
+      fetch: mockMcpFetch({ toolError: true, toolErrorText: privateText }),
+    })
+    await assert.rejects(
+      client.callTool({
+        connection: noAuthConnection(),
+        redirectUri: "https://den.example.test/callback",
+        toolName: "lookup-record",
+        arguments: {},
+      }),
+      (error: unknown) => {
+        assert.ok(error instanceof EnterpriseMcpClientError)
+        assert.ok(error.cause instanceof EnterpriseMcpToolResultError)
+        assert.deepEqual(error.cause.providerSignal, { category: "invalid_arguments" })
+        assert.doesNotMatch(JSON.stringify(error.cause), /private provider detail/)
+        return true
+      },
+    )
+  })
+
   it("rejects oversized or cyclic tool arguments before opening a provider connection", async () => {
     let fetchCount = 0
     const client = createEnterpriseMcpClient({
@@ -623,6 +646,20 @@ function oauthProvider(input: {
 }
 
 describe("enterprise MCP OAuth persistence contract", () => {
+  it("uses discovery or an explicit registration hint to select confidential-client authentication", () => {
+    const confidentialClient = {
+      client_id: "confidential-client",
+      client_secret: "confidential-secret",
+    }
+    assert.equal(selectClientAuthMethod(confidentialClient, ["client_secret_post"]), "client_secret_post")
+    assert.equal(selectClientAuthMethod(confidentialClient, []), "client_secret_basic")
+    assert.equal(selectClientAuthMethod({
+      ...confidentialClient,
+      redirect_uris: ["https://den.example.test/v1/mcp-connections/oauth/callback"],
+      token_endpoint_auth_method: "client_secret_post",
+    }, []), "client_secret_post")
+  })
+
   it("validates authorization-response issuers exactly before token exchange", () => {
     const discoveryState = {
       authorizationServerUrl: "https://identity.example.test/tenant",
@@ -678,6 +715,31 @@ describe("enterprise MCP OAuth persistence contract", () => {
       defense: "distinct-redirect-uri",
       ignoredResponseIssuer: "stytch.com/project-live-provider-value",
     })
+  })
+
+  it("supports a pinned authorization transaction when a provider omits response issuers", () => {
+    const expectedIssuer = "https://identity.example.test/tenant"
+    const discoveryState = {
+      authorizationServerUrl: expectedIssuer,
+      authorizationServerMetadata: {
+        issuer: expectedIssuer,
+        authorization_response_iss_parameter_supported: false,
+      },
+      resourceMetadata: { authorization_servers: [expectedIssuer] },
+    }
+
+    assert.deepEqual(validateMcpAuthorizationResponseIssuer({
+      expectedIssuer,
+      discoveryState,
+      mixUpDefense: "pinned-transaction",
+    }), { defense: "pinned-transaction" })
+    assert.throws(() => validateMcpAuthorizationResponseIssuer({
+      expectedIssuer,
+      discoveryState,
+      responseIssuer: "https://attacker.example.test",
+      mixUpDefense: "pinned-transaction",
+    }), (error: unknown) => error instanceof EnterpriseMcpOAuthContractError
+      && error.code === "MCP_OAUTH_ISSUER_MISMATCH")
   })
 
   it("never lets PKCE or an isolated callback override advertised RFC 9207 support", () => {

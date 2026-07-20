@@ -281,23 +281,6 @@ function FileMessage({ part }: FileMessageProps) {
   )
 }
 
-function EmptyMessage({
-  className,
-  ...props
-}: React.ComponentProps<"div">) {
-  return (
-    <div
-      className={cn(
-        "mx-auto flex w-full max-w-3xl flex-col items-start gap-2 px-2 md:px-10 text-muted-foreground",
-        className
-      )}
-      {...props}
-    >
-      Empty message
-    </div>
-  )
-}
-
 interface CopyMessageButtonProps {
   messages: UIMessage[]
 }
@@ -584,13 +567,8 @@ const MessageComponent = React.memo(
       return <ErrorMessage error={getMessagesText([message]) || "Session failed"} />
     }
 
-    if (isEmptyMessage(message) && !isStreaming) {
-      return (
-        <EmptyMessage
-          data-message-id={message.id}
-          data-message-role={message.role}
-        />
-      )
+    if (isEmptyMessage(message)) {
+      return null
     }
 
     if (message.role === "assistant") {
@@ -765,11 +743,7 @@ function MessageGroup({
   })
 
   if (!lastItem || isMessageEmptyGroup(items)) {
-    if (isStreaming) {
-      return null;
-    }
-
-    return <EmptyMessage />
+    return null;
   }
 
   const renderableItems = getRenderableMessages(items)
@@ -842,7 +816,6 @@ function MessageGroup({
           {/* <MessageSources messages={items.map((item) => item.message)} /> */}
         </div>
       )}
-      {renderableItems.length === 0 && !isStreaming ? <EmptyMessage /> : null}
       </div>
   )
 }

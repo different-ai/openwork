@@ -8,16 +8,26 @@ const cardPath = fileURLToPath(
 const settingsPath = fileURLToPath(
   new URL("../app/(den)/dashboard/_components/org-settings-screen.tsx", import.meta.url),
 );
+const diagnosticsPath = fileURLToPath(
+  new URL("../app/(den)/dashboard/_components/diagnostics-screen.tsx", import.meta.url),
+);
+const shellPath = fileURLToPath(
+  new URL("../app/(den)/dashboard/_components/org-dashboard-shell.tsx", import.meta.url),
+);
 const routePath = fileURLToPath(
   new URL("../../den-api/src/routes/org/egress-diagnostics.ts", import.meta.url),
 );
 
 describe("Den egress diagnostic settings flow", () => {
-  test("presents the controlled multi-step run in Org settings", () => {
+  test("presents the controlled multi-step run on the dedicated Diagnostics page", () => {
     const card = readFileSync(cardPath, "utf8");
     const settings = readFileSync(settingsPath, "utf8");
+    const diagnostics = readFileSync(diagnosticsPath, "utf8");
+    const shell = readFileSync(shellPath, "utf8");
 
-    expect(settings).toContain("<EgressDiagnosticsCard canRun={canRunEgressDiagnostics} />");
+    expect(settings).not.toContain("EgressDiagnosticsCard");
+    expect(diagnostics).toContain("<EgressDiagnosticsCard canRun />");
+    expect(shell).toContain('{ href: getDiagnosticsRoute(activeOrg.slug), label: "Diagnostics" }');
     expect(card).toContain("Run egress diagnostic");
     expect(card).toContain("Open support trace");
     expect(card).toContain("Suggested owner:");

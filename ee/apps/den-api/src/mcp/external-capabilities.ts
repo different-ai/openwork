@@ -29,6 +29,11 @@ import { getConnectedAccount } from "../capability-sources/oauth-credentials.js"
 import { db } from "../db.js"
 import { listTeamsForMember } from "../orgs.js"
 import { openworkOrganizationConnectionsUrl, openworkYourConnectionsUrl } from "./connection-navigation.js"
+import {
+  externalMcpToolSchemaDigest,
+  validateExternalMcpToolArguments,
+  type ExternalMcpArgumentIssue,
+} from "./external-mcp-tool-arguments.js"
 import { compareCapabilityMatches, tokenize } from "./search.js"
 import type { CapabilityMatch } from "./search.js"
 
@@ -150,6 +155,12 @@ export function selectExternalMcpSearchConnections<T extends { name: string }>(
 }
 
 export type ExternalCapabilityMatch = CapabilityMatch & {
+  /** Exact MCP arguments schema returned by the provider's live tools/list. */
+  argumentsSchema?: unknown
+  /** Stable digest used to detect a schema change between search and execute. */
+  schemaDigest?: string
+  /** Tells the generic execute facade where MCP arguments must be supplied. */
+  invocation?: { argumentsField: "body" }
   /** Distinguishes a connection-health result from a callable capability. */
   kind?: "connection_status"
   /** Set for connection-level status rows: the tool exists but needs a human/admin fix before real tools can be listed. */
@@ -569,7 +580,7 @@ async function probeExternalMcpConnection(input: {
         score,
         summary: `[${connection.name}] OAuth provider settings changed and require administrator review.`,
         status: "error",
-        hint: `Ask an org admin to open OpenWork Cloud -> Connections, review the live OAuth issuer for "${connection.name}", and reconnect if requested.`,
+        hint: `Ask an org admin to open OpenWork Cloud -> Connectors, review the live OAuth issuer for "${connection.name}", and reconnect if requested.`,
         connectionStatus: buildExternalConnectionStatus({
           connection,
           state: "reauth_required",
@@ -684,6 +695,9 @@ async function probeExternalMcpConnection(input: {
       pathParams: [],
       queryParams: [],
       hasBody: true,
+      argumentsSchema: tool.inputSchema,
+      schemaDigest: externalMcpToolSchemaDigest(tool.inputSchema),
+      invocation: { argumentsField: "body" },
     })
   }
   return matches
@@ -736,17 +750,109 @@ export async function searchExternalCapabilities(input: {
   })
 }
 
+export type ExternalMcpSchemaWarning =
+  | {
+      code: "arguments_schema_mismatch"
+      message: string
+      issues: ExternalMcpArgumentIssue[]
+      suggestedAction: string
+    }
+  | {
+      code: "arguments_schema_unavailable"
+      message: string
+      suggestedAction: string
+    }
+  | {
+      code: "capability_schema_changed"
+      message: string
+      searchedSchemaDigest: string
+      currentSchemaDigest: string
+      suggestedAction: string
+    }
+
+export type ExternalMcpSchemaGuidance = {
+  advisory: true
+  providerCallAttempted: true
+  message: string
+  warnings: ExternalMcpSchemaWarning[]
+}
+
 export type ExternalCapabilityExecuteResult =
-  | { ok: true; result: Awaited<ReturnType<typeof callExternalMcpTool>> }
+  | {
+      ok: true
+      result: Awaited<ReturnType<typeof callExternalMcpTool>>
+      schemaGuidance?: ExternalMcpSchemaGuidance
+    }
   | {
       ok: false
-      error: "unknown_capability" | "forbidden" | "connection_not_connected" | "needs_connection" | "connection_failed" | "provider_error"
+      error:
+        | "unknown_capability"
+        | "forbidden"
+        | "connection_not_connected"
+        | "needs_connection"
+        | "connection_failed"
+        | "provider_error"
+        | "invalid_capability_arguments"
       message: string
       diagnostic?: ExternalMcpDiagnostic
       actionOwner?: ExternalMcpDiagnostic["actionOwner"]
       operatorAction?: string
       connectionStatus?: ExternalConnectionStatus
+      capability?: string
+      issues?: ExternalMcpArgumentIssue[]
+      schemaDigest?: string
+      sameArgumentsRetryable?: false
+      retry?: {
+        action: "correct_arguments" | "search_capabilities"
+        searchRequired: boolean
+      }
+      schemaGuidance?: ExternalMcpSchemaGuidance
     }
+
+function invalidCapabilityArguments(input: {
+  capability: string
+  schemaDigest?: string
+  issues?: ExternalMcpArgumentIssue[]
+  diagnostic?: ExternalMcpDiagnostic
+  schemaGuidance?: ExternalMcpSchemaGuidance
+}): Exclude<ExternalCapabilityExecuteResult, { ok: true }> {
+  return {
+    ok: false,
+    error: "invalid_capability_arguments",
+    capability: input.capability,
+    message: input.diagnostic
+      ? `The remote MCP rejected the capability arguments as invalid. Correct them using the latest argumentsSchema. Diagnostic reference: ${input.diagnostic.referenceId}.`
+      : "The capability arguments do not match the remote MCP tool's advertised argumentsSchema.",
+    issues: input.issues ?? [{
+      path: "/",
+      keyword: "schema_validation",
+      message: "The remote MCP rejected these arguments as invalid. Correct them using the latest argumentsSchema.",
+    }],
+    ...(input.schemaDigest ? { schemaDigest: input.schemaDigest } : {}),
+    sameArgumentsRetryable: false,
+    retry: { action: "correct_arguments", searchRequired: false },
+    ...(input.schemaGuidance ? { schemaGuidance: input.schemaGuidance } : {}),
+    ...(input.diagnostic
+      ? {
+          diagnostic: input.diagnostic,
+          actionOwner: input.diagnostic.actionOwner,
+          operatorAction: input.diagnostic.operatorAction,
+        }
+      : {}),
+  }
+}
+
+function advisorySchemaGuidance(
+  warnings: ExternalMcpSchemaWarning[],
+): ExternalMcpSchemaGuidance | undefined {
+  if (warnings.length === 0) return undefined
+  return {
+    advisory: true,
+    providerCallAttempted: true,
+    message: "OpenWork forwarded the call to the provider. These local schema checks are guidance only; use the provider result as the source of truth.",
+    warnings,
+  }
+}
 
 /**
  * Executes a namespaced external capability, scoped to the calling
@@ -759,7 +865,8 @@ export async function executeExternalCapability(input: {
   member: McpMemberIdentity | null
   connectionId: string
   toolName: string
-  args: Record<string, unknown>
+  args: unknown
+  schemaDigest?: string
   redirectUriBase: string
 }): Promise<ExternalCapabilityExecuteResult> {
   if (!input.member) {
@@ -851,15 +958,71 @@ export async function executeExternalCapability(input: {
     }
   }
 
+  let currentSchemaDigest: string | undefined
+  let schemaGuidance: ExternalMcpSchemaGuidance | undefined
   try {
-    const result = await callExternalMcpTool({
+    const redirectUri = redirectUriFor(input.redirectUriBase, connection.id)
+    const tools = await listExternalMcpTools(connection, redirectUri, member)
+    const tool = tools.find((candidate) => candidate.name === input.toolName)
+    if (!tool) {
+      return {
+        ok: false,
+        error: "unknown_capability",
+        capability: buildExternalCapabilityName(connection.id, input.toolName),
+        message: `No current tool named "${input.toolName}" exists on "${connection.name}". Call search_capabilities again.`,
+        sameArgumentsRetryable: false,
+        retry: { action: "search_capabilities", searchRequired: true },
+      }
+    }
+
+    const schemaDigest = externalMcpToolSchemaDigest(tool.inputSchema)
+    currentSchemaDigest = schemaDigest
+    const schemaWarnings: ExternalMcpSchemaWarning[] = []
+    if (input.schemaDigest && input.schemaDigest !== schemaDigest) {
+      schemaWarnings.push({
+        code: "capability_schema_changed",
+        message: "The provider advertised a different capability schema after discovery, but OpenWork still forwarded the call.",
+        searchedSchemaDigest: input.schemaDigest,
+        currentSchemaDigest: schemaDigest,
+        suggestedAction: "If the provider call failed, call search_capabilities again and retry with the latest argumentsSchema. Do not retry solely because of this warning when the provider call succeeded.",
+      })
+    }
+
+    // MCP tool arguments are always an object at the protocol boundary. Start
+    // the provider call before advisory validation so a provider with an
+    // inaccurate or unsupported advertised schema still gets the request.
+    const forwardedArguments = isRecord(input.args) ? input.args : {}
+    const providerCall = callExternalMcpTool({
       connection,
-      redirectUri: redirectUriFor(input.redirectUriBase, connection.id),
+      redirectUri,
       toolName: input.toolName,
-      args: input.args,
+      args: forwardedArguments,
       member,
     })
-    return { ok: true, result }
+
+    const validation = validateExternalMcpToolArguments(tool.inputSchema, input.args)
+    if (!validation.ok && validation.error === "invalid_arguments") {
+      schemaWarnings.push({
+        code: "arguments_schema_mismatch",
+        message: "The arguments do not match the provider's advertised argumentsSchema, but OpenWork still forwarded the call because the provider may accept them.",
+        issues: validation.issues,
+        suggestedAction: "If the provider call failed, correct the listed issues and retry with changed arguments. Do not retry solely because of this warning when the provider call succeeded.",
+      })
+    } else if (!validation.ok) {
+      schemaWarnings.push({
+        code: "arguments_schema_unavailable",
+        message: validation.message,
+        suggestedAction: "Use the provider result as the source of truth. If the call failed, the provider administrator may need to repair the advertised inputSchema.",
+      })
+    }
+
+    schemaGuidance = advisorySchemaGuidance(schemaWarnings)
+    const result = await providerCall
+    return {
+      ok: true,
+      result,
+      ...(schemaGuidance ? { schemaGuidance } : {}),
+    }
   } catch (error) {
     const message = upstreamErrorMessage(error)
     const authErrorCode = externalMcpAuthErrorCode(error, message)
@@ -870,6 +1033,14 @@ export async function executeExternalCapability(input: {
         connectionEndpoint: safeExternalMcpEndpointForLog(connection.url),
         ...externalMcpDiagnosticForLog(error, error.diagnostic.referenceId, "MCP_TOOL_EXECUTION"),
       })
+      if (error.diagnostic.code === "MCP_INVALID_PARAMS" || error.diagnostic.code === "MCP_PROVIDER_INVALID_PARAMS") {
+        return invalidCapabilityArguments({
+          capability: buildExternalCapabilityName(connection.id, input.toolName),
+          schemaDigest: currentSchemaDigest ?? input.schemaDigest,
+          diagnostic: error.diagnostic,
+          schemaGuidance,
+        })
+      }
       return {
         ok: false,
         error: error.diagnostic.phase === "PROVIDER_EXECUTION" || error.diagnostic.phase === "PROVIDER_AUTHORIZATION"
@@ -879,6 +1050,7 @@ export async function executeExternalCapability(input: {
         diagnostic: error.diagnostic,
         actionOwner: error.diagnostic.actionOwner,
         operatorAction: error.diagnostic.operatorAction,
+        ...(schemaGuidance ? { schemaGuidance } : {}),
         ...(authErrorCode
           ? {
               connectionStatus: buildExternalConnectionStatus({
@@ -897,6 +1069,7 @@ export async function executeExternalCapability(input: {
         ok: false,
         error: "connection_failed",
         message,
+        ...(schemaGuidance ? { schemaGuidance } : {}),
         connectionStatus: buildExternalConnectionStatus({
           connection,
           state: "reauth_required",

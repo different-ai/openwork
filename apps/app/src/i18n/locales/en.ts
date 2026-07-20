@@ -1198,6 +1198,8 @@ export default {
   "settings.diag_started": "Started: {time}",
   "settings.diag_token_source": "Token source: {source}",
   "settings.diag_workspaces": "Workspaces: {count}",
+  "settings.agent_diagnostics_desc": "Run a bounded, redacted check of what the agent actually receives: effective agent, context markers, MCP inventory, and Cloud tool access.",
+  "settings.agent_diagnostics_title": "Agent context diagnostics",
   "settings.diagnostics_unavailable": "Diagnostics unavailable.",
   "settings.disable_developer_mode": "Disable Developer Mode",
   "settings.disabled": "Disabled",

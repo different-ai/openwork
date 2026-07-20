@@ -4,6 +4,7 @@ import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { z } from "zod"
 import { auth } from "./auth.js"
 import { db } from "./db.js"
+import { isOrganizationSsoReady } from "./sso-readiness.js"
 import { env } from "./env.js"
 import { isMicrosoftEntraManagedDomain } from "./sso-entra-domain.js"
 import { SSO_IDENTITY_EXTRA_FIELDS } from "./sso-jit.js"
@@ -387,4 +388,14 @@ export async function getSsoProviderForConnection(connection: SsoConnection) {
     .limit(1)
 
   return rows[0] ?? null
+}
+
+export async function hasEnabledOrganizationSsoConnection(organizationId: OrganizationId) {
+  const connection = await getOrganizationSsoConnection(organizationId)
+  if (!connection) {
+    return false
+  }
+
+  const provider = await getSsoProviderForConnection(connection)
+  return isOrganizationSsoReady({ connection, providerExists: Boolean(provider) })
 }

@@ -279,7 +279,7 @@ function featureGranted(token: Extract<Microsoft365AccessToken, { kind: "ok" }>,
 }
 
 function missingPermissionMessage(label: string): string {
-  return `Your connected Microsoft account is missing the ${label} permission. An admin can enable it on the Microsoft 365 connection in OpenWork Cloud -> Connections; then reconnect your account.`
+  return `Your connected Microsoft account is missing the ${label} permission. An admin can enable it on the Microsoft 365 connector in OpenWork Cloud -> Connectors; then reconnect your account.`
 }
 
 function disabledFeatureMessage(label: string): string {

@@ -84,6 +84,24 @@ test("privileged actions require a fresh session", () => {
   expect(sharedModule.hasFreshPrivilegedSession({ session: null }, now)).toBe(false)
 })
 
+test("read-only connection settings accept a login from the last 24 hours", () => {
+  const now = new Date("2026-06-13T12:00:00.000Z")
+  const session = {
+    createdAt: new Date(now.getTime() - sharedModule.CONNECTIONS_READ_SESSION_MAX_AGE_MS),
+  }
+
+  expect(sharedModule.hasFreshPrivilegedSession({ session }, now)).toBe(false)
+  expect(sharedModule.hasFreshPrivilegedSession(
+    { session },
+    now,
+    sharedModule.CONNECTIONS_READ_SESSION_MAX_AGE_MS,
+  )).toBe(true)
+
+  expect(sharedModule.hasFreshPrivilegedSession({
+    session: { createdAt: new Date(now.getTime() - sharedModule.CONNECTIONS_READ_SESSION_MAX_AGE_MS - 1) },
+  }, now, sharedModule.CONNECTIONS_READ_SESSION_MAX_AGE_MS)).toBe(false)
+})
+
 test("routine admin authorization checks the role without requiring session freshness", () => {
   const message = "Only workspace owners and admins can configure this integration."
 

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   BarChart3,
   ChevronDown,
@@ -30,6 +30,7 @@ import {
   getBrandAppearanceRoute,
   getBillingRoute,
   getCustomLlmProvidersRoute,
+  getDiagnosticsRoute,
   getDesktopPoliciesRoute,
   getOrgAccessFlags,
   getIntegrationsRoute,
@@ -135,7 +136,7 @@ export function SidebarBrandMark({
   if (metadata === undefined) {
     return (
       <div
-        className="h-10 w-10 rounded-xl bg-gray-100"
+        className="h-10 w-10 rounded-xl"
         aria-label="Loading organization icon"
         data-sidebar-brand-icon="loading"
       />
@@ -153,18 +154,67 @@ export function SidebarBrandMark({
 
   return (
     <div
-      className="h-10 w-10 overflow-hidden rounded-xl bg-gray-100"
+      className="h-10 w-10 overflow-hidden rounded-xl"
       data-sidebar-brand-icon={loadedUrl === iconUrl ? "ready" : "loading"}
     >
       <img
         src={iconUrl}
         alt={`${organizationName} icon`}
-        className={`h-full w-full object-cover transition-opacity ${loadedUrl === iconUrl ? "opacity-100" : "opacity-0"}`}
+        className={`h-full w-full object-contain transition-opacity ${loadedUrl === iconUrl ? "opacity-100" : "opacity-0"}`}
         onLoad={() => setLoadedUrl(iconUrl)}
         onError={() => setFailedUrl(iconUrl)}
       />
     </div>
   );
+}
+
+export function WorkspaceFavicon({
+  metadata,
+}: {
+  metadata: string | null | undefined;
+}) {
+  const iconUrl = getManagedBrandIconUrl(metadata ?? null);
+
+  useEffect(() => {
+    if (!iconUrl) {
+      return;
+    }
+
+    let favicon = document.head.querySelector<HTMLLinkElement>('link[rel="icon"]');
+    const created = favicon === null;
+    if (!favicon) {
+      favicon = document.createElement("link");
+      favicon.rel = "icon";
+      document.head.appendChild(favicon);
+    }
+
+    const previousHref = favicon.getAttribute("href");
+    const previousType = favicon.getAttribute("type");
+    favicon.href = iconUrl;
+    favicon.type = iconUrl.toLowerCase().endsWith(".jpg")
+      || iconUrl.toLowerCase().endsWith(".jpeg")
+      ? "image/jpeg"
+      : "image/png";
+
+    return () => {
+      if (created) {
+        favicon.remove();
+        return;
+      }
+      if (previousHref === null) {
+        favicon.removeAttribute("href");
+      } else {
+        favicon.setAttribute("href", previousHref);
+      }
+      if (previousType === null) {
+        favicon.removeAttribute("type");
+      } else {
+        favicon.setAttribute("type", previousType);
+      }
+    };
+  }, [iconUrl]);
+
+  return null;
 }
 
 function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
@@ -201,6 +251,9 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
   if (pathname.startsWith(getDesktopPoliciesRoute(orgSlug))) {
     return "Desktop Policies";
   }
+  if (pathname.startsWith(getDiagnosticsRoute(orgSlug))) {
+    return "Diagnostics";
+  }
   if (pathname.startsWith(getInferenceRoute(orgSlug))) {
     return "OpenWork Models";
   }
@@ -208,13 +261,13 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
     return "Plugins";
   }
   if (pathname.startsWith(getMarketplacesRoute(orgSlug))) {
-    return "Marketplaces";
+    return "Marketplace";
   }
   if (pathname.startsWith(getIntegrationsRoute(orgSlug))) {
     return "Sources";
   }
   if (pathname.startsWith(getMcpConnectionsRoute(orgSlug))) {
-    return "Connections";
+    return "Connectors";
   }
   if (pathname.startsWith(getYourConnectionsRoute(orgSlug))) {
     return "Your Connections";
@@ -292,19 +345,19 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
 
   // Top-level rows: Dashboard, optional Your Connections, Extensions, Models,
   // Members, Analytics, Settings. Everything tool-shaped groups under
-  // Extensions (in pipeline order: Sources feed Plugins, share via
-  // Marketplaces, alpha Connections last); model config groups under
+  // Extensions starts with the Marketplace, followed by its source and
+  // management surfaces; model config groups under
   // Models; set-once governance groups under Settings.
   const extensionsGroup: DashboardNavItem | null = access.isAdmin && activeOrg
     ? {
-        href: getIntegrationsRoute(activeOrg.slug),
+        href: getMarketplacesRoute(activeOrg.slug),
         label: "Extensions",
         icon: Puzzle,
         children: [
+          { href: getMarketplacesRoute(activeOrg.slug), label: "Marketplace" },
           { href: getIntegrationsRoute(activeOrg.slug), label: "Sources" },
           { href: getPluginsRoute(activeOrg.slug), label: "Plugins" },
-          { href: getMarketplacesRoute(activeOrg.slug), label: "Marketplaces" },
-          { href: getMcpConnectionsRoute(activeOrg.slug), label: "Connections", badge: "Alpha" },
+          { href: getMcpConnectionsRoute(activeOrg.slug), label: "Connectors", badge: "Beta" },
         ],
       }
     : null;
@@ -332,6 +385,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
         ...(access.isAdmin
           ? [
               { href: getOrgSettingsRoute(activeOrg.slug), label: "General" },
+              { href: getDiagnosticsRoute(activeOrg.slug), label: "Diagnostics" },
               { href: getBrandAppearanceRoute(activeOrg.slug), label: "Brand appearance" },
               { href: getDesktopPoliciesRoute(activeOrg.slug), label: "Desktop Policies" },
               { href: getBillingRoute(activeOrg.slug), label: "Stripe" },
@@ -364,7 +418,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
           href: activeOrg ? getYourConnectionsRoute(activeOrg.slug) : "#",
           label: "Your Connections",
           icon: Plug,
-          badge: "Alpha",
+          badge: "Beta",
         }]
       : []),
     ...(extensionsGroup ? [extensionsGroup] : []),
@@ -639,6 +693,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex min-h-screen flex-col bg-[#fafafa] md:h-screen md:flex-row">
+      <WorkspaceFavicon metadata={orgContext?.organization.metadata} />
       {/* Desktop sidebar — always visible at md+ */}
       <aside className="hidden shrink-0 border-r border-gray-100 bg-white md:flex md:min-h-screen md:w-[260px] md:flex-col">
         {sidebarContent}

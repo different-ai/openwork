@@ -17,6 +17,7 @@ import { denTypeIdSchema, enterprisePlanRequiredSchema, forbiddenSchema, invalid
 import { normalizeOrganizationCapabilities } from "../../organization-capabilities.js"
 import { validateInvitationAcceptVerification } from "../../organization-join-verification.js"
 import { normalizeOrganizationMetadata } from "../../organization-limits.js"
+import { isDesktopVersionOnlyOrganizationUpdate } from "../../organization-settings-permissions.js"
 import {
   acceptInvitationForUser,
   createOrganizationForUser,
@@ -335,26 +336,32 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
     describeRoute({
       tags: ["Organizations"],
       summary: "Update organization",
-      description: "Updates organization fields that workspace owners are allowed to change, including the display name, allowed invitation email domains, and allowed desktop versions. The slug is immutable to avoid breaking dashboard URLs.",
+      description: "Updates organization fields. Workspace admins can change allowed desktop versions; all other fields remain owner-only. The slug is immutable to avoid breaking dashboard URLs.",
       responses: {
         200: jsonResponse("Organization updated successfully.", organizationResponseSchema),
         400: jsonResponse("The organization update request body was invalid, contained malformed email domains, or contained an invalid brand icon URL.", updateOrganizationBadRequestSchema),
         401: jsonResponse("The caller must be signed in to update an organization.", unauthorizedSchema),
         402: jsonResponse("Enabling enforced SSO or desktop version controls requires an Enterprise plan.", enterprisePlanRequiredSchema),
-        403: jsonResponse("Only workspace owners can update the organization.", forbiddenSchema),
+        403: jsonResponse("The caller does not have permission to update the requested organization fields.", forbiddenSchema),
         404: jsonResponse("The organization could not be found.", notFoundSchema),
       },
     }),
-    orgRoleRoute(["owner"]),
+    orgRoleRoute(["admin"]),
     jsonValidator(updateOrganizationSchema),
     async (c) => {
-      const permission = ensureOwner(c)
-      if (!permission.ok) {
-        return c.json(permission.response, 403)
-      }
-
       const payload = c.get("organizationContext")
       const input = c.req.valid("json")
+      if (payload.currentMember.isOwner) {
+        const permission = ensureOwner(c)
+        if (!permission.ok) {
+          return c.json(permission.response, 403)
+        }
+      } else if (!isDesktopVersionOnlyOrganizationUpdate(input)) {
+        return c.json({
+          error: "forbidden",
+          message: "Workspace admins can only change allowed desktop versions.",
+        }, 403)
+      }
 
       const normalizedDomains: { domains: string[] | null | undefined; invalidDomains: string[] } = input.allowedEmailDomains === undefined
         ? { domains: undefined, invalidDomains: [] }
