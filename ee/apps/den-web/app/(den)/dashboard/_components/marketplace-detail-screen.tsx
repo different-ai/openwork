@@ -7,6 +7,7 @@ import { PaperMeshGradient, StaticSeededGradient } from "@openwork/ui/react";
 import { buttonVariants, DenButton } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
 import { DenSelect } from "../../_components/ui/select";
+import { type TabItem, UnderlineTabs } from "../../_components/ui/tabs";
 import {
   getGithubIntegrationSetupRoute,
   getMarketplacesRoute,
@@ -120,14 +121,10 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
   }
 
   const { marketplace, plugins, source } = data;
-  const tabs: Array<{
-    id: MarketplaceDetailTab;
-    label: string;
-    icon: React.ComponentType<{ className?: string }>;
-  }> = [
-    { id: "plugins", label: "Plugins", icon: Puzzle },
-    { id: "members", label: "Members", icon: Users },
-    { id: "configure", label: "Configure", icon: Plug },
+  const tabs: readonly TabItem<MarketplaceDetailTab>[] = [
+    { value: "plugins", label: "Plugins", icon: Puzzle },
+    { value: "members", label: "Members", icon: Users },
+    { value: "configure", label: "Configure", icon: Plug, count: configurationTargets.length },
   ];
 
   return (
@@ -179,54 +176,16 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
         </div>
       </article>
 
-      <div className="mt-6">
-        <div
-          className="grid w-full grid-cols-3 gap-1 rounded-2xl border border-gray-100 bg-gray-50/80 p-1 shadow-[0_1px_2px_rgba(15,23,42,0.03)] sm:w-fit"
-          role="tablist"
-          aria-label="Marketplace sections"
-        >
-          {tabs.map((tab) => {
-            const Icon = tab.icon;
-            const active = activeTab === tab.id;
-            return (
-              <button
-                key={tab.id}
-                type="button"
-                role="tab"
-                id={`marketplace-${tab.id}-tab`}
-                aria-controls={`marketplace-${tab.id}-panel`}
-                aria-selected={active}
-                onClick={() => setActiveTab(tab.id)}
-                className={`inline-flex min-h-9 items-center justify-center gap-1.5 rounded-xl px-3.5 py-2 text-[12.5px] font-medium transition-all ${
-                  active
-                    ? "border border-gray-100 bg-white text-gray-950 shadow-[0_2px_8px_-3px_rgba(15,23,42,0.18)]"
-                    : "border border-transparent text-gray-500 hover:bg-white/70 hover:text-gray-800"
-                }`}
-              >
-                <Icon className={`h-3.5 w-3.5 ${active ? "text-gray-700" : "text-gray-400"}`} />
-                <span>{tab.label}</span>
-                {tab.id === "configure" ? (
-                  <span
-                    className={`inline-flex min-w-5 items-center justify-center rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${
-                      configurationTargets.length > 0
-                        ? "bg-amber-50 text-amber-700"
-                        : active
-                          ? "bg-gray-100 text-gray-500"
-                          : "bg-white text-gray-400"
-                    }`}
-                  >
-                    {configurationTargets.length}
-                  </span>
-                ) : null}
-              </button>
-            );
-          })}
-        </div>
-      </div>
+      <UnderlineTabs
+        className="mt-6"
+        tabs={tabs}
+        activeTab={activeTab}
+        onChange={setActiveTab}
+      />
 
       <div className="mt-6">
         {activeTab === "plugins" ? (
-          <div id="marketplace-plugins-panel" role="tabpanel" aria-labelledby="marketplace-plugins-tab" className="space-y-6">
+          <div role="tabpanel" aria-label="Plugins" className="space-y-6">
             {source ? (
               <section>
                 <h2 className="mb-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">
@@ -289,13 +248,13 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
         ) : null}
 
         {activeTab === "members" ? (
-          <div id="marketplace-members-panel" role="tabpanel" aria-labelledby="marketplace-members-tab">
+          <div role="tabpanel" aria-label="Members">
             <MarketplaceAccessSection marketplaceId={marketplace.id} />
           </div>
         ) : null}
 
         {activeTab === "configure" ? (
-          <div id="marketplace-configure-panel" role="tabpanel" aria-labelledby="marketplace-configure-tab">
+          <div role="tabpanel" aria-label="Configure">
             <MarketplaceConfigureSection
               targets={configurationTargets}
               presets={presets}
