@@ -282,16 +282,30 @@ export async function desktopHandoffSignIn(ctx, email) {
 function localServerExpr() {
   return `(() => {
     const urlOverride = (localStorage.getItem("openwork.server.urlOverride") || "").trim();
-    const active = (localStorage.getItem("openwork.server.active") || "").trim();
-    const port = (localStorage.getItem("openwork.server.port") || "").trim();
     const token = (localStorage.getItem("openwork.server.token") || "").trim();
     const hostToken = (localStorage.getItem("openwork.server.hostToken") || "").trim();
-    const base = (urlOverride || active || (port ? "http://127.0.0.1:" + port : "")).replace(/\\/+$/, "");
+    const base = urlOverride.replace(/\\/+$/, "");
     return { base, token, hostToken };
   })()`;
 }
 
-export async function ensureLocalWorkspace(ctx, folderPath, name) {
+export async function waitForOpenWorkConnectReady(ctx, timeout = 90_000) {
+  let last = null;
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    last = await ctx.eval(`(() => {
+      const text = document.body.innerText || "";
+      const match = text.match(/OpenWork Connect: (Ready|Checking|Needs attention)/);
+      return { ready: text.includes("OpenWork Connect: Ready"), status: match?.[0] || "", hash: window.location.hash };
+    })()`);
+    if (last?.ready) return last;
+    await ctx.eval("window.dispatchEvent(new Event('focus'))").catch(() => undefined);
+    await sleep(1_000);
+  }
+  throw new Error(`OpenWork Connect did not become Ready in the status bar within ${timeout}ms: ${JSON.stringify(last)}`);
+}
+
+export async function ensureLocalWorkspace(ctx, folderPath) {
   await ctx.waitFor(`(() => { const s = ${localServerExpr()}; return Boolean(s.base && s.token); })()`, { timeoutMs: 60_000, label: "local OpenWork server URL/token" });
   let created = null;
   const deadline = Date.now() + 60_000;
@@ -300,21 +314,17 @@ export async function ensureLocalWorkspace(ctx, folderPath, name) {
       try {
         const s = ${localServerExpr()};
         if (!s.base || !s.token) return { ok: false, reason: "missing local server base/token", base: s.base, token: Boolean(s.token) };
-        const headers = { "content-type": "application/json", authorization: "Bearer " + s.token };
+        const headers = { "Content-Type": "application/json", Authorization: "Bearer " + s.token };
         if (s.hostToken) headers["X-OpenWork-Host-Token"] = s.hostToken;
-        const response = await fetch(s.base + "/workspaces/local", { method: "POST", headers, body: JSON.stringify({ folderPath: ${JSON.stringify(folderPath)}, name: ${JSON.stringify(name)}, preset: "starter" }) });
+        const response = await fetch(s.base + "/workspaces/local", { method: "POST", headers, body: JSON.stringify({ folderPath: ${JSON.stringify(folderPath)} }) });
         const text = await response.text();
         let payload = null;
         try { payload = text ? JSON.parse(text) : null; } catch {}
         if (!response.ok) return { ok: false, status: response.status, text };
-        const workspaces = Array.isArray(payload?.workspaces) ? payload.workspaces : [];
-        const workspaceId = payload?.activeId || payload?.workspace?.id || payload?.workspaceId || workspaces.find((workspace) => workspace.path === ${JSON.stringify(folderPath)} || workspace.folderPath === ${JSON.stringify(folderPath)})?.id;
+        const workspaceId = typeof payload?.activeId === "string" ? payload.activeId.trim() : "";
         if (!workspaceId) return { ok: false, status: response.status, text: "workspace id missing", payload };
-        const activate = await fetch(s.base + "/workspaces/" + encodeURIComponent(workspaceId) + "/activate?persist=true", { method: "POST", headers });
-        const activateText = await activate.text();
-        if (!activate.ok) return { ok: false, status: activate.status, text: activateText };
         localStorage.setItem("openwork.react.activeWorkspace", workspaceId);
-        return { ok: true, workspaceId, base: s.base };
+        return { ok: true, workspaceId, base: s.base, status: response.status };
       } catch (error) {
         return { ok: false, error: error instanceof Error ? error.message : String(error) };
       }
@@ -323,75 +333,33 @@ export async function ensureLocalWorkspace(ctx, folderPath, name) {
     await sleep(1_000);
   }
   ctx.assert(created?.ok && created.workspaceId, `Workspace setup failed for ${folderPath}: ${JSON.stringify(created)}`);
-  await ctx.navigateHash(`/workspace/${created.workspaceId}/session`);
+  await ctx.eval(`(() => {
+    window.location.hash = ${JSON.stringify(`#/workspace/${created.workspaceId}/session`)};
+    return window.location.hash;
+  })()`);
   await ctx.waitFor("window.location.hash.includes('/workspace/') && window.location.hash.includes('/session')", { timeoutMs: 60_000, label: "workspace session route" });
+  await ensureComposerReady(ctx);
   return created.workspaceId;
 }
 
-async function runtimeCloudControl(ctx, workspaceId) {
-  return ctx.eval(`(async () => {
-    const s = ${localServerExpr()};
-    if (!s.base || !s.token) return { ok: false, reason: "missing local server base/token" };
-    const headers = { authorization: "Bearer " + s.token };
-    if (s.hostToken) headers["X-OpenWork-Host-Token"] = s.hostToken;
-    const response = await fetch(s.base + "/workspace/" + ${JSON.stringify(workspaceId)} + "/mcp", { headers });
-    const text = await response.text();
-    let payload = null;
-    try { payload = text ? JSON.parse(text) : null; } catch {}
-    if (!response.ok) return { ok: false, status: response.status, text };
-    const items = payload?.items ?? [];
-    const entry = items.find((item) => item.name === "openwork-cloud");
-    return { ok: Boolean(entry?.config?.url?.includes("/mcp/agent") && entry?.config?.headers?.Authorization && entry?.config?.oauth === false && payload?.engineSync?.status === "ok"), names: items.map((item) => item.name), engineSync: payload?.engineSync?.status ?? null, failures: payload?.engineSync?.failures ?? [] };
-  })()`, { awaitPromise: true });
-}
-
-export async function waitForRuntimeCloudControlMcp(ctx, workspaceId, timeout = 90_000) {
+export async function ensureComposerReady(ctx, timeout = 90_000) {
   let last = null;
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
-    try {
-      last = await runtimeCloudControl(ctx, workspaceId);
-      if (last?.ok) return last;
-    } catch (error) {
-      last = { ok: false, error: error instanceof Error ? error.message : String(error) };
-    }
+    last = await ctx.eval(`(() => {
+      const text = document.body.innerText || "";
+      return {
+        hasComposer: Boolean(document.querySelector(${JSON.stringify(EDITOR_SELECTOR)})),
+        opencodeUnavailable: text.includes("OpenCode unavailable") || text.includes("opencode_unconfigured"),
+        hash: window.location.hash,
+        text: text.slice(0, 1_000),
+      };
+    })()`);
+    if (last?.hasComposer && !last.opencodeUnavailable) break;
     await sleep(1_000);
   }
-  throw new Error(`OpenWork Cloud Control MCP did not become runtime-ready: ${JSON.stringify(last)}`);
-}
-
-export async function ensureOpenWorkCloudControlReady(ctx, workspaceId) {
-  await ctx.navigateHash(`/workspace/${workspaceId}/settings/extensions/mcp`);
-  await ctx.waitFor("document.body.innerText.includes('OpenWork Cloud Control') || document.body.innerText.includes('Add Custom App') || document.body.innerText.includes('Extension')", { timeoutMs: 60_000, label: "MCP settings mounted" });
-  await clickExactIfVisible(ctx, "Show hidden", "button, [role=button]").catch(() => false);
-  const connected = await ctx.eval(`(() => {
-    const card = [...document.querySelectorAll("button, [role=button]")].find((entry) => (entry.textContent ?? "").includes("OpenWork Cloud Control"));
-    return Boolean(card?.textContent?.includes("Connected"));
-  })()`);
-  if (!connected) {
-    const opened = await ctx.eval(`(() => {
-      const card = [...document.querySelectorAll("button, [role=button]")].find((entry) => (entry.textContent ?? "").includes("OpenWork Cloud Control"));
-      card?.scrollIntoView({ block: "center", inline: "center" });
-      card?.click();
-      return Boolean(card);
-    })()`);
-    ctx.assert(opened, "Could not find the OpenWork Cloud Control MCP card in settings.");
-    await ctx.waitForText("OpenWork Cloud Control", { timeoutMs: 15_000 });
-    await ctx.eval(`(() => {
-      const dialog = document.querySelector('[role="dialog"]');
-      const button = [...(dialog?.querySelectorAll("button") ?? [])].find((entry) => (entry.textContent ?? "").replace(/\\s+/g, " ").trim() === "Connect" && !entry.disabled);
-      button?.click();
-      return true;
-    })()`);
-  }
-  await clickExactIfVisible(ctx, "Refresh", "button, [role=button]").catch(() => false);
-  await waitForRuntimeCloudControlMcp(ctx, workspaceId);
-  await ctx.navigateHash(`/workspace/${workspaceId}/session`);
-  await ensureComposerReady(ctx);
-}
-
-export async function ensureComposerReady(ctx) {
-  await ctx.waitFor(`Boolean(document.querySelector(${JSON.stringify(EDITOR_SELECTOR)}))`, { timeoutMs: 60_000, label: "Lexical composer" });
+  if (last?.opencodeUnavailable) throw new Error(`OpenCode unavailable — opencode_unconfigured persisted while waiting for the workspace composer. Restart the app and rerun this eval so the engine can spawn. Last state: ${JSON.stringify(last)}`);
+  if (!last?.hasComposer) throw new Error(`Workspace composer did not become ready within ${timeout}ms: ${JSON.stringify(last)}`);
   await ctx.waitFor("document.body.innerText.includes('Run task')", { timeoutMs: 60_000, label: "Run task button" });
 }
 

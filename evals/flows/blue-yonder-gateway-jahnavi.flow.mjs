@@ -23,12 +23,12 @@ import {
   assertEvidence,
   desktopHandoffSignIn,
   ensureLocalWorkspace,
-  ensureOpenWorkCloudControlReady,
   listSkillsFor,
   retryAfterGatewayLoginIfNeeded,
   sendPromptAndWait,
   signInByEmail,
   timeoutMs,
+  waitForOpenWorkConnectReady,
   workspaceFolder,
 } from "./blue-yonder-gateway-common.mjs";
 
@@ -60,11 +60,11 @@ export default {
       },
     },
     {
-      name: "Create Jahnavi's fresh workspace and attach OpenWork Cloud Control",
+      name: "Create Jahnavi's fresh workspace with OpenWork Connect ready",
       run: async (ctx) => {
+        await waitForOpenWorkConnectReady(ctx);
         const folder = workspaceFolder(ctx, WORKSPACE_ENV, DEFAULT_WORKSPACE);
-        state.workspaceId = await ensureLocalWorkspace(ctx, folder, "blue-yonder-jahnavi");
-        await ensureOpenWorkCloudControlReady(ctx, state.workspaceId);
+        state.workspaceId = await ensureLocalWorkspace(ctx, folder);
       },
     },
     {
