@@ -24,7 +24,6 @@ import {
 import { LazyMotion, Reorder, domMax, m, useDragControls } from "motion/react";
 
 import { getDisplaySessionTitle } from "../../../../app/lib/session-title";
-import { OPENWORK_BUILD_IDENTIFIER_LABEL } from "../../../../app/lib/build-identifier";
 import type { WorkspaceInfo } from "../../../../app/lib/desktop";
 import { OpenWorkDenHelpLink } from "../../workspace/openwork-den-help-link";
 import type {
@@ -622,20 +621,6 @@ function isSessionActivityStatus(status: string | undefined): status is SessionA
   return status === "idle" || status === "thinking" || status === "responding" || status === "error" || status === "compacting" || status === "waiting";
 }
 
-function SidebarBuildIdentifier() {
-  if (!OPENWORK_BUILD_IDENTIFIER_LABEL) return null;
-
-  return (
-    <div
-      data-testid="sidebar-build-identifier"
-      className="select-text truncate px-2 text-[11px] leading-4 text-sidebar-foreground/50 group-data-[collapsible=icon]:hidden"
-      title={OPENWORK_BUILD_IDENTIFIER_LABEL}
-    >
-      {OPENWORK_BUILD_IDENTIFIER_LABEL}
-    </div>
-  );
-}
-
 export function AppSidebar(props: AppSidebarProps) {
   const [expandedWorkspaceIds, setExpandedWorkspaceIds] = React.useState<Set<string>>(
     () => new Set(),
@@ -837,7 +822,6 @@ export function AppSidebar(props: AppSidebarProps) {
               </SidebarMenuButton>
             </SidebarMenuItem>
           </SidebarMenu>
-          <SidebarBuildIdentifier />
         </SidebarFooter>
         <SidebarRail
           className="before:pointer-events-none before:absolute before:inset-y-0 before:left-[calc(50%+1px)] before:right-0 before:content-[''] group-data-[state=expanded]:before:bg-sidebar"
