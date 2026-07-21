@@ -228,10 +228,6 @@ export function DenSignInSurface(props: DenSignInSurfaceProps) {
         <div className={softNoticeClass}>{props.statusMessage}</div>
       ) : null}
 
-      {props.signinFallbackUrl ? (
-        <SignInFallbackNotice url={props.signinFallbackUrl} />
-      ) : null}
-
       <div className="space-y-2">
         <div className="max-w-[54ch] text-sm text-dls-secondary">
           {t("den.auto_reconnect_hint")}
@@ -262,6 +258,10 @@ export function DenSignInSurface(props: DenSignInSurfaceProps) {
             : t("den.paste_signin_code")}
         </Button>
       </div>
+
+      {props.signinFallbackUrl ? (
+        <SignInFallbackNotice url={props.signinFallbackUrl} />
+      ) : null}
 
       {props.manualAuthOpen ? (
         <div className={`${settingsPanelSoftClass} space-y-3`}>
@@ -346,6 +346,10 @@ export function DenSignInSurface(props: DenSignInSurfaceProps) {
                 <ArrowUpRight size={15} />
               </button>
 
+              {props.signinFallbackUrl ? (
+                <SignInFallbackNotice url={props.signinFallbackUrl} />
+              ) : null}
+
               {props.onOrganizationServerSave ? (
                 <OrganizationServerAffordance
                   busy={props.organizationServerBusy === true}
@@ -357,10 +361,6 @@ export function DenSignInSurface(props: DenSignInSurfaceProps) {
 
               {props.statusMessage && !props.authError ? (
                 <div className={softNoticeClass}>{props.statusMessage}</div>
-              ) : null}
-
-              {props.signinFallbackUrl ? (
-                <SignInFallbackNotice url={props.signinFallbackUrl} />
               ) : null}
 
               {props.authError ? (
