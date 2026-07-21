@@ -470,6 +470,16 @@ describe("external MCP diagnostics", () => {
     })
   })
 
+  test("recognizes the SDK local timeout by its structural payload, not its message", () => {
+    const tracker = new ExternalMcpDiagnosticTracker("req_local_timeout_structural")
+    tracker.begin("MCP_TOOL_EXECUTION")
+    // Same structural payload the SDK sets locally, but a non-default message:
+    // provenance must not hinge on the English string.
+    const localTimeout = new McpError(-32001, "deadline reached", { maxTotalTimeout: 60_000, totalElapsed: 60_001 })
+
+    expect(tracker.error(localTimeout).diagnostic.code).toBe("MCP_REQUEST_TIMEOUT")
+  })
+
   test("classifies an OpenWork lifecycle-deadline abort as an OpenWork timeout", () => {
     const tracker = new ExternalMcpDiagnosticTracker("req_lifecycle_abort")
     tracker.begin("MCP_TOOL_EXECUTION")

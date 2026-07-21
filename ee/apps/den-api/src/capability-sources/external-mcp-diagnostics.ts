@@ -229,18 +229,25 @@ function numericErrorCode(value: unknown): number | undefined {
   return undefined
 }
 
-// The MCP SDK generates a request timeout locally with a fixed message; OpenWork
-// pins this SDK, so those exact strings are a reliable local-provenance marker.
+// The SDK's own local request timeout, verified against its source: it sets a
+// numeric data.timeout (per-request) or data.maxTotalTimeout (overall) and a
+// fixed message. The structural fields are the primary marker; the strings are a
+// secondary, redundant one.
 const LOCAL_SDK_TIMEOUT_SUFFIXES = ["Request timed out", "Maximum total timeout exceeded"]
 
 /**
  * True only for a timeout OpenWork's own runtime produced — the pinned MCP
- * SDK's client request timeout (`ErrorCode.RequestTimeout` with its fixed local
- * message), an abort/timeout from OpenWork's bounded deadline signal, or the
- * enterprise client's lifecycle-deadline abort. Classification is by
- * PROVENANCE, never the bare numeric code: the SDK reserves -32001 for its own
- * timeout, but a remote provider may return -32001 for something unrelated, and
- * that response must not be mistaken for a local timeout.
+ * SDK's client request timeout, an abort/timeout from OpenWork's bounded
+ * deadline signal, or the enterprise client's lifecycle-deadline abort.
+ *
+ * Classification is by PROVENANCE, never the bare numeric code: the SDK reserves
+ * -32001 for its own timeout, but a remote provider may return -32001 for
+ * something unrelated, and that response must not be mistaken for a local
+ * timeout. The SDK timeout is recognized by the structural payload it sets
+ * locally (`data.timeout` / `data.maxTotalTimeout` numbers) first, then by its
+ * fixed message, so detection does not hinge on an English string. A remote
+ * that deliberately forges this exact shape can at most earn a timeout label —
+ * it can never produce an unsafe action, a relayed link, or an automatic retry.
  */
 function isLocalMcpTimeout(error: unknown): boolean {
   let current: unknown = error
@@ -248,8 +255,10 @@ function isLocalMcpTimeout(error: unknown): boolean {
   for (let depth = 0; depth < 5 && current && !seen.has(current); depth += 1) {
     seen.add(current)
     if (current instanceof McpError && current.code === ErrorCode.RequestTimeout) {
-      const message = current.message
-      if (LOCAL_SDK_TIMEOUT_SUFFIXES.some((suffix) => message.endsWith(suffix))) return true
+      const data = current.data
+      if (isRecord(data) && (typeof data.timeout === "number" || typeof data.maxTotalTimeout === "number")) return true
+      const timeoutMessage = current.message
+      if (LOCAL_SDK_TIMEOUT_SUFFIXES.some((suffix) => timeoutMessage.endsWith(suffix))) return true
     }
     if (current instanceof DOMException && (current.name === "TimeoutError" || current.name === "AbortError")) return true
     const name = current instanceof Error ? current.name : stringProperty(current, "name")
