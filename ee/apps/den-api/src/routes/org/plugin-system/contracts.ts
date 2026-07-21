@@ -173,6 +173,7 @@ export const pluginArchRoutePaths = {
   marketplace: `${orgBasePath}/marketplaces/:marketplaceId`,
   marketplaceResolved: `${orgBasePath}/marketplaces/:marketplaceId/resolved`,
   marketplaceArchive: `${orgBasePath}/marketplaces/:marketplaceId/archive`,
+  marketplaceDelete: `${orgBasePath}/marketplaces/:marketplaceId/delete`,
   marketplaceRestore: `${orgBasePath}/marketplaces/:marketplaceId/restore`,
   marketplacePlugins: `${orgBasePath}/marketplaces/:marketplaceId/plugins`,
   marketplacePlugin: `${orgBasePath}/marketplaces/:marketplaceId/plugins/:pluginId`,
@@ -526,6 +527,15 @@ export const pluginArchEndpointContracts: Record<string, EndpointContract> = {
     path: pluginArchRoutePaths.marketplaceArchive,
     request: { params: marketplaceParamsSchema },
     response: { description: "Archived marketplace detail.", schema: marketplaceMutationResponseSchema, status: 200 },
+    tag: "Marketplaces",
+  },
+  deleteMarketplace: {
+    audience: "admin",
+    description: "Soft-delete a custom marketplace while preserving its plugins and membership history.",
+    method: "POST",
+    path: pluginArchRoutePaths.marketplaceDelete,
+    request: { params: marketplaceParamsSchema },
+    response: { description: "Deleted marketplace detail.", schema: marketplaceMutationResponseSchema, status: 200 },
     tag: "Marketplaces",
   },
   restoreMarketplace: {

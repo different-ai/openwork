@@ -813,7 +813,9 @@ export const marketplaceMutationResponseSchema = pluginArchMutationResponseSchem
 export const marketplaceResolvedResponseSchema = pluginArchMutationResponseSchema(
   "PluginArchMarketplaceResolvedResponse",
   z.object({
-    marketplace: marketplaceSchema,
+    marketplace: marketplaceSchema.extend({
+      canDelete: z.boolean(),
+    }),
     plugins: z.array(pluginSchema.extend({
       componentCounts: z.record(z.string(), z.number().int().nonnegative()).default({}),
       cloudReadiness: pluginCloudReadinessSchema.optional(),

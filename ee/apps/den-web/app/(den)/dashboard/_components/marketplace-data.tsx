@@ -13,6 +13,7 @@ export type DenMarketplace = {
   pluginCount: number;
   createdAt: string;
   updatedAt: string;
+  canDelete?: boolean;
 };
 
 export const marketplaceQueryKeys = {
@@ -105,6 +106,7 @@ function parseMarketplace(entry: unknown): DenMarketplace | null {
     pluginCount: typeof entry.pluginCount === "number" ? entry.pluginCount : 0,
     createdAt,
     updatedAt,
+    ...(typeof entry.canDelete === "boolean" ? { canDelete: entry.canDelete } : {}),
   };
 }
 
@@ -453,6 +455,31 @@ export function useCreateMarketplace() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: marketplaceQueryKeys.all });
+    },
+  });
+}
+
+export function useDeleteMarketplace() {
+  const queryClient = useQueryClient();
+  const { runReauthableAction } = useOrgDashboard();
+
+  return useMutation({
+    mutationFn: async (marketplaceId: string): Promise<string> => {
+      await runReauthableAction("delete-marketplace", async () => {
+        const { response, payload } = await requestJson(
+          `/v1/marketplaces/${encodeURIComponent(marketplaceId)}/delete`,
+          { method: "POST" },
+          15000,
+        );
+        if (!response.ok) {
+          throw getRequestError(payload, response, `Failed to delete marketplace (${response.status}).`);
+        }
+      });
+      return marketplaceId;
+    },
+    onSuccess: (marketplaceId) => {
+      queryClient.removeQueries({ queryKey: marketplaceQueryKeys.resolved(marketplaceId) });
+      queryClient.invalidateQueries({ queryKey: marketplaceQueryKeys.list() });
     },
   });
 }

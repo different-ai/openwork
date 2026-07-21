@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useMemo, useRef, useState, useEffect } from "react";
-import { ArrowLeft, Check, ChevronDown, GitBranch, Github, Globe, Loader2, Plug, Plus, Puzzle, Users, X } from "lucide-react";
+import { ArrowLeft, Check, ChevronDown, GitBranch, Github, Globe, Loader2, Plug, Plus, Puzzle, Trash2, Users, X } from "lucide-react";
 import { PaperMeshGradient, StaticSeededGradient } from "@openwork/ui/react";
 import { buttonVariants, DenButton } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
@@ -23,6 +24,7 @@ import {
   type MarketplacePluginCloudReadinessState,
   type MarketplacePluginSummary,
   useConfigurePluginMcpConnection,
+  useDeleteMarketplace,
   useGrantMarketplaceAccess,
   useMarketplace,
   useMarketplaceAccess,
@@ -78,11 +80,13 @@ function authTypeFromSelect(value: string): ExternalMcpAuthType {
 }
 
 export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: string }) {
+  const router = useRouter();
   const { orgContext, orgSlug } = useOrgDashboard();
   const { data, isLoading, error, refetch } = useMarketplace(marketplaceId);
   const { data: presets = [] } = useMcpConnectionPresets();
   const [setupTarget, setSetupTarget] = useState<PluginMcpSetupTarget | null>(null);
   const [activeTab, setActiveTab] = useState<MarketplaceDetailTab>("plugins");
+  const deleteMarketplace = useDeleteMarketplace();
   const authorization = useMcpAccountAuthorization(() => {
     void refetch();
   });
@@ -123,6 +127,19 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
   }
 
   const { marketplace, plugins, source } = data;
+  async function handleDeleteMarketplace() {
+    const confirmed = window.confirm(
+      `Delete ${marketplace.name}? It will disappear from your organization and stop granting plugin access. The plugins themselves will not be deleted.`,
+    );
+    if (!confirmed) return;
+    try {
+      await deleteMarketplace.mutateAsync(marketplace.id);
+      router.push(getMarketplacesRoute(orgSlug));
+      router.refresh();
+    } catch {
+      // The mutation error is rendered below the action.
+    }
+  }
   const tabs: readonly TabItem<MarketplaceDetailTab>[] = [
     { value: "plugins", label: "Plugins", icon: Puzzle },
     { value: "members", label: "Members", icon: Users },
@@ -139,7 +156,23 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
           <ArrowLeft className="h-4 w-4" />
           Back
         </Link>
+        {access.isAdmin && marketplace.canDelete ? (
+          <DenButton
+            variant="destructive"
+            loading={deleteMarketplace.isPending}
+            onClick={() => void handleDeleteMarketplace()}
+          >
+            <Trash2 className="h-4 w-4" aria-hidden />
+            Delete marketplace
+          </DenButton>
+        ) : null}
       </div>
+
+      {deleteMarketplace.error ? (
+        <div className="mb-6 rounded-2xl border border-red-100 bg-red-50 px-5 py-3.5 text-[13px] text-red-600">
+          {deleteMarketplace.error instanceof Error ? deleteMarketplace.error.message : "Failed to delete marketplace."}
+        </div>
+      ) : null}
 
       <article className="overflow-hidden rounded-2xl border border-gray-100 bg-white">
         <div className="flex items-stretch">

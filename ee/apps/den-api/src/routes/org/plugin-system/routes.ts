@@ -1,6 +1,6 @@
 import type { Context, Hono } from "hono"
 import { describeRoute } from "hono-openapi"
-import type { z } from "zod"
+import { z } from "zod"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { queryValidator, jsonValidator, orgMemberRoute, paramValidator, resolveMemberTeamsMiddleware } from "../../../middleware/index.js"
 import { emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../../openapi.js"
@@ -184,6 +184,11 @@ import {
 
 type OrgContext = Context<{ Variables: OrgRouteVariables }>
 type PluginCreateBody = z.infer<typeof pluginCreateSchema>
+
+const marketplaceConflictSchema = z.object({
+  error: z.string(),
+  message: z.string().optional(),
+}).meta({ ref: "PluginArchMarketplaceConflictError" })
 
 function validRequestPart<T>(c: OrgContext, target: "json" | "param" | "query") {
   return (c.req as unknown as { valid: (part: typeof target) => unknown }).valid(target) as T
@@ -1129,19 +1134,26 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
       }
     })
 
-  for (const [path, action] of [[pluginArchRoutePaths.marketplaceArchive, "archive"], [pluginArchRoutePaths.marketplaceRestore, "restore"]] as const) {
+  for (const [path, action] of [
+    [pluginArchRoutePaths.marketplaceArchive, "archive"],
+    [pluginArchRoutePaths.marketplaceDelete, "delete"],
+    [pluginArchRoutePaths.marketplaceRestore, "restore"],
+  ] as const) {
     withPluginArchOrgContext(app, "post", path,
       paramValidator(marketplaceParamsSchema),
       describeRoute({
         tags: ["Marketplaces"],
         summary: `${action} marketplace`,
-        description: `${action} a marketplace without touching membership history.`,
+        description: `${action} a marketplace without deleting its plugins or membership history.`,
         responses: {
           200: jsonResponse("Marketplace lifecycle updated successfully.", marketplaceMutationResponseSchema),
           400: jsonResponse("The marketplace lifecycle path parameters were invalid.", invalidRequestSchema),
           401: jsonResponse("The caller must be signed in to manage marketplaces.", unauthorizedSchema),
           403: jsonResponse("The caller lacks permission to manage this marketplace.", forbiddenSchema),
           404: jsonResponse("The marketplace could not be found.", notFoundSchema),
+          ...(action === "delete" ? {
+            409: jsonResponse("A built-in or connector-managed marketplace cannot be deleted.", marketplaceConflictSchema),
+          } : {}),
         },
       }),
       async (c: OrgContext) => {

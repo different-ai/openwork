@@ -2334,13 +2334,27 @@ export async function updateMarketplace(input: { context: PluginArchActorContext
   return getMarketplaceDetail(input.context, row.id)
 }
 
-export async function setMarketplaceLifecycle(input: { action: "archive" | "restore"; context: PluginArchActorContext; marketplaceId: MarketplaceId }) {
+export async function setMarketplaceLifecycle(input: { action: "archive" | "delete" | "restore"; context: PluginArchActorContext; marketplaceId: MarketplaceId }) {
   const row = await ensureVisibleMarketplace(input.context, input.marketplaceId)
   await requirePluginArchResourceRole({ context: input.context, resourceId: row.id, resourceKind: "marketplace", role: "manager" })
   const updatedAt = new Date()
+  if (input.action === "delete") {
+    const managedMembership = (await db
+      .select({ id: MarketplacePluginTable.id })
+      .from(MarketplacePluginTable)
+      .where(and(
+        eq(MarketplacePluginTable.marketplaceId, row.id),
+        inArray(MarketplacePluginTable.membershipSource, ["system", "connector"]),
+        isNull(MarketplacePluginTable.removedAt),
+      ))
+      .limit(1))[0]
+    if (managedMembership) {
+      throw new PluginArchRouteFailure(409, "managed_marketplace_cannot_be_deleted", "Built-in and connected marketplaces cannot be deleted here.")
+    }
+  }
   await db.update(MarketplaceTable).set({
-    deletedAt: input.action === "archive" ? row.deletedAt : null,
-    status: input.action === "archive" ? "archived" : "active",
+    deletedAt: input.action === "delete" ? updatedAt : input.action === "restore" ? null : row.deletedAt,
+    status: input.action === "archive" ? "archived" : input.action === "delete" ? "deleted" : "active",
     updatedAt,
   }).where(eq(MarketplaceTable.id, row.id))
   await syncPluginMcpRequirementAccessForResource({
@@ -2496,7 +2510,10 @@ export async function getMarketplaceResolved(input: { context: PluginArchActorCo
   }
 
   return {
-    marketplace: serializeMarketplace(marketplaceRow, plugins.length),
+    marketplace: {
+      ...serializeMarketplace(marketplaceRow, plugins.length),
+      canDelete: memberships.every((membership) => membership.membershipSource === "manual"),
+    },
     plugins,
     source,
   }
