@@ -340,25 +340,6 @@ body {
   box-shadow: inset 0 0 0 1px rgba(var(--dls-accent-rgb), 0.28), 0 0 0 3px rgba(var(--dls-accent-rgb), 0.08);
 }
 
-/* Global clickable elements pointer */
-button,
-[role="button"],
-a,
-input[type="submit"],
-input[type="button"],
-input[type="checkbox"],
-input[type="radio"],
-select {
-  cursor: pointer;
-}
-
-button:disabled,
-[role="button"][aria-disabled="true"],
-input:disabled,
-select:disabled {
-  cursor: not-allowed;
-}
-
 @utility animate-spin-slow {
   animation: spin 3s linear infinite;
 }
@@ -535,5 +516,24 @@ select:disabled {
   }
   html {
     @apply font-sans;
+  }
+
+  /* Clickable defaults stay below utilities so interaction-specific cursors can override them. */
+  button,
+  [role="button"],
+  a,
+  input[type="submit"],
+  input[type="button"],
+  input[type="checkbox"],
+  input[type="radio"],
+  select {
+    cursor: pointer;
+  }
+
+  button:disabled,
+  [role="button"][aria-disabled="true"],
+  input:disabled,
+  select:disabled {
+    cursor: not-allowed;
   }
 }
