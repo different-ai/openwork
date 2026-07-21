@@ -459,6 +459,39 @@ export function useCreateMarketplace() {
   });
 }
 
+export function useUpdateMarketplace() {
+  const queryClient = useQueryClient();
+  const { runReauthableAction } = useOrgDashboard();
+
+  return useMutation({
+    mutationFn: async (input: { marketplaceId: string; name: string; description: string | null }): Promise<DenMarketplace> => {
+      let updated: DenMarketplace | null = null;
+      await runReauthableAction("update-marketplace", async () => {
+        const { response, payload } = await requestJson(
+          `/v1/marketplaces/${encodeURIComponent(input.marketplaceId)}`,
+          {
+            method: "PATCH",
+            body: JSON.stringify({ name: input.name, description: input.description }),
+          },
+          15000,
+        );
+        if (!response.ok) {
+          throw getRequestError(payload, response, `Failed to update marketplace (${response.status}).`);
+        }
+        updated = isRecord(payload) && isRecord(payload.item) ? parseMarketplace(payload.item) : null;
+      });
+      if (!updated) {
+        throw new Error("Marketplace update response was incomplete.");
+      }
+      return updated;
+    },
+    onSuccess: (marketplace) => {
+      queryClient.invalidateQueries({ queryKey: marketplaceQueryKeys.list() });
+      queryClient.invalidateQueries({ queryKey: marketplaceQueryKeys.resolved(marketplace.id) });
+    },
+  });
+}
+
 export function useDeleteMarketplace() {
   const queryClient = useQueryClient();
   const { runReauthableAction } = useOrgDashboard();

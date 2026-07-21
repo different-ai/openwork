@@ -6,6 +6,7 @@ const vo = await loadVoiceoverParagraphs(FLOW_ID);
 const OWNER_EMAIL = process.env.OPENWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
 const OWNER_PASSWORD = process.env.OPENWORK_EVAL_DEMO_PASSWORD?.trim() || "OpenWorkDemo123!";
 const MARKETPLACE_NAME = `Fraimz Custom Marketplace ${Date.now()}`;
+const UPDATED_MARKETPLACE_NAME = `${MARKETPLACE_NAME} Edited`;
 
 const state = {
   marketplaceId: "",
@@ -44,7 +45,7 @@ function screenshot(name, claim, requireText, rejectText = []) {
 
 export default {
   id: FLOW_ID,
-  title: "Admins safely delete custom marketplaces while managed catalogs stay protected",
+  title: "Admins discreetly edit and safely delete custom marketplaces while managed catalogs stay protected",
   kind: "user-facing",
   preserveTheme: true,
   requiredEnv: ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_WEB_URL"],
@@ -86,21 +87,24 @@ export default {
     {
       name: "Frame 1",
       run: async (ctx) => {
-        await ctx.prove("The custom marketplace exposes a clear destructive action", {
+        await ctx.prove("Marketplace management actions stay in a discreet overflow menu", {
           voiceover: vo[0],
           action: async () => {
             await navigateTo(ctx, `/dashboard/marketplaces/${encodeURIComponent(state.marketplaceId)}`);
-            await ctx.waitForText("Delete marketplace", { timeoutMs: 30_000 });
+            await ctx.waitForText(MARKETPLACE_NAME, { timeoutMs: 30_000 });
+            await ctx.eval(`document.querySelector('[data-testid="marketplace-actions-trigger"]')?.click()`);
+            await ctx.waitForText("Edit", { timeoutMs: 10_000 });
           },
           assert: async () => {
             await ctx.expectText(MARKETPLACE_NAME);
-            await ctx.expectText("Delete marketplace");
+            await ctx.expectText("Edit");
+            await ctx.expectText("Delete");
             await ctx.expectText("0 plugins");
           },
           screenshot: screenshot(
-            "custom-marketplace-delete-action",
-            "A custom marketplace visibly offers Delete marketplace without implying that its plugins will be deleted.",
-            [MARKETPLACE_NAME, "Delete marketplace", "0 plugins"],
+            "custom-marketplace-actions-menu",
+            "A compact overflow menu contains Edit and Delete without promoting the destructive action.",
+            [MARKETPLACE_NAME, "Edit", "Delete", "0 plugins"],
           ),
         });
       },
@@ -108,16 +112,71 @@ export default {
     {
       name: "Frame 2",
       run: async (ctx) => {
-        await ctx.prove("Confirming deletion removes the marketplace from the active organization list", {
+        await ctx.prove("Admins can edit custom marketplace metadata", {
           voiceover: vo[1],
           action: async () => {
-            await ctx.eval("window.confirm = () => true");
-            await ctx.clickText("Delete marketplace", { selector: "button", timeoutMs: 10_000 });
+            await ctx.clickText("Edit", { selector: '[role="menuitem"]', timeoutMs: 10_000 });
+            await ctx.waitForText("Edit marketplace", { timeoutMs: 10_000 });
+            await ctx.fill('[data-testid="marketplace-edit-name"]', UPDATED_MARKETPLACE_NAME);
+            await ctx.fill('[data-testid="marketplace-edit-description"]', "Updated through the marketplace actions menu.");
+            await ctx.clickText("Save changes", { selector: "button", timeoutMs: 10_000 });
+            await ctx.waitForText(UPDATED_MARKETPLACE_NAME, { timeoutMs: 30_000 });
+          },
+          assert: async () => {
+            await ctx.expectText(UPDATED_MARKETPLACE_NAME);
+            await ctx.expectText("Updated through the marketplace actions menu.");
+            const detail = await denApiFetch(`/v1/marketplaces/${encodeURIComponent(state.marketplaceId)}`, { headers: authHeaders() });
+            witness(ctx, detail.response.ok && detail.body?.item?.name === UPDATED_MARKETPLACE_NAME, "The edit persists through the real marketplace API", {
+              status: detail.response.status,
+              name: detail.body?.item?.name,
+            });
+          },
+          screenshot: screenshot(
+            "custom-marketplace-edited",
+            "The marketplace detail immediately reflects the saved name and description.",
+            [UPDATED_MARKETPLACE_NAME, "Updated through the marketplace actions menu."],
+          ),
+        });
+      },
+    },
+    {
+      name: "Frame 3",
+      run: async (ctx) => {
+        await ctx.prove("Deletion requires an explicit modal confirmation", {
+          voiceover: vo[2],
+          action: async () => {
+            await ctx.eval(`document.querySelector('[data-testid="marketplace-actions-trigger"]')?.click()`);
+            await ctx.clickText("Delete", { selector: '[role="menuitem"]', timeoutMs: 10_000 });
+            await ctx.waitForText(`Delete ${UPDATED_MARKETPLACE_NAME}?`, { timeoutMs: 10_000 });
+          },
+          assert: async () => {
+            await ctx.expectText(`Delete ${UPDATED_MARKETPLACE_NAME}?`);
+            await ctx.expectText("Its plugins and membership history will be preserved.");
+            await ctx.expectText("Cancel");
+            await ctx.expectText("Delete marketplace");
+            const alertDialogVisible = await ctx.eval(`Boolean(document.querySelector('[role="alertdialog"][aria-modal="true"]'))`);
+            witness(ctx, alertDialogVisible === true, "The destructive action opens a modal alert dialog before making the request", { alertDialogVisible });
+          },
+          screenshot: screenshot(
+            "custom-marketplace-delete-confirmation",
+            "A dedicated confirmation modal explains the soft-delete and requires an explicit destructive confirmation.",
+            [`Delete ${UPDATED_MARKETPLACE_NAME}?`, "Cancel", "Delete marketplace", "membership history will be preserved"],
+          ),
+        });
+      },
+    },
+    {
+      name: "Frame 4",
+      run: async (ctx) => {
+        await ctx.prove("Confirming deletion removes the marketplace from the active organization list", {
+          voiceover: vo[3],
+          action: async () => {
+            await ctx.clickText("Delete marketplace", { selector: '[role="alertdialog"] button', timeoutMs: 10_000 });
             await ctx.waitFor("location.pathname === '/dashboard/marketplaces'", { timeoutMs: 30_000, label: "marketplace list after deletion" });
             await ctx.waitForText("Marketplaces", { timeoutMs: 30_000 });
           },
           assert: async () => {
-            await ctx.expectNoText(MARKETPLACE_NAME);
+            await ctx.expectNoText(UPDATED_MARKETPLACE_NAME);
             const detail = await denApiFetch(`/v1/marketplaces/${encodeURIComponent(state.marketplaceId)}`, { headers: authHeaders() });
             witness(ctx, detail.response.ok && detail.body?.item?.status === "deleted" && Boolean(detail.body?.item?.deletedAt), "The API records a reversible soft-delete", {
               status: detail.response.status,
@@ -132,25 +191,27 @@ export default {
             "custom-marketplace-removed",
             "The deleted custom marketplace is absent from the active marketplace list.",
             ["Marketplaces", "OpenWork Marketplace"],
-            [MARKETPLACE_NAME],
+            [UPDATED_MARKETPLACE_NAME],
           ),
         });
       },
     },
     {
-      name: "Frame 3",
+      name: "Frame 5",
       run: async (ctx) => {
         await ctx.prove("Built-in marketplaces remain protected from deletion", {
-          voiceover: vo[2],
+          voiceover: vo[4],
           action: async () => {
             await navigateTo(ctx, `/dashboard/marketplaces/${encodeURIComponent(state.builtInMarketplaceId)}`);
             await ctx.waitForText("OpenWork Marketplace", { timeoutMs: 30_000 });
+            await ctx.eval(`document.querySelector('[data-testid="marketplace-actions-trigger"]')?.click()`);
+            await ctx.waitForText("Edit", { timeoutMs: 10_000 });
           },
           assert: async () => {
             await ctx.expectText("OpenWork Marketplace");
-            const deleteButtonVisible = await ctx.eval(`(() => [...document.querySelectorAll('button')]
-              .some((button) => (button.textContent ?? '').includes('Delete marketplace')))()`);
-            witness(ctx, deleteButtonVisible === false, "The built-in marketplace does not expose the delete action", { deleteButtonVisible });
+            await ctx.expectText("Edit");
+            const deleteMenuItemVisible = await ctx.eval(`Boolean(document.querySelector('[data-testid="delete-marketplace-action"]'))`);
+            witness(ctx, deleteMenuItemVisible === false, "The built-in marketplace menu does not expose the delete action", { deleteMenuItemVisible });
             const directDelete = await denApiFetch(`/v1/marketplaces/${encodeURIComponent(state.builtInMarketplaceId)}/delete`, {
               method: "POST",
               headers: authHeaders(),
@@ -163,9 +224,9 @@ export default {
           },
           screenshot: screenshot(
             "built-in-marketplace-protected",
-            "The built-in marketplace remains available without a destructive delete action.",
-            ["OpenWork Marketplace", "Add a plugin"],
-            ["Delete marketplace"],
+            "The built-in marketplace remains editable but its action menu has no destructive option.",
+            ["OpenWork Marketplace", "Edit", "Add a plugin"],
+            ["Delete"],
           ),
         });
       },
