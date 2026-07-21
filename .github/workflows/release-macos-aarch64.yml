@@ -556,12 +556,16 @@ jobs:
   publish-electron-assets:
     name: Publish Electron Assets
     needs: [resolve-release, verify-release, publish-electron]
+    # Run even when a single Electron platform (e.g. Windows) fails. The merge
+    # script only publishes manifests that were actually produced and validates
+    # that latest-mac.yml contains both mac arches, so a missing mac arch still
+    # fails this job correctly instead of silently skipping the updater feed.
     if: |
       always() &&
       needs.resolve-release.outputs.build_electron == 'true' &&
       needs.resolve-release.result == 'success' &&
       needs.verify-release.result == 'success' &&
-      needs.publish-electron.result == 'success'
+      (needs.publish-electron.result == 'success' || needs.publish-electron.result == 'failure')
     runs-on: blacksmith-4vcpu-ubuntu-2404
     env:
       RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
@@ -907,12 +911,16 @@ jobs:
       - release-orchestrator-sidecars
       - publish-npm
       - publish-daytona-snapshot
+    # Allow a partial Electron build (e.g. Windows failed) to still publish as
+    # latest, but ONLY when the updater manifests were actually published -- a
+    # release must never become "latest" without its latest-mac.yml/latest-linux
+    # feeds, which is what left v0.17.2 mac users hitting a 404 on auto-update.
     if: |
       always() &&
       needs.resolve-release.result == 'success' &&
       needs.verify-release.result == 'success' &&
-      (needs.publish-electron.result == 'success' || needs.publish-electron.result == 'skipped') &&
-      (needs.publish-electron-assets.result == 'success' || needs.publish-electron-assets.result == 'skipped') &&
+      (needs.publish-electron.result == 'success' || needs.publish-electron.result == 'skipped' || needs.publish-electron.result == 'failure') &&
+      (needs.publish-electron-assets.result == 'success' || (needs.resolve-release.outputs.build_electron != 'true' && needs.publish-electron-assets.result == 'skipped')) &&
       (needs.release-orchestrator-sidecars.result == 'success' || needs.release-orchestrator-sidecars.result == 'skipped') &&
       (needs.publish-npm.result == 'success' || needs.publish-npm.result == 'skipped') &&
       (needs.publish-daytona-snapshot.result == 'success' || needs.publish-daytona-snapshot.result == 'skipped')
