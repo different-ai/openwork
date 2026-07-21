@@ -1,0 +1,174 @@
+import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
+import { denApiFetch, denApiUrl, denWebUrl, signInApi, signInViaBrowser } from "./lib/den-web.mjs";
+
+const FLOW_ID = "delete-custom-marketplace";
+const vo = await loadVoiceoverParagraphs(FLOW_ID);
+const OWNER_EMAIL = process.env.OPENWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
+const OWNER_PASSWORD = process.env.OPENWORK_EVAL_DEMO_PASSWORD?.trim() || "OpenWorkDemo123!";
+const MARKETPLACE_NAME = `Fraimz Custom Marketplace ${Date.now()}`;
+
+const state = {
+  marketplaceId: "",
+  builtInMarketplaceId: "",
+  token: "",
+};
+
+function authHeaders() {
+  return { authorization: `Bearer ${state.token}` };
+}
+
+function witness(ctx, condition, assertion, actual) {
+  ctx.recordEvidence({
+    type: "assertion",
+    status: condition ? "passed" : "failed",
+    assertion,
+    actual: actual === undefined ? undefined : JSON.stringify(actual).slice(0, 1_200),
+  });
+  ctx.assert(condition, `${assertion}${actual === undefined ? "" : `. Actual: ${JSON.stringify(actual).slice(0, 600)}`}`);
+}
+
+async function navigateTo(ctx, path) {
+  const url = new URL(path, denWebUrl()).toString();
+  await ctx.eval(`(() => { location.assign(${JSON.stringify(url)}); return true; })()`);
+  await ctx.waitFor("document.readyState === 'complete'", { timeoutMs: 30_000, label: `load ${path}` });
+}
+
+function screenshot(name, claim, requireText, rejectText = []) {
+  return {
+    name,
+    claim,
+    requireText,
+    rejectText: ["Something went wrong", ...rejectText],
+  };
+}
+
+export default {
+  id: FLOW_ID,
+  title: "Admins safely delete custom marketplaces while managed catalogs stay protected",
+  kind: "user-facing",
+  preserveTheme: true,
+  requiredEnv: ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_WEB_URL"],
+  steps: [
+    {
+      name: "Setup",
+      run: async (ctx) => {
+        await ctx.client.send("Emulation.setDeviceMetricsOverride", {
+          width: 1440,
+          height: 1000,
+          deviceScaleFactor: 1,
+          mobile: false,
+        });
+
+        state.token = await signInApi(OWNER_EMAIL, OWNER_PASSWORD) ?? "";
+        witness(ctx, state.token.length > 0, "The seeded workspace owner can sign in", { email: OWNER_EMAIL });
+
+        const created = await denApiFetch("/v1/marketplaces", {
+          method: "POST",
+          headers: authHeaders(),
+          body: JSON.stringify({
+            name: MARKETPLACE_NAME,
+            description: "A temporary custom marketplace created for deletion proof.",
+          }),
+        });
+        state.marketplaceId = created.body?.item?.id ?? "";
+        witness(ctx, created.response.status === 201 && state.marketplaceId.length > 0, "A custom marketplace is created through the real Den API", {
+          status: created.response.status,
+          marketplaceId: state.marketplaceId,
+        });
+
+        const marketplaces = await denApiFetch("/v1/marketplaces?status=active&limit=100", { headers: authHeaders() });
+        state.builtInMarketplaceId = marketplaces.body?.items?.find((item) => item?.name === "OpenWork Marketplace")?.id ?? "";
+        witness(ctx, state.builtInMarketplaceId.length > 0, "The built-in OpenWork Marketplace is available for the protection check");
+
+        await signInViaBrowser(ctx, OWNER_EMAIL, OWNER_PASSWORD);
+      },
+    },
+    {
+      name: "Frame 1",
+      run: async (ctx) => {
+        await ctx.prove("The custom marketplace exposes a clear destructive action", {
+          voiceover: vo[0],
+          action: async () => {
+            await navigateTo(ctx, `/dashboard/marketplaces/${encodeURIComponent(state.marketplaceId)}`);
+            await ctx.waitForText("Delete marketplace", { timeoutMs: 30_000 });
+          },
+          assert: async () => {
+            await ctx.expectText(MARKETPLACE_NAME);
+            await ctx.expectText("Delete marketplace");
+            await ctx.expectText("0 plugins");
+          },
+          screenshot: screenshot(
+            "custom-marketplace-delete-action",
+            "A custom marketplace visibly offers Delete marketplace without implying that its plugins will be deleted.",
+            [MARKETPLACE_NAME, "Delete marketplace", "0 plugins"],
+          ),
+        });
+      },
+    },
+    {
+      name: "Frame 2",
+      run: async (ctx) => {
+        await ctx.prove("Confirming deletion removes the marketplace from the active organization list", {
+          voiceover: vo[1],
+          action: async () => {
+            await ctx.eval("window.confirm = () => true");
+            await ctx.clickText("Delete marketplace", { selector: "button", timeoutMs: 10_000 });
+            await ctx.waitFor("location.pathname === '/dashboard/marketplaces'", { timeoutMs: 30_000, label: "marketplace list after deletion" });
+            await ctx.waitForText("Marketplaces", { timeoutMs: 30_000 });
+          },
+          assert: async () => {
+            await ctx.expectNoText(MARKETPLACE_NAME);
+            const detail = await denApiFetch(`/v1/marketplaces/${encodeURIComponent(state.marketplaceId)}`, { headers: authHeaders() });
+            witness(ctx, detail.response.ok && detail.body?.item?.status === "deleted" && Boolean(detail.body?.item?.deletedAt), "The API records a reversible soft-delete", {
+              status: detail.response.status,
+              marketplaceStatus: detail.body?.item?.status,
+              deletedAt: detail.body?.item?.deletedAt,
+            });
+            witness(ctx, detail.body?.item?.pluginCount === 0, "Deletion preserves marketplace membership history instead of cascading into plugins", {
+              pluginCount: detail.body?.item?.pluginCount,
+            });
+          },
+          screenshot: screenshot(
+            "custom-marketplace-removed",
+            "The deleted custom marketplace is absent from the active marketplace list.",
+            ["Marketplaces", "OpenWork Marketplace"],
+            [MARKETPLACE_NAME],
+          ),
+        });
+      },
+    },
+    {
+      name: "Frame 3",
+      run: async (ctx) => {
+        await ctx.prove("Built-in marketplaces remain protected from deletion", {
+          voiceover: vo[2],
+          action: async () => {
+            await navigateTo(ctx, `/dashboard/marketplaces/${encodeURIComponent(state.builtInMarketplaceId)}`);
+            await ctx.waitForText("OpenWork Marketplace", { timeoutMs: 30_000 });
+          },
+          assert: async () => {
+            await ctx.expectText("OpenWork Marketplace");
+            const deleteButtonVisible = await ctx.eval(`(() => [...document.querySelectorAll('button')]
+              .some((button) => (button.textContent ?? '').includes('Delete marketplace')))()`);
+            witness(ctx, deleteButtonVisible === false, "The built-in marketplace does not expose the delete action", { deleteButtonVisible });
+            const directDelete = await denApiFetch(`/v1/marketplaces/${encodeURIComponent(state.builtInMarketplaceId)}/delete`, {
+              method: "POST",
+              headers: authHeaders(),
+            });
+            witness(ctx, directDelete.response.status === 409, "The API independently refuses deletion of a managed marketplace", {
+              status: directDelete.response.status,
+              body: directDelete.body,
+              apiUrl: denApiUrl(),
+            });
+          },
+          screenshot: screenshot(
+            "built-in-marketplace-protected",
+            "The built-in marketplace remains available without a destructive delete action.",
+            ["OpenWork Marketplace", "Add a plugin"],
+            ["Delete marketplace"],
+          ),
+        });
+      },
+    },
+  ],
+};
