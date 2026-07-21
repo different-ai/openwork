@@ -151,7 +151,7 @@ export default {
           },
           assert: async () => {
             await ctx.expectText(`Delete ${UPDATED_MARKETPLACE_NAME}?`);
-            await ctx.expectText("Its plugins and membership history will be preserved.");
+            await ctx.expectText("This action cannot be undone.");
             await ctx.expectText("Cancel");
             await ctx.expectText("Delete marketplace");
             const alertDialogVisible = await ctx.eval(`Boolean(document.querySelector('[role="alertdialog"][aria-modal="true"]'))`);
@@ -159,8 +159,8 @@ export default {
           },
           screenshot: screenshot(
             "custom-marketplace-delete-confirmation",
-            "A dedicated confirmation modal explains the soft-delete and requires an explicit destructive confirmation.",
-            [`Delete ${UPDATED_MARKETPLACE_NAME}?`, "Cancel", "Delete marketplace", "membership history will be preserved"],
+            "A dedicated confirmation modal requires an explicit destructive confirmation without exposing implementation details.",
+            [`Delete ${UPDATED_MARKETPLACE_NAME}?`, "This action cannot be undone.", "Cancel", "Delete marketplace"],
           ),
         });
       },
@@ -178,13 +178,9 @@ export default {
           assert: async () => {
             await ctx.expectNoText(UPDATED_MARKETPLACE_NAME);
             const detail = await denApiFetch(`/v1/marketplaces/${encodeURIComponent(state.marketplaceId)}`, { headers: authHeaders() });
-            witness(ctx, detail.response.ok && detail.body?.item?.status === "deleted" && Boolean(detail.body?.item?.deletedAt), "The API records a reversible soft-delete", {
+            witness(ctx, detail.response.status === 404, "The deleted marketplace no longer exists in the API", {
               status: detail.response.status,
-              marketplaceStatus: detail.body?.item?.status,
-              deletedAt: detail.body?.item?.deletedAt,
-            });
-            witness(ctx, detail.body?.item?.pluginCount === 0, "Deletion preserves marketplace membership history instead of cascading into plugins", {
-              pluginCount: detail.body?.item?.pluginCount,
+              body: detail.body,
             });
           },
           screenshot: screenshot(

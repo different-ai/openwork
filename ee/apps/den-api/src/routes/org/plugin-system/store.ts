@@ -2339,24 +2339,30 @@ export async function setMarketplaceLifecycle(input: { action: "archive" | "dele
   await requirePluginArchResourceRole({ context: input.context, resourceId: row.id, resourceKind: "marketplace", role: "manager" })
   const updatedAt = new Date()
   if (input.action === "delete") {
-    const managedMembership = (await db
-      .select({ id: MarketplacePluginTable.id })
+    const memberships = await db
+      .select()
       .from(MarketplacePluginTable)
-      .where(and(
-        eq(MarketplacePluginTable.marketplaceId, row.id),
-        inArray(MarketplacePluginTable.membershipSource, ["system", "connector"]),
-        isNull(MarketplacePluginTable.removedAt),
-      ))
-      .limit(1))[0]
-    if (managedMembership) {
+      .where(eq(MarketplacePluginTable.marketplaceId, row.id))
+    if (memberships.some((membership) => membership.removedAt === null && (membership.membershipSource === "system" || membership.membershipSource === "connector"))) {
       throw new PluginArchRouteFailure(409, "managed_marketplace_cannot_be_deleted", "Built-in and connected marketplaces cannot be deleted here.")
     }
+    await db.transaction(async (tx) => {
+      await tx.delete(MarketplaceAccessGrantTable).where(eq(MarketplaceAccessGrantTable.marketplaceId, row.id))
+      await tx.delete(MarketplacePluginTable).where(eq(MarketplacePluginTable.marketplaceId, row.id))
+      await tx.delete(MarketplaceTable).where(eq(MarketplaceTable.id, row.id))
+    })
+    for (const pluginId of new Set(memberships.map((membership) => membership.pluginId))) {
+      await syncPluginMcpRequirementAccessForResource({ context: input.context, resourceId: pluginId, resourceKind: "plugin" })
+    }
+    return serializeMarketplace({ ...row, deletedAt: updatedAt, status: "deleted", updatedAt }, memberships.filter((membership) => membership.removedAt === null).length)
   }
-  await db.update(MarketplaceTable).set({
-    deletedAt: input.action === "delete" ? updatedAt : input.action === "restore" ? null : row.deletedAt,
-    status: input.action === "archive" ? "archived" : input.action === "delete" ? "deleted" : "active",
-    updatedAt,
-  }).where(eq(MarketplaceTable.id, row.id))
+  await db.transaction(async (tx) => {
+    await tx.update(MarketplaceTable).set({
+      deletedAt: input.action === "restore" ? null : row.deletedAt,
+      status: input.action === "archive" ? "archived" : "active",
+      updatedAt,
+    }).where(eq(MarketplaceTable.id, row.id))
+  })
   await syncPluginMcpRequirementAccessForResource({
     context: input.context,
     resourceId: row.id,

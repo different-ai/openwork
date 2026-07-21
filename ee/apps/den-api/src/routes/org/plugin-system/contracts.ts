@@ -531,11 +531,11 @@ export const pluginArchEndpointContracts: Record<string, EndpointContract> = {
   },
   deleteMarketplace: {
     audience: "admin",
-    description: "Soft-delete a custom marketplace while preserving its plugins and membership history.",
+    description: "Permanently delete a custom marketplace and its access and plugin relationships.",
     method: "POST",
     path: pluginArchRoutePaths.marketplaceDelete,
     request: { params: marketplaceParamsSchema },
-    response: { description: "Deleted marketplace detail.", schema: marketplaceMutationResponseSchema, status: 200 },
+    response: { description: "Snapshot of the deleted marketplace.", schema: marketplaceMutationResponseSchema, status: 200 },
     tag: "Marketplaces",
   },
   restoreMarketplace: {

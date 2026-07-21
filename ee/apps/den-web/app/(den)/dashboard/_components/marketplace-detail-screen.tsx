@@ -527,10 +527,7 @@ function DeleteMarketplaceDialog({
               Delete {marketplaceName}?
             </h2>
             <p id="delete-marketplace-description" className="mt-1 text-[13px] leading-6 text-gray-600">
-              This marketplace will disappear from your organization and stop granting plugin access. Its plugins and membership history will be preserved.
-            </p>
-            <p className="mt-3 text-[12px] leading-5 text-gray-500">
-              You can restore the marketplace later through the lifecycle API.
+              This action cannot be undone.
             </p>
           </div>
         </div>

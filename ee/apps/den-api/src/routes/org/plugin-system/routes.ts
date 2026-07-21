@@ -1144,7 +1144,9 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
       describeRoute({
         tags: ["Marketplaces"],
         summary: `${action} marketplace`,
-        description: `${action} a marketplace without deleting its plugins or membership history.`,
+        description: action === "delete"
+          ? "Permanently deletes a custom marketplace and its relationships."
+          : `${action} a marketplace without deleting its plugins.`,
         responses: {
           200: jsonResponse("Marketplace lifecycle updated successfully.", marketplaceMutationResponseSchema),
           400: jsonResponse("The marketplace lifecycle path parameters were invalid.", invalidRequestSchema),
