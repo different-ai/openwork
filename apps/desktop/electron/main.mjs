@@ -1931,6 +1931,7 @@ const desktopCommandHandlers = {
     currentDisplayAppName = applyBrandAppName(args[0], {
       fallbackName: APP_NAME,
       platform: process.platform,
+      updateElectronAppName: process.platform === "darwin",
       runtimeProcess: process,
       app,
       applicationMenu,
@@ -2421,6 +2422,7 @@ if (!app.requestSingleInstanceLock()) {
     currentDisplayAppName = applyBrandAppName(bootstrapConfig.brandAppName, {
       fallbackName: APP_NAME,
       platform: process.platform,
+      updateElectronAppName: true,
       runtimeProcess: process,
       app,
       applicationMenu,

@@ -10,6 +10,7 @@ const MAX_APP_NAME_LENGTH = 64;
  * @param {{
  *   fallbackName: string,
  *   platform: string,
+ *   updateElectronAppName: boolean,
  *   runtimeProcess: { title: string },
  *   app: { setName: (name: string) => void },
  *   applicationMenu: { setAppName: (name: string) => unknown },
@@ -23,7 +24,9 @@ export function applyBrandAppName(requestedName, dependencies) {
   if (dependencies.platform === "darwin") {
     dependencies.runtimeProcess.title = appName;
   }
-  dependencies.app.setName(appName);
+  if (dependencies.updateElectronAppName) {
+    dependencies.app.setName(appName);
+  }
   dependencies.applicationMenu.setAppName(appName);
   dependencies.window?.setTitle(appName);
 
