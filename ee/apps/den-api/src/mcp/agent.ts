@@ -17,7 +17,7 @@ import { preflightMcpJsonRpcRequest } from "./json-rpc-preflight.js"
 import { compareCapabilityMatches, SEARCH_CAPABILITIES_TOOL_NAME, searchCapabilities, searchCapabilitySourceFilter, type CapabilityMatch } from "./search.js"
 import { executeExternalCapability, externalMcpSearchCoverageHint, parseExternalCapabilityName, resolveMcpMemberIdentity, searchExternalCapabilities, type ExternalCapabilityExecuteResult } from "./external-capabilities.js"
 import { executeMarketplaceCapability, parseMarketplaceCapabilityName, searchMarketplaceCapabilities, type MarketplaceCapabilityObjectType } from "./marketplace-capabilities.js"
-import { executeSkillCapability, parseSkillCapabilityName, searchSkillCapabilities } from "./skill-capabilities.js"
+import { executeSkillCapability, listAccessibleSkillDescriptors, parseSkillCapabilityName, searchSkillCapabilities, type RemoteSkillDescriptor } from "./skill-capabilities.js"
 import { resolvePublicOrigin } from "../capability-sources/generic-oauth.js"
 import { env } from "../env.js"
 import { isPlatformAdminUserId } from "../middleware/admin.js"
@@ -121,6 +121,39 @@ export const AGENT_MCP_INSTRUCTIONS = [
   "When a match has kind connection_status, name connectionStatus.connectionName and relay connectionStatus.action exactly. Distinguish the member's Your Connections page, the organization Connections dashboard, and the provider's own admin console.",
   "Connection probes are live. After the requested human fixes that connector, search again in the same task; otherwise do not retry unchanged or improvise workarounds through other tools.",
 ].join("\n")
+
+async function mcpRequestMethod(request: Request): Promise<string | null> {
+  if (request.method.toUpperCase() !== "POST") return null
+  const body: unknown = await request.clone().json().catch(() => null)
+  return typeof body === "object"
+    && body !== null
+    && "method" in body
+    && typeof body.method === "string"
+    ? body.method
+    : null
+}
+
+export const AGENT_SKILL_INDEX_URI = "skill://index.json"
+export const AGENT_SKILL_INDEX_SCHEMA = "https://schemas.agentskills.io/discovery/0.2.0/schema.json"
+
+export function buildAgentSkillIndex(skills: RemoteSkillDescriptor[]) {
+  return {
+    $schema: AGENT_SKILL_INDEX_SCHEMA,
+    skills: skills.map((skill) => ({
+      name: skill.name,
+      type: "skill-md" as const,
+      description: (skill.description ?? skill.name).replace(/\s+/g, " ").trim().slice(0, 1_024),
+      url: skill.location,
+      capability: skill.capability,
+    })),
+  }
+}
+
+function standardSkillMarkdown(skill: RemoteSkillDescriptor, source: string): string {
+  const body = source.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "").replace(/^\s+/, "")
+  const description = (skill.description ?? skill.name).replace(/\s+/g, " ").trim().slice(0, 1_024)
+  return `---\nname: ${skill.name}\ndescription: ${JSON.stringify(description)}\n---\n\n${body}`
+}
 
 const EXECUTE_CAPABILITY_TIMEOUT_MESSAGE = `The capability call exceeded ${EXECUTE_CAPABILITY_TIMEOUT_MS / 1_000}s. Retry once; if it times out again, narrow the request (fewer results, tighter query) and tell the user the service is slow — do NOT tell them to reconfigure or reconnect.`
 
@@ -257,6 +290,47 @@ export function createAgentMcpServer(): McpServer {
   })
 }
 
+export function registerAgentSkillResources(input: {
+  server: McpServer
+  skills: RemoteSkillDescriptor[]
+  organizationId: string
+  member: Awaited<ReturnType<typeof resolveMcpMemberIdentity>>
+}) {
+  input.server.registerResource("agent-skills-index", AGENT_SKILL_INDEX_URI, {
+    title: "Available Agent Skills",
+    description: "Authorized Agent Skills discovery index for this OpenWork member.",
+    mimeType: "application/json",
+  }, async () => ({
+    contents: [{
+      uri: AGENT_SKILL_INDEX_URI,
+      mimeType: "application/json",
+      text: JSON.stringify(buildAgentSkillIndex(input.skills)),
+    }],
+  }))
+  for (const skill of input.skills) {
+    input.server.registerResource(skill.name, skill.location, {
+      title: skill.name,
+      description: (skill.description ?? skill.name).replace(/\s+/g, " ").trim().slice(0, 1_024),
+      mimeType: "text/markdown",
+    }, async () => {
+      const skillId = parseSkillCapabilityName(skill.capability)
+      const result = skillId ? await executeSkillCapability({
+        organizationId: input.organizationId,
+        member: input.member,
+        skillId,
+      }) : null
+      if (!result?.ok) throw new McpError(ErrorCode.InvalidRequest, "Skill is no longer available")
+      return {
+        contents: [{
+          uri: skill.location,
+          mimeType: "text/markdown",
+          text: standardSkillMarkdown(skill, result.skill.skillText),
+        }],
+      }
+    })
+  }
+}
+
 /**
  * The minimal, harness-facing MCP surface: exactly two tools, full stop.
  *
@@ -319,7 +393,23 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
     const externalMcpConnectionsEnabled = memberFacingMcpConnectionsEnabled(organizationRows[0]?.metadata, {
       gatingEnabled: env.mcpConnectionsGatingEnabled,
     })
+    let remoteSkills: RemoteSkillDescriptor[] = []
+    const method = await mcpRequestMethod(c.req.raw)
+    if (method === "initialize" || method === "resources/list" || method === "resources/read") {
+      remoteSkills = await listAccessibleSkillDescriptors({
+        organizationId: principal.organizationId,
+        member: memberIdentity,
+      })
+    }
     const server = createAgentMcpServer()
+    if (method === "initialize" || method === "resources/list" || method === "resources/read") {
+      registerAgentSkillResources({
+        server,
+        skills: remoteSkills,
+        organizationId: principal.organizationId,
+        member: memberIdentity,
+      })
+    }
 
     server.registerTool(
       SEARCH_CAPABILITIES_TOOL_NAME,

@@ -156,6 +156,15 @@ export function runtimeMcpMap(config: RuntimeOpencodeConfig): Record<string, Rec
   return isRecord(config.mcp) ? config.mcp as Record<string, Record<string, unknown>> : {};
 }
 
+/** Narrow server-owned read port for consumers that need one runtime MCP endpoint. */
+export async function readRuntimeMcpConfig(
+  config: ServerConfig,
+  workspaceId: string,
+  name: string,
+): Promise<Record<string, unknown> | null> {
+  return runtimeMcpMap(await readRuntimeOpencodeConfig(config, workspaceId))[name] ?? null;
+}
+
 export function runtimeExternalDirectory(config: RuntimeOpencodeConfig): Record<string, unknown> {
   const permission = isRecord(config.permission) ? config.permission : null;
   const externalDirectory = permission && isRecord(permission.external_directory) ? permission.external_directory : null;

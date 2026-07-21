@@ -24,6 +24,27 @@ type SkillReadRow = SkillSearchRow & {
   skillText: string
 }
 
+export type RemoteSkillDescriptor = {
+  name: string
+  description: string | null
+  capability: string
+  location: string
+}
+
+const AGENT_SKILL_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
+
+function standardSkillName(title: string, skillId: string): string {
+  const suffix = skillId.replace(/^skill_/, "").slice(-8).toLowerCase()
+  const base = title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .replace(/-{2,}/g, "-")
+  const bounded = base.slice(0, Math.max(1, 64 - suffix.length - 1)).replace(/-+$/g, "")
+  const name = `${bounded || "skill"}-${suffix}`
+  return AGENT_SKILL_NAME_PATTERN.test(name) ? name : `skill-${suffix}`
+}
+
 export function buildSkillCapabilityName(skillId: string): string {
   return `${SKILL_CAPABILITY_PREFIX}${skillId}`
 }
@@ -117,6 +138,24 @@ async function listAccessibleSkills(input: {
     skill,
     hubAccessibleSkillIds,
   }))
+}
+
+export async function listAccessibleSkillDescriptors(input: {
+  organizationId: string
+  member: McpMemberIdentity | null
+}): Promise<RemoteSkillDescriptor[]> {
+  const skills = await listAccessibleSkills(input)
+  return skills
+    .map((skill) => {
+      const name = standardSkillName(skill.title, skill.id)
+      return {
+        name,
+        description: skill.description,
+        capability: buildSkillCapabilityName(skill.id),
+        location: `skill://${name}/SKILL.md`,
+      }
+    })
+    .sort((a, b) => a.name.localeCompare(b.name) || a.capability.localeCompare(b.capability))
 }
 
 async function getAccessibleSkill(input: {
