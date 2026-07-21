@@ -1,12 +1,13 @@
 "use client";
 
 import { ShieldCheck, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { DenButton, buttonVariants } from "./ui/button";
 import { DenInput } from "./ui/input";
 import { DenNotice } from "./ui/notice";
 import { type AuthUser, getErrorMessage, getUser, requestJson, type SocialAuthProvider, WORKSPACE_REAUTH_SECURITY_MESSAGE } from "../_lib/den-flow";
 import { type DenOrgContext, getRequireSsoFromMetadata } from "../_lib/den-org";
+import { resolveReauthMethods } from "../_lib/reauth-method-policy";
 
 function getSocialLabel(provider: SocialAuthProvider) {
   return provider === "google" ? "Google" : "GitHub";
@@ -50,8 +51,6 @@ function getReauthCompleteMessage(data: unknown): ReauthCompleteMessage | null {
   return { type: "openwork:reauth-complete", nonce: data.nonce, error };
 }
 
-const REAUTH_SOCIAL_PROVIDERS: readonly SocialAuthProvider[] = ["google", "github"];
-
 export function ReauthDialog({
   open,
   user,
@@ -78,11 +77,11 @@ export function ReauthDialog({
   const popupClosedIntervalRef = useRef<number | null>(null);
 
   const effectiveProviders = providers.length > 0 ? providers : user?.authProviders ?? [];
-  const hasPassword = !loadingMethods && (effectiveProviders.length === 0 || effectiveProviders.includes("email"));
-  const socialProviders = useMemo(
-    () => REAUTH_SOCIAL_PROVIDERS.filter((provider) => effectiveProviders.includes(provider)),
-    [effectiveProviders],
-  );
+  const { hasPassword, socialProviders } = resolveReauthMethods({
+    providers: effectiveProviders,
+    loading: loadingMethods,
+    requiresSso: Boolean(ssoUrl),
+  });
   const hasManagedOrgSignIn = Boolean(
     ssoUrl ||
       getRequireSsoFromMetadata(orgContext?.organization.metadata ?? null) ||
@@ -125,6 +124,8 @@ export function ReauthDialog({
       setError(null);
       setBusy(false);
       setLoadingMethods(false);
+      setProviders([]);
+      setSsoUrl(null);
       return;
     }
 
@@ -134,6 +135,7 @@ export function ReauthDialog({
     }
 
     let cancelled = false;
+    setSsoUrl(null);
     setLoadingMethods(true);
 
     void (async () => {
@@ -147,11 +149,11 @@ export function ReauthDialog({
         const email = refreshedUser?.email ?? user?.email ?? "";
         if (email) {
           const ssoResult = await requestJson(`/v1/orgs/sso/resolve?email=${encodeURIComponent(email)}`, { method: "GET" }, 12000);
-          if (!cancelled && ssoResult.response.ok) {
-            const payload = ssoResult.payload;
-            const nextUrl = payload && typeof payload === "object" && "signInUrl" in payload && typeof payload.signInUrl === "string"
-              ? payload.signInUrl
-              : null;
+          const payload = ssoResult.payload;
+          const nextUrl = ssoResult.response.ok && payload && typeof payload === "object" && "signInUrl" in payload && typeof payload.signInUrl === "string"
+            ? payload.signInUrl
+            : null;
+          if (!cancelled) {
             setSsoUrl(nextUrl);
           }
         }
