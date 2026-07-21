@@ -495,6 +495,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const [toolMcpStatus, setToolMcpStatus] = useState<string | null>(null);
   const [toolMcpStatuses, setToolMcpStatuses] = useState<McpStatusMap>({});
   const [toolImportedPlugins, setToolImportedPlugins] = useState<CloudImportedPlugin[]>([]);
+  const [steering, setSteering] = useState(false);
   const connectInventoryCacheRef = useRef<{
     scope: string;
     promise: Promise<ConnectCapabilityInventory>;
@@ -541,6 +542,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
 
   useEffect(() => {
     hydratedKeyRef.current = null;
+    setSteering(false);
     setError(null);
     setShowDelayedLoading(false);
     setAwaitingAssistantBaseline(null);
@@ -624,6 +626,10 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const preparingCloudTools = props.cloudMcpSubmissionState.status === "checking" ||
     props.cloudMcpSubmissionState.status === "repairing";
   const chatStreaming = sending || liveStatus.type === "busy" || liveStatus.type === "retry";
+
+  useEffect(() => {
+    if (!chatStreaming) setSteering(false);
+  }, [chatStreaming]);
   const status = useMemo((): ThreadStatus => {
     if (sending) {
       return "submitted";
@@ -862,7 +868,10 @@ export function SessionSurface(props: SessionSurfaceProps) {
     }
   }, [attachments, buildDraft, clearComposer, draft, props.sessionId, sendDraft]);
 
-  const handleSteer = handleSend;
+  const handleSteer = useCallback(async () => {
+    setSteering(true);
+    await handleSend();
+  }, [handleSend]);
 
   const handleRetryCloudSubmission = useCallback(() => {
     if (draft.trim() || attachments.length > 0) {
@@ -1702,6 +1711,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         onQueue={handleQueue}
         onStop={handleAbort}
         busy={chatStreaming}
+        steering={steering}
         submissionPreparing={preparingCloudTools}
         queuedCount={queuedMessages.length}
         disabled={model.transitionState !== "idle" || Boolean(props.modelUnavailable)}

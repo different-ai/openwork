@@ -61,6 +61,7 @@ type ComposerProps = {
   onQueue: () => void | Promise<void>;
   onStop: () => void | Promise<void>;
   busy: boolean;
+  steering: boolean;
   submissionPreparing: boolean;
   queuedCount: number;
   disabled: boolean;
@@ -359,6 +360,12 @@ export function ReactSessionComposer(props: ComposerProps) {
   useEffect(() => {
     if (!props.busy) disarmEscape();
   }, [props.busy, disarmEscape]);
+
+  useEffect(() => {
+    if (props.steering && props.modelPickerOpen) {
+      props.onModelPickerOpenChange(false);
+    }
+  }, [props.modelPickerOpen, props.onModelPickerOpenChange, props.steering]);
 
   // Input history recall (#2012): ArrowUp on an empty composer recalls the
   // previous sent prompt; repeated ArrowUp/ArrowDown walk the history.
@@ -1721,8 +1728,10 @@ export function ReactSessionComposer(props: ComposerProps) {
                   open={props.modelPickerOpen}
                   value={props.selectedModel}
                   onOpenChange={props.onModelPickerOpenChange}
-                  onChange={props.onModelChange}
-                  disabled={props.busy}
+                  onChange={(model) => {
+                    if (!props.steering) props.onModelChange(model);
+                  }}
+                  disabled={props.steering}
                 />
                 {props.modelUnavailable ? (
                   <span className="text-xs font-medium text-red-10">Model no longer available</span>
@@ -1732,8 +1741,10 @@ export function ReactSessionComposer(props: ComposerProps) {
                   value={props.modelVariant}
                   label={props.modelVariantLabel}
                   options={props.modelBehaviorOptions}
-                  onChange={props.onModelVariantChange}
-                  disabled={props.busy}
+                  onChange={(value) => {
+                    if (!props.steering) props.onModelVariantChange(value);
+                  }}
+                  disabled={props.steering}
                 />
               </div>
 
