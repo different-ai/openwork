@@ -65,7 +65,7 @@ test("renders an inline reconnect button when Cloud capability discovery finds e
   expect(html).toContain('data-testid="chat-mcp-reconnect-action"')
 })
 
-test("renders a copy action when a tool result is available", () => {
+test("renders a copy action inside the expanded tool result", () => {
   const toolPart: DynamicToolUIPart = {
     type: "dynamic-tool",
     toolName: "openwork-cloud_search_capabilities",
@@ -75,9 +75,12 @@ test("renders a copy action when a tool result is available", () => {
     output: { matches: [{ name: "searchPages" }] },
   }
 
-  const html = renderToStaticMarkup(<Tool toolPart={toolPart} />)
+  const html = renderToStaticMarkup(<Tool toolPart={toolPart} defaultOpen />)
+  const contentIndex = html.indexOf('data-slot="collapsible-content"')
+  const copyActionIndex = html.indexOf('data-testid="tool-result-copy-action"')
 
-  expect(html).toContain('data-testid="tool-result-copy-action"')
+  expect(contentIndex).toBeGreaterThan(-1)
+  expect(copyActionIndex).toBeGreaterThan(contentIndex)
   expect(html).toContain('aria-label="Copy tool result"')
 })
 

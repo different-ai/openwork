@@ -340,25 +340,26 @@ const Tool = ({
             {reconnectPresentation?.buttonLabel}
           </Button>
         ) : null}
-        {resultText !== null ? (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-xs"
-            data-testid="tool-result-copy-action"
-            title={copied ? "Copied" : "Copy tool result"}
-            aria-label={copied ? "Tool result copied" : "Copy tool result"}
-            onClick={() => void handleCopyResult()}
-          >
-            {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
-          </Button>
-        ) : null}
       </div>
       {reconnectError ? (
         <p className="mt-1 text-xs text-destructive" role="alert">{reconnectError}</p>
       ) : null}
       <CollapsibleContent className="h-(--collapsible-panel-height) overflow-hidden text-sm transition-[height] duration-150 ease-out data-starting-style:h-0 data-ending-style:h-0 [&[hidden]:not([hidden='until-found'])]:hidden">
-        <div className="bg-muted mt-2 flex flex-col gap-2 rounded-lg p-2 text-xs">
+        <div className="bg-muted relative mt-2 flex flex-col gap-2 rounded-lg p-2 pr-10 text-xs">
+          {resultText !== null ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-xs"
+              className="absolute right-2 top-2"
+              data-testid="tool-result-copy-action"
+              title={copied ? "Copied" : "Copy tool result"}
+              aria-label={copied ? "Tool result copied" : "Copy tool result"}
+              onClick={() => void handleCopyResult()}
+            >
+              {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+            </Button>
+          ) : null}
           {hasInput ? (
             inputDiff !== null ? (
               <DiffLines diff={inputDiff} />
