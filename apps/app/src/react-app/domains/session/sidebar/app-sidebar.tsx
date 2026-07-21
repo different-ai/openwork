@@ -1817,7 +1817,7 @@ function SessionMenuItem({
               >
                 <PinnedIndicator isPinned={isPinned} />
                 <span
-                  className={cn("min-w-0 flex-1 truncate transition-[padding] duration-75 group-hover/menu-sub-item:pe-12 group-has-data-popup-open/menu-sub-item:pe-12 pe-4", isSessionStreaming || isSessionActive && "pe-12")}
+                  className={cn("min-w-0 flex-1 truncate transition-[padding] duration-75 group-hover/menu-sub-item:pe-12 group-has-data-popup-open/menu-sub-item:pe-12 pe-4", (isSessionStreaming || isSessionActive) && "pe-12")}
                   title={displayTitle}
                 >
                   {displayTitle}
@@ -1847,7 +1847,7 @@ function SessionMenuItem({
           onClick={openSession}
           onPointerEnter={prefetchSession}
           onFocus={prefetchSession}
-          className={cn("transition-[padding] duration-75 group-hover/menu-sub-item:pe-8 group-has-data-popup-open/menu-sub-item:pe-8", depth > 0 && "ps-13", isSessionStreaming || isSessionActive && "pe-8")}
+          className={cn("transition-[padding] duration-75 group-hover/menu-sub-item:pe-8 group-has-data-popup-open/menu-sub-item:pe-8", depth > 0 && "ps-13", (isSessionStreaming || isSessionActive) && "pe-12")}
         >
           <PinnedIndicator isPinned={isPinned} />
           <span className="min-w-0 flex-1 truncate" title={displayTitle}>{displayTitle}</span>

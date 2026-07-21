@@ -1414,6 +1414,25 @@ export function SessionRoute() {
   }, [checkDesktopRestriction, disabledProviderIds, local, modelPicker.setQuery, modelPicker.setRecentProviderIds, opencodeBaseUrl, opencodeClient, selectedSessionId, selectedWorkspaceId, selectedWorkspaceRoot]);
   useControlAction(seedUnavailableModelControlAction);
 
+  const seedActiveSessionSidebarControlAction = useMemo<OpenworkControlAction | null>(() => {
+    if (!import.meta.env.DEV) return null;
+    return {
+      id: "eval.session_sidebar.seed_active",
+      label: "Show the selected session as active",
+      description: "Dev-only eval hook that displays the selected session activity spinner.",
+      sideEffect: "mutation",
+      disabled: !selectedWorkspaceId || !selectedSessionId,
+      execute: () => {
+        if (!selectedWorkspaceId || !selectedSessionId) {
+          return { ok: false, error: "No session is selected." };
+        }
+        useSessionActivityStore.getState().setRunStatus(selectedWorkspaceId, selectedSessionId, "running");
+        return { workspaceId: selectedWorkspaceId, sessionId: selectedSessionId };
+      },
+    };
+  }, [selectedSessionId, selectedWorkspaceId]);
+  useControlAction(seedActiveSessionSidebarControlAction);
+
   const commandPaletteControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "command_palette.open",
     label: "Open the command palette",
