@@ -465,10 +465,14 @@ export default {
               return [...(policy?.querySelectorAll('button[role="switch"]') ?? [])].map((button) => ({
                 label: button.getAttribute('aria-label'),
                 checked: button.getAttribute('aria-checked'),
+                trackColor: getComputedStyle(button.querySelector('[data-switch-track]')).backgroundColor,
               }));
             })()`);
             witness(ctx, states.some((entry) => entry.label?.includes("Draft a postmortem") && entry.checked === "false"), "create_postmortem is selected as disabled.", states);
             witness(ctx, states.some((entry) => entry.label?.includes("Search incidents") && entry.checked === "true"), "search_incidents remains enabled.", states);
+            const enabledColor = states.find((entry) => entry.checked === "true")?.trackColor;
+            const disabledColor = states.find((entry) => entry.checked === "false")?.trackColor;
+            witness(ctx, Boolean(enabledColor && disabledColor && enabledColor !== disabledColor), "Enabled and disabled switches have visibly distinct track colors.", states);
             witness(ctx, !state.observedMethods.includes("tools/call"), "Changing tool policy still never executes a provider tool.", state.observedMethods);
           },
           screenshot: {

@@ -2098,6 +2098,7 @@ function EditConnectionDialog({
               <DenButton
                 variant="secondary"
                 size="sm"
+                className="shrink-0 whitespace-nowrap"
                 loading={toolCatalog.isFetching}
                 onClick={() => void toolCatalog.refetch()}
                 data-testid="test-mcp-connection"
@@ -2148,11 +2149,16 @@ function EditConnectionDialog({
                               aria-label={`${disabled ? "Enable" : "Disable"} ${displayTitle}`}
                               data-testid={`mcp-tool-toggle-${tool.name}`}
                               onClick={() => setDisabledToolNames((current) => toggle(current, tool.name))}
-                              className={`relative inline-flex h-6 w-[42px] items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-[#0f172a]/20 focus:ring-offset-2 ${disabled ? "bg-gray-200" : "bg-[#0f172a]"}`}
+                              className="relative inline-flex h-6 w-[42px] items-center rounded-full focus:outline-none focus:ring-2 focus:ring-[#0f172a]/20 focus:ring-offset-2"
                             >
+                              {disabled ? (
+                                <span aria-hidden="true" data-switch-track="disabled" className="absolute inset-0 rounded-full bg-slate-300" />
+                              ) : (
+                                <span aria-hidden="true" data-switch-track="enabled" className="absolute inset-0 rounded-full bg-emerald-600" />
+                              )}
                               <span
                                 aria-hidden="true"
-                                className={`inline-block h-5 w-5 rounded-full bg-white shadow-[0_2px_6px_-1px_rgba(15,23,42,0.3)] transition-transform ${disabled ? "translate-x-0.5" : "translate-x-[18px]"}`}
+                                className={`relative inline-block h-5 w-5 rounded-full bg-white shadow-[0_2px_6px_-1px_rgba(15,23,42,0.3)] transition-transform ${disabled ? "translate-x-0.5" : "translate-x-[18px]"}`}
                               />
                             </button>
                           </span>
