@@ -1,5 +1,5 @@
 import http from "node:http";
-import { denApiFetch, denWebUrl, openAdminConnections, signInApi, signInViaBrowser } from "./lib/den-web.mjs";
+import { denApiFetch, denWebUrl, mcpAgentCall, mintMcpToken, openAdminConnections, signInApi, signInViaBrowser } from "./lib/den-web.mjs";
 import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
 
 const FLOW_ID = "mcp-tool-catalog";
@@ -267,6 +267,16 @@ export default {
             }
             await ensureConnection(ctx);
             await navigateToConnections(ctx);
+            const openedMenu = await ctx.eval(`(() => {
+              const button = document.querySelector('[data-testid="mcp-connection-more-${state.connectionId}"]');
+              button?.click();
+              return Boolean(button);
+            })()`);
+            witness(ctx, openedMenu, "Alex opens the connection actions menu.", { openedMenu });
+            await ctx.waitFor(`(() => {
+              const menu = document.querySelector('[aria-label="Actions for ${state.connectionName}"]');
+              return (menu?.textContent ?? '').includes('View tools');
+            })()`, { timeoutMs: 10_000, label: "View tools menu action" });
           },
           assert: async () => {
             const hasAction = await ctx.eval(connectionRowScript("find"));
@@ -404,6 +414,127 @@ export default {
             name: "mcp-tool-input-schema",
             requireText: ["search_incidents", "Read-only hint", "query: string · required", "status: string", "View input schema", "View output schema", "additionalProperties"],
             rejectText: ["This proof must never execute a tool"],
+            hashIncludes: "/dashboard/mcp-connections",
+          },
+        });
+
+      },
+    },
+    {
+      name: "An admin disables one tool without disconnecting the MCP",
+      run: async (ctx) => {
+        await ctx.prove("The edit dialog lets an organization admin disable one tool while leaving the rest available", {
+          voiceover: vo[3],
+          action: async () => {
+            const openedMenu = await ctx.eval(`(() => {
+              const button = document.querySelector('[data-testid="mcp-connection-more-${state.connectionId}"]');
+              button?.click();
+              return Boolean(button);
+            })()`);
+            witness(ctx, openedMenu, "Alex opens the connection actions menu.", { openedMenu });
+            await ctx.waitFor(`Boolean(document.querySelector('[data-testid="edit-mcp-connection-${state.connectionId}"]'))`, { timeoutMs: 10_000, label: "Edit MCP action" });
+            const opened = await ctx.eval(`(() => {
+              const button = document.querySelector('[data-testid="edit-mcp-connection-${state.connectionId}"]');
+              button?.click();
+              return Boolean(button);
+            })()`);
+            witness(ctx, opened, "Alex opens the existing MCP connection for editing.", { opened });
+            await ctx.waitFor("Boolean(document.querySelector('[data-testid=\"edit-mcp-connection-dialog\"]'))", { timeoutMs: 10_000, label: "MCP edit dialog" });
+            await ctx.waitFor(`(() => {
+              const policy = document.querySelector('[data-testid="edit-mcp-tool-policy"]');
+              return (policy?.textContent ?? '').includes('search_incidents')
+                && (policy?.textContent ?? '').includes('create_postmortem');
+            })()`, { timeoutMs: 30_000, label: "editable MCP tool policy" });
+            const toggled = await ctx.eval(`(() => {
+              const policy = document.querySelector('[data-testid="edit-mcp-tool-policy"]');
+              const button = [...(policy?.querySelectorAll('button') ?? [])]
+                .find((entry) => (entry.textContent ?? '').includes('create_postmortem'));
+              button?.click();
+              button?.scrollIntoView({ block: 'center' });
+              return Boolean(button);
+            })()`);
+            witness(ctx, toggled, "Alex selects create_postmortem in the tool policy.", { toggled });
+            await ctx.waitFor(`(() => {
+              const policy = document.querySelector('[data-testid="edit-mcp-tool-policy"]');
+              const button = [...(policy?.querySelectorAll('button') ?? [])]
+                .find((entry) => (entry.textContent ?? '').includes('create_postmortem'));
+              return button?.getAttribute('aria-pressed') === 'false';
+            })()`, { timeoutMs: 10_000, label: "create_postmortem disabled" });
+          },
+          assert: async () => {
+            const states = await ctx.eval(`(() => {
+              const policy = document.querySelector('[data-testid="edit-mcp-tool-policy"]');
+              return [...(policy?.querySelectorAll('button[aria-pressed]') ?? [])].map((button) => ({
+                text: (button.textContent ?? '').replace(/\\s+/g, ' ').trim(),
+                pressed: button.getAttribute('aria-pressed'),
+              }));
+            })()`);
+            witness(ctx, states.some((entry) => entry.text.includes("create_postmortem") && entry.pressed === "false"), "create_postmortem is selected as disabled.", states);
+            witness(ctx, states.some((entry) => entry.text.includes("search_incidents") && entry.pressed === "true"), "search_incidents remains enabled.", states);
+            witness(ctx, !state.observedMethods.includes("tools/call"), "Changing tool policy still never executes a provider tool.", state.observedMethods);
+          },
+          screenshot: {
+            name: "disable-one-mcp-tool",
+            requireText: ["Edit MCP connection", "Available tools", "search_incidents", "create_postmortem", "Enabled", "Disabled", "Save changes"],
+            rejectText: ["Could not test this MCP connection"],
+            hashIncludes: "/dashboard/mcp-connections",
+          },
+        });
+      },
+    },
+    {
+      name: "The saved policy is visible and enforced for agents",
+      run: async (ctx) => {
+        await ctx.prove("Den persists the disabled tool, hides it from capability search, and rejects direct execution", {
+          voiceover: vo[4],
+          action: async () => {
+            const saved = await ctx.eval(`(() => {
+              const dialog = document.querySelector('[data-testid="edit-mcp-connection-dialog"]');
+              const button = [...(dialog?.querySelectorAll('button') ?? [])]
+                .find((entry) => (entry.textContent ?? '').trim() === 'Save changes');
+              button?.click();
+              return Boolean(button);
+            })()`);
+            witness(ctx, saved, "Alex saves the updated tool policy.", { saved });
+            await ctx.waitFor("!document.querySelector('[data-testid=\"edit-mcp-connection-dialog\"]')", { timeoutMs: 30_000, label: "tool policy saved" });
+            await ctx.waitFor(`(() => {
+              const catalog = document.querySelector('[data-mcp-tool-catalog="${state.connectionId}"]');
+              return (catalog?.textContent ?? '').includes('create_postmortem')
+                && (catalog?.textContent ?? '').includes('Disabled');
+            })()`, { timeoutMs: 30_000, label: "disabled tool badge in live catalog" });
+            await ctx.eval(`(() => {
+              const catalog = document.querySelector('[data-mcp-tool-catalog="${state.connectionId}"]');
+              catalog?.scrollIntoView({ block: 'center' });
+              return Boolean(catalog);
+            })()`);
+          },
+          assert: async () => {
+            const listed = await denApiFetch("/v1/mcp-connections?scope=manageable", {
+              headers: { authorization: `Bearer ${state.adminToken}` },
+            });
+            const connection = (listed.body.connections ?? []).find((entry) => entry.id === state.connectionId);
+            witness(ctx, connection?.disabledToolNames?.includes("create_postmortem"), "Den persisted create_postmortem in the organization deny-list.", connection?.disabledToolNames);
+
+            const mcpToken = await mintMcpToken(state.adminToken, ctx);
+            const search = await mcpAgentCall(mcpToken, "tools/call", {
+              name: "search_capabilities",
+              arguments: { query: "postmortem" },
+            }, ctx);
+            const searchText = String(search.content?.[0]?.text ?? "");
+            witness(ctx, !searchText.includes(`mcp:${state.connectionId}:create_postmortem`), "Capability search no longer exposes the disabled tool.", searchText);
+
+            const execution = await mcpAgentCall(mcpToken, "tools/call", {
+              name: "execute_capability",
+              arguments: { name: `mcp:${state.connectionId}:create_postmortem`, body: { incidentId: "INC-42" } },
+            }, ctx);
+            const executionText = String(execution.content?.[0]?.text ?? "");
+            witness(ctx, execution.isError === true && executionText.includes("disabled"), "A forged direct execution is rejected by Den before tools/call reaches the provider.", execution);
+            witness(ctx, !state.observedMethods.includes("tools/call"), "The disabled provider tool was never invoked.", state.observedMethods);
+          },
+          screenshot: {
+            name: "disabled-mcp-tool-enforced",
+            requireText: ["Tools available to your agents", "search_incidents", "create_postmortem", "Enabled", "Disabled"],
+            rejectText: ["Could not read this MCP's tools", "This proof must never execute a tool"],
             hashIncludes: "/dashboard/mcp-connections",
           },
         });
