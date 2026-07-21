@@ -30,6 +30,19 @@ Open `http://localhost:3010` and sign in with:
 The local MCP endpoint is `http://localhost:3010/mcp` with synthetic bearer
 token `OpenWorkDiagnosticsToken!`. Local history is process-memory only.
 
+The MCP catalog also contains two diagnostics-only authorization tools:
+
+- `diagnostics_authorization_check` returns JSON-RPC `-32001` with a same-origin
+  `data.connect_url` until the user opens that mock verification link. A
+  successful verification lasts five minutes and survives MCP reconnects.
+- `diagnostics_reset_authorization` immediately clears that state so the link
+  flow can be repeated without waiting for its automatic expiry.
+
+The state is keyed by a one-way identity derived from the already-valid
+synthetic MCP bearer token. Hosted deployments keep only that derived identity
+in Redis with a five-minute TTL; local development keeps it in process memory.
+The mock verification page never asks for or stores provider credentials.
+
 To expose the controlled run in a local Den, set:
 
 ```dotenv

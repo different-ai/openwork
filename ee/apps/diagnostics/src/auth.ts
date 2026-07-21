@@ -1,4 +1,4 @@
-import { timingSafeEqual } from "node:crypto"
+import { createHmac, timingSafeEqual } from "node:crypto"
 import { verifyAccessToken } from "./session"
 
 function constantTimeEqual(left: string, right: string): boolean {
@@ -15,10 +15,15 @@ export function bearerAuthorized(request: Request, expectedToken: string): boole
 }
 
 export function mcpBearerAuthorized(request: Request, expectedToken: string, signingSecret: string): boolean {
+  return mcpAuthorizationSubject(request, expectedToken, signingSecret) !== null
+}
+
+export function mcpAuthorizationSubject(request: Request, expectedToken: string, signingSecret: string): string | null {
   const authorization = request.headers.get("authorization") ?? ""
-  if (!authorization.startsWith("Bearer ")) return false
+  if (!authorization.startsWith("Bearer ")) return null
   const token = authorization.slice(7)
-  return constantTimeEqual(token, expectedToken) || verifyAccessToken(token, signingSecret)
+  if (!constantTimeEqual(token, expectedToken) && !verifyAccessToken(token, signingSecret)) return null
+  return createHmac("sha256", signingSecret).update(`diagnostics-mock-authorization:${token}`).digest("hex")
 }
 
 export function oauthBasicAuthorized(request: Request, expectedSecret: string): boolean {
