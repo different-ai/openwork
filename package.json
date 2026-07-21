@@ -50,6 +50,7 @@
     "test:session-scope": "pnpm --filter @openwork/app test:session-scope",
     "test:session-switch": "pnpm --filter @openwork/app test:session-switch",
     "test:fs-engine": "pnpm --filter @openwork/app test:fs-engine",
+    "test:eval-runner": "node --test evals/runner/*.test.mjs",
     "test:e2e": "pnpm --filter @openwork/app test:e2e",
     "test:admin-scale": "pnpm --filter @openwork-ee/den-api test:admin-scale",
     "benchmark:admin-scale:mysql": "pnpm --filter @openwork-ee/den-db benchmark:admin-scale:mysql",

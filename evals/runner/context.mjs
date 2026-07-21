@@ -9,9 +9,42 @@ import { captureDaytonaComputerUseScreenshot } from "./daytona-computer-use.mjs"
 const execFileAsync = promisify(execFile);
 
 const DEFAULT_TIMEOUT_MS = 20_000;
+const DEFAULT_ROUTE_TIMEOUT_MS = 5_000;
 const POLL_INTERVAL_MS = 250;
+const ROUTE_POLL_INTERVAL_MS = 50;
+
+const ROUTE_EXPRESSION = `(() => {
+  try {
+    const route = window.__openworkControl?.snapshot?.().route;
+    if (typeof route === "string" && route.length > 0) return route;
+  } catch {
+    // Fall through to the browser URL while the control surface initializes.
+  }
+  return window.location.hash.replace(/^#/, "") || window.location.pathname;
+})()`;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function within(promise, timeoutMs, message) {
+  let timer;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new EvalError(message)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function normalizeRoute(route) {
+  if (typeof route !== "string") return null;
+  const value = route.trim().replace(/^#/, "");
+  if (!value) return "/";
+  return value.startsWith("/") ? value : `/${value}`;
+}
 
 export class EvalError extends Error {}
 
@@ -203,6 +236,16 @@ export class EvalContext {
     if (!passed) throw new EvalError(`Expected URL hash to include ${fragment}, got ${hash}`);
   }
 
+  async expectRoute(expected, options = {}) {
+    const actual = await this.waitForRoute(expected, options);
+    return this.recordEvidence({
+      type: "assertion",
+      status: "passed",
+      assertion: `App route equals ${JSON.stringify(normalizeRoute(expected))}`,
+      actual,
+    });
+  }
+
   async prove(name, options) {
     const claim = options?.claim ?? name;
     const voiceover = typeof options?.voiceover === "string" ? options.voiceover.trim() : "";
@@ -245,6 +288,48 @@ export class EvalContext {
     const what = label ?? expression;
     throw new EvalError(
       `Timed out after ${timeoutMs}ms waiting for: ${what}` +
+        (lastError ? ` (last error: ${lastError.message})` : ""),
+    );
+  }
+
+  /**
+   * Poll the app's canonical route, preferring the control snapshot and
+   * falling back to the URL hash used by the Electron app. Each probe is
+   * capped by the remaining deadline so a stalled CDP call cannot turn a
+   * short route wait into the client's longer transport timeout.
+   */
+  async waitForRoute(expected, { timeoutMs = DEFAULT_ROUTE_TIMEOUT_MS } = {}) {
+    const expectedRoute = normalizeRoute(expected);
+    if (!expectedRoute) {
+      throw new EvalError(`Expected a non-empty app route, got ${JSON.stringify(expected)}.`);
+    }
+
+    const deadline = Date.now() + timeoutMs;
+    let lastRoute = null;
+    let lastError = null;
+
+    while (Date.now() < deadline) {
+      const remainingMs = deadline - Date.now();
+      try {
+        const route = await within(
+          this.eval(ROUTE_EXPRESSION),
+          remainingMs,
+          `Route probe timed out after ${remainingMs}ms.`,
+        );
+        lastRoute = normalizeRoute(route);
+        lastError = null;
+        if (lastRoute === expectedRoute) return lastRoute;
+      } catch (error) {
+        lastError = error;
+      }
+
+      const delayMs = Math.min(ROUTE_POLL_INTERVAL_MS, Math.max(0, deadline - Date.now()));
+      if (delayMs > 0) await sleep(delayMs);
+    }
+
+    throw new EvalError(
+      `Timed out after ${timeoutMs}ms waiting for app route ${JSON.stringify(expectedRoute)}; ` +
+        `last observed route: ${JSON.stringify(lastRoute)}` +
         (lastError ? ` (last error: ${lastError.message})` : ""),
     );
   }
