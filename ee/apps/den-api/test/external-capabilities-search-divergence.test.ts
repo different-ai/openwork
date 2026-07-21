@@ -236,6 +236,10 @@ function startConnectDialectMcpServer(): FakeMcpServer {
       // A server-defined code with no structured action and no standard meaning.
       return { code: -32077, message: "Provider declared an internal condition; detail must not escape.", data: {} }
     }
+    if (tool === "lookup_reserved_code") {
+      // A reserved-range JSON-RPC code (internal error) from the remote.
+      return { code: -32603, message: "Provider internal error; detail must not escape.", data: {} }
+    }
     return null
   }
 
@@ -258,6 +262,7 @@ function startConnectDialectMcpServer(): FakeMcpServer {
       "lookup_with_url_elicitation",
       "lookup_cross_origin",
       "lookup_unknown_remote",
+      "lookup_reserved_code",
     ]) {
       server.registerTool(name, { description: `Look up via ${name}`, inputSchema: z.object({}) },
         async () => ({ content: textContent("unreachable success") }))
@@ -1015,6 +1020,20 @@ test("an unknown remote server error is reported honestly without invented remed
   // and never echoes the provider's own text.
   expect(result.message).toContain("JSON-RPC -32077")
   expect(result.message).not.toMatch(/latency|reconnect|credential|timed out|check your connection/i)
+  expect(JSON.stringify(result)).not.toContain("must not escape")
+})
+
+test("any remote error is captured end to end with its JSON-RPC code and a diagnostic reference", async () => {
+  const { seed, connection } = await connectDialectConnection("provider-reserved-code-capture")
+  const result = await runConnectDialectTool(seed, connection, "lookup_reserved_code")
+
+  // Whatever the code and band, the original error survives as structured,
+  // referenced, non-leaking evidence rather than an opaque or dropped failure.
+  expect(result.ok).toBe(false)
+  if (result.ok) throw new Error("Reserved-code error unexpectedly returned success")
+  expect(result.diagnostic?.jsonRpcCode).toBe(-32603)
+  expect(result.diagnostic?.referenceId).toBeTruthy()
+  expect(result.message).toContain(result.diagnostic?.referenceId ?? "MISSING_REFERENCE")
   expect(JSON.stringify(result)).not.toContain("must not escape")
 })
 

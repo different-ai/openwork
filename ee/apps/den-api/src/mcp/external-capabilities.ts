@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto"
 import { and, eq, isNull } from "@openwork-ee/den-db/drizzle"
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js"
 import { StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
@@ -22,6 +23,7 @@ import {
 import {
   ExternalMcpDiagnosticError,
   externalMcpDiagnosticForLog,
+  externalMcpDiagnosticForResponse,
   safeExternalMcpEndpointForLog,
   type ExternalMcpDiagnostic,
 } from "../capability-sources/external-mcp-diagnostics.js"
@@ -1098,6 +1100,30 @@ export async function executeExternalCapability(input: {
         }),
       }
     }
-    throw error
+    // Full-proof floor: any residual error — including one thrown outside the
+    // enterprise adapter, which would not already be an ExternalMcpDiagnosticError
+    // — is still captured as a structured, referenced, and logged result rather
+    // than escaping unclassified. The original error's JSON-RPC code and cause
+    // chain are preserved as evidence exactly as for adapter-reported failures,
+    // so the harness never receives an opaque failure and the server always logs
+    // the raw original for correlation.
+    const diagnostic = externalMcpDiagnosticForResponse(error, randomUUID(), "MCP_TOOL_EXECUTION")
+    console.error("external_mcp_capability_execute_failed", {
+      connectionId: connection.id,
+      organizationId: connection.organizationId,
+      connectionEndpoint: safeExternalMcpEndpointForLog(connection.url),
+      ...externalMcpDiagnosticForLog(error, diagnostic.referenceId, "MCP_TOOL_EXECUTION"),
+    })
+    return {
+      ok: false,
+      error: diagnostic.phase === "PROVIDER_EXECUTION" || diagnostic.phase === "PROVIDER_AUTHORIZATION"
+        ? "provider_error"
+        : "connection_failed",
+      message: `${diagnostic.message} ${diagnostic.operatorAction} Diagnostic reference: ${diagnostic.referenceId}.`,
+      diagnostic,
+      actionOwner: diagnostic.actionOwner,
+      operatorAction: diagnostic.operatorAction,
+      ...(schemaGuidance ? { schemaGuidance } : {}),
+    }
   }
 }

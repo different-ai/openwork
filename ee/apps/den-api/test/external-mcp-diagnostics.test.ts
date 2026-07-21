@@ -8,6 +8,7 @@ import {
   catalogDiagnosticError,
   createExternalMcpDiagnosticFetch,
   externalMcpDiagnosticForLog,
+  externalMcpDiagnosticForResponse,
   safeExternalMcpEndpointForLog,
   safeExternalMcpCauseChain,
 } from "../src/capability-sources/external-mcp-diagnostics.js"
@@ -513,6 +514,33 @@ describe("external MCP diagnostics", () => {
     expect(error.diagnostic.message).toContain("JSON-RPC -32077")
     expect(error.diagnostic.message).not.toMatch(/latency|reconnect|credential|timed out/i)
     expect(JSON.stringify(error.diagnostic)).not.toContain("must not escape")
+  })
+
+  // Capture floor: whatever the downstream throws, the original error is always
+  // turned into a referenced diagnostic that preserves any JSON-RPC code and
+  // never leaks the provider's raw text.
+  test.each([
+    ["server-defined code", new McpError(-32077, "provider text must not escape"), -32077],
+    ["reserved-range code", new McpError(-32603, "internal detail must not escape"), -32603],
+    ["code carried by a wrapped cause", new Error("wrapper", { cause: new McpError(-32050, "inner must not escape") }), -32050],
+  ])("always captures the original error with its JSON-RPC code preserved: %s", (_label, error, code) => {
+    const diagnostic = externalMcpDiagnosticForResponse(error, "req_capture_floor", "MCP_TOOL_EXECUTION")
+    expect(diagnostic.referenceId).toBe("req_capture_floor")
+    expect(diagnostic.message.length).toBeGreaterThan(0)
+    expect(diagnostic.jsonRpcCode).toBe(code)
+    expect(JSON.stringify(diagnostic)).not.toContain("must not escape")
+  })
+
+  test.each([
+    ["opaque string error", new Error("an opaque failure with no code")],
+    ["empty object", {}],
+    ["thrown null", null],
+    ["thrown undefined", undefined],
+  ])("still captures a referenced, non-empty diagnostic for an unstructured error: %s", (_label, error) => {
+    const diagnostic = externalMcpDiagnosticForResponse(error, "req_capture_floor_unstructured", "MCP_TOOL_EXECUTION")
+    expect(diagnostic.referenceId).toBe("req_capture_floor_unstructured")
+    expect(typeof diagnostic.message).toBe("string")
+    expect(diagnostic.message.length).toBeGreaterThan(0)
   })
 
   test("classifies structured provider validation errors as correctable tool input", () => {
