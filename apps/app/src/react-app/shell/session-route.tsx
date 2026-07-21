@@ -621,11 +621,6 @@ export function SessionRoute() {
       defaultModel: local.prefs.defaultModel,
       modelVariant: local.prefs.modelVariant ?? null,
     });
-  const modelPicker = useModelPicker({
-    client: opencodeClient,
-    baseUrl: opencodeBaseUrl,
-    workspaceRoot: selectedWorkspaceRoot,
-  });
   const {
     store: sessionProviderAuthStore,
     snapshot: sessionProviderAuthSnapshot,
@@ -633,6 +628,7 @@ export function SessionRoute() {
     cloudProviderList,
   } = useSessionProviderAuth({
     opencodeClient,
+    opencodeBaseUrl,
     providers,
     providerDefaults,
     providerConnectedIds,
@@ -645,6 +641,15 @@ export function SessionRoute() {
     setProviderDefaults,
     setProviderConnectedIds,
     setDisabledProviderIds,
+  });
+  const handleModelPickerOpen = useCallback(() => {
+    void sessionProviderAuthStore.runCloudProviderSync("model_picker_open");
+  }, [sessionProviderAuthStore]);
+  const modelPicker = useModelPicker({
+    client: opencodeClient,
+    baseUrl: opencodeBaseUrl,
+    workspaceRoot: selectedWorkspaceRoot,
+    onOpen: handleModelPickerOpen,
   });
   const selectedModelUsesCloudProvider = Boolean(
     local.prefs.defaultModel && isCloudManagedProviderKey(local.prefs.defaultModel.providerID),
@@ -1215,6 +1220,9 @@ export function SessionRoute() {
       const session = unwrap(
         await workspaceClient.session.create({ directory: workspace.path?.trim() || undefined }),
       );
+      if (workspaceId === selectedWorkspaceId) {
+        void sessionProviderAuthStore.runCloudProviderSync("new_chat");
+      }
       captureAnalyticsEvent("task_created", {
         source: "new_task",
         workspace_type: workspace.workspaceType ?? "unknown",
@@ -1262,7 +1270,7 @@ export function SessionRoute() {
       }
       return null;
     }
-  }, [baseUrl, loading, navigateToWorkspaceSession, refreshRouteState, rememberPendingCreatedSession, retryingWorkspaceIds, token, workspaces]);
+  }, [baseUrl, loading, navigateToWorkspaceSession, refreshRouteState, rememberPendingCreatedSession, retryingWorkspaceIds, selectedWorkspaceId, sessionProviderAuthStore, token, workspaces]);
 
   // Latest session-list state for prev/next session tab navigation. The
   // `options` field is updated by `onSessionTabsChange` from SessionPage so we
@@ -2043,6 +2051,9 @@ export function SessionRoute() {
               const session = unwrap(
                 await workspaceClient.session.create({ directory: workspace.path?.trim() || undefined }),
               );
+              if (workspaceId === selectedWorkspaceId) {
+                void sessionProviderAuthStore.runCloudProviderSync("new_chat");
+              }
               saveSessionDraft(workspaceId, session.id, { text: prompt, mode: "prompt" });
               writeActiveWorkspaceId(workspaceId || null);
               writeLastSessionFor(workspaceId, session.id);

@@ -33,6 +33,7 @@ import { listTeamsForMember } from "../orgs.js"
 import { openworkOrganizationConnectionsUrl, openworkYourConnectionsUrl } from "./connection-navigation.js"
 import {
   externalMcpConnectionActionRequired,
+  safeConnectionActionUrl,
   type ExternalMcpConnectionActionData,
 } from "./external-mcp-remote-action.js"
 import {
@@ -288,6 +289,11 @@ export function isExternalMcpAuthError(error: unknown): boolean {
   return externalMcpAuthErrorCode(error) !== null
 }
 
+function diagnosticAllowsReauthentication(diagnostic: ExternalMcpDiagnostic | undefined): boolean {
+  if (!diagnostic) return true
+  return diagnostic.phase.startsWith("AUTH_") || diagnostic.phase === "CONTINUITY_REFRESH"
+}
+
 export function externalConnectionErrorHint(
   connectionName: string,
   error: unknown,
@@ -363,6 +369,56 @@ function addConnectionActionUrl(input: {
   return url ? { ...input.action, url } : input.action
 }
 
+function providerAuthorizationDiagnosticForConnection(input: {
+  diagnostic: ExternalMcpDiagnostic
+  connectionUrl: string
+}): ExternalMcpDiagnostic {
+  // Provider text/data is retained in server-side diagnostic logs, but an
+  // authorization action sent to an agent contains only trusted OpenWork copy
+  // and the single URL that passed the connection-bound safety gate.
+  const diagnostic = {
+    ...input.diagnostic,
+    message: "The provider requires this user to authorize the downstream account before the capability can run.",
+    operatorAction: "Ask the user to complete provider authorization, then retry this capability only after they confirm it is complete.",
+  }
+  const connectUrl = safeConnectionActionUrl(diagnostic.connectUrl, input.connectionUrl)
+  delete diagnostic.providerErrorMessage
+  delete diagnostic.providerErrorData
+  if (!connectUrl) {
+    delete diagnostic.connectUrl
+    return diagnostic
+  }
+  return { ...diagnostic, connectUrl }
+}
+
+function providerAuthorizationConnectionStatus(input: {
+  connection: Pick<ExternalMcpConnectionRow, "id" | "name" | "authType" | "credentialMode">
+  diagnostic?: ExternalMcpDiagnostic
+  connectUrl?: string
+  message: string
+}): ExternalConnectionStatus {
+  const status = buildExternalConnectionStatus({
+    connection: input.connection,
+    state: "needs_connection",
+    errorCode: "not_connected",
+    message: input.message,
+    ...(input.diagnostic ? { diagnostic: input.diagnostic } : {}),
+    actionOwner: "member",
+    layer: "downstream_provider",
+  })
+  return {
+    ...status,
+    actor: "member",
+    action: {
+      type: "connect",
+      label: "Connect your provider account",
+      surface: "openwork_your_connections",
+      retry: "search_capabilities",
+      ...(input.connectUrl ? { url: input.connectUrl } : {}),
+    },
+  }
+}
+
 export function buildExternalConnectionStatus(input: {
   connection: Pick<ExternalMcpConnectionRow, "id" | "name" | "authType" | "credentialMode">
   state: ExternalConnectionStatus["state"]
@@ -370,6 +426,7 @@ export function buildExternalConnectionStatus(input: {
   message: string
   diagnostic?: ExternalMcpDiagnostic
   actionOwner?: "member" | "organization_admin"
+  layer?: ExternalConnectionStatus["layer"]
 }): ExternalConnectionStatus {
   const connectionName = input.connection.name
   const actionContract = {
@@ -389,7 +446,7 @@ export function buildExternalConnectionStatus(input: {
     const providerAdminAction = PROVIDER_ADMIN_ACTION_PATTERN.test(input.message)
     return {
       ...actionContract,
-      layer: input.diagnostic ? "mcp_connection" : "downstream_provider",
+      layer: input.layer ?? (input.diagnostic ? "mcp_connection" : "downstream_provider"),
       connectionId: input.connection.id,
       connectionName,
       authType: input.connection.authType,
@@ -436,7 +493,7 @@ export function buildExternalConnectionStatus(input: {
         : "Inspect"
   return {
     ...actionContract,
-    layer: input.diagnostic ? "mcp_connection" : "downstream_provider",
+    layer: input.layer ?? (input.diagnostic ? "mcp_connection" : "downstream_provider"),
     connectionId: input.connection.id,
     connectionName,
     authType: input.connection.authType,
@@ -666,7 +723,12 @@ async function probeExternalMcpConnection(input: {
           ...externalMcpDiagnosticForLog(error, diagnostic.referenceId, "MCP_TOOL_DISCOVERY"),
         })
       }
-      const authErrorCode = externalMcpAuthErrorCode(error, message)
+      const detectedAuthErrorCode = externalMcpAuthErrorCode(error, message)
+      // Provider-declared protocol errors can contain phrases such as
+      // "invalid refresh token" in untrusted text. Only route the user to
+      // reauthenticate when the structured diagnostic also places the failure
+      // in an authentication or refresh phase.
+      const authErrorCode = diagnosticAllowsReauthentication(diagnostic) ? detectedAuthErrorCode : null
       const state = authErrorCode ? "reauth_required" : "provider_error"
       add(statusMatch({
         connection,
@@ -796,7 +858,6 @@ export type ExternalCapabilityExecuteResult =
         | "forbidden"
         | "connection_not_connected"
         | "needs_connection"
-        | "authorization_required"
         | "connection_failed"
         | "provider_error"
         | "invalid_capability_arguments"
@@ -816,6 +877,38 @@ export type ExternalCapabilityExecuteResult =
       }
       schemaGuidance?: ExternalMcpSchemaGuidance
     }
+
+function providerAuthorizationExecuteFailure(input: {
+  connection: Pick<ExternalMcpConnectionRow, "id" | "name" | "authType" | "credentialMode">
+  connectionAction?: ExternalMcpConnectionActionData
+  diagnostic?: ExternalMcpDiagnostic
+  schemaGuidance?: ExternalMcpSchemaGuidance
+}): Exclude<ExternalCapabilityExecuteResult, { ok: true }> {
+  const connectUrl = input.connectionAction?.connect_url
+  const operatorAction = connectUrl
+    ? "Ask the user to open the provider sign-in link, complete authorization, and confirm before retrying. Do not open the link or retry automatically."
+    : "Ask the user to connect the provider account from Your Connections. Do not retry automatically until they confirm authorization is complete."
+  const message = connectUrl
+    ? `"${input.connection.name}" needs the user to sign in before this capability can run. Ask the user to open ${connectUrl} in a browser, sign in, then retry this request once they confirm. Do not open the URL on the user's behalf and do not retry automatically.`
+    : `"${input.connection.name}" needs the user to sign in before this capability can run, but the provider did not return a safe connection-bound sign-in URL. Ask the user to connect it from Your Connections before retrying.`
+
+  return {
+    ok: false,
+    error: "needs_connection",
+    message,
+    ...(input.connectionAction ? { data: input.connectionAction } : {}),
+    ...(input.diagnostic ? { diagnostic: input.diagnostic } : {}),
+    actionOwner: "member",
+    operatorAction,
+    connectionStatus: providerAuthorizationConnectionStatus({
+      connection: input.connection,
+      message,
+      ...(input.diagnostic ? { diagnostic: input.diagnostic } : {}),
+      ...(connectUrl ? { connectUrl } : {}),
+    }),
+    ...(input.schemaGuidance ? { schemaGuidance: input.schemaGuidance } : {}),
+  }
+}
 
 function invalidCapabilityArguments(input: {
   capability: string
@@ -1037,54 +1130,86 @@ export async function executeExternalCapability(input: {
     // origin. Recognized before generic diagnosis so a legitimate sign-in
     // prompt is never buried as an opaque provider failure.
     const connectionAction = externalMcpConnectionActionRequired(error, { connectionUrl: connection.url })
-    if (connectionAction) {
-      return {
-        ok: false,
-        error: "authorization_required",
-        message: `"${connection.name}" needs the user to sign in before this capability can run. Ask the user to open ${connectionAction.connect_url} in a browser, sign in, then retry this request once they confirm. Do not open the URL on the user's behalf and do not retry automatically.`,
-        data: connectionAction,
-        ...(schemaGuidance ? { schemaGuidance } : {}),
-      }
-    }
     const message = upstreamErrorMessage(error)
     const authErrorCode = externalMcpAuthErrorCode(error, message)
     if (error instanceof ExternalMcpDiagnosticError) {
+      const providerAuthorizationRequired = error.diagnostic.code === "MCP_PROVIDER_AUTH_REQUIRED" || Boolean(connectionAction)
+      const diagnostic = providerAuthorizationRequired
+        ? providerAuthorizationDiagnosticForConnection({
+            diagnostic: connectionAction
+              ? {
+                  ...error.diagnostic,
+                  phase: "PROVIDER_AUTHORIZATION",
+                  category: "provider_authorization_required",
+                  code: "MCP_PROVIDER_AUTH_REQUIRED",
+                  retryable: false,
+                  actionOwner: "member",
+                  operatorAction: "Connect your account for this provider using its sign-in link, then retry this capability.",
+                  connectUrl: connectionAction.connect_url,
+                }
+              : error.diagnostic,
+            connectionUrl: connection.url,
+          })
+        : error.diagnostic
+      const log = externalMcpDiagnosticForLog(error, error.diagnostic.referenceId, "MCP_TOOL_EXECUTION")
       console.error("external_mcp_capability_execute_failed", {
         connectionId: connection.id,
         organizationId: connection.organizationId,
         connectionEndpoint: safeExternalMcpEndpointForLog(connection.url),
-        ...externalMcpDiagnosticForLog(error, error.diagnostic.referenceId, "MCP_TOOL_EXECUTION"),
+        ...log,
+        diagnostic,
       })
-      if (error.diagnostic.code === "MCP_INVALID_PARAMS" || error.diagnostic.code === "MCP_PROVIDER_INVALID_PARAMS") {
+      if (diagnostic.code === "MCP_INVALID_PARAMS" || diagnostic.code === "MCP_PROVIDER_INVALID_PARAMS") {
         return invalidCapabilityArguments({
           capability: buildExternalCapabilityName(connection.id, input.toolName),
           schemaDigest: currentSchemaDigest ?? input.schemaDigest,
-          diagnostic: error.diagnostic,
+          diagnostic,
           schemaGuidance,
+        })
+      }
+      if (providerAuthorizationRequired) {
+        const safeConnectionAction = diagnostic.connectUrl
+          ? {
+              connect_url: diagnostic.connectUrl,
+              ...(connectionAction?.provider ? { provider: connectionAction.provider } : {}),
+            }
+          : undefined
+        return providerAuthorizationExecuteFailure({
+          connection,
+          ...(safeConnectionAction ? { connectionAction: safeConnectionAction } : {}),
+          diagnostic,
+          ...(schemaGuidance ? { schemaGuidance } : {}),
         })
       }
       return {
         ok: false,
-        error: error.diagnostic.phase === "PROVIDER_EXECUTION" || error.diagnostic.phase === "PROVIDER_AUTHORIZATION"
+        error: diagnostic.phase === "PROVIDER_EXECUTION" || diagnostic.phase === "PROVIDER_AUTHORIZATION"
           ? "provider_error"
           : "connection_failed",
-        message: `${error.diagnostic.message} ${error.diagnostic.operatorAction} Diagnostic reference: ${error.diagnostic.referenceId}.`,
-        diagnostic: error.diagnostic,
-        actionOwner: error.diagnostic.actionOwner,
-        operatorAction: error.diagnostic.operatorAction,
+        message: `${diagnostic.message} ${diagnostic.operatorAction} Diagnostic reference: ${diagnostic.referenceId}.`,
+        diagnostic,
+        actionOwner: diagnostic.actionOwner,
+        operatorAction: diagnostic.operatorAction,
         ...(schemaGuidance ? { schemaGuidance } : {}),
-        ...(authErrorCode
+        ...(authErrorCode && diagnosticAllowsReauthentication(diagnostic)
           ? {
               connectionStatus: buildExternalConnectionStatus({
                 connection,
                 state: "reauth_required",
                 errorCode: authErrorCode,
                 message,
-                diagnostic: error.diagnostic,
+                diagnostic,
               }),
             }
           : {}),
       }
+    }
+    if (connectionAction) {
+      return providerAuthorizationExecuteFailure({
+        connection,
+        connectionAction,
+        ...(schemaGuidance ? { schemaGuidance } : {}),
+      })
     }
     if (authErrorCode) {
       return {

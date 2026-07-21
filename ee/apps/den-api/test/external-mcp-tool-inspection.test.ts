@@ -211,6 +211,15 @@ test("attributes a blocked or deadline-stopped tools/call to the right layer", (
     layer: "network",
     summary: "OpenWork sent the request, but the remote MCP did not respond before OpenWork’s deadline.",
   })
+  expect(diagnoseExternalMcpToolCall({
+    inspection: { request: { method: "POST", url: "https://mcp.example.test/rpc", startedAt: new Date().toISOString(), headers: [], body: { text: "{}", bytes: 2, truncated: false } } },
+    succeeded: false,
+    diagnostic: { phase: "PROVIDER_AUTHORIZATION", category: "provider_authorization_required", code: "MCP_PROVIDER_AUTH_REQUIRED" },
+  })).toEqual({
+    status: "failed",
+    layer: "mcp_tool",
+    summary: "The remote MCP responded and requires user authorization for the downstream provider.",
+  })
 })
 
 test("attributes remote HTTP and downstream provider failures without crossing evidence boundaries", () => {
@@ -244,6 +253,15 @@ test("attributes remote HTTP and downstream provider failures without crossing e
     status: "failed",
     layer: "mcp_tool",
     summary: "The remote MCP responded, but the downstream provider rejected the operation.",
+  })
+  expect(diagnoseExternalMcpToolCall({
+    inspection: { request, response: { ...response, status: 200, statusText: "OK" } },
+    succeeded: false,
+    diagnostic: { phase: "PROVIDER_AUTHORIZATION", code: "MCP_PROVIDER_AUTH_REQUIRED" },
+  })).toEqual({
+    status: "failed",
+    layer: "mcp_tool",
+    summary: "The remote MCP responded and requires user authorization for the downstream provider.",
   })
 })
 

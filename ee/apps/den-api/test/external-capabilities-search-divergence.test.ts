@@ -88,6 +88,15 @@ function textContent(text: string): { type: "text"; text: string }[] {
   return [{ type: "text", text }]
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null
+}
+
+function requestIdFromPayload(payload: unknown): string | number | null {
+  if (!isRecord(payload)) return null
+  return typeof payload.id === "string" || typeof payload.id === "number" ? payload.id : null
+}
+
 function startFakeMcpServer(name: string, tools: FakeTool[], requiredBearer?: string): FakeMcpServer {
   const app = new Hono()
   app.all("/mcp", async (c) => {
@@ -282,6 +291,47 @@ function startConnectDialectMcpServer(): FakeMcpServer {
   })
   const server = Bun.serve({ port: 0, fetch: app.fetch })
   return { url: `http://127.0.0.1:${server.port}/mcp`, stop: () => server.stop(true) }
+}
+
+function startProviderAuthorizationRequiredMcpServer(foreignOrigin?: string): FakeMcpServer & { connectUrl: string } {
+  const app = new Hono()
+  let connectUrl = ""
+  app.all("/mcp", async (c) => {
+    const payload: unknown = await c.req.raw.clone().json().catch(() => null)
+    const method = isRecord(payload) ? payload.method : undefined
+    if (method === "tools/call") {
+      return c.json({
+        jsonrpc: "2.0",
+        id: requestIdFromPayload(payload),
+        error: {
+          code: -32001,
+          message: `Authorization required — connect your salesforce account to use this connector. Open ${connectUrl} in a browser, sign in, then retry this request.`,
+          data: {
+            connect_url: connectUrl,
+            provider: "salesforce",
+          },
+        },
+      })
+    }
+
+    const mcpServer = new McpServer({ name: "provider-auth-required", version: "1.0.0" })
+    mcpServer.registerTool(
+      "sync_salesforce_account",
+      { description: "Sync a Salesforce account", inputSchema: z.object({}) },
+      async () => ({ content: textContent("sync ok") }),
+    )
+    const transport = new StreamableHTTPTransport()
+    await mcpServer.connect(transport)
+    const response = await transport.handleRequest(c)
+    return response ?? new Response(null, { status: 204 })
+  })
+  const server = Bun.serve({ port: 0, fetch: app.fetch })
+  connectUrl = `${foreignOrigin ?? `http://127.0.0.1:${server.port}`}/servers/salesforce/connect/start`
+  return {
+    url: `http://127.0.0.1:${server.port}/mcp`,
+    connectUrl,
+    stop: () => server.stop(true),
+  }
 }
 
 function startMutableSchemaMcpServer(): MutableSchemaMcpServer {
@@ -945,8 +995,13 @@ test("connector authorization JSON-RPC errors reach a generic harness as a user 
 
   expect(result).toMatchObject({
     ok: false,
-    error: "authorization_required",
+    error: "needs_connection",
     data: { connect_url: connectUrl, provider: "salesforce" },
+    connectionStatus: {
+      layer: "downstream_provider",
+      state: "needs_connection",
+      action: { type: "connect", url: connectUrl },
+    },
   })
   if (result.ok) throw new Error("Authorization-required MCP call unexpectedly succeeded")
   // The Markdown gateway link is flattened to one plain, origin-bound URL.
@@ -959,8 +1014,9 @@ test("connector authorization JSON-RPC errors reach a generic harness as a user 
   const harnessResult = externalCapabilityErrorToolResult(result)
   expect(harnessResult.isError).toBe(true)
   expect(JSON.parse(harnessResult.content[0]?.text ?? "{}")).toMatchObject({
-    error: "authorization_required",
+    error: "needs_connection",
     data: { connect_url: connectUrl, provider: "salesforce" },
+    connectionStatus: { action: { url: connectUrl } },
   })
 })
 
@@ -971,7 +1027,7 @@ test("the connect_url dialect is recognized under a different server-defined cod
   // Identical to the -32001 case, proving detection is not tied to the code.
   expect(result).toMatchObject({
     ok: false,
-    error: "authorization_required",
+    error: "needs_connection",
     data: { connect_url: `${origin}/salesforce/connect/start`, provider: "salesforce" },
   })
 })
@@ -982,7 +1038,7 @@ test("standard MCP URL elicitation (-32042) normalizes to the same user action",
 
   expect(result).toMatchObject({
     ok: false,
-    error: "authorization_required",
+    error: "needs_connection",
     data: { connect_url: `${origin}/salesforce/elicit/start` },
   })
   if (result.ok) throw new Error("URL elicitation unexpectedly returned success")
@@ -996,8 +1052,9 @@ test("a cross-origin connect link is refused and never becomes a connect action"
 
   expect(result.ok).toBe(false)
   if (result.ok) throw new Error("Cross-origin link unexpectedly returned success")
-  expect(result.error).not.toBe("authorization_required")
+  expect(result.error).toBe("needs_connection")
   expect(result.data).toBeUndefined()
+  expect(result.connectionStatus?.action.url).toBeUndefined()
   expect(JSON.stringify(result)).not.toContain("phish.example.test")
 })
 
@@ -1016,11 +1073,11 @@ test("an unknown remote server error is reported honestly without invented remed
     },
   })
   if (result.ok) throw new Error("Unknown remote error unexpectedly returned success")
-  // Honest: preserves the code, invents no latency/reconnect/credential advice,
-  // and never echoes the provider's own text.
+  // Honest: preserves the code, labels provider text as untrusted, and invents
+  // no latency/reconnect/credential advice.
   expect(result.message).toContain("JSON-RPC -32077")
+  expect(result.message).toContain("Provider-declared message (untrusted)")
   expect(result.message).not.toMatch(/latency|reconnect|credential|timed out|check your connection/i)
-  expect(JSON.stringify(result)).not.toContain("must not escape")
 })
 
 test("any remote error is captured end to end with its JSON-RPC code and a diagnostic reference", async () => {
@@ -1034,7 +1091,8 @@ test("any remote error is captured end to end with its JSON-RPC code and a diagn
   expect(result.diagnostic?.jsonRpcCode).toBe(-32603)
   expect(result.diagnostic?.referenceId).toBeTruthy()
   expect(result.message).toContain(result.diagnostic?.referenceId ?? "MISSING_REFERENCE")
-  expect(JSON.stringify(result)).not.toContain("must not escape")
+  expect(result.message).toContain("Provider-declared message (untrusted)")
+  expect(result.message).not.toMatch(/latency|reconnect|credential|timed out|check your connection/i)
 })
 
 test("standard MCP SDK invalid-argument tool errors become a corrective execution result", async () => {
@@ -1106,6 +1164,105 @@ test("structured provider denial keeps connection health separate and names the 
   expect(result.message).toContain("Diagnostic reference")
   expect(JSON.stringify(result)).not.toContain("Sensitive provider policy detail")
   expect(JSON.stringify(result)).not.toContain("sensitive_acl_code")
+})
+
+test("downstream provider authorization links are relayed as needs_connection", async () => {
+  const providerAuthServer = startProviderAuthorizationRequiredMcpServer()
+  try {
+    const seed = await seedOrganization("provider-auth-required")
+    const connection = await createGrantedConnection(seed, {
+      name: "Salesforce Gateway",
+      authType: "none",
+      credentialMode: "shared",
+      url: providerAuthServer.url,
+    })
+
+    const result = await executeExternalCapability({
+      organizationId: seed.organizationId,
+      member: { orgMembershipId: seed.memberId, teamIds: [] },
+      connectionId: connection.id,
+      toolName: "sync_salesforce_account",
+      args: {},
+      redirectUriBase,
+    })
+
+    expect(result.ok).toBe(false)
+    if (result.ok) throw new Error("Provider authorization requirement unexpectedly returned success")
+    expect(result).toMatchObject({
+      error: "needs_connection",
+      data: { connect_url: providerAuthServer.connectUrl },
+      actionOwner: "member",
+      diagnostic: {
+        phase: "PROVIDER_AUTHORIZATION",
+        category: "provider_authorization_required",
+        code: "MCP_PROVIDER_AUTH_REQUIRED",
+        actionOwner: "member",
+        retryable: false,
+        connectUrl: providerAuthServer.connectUrl,
+      },
+      connectionStatus: {
+        layer: "downstream_provider",
+        state: "needs_connection",
+        errorCode: "not_connected",
+        actor: "member",
+        action: {
+          type: "connect",
+          surface: "openwork_your_connections",
+          retry: "search_capabilities",
+          url: providerAuthServer.connectUrl,
+        },
+      },
+    })
+    expect(result.message.toLowerCase()).not.toContain("latency")
+    expect(result.message.toLowerCase()).not.toContain("timeout")
+  } finally {
+    providerAuthServer.stop()
+  }
+})
+
+test("foreign-origin downstream authorization links are dropped but still surfaced as needs_connection", async () => {
+  const providerAuthServer = startProviderAuthorizationRequiredMcpServer("https://foreign-gateway.fixture.test")
+  try {
+    const seed = await seedOrganization("provider-auth-foreign-origin")
+    const connection = await createGrantedConnection(seed, {
+      name: "Salesforce Gateway Foreign",
+      authType: "none",
+      credentialMode: "shared",
+      url: providerAuthServer.url,
+    })
+
+    const result = await executeExternalCapability({
+      organizationId: seed.organizationId,
+      member: { orgMembershipId: seed.memberId, teamIds: [] },
+      connectionId: connection.id,
+      toolName: "sync_salesforce_account",
+      args: {},
+      redirectUriBase,
+    })
+
+    expect(result.ok).toBe(false)
+    if (result.ok) throw new Error("Provider authorization requirement unexpectedly returned success")
+    expect(result).toMatchObject({
+      error: "needs_connection",
+      diagnostic: {
+        code: "MCP_PROVIDER_AUTH_REQUIRED",
+      },
+      connectionStatus: {
+        layer: "downstream_provider",
+        state: "needs_connection",
+        action: { type: "connect", surface: "openwork_your_connections" },
+      },
+    })
+    expect(result.diagnostic?.connectUrl).toBeUndefined()
+    expect(result.connectionStatus?.diagnostic?.connectUrl).toBeUndefined()
+    expect(result.connectionStatus?.action.url).toBeUndefined()
+    expect(result.data).toBeUndefined()
+    expect(JSON.stringify(result)).not.toContain(providerAuthServer.connectUrl)
+    expect(result.message.toLowerCase()).not.toContain("latency")
+    expect(result.message.toLowerCase()).not.toContain("timeout")
+  } finally {
+    providerAuthServer.stop()
+  }
 })
 
 test("stale-apikey-looks-connected: stored API key looks connected and search returns an error status", async () => {
@@ -1199,9 +1356,10 @@ test("JSON-RPC initialize errors are not mislabeled as OAuth refresh failures", 
         retry: "search_capabilities",
       },
       diagnostic: {
-        phase: "MCP_INITIALIZE",
-        category: "mcp_protocol_failure",
-        code: "MCP_MCP_INITIALIZE",
+        phase: "PROVIDER_EXECUTION",
+        operationPhase: "MCP_INITIALIZE",
+        category: "provider_declared_error",
+        code: "MCP_PROVIDER_DECLARED_ERROR",
         highestPassed: "reachable",
         jsonRpcCode: -32603,
       },

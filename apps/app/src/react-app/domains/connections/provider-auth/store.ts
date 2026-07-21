@@ -76,7 +76,13 @@ import {
 } from "../../../../app/cloud/desktop-app-restrictions";
 
 type ProviderReturnFocusTarget = "none" | "composer";
-type CloudProviderSyncReason = "sign_in" | "app_launch" | "interval" | "settings_cloud_opened";
+type CloudProviderSyncReason =
+  | "sign_in"
+  | "app_launch"
+  | "app_resume"
+  | "model_picker_open"
+  | "new_chat"
+  | "settings_cloud_opened";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -150,6 +156,7 @@ type CreateProviderAuthStoreOptions = {
   disabledProviders: () => string[];
   checkDesktopAppRestriction: DesktopAppRestrictionChecker;
   selectedWorkspaceDisplay: () => WorkspaceDisplay;
+  providerBaseUrl: () => string;
   selectedWorkspaceRoot: () => string;
   runtimeWorkspaceId: () => string | null;
   ensureRuntimeWorkspaceId?: () => Promise<string | null | undefined>;
@@ -1215,6 +1222,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       const updated = filterProviderList(
         await ensureProviderListQuery(getReactQueryClient(), {
           client: activeClient,
+          baseUrl: options.providerBaseUrl(),
           directory: options.selectedWorkspaceRoot(),
           force: Boolean(optionsArg?.dispose || optionsArg?.force),
         }),

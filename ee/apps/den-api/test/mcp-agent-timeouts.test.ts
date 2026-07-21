@@ -221,7 +221,7 @@ test("external capability failures preserve the safe MCP diagnostic envelope", (
 test("authorization-required failures preserve the harness-neutral connect action", () => {
   const result = agentModule.externalCapabilityErrorToolResult({
     ok: false,
-    error: "authorization_required",
+    error: "needs_connection",
     message: "Authorization required for Salesforce. Ask the user to open the link, sign in, then retry.",
     data: {
       connect_url: "https://connect.example.test/salesforce/start",
@@ -231,7 +231,7 @@ test("authorization-required failures preserve the harness-neutral connect actio
 
   expect(result.isError).toBe(true)
   expect(JSON.parse(result.content[0]?.text ?? "{}")).toEqual({
-    error: "authorization_required",
+    error: "needs_connection",
     message: "Authorization required for Salesforce. Ask the user to open the link, sign in, then retry.",
     data: {
       connect_url: "https://connect.example.test/salesforce/start",

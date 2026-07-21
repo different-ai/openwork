@@ -119,6 +119,7 @@ describe("assigned OpenWork Connect capability inventory", () => {
     expect(inventory.skills).toEqual([
       expect.objectContaining({
         name: "Escalate ticket",
+        trigger: "escalate-ticket",
         origin: "openwork-connect",
         marketplaceName: "Team tools",
         pluginName: "Support kit",
@@ -215,5 +216,65 @@ describe("assigned OpenWork Connect capability inventory", () => {
     expect(resolvedMarketplaceIds).toEqual(["marketplace_active"]);
     expect(inventory.skills).toEqual([]);
     expect(inventory.mcpServers).toEqual([]);
+  });
+
+  test("derives the trigger from Windows-style skill paths and omits it when the path is not a SKILL.md", async () => {
+    const marketplace = {
+      id: "marketplace_1",
+      name: "Team tools",
+      description: null,
+      status: "active" as const,
+      pluginCount: 1,
+      updatedAt: null,
+    };
+    const makeSkill = (id: string, title: string, currentRelativePath: string | null) => ({
+      id: `membership_${id}`,
+      pluginId: "plugin_1",
+      configObjectId: id,
+      configObject: {
+        id,
+        objectType: "skill" as const,
+        title,
+        description: null,
+        currentFileName: null,
+        currentFileExtension: null,
+        currentRelativePath,
+        status: "active" as const,
+        updatedAt: null,
+        latestVersion: null,
+      },
+    });
+
+    const inventory = await listAssignedConnectCapabilities({
+      organizationId: "org_1",
+      client: {
+        listOrgMarketplaces: async () => [marketplace],
+        getOrgMarketplaceResolved: async () => ({
+          marketplace,
+          plugins: [
+            {
+              id: "plugin_1",
+              name: "Support kit",
+              description: null,
+              status: "active",
+              memberCount: 2,
+              updatedAt: null,
+              componentCounts: { skill: 2 },
+            },
+          ],
+        }),
+        getOrgPluginResolved: async (_organizationId, plugin) => ({
+          plugin,
+          memberships: [
+            makeSkill("skill_win", "Windows skill", "skills\\escalate-ticket\\SKILL.md"),
+            makeSkill("skill_nomatch", "Loose skill", "docs/escalate-ticket/README.md"),
+          ],
+        }),
+      },
+    });
+
+    const byName = Object.fromEntries(inventory.skills.map((skill) => [skill.name, skill]));
+    expect(byName["Windows skill"]?.trigger).toBe("escalate-ticket");
+    expect(byName["Loose skill"]?.trigger).toBeUndefined();
   });
 });

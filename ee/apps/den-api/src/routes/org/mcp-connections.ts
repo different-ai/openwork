@@ -551,6 +551,7 @@ const externalMcpDiagnosticSchema = z.object({
   providerCode: z.string().optional(),
   payloadBytes: z.number().int().optional(),
   jsonRpcCode: z.number().int().optional(),
+  connectUrl: z.string().url().optional(),
 }).meta({ ref: "ExternalMcpDiagnostic" })
 
 const connectionToolListFailedSchema = z.object({

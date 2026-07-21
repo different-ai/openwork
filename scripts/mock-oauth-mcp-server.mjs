@@ -507,7 +507,7 @@ function mcpResponse(message) {
         code: -32001,
         message: `Authorization required — connect your ${errorToolProvider} account to use this connector. Open ${connectLink} in a browser, sign in, then retry this request.`,
         data: {
-          connect_url: connectLink,
+          connect_url: errorToolConnectUrl,
           provider: errorToolProvider,
         },
       },

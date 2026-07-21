@@ -377,6 +377,13 @@ export function diagnoseExternalMcpToolCall(input: {
         summary: "OpenWork's outbound network safety policy blocked this tools/call request, so it was not sent to the remote MCP.",
       }
     }
+    if (input.diagnostic?.code === "MCP_PROVIDER_AUTH_REQUIRED") {
+      return {
+        status: "failed",
+        layer: "mcp_tool",
+        summary: "The remote MCP responded and requires user authorization for the downstream provider.",
+      }
+    }
     if (input.diagnostic?.code === "MCP_LIFECYCLE_DEADLINE" || input.diagnostic?.code === "MCP_REQUEST_TIMEOUT") {
       return {
         status: "failed",
@@ -400,7 +407,9 @@ export function diagnoseExternalMcpToolCall(input: {
   return {
     status: "failed",
     layer: "mcp_tool",
-    summary: input.diagnostic?.phase === "PROVIDER_AUTHORIZATION" || input.diagnostic?.phase === "PROVIDER_EXECUTION"
+    summary: input.diagnostic?.code === "MCP_PROVIDER_AUTH_REQUIRED"
+      ? "The remote MCP responded and requires user authorization for the downstream provider."
+      : input.diagnostic?.phase === "PROVIDER_AUTHORIZATION" || input.diagnostic?.phase === "PROVIDER_EXECUTION"
       ? "The remote MCP responded, but the downstream provider rejected the operation."
       : input.diagnostic?.phase === "MCP_TOOL_EXECUTION"
         ? "The remote MCP responded, but the MCP tool returned an error."

@@ -136,6 +136,33 @@ describe("MCP failure attribution", () => {
     });
   });
 
+  test("attributes downstream provider authorization as a confirmed provider response", () => {
+    const attribution = attributeExternalMcpToolFailure({
+      diagnostic: {
+        referenceId: "req_provider_auth",
+        phase: "PROVIDER_AUTHORIZATION",
+        category: "provider_authorization_required",
+        code: "MCP_PROVIDER_AUTH_REQUIRED",
+        retryable: false,
+        actionOwner: "member",
+        operatorAction: "Connect your account for this provider using its sign-in link, then retry this capability.",
+      },
+      inspection: { request: {} },
+      browserTimeout: null,
+      mayHaveSideEffects: false,
+    });
+
+    expect(attribution).toMatchObject({
+      summary: "The remote MCP responded and requires user authorization for the downstream provider.",
+      lastConfirmedBoundary: "Remote MCP returned an authorization request",
+      likelySource: "Downstream provider authorization",
+      confidence: "Confirmed",
+      outcome: "failed",
+      diagnosticReference: "req_provider_auth",
+      diagnosticCode: "MCP_PROVIDER_AUTH_REQUIRED",
+    });
+  });
+
   test("attributes an OpenWork block before send as confirmed", () => {
     const attribution = attributeExternalMcpToolFailure({
       diagnostic: {
@@ -193,6 +220,7 @@ describe("MCP failure attribution", () => {
       providerStatus: 403,
       providerRequestId: "provider-request-456",
       providerCode: "access_denied",
+      connectUrl: "https://mcp-gateway.fixture.test/servers/salesforce/connect/start",
     })).toEqual({
       referenceId: "req_full",
       phase: "FUTURE_PROVIDER_PHASE",
@@ -208,6 +236,7 @@ describe("MCP failure attribution", () => {
       providerStatus: 403,
       providerRequestId: "provider-request-456",
       providerCode: "access_denied",
+      connectUrl: "https://mcp-gateway.fixture.test/servers/salesforce/connect/start",
     });
 
     const attribution = attributeExternalMcpToolFailure({

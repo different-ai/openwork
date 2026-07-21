@@ -13,6 +13,7 @@ export type ExternalMcpDiagnostic = {
   providerStatus?: number;
   providerRequestId?: string;
   providerCode?: string;
+  connectUrl?: string;
 };
 
 type InspectionEvidence = {
@@ -95,6 +96,7 @@ export function parseExternalMcpDiagnostic(value: unknown): ExternalMcpDiagnosti
   const providerStatus = optionalNumber(value.providerStatus);
   const providerRequestId = optionalString(value.providerRequestId);
   const providerCode = optionalString(value.providerCode);
+  const connectUrl = optionalString(value.connectUrl);
   const diagnostic: ExternalMcpDiagnostic = {
     ...(referenceId ? { referenceId } : {}),
     // Keep unknown future phases/categories as safe strings so an older
@@ -112,6 +114,7 @@ export function parseExternalMcpDiagnostic(value: unknown): ExternalMcpDiagnosti
     ...(providerStatus !== undefined ? { providerStatus } : {}),
     ...(providerRequestId ? { providerRequestId } : {}),
     ...(providerCode ? { providerCode } : {}),
+    ...(connectUrl ? { connectUrl } : {}),
   };
 
   return Object.keys(diagnostic).length > 0 ? diagnostic : null;
@@ -222,6 +225,19 @@ export function attributeExternalMcpToolFailure(input: {
   const providerFailure = diagnostic?.phase?.startsWith("PROVIDER_")
     || diagnostic?.providerStatus !== undefined
     || diagnostic?.providerCode !== undefined;
+  if (diagnostic?.code === "MCP_PROVIDER_AUTH_REQUIRED") {
+    return {
+      summary: "The remote MCP responded and requires user authorization for the downstream provider.",
+      lastConfirmedBoundary: responseStatus !== undefined
+        ? `Remote MCP returned HTTP ${responseStatus} with an authorization request`
+        : "Remote MCP returned an authorization request",
+      likelySource: "Downstream provider authorization",
+      confidence: "Confirmed",
+      retryGuidance: diagnostic.operatorAction ?? "Connect the provider account, then retry.",
+      outcome: "failed",
+      ...details,
+    };
+  }
   if (providerFailure) {
     return {
       summary: "The remote MCP responded, but the downstream provider rejected the operation.",

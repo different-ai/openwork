@@ -23,6 +23,7 @@ const emptyWorkspaceDisplay: WorkspaceDisplay = {
 
 export type UseSessionProviderAuthInput = {
   opencodeClient: Client | null;
+  opencodeBaseUrl: string;
   providers: ProviderListItem[];
   providerDefaults: Record<string, string>;
   providerConnectedIds: string[];
@@ -40,6 +41,7 @@ export type UseSessionProviderAuthInput = {
 export function useSessionProviderAuth(input: UseSessionProviderAuthInput) {
   const {
     opencodeClient,
+    opencodeBaseUrl,
     providers,
     providerDefaults,
     providerConnectedIds,
@@ -60,6 +62,7 @@ export function useSessionProviderAuth(input: UseSessionProviderAuthInput) {
 
   const stateRef = useRef({
     opencodeClient,
+    opencodeBaseUrl,
     providers,
     providerDefaults,
     providerConnectedIds,
@@ -70,6 +73,7 @@ export function useSessionProviderAuth(input: UseSessionProviderAuthInput) {
   });
   stateRef.current = {
     opencodeClient,
+    opencodeBaseUrl,
     providers,
     providerDefaults,
     providerConnectedIds,
@@ -92,6 +96,7 @@ export function useSessionProviderAuth(input: UseSessionProviderAuthInput) {
         providerConnectedIds: () => stateRef.current.providerConnectedIds,
         disabledProviders: () => stateRef.current.disabledProviderIds,
         checkDesktopAppRestriction: checkDesktopRestriction,
+        providerBaseUrl: () => stateRef.current.opencodeBaseUrl,
         selectedWorkspaceDisplay: () =>
           stateRef.current.selectedWorkspace
             ? ({

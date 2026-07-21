@@ -18,7 +18,13 @@ import { ModelSelect } from "@/components/model-select";
 import { LexicalPromptEditor, type LexicalPromptEditorHandle } from "./editor";
 import { listRunningAppsForMention } from "./app-mentions";
 import type { ComposerMentionKind } from "./mention-encoding";
-import { getSlashCommandQuery } from "./slash-command";
+import {
+  connectSkillSlashCommandOptions,
+  getSlashCommandQuery,
+  skillMenuSlashCommandName,
+  skillSlashCommandName,
+  type ComposerSlashCommandOption,
+} from "./slash-command";
 import { FILE_URL_RE, HTTP_URL_RE } from "./pasted-text";
 
 type MentionItem = {
@@ -298,6 +304,7 @@ export function ReactSessionComposer(props: ComposerProps) {
   const menuItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const commandsCacheRef = useRef<SlashCommandOption[] | null>(null);
   const commandsRequestRef = useRef<Promise<SlashCommandOption[]> | null>(null);
+  const skillsRequestRef = useRef<Promise<SkillCard[]> | null>(null);
   const commandsLoadVersionRef = useRef(0);
   const listCommandsRef = useRef(props.listCommands);
   const listSkillsRef = useRef(props.listSkills);
@@ -495,6 +502,17 @@ export function ReactSessionComposer(props: ComposerProps) {
     return request;
   }, []);
 
+  const loadSkills = useCallback(() => {
+    if (skillsRequestRef.current) return skillsRequestRef.current;
+    const listSkills = listSkillsRef.current;
+    if (!listSkills) return Promise.resolve([]);
+    const request = listSkills().finally(() => {
+      if (skillsRequestRef.current === request) skillsRequestRef.current = null;
+    });
+    skillsRequestRef.current = request;
+    return request;
+  }, []);
+
   useEffect(() => {
     const refresh = () => setExtensionStateVersion((value) => value + 1);
     window.addEventListener(OPENWORK_EXTENSION_STATE_CHANGED, refresh);
@@ -641,32 +659,34 @@ export function ReactSessionComposer(props: ComposerProps) {
   }, [toolMenuOpen]);
 
   useEffect(() => {
-    if (!toolMenuOpen) return;
+    if (!slashOpen && !toolMenuOpen) return;
     const openId = toolMenuLoadRef.current.openId;
-    const listSkills = listSkillsRef.current;
     const listMcp = listMcpRef.current;
-    if (toolMenuSection === "skills" && listSkills && !toolMenuLoadRef.current.skills) {
+    if ((slashOpen || toolMenuSection === "skills") && (!toolMenuOpen || !toolMenuLoadRef.current.skills)) {
       let cancelled = false;
-      toolMenuLoadRef.current.skills = true;
+      if (toolMenuOpen) toolMenuLoadRef.current.skills = true;
       setSkillsLoading(true);
-      void listSkills()
+      void loadSkills()
         .then((next) => {
-          if (!cancelled && toolMenuLoadRef.current.openId === openId) {
+          if (!cancelled && (!toolMenuOpen || toolMenuLoadRef.current.openId === openId)) {
             setSkills(next);
             setSkillsLoaded(true);
           }
         })
         .catch(() => {
-          if (!cancelled && toolMenuLoadRef.current.openId === openId) {
+          if (!cancelled && (!toolMenuOpen || toolMenuLoadRef.current.openId === openId)) {
             setSkills([]);
             setSkillsLoaded(true);
           }
         })
         .finally(() => {
-          if (!cancelled && toolMenuLoadRef.current.openId === openId) setSkillsLoading(false);
+          if (!cancelled && (!toolMenuOpen || toolMenuLoadRef.current.openId === openId)) setSkillsLoading(false);
         });
       return () => {
         cancelled = true;
+        if (toolMenuOpen && toolMenuLoadRef.current.openId === openId) {
+          toolMenuLoadRef.current.skills = false;
+        }
       };
     }
     if (toolMenuSection === "mcps" && listMcp && !toolMenuLoadRef.current.mcps) {
@@ -695,13 +715,17 @@ export function ReactSessionComposer(props: ComposerProps) {
       };
     }
     return undefined;
-  }, [toolMenuOpen, toolMenuSection]);
+  }, [loadSkills, slashOpen, toolMenuOpen, toolMenuSection]);
 
+  const slashItems = useMemo<ComposerSlashCommandOption[]>(
+    () => [...commands, ...connectSkillSlashCommandOptions(skills)],
+    [commands, skills],
+  );
   const slashFiltered = useMemo(() => {
     if (!slashOpen) return [];
-    if (!slashQuery) return commands.slice(0, 8);
-    return fuzzysort.go(slashQuery, commands, { keys: ["name", "description"], limit: 8 }).map((entry) => entry.obj);
-  }, [commands, slashOpen, slashQuery]);
+    if (!slashQuery) return slashItems.slice(0, 8);
+    return fuzzysort.go(slashQuery, slashItems, { keys: ["name", "description"], limit: 8 }).map((entry) => entry.obj);
+  }, [slashItems, slashOpen, slashQuery]);
   const mentionFiltered = useMemo(() => {
     if (!mentionOpen) return [];
     if (!mentionQuery) return mentionItems.slice(0, 8);
@@ -768,7 +792,11 @@ export function ReactSessionComposer(props: ComposerProps) {
     target?.scrollIntoView({ block: "nearest" });
   }, [menuIndex, activeItems.length]);
 
-  const applyCommandSelection = (command: SlashCommandOption, options?: { replaceSkillDraft?: boolean }) => {
+  const applyCommandSelection = (command: ComposerSlashCommandOption, options?: { replaceSkillDraft?: boolean }) => {
+    if (command.skill) {
+      applySkillSelection(command.skill, options);
+      return;
+    }
     if (command.source === "skill") {
       applySkillSelection(command.name, options);
       return;
@@ -786,6 +814,7 @@ export function ReactSessionComposer(props: ComposerProps) {
       const prompt = t("composer.connect_skill_prompt", {
         name: skill.name,
         marketplace: skill.marketplaceName ?? "assigned",
+        capability: skill.connectCapabilityName ?? skill.name,
       });
       if (options?.replaceSkillDraft) {
         props.onDraftChange(prompt);
@@ -1106,7 +1135,7 @@ export function ReactSessionComposer(props: ComposerProps) {
               </div>
             ) : (
               <div className="px-3 py-2 text-xs text-gray-10">
-                {!commandsLoaded && commandsLoading ? t("composer.loading_commands") : t("composer.no_commands")}
+                {(!commandsLoaded && commandsLoading) || skillsLoading ? t("composer.loading_commands") : t("composer.no_commands")}
               </div>
             )}
           </div>
@@ -1493,7 +1522,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                                     <div className="min-w-0 flex-1">
                                       <div className="flex items-center justify-between gap-3">
                                         <div className="min-w-0 flex-1 truncate text-xs font-semibold text-gray-11">
-                                          {skill.origin === "openwork-connect" ? skill.name : `/${skill.name}`}
+                                          /{skillMenuSlashCommandName(skill)}
                                         </div>
                                         {isLocalCapability(skill.origin) ? (
                                           <span className="shrink-0 rounded-full bg-gray-3 px-2 py-0.5 text-[10px] font-medium text-gray-11">
