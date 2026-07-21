@@ -29,6 +29,7 @@ import {
 } from "./computer-use.mjs";
 import { createUiControlServer } from "./ui-control-server.mjs";
 import { createApplicationMenu } from "./app-menu.mjs";
+import { applyBrandAppName } from "./brand-app-name.mjs";
 import { createBrowserPanel } from "./browser-panel.mjs";
 import { createWorkspaceStore } from "./workspace-store.mjs";
 import {
@@ -1927,10 +1928,14 @@ const desktopCommandHandlers = {
       }
   },
   "__applyBrandAppName": async (event, ...args) => {
-      const requested = args[0] === null ? "" : String(args[0] ?? "").trim();
-      currentDisplayAppName = requested.slice(0, 64) || APP_NAME;
-    applicationMenu.setAppName(currentDisplayAppName);
-    mainWindow?.setTitle(currentDisplayAppName);
+    currentDisplayAppName = applyBrandAppName(args[0], {
+      fallbackName: APP_NAME,
+      platform: process.platform,
+      runtimeProcess: process,
+      app,
+      applicationMenu,
+      window: mainWindow,
+    });
     if (process.platform === "win32") {
       await registerWindowsDisplayShortcut();
     }
@@ -2413,9 +2418,13 @@ if (!app.requestSingleInstanceLock()) {
     });
     await workspaceStore.importBundledDesktopBootstrapConfigIfPreferred();
     const bootstrapConfig = await workspaceStore.getDesktopBootstrapConfig();
-    currentDisplayAppName = bootstrapConfig.brandAppName?.slice(0, 64) || APP_NAME;
-    app.setName(currentDisplayAppName);
-    applicationMenu.setAppName(currentDisplayAppName);
+    currentDisplayAppName = applyBrandAppName(bootstrapConfig.brandAppName, {
+      fallbackName: APP_NAME,
+      platform: process.platform,
+      runtimeProcess: process,
+      app,
+      applicationMenu,
+    });
     if (process.platform === "win32") {
       await registerWindowsDisplayShortcut();
     }
