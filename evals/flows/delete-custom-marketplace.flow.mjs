@@ -204,14 +204,11 @@ export default {
           action: async () => {
             await navigateTo(ctx, `/dashboard/marketplaces/${encodeURIComponent(state.builtInMarketplaceId)}`);
             await ctx.waitForText("OpenWork Marketplace", { timeoutMs: 30_000 });
-            await ctx.eval(`document.querySelector('[data-testid="marketplace-actions-trigger"]')?.click()`);
-            await ctx.waitForText("Edit", { timeoutMs: 10_000 });
           },
           assert: async () => {
             await ctx.expectText("OpenWork Marketplace");
-            await ctx.expectText("Edit");
-            const deleteMenuItemVisible = await ctx.eval(`Boolean(document.querySelector('[data-testid="delete-marketplace-action"]'))`);
-            witness(ctx, deleteMenuItemVisible === false, "The built-in marketplace menu does not expose the delete action", { deleteMenuItemVisible });
+            const actionsTriggerVisible = await ctx.eval(`Boolean(document.querySelector('[data-testid="marketplace-actions-trigger"]'))`);
+            witness(ctx, actionsTriggerVisible === false, "The built-in marketplace exposes no edit or delete menu", { actionsTriggerVisible });
             const directDelete = await denApiFetch(`/v1/marketplaces/${encodeURIComponent(state.builtInMarketplaceId)}/delete`, {
               method: "POST",
               headers: authHeaders(),
@@ -224,9 +221,9 @@ export default {
           },
           screenshot: screenshot(
             "built-in-marketplace-protected",
-            "The built-in marketplace remains editable but its action menu has no destructive option.",
-            ["OpenWork Marketplace", "Edit", "Add a plugin"],
-            ["Delete"],
+            "The built-in marketplace remains available without edit or delete controls.",
+            ["OpenWork Marketplace", "Add a plugin"],
+            ["Edit", "Delete"],
           ),
         });
       },

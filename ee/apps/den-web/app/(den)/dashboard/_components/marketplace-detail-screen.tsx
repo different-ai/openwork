@@ -170,7 +170,7 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
           <ArrowLeft className="h-4 w-4" />
           Back
         </Link>
-        {access.isAdmin ? (
+        {access.isAdmin && marketplace.canDelete ? (
           <div ref={actionsRef} className="relative">
             <button
               type="button"
@@ -201,25 +201,21 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
                   <Pencil className="h-3.5 w-3.5" aria-hidden />
                   Edit
                 </button>
-                {marketplace.canDelete ? (
-                  <>
-                    <div className="my-1 border-t border-gray-100" />
-                    <button
-                      type="button"
-                      role="menuitem"
-                      onClick={() => {
-                        setActionsOpen(false);
-                        deleteMarketplace.reset();
-                        setDeleteOpen(true);
-                      }}
-                      className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-red-600 transition hover:bg-red-50"
-                      data-testid="delete-marketplace-action"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" aria-hidden />
-                      Delete
-                    </button>
-                  </>
-                ) : null}
+                <div className="my-1 border-t border-gray-100" />
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setActionsOpen(false);
+                    deleteMarketplace.reset();
+                    setDeleteOpen(true);
+                  }}
+                  className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-red-600 transition hover:bg-red-50"
+                  data-testid="delete-marketplace-action"
+                >
+                  <Trash2 className="h-3.5 w-3.5" aria-hidden />
+                  Delete
+                </button>
               </div>
             ) : null}
           </div>

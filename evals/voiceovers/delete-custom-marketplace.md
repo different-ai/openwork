@@ -8,4 +8,4 @@
 
 4. Only after I explicitly confirm does the marketplace leave the active list, while the API records a reversible soft-delete and keeps plugin history intact.
 
-5. OpenWork's built-in marketplace stays protected in both the interface and API, so the destructive action applies only to manually managed catalogs.
+5. OpenWork's built-in marketplace has no edit or delete menu and stays protected by the API, so management actions apply only to custom catalogs.
