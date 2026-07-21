@@ -447,8 +447,7 @@ export default {
             })()`, { timeoutMs: 30_000, label: "editable MCP tool policy" });
             const toggled = await ctx.eval(`(() => {
               const policy = document.querySelector('[data-testid="edit-mcp-tool-policy"]');
-              const button = [...(policy?.querySelectorAll('button') ?? [])]
-                .find((entry) => (entry.textContent ?? '').includes('create_postmortem'));
+              const button = policy?.querySelector('[data-testid="mcp-tool-toggle-create_postmortem"]');
               button?.click();
               button?.scrollIntoView({ block: 'center' });
               return Boolean(button);
@@ -456,21 +455,20 @@ export default {
             witness(ctx, toggled, "Alex selects create_postmortem in the tool policy.", { toggled });
             await ctx.waitFor(`(() => {
               const policy = document.querySelector('[data-testid="edit-mcp-tool-policy"]');
-              const button = [...(policy?.querySelectorAll('button') ?? [])]
-                .find((entry) => (entry.textContent ?? '').includes('create_postmortem'));
-              return button?.getAttribute('aria-pressed') === 'false';
+              const button = policy?.querySelector('[data-testid="mcp-tool-toggle-create_postmortem"]');
+              return button?.getAttribute('aria-checked') === 'false';
             })()`, { timeoutMs: 10_000, label: "create_postmortem disabled" });
           },
           assert: async () => {
             const states = await ctx.eval(`(() => {
               const policy = document.querySelector('[data-testid="edit-mcp-tool-policy"]');
-              return [...(policy?.querySelectorAll('button[aria-pressed]') ?? [])].map((button) => ({
-                text: (button.textContent ?? '').replace(/\\s+/g, ' ').trim(),
-                pressed: button.getAttribute('aria-pressed'),
+              return [...(policy?.querySelectorAll('button[role="switch"]') ?? [])].map((button) => ({
+                label: button.getAttribute('aria-label'),
+                checked: button.getAttribute('aria-checked'),
               }));
             })()`);
-            witness(ctx, states.some((entry) => entry.text.includes("create_postmortem") && entry.pressed === "false"), "create_postmortem is selected as disabled.", states);
-            witness(ctx, states.some((entry) => entry.text.includes("search_incidents") && entry.pressed === "true"), "search_incidents remains enabled.", states);
+            witness(ctx, states.some((entry) => entry.label?.includes("Draft a postmortem") && entry.checked === "false"), "create_postmortem is selected as disabled.", states);
+            witness(ctx, states.some((entry) => entry.label?.includes("Search incidents") && entry.checked === "true"), "search_incidents remains enabled.", states);
             witness(ctx, !state.observedMethods.includes("tools/call"), "Changing tool policy still never executes a provider tool.", state.observedMethods);
           },
           screenshot: {

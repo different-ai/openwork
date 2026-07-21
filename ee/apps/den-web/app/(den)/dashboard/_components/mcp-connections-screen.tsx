@@ -2092,7 +2092,7 @@ function EditConnectionDialog({
               <div>
                 <p className="text-[13px] font-semibold text-gray-900">Available tools</p>
                 <p className="mt-1 text-[11px] leading-5 text-gray-500">
-                  Test the saved connection and choose which tools agents can use. This only reads the catalog; it does not run a tool.
+                  Test the saved connection, then turn individual tools on or off. This only reads the catalog; it does not run a tool.
                 </p>
               </div>
               <DenButton
@@ -2129,21 +2129,34 @@ function EditConnectionDialog({
                       const disabled = disabledToolNames.includes(tool.name);
                       const displayTitle = tool.title || tool.annotations?.title || tool.name;
                       return (
-                        <button
+                        <div
                           key={tool.name}
-                          type="button"
-                          aria-pressed={!disabled}
-                          onClick={() => setDisabledToolNames((current) => toggle(current, tool.name))}
-                          className="flex w-full items-start justify-between gap-3 rounded-lg px-2.5 py-2 text-left transition hover:bg-gray-50"
+                          className="flex w-full items-center justify-between gap-3 rounded-lg px-2.5 py-2"
                         >
                           <span className="min-w-0">
                             <span className="block truncate text-[12px] font-medium text-gray-900">{displayTitle}</span>
                             {displayTitle !== tool.name ? <span className="block truncate font-mono text-[10px] text-gray-500">{tool.name}</span> : null}
                           </span>
-                          <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${disabled ? "bg-gray-100 text-gray-500" : "bg-emerald-50 text-emerald-700"}`}>
-                            {disabled ? "Disabled" : "Enabled"}
+                          <span className="flex shrink-0 items-center gap-2">
+                            <span className={`text-[10px] font-medium ${disabled ? "text-gray-500" : "text-emerald-700"}`}>
+                              {disabled ? "Disabled" : "Enabled"}
+                            </span>
+                            <button
+                              type="button"
+                              role="switch"
+                              aria-checked={!disabled}
+                              aria-label={`${disabled ? "Enable" : "Disable"} ${displayTitle}`}
+                              data-testid={`mcp-tool-toggle-${tool.name}`}
+                              onClick={() => setDisabledToolNames((current) => toggle(current, tool.name))}
+                              className={`relative inline-flex h-6 w-[42px] items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-[#0f172a]/20 focus:ring-offset-2 ${disabled ? "bg-gray-200" : "bg-[#0f172a]"}`}
+                            >
+                              <span
+                                aria-hidden="true"
+                                className={`inline-block h-5 w-5 rounded-full bg-white shadow-[0_2px_6px_-1px_rgba(15,23,42,0.3)] transition-transform ${disabled ? "translate-x-0.5" : "translate-x-[18px]"}`}
+                              />
+                            </button>
                           </span>
-                        </button>
+                        </div>
                       );
                     })}
                   </div>
