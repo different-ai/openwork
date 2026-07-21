@@ -46,6 +46,7 @@ import {
 import { isDesktopProviderBlocked } from "@/app/cloud/desktop-app-restrictions";
 import { openModelPickerEvent } from "@/react-app/shell/new-providers-listener";
 import { newProvidersEvent } from "@/app/lib/provider-events";
+import { t } from "@/i18n";
 
 function getProviderDisplayName(providerId: string) {
   return providerId
@@ -301,19 +302,19 @@ export function ModelSelect({
             <PopoverTrigger
               type="button"
               disabled={disabled}
-              aria-label="Change model"
+              aria-label={t("model_select.change_model")}
               aria-keyshortcuts="Meta+Alt+/"
               className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm text-gray-10 transition-colors hover:bg-gray-3 hover:text-gray-12 disabled:pointer-events-none disabled:opacity-60"
             />
           }
         >
           <span className="max-w-48 truncate">
-            {selectedOption?.title ?? value.modelID ?? "Select model"}
+            {selectedOption?.title ?? value.modelID ?? t("model_select.select_model")}
           </span>
           <ChevronDown className="h-3 w-3" />
         </TooltipTrigger>
         <TooltipContent>
-          Change model
+          {t("model_select.change_model")}
         </TooltipContent>
       </Tooltip>
       <PopoverContent
@@ -325,10 +326,10 @@ export function ModelSelect({
           <CommandHeader>
             <CommandInput
               ref={searchInputRef}
-              placeholder="Search models..."
+              placeholder={t("model_select.search_placeholder")}
             />
           </CommandHeader>
-          <CommandEmpty>No models found.</CommandEmpty>
+          <CommandEmpty>{t("model_select.no_models")}</CommandEmpty>
           <CommandList>
             {(group: ModelSelectGroup) => (
               <CommandGroup
@@ -360,11 +361,11 @@ export function ModelSelect({
                               {item.title}
                             </span>
                             <span className="block truncate text-xs text-muted-foreground">
-                              {item.subtitle} - {denAuth.isSignedIn ? "Subscribe to add this model" : "Sign in to unlock"}
+                              {item.subtitle} - {denAuth.isSignedIn ? t("model_select.subscribe_hint") : t("model_select.signin_hint")}
                             </span>
                           </span>
                           <span className="shrink-0 rounded-full border border-blue-6 bg-blue-3 px-1.5 py-0.5 text-[10px] font-medium text-blue-11">
-                            {denAuth.isSignedIn ? "Subscribe" : "Sign in"}
+                            {denAuth.isSignedIn ? t("model_select.subscribe") : t("model_select.signin")}
                           </span>
                           <ChevronRight className="size-3.5 text-blue-11" />
                         </CommandItem>
@@ -415,7 +416,7 @@ export function ModelSelect({
                 }}
               >
                 <Settings2 className="size-3.5" />
-                All models
+                {t("model_select.all_models")}
               </button>
               {showOpenWorkModelsPromo ? (
                 <button
@@ -423,7 +424,7 @@ export function ModelSelect({
                   className="shrink-0 rounded-md px-2 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
                   onClick={handleHideOpenWorkModels}
                 >
-                  Hide
+                  {t("common.hide")}
                 </button>
               ) : null}
             </div>

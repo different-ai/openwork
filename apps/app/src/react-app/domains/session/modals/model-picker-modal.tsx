@@ -35,12 +35,13 @@ import {
   OPENWORK_MODELS_PROVIDER_NAME,
   openWorkModelsPromoChangedEvent,
 } from "../../cloud/openwork-models-promo";
+import { t } from "../../../../i18n";
 
-export const MODEL_PICKER_DEFAULT_SUBTITLE = "Select a model for this session.";
+export const MODEL_PICKER_DEFAULT_SUBTITLE = "";
 export const MODEL_PICKER_UNAVAILABLE_SUBTITLE = "The model you were using is no longer available, please select a different model for this session.";
 
 export function resolveModelPickerSubtitle(subtitle: string | undefined) {
-  return subtitle ?? MODEL_PICKER_DEFAULT_SUBTITLE;
+  return subtitle ?? t("model_modal.subtitle_default");
 }
 
 export type ModelPickerModalProps = {
@@ -223,7 +224,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
     >
       <DialogContent className="flex max-h-[calc(100vh-2rem)] min-h-0 w-full max-w-lg flex-col overflow-hidden sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>Models</DialogTitle>
+          <DialogTitle>{t("model_modal.title")}</DialogTitle>
           <DialogDescription>
             {resolveModelPickerSubtitle(props.subtitle)}
           </DialogDescription>
@@ -237,7 +238,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
               ref={searchInputRef}
               type="text"
               className="h-10 w-full rounded-xl border border-dls-border bg-dls-surface pl-9 pr-3 text-sm text-dls-text placeholder:text-dls-secondary focus:outline-none focus:ring-2 focus:ring-[rgba(var(--dls-accent-rgb),0.2)]"
-              placeholder="Search providers and models..."
+              placeholder={t("model_modal.search_placeholder")}
               value={props.query}
               onChange={(e) => props.setQuery(e.target.value)}
             />
@@ -281,11 +282,11 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
             {providerGroups.length === 0 ? (
               <div className="space-y-3 rounded-2xl border border-dls-border bg-dls-hover/30 px-4 py-6 text-center">
                 <div className="text-sm text-dls-secondary">
-                  {props.query.trim() ? "No models match your search." : "No models available. Connect a provider to get started."}
+                  {props.query.trim() ? t("model_modal.no_match") : t("model_modal.no_available")}
                 </div>
                 {!props.query.trim() ? (
                   <Button variant="outline" onClick={props.onOpenSettings}>
-                    Connect a provider
+                    {t("model_modal.connect_provider")}
                   </Button>
                 ) : null}
               </div>
@@ -309,7 +310,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
         {/* Footer */}
         <DialogFooter className="shrink-0">
           <DialogClose render={<Button variant="outline" />}>
-            Done
+            {t("model_modal.done")}
           </DialogClose>
         </DialogFooter>
       </DialogContent>
@@ -355,18 +356,18 @@ function ProviderAccordion({
           <div className="min-w-0 flex-1">
             <span className="text-[13px] font-medium text-dls-text">{group.name}</span>
             <span className="ml-2 text-[11px] text-dls-secondary">
-              {totalModels} model{totalModels === 1 ? "" : "s"}
+              {t("model_modal.models_count", { count: totalModels })}
             </span>
           </div>
           <span className="flex shrink-0 items-center gap-1.5">
             {group.isNew ? (
-              <span className="rounded-md bg-blue-3 px-1.5 py-0.5 text-[10px] font-medium text-blue-11">New</span>
+              <span className="rounded-md bg-blue-3 px-1.5 py-0.5 text-[10px] font-medium text-blue-11">{t("model_modal.new_badge")}</span>
             ) : null}
             {group.isCloud ? (
               <span className="rounded-md bg-blue-3/50 px-1.5 py-0.5 text-[10px] font-medium text-blue-11/70">Cloud</span>
             ) : null}
             {group.hasCurrent ? (
-              <span className="rounded-md bg-green-3 px-1.5 py-0.5 text-[10px] font-medium text-green-11">Current</span>
+              <span className="rounded-md bg-green-3 px-1.5 py-0.5 text-[10px] font-medium text-green-11">{t("model_modal.current_badge")}</span>
             ) : null}
           </span>
         </button>
@@ -380,9 +381,9 @@ function ProviderAccordion({
                 : "bg-green-3 text-green-11 hover:bg-green-4",
             ].join(" ")}
             onClick={(e) => { e.stopPropagation(); onToggleProvider?.(group.id, group.isDisabled); }}
-            title={group.isDisabled ? "Enable this provider" : "Disable this provider"}
+            title={group.isDisabled ? t("model_modal.enable") : t("model_modal.enabled_badge")}
           >
-            {group.isDisabled ? "Enable" : "Enabled"}
+            {group.isDisabled ? t("model_modal.enable") : t("model_modal.enabled_badge")}
           </button>
         ) : null}
       </div>
@@ -393,7 +394,7 @@ function ProviderAccordion({
           {group.recommended.length > 0 ? (
             <>
               <div className="px-2 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-dls-secondary">
-                Recommended
+                {t("model_modal.recommended")}
               </div>
               {group.recommended.map((opt) => (
                 <DefaultModelRow key={opt.modelID} opt={opt} current={current} onSelect={onSelect} recommended />
@@ -404,7 +405,7 @@ function ProviderAccordion({
             <>
               {group.recommended.length > 0 ? (
                 <div className="px-2 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-dls-secondary">
-                  All models
+                  {t("model_modal.all_models")}
                 </div>
               ) : null}
               {group.other.map((opt) => (

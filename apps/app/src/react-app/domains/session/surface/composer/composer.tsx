@@ -1413,7 +1413,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                             ["agents", t("composer.agents_label")],
                             ["commands", t("dashboard.commands")],
                             ["skills", t("dashboard.skills")],
-                            ["extensions", "Extensions"],
+                            ["extensions", t("composer.extensions_label")],
                             ["mcps", t("composer.mcps_label")],
                           ] as const).map(([section, label]) => (
                             <button
@@ -1602,7 +1602,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                                       <div className="flex items-center justify-between gap-3">
                                         <div className="truncate text-xs font-semibold text-gray-11">{entry.name}</div>
                                         {entry.defaultEnabled ? (
-                                          <span className="shrink-0 rounded-full bg-green-3 px-2 py-0.5 text-[10px] font-medium text-green-11">Enabled</span>
+                                          <span className="shrink-0 rounded-full bg-green-3 px-2 py-0.5 text-[10px] font-medium text-green-11">{t("composer.enabled_badge")}</span>
                                         ) : null}
                                       </div>
                                       <div className="truncate text-xs text-gray-10">{entry.description}</div>
@@ -1611,7 +1611,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                                 ))}
                               </div>
                             ) : (
-                              <div className="px-3 py-2 text-xs text-gray-10">No extensions enabled. Open Extensions to enable them.</div>
+                              <div className="px-3 py-2 text-xs text-gray-10">{t("composer.no_extensions")}</div>
                             )
                           ) : null}
                           {activePlugin ? (

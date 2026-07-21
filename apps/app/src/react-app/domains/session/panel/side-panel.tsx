@@ -20,6 +20,7 @@ import {
   InputGroupInput,
 } from "@/components/ui/input-group";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { t } from "../../../../i18n";
 
 import { ArtifactIcon } from "../artifacts/artifact-icon";
 import { ArtifactPanel } from "../artifacts/artifact-panel";
@@ -599,7 +600,7 @@ export function SidePanel({
 function PanelEmpty() {
   return (
     <div className="flex h-full items-center justify-center p-4 text-center">
-      <p className="text-sm text-muted-foreground">Open an artifact or browser tab to get started.</p>
+      <p className="text-sm text-muted-foreground">{t("side_panel.empty_hint")}</p>
     </div>
   );
 }

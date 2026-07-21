@@ -397,7 +397,7 @@ function SessionErrorCard({ error, onDismiss, onChangeModel, onOpenModelPicker }
                     onDismiss();
                   }}
                 >
-                  Change model
+                  {t("session_surface.change_model")}
                 </button>
               </div>
             ) : null}

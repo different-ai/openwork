@@ -133,7 +133,7 @@ export function AiSettingsView(props: AiSettingsViewProps) {
                 onClick={() => void props.onSubscribeOpenWorkModels?.()}
                 disabled={props.busy || props.providerAuthBusy}
               >
-                Subscribe
+                {t("ai_view.subscribe")}
                 <ArrowRight className="ml-1.5 size-3.5" />
               </Button>
             </div>
@@ -197,11 +197,11 @@ export function AiSettingsView(props: AiSettingsViewProps) {
                 <div className="flex items-center gap-2">
                   <span className="truncate text-sm font-medium text-dls-text">OpenWork Models</span>
                   <span className="shrink-0 rounded-full border border-dls-border bg-dls-sidebar/40 px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
-                    Not connected
+                    {t("ai_view.not_connected")}
                   </span>
                 </div>
                 <div className="truncate text-xs text-muted-foreground">
-                  Hosted frontier models without managing API keys.
+                  {t("ai_view.hosted_models")}
                 </div>
               </div>
             </div>
@@ -210,7 +210,7 @@ export function AiSettingsView(props: AiSettingsViewProps) {
               onClick={() => void props.onSubscribeOpenWorkModels?.()}
               disabled={props.busy || props.providerAuthBusy}
             >
-              Connect
+              {t("ai_view.connect")}
               <ArrowRight className="ml-1.5 size-3.5" />
             </Button>
           </LayoutSectionItem>

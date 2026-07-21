@@ -794,8 +794,8 @@ export function SessionPage(props: SessionPageProps) {
   const showSelectedWorkspaceError = Boolean(selectedWorkspaceErrorMessage);
   const selectedWorkspaceErrorTitle =
     props.selectedWorkspaceDisplay.workspaceType === "remote"
-      ? "Remote workspace unavailable"
-      : "OpenCode unavailable";
+      ? t("session_page.remote_unavailable")
+      : t("session_page.opencode_unavailable");
 
   const reactSessionBaseUrl = props.opencodeBaseUrl?.trim() ?? "";
   const reactSessionToken =
@@ -1013,14 +1013,14 @@ export function SessionPage(props: SessionPageProps) {
                         variant="ghost"
                         size="icon-sm"
                         className="rounded-xl text-gray-10 transition-colors hover:bg-muted hover:text-foreground"
-                        aria-label="Find in conversation"
+                        aria-label={t("session_page.find_conversation")}
                         onClick={() => useSessionFindStore.getState().openFind({ sessionId: findButtonSessionId })}
                       >
                         <TextSearch size={17} />
                       </Button>
                     }
                   />
-                  <TooltipContent>Find in conversation (⌘F)</TooltipContent>
+                  <TooltipContent>{t("session_page.find_conversation")} (⌘F)</TooltipContent>
                 </Tooltip>
               ) : null}
               <NotificationBell />
@@ -1112,8 +1112,8 @@ export function SessionPage(props: SessionPageProps) {
                                 variant="ghost"
                                 size="icon-xs"
                                 className="rounded-lg text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text disabled:opacity-40"
-                                aria-label="Back in conversation history"
-                                title="Back in conversation history"
+                                aria-label={t("session_page.back_history")}
+                                title={t("session_page.back_history")}
                                 data-conversation-history-control="back"
                                 disabled={!canGoBackInConversationHistory}
                                 onClick={() => navigateConversationHistory("back")}
@@ -1122,7 +1122,7 @@ export function SessionPage(props: SessionPageProps) {
                               </Button>
                             }
                           />
-                          <TooltipContent>Back in conversation history</TooltipContent>
+                          <TooltipContent>{t("session_page.back_history")}</TooltipContent>
                         </Tooltip>
                         <Tooltip>
                           <TooltipTrigger
@@ -1131,8 +1131,8 @@ export function SessionPage(props: SessionPageProps) {
                                 variant="ghost"
                                 size="icon-xs"
                                 className="rounded-lg text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text disabled:opacity-40"
-                                aria-label="Forward in conversation history"
-                                title="Forward in conversation history"
+                                aria-label={t("session_page.forward_history")}
+                                title={t("session_page.forward_history")}
                                 data-conversation-history-control="forward"
                                 disabled={!canGoForwardInConversationHistory}
                                 onClick={() => navigateConversationHistory("forward")}
@@ -1141,7 +1141,7 @@ export function SessionPage(props: SessionPageProps) {
                               </Button>
                             }
                           />
-                          <TooltipContent>Forward in conversation history</TooltipContent>
+                          <TooltipContent>{t("session_page.forward_history")}</TooltipContent>
                         </Tooltip>
                       </div>
                       <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
@@ -1175,8 +1175,8 @@ export function SessionPage(props: SessionPageProps) {
                                 className="rounded p-0.5 text-dls-secondary hover:bg-dls-hover hover:text-dls-text disabled:pointer-events-none disabled:opacity-40"
                                 onClick={() => setSplitSessionId(split ? null : tab.sessionId)}
                                 disabled={active}
-                                title={split ? "Close split" : "Open in split view"}
-                                aria-label={split ? "Close split" : "Open in split view"}
+                                title={split ? t("session_page.close_split") : t("session_page.open_split")}
+                                aria-label={split ? t("session_page.close_split") : t("session_page.open_split")}
                               >
                                 <Columns2 size={13} />
                               </button>
@@ -1184,8 +1184,8 @@ export function SessionPage(props: SessionPageProps) {
                                 type="button"
                                 className="rounded p-0.5 text-dls-secondary opacity-80 hover:bg-dls-hover hover:text-dls-text group-hover:opacity-100"
                                 onClick={() => closeSessionTab(tab.sessionId)}
-                                title="Close tab"
-                                aria-label="Close tab"
+                                title={t("session_page.close_tab")}
+                                aria-label={t("session_page.close_tab")}
                               >
                                 <X size={13} />
                               </button>
@@ -1246,7 +1246,7 @@ export function SessionPage(props: SessionPageProps) {
                   {props.notFoundMessage ? (
                     <div className="px-6 py-16 text-center">
                       <div className="mx-auto max-w-md rounded-2xl border border-dls-border bg-dls-card px-5 py-6 shadow-[var(--dls-card-shadow)]">
-                        <h3 className="text-base font-medium text-dls-text">Workspace or session not found</h3>
+                        <h3 className="text-base font-medium text-dls-text">{t("session_page.not_found_title")}</h3>
                         <p className="mt-2 text-sm leading-6 text-dls-secondary">{props.notFoundMessage}</p>
                       </div>
                     </div>
@@ -1278,7 +1278,7 @@ export function SessionPage(props: SessionPageProps) {
                             size="sm"
                             onClick={() => props.sidebar.onCreateTaskInWorkspace(props.selectedWorkspaceId)}
                           >
-                            Retry
+                            {t("session_page.retry")}
                           </Button>
                           <Button
                             variant="outline"
@@ -1321,8 +1321,8 @@ export function SessionPage(props: SessionPageProps) {
                           </h2>
                           <p className="text-xs text-dls-secondary">
                             {providerCount === 0
-                              ? "Add an AI model provider so your tasks can run."
-                              : "Try one of these to get started:"}
+                              ? t("session_page.add_model_provider")
+                              : t("session_page.try_get_started")}
                           </p>
                         </div>
                         <div className="space-y-2">
@@ -1334,9 +1334,9 @@ export function SessionPage(props: SessionPageProps) {
                             >
                               <Zap className="mt-0.5 size-5 shrink-0 text-blue-10" />
                               <div>
-                                <div className="text-[13px] font-medium text-dls-text">Connect a model provider</div>
+                                <div className="text-[13px] font-medium text-dls-text">{t("suggestions.connect_provider_title")}</div>
                                 <div className="mt-0.5 text-[11px] text-dls-secondary">
-                                  Add an API key for Anthropic, OpenAI, Google, or other providers
+                                  {t("suggestions.connect_provider_desc")}
                                 </div>
                               </div>
                             </button>
@@ -1353,8 +1353,8 @@ export function SessionPage(props: SessionPageProps) {
                           >
                             <img src="https://cdn.simpleicons.org/googlesheets" alt="" width={20} height={20} className="mt-0.5 shrink-0" />
                             <div>
-                              <div className="text-[13px] font-medium text-dls-text">Edit a CSV</div>
-                              <div className="mt-0.5 text-[11px] text-dls-secondary">Create a sample spreadsheet with customer data</div>
+                              <div className="text-[13px] font-medium text-dls-text">{t("suggestions.edit_csv")}</div>
+                              <div className="mt-0.5 text-[11px] text-dls-secondary">{t("session_page.edit_csv_desc")}</div>
                             </div>
                           </button>
                           <button
@@ -1369,8 +1369,8 @@ export function SessionPage(props: SessionPageProps) {
                           >
                             <img src={resolveExtensionIconSrc("/openwork-mark.svg")} alt="" width={20} height={20} className="mt-0.5 shrink-0" />
                             <div>
-                              <div className="text-[13px] font-medium text-dls-text">Browse the web</div>
-                              <div className="mt-0.5 text-[11px] text-dls-secondary">Search Craigslist for couches and list the results</div>
+                              <div className="text-[13px] font-medium text-dls-text">{t("suggestions.browse_web")}</div>
+                              <div className="mt-0.5 text-[11px] text-dls-secondary">{t("session_page.browse_web_desc")}</div>
                             </div>
                           </button>
                           <button
@@ -1382,8 +1382,8 @@ export function SessionPage(props: SessionPageProps) {
                           >
                             <img src="https://cdn.simpleicons.org/hackthebox" alt="" width={20} height={20} className="mt-0.5 shrink-0" />
                             <div>
-                              <div className="text-[13px] font-medium text-dls-text">Connect an extension</div>
-                              <div className="mt-0.5 text-[11px] text-dls-secondary">Add MCP servers, plugins, and integrations</div>
+                              <div className="text-[13px] font-medium text-dls-text">{t("suggestions.connect_extension")}</div>
+                              <div className="mt-0.5 text-[11px] text-dls-secondary">{t("session_page.connect_extension_desc")}</div>
                             </div>
                           </button>
                         </div>
@@ -1473,8 +1473,8 @@ export function SessionPage(props: SessionPageProps) {
                   panelRailActive && "bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary",
                 )}
                 onClick={openBrowserRailPane}
-                title="Browser"
-                aria-label="Browser"
+                title={t("session_page.browser")}
+                aria-label={t("session_page.browser")}
                 aria-pressed={panelRailActive}
               >
                 <Globe size={17} />
@@ -1489,8 +1489,8 @@ export function SessionPage(props: SessionPageProps) {
                   voiceRailActive && "bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary",
                 )}
                 onClick={openVoiceRailPane}
-                title="Voice Mode"
-                aria-label="Voice Mode"
+                title={t("session_page.voice_mode")}
+                aria-label={t("session_page.voice_mode")}
                 aria-pressed={voiceRailActive}
               >
                 <Mic2 size={17} />
@@ -1504,8 +1504,8 @@ export function SessionPage(props: SessionPageProps) {
                 panelRailActive && "bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary",
               )}
               onClick={openArtifactRailPane}
-              title={hasArtifactTargets ? `Artifacts (${artifactTargetCount})` : "No artifacts yet"}
-              aria-label={hasArtifactTargets ? `Artifacts (${artifactTargetCount})` : "No artifacts yet"}
+              title={hasArtifactTargets ? `Artifacts (${artifactTargetCount})` : t("session_page.no_artifacts")}
+              aria-label={hasArtifactTargets ? `Artifacts (${artifactTargetCount})` : t("session_page.no_artifacts")}
               aria-pressed={panelRailActive}
               disabled={!hasArtifactTargets}
             >
@@ -1524,8 +1524,8 @@ export function SessionPage(props: SessionPageProps) {
                 extensionsRailActive && "bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary",
               )}
               onClick={props.settingsSlot ? openExtensionsRailPane : props.onOpenSettings}
-              title="Extensions"
-              aria-label="Extensions"
+              title={t("session_page.extensions")}
+              aria-label={t("session_page.extensions")}
               aria-pressed={extensionsRailActive}
             >
               <Settings2 size={17} />

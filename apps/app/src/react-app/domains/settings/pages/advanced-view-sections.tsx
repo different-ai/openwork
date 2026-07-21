@@ -390,17 +390,17 @@ export function AdvancedCloudMcpDiagnosticsSection(props: AdvancedCloudMcpDiagno
   return (
     <LayoutSection>
       <LayoutSectionHeader>
-        <LayoutSectionTitle>Agent access diagnostics</LayoutSectionTitle>
+        <LayoutSectionTitle>{t("advanced.agent_diagnostics_title")}</LayoutSectionTitle>
         <LayoutSectionDescription>
-          Technical details for OpenWork Cloud MCP delivery. Tokens and Authorization headers are redacted before display or copy.
+          {t("advanced.agent_diagnostics_desc")}
         </LayoutSectionDescription>
       </LayoutSectionHeader>
 
       <LayoutSectionItem>
         <LayoutSectionItemHeader>
-          <LayoutSectionItemTitle>OpenWork Cloud MCP health</LayoutSectionItemTitle>
+          <LayoutSectionItemTitle>{t("advanced.cloud_mcp_health")}</LayoutSectionItemTitle>
           <LayoutSectionItemDescription>
-            Use this when support needs exact runtime state. The main Connect card stays user-facing.
+            {t("advanced.cloud_mcp_health_desc")}
           </LayoutSectionItemDescription>
           <LayoutSectionItemHeaderActions>
             <Button type="button" variant="outline" size="sm" onClick={() => void refresh()} disabled={busy}>
@@ -408,7 +408,7 @@ export function AdvancedCloudMcpDiagnosticsSection(props: AdvancedCloudMcpDiagno
               Refresh
             </Button>
             <Button type="button" variant="outline" size="sm" onClick={() => void copy()} disabled={!props.cloudMcpHealth}>
-              Copy sanitized diagnostic
+              {t("advanced.copy_sanitized")}
             </Button>
           </LayoutSectionItemHeaderActions>
         </LayoutSectionItemHeader>
@@ -447,7 +447,7 @@ export function AdvancedCloudMcpDiagnosticsSection(props: AdvancedCloudMcpDiagno
             </details>
           </div>
         ) : (
-          <SettingsNotice>No Cloud MCP health has been loaded for this workspace yet.</SettingsNotice>
+          <SettingsNotice>{t("advanced.no_cloud_mcp")}</SettingsNotice>
         )}
       </LayoutSectionItem>
     </LayoutSection>
@@ -570,17 +570,17 @@ export function AdvancedRuntimeMigrationSection(props: AdvancedRuntimeMigrationS
   return (
     <LayoutSection>
       <LayoutSectionHeader>
-        <LayoutSectionTitle>OpenCode config sources</LayoutSectionTitle>
+        <LayoutSectionTitle>{t("advanced.config_sources_title")}</LayoutSectionTitle>
         <LayoutSectionDescription>
-          Inspect what OpenWork controls at runtime versus what belongs to your workspace config. This works through the OpenWork server and does not require the OpenCode engine to be healthy.
+          {t("advanced.config_sources_desc")}
         </LayoutSectionDescription>
       </LayoutSectionHeader>
 
       <LayoutSectionItem>
         <LayoutSectionItemHeader>
-          <LayoutSectionItemTitle>Move OpenWork-managed config</LayoutSectionItemTitle>
+          <LayoutSectionItemTitle>{t("advanced.move_config_title")}</LayoutSectionItemTitle>
           <LayoutSectionItemDescription>
-            Moves older OpenWork-owned runtime keys from `.opencode/openwork.json` and safe OpenWork-managed keys from `opencode.jsonc` into the runtime database.
+            {t("advanced.move_config_desc")}
           </LayoutSectionItemDescription>
           <LayoutSectionItemHeaderActions>
             <Button
@@ -601,7 +601,7 @@ export function AdvancedRuntimeMigrationSection(props: AdvancedRuntimeMigrationS
               disabled={props.busy || props.migrationBusy || !props.canMigrate}
             >
               <Database size={14} />
-              {props.migrationBusy ? "Migrating..." : "Migrate"}
+              {props.migrationBusy ? t("advanced.migrating") : t("advanced.migrate")}
             </Button>
           </LayoutSectionItemHeaderActions>
         </LayoutSectionItemHeader>
@@ -610,13 +610,13 @@ export function AdvancedRuntimeMigrationSection(props: AdvancedRuntimeMigrationS
         {props.configStatus ? (
           <div className="space-y-3 rounded-xl border border-gray-6 bg-gray-1/60 p-3 text-xs text-gray-10">
             <div className="space-y-2 rounded-xl border border-blue-6/50 bg-blue-2/40 p-3">
-              <div className="font-medium text-gray-12">Desired OpenWork runtime config</div>
+              <div className="font-medium text-gray-12">{t("advanced.desired_config")}</div>
               <div className="text-[11px] text-gray-9">
-                This is the OpenWork-built config object requested for the runtime database and injected safely by the server. Sensitive headers are redacted here.
+                {t("advanced.desired_config_desc")}
               </div>
               <RuntimeConfigSummary config={effectiveRuntimeConfig ?? {}} />
               <details className="rounded-lg bg-gray-3 p-2">
-                <summary className="cursor-pointer text-[11px] font-medium text-gray-11">Show desired JSON</summary>
+                <summary className="cursor-pointer text-[11px] font-medium text-gray-11">{t("advanced.show_desired_json")}</summary>
                 <pre className="mt-2 max-h-72 overflow-auto font-mono text-[11px] text-gray-11">
                   {JSON.stringify(effectiveRuntimeConfig, null, 2)}
                 </pre>
@@ -625,14 +625,14 @@ export function AdvancedRuntimeMigrationSection(props: AdvancedRuntimeMigrationS
             {props.configStatus.sources ? (
               <div className="space-y-3">
                 <div>
-                  <div className="font-medium text-gray-12">OpenCode source breakdown</div>
+                  <div className="font-medium text-gray-12">{t("advanced.source_breakdown")}</div>
                   <div className="text-[11px] text-gray-9">
-                    OpenCode also reads its own project and global config files. OpenWork injects the runtime config separately; for OpenWork-managed keys, the injected config is the source to inspect.
+                    {t("advanced.source_breakdown_desc")}
                   </div>
                 </div>
                 <RuntimeConfigSourceBlock
-                  title="Project opencode config"
-                  description="Workspace-level OpenCode config owned by the user/project."
+                  title={t("advanced.project_config")}
+                  description={t("advanced.project_config_desc")}
                   path={props.configStatus.sources.projectOpencode.path}
                   exists={props.configStatus.sources.projectOpencode.exists}
                   keys={props.configStatus.sources.projectOpencode.keys}

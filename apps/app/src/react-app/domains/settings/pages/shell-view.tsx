@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
+import { t } from "@/i18n";
 
 import {
   LayoutSection,
@@ -249,17 +250,17 @@ export function ShellCustomizationView() {
       {/* ---- Branding ---- */}
       <LayoutSection>
         <LayoutSectionHeader>
-          <LayoutSectionTitle>Branding</LayoutSectionTitle>
+          <LayoutSectionTitle>{t("shell.branding_title")}</LayoutSectionTitle>
           <LayoutSectionDescription>
-            Customize the name your users see across the app.
+            {t("shell.branding_desc")}
           </LayoutSectionDescription>
         </LayoutSectionHeader>
 
         <LayoutSectionItem>
           <LayoutSectionItemHeader>
-            <LayoutSectionItemTitle>Change application name</LayoutSectionItemTitle>
+            <LayoutSectionItemTitle>{t("shell.change_app_name")}</LayoutSectionItemTitle>
             <LayoutSectionItemDescription>
-              Appears in the title bar, sidebar, and welcome screen.
+              {t("shell.change_app_name_desc")}
             </LayoutSectionItemDescription>
             <LayoutSectionItemHeaderActions>
               <Field className="w-64 max-w-full gap-0">
@@ -280,7 +281,7 @@ export function ShellCustomizationView() {
           <Alert>
             <Info />
             <AlertDescription>
-              {brandAppName === "OpenWork" ? "Your organization has not set a custom application name." : "This application name is managed by your organization."}
+              {brandAppName === "OpenWork" ? t("shell.no_custom_name") : t("shell.managed_name")}
             </AlertDescription>
           </Alert>
         </LayoutSectionItem>
@@ -291,15 +292,15 @@ export function ShellCustomizationView() {
       {/* ---- Visibility ---- */}
       <LayoutSection>
         <LayoutSectionHeader>
-          <LayoutSectionTitle>Layout</LayoutSectionTitle>
+          <LayoutSectionTitle>{t("shell.layout_title")}</LayoutSectionTitle>
           <LayoutSectionDescription>
-            Customize what's visible in the interface.
+            {t("shell.layout_desc")}
           </LayoutSectionDescription>
         </LayoutSectionHeader>
 
         <Alert>
           <AlertDescription>
-            Anything you hide is still available via the command palette (Cmd+K).
+            {t("shell.cmd_palette_hint")}
           </AlertDescription>
         </Alert>
 
@@ -308,37 +309,37 @@ export function ShellCustomizationView() {
         </LayoutSectionItem>
 
         <ToggleRow
-          label="Display sidebar"
-          description="Browse workspaces and past sessions from a side panel."
+          label={t("shell.display_sidebar")}
+          description={t("shell.display_sidebar_desc")}
           checked={config.sidebar}
           onChange={(v) => update({ sidebar: v })}
         />
 
         <ToggleRow
-          label="Display status bar"
-          description="Quick access to status, settings, and actions along the bottom edge."
+          label={t("shell.display_status_bar")}
+          description={t("shell.display_status_bar_desc")}
           checked={config.statusBar}
           onChange={(v) => update({ statusBar: v })}
-          warning="When hidden, the only way to access settings is via Cmd+K."
+          warning={t("shell.status_bar_warning")}
         />
 
         {config.statusBar ? (
           <div className="ml-6 flex flex-col gap-3 border border-dls-border px-4 py-4 rounded-2xl -mr-4">
             <ToggleRow
-              label="Display documentation link"
-              description="Show a link to your documentation."
+              label={t("shell.display_docs")}
+              description={t("shell.display_docs_desc")}
               checked={config.docsButton}
               onChange={(value) => update({ docsButton: value })}
             />
             <ToggleRow
-              label="Display feedback button"
-              description="Show a button for submitting feedback."
+              label={t("shell.display_feedback")}
+              description={t("shell.display_feedback_desc")}
               checked={config.feedbackButton}
               onChange={(value) => update({ feedbackButton: value })}
             />
             <ToggleRow
-              label="Display cloud sign-in"
-              description="Show a sign-in prompt for users who aren't logged in."
+              label={t("shell.display_cloud_signin")}
+              description={t("shell.display_cloud_signin_desc")}
               checked={config.cloudSignin}
               onChange={(value) => update({ cloudSignin: value })}
             />
@@ -346,52 +347,52 @@ export function ShellCustomizationView() {
         ) : null}
 
         <ToggleRow
-          label="Display notifications"
-          description="A bell in the header collecting updates from OpenWork Cloud and your workspaces."
+          label={t("shell.display_notifications")}
+          description={t("shell.display_notifications_desc")}
           checked={config.notifications}
           onChange={(v) => update({ notifications: v })}
         />
 
         <ToggleRow
-          label="Display task suggestions"
-          description="Show task suggestions to help users get started."
+          label={t("shell.display_suggestions")}
+          description={t("shell.display_suggestions_desc")}
           checked={config.starterCards}
           onChange={(v) => update({ starterCards: v })}
         />
 
         <ToggleRow
-          label="Display model picker"
-          description="Let users choose which AI model to use."
+          label={t("shell.display_model_picker")}
+          description={t("shell.display_model_picker_desc")}
           checked={config.modelPicker}
           onChange={(v) => update({ modelPicker: v })}
           disabled
-          unavailable="The model picker display control is not available yet."
+          unavailable={t("shell.unavailable_model_picker")}
         />
 
         <ToggleRow
-          label="Display browser panel"
-          description="A built-in browser for viewing web content alongside sessions."
+          label={t("shell.display_browser")}
+          description={t("shell.display_browser_desc")}
           checked={config.browser}
           onChange={(v) => update({ browser: v })}
           disabled
-          unavailable="The browser panel display control is not available yet."
+          unavailable={t("shell.unavailable_browser")}
         />
 
         <ToggleRow
-          label="Display menu bar"
-          description="Show the native desktop menu bar."
+          label={t("shell.display_menu_bar")}
+          description={t("shell.display_menu_bar_desc")}
           checked={applicationMenuVisible}
           onChange={setApplicationMenuVisible}
           className="hidden windows:flex linux:flex"
         />
 
         <ToggleRow
-          label="Display new workspace button"
-          description="Let users create or join additional workspaces."
+          label={t("shell.display_new_workspace")}
+          description={t("shell.display_new_workspace_desc")}
           checked={config.addWorkspace}
           onChange={(v) => update({ addWorkspace: v })}
           disabled
-          unavailable="The new workspace button display control is not available yet."
+          unavailable={t("shell.unavailable_workspace_button")}
         />
       </LayoutSection>
 
@@ -400,46 +401,46 @@ export function ShellCustomizationView() {
       {/* ---- Cloud-managed (grayed out) ---- */}
       <LayoutSection>
         <LayoutSectionHeader>
-          <LayoutSectionTitle>Organization-wide settings</LayoutSectionTitle>
+          <LayoutSectionTitle>{t("shell.org_settings_title")}</LayoutSectionTitle>
           <LayoutSectionDescription>
-            These settings are managed by your organization via OpenWork Cloud.
+            {t("shell.org_settings_desc")}
           </LayoutSectionDescription>
         </LayoutSectionHeader>
 
         <Alert variant="warning">
           <Lock />
           <AlertDescription>
-            These settings can only be changed by your organization admin. Contact your admin to make changes.
+            {t("shell.org_admin_warning")}
           </AlertDescription>
         </Alert>
 
         <ToggleRow
-          label="Settings access"
-          description="Let users open the settings panel."
+          label={t("shell.settings_access")}
+          description={t("shell.settings_access_desc")}
           checked={true}
           onChange={() => {}}
           cloudOnly
         />
 
         <ToggleRow
-          label="Model restrictions"
-          description="Limit which AI models and providers users can choose from."
+          label={t("shell.model_restrictions")}
+          description={t("shell.model_restrictions_desc")}
           checked={false}
           onChange={() => {}}
           cloudOnly
         />
 
         <ToggleRow
-          label="Extension restrictions"
-          description="Limit which extensions, plugins, and skills users can install."
+          label={t("shell.extension_restrictions")}
+          description={t("shell.extension_restrictions_desc")}
           checked={false}
           onChange={() => {}}
           cloudOnly
         />
 
         <ToggleRow
-          label="Enable welcome page"
-          description="A getting-started screen for first-time users."
+          label={t("shell.enable_welcome")}
+          description={t("shell.enable_welcome_desc")}
           checked={config.welcomePage}
           onChange={(v) => update({ welcomePage: v })}
           cloudOnly
@@ -452,7 +453,7 @@ export function ShellCustomizationView() {
       {/* ---- Reset ---- */}
       <div className="flex items-center justify-between">
         <div className="text-sm text-dls-secondary">
-          {isDefault ? "All settings are at their defaults." : "Some settings have been customized."}
+          {isDefault ? t("shell.all_defaults") : t("shell.some_customized")}
         </div>
         <Button
           variant="outline"
@@ -461,7 +462,7 @@ export function ShellCustomizationView() {
           disabled={isDefault}
         >
           <RotateCcw size={12} />
-          Reset to defaults
+          {t("shell.reset_defaults")}
         </Button>
       </div>
     </LayoutStack>

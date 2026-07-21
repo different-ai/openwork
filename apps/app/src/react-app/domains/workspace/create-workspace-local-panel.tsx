@@ -147,7 +147,7 @@ export function CreateWorkspaceLocalPanel(
                 </span>
               ) : (
                 <span className="text-[14px] text-dls-secondary">
-                  No folder selected yet.
+                  {t("workspace_create.no_folder")}
                 </span>
               )}
             </div>
@@ -166,10 +166,10 @@ export function CreateWorkspaceLocalPanel(
                       </span>
                       <span className="min-w-0">
                         <span className="block text-[14px] font-semibold text-dls-text">
-                          Want more analytics?
+                          {t("workspace_create.analytics_title")}
                         </span>
                         <span className="mt-1 block text-[12px] leading-5 text-dls-secondary">
-                          Add a project name to group this workspace's sessions in Analytics.
+                          {t("workspace_create.analytics_desc")}
                         </span>
                       </span>
                     </span>
@@ -177,7 +177,7 @@ export function CreateWorkspaceLocalPanel(
                   <AccordionContent className="space-y-3 px-4 pb-4">
                     <div>
                       <label className="text-[13px] font-medium text-dls-text">
-                        Project name <span className="text-dls-secondary">(optional)</span>
+                        {t("workspace_create.project_name_label")} <span className="text-dls-secondary">{t("workspace_create.project_name_optional")}</span>
                       </label>
                       <input
                         type="text"
@@ -206,7 +206,7 @@ export function CreateWorkspaceLocalPanel(
                 )}
                 {props.hasSelectedFolder
                   ? t("dashboard.change")
-                  : "Select folder"}
+                  : t("workspace_create.select_folder")}
               </button>
             </div>
           </div>

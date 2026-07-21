@@ -522,7 +522,7 @@ export function McpView(props: McpViewProps) {
 
       {props.builtInExtensionsDisabled ? (
         <div className="rounded-xl border border-amber-6 bg-amber-2 px-4 py-3 text-xs text-amber-11">
-          Built-in OpenWork extensions are disabled by your organization. Use Show hidden to review blocked built-ins.
+          {t("mcp_view.builtins_disabled")}
         </div>
       ) : null}
 
@@ -541,7 +541,7 @@ export function McpView(props: McpViewProps) {
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-dls-secondary" />
           <input
             className="w-full rounded-lg border border-dls-border bg-dls-surface py-2 pl-9 pr-3 text-xs text-dls-text placeholder:text-dls-secondary focus:outline-none focus:ring-2 focus:ring-[rgba(var(--dls-accent-rgb),0.2)]"
-            placeholder="Search extensions..."
+            placeholder={t("mcp_view.search_placeholder")}
             value={search}
             onChange={(e) => setSearch(e.currentTarget.value)}
           />
@@ -554,7 +554,7 @@ export function McpView(props: McpViewProps) {
               size="xs"
               onClick={() => setFilter(f)}
             >
-              {f === "all" ? "All" : f === "mcp" ? "MCPs" : "Skills"}
+              {f === "all" ? t("mcp_view.filter_all") : f === "mcp" ? t("mcp_view.filter_mcp") : t("mcp_view.filter_skill")}
             </Button>
           ))}
           <Button
@@ -562,7 +562,7 @@ export function McpView(props: McpViewProps) {
             size="xs"
             onClick={() => setShowHidden((current) => !current)}
           >
-            {showHidden ? "Showing hidden" : hiddenOrPolicyCount > 0 ? `Show hidden (${hiddenOrPolicyCount})` : "Show hidden"}
+            {showHidden ? t("mcp_view.showing_hidden") : hiddenOrPolicyCount > 0 ? `${t("mcp_view.show_hidden_label")} (${hiddenOrPolicyCount})` : t("mcp_view.show_hidden_label")}
           </Button>
         </div>
       </div>
@@ -972,7 +972,7 @@ function McpQuickConnectSection(props: {
               preview={entry.preview}
               disabledReason={disabledReason}
               disabled={props.busy}
-              actionLabel={configured ? "View details" : t("mcp.tap_to_connect")}
+              actionLabel={configured ? t("mcp_view.view_details") : t("mcp.tap_to_connect")}
               onClick={() => props.onDetail(entry)}
             />
           );
@@ -989,7 +989,7 @@ function McpQuickConnectSection(props: {
               kind="skill"
               connected={true}
               hidden={hidden}
-              actionLabel="View details"
+              actionLabel={t("mcp_view.view_details")}
               onClick={() => props.onSkillDetail?.(skill)}
             />
           );
@@ -1006,7 +1006,7 @@ function McpQuickConnectSection(props: {
               kind="extension"
               connected={true}
               hidden={hidden}
-              actionLabel="View details"
+              actionLabel={t("mcp_view.view_details")}
               onClick={() => props.onPluginDetail?.(plugin)}
             />
           );
@@ -1026,7 +1026,7 @@ function McpQuickConnectSection(props: {
                 connected={true}
                 connectedLabel={orgMcpConnectionActionLabel(connection)}
                 beta
-                actionLabel={disconnecting ? t("mcp.org_connection_disconnecting_action") : "View details"}
+                actionLabel={disconnecting ? t("mcp.org_connection_disconnecting_action") : t("mcp_view.view_details")}
                 onClick={() => props.onOrgMcpDetail?.(item)}
               />
               {canDisconnect ? (
@@ -1047,8 +1047,8 @@ function McpQuickConnectSection(props: {
         {props.entries.length === 0 && (props.installedSkills ?? []).length === 0 && (props.installedPlugins ?? []).length === 0 && (props.installedOrgMcpItems ?? []).length === 0 ? (
           <div className="col-span-full rounded-xl border border-dashed border-dls-border px-5 py-10 text-center">
             <Unplug size={24} className="mx-auto mb-3 text-dls-secondary/30" />
-            <div className="text-sm font-medium text-dls-secondary">No extensions found</div>
-            <div className="mt-1 text-xs text-dls-secondary/60">Try a different search, filter, or open Marketplace to add one.</div>
+            <div className="text-sm font-medium text-dls-secondary">{t("mcp_view.no_extensions_found")}</div>
+            <div className="mt-1 text-xs text-dls-secondary/60">{t("mcp_view.no_extensions_hint")}</div>
           </div>
         ) : null}
       </div>

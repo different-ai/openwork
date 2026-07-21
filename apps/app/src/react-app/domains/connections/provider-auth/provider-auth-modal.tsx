@@ -28,6 +28,7 @@ import { compareProviders } from "@/app/utils/providers";
 import { Button } from "@/components/ui/button";
 import { ProviderIcon } from "../../../design-system/provider-icon";
 import { TextInput } from "../../../design-system/text-input";
+import { t } from "../../../../i18n";
 import type {
   ProviderAuthMethod,
   ProviderAuthProvider,
@@ -705,9 +706,9 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     >
       <DialogContent className="flex max-h-[calc(100vh-2rem)] min-h-0 w-full max-w-lg flex-col overflow-hidden sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>Connect providers</DialogTitle>
+          <DialogTitle>{t("provider_auth.title")}</DialogTitle>
           <DialogDescription>
-            Sign in to services or use providers managed by your organization.
+            {t("provider_auth.description")}
           </DialogDescription>
         </DialogHeader>
 
@@ -718,7 +719,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
             </div>
           ) : props.loading ? (
             <div className="rounded-xl border border-gray-6 bg-gray-1/60 px-4 py-3 text-sm text-gray-10 animate-pulse">
-              Loading providers…
+              {t("provider_auth.loading")}
             </div>
           ) : null}
 
@@ -731,7 +732,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                     <input
                       ref={searchInputRef}
                       type="text"
-                      placeholder="Filter providers by name or ID"
+                      placeholder={t("provider_auth.filter_placeholder")}
                       value={searchQuery}
                       onChange={(event) => {
                         setSearchQuery(event.currentTarget.value);
@@ -772,11 +773,11 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                               {entry.connected ? (
                                 <div className="flex items-center gap-1 text-[11px] font-medium text-green-11 bg-green-4/20 border border-green-5/30 px-1.5 py-0.5 rounded-md">
                                   <CheckCircle2 size={12} strokeWidth={2.5} />
-                                  Connected
+                                  {t("provider_auth.connected")}
                                 </div>
                               ) : (
                                 <div className="text-[12px] font-medium text-gray-9 group-hover:text-gray-12 transition-colors flex items-center gap-0.5 opacity-80 group-hover:opacity-100">
-                                  Connect
+                                  {t("provider_auth.connect")}
                                   <ChevronRight size={14} className="opacity-0 -ml-2 group-hover:opacity-100 group-hover:ml-0 transition-all duration-200" />
                                 </div>
                               )}
@@ -807,11 +808,11 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                     ))
                   ) : (
                     <div className="text-sm text-gray-10 pt-2">
-                      {entries.length ? "No providers match your search." : "No providers available."}
+                      {entries.length ? t("provider_auth.no_match") : t("provider_auth.no_available")}
                     </div>
                   )}
 
-                  <div className="text-[11px] text-gray-9">Arrow keys to navigate, Enter to select.</div>
+                  <div className="text-[11px] text-gray-9">{t("provider_auth.arrow_hint")}</div>
                 </div>
               ) : null}
 
@@ -820,10 +821,10 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                   <div className="flex items-center justify-between gap-4">
                     <div>
                       <div className="text-sm font-medium text-gray-12">{selectedEntry.name}</div>
-                      <div className="text-xs text-gray-10 mt-1">Choose how you'd like to connect.</div>
+                      <div className="text-xs text-gray-10 mt-1">{t("provider_auth.choose_connect")}</div>
                     </div>
                     <Button variant="outline" onClick={handleBack} disabled={actionDisabled}>
-                      Back
+                      {t("common.back")}
                     </Button>
                   </div>
                   <div className="grid gap-2">
@@ -855,11 +856,11 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                       <div className="text-xs text-gray-10 mt-1">
                         {isOpencodeZenProvider(selectedEntry.id)
                           ? "Sign in to OpenCode Zen with an API key from opencode.ai/auth."
-                          : "Paste your API key to connect."}
+                          : t("provider_auth.paste_api_key")}
                       </div>
                     </div>
                     <Button variant="outline" onClick={handleBack} disabled={actionDisabled}>
-                      Back
+                      {t("common.back")}
                     </Button>
                   </div>
                   {isOpencodeZenProvider(selectedEntry.id) ? (
@@ -896,12 +897,12 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                     </div>
                   ) : null}
                   <div className="flex items-center justify-between gap-3">
-                    <div className="text-[11px] text-gray-9">Keys are stored locally by OpenCode.</div>
+                    <div className="text-[11px] text-gray-9">{t("provider_auth.keys_stored_locally")}</div>
                     <Button
                       onClick={handleApiSubmit}
                       disabled={actionDisabled || !apiKeyInput.trim()}
                     >
-                      {props.submitting ? "Saving…" : "Save key"}
+                      {props.submitting ? t("provider_auth.saving_key") : t("provider_auth.save_key")}
                     </Button>
                   </div>
                 </div>
@@ -912,10 +913,10 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                   <div className="flex items-center justify-between gap-4">
                     <div>
                       <div className="text-sm font-medium text-gray-12">{selectedEntry.name}</div>
-                      <div className="text-xs text-gray-10 mt-1">Connect with the provider managed by your organization.</div>
+                      <div className="text-xs text-gray-10 mt-1">{t("provider_auth.connect_org_provider")}</div>
                     </div>
                     <Button variant="outline" onClick={handleBack} disabled={actionDisabled}>
-                      Back
+                      {t("common.back")}
                     </Button>
                   </div>
                   <div className="text-xs text-gray-9">
@@ -936,7 +937,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                       OpenWork will install the provider config and use the credential stored for your org.
                     </div>
                     <Button onClick={handleCloudSubmit} disabled={actionDisabled}>
-                      {props.submitting ? "Connecting..." : "Connect provider"}
+                      {props.submitting ? t("provider_auth.connecting") : t("provider_auth.connect_provider_btn")}
                     </Button>
                   </div>
                 </div>
@@ -1095,7 +1096,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
             disabled={actionDisabled}
             render={<Button variant="outline" disabled={actionDisabled} />}
           >
-            Close
+            {t("provider_auth.close")}
           </DialogClose>
         </DialogFooter>
       </DialogContent>
