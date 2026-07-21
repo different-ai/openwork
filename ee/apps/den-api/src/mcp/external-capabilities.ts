@@ -36,6 +36,7 @@ import {
 } from "./external-mcp-tool-arguments.js"
 import { compareCapabilityMatches, tokenize } from "./search.js"
 import type { CapabilityMatch } from "./search.js"
+import { createExternalMcpSearchCache } from "./external-mcp-search-cache.js"
 
 /**
  * Merges org-level External MCP Connections (capability-sources/) into the
@@ -59,6 +60,18 @@ const EXTERNAL_CAPABILITY_PREFIX = "mcp:"
 export const EXTERNAL_MCP_SEARCH_CONNECTION_LIMIT = 16
 export const EXTERNAL_MCP_SEARCH_CONCURRENCY = 4
 export const EXTERNAL_MCP_SEARCH_MATCH_LIMIT = 20
+export const EXTERNAL_MCP_SEARCH_CACHE_TTL_MS = 60_000
+export const EXTERNAL_MCP_SEARCH_CACHE_MAX_ENTRIES = 256
+export const EXTERNAL_MCP_SEARCH_CACHE_MAX_BYTES = 16 * 1024 * 1024
+
+type ExternalMcpToolList = Awaited<ReturnType<typeof listExternalMcpTools>>
+
+const externalMcpSearchCache = createExternalMcpSearchCache<ExternalMcpToolList>({
+  maxEntries: EXTERNAL_MCP_SEARCH_CACHE_MAX_ENTRIES,
+  maxTotalSize: EXTERNAL_MCP_SEARCH_CACHE_MAX_BYTES,
+  sizeOf: (tools) => new TextEncoder().encode(JSON.stringify(tools)).byteLength,
+  ttlMs: EXTERNAL_MCP_SEARCH_CACHE_TTL_MS,
+})
 
 export function buildExternalCapabilityName(connectionId: string, toolName: string): string {
   return `${EXTERNAL_CAPABILITY_PREFIX}${connectionId}:${toolName}`
@@ -115,6 +128,23 @@ function hasSharedCredential(connection: ExternalMcpConnectionRow): boolean {
 
 function redirectUriFor(redirectUriBase: string, connectionId: string): string {
   return `${redirectUriBase}/v1/mcp-connections/${encodeURIComponent(connectionId)}/connect/callback`
+}
+
+function externalMcpSearchCacheKey(
+  connection: ExternalMcpConnectionRow,
+  member: { orgMembershipId: DenTypeId<"member"> } | undefined,
+  credentialUpdatedAt: Date,
+): string {
+  return [
+    connection.organizationId,
+    connection.id,
+    member?.orgMembershipId ?? "shared",
+    connection.url,
+    connection.authType,
+    connection.credentialMode,
+    connection.updatedAt.toISOString(),
+    credentialUpdatedAt.toISOString(),
+  ].join("\0")
 }
 
 function scoreText(nameTokens: string[], summaryTokens: string[], queryTokens: string[]): number {
@@ -645,6 +675,7 @@ async function probeExternalMcpConnection(input: {
     }
     return matches
   }
+  let credentialUpdatedAt = connection.updatedAt
   if (connection.credentialMode === "per_member") {
     const account = await getConnectedAccount({
       organizationId: connection.organizationId,
@@ -670,6 +701,7 @@ async function probeExternalMcpConnection(input: {
       }
       return matches
     }
+    credentialUpdatedAt = account.updatedAt
   } else if (!hasSharedCredential(connection)) {
     const nameTokens = tokenize(connection.name)
     const score = scoreText(nameTokens, nameTokens, input.queryTokens)
@@ -692,12 +724,15 @@ async function probeExternalMcpConnection(input: {
     : undefined
   let tools: Awaited<ReturnType<typeof listExternalMcpTools>>
   try {
-    tools = await listExternalMcpTools(
-      connection,
-      redirectUriFor(input.redirectUriBase, connection.id),
-      member,
-      undefined,
-      input.deadline,
+    tools = await externalMcpSearchCache.getOrLoad(
+      externalMcpSearchCacheKey(connection, member, credentialUpdatedAt),
+      () => listExternalMcpTools(
+        connection,
+        redirectUriFor(input.redirectUriBase, connection.id),
+        member,
+        undefined,
+        input.deadline,
+      ),
     )
   } catch (error) {
     const message = upstreamErrorMessage(error)
