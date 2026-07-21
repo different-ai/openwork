@@ -37,8 +37,8 @@ import {
 const DEFAULT_NEW_USER_EMAIL = "venkat@blueyonder.dev";
 const WORKSPACE_ENV = "OPENWORK_EVAL_BLUE_YONDER_NEW_WORKSPACE";
 const DEFAULT_WORKSPACE = "/workspace/venkat-workspace";
-const PROMPT = "How many incidents do I have?";
-const PROMPT_AFTER_JIT = "Done, signed in.";
+const PROMPT = "Use OpenWork Cloud capabilities to find and use the `my-incidents` skill, then report the open incidents assigned to me.";
+const PROMPT_AFTER_JIT = "The Blue Yonder MCP Gateway sign-in is complete. Start fresh without reusing prior results: find and use `my-incidents` / `enterprise_graph_query` with `assigned_to: me` and `status: open`, then report my open incidents.";
 const JIT_COMPLETE_SENTINEL = "OPENWORK_BLUE_YONDER_JIT_COMPLETE_SENTINEL";
 
 const state = {

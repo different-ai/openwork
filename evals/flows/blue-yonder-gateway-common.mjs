@@ -1,5 +1,6 @@
 const CLICKABLE_SELECTOR = "button, [role=button], a, div, article, li, label";
 const EDITOR_SELECTOR = '[contenteditable="true"][data-lexical-editor="true"]';
+const WELCOME_FOLDER_INPUT_SELECTOR = 'input[placeholder="/workspace/my-project"]';
 const DEFAULT_PASSWORD = "TutorialDemo123!";
 
 export function sleep(ms) {
@@ -188,8 +189,21 @@ async function waitForDesktopDenToken(ctx, openworkUrl) {
 export async function clickExactText(ctx, text, selector = "button, [role=button], a", timeout = 20_000) {
   await ctx.waitFor(`(() => {
     const normalize = (value) => (value ?? "").replace(/\\s+/g, " ").trim();
+    const visibleEnabled = (entry) => {
+      entry.scrollIntoView({ block: "center", inline: "center" });
+      const rect = entry.getBoundingClientRect();
+      const style = window.getComputedStyle(entry);
+      const top = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+      return entry.disabled !== true
+        && entry.getAttribute("aria-disabled") !== "true"
+        && rect.width > 0
+        && rect.height > 0
+        && style.visibility !== "hidden"
+        && style.display !== "none"
+        && Boolean(top && (top === entry || entry.contains(top)));
+    };
     const element = [...document.querySelectorAll(${JSON.stringify(selector)})]
-      .find((entry) => normalize(entry.textContent) === ${JSON.stringify(text)} && entry.disabled !== true && entry.getAttribute("aria-disabled") !== "true");
+      .find((entry) => normalize(entry.textContent) === ${JSON.stringify(text)} && visibleEnabled(entry));
     element?.scrollIntoView({ block: "center", inline: "center" });
     element?.click();
     return Boolean(element);
@@ -199,8 +213,21 @@ export async function clickExactText(ctx, text, selector = "button, [role=button
 export async function clickExactIfVisible(ctx, text, selector = "button, [role=button], a") {
   return Boolean(await ctx.eval(`(() => {
     const normalize = (value) => (value ?? "").replace(/\\s+/g, " ").trim();
+    const visibleEnabled = (entry) => {
+      entry.scrollIntoView({ block: "center", inline: "center" });
+      const rect = entry.getBoundingClientRect();
+      const style = window.getComputedStyle(entry);
+      const top = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+      return entry.disabled !== true
+        && entry.getAttribute("aria-disabled") !== "true"
+        && rect.width > 0
+        && rect.height > 0
+        && style.visibility !== "hidden"
+        && style.display !== "none"
+        && Boolean(top && (top === entry || entry.contains(top)));
+    };
     const element = [...document.querySelectorAll(${JSON.stringify(selector)})]
-      .find((entry) => normalize(entry.textContent) === ${JSON.stringify(text)} && entry.disabled !== true && entry.getAttribute("aria-disabled") !== "true");
+      .find((entry) => normalize(entry.textContent) === ${JSON.stringify(text)} && visibleEnabled(entry));
     element?.scrollIntoView({ block: "center", inline: "center" });
     element?.click();
     return Boolean(element);
@@ -262,13 +289,13 @@ export async function completeBlueYonderOrgOnboarding(ctx) {
     })()`);
     if (last.hasFolderInput || last.hash.includes("/welcome")) return;
     if (last.activeOrgName === "Blue Yonder" && !last.hasChoose && !last.hasContinueOrg && !last.hasContinueWorkspace) return;
-    if (last.hasChoose && last.hasBlueYonder && await clickNearestExactIfVisible(ctx, "Blue Yonder")) {
-      await sleep(750);
-      continue;
-    }
     const onboardingClick = await clickThroughLingeringOnboarding(ctx);
     if (onboardingClick.clickedContinueOrg || onboardingClick.clickedContinueWorkspace) {
       await sleep(1_000);
+      continue;
+    }
+    if (last.hasChoose && last.hasBlueYonder && await clickNearestExactIfVisible(ctx, "Blue Yonder")) {
+      await sleep(750);
       continue;
     }
     if (last.activeOrgName === "Blue Yonder") return;
@@ -292,9 +319,10 @@ export async function desktopHandoffSignIn(ctx, email) {
 function localServerExpr() {
   return `(() => {
     const urlOverride = (localStorage.getItem("openwork.server.urlOverride") || "").trim();
+    const port = (localStorage.getItem("openwork.server.port") || "").trim();
     const token = (localStorage.getItem("openwork.server.token") || "").trim();
     const hostToken = (localStorage.getItem("openwork.server.hostToken") || "").trim();
-    const base = urlOverride.replace(/\\/+$/, "");
+    const base = urlOverride.replace(/\\/+$/, "") || (port ? "http://127.0.0.1:" + port : "");
     return { base, token, hostToken };
   })()`;
 }
@@ -323,99 +351,101 @@ export async function waitForOpenWorkConnectReady(ctx, timeout = 90_000) {
 }
 
 export async function ensureLocalWorkspaceBeforeConnectPollIfNeeded(ctx, folderPath) {
-  const route = await ctx.eval(`(() => {
-    const text = document.body.innerText || "";
-    const hash = window.location.hash;
-    return {
-      hash,
-      hasConnectStatus: /OpenWork Connect: (Ready|Checking|Needs attention)/.test(text),
-      hasWorkspaceRoute: hash.includes("/workspace/"),
-    };
-  })()`);
-  if (route?.hash?.startsWith("#/welcome")) return ensureLocalWorkspace(ctx, folderPath);
-  if (route?.hasConnectStatus || route?.hasWorkspaceRoute) return "";
-
-  const probe = await ctx.eval(`(async () => {
-    try {
-      const s = ${localServerExpr()};
-      if (!s.base || !s.token) return { ok: false, reason: "missing local server base/token" };
-      const headers = { Authorization: "Bearer " + s.token };
-      if (s.hostToken) headers["X-OpenWork-Host-Token"] = s.hostToken;
-      const response = await fetch(s.base + "/workspaces", { headers });
-      const text = await response.text();
-      let payload = null;
-      try { payload = text ? JSON.parse(text) : null; } catch {}
-      if (!response.ok) return { ok: false, status: response.status, text: text.slice(0, 1_000) };
-      const workspaces = Array.isArray(payload?.workspaces) ? payload.workspaces : Array.isArray(payload?.items) ? payload.items : [];
-      return { ok: true, count: workspaces.length, activeId: typeof payload?.activeId === "string" ? payload.activeId : "" };
-    } catch (error) {
-      return { ok: false, error: error instanceof Error ? error.message : String(error) };
-    }
-  })()`, { awaitPromise: true });
-  if (probe?.ok && probe.count === 0) return ensureLocalWorkspace(ctx, folderPath);
-  return "";
+  const existing = await workspaceSessionState(ctx);
+  if (existing.hasConcreteSession) {
+    await clickThroughWorkspaceOnboarding(ctx, folderPath);
+    await ensureComposerReady(ctx);
+    const ready = await workspaceSessionState(ctx);
+    ctx.assert(Boolean(ready.workspaceId), `Existing workspace route lost its workspace id before Connect polling: ${JSON.stringify(ready)}`);
+    return ready.workspaceId;
+  }
+  return ensureLocalWorkspace(ctx, folderPath);
 }
 
 export async function ensureLocalWorkspace(ctx, folderPath) {
   await ctx.waitFor(`(() => { const s = ${localServerExpr()}; return Boolean(s.base && s.token); })()`, { timeoutMs: 60_000, label: "local OpenWork server URL/token" });
-  let created = null;
-  const deadline = Date.now() + 60_000;
+  let last = null;
+  const deadline = Date.now() + 120_000;
   while (Date.now() < deadline) {
-    created = await ctx.eval(`(async () => {
-      try {
-        const s = ${localServerExpr()};
-        if (!s.base || !s.token) return { ok: false, reason: "missing local server base/token", base: s.base, token: Boolean(s.token) };
-        const headers = { "Content-Type": "application/json", Authorization: "Bearer " + s.token };
-        if (s.hostToken) headers["X-OpenWork-Host-Token"] = s.hostToken;
-        const response = await fetch(s.base + "/workspaces/local", { method: "POST", headers, body: JSON.stringify({ folderPath: ${JSON.stringify(folderPath)} }) });
-        const text = await response.text();
-        let payload = null;
-        try { payload = text ? JSON.parse(text) : null; } catch {}
-        if (!response.ok) return { ok: false, status: response.status, text };
-        const workspaceId = typeof payload?.activeId === "string" ? payload.activeId.trim() : "";
-        if (!workspaceId) return { ok: false, status: response.status, text: "workspace id missing", payload };
-        localStorage.setItem("openwork.react.activeWorkspace", workspaceId);
-        return { ok: true, workspaceId, base: s.base, status: response.status };
-      } catch (error) {
-        return { ok: false, error: error instanceof Error ? error.message : String(error) };
-      }
-    })()`, { awaitPromise: true });
-    if (created?.ok && created.workspaceId) break;
+    await clickThroughWorkspaceOnboarding(ctx, folderPath);
+    last = await workspaceSessionState(ctx);
+    if (last.hasConcreteSession) {
+      await ensureComposerReady(ctx);
+      const ready = await workspaceSessionState(ctx);
+      ctx.assert(Boolean(ready.workspaceId), `Workspace route did not include a workspace id after onboarding: ${JSON.stringify(ready)}`);
+      return ready.workspaceId;
+    }
+    if (!last.hasFolderInput && !last.hasWelcome) {
+      await ctx.eval(`(() => { window.location.hash = "#/welcome"; return window.location.hash; })()`);
+    }
     await sleep(1_000);
   }
-  ctx.assert(created?.ok && created.workspaceId, `Workspace setup failed for ${folderPath}: ${JSON.stringify(created)}`);
-  await ctx.eval(`(() => {
-    window.location.hash = ${JSON.stringify(`#/workspace/${created.workspaceId}/session`)};
-    return window.location.hash;
+  throw new Error(`Workspace setup through the visible welcome flow did not reach /workspace/<id>/session/ses_* for ${folderPath}. Last state: ${JSON.stringify(last)}`);
+}
+
+async function clickThroughWorkspaceOnboarding(ctx, folderPath) {
+  const onboardingClick = await clickThroughLingeringOnboarding(ctx);
+  if (onboardingClick.clickedContinueOrg || onboardingClick.clickedContinueWorkspace) return true;
+  for (const text of ["Skip and use the free model", "Continue without OpenWork Models", "Skip"]) {
+    if (await clickExactIfVisible(ctx, text, "button, [role=button]")) return true;
+  }
+  const state = await workspaceSessionState(ctx);
+  if (state.hasFolderInput) {
+    if (!folderPath || state.workspaceCreateBusy) return false;
+    await ctx.fill(WELCOME_FOLDER_INPUT_SELECTOR, folderPath);
+    return clickExactIfVisible(ctx, "Use this folder", "button");
+  }
+  return false;
+}
+
+async function workspaceSessionState(ctx) {
+  return ctx.eval(`(() => {
+    const hash = window.location.hash;
+    const match = hash.match(/^#\\/workspace\\/([^/?#]+)\\/session\\/(ses_[^/?#]+)/);
+    const decode = (value) => {
+      try { return decodeURIComponent(value); } catch { return value; }
+    };
+    const text = document.body.innerText || "";
+    const input = document.querySelector(${JSON.stringify(WELCOME_FOLDER_INPUT_SELECTOR)});
+    const inputRect = input?.getBoundingClientRect();
+    return {
+      hash,
+      workspaceId: match ? decode(match[1]) : "",
+      sessionId: match ? decode(match[2]) : "",
+      hasConcreteSession: Boolean(match),
+      hasComposer: Boolean(document.querySelector(${JSON.stringify(EDITOR_SELECTOR)})),
+      hasFolderInput: Boolean(input && inputRect && inputRect.width > 0 && inputRect.height > 0),
+      hasWelcome: text.includes("Welcome to OpenWork"),
+      workspaceCreateBusy: text.includes("Creating workspace"),
+      hasConnectStatus: /OpenWork Connect: (Ready|Checking|Needs attention)/.test(text),
+      opencodeUnavailable: text.includes("OpenCode unavailable") || text.includes("opencode_unconfigured") || text.includes("OpenCode base URL is missing"),
+      text: text.slice(0, 1_000),
+    };
   })()`);
-  await ctx.waitFor("window.location.hash.includes('/workspace/') && window.location.hash.includes('/session')", { timeoutMs: 60_000, label: "workspace session route" });
-  await ensureComposerReady(ctx);
-  return created.workspaceId;
 }
 
 export async function ensureComposerReady(ctx, timeout = 90_000) {
   let last = null;
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
-    last = await ctx.eval(`(() => {
-      const text = document.body.innerText || "";
-      return {
-        hasComposer: Boolean(document.querySelector(${JSON.stringify(EDITOR_SELECTOR)})),
-        opencodeUnavailable: text.includes("OpenCode unavailable") || text.includes("opencode_unconfigured"),
-        hash: window.location.hash,
-        text: text.slice(0, 1_000),
-      };
-    })()`);
-    if (last?.hasComposer && !last.opencodeUnavailable) break;
+    await clickThroughWorkspaceOnboarding(ctx, "");
+    last = await workspaceSessionState(ctx);
+    if (last?.hasConcreteSession && last.hasComposer && !last.opencodeUnavailable) break;
     await sleep(1_000);
   }
-  if (last?.opencodeUnavailable) throw new Error(`OpenCode unavailable — opencode_unconfigured persisted while waiting for the workspace composer. Restart the app and rerun this eval so the engine can spawn. Last state: ${JSON.stringify(last)}`);
+  if (last?.opencodeUnavailable) throw new Error(`OpenCode unavailable — the workspace OpenCode base URL is still missing while waiting for the composer. Restart the app and rerun this eval so the welcome flow can spawn the managed engine. Last state: ${JSON.stringify(last)}`);
+  if (!last?.hasConcreteSession) throw new Error(`Workspace did not reach a concrete /workspace/<id>/session/ses_* route within ${timeout}ms: ${JSON.stringify(last)}`);
   if (!last?.hasComposer) throw new Error(`Workspace composer did not become ready within ${timeout}ms: ${JSON.stringify(last)}`);
   await ctx.waitFor("document.body.innerText.includes('Run task')", { timeoutMs: 60_000, label: "Run task button" });
 }
 
 export async function readTranscriptSnapshot(ctx) {
   return ctx.eval(`(async () => {
+    const normalize = (value) => String(value ?? "").replace(/\\s+/g, " ").trim();
+    const substantive = (value) => {
+      const text = normalize(value);
+      return text.length > 0 && text !== "OpenWork";
+    };
     const bodyText = document.body.innerText || "";
     let transcript = null;
     try {
@@ -423,53 +453,160 @@ export async function readTranscriptSnapshot(ctx) {
       if (result?.ok && result.result?.messages) transcript = result.result;
     } catch {}
     const messages = transcript?.messages ?? [];
-    const text = messages.length ? messages.map((message) => String(message.role || "") + ": " + String(message.text || "")).join("\n\n") : bodyText;
+    const transcriptText = messages.length ? messages.map((message) => String(message.role || "") + ": " + String(message.text || "")).join("\\n\\n") : "";
+    const markdownTexts = [...document.querySelectorAll(".markdown-content")]
+      .map((element) => element.innerText || element.textContent || "")
+      .filter((value) => normalize(value).length > 0);
+    const latestRenderedMarkdown = markdownTexts.at(-1) || "";
+    const textParts = transcriptText ? [transcriptText] : [];
+    if (latestRenderedMarkdown && !normalize(transcriptText).includes(normalize(latestRenderedMarkdown))) textParts.push(latestRenderedMarkdown);
+    const text = textParts.join("\\n\\n") || bodyText;
+    const activeLabels = ["Thinking", "Responding", "Waiting", "Compacting", "Session streaming", "Session active"];
+    const activityLabels = [...document.querySelectorAll("[aria-label]")]
+      .map((element) => element.getAttribute("aria-label") || "")
+      .filter((label) => activeLabels.includes(label));
     const assistantTexts = messages.filter((message) => message.role !== "user").map((message) => String(message.text || ""));
-    return { bodyText, text, messages, length: text.length, messageCount: transcript?.messageCount ?? messages.length, ready: bodyText.includes("Ready for new tasks"), stop: [...document.querySelectorAll("button")].some((button) => (button.textContent ?? "").trim() === "Stop"), latestAssistantText: assistantTexts.at(-1) || "" };
+    const substantiveAssistantTexts = assistantTexts.filter((value) => substantive(value));
+    return { bodyText, transcriptText, text, messages, length: text.length, messageCount: transcript?.messageCount ?? messages.length, ready: bodyText.includes("Ready for new tasks"), stop: [...document.querySelectorAll("button")].some((button) => (button.textContent ?? "").trim() === "Stop"), activityActive: activityLabels.length > 0, activityLabels, latestRenderedMarkdown, latestAssistantText: latestRenderedMarkdown || substantiveAssistantTexts.at(-1) || "" };
   })()`, { awaitPromise: true });
 }
 
-function hasAssistantAfter(snapshot, initialMessageCount) {
-  return (snapshot.messages ?? []).some((message) => (
-    typeof message.index === "number"
-    && message.index >= initialMessageCount
-    && message.role !== "user"
-    && String(message.text ?? "").trim().length > 0
-  ));
+function normalizeSnapshotText(value) {
+  return String(value ?? "").replace(/\s+/g, " ").trim();
 }
 
-async function insertPromptWithExecCommand(ctx, prompt) {
-  const result = await ctx.eval(`(() => {
+function isSubstantiveAssistantText(value) {
+  const text = normalizeSnapshotText(value);
+  return text.length > 0 && text !== "OpenWork";
+}
+
+function hasAssistantAfter(snapshot, initialMessageCount) {
+  const start = typeof initialMessageCount === "number" ? initialMessageCount : 0;
+  return (snapshot.messages ?? []).some((message, index) => {
+    const messageIndex = typeof message.index === "number" ? message.index : index;
+    return messageIndex >= start
+      && message.role !== "user"
+      && isSubstantiveAssistantText(message.text);
+  });
+}
+
+function snapshotChangedAfterSubmit(snapshot, before) {
+  const beforeMessageCount = before.messageCount ?? 0;
+  return (snapshot.messageCount ?? 0) > beforeMessageCount
+    || normalizeSnapshotText(snapshot.transcriptText) !== normalizeSnapshotText(before.transcriptText)
+    || normalizeSnapshotText(snapshot.latestRenderedMarkdown) !== normalizeSnapshotText(before.latestRenderedMarkdown);
+}
+
+function hasSubstantivePostSubmitOutput(snapshot, before) {
+  return hasAssistantAfter(snapshot, before.messageCount ?? 0)
+    || (
+      isSubstantiveAssistantText(snapshot.latestRenderedMarkdown)
+      && normalizeSnapshotText(snapshot.latestRenderedMarkdown) !== normalizeSnapshotText(before.latestRenderedMarkdown)
+    );
+}
+
+function snapshotSignature(snapshot) {
+  return [
+    snapshot.messageCount ?? 0,
+    normalizeSnapshotText(snapshot.transcriptText),
+    normalizeSnapshotText(snapshot.latestRenderedMarkdown),
+    snapshot.activityActive ? "active" : "idle",
+    snapshot.stop ? "stop" : "run",
+  ].join("|");
+}
+
+async function insertPromptWithSyntheticPaste(ctx, prompt) {
+  const result = await ctx.eval(`(async () => {
     const editor = document.querySelector(${JSON.stringify(EDITOR_SELECTOR)});
     if (!editor) return { ok: false, reason: "composer not found" };
+    const prompt = ${JSON.stringify(prompt)};
+    const normalize = (value) => (value ?? "").replace(/\\s+/g, " ").trim();
+    const readText = () => editor.innerText || editor.textContent || "";
+    const visiblePastedChips = () => [...document.querySelectorAll("button[data-pasted-expand-label]")]
+      .filter((button) => {
+        const rect = button.getBoundingClientRect();
+        const style = window.getComputedStyle(button);
+        return rect.width > 0
+          && rect.height > 0
+          && style.visibility !== "hidden"
+          && style.display !== "none"
+          && button.disabled !== true;
+      })
+      .map((button) => ({
+        label: button.dataset.pastedExpandLabel || "",
+        text: normalize(button.closest("span")?.textContent || button.textContent || ""),
+        ariaLabel: button.getAttribute("aria-label") || "",
+      }));
+    const selectEditorContents = () => {
+      const selection = window.getSelection();
+      const range = document.createRange();
+      range.selectNodeContents(editor);
+      selection.removeAllRanges();
+      selection.addRange(range);
+    };
+    const waitFrame = () => new Promise((resolve) => requestAnimationFrame(() => resolve()));
     editor.focus();
-    const selection = window.getSelection();
-    const range = document.createRange();
-    range.selectNodeContents(editor);
-    selection.removeAllRanges();
-    selection.addRange(range);
-    document.execCommand("insertText", false, ${JSON.stringify(prompt)});
-    editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: ${JSON.stringify(prompt)} }));
-    return { ok: (editor.innerText || editor.textContent || "").includes(${JSON.stringify(prompt.slice(0, 32))}), text: editor.innerText || editor.textContent || "" };
-  })()`);
-  ctx.assert(result?.ok, `Failed to insert prompt into Lexical composer with document.execCommand('insertText'): ${JSON.stringify(result)}`);
+    const before = readText();
+    const initialChips = visiblePastedChips();
+    if (normalize(before) || initialChips.length > 0) {
+      selectEditorContents();
+      const selectAll = { bubbles: true, cancelable: true, key: "a", code: "KeyA", metaKey: navigator.platform.includes("Mac"), ctrlKey: !navigator.platform.includes("Mac") };
+      editor.dispatchEvent(new KeyboardEvent("keydown", selectAll));
+      editor.dispatchEvent(new KeyboardEvent("keyup", selectAll));
+      const deleteKey = { bubbles: true, cancelable: true, key: "Backspace", code: "Backspace" };
+      editor.dispatchEvent(new KeyboardEvent("keydown", deleteKey));
+      editor.dispatchEvent(new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "deleteContentBackward", data: null }));
+      editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "deleteContentBackward", data: null }));
+      editor.dispatchEvent(new KeyboardEvent("keyup", deleteKey));
+      await waitFrame();
+    }
+    const chipsBefore = visiblePastedChips();
+    selectEditorContents();
+    const data = new DataTransfer();
+    data.setData("text/plain", prompt);
+    const accepted = editor.dispatchEvent(new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData: data }));
+    await waitFrame();
+    await waitFrame();
+    const text = readText();
+    const chipsAfter = visiblePastedChips();
+    const inlineMatched = normalize(text).includes(normalize(prompt));
+    const newPastedChip = chipsAfter.length > chipsBefore.length;
+    return {
+      ok: inlineMatched || newPastedChip,
+      representation: inlineMatched ? "inline" : newPastedChip ? "pasted-chip" : "missing",
+      inlineMatched,
+      newPastedChip,
+      text: text.slice(0, 1_000),
+      before: before.slice(0, 1_000),
+      accepted,
+      chipCountBefore: chipsBefore.length,
+      chipCountAfter: chipsAfter.length,
+      chipLabelsBefore: chipsBefore.map((chip) => chip.text || chip.ariaLabel || chip.label),
+      chipLabelsAfter: chipsAfter.map((chip) => chip.text || chip.ariaLabel || chip.label),
+    };
+  })()`, { awaitPromise: true });
+  ctx.assert(result?.ok, `Failed to paste prompt into Lexical composer with synthetic ClipboardEvent('paste'): ${JSON.stringify(result)}`);
 }
 
 export async function sendPromptAndWait(ctx, prompt, { timeout = 300_000 } = {}) {
   await ensureComposerReady(ctx);
   const before = await readTranscriptSnapshot(ctx).catch(() => ({ messageCount: 0, length: 0 }));
-  await insertPromptWithExecCommand(ctx, prompt);
+  await insertPromptWithSyntheticPaste(ctx, prompt);
   await clickExactText(ctx, "Run task", "button", 30_000);
   let last = null;
-  let lastLength = -1;
+  let lastSignature = "";
   let stableTicks = 0;
+  let transitionSeen = false;
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
     last = await readTranscriptSnapshot(ctx);
-    if (last.length === lastLength) stableTicks += 1;
+    const changed = snapshotChangedAfterSubmit(last, before);
+    if (last.activityActive || changed) transitionSeen = true;
+    const signature = snapshotSignature(last);
+    if (signature === lastSignature && !last.activityActive) stableTicks += 1;
     else stableTicks = 0;
-    lastLength = last.length;
-    if (last.ready && !last.stop && hasAssistantAfter(last, before.messageCount ?? 0) && stableTicks >= 4) {
+    lastSignature = signature;
+    if (transitionSeen && !last.activityActive && !last.stop && hasSubstantivePostSubmitOutput(last, before) && stableTicks >= 4) {
       await ctx.control("session.scroll_bottom").catch(() => undefined);
       await sleep(500);
       return last.text;
@@ -494,25 +631,48 @@ function extractLoginUrl(text) {
   }
 }
 
-export async function completeGatewayLogin(ctx, email, transcript, gatewayUserEnvName) {
+function normalizeGatewayPrincipal(value) {
+  const normalized = value.trim().toLowerCase();
+  const at = normalized.indexOf("@");
+  return at > 0 ? normalized.slice(0, at) : normalized;
+}
+
+function gatewayLoginUrl(ctx, transcript, desiredUser) {
+  const principal = normalizeGatewayPrincipal(desiredUser);
   const fromTranscript = extractLoginUrl(transcript);
   const gatewayBase = cleanBase(envText(ctx, "OPENWORK_EVAL_BLUE_YONDER_GATEWAY_URL"));
   let loginUrl = fromTranscript;
-  if (!loginUrl && gatewayBase) {
-    const url = new URL("/login", gatewayBase);
-    url.searchParams.set("user", envText(ctx, gatewayUserEnvName) || email);
-    loginUrl = url.toString();
+  try {
+    if (!loginUrl && gatewayBase) loginUrl = new URL("/login", gatewayBase).toString();
+  } catch {
+    return "";
   }
+  if (!loginUrl) return "";
+  try {
+    const url = new URL(loginUrl);
+    url.searchParams.set("user", principal);
+    return url.toString();
+  } catch {
+    return "";
+  }
+}
+
+export async function completeGatewayLogin(ctx, email, transcript, gatewayUserEnvName) {
+  const desiredUser = normalizeGatewayPrincipal(envText(ctx, gatewayUserEnvName) || email);
+  const loginUrl = gatewayLoginUrl(ctx, transcript, desiredUser);
   ctx.assert(Boolean(loginUrl), "Gateway requested login but no login URL was visible. Set OPENWORK_EVAL_BLUE_YONDER_GATEWAY_URL or expose the gateway login link in the transcript.");
   const response = await fetch(loginUrl);
   const text = await response.text().catch(() => "");
   ctx.assert(response.status < 400, `Gateway login failed at ${loginUrl}: ${response.status} ${text.slice(0, 300)}`);
-  ctx.recordEvidence({ type: "assertion", status: "passed", assertion: `Gateway login completed for ${email}`, actual: loginUrl.replace(/user=[^&]+/, "user=<redacted>") });
+  ctx.recordEvidence({ type: "assertion", status: "passed", assertion: `Gateway login completed for ${desiredUser}`, actual: loginUrl.replace(/user=[^&]+/, "user=<redacted>") });
 }
 
 export async function retryAfterGatewayLoginIfNeeded(ctx, email, transcript, expectedText, retryPrompt, options = {}) {
-  if (transcript.includes(expectedText) || !authNeeded(transcript)) return transcript;
-  await completeGatewayLogin(ctx, email, transcript, options.gatewayUserEnvName ?? "OPENWORK_EVAL_BLUE_YONDER_GATEWAY_USER");
+  if (transcript.includes(expectedText)) return transcript;
+  const gatewayUserEnvName = options.gatewayUserEnvName ?? "OPENWORK_EVAL_BLUE_YONDER_GATEWAY_USER";
+  const desiredUser = normalizeGatewayPrincipal(envText(ctx, gatewayUserEnvName) || email);
+  if (!gatewayLoginUrl(ctx, transcript, desiredUser) && !authNeeded(transcript)) return transcript;
+  await completeGatewayLogin(ctx, email, transcript, gatewayUserEnvName);
   return sendPromptAndWait(ctx, retryPrompt, { timeout: options.timeout ?? 300_000 });
 }
 
