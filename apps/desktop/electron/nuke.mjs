@@ -239,7 +239,8 @@ function addOpenworkConfigFiles(deletePaths, roots, paths) {
 function resolveNukePlan(input) {
   const resolved = resolveNukeEnvironment(input);
   const { env, homedir, platform, paths, userDataPath } = resolved;
-  const preserveBootstrapPath = desktopBootstrapPath(env, homedir, platform, paths, userDataPath);
+  const bootstrapPath = desktopBootstrapPath(env, homedir, platform, paths, userDataPath);
+  const preserveBootstrapPath = input.preserveBootstrap === false ? null : bootstrapPath;
   const legacyBootstrapPath = legacyDesktopBootstrapPath(homedir, paths);
   const serverConfig = openworkServerConfigPath(env, homedir, platform, paths);
   const runtimeDb = runtimeDbPath(env, serverConfig, homedir, paths);
@@ -256,6 +257,7 @@ function resolveNukePlan(input) {
     runtimeConfig,
     tokens,
     envStore,
+    bootstrapPath,
     legacyBootstrapPath,
     ...dataDirs,
     ...opencodeDbOverridePaths(env, dataDirs, paths),
@@ -283,6 +285,7 @@ function resolveNukePlan(input) {
   );
   const manifest = {
     deletePaths: uniquePaths(filteredDeletePaths, paths, platform),
+    bootstrapPath,
     preserveBootstrapPath: preserveBootstrapPath || null,
     partitions: [...NUKE_PARTITIONS],
   };
@@ -292,7 +295,7 @@ function resolveNukePlan(input) {
     manifest,
     pendingPath,
     preservePaths: uniquePaths([preserveBootstrapPath, paths.join(homedir, ".opencode", "bin")], paths, platform),
-    legacyBootstrapPath: paths.resolve(legacyBootstrapPath) === paths.resolve(preserveBootstrapPath) ? null : legacyBootstrapPath,
+    legacyBootstrapPath: paths.resolve(legacyBootstrapPath) === paths.resolve(bootstrapPath) ? null : legacyBootstrapPath,
     platform,
   };
 }
@@ -311,6 +314,7 @@ export function buildNukeWorkerNukeInput(input) {
     env,
     homedir: String(input.homedir ?? ""),
     platform: normalizePlatform(input.platform),
+    preserveBootstrap: input.preserveBootstrap !== false,
     userDataPath: String(input.userDataPath ?? ""),
   };
 }
@@ -598,6 +602,9 @@ async function writePendingNukeFile(pendingPath, paths, pending = null, options 
   const attemptedAt = nukeNowIso(options);
   await writeJsonFile(pendingPath, {
     paths,
+    preserveBootstrap: typeof pending?.preserveBootstrap === "boolean"
+      ? pending.preserveBootstrap
+      : options.preserveBootstrap !== false,
     createdAt: pendingCreatedAt(pending, attemptedAt),
     attemptedAt,
   });
@@ -664,14 +671,15 @@ function preservePathsWithoutBootstrap(plan) {
 }
 
 export async function runPendingNukeCleanup(input, options = {}) {
-  const plan = resolveNukePlan(input);
-  const pendingFile = await readJsonIfPresent(plan.pendingPath);
+  const initialPlan = resolveNukePlan(input);
+  const pendingFile = await readJsonIfPresent(initialPlan.pendingPath);
   if (!pendingFile.exists) return pendingCleanupResult({ ran: false });
   if (!pendingFile.ok) {
-    await rm(plan.pendingPath, { force: true });
+    await rm(initialPlan.pendingPath, { force: true });
     return pendingCleanupResult({ ran: false, invalid: true });
   }
   const pending = pendingFile.ok ? pendingFile.value : null;
+  const plan = resolveNukePlan({ ...input, preserveBootstrap: pending?.preserveBootstrap !== false });
   const paths = Array.isArray(pending?.paths)
     ? pending.paths.filter((entry) => typeof entry === "string" && entry.trim()).map((entry) => entry.trim())
     : [];
@@ -694,11 +702,14 @@ export async function runPendingNukeCleanup(input, options = {}) {
 
 /** @returns {Promise<import("@openwork/types/desktop-ipc").NukeReceipt>} */
 export async function executeNukeFreshStart({ app, session, runtimeManager, uiControlServer, removeWindowsBrandShortcut }, options = {}) {
-  const input = options.input ?? {
-    env: process.env,
-    homedir: os.homedir(),
-    platform: process.platform,
-    userDataPath: app.getPath("userData"),
+  const input = {
+    ...(options.input ?? {
+      env: process.env,
+      homedir: os.homedir(),
+      platform: process.platform,
+      userDataPath: app.getPath("userData"),
+    }),
+    preserveBootstrap: options.preserveBootstrap ?? options.input?.preserveBootstrap ?? true,
   };
   const plan = resolveNukePlan(input);
   const phaseErrors = [];
@@ -715,7 +726,9 @@ export async function executeNukeFreshStart({ app, session, runtimeManager, uiCo
   const deletionErrors = await deleteManifestPaths(plan.manifest, plan.platform, preservePaths, options);
   const verified = await verifyManifestDeletion(plan.manifest, [...phaseErrors, ...deletionErrors], preservePaths);
   if (verified.pendingRetry.length > 0) {
-    await writePendingNukeFile(plan.pendingPath, verified.pendingRetry).catch((error) => {
+    await writePendingNukeFile(plan.pendingPath, verified.pendingRetry, null, {
+      preserveBootstrap: input.preserveBootstrap,
+    }).catch((error) => {
       verified.errors.push(receiptError(plan.pendingPath, error));
     });
   }

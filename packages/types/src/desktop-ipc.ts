@@ -294,8 +294,13 @@ export type CacheResetResult = {
 
 export type NukeManifestPreview = {
   deletePaths: string[];
+  bootstrapPath: string;
   preserveBootstrapPath: string | null;
   partitions: string[];
+};
+
+export type NukeOptions = {
+  preserveBootstrap: boolean;
 };
 
 export type NukeReceiptError = {
@@ -478,8 +483,8 @@ export type DesktopCommandMap = {
     args: [rawUrl: string];
     result: { ok: true; config: DesktopBootstrapConfig } | ConnectLinkVerifyFailure;
   };
-  nukeOpenworkAndOpencodeConfigPreview: { args: []; result: NukeManifestPreview };
-  nukeOpenworkAndOpencodeConfigAndExit: { args: []; result: NukeReceipt };
+  nukeOpenworkAndOpencodeConfigPreview: { args: [options?: NukeOptions]; result: NukeManifestPreview };
+  nukeOpenworkAndOpencodeConfigAndExit: { args: [options?: NukeOptions]; result: NukeReceipt };
 
   // Sandbox
   sandboxDoctor: { args: []; result: SandboxDoctorResult };

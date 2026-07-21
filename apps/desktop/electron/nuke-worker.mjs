@@ -68,6 +68,7 @@ export function validateNukeWorkerPayload(value) {
       env: nukeInput.env && typeof nukeInput.env === "object" && !Array.isArray(nukeInput.env) ? nukeInput.env : {},
       homedir,
       platform,
+      preserveBootstrap: nukeInput.preserveBootstrap !== false,
       userDataPath,
     },
     appExecutablePath,

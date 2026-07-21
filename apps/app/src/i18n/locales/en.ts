@@ -1255,6 +1255,8 @@ export default {
   "settings.no_custom_path_set": "No custom path set",
   "settings.nuke_hint": "Use this only when you want to fully reset the desktop app and its OpenCode runtime state.",
   "settings.nuke_cancel": "Cancel",
+  "settings.nuke_bootstrap_toggle_desc": "Keep {path} to stay connected to the same organization server. Turn this off to remove it too.",
+  "settings.nuke_bootstrap_toggle_label": "Keep bootstrap / organization server",
   "settings.nuke_confirmation_hint": "OpenWork will revoke your cloud session best-effort, wipe local state, then relaunch.",
   "settings.nuke_confirmation_label": "Type NUKE to confirm",
   "settings.nuke_confirmation_placeholder": "Type NUKE",

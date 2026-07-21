@@ -1720,6 +1720,7 @@ const desktopCommandHandlers = {
         env: process.env,
         homedir: os.homedir(),
         platform: process.platform,
+        preserveBootstrap: args[0]?.preserveBootstrap !== false,
         userDataPath: app.getPath("userData"),
       });
   },
@@ -1730,7 +1731,7 @@ const desktopCommandHandlers = {
         runtimeManager,
         uiControlServer,
         removeWindowsBrandShortcut,
-      });
+      }, { preserveBootstrap: args[0]?.preserveBootstrap !== false });
   },
   "orchestratorStartDetached": async (event, ...args) => {
       return runtimeManager.orchestratorStartDetached(args[0] ?? {});

@@ -299,6 +299,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
   const [nukePreviewBusy, setNukePreviewBusy] = useState(false);
   const [nukeDialogOpen, setNukeDialogOpen] = useState(false);
   const [nukeConfirmationText, setNukeConfirmationText] = useState("");
+  const [nukePreserveBootstrap, setNukePreserveBootstrap] = useState(true);
   const [nukeManifestPreview, setNukeManifestPreview] = useState<NukeManifestPreview | null>(null);
   const [engineSource, setEngineSourceState] = useState<"path" | "sidecar" | "custom">(readEngineSource);
   const [engineCustomBinPath, setEngineCustomBinPath] = useState<string>(() =>
@@ -969,9 +970,10 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
     setNukePreviewBusy(true);
     setNukeConfigStatus(null);
     try {
-      const preview = await nukeOpenworkAndOpencodeConfigPreview();
+      const preview = await nukeOpenworkAndOpencodeConfigPreview({ preserveBootstrap: true });
       setNukeManifestPreview(preview);
       setNukeConfirmationText("");
+      setNukePreserveBootstrap(true);
       setNukeDialogOpen(true);
     } catch (error) {
       setNukeConfigStatus(error instanceof Error ? error.message : safeStringify(error));
@@ -979,6 +981,22 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       setNukePreviewBusy(false);
     }
   }, []);
+
+  const onSetNukePreserveBootstrap = useCallback(async (preserveBootstrap: boolean) => {
+    if (nukeConfigBusy || nukePreviewBusy) return;
+    setNukePreserveBootstrap(preserveBootstrap);
+    setNukePreviewBusy(true);
+    setNukeConfigStatus(null);
+    try {
+      const preview = await nukeOpenworkAndOpencodeConfigPreview({ preserveBootstrap });
+      setNukeManifestPreview(preview);
+    } catch (error) {
+      setNukePreserveBootstrap(!preserveBootstrap);
+      setNukeConfigStatus(error instanceof Error ? error.message : safeStringify(error));
+    } finally {
+      setNukePreviewBusy(false);
+    }
+  }, [nukeConfigBusy, nukePreviewBusy]);
 
   const onCloseNukeDialog = useCallback(() => {
     if (nukeConfigBusy) return;
@@ -991,7 +1009,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
     setNukeConfigStatus(null);
     try {
       await revokeDenSessionBeforeNuke();
-      await nukeOpenworkAndOpencodeConfigAndExit();
+      await nukeOpenworkAndOpencodeConfigAndExit({ preserveBootstrap: nukePreserveBootstrap });
     } catch (error) {
       setNukeConfigStatus(error instanceof Error ? error.message : safeStringify(error));
       setNukeConfigBusy(false);
@@ -999,7 +1017,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
     } finally {
       setNukeDialogOpen(false);
     }
-  }, [nukeConfirmationText]);
+  }, [nukeConfirmationText, nukePreserveBootstrap]);
 
   const [workspaceDebugEventsStatus, setWorkspaceDebugEventsStatus] = useState<string | null>(null);
   const onClearWorkspaceDebugEvents = useCallback(async () => {
@@ -1103,10 +1121,12 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       nukePreviewBusy,
       nukeDialogOpen,
       nukeConfirmationText,
+      nukePreserveBootstrap,
       nukeManifestPreview,
       onOpenNukeDialog,
       onCloseNukeDialog,
       onSetNukeConfirmationText: setNukeConfirmationText,
+      onSetNukePreserveBootstrap,
       onConfirmNukeOpenworkAndOpencodeConfig,
     }),
     [
@@ -1132,11 +1152,13 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       nukeConfirmationText,
       nukeDialogOpen,
       nukeManifestPreview,
+      nukePreserveBootstrap,
       nukePreviewBusy,
       onClearDeveloperLog,
       onClearEngineCustomBinPath,
       onClearWorkspaceDebugEvents,
       onCloseNukeDialog,
+      onSetNukePreserveBootstrap,
       onCopyDeveloperLog,
       onCopyRuntimeDebugReport,
       onExportDeveloperLog,

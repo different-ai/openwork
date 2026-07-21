@@ -109,6 +109,7 @@ test("buildNukeManifest includes default macOS state roots and preserves bootstr
   const userDataPath = "/Users/alice/Library/Application Support/com.differentai.openwork";
   const manifest = buildNukeManifest({ env: {}, homedir: home, platform: "darwin", userDataPath });
 
+  assert.equal(manifest.bootstrapPath, "/Users/alice/.config/openwork/desktop-bootstrap.json");
   assert.equal(manifest.preserveBootstrapPath, "/Users/alice/.config/openwork/desktop-bootstrap.json");
   assert.deepEqual(manifest.partitions, ["default", "persist:openwork-browser"]);
   assert.ok(manifest.deletePaths.includes(userDataPath));
@@ -126,6 +127,21 @@ test("buildNukeManifest includes default macOS state roots and preserves bootstr
   assert.ok(manifest.deletePaths.includes("/Users/alice/.openwork/openwork-orchestrator"));
   assert.ok(!manifest.deletePaths.includes("/Users/alice/.opencode/bin"));
   assert.ok(!manifest.deletePaths.includes("/Users/alice/project/.opencode"));
+});
+
+test("buildNukeManifest can include the bootstrap file in the wipe", () => {
+  const bootstrapPath = "/Users/alice/.config/openwork/desktop-bootstrap.json";
+  const manifest = buildNukeManifest({
+    env: {},
+    homedir: "/Users/alice",
+    platform: "darwin",
+    preserveBootstrap: false,
+    userDataPath: "/Users/alice/Library/Application Support/com.differentai.openwork",
+  });
+
+  assert.equal(manifest.bootstrapPath, bootstrapPath);
+  assert.equal(manifest.preserveBootstrapPath, null);
+  assert.ok(manifest.deletePaths.includes(bootstrapPath));
 });
 
 test("buildNukeManifest includes default Linux state roots", () => {
@@ -318,6 +334,24 @@ test("runPendingNukeCleanup removes the sentinel after all pending paths are gon
   });
 });
 
+test("runPendingNukeCleanup retains the choice to remove bootstrap state", async () => {
+  await withTempDir(async (root) => {
+    const input = pendingNukeInput(root);
+    const bootstrapPath = path.join(input.env.XDG_CONFIG_HOME, "openwork", "desktop-bootstrap.json");
+    await mkdir(path.dirname(bootstrapPath), { recursive: true });
+    await writeFile(bootstrapPath, JSON.stringify({ baseUrl: "https://den.example.com" }), "utf8");
+    await writePendingNuke(root, {
+      paths: [bootstrapPath],
+      preserveBootstrap: false,
+    });
+
+    const result = await runPendingNukeCleanup(input);
+
+    assert.equal(result.ran, true);
+    assert.equal(await exists(bootstrapPath), false);
+  });
+});
+
 test("runPendingNukeCleanup rewrites only failed paths and removes them on the next boot", async () => {
   await withTempDir(async (root) => {
     const okPath = path.join(root, "ok-runtime.sqlite");
@@ -394,6 +428,7 @@ test("nuke worker payload only serializes safe path inputs", () => {
     homedir: "/tmp/home",
     platform: "darwin",
     userDataPath: "/tmp/userData",
+    preserveBootstrap: false,
   });
   const payload = buildNukeWorkerPayload({
     parentPid: 123,
@@ -408,6 +443,7 @@ test("nuke worker payload only serializes safe path inputs", () => {
   assert.equal(payload.nukeInput.env.APPDATA, "C:\\Users\\Alice\\AppData\\Roaming");
   assert.equal(payload.nukeInput.env.XDG_CONFIG_HOME, "/tmp/config");
   assert.equal(payload.nukeInput.env.OPENWORK_TOKEN_STORE, "C:\\Users\\Alice\\AppData\\Roaming\\openwork\\tokens.json");
+  assert.equal(payload.nukeInput.preserveBootstrap, false);
   assert.deepEqual(payload.appArgv, []);
   assert.equal(serialized.includes("secret-api-key"), false);
   assert.equal(serialized.includes("secret-token"), false);
@@ -649,5 +685,28 @@ test("executeNukeFreshStart relaunches directly when no paths remain pending", a
     await tinyDelay();
     assert.equal(app.relaunchCount, 1);
     assert.equal(app.quitCount, 1);
+  });
+});
+
+test("executeNukeFreshStart removes the bootstrap when preservation is disabled", async () => {
+  await withTempDir(async (root) => {
+    const input = { ...pendingNukeInput(root), preserveBootstrap: false };
+    const bootstrapPath = path.join(input.env.XDG_CONFIG_HOME, "openwork", "desktop-bootstrap.json");
+    await mkdir(path.dirname(bootstrapPath), { recursive: true });
+    await writeFile(bootstrapPath, JSON.stringify({ baseUrl: "https://den.example.com" }), "utf8");
+    await mkdir(input.userDataPath, { recursive: true });
+    const app = fakeApp(input.userDataPath);
+
+    const receipt = await executeNukeFreshStart({
+      app,
+      session: fakeSession(),
+      runtimeManager: fakeRuntimeManager(),
+      uiControlServer: fakeUiControlServer(),
+      removeWindowsBrandShortcut: async () => {},
+    }, { input });
+
+    assert.equal(receipt.preservedBootstrap, false);
+    assert.equal(await exists(bootstrapPath), false);
+    await tinyDelay();
   });
 });

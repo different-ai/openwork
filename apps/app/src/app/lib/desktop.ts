@@ -23,6 +23,7 @@ export type {
   LocalSkillCard,
   LocalSkillContent,
   NukeManifestPreview,
+  NukeOptions,
   NukeReceipt,
   NukeReceiptError,
   OpencodeConfigFile,
@@ -39,6 +40,7 @@ import type {
   DesktopCommandResult,
   EvalRelaunchResult,
   NukeManifestPreview,
+  NukeOptions,
   NukeReceipt,
   WorkspaceList,
 } from "./desktop-types";
@@ -104,8 +106,8 @@ declare global {
         evalRelaunch?: () => Promise<EvalRelaunchResult>;
       };
       nuke?: {
-        preview?: () => Promise<NukeManifestPreview>;
-        execute?: () => Promise<NukeReceipt>;
+        preview?: (options?: NukeOptions) => Promise<NukeManifestPreview>;
+        execute?: (options?: NukeOptions) => Promise<NukeReceipt>;
       };
       updater?: {
         getChannel?: () => Promise<{

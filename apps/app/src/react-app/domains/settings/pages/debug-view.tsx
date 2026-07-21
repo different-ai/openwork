@@ -35,6 +35,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import {
   AgentContextDiagnosticsSection,
   type AgentContextDiagnosticsSectionProps,
@@ -175,10 +176,12 @@ export type DebugViewProps = {
   nukePreviewBusy: boolean;
   nukeDialogOpen: boolean;
   nukeConfirmationText: string;
+  nukePreserveBootstrap: boolean;
   nukeManifestPreview: NukeManifestPreview | null;
   onOpenNukeDialog: () => void | Promise<void>;
   onCloseNukeDialog: () => void;
   onSetNukeConfirmationText: (value: string) => void;
+  onSetNukePreserveBootstrap: (value: boolean) => void | Promise<void>;
   onConfirmNukeOpenworkAndOpencodeConfig: () => void | Promise<void>;
 };
 
@@ -469,7 +472,9 @@ export function DebugView(props: DebugViewProps) {
     : props.anyActiveRuns
       ? t("settings.sandbox_stop_runs_hint")
       : "";
-  const canConfirmNuke = props.nukeConfirmationText.trim().toUpperCase() === "NUKE" && !props.nukeConfigBusy;
+  const canConfirmNuke = props.nukeConfirmationText.trim().toUpperCase() === "NUKE"
+    && !props.nukeConfigBusy
+    && !props.nukePreviewBusy;
   const nukeDeletePaths = props.nukeManifestPreview?.deletePaths ?? [];
   const nukePartitions = props.nukeManifestPreview?.partitions.join(", ") || "default";
 
@@ -1268,13 +1273,13 @@ export function DebugView(props: DebugViewProps) {
         if (!open) props.onCloseNukeDialog();
       }}
     >
-      <AlertDialogContent className="w-full max-w-2xl overflow-hidden sm:max-w-2xl">
+      <AlertDialogContent className="grid max-h-[calc(100dvh-2rem)] w-full max-w-2xl grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden sm:max-w-2xl">
         <AlertDialogHeader>
           <AlertDialogTitle>{t("settings.nuke_dialog_title")}</AlertDialogTitle>
           <AlertDialogDescription>{t("settings.nuke_dialog_desc")}</AlertDialogDescription>
         </AlertDialogHeader>
 
-        <div className="space-y-4 text-sm">
+        <div className="space-y-4 overflow-y-auto pr-1 text-sm">
           <div className="rounded-xl border border-red-7/30 bg-red-3/10 p-3">
             <div className="mb-2 text-[12px] font-semibold uppercase tracking-wider text-red-11">
               {t("settings.nuke_deleted_title")}
@@ -1302,14 +1307,35 @@ export function DebugView(props: DebugViewProps) {
               {t("settings.nuke_survives_title")}
             </div>
             <ul className="list-disc space-y-1 pl-5 text-[12px] text-dls-secondary">
-              <li>
-                {t("settings.nuke_survives_bootstrap", {
-                  path: props.nukeManifestPreview?.preserveBootstrapPath ?? t("settings.nuke_no_bootstrap_path"),
-                })}
-              </li>
+              {props.nukePreserveBootstrap ? (
+                <li>
+                  {t("settings.nuke_survives_bootstrap", {
+                    path: props.nukeManifestPreview?.bootstrapPath ?? t("settings.nuke_no_bootstrap_path"),
+                  })}
+                </li>
+              ) : null}
               <li>{t("settings.nuke_survives_app")}</li>
               <li>{t("settings.nuke_survives_workspaces")}</li>
             </ul>
+          </div>
+
+          <div className="flex items-center justify-between gap-4 rounded-xl border border-dls-border bg-dls-surface p-3">
+            <div className="min-w-0">
+              <div className="text-[13px] font-medium text-dls-text">
+                {t("settings.nuke_bootstrap_toggle_label")}
+              </div>
+              <div className="mt-1 break-all text-[11px] text-dls-secondary">
+                {t("settings.nuke_bootstrap_toggle_desc", {
+                  path: props.nukeManifestPreview?.bootstrapPath ?? t("settings.nuke_no_bootstrap_path"),
+                })}
+              </div>
+            </div>
+            <Switch
+              checked={props.nukePreserveBootstrap}
+              disabled={props.nukeConfigBusy || props.nukePreviewBusy}
+              onCheckedChange={(checked) => void props.onSetNukePreserveBootstrap(checked)}
+              aria-label={t("settings.nuke_bootstrap_toggle_label")}
+            />
           </div>
 
           <label className="block">
@@ -1321,7 +1347,7 @@ export function DebugView(props: DebugViewProps) {
               value={props.nukeConfirmationText}
               placeholder={t("settings.nuke_confirmation_placeholder")}
               onChange={(event) => props.onSetNukeConfirmationText(event.currentTarget.value)}
-              disabled={props.nukeConfigBusy}
+              disabled={props.nukeConfigBusy || props.nukePreviewBusy}
               className="w-full rounded-xl border border-dls-border bg-dls-surface px-4 py-3 text-[14px] text-dls-text placeholder:text-dls-secondary focus:outline-none focus:ring-2 focus:ring-[rgba(var(--dls-accent-rgb),0.12)] disabled:cursor-not-allowed disabled:opacity-60"
             />
             <span className="mt-1.5 block text-[11px] text-dls-secondary">

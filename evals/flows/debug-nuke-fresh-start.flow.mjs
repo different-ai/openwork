@@ -1106,6 +1106,7 @@ export default {
             await ctx.expectText("This removes local OpenWork, OpenCode, browser, token, runtime, cache, and orchestrator state on this device.");
             await ctx.expectText("WILL DELETE");
             await ctx.expectText("WILL SURVIVE");
+            await ctx.expectText("Keep bootstrap / organization server");
             await ctx.expectText("Type NUKE to confirm");
             await ctx.expectText("Chromium storage cleared: default, persist:openwork-browser");
             await ctx.expectText("Nuke & relaunch");
@@ -1117,6 +1118,7 @@ export default {
               "This removes local OpenWork, OpenCode, browser, token, runtime, cache, and orchestrator state on this device.",
               "WILL DELETE",
               "WILL SURVIVE",
+              "Keep bootstrap / organization server",
               "Type NUKE to confirm",
               "Chromium storage cleared: default, persist:openwork-browser",
               "Nuke & relaunch",

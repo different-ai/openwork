@@ -25,6 +25,7 @@ export type {
   LocalSkillCard,
   LocalSkillContent,
   NukeManifestPreview,
+  NukeOptions,
   NukeReceipt,
   NukeReceiptError,
   OpencodeCommandDraft,
