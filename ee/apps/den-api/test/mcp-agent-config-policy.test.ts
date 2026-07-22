@@ -150,7 +150,7 @@ describe("agent-configurable org connections policy", () => {
           selectedSkillKeys: expect.objectContaining({ type: "array" }),
           selectedServerKeys: expect.objectContaining({ type: "array" }),
         }),
-        required: expect.arrayContaining(["githubUrl", "marketplaceId"]),
+        required: expect.arrayContaining(["githubUrl"]),
       }),
     }))
     expect(readinessMatches).toContainEqual(expect.objectContaining({

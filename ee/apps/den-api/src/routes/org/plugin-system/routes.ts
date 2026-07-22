@@ -942,7 +942,7 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
     jsonValidator(githubPluginMcpImportSchema),
     describeRoute({
       tags: ["GitHub"],
-      summary: "Create a plugin from GitHub",
+      summary: "Add GitHub plugin to marketplace",
       description: "Creates one plugin from selected skills and remote MCP servers in a public GitHub plugin URL, applies the requested access grants, and optionally publishes it into an organization marketplace. Declared and known-server authentication requirements take precedence over the request-wide auth fallback.",
       responses: {
         200: jsonResponse("GitHub plugin MCPs imported successfully.", githubPluginMcpImportResponseSchema),
