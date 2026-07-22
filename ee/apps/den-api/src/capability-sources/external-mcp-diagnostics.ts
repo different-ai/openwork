@@ -1857,8 +1857,10 @@ export function createExternalMcpDiagnosticFetch(input: {
 }
 
 export function externalMcpDiagnosticForResponse(error: unknown, referenceId: string, fallbackPhase: ExternalMcpDiagnosticPhase): ExternalMcpDiagnostic {
-  if (error instanceof ExternalMcpDiagnosticError) return error.diagnostic
-  return new ExternalMcpDiagnosticTracker(referenceId).error(error, fallbackPhase).diagnostic
+  const diagnostic = error instanceof ExternalMcpDiagnosticError
+    ? error.diagnostic
+    : new ExternalMcpDiagnosticTracker(referenceId).error(error, fallbackPhase).diagnostic
+  return externalMcpDiagnosticForUntrustedBoundary(diagnostic)
 }
 
 const OAUTH_CALLBACK_ERROR_NAMES: Record<string, string> = {
@@ -1891,8 +1893,21 @@ export function externalMcpDiagnosticForLog(error: unknown, referenceId: string,
     ? error
     : new ExternalMcpDiagnosticTracker(referenceId).error(error, fallbackPhase)
   return {
-    diagnostic: diagnosticError.diagnostic,
+    diagnostic: externalMcpDiagnosticForUntrustedBoundary(diagnosticError.diagnostic),
     causeChain: diagnosticError.safeCauseChain,
+  }
+}
+
+function externalMcpDiagnosticForUntrustedBoundary(diagnostic: ExternalMcpDiagnostic): ExternalMcpDiagnostic {
+  const {
+    providerErrorMessage: _providerErrorMessage,
+    providerErrorData: _providerErrorData,
+    message: _message,
+    ...safeDiagnostic
+  } = diagnostic
+  return {
+    ...safeDiagnostic,
+    message: safeMessageFor(safeDiagnostic),
   }
 }
 

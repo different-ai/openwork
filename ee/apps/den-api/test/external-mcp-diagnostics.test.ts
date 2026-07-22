@@ -7,6 +7,7 @@ import {
   catalogDiagnosticError,
   createExternalMcpDiagnosticFetch,
   externalMcpDiagnosticForLog,
+  externalMcpDiagnosticForResponse,
   safeExternalMcpEndpointForLog,
   safeExternalMcpCauseChain,
 } from "../src/capability-sources/external-mcp-diagnostics.js"
@@ -852,6 +853,38 @@ describe("external MCP diagnostics", () => {
       providerErrorData: '{"provider_detail":"must-not-surface"}',
     })
     expect(error.diagnostic.message).toContain("code -32050")
+  })
+
+  test("removes provider-declared payloads from response and log diagnostics", () => {
+    const tracker = new ExternalMcpDiagnosticTracker("req_untrusted_boundary")
+    tracker.begin("MCP_TOOL_EXECUTION")
+    const diagnosticError = tracker.error(jsonRpcError(-32050, {
+      provider_detail: "provider-data-secret",
+    }))
+
+    const responseDiagnostic = externalMcpDiagnosticForResponse(
+      diagnosticError,
+      "ignored",
+      "MCP_TOOL_EXECUTION",
+    )
+    const logDiagnostic = externalMcpDiagnosticForLog(
+      diagnosticError,
+      "ignored",
+      "MCP_TOOL_EXECUTION",
+    ).diagnostic
+
+    for (const diagnostic of [responseDiagnostic, logDiagnostic]) {
+      expect(diagnostic).toMatchObject({
+        referenceId: "req_untrusted_boundary",
+        code: "MCP_PROVIDER_DECLARED_ERROR",
+        jsonRpcCode: -32050,
+      })
+      expect(diagnostic.providerErrorMessage).toBeUndefined()
+      expect(diagnostic.providerErrorData).toBeUndefined()
+      expect(diagnostic.message).toContain("code -32050")
+      expect(JSON.stringify(diagnostic)).not.toContain("provider-data-secret")
+      expect(JSON.stringify(diagnostic)).not.toContain("synthetic provider detail")
+    }
   })
 
   test("classifies structured provider validation errors as correctable tool input", () => {
