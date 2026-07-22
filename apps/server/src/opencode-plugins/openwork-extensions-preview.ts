@@ -3,11 +3,15 @@ import { join } from "node:path";
 import { homedir, platform } from "node:os";
 import { z } from "zod";
 import {
-  OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION,
   resolveOpenWorkExtensionDiscoveryInstruction,
   type OpenCodeContext,
   type OpenWorkEngineMcpStatusClient,
 } from "./openwork-extensions-preview-steering.js";
+import {
+  OPENWORK_BROWSER_INSTRUCTION,
+  OPENWORK_SESSION_MEMORY_INSTRUCTION,
+  OPENWORK_UI_CONTROL_INSTRUCTION,
+} from "./openwork-system-instructions.js";
 
 type ExtensionActionPayload = {
   extensionId: string;
@@ -109,28 +113,6 @@ const sessionMessageSchema = z.object({
 const sessionMessagesEnvelopeSchema = z.object({
   items: z.array(sessionMessageSchema),
 }).passthrough();
-
-const OPENWORK_UI_CONTROL_INSTRUCTION =
-  `IMPORTANT: You are running inside the OpenWork desktop app. When the user asks you to open settings, navigate the app, add providers, or control the OpenWork UI in any way, ALWAYS use the openwork_ui_* tools — NOT the browser_* tools. The browser tools are for external websites only. The openwork_ui_* tools control the app directly and are instant (one tool call).
-
-To open settings: openwork_ui_execute_action with actionId "settings.panel.open" and args {panel:"general"} (or "ai", "extensions", "permissions", "skills", "appearance", etc.)
-To add a provider: openwork_ui_execute_action with actionId "settings.provider.add" and optional args {providerId:"anthropic"}
-To see what the user sees: openwork_ui_snapshot
-To list all available actions: openwork_ui_list_actions
-To ask what OpenWork can do: openwork_ui_execute_action with actionId "help.capabilities"`;
-
-const OPENWORK_SESSION_MEMORY_INSTRUCTION =
-  `## Cross-session memory
-When the user asks what they said, what happened, or what was decided in another OpenWork chat/session, treat it as a session-history lookup, not hidden model memory.
-Use openwork_session_search first to search session titles and message transcripts across workspaces. If there is one clear match, use openwork_session_read with the returned sessionId/workspaceId to retrieve transcript context without navigating the UI.
-Answer only from the returned search/read results. If multiple sessions match, ask a short clarifying question. If the returned transcript is limited or missing the older context needed, say so instead of guessing.`;
-
-const OPENWORK_BROWSER_INSTRUCTION =
-  `Do NOT use browser_navigate, browser_click, or browser_snapshot to interact with the OpenWork app itself. Those are for browsing external websites.
-
-## Built-in Browser (external websites)
-For web browsing tasks, ALWAYS start with openwork_browser_open_url. It creates/selects a built-in OpenWork browser tab and returns browser_url plus target_id. Use that exact browser_url and target_id for every later browser_snapshot, browser_click, browser_fill, browser_eval, and browser_screenshot call.
-Do not call browser_navigate without a target_id returned by openwork_browser_open_url. Do not use browser_* tools on the OpenWork app target (avoid targets with title "OpenWork" or URLs containing ":5173/#/").`;
 
 // ── UI control bridge discovery ──
 
@@ -680,7 +662,7 @@ export const OpenWorkExtensionsPreview = async (factoryInput?: unknown) => {
   },
   tool: {
     openwork_extension_list_actions: {
-      description: `List extension actions currently exposed by OpenWork. ${OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION}`,
+      description: "List extension actions currently exposed by OpenWork.",
       args: listActionsArgsSchema.shape,
       async execute(rawArgs: unknown, context: OpenCodeContext) {
         const args = listActionsArgsSchema.parse(rawArgs);
@@ -695,7 +677,7 @@ export const OpenWorkExtensionsPreview = async (factoryInput?: unknown) => {
       },
     },
     openwork_extension_call: {
-      description: `Call an OpenWork extension action. Use openwork_extension_list_actions first to inspect available actions and schemas. ${OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION}`,
+      description: "Call an OpenWork extension action. Use openwork_extension_list_actions first to inspect available actions and schemas.",
       args: callArgsSchema.shape,
       async execute(rawArgs: unknown, context: OpenCodeContext) {
         const args = callArgsSchema.parse(rawArgs);
@@ -718,7 +700,7 @@ export const OpenWorkExtensionsPreview = async (factoryInput?: unknown) => {
       },
     },
     openwork_ui_list_actions: {
-      description: `List all UI control actions currently available in OpenWork. Each action has an id you can pass to openwork_ui_execute_action. ${OPENWORK_UI_CONTROL_INSTRUCTION}`,
+      description: "List all UI control actions currently available in OpenWork. Each action has an id you can pass to openwork_ui_execute_action.",
       args: {},
       async execute() {
         const result = await uiBridgeRequest("/actions");
@@ -726,7 +708,7 @@ export const OpenWorkExtensionsPreview = async (factoryInput?: unknown) => {
       },
     },
     openwork_ui_execute_action: {
-      description: `Execute an OpenWork UI action by its id. Use openwork_ui_list_actions first to see available actions. ${OPENWORK_UI_CONTROL_INSTRUCTION}`,
+      description: "Execute an OpenWork UI action by its id. Use openwork_ui_list_actions first to see available actions.",
       args: uiExecuteArgsSchema.shape,
       async execute(rawArgs: unknown) {
         const { actionId, args } = uiExecuteArgsSchema.parse(rawArgs);

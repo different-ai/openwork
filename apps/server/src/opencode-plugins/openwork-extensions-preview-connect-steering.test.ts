@@ -19,8 +19,8 @@ type CloudFailure = NonNullable<CloudHealth["firstFailure"]>;
 const originalServerUrl = process.env.OPENWORK_SERVER_URL;
 const originalServerToken = process.env.OPENWORK_SERVER_TOKEN;
 
-const UNCHANGED_EXTENSION_DISCOVERY_INSTRUCTION =
-  "If the user asks for something you cannot do with obvious built-in tools, check OpenWork extensions before saying the capability is unavailable. Use openwork_extension_list_actions to inspect available extension actions, then call the matching action with openwork_extension_call.";
+const EXPECTED_EXTENSION_DISCOVERY_INSTRUCTION =
+  "# Extension actions\nIf built-in tools do not cover the request, list OpenWork extension actions before saying it is unavailable, then call the matching action.";
 
 beforeEach(() => {
   resetOpenWorkExtensionDiscoveryInstructionCacheForTests();
@@ -101,22 +101,23 @@ describe("composeSteeringFromEngineMcpStatus", () => {
 
 describe("composeOpenWorkExtensionDiscoveryInstruction", () => {
   test("keeps the fallback instruction byte-identical when state is unavailable or generic discovery is gated", () => {
-    expect(OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION).toBe(UNCHANGED_EXTENSION_DISCOVERY_INSTRUCTION);
-    expect(composeOpenWorkExtensionDiscoveryInstruction(null)).toBe(UNCHANGED_EXTENSION_DISCOVERY_INSTRUCTION);
-    expect(composeOpenWorkExtensionDiscoveryInstruction({ ...state(null), connectCatalogEnabled: false })).toBe(UNCHANGED_EXTENSION_DISCOVERY_INSTRUCTION);
+    expect(OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION).toBe(EXPECTED_EXTENSION_DISCOVERY_INSTRUCTION);
+    expect(composeOpenWorkExtensionDiscoveryInstruction(null)).toBe(EXPECTED_EXTENSION_DISCOVERY_INSTRUCTION);
+    expect(composeOpenWorkExtensionDiscoveryInstruction({ ...state(null), connectCatalogEnabled: false })).toBe(EXPECTED_EXTENSION_DISCOVERY_INSTRUCTION);
   });
 
   test("keeps fallback when only legacy Google Workspace is configured", () => {
-    expect(composeOpenWorkExtensionDiscoveryInstruction({ ...state(null), googleWorkspace: { legacyConfigured: true } })).toBe(UNCHANGED_EXTENSION_DISCOVERY_INSTRUCTION);
+    expect(composeOpenWorkExtensionDiscoveryInstruction({ ...state(null), googleWorkspace: { legacyConfigured: true } })).toBe(EXPECTED_EXTENSION_DISCOVERY_INSTRUCTION);
   });
 
   test("steers ready Connect users to verified openwork-cloud capabilities first", () => {
-    expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("verified for this workspace and model");
+    expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toStartWith("# OpenWork Connect");
+    expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("Cloud tools are ready for this workspace and model");
     expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("start with one openwork-cloud_search_capabilities call");
-    expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("If the results are empty or irrelevant, search again with broader or different keywords");
+    expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("If no result is relevant, retry with broader or different keywords");
     expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).not.toContain("2-4 keyword variants");
     expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("relay connectionStatus.action exactly");
-    expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("do not repeat an unchanged query");
+    expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("Retry an unchanged query only after");
     expect(composeOpenWorkExtensionDiscoveryInstruction(state(health()))).toBe(OPENWORK_CLOUD_CONNECTION_INSTRUCTION);
     expect(composeOpenWorkExtensionDiscoveryInstruction({ ...state(health()), connectCatalogEnabled: false })).toBe(OPENWORK_CLOUD_CONNECTION_INSTRUCTION);
     expect(composeOpenWorkExtensionDiscoveryInstruction({ ...state(health()), googleWorkspace: { legacyConfigured: true } })).toBe(OPENWORK_CLOUD_CONNECTION_INSTRUCTION);
@@ -342,7 +343,7 @@ describe("resolveOpenWorkExtensionDiscoveryInstruction", () => {
       return Response.json({ message: "unexpected" }, { status: 500 });
     };
 
-    expect(await resolveOpenWorkExtensionDiscoveryInstruction({}, serverFetch, { client })).toBe(UNCHANGED_EXTENSION_DISCOVERY_INSTRUCTION);
+    expect(await resolveOpenWorkExtensionDiscoveryInstruction({}, serverFetch, { client })).toBe(EXPECTED_EXTENSION_DISCOVERY_INSTRUCTION);
     expect(serverFetchCalls).toBe(0);
   });
 
@@ -354,7 +355,7 @@ describe("resolveOpenWorkExtensionDiscoveryInstruction", () => {
       return Response.json({ message: "unexpected" }, { status: 500 });
     };
 
-    expect(await resolveOpenWorkExtensionDiscoveryInstruction({}, serverFetch, { client })).toBe(UNCHANGED_EXTENSION_DISCOVERY_INSTRUCTION);
+    expect(await resolveOpenWorkExtensionDiscoveryInstruction({}, serverFetch, { client })).toBe(EXPECTED_EXTENSION_DISCOVERY_INSTRUCTION);
     expect(serverFetchCalls).toBe(0);
   });
 
@@ -416,7 +417,7 @@ describe("resolveOpenWorkExtensionDiscoveryInstruction", () => {
       context: { directory: "/tmp/ws_1" },
       model: { providerID: "anthropic", modelID: "claude-sonnet-4" },
     };
-    expect(await resolveOpenWorkExtensionDiscoveryInstruction(input, fakeFetch)).toBe(UNCHANGED_EXTENSION_DISCOVERY_INSTRUCTION);
+    expect(await resolveOpenWorkExtensionDiscoveryInstruction(input, fakeFetch)).toBe(EXPECTED_EXTENSION_DISCOVERY_INSTRUCTION);
     expect(await resolveOpenWorkExtensionDiscoveryInstruction(input, fakeFetch)).toBe(OPENWORK_CLOUD_CONNECTION_INSTRUCTION);
     expect(calls).toBe(2);
     expect(urls).toEqual([
@@ -456,7 +457,7 @@ describe("resolveOpenWorkExtensionDiscoveryInstruction", () => {
     };
     const invalidFetch = async (): Promise<Response> => Response.json({ ok: true });
 
-    expect(await resolveOpenWorkExtensionDiscoveryInstruction({}, failingFetch)).toBe(UNCHANGED_EXTENSION_DISCOVERY_INSTRUCTION);
-    expect(await resolveOpenWorkExtensionDiscoveryInstruction({}, invalidFetch)).toBe(UNCHANGED_EXTENSION_DISCOVERY_INSTRUCTION);
+    expect(await resolveOpenWorkExtensionDiscoveryInstruction({}, failingFetch)).toBe(EXPECTED_EXTENSION_DISCOVERY_INSTRUCTION);
+    expect(await resolveOpenWorkExtensionDiscoveryInstruction({}, invalidFetch)).toBe(EXPECTED_EXTENSION_DISCOVERY_INSTRUCTION);
   });
 });

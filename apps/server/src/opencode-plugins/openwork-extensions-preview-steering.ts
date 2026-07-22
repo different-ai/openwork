@@ -129,21 +129,24 @@ const connectStateResponseSchema = z.object({
 }).passthrough();
 
 export const OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION =
-  "If the user asks for something you cannot do with obvious built-in tools, check OpenWork extensions before saying the capability is unavailable. Use openwork_extension_list_actions to inspect available extension actions, then call the matching action with openwork_extension_call.";
+  `# Extension actions
+If built-in tools do not cover the request, list OpenWork extension actions before saying it is unavailable, then call the matching action.`;
 
 export const OPENWORK_CLOUD_CONNECTION_INSTRUCTION =
-  `OpenWork Cloud is verified for this workspace and model.
-- For a requested action in Gmail, Calendar, Drive, or another connected service, start with one openwork-cloud_search_capabilities call using concise task keywords. If the results are empty or irrelevant, search again with broader or different keywords.
-- Run openwork-cloud_execute_capability with an exact returned name. Search before claiming a connected-service capability is unavailable.
-- Use OpenWork Cloud for connected services and OpenWork extensions for local extension actions.
-- If a result has kind connection_status, name connectionStatus.connectionName and relay connectionStatus.action exactly. A successful search means OpenWork Cloud is authorized; do not treat a downstream connector failure as a reason to reconnect OpenWork Cloud.
-- After the requested human fixes that connector, search again. Until then, do not repeat an unchanged query.`;
+  `# OpenWork Connect
+Cloud tools are ready for this workspace and model.
+- For a connected-service action, start with one openwork-cloud_search_capabilities call using concise task keywords. If no result is relevant, retry with broader or different keywords.
+- Run openwork-cloud_execute_capability with an exact returned name. Search before saying the capability is unavailable.
+- If a result has kind connection_status, name connectionStatus.connectionName and relay connectionStatus.action exactly. Search success confirms Cloud authorization; a connector error does not require reconnecting Cloud.
+- Retry an unchanged query only after the user completes the requested fix.`;
 
 export const OPENWORK_CONNECT_SIGN_IN_INSTRUCTION =
-  `${OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION} OpenWork Cloud is not signed in or no desired agent access configuration exists for this workspace. Direct the user to sign in to OpenWork and connect the service in Settings → Connect.`;
+  `# OpenWork Connect
+Cloud tools are unavailable because sign-in or agent access is missing. For managed services, direct the user to sign in and repair access in Settings > Connect. Use extension actions for unrelated local capabilities.`;
 
 export const OPENWORK_CONNECT_DISABLED_INSTRUCTION =
-  `${OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION} OpenWork Cloud agent access is explicitly disabled for this workspace. Explain that the user can enable agent access in Settings → Connect.`;
+  `# OpenWork Connect
+Cloud agent access is disabled for this workspace. Direct the user to Settings > Connect to enable it. Use extension actions for unrelated local capabilities.`;
 
 const OPENWORK_CLOUD_MCP_NAME = "openwork-cloud";
 
