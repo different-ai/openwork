@@ -294,10 +294,22 @@ async function restoreCurrentUrl(ctx, url) {
 
 async function redactCurrentUrlParam(ctx, param) {
   await ctx.eval(`(() => {
+    const param = ${JSON.stringify(param)};
     const url = new URL(location.href);
-    if (url.searchParams.has(${JSON.stringify(param)})) {
-      url.searchParams.set(${JSON.stringify(param)}, 'REDACTED');
+    if (url.searchParams.has(param)) {
+      url.searchParams.set(param, 'REDACTED');
       history.replaceState(history.state, '', url.pathname + url.search + url.hash);
+    }
+    for (const input of document.querySelectorAll('input[readonly]')) {
+      if (!(input instanceof HTMLInputElement)) continue;
+      try {
+        const inputUrl = new URL(input.value);
+        if (!inputUrl.searchParams.has(param)) continue;
+        inputUrl.searchParams.set(param, 'REDACTED');
+        const descriptor = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+        descriptor?.set?.call(input, inputUrl.toString());
+        input.setAttribute('value', inputUrl.toString());
+      } catch {}
     }
     return true;
   })()`);
