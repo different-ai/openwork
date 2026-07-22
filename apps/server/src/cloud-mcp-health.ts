@@ -227,6 +227,7 @@ export type CloudMcpHealth = {
     status: "not_checked" | "missing" | "connected" | "disabled" | "failed" | "needs_auth" | "needs_client_registration" | "unreachable" | "unknown";
     error?: unknown;
   };
+  engineInspection: CloudMcpEngineInspection;
   tools: {
     expected: string[];
     present: string[];
@@ -237,6 +238,7 @@ export type CloudMcpHealth = {
       expected: string[];
       present: string[];
       missing: string[];
+      trace?: CloudMcpProbeTrace;
       error?: unknown;
       failure?: CloudMcpFailure;
     };
@@ -262,6 +264,7 @@ export type CloudMcpHealth = {
   toolDenies: McpToolDeny[];
   firstFailure: CloudMcpFailure | null;
   checkedAt: string;
+  durationMs: number;
 };
 
 type RedactedCloudMcpConfig = {
@@ -342,12 +345,52 @@ type ToolSnapshot = {
   missing: string[];
 };
 
+export type CloudMcpEngineServerStatus = {
+  name: string;
+  status: string;
+  error?: string;
+};
+
+/**
+ * The engine's own view of every MCP server it tracks, read over the OpenCode
+ * SDK. Support triage needs the siblings: "everything failed" points at the
+ * engine host's network path, "only openwork-cloud failed" points at the Cloud
+ * endpoint or token, and an absent entry means the dynamic registration was
+ * lost (e.g. after an engine state rebuild) and must be re-applied.
+ */
+export type CloudMcpEngineInspection = {
+  checked: boolean;
+  cloudPresent?: boolean;
+  serverCount?: number;
+  servers?: CloudMcpEngineServerStatus[];
+};
+
+export type CloudMcpProbeStepName = "initialize" | "initialized_notice" | "tools_list";
+
+export type CloudMcpProbeStep = {
+  step: CloudMcpProbeStepName;
+  ok: boolean;
+  httpStatus?: number;
+  latencyMs: number;
+  error?: unknown;
+};
+
+export type CloudMcpProbeTrace = {
+  endpoint: string | null;
+  startedAt: string;
+  latencyMs: number;
+  protocolVersion: string | null;
+  serverInfo: { name: string | null; version: string | null } | null;
+  steps: CloudMcpProbeStep[];
+};
+
 type DirectCloudToolsSnapshot = {
   checked: boolean;
   source: "mcp_tools_list";
   expected: string[];
   present: string[];
   missing: string[];
+  trace?: CloudMcpProbeTrace;
   error?: unknown;
   failure?: CloudMcpFailure;
 };
@@ -368,6 +411,7 @@ type ProviderProjectionSnapshot = {
 
 type Inspection = {
   engine: CloudMcpHealth["engine"];
+  engineInspection: CloudMcpEngineInspection;
   tools: ToolSnapshot;
   directTools: DirectCloudToolsSnapshot;
   providerProjection: ProviderProjectionSnapshot;
@@ -1130,17 +1174,75 @@ function toolsFromEngineAttestation(): ToolSnapshot {
   return { expected, present: [...expected], missing: [] };
 }
 
+// OpenCode collapses a failed remote connect to `Error.message` (often the bare
+// "fetch failed"), so the probe preserves the cause chain (code/errno/syscall)
+// — it is the only place the network-level cause survives for support.
+function describeTransportError(error: unknown): Record<string, unknown> {
+  const chain: Array<Record<string, unknown>> = [];
+  let current: unknown = error;
+  for (let depth = 0; depth < 5 && current !== undefined && current !== null; depth += 1) {
+    if (!(current instanceof Error)) {
+      chain.push({ message: sanitizeDiagnosticString(String(current)) });
+      break;
+    }
+    const entry: Record<string, unknown> = { message: sanitizeDiagnosticString(current.message) };
+    if (current.name && current.name !== "Error") entry.name = sanitizeDiagnosticString(current.name);
+    const withCode = current as Error & { code?: unknown; errno?: unknown; syscall?: unknown };
+    if (typeof withCode.code === "string") entry.code = sanitizeDiagnosticString(withCode.code);
+    if (typeof withCode.errno === "number") entry.errno = withCode.errno;
+    if (typeof withCode.syscall === "string") entry.syscall = sanitizeDiagnosticString(withCode.syscall);
+    chain.push(entry);
+    current = current.cause;
+  }
+  const first = chain[0] ?? { message: "unknown transport error" };
+  return { ...first, ...(chain.length > 1 ? { causes: chain.slice(1) } : {}) };
+}
+
 async function readDirectCloudTools(config: Record<string, unknown>): Promise<DirectCloudToolsSnapshot> {
   const url = readString(config.url);
   const authorization = authorizationHeader(config);
   const endpoint = url ? sanitizeDiagnosticString(url) : null;
+  const startedAtMs = Date.now();
+  const steps: CloudMcpProbeStep[] = [];
+  let protocolVersionSeen: string | null = null;
+  let serverInfo: CloudMcpProbeTrace["serverInfo"] = null;
+  const trace = (): CloudMcpProbeTrace => ({
+    endpoint,
+    startedAt: new Date(startedAtMs).toISOString(),
+    latencyMs: Date.now() - startedAtMs,
+    protocolVersion: protocolVersionSeen,
+    serverInfo,
+    steps,
+  });
+  const timed = async <T>(input: {
+    step: CloudMcpProbeStepName;
+    task: () => Promise<T>;
+    httpStatus?: (value: T) => number;
+    ok?: (value: T) => boolean;
+  }): Promise<T> => {
+    const stepStarted = Date.now();
+    try {
+      const value = await input.task();
+      const httpStatus = input.httpStatus?.(value);
+      steps.push({
+        step: input.step,
+        ok: input.ok ? input.ok(value) : true,
+        ...(httpStatus !== undefined ? { httpStatus } : {}),
+        latencyMs: Date.now() - stepStarted,
+      });
+      return value;
+    } catch (error) {
+      steps.push({ step: input.step, ok: false, latencyMs: Date.now() - stepStarted, error: describeTransportError(error) });
+      throw error;
+    }
+  };
   if (!url || !authorization) {
     const failureResult = directCloudToolsFailure({
       retryable: false,
       message: "The persisted OpenWork Cloud MCP config cannot be used for direct tools/list verification.",
       details: { endpoint, authorizationPresent: Boolean(authorization) },
     });
-    return { ...directToolsNotChecked(), checked: true, missing: expectedDirectToolNames(), error: failureResult.details, failure: failureResult };
+    return { ...directToolsNotChecked(), checked: true, missing: expectedDirectToolNames(), trace: trace(), error: failureResult.details, failure: failureResult };
   }
 
   const baseHeaders: Record<string, string> = {
@@ -1149,19 +1251,24 @@ async function readDirectCloudTools(config: Record<string, unknown>): Promise<Di
     "content-type": "application/json",
   };
   try {
-    const initialized = await mcpJsonRpcPost({
-      url,
-      headers: baseHeaders,
-      body: {
-        id: 1,
-        jsonrpc: "2.0",
-        method: "initialize",
-        params: {
-          capabilities: {},
-          clientInfo: { name: "openwork-server-cloud-mcp-health", version: "1.0.0" },
-          protocolVersion: "2025-06-18",
+    const initialized = await timed({
+      step: "initialize",
+      task: () => mcpJsonRpcPost({
+        url,
+        headers: baseHeaders,
+        body: {
+          id: 1,
+          jsonrpc: "2.0",
+          method: "initialize",
+          params: {
+            capabilities: {},
+            clientInfo: { name: "openwork-server-cloud-mcp-health", version: "1.0.0" },
+            protocolVersion: "2025-06-18",
+          },
         },
-      },
+      }),
+      httpStatus: (value) => value.response.status,
+      ok: (value) => value.response.ok,
     });
     if (!initialized.response.ok) {
       const authFailure = directCloudAuthFailure(initialized.response, initialized.payload, endpoint ?? "unknown");
@@ -1170,26 +1277,48 @@ async function readDirectCloudTools(config: Record<string, unknown>): Promise<Di
         message: "The OpenWork Cloud MCP endpoint initialize request failed during direct verification.",
         details: { endpoint, status: initialized.response.status, response: initialized.payload },
       });
-      return { ...directToolsNotChecked(), checked: true, missing: expectedDirectToolNames(), error: failureResult.details, failure: failureResult };
+      return { ...directToolsNotChecked(), checked: true, missing: expectedDirectToolNames(), trace: trace(), error: failureResult.details, failure: failureResult };
+    }
+
+    const initRecord = jsonRpcRecord(initialized.payload);
+    const initResult = initRecord && isRecord(initRecord.result) ? initRecord.result : null;
+    const serverInfoRecord = initResult && isRecord(initResult.serverInfo) ? initResult.serverInfo : null;
+    if (serverInfoRecord) {
+      serverInfo = {
+        name: typeof serverInfoRecord.name === "string" ? sanitizeDiagnosticString(serverInfoRecord.name) : null,
+        version: typeof serverInfoRecord.version === "string" ? sanitizeDiagnosticString(serverInfoRecord.version) : null,
+      };
     }
 
     const sessionId = initialized.response.headers.get("mcp-session-id");
     const protocolVersion = initialized.response.headers.get("mcp-protocol-version");
+    protocolVersionSeen = protocolVersion
+      ?? (initResult && typeof initResult.protocolVersion === "string" ? sanitizeDiagnosticString(initResult.protocolVersion) : null);
     const sessionHeaders: Record<string, string> = {
       ...baseHeaders,
       ...(sessionId ? { "mcp-session-id": sessionId } : {}),
       ...(protocolVersion ? { "mcp-protocol-version": protocolVersion } : {}),
     };
-    await withCloudEndpointProbeTimeout((signal) => externalFetch(url, {
-      method: "POST",
-      headers: sessionHeaders,
-      body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized", params: {} }),
-      signal,
-    }));
-    const listed = await mcpJsonRpcPost({
-      url,
-      headers: sessionHeaders,
-      body: { id: 2, jsonrpc: "2.0", method: "tools/list", params: {} },
+    await timed({
+      step: "initialized_notice",
+      task: () => withCloudEndpointProbeTimeout((signal) => externalFetch(url, {
+        method: "POST",
+        headers: sessionHeaders,
+        body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized", params: {} }),
+        signal,
+      })),
+      httpStatus: (value) => value.status,
+      ok: (value) => value.ok,
+    });
+    const listed = await timed({
+      step: "tools_list",
+      task: () => mcpJsonRpcPost({
+        url,
+        headers: sessionHeaders,
+        body: { id: 2, jsonrpc: "2.0", method: "tools/list", params: {} },
+      }),
+      httpStatus: (value) => value.response.status,
+      ok: (value) => value.response.ok,
     });
     if (!listed.response.ok) {
       const authFailure = directCloudAuthFailure(listed.response, listed.payload, endpoint ?? "unknown");
@@ -1198,7 +1327,7 @@ async function readDirectCloudTools(config: Record<string, unknown>): Promise<Di
         message: "The OpenWork Cloud MCP endpoint tools/list request failed during direct verification.",
         details: { endpoint, status: listed.response.status, response: listed.payload },
       });
-      return { ...directToolsNotChecked(), checked: true, missing: expectedDirectToolNames(), error: failureResult.details, failure: failureResult };
+      return { ...directToolsNotChecked(), checked: true, missing: expectedDirectToolNames(), trace: trace(), error: failureResult.details, failure: failureResult };
     }
     const toolNames = toolNamesFromMcpPayload(listed.payload);
     if (!toolNames.names) {
@@ -1207,9 +1336,9 @@ async function readDirectCloudTools(config: Record<string, unknown>): Promise<Di
         message: "The OpenWork Cloud MCP endpoint tools/list response could not be parsed.",
         details: { endpoint, error: toolNames.error },
       });
-      return { ...directToolsNotChecked(), checked: true, missing: expectedDirectToolNames(), error: failureResult.details, failure: failureResult };
+      return { ...directToolsNotChecked(), checked: true, missing: expectedDirectToolNames(), trace: trace(), error: failureResult.details, failure: failureResult };
     }
-    return directToolsFromNames(toolNames.names);
+    return { ...directToolsFromNames(toolNames.names), trace: trace() };
   } catch (error) {
     // Field incident (corporate Windows, TLS interception): a probe transport
     // failure must never be reported as missing tools — the engine's own MCP
@@ -1220,9 +1349,9 @@ async function readDirectCloudTools(config: Record<string, unknown>): Promise<Di
       retryable: true,
       recommendedAction: "Check this machine's network path (proxy/TLS trust) to the Cloud MCP endpoint. The engine's own MCP connection is authoritative.",
       message: "The OpenWork server could not reach the Cloud MCP endpoint for direct verification (transport error before any HTTP response). This does not indicate missing tools.",
-      details: { endpoint, error: error instanceof Error ? error.message : String(error) },
+      details: { endpoint, error: error instanceof Error ? error.message : String(error), transport: describeTransportError(error) },
     });
-    return { ...directToolsNotChecked(), checked: false, missing: [], error: failureResult.details, failure: failureResult };
+    return { ...directToolsNotChecked(), checked: false, missing: [], trace: trace(), error: failureResult.details, failure: failureResult };
   }
 }
 
@@ -1496,6 +1625,27 @@ function engineStatusFromMcpStatus(status: McpStatus | undefined): CloudMcpHealt
   return { status: status.status };
 }
 
+function engineInspectionNotChecked(): CloudMcpEngineInspection {
+  return { checked: false };
+}
+
+function engineInspectionFromStatuses(statuses: Record<string, McpStatus>): CloudMcpEngineInspection {
+  const servers = Object.entries(statuses)
+    .map(([name, status]) => ({
+      name: sanitizeDiagnosticString(name),
+      status: status.status,
+      ...(("error" in status) && typeof status.error === "string" ? { error: sanitizeDiagnosticString(status.error) } : {}),
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .slice(0, 50);
+  return {
+    checked: true,
+    cloudPresent: Boolean(statuses[OPENWORK_CLOUD_MCP_NAME]),
+    serverCount: Object.keys(statuses).length,
+    servers,
+  };
+}
+
 function readVersionFromHealthPayload(payload: unknown): string | null {
   if (!isRecord(payload)) return null;
   return typeof payload.version === "string" ? sanitizeDiagnosticString(payload.version) : null;
@@ -1545,6 +1695,7 @@ async function inspectOpenworkCloud(input: {
     failures.push(statusResult.failure);
     return {
       engine: { status: statusResult.failure.code === "opencode_engine_unreachable" ? "unreachable" : "unknown", error: statusResult.failure.details },
+      engineInspection: engineInspectionNotChecked(),
       tools: emptyTools,
       directTools: emptyDirectTools,
       providerProjection: providerProjectionNotChecked(input.providerModel),
@@ -1556,6 +1707,7 @@ async function inspectOpenworkCloud(input: {
     };
   }
 
+  const engineInspection = engineInspectionFromStatuses(statusResult.data ?? {});
   const cloudStatus = statusResult.data?.[OPENWORK_CLOUD_MCP_NAME];
   if (cloudStatus) {
     input.refreshRegistrationFromLiveStatus?.(
@@ -1571,6 +1723,7 @@ async function inspectOpenworkCloud(input: {
     failures.push(statusFailure(cloudStatus));
     return {
       engine,
+      engineInspection,
       tools: emptyTools,
       directTools: emptyDirectTools,
       providerProjection: providerProjectionNotChecked(input.providerModel),
@@ -1587,6 +1740,7 @@ async function inspectOpenworkCloud(input: {
     failures.push(idsResult.failure);
     return {
       engine,
+      engineInspection,
       tools: emptyTools,
       directTools: emptyDirectTools,
       providerProjection: providerProjectionNotChecked(input.providerModel),
@@ -1633,7 +1787,7 @@ async function inspectOpenworkCloud(input: {
     }));
   }
 
-  return { engine, tools, directTools, providerProjection, pluginCanaries, experimentalToolIds, experimentalProviderTools, opencodeVersion, failures };
+  return { engine, engineInspection, tools, directTools, providerProjection, pluginCanaries, experimentalToolIds, experimentalProviderTools, opencodeVersion, failures };
 }
 
 function providerProjectionNotChecked(providerModel?: CloudMcpProviderModelContext): ProviderProjectionSnapshot {
@@ -1818,6 +1972,7 @@ export async function readOpenworkCloudMcpHealth(input: {
   refreshRegistrationFromLiveStatus?: CloudMcpLiveStatusObserver;
 }): Promise<CloudMcpHealth> {
   const checkedAt = new Date().toISOString();
+  const startedAtMs = Date.now();
   const desired = await readDesiredState({ config: input.config, workspace: input.workspace, directory: input.directory });
   let delivery = cloudMcpDeliveryState.snapshot(input.workspace, input.directory, desired.revision);
   const toolDenies = desired.present
@@ -1861,6 +2016,7 @@ export async function readOpenworkCloudMcpHealth(input: {
 
   let inspection: Inspection = {
     engine: { status: "not_checked" },
+    engineInspection: engineInspectionNotChecked(),
     tools: splitPresentMissing([], expectedTools()),
     directTools: directToolsNotChecked(),
     providerProjection: providerProjectionNotChecked(input.providerModel),
@@ -1921,6 +2077,7 @@ export async function readOpenworkCloudMcpHealth(input: {
     },
     delivery,
     engine: inspection.engine,
+    engineInspection: inspection.engineInspection,
     tools: {
       expected: inspection.tools.expected,
       present: inspection.tools.present,
@@ -1931,6 +2088,7 @@ export async function readOpenworkCloudMcpHealth(input: {
         expected: inspection.directTools.expected,
         present: inspection.directTools.present,
         missing: inspection.directTools.missing,
+        ...(inspection.directTools.trace ? { trace: inspection.directTools.trace } : {}),
         ...(inspection.directTools.error ? { error: inspection.directTools.error } : {}),
         ...(inspection.directTools.failure ? { failure: inspection.directTools.failure } : {}),
       },
@@ -1952,6 +2110,7 @@ export async function readOpenworkCloudMcpHealth(input: {
     toolDenies,
     firstFailure,
     checkedAt,
+    durationMs: Date.now() - startedAtMs,
   };
 }
 
@@ -2121,6 +2280,7 @@ export async function reconcilePersistedOpenworkCloudMcp(input: {
   config: ServerConfig;
   workspace: WorkspaceInfo;
   directory: string | null;
+  providerModel?: CloudMcpProviderModelContext;
   serverMetadata?: CloudMcpServerMetadata;
   createWorkspaceOpencodeClient: (config: ServerConfig, workspace: WorkspaceInfo) => WorkspaceOpencodeClient;
   registerRuntimeMcp: CloudMcpRuntimeRegistrar;
@@ -2143,4 +2303,110 @@ export async function reconcilePersistedOpenworkCloudMcp(input: {
 
 export function markOpenworkCloudMcpStale(workspace: WorkspaceInfo, directory: string | null): void {
   cloudMcpDeliveryState.markWorkspaceStale(workspace, directory);
+}
+
+export type CloudMcpEngineRefreshStep = {
+  step: "engine_disconnect" | "reapply";
+  ok: boolean;
+  latencyMs: number;
+  detail?: unknown;
+};
+
+export type CloudMcpEngineRefresh = {
+  performed: boolean;
+  reason?: "desired_missing";
+  trigger: string;
+  startedAt: string;
+  finishedAt: string;
+  steps: CloudMcpEngineRefreshStep[];
+};
+
+export type CloudMcpEngineRefreshResult = {
+  refresh: CloudMcpEngineRefresh;
+  health: CloudMcpHealth;
+};
+
+// OpenCode never retries a failed MCP connection on its own: a remote connect
+// failure is stored as {status:"failed"} and the client is dropped until
+// something external re-drives it. This refresh closes any wedged client
+// first (disconnect), then re-runs the persisted reconcile, which re-POSTs
+// /mcp — an unconditional fresh connect attempt on the engine side.
+export async function refreshOpenworkCloudMcpEngine(input: {
+  config: ServerConfig;
+  workspace: WorkspaceInfo;
+  directory: string | null;
+  providerModel?: CloudMcpProviderModelContext;
+  serverMetadata?: CloudMcpServerMetadata;
+  createWorkspaceOpencodeClient: (config: ServerConfig, workspace: WorkspaceInfo) => WorkspaceOpencodeClient;
+  registerRuntimeMcp: CloudMcpRuntimeRegistrar;
+  refreshRegistrationFromLiveStatus?: CloudMcpLiveStatusObserver;
+  trigger?: string;
+}): Promise<CloudMcpEngineRefreshResult> {
+  const trigger = input.trigger?.trim() || "engine-refresh";
+  const startedAt = new Date().toISOString();
+  const steps: CloudMcpEngineRefreshStep[] = [];
+  const finish = (performed: boolean, health: CloudMcpHealth, reason?: "desired_missing"): CloudMcpEngineRefreshResult => ({
+    refresh: {
+      performed,
+      ...(reason ? { reason } : {}),
+      trigger,
+      startedAt,
+      finishedAt: new Date().toISOString(),
+      steps,
+    },
+    health,
+  });
+
+  const runtimeConfig = await readRuntimeOpencodeConfig(input.config, input.workspace.id);
+  const desiredConfig = runtimeMcpMap(runtimeConfig)[OPENWORK_CLOUD_MCP_NAME];
+  if (!desiredConfig) {
+    return finish(false, await readOpenworkCloudMcpHealth({ ...input, probe: true }), "desired_missing");
+  }
+
+  const disconnectStarted = Date.now();
+  try {
+    const opencode = input.createWorkspaceOpencodeClient(input.config, input.workspace);
+    const result = await withEngineProbeTimeout(() => opencode.mcp.disconnect({
+      name: OPENWORK_CLOUD_MCP_NAME,
+      ...locationParams(input.directory),
+    }));
+    steps.push({
+      step: "engine_disconnect",
+      ok: result.error === undefined,
+      latencyMs: Date.now() - disconnectStarted,
+      ...(result.error !== undefined
+        ? { detail: sanitizeDiagnosticValue({ status: result.response.status, error: result.error }) }
+        : {}),
+    });
+  } catch (error) {
+    // A dynamically-registered entry can be gone after an engine state
+    // rebuild, and the engine itself can be down; the reapply below is the
+    // authoritative step either way.
+    steps.push({
+      step: "engine_disconnect",
+      ok: false,
+      latencyMs: Date.now() - disconnectStarted,
+      detail: sanitizeDiagnosticValue(describeTransportError(error)),
+    });
+  }
+
+  const reapplyStarted = Date.now();
+  const health = await reconcilePersistedOpenworkCloudMcp({
+    config: input.config,
+    workspace: input.workspace,
+    directory: input.directory,
+    providerModel: input.providerModel,
+    serverMetadata: input.serverMetadata,
+    createWorkspaceOpencodeClient: input.createWorkspaceOpencodeClient,
+    registerRuntimeMcp: input.registerRuntimeMcp,
+    refreshRegistrationFromLiveStatus: input.refreshRegistrationFromLiveStatus,
+    trigger,
+  });
+  steps.push({
+    step: "reapply",
+    ok: health.firstFailure === null,
+    latencyMs: Date.now() - reapplyStarted,
+    ...(health.firstFailure ? { detail: { code: health.firstFailure.code, stage: health.firstFailure.stage } } : {}),
+  });
+  return finish(true, health);
 }

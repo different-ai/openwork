@@ -100,6 +100,12 @@ function startMockOpencode(options: MockOpencodeOptions = {}) {
         registerCount += 1;
         return Response.json({});
       }
+      if (url.pathname === "/mcp/openwork-cloud/disconnect" && request.method === "POST") {
+        // OpenCode closes the client and keeps the config; status is no longer
+        // connected until a later POST /mcp re-registers it.
+        registerCount = 0;
+        return Response.json(true);
+      }
       if (url.pathname === "/mcp" && request.method === "GET") {
         statusReads += 1;
         if (options.delayMcpStatusMs) await new Promise((resolve) => setTimeout(resolve, options.delayMcpStatusMs));
@@ -601,5 +607,89 @@ describe("openwork-cloud MCP strict reconcile", () => {
     expect(generic.status).toBe(200);
     const genericBody = await responseRecord(generic);
     expect(requireArray(genericBody.items, "items").some((item) => isRecord(item) && item.name === "posthog")).toBe(true);
+  });
+});
+
+async function engineRefresh(base: string, workspaceId = "ws_1", body?: Record<string, unknown>): Promise<Response> {
+  return fetch(`${base}/workspace/${workspaceId}/mcp/openwork-cloud/engine-refresh`, {
+    method: "POST",
+    headers: headers(),
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  });
+}
+
+describe("openwork-cloud MCP engine refresh", () => {
+  test("disconnects the engine client, re-registers, and returns ordered refresh steps with probed health", async () => {
+    const root = await createRoot();
+    const mock = startMockOpencode({ initialConnected: true });
+    const openwork = await startOpenwork([workspace("ws_1", root, `http://127.0.0.1:${mock.server.port}`)]);
+
+    const seeded = await reconcile(openwork.base, "ws_1", { trigger: "seed" });
+    expect(seeded.status).toBe(200);
+    const registersBeforeRefresh = mock.requests.filter((request) => request.pathname === "/mcp" && request.method === "POST").length;
+
+    const response = await engineRefresh(openwork.base, "ws_1", { trigger: "support-call" });
+    expect(response.status).toBe(200);
+    const body = await responseRecord(response);
+
+    const refresh = requireRecord(body.refresh, "refresh");
+    expect(refresh.performed).toBe(true);
+    expect(refresh.trigger).toBe("support-call");
+    const steps = requireArray(refresh.steps, "refresh.steps").map((step) => requireRecord(step, "step"));
+    expect(steps.map((step) => step.step)).toEqual(["engine_disconnect", "reapply"]);
+    expect(steps.every((step) => step.ok === true)).toBe(true);
+    expect(steps.every((step) => typeof step.latencyMs === "number")).toBe(true);
+
+    const health = requireRecord(body.health, "health");
+    expect(health.phase).toBe("ready");
+    expect(health.usable).toBe(true);
+    expect(delivery(health).state).toBe("ready");
+
+    const disconnects = mock.requests.filter((request) => request.pathname === "/mcp/openwork-cloud/disconnect");
+    expect(disconnects).toHaveLength(1);
+    expectDirectoryQuery(disconnects[0]?.search, root);
+    const registersAfterRefresh = mock.requests.filter((request) => request.pathname === "/mcp" && request.method === "POST").length;
+    expect(registersAfterRefresh).toBeGreaterThan(registersBeforeRefresh);
+  });
+
+  test("reports desired_missing without touching the engine when no config is persisted", async () => {
+    const root = await createRoot();
+    const mock = startMockOpencode();
+    const openwork = await startOpenwork([workspace("ws_1", root, `http://127.0.0.1:${mock.server.port}`)]);
+
+    const response = await engineRefresh(openwork.base);
+    expect(response.status).toBe(200);
+    const body = await responseRecord(response);
+
+    const refresh = requireRecord(body.refresh, "refresh");
+    expect(refresh.performed).toBe(false);
+    expect(refresh.reason).toBe("desired_missing");
+    expect(requireArray(refresh.steps, "refresh.steps")).toHaveLength(0);
+    expect(requireRecord(body.health, "health").usable).toBe(false);
+    expect(mock.requests.filter((request) => request.pathname === "/mcp/openwork-cloud/disconnect")).toHaveLength(0);
+  });
+
+  test("keeps step-level failure detail when the engine goes down between seed and refresh", async () => {
+    const root = await createRoot();
+    const mock = startMockOpencode({ initialConnected: true });
+    const openwork = await startOpenwork([workspace("ws_1", root, `http://127.0.0.1:${mock.server.port}`)]);
+
+    const seeded = await reconcile(openwork.base, "ws_1", { trigger: "seed" });
+    expect(seeded.status).toBe(200);
+    mock.server.stop(true);
+
+    const response = await engineRefresh(openwork.base, "ws_1", { trigger: "engine-down" });
+    expect(response.status).toBe(200);
+    const body = await responseRecord(response);
+
+    const refresh = requireRecord(body.refresh, "refresh");
+    expect(refresh.performed).toBe(true);
+    const steps = requireArray(refresh.steps, "refresh.steps").map((step) => requireRecord(step, "step"));
+    expect(steps.map((step) => step.step)).toEqual(["engine_disconnect", "reapply"]);
+    expect(steps.every((step) => step.ok === false)).toBe(true);
+
+    const health = requireRecord(body.health, "health");
+    expect(health.usable).toBe(false);
+    expect(typeof firstFailure(health).code).toBe("string");
   });
 });

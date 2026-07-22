@@ -3,6 +3,7 @@ import {
   OPENWORK_CLOUD_MCP_NAME,
   readOpenworkCloudMcpHealth,
   reconcileOpenworkCloudMcp,
+  refreshOpenworkCloudMcpEngine,
   type CloudMcpServerMetadata,
   type CloudMcpProviderModelContext,
   type CloudMcpRuntimeRegistrar,
@@ -106,6 +107,29 @@ export function registerCloudMcpRoutes(options: RegisterCloudMcpRoutesOptions): 
       refreshRegistrationFromLiveStatus,
     });
     return jsonResponse(health);
+  });
+
+  addRoute(routes, "POST", "/workspace/:id/mcp/openwork-cloud/engine-refresh", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    assertExactWorkspace(ctx.params.id, workspace);
+    // The refresh needs no payload; an optional body may scope provider/model
+    // and name the trigger for the delivery ledger.
+    const body = await readJsonBody(ctx.request).catch(() => ({} as Record<string, unknown>));
+    if (isRecord(body)) assertStrictBody(body, workspace);
+    const result = await refreshOpenworkCloudMcpEngine({
+      config,
+      workspace,
+      directory: resolveOpencodeDirectory(workspace),
+      providerModel: isRecord(body) ? providerModelFromBody(body) : undefined,
+      serverMetadata,
+      createWorkspaceOpencodeClient,
+      registerRuntimeMcp,
+      refreshRegistrationFromLiveStatus,
+      trigger: isRecord(body) && typeof body.trigger === "string" ? body.trigger : undefined,
+    });
+    return jsonResponse(result);
   });
 
   addRoute(routes, "POST", "/workspace/:id/mcp/openwork-cloud/reconcile", "client", async (ctx) => {

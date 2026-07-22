@@ -75,7 +75,12 @@ function startMockOpencode(mode: DirectProbeMode) {
     async fetch(request) {
       const url = new URL(request.url);
       if (url.pathname === "/global/health") return Response.json({ healthy: true, version: "1.17.11" });
-      if (url.pathname === "/mcp" && request.method === "GET") return Response.json({ "openwork-cloud": { status: "connected" } });
+      if (url.pathname === "/mcp" && request.method === "GET") {
+        return Response.json({
+          "openwork-cloud": { status: "connected" },
+          "sibling-remote": { status: "failed", error: "fetch failed" },
+        });
+      }
       if (url.pathname === "/experimental/tool/ids") return Response.json([...OPENWORK_CLOUD_EXPECTED_TOOLS, ...OPENWORK_CLOUD_PLUGIN_CANARIES]);
       if (url.pathname === "/cloud-mcp/mcp/agent" && request.method === "POST") {
         if (mode === "unauthorized") return Response.json({ error: "invalid token" }, { status: 401 });
@@ -362,5 +367,72 @@ describe("cloud MCP health foundation", () => {
     expect(health.firstFailure?.code).toBe("cloud_tools_missing");
     expect(health.tools.direct.checked).toBe(true);
     expect(health.tools.direct.missing).toEqual(["execute_capability"]);
+  });
+
+  test("reports the engine's full MCP server map with per-server errors", async () => {
+    const { health } = await readHealthForDirectProbe("ok");
+
+    expect(health.engineInspection.checked).toBe(true);
+    expect(health.engineInspection.cloudPresent).toBe(true);
+    expect(health.engineInspection.serverCount).toBe(2);
+    expect(health.engineInspection.servers).toEqual([
+      { name: "openwork-cloud", status: "connected" },
+      { name: "sibling-remote", status: "failed", error: "fetch failed" },
+    ]);
+  });
+
+  test("records a probe step trace with latencies and endpoint server info", async () => {
+    const { health, directUrl } = await readHealthForDirectProbe("ok", { probe: true });
+
+    const trace = health.tools.direct.trace;
+    expect(trace?.endpoint).toBe(directUrl);
+    expect(trace?.steps.map((step) => step.step)).toEqual(["initialize", "initialized_notice", "tools_list"]);
+    for (const step of trace?.steps ?? []) {
+      expect(step.ok).toBe(true);
+      expect(step.latencyMs).toBeGreaterThanOrEqual(0);
+    }
+    expect(trace?.steps[0]?.httpStatus).toBe(200);
+    expect(trace?.serverInfo).toEqual({ name: "openwork-cloud-test", version: "1.0.0" });
+    expect(trace?.protocolVersion).toBe("2025-06-18");
+    expect(health.durationMs).toBeGreaterThanOrEqual(0);
+  });
+
+  test("captures the rejected initialize step in the probe trace on HTTP 401", async () => {
+    const { health } = await readHealthForDirectProbe("unauthorized", { probe: true });
+
+    const steps = health.tools.direct.trace?.steps ?? [];
+    expect(steps).toHaveLength(1);
+    expect(steps[0]).toMatchObject({ step: "initialize", ok: false, httpStatus: 401 });
+  });
+
+  test("preserves the transport error cause chain when the probe cannot connect", async () => {
+    const { health } = await readHealthForDirectProbe("ok", {
+      probe: true,
+      beforeRead: (directUrl) => {
+        const originalFetch = globalThis.fetch;
+        globalThis.fetch = Object.assign(
+          (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+            const url = input instanceof Request ? input.url : String(input);
+            if (url === directUrl) {
+              const cause = Object.assign(new Error("self signed certificate in certificate chain"), {
+                code: "SELF_SIGNED_CERT_IN_CHAIN",
+              });
+              return Promise.reject(new Error("fetch failed", { cause }));
+            }
+            return originalFetch(input, init);
+          },
+          { preconnect: originalFetch.preconnect },
+        );
+      },
+    });
+
+    // The engine stays authoritative, but the probe failure must carry the
+    // cause that OpenCode itself collapses to a bare "fetch failed".
+    expect(health.tools.direct.failure?.code).toBe("probe_unreachable");
+    const details = JSON.stringify(health.tools.direct.failure?.details);
+    expect(details).toContain("SELF_SIGNED_CERT_IN_CHAIN");
+    expect(details).toContain("self signed certificate in certificate chain");
+    const initializeStep = health.tools.direct.trace?.steps.find((step) => step.step === "initialize");
+    expect(initializeStep?.ok).toBe(false);
   });
 });

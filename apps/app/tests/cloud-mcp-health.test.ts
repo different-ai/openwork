@@ -14,6 +14,7 @@ import {
   cloudMcpFailureStageLabel,
   isCloudMcpAuthTokenFailure,
   isCloudMcpAuthTokenFailureCode,
+  runOpenworkCloudMcpEngineRefresh,
   runOpenworkCloudMcpReconciler,
 } from "../src/react-app/domains/connections/cloud-mcp-reconciler";
 
@@ -190,8 +191,102 @@ describe("OpenWork Cloud MCP reconciler", () => {
     expect(getCount).toBe(1);
     expect(mintCount).toBe(0);
     expect(postCount).toBe(0);
-    expect(result.markerWritten).toBe(false);
     expect(writes).toBe(0);
+  });
+
+  test("Test now with probe asks the server for a direct endpoint verification", async () => {
+    const probeOptionsSeen: Array<{ probe?: boolean } | undefined> = [];
+    const client = {
+      baseUrl: scope.serverBaseUrl,
+      getOpenworkCloudMcpHealth: async (
+        _workspaceId: string,
+        _providerModel?: unknown,
+        options?: { probe?: boolean },
+      ) => {
+        probeOptionsSeen.push(options);
+        return health({ usable: true });
+      },
+      reconcileOpenworkCloudMcp: async () => health({ usable: true }),
+    };
+
+    await runOpenworkCloudMcpReconciler({
+      mode: "health",
+      client,
+      context,
+      mintToken: async () => token,
+      refreshMarginMs: 24 * 60 * 60 * 1000,
+      probe: true,
+    });
+    await runOpenworkCloudMcpReconciler({
+      mode: "health",
+      client,
+      context,
+      mintToken: async () => token,
+      refreshMarginMs: 24 * 60 * 60 * 1000,
+    });
+
+    expect(probeOptionsSeen).toEqual([{ probe: true }, undefined]);
+  });
+
+  test("engine refresh maps the endpoint result and skips unsupported servers", async () => {
+    const calls: Array<{ workspaceId: string; payload?: { provider?: string; model?: string; trigger?: string } }> = [];
+    const refreshedHealth = health({ usable: true });
+    const refresh = {
+      performed: true,
+      trigger: "desktop-engine-refresh",
+      startedAt: new Date(NOW).toISOString(),
+      finishedAt: new Date(NOW + 500).toISOString(),
+      steps: [
+        { step: "engine_disconnect", ok: true, latencyMs: 12 },
+        { step: "reapply", ok: true, latencyMs: 480 },
+      ],
+    };
+    const result = await runOpenworkCloudMcpEngineRefresh({
+      client: {
+        baseUrl: scope.serverBaseUrl,
+        getOpenworkCloudMcpHealth: async () => refreshedHealth,
+        reconcileOpenworkCloudMcp: async () => refreshedHealth,
+        refreshOpenworkCloudMcpEngine: async (workspaceId, payload) => {
+          calls.push({ workspaceId, payload });
+          return { refresh, health: refreshedHealth };
+        },
+      },
+      context,
+    });
+
+    expect(result.status).toBe("refreshed");
+    expect(result.refresh?.steps.map((step) => step.step)).toEqual(["engine_disconnect", "reapply"]);
+    expect(calls).toEqual([
+      {
+        workspaceId: scope.workspaceId,
+        payload: { provider: "openwork", model: "gpt-5", trigger: "desktop-engine-refresh" },
+      },
+    ]);
+
+    const failed = await runOpenworkCloudMcpEngineRefresh({
+      client: {
+        baseUrl: scope.serverBaseUrl,
+        getOpenworkCloudMcpHealth: async () => refreshedHealth,
+        reconcileOpenworkCloudMcp: async () => refreshedHealth,
+        refreshOpenworkCloudMcpEngine: async () => ({
+          refresh: { ...refresh, steps: [{ step: "engine_disconnect", ok: false, latencyMs: 3 }, { step: "reapply", ok: false, latencyMs: 9 }] },
+          health: health({ usable: false }),
+        }),
+      },
+      context,
+    });
+    expect(failed.status).toBe("failed");
+
+    const skipped = await runOpenworkCloudMcpEngineRefresh({
+      client: {
+        baseUrl: scope.serverBaseUrl,
+        getOpenworkCloudMcpHealth: async () => refreshedHealth,
+        reconcileOpenworkCloudMcp: async () => refreshedHealth,
+      },
+      context,
+    });
+    expect(skipped.status).toBe("skipped");
+    expect(skipped.skippedReason).toBe("unsupported");
   });
 
   test("writes marker only when returned health is usable", async () => {

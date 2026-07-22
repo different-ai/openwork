@@ -892,7 +892,9 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       setCloudMcpHealth(null);
       return null;
     }
-    const health = await client.getOpenworkCloudMcpHealth(workspaceId, currentCloudMcpModel ?? undefined);
+    // probe: the Advanced page refresh should verify the Cloud endpoint
+    // directly (outside the engine), not just report the engine's cached state.
+    const health = await client.getOpenworkCloudMcpHealth(workspaceId, currentCloudMcpModel ?? undefined, { probe: true });
     setCloudMcpHealth(health);
     return health;
   }, [currentCloudMcpModel, openworkClient, runtimeWorkspaceId, selectedWorkspaceEndpoint]);

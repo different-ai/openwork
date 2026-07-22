@@ -480,6 +480,44 @@ export type OpenworkCloudMcpDeliverySnapshot = {
   failure?: OpenworkCloudMcpFailure;
 };
 
+export type OpenworkCloudMcpProbeStep = {
+  step: "initialize" | "initialized_notice" | "tools_list" | string;
+  ok: boolean;
+  httpStatus?: number;
+  latencyMs: number;
+  error?: unknown;
+};
+
+export type OpenworkCloudMcpProbeTrace = {
+  endpoint: string | null;
+  startedAt: string;
+  latencyMs: number;
+  protocolVersion: string | null;
+  serverInfo: { name: string | null; version: string | null } | null;
+  steps: OpenworkCloudMcpProbeStep[];
+};
+
+export type OpenworkCloudMcpEngineRefreshStep = {
+  step: "engine_disconnect" | "reapply" | string;
+  ok: boolean;
+  latencyMs: number;
+  detail?: unknown;
+};
+
+export type OpenworkCloudMcpEngineRefresh = {
+  performed: boolean;
+  reason?: "desired_missing" | string;
+  trigger: string;
+  startedAt: string;
+  finishedAt: string;
+  steps: OpenworkCloudMcpEngineRefreshStep[];
+};
+
+export type OpenworkCloudMcpEngineRefreshResult = {
+  refresh: OpenworkCloudMcpEngineRefresh;
+  health: OpenworkCloudMcpHealth;
+};
+
 export type OpenworkCloudMcpHealth = {
   schemaVersion: 1;
   phase: OpenworkCloudMcpHealthPhase;
@@ -510,6 +548,13 @@ export type OpenworkCloudMcpHealth = {
     status: "not_checked" | "missing" | "connected" | "disabled" | "failed" | "needs_auth" | "needs_client_registration" | "unreachable" | "unknown" | string;
     error?: unknown;
   };
+  /** The engine's own view of every MCP server it tracks (older servers omit this). */
+  engineInspection?: {
+    checked: boolean;
+    cloudPresent?: boolean;
+    serverCount?: number;
+    servers?: Array<{ name: string; status: string; error?: string }>;
+  };
   tools: {
     expected: string[];
     present: string[];
@@ -520,7 +565,9 @@ export type OpenworkCloudMcpHealth = {
       expected: string[];
       present: string[];
       missing: string[];
+      trace?: OpenworkCloudMcpProbeTrace;
       error?: unknown;
+      failure?: OpenworkCloudMcpFailure;
     };
     providerProjection: {
       checked: boolean;
@@ -544,6 +591,7 @@ export type OpenworkCloudMcpHealth = {
   toolDenies: unknown[];
   firstFailure: OpenworkCloudMcpFailure | null;
   checkedAt: string;
+  durationMs?: number;
 };
 
 export type OpenworkCloudMcpReconcilePayload = {
@@ -1322,6 +1370,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
     diagnostics: AGENT_CONTEXT_DIAGNOSTICS_REQUEST_TIMEOUT_MS,
     config: 10_000,
     cloudMcpHealth: 12_000,
+    cloudMcpProbeHealth: 30_000,
     cloudMcpReconcile: 60_000,
     workspaceExport: 30_000,
     workspaceImport: 30_000,
@@ -1779,17 +1828,24 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         `/workspace/${workspaceId}/mcp`,
         { token, hostToken },
       ),
-    getOpenworkCloudMcpHealth: (workspaceId: string, providerModel?: OpenworkCloudMcpProviderModelContext) => {
+    getOpenworkCloudMcpHealth: (
+      workspaceId: string,
+      providerModel?: OpenworkCloudMcpProviderModelContext,
+      options?: { probe?: boolean },
+    ) => {
       const query = new URLSearchParams();
       if (providerModel?.provider.trim() && providerModel.model.trim()) {
         query.set("provider", providerModel.provider.trim());
         query.set("model", providerModel.model.trim());
       }
+      // probe=1 verifies the Cloud endpoint directly from the OpenWork server
+      // (initialize + tools/list), independent of the engine's own connection.
+      if (options?.probe) query.set("probe", "1");
       const suffix = query.size ? `?${query.toString()}` : "";
       return requestJson<OpenworkCloudMcpHealth>(
         baseUrl,
         `/workspace/${encodeURIComponent(workspaceId)}/mcp/openwork-cloud/health${suffix}`,
-        { token, hostToken, timeoutMs: timeouts.cloudMcpHealth },
+        { token, hostToken, timeoutMs: options?.probe ? timeouts.cloudMcpProbeHealth : timeouts.cloudMcpHealth },
       );
     },
     reconcileOpenworkCloudMcp: (workspaceId: string, payload: OpenworkCloudMcpReconcilePayload) =>
@@ -1801,6 +1857,21 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
           hostToken,
           method: "POST",
           body: payload,
+          timeoutMs: timeouts.cloudMcpReconcile,
+        },
+      ),
+    refreshOpenworkCloudMcpEngine: (
+      workspaceId: string,
+      payload?: { provider?: string; model?: string; trigger?: string },
+    ) =>
+      requestJson<OpenworkCloudMcpEngineRefreshResult>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/mcp/openwork-cloud/engine-refresh`,
+        {
+          token,
+          hostToken,
+          method: "POST",
+          body: payload ?? {},
           timeoutMs: timeouts.cloudMcpReconcile,
         },
       ),
