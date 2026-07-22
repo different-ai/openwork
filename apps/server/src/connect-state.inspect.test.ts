@@ -28,6 +28,36 @@ function serverConfig(root: string): ServerConfig {
 }
 
 describe("Connect state inspection", () => {
+  test("treats server-scoped cloudMcp as present without scanning workspaces", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openwork-connect-state-server-mcp-"));
+    const previousDb = process.env.OPENWORK_RUNTIME_DB;
+    process.env.OPENWORK_RUNTIME_DB = join(root, "runtime.sqlite");
+    try {
+      const config = serverConfig(root);
+      await writeFile(join(root, "connect-state.json"), JSON.stringify({
+        connectEnabled: true,
+        updatedAt: 123,
+        cloudMcp: {
+          type: "remote",
+          url: "https://connect.example/mcp/agent",
+          enabled: true,
+        },
+      }), "utf8");
+
+      expect(await inspectConnectSnapshot(config)).toMatchObject({
+        status: "available",
+        snapshot: {
+          connectEnabled: true,
+          cloudMcpPresent: true,
+        },
+      });
+    } finally {
+      if (previousDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
+      else process.env.OPENWORK_RUNTIME_DB = previousDb;
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("distinguishes a missing state file from bounded read failures", async () => {
     const root = await mkdtemp(join(tmpdir(), "openwork-connect-state-inspect-"));
     const config = serverConfig(root);
@@ -41,7 +71,7 @@ describe("Connect state inspection", () => {
       await writeFile(path, JSON.stringify({ connectEnabled: true, updatedAt: 123 }), "utf8");
       expect(await inspectConnectState(config)).toEqual({
         status: "available",
-        state: { connectEnabled: true, updatedAt: 123 },
+        state: { connectEnabled: true, updatedAt: 123, cloudMcp: null },
       });
 
       await writeFile(path, JSON.stringify({

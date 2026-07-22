@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 
+import { readConnectCloudMcp, writeConnectCloudMcp } from "./connect-state.js";
 import { readRuntimeMcpConfig } from "./runtime-opencode-config-store.js";
 import { externalFetch } from "./server-fetch.js";
 import type { ServerConfig } from "./types.js";
@@ -103,15 +104,34 @@ export async function readMcpSkillIndex(config: Record<string, unknown>, fetcher
   return skillIndexSchema.parse(JSON.parse(text)).skills;
 }
 
+async function resolveServerConnectMcpConfig(config: ServerConfig): Promise<Record<string, unknown> | null> {
+  const fromState = await readConnectCloudMcp(config);
+  if (fromState) return fromState;
+
+  // Back-compat: older hosts only stored openwork-cloud per workspace. Promote the
+  // first found copy into server-scoped connect-state so skills no longer depend
+  // on workspace resolution.
+  for (const workspace of config.workspaces) {
+    const cloud = await readRuntimeMcpConfig(config, workspace.id, OPENWORK_CLOUD_MCP_NAME);
+    if (!cloud) continue;
+    try {
+      await writeConnectCloudMcp(config, cloud);
+    } catch {
+      // Catalog reads should still succeed even if promotion fails.
+    }
+    return cloud;
+  }
+  return null;
+}
+
 export async function readOpenWorkConnectSkillCatalog(
   config: ServerConfig,
-  workspaceId: string,
   fetcher: McpFetch = externalFetch,
 ): Promise<OpenWorkConnectSkill[]> {
   try {
-    const cloud = await readRuntimeMcpConfig(config, workspaceId, OPENWORK_CLOUD_MCP_NAME);
+    const cloud = await resolveServerConnectMcpConfig(config);
     if (!cloud) return [];
-    const cacheKey = `${workspaceId}:${createHash("sha256").update(JSON.stringify(cloud)).digest("hex")}`;
+    const cacheKey = createHash("sha256").update(JSON.stringify(cloud)).digest("hex");
     const cached = catalogCache.get(cacheKey);
     if (cached && cached.expiresAt > Date.now()) return await cached.value;
     const value = readMcpSkillIndex(cloud, fetcher);

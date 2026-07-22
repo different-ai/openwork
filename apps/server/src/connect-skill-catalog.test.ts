@@ -1,6 +1,87 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-import { readMcpSkillIndex, renderOpenWorkConnectSkillInstruction } from "./connect-skill-catalog.js";
+import {
+  readMcpSkillIndex,
+  readOpenWorkConnectSkillCatalog,
+  renderOpenWorkConnectSkillInstruction,
+  resetOpenWorkConnectSkillCatalogCacheForTests,
+} from "./connect-skill-catalog.js";
+import { writeConnectCloudMcp } from "./connect-state.js";
+import { writeRuntimeOpencodeConfig } from "./runtime-opencode-config-store.js";
+import type { ServerConfig } from "./types.js";
+
+const roots: string[] = [];
+const previousRuntimeDb = process.env.OPENWORK_RUNTIME_DB;
+
+afterEach(async () => {
+  resetOpenWorkConnectSkillCatalogCacheForTests();
+  while (roots.length) await rm(roots.pop() ?? "", { recursive: true, force: true });
+  if (previousRuntimeDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
+  else process.env.OPENWORK_RUNTIME_DB = previousRuntimeDb;
+});
+
+function skillIndexFetcher(capability = "skill:skill_customer_briefing"): (url: string, init?: RequestInit) => Promise<Response> {
+  return async (_url: string, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    if (body.method === "initialize") {
+      return Response.json({ jsonrpc: "2.0", id: 1, result: { protocolVersion: "2025-06-18", capabilities: {} } });
+    }
+    if (body.method === "notifications/initialized") return new Response(null, { status: 202 });
+    return Response.json({
+      jsonrpc: "2.0",
+      id: 2,
+      result: {
+        contents: [{
+          uri: "skill://index.json",
+          mimeType: "application/json",
+          text: JSON.stringify({
+            $schema: "https://schemas.agentskills.io/discovery/0.2.0/schema.json",
+            skills: [{
+              name: "customer-briefing",
+              type: "skill-md",
+              description: "Prepare customer briefings.",
+              url: "skill://customer-briefing/SKILL.md",
+              capability,
+            }],
+          }),
+        }],
+      },
+    });
+  };
+}
+
+async function serverConfig(): Promise<ServerConfig> {
+  const root = await mkdtemp(join(tmpdir(), "openwork-connect-skills-"));
+  roots.push(root);
+  process.env.OPENWORK_RUNTIME_DB = join(root, "runtime.sqlite");
+  const workspace = {
+    id: "ws_legacy",
+    name: "Legacy",
+    path: root,
+    preset: "starter",
+    workspaceType: "local" as const,
+  };
+  return {
+    host: "127.0.0.1",
+    port: 0,
+    token: "test",
+    hostToken: "host",
+    configPath: join(root, "openwork.json"),
+    approval: { mode: "auto", timeoutMs: 1000 },
+    corsOrigins: ["*"],
+    workspaces: [workspace],
+    authorizedRoots: [root],
+    readOnly: false,
+    startedAt: Date.now(),
+    tokenSource: "cli",
+    hostTokenSource: "cli",
+    logFormat: "pretty",
+    logRequests: false,
+  };
+}
 
 describe("OpenWork Connect skill catalog", () => {
   test("renders bounded discovery metadata and capability retrieval guidance", () => {
@@ -116,5 +197,42 @@ describe("OpenWork Connect skill catalog", () => {
 
     expect(skills).toHaveLength(1);
     expect(skills[0]?.capability).toBe("plugin:plg_test:cfg_test");
+  });
+
+  test("reads the skill catalog from server-scoped Connect MCP config", async () => {
+    const config = await serverConfig();
+    await writeConnectCloudMcp(config, {
+      type: "remote",
+      url: "https://connect.example/mcp/agent",
+      enabled: true,
+      headers: { Authorization: "Bearer secret" },
+    });
+
+    const skills = await readOpenWorkConnectSkillCatalog(config, skillIndexFetcher());
+    expect(skills).toHaveLength(1);
+    expect(skills[0]?.name).toBe("customer-briefing");
+  });
+
+  test("promotes legacy workspace openwork-cloud config into server scope", async () => {
+    const config = await serverConfig();
+    await writeRuntimeOpencodeConfig(config, "ws_legacy", (current) => ({
+      ...current,
+      mcp: {
+        "openwork-cloud": {
+          type: "remote",
+          url: "https://connect.example/mcp/agent",
+          enabled: true,
+        },
+      },
+    }));
+
+    const skills = await readOpenWorkConnectSkillCatalog(config, skillIndexFetcher("skill:skill_promoted"));
+    expect(skills[0]?.capability).toBe("skill:skill_promoted");
+
+    // Second read should use the promoted host-level copy even if workspace config is cleared.
+    await writeRuntimeOpencodeConfig(config, "ws_legacy", () => ({ mcp: {} }));
+    resetOpenWorkConnectSkillCatalogCacheForTests();
+    const again = await readOpenWorkConnectSkillCatalog(config, skillIndexFetcher("skill:skill_promoted"));
+    expect(again[0]?.capability).toBe("skill:skill_promoted");
   });
 });

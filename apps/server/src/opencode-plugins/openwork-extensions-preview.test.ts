@@ -227,7 +227,7 @@ describe("OpenWorkExtensionsPreview session tools", () => {
     const connectStateRequest = fake.requests.find((request) => request.pathname === "/experimental/connect/state");
     const connectSkillsRequest = fake.requests.find((request) => request.pathname === "/experimental/connect/skills");
     expect(connectStateRequest?.search).toBe("?directory=%2Ftmp%2Farchive&provider=anthropic&model=claude-sonnet-4");
-    expect(connectSkillsRequest?.search).toBe("?directory=%2Ftmp%2Farchive");
+    expect(connectSkillsRequest?.search).toBe("");
     expect(output.system.join("\n")).toContain("verified ready for this exact workspace/model");
     expect(output.system.join("\n")).toContain("<name>customer-briefing</name>");
   });
