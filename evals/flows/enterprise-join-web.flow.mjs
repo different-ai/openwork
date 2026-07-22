@@ -8,6 +8,7 @@
  * Optional env:
  * - OPENWORK_EVAL_CDP_URL or --cdp-url: CDP endpoint for a headless Chrome page target.
  * - OPENWORK_EVAL_ENTERPRISE_ORG_NAME: organization display name (default Example Organization).
+ * - OPENWORK_EVAL_ENTERPRISE_APP_NAME: branded app display name (default OpenWork).
  * - OPENWORK_EVAL_ENTERPRISE_ADMIN_EMAIL: inviter/admin email (default admin@example.com).
  * - OPENWORK_EVAL_ENTERPRISE_NEW_MEMBER_EMAIL: invited member email (default new.member@example.com).
  * - OPENWORK_EVAL_ENTERPRISE_NEW_MEMBER_DISPLAY_NAME: invited member display name (default Alex).
@@ -114,12 +115,20 @@ export default {
             await redactCurrentUrlParam(ctx, "invite");
           },
           assert: async () => {
-            await ctx.expectText(joinedWelcomeTitle(ctx), { timeoutMs: 45_000 });
+            await ctx.expectText(joinedWelcomeLead(), { timeoutMs: 45_000 });
+            await ctx.expectText(enterpriseAppName(ctx));
+            const logoAlt = await ctx.eval("document.querySelector('[data-testid=join-org-success] img')?.getAttribute('alt') ?? ''");
+            assertEvidence(
+              ctx,
+              logoAlt === `${enterpriseOrgName(ctx)} logo` || logoAlt === `${enterpriseOrgName(ctx)} icon` || logoAlt === "",
+              "The company welcome uses the organization logo/icon when configured and text otherwise",
+              logoAlt,
+            );
           },
           screenshot: {
             name: "enterprise-joined-welcome",
             claim: "The invite acceptance completes and welcomes the new member to the organization.",
-            requireText: [joinedWelcomeTitle(ctx)],
+            requireText: [joinedWelcomeLead(), enterpriseAppName(ctx)],
             rejectText: ["Something went wrong"],
           },
         });
@@ -200,6 +209,10 @@ function newMemberDisplayName(ctx) {
   return envText(ctx, "OPENWORK_EVAL_ENTERPRISE_NEW_MEMBER_DISPLAY_NAME") || DEFAULT_NEW_MEMBER_DISPLAY_NAME;
 }
 
+function enterpriseAppName(ctx) {
+  return envText(ctx, "OPENWORK_EVAL_ENTERPRISE_APP_NAME") || "OpenWork";
+}
+
 function password(ctx) {
   return envText(ctx, "OPENWORK_EVAL_ENTERPRISE_PASSWORD") || DEFAULT_PASSWORD;
 }
@@ -208,8 +221,8 @@ function joinTitle(ctx) {
   return `Join ${enterpriseOrgName(ctx)}`;
 }
 
-function joinedWelcomeTitle(ctx) {
-  return `You're in, welcome to ${enterpriseOrgName(ctx)}`;
+function joinedWelcomeLead() {
+  return "You're in, welcome to";
 }
 
 async function denApiFetch(ctx, pathname, init = {}) {
@@ -321,7 +334,7 @@ async function redactCurrentUrlParam(ctx, param) {
 
 async function fillPasswordAndJoin(ctx, value) {
   const join = joinTitle(ctx);
-  const welcome = joinedWelcomeTitle(ctx);
+  const welcome = joinedWelcomeLead();
   await fillReactInput(ctx, 'input[type="password"]', value);
   await clickButtonStartingWithOneOf(ctx, [join, "Sign in to join"], 30_000);
   await ctx.waitFor(`(() => {
