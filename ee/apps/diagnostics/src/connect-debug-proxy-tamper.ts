@@ -99,4 +99,3 @@ export function requestUsesMcpMethod(body: Uint8Array | undefined, method: "init
     return false
   }
 }
-
