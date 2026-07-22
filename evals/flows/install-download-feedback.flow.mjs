@@ -36,9 +36,25 @@ async function redactInstallLinkForEvidence(ctx) {
     const descriptor = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
     descriptor?.set?.call(input, value.toString());
     input.setAttribute('value', value.toString());
+    history.replaceState(history.state, '', value.pathname + value.search);
     return true;
   })()`);
   ctx.assert(redacted, "The guided install token is redacted in screenshot evidence.");
+}
+
+async function restoreInstallLinkForInteraction(ctx) {
+  await ctx.eval(`(() => {
+    const value = ${JSON.stringify(state.installPageUrl)};
+    history.replaceState(history.state, '', value);
+    const input = [...document.querySelectorAll('input[readonly]')]
+      .find((entry) => entry instanceof HTMLInputElement && entry.value.includes('/install?token='));
+    if (input instanceof HTMLInputElement) {
+      const descriptor = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+      descriptor?.set?.call(input, value);
+      input.setAttribute('value', value);
+    }
+    return true;
+  })()`);
 }
 
 export default {
@@ -78,6 +94,7 @@ export default {
         await ctx.prove("Redundant team and server metadata are absent from the install page", {
           voiceover: vo[1],
           action: async () => {
+            await restoreInstallLinkForInteraction(ctx);
             await ctx.eval(`Array.from(document.querySelectorAll('a')).find((link) => link.textContent?.trim() === 'x64 Installer')?.focus()`);
           },
           assert: async () => {
@@ -97,6 +114,7 @@ export default {
         await ctx.prove("Choosing a platform immediately explains that the download is being prepared", {
           voiceover: vo[2],
           action: async () => {
+            await restoreInstallLinkForInteraction(ctx);
             await ctx.eval(`(() => {
               const cancelDownload = (event) => event.preventDefault();
               document.addEventListener('click', cancelDownload, { capture: true, once: true });
@@ -119,6 +137,7 @@ export default {
         await ctx.prove("The page confirms the browser download request and offers a retry", {
           voiceover: vo[3],
           action: async () => {
+            await restoreInstallLinkForInteraction(ctx);
             await ctx.waitFor("document.body.innerText.includes('Download started')", { timeoutMs: 6_500, label: "download started feedback" });
           },
           assert: async () => {
