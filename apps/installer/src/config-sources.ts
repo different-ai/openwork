@@ -11,7 +11,9 @@ export type InstallerConfigResolution = {
 
 export type InstallLinkConfigResult =
   | { status: "resolved"; config: InstallerConfig }
+  | { status: "invalid-input" }
   | { status: "not-found" }
+  | { status: "unreachable" }
   | { status: "unresolved" }
 
 type ConfigSourceOptions = {
@@ -84,7 +86,12 @@ function parseConfigPayload(payload: unknown, label: string, options?: ConfigSou
     warn(options, `${label} did not contain a valid OpenWork install config.`)
     return null
   }
-  return toInstallerConfig(parsed.data)
+  try {
+    return toInstallerConfig(parsed.data)
+  } catch {
+    warn(options, `${label} did not contain a valid OpenWork install config.`)
+    return null
+  }
 }
 
 function parseRequireSignin(value: string | undefined, fallback: boolean) {
@@ -189,7 +196,13 @@ async function fetchInstallConfig(configUrl: string, options?: ConfigSourceOptio
     warn(options, `Install config request failed (${response.status} ${response.statusText}).`)
     return { status: response.status === 404 ? "not-found" : "unresolved" }
   }
-  const payload: unknown = await response.json()
+  let payload: unknown
+  try {
+    payload = await response.json()
+  } catch {
+    warn(options, `${configUrl} did not contain a valid OpenWork install config.`)
+    return { status: "unresolved" }
+  }
   const config = parseConfigPayload(payload, configUrl, options)
   return config ? { status: "resolved", config } : { status: "unresolved" }
 }
@@ -201,9 +214,13 @@ export async function installLinkConfig(input: string, options: ConfigSourceOpti
 export async function resolveInstallLinkConfig(input: string, options: ConfigSourceOptions = {}): Promise<InstallLinkConfigResult> {
   const parsed = parseInstallLinkInput(input)
   if (!parsed) {
-    return { status: "unresolved" }
+    return { status: "invalid-input" }
   }
-  return fetchInstallConfig(parsed.url, options)
+  try {
+    return await fetchInstallConfig(parsed.url, options)
+  } catch {
+    return { status: "unreachable" }
+  }
 }
 
 export function buildConstantsConfig(constants: BuildConstants = DEFAULT_BUILD_CONSTANTS): InstallerConfig | null {

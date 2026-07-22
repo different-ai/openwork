@@ -56,11 +56,16 @@ export function startInstallerServer(initialResolution: InstallerConfigResolutio
           }
           const result = await resolveInstallLinkConfig(installLink)
           if (result.status !== "resolved") {
-            const expired = result.status === "not-found"
-            const message = expired
-              ? "This install link has expired or was replaced. Ask your workspace admin for a fresh one from the Members page."
-              : "Install link could not be resolved."
-            return Response.json({ error: expired ? "install_link_expired" : "install_link_invalid", message }, { status: 400 })
+            if (result.status === "not-found") {
+              return Response.json({ error: "install_link_expired", message: "This install link has expired or was replaced. Ask your workspace admin for a fresh one from the Members page." }, { status: 400 })
+            }
+            if (result.status === "invalid-input") {
+              return Response.json({ error: "install_link_invalid", message: "That doesn't look like an install link. On your team's install page, copy the link shown in step 2 — it ends with ?token=..." }, { status: 400 })
+            }
+            if (result.status === "unreachable") {
+              return Response.json({ error: "install_link_unreachable", message: "Could not reach your workspace. Check your internet or VPN connection and try again." }, { status: 400 })
+            }
+            return Response.json({ error: "install_link_invalid", message: "Install link could not be resolved." }, { status: 400 })
           }
           resolution = { config: result.config, source: "install-link" }
           return Response.json({ ok: true, source: installerConfigSourceLabel(resolution.source) })

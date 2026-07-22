@@ -25,6 +25,8 @@ import { denTypeIdSchema, emptyResponse, forbiddenSchema, invalidRequestSchema, 
 import { organizationCapabilityKeySchema } from "../../organization-capabilities.js"
 import { normalizeOrganizationMetadata } from "../../organization-limits.js"
 import {
+  DEFAULT_INSTALLER_RELEASE_REPO,
+  FIRST_GENERIC_INSTALLER_RELEASE,
   genericInstallerArtifactName,
   installerReleaseAssetUrl,
   resolveConfiguredInstallerArtifact,
@@ -209,15 +211,26 @@ function maxAllowedDesktopVersion(versions: string[]) {
   return maxVersion
 }
 
+function clampInstallerReleaseTag(releaseTag: string) {
+  const comparison = compareVersions(releaseTag, FIRST_GENERIC_INSTALLER_RELEASE)
+  if (env.installerReleaseRepo === DEFAULT_INSTALLER_RELEASE_REPO && comparison !== null && comparison < 0) {
+    // The generic installer is version-agnostic: it installs /v1/app-version,
+    // so allowedDesktopVersions still governs app updates. This only selects
+    // an installer binary release that actually has OpenWork-Installer-* assets.
+    return `v${FIRST_GENERIC_INSTALLER_RELEASE}`
+  }
+  return releaseTag
+}
+
 function installerReleaseTagForMetadata(metadataInput: unknown) {
   const metadata = normalizeOrganizationMetadata(organizationMetadataInput(metadataInput)).metadata
   const allowedVersions = metadata.allowedDesktopVersions
   if (!allowedVersions?.length) {
-    return env.installerReleaseTag
+    return clampInstallerReleaseTag(env.installerReleaseTag)
   }
 
   const maxVersion = maxAllowedDesktopVersion(allowedVersions)
-  return maxVersion ? `v${maxVersion}` : env.installerReleaseTag
+  return clampInstallerReleaseTag(maxVersion ? `v${maxVersion}` : env.installerReleaseTag)
 }
 
 async function resolveInstallConfigForToken(token: string, request: Request) {

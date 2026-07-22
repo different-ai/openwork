@@ -289,6 +289,51 @@ describe("install link helpers", () => {
 })
 
 describe("resolve-link API", () => {
+  test("explains pasted GitHub artifact URLs are not install links", async () => {
+    const installerServer = startInstallerServer(null, () => undefined)
+    try {
+      const response = await fetch(`${installerServer.url}api/resolve-link`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-installer-token": installerServer.token },
+        body: JSON.stringify({ installLink: "https://github.com/different-ai/openwork/releases/download/v0.17.39/OpenWork-Installer-win-x64.exe" }),
+      })
+
+      expect(response.status).toBe(400)
+      expect(await response.json()).toEqual({
+        error: "install_link_invalid",
+        message: "That doesn't look like an install link. On your team's install page, copy the link shown in step 2 — it ends with ?token=...",
+      })
+    } finally {
+      installerServer.stop()
+    }
+  })
+
+  test("explains unreachable workspaces as connection or VPN problems", async () => {
+    const configServer = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: () => Response.json({ ok: true }),
+    })
+    const port = configServer.port
+    const installerServer = startInstallerServer(null, () => undefined)
+    configServer.stop(true)
+    try {
+      const response = await fetch(`${installerServer.url}api/resolve-link`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-installer-token": installerServer.token },
+        body: JSON.stringify({ installLink: `http://127.0.0.1:${port}/install?token=abcDEF12` }),
+      })
+
+      expect(response.status).toBe(400)
+      expect(await response.json()).toEqual({
+        error: "install_link_unreachable",
+        message: "Could not reach your workspace. Check your internet or VPN connection and try again.",
+      })
+    } finally {
+      installerServer.stop()
+    }
+  })
+
   test("maps missing install configs to the expired-link message", async () => {
     const configServer = Bun.serve({
       hostname: "127.0.0.1",

@@ -8,6 +8,11 @@ export type ConfiguredInstallerArtifact = {
   size: number
 }
 
+export const DEFAULT_INSTALLER_RELEASE_REPO = "different-ai/openwork"
+// First GitHub release tag on different-ai/openwork that carries the OpenWork-Installer-* assets;
+// earlier tags have no installer assets so redirects to them 404.
+export const FIRST_GENERIC_INSTALLER_RELEASE = "0.17.37"
+
 export function installerReleaseAssetUrl(
   fileName: string,
   options: { releaseRepo?: string; releaseTag?: string } = {},

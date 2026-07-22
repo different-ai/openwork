@@ -4,11 +4,13 @@ const FLOW_ID = "den-download-link-match-allowed-versions";
 const DEN_API_URL = cleanBaseUrl(process.env.OPENWORK_EVAL_DEN_API_URL);
 const DEN_TOKEN = process.env.OPENWORK_EVAL_DEN_TOKEN?.trim() || "";
 const MEMBER_TOKEN = process.env.OPENWORK_EVAL_MEMBER_DEN_TOKEN?.trim() || DEN_TOKEN;
-const DEFAULT_RELEASE_TAG = process.env.OPENWORK_EVAL_DEFAULT_INSTALLER_RELEASE_TAG?.trim() || "v0.17.28";
+const DEFAULT_RELEASE_TAG = process.env.OPENWORK_EVAL_DEFAULT_INSTALLER_RELEASE_TAG?.trim() || "v0.17.39";
 const DEFAULT_RELEASE_VERSION = DEFAULT_RELEASE_TAG.replace(/^v/i, "");
-const ALLOWED_VERSIONS = ["0.17.26", "0.17.27"];
-const SELECTED_VERSION = "0.17.27";
-const DISALLOWED_VERSION = "0.17.28";
+const ALLOWED_VERSIONS = ["0.17.37", "0.17.38"];
+const SELECTED_VERSION = "0.17.38";
+const DISALLOWED_VERSION = "0.17.39";
+const LEGACY_ALLOWED_VERSIONS = ["0.17.26", "0.17.27"];
+const FIRST_GENERIC_INSTALLER_VERSION = "0.17.37";
 
 // Narration is loaded from the approved script (evals/voiceovers/den-download-link-match-allowed-versions.md).
 // The runner fails this flow if the narration drifts from that script.
@@ -19,6 +21,8 @@ const state = {
   organizationName: null,
   memberInstallToken: null,
   restrictedDownload: null,
+  legacyInstallToken: null,
+  legacyDownload: null,
   unrestrictedInstallToken: null,
   unrestrictedDownload: null,
 };
@@ -146,7 +150,7 @@ export default {
     {
       name: "Frame 1 — Admin restricts desktop versions",
       run: async (ctx) => {
-        await ctx.prove("An admin saves a policy allowing 0.17.26 and 0.17.27 while 0.17.28 remains disallowed", {
+        await ctx.prove("An admin saves a policy allowing 0.17.37 and 0.17.38 while 0.17.39 remains disallowed", {
           voiceover: vo[0],
           action: async () => {
             const organization = await setAllowedDesktopVersions(ctx, ALLOWED_VERSIONS);
@@ -156,7 +160,7 @@ export default {
             const current = await denApiFetch("/v1/org");
             const versions = readOrganizationMetadata(current.body?.organization).allowedDesktopVersions;
             witness(ctx, Array.isArray(versions), "The saved organization metadata exposes allowedDesktopVersions", current.body);
-            witness(ctx, versions.includes("0.17.26") && versions.includes(SELECTED_VERSION), "The saved policy includes the two allowed versions", versions);
+            witness(ctx, versions.includes("0.17.37") && versions.includes(SELECTED_VERSION), "The saved policy includes the two allowed versions", versions);
             witness(ctx, !versions.includes(DISALLOWED_VERSION), "The saved policy excludes the disallowed latest version", versions);
           },
         });
@@ -182,24 +186,42 @@ export default {
     {
       name: "Frame 3 — Download selects the highest allowed version",
       run: async (ctx) => {
-        await ctx.prove("Clicking download returns OpenWork 0.17.27 instead of the disallowed 0.17.28 release", {
+        await ctx.prove("Clicking download returns OpenWork 0.17.38 instead of the disallowed 0.17.39 release", {
           voiceover: vo[2],
           action: async () => {
             state.restrictedDownload = await fetchInstallerDownload(state.memberInstallToken);
           },
           assert: async () => {
             witness(ctx, [200, 302].includes(state.restrictedDownload.status), "The installer endpoint returns a download or redirect", state.restrictedDownload);
-            witness(ctx, downloadMentionsVersion(state.restrictedDownload, SELECTED_VERSION), "The selected direct URL or artifact filename contains 0.17.27", state.restrictedDownload);
-            witness(ctx, !downloadMentionsVersion(state.restrictedDownload, DISALLOWED_VERSION), "The selected download does not contain disallowed 0.17.28", state.restrictedDownload);
+            witness(ctx, downloadMentionsVersion(state.restrictedDownload, SELECTED_VERSION), "The selected direct URL or artifact filename contains 0.17.38", state.restrictedDownload);
+            witness(ctx, !downloadMentionsVersion(state.restrictedDownload, DISALLOWED_VERSION), "The selected download does not contain disallowed 0.17.39", state.restrictedDownload);
           },
         });
       },
     },
     {
-      name: "Frame 4 — Unrestricted org keeps Den default",
+      name: "Frame 4 — Legacy pins still get an installer binary that exists",
+      run: async (ctx) => {
+        await ctx.prove("Legacy desktop-version pins download the first generic installer release instead of a missing legacy asset", {
+          voiceover: vo[3],
+          action: async () => {
+            await setAllowedDesktopVersions(ctx, LEGACY_ALLOWED_VERSIONS);
+            state.legacyInstallToken = await mintInstallToken(ctx, DEN_TOKEN);
+            state.legacyDownload = await fetchInstallerDownload(state.legacyInstallToken);
+          },
+          assert: async () => {
+            witness(ctx, [200, 302].includes(state.legacyDownload.status), "The legacy-pinned installer endpoint returns a download or redirect", state.legacyDownload);
+            witness(ctx, downloadMentionsVersion(state.legacyDownload, FIRST_GENERIC_INSTALLER_VERSION), "The legacy-pinned download uses the first release with installer assets", state.legacyDownload);
+            witness(ctx, !downloadMentionsVersion(state.legacyDownload, "0.17.27"), "The legacy-pinned download does not point at the missing v0.17.27 installer asset", state.legacyDownload);
+          },
+        });
+      },
+    },
+    {
+      name: "Frame 5 — Unrestricted org keeps Den default",
       run: async (ctx) => {
         await ctx.prove("Removing the allowed-version restriction restores Den's configured installer release", {
-          voiceover: vo[3],
+          voiceover: vo[4],
           action: async () => {
             await setAllowedDesktopVersions(ctx, null);
             state.unrestrictedInstallToken = await mintInstallToken(ctx, DEN_TOKEN);

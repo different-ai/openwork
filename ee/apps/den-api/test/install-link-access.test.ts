@@ -403,6 +403,22 @@ test("zero-config downloads redirect the browser to the official release", async
 test("unordered organization allowed desktop versions select the maximum direct release URL", async () => {
   organizationMetadata = {
     ...defaultOrganizationMetadata(),
+    allowedDesktopVersions: ["0.17.38", "0.17.37", "0.17.39"],
+  }
+
+  const response = await createApp().request("http://den.local/v1/install/win-x64?token=opaque-token", {
+    redirect: "manual",
+  })
+
+  expect(response.status).toBe(302)
+  expect(response.headers.get("location")).toBe("https://github.com/different-ai/openwork/releases/download/v0.17.39/OpenWork-Installer-win-x64.exe")
+  expect(response.headers.get("location")).not.toContain("v9.9.9")
+  expect(response.headers.get("location")).not.toContain("opaque-token")
+})
+
+test("below-floor allowed desktop versions serve the first installer release that has assets", async () => {
+  organizationMetadata = {
+    ...defaultOrganizationMetadata(),
     allowedDesktopVersions: ["0.17.26", "0.17.25", "0.17.27"],
   }
 
@@ -411,8 +427,8 @@ test("unordered organization allowed desktop versions select the maximum direct 
   })
 
   expect(response.status).toBe(302)
-  expect(response.headers.get("location")).toBe("https://github.com/different-ai/openwork/releases/download/v0.17.27/OpenWork-Installer-win-x64.exe")
-  expect(response.headers.get("location")).not.toContain("v9.9.9")
+  expect(response.headers.get("location")).toBe("https://github.com/different-ai/openwork/releases/download/v0.17.37/OpenWork-Installer-win-x64.exe")
+  expect(response.headers.get("location")).not.toContain("v0.17.27")
   expect(response.headers.get("location")).not.toContain("opaque-token")
 })
 
@@ -457,9 +473,9 @@ test("unrestricted organizations use Den's configured installer release tag", as
 test("install token organization policy applies to member and admin downloads", async () => {
   organizationMetadata = {
     ...defaultOrganizationMetadata(),
-    allowedDesktopVersions: ["0.17.26", "0.17.27"],
+    allowedDesktopVersions: ["0.17.37", "0.17.39"],
   }
-  const expectedUrl = "https://github.com/different-ai/openwork/releases/download/v0.17.27/OpenWork-Installer-win-x64.exe"
+  const expectedUrl = "https://github.com/different-ai/openwork/releases/download/v0.17.39/OpenWork-Installer-win-x64.exe"
 
   for (const nextRole of ["member", "admin"]) {
     role = nextRole
@@ -470,6 +486,39 @@ test("install token organization policy applies to member and admin downloads", 
     expect(response.status).toBe(302)
     expect(response.headers.get("location")).toBe(expectedUrl)
   }
+})
+
+test("below-floor configured installer release tags are clamped for unrestricted official downloads", async () => {
+  envModule.env.installerReleaseTag = "v0.17.27"
+  organizationMetadata = {
+    ...defaultOrganizationMetadata(),
+    allowedDesktopVersions: [],
+  }
+
+  const response = await createApp().request("http://den.local/v1/install/win-x64?token=opaque-token", {
+    redirect: "manual",
+  })
+
+  expect(response.status).toBe(302)
+  expect(response.headers.get("location")).toBe("https://github.com/different-ai/openwork/releases/download/v0.17.37/OpenWork-Installer-win-x64.exe")
+  expect(response.headers.get("location")).not.toContain("v0.17.27")
+  expect(response.headers.get("location")).not.toContain("opaque-token")
+})
+
+test("custom installer release repos are not clamped", async () => {
+  envModule.env.installerReleaseRepo = "acme/openwork"
+  organizationMetadata = {
+    ...defaultOrganizationMetadata(),
+    allowedDesktopVersions: ["0.17.26", "0.17.27"],
+  }
+
+  const response = await createApp().request("http://den.local/v1/install/win-x64?token=opaque-token", {
+    redirect: "manual",
+  })
+
+  expect(response.status).toBe(302)
+  expect(response.headers.get("location")).toBe("https://github.com/acme/openwork/releases/download/v0.17.27/OpenWork-Installer-win-x64.exe")
+  expect(response.headers.get("location")).not.toContain("opaque-token")
 })
 
 test.each([
