@@ -72,7 +72,7 @@ describe("openwork runtime config file", () => {
     expect(Array.isArray(parsed.plugin)).toBe(true);
   });
 
-  test("openwork prompt has a static search-first Memory Bank section, distinct from ## Memory", async () => {
+  test("openwork prompt keeps only OpenWork-specific output, privacy, and Memory Bank rules", async () => {
     const { config } = await setup();
     await writeOpenworkRuntimeConfigFile(config, "ws_1");
 
@@ -80,16 +80,18 @@ describe("openwork runtime config file", () => {
     const agent = parsed.agent as Record<string, { prompt?: string }>;
     const prompt = agent.openwork?.prompt ?? "";
 
-    // The new Memory Bank section is present and distinct from the existing ## Memory section.
+    expect(prompt).toStartWith("# OpenWork");
+    expect(prompt).toContain("## Workspace outputs");
+    expect(prompt).toContain("## Private data");
     expect(prompt).toContain("## Memory Bank");
-    expect(prompt).toContain("## Memory\n");
-    // Search-first (B1): never name tools that do not exist.
+    expect(prompt).toContain("explicitly asks");
+    expect(prompt).toContain("get confirmation");
     expect(prompt).toContain("search_capabilities");
     expect(prompt).toContain("execute_capability");
     expect(prompt).not.toContain("memory_save");
     expect(prompt).not.toContain("memory_search");
-    // No-secrets guidance is the only v0 plaintext-at-rest mitigation.
-    expect(prompt).toMatch(/secret|credential|API key|token|PII/i);
+    expect(prompt).toMatch(/secret|credential|token|personal data/i);
+    expect(prompt.length).toBeLessThanOrEqual(1_000);
   });
 
   test("keepOpenworkRuntimeConfigFileFresh rewrites the file on runtime-DB writes", async () => {

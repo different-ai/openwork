@@ -3,40 +3,23 @@ import { resolve } from "node:path";
 import { OpenWorkCapabilitiesKnowledge } from "./openwork-capabilities-knowledge.js";
 
 describe("OpenWork capabilities knowledge plugin", () => {
-  test("injects current OpenWork Connect guidance", async () => {
+  test("injects concise product-routing guidance instead of a product manual", async () => {
     const plugin = await OpenWorkCapabilitiesKnowledge();
     const output = { system: [] };
 
     await plugin["experimental.chat.system.transform"]({}, output);
 
     const knowledge = output.system.join("\n");
-    expect(knowledge).toContain("https://api.openworklabs.com/mcp/agent");
-    expect(knowledge).toContain("app.openworklabs.com/api/den");
-    expect(knowledge).toContain("internal same-origin desktop proxy");
-    expect(knowledge).toContain("OpenCode is verified");
-    expect(knowledge).toContain("Codex is setup-only");
-    expect(knowledge).toContain("cursor://anysphere.cursor-mcp/oauth/callback");
-    expect(knowledge).toContain("Settings > MCP servers");
-    expect(knowledge).toContain("https://app.openworklabs.com/api/auth");
-    expect(knowledge).toContain("RFC9728 discovery");
-    expect(knowledge).toContain("PKCE S256");
-    expect(knowledge).toContain("opencode mcp auth openwork");
-    expect(knowledge).toContain("codex mcp login openwork");
-    expect(knowledge).toContain("search_capabilities");
-    expect(knowledge).toContain("execute_capability");
-    expect(knowledge).toContain("JWTs signed and validated with EdDSA");
-    expect(knowledge).toContain("30-day inactivity window");
-    expect(knowledge).toContain("reference_id");
-    expect(knowledge).toContain("OpenWork documentation tools answer product questions. Never use them as a substitute for performing an action against ServiceNow, Slack, Notion, Linear, Google Workspace, a marketplace, or another connected service.");
-    expect(knowledge).toContain("require the user to sign in to OpenWork first");
-    expect(knowledge).toContain("Runtime steering from the OpenWork extensions plugin is the source of truth");
-    expect(knowledge).not.toContain("First call `openwork-cloud_search_capabilities`");
-    expect(knowledge).not.toContain("then call `openwork-cloud_execute_capability`");
+    expect(knowledge).toStartWith("# OpenWork product guidance");
+    expect(knowledge).toContain("openwork_docs_search");
+    expect(knowledge).toContain("openwork_docs_read");
+    expect(knowledge).toContain("live runtime steering as the source of truth");
     expect(knowledge).toContain("Settings > Connect");
     expect(knowledge).toContain("custom or local MCP server");
-    expect(knowledge).not.toContain("Access tokens are opaque");
-    expect(knowledge).not.toContain("https://api.openworklabs.com/mcp`");
-    expect(knowledge).not.toContain("openwork-ui-mcp");
+    expect(knowledge).not.toContain("https://api.openworklabs.com");
+    expect(knowledge).not.toContain("RFC9728");
+    expect(knowledge).not.toContain("JWT");
+    expect(knowledge.length).toBeLessThanOrEqual(700);
   });
 
   test("retrieves Slack connection guidance from bundled docs", async () => {

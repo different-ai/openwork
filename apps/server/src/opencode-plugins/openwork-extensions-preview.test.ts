@@ -188,7 +188,7 @@ describe("OpenWorkExtensionsPreview session tools", () => {
 
     const connectStateRequest = fake.requests.find((request) => request.pathname === "/experimental/connect/state");
     expect(connectStateRequest?.search).toBe("?directory=%2Ftmp%2Farchive&provider=anthropic&model=claude-sonnet-4");
-    expect(output.system.join("\n")).toContain("verified ready for this exact workspace/model");
+    expect(output.system.join("\n")).toContain("Cloud tools are ready for this workspace and model");
   });
 
   test("uses the factory engine client as transform steering source of truth", async () => {
@@ -206,7 +206,7 @@ describe("OpenWorkExtensionsPreview session tools", () => {
     await plugin["experimental.chat.system.transform"]({}, output);
 
     expect(requests).toEqual([{ query: { directory: "/tmp/archive" } }]);
-    expect(output.system.join("\n")).toContain("verified ready for this exact workspace/model");
+    expect(output.system.join("\n")).toContain("Cloud tools are ready for this workspace and model");
   });
 
   test("uses neutral transform steering when the engine reports failed Cloud status", async () => {
@@ -283,6 +283,8 @@ describe("OpenWorkExtensionsPreview UI control tools", () => {
     expect(tools).toContain("openwork_ui_execute_action");
 
     const system = await transformedSystem(plugin);
-    expect(system).toContain("openwork_ui_execute_action");
+    expect(system).toContain("# OpenWork UI");
+    expect(system).toContain("openwork_ui_*");
+    expect(system).toContain("openwork_ui_snapshot");
   });
 });
