@@ -29,8 +29,8 @@ export function OrganizationBrandIdentity({
       // eslint-disable-next-line @next/next/no-img-element
       <img
         src={brand.logoUrl}
-        alt={organizationName}
-        className={`inline-block max-h-[1.2em] max-w-[12rem] object-contain align-[-0.12em] ${className}`}
+        alt={`${organizationName} logo`}
+        className={`inline-block max-h-[1.08em] max-w-[12rem] shrink-0 object-contain align-middle ${className}`}
         onError={() => setFailedLogoUrl(brand.logoUrl)}
       />
     );

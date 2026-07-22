@@ -282,12 +282,15 @@ export function InstallScreen() {
       <section data-testid="install-page">
         <div className="grid gap-6 rounded-[1.75rem] border border-slate-200/80 bg-white p-5 text-center sm:p-6 md:p-8" data-testid="install-card">
           <div className="grid justify-items-center gap-3">
-            <h1 className="m-0 max-w-[22ch] text-balance text-[2rem] font-semibold leading-[1.04] tracking-[-0.05em] text-slate-950 sm:text-[2.4rem]">
-              Download OpenWork for{" "}
-              <OrganizationBrandIdentity
-                organizationName={config.clientName}
-                brand={{ appName: config.appName, logoUrl: config.logoUrl, iconUrl: config.iconUrl }}
-              />
+            <h1 className="m-0 grid max-w-[22ch] gap-1 text-[2rem] font-semibold leading-[1.04] tracking-[-0.05em] text-slate-950 sm:text-[2.4rem]">
+              <span>Download OpenWork</span>
+              <span className="flex min-w-0 flex-wrap items-center justify-center gap-x-[0.18em] gap-y-1">
+                <span>for</span>
+                <OrganizationBrandIdentity
+                  organizationName={config.clientName}
+                  brand={{ appName: config.appName, logoUrl: config.logoUrl, iconUrl: config.iconUrl }}
+                />
+              </span>
             </h1>
             <p className="den-copy">
               This page walks you through connecting this computer to {config.clientName}.

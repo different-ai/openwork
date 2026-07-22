@@ -172,8 +172,11 @@ describe("join organization invite clean layout contract", () => {
     expect(successSource).toContain("Email me the download link");
     expect(successSource).not.toContain("capabilities");
     expect(successSource).not.toContain("Open OpenWork");
+    expect(successSource).toContain("<span>You&apos;re in, welcome to</span>");
+    expect(successSource).toContain('className="whitespace-nowrap">&apos;s {brand.appName}</span>');
     expect(installSource).toContain("DownloadPlatformGrid");
-    expect(installSource).toContain("Download OpenWork for");
+    expect(installSource).toContain("<span>Download OpenWork</span>");
+    expect(installSource).toContain("<span>for</span>");
     expect(installSource).toContain("Setup script (ARM64)");
     expect(identitySource).toContain("failedLogoUrl");
     expect(identitySource).toContain("failedIconUrl");

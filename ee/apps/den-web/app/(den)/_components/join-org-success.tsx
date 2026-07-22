@@ -169,10 +169,12 @@ export function JoinOrgSuccess({
       <section data-testid="join-org-success">
         <div className="grid gap-5 rounded-[1.75rem] border border-slate-200/80 bg-white p-6 sm:p-8 md:p-10">
           <div className="grid gap-3">
-            <h1 className="m-0 max-w-[22ch] text-balance text-[2rem] font-semibold leading-[1.03] tracking-[-0.055em] text-slate-950 sm:text-[2.6rem]">
-              You&apos;re in, welcome to{" "}
-              <OrganizationBrandIdentity organizationName={organizationName} brand={brand} />
-              &apos;s {brand.appName}
+            <h1 className="m-0 grid max-w-full gap-1 text-[2rem] font-semibold leading-[1.03] tracking-[-0.055em] text-slate-950 sm:text-[2.6rem]">
+              <span>You&apos;re in, welcome to</span>
+              <span className="flex min-w-0 flex-wrap items-center gap-x-[0.18em] gap-y-1">
+                <OrganizationBrandIdentity organizationName={organizationName} brand={brand} />
+                <span className="whitespace-nowrap">&apos;s {brand.appName}</span>
+              </span>
             </h1>
             <p className="m-0 max-w-2xl text-sm leading-6 text-slate-600">
               {desktopAuthRequested
