@@ -59,7 +59,7 @@ const sessionCreateArgsSchema = z.object({
   sessions: z.array(z.object({
     title: z.string().trim().min(1).max(120).describe("Short title shown in the OpenWork session list."),
     prompt: z.string().trim().min(1).max(100_000).describe("Self-contained task to start in the new session."),
-  })).min(1).max(20).describe("One entry per new session to create and start. Maximum 20."),
+  })).min(1).describe("One entry per new session to create and start."),
   workspaceId: z.string().trim().optional().describe("Optional OpenWork workspace id/name. Defaults to the workspace containing the current session."),
 });
 

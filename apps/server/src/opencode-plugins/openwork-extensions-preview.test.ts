@@ -326,6 +326,22 @@ describe("OpenWorkExtensionsPreview session tools", () => {
     expect(createRequests[0]?.body).toEqual({ title: "Look into dolphins", prompt: "Research dolphins." });
   });
 
+  test("creates more than twenty sessions in one tool call", async () => {
+    const fake = startFakeOpenWorkServer();
+    const plugin = await OpenWorkExtensionsPreview({ directory: "/tmp/archive" });
+    const sessions = Array.from({ length: 21 }, (_, index) => ({
+      title: `Research topic ${index + 1}`,
+      prompt: `Research topic ${index + 1}.`,
+    }));
+
+    const output = await plugin.tool.openwork_session_create.execute({ sessions }, { sessionID: "ses_origin" });
+    const parsed = createResultSchema.parse(JSON.parse(output));
+
+    expect(parsed.ok).toBe(true);
+    expect(parsed.created).toHaveLength(21);
+    expect(parsed.failures).toEqual([]);
+    expect(fake.requests.filter((request) => request.pathname === "/workspace/ws_2/sessions" && request.method === "POST")).toHaveLength(21);
+  });
 });
 
 describe("OpenWorkExtensionsPreview UI control tools", () => {
