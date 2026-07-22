@@ -31,6 +31,7 @@ import { listPluginMcpRequirementBindings, type PluginMcpRequirementBindingRow }
 import { scoreText, tokenize } from "./search.js"
 import type { McpMemberIdentity } from "./external-capabilities.js"
 import type { CapabilityMatch } from "./search.js"
+import { standardSkillName, type RemoteSkillDescriptor } from "./skill-capabilities.js"
 
 const MARKETPLACE_CAPABILITY_PREFIX = "plugin:"
 const PROVENANCE_SUFFIX = "in your organization's library."
@@ -476,6 +477,42 @@ async function filterVisibleRows(input: {
     if (grantRole(input.member, pluginGrants.get(row.plugin.id) ?? [])) return true
     return Boolean(grantRole(input.member, marketplaceGrants.get(row.marketplace.id) ?? []))
   })
+}
+
+export async function listAccessibleMarketplaceSkillDescriptors(input: {
+  enabled?: boolean
+  member: McpMemberIdentity | null
+  organizationId: string
+}): Promise<RemoteSkillDescriptor[]> {
+  if (input.enabled === false || !input.member) return []
+
+  const organizationId = normalizeDenTypeId("organization", input.organizationId)
+  const memberRow = await getActiveMember(organizationId, input.member)
+  if (!memberRow) return []
+
+  const rows = await filterVisibleRows({
+    organizationId,
+    member: input.member,
+    memberRow,
+    rows: (await listActiveMarketplaceRows(organizationId))
+      .filter((row) => row.configObject.objectType === "skill"),
+  })
+  const descriptors = new Map<string, RemoteSkillDescriptor>()
+  for (const row of rows) {
+    const capability = buildMarketplaceCapabilityName(row.plugin.id, row.configObject.id)
+    if (descriptors.has(capability)) continue
+    const uniqueSuffix = `${row.plugin.id.slice(-4)}${row.configObject.id.slice(-4)}`
+    const name = standardSkillName(row.configObject.title, uniqueSuffix)
+    descriptors.set(capability, {
+      name,
+      description: row.configObject.description,
+      capability,
+      location: `skill://${name}/SKILL.md`,
+    })
+  }
+
+  return [...descriptors.values()]
+    .sort((a, b) => a.name.localeCompare(b.name) || a.capability.localeCompare(b.capability))
 }
 
 async function latestVersion(configObjectId: ConfigObjectId, organizationId: OrganizationId) {
