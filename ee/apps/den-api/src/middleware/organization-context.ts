@@ -22,7 +22,7 @@ export const resolveOrganizationContextMiddleware: MiddlewareHandler<{
   const headerOrganizationId = getRequestScopedOrganizationId(c.req.raw.headers)
   const session = c.get("session")
   const internalMcpOrganizationId = session?.id === "mcp_internal"
-    ? session.activeOrganizationId
+    ? session.activeOrganizationId ?? null
     : null
   const scopedOrganizationId = apiKeyScopedOrganizationId ?? headerOrganizationId ?? internalMcpOrganizationId
   const userId = normalizeDenTypeId("user", user.id)
