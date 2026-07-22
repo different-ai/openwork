@@ -150,10 +150,10 @@ OpenWork Connect is a remote Streamable HTTP MCP server with OAuth:
 
 Clients normally refresh automatically. The values matter when diagnosing reconnects:
 
-- Public OAuth access tokens are JWTs signed and validated with EdDSA. The issuer is exactly `https://app.openworklabs.com/api/auth`, the audience is exactly `https://api.openworklabs.com/mcp/agent`, and access tokens expire after 15 minutes.
-- Refresh tokens are opaque rotating grants with a 30-day inactivity window.
-- Each refresh revokes the previous refresh grant.
-- If an old refresh grant is replayed, used concurrently, expired, or revoked, the client may receive `invalid_grant`. Reconnect by logging out of the MCP entry and authenticating again.
+- Public OAuth access tokens are JWTs signed and validated with EdDSA. The issuer is exactly `https://app.openworklabs.com/api/auth`, the audience is exactly `https://api.openworklabs.com/mcp/agent`, and access tokens expire after 45 minutes.
+- Refresh tokens are opaque rotating grants with a 30-day inactivity window and a 30-second rotation overlap for near-simultaneous refreshes.
+- Each refresh revokes the previous refresh grant; because OpenWork stores only token hashes, a replay during the overlap can issue another successor instead of returning prior plaintext.
+- Successor grants remain normal rotating grants. If an old refresh grant is replayed after the overlap, expired, or revoked, the client may receive `invalid_grant` and the client/user refresh-token family is revoked. Reconnect by logging out of the MCP entry and authenticating again.
 - Access is rechecked against the active OpenWork session and organization membership, so removing a member or revoking the session cuts off MCP access.
 
 ## What the server exposes
@@ -171,7 +171,7 @@ Availability is governed by organization membership, role, policy, and exposure 
 
 - **401 missing or invalid token**: run the client's auth/login command again. Confirm the client points to `https://api.openworklabs.com/mcp/agent`.
 - **403 membership or scope error**: confirm you selected the right organization and still have membership and required permissions there.
-- **`invalid_grant`**: the refresh grant was expired, revoked, replayed, or used concurrently. Run logout, then auth/login again.
+- **`invalid_grant`**: the refresh grant was expired, revoked, or replayed after the 30-second rotation overlap. Run logout, then auth/login again.
 - **429 rate limit**: wait for the response's `Retry-After` value before retrying.
 - **Support requests**: include the response `X-Request-Id` header plus any JSON body MCP `referenceId` or OAuth `reference_id` field so OpenWork support can find the server-side trace.
 

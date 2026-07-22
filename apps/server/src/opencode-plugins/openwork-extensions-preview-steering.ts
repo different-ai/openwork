@@ -128,6 +128,12 @@ const connectStateResponseSchema = z.object({
   }).passthrough(),
 }).passthrough();
 
+const connectSkillsResponseSchema = z.object({
+  ok: z.literal(true),
+  schemaVersion: z.number(),
+  instruction: z.string(),
+}).passthrough();
+
 export const OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION =
   `# Extension actions
 If built-in tools do not cover the request, list OpenWork extension actions before saying it is unavailable, then call the matching action.`;
@@ -291,6 +297,26 @@ async function fetchOpenWorkConnectState(input: unknown, fetcher: OpenWorkFetch)
       legacyConfigured: parsed.googleWorkspace.legacyConfigured,
     },
   };
+}
+
+export async function resolveOpenWorkConnectSkillInstruction(input?: unknown, fetcher: OpenWorkFetch = fetch): Promise<string> {
+  try {
+    const { url, token } = requireOpenWorkServer();
+    const context = readContext(input);
+    const query = new URLSearchParams();
+    const workspaceId = context.workspaceId ?? context.workspaceID;
+    const directory = context.worktree ?? context.directory;
+    if (workspaceId) query.set("workspaceId", workspaceId);
+    if (directory) query.set("directory", directory);
+    const suffix = query.size ? `?${query.toString()}` : "";
+    const response = await fetcher(`${url}/experimental/connect/skills${suffix}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!response.ok) return "";
+    return connectSkillsResponseSchema.parse(await parseResponse(response)).instruction;
+  } catch {
+    return "";
+  }
 }
 
 export function composeOpenWorkExtensionDiscoveryInstruction(state: OpenWorkExtensionConnectState | null): string {

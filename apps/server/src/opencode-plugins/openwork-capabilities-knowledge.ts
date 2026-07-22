@@ -13,7 +13,6 @@ const docsSearchArgsSchema = z.object({
 const docsReadArgsSchema = z.object({
   path: z.string().min(1).describe("Docs-relative path returned by openwork_docs_search, for example start-here/connect-your-stack/connect-slack-mcp.mdx."),
 });
-
 type DocsEntry = {
   path: string;
   title: string | null;

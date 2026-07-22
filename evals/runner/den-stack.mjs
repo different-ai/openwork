@@ -17,7 +17,6 @@
 import { spawn, execFile } from "node:child_process";
 import { openSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { homedir, platform } from "node:os";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -27,6 +26,8 @@ const execFileAsync = promisify(execFile);
 const RUNNER_DIR = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(RUNNER_DIR, "..", "..");
 const STATE_DIR = join(RUNNER_DIR, "..", "results", ".den-stack");
+const EVAL_ELECTRON_USERDATA = process.env.OPENWORK_EVAL_ELECTRON_USERDATA?.trim()
+  || join(STATE_DIR, "electron-user-data");
 
 const DEN_API_PORT = Number(process.env.OPENWORK_EVAL_DEN_PORT ?? 8790);
 const DEN_API_INTERNAL_PORT = DEN_API_PORT + 1;
@@ -51,7 +52,7 @@ const DEN_ENV = {
   DATABASE_URL: DEN_DATABASE_URL,
   DEN_DB_ENCRYPTION_KEY: "local-dev-db-encryption-key-please-change-1234567890",
   BETTER_AUTH_SECRET: "local-dev-secret-not-for-production-use!!",
-  BETTER_AUTH_URL: DEN_BASE_URL,
+  BETTER_AUTH_URL: DEN_WEB_ORIGIN,
   DEN_API_PUBLIC_URL: DEN_API_URL,
   DEN_BETTER_AUTH_TRUSTED_ORIGINS: DEN_TRUSTED_ORIGINS,
   CORS_ORIGINS: DEN_TRUSTED_ORIGINS,
@@ -65,14 +66,7 @@ const DEN_ENV = {
 const sleep = (ms) => new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
 
 function devUserDataHome() {
-  // Matches Electron's appData layout for the dev app identifier.
-  if (platform() === "darwin") {
-    return join(homedir(), "Library", "Application Support", "com.differentai.openwork.dev");
-  }
-  if (platform() === "win32") {
-    return join(process.env.APPDATA ?? join(homedir(), "AppData", "Roaming"), "com.differentai.openwork.dev");
-  }
-  return join(process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config"), "com.differentai.openwork.dev");
+  return EVAL_ELECTRON_USERDATA;
 }
 
 function devBootstrapPath() {
@@ -86,6 +80,21 @@ async function httpOk(url, timeoutMs = 2_500) {
     const response = await fetch(url, { signal: controller.signal });
     clearTimeout(timer);
     return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function hasCdpPageTarget(baseUrl) {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 2_500);
+    const response = await fetch(`${baseUrl}/json/list`, { signal: controller.signal });
+    clearTimeout(timer);
+    if (!response.ok) return false;
+    const targets = await response.json();
+    return Array.isArray(targets)
+      && targets.some((target) => target?.type === "page" && typeof target.webSocketDebuggerUrl === "string");
   } catch {
     return false;
   }
@@ -238,6 +247,35 @@ async function ensureDenApi(log) {
   throw new Error("den proxy did not expose /api/den/health within 30s.");
 }
 
+async function ensureDenWeb(log) {
+  if (await httpOk(`${DEN_WEB_ORIGIN}/api/den/health`)) {
+    log(`den-web already healthy at ${DEN_WEB_ORIGIN}`);
+    return;
+  }
+
+  const webUrl = new URL(DEN_WEB_ORIGIN);
+  const denWebPort = webUrl.port || "3005";
+  log(`Starting den-web on :${denWebPort}...`);
+  const pid = spawnDetached("pnpm", ["dev:den:web"], {
+    logName: "den-web",
+    env: {
+      DEN_API_BASE: DEN_API_URL,
+      DEN_AUTH_ORIGIN: DEN_WEB_ORIGIN,
+      DEN_AUTH_FALLBACK_BASE: DEN_API_URL,
+      DEN_WEB_PORT: denWebPort,
+    },
+  });
+  await writePidState("den-web.pid", pid);
+  for (let attempt = 0; attempt < 45; attempt += 1) {
+    if (await httpOk(`${DEN_WEB_ORIGIN}/api/den/health`)) {
+      log("den-web healthy");
+      return;
+    }
+    await sleep(2_000);
+  }
+  throw new Error(`den-web did not become healthy at ${DEN_WEB_ORIGIN} within 90s.`);
+}
+
 async function ensureSeed(log) {
   if (await signInDemoOwner()) {
     log(`Demo org present (${DEMO_EMAIL})`);
@@ -255,8 +293,8 @@ async function ensureSeed(log) {
 }
 
 async function freeStaleAppPorts(log) {
-  // If CDP is not serving but the dev ports are held, a previous run left a
-  // half-dead app behind (e.g. Electron without its devtools listener).
+  // If no app page target is serving but the dev ports are held, a previous
+  // run left a half-dead app behind (e.g. Electron without its renderer).
   // Clear them so the fresh spawn does not lose the bind race.
   for (const port of [9823, 5173]) {
     try {
@@ -279,7 +317,7 @@ async function freeStaleAppPorts(log) {
 
 async function ensureApp(log, cdpCandidates) {
   for (const candidate of cdpCandidates) {
-    if (await httpOk(`${candidate}/json/list`)) {
+    if (await hasCdpPageTarget(candidate)) {
       log(`App CDP already reachable at ${candidate} — make sure it targets the local Den (reload after bootstrap changes).`);
       return;
     }
@@ -297,11 +335,14 @@ async function ensureApp(log, cdpCandidates) {
   log(`Wrote desktop bootstrap -> ${DEN_BASE_URL}`);
 
   log("Starting dev Electron (pnpm dev)...");
-  const pid = spawnDetached("pnpm", ["dev"], { logName: "app", env: {} });
+  const pid = spawnDetached("pnpm", ["dev"], {
+    logName: "app",
+    env: { OPENWORK_ELECTRON_USERDATA: EVAL_ELECTRON_USERDATA },
+  });
   await writePidState("app.pid", pid);
   for (let attempt = 0; attempt < 45; attempt += 1) {
     for (const candidate of cdpCandidates) {
-      if (await httpOk(`${candidate}/json/list`)) {
+      if (await hasCdpPageTarget(candidate)) {
         log(`App CDP up at ${candidate}`);
         // Give the renderer a moment to finish booting providers.
         await sleep(8_000);
@@ -310,7 +351,7 @@ async function ensureApp(log, cdpCandidates) {
     }
     await sleep(4_000);
   }
-  throw new Error("Dev Electron CDP did not come up within 3 minutes.");
+  throw new Error("Dev Electron CDP page target did not come up within 3 minutes.");
 }
 
 export async function ensureDenStack({ log, cdpCandidates, skipApp = false }) {
@@ -318,6 +359,7 @@ export async function ensureDenStack({ log, cdpCandidates, skipApp = false }) {
   await ensureMysql(log);
   await ensureSchema(log);
   await ensureDenApi(log);
+  await ensureDenWeb(log);
   await ensureSeed(log);
   if (skipApp) {
     log("Skipping dev Electron startup — selected eval flow is app-less");
@@ -329,8 +371,9 @@ export async function ensureDenStack({ log, cdpCandidates, skipApp = false }) {
   if (!token) throw new Error("Could not obtain a demo-owner session token.");
 
   process.env.OPENWORK_EVAL_DEN_API_URL = DEN_API_URL;
+  process.env.OPENWORK_EVAL_DEN_WEB_URL = DEN_WEB_ORIGIN;
   process.env.OPENWORK_EVAL_DEN_TOKEN = token;
-  log(`Den stack ready — flows get OPENWORK_EVAL_DEN_API_URL=${DEN_API_URL} and a fresh ${DEMO_EMAIL} token.`);
+  log(`Den stack ready — flows get OPENWORK_EVAL_DEN_API_URL=${DEN_API_URL}, OPENWORK_EVAL_DEN_WEB_URL=${DEN_WEB_ORIGIN}, and a fresh ${DEMO_EMAIL} token.`);
 }
 
 export async function denStackDown({ log }) {
@@ -341,6 +384,11 @@ export async function denStackDown({ log }) {
   const apiPid = await readPidState("den-api.pid");
   if (apiPid) {
     try { process.kill(Number(apiPid)); log(`Stopped den-api (pid ${apiPid})`); } catch { /* already gone */ }
+  }
+  const webPid = await readPidState("den-web.pid");
+  if (webPid) {
+    try { process.kill(-Number(webPid)); } catch { /* group gone */ }
+    try { process.kill(Number(webPid)); log(`Stopped den-web (pid ${webPid})`); } catch { /* already gone */ }
   }
   const appPid = await readPidState("app.pid");
   if (appPid) {

@@ -9,6 +9,7 @@ import { parseInstallLinkInput, resolveInstallerConfig } from "../src/config"
 import { isTranslocatedPath, parseMountTableLine, readSidecarConfig, resolveTranslocatedOriginalPath } from "../src/config-sources"
 import { writeBootstrapConfig } from "../src/install"
 import { releaseAssetFor } from "../src/release-asset"
+import { startInstallerServer } from "../src/server"
 
 describe("desktopBootstrapPath", () => {
   test("honors the explicit override", () => {
@@ -297,6 +298,58 @@ describe("install link helpers", () => {
       "https://api.example.com/v1/install-config?token=abcDEF12",
     )
     expect(parseInstallLinkInput("http://api.example.com/install?token=abcDEF12")).toBeNull()
+  })
+})
+
+describe("resolve-link API", () => {
+  test("maps missing install configs to the expired-link message", async () => {
+    const configServer = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: () => new Response("missing", { status: 404, statusText: "Not Found" }),
+    })
+    const installerServer = startInstallerServer(null, () => undefined)
+    try {
+      const response = await fetch(`${installerServer.url}api/resolve-link`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-installer-token": installerServer.token },
+        body: JSON.stringify({ installLink: `http://127.0.0.1:${configServer.port}/install?token=abcDEF12` }),
+      })
+
+      expect(response.status).toBe(400)
+      expect(await response.json()).toEqual({
+        error: "install_link_expired",
+        message: "This install link has expired or was replaced. Ask your workspace admin for a fresh one from the Members page.",
+      })
+    } finally {
+      installerServer.stop()
+      configServer.stop(true)
+    }
+  })
+
+  test("keeps generic copy for other install config failures", async () => {
+    const configServer = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: () => new Response("error", { status: 500, statusText: "Internal Server Error" }),
+    })
+    const installerServer = startInstallerServer(null, () => undefined)
+    try {
+      const response = await fetch(`${installerServer.url}api/resolve-link`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-installer-token": installerServer.token },
+        body: JSON.stringify({ installLink: `http://127.0.0.1:${configServer.port}/install?token=abcDEF12` }),
+      })
+
+      expect(response.status).toBe(400)
+      expect(await response.json()).toEqual({
+        error: "install_link_invalid",
+        message: "Install link could not be resolved.",
+      })
+    } finally {
+      installerServer.stop()
+      configServer.stop(true)
+    }
   })
 })
 

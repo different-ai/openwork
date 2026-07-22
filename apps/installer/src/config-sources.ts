@@ -12,6 +12,11 @@ export type InstallerConfigResolution = {
   source: InstallerConfigSource
 }
 
+export type InstallLinkConfigResult =
+  | { status: "resolved"; config: InstallerConfig }
+  | { status: "not-found" }
+  | { status: "unresolved" }
+
 type ConfigSourceOptions = {
   env?: NodeJS.ProcessEnv
   execPath?: string
@@ -241,7 +246,11 @@ export function parseInstallLinkInput(input: string): { url: string; host: strin
   }
 }
 
-async function fetchInstallConfig(configUrl: string, options?: ConfigSourceOptions) {
+function configFromResult(result: InstallLinkConfigResult): InstallerConfig | null {
+  return result.status === "resolved" ? result.config : null
+}
+
+async function fetchInstallConfig(configUrl: string, options?: ConfigSourceOptions): Promise<InstallLinkConfigResult> {
   const fetcher = options?.fetcher ?? fetch
   const response = await fetcher(configUrl, {
     headers: { accept: "application/json" },
@@ -249,10 +258,11 @@ async function fetchInstallConfig(configUrl: string, options?: ConfigSourceOptio
   })
   if (!response.ok) {
     warn(options, `Install config request failed (${response.status} ${response.statusText}).`)
-    return null
+    return { status: response.status === 404 ? "not-found" : "unresolved" }
   }
   const payload: unknown = await response.json()
-  return parseConfigPayload(payload, configUrl, options)
+  const config = parseConfigPayload(payload, configUrl, options)
+  return config ? { status: "resolved", config } : { status: "unresolved" }
 }
 
 export async function filenameTagConfig(options: ConfigSourceOptions = {}): Promise<InstallerConfig | null> {
@@ -262,13 +272,17 @@ export async function filenameTagConfig(options: ConfigSourceOptions = {}): Prom
     return null
   }
 
-  return fetchInstallConfig(installConfigUrlFor(tag.host, tag.token), options)
+  return configFromResult(await fetchInstallConfig(installConfigUrlFor(tag.host, tag.token), options))
 }
 
 export async function installLinkConfig(input: string, options: ConfigSourceOptions = {}): Promise<InstallerConfig | null> {
+  return configFromResult(await resolveInstallLinkConfig(input, options))
+}
+
+export async function resolveInstallLinkConfig(input: string, options: ConfigSourceOptions = {}): Promise<InstallLinkConfigResult> {
   const parsed = parseInstallLinkInput(input)
   if (!parsed) {
-    return null
+    return { status: "unresolved" }
   }
   return fetchInstallConfig(parsed.url, options)
 }

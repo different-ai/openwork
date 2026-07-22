@@ -11,6 +11,19 @@ function getInstallPageUrl(payload: unknown) {
     : null;
 }
 
+function installPageUrlOnCurrentOrigin(value: string) {
+  if (typeof window === "undefined") {
+    return value;
+  }
+
+  const parsed = new URL(value);
+  if (parsed.pathname.replace(/\/+$/, "") !== "/install") {
+    return value;
+  }
+
+  return new URL(`${parsed.pathname}${parsed.search}${parsed.hash}`, window.location.origin).toString();
+}
+
 export async function createOrganizationInstallLink(organizationId: string, rotate = false) {
   const { response, payload } = await requestJson(
     `/v1/orgs/${encodeURIComponent(organizationId)}/install-links`,
@@ -27,5 +40,5 @@ export async function createOrganizationInstallLink(organizationId: string, rota
     throw new Error("The install link response was incomplete.");
   }
 
-  return installPageUrl;
+  return installPageUrlOnCurrentOrigin(installPageUrl);
 }

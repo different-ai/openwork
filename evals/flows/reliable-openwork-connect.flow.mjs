@@ -2275,7 +2275,7 @@ export default {
                 matrixRow("400 JSON-RPC malformed authenticated MCP request", malformed, "Malformed authenticated JSON-RPC returns 400 with JSON-RPC error details."),
                 matrixRow("401 missing bearer discovery", missingBearer, "Missing bearer returns WWW-Authenticate with RFC9728 resource metadata."),
                 matrixRow("401 invalid/expired bearer contract", invalidBearer, "Invalid or expired bearer returns invalid_token challenge."),
-                ...concurrent.map((entry) => matrixRow(`Concurrent refresh response ${entry.ok ? "success" : "invalid_grant"}`, entry, "The same refresh grant produces exactly one success and one invalid_grant, never a 500; the family is invalidated and reconnect is required.")),
+                ...concurrent.map((entry) => matrixRow(`Concurrent refresh response ${entry.ok ? "success" : "error"}`, entry, "Near-simultaneous refreshes during rotation grace return sibling replacements, never 4xx/5xx.")),
                 matrixRow("429 OAuth rate limit", rateLimit, "Hosted OAuth rate limiting is generated live at the discovered token endpoint with Retry-After and support reference."),
                 matrixRow("401 expired/revoked auth session", revokedSession, "A JWT whose sid row was expired in MySQL is rejected with mcp_session_revoked/invalid_token."),
               ];
@@ -2287,7 +2287,6 @@ export default {
               const errorResponses = [malformed, missingBearer, invalidBearer, ...concurrent.filter((entry) => !entry.ok), rateLimit, revokedSession];
               const successfulConcurrentRefresh = concurrent.find((entry) => entry.ok);
               const concurrentStatuses = concurrent.map((entry) => entry.status).sort((a, b) => a - b);
-              const invalidGrant = concurrent.find((entry) => !entry.ok);
               recordAssertion(
                 ctx,
                 "Every live error response has X-Request-Id matching body referenceId/reference_id, while the successful concurrent refresh is traceable and no response exposes tokens",
@@ -2319,13 +2318,10 @@ export default {
               );
               recordAssertion(
                 ctx,
-                "Concurrent refresh of the same refresh grant returns exactly one success and one invalid_grant with no 500, and the family is treated as invalidated/reconnect-required",
-                JSON.stringify(concurrentStatuses) === JSON.stringify([200, 400])
-                  && invalidGrant !== undefined
-                  && isRecord(invalidGrant.body)
-                  && readString(invalidGrant.body, "error") === "invalid_grant"
-                  && concurrent.every((entry) => entry.status !== 500),
-                { concurrent, securityConclusion: "refresh-token replay invalidates the family; do not claim the winner remains refreshable; reconnect is required" },
+                "Concurrent refresh of the same refresh grant recovers during the rotation grace window with no 4xx/5xx responses",
+                JSON.stringify(concurrentStatuses) === JSON.stringify([200, 200])
+                  && concurrent.every((entry) => entry.ok && entry.status >= 200 && entry.status < 300),
+                { concurrent, securityConclusion: "concurrent refreshes recover during grace; stale replay outside grace remains revoked by the lifecycle harness" },
               );
               recordAssertion(
                 ctx,
@@ -2387,8 +2383,9 @@ export default {
                 return {
                   href: location.href,
                   hasEndpoint: bodyText.includes(${JSON.stringify(PUBLIC_MCP_SERVER_URL)}),
-                  hasFifteenMinutes: bodyText.includes('15 minutes'),
+                  hasFortyFiveMinutes: bodyText.includes('45 minutes'),
                   hasThirtyDays: bodyText.includes('30-day inactivity window'),
+                  hasRotationOverlap: bodyText.includes('30-second rotation overlap'),
                   hasJwtAccessTokenContract: bodyText.includes('JWTs signed and validated with EdDSA')
                     && bodyText.includes('issuer is exactly')
                     && bodyText.includes('audience is exactly'),
@@ -2423,8 +2420,9 @@ export default {
                 "Within article/main, the docs page URL and endpoint, token lifetime, auth commands, reconnect commands, and org switching copy match the shipped behavior",
                 actual.href === state.docsUrl
                   && actual.hasEndpoint === true
-                  && actual.hasFifteenMinutes === true
+                  && actual.hasFortyFiveMinutes === true
                   && actual.hasThirtyDays === true
+                  && actual.hasRotationOverlap === true
                   && actual.hasJwtAccessTokenContract === true
                   && actual.hasOpaqueRefreshTokenContract === true
                   && actual.hasOpenCodeAuth === true
@@ -2451,7 +2449,7 @@ export default {
                 { statusByClient, supportRows, actual },
               );
             },
-            screenshot: { name: "frame-6-docs-contract", requireText: [PUBLIC_MCP_SERVER_URL, "JWTs", "15 minutes", "30-day inactivity window", "X-Request-Id"], rejectText: ["JWKS"] },
+            screenshot: { name: "frame-6-docs-contract", requireText: [PUBLIC_MCP_SERVER_URL, "JWTs", "45 minutes", "30-day inactivity window", "30-second rotation overlap", "X-Request-Id"], rejectText: ["JWKS"] },
           });
         } finally {
           await cleanupNativeState(ctx);

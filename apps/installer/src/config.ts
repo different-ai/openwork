@@ -20,8 +20,10 @@ export {
   installerConfigSourceLabel,
   parseInstallLinkInput,
   readSidecarConfig,
+  resolveInstallLinkConfig,
   resolveInstallerConfig,
   resolveOptionalInstallerConfig,
+  type InstallLinkConfigResult,
   type InstallerConfigResolution,
   type InstallerConfigSource,
 } from "./config-sources"

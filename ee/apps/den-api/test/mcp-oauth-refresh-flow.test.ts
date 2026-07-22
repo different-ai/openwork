@@ -207,7 +207,7 @@ test("legacy MCP registration gains offline access and rotates a thirty-day refr
   const firstRefreshToken = requiredString(tokens, "refresh_token")
   const grantedScopes = requiredString(tokens, "scope").split(" ")
   expect(firstRefreshToken).toStartWith("ow_mcp_rt_")
-  expect(isRecord(tokens) && tokens.expires_in).toBe(15 * 60)
+  expect(isRecord(tokens) && tokens.expires_in).toBe(45 * 60)
   expect(grantedScopes).toContain("offline_access")
   expect(grantedScopes).toContain("mcp:write")
 
@@ -276,22 +276,20 @@ test("legacy MCP registration gains offline access and rotates a thirty-day refr
   }))
   const concurrentResponses = await Promise.all([concurrentRefreshRequest(), concurrentRefreshRequest()])
   const concurrentStatuses = concurrentResponses.map((response) => response.status).sort()
-  expect(concurrentStatuses).toEqual([200, 400])
-  expect(concurrentStatuses).not.toContain(500)
-  const concurrentErrors = await Promise.all(concurrentResponses
-    .filter((response) => response.status !== 200)
-    .map((response) => response.json()))
-  expect(concurrentErrors).toHaveLength(1)
-  expect(isRecord(concurrentErrors[0]) && concurrentErrors[0].error).toBe("invalid_grant")
+  expect(concurrentStatuses).toEqual([200, 200])
+  const concurrentBodies: unknown[] = await Promise.all(concurrentResponses.map((response) => response.json()))
+  const concurrentRefreshTokens = concurrentBodies.map((body) => requiredString(body, "refresh_token"))
+  expect(concurrentRefreshTokens).not.toContain(nextRefreshToken)
+  expect(new Set(concurrentRefreshTokens).size).toBe(concurrentRefreshTokens.length)
 
-  const grantsAfterConcurrentReplay = await db
+  const grantsAfterConcurrentRefresh = await db
     .select({
       id: schema.OAuthRefreshTokenTable.id,
       revoked: schema.OAuthRefreshTokenTable.revoked,
     })
     .from(schema.OAuthRefreshTokenTable)
     .where(drizzle.eq(schema.OAuthRefreshTokenTable.clientId, oauthClientId))
-  expect(grantsAfterConcurrentReplay.filter((grant) => grant.revoked === null)).toEqual([])
+  expect(grantsAfterConcurrentRefresh.filter((grant) => grant.revoked === null).length).toBeGreaterThan(0)
 
   const overbroadAuthorizeUrl = new URL(authorizeUrl)
   overbroadAuthorizeUrl.searchParams.set("scope", `${scope} email`)

@@ -35,7 +35,7 @@ export type ForcedSigninPageProps = {
  * string (>= 12 chars) or an `openwork://den-auth?grant=…` deep link.
  * Matches the Solid ForcedSigninPage exactly so flows stay fungible.
  */
-function parseManualAuthInput(value: string) {
+export function parseManualAuthInput(value: string) {
   const trimmed = value.trim();
   if (!trimmed) return null;
 

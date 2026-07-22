@@ -23,8 +23,8 @@ src/
 └── react-app/
     ├── shell/                 Bootstrap, providers composition, routes (session-route,
     │                          settings-route), command palette, menus, boot/loading states
-    ├── kernel/                App-wide state + provider stack (server → global-sdk →
-    │                          global-sync → local), zustand store, platform
+    ├── kernel/                Provider stack (server → global-sdk → global-sync →
+    │                          local), platform, notifications, system state
     ├── infra/                 React-only runtime infra (query-client, provider-list-query)
     ├── design-system/         Reusable presentational primitives
     └── domains/               Feature-scoped code, one folder per product domain
@@ -73,8 +73,10 @@ src/index.react.tsx                       React entry
 
 ## State ownership
 
-- `react-app/kernel/store.ts`: app-wide Zustand store; domain selectors in
-  `kernel/selectors.ts`.
+- `react-app/kernel/server-provider-state.ts` and
+  `react-app/kernel/system-state.ts`: shell-level server, reload, and reset state.
+- `react-app/kernel/notification-store.ts`: persistent notification-center
+  Zustand store.
 - `react-app/infra/query-client.ts`: TanStack Query singleton.
   `react-app/infra/provider-list-query.ts`: shared provider-list cache used by
   kernel, shell, and connections.

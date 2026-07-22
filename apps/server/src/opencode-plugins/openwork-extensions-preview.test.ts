@@ -93,6 +93,15 @@ function startFakeOpenWorkServer() {
         });
       }
 
+      if (url.pathname === "/experimental/connect/skills") {
+        return Response.json({
+          ok: true,
+          schemaVersion: 1,
+          skills: [],
+          instruction: "<available_skills><skill><name>customer-briefing</name></skill></available_skills>",
+        });
+      }
+
       if (url.pathname === "/workspaces") {
         return Response.json({ items: [workspaceOne, workspaceTwo], workspaces: [workspaceOne, workspaceTwo] });
       }
@@ -187,8 +196,11 @@ describe("OpenWorkExtensionsPreview session tools", () => {
     }, output);
 
     const connectStateRequest = fake.requests.find((request) => request.pathname === "/experimental/connect/state");
+    const connectSkillsRequest = fake.requests.find((request) => request.pathname === "/experimental/connect/skills");
     expect(connectStateRequest?.search).toBe("?directory=%2Ftmp%2Farchive&provider=anthropic&model=claude-sonnet-4");
+    expect(connectSkillsRequest?.search).toBe("?directory=%2Ftmp%2Farchive");
     expect(output.system.join("\n")).toContain("Cloud tools are ready for this workspace and model");
+    expect(output.system.join("\n")).toContain("<name>customer-briefing</name>");
   });
 
   test("uses the factory engine client as transform steering source of truth", async () => {

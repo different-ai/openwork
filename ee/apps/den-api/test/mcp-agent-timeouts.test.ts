@@ -125,6 +125,60 @@ test("agent MCP server exposes steering instructions during initialize", async (
   await server.close()
 })
 
+test("agent MCP server exposes a standards-shaped remote skill index", () => {
+  const index = agentModule.buildAgentSkillIndex([{
+    name: "customer-briefing",
+    description: "Use for accounts & renewals",
+    capability: "skill:skill_customer_briefing",
+    location: "skill://customer-briefing/SKILL.md",
+  }])
+  expect(index).toEqual({
+    $schema: "https://schemas.agentskills.io/discovery/0.2.0/schema.json",
+    skills: [{
+      name: "customer-briefing",
+      type: "skill-md",
+      description: "Use for accounts & renewals",
+      url: "skill://customer-briefing/SKILL.md",
+      capability: "skill:skill_customer_briefing",
+    }],
+  })
+})
+
+test("agent MCP server publishes the authorized skill index as an MCP resource", async () => {
+  const server = agentModule.createAgentMcpServer()
+  agentModule.registerAgentSkillResources({
+    server,
+    organizationId: "org_test",
+    member: null,
+    skills: [{
+      name: "customer-briefing",
+      description: "Prepare customer briefings.",
+      capability: "skill:skill_customer_briefing",
+      location: "skill://customer-briefing/SKILL.md",
+    }],
+  })
+  const client = new Client({ name: "test-client", version: "1.0.0" })
+  const transports = createMemoryTransportPair()
+
+  await server.connect(transports.server)
+  await client.connect(transports.client)
+
+  const resources = await client.listResources()
+  expect(resources.resources.map((resource) => resource.uri)).toContain("skill://index.json")
+  expect(resources.resources.map((resource) => resource.uri)).toContain("skill://customer-briefing/SKILL.md")
+  const index = await client.readResource({ uri: "skill://index.json" })
+  const content = index.contents[0]
+  expect(content && "text" in content ? JSON.parse(content.text) : null).toEqual(agentModule.buildAgentSkillIndex([{
+    name: "customer-briefing",
+    description: "Prepare customer briefings.",
+    capability: "skill:skill_customer_briefing",
+    location: "skill://customer-briefing/SKILL.md",
+  }]))
+
+  await client.close()
+  await server.close()
+})
+
 test("capability search results include structured output alongside text compatibility", () => {
   const matches = [{
     name: "getOrganizations",

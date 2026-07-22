@@ -107,6 +107,16 @@ const EMPTY_TRANSCRIPT: UIMessage[] = [];
 const IDLE_STATUS: SessionStatus = { type: "idle" };
 const DEFAULT_COMPOSER_CONTROL_TEXT = "Help me outline the next OpenWork task.";
 const SESSION_SURFACE_SELECTOR = "[data-session-surface-id]";
+const MARKDOWN_PRIMITIVE_EVAL_TEXT = `# Markdown proof heading
+
+This shared renderer keeps **bold proof text**, inline \`renderMarkdownHtml\`, and [OpenWork link](https://openworklabs.com) readable in one message.
+
+\`\`\`ts
+const pipeline = "shared markdown primitive";
+console.log(pipeline);
+\`\`\`
+
+Search token: markdown-primitive-highlight.`;
 
 type SessionError = {
   message: string;
@@ -116,6 +126,27 @@ type SessionError = {
   /** For model-not-found: suggested replacements from the backend. */
   suggestions?: Array<{ providerID: string; modelID: string }>;
 };
+
+function createMarkdownPrimitiveEvalMessages(sessionId: string) {
+  const userMessageId = `${sessionId}:eval-markdown-user`;
+  const assistantMessageId = `${sessionId}:eval-markdown-assistant`;
+  const messages: UIMessage[] = [
+    {
+      id: userMessageId,
+      role: "user",
+      parts: [{ type: "text", text: "Show the Markdown primitive proof message." }],
+      metadata: { opencode: { created: Date.now() } },
+    },
+    {
+      id: assistantMessageId,
+      role: "assistant",
+      parts: [{ type: "text", text: MARKDOWN_PRIMITIVE_EVAL_TEXT }],
+      metadata: { opencode: { created: Date.now() + 1 } },
+    },
+  ];
+
+  return { messages, assistantMessageId };
+}
 
 export type SessionSurfaceProps = {
   client: OpenworkServerClient;
@@ -645,10 +676,41 @@ export function SessionSurface(props: SessionSurfaceProps) {
 
     return "ready";
   }, [liveStatus, sending]);
-  const renderedMessages = useMemo(
+  const [evalMarkdownMessages, setEvalMarkdownMessages] = useState<UIMessage[]>(EMPTY_TRANSCRIPT);
+  useEffect(() => {
+    setEvalMarkdownMessages(EMPTY_TRANSCRIPT);
+  }, [props.sessionId]);
+
+  const baseRenderedMessages = useMemo(
     () => deriveRenderedSessionMessages({ transcriptState, snapshot }),
     [snapshot, transcriptState],
   );
+  const renderedMessages = useMemo(() => {
+    if (evalMarkdownMessages.length === 0) return baseRenderedMessages;
+
+    return [...baseRenderedMessages, ...evalMarkdownMessages];
+  }, [baseRenderedMessages, evalMarkdownMessages]);
+  const seedMarkdownPrimitiveControlAction = useMemo<OpenworkControlAction | null>(() => {
+    if (!import.meta.env.DEV) return null;
+
+    return {
+      id: "eval.markdown_primitive.seed_chat",
+      label: "Seed markdown primitive chat proof",
+      description: "Dev-only eval hook that renders deterministic Markdown in the active conversation.",
+      sideEffect: "mutation",
+      disabled: !props.sessionId,
+      execute: () => {
+        const seeded = createMarkdownPrimitiveEvalMessages(props.sessionId);
+        setEvalMarkdownMessages(seeded.messages);
+        return {
+          ok: true,
+          assistantMessageId: seeded.assistantMessageId,
+          messageCount: seeded.messages.length,
+        };
+      },
+    };
+  }, [props.sessionId]);
+  useControlAction(seedMarkdownPrimitiveControlAction);
   const openTargets = useMemo(() => deriveOpenTargets(renderedMessages), [renderedMessages]);
   const openTargetsFingerprint = useMemo(
     () => openTargets.map((target) => `${target.kind}:${target.value}:${target.confidence}`).join("|"),

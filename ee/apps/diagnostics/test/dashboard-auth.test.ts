@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { NextRequest } from "next/server"
 import { POST } from "../app/api/dashboard-session/route"
 import { proxy } from "../proxy"
+import { CONNECT_DEBUG_PROXY_BROWSER_ROUTE_COOKIE } from "../src/connect-debug-proxy-browser-route"
 import {
   DASHBOARD_SESSION_COOKIE,
   DASHBOARD_SESSION_LIFETIME_SECONDS,
@@ -169,5 +170,27 @@ describe("Diagnostics dashboard authentication", () => {
 
     expect(response.status).toBe(200)
     expect(response.headers.get("cache-control")).toBe("private, no-store")
+  })
+
+  test("routes Den browser assets and API calls through the selected scenario", () => {
+    configureLocalAuthentication()
+    const route = encodeURIComponent("/via/default/local-connect-debug-proxy")
+    const response = proxy(new NextRequest("http://localhost:3010/_next/static/chunks/den.js?v=1", {
+      headers: { cookie: `${CONNECT_DEBUG_PROXY_BROWSER_ROUTE_COOKIE}=${route}` },
+    }))
+
+    expect(response.headers.get("x-middleware-rewrite")).toBe(
+      "http://localhost:3010/via/default/local-connect-debug-proxy/_next/static/chunks/den.js?v=1",
+    )
+  })
+
+  test("clears browser routing before rendering the debug control page", () => {
+    configureLocalAuthentication()
+    const response = proxy(new NextRequest("http://localhost:3010/debug-proxy/local-connect-debug-proxy", {
+      headers: { cookie: `${CONNECT_DEBUG_PROXY_BROWSER_ROUTE_COOKIE}=%2Fvia%2Fdefault%2Flocal-connect-debug-proxy` },
+    }))
+
+    expect(response.headers.get("set-cookie")).toContain(`${CONNECT_DEBUG_PROXY_BROWSER_ROUTE_COOKIE}=`)
+    expect(response.headers.get("set-cookie")).toContain("Expires=Thu, 01 Jan 1970 00:00:00 GMT")
   })
 })

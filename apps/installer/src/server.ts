@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto"
 
-import { installLinkConfig, installerConfigSourceLabel, type InstallerConfigResolution } from "./config"
+import { installerConfigSourceLabel, resolveInstallLinkConfig, type InstallerConfigResolution } from "./config"
 import { installStatus, launchInstalledApp, runInstall } from "./install"
 import { renderInstallerHtml } from "./ui-html"
 
@@ -54,11 +54,15 @@ export function startInstallerServer(initialResolution: InstallerConfigResolutio
           if (!installLink) {
             return Response.json({ error: "missing_install_link", message: "Paste an OpenWork install link." }, { status: 400 })
           }
-          const config = await installLinkConfig(installLink)
-          if (!config) {
-            return Response.json({ error: "install_link_invalid", message: "That install link could not be resolved. Check the link and try again." }, { status: 400 })
+          const result = await resolveInstallLinkConfig(installLink)
+          if (result.status !== "resolved") {
+            const expired = result.status === "not-found"
+            const message = expired
+              ? "This install link has expired or was replaced. Ask your workspace admin for a fresh one from the Members page."
+              : "Install link could not be resolved."
+            return Response.json({ error: expired ? "install_link_expired" : "install_link_invalid", message }, { status: 400 })
           }
-          resolution = { config, source: "install-link" }
+          resolution = { config: result.config, source: "install-link" }
           return Response.json({ ok: true, source: installerConfigSourceLabel(resolution.source) })
         }
         if (request.method === "POST" && url.pathname === "/api/install") {

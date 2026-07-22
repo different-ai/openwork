@@ -12,13 +12,14 @@ function seedRequiredEnv() {
 
 let installerReleaseAssetUrl: typeof import("../src/utils/installer-artifacts.js")["installerReleaseAssetUrl"]
 let desktopReleaseAssetName: typeof import("../src/utils/installer-artifacts.js")["desktopReleaseAssetName"]
+let genericInstallerArtifactName: typeof import("../src/utils/installer-artifacts.js")["genericInstallerArtifactName"]
 let resolveConfiguredInstallerArtifact: typeof import("../src/utils/installer-artifacts.js")["resolveConfiguredInstallerArtifact"]
 let envModule: typeof import("../src/env.js")
 
 beforeAll(async () => {
   seedRequiredEnv()
   envModule = await import("../src/env.js")
-  ;({ desktopReleaseAssetName, installerReleaseAssetUrl, resolveConfiguredInstallerArtifact } = await import("../src/utils/installer-artifacts.js"))
+  ;({ desktopReleaseAssetName, genericInstallerArtifactName, installerReleaseAssetUrl, resolveConfiguredInstallerArtifact } = await import("../src/utils/installer-artifacts.js"))
 })
 
 test("builds the direct standard desktop asset URL for the configured release", () => {
@@ -38,6 +39,16 @@ test.each([
   expect(desktopReleaseAssetName(platform, releaseTag)).toBe(expected)
 })
 
+test.each([
+  ["mac-arm64", "openwork-installer-mac-arm64.zip"],
+  ["mac-x64", "openwork-installer-mac-x64.zip"],
+  ["win-x64", "openwork-installer-win-x64.exe"],
+  ["linux-x64", null],
+  ["linux-arm64", null],
+])("maps %s to the generic bootstrap installer artifact", (platform, expected) => {
+  expect(genericInstallerArtifactName(platform)).toBe(expected)
+})
+
 test("resolves only a mounted standard installer and reports its size", async () => {
   const artifactsDir = mkdtempSync(path.join(os.tmpdir(), "ow-installer-artifacts-"))
   const fileName = "openwork-win-x64-9.9.9.exe"
@@ -46,9 +57,25 @@ test("resolves only a mounted standard installer and reports its size", async ()
 
   await expect(resolveConfiguredInstallerArtifact(fileName)).resolves.toEqual({
     filePath: path.join(artifactsDir, fileName),
+    fileName,
     size: 18,
   })
   await expect(resolveConfiguredInstallerArtifact("missing.exe")).resolves.toBeNull()
+
+  envModule.env.installerArtifactsDir = null
+})
+
+test("falls back from a Windows desktop asset name to the generic bootstrap installer", async () => {
+  const artifactsDir = mkdtempSync(path.join(os.tmpdir(), "ow-installer-artifacts-"))
+  const fileName = "openwork-installer-win-x64.exe"
+  writeFileSync(path.join(artifactsDir, fileName), "generic-installer")
+  envModule.env.installerArtifactsDir = artifactsDir
+
+  await expect(resolveConfiguredInstallerArtifact("openwork-win-x64-9.9.9.exe")).resolves.toEqual({
+    filePath: path.join(artifactsDir, fileName),
+    fileName,
+    size: 17,
+  })
 
   envModule.env.installerArtifactsDir = null
 })

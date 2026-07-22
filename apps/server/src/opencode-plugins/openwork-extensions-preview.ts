@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { homedir, platform } from "node:os";
 import { z } from "zod";
 import {
+  resolveOpenWorkConnectSkillInstruction,
   resolveOpenWorkExtensionDiscoveryInstruction,
   type OpenCodeContext,
   type OpenWorkEngineMcpStatusClient,
@@ -652,10 +653,15 @@ export const OpenWorkExtensionsPreview = async (factoryInput?: unknown) => {
   return {
   "experimental.chat.system.transform": async (input: unknown, output: { system: string[] }) => {
     const mergedInput = mergeTransformInputWithFactoryContext(input, factoryContext);
-    output.system.push(await resolveOpenWorkExtensionDiscoveryInstruction(mergedInput, fetch, {
-      client: engineMcpStatusClient,
-      directory: engineMcpStatusDirectory,
-    }));
+    const [extensionInstruction, skillInstruction] = await Promise.all([
+      resolveOpenWorkExtensionDiscoveryInstruction(mergedInput, fetch, {
+        client: engineMcpStatusClient,
+        directory: engineMcpStatusDirectory,
+      }),
+      resolveOpenWorkConnectSkillInstruction(mergedInput, fetch),
+    ]);
+    output.system.push(extensionInstruction);
+    if (skillInstruction) output.system.push(skillInstruction);
     output.system.push(OPENWORK_SESSION_MEMORY_INSTRUCTION);
     output.system.push(OPENWORK_BROWSER_INSTRUCTION);
     if (uiControlEnabled) output.system.push(OPENWORK_UI_CONTROL_INSTRUCTION);

@@ -1,11 +1,12 @@
 import {
+  INSTALL_SIDECAR_FILENAME,
   installConfigSchema,
 } from "@openwork/install-config"
 import { connectLinkClaimsSchema } from "@openwork/connect-link"
 import { and, eq, gt, isNull, or } from "@openwork-ee/den-db/drizzle"
 import { InstallLinkTable, OrganizationTable, RateLimitTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
-import { createReadStream } from "node:fs"
+import { createReadStream, readFileSync } from "node:fs"
 import type { MiddlewareHandler } from "hono"
 import type { Hono } from "hono"
 import { stream } from "hono/streaming"
@@ -29,9 +30,11 @@ import { organizationCapabilityKeySchema } from "../../organization-capabilities
 import { normalizeOrganizationMetadata } from "../../organization-limits.js"
 import {
   desktopReleaseAssetName,
+  genericInstallerArtifactName,
   installerReleaseAssetUrl,
   resolveConfiguredInstallerArtifact,
 } from "../../utils/installer-artifacts.js"
+import { appendStoredEntryToZip } from "../../utils/zip-append.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { ensureOrganizationAdmin, orgAccessFailureStatus } from "./shared.js"
 
@@ -295,6 +298,14 @@ function contentDisposition(filename: string) {
   return `attachment; filename="${filename.replace(/["\\]/g, "-")}"`
 }
 
+function filenameTagHost(request: Request) {
+  return new URL(resolvePublicOrigin(request, env.apiPublicUrl)).host.replace(/:/g, "_")
+}
+
+function stampedWindowsInstallerFileName(request: Request, token: string) {
+  return `OpenWork-Installer--${filenameTagHost(request)}--${token}.exe`
+}
+
 function artifactFileName(platform: InstallPlatform, releaseTag: string) {
   return desktopReleaseAssetName(platform, releaseTag)
 }
@@ -305,6 +316,20 @@ function installerContentType(platform: InstallPlatform) {
   return "application/vnd.appimage"
 }
 
+function configuredArtifactContentType(platform: InstallPlatform, fileName: string) {
+  return fileName.toLowerCase().endsWith(".zip") ? "application/zip" : installerContentType(platform)
+}
+
+function stampedZipPayload(filePath: string, config: ReturnType<typeof buildInstallConfig>) {
+  const sidecar = Buffer.from(`${JSON.stringify(config, null, 2)}\n`, "utf8")
+  return Buffer.from(appendStoredEntryToZip(readFileSync(filePath), INSTALL_SIDECAR_FILENAME, sidecar))
+}
+
+function bufferArrayBuffer(buffer: Buffer) {
+  const bytes = new Uint8Array(buffer.byteLength)
+  bytes.set(buffer)
+  return bytes.buffer
+}
 
 const setActiveOrganizationFromParam: MiddlewareHandler<{ Variables: OrgRouteVariables }> = async (c, next) => {
   const parsed = denTypeIdSchema("organization").safeParse(c.req.param("organizationId"))
@@ -516,26 +541,41 @@ export function registerOrgInstallLinkRoutes<T extends { Variables: OrgRouteVari
       }
 
       const platform = platformResult.data.platform
+      const genericFileName = genericInstallerArtifactName(platform)
+      if (genericFileName) {
+        const configuredArtifact = await installer.resolveConfiguredArtifact(genericFileName)
+        if (configuredArtifact) {
+          const responseFileName = platform === "win-x64"
+            ? stampedWindowsInstallerFileName(c.req.raw, input.token)
+            : configuredArtifact.fileName ?? genericFileName
+          if (responseFileName.toLowerCase().endsWith(".zip")) {
+            const stamped = stampedZipPayload(configuredArtifact.filePath, resolved.config)
+            c.header("content-type", "application/zip")
+            c.header("content-length", String(stamped.byteLength))
+            c.header("content-disposition", contentDisposition(responseFileName))
+            c.header("cache-control", "private, max-age=300")
+            return c.body(bufferArrayBuffer(stamped))
+          }
+
+          c.header("content-type", configuredArtifactContentType(platform, responseFileName))
+          c.header("content-length", String(configuredArtifact.size))
+          c.header("content-disposition", contentDisposition(responseFileName))
+          c.header("cache-control", "private, max-age=300")
+          return stream(c, async (body) => {
+            for await (const chunk of createReadStream(configuredArtifact.filePath)) {
+              await body.write(chunk)
+            }
+          })
+        }
+      }
+
       const fileName = artifactFileName(platform, resolved.installerReleaseTag)
       if (!fileName) {
         return c.json({ error: "invalid_request", details: [{ message: "Unsupported installer platform." }] }, 400)
       }
 
-      // Organization setup is always a separate deep-link step, so every Den
-      // deployment can return the ordinary installer without keys, wrapping,
-      // or a per-pod artifact cache.
-      const configuredArtifact = await installer.resolveConfiguredArtifact(fileName)
-      if (configuredArtifact) {
-        c.header("content-type", installerContentType(platform))
-        c.header("content-length", String(configuredArtifact.size))
-        c.header("content-disposition", contentDisposition(fileName))
-        c.header("cache-control", "private, max-age=300")
-        return stream(c, async (body) => {
-          for await (const chunk of createReadStream(configuredArtifact.filePath)) {
-            await body.write(chunk)
-          }
-        })
-      }
+      // If no generic bootstrap installer is mounted, use the normal desktop
+      // release URL without forwarding the organization token to GitHub.
       return c.redirect(installer.resolveDirectUrl(platform, resolved.installerReleaseTag), 302)
     },
   )

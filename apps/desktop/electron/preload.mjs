@@ -48,6 +48,13 @@ function installMenuOverlayDismissListeners() {
   }
 }
 
+let desktopBootstrap = null;
+try {
+  desktopBootstrap = ipcRenderer.sendSync("openwork:desktop-bootstrap-sync");
+} catch {
+  desktopBootstrap = null;
+}
+
 contextBridge.exposeInMainWorld("__OPENWORK_ELECTRON__", {
   invokeDesktop(command, ...args) {
     return ipcRenderer.invoke("openwork:desktop", command, ...args);
@@ -178,6 +185,7 @@ contextBridge.exposeInMainWorld("__OPENWORK_ELECTRON__", {
     },
   },
   meta: {
+    desktopBootstrap,
     initialDeepLinks: [],
     platform: normalizePlatform(process.platform),
     version: process.versions.electron,
