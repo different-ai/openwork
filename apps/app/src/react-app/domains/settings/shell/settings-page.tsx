@@ -214,7 +214,7 @@ export function SettingsBetaBadge({ className }: { className?: string }) {
         className,
       )}
     >
-      {t("common.alpha")}
+      {t("common.beta")}
     </span>
   );
 }
