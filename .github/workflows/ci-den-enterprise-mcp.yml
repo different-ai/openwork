@@ -1,0 +1,101 @@
+name: Den and Enterprise MCP
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/ci-den-enterprise-mcp.yml"
+      - "ee/apps/den-api/**"
+      - "ee/packages/den-db/**"
+      - "ee/packages/utils/**"
+      - "packages/connect-link/**"
+      - "packages/email/**"
+      - "packages/enterprise-mcp-client/**"
+      - "packages/install-config/**"
+      - "packages/types/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+  push:
+    branches: [dev]
+    paths:
+      - ".github/workflows/ci-den-enterprise-mcp.yml"
+      - "ee/apps/den-api/**"
+      - "ee/packages/den-db/**"
+      - "ee/packages/utils/**"
+      - "packages/connect-link/**"
+      - "packages/email/**"
+      - "packages/enterprise-mcp-client/**"
+      - "packages/install-config/**"
+      - "packages/types/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Den API and enterprise MCP client
+    runs-on: blacksmith-4vcpu-ubuntu-2204
+    services:
+      mysql:
+        image: mysql:8
+        env:
+          MYSQL_ROOT_PASSWORD: repro
+          MYSQL_DATABASE: openwork_test
+        ports:
+          - 33062:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -prepro"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
+    env:
+      DATABASE_URL: mysql://root:repro@127.0.0.1:33062/openwork_test
+      DB_MODE: mysql
+      DEN_DB_ENCRYPTION_KEY: ci-den-db-encryption-key-not-production
+      BETTER_AUTH_SECRET: ci-better-auth-secret-not-production
+      BETTER_AUTH_URL: http://127.0.0.1:8790
+      CORS_ORIGINS: http://127.0.0.1:8790
+      OPENWORK_DEV_MODE: "1"
+      PROVISIONER_MODE: stub
+      DEN_ALLOW_PRIVATE_MCP_URLS: "1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.4.0
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.9
+
+      - name: Install focused dependencies
+        run: >-
+          pnpm install --frozen-lockfile --ignore-scripts
+          --filter @openwork-ee/den-api...
+          --filter @openwork/enterprise-mcp-client...
+
+      - name: Prepare test database
+        run: pnpm --filter @openwork-ee/den-db db:push
+
+      - name: Check enterprise MCP client
+        run: |
+          pnpm --filter @openwork/enterprise-mcp-client typecheck
+          pnpm --filter @openwork/enterprise-mcp-client test
+
+      - name: Test Den API in isolated processes
+        run: pnpm --filter @openwork-ee/den-api test
