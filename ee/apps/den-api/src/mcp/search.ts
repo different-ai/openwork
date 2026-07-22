@@ -1,4 +1,5 @@
 import { getJsonRequestBodySchema, getParameters, hasJsonRequestBody, pathParameterNamesFromTemplate, type McpToolOperation } from "./catalog.js"
+import { rankCapabilities, tokenizeText, type CapabilityCandidate } from "./ranking.js"
 
 /**
  * `search_capabilities` is the "search" half of a search+execute facade laid
@@ -53,10 +54,7 @@ export function searchCapabilitySourceFilter(type?: SearchCapabilityType) {
 }
 
 export function tokenize(value: string): string[] {
-  return value
-    .toLowerCase()
-    .split(/[^a-z0-9]+/)
-    .filter((token) => token.length > 0)
+  return tokenizeText(value)
 }
 
 export function scoreText(
@@ -95,15 +93,36 @@ function summaryFor(operation: McpToolOperation): string {
   return operation.operation.summary ?? operation.operation.description ?? `${operation.method} ${operation.path}`
 }
 
-function scoreOperation(operation: McpToolOperation, queryTokens: string[]): number {
-  if (queryTokens.length === 0) {
-    return 0
-  }
+function legacyOperationScore(operation: McpToolOperation, queryTokens: string[]): number {
+  return scoreText(
+    tokenizeToolName(operation.name),
+    tokenize(summaryFor(operation)),
+    queryTokens,
+    tokenize(operation.path),
+  )
+}
 
-  const nameTokens = tokenizeToolName(operation.name)
-  const summaryTokens = tokenize(summaryFor(operation))
-  const pathTokens = tokenize(operation.path)
-  return scoreText(nameTokens, summaryTokens, queryTokens, pathTokens)
+function capabilityCandidate(operation: McpToolOperation, queryTokens: string[]): CapabilityCandidate {
+  const bodySchema = getJsonRequestBodySchema(operation.operation)
+  return {
+    match: {
+      name: operation.name,
+      method: operation.method,
+      path: operation.path,
+      score: legacyOperationScore(operation, queryTokens),
+      summary: summaryFor(operation),
+      pathParams: pathParameterNamesFromTemplate(operation.path),
+      queryParams: getParameters(operation.operation, "query").map((parameter) => parameter.name as string),
+      hasBody: hasJsonRequestBody(operation.operation),
+      ...(bodySchema === undefined ? {} : { bodySchema }),
+    },
+    searchText: {
+      name: tokenizeToolName(operation.name).join(" "),
+      summary: summaryFor(operation),
+      path: operation.path,
+      keywords: operation.operation.tags ?? [],
+    },
+  }
 }
 
 export function searchCapabilities(
@@ -112,23 +131,5 @@ export function searchCapabilities(
   limit = 5,
 ): CapabilityMatch[] {
   const queryTokens = tokenize(query)
-  const boundedLimit = Math.max(1, Math.min(20, Math.trunc(limit) || 5))
-
-  return catalog
-    .map((operation) => ({
-      name: operation.name,
-      method: operation.method,
-      path: operation.path,
-      score: scoreOperation(operation, queryTokens),
-      summary: summaryFor(operation),
-      pathParams: pathParameterNamesFromTemplate(operation.path),
-      queryParams: getParameters(operation.operation, "query").map((parameter) => parameter.name as string),
-      hasBody: hasJsonRequestBody(operation.operation),
-      ...(getJsonRequestBodySchema(operation.operation) === undefined
-        ? {}
-        : { bodySchema: getJsonRequestBodySchema(operation.operation) }),
-    }))
-    .filter((match) => match.score > 0)
-    .sort(compareCapabilityMatches)
-    .slice(0, boundedLimit)
+  return rankCapabilities(query, catalog.map((operation) => capabilityCandidate(operation, queryTokens)), { limit })
 }

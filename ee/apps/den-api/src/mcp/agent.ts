@@ -14,7 +14,7 @@ import { getMcpResourceContext, verifyMcpRequest } from "./auth.js"
 import { invokeMcpOperation, normalizeToolBody, normalizeToolRecord } from "./invoke.js"
 import { getCatalog, protectedResourceMetadata } from "./index.js"
 import { preflightMcpJsonRpcRequest } from "./json-rpc-preflight.js"
-import { compareCapabilityMatches, SEARCH_CAPABILITIES_TOOL_NAME, searchCapabilities, searchCapabilitySourceFilter, type CapabilityMatch } from "./search.js"
+import { SEARCH_CAPABILITIES_TOOL_NAME, searchCapabilities, searchCapabilitySourceFilter, type CapabilityMatch } from "./search.js"
 import { executeExternalCapability, externalMcpSearchCoverageHint, parseExternalCapabilityName, resolveMcpMemberIdentity, searchExternalCapabilities, type ExternalCapabilityExecuteResult } from "./external-capabilities.js"
 import { executeMarketplaceCapability, parseMarketplaceCapabilityName, searchMarketplaceCapabilities, type MarketplaceCapabilityObjectType } from "./marketplace-capabilities.js"
 import { executeSkillCapability, parseSkillCapabilityName, searchSkillCapabilities } from "./skill-capabilities.js"
@@ -22,6 +22,7 @@ import { resolvePublicOrigin } from "../capability-sources/generic-oauth.js"
 import { env } from "../env.js"
 import { isPlatformAdminUserId } from "../middleware/admin.js"
 import { executeAvailableAdminCapability, parseAdminCapabilityName, searchAvailableAdminCapabilities } from "./admin-capabilities.js"
+import { rerankCapabilityMatches } from "./ranking.js"
 
 export const EXECUTE_CAPABILITY_TOOL_NAME = "execute_capability"
 const searchCapabilityTypeSchema = z.enum(["all", "api", "admin", "mcp", "marketplace", "skills"])
@@ -343,11 +344,12 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
       },
       async ({ query, limit, type }) => {
         const boundedLimit = limit ?? 5
+        const sourceCandidateLimit = 20
         const sourceFilter = searchCapabilitySourceFilter(type)
         const marketplaceObjectTypes = type === "skills" ? skillMarketplaceObjectTypes : undefined
-        const restMatches = sourceFilter.api ? searchCapabilities(catalog, query, boundedLimit) : []
+        const restMatches = sourceFilter.api ? searchCapabilities(catalog, query, sourceCandidateLimit) : []
         const adminMatches = sourceFilter.admin
-          ? await searchAvailableAdminCapabilities(await resolvePlatformAdmin(), query, boundedLimit)
+          ? await searchAvailableAdminCapabilities(await resolvePlatformAdmin(), query, sourceCandidateLimit)
           : []
         // Merged in from each connected External MCP Connection's live
         // tools/list (capability-sources/external-mcp-client.ts) — a
@@ -360,7 +362,7 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
             member: memberIdentity,
             query,
             redirectUriBase: resolvePublicOrigin(c.req.raw, env.apiPublicUrl),
-            limit: boundedLimit,
+            limit: sourceCandidateLimit,
             reportCoverage: (coverage) => {
               externalCoverageHint = externalMcpSearchCoverageHint(coverage)
             },
@@ -372,7 +374,7 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
             member: memberIdentity,
             objectTypes: marketplaceObjectTypes,
             query,
-            limit: boundedLimit,
+            limit: sourceCandidateLimit,
             enabled: externalMcpConnectionsEnabled,
           })
           : []
@@ -381,12 +383,14 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
             organizationId: principal.organizationId,
             member: memberIdentity,
             query,
-            limit: boundedLimit,
+            limit: sourceCandidateLimit,
           })
           : []
-        const matches = [...restMatches, ...adminMatches, ...externalMatches, ...marketplaceMatches, ...skillMatches]
-          .sort(compareCapabilityMatches)
-          .slice(0, boundedLimit)
+        const matches = rerankCapabilityMatches(
+          query,
+          [...restMatches, ...adminMatches, ...externalMatches, ...marketplaceMatches, ...skillMatches],
+          { limit: boundedLimit },
+        )
         return capabilitySearchToolResult(matches, externalCoverageHint)
       },
     )
