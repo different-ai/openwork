@@ -1,9 +1,13 @@
 import { describe, expect, test } from "bun:test";
 
-import { readMcpSkillIndex, renderOpenWorkConnectSkillInstruction } from "./connect-skill-catalog.js";
+import {
+  type OpenWorkConnectSkill,
+  readMcpSkillIndex,
+  renderOpenWorkConnectSkillInstruction,
+} from "./connect-skill-catalog.js";
 
 describe("OpenWork Connect skill catalog", () => {
-  test("renders bounded discovery metadata and capability retrieval guidance", () => {
+  test("renders discovery metadata and capability retrieval guidance", () => {
     const instruction = renderOpenWorkConnectSkillInstruction([{
       name: "customer-briefing",
       type: "skill-md",
@@ -26,6 +30,22 @@ describe("OpenWork Connect skill catalog", () => {
 
   test("omits the prompt block when no authorized skills exist", () => {
     expect(renderOpenWorkConnectSkillInstruction([])).toBe("");
+  });
+
+  test("injects every authorized Connect skill without client-side truncation", () => {
+    const skills = Array.from({ length: 125 }, (_, index): OpenWorkConnectSkill => ({
+      name: `plugin-skill-${index}`,
+      type: "skill-md",
+      description: `Use plugin skill ${index}.`,
+      url: `skill://plugin-skill-${index}/SKILL.md`,
+      capability: `plugin:plg_test:cfg_${index}`,
+    }));
+
+    const instruction = renderOpenWorkConnectSkillInstruction(skills);
+
+    expect(instruction.match(/<skill>/g)).toHaveLength(skills.length);
+    expect(instruction).toContain("<name>plugin-skill-124</name>");
+    expect(instruction).toContain("<capability>plugin:plg_test:cfg_124</capability>");
   });
 
   test("reads the standards-shaped index through an authenticated MCP resource", async () => {
