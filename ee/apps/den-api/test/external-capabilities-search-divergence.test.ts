@@ -32,6 +32,7 @@ type FakeTool = {
 type FakeMcpServer = {
   url: string
   stop: () => void
+  requestCount?: () => number
 }
 
 type MutableSchemaMcpServer = FakeMcpServer & {
@@ -99,6 +100,7 @@ function requestIdFromPayload(payload: unknown): string | number | null {
 
 function startFakeMcpServer(name: string, tools: FakeTool[], requiredBearer?: string): FakeMcpServer {
   const app = new Hono()
+  let requestCount = 0
   app.get("/.well-known/oauth-protected-resource/mcp", (c) => {
     const origin = new URL(c.req.url).origin
     return c.json({
@@ -118,6 +120,7 @@ function startFakeMcpServer(name: string, tools: FakeTool[], requiredBearer?: st
     })
   })
   app.all("/mcp", async (c) => {
+    requestCount += 1
     if (requiredBearer && c.req.header("authorization") !== `Bearer ${requiredBearer}`) {
       const origin = new URL(c.req.url).origin
       return c.json(
@@ -146,6 +149,7 @@ function startFakeMcpServer(name: string, tools: FakeTool[], requiredBearer?: st
   return {
     url: `http://127.0.0.1:${server.port}/mcp`,
     stop: () => server.stop(true),
+    requestCount: () => requestCount,
   }
 }
 
@@ -542,6 +546,49 @@ test("control-healthy: Connections list and search_capabilities both see Slack t
   }
   if (process.env.OPENWORK_EVAL_VERBOSE === "1") {
     console.log("E2E_HEALTHY_DISCOVERY", JSON.stringify({ connectionName: "Slack", toolCount: matches.length, status: "available" }))
+  }
+})
+
+test("repeated search variants reuse the full current external tool catalog", async () => {
+  const server = startFakeMcpServer("search-cache", slackTools)
+  try {
+    if (!server.requestCount) throw new Error("Counting MCP server did not expose requestCount")
+    const seed = await seedOrganization("search-cache")
+    const connection = await createGrantedConnection(seed, {
+      name: "Slack Search Cache",
+      authType: "none",
+      credentialMode: "shared",
+      url: server.url,
+    })
+
+    const coldStartedAt = performance.now()
+    const coldMatches = await search(seed, "slack")
+    const coldMs = performance.now() - coldStartedAt
+    const requestsAfterCold = server.requestCount()
+
+    const warmStartedAt = performance.now()
+    const warmMatches = await search(seed, "slack channel message")
+    const warmMs = performance.now() - warmStartedAt
+    const requestsAfterWarm = server.requestCount()
+
+    expect(requestsAfterCold).toBeGreaterThan(0)
+    expect(requestsAfterWarm).toBe(requestsAfterCold)
+    expect(coldMatches.length).toBeGreaterThan(0)
+    expect(warmMatches.length).toBeGreaterThan(0)
+    expect(warmMatches[0]).toEqual(expect.objectContaining({
+      name: expect.stringContaining(`mcp:${connection.id}:`),
+      argumentsSchema: expect.objectContaining({ type: "object" }),
+      schemaDigest: expect.stringMatching(/^sha256:[a-f0-9]{64}$/),
+      invocation: { argumentsField: "body" },
+    }))
+    console.log("MCP_SEARCH_CACHE_BENCHMARK", JSON.stringify({
+      coldMs: Number(coldMs.toFixed(2)),
+      coldRemoteRequests: requestsAfterCold,
+      warmMs: Number(warmMs.toFixed(2)),
+      warmRemoteRequests: requestsAfterWarm - requestsAfterCold,
+    }))
+  } finally {
+    server.stop()
   }
 })
 
