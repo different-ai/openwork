@@ -89,6 +89,7 @@ export default {
             await clearDenWebSession(ctx);
             await navigateAbsolute(ctx, requireState(state.inviteUrl, "invite URL"));
             await ctx.waitForText(joinTitle(ctx), { timeoutMs: 45_000 });
+            await redactCurrentUrlParam(ctx, "invite");
           },
           assert: async () => {
             await ctx.expectText(joinTitle(ctx));
@@ -108,7 +109,9 @@ export default {
       run: async (ctx) => {
         await ctx.prove("New member joins the organization and lands on the welcome step", {
           action: async () => {
+            await restoreCurrentUrl(ctx, requireState(state.inviteUrl, "invite URL"));
             await fillPasswordAndJoin(ctx, password(ctx));
+            await redactCurrentUrlParam(ctx, "invite");
           },
           assert: async () => {
             await ctx.expectText(joinedWelcomeTitle(ctx), { timeoutMs: 45_000 });
@@ -127,16 +130,24 @@ export default {
       run: async (ctx) => {
         await ctx.prove("New member can get the desktop app installer from the welcome screen", {
           action: async () => {
+            await restoreCurrentUrl(ctx, requireState(state.inviteUrl, "invite URL"));
             const cta = await getInstallerCta(ctx);
             assertEvidence(ctx, cta.exists, "The joined welcome screen exposes a Get the desktop app CTA", cta);
             const installer = await captureInstallerTarget(ctx);
             state.installerUrl = installer.url.trim();
-            assertEvidence(ctx, state.installerUrl.length > 0, "The installer/download action produced a non-empty URL", installer);
-            ctx.output("installer-download-url", JSON.stringify({ url: state.installerUrl, source: installer.source }, null, 2));
-            ctx.log(`Installer/download URL: ${state.installerUrl}`);
+            const redactedInstaller = redactNavigationWitness(installer);
+            assertEvidence(ctx, state.installerUrl.length > 0, "The installer/download action produced a non-empty URL", redactedInstaller);
+            ctx.output("installer-download-url", JSON.stringify({ url: redactUrlParam(state.installerUrl, "token"), source: installer.source }, null, 2));
+            ctx.log(`Installer/download URL: ${redactUrlParam(state.installerUrl, "token")}`);
+            await redactCurrentUrlParam(ctx, "token");
           },
           assert: async () => {
-            assertEvidence(ctx, state.installerUrl.length > 0, "Installer/download URL captured for the desktop app", state.installerUrl);
+            assertEvidence(
+              ctx,
+              state.installerUrl.length > 0,
+              "Installer/download URL captured for the desktop app",
+              redactUrlParam(state.installerUrl, "token"),
+            );
           },
           screenshot: {
             name: "enterprise-installer-download",
@@ -274,6 +285,24 @@ async function navigateAbsolute(ctx, url) {
   await ctx.eval(`(() => { location.assign(${JSON.stringify(url)}); return true; })()`);
 }
 
+async function restoreCurrentUrl(ctx, url) {
+  await ctx.eval(`(() => {
+    history.replaceState(history.state, '', ${JSON.stringify(url)});
+    return true;
+  })()`);
+}
+
+async function redactCurrentUrlParam(ctx, param) {
+  await ctx.eval(`(() => {
+    const url = new URL(location.href);
+    if (url.searchParams.has(${JSON.stringify(param)})) {
+      url.searchParams.set(${JSON.stringify(param)}, 'REDACTED');
+      history.replaceState(history.state, '', url.pathname + url.search + url.hash);
+    }
+    return true;
+  })()`);
+}
+
 async function fillPasswordAndJoin(ctx, value) {
   const join = joinTitle(ctx);
   const welcome = joinedWelcomeTitle(ctx);
@@ -400,4 +429,24 @@ function requireState(value, label) {
 
 function redactSecret(value) {
   return value ? "[redacted]" : "";
+}
+
+function redactUrlParam(value, param) {
+  if (typeof value !== "string" || !value.trim()) return value;
+  try {
+    const url = new URL(value);
+    if (url.searchParams.has(param)) url.searchParams.set(param, "REDACTED");
+    return url.toString();
+  } catch {
+    return "[redacted URL]";
+  }
+}
+
+function redactNavigationWitness(witness) {
+  return {
+    ...witness,
+    url: redactUrlParam(witness?.url, "token"),
+    before: redactUrlParam(witness?.before, "invite"),
+    after: redactUrlParam(witness?.after, "token"),
+  };
 }
