@@ -125,6 +125,32 @@ test("agent MCP server exposes steering instructions during initialize", async (
   await server.close()
 })
 
+test("agent MCP server injects assigned remote skills during initialize", async () => {
+  const server = agentModule.createAgentMcpServer([{
+    name: "renewal-playbook-a1b2c3d4",
+    description: "Use for accounts & renewals <before calls>",
+    capability: "plugin:plg_test:cfg_test",
+    location: "skill://renewal-playbook-a1b2c3d4/SKILL.md",
+  }])
+  const client = new Client({ name: "test-client", version: "1.0.0" })
+  const transports = createMemoryTransportPair()
+
+  await server.connect(transports.server)
+  await client.connect(transports.client)
+
+  const instructions = client.getInstructions()
+  expect(instructions).toContain("<available_skills>")
+  expect(instructions).toContain("<name>renewal-playbook-a1b2c3d4</name>")
+  expect(instructions).toContain("Use for accounts &amp; renewals &lt;before calls&gt;")
+  expect(instructions).toContain("<capability>plugin:plg_test:cfg_test</capability>")
+  expect(instructions).toContain("openwork-cloud_execute_capability")
+  expect(instructions).toContain("NEVER use the native Load Skill tool")
+  expect(instructions).toContain("do not call search_capabilities first")
+
+  await client.close()
+  await server.close()
+})
+
 test("agent MCP server exposes a standards-shaped remote skill index", () => {
   const index = agentModule.buildAgentSkillIndex([{
     name: "customer-briefing",
