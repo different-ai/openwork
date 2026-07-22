@@ -9,6 +9,7 @@ import path from "node:path"
 type InstallExperienceDependencies = import("../src/routes/org/install-links.js").InstallExperienceDependencies
 
 function seedRequiredEnv() {
+  delete process.env.DEN_API_PUBLIC_URL
   process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/openwork_test"
   process.env.DEN_DB_ENCRYPTION_KEY = process.env.DEN_DB_ENCRYPTION_KEY ?? "x".repeat(32)
   process.env.BETTER_AUTH_SECRET = process.env.BETTER_AUTH_SECRET ?? "y".repeat(32)
