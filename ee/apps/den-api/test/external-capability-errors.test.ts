@@ -73,6 +73,18 @@ test("invalid_grant is classified without connector-specific special casing", ()
   expect(externalCapabilities.externalMcpAuthErrorCode(error)).toBe("invalid_grant")
 })
 
+test("provider-declared text cannot override a structured non-auth diagnostic", async () => {
+  const { ExternalMcpDiagnosticTracker } = await import("../src/capability-sources/external-mcp-diagnostics.js")
+  const providerError = new Error("Invalid refresh token")
+  Object.defineProperty(providerError, "code", { value: -32603, enumerable: true })
+  const tracker = new ExternalMcpDiagnosticTracker("req_provider_words")
+  tracker.begin("MCP_INITIALIZE")
+  const error = tracker.error(providerError)
+
+  expect(error.diagnostic.category).toBe("provider_declared_error")
+  expect(externalCapabilities.externalMcpAuthErrorCode(error)).toBeNull()
+})
+
 test("generic connector recovery routes members and organization admins without provider names", () => {
   const memberStatus = externalCapabilities.buildExternalConnectionStatus({
     connection: { id: "connection-1", name: "Knowledge Hub", authType: "oauth", credentialMode: "per_member" },

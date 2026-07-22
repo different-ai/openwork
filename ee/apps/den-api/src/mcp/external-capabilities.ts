@@ -264,6 +264,9 @@ export function externalMcpAuthErrorCode(
       || diagnosticError.diagnostic.phase === "AUTH_RESOURCE_VALIDATION"
       || diagnosticError.diagnostic.phase === "CONTINUITY_REFRESH"
     ) return "unauthorized"
+    // A structured diagnostic already identified this as a non-auth failure.
+    // Never let untrusted provider prose override that classification.
+    return null
   }
   if (INVALID_REFRESH_TOKEN_PATTERN.test(message)) return "invalid_refresh_token"
   if (INVALID_GRANT_PATTERN.test(message)) return "invalid_grant"
