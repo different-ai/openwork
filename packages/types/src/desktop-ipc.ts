@@ -444,7 +444,10 @@ export type DesktopCommandMap = {
   engineStart: { args: [projectDir: string, options?: Record<string, unknown>]; result: EngineInfo };
   prepareFreshRuntime: { args: []; result: unknown };
   runtimeBootstrap: {
-    args: [options?: { observability?: DeveloperObservabilityConfig }];
+    args: [options?: {
+      observability?: DeveloperObservabilityConfig;
+      observabilityRevision?: number;
+    }];
     result: unknown;
   };
   runtimeStatus: { args: []; result: unknown };
@@ -508,12 +511,15 @@ export type DesktopCommandMap = {
   // Openwork server sidecar
   openworkServerInfo: { args: []; result: OpenworkServerInfo };
   openworkServerRestart: {
-    args: [options?: Record<string, unknown>];
+    args: [options?: Record<string, unknown> & {
+      observability?: DeveloperObservabilityConfig;
+      observabilityRevision?: number;
+    }];
     result: OpenworkServerInfo;
   };
   setDeveloperObservabilityConfig: {
     args: [config: DeveloperObservabilityConfig];
-    result: { ok: boolean };
+    result: { ok: boolean; revision: number };
   };
 
   // Dialogs

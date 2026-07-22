@@ -213,35 +213,47 @@ export const OpenWorkObservability = async (factoryInput?: unknown) => {
   let cachedConfig: RemoteObservabilityConfig | null = null;
   let cachedConfigAt = 0;
   let configRequest: Promise<RemoteObservabilityConfig | null> | null = null;
+  let coalescibleForcedConfigRequest: Promise<RemoteObservabilityConfig | null> | null = null;
+  let configReadGeneration = 0;
   let activeEpoch: number | null = null;
   let factoryAnnouncedEpoch: number | null = null;
   let factoryAnnouncement: Promise<void> | null = null;
   let factoryRetryTimer: ReturnType<typeof setTimeout> | null = null;
   let factoryRetryDelayMs = FACTORY_RETRY_MS;
 
+  const fetchConfig = async (): Promise<RemoteObservabilityConfig | null> => {
+    const connection = serverConnection();
+    if (!connection) return null;
+    try {
+      const response = await fetch(`${connection.url}/observability/config`, {
+        headers: {
+          Authorization: `Bearer ${connection.token}`,
+          "X-OpenWork-Observability-Token": connection.observabilityToken,
+        },
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
+      if (!response.ok) return null;
+      return parseRemoteConfig(await response.json());
+    } catch {
+      return null;
+    }
+  };
+
   const readConfig = async (force = false): Promise<RemoteObservabilityConfig | null> => {
     if (!force && cachedConfig && Date.now() - cachedConfigAt < CONFIG_CACHE_MS) return cachedConfig;
-    if (configRequest) {
-      const pending = await configRequest;
-      if (!force) return pending;
-      // A forced read is an activation boundary. If another request started
-      // before the owner toggle, follow it with a new request rather than
-      // trusting its potentially stale result.
-    }
-    configRequest = (async () => {
-      const connection = serverConnection();
-      if (!connection) return null;
+    if (!force && configRequest) return configRequest;
+    if (force && coalescibleForcedConfigRequest) return coalescibleForcedConfigRequest;
+
+    // Calls made in the same turn share one boundary read. A later prompt
+    // starts a new read immediately, even if an older request is still in
+    // flight, so a pre-enable disabled response cannot hide the first prompt
+    // after enable. Only the newest scheduled response may update lineage.
+    const generation = ++configReadGeneration;
+    let request!: Promise<RemoteObservabilityConfig | null>;
+    request = (async () => {
       try {
-        const response = await fetch(`${connection.url}/observability/config`, {
-          headers: {
-            Authorization: `Bearer ${connection.token}`,
-            "X-OpenWork-Observability-Token": connection.observabilityToken,
-          },
-          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-        });
-        if (!response.ok) return null;
-        const config = parseRemoteConfig(await response.json());
-        if (config) {
+        const config = await fetchConfig();
+        if (config && generation === configReadGeneration) {
           if (config.enabled && activeEpoch !== config.collectionEpoch) {
             activeEpoch = config.collectionEpoch;
             previousBySession.clear();
@@ -250,13 +262,20 @@ export const OpenWorkObservability = async (factoryInput?: unknown) => {
           cachedConfigAt = Date.now();
         }
         return config;
-      } catch {
-        return null;
       } finally {
-        configRequest = null;
+        if (configRequest === request) configRequest = null;
       }
     })();
-    return configRequest;
+    configRequest = request;
+    if (force) {
+      coalescibleForcedConfigRequest = request;
+      queueMicrotask(() => {
+        if (coalescibleForcedConfigRequest === request) {
+          coalescibleForcedConfigRequest = null;
+        }
+      });
+    }
+    return request;
   };
 
   const post = async (config: RemoteObservabilityConfig, observation: Observation): Promise<boolean> => {

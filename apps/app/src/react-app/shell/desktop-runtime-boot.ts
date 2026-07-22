@@ -8,6 +8,7 @@ import {
   openworkServerRestart,
   resolveWorkspaceListSelectedId,
   runtimeBootstrap,
+  setDeveloperObservabilityConfig,
   workspaceBootstrap,
   workspaceSetRuntimeActive,
   workspaceSetSelected,
@@ -96,6 +97,29 @@ export function useDesktopRuntimeBoot() {
         hydrateOpenworkServerSettingsFromEnv();
         const preferredRemoteAccess = readOpenworkServerSettings().remoteAccessEnabled === true;
         const startupObservability = readStartupObservabilityConfig();
+        let startupObservabilityOptions: {
+          observability?: typeof startupObservability;
+          observabilityRevision?: number;
+        } = { observability: startupObservability };
+        if (isElectronRuntime()) {
+          try {
+            // Claim a main-process revision immediately after reading the
+            // launch snapshot. Any later Developer Mode update advances the
+            // revision and fences this snapshot across the awaited boot work.
+            const binding = await setDeveloperObservabilityConfig(startupObservability);
+            startupObservabilityOptions = binding.ok && Number.isSafeInteger(binding.revision)
+              ? {
+                  observability: startupObservability,
+                  observabilityRevision: binding.revision,
+                }
+              : {};
+          } catch (error) {
+            // Runtime startup must remain available if diagnostics cannot be
+            // bound. Omitting the unversioned snapshot avoids a stale write.
+            startupObservabilityOptions = {};
+            console.warn("[desktop-boot] observability snapshot binding failed:", error);
+          }
+        }
 
         const publishOpenworkServerInfo = (serverInfo: BootOpenworkServerInfo | null | undefined) => {
           if (!serverInfo?.baseUrl) return;
@@ -120,7 +144,7 @@ export function useDesktopRuntimeBoot() {
           setPhase("starting-engine", "Starting OpenWork server");
           const serverInfo = await openworkServerRestart({
             remoteAccessEnabled: preferredRemoteAccess,
-            observability: startupObservability,
+            ...startupObservabilityOptions,
           }).catch((error) => {
             console.warn("[desktop-boot] openworkServerRestart failed:", error);
             return null;
@@ -157,7 +181,7 @@ export function useDesktopRuntimeBoot() {
 
         if (isElectronRuntime()) {
           setPhase("starting-engine", "Starting your workspace");
-          const boot = (await runtimeBootstrap({ observability: startupObservability }).catch((error) => ({
+          const boot = (await runtimeBootstrap(startupObservabilityOptions).catch((error) => ({
             ok: false,
             error: error instanceof Error ? error.message : safeStringify(error),
           }))) as {
@@ -185,7 +209,7 @@ export function useDesktopRuntimeBoot() {
           if (preferredRemoteAccess && serverInfo?.remoteAccessEnabled !== true) {
             const restarted = await openworkServerRestart({
               remoteAccessEnabled: true,
-              observability: startupObservability,
+              ...startupObservabilityOptions,
             }).catch((error) => {
               console.warn("[desktop-boot] openworkServerRestart failed:", error);
               return null;

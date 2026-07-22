@@ -49,6 +49,22 @@ export function normalizeDesktopObservabilityConfig(input) {
   }
 }
 
+export function selectDesktopObservabilitySnapshot(
+  currentConfig,
+  currentRevision,
+  candidateConfig,
+  candidateRevision,
+) {
+  if (candidateConfig === undefined || candidateRevision !== currentRevision) {
+    return { config: currentConfig, revision: currentRevision, applied: false };
+  }
+  return {
+    config: normalizeDesktopObservabilityConfig(candidateConfig),
+    revision: currentRevision + 1,
+    applied: true,
+  };
+}
+
 function truncateOutput(value, limit = 8000) {
   const text = String(value ?? "");
   return text.length <= limit ? text : text.slice(text.length - limit);
@@ -615,6 +631,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
   let runtimeLifecycleQueue = Promise.resolve();
   let lifecycleState = "idle";
   let observabilityConfig = normalizeDesktopObservabilityConfig(undefined);
+  let observabilityConfigRevision = 0;
   /**
    * Serialize engine lifecycle operations; preserves the wrapped function's
    * return type (untyped, this collapsed runtime-manager inference to
@@ -1217,9 +1234,14 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
 
   async function startOpenworkServer(options) {
     const currentPort = openworkServerState.port;
-    if (options.observability !== undefined) {
-      observabilityConfig = normalizeDesktopObservabilityConfig(options.observability);
-    }
+    const selectedObservability = selectDesktopObservabilitySnapshot(
+      observabilityConfig,
+      observabilityConfigRevision,
+      options.observability,
+      options.observabilityRevision,
+    );
+    observabilityConfig = selectedObservability.config;
+    observabilityConfigRevision = selectedObservability.revision;
     // Stop any previously running in-process server
     if (inProcessServer) {
       stopObservabilityHeartbeat();
@@ -1538,6 +1560,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
         manageOpencode: options.manageOpencode === true,
         opencodeBinPath: options.opencodeBinPath,
         observability: options.observability,
+        observabilityRevision: options.observabilityRevision,
       });
     } catch (error) {
       appendOutput(engineState, "lastStderr", `OpenWork server: ${error instanceof Error ? error.message : String(error)}\n`);
@@ -1597,6 +1620,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
         manageOpencode: true,
         opencodeBinPath: options.opencodeBinPath,
         observability: options.observability,
+        observabilityRevision: options.observabilityRevision,
       });
 
       lifecycleState = "healthy";
@@ -1661,10 +1685,12 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
       manageOpencode: shouldManageOpencode,
       opencodeBinPath: engineState.opencodeBinPath ?? openworkServerState.managedOpencodeBinPath,
       observability: options.observability,
+      observabilityRevision: options.observabilityRevision,
     });
   }
 
   async function setDeveloperObservabilityConfig(input) {
+    observabilityConfigRevision += 1;
     observabilityConfig = normalizeDesktopObservabilityConfig(input);
     try {
       inProcessServer?.configureObservability?.(observabilityConfig);
@@ -1672,7 +1698,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     } catch {
       // The HTTP owner path remains a retrying fallback in the renderer.
     }
-    return { ok: true };
+    return { ok: true, revision: observabilityConfigRevision };
   }
 
   async function orchestratorStatus() {
@@ -2072,7 +2098,15 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
   }
 
   return {
-    engineStart: (projectDir, options) => withRuntimeLifecycle(() => engineStart(projectDir, options)),
+    engineStart: (projectDir, options = {}) => {
+      const observabilityRevision = Number.isSafeInteger(options.observabilityRevision)
+        ? options.observabilityRevision
+        : observabilityConfigRevision;
+      return withRuntimeLifecycle(() => engineStart(projectDir, {
+        ...options,
+        observabilityRevision,
+      }));
+    },
     engineStop: () => withRuntimeLifecycle(() => engineStop()),
     engineRestart: (options) => withRuntimeLifecycle(() => engineRestart(options)),
     prepareFreshRuntime: () => withRuntimeLifecycle(() => prepareFreshRuntime()),
@@ -2082,7 +2116,16 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     engineDoctor,
     engineInstall,
     openworkServerInfo,
-    openworkServerRestart: (options) => withRuntimeLifecycle(() => openworkServerRestart(options)),
+    openworkServerRestart: (options = {}) => {
+      const observabilityRevision = Number.isSafeInteger(options.observabilityRevision)
+        ? options.observabilityRevision
+        : observabilityConfigRevision;
+      return withRuntimeLifecycle(() => openworkServerRestart({
+        ...options,
+        observabilityRevision,
+      }));
+    },
+    getDeveloperObservabilityRevision: () => observabilityConfigRevision,
     setDeveloperObservabilityConfig,
     orchestratorStatus,
     orchestratorWorkspaceActivate,

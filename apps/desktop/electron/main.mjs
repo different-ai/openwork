@@ -1163,6 +1163,12 @@ function assertOpenworkServerReady(info) {
 }
 
 async function bootRuntimeForSelectedWorkspace(options = {}) {
+  // The renderer claims this coordinate immediately after reading the launch
+  // snapshot. Preserve it across every awaited boot step so a newer Developer
+  // Mode IPC command fences the stale snapshot.
+  const observabilityRevision = Number.isSafeInteger(options.observabilityRevision)
+    ? options.observabilityRevision
+    : runtimeManager.getDeveloperObservabilityRevision();
   const list = await workspaceStore.readWorkspaceState();
   const selectedId = list.selectedId || list.activeId || list.workspaces[0]?.id || "";
   const workspace = selectedId
@@ -1189,6 +1195,7 @@ async function bootRuntimeForSelectedWorkspace(options = {}) {
       runtime: "direct",
       workspacePaths,
       observability: options.observability,
+      observabilityRevision,
     });
   } catch (error) {
     const fallback = list.workspaces.find((entry) => {
@@ -1210,6 +1217,7 @@ async function bootRuntimeForSelectedWorkspace(options = {}) {
       runtime: "direct",
       workspacePaths: fallbackWorkspacePaths,
       observability: options.observability,
+      observabilityRevision,
     });
     bootWorkspace = fallback;
     bootWorkspaceRoot = fallbackRoot;

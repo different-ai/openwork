@@ -250,6 +250,116 @@ describe("OpenWork observability plugin", () => {
     expect(promptEvents.every((event) => event.cause === undefined)).toBe(true);
   });
 
+  test("coalesces same-turn prompt reads without allowing older responses to regress epochs", async () => {
+    process.env.OPENWORK_SERVER_URL = "http://127.0.0.1:8787";
+    process.env.OPENWORK_SERVER_TOKEN = "collaborator";
+    process.env.OPENWORK_OBSERVABILITY_TOKEN = "observer-only";
+    let activeReads = 0;
+    let maxActiveReads = 0;
+    let readCount = 0;
+    const promptEvents: Array<Record<string, unknown>> = [];
+    globalThis.fetch = Object.assign(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if ((init?.method ?? "GET") === "GET") {
+        activeReads += 1;
+        maxActiveReads = Math.max(maxActiveReads, activeReads);
+        readCount += 1;
+        const readNumber = readCount;
+        await Bun.sleep(readNumber === 1 ? 20 : 2);
+        activeReads -= 1;
+        return Response.json({
+          config: { enabled: true, scopes: ["lifecycle", "prompt"], content: "hash" },
+          collectionEpoch: readNumber === 1 ? 1 : 2,
+        });
+      }
+      const body = JSON.parse(String(init?.body)) as { events?: Array<Record<string, unknown>> };
+      for (const event of body.events ?? []) {
+        if (event.action === "system-prompt.snapshot") promptEvents.push(event);
+      }
+      return Response.json({ ok: true, accepted: 1, rejected: 0 });
+    }, { preconnect: originalFetch.preconnect });
+
+    const hooks = await OpenWorkObservability();
+    const transform = hooks["experimental.chat.system.transform"];
+    await Promise.all(Array.from({ length: 10 }, (_, index) => (
+      transform(
+        { context: { sessionID: `concurrent-${index}` } },
+        { system: [`prompt ${index}`] },
+      )
+    )));
+    await Bun.sleep(25);
+
+    expect(maxActiveReads).toBe(2);
+    expect(readCount).toBe(2);
+    expect(promptEvents).toHaveLength(10);
+    expect(promptEvents.every((event) => (
+      (event.data as { collectionEpoch?: number }).collectionEpoch === 2
+    ))).toBe(true);
+  });
+
+  test("does not share a pre-enable disabled read with the first post-enable prompt", async () => {
+    process.env.OPENWORK_SERVER_URL = "http://127.0.0.1:8787";
+    process.env.OPENWORK_SERVER_TOKEN = "collaborator";
+    process.env.OPENWORK_OBSERVABILITY_TOKEN = "observer-only";
+    let enabled = false;
+    let collectionEpoch = 0;
+    let blockNextRead = false;
+    let releaseBlockedRead: () => void = () => undefined;
+    let markBlockedReadStarted: () => void = () => undefined;
+    const blockedReadStarted = new Promise<void>((resolve) => {
+      markBlockedReadStarted = resolve;
+    });
+    const blockedRead = new Promise<void>((resolve) => {
+      releaseBlockedRead = resolve;
+    });
+    const promptEvents: Array<Record<string, unknown>> = [];
+    globalThis.fetch = Object.assign(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if ((init?.method ?? "GET") === "GET") {
+        const snapshot = { enabled, collectionEpoch };
+        if (blockNextRead) {
+          blockNextRead = false;
+          markBlockedReadStarted();
+          await blockedRead;
+        }
+        return Response.json({
+          config: {
+            enabled: snapshot.enabled,
+            scopes: ["lifecycle", "prompt"],
+            content: "hash",
+          },
+          collectionEpoch: snapshot.collectionEpoch,
+        });
+      }
+      const body = JSON.parse(String(init?.body)) as { events?: Array<Record<string, unknown>> };
+      for (const event of body.events ?? []) {
+        if (event.action === "system-prompt.snapshot") promptEvents.push(event);
+      }
+      return Response.json({ ok: true, accepted: 1, rejected: 0 });
+    }, { preconnect: originalFetch.preconnect });
+
+    const hooks = await OpenWorkObservability();
+    await hooks.event();
+    const transform = hooks["experimental.chat.system.transform"];
+    blockNextRead = true;
+    const beforeEnable = transform(
+      { context: { sessionID: "before-enable" } },
+      { system: ["before"] },
+    );
+    await blockedReadStarted;
+
+    enabled = true;
+    collectionEpoch = 1;
+    const afterEnable = transform(
+      { context: { sessionID: "after-enable" } },
+      { system: ["after"] },
+    );
+    releaseBlockedRead();
+    await Promise.all([beforeEnable, afterEnable]);
+
+    expect(promptEvents).toHaveLength(1);
+    expect(promptEvents[0]?.context).toMatchObject({ sessionId: "after-enable" });
+    expect(promptEvents[0]?.data).toMatchObject({ collectionEpoch: 1, status: "initial" });
+  });
+
   test("re-announces the factory and resets prompt lineage for each collection epoch", async () => {
     process.env.OPENWORK_SERVER_URL = "http://127.0.0.1:8787";
     process.env.OPENWORK_SERVER_TOKEN = "collaborator";

@@ -111,6 +111,7 @@ export function registerObservabilityRoutes(options: RegisterObservabilityRoutes
     return noStore(jsonResponse({
       config: observability.getConfig(),
       collectionEpoch: observability.getCollectionEpoch(),
+      configRevision: observability.getConfigRevision(),
     }));
   });
 
@@ -120,7 +121,33 @@ export function registerObservabilityRoutes(options: RegisterObservabilityRoutes
     if (!isRecord(body)) {
       throw new ApiError(400, "invalid_observability_config", "Observability config must be an object");
     }
-    return noStore(jsonResponse({ config: observability.configure(body) }));
+    const expectedRevision = body.expectedRevision;
+    const configInput = body.config;
+    if (
+      typeof expectedRevision !== "number"
+      || !Number.isSafeInteger(expectedRevision)
+      || expectedRevision < 0
+      || !isRecord(configInput)
+    ) {
+      throw new ApiError(
+        400,
+        "invalid_observability_config_write",
+        "Observability config writes require a non-negative expectedRevision and config object",
+      );
+    }
+    if (expectedRevision !== observability.getConfigRevision()) {
+      throw new ApiError(
+        409,
+        "observability_config_conflict",
+        "Observability configuration changed; refresh before retrying",
+      );
+    }
+    const config = observability.configure(configInput);
+    return noStore(jsonResponse({
+      config,
+      collectionEpoch: observability.getCollectionEpoch(),
+      configRevision: observability.getConfigRevision(),
+    }));
   });
 
   addRoute(routes, "GET", "/observability/events", "client", async (ctx) => {
@@ -132,6 +159,7 @@ export function registerObservabilityRoutes(options: RegisterObservabilityRoutes
     return noStore(jsonResponse({
       config: observability.getConfig(),
       collectionEpoch: observability.getCollectionEpoch(),
+      configRevision: observability.getConfigRevision(),
       events: observability.list({ after, limit }),
       lastSequence: stats.lastSequence,
       droppedCount: stats.droppedCount,
@@ -148,13 +176,19 @@ export function registerObservabilityRoutes(options: RegisterObservabilityRoutes
       : isRecord(body) && Array.isArray(body.events)
         ? body.events
         : [body];
+    const batchCollectionEpoch = isRecord(body)
+      && typeof body.collectionEpoch === "number"
+      && Number.isSafeInteger(body.collectionEpoch)
+      && body.collectionEpoch >= 0
+      ? body.collectionEpoch
+      : undefined;
     if (candidates.length > 250) {
       throw new ApiError(413, "too_many_observability_events", "At most 250 observability events can be ingested at once");
     }
     let accepted = 0;
     let rejected = 0;
     for (const candidate of candidates) {
-      if (observability.recordUnknown(candidate)) accepted += 1;
+      if (observability.recordUnknown(candidate, { collectionEpoch: batchCollectionEpoch })) accepted += 1;
       else rejected += 1;
     }
     return noStore(jsonResponse({ ok: true, accepted, rejected }));
@@ -163,6 +197,10 @@ export function registerObservabilityRoutes(options: RegisterObservabilityRoutes
   addRoute(routes, "DELETE", "/observability/events", "client", async (ctx) => {
     requireObservabilityOwner(ctx);
     observability.clear();
-    return noStore(jsonResponse({ ok: true }));
+    return noStore(jsonResponse({
+      ok: true,
+      collectionEpoch: observability.getCollectionEpoch(),
+      configRevision: observability.getConfigRevision(),
+    }));
   });
 }

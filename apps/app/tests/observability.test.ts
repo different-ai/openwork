@@ -13,6 +13,7 @@ import {
 import {
   applyDefensiveContentPolicy,
   OBSERVABILITY_PREFERENCES_STORAGE_KEY,
+  parseObservabilityControlSnapshot,
   persistObservabilityPreferences,
   readObservabilityPreferences,
   retainNewestObservabilityEvents,
@@ -31,6 +32,16 @@ function memoryStorage(initial: Record<string, string> = {}) {
 }
 
 describe("observability preferences", () => {
+  test("requires monotonic control coordinates before activating producers", () => {
+    expect(parseObservabilityControlSnapshot({
+      collectionEpoch: 3,
+      configRevision: 7,
+    })).toEqual({ collectionEpoch: 3, configRevision: 7 });
+    expect(parseObservabilityControlSnapshot({ collectionEpoch: 3 })).toBeNull();
+    expect(parseObservabilityControlSnapshot({ collectionEpoch: -1, configRevision: 7 })).toBeNull();
+    expect(parseObservabilityControlSnapshot({ collectionEpoch: 3, configRevision: 1.5 })).toBeNull();
+  });
+
   test("defaults to metadata and never persists the enabled lifecycle flag", () => {
     const storage = memoryStorage();
     const initial = readObservabilityPreferences(storage);

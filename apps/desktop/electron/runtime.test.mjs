@@ -12,6 +12,7 @@ import {
   prioritizeWorkspacePaths,
   resolveOpenworkServerConfigPath,
   seedWorkspacePathsForEmbeddedServer,
+  selectDesktopObservabilitySnapshot,
   selectStickyOpenworkPortWorkspace,
   snapshotEngineState,
 } from "./runtime.mjs";
@@ -35,6 +36,26 @@ describe("normalizeDesktopObservabilityConfig", () => {
       content: "hash",
       maxEvents: 321,
     });
+  });
+
+  it("rejects a queued startup snapshot after a newer IPC revision", () => {
+    const current = { enabled: false, content: "metadata" };
+    assert.deepEqual(
+      selectDesktopObservabilitySnapshot(current, 0, { enabled: true }, 0),
+      { config: { enabled: true }, revision: 1, applied: true },
+    );
+    assert.deepEqual(
+      selectDesktopObservabilitySnapshot(current, 1, { enabled: true }, 0),
+      { config: current, revision: 1, applied: false },
+    );
+    assert.deepEqual(
+      selectDesktopObservabilitySnapshot(current, 4, { enabled: true }, 3),
+      { config: current, revision: 4, applied: false },
+    );
+    assert.deepEqual(
+      selectDesktopObservabilitySnapshot(current, 4, { enabled: true }, 4),
+      { config: { enabled: true }, revision: 5, applied: true },
+    );
   });
 });
 

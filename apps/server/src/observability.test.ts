@@ -14,6 +14,7 @@ describe("server observability controller", () => {
     const controller = createServerObservabilityController();
     expect(controller.getConfig().enabled).toBe(false);
     expect(controller.getCollectionEpoch()).toBe(0);
+    expect(controller.getConfigRevision()).toBe(0);
     expect(controller.record({
       level: "info",
       scope: "process",
@@ -23,17 +24,21 @@ describe("server observability controller", () => {
 
     controller.configure({ enabled: true, level: "debug", content: "hash" });
     expect(controller.getCollectionEpoch()).toBe(1);
+    expect(controller.getConfigRevision()).toBe(1);
     controller.configure({ scopes: ["lifecycle", "prompt"] });
+    expect(controller.getConfigRevision()).toBe(2);
     expect(controller.list().map((event) => event.action)).toEqual([
       "observability.enabled",
       "observability.config.changed",
     ]);
 
     controller.configure({ enabled: false });
+    expect(controller.getConfigRevision()).toBe(3);
     expect(controller.getConfig().enabled).toBe(false);
     expect(controller.list()).toEqual([]);
     controller.configure({ enabled: true });
     expect(controller.getCollectionEpoch()).toBe(2);
+    expect(controller.getConfigRevision()).toBe(4);
   });
 
   test("accepts only normalized event envelopes and never exposes its token in snapshots", () => {
@@ -109,6 +114,26 @@ describe("server observability controller", () => {
     expect(controller.getCollectionEpoch()).toBe(2);
     expect(controller.recordUnknown(observation(1))).toBeUndefined();
     expect(controller.recordUnknown(observation(2))?.data).toMatchObject({ collectionEpoch: 2 });
+  });
+
+  test("clear fences in-flight producer batches and conditional config writes", () => {
+    const controller = createServerObservabilityController({ enabled: true });
+    const rendererObservation = {
+      level: "info",
+      scope: "event",
+      action: "sse.event",
+      source: { runtime: "renderer", component: "session-sync" },
+      data: { type: "session.updated" },
+    };
+
+    expect(controller.recordUnknown(rendererObservation, { collectionEpoch: 1 })).toBeDefined();
+    controller.clear();
+    expect(controller.getCollectionEpoch()).toBe(2);
+    expect(controller.getConfigRevision()).toBe(1);
+    expect(controller.list()).toEqual([]);
+    expect(controller.recordUnknown(rendererObservation, { collectionEpoch: 1 })).toBeUndefined();
+    expect(controller.recordUnknown(rendererObservation)).toBeUndefined();
+    expect(controller.recordUnknown(rendererObservation, { collectionEpoch: 2 })).toBeDefined();
   });
 
   test("supports a short lease override and expires collection without an owner heartbeat", async () => {

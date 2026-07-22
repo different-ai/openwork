@@ -23,11 +23,12 @@ export interface ServerObservabilityController {
   configure(input: unknown): ObservabilityConfig;
   getConfig(): ObservabilityConfig;
   record(input: ObservabilityEventInput): ObservabilityEvent | undefined;
-  recordUnknown(input: unknown): ObservabilityEvent | undefined;
+  recordUnknown(input: unknown, options?: { collectionEpoch?: number }): ObservabilityEvent | undefined;
   list(options?: { after?: number; limit?: number }): ObservabilityEvent[];
   clear(): void;
   heartbeat(): void;
   getCollectionEpoch(): number;
+  getConfigRevision(): number;
   stats(): ObservabilityStats;
   snapshot(): ObservabilitySnapshot;
   getInternalToken(): string;
@@ -280,6 +281,7 @@ export function createServerObservabilityController(
   const journal: ObservabilityJournal = createObservabilityJournal(initialConfig);
   const internalToken = randomBytes(32).toString("hex");
   let collectionEpoch = journal.getConfig().enabled ? 1 : 0;
+  let configRevision = 0;
   // This lease is a crash failsafe, not a renderer-liveness signal. Keep the
   // default long enough to survive background throttling, suspend/resume, and
   // debugger pauses while still eventually disabling an abandoned collector.
@@ -290,6 +292,7 @@ export function createServerObservabilityController(
   const expireLease = () => {
     if (!journal.getConfig().enabled || Date.now() < leaseExpiresAt) return;
     journal.configure({ enabled: false });
+    configRevision += 1;
     leaseExpiresAt = 0;
     leaseTimer = null;
   };
@@ -314,6 +317,10 @@ export function createServerObservabilityController(
       }
 
       const next = journal.configure(input);
+      // Every owner command is a write fence, including a no-op disable. This
+      // lets conditional HTTP writes reject an older enable that was already
+      // in flight when the desktop owner switched Developer Mode off.
+      configRevision += 1;
       if (next.enabled) renewLease();
       else if (leaseTimer) {
         clearTimeout(leaseTimer);
@@ -348,15 +355,18 @@ export function createServerObservabilityController(
       return journal.record(input);
     },
 
-    recordUnknown(input) {
+    recordUnknown(input, options = {}) {
       expireLease();
       const normalized = normalizeObservabilityEventInput(input, journal.getConfig().content);
-      if (normalized?.source.runtime === "opencode") {
-        const epoch = isRecord(normalized.data)
-          ? nonNegativeInteger(normalized.data.collectionEpoch)
-          : undefined;
-        // A plugin request can race an off/on transition. Never let a delayed
-        // observation from an earlier collection window enter the new journal.
+      if (normalized?.source.runtime === "opencode" || normalized?.source.runtime === "renderer") {
+        const epoch = normalized.source.runtime === "opencode"
+          ? isRecord(normalized.data)
+            ? nonNegativeInteger(normalized.data.collectionEpoch)
+            : undefined
+          : nonNegativeInteger(options.collectionEpoch);
+        // Producers can race an off/on or clear transition. Never let a
+        // delayed observation from an earlier collection window enter the new
+        // journal, even if its request was dispatched while collection was on.
         if (epoch !== collectionEpoch) return undefined;
       }
       return normalized ? journal.record(normalized) : undefined;
@@ -369,6 +379,10 @@ export function createServerObservabilityController(
 
     clear() {
       journal.clear();
+      // Clear is a privacy boundary: invalidate every producer batch and
+      // conditional config write that was dispatched before the clear.
+      if (journal.getConfig().enabled) collectionEpoch += 1;
+      configRevision += 1;
     },
 
     heartbeat() {
@@ -378,6 +392,10 @@ export function createServerObservabilityController(
 
     getCollectionEpoch() {
       return collectionEpoch;
+    },
+
+    getConfigRevision() {
+      return configRevision;
     },
 
     stats() {

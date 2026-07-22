@@ -248,6 +248,34 @@ async function parseJson(response: Response): Promise<Record<string, unknown>> {
   }
 }
 
+class ObservabilityRequestError extends Error {
+  constructor(readonly status: number) {
+    super(`Observability request failed (${status})`);
+    this.name = "ObservabilityRequestError";
+  }
+}
+
+type ObservabilityControlSnapshot = {
+  collectionEpoch: number;
+  configRevision: number;
+};
+
+export function parseObservabilityControlSnapshot(
+  input: Record<string, unknown>,
+): ObservabilityControlSnapshot | null {
+  const collectionEpoch = input.collectionEpoch;
+  const configRevision = input.configRevision;
+  if (
+    typeof collectionEpoch !== "number"
+    || !Number.isSafeInteger(collectionEpoch)
+    || collectionEpoch < 0
+    || typeof configRevision !== "number"
+    || !Number.isSafeInteger(configRevision)
+    || configRevision < 0
+  ) return null;
+  return { collectionEpoch, configRevision };
+}
+
 export function ObservabilityProvider({ children }: { children: ReactNode }) {
   const developerMode = useDeveloperMode();
   const [preferences, setPreferences] = useState<ObservabilityPreferences>(() =>
@@ -271,6 +299,12 @@ export function ObservabilityProvider({ children }: { children: ReactNode }) {
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const afterSequenceRef = useRef(0);
   const connectionRef = useRef<{ baseUrl: string; token: string } | null>(null);
+  const effectGenerationRef = useRef(0);
+  const journalFenceRef = useRef(0);
+  const [activationVersion, restartObservationEffect] = useReducer(
+    (value: number) => value + 1,
+    0,
+  );
 
   useEffect(() => {
     if (!config.enabled) {
@@ -289,13 +323,6 @@ export function ObservabilityProvider({ children }: { children: ReactNode }) {
   }, [config.content, config.enabled, config.maxEvents]);
   const lastConnectionRef = useRef<{ baseUrl: string; token: string } | null>(null);
 
-  useEffect(() => {
-    if (!isElectronRuntime()) return;
-    // Keep Electron's restart-time snapshot aligned with the canonical
-    // renderer preference. The initial boot passes the same config directly.
-    void setDeveloperObservabilityConfig(config).catch(() => undefined);
-  }, [config]);
-
   const updateConfig = useCallback((patch: Partial<ObservabilityPreferences>) => {
     setPreferences((current) => {
       const normalized = normalizeObservabilityConfig({ ...current, ...patch, enabled: false });
@@ -313,6 +340,7 @@ export function ObservabilityProvider({ children }: { children: ReactNode }) {
     let connection = connectionRef.current;
     if (!connection) {
       const resolved = await resolveOpenworkConnection();
+      signal?.throwIfAborted();
       if (!resolved.normalizedBaseUrl || !resolved.resolvedToken) {
         throw new Error("OpenWork server connection is unavailable");
       }
@@ -328,6 +356,7 @@ export function ObservabilityProvider({ children }: { children: ReactNode }) {
       lastConnectionRef.current = connection;
       connectionRef.current = connection;
     }
+    signal?.throwIfAborted();
     const response = await fetch(`${connection.baseUrl}${path}`, {
       ...init,
       signal,
@@ -337,7 +366,7 @@ export function ObservabilityProvider({ children }: { children: ReactNode }) {
         ...init.headers,
       },
     });
-    if (!response.ok) throw new Error(`Observability request failed (${response.status})`);
+    if (!response.ok) throw new ObservabilityRequestError(response.status);
     return response;
   }, []);
 
@@ -347,77 +376,101 @@ export function ObservabilityProvider({ children }: { children: ReactNode }) {
     setRendererDroppedCount(0);
     resetRendererObservationBridgeDroppedCount();
     if (!configRef.current.enabled) return;
+    // Invalidate reads and producer batches before awaiting the server. A late
+    // response from the prior generation must not refill the local journal.
+    journalFenceRef.current += 1;
+    effectGenerationRef.current += 1;
+    configureRendererObservationBridge({ enabled: false });
+    setStatusMessage(null);
     try {
-      await request("/observability/events", { method: "DELETE" });
+      const response = await request("/observability/events", { method: "DELETE" });
+      const body = await parseJson(response);
+      if (!parseObservabilityControlSnapshot(body)) {
+        throw new Error("Observability clear response is invalid");
+      }
+      restartObservationEffect();
     } catch (error) {
+      // Stay fenced on failure. A new Clear attempt can retry, but collection
+      // must not silently resume while the server may still retain old data.
+      setStatus("error");
       setStatusMessage(error instanceof Error ? error.message : String(error));
     }
   }, [request]);
 
   useEffect(() => {
+    const effectGeneration = effectGenerationRef.current + 1;
+    effectGenerationRef.current = effectGeneration;
     let active = true;
     const controller = new AbortController();
     let pollTimer: ReturnType<typeof setTimeout> | null = null;
     let disableRetryTimer: ReturnType<typeof setTimeout> | null = null;
+    let activeCollectionEpoch: number | null = null;
     connectionRef.current = null;
+    configureRendererObservationBridge({ enabled: false });
+
+    const isCurrent = () => active
+      && !controller.signal.aborted
+      && effectGenerationRef.current === effectGeneration
+      && configRef.current === config;
+
+    const readControlSnapshot = async (): Promise<ObservabilityControlSnapshot> => {
+      const response = await request("/observability/config", {}, controller.signal);
+      const body = await parseJson(response);
+      const snapshot = parseObservabilityControlSnapshot(body);
+      if (!snapshot) throw new Error("Observability control response is invalid");
+      return snapshot;
+    };
+
+    const writeConfig = async (
+      expectedRevision: number,
+      nextConfig: Partial<ObservabilityConfig>,
+    ): Promise<ObservabilityControlSnapshot> => {
+      const response = await request("/observability/config", {
+        method: "PUT",
+        body: JSON.stringify({ expectedRevision, config: nextConfig }),
+      }, controller.signal);
+      const body = await parseJson(response);
+      const snapshot = parseObservabilityControlSnapshot(body);
+      if (!snapshot) throw new Error("Observability config response is invalid");
+      return snapshot;
+    };
 
     const pushDisabled = async () => {
+      if (!isCurrent()) return;
       let retry = true;
       try {
-        const resolved = await resolveOpenworkConnection();
-        if (!resolved.normalizedBaseUrl || !resolved.resolvedToken) {
-          throw new Error("OpenWork server connection is unavailable");
+        if (isElectronRuntime()) {
+          await setDeveloperObservabilityConfig({ ...config, enabled: false });
+          if (!isCurrent()) return;
         }
-        const baseUrl = resolved.normalizedBaseUrl.replace(/\/+$/, "");
-        const currentResponse = await fetch(`${baseUrl}/observability/config`, {
-          headers: { Authorization: `Bearer ${resolved.resolvedToken}` },
-          signal: controller.signal,
-        });
-        if (currentResponse.status === 401 || currentResponse.status === 403) {
-          retry = false;
-          return;
-        }
-        if (!currentResponse.ok) {
-          throw new Error(`Observability status failed (${currentResponse.status})`);
-        }
-        const currentBody = await parseJson(currentResponse);
-        const currentConfig = currentBody.config;
+        const snapshot = await readControlSnapshot();
+        if (!isCurrent()) return;
+        await writeConfig(snapshot.configRevision, { enabled: false });
+      } catch (error) {
         if (
-          currentConfig
-          && typeof currentConfig === "object"
-          && (currentConfig as { enabled?: unknown }).enabled === false
-        ) return;
-        const response = await fetch(`${baseUrl}/observability/config`, {
-          method: "PUT",
-          headers: {
-            Authorization: `Bearer ${resolved.resolvedToken}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ enabled: false }),
-          signal: controller.signal,
-        });
-        if (response.status === 401 || response.status === 403) {
+          error instanceof ObservabilityRequestError
+          && (error.status === 401 || error.status === 403)
+        ) {
           retry = false;
-          return;
         }
-        if (!response.ok) throw new Error(`Observability disable failed (${response.status})`);
-      } catch {
         // Disabling is a privacy boundary, not a one-shot hint. Keep retrying
         // while this provider remains off so a transient restart or network
         // failure cannot leave the server collecting behind an "off" UI.
-        if (retry && active && !controller.signal.aborted) {
+        if (retry && isCurrent()) {
           disableRetryTimer = setTimeout(() => void pushDisabled(), 1_000);
         }
       }
     };
 
     if (!config.enabled) {
-      configureRendererObservationBridge({ enabled: false });
       setStatus("disabled");
       setStatusMessage(null);
       void pushDisabled();
       return () => {
         active = false;
+        if (effectGenerationRef.current === effectGeneration) {
+          effectGenerationRef.current += 1;
+        }
         controller.abort();
         if (disableRetryTimer) clearTimeout(disableRetryTimer);
       };
@@ -427,6 +480,9 @@ export function ObservabilityProvider({ children }: { children: ReactNode }) {
     setStatusMessage(null);
 
     const postRendererEvents = async (batch: ObservabilityEventInput[]) => {
+      if (!isCurrent() || activeCollectionEpoch === null) {
+        throw new Error("Observability collection generation changed");
+      }
       const activeConfig = configRef.current;
       const levelPriority = { debug: 10, info: 20, warn: 30, error: 40 } as const;
       const filtered = batch
@@ -440,21 +496,21 @@ export function ObservabilityProvider({ children }: { children: ReactNode }) {
           return { ...event, content };
         });
       if (filtered.length === 0) return;
-      await request("/observability/events", {
+      const response = await request("/observability/events", {
         method: "POST",
-        body: JSON.stringify({ events: filtered }),
+        body: JSON.stringify({
+          collectionEpoch: activeCollectionEpoch,
+          events: filtered,
+        }),
       }, controller.signal);
+      const body = await parseJson(response);
+      if (body.accepted !== filtered.length) {
+        throw new Error("Observability renderer batch crossed a collection boundary");
+      }
     };
-    configureRendererObservationBridge({
-      enabled: true,
-      transport: postRendererEvents,
-      onDropped: setRendererDroppedCount,
-      content: config.content,
-      level: config.level,
-      scopes: config.scopes,
-    });
 
     const appendEvents = (incoming: unknown[]) => {
+      if (!isCurrent()) return;
       const nextEvents = incoming
         .filter(isObservabilityEvent)
         .map((event) => applyDefensiveContentPolicy(event, config.content));
@@ -476,11 +532,12 @@ export function ObservabilityProvider({ children }: { children: ReactNode }) {
     };
 
     const schedule = (task: () => Promise<void>) => {
-      if (active) pollTimer = setTimeout(() => void task(), 750);
+      if (isCurrent()) pollTimer = setTimeout(() => void task(), 750);
     };
 
     async function poll() {
-      if (!active) return;
+      if (!isCurrent()) return;
+      const journalFence = journalFenceRef.current;
       try {
         const response = await request(
           `/observability/events?after=${afterSequenceRef.current}&limit=250`,
@@ -488,6 +545,30 @@ export function ObservabilityProvider({ children }: { children: ReactNode }) {
           controller.signal,
         );
         const body = await parseJson(response);
+        if (!isCurrent()) return;
+        if (journalFence !== journalFenceRef.current) {
+          schedule(poll);
+          return;
+        }
+        const control = parseObservabilityControlSnapshot(body);
+        if (!control) throw new Error("Observability events response is invalid");
+        if (
+          activeCollectionEpoch !== null
+          && control.collectionEpoch !== activeCollectionEpoch
+        ) {
+          // Another owner cleared the shared journal. Fence this producer and
+          // restart against the new epoch instead of dropping every future
+          // renderer batch under the old one.
+          journalFenceRef.current += 1;
+          effectGenerationRef.current += 1;
+          configureRendererObservationBridge({ enabled: false });
+          dispatchRetainedEvents({ type: "reset" });
+          setServerDroppedCount(0);
+          setRendererDroppedCount(0);
+          resetRendererObservationBridgeDroppedCount();
+          restartObservationEffect();
+          return;
+        }
         if (
           body.config
           && typeof body.config === "object"
@@ -506,14 +587,13 @@ export function ObservabilityProvider({ children }: { children: ReactNode }) {
           return;
         }
         appendEvents(Array.isArray(body.events) ? body.events : []);
+        if (!isCurrent()) return;
         if (typeof body.droppedCount === "number") setServerDroppedCount(body.droppedCount);
-        if (active) {
-          setStatus("connected");
-          setStatusMessage(null);
-        }
+        setStatus("connected");
+        setStatusMessage(null);
         schedule(poll);
       } catch (error) {
-        if (active && !controller.signal.aborted) {
+        if (isCurrent()) {
           connectionRef.current = null;
           setStatus("error");
           setStatusMessage(error instanceof Error ? error.message : String(error));
@@ -523,15 +603,28 @@ export function ObservabilityProvider({ children }: { children: ReactNode }) {
     }
 
     async function activate() {
+      if (!isCurrent()) return;
       try {
-        const response = await request("/observability/config", {
-          method: "PUT",
-          body: JSON.stringify(config),
-        }, controller.signal);
-        await parseJson(response);
-        if (active) void poll();
+        if (isElectronRuntime()) {
+          await setDeveloperObservabilityConfig(config);
+          if (!isCurrent()) return;
+        }
+        const current = await readControlSnapshot();
+        if (!isCurrent()) return;
+        const activated = await writeConfig(current.configRevision, config);
+        if (!isCurrent()) return;
+        activeCollectionEpoch = activated.collectionEpoch;
+        configureRendererObservationBridge({
+          enabled: true,
+          transport: postRendererEvents,
+          onDropped: setRendererDroppedCount,
+          content: config.content,
+          level: config.level,
+          scopes: config.scopes,
+        });
+        void poll();
       } catch (error) {
-        if (active && !controller.signal.aborted) {
+        if (isCurrent()) {
           connectionRef.current = null;
           setStatus("error");
           setStatusMessage(error instanceof Error ? error.message : String(error));
@@ -544,12 +637,15 @@ export function ObservabilityProvider({ children }: { children: ReactNode }) {
 
     return () => {
       active = false;
+      if (effectGenerationRef.current === effectGeneration) {
+        effectGenerationRef.current += 1;
+      }
       controller.abort();
       if (pollTimer) clearTimeout(pollTimer);
       if (disableRetryTimer) clearTimeout(disableRetryTimer);
       configureRendererObservationBridge({ enabled: false });
     };
-  }, [config, request]);
+  }, [activationVersion, config, request]);
 
   const value = useMemo<ObservabilityContextValue>(() => ({
     config,
