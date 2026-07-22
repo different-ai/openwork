@@ -115,19 +115,33 @@ export function registerCloudMcpRoutes(options: RegisterCloudMcpRoutesOptions): 
     const workspace = await resolveWorkspace(config, ctx.params.id);
     assertExactWorkspace(ctx.params.id, workspace);
     // The refresh needs no payload; an optional body may scope provider/model
-    // and name the trigger for the delivery ledger.
-    const body = await readJsonBody(ctx.request).catch(() => ({} as Record<string, unknown>));
-    if (isRecord(body)) assertStrictBody(body, workspace);
+    // and name the trigger for the delivery ledger. An absent/empty body is
+    // fine, but malformed JSON stays a hard 400 — never silently ignored.
+    const raw = (await ctx.request.text()).trim();
+    let body: Record<string, unknown> = {};
+    if (raw) {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        throw new ApiError(400, "invalid_json", "Invalid JSON body");
+      }
+      if (!isRecord(parsed)) {
+        throw new ApiError(400, "invalid_payload", "JSON object body is required");
+      }
+      body = parsed;
+    }
+    assertStrictBody(body, workspace);
     const result = await refreshOpenworkCloudMcpEngine({
       config,
       workspace,
       directory: resolveOpencodeDirectory(workspace),
-      providerModel: isRecord(body) ? providerModelFromBody(body) : undefined,
+      providerModel: providerModelFromBody(body),
       serverMetadata,
       createWorkspaceOpencodeClient,
       registerRuntimeMcp,
       refreshRegistrationFromLiveStatus,
-      trigger: isRecord(body) && typeof body.trigger === "string" ? body.trigger : undefined,
+      trigger: typeof body.trigger === "string" ? body.trigger : undefined,
     });
     return jsonResponse(result);
   });

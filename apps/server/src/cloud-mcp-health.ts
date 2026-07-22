@@ -1582,13 +1582,26 @@ function statusFailure(status: McpStatus | undefined): CloudMcpFailure {
 
 function inferFailedStatus(error: string): CloudMcpFailure {
   const lower = error.toLowerCase();
-  if (lower.includes("expired")) {
+  // Engines that preserve transport cause chains produce strings like
+  // "fetch failed; caused by: certificate has expired (CERT_HAS_EXPIRED)".
+  // Certificate/TLS wording ("expired", "authority", "revoked") must never be
+  // classified as a token or session problem — reconnecting cannot repair a
+  // broken transport, and richer engine errors must not change the verdict
+  // for what is still a connection-level failure.
+  const certTransport =
+    lower.includes("certificat") ||
+    lower.includes("cert_") ||
+    lower.includes("tls") ||
+    lower.includes("ssl") ||
+    lower.includes("self signed") ||
+    lower.includes("self-signed");
+  if (!certTransport && lower.includes("expired")) {
     return failure({ code: "invalid_mcp_token", stage: "transport_auth", retryable: false, recommendedAction: "Reconnect OpenWork Cloud", message: "openwork-cloud token is expired.", aliases: ["openwork_cloud_token_expired"], details: { error } });
   }
-  if (lower.includes("invalid_token") || lower.includes("unauthorized") || lower.includes("401") || lower.includes("auth")) {
+  if (!certTransport && (lower.includes("invalid_token") || lower.includes("unauthorized") || lower.includes("401") || lower.includes("auth"))) {
     return failure({ code: "invalid_mcp_token", stage: "transport_auth", retryable: false, recommendedAction: "Reconnect OpenWork Cloud", message: "openwork-cloud authentication failed.", aliases: ["openwork_cloud_auth_invalid"], details: { error } });
   }
-  if (lower.includes("invalid_grant") || lower.includes("session") || lower.includes("revoked")) {
+  if (!certTransport && (lower.includes("invalid_grant") || lower.includes("session") || lower.includes("revoked"))) {
     return failure({ code: "mcp_session_revoked", stage: "transport_auth", retryable: false, recommendedAction: "Reconnect OpenWork Cloud", message: "openwork-cloud session was revoked.", details: { error } });
   }
   if (lower.includes("membership") || lower.includes("member")) {

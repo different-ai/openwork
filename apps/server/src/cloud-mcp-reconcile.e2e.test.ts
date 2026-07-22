@@ -28,6 +28,7 @@ type MockOpencodeOptions = {
   hangHealth?: boolean;
   delayMcpStatusMs?: number;
   postFailure?: { status: number; body: unknown };
+  cloudFailedError?: string;
 };
 
 type CloudConfig = {
@@ -109,6 +110,9 @@ function startMockOpencode(options: MockOpencodeOptions = {}) {
       if (url.pathname === "/mcp" && request.method === "GET") {
         statusReads += 1;
         if (options.delayMcpStatusMs) await new Promise((resolve) => setTimeout(resolve, options.delayMcpStatusMs));
+        if (options.cloudFailedError) {
+          return Response.json({ "openwork-cloud": { status: "failed", error: options.cloudFailedError } });
+        }
         if (options.connectAfterStatusReads && statusReads < options.connectAfterStatusReads) {
           return Response.json({ "openwork-cloud": { status: "failed", error: "slow connect" } });
         }
@@ -667,6 +671,45 @@ describe("openwork-cloud MCP engine refresh", () => {
     expect(requireArray(refresh.steps, "refresh.steps")).toHaveLength(0);
     expect(requireRecord(body.health, "health").usable).toBe(false);
     expect(mock.requests.filter((request) => request.pathname === "/mcp/openwork-cloud/disconnect")).toHaveLength(0);
+  });
+
+  test("rejects malformed JSON on engine refresh instead of silently ignoring it", async () => {
+    const root = await createRoot();
+    const mock = startMockOpencode({ initialConnected: true });
+    const openwork = await startOpenwork([workspace("ws_1", root, `http://127.0.0.1:${mock.server.port}`)]);
+
+    const response = await fetch(`${openwork.base}/workspace/ws_1/mcp/openwork-cloud/engine-refresh`, {
+      method: "POST",
+      headers: headers(),
+      body: "not-json",
+    });
+    expect(response.status).toBe(400);
+    expect((await responseRecord(response)).code).toBe("invalid_json");
+    expect(mock.requests.filter((request) => request.pathname === "/mcp/openwork-cloud/disconnect")).toHaveLength(0);
+  });
+
+  test("richer engine cert/TLS error strings stay classified as connection failures, not token problems", async () => {
+    const root = await createRoot();
+    const mock = startMockOpencode({
+      cloudFailedError: "fetch failed; caused by: certificate has expired (CERT_HAS_EXPIRED)",
+    });
+    const openwork = await startOpenwork([workspace("ws_1", root, `http://127.0.0.1:${mock.server.port}`)]);
+
+    const body = await responseRecord(await reconcile(openwork.base));
+    const failure = firstFailure(body);
+    // A transport/cert failure must never be classified as an expired token:
+    // "Reconnect OpenWork Cloud" cannot repair a broken TLS path.
+    expect(failure.code).toBe("opencode_mcp_sync_failed");
+    expect(failure.recommendedAction).toBe("Retry reconcile or reconnect OpenWork Cloud");
+  });
+
+  test("token-expired engine errors keep their token classification", async () => {
+    const root = await createRoot();
+    const mock = startMockOpencode({ cloudFailedError: "openwork-cloud bearer token expired" });
+    const openwork = await startOpenwork([workspace("ws_1", root, `http://127.0.0.1:${mock.server.port}`)]);
+
+    const body = await responseRecord(await reconcile(openwork.base));
+    expect(firstFailure(body).code).toBe("invalid_mcp_token");
   });
 
   test("keeps step-level failure detail when the engine goes down between seed and refresh", async () => {
