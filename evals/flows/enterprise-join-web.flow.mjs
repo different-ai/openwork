@@ -307,7 +307,7 @@ async function fillPasswordAndJoin(ctx, value) {
   const join = joinTitle(ctx);
   const welcome = joinedWelcomeTitle(ctx);
   await fillReactInput(ctx, 'input[type="password"]', value);
-  await clickButtonStartingWith(ctx, join, 30_000);
+  await clickButtonStartingWithOneOf(ctx, [join, "Sign in to join"], 30_000);
   await ctx.waitFor(`(() => {
     const text = document.body.innerText || "";
     const buttons = [...document.querySelectorAll("button")].map((button) => (button.textContent ?? "").replace(/\\s+/g, " ").trim());
@@ -345,6 +345,18 @@ async function clickButtonStartingWith(ctx, prefix, timeoutMs) {
     button?.click();
     return Boolean(button);
   })()`, { timeoutMs, label: `button starting with ${JSON.stringify(prefix)}` });
+}
+
+async function clickButtonStartingWithOneOf(ctx, prefixes, timeoutMs) {
+  await ctx.waitFor(`(() => {
+    const normalize = (value) => (value ?? '').replace(/\\s+/g, ' ').trim();
+    const prefixes = ${JSON.stringify(prefixes)};
+    const button = [...document.querySelectorAll('button')]
+      .find((entry) => prefixes.some((prefix) => normalize(entry.textContent).startsWith(prefix)) && entry.disabled !== true && entry.getAttribute('aria-disabled') !== 'true');
+    button?.scrollIntoView({ block: 'center', inline: 'center' });
+    button?.click();
+    return Boolean(button);
+  })()`, { timeoutMs, label: `button starting with one of ${JSON.stringify(prefixes)}` });
 }
 
 async function clickButtonStartingWithIfVisible(ctx, prefix) {
