@@ -6,6 +6,7 @@
     "dev": "next dev --hostname 0.0.0.0 --port ${DIAGNOSTICS_PORT:-3010}",
     "build": "next build",
     "start": "next start --hostname 0.0.0.0 --port ${DIAGNOSTICS_PORT:-3010}",
+    "smoke:debug-proxy": "node scripts/connect-debug-proxy-smoke.mjs",
     "test": "bun test"
   },
   "dependencies": {

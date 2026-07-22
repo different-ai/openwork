@@ -30,6 +30,22 @@ Open `http://localhost:3010` and sign in with:
 The local MCP endpoint is `http://localhost:3010/mcp` with synthetic bearer
 token `OpenWorkDiagnosticsToken!`. Local history is process-memory only.
 
+The Connect debug proxy is available at:
+
+```text
+http://localhost:3010/debug-proxy/local-connect-debug-proxy
+```
+
+The final path segment is the local-only access key. The control page generates
+scenario URLs such as
+`http://localhost:3010/via/auth-expired/local-connect-debug-proxy`. Paste a
+complete generated URL into the desktop's **Settings → Connect → Den base URL**
+field. Run its standalone local MCP smoke journey with:
+
+```bash
+pnpm --filter @openwork-ee/diagnostics smoke:debug-proxy
+```
+
 The MCP catalog also contains two diagnostics-only authorization tools:
 
 - `diagnostics_authorization_check` returns JSON-RPC `-32001` with a same-origin
@@ -73,6 +89,11 @@ Set these production environment variables:
 | `DIAGNOSTICS_MCP_BEARER_TOKEN` | Synthetic diagnostic token shared with the test Den or client, at least 24 characters. Never use a provider/customer credential. |
 | `DIAGNOSTICS_PROFILE` | `generic`, `microsoft`, or `servicenow`. |
 | `NEXT_PUBLIC_DIAGNOSTICS_ORIGIN` | Fixed production origin, normally `https://diagnostic.openworklabs.com`. Preview deployments use Vercel's deployment-specific `VERCEL_URL` instead. |
+| `DEBUG_PROXY_ACCESS_KEY` | URL-safe random value (16+ characters) required for the Connect debug proxy UI and traffic. It becomes a path segment in generated desktop-compatible URLs. |
+| `DEBUG_PROXY_DEFAULT_UPSTREAM` | Default Den origin. Falls back to `https://app.openworklabs.com`; set it explicitly on the Vercel project. |
+| `DEBUG_PROXY_ALLOWED_UPSTREAMS` | Comma-separated HTTPS hosts or origins that generated override links may target. The default upstream remains allowed independently. |
+| `DEBUG_PROXY_SLOW_MS` | Optional Agent endpoint delay, clamped to 5,000–10,000 ms; default 7,000 ms. |
+| `DEBUG_PROXY_FLAKY_WINDOW_MS` | Optional per-instance rolling window for `flaky-N`; default 60,000 ms. |
 
 Keep Vercel's **Automatically expose System Environment Variables** setting
 enabled. Preview deployments derive their OAuth and MCP resource URLs from the
@@ -100,6 +121,58 @@ attaching the public hostname.
 The app fails closed in Vercel when a required credential or Redis setting is
 missing, the profile is invalid, Redis is not HTTPS, or application secrets are
 reused. `/health` reports only configuration names, never values.
+
+### Connect debug proxy deployment and use
+
+The proxy deploys with this existing diagnostics Vercel project; do not create
+a second project or change the project root. After setting the variables above,
+open:
+
+```text
+https://<deployment>/debug-proxy/<DEBUG_PROXY_ACCESS_KEY>
+```
+
+Choose an allowlisted upstream and copy a scenario's complete base URL. The
+desktop-compatible path format is:
+
+```text
+https://<deployment>/via/<scenario>/<DEBUG_PROXY_ACCESS_KEY>[/~<encoded-upstream>]
+```
+
+Non-browser probes may omit the key path segment and instead send it in the
+`x-connect-debug-proxy-key` header. The desktop cannot be assumed to add that
+header, so use the generated path form for end-to-end testing.
+
+The control page lists the expected Agent access phase, `firstFailure`, and
+probe trace outcome for every scenario. The request log is a best-effort
+100-entry in-memory ring per Vercel instance. It retains method, forwarded path,
+scenario, applied fault, status, and header latency only. It never retains
+Authorization, cookies, query values, request/response bodies, or upstream
+error text. Vercel instance replacement clears the log and resets `flaky-N`
+counters.
+
+Real sign-in cookies and bearer tokens transit the proxy. Prefer a staging or
+development Den in `DEBUG_PROXY_DEFAULT_UPSTREAM`; use production only for a
+time-bounded investigation with an isolated access key. Treat the generated
+URLs as secrets because they contain that key.
+
+To recover the desktop after a fault scenario:
+
+1. Change the Den base URL back to the real Den origin, or to the generated
+   `default` scenario URL.
+2. Apply the base URL.
+3. Click **Repair and test** on the Agent access card.
+4. Confirm the card reaches **Ready** and the Advanced probe trace shows a
+   successful initialize and tools/list.
+
+Before promoting a Vercel deployment, run the diagnostics test/build gate and
+the standalone smoke:
+
+```bash
+pnpm --filter @openwork-ee/diagnostics test
+pnpm --filter @openwork-ee/diagnostics build
+pnpm --filter @openwork-ee/diagnostics smoke:debug-proxy
+```
 
 After the production deployment is promoted, verify all of the following
 before sharing the allowlist hostname:

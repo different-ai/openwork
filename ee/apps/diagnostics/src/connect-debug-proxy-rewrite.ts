@@ -1,0 +1,144 @@
+import { createMcpSseTamperStream, tamperJsonRpcText } from "./connect-debug-proxy-tamper"
+import type { McpTamperMode } from "./connect-debug-proxy-tamper"
+import { CONNECT_DEBUG_PROXY_KEY_HEADER } from "./connect-debug-proxy-config"
+
+const hopByHopHeaders = new Set([
+  "connection",
+  "keep-alive",
+  "proxy-authenticate",
+  "proxy-authorization",
+  "te",
+  "trailer",
+  "transfer-encoding",
+  "upgrade",
+])
+
+function replaceUpstreamOrigin(value: string, upstreamOrigin: string, proxyBase: string): string {
+  return value.split(upstreamOrigin).join(proxyBase)
+}
+
+function createTextReplacementStream(search: string, replacement: string): TransformStream<Uint8Array, Uint8Array> {
+  const decoder = new TextDecoder()
+  const encoder = new TextEncoder()
+  let pending = ""
+  return new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, controller) {
+      pending += decoder.decode(chunk, { stream: true })
+      let match = pending.indexOf(search)
+      while (match >= 0) {
+        controller.enqueue(encoder.encode(`${pending.slice(0, match)}${replacement}`))
+        pending = pending.slice(match + search.length)
+        match = pending.indexOf(search)
+      }
+      const safeLength = Math.max(0, pending.length - search.length + 1)
+      if (safeLength > 0) {
+        controller.enqueue(encoder.encode(pending.slice(0, safeLength)))
+        pending = pending.slice(safeLength)
+      }
+    },
+    flush(controller) {
+      pending += decoder.decode()
+      if (pending) controller.enqueue(encoder.encode(replaceUpstreamOrigin(pending, search, replacement)))
+    },
+  })
+}
+
+export function rewriteLocationHeader(location: string, upstreamRequestUrl: URL, proxyBase: string): string {
+  try {
+    const resolved = new URL(location, upstreamRequestUrl)
+    if (resolved.origin !== upstreamRequestUrl.origin) return location
+    return `${proxyBase}${resolved.pathname}${resolved.search}${resolved.hash}`
+  } catch {
+    return location
+  }
+}
+
+export function rewriteSetCookieHeader(cookie: string, proxyPath: string): string {
+  return cookie
+    .split(";")
+    .map((part, index) => {
+      const trimmed = part.trim()
+      if (/^domain=/iu.test(trimmed)) return ""
+      if (/^path=/iu.test(trimmed)) {
+        const upstreamPath = trimmed.slice(5).trim()
+        const suffix = upstreamPath === "/" ? "" : upstreamPath.startsWith("/") ? upstreamPath : `/${upstreamPath}`
+        return `Path=${proxyPath}${suffix}`
+      }
+      return index === 0 ? trimmed : ` ${trimmed}`
+    })
+    .filter(Boolean)
+    .join(";")
+}
+
+export function forwardRequestHeaders(source: Headers, input?: { proxyBase: string; upstreamOrigin: string }): Headers {
+  const headers = new Headers()
+  source.forEach((value, name) => {
+    const lower = name.toLowerCase()
+    if (!hopByHopHeaders.has(lower) && lower !== "host" && lower !== "content-length"
+      && lower !== "accept-encoding" && lower !== CONNECT_DEBUG_PROXY_KEY_HEADER) {
+      headers.append(name, value)
+    }
+  })
+  headers.set("accept-encoding", "identity")
+  if (input) {
+    const proxyOrigin = new URL(input.proxyBase).origin
+    if (headers.get("origin") === proxyOrigin) headers.set("origin", input.upstreamOrigin)
+    const referer = headers.get("referer")
+    if (referer?.startsWith(input.proxyBase)) headers.set("referer", `${input.upstreamOrigin}${referer.slice(input.proxyBase.length)}`)
+  }
+  return headers
+}
+
+function responseHeaders(upstream: Response, upstreamRequestUrl: URL, proxyBase: string, transformed: boolean): Headers {
+  const headers = new Headers()
+  upstream.headers.forEach((value, name) => {
+    const lower = name.toLowerCase()
+    if (hopByHopHeaders.has(lower) || lower === "set-cookie") return
+    if (transformed && (lower === "content-length" || lower === "content-encoding" || lower === "etag")) return
+    if (lower === "location") {
+      headers.append(name, rewriteLocationHeader(value, upstreamRequestUrl, proxyBase))
+    } else if (lower === "access-control-allow-origin" && value === upstreamRequestUrl.origin) {
+      headers.append(name, new URL(proxyBase).origin)
+    } else {
+      headers.append(name, value)
+    }
+  })
+  const proxyPath = new URL(proxyBase).pathname
+  for (const cookie of upstream.headers.getSetCookie()) headers.append("set-cookie", rewriteSetCookieHeader(cookie, proxyPath))
+  return headers
+}
+
+export async function buildConnectDebugProxyResponse(input: {
+  proxyBase: string
+  tamperMode: McpTamperMode | null
+  upstream: Response
+  upstreamRequestUrl: URL
+}): Promise<Response> {
+  const contentType = input.upstream.headers.get("content-type")?.toLowerCase() ?? ""
+  const isSse = contentType.includes("text/event-stream")
+  const isJson = contentType.includes("application/json") || contentType.includes("application/problem+json")
+  const isHtml = contentType.includes("text/html")
+  const transformed = Boolean(input.tamperMode) || isJson || isHtml
+  const headers = responseHeaders(input.upstream, input.upstreamRequestUrl, input.proxyBase, transformed)
+  if (input.tamperMode === "bad-protocol") headers.set("mcp-protocol-version", "1900-01-01")
+  if (!input.upstream.body) {
+    return new Response(null, { headers, status: input.upstream.status, statusText: input.upstream.statusText })
+  }
+  if (isSse) {
+    const body = input.tamperMode
+      ? input.upstream.body.pipeThrough(createMcpSseTamperStream(input.tamperMode))
+      : input.upstream.body
+    return new Response(body, { headers, status: input.upstream.status, statusText: input.upstream.statusText })
+  }
+  if (input.tamperMode) {
+    let body = await input.upstream.text()
+    body = tamperJsonRpcText(body, input.tamperMode)
+    body = replaceUpstreamOrigin(body, input.upstreamRequestUrl.origin, input.proxyBase)
+    return new Response(body, { headers, status: input.upstream.status, statusText: input.upstream.statusText })
+  }
+  if (isJson || isHtml) {
+    const body = input.upstream.body.pipeThrough(createTextReplacementStream(input.upstreamRequestUrl.origin, input.proxyBase))
+    return new Response(body, { headers, status: input.upstream.status, statusText: input.upstream.statusText })
+  }
+  return new Response(input.upstream.body, { headers, status: input.upstream.status, statusText: input.upstream.statusText })
+}
