@@ -19,6 +19,23 @@ const MENU_OVERLAY_WIDTH = 196;
 const MENU_OVERLAY_HEIGHT = 176;
 const MENU_OVERLAY_READY_TIMEOUT_MS = 2000;
 
+// Pure allowlist check for main-window navigations. Lives outside the factory
+// because the main window's navigation guard must hold even when the browser
+// panel is disabled (OPENWORK_DISABLE_BUILTIN_MCP=1).
+export function isMainWindowAllowedNavigation(url, currentUrl) {
+  if (!url) return true;
+  if (url.startsWith("file://") || url.startsWith("data:")) return true;
+  try {
+    const target = new URL(url);
+    if (target.hostname === "127.0.0.1" || target.hostname === "localhost") return true;
+    if (!currentUrl || currentUrl === "about:blank") return true;
+    const current = new URL(currentUrl);
+    return target.origin === current.origin;
+  } catch {
+    return true;
+  }
+}
+
 export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
   const browserTabs = new Map();
   let browserTabOrder = [];
@@ -86,21 +103,6 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
     const target = typeof url === "string" && url.trim() ? url.trim() : fallback;
     if (!target || target === "about:blank") return "about:blank";
     return /^https?:\/\//i.test(target) ? target : `https://${target}`;
-  }
-
-  function isMainWindowAllowedNavigation(url) {
-    if (!url) return true;
-    if (url.startsWith("file://") || url.startsWith("data:")) return true;
-    try {
-      const target = new URL(url);
-      if (target.hostname === "127.0.0.1" || target.hostname === "localhost") return true;
-      const currentUrl = window()?.webContents.getURL();
-      if (!currentUrl || currentUrl === "about:blank") return true;
-      const current = new URL(currentUrl);
-      return target.origin === current.origin;
-    } catch {
-      return true;
-    }
   }
 
   function routeBlockedMainWindowNavigation(url) {
@@ -802,7 +804,6 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
 
   return {
     destroy: destroyBrowserView,
-    isMainWindowAllowedNavigation,
     registerIpc,
     routeBlockedMainWindowNavigation,
   };

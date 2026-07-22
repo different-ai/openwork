@@ -30,7 +30,7 @@ import {
 } from "./computer-use.mjs";
 import { createUiControlServer } from "./ui-control-server.mjs";
 import { createApplicationMenu } from "./app-menu.mjs";
-import { createBrowserPanel } from "./browser-panel.mjs";
+import { createBrowserPanel, isMainWindowAllowedNavigation } from "./browser-panel.mjs";
 import { createWorkspaceStore } from "./workspace-store.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -406,6 +406,20 @@ const browserPanel = DISABLE_BUILTIN_MCP
       getWindow: () => mainWindow,
       onDeepLink: (urls) => queueDeepLinks(urls),
     });
+
+// Blocked main-window navigations go to a built-in browser tab when the panel
+// exists; with the panel disabled they still must not take over the app window,
+// so hand them to the system browser instead.
+function routeBlockedMainWindowNavigation(url) {
+  if (browserPanel) {
+    browserPanel.routeBlockedMainWindowNavigation(url);
+    return;
+  }
+  if (!/^https?:\/\//i.test(String(url ?? ""))) return;
+  void shell.openExternal(url).catch((error) => {
+    console.warn("[browser] failed to open blocked main-window navigation externally", error);
+  });
+}
 
 const workspaceStore = createWorkspaceStore({
   app,
@@ -1518,10 +1532,9 @@ async function createMainWindow() {
   });
 
   mainWindow.webContents.on("will-navigate", (event, url) => {
-    if (!browserPanel) return;
-    if (browserPanel.isMainWindowAllowedNavigation(url)) return;
+    if (isMainWindowAllowedNavigation(url, mainWindow?.webContents.getURL())) return;
     event.preventDefault();
-    browserPanel.routeBlockedMainWindowNavigation(url);
+    routeBlockedMainWindowNavigation(url);
   });
 
   // `will-navigate` does NOT fire for CDP `Page.navigate` (it behaves like
@@ -1532,14 +1545,13 @@ async function createMainWindow() {
   // reroute the URL into a built-in browser tab instead.
   mainWindow.webContents.on("did-start-navigation", (_event, url, isInPlace, isMainFrame) => {
     if (!isMainFrame || isInPlace) return;
-    if (!browserPanel) return;
-    if (browserPanel.isMainWindowAllowedNavigation(url)) return;
+    if (isMainWindowAllowedNavigation(url, mainWindow?.webContents.getURL())) return;
     try {
       mainWindow?.webContents.stop();
     } catch {
       // best effort — routing below still gives the user a way back
     }
-    browserPanel.routeBlockedMainWindowNavigation(url);
+    routeBlockedMainWindowNavigation(url);
   });
 
   const startUrl = process.env.OPENWORK_ELECTRON_START_URL?.trim() || process.env.ELECTRON_START_URL?.trim();
