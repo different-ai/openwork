@@ -11,11 +11,7 @@ import {
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import type { PluginArchActorContext } from "../src/routes/org/plugin-system/access.js"
 
-const databaseUrl = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/openwork_test_marketplace_seeding"
-if (!new URL(databaseUrl).pathname.includes("marketplace_seed")) {
-  throw new Error("Marketplace seeding test requires a dedicated database whose name contains marketplace_seed.")
-}
-process.env.DATABASE_URL = databaseUrl
+process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/openwork_test"
 process.env.DB_MODE ??= "mysql"
 process.env.DEN_DB_ENCRYPTION_KEY ??= "marketplace-seeding-test-key-1234567890"
 process.env.BETTER_AUTH_SECRET ??= "marketplace-seeding-test-secret-123456"
@@ -30,13 +26,13 @@ const memberId = createDenTypeId("member")
 const userId = createDenTypeId("user")
 
 async function clearSeededRows() {
-  await db.delete(MarketplacePluginTable)
-  await db.delete(MarketplaceAccessGrantTable)
-  await db.delete(PluginAccessGrantTable)
-  await db.delete(MarketplaceTable)
-  await db.delete(PluginTable)
-  await db.delete(MemberTable)
-  await db.delete(OrganizationTable)
+  await db.delete(MarketplacePluginTable).where(eq(MarketplacePluginTable.organizationId, organizationId))
+  await db.delete(MarketplaceAccessGrantTable).where(eq(MarketplaceAccessGrantTable.organizationId, organizationId))
+  await db.delete(PluginAccessGrantTable).where(eq(PluginAccessGrantTable.organizationId, organizationId))
+  await db.delete(MarketplaceTable).where(eq(MarketplaceTable.organizationId, organizationId))
+  await db.delete(PluginTable).where(eq(PluginTable.organizationId, organizationId))
+  await db.delete(MemberTable).where(eq(MemberTable.organizationId, organizationId))
+  await db.delete(OrganizationTable).where(eq(OrganizationTable.id, organizationId))
 }
 
 beforeAll(async () => {
