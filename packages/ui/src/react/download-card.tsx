@@ -44,6 +44,25 @@ function DownloadIcon({ className }: { className?: string }) {
   )
 }
 
+function MonitorIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      className={className}
+    >
+      <rect x={2} y={3} width={20} height={14} rx={2} />
+      <line x1={8} y1={21} x2={16} y2={21} />
+      <line x1={12} y1={17} x2={12} y2={21} />
+    </svg>
+  )
+}
+
 function PlatformIcon({ os, className }: { os: DetectedOS; className?: string }) {
   if (os === "macos") {
     return (
@@ -73,17 +92,23 @@ function DownloadColumn({
   os,
   title,
   detectedLabel,
+  showPlatformIcon,
   children,
 }: {
   os: DetectedOS
   title: string
   detectedLabel: string | null
+  showPlatformIcon: boolean
   children: ReactNode
 }) {
   return (
     <div className="bg-white px-6 py-4">
       <div className="flex items-center gap-2">
-        <PlatformIcon os={os} className="h-4 w-4 text-[#07192C]" />
+        {showPlatformIcon ? (
+          <PlatformIcon os={os} className="h-4 w-4 text-[#07192C]" />
+        ) : (
+          <MonitorIcon className="h-4 w-4 text-[#8A96AC]" />
+        )}
         <span className="text-[13px] font-semibold text-[#07192C]">{title}</span>
         {detectedLabel ? (
           <span className="rounded-full bg-[#E5F5EA] px-1.5 py-px text-[10px] font-medium text-[#15803D]">{detectedLabel}</span>
@@ -100,6 +125,7 @@ function DownloadLink({
   recommended,
   testId,
   openInNewTab,
+  keepLabelOnOneLine,
   onDownload,
 }: {
   href: string
@@ -107,6 +133,7 @@ function DownloadLink({
   recommended?: boolean
   testId?: string
   openInNewTab: boolean
+  keepLabelOnOneLine: boolean
   onDownload?: () => void
 }) {
   return (
@@ -120,8 +147,8 @@ function DownloadLink({
       onClick={onDownload}
       className={
         recommended
-          ? "inline-flex items-center gap-2 whitespace-nowrap rounded-lg border border-[#07192C] bg-[#07192C] px-3 py-2 text-[12px] font-medium text-white transition-colors hover:border-[#12283F] hover:bg-[#12283F]"
-          : "inline-flex items-center gap-2 whitespace-nowrap rounded-lg border border-[#DFE5EE] bg-[#F8FAFC] px-3 py-2 text-[12px] font-medium text-[#1C2B44] transition-colors hover:border-[#C9D5E7] hover:bg-[#EEF4FC]"
+          ? `inline-flex items-center gap-2 rounded-lg border border-[#07192C] bg-[#07192C] px-3 py-2 text-[12px] font-medium text-white transition-colors hover:border-[#12283F] hover:bg-[#12283F]${keepLabelOnOneLine ? " whitespace-nowrap" : ""}`
+          : `inline-flex items-center gap-2 rounded-lg border border-[#DFE5EE] bg-[#F8FAFC] px-3 py-2 text-[12px] font-medium text-[#1C2B44] transition-colors hover:border-[#C9D5E7] hover:bg-[#EEF4FC]${keepLabelOnOneLine ? " whitespace-nowrap" : ""}`
       }
     >
       <DownloadIcon className={`h-3 w-3 shrink-0 ${recommended ? "text-white/70" : "text-[#5A6886]"}`} />
@@ -170,19 +197,27 @@ function DownloadPlatformGridContent({
   detected,
   groups,
   openInNewTab,
+  customCompanyPresentation,
   recommendedTestId,
   onDownload,
 }: {
   detected: DetectedPlatform | null
   groups: DownloadPlatformGroup[]
   openInNewTab: boolean
+  customCompanyPresentation: boolean
   recommendedTestId?: string
   onDownload?: (option: DownloadPlatformOption) => void
 }) {
   return (
-    <div className="grid gap-px border-t border-[#E9EDF3] bg-[#E9EDF3] lg:grid-cols-3">
+    <div className={`grid gap-px border-t border-[#E9EDF3] bg-[#E9EDF3] ${customCompanyPresentation ? "lg:grid-cols-3" : "sm:grid-cols-3"}`}>
       {groups.map((group) => (
-        <DownloadColumn key={group.os} os={group.os} title={group.title} detectedLabel={getDetectedLabel(detected, group.os)}>
+        <DownloadColumn
+          key={group.os}
+          os={group.os}
+          title={group.title}
+          detectedLabel={getDetectedLabel(detected, group.os)}
+          showPlatformIcon={customCompanyPresentation}
+        >
           {group.options.map((option) => (
             <DownloadLink
               key={`${option.label}-${option.href}`}
@@ -190,6 +225,7 @@ function DownloadPlatformGridContent({
               recommended={isRecommended(detected, group.os, option.arch)}
               testId={isRecommended(detected, group.os, option.arch) ? recommendedTestId : undefined}
               openInNewTab={openInNewTab}
+              keepLabelOnOneLine={customCompanyPresentation}
               onDownload={onDownload ? () => onDownload(option) : undefined}
             >
               {option.label}
@@ -226,6 +262,7 @@ export function DownloadPlatformGrid({
         detected={detected}
         groups={groups}
         openInNewTab={openInNewTab}
+        customCompanyPresentation
         recommendedTestId={recommendedTestId}
         onDownload={onDownload}
       />
@@ -282,7 +319,7 @@ export function DownloadOpenWorkCard({
       data-detected-arch={detected ? detected.arch ?? "unknown" : undefined}
       data-detected-os-version={detected ? detected.osVersion ?? "unknown" : undefined}
       data-detection-source={detected?.source}
-      className="overflow-hidden rounded-[18px] border border-[#E3E7EE] bg-white"
+      className="overflow-hidden rounded-[18px] border border-[#E3E7EE] bg-white shadow-[0_24px_60px_-32px_rgba(7,25,44,0.22)]"
     >
       <div className="bg-gradient-to-b from-[#FAFBFE] to-white px-6 py-5">
         <div className="flex items-center gap-2.5">
@@ -297,7 +334,12 @@ export function DownloadOpenWorkCard({
         </p>
       </div>
 
-      <DownloadPlatformGridContent detected={detected} groups={groupsForInstallers(resolvedInstallers)} openInNewTab />
+      <DownloadPlatformGridContent
+        detected={detected}
+        groups={groupsForInstallers(resolvedInstallers)}
+        openInNewTab
+        customCompanyPresentation={false}
+      />
     </section>
   )
 }
