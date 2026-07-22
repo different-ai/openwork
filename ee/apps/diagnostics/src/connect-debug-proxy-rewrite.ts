@@ -13,24 +13,37 @@ const hopByHopHeaders = new Set([
   "upgrade",
 ])
 
-function replaceUpstreamOrigin(value: string, upstreamOrigin: string, proxyBase: string): string {
-  return value.split(upstreamOrigin).join(proxyBase)
+function upstreamReferenceReplacements(upstreamOrigin: string, proxyBase: string) {
+  return [
+    { replacement: proxyBase, search: upstreamOrigin },
+    { replacement: encodeURIComponent(proxyBase), search: encodeURIComponent(upstreamOrigin) },
+  ]
 }
 
-function createTextReplacementStream(search: string, replacement: string): TransformStream<Uint8Array, Uint8Array> {
+function replaceUpstreamOrigin(value: string, upstreamOrigin: string, proxyBase: string): string {
+  return upstreamReferenceReplacements(upstreamOrigin, proxyBase)
+    .reduce((result, { replacement, search }) => result.split(search).join(replacement), value)
+}
+
+function createTextReplacementStream(upstreamOrigin: string, proxyBase: string): TransformStream<Uint8Array, Uint8Array> {
   const decoder = new TextDecoder()
   const encoder = new TextEncoder()
+  const replacements = upstreamReferenceReplacements(upstreamOrigin, proxyBase)
+  const longestSearch = Math.max(...replacements.map(({ search }) => search.length))
   let pending = ""
   return new TransformStream<Uint8Array, Uint8Array>({
     transform(chunk, controller) {
       pending += decoder.decode(chunk, { stream: true })
-      let match = pending.indexOf(search)
-      while (match >= 0) {
-        controller.enqueue(encoder.encode(`${pending.slice(0, match)}${replacement}`))
-        pending = pending.slice(match + search.length)
-        match = pending.indexOf(search)
+      while (true) {
+        const match = replacements
+          .map((candidate) => ({ ...candidate, index: pending.indexOf(candidate.search) }))
+          .filter((candidate) => candidate.index >= 0)
+          .sort((left, right) => left.index - right.index)[0]
+        if (!match) break
+        controller.enqueue(encoder.encode(`${pending.slice(0, match.index)}${match.replacement}`))
+        pending = pending.slice(match.index + match.search.length)
       }
-      const safeLength = Math.max(0, pending.length - search.length + 1)
+      const safeLength = Math.max(0, pending.length - longestSearch + 1)
       if (safeLength > 0) {
         controller.enqueue(encoder.encode(pending.slice(0, safeLength)))
         pending = pending.slice(safeLength)
@@ -38,12 +51,14 @@ function createTextReplacementStream(search: string, replacement: string): Trans
     },
     flush(controller) {
       pending += decoder.decode()
-      if (pending) controller.enqueue(encoder.encode(replaceUpstreamOrigin(pending, search, replacement)))
+      if (pending) controller.enqueue(encoder.encode(replaceUpstreamOrigin(pending, upstreamOrigin, proxyBase)))
     },
   })
 }
 
 export function rewriteLocationHeader(location: string, upstreamRequestUrl: URL, proxyBase: string): string {
+  const rewrittenReference = replaceUpstreamOrigin(location, upstreamRequestUrl.origin, proxyBase)
+  if (rewrittenReference !== location) return rewrittenReference
   try {
     const resolved = new URL(location, upstreamRequestUrl)
     if (resolved.origin !== upstreamRequestUrl.origin) return location

@@ -131,6 +131,26 @@ describe("Connect debug proxy rewriting and streaming", () => {
     expect(await response.json()).toEqual({ redirect: `${proxyBase}/next` })
   })
 
+  test("keeps the desktop auth handoff on the selected proxy base", async () => {
+    const upstreamUrl = new URL("https://app.openworklabs.com/api/den/v1/auth/desktop-handoff")
+    const proxyBase = "https://proxy.example/via/default/access-key"
+    const upstreamDenBaseUrl = "https://app.openworklabs.com/api/den"
+    const deepLink = `openwork://den-auth?grant=one-time-grant&denBaseUrl=${encodeURIComponent(upstreamDenBaseUrl)}`
+
+    expect(rewriteLocationHeader(deepLink, upstreamUrl, proxyBase)).toBe(
+      `openwork://den-auth?grant=one-time-grant&denBaseUrl=${encodeURIComponent(`${proxyBase}/api/den`)}`,
+    )
+
+    const response = await buildConnectDebugProxyResponse({
+      proxyBase,
+      tamperMode: null,
+      upstream: Response.json({ openworkUrl: deepLink }),
+      upstreamRequestUrl: upstreamUrl,
+    })
+    const payload = await response.json() as { openworkUrl: string }
+    expect(new URL(payload.openworkUrl).searchParams.get("denBaseUrl")).toBe(`${proxyBase}/api/den`)
+  })
+
   test("keeps the proxy key private while translating same-origin browser headers", () => {
     const headers = forwardRequestHeaders(new Headers({
       "x-connect-debug-proxy-key": "do-not-forward",
