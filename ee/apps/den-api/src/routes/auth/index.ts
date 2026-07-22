@@ -4,7 +4,7 @@ import { AuthAccountTable, AuthUserTable, OAuthClientTable } from "@openwork-ee/
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
-import { auth, normalizeMcpOAuthResource } from "../../auth.js"
+import { auth, DEN_MCP_OAUTH_RESOURCE, normalizeMcpOAuthResource } from "../../auth.js"
 import { normalizeLoginEmail, resolveLoginOptionKind } from "../../auth-login-options.js"
 import {
   getBreachedPasswordResponse,
@@ -178,11 +178,22 @@ export async function normalizeMcpOAuthRequest(request: Request) {
 
   const clientId = body.get("client_id") ?? readBasicAuthClientId(headers)
   const resourceRequired = clientId ? await registeredClientHasMcpScope(clientId) : false
+  const inferredRefreshResource = resourceRequired
+    && body.get("grant_type") === "refresh_token"
+    && !body.has("resource")
+
+  if (inferredRefreshResource) {
+    // MCP clients should send resource on every token request, but some clients
+    // omit it while refreshing. Public MCP has exactly one valid audience, so
+    // defaulting only this grant preserves audience binding without widening it.
+    body.set("resource", DEN_MCP_OAUTH_RESOURCE)
+  }
+
   const result = normalizeMcpOAuthResourceParams(body, true, resourceRequired)
   if (!result.ok) {
     return result.response
   }
-  if (!result.changed) {
+  if (!inferredRefreshResource && !result.changed) {
     return request
   }
 

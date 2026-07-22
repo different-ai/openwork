@@ -114,7 +114,7 @@ afterAll(async () => {
   mock.restore()
 })
 
-test("legacy MCP registration gains offline access and rotates a thirty-day refresh grant", async () => {
+test("legacy MCP registration gains offline access and rotates refresh grants when resource is omitted", async () => {
   const metadataResponse = await app.fetch(new Request(`${API_ORIGIN}/mcp/agent/.well-known/oauth-protected-resource`))
   expect(metadataResponse.status).toBe(200)
   const metadata: unknown = await metadataResponse.json()
@@ -236,7 +236,6 @@ test("legacy MCP registration gains offline access and rotates a thirty-day refr
       grant_type: "refresh_token",
       client_id: oauthClientId,
       refresh_token: firstRefreshToken,
-      resource: LEGACY_PARENT_RESOURCE,
     }),
   }))
   expect(refreshResponse.status).toBe(200)
