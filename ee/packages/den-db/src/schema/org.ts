@@ -1,7 +1,8 @@
 import { relations, sql } from "drizzle-orm"
 import { index, json, mysqlTable, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core"
 import type { DesktopAppRestrictions } from "@openwork/types/den/desktop-app-restrictions"
-import { denTypeIdColumn } from "../columns"
+import type { ConnectLinkClaims } from "@openwork/types/connect-link"
+import { denTypeIdColumn, mediumBlobColumn } from "../columns"
 
 export const DesktopHandoffGrantTable = mysqlTable(
   "desktop_handoff_grant",
@@ -16,6 +17,23 @@ export const DesktopHandoffGrantTable = mysqlTable(
   (table) => [
     index("desktop_handoff_grant_user_id").on(table.user_id),
     index("desktop_handoff_grant_expires_at").on(table.expires_at),
+  ],
+)
+
+export const DesktopConnectGrantTable = mysqlTable(
+  "desktop_connect_grant",
+  {
+    codeHash: varchar("code_hash", { length: 64 }).notNull().primaryKey(),
+    installLinkId: denTypeIdColumn("installLink", "install_link_id").notNull(),
+    claims: json("claims").$type<ConnectLinkClaims>().notNull(),
+    expiresAt: timestamp("expires_at", { fsp: 3 }).notNull(),
+    consumedAt: timestamp("consumed_at", { fsp: 3 }),
+    consumedNonce: varchar("consumed_nonce", { length: 64 }),
+    createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("desktop_connect_grant_install_link_id").on(table.installLinkId),
+    index("desktop_connect_grant_expires_at").on(table.expiresAt),
   ],
 )
 
@@ -34,7 +52,29 @@ export const OrganizationTable = mysqlTable(
       .notNull()
       .default(sql`CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)`),
   },
-  (table) => [uniqueIndex("organization_slug").on(table.slug)],
+  (table) => [uniqueIndex("organization_slug").on(table.slug), index("organization_created_at_id").on(table.createdAt, table.id)],
+)
+
+export const OrganizationBrandAssetTable = mysqlTable(
+  "organization_brand_asset",
+  {
+    id: varchar("id", { length: 64 }).notNull().primaryKey(),
+    organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
+    kind: varchar("kind", { length: 16 }).notNull(),
+    version: varchar("version", { length: 64 }).notNull(),
+    extension: varchar("extension", { length: 3 }).notNull(),
+    bytes: mediumBlobColumn("bytes").notNull(),
+    createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("organization_brand_asset_organization_id").on(table.organizationId),
+    uniqueIndex("organization_brand_asset_version").on(
+      table.organizationId,
+      table.kind,
+      table.version,
+      table.extension,
+    ),
+  ],
 )
 
 export const MemberTable = mysqlTable(
@@ -82,6 +122,7 @@ export const InvitationTable = mysqlTable(
     index("invitation_email").on(table.email),
     index("invitation_status").on(table.status),
     index("invitation_team_id").on(table.teamId),
+    index("invitation_inviter_id").on(table.inviterId),
     index("invitation_org_member_id").on(table.orgMemberId),
     uniqueIndex("invitation_invite_token").on(table.inviteToken),
   ],
@@ -130,6 +171,26 @@ export const WorkspaceClaimTable = mysqlTable(
   ],
 )
 
+export const InstallLinkTable = mysqlTable(
+  "install_link",
+  {
+    id: denTypeIdColumn("installLink", "id").notNull().primaryKey(),
+    organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
+    tokenHash: varchar("token_hash", { length: 128 }).notNull(),
+    createdByUserId: denTypeIdColumn("user", "created_by_user_id").notNull(),
+    createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+    revokedAt: timestamp("revoked_at", { fsp: 3 }),
+    expiresAt: timestamp("expires_at", { fsp: 3 }),
+  },
+  (table) => [
+    uniqueIndex("install_link_token_hash").on(table.tokenHash),
+    index("install_link_organization_id").on(table.organizationId),
+    index("install_link_created_by_user_id").on(table.createdByUserId),
+    index("install_link_revoked_at").on(table.revokedAt),
+    index("install_link_expires_at").on(table.expiresAt),
+  ],
+)
+
 export const OrganizationRoleTable = mysqlTable(
   "organization_role",
   {
@@ -172,4 +233,5 @@ export const member = MemberTable
 export const invitation = InvitationTable
 export const workspaceBootstrap = WorkspaceBootstrapTable
 export const workspaceClaim = WorkspaceClaimTable
+export const installLink = InstallLinkTable
 export const organizationRole = OrganizationRoleTable

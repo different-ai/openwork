@@ -14,6 +14,12 @@ export type DenAuthDeepLink = {
   denBaseUrl: string;
 };
 
+export type ConnectDeepLink = {
+  /** The full deep link, relayed verbatim to the main process for verification. */
+  rawUrl: string;
+  key: string;
+};
+
 function isSupportedDeepLinkProtocol(protocol: string): boolean {
   const normalized = protocol.toLowerCase();
   return normalized === "openwork:" || normalized === "openwork-dev:" || normalized === "https:" || normalized === "http:";
@@ -130,6 +136,41 @@ export function parseDenAuthDeepLink(rawUrl: string): DenAuthDeepLink | null {
   }
 
   return { grant, denBaseUrl };
+}
+
+export function parseConnectDeepLink(rawUrl: string): ConnectDeepLink | null {
+  let url: URL;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    return null;
+  }
+
+  // Unlike sibling parsers, organization connect credentials only ride the
+  // dedicated desktop scheme, never ordinary web URLs.
+  const protocol = url.protocol.toLowerCase();
+  if (protocol !== "openwork:" && protocol !== "openwork-dev:") {
+    return null;
+  }
+
+  const routeHost = url.hostname.toLowerCase();
+  const routePath = url.pathname.replace(/^\/+/, "").toLowerCase();
+  const routeSegments = routePath.split("/").filter(Boolean);
+  const routeTail = routeSegments[routeSegments.length - 1] ?? "";
+  if (routeHost !== "connect" && routePath !== "connect" && routeTail !== "connect") {
+    return null;
+  }
+
+  const token = url.searchParams.get("token")?.trim() ?? "";
+  const code = url.searchParams.get("code")?.trim() ?? "";
+  const apiBaseUrl = url.searchParams.get("apiBaseUrl")?.trim() ?? "";
+  const signed = Boolean(token) && !code && !apiBaseUrl;
+  const exchange = !token && /^[A-Za-z0-9_-]{24,128}$/.test(code) && Boolean(apiBaseUrl);
+  if (!signed && !exchange) {
+    return null;
+  }
+
+  return { rawUrl, key: signed ? `signed:${token}` : `exchange:${apiBaseUrl}:${code}` };
 }
 
 function normalizeDebugDeepLinkInput(rawValue: string): string {

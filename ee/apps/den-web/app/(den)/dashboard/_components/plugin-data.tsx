@@ -62,11 +62,14 @@ export type PluginHook = {
 export type PluginMcpTransport = "stdio" | "http" | "sse";
 
 export type PluginMcp = {
+  configObjectId?: string;
   id: string;
   name: string;
   description: string;
   transport: PluginMcpTransport;
   toolCount: number;
+  serverName?: string;
+  url?: string | null;
 };
 
 export type PluginAgent = {
@@ -450,6 +453,40 @@ function asString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
 
+function pluginMcpTransport(config: Record<string, unknown>): PluginMcpTransport {
+  const type = asString(config.type)?.toLowerCase();
+  if (type === "sse") return "sse";
+  return asString(config.url) ? "http" : "stdio";
+}
+
+export function pluginMcpEntries(item: {
+  description: string;
+  id: string;
+  normalizedPayload: Record<string, unknown> | null;
+  title: string;
+}): PluginMcp[] {
+  const payload = item.normalizedPayload ?? {};
+  const entries = [payload.mcpServers, payload.mcp].flatMap((container) => (
+    isRecord(container)
+      ? Object.entries(container).filter((entry): entry is [string, Record<string, unknown>] => isRecord(entry[1]))
+      : []
+  ));
+  const servers = entries.length > 0
+    ? entries
+    : [[item.title, payload] satisfies [string, Record<string, unknown>]];
+
+  return servers.map(([serverName, config], index) => ({
+    configObjectId: item.id,
+    description: item.description,
+    id: servers.length === 1 ? item.id : `${item.id}:${index}`,
+    name: servers.length === 1 ? item.title : serverName,
+    serverName,
+    toolCount: typeof config.toolCount === "number" ? config.toolCount : 0,
+    transport: pluginMcpTransport(config),
+    url: asString(config.url),
+  }));
+}
+
 function parseMembershipConfigObject(entry: unknown) {
   if (!isRecord(entry) || !isRecord(entry.configObject)) {
     return null;
@@ -552,13 +589,7 @@ async function fetchResolvedPlugin(id: string): Promise<DenPlugin | null> {
     } satisfies PluginHook));
   const mcps = membershipItems
     .filter((item) => item.objectType === "mcp")
-    .map((item) => ({
-      description: item.description,
-      id: item.id,
-      name: item.title,
-      toolCount: typeof item.normalizedPayload?.toolCount === "number" ? item.normalizedPayload.toolCount : 0,
-      transport: (asString(item.normalizedPayload?.transport) as PluginMcpTransport | null) ?? "stdio",
-    } satisfies PluginMcp));
+    .flatMap(pluginMcpEntries);
 
   const marketplaces = Array.isArray(pluginItem.marketplaces)
     ? pluginItem.marketplaces.flatMap((entry) => {

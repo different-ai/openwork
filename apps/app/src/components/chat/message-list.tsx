@@ -5,6 +5,7 @@ import {
   AlertTriangle,
   Check,
   Copy,
+  Download,
   FileIcon,
   LoaderCircle,
   Pencil,
@@ -81,7 +82,9 @@ import {
   getActiveToolLabel,
 } from "@/lib/tool-activity"
 import { cn } from "@/lib/utils"
-import { groupMessages, isMessageGroup, getLastTextPart, getAssistantRenderGroups, getFileTitle, getMediaBadge, getMessageCreated, formatMessageTimestamp, type UIMessageWithIndex, getMessagesText } from "./utils"
+import { groupMessages, isMessageGroup, getLastTextPart, getAssistantRenderGroups, getFileTitle, getMediaBadge, getMessageCreated, formatMessageTimestamp, type UIMessageWithIndex, getMessagesText, getSafeFileDownloadUrl } from "./utils"
+
+const SEARCH_HIGHLIGHT_MARK_CLASS = "rounded px-0.5 bg-amber-4/70 text-current"
 
 function MessageTimestamp({ message, className }: { message: UIMessage; className?: string }) {
   const created = getMessageCreated(message)
@@ -133,6 +136,8 @@ class ToolMessage extends React.Component<ToolMessageProps, { failed: boolean }>
 }
 
 const ToolMessageInner = ({ part }: ToolMessageProps) => {
+  const { onMcpReconnect, onMcpReopenAuthorization, onMcpRetry } = useMessageList()
+
   if (isBashToolPart(part)) {
     return <BashTool part={part} />
   }
@@ -189,7 +194,14 @@ const ToolMessageInner = ({ part }: ToolMessageProps) => {
     return <EnvVarRequestTool part={part} />
   }
 
-  return <Tool toolPart={part} />
+  return (
+    <Tool
+      toolPart={part}
+      onReconnect={onMcpReconnect}
+      onReopenAuthorization={onMcpReopenAuthorization}
+      onRetry={onMcpRetry}
+    />
+  )
 }
 
 const isEmptyMessage = (message: UIMessage): boolean => message.parts.length === 0
@@ -214,6 +226,18 @@ function FileMessage({ part }: FileMessageProps) {
   const title = getFileTitle(part)
   const badge = getMediaBadge(part)
   const isImage = part.mediaType.startsWith("image/") && part.url
+  const downloadUrl = getSafeFileDownloadUrl(part)
+
+  const handleDownload = React.useCallback(() => {
+    if (!downloadUrl) return
+    const anchor = document.createElement("a")
+    anchor.href = downloadUrl
+    anchor.download = title
+    anchor.rel = "noopener noreferrer"
+    document.body.append(anchor)
+    anchor.click()
+    anchor.remove()
+  }, [downloadUrl, title])
 
   if (isImage) {
     return (
@@ -227,35 +251,32 @@ function FileMessage({ part }: FileMessageProps) {
   }
 
   return (
-    <div className="flex h-auto w-fit min-w-0 max-w-full shrink items-center justify-start gap-2 rounded-xl border border-border ps-2 pe-4 py-1 text-left text-sm font-medium whitespace-normal">
-      <DescriptiveButtonIcon>
-        <FileIcon className="size-6 shrink-0" />
-      </DescriptiveButtonIcon>
-      <DescriptiveButtonContent className="gap-0">
-        <DescriptiveButtonTitle>{title}</DescriptiveButtonTitle>
-        {badge ? (
-          <DescriptiveButtonDescription className="text-xs">
-            {badge}
-          </DescriptiveButtonDescription>
-        ) : null}
-      </DescriptiveButtonContent>
-    </div>
-  )
-}
-
-function EmptyMessage({
-  className,
-  ...props
-}: React.ComponentProps<"div">) {
-  return (
-    <div
-      className={cn(
-        "mx-auto flex w-full max-w-3xl flex-col items-start gap-2 px-2 md:px-10 text-muted-foreground",
-        className
-      )}
-      {...props}
-    >
-      Empty message
+    <div className="flex h-auto w-fit min-w-0 max-w-full shrink items-center justify-start gap-2 rounded-xl border border-border ps-2 pe-2 py-1 text-left text-sm font-medium whitespace-normal">
+      <div className="flex min-w-0 items-center gap-2 pe-2">
+        <DescriptiveButtonIcon>
+          <FileIcon className="size-6 shrink-0" />
+        </DescriptiveButtonIcon>
+        <DescriptiveButtonContent className="gap-0">
+          <DescriptiveButtonTitle>{title}</DescriptiveButtonTitle>
+          {badge ? (
+            <DescriptiveButtonDescription className="text-xs">
+              {badge}
+            </DescriptiveButtonDescription>
+          ) : null}
+        </DescriptiveButtonContent>
+      </div>
+      {downloadUrl ? (
+        <Button
+          type="button"
+          variant="outline"
+          size="xs"
+          onClick={handleDownload}
+          aria-label={`Download ${title}`}
+        >
+          <Download className="size-3" />
+          Download
+        </Button>
+      ) : null}
     </div>
   )
 }
@@ -309,7 +330,7 @@ type AssistantMessageProps = {
 
 const AssistantMessage = React.memo(
   ({ message }: AssistantMessageProps) => {
-    const { showThinking } = useMessageList()
+    const { showThinking, highlightQuery } = useMessageList()
     const assistantRenderGroups = React.useMemo(
       () => getAssistantRenderGroups(message.parts, showThinking),
       [message.parts, showThinking]
@@ -329,6 +350,7 @@ const AssistantMessage = React.memo(
                   key={`text-${index}`}
                   className="text-foreground prose w-full min-w-0 flex-1 rounded-lg bg-transparent p-0"
                   markdown
+                  highlightQuery={highlightQuery}
                 >
                   {group.text}
                 </MessageContent>
@@ -384,21 +406,56 @@ function UserSkillChip(props: { name: string }) {
   )
 }
 
-function renderUserTextWithSkillChips(text: string) {
-  if (!USER_SKILL_TOKEN_RE.test(text)) return text
+function renderPlainTextWithSearchHighlights(text: string, highlightQuery: string | undefined, keyPrefix: string) {
+  const needle = highlightQuery?.trim().toLowerCase() ?? ""
+  if (needle.length < 2) return text
+
+  const lower = text.toLowerCase()
+  if (!lower.includes(needle)) return text
+
+  const nodes: React.ReactNode[] = []
+  let cursor = 0
+  let matchIndex = lower.indexOf(needle)
+  while (matchIndex >= 0) {
+    if (matchIndex > cursor) {
+      nodes.push(text.slice(cursor, matchIndex))
+    }
+    const end = matchIndex + needle.length
+    nodes.push(
+      <mark
+        key={`${keyPrefix}:match:${matchIndex}`}
+        data-search-highlight="true"
+        className={SEARCH_HIGHLIGHT_MARK_CLASS}
+      >
+        {text.slice(matchIndex, end)}
+      </mark>
+    )
+    cursor = end
+    matchIndex = lower.indexOf(needle, cursor)
+  }
+
+  if (cursor < text.length) {
+    nodes.push(text.slice(cursor))
+  }
+
+  return nodes
+}
+
+function renderUserTextWithSkillChips(text: string, highlightQuery: string | undefined) {
+  if (!USER_SKILL_TOKEN_RE.test(text)) return renderPlainTextWithSearchHighlights(text, highlightQuery, "text")
   let offset = 0
   return text.split(USER_SKILL_TOKEN_RE).map((segment) => {
     const key = `${offset}:${segment}`
     offset += segment.length
     const skillMatch = segment.match(/^(?:Load )?\[skill ([^\]]+)\](?: and follow its instructions\.)?$/)
     if (skillMatch?.[1]) return <UserSkillChip key={key} name={skillMatch[1]} />
-    return <React.Fragment key={key}>{segment}</React.Fragment>
+    return <React.Fragment key={key}>{renderPlainTextWithSearchHighlights(segment, highlightQuery, key)}</React.Fragment>
   })
 }
 
 const UserMessage = React.memo(
   ({ message, isStreaming }: UserMessageProps) => {
-    const { onRevertToUserMessage, onForkAtMessage, onEditUserMessage } = useMessageList()
+    const { onRevertToUserMessage, onForkAtMessage, onEditUserMessage, highlightQuery } = useMessageList()
     const messageText = React.useMemo(() => getMessagesText([message]), [message])
 
     return (
@@ -419,7 +476,7 @@ const UserMessage = React.memo(
                     layoutId={message.id}
                     className="bg-muted text-foreground max-w-[85%] rounded-3xl px-5 py-2.5 whitespace-pre-wrap sm:max-w-[75%]"
                   >
-                    {renderUserTextWithSkillChips(message.parts.map((part) => (part.type === "text" ? part.text : "")).join(""))}
+                    {renderUserTextWithSkillChips(message.parts.map((part) => (part.type === "text" ? part.text : "")).join(""), highlightQuery)}
                   </MessageContent>
                 ) : null}
                 {!isStreaming && (
@@ -510,13 +567,8 @@ const MessageComponent = React.memo(
       return <ErrorMessage error={getMessagesText([message]) || "Session failed"} />
     }
 
-    if (isEmptyMessage(message) && !isStreaming) {
-      return (
-        <EmptyMessage
-          data-message-id={message.id}
-          data-message-role={message.role}
-        />
-      )
+    if (isEmptyMessage(message)) {
+      return null
     }
 
     if (message.role === "assistant") {
@@ -691,11 +743,7 @@ function MessageGroup({
   })
 
   if (!lastItem || isMessageEmptyGroup(items)) {
-    if (isStreaming) {
-      return null;
-    }
-
-    return <EmptyMessage />
+    return null;
   }
 
   const renderableItems = getRenderableMessages(items)
@@ -768,7 +816,6 @@ function MessageGroup({
           {/* <MessageSources messages={items.map((item) => item.message)} /> */}
         </div>
       )}
-      {renderableItems.length === 0 && !isStreaming ? <EmptyMessage /> : null}
       </div>
   )
 }

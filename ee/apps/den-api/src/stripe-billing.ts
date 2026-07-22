@@ -10,7 +10,9 @@ import {
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "./db.js"
 import { env } from "./env.js"
+import type { DenOrgMode } from "./env.js"
 import { setInferenceEnabled } from "./inference.js"
+import { appLogger } from "./observability/logger.js"
 
 type OrgId = typeof OrganizationTable.$inferSelect.id
 type MemberId = typeof MemberTable.$inferSelect.id
@@ -23,6 +25,7 @@ const SEAT_SUBSCRIPTION_TYPE = "seat" as const
 export const FREE_ORG_SEAT_COUNT = 5
 const ACTIVE_STATUSES = new Set<OrgSubscriptionStatusValue>(["active", "trialing"])
 const EXPIRED_STATUSES = new Set<OrgSubscriptionStatusValue>(["past_due", "canceled", "unpaid", "incomplete_expired", "expired"])
+const logger = appLogger.child({ component: "stripe_billing" })
 
 export type StripeCheckoutSubscriptionType = typeof INFERENCE_SUBSCRIPTION_TYPE | typeof SEAT_SUBSCRIPTION_TYPE
 
@@ -148,6 +151,18 @@ export function additionalFreeSeatCountFromMetadata(metadata: Record<string, unk
   return normalizeAdditionalFreeSeats(metadata?.seatsFreeAdditional)
 }
 
+// Seat billing only gates member additions on hosted multi-org deployments
+// where Stripe seat billing is configured. Single-org (self-hosted /
+// enterprise) deployments never restrict member count, and without Stripe
+// configured the 402 would be a dead end the operator cannot resolve.
+export function isSeatBillingGateEnabled(input: {
+  orgMode: DenOrgMode
+  stripeSecretKey: string | undefined
+  stripeSeatPriceId: string | undefined
+}) {
+  return input.orgMode === "multi_org" && Boolean(input.stripeSecretKey && input.stripeSeatPriceId)
+}
+
 export function calculateOrganizationSeatBillingCounts(input: {
   memberCount: number
   metadata?: Record<string, unknown> | null
@@ -238,7 +253,7 @@ async function findStripeCustomerIdByOrgMetadata(organizationId: string) {
     })
     return customers.data[0]?.id ?? null
   } catch (error) {
-    console.warn("[stripe-billing] failed to search customers by org metadata", error)
+    logger.warn("failed to search Stripe customers by org metadata", { organization_id: organizationId, error })
     return null
   }
 }
@@ -255,7 +270,12 @@ export async function organizationHasActiveSeatSubscription(organizationId: OrgI
 
 export async function getOrganizationSeatAddEligibility(organizationId: OrgId) {
   const seatCounts = await getOrganizationSeatBillingCounts({ organizationId })
-  if (seatCounts.total < seatCounts.free) {
+  const gateEnabled = isSeatBillingGateEnabled({
+    orgMode: env.orgMode,
+    stripeSecretKey: env.stripe.secretKey,
+    stripeSeatPriceId: env.stripe.seatPriceId,
+  })
+  if (!gateEnabled || seatCounts.total < seatCounts.free) {
     return {
       allowed: true,
       currentCount: seatCounts.total,
@@ -516,7 +536,7 @@ export async function getOrgBillingSummary(input: { organizationId: OrgId; inclu
     try {
       portalUrl = (await createInferencePortalSession({ organizationId: input.organizationId, returnUrl: input.returnUrl })).url
     } catch (error) {
-      console.warn("[stripe-billing] failed to create billing portal session", error)
+      logger.warn("failed to create billing portal session", { organization_id: input.organizationId, error })
     }
   }
 

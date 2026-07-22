@@ -1,12 +1,54 @@
 const SEARCH_HIGHLIGHT_MARK_ATTR = "data-search-highlight";
+export const SEARCH_HIGHLIGHT_SELECTOR = `mark[${SEARCH_HIGHLIGHT_MARK_ATTR}="true"]`;
+const SEARCH_HIGHLIGHT_CLASS_NAME = "rounded px-0.5 bg-amber-4/70 text-current";
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-function clearTextHighlights(root: HTMLElement) {
-  const marks = root.querySelectorAll(`mark[${SEARCH_HIGHLIGHT_MARK_ATTR}="true"]`);
+export type TextHighlightPart = {
+  text: string;
+  highlighted: boolean;
+};
+
+export function textHighlightParts(value: string, query: string): TextHighlightPart[] {
+  const needle = query.trim().toLowerCase();
+
+  if (!needle || !value) {
+    return value ? [{ text: value, highlighted: false }] : [];
+  }
+
+  const lower = value.toLowerCase();
+
+  if (!lower.includes(needle)) {
+    return [{ text: value, highlighted: false }];
+  }
+
+  const needlePattern = new RegExp(escapeRegExp(needle), "g");
+  const parts: TextHighlightPart[] = [];
+  let searchIndex = 0;
+
+  for (const match of lower.matchAll(needlePattern)) {
+    const matchIndex = match.index;
+
+    if (matchIndex > searchIndex) {
+      parts.push({ text: value.slice(searchIndex, matchIndex), highlighted: false });
+    }
+
+    parts.push({ text: value.slice(matchIndex, matchIndex + needle.length), highlighted: true });
+    searchIndex = matchIndex + needle.length;
+  }
+
+  if (searchIndex < value.length) {
+    parts.push({ text: value.slice(searchIndex), highlighted: false });
+  }
+
+  return parts;
+}
+
+export function clearTextHighlights(root: HTMLElement) {
+  const marks = root.querySelectorAll(SEARCH_HIGHLIGHT_SELECTOR);
 
   for (const mark of marks) {
     const parent = mark.parentNode;
-    
+
     if (!parent) {
       continue;
     }
@@ -23,16 +65,14 @@ export function applyTextHighlights(root: HTMLElement, query: string) {
   // We only need to clear existing marks if a previous search actually added
   // some.
   if (!needle) {
-    if (root.querySelector(`mark[${SEARCH_HIGHLIGHT_MARK_ATTR}="true"]`)) {
+    if (root.querySelector(SEARCH_HIGHLIGHT_SELECTOR)) {
       clearTextHighlights(root);
     }
-    
+
     return;
   }
 
   clearTextHighlights(root);
-
-  const needlePattern = new RegExp(escapeRegExp(needle), "g");
 
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode(node) {
@@ -65,33 +105,27 @@ export function applyTextHighlights(root: HTMLElement, query: string) {
   const nodes: Text[] = [];
   let current = walker.nextNode();
   while (current) {
-    nodes.push(current as Text);
+    if (current instanceof Text) {
+      nodes.push(current);
+    }
     current = walker.nextNode();
   }
 
   for (const node of nodes) {
     const text = node.nodeValue ?? "";
-    const lower = text.toLowerCase();
-    let searchIndex = 0;
     const fragment = document.createDocumentFragment();
 
-    for (const match of lower.matchAll(needlePattern)) {
-      const matchIndex = match.index;
-
-      if (matchIndex > searchIndex) {
-        fragment.appendChild(document.createTextNode(text.slice(searchIndex, matchIndex)));
+    for (const part of textHighlightParts(text, needle)) {
+      if (!part.highlighted) {
+        fragment.appendChild(document.createTextNode(part.text));
+        continue;
       }
 
       const mark = document.createElement("mark");
       mark.setAttribute(SEARCH_HIGHLIGHT_MARK_ATTR, "true");
-      mark.className = "rounded px-0.5 bg-amber-4/70 text-current";
-      mark.textContent = text.slice(matchIndex, matchIndex + needle.length);
+      mark.className = SEARCH_HIGHLIGHT_CLASS_NAME;
+      mark.textContent = part.text;
       fragment.appendChild(mark);
-      searchIndex = matchIndex + needle.length;
-    }
-    
-    if (searchIndex < text.length) {
-      fragment.appendChild(document.createTextNode(text.slice(searchIndex)));
     }
 
     node.parentNode?.replaceChild(fragment, node);

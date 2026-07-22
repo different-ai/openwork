@@ -45,8 +45,28 @@ Frontend for `app.openworklabs.com`.
   - set it to `https://us.i.posthog.com` to bypass the local proxy
 - `GET /api/health` returns a shallow app health payload for container probes.
 
+### Observability
+
+`DEN_OBSERVABILITY_BACKEND` selects one backend at startup: `none` (default), `otel`, or `sentry`.
+
+- `none`: no SDK initializes; den-web runtime logs are structured JSON on stdout.
+- `otel`: server-only OpenTelemetry. The Next instrumentation starts the NodeSDK only when `NEXT_RUNTIME=nodejs` and exports traces, metrics, and logs over OTLP HTTP/protobuf (`*-otlp-proto` exporters). Configure with standard `OTEL_EXPORTER_OTLP_ENDPOINT`, per-signal endpoint/protocol/exporter vars, `OTEL_TRACES_SAMPLER` / `OTEL_TRACES_SAMPLER_ARG`, and optional `OTEL_SERVICE_NAME` (defaults to `den-web`).
+- `sentry`: intended Vercel backend. Set server `SENTRY_DSN`; optional `SENTRY_TRACES_SAMPLE_RATE`, `SENTRY_ENVIRONMENT`, `SENTRY_RELEASE`, and `SENTRY_DIST` tune runtime events. Browser Sentry is explicit at build time with `NEXT_PUBLIC_DEN_OBSERVABILITY_BACKEND=sentry` and `NEXT_PUBLIC_SENTRY_DSN`; `NEXT_PUBLIC_DEN_OBSERVABILITY_BACKEND=otel` disables browser collection because OTEL is server-only.
+
+Direct OTLP shutdown/flush for stock `next start` and Vercel deployments is operational best-effort because the platform owns process shutdown timing. Sentry remains the recommended backend for Vercel-hosted Den Web.
+
+Sentry wraps the Next config for browser Sentry builds (`NEXT_PUBLIC_DEN_OBSERVABILITY_BACKEND=sentry`) and for explicit source-map upload builds. Source-map uploads are disabled by default; enable them with the build-only `DEN_WEB_UPLOAD_SENTRY_SOURCEMAPS=true` flag and provide `SENTRY_AUTH_TOKEN`, `SENTRY_ORG`, and `SENTRY_PROJECT` as build credentials. Normal Docker/image builds do not need runtime `DEN_OBSERVABILITY_BACKEND` or `SENTRY_DSN` values. Never expose `SENTRY_AUTH_TOKEN` to the browser.
+
+Runtime logs and telemetry scrubbing avoid request bodies, cookies, authorization headers, credentials, and target query strings. The `/api/den/*` and `/api/auth/*` upstream proxy emits one structured completion/error log per request and forwards W3C trace context so web-to-api traffic can be correlated with Next traces.
+
 ### Related Den API env vars
 
+- `DEN_ORG_MODE`: `single_org` or `multi_org`. Blank/unset resolves to `single_org` in the implemented target state; hosted/cloud deployments should set `multi_org` explicitly.
+- `DEN_SINGLE_ORG_NAME` / `DEN_SINGLE_ORG_SLUG`: singleton organization display name and stable slug for private single-org deployments.
+- `DEN_SINGLE_ORG_OWNER_EMAILS`: comma-separated emails allowed to claim singleton organization ownership.
+- `DEN_SINGLE_ORG_ALLOW_PUBLIC_SIGNUP`: whether unauthenticated users can self-serve signup into the singleton organization.
+- When SSO is configured on the singleton organization, auth becomes SSO-only.
+- `DEN_REQUIRE_EMAIL_VERIFICATION`: set `false` for the single-org default to avoid signup verification-code flows; hosted multi-org should set `true`.
 - `DEN_MCP_CLAIM_NAMESPACE`: namespace used for MCP token claim URIs. Leave blank to use `BETTER_AUTH_URL`; set a stable value before issuing tokens if hosts may change. Use `https://openworklabs.com` to preserve the original hosted MCP claim names.
 - `DEN_BOOTSTRAP_ADMIN_EMAILS`: comma-separated platform admin emails seeded by `den-api` on startup. Blank disables bootstrap admin seeding.
 

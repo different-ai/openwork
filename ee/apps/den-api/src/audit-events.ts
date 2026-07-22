@@ -1,6 +1,8 @@
 import { AuditEventTable } from "@openwork-ee/den-db/schema"
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import { appLogger } from "./observability/logger.js"
+import { AUDIT_ALERT_OPERATIONAL_MARKER } from "./operational-log-markers.js"
 
 export const ORGANIZATION_AUDIT_ACTIONS = {
   apiKeyCreated: "organization.api_key.created",
@@ -17,12 +19,14 @@ export const ORGANIZATION_AUDIT_ACTIONS = {
   scimTokenRotated: "organization.scim.token_rotated",
   scimConnectionDeleted: "organization.scim.connection_deleted",
   scimReconciliationRun: "organization.scim.reconciliation_run",
+  scimGroupMappingUpdated: "organization.scim.group_mapping_updated",
   ssoConnectionRegistered: "organization.sso.connection_registered",
   ssoConnectionDeleted: "organization.sso.connection_deleted",
 }
 
 type OrganizationAuditAction = typeof ORGANIZATION_AUDIT_ACTIONS[keyof typeof ORGANIZATION_AUDIT_ACTIONS]
 type OrganizationAuditPayload = Record<string, string | number | boolean | null>
+const logger = appLogger.child({ component: "audit_events" })
 
 export function buildOrganizationAuditEvent(input: {
   organizationId: DenTypeId<"organization">
@@ -56,6 +60,7 @@ export function isOrganizationAuditAlertAction(action: OrganizationAuditAction) 
     case ORGANIZATION_AUDIT_ACTIONS.memberRemoved:
     case ORGANIZATION_AUDIT_ACTIONS.scimTokenRotated:
     case ORGANIZATION_AUDIT_ACTIONS.scimConnectionDeleted:
+    case ORGANIZATION_AUDIT_ACTIONS.scimGroupMappingUpdated:
     case ORGANIZATION_AUDIT_ACTIONS.ssoConnectionRegistered:
     case ORGANIZATION_AUDIT_ACTIONS.ssoConnectionDeleted:
       return true
@@ -65,7 +70,7 @@ export function isOrganizationAuditAlertAction(action: OrganizationAuditAction) 
 }
 
 export function buildOrganizationAuditAlertLogLine(event: OrganizationAuditEvent) {
-  return `[audit-alert] ${JSON.stringify({
+  return `${AUDIT_ALERT_OPERATIONAL_MARKER} ${JSON.stringify({
     auditEventId: event.id,
     organizationId: event.org_id,
     actorUserId: event.actor_user_id,
@@ -79,6 +84,13 @@ export async function recordOrganizationAuditEvent(input: Parameters<typeof buil
   const event = buildOrganizationAuditEvent(input)
   await db.insert(AuditEventTable).values(event)
   if (isOrganizationAuditAlertAction(event.action)) {
-    console.warn(buildOrganizationAuditAlertLogLine(event))
+    logger.warn(`${AUDIT_ALERT_OPERATIONAL_MARKER} organization audit alert`, {
+      operational_marker: AUDIT_ALERT_OPERATIONAL_MARKER,
+      audit_event_id: event.id,
+      organization_id: event.org_id,
+      actor_user_id: event.actor_user_id,
+      action: event.action,
+      payload: event.payload,
+    })
   }
 }

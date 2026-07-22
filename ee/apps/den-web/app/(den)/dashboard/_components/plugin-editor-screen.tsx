@@ -1,19 +1,26 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, FileText, Plus, Server, Terminal, Trash2 } from "lucide-react";
+import { ArrowLeft, Download, FileText, Plus, Server, Terminal, Trash2 } from "lucide-react";
 import { DenButton } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
 import { DenSelect } from "../../_components/ui/select";
 import { DenTextarea } from "../../_components/ui/textarea";
 import { getRequestError, requestJson } from "../../_lib/den-flow";
-import { getPluginRoute, getPluginsRoute } from "../../_lib/den-org";
+import { getImportPluginRoute, getPluginRoute, getPluginsRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { useMarketplaces } from "./marketplace-data";
 import { pluginQueryKeys } from "./plugin-data";
+import {
+  clearPluginImportDraft,
+  loadPluginImportDraft,
+  pluginImportSourceLabel,
+  pluginImportSuggestedName,
+  type PluginImportDraft,
+} from "./plugin-import-draft";
 
 type ComponentKind = "skill" | "command" | "mcp";
 
@@ -67,13 +74,11 @@ function buildSkillMarkdown(component: DraftComponent): string {
   ].join("\n");
 }
 
-function buildConfigObjectBody(pluginId: string, component: DraftComponent): Record<string, unknown> {
+function buildComponentBody(component: DraftComponent): Record<string, unknown> {
   if (component.kind === "mcp") {
     const serverName = slugify(component.name);
     return {
       type: "mcp",
-      sourceMode: "cloud",
-      pluginIds: [pluginId],
       input: {
         normalizedPayloadJson: {
           mcpServers: {
@@ -90,8 +95,6 @@ function buildConfigObjectBody(pluginId: string, component: DraftComponent): Rec
 
   return {
     type: component.kind,
-    sourceMode: "cloud",
-    pluginIds: [pluginId],
     input: {
       rawSourceText:
         component.kind === "skill" ? buildSkillMarkdown(component) : `${component.content.trim()}\n`,
@@ -115,18 +118,20 @@ async function postJson(path: string, body: unknown, failureLabel: string): Prom
   return payload;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
 function createdItemId(payload: unknown): string | null {
-  if (payload && typeof payload === "object" && "item" in payload) {
-    const item = (payload as { item?: { id?: unknown } }).item;
-    if (item && typeof item.id === "string") return item.id;
-  }
-  return null;
+  const item = isRecord(payload) && isRecord(payload.item) ? payload.item : null;
+  return typeof item?.id === "string" ? item.id : null;
 }
 
 export function PluginEditorScreen() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const queryClient = useQueryClient();
-  const { orgSlug, runReauthableAction } = useOrgDashboard();
+  const { orgContext, orgSlug, runReauthableAction } = useOrgDashboard();
   const { data: marketplaces = [] } = useMarketplaces();
 
   const [name, setName] = useState("");
@@ -136,17 +141,25 @@ export function PluginEditorScreen() {
   const [marketplaceId, setMarketplaceId] = useState<string>("");
   const [marketplaceTouched, setMarketplaceTouched] = useState(false);
   const [shareOrgWide, setShareOrgWide] = useState(true);
+  const [importDraft, setImportDraft] = useState<PluginImportDraft | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   // Publishing is the happy path for non-technical creators: pre-select the
-  // first marketplace once the list loads, unless the user chose otherwise.
+  // requested marketplace, or the first marketplace when opened elsewhere.
   useEffect(() => {
-    if (!marketplaceTouched && !marketplaceId && marketplaces.length > 0) {
-      setMarketplaceId(marketplaces[0].id);
-    }
-  }, [marketplaceId, marketplaceTouched, marketplaces]);
-  const [saving, setSaving] = useState(false);
-  const [progress, setProgress] = useState<string | null>(null);
-  const [saveError, setSaveError] = useState<string | null>(null);
+    if (marketplaceTouched || marketplaceId || marketplaces.length === 0) return;
+    const requestedMarketplaceId = searchParams.get("marketplaceId");
+    const requestedMarketplace = marketplaces.find((marketplace) => marketplace.id === requestedMarketplaceId);
+    setMarketplaceId(requestedMarketplace?.id ?? marketplaces[0].id);
+  }, [marketplaceId, marketplaceTouched, marketplaces, searchParams]);
+
+  useEffect(() => {
+    const draft = loadPluginImportDraft();
+    if (!draft) return;
+    setImportDraft(draft);
+    setName((current) => current || pluginImportSuggestedName(draft.preview));
+  }, []);
 
   const addComponent = (kind: ComponentKind) => {
     setComponents((current) => [
@@ -166,9 +179,65 @@ export function PluginEditorScreen() {
     setComponents((current) => current.filter((entry) => entry.key !== key));
   };
 
+  async function createImportedPlugin(draft: PluginImportDraft) {
+    if (!shareOrgWide && !orgContext) {
+      setSaveError("Your organization membership is still loading. Try again in a moment.");
+      return;
+    }
+    setSaving(true);
+    setSaveError(null);
+    try {
+      let pluginId: string | null = null;
+      await runReauthableAction("create-imported-plugin", async () => {
+        const result = await requestJson(
+          "/v1/plugins/import-mcps-from-github-url",
+          {
+            method: "POST",
+            body: JSON.stringify({
+              access: {
+                orgWide: shareOrgWide,
+                memberIds: shareOrgWide || !orgContext ? [] : [orgContext.currentMember.id],
+                teamIds: [],
+              },
+              authType: draft.authType,
+              credentialMode: draft.credentialMode,
+              description: description.trim() || null,
+              githubUrl: draft.githubUrl,
+              marketplaceId: marketplaceId || undefined,
+              name: name.trim(),
+              selectedSkillKeys: draft.selectedSkillKeys,
+              selectedServerKeys: draft.selectedServerKeys,
+            }),
+          },
+          30000,
+        );
+        if (!result.response.ok) {
+          throw getRequestError(result.payload, result.response, "Failed to create the imported plugin.");
+        }
+        const item = isRecord(result.payload) && isRecord(result.payload.item) ? result.payload.item : null;
+        const plugin = item && isRecord(item.plugin) ? item.plugin : null;
+        pluginId = plugin && typeof plugin.id === "string" ? plugin.id : null;
+      });
+      if (!pluginId) throw new Error("The plugin was created, but no id was returned.");
+
+      clearPluginImportDraft();
+      await queryClient.invalidateQueries({ queryKey: pluginQueryKeys.all });
+      router.push(getPluginRoute(orgSlug, pluginId));
+      router.refresh();
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : "Failed to create the imported plugin.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function createPlugin() {
     if (!name.trim()) {
       setSaveError("Give your plugin a name.");
+      return;
+    }
+    if (importDraft) {
+      await createImportedPlugin(importDraft);
       return;
     }
     if (components.length === 0) {
@@ -193,61 +262,22 @@ export function PluginEditorScreen() {
     setSaving(true);
     setSaveError(null);
     try {
-      setProgress("Creating plugin...");
       let pluginPayload: unknown = null;
       await runReauthableAction("create-plugin", async () => {
         pluginPayload = await postJson(
           "/v1/plugins",
-          { name: name.trim(), description: description.trim() || null },
+          {
+            name: name.trim(),
+            description: description.trim() || null,
+            components: components.map(buildComponentBody),
+            orgWide: shareOrgWide,
+            marketplaceId: marketplaceId || undefined,
+          },
           "Failed to create the plugin",
         );
       });
       const pluginId = createdItemId(pluginPayload);
       if (!pluginId) throw new Error("The plugin was created, but no id was returned.");
-
-      for (const [index, component] of components.entries()) {
-        setProgress(`Adding ${COMPONENT_META[component.kind].label.toLowerCase()} ${index + 1} of ${components.length}...`);
-        let objectPayload: unknown = null;
-        await runReauthableAction("create-plugin-config-object", async () => {
-          objectPayload = await postJson(
-            "/v1/config-objects",
-            buildConfigObjectBody(pluginId, component),
-            `Failed to add "${component.name}"`,
-          );
-        });
-        const configObjectId = createdItemId(objectPayload);
-        if (shareOrgWide && configObjectId) {
-          await runReauthableAction("share-plugin-config-object", async () => {
-            await postJson(
-              `/v1/config-objects/${encodeURIComponent(configObjectId)}/access`,
-              { orgWide: true, role: "viewer" },
-              `Failed to share "${component.name}" with the organization`,
-            );
-          });
-        }
-      }
-
-      if (shareOrgWide) {
-        setProgress("Sharing with your organization...");
-        await runReauthableAction("share-plugin", async () => {
-          await postJson(
-            `/v1/plugins/${encodeURIComponent(pluginId)}/access`,
-            { orgWide: true, role: "viewer" },
-            "Failed to share the plugin with the organization",
-          );
-        });
-      }
-
-      if (marketplaceId) {
-        setProgress("Publishing to the marketplace...");
-        await runReauthableAction("publish-plugin", async () => {
-          await postJson(
-            `/v1/marketplaces/${encodeURIComponent(marketplaceId)}/plugins`,
-            { pluginId },
-            "Failed to publish to the marketplace",
-          );
-        });
-      }
 
       await queryClient.invalidateQueries({ queryKey: pluginQueryKeys.all });
       router.push(getPluginRoute(orgSlug, pluginId));
@@ -256,9 +286,15 @@ export function PluginEditorScreen() {
       setSaveError(error instanceof Error ? error.message : "Failed to create the plugin.");
     } finally {
       setSaving(false);
-      setProgress(null);
     }
   }
+
+  const importedSkills = importDraft
+    ? importDraft.preview.skills.filter((skill) => importDraft.selectedSkillKeys.includes(skill.skillKey))
+    : [];
+  const importedServers = importDraft
+    ? importDraft.preview.servers.filter((server) => importDraft.selectedServerKeys.includes(server.serverKey))
+    : [];
 
   return (
     <div className="mx-auto w-full max-w-3xl px-6 py-10">
@@ -270,10 +306,21 @@ export function PluginEditorScreen() {
         Back to plugins
       </Link>
 
-      <h1 className="text-[28px] font-semibold text-gray-900">Create a plugin</h1>
-      <p className="mt-1 text-[15px] text-gray-500">
-        Bundle skills, commands, and MCP servers your team can install in OpenWork with one click.
-      </p>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h1 className="text-[28px] font-semibold text-gray-900">Create a plugin</h1>
+          <p className="mt-1 text-[15px] text-gray-500">
+            Bundle skills, commands, and MCP servers your team can install in OpenWork with one click.
+          </p>
+        </div>
+        <Link
+          href={getImportPluginRoute(orgSlug)}
+          className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg border border-gray-200 bg-white px-3 text-[13px] font-medium text-gray-700 transition hover:bg-gray-50"
+        >
+          <Download size={14} />
+          {importDraft ? "Change import" : "Import from GitHub"}
+        </Link>
+      </div>
 
       <div className="mt-8 flex flex-col gap-5 rounded-[24px] border border-gray-200 bg-white p-6">
         <div>
@@ -300,7 +347,7 @@ export function PluginEditorScreen() {
       <div className="mt-6">
         <div className="flex items-center justify-between">
           <h2 className="text-[18px] font-semibold text-gray-900">What&apos;s inside</h2>
-          <div className="flex gap-2">
+          {!importDraft ? <div className="flex gap-2">
             {(Object.keys(COMPONENT_META) as ComponentKind[]).map((kind) => {
               const meta = COMPONENT_META[kind];
               return (
@@ -316,16 +363,53 @@ export function PluginEditorScreen() {
                 </DenButton>
               );
             })}
-          </div>
+          </div> : null}
         </div>
 
-        {components.length === 0 ? (
+        {importDraft ? (
+          <div className="mt-4 overflow-hidden rounded-[24px] border border-gray-200 bg-white">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 bg-gray-50 px-5 py-4">
+              <div className="min-w-0">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-400">Imported from GitHub</p>
+                <p className="mt-1 truncate text-[14px] font-medium text-gray-900">{pluginImportSourceLabel(importDraft.preview)}</p>
+              </div>
+              <div className="flex shrink-0 items-center gap-3 text-[13px] font-medium">
+                <button
+                  type="button"
+                  className="text-gray-500 hover:text-gray-900"
+                  onClick={() => {
+                    clearPluginImportDraft();
+                    setImportDraft(null);
+                  }}
+                >
+                  Discard
+                </button>
+                <Link href={getImportPluginRoute(orgSlug)} className="text-gray-600 hover:text-gray-900">
+                  Change import
+                </Link>
+              </div>
+            </div>
+            {[...importedSkills.map((skill) => ({ key: `skill:${skill.skillKey}`, label: "Skill", name: skill.name, Icon: FileText })),
+              ...importedServers.map((server) => ({ key: `mcp:${server.serverKey}`, label: "MCP server", name: server.name, Icon: Server }))]
+              .map((item) => (
+                <div key={item.key} className="flex items-center gap-3 border-b border-gray-100 px-5 py-3 last:border-b-0">
+                  <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-gray-50 text-gray-500">
+                    <item.Icon size={16} />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[14px] font-medium text-gray-900">{item.name}</span>
+                    <span className="block text-[12px] text-gray-500">{item.label}</span>
+                  </span>
+                </div>
+              ))}
+          </div>
+        ) : components.length === 0 ? (
           <div className="mt-4 rounded-[24px] border border-dashed border-gray-300 bg-gray-50 px-6 py-10 text-center text-[14px] text-gray-500">
             Add a skill, command, or MCP server to get started. A plugin needs at least one component.
           </div>
         ) : null}
 
-        <div className="mt-4 flex flex-col gap-4">
+        {!importDraft ? <div className="mt-4 flex flex-col gap-4">
           {components.map((component) => {
             const meta = COMPONENT_META[component.kind];
             const Icon = meta.icon;
@@ -386,7 +470,7 @@ export function PluginEditorScreen() {
               </div>
             );
           })}
-        </div>
+        </div> : null}
       </div>
 
       <div className="mt-6 flex flex-col gap-4 rounded-[24px] border border-gray-200 bg-white p-6">
@@ -437,9 +521,13 @@ export function PluginEditorScreen() {
 
       <div className="mt-6 flex items-center gap-3">
         <DenButton onClick={() => void createPlugin()} disabled={saving}>
-          {saving ? progress ?? "Creating..." : "Create plugin"}
+          {saving ? "Creating..." : "Create plugin"}
         </DenButton>
-        <Link href={getPluginsRoute(orgSlug)} className="text-[14px] text-gray-500 hover:text-gray-900">
+        <Link
+          href={getPluginsRoute(orgSlug)}
+          onClick={() => clearPluginImportDraft()}
+          className="text-[14px] text-gray-500 hover:text-gray-900"
+        >
           Cancel
         </Link>
       </div>

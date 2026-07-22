@@ -55,7 +55,7 @@ After a signed-in user can list active marketplaces with
    - A visible `OpenWork Marketplace` card.
    - A visible `Anthropic-Compatible Plugins` card.
    - A link or visible reference to `anthropics/knowledge-work-plugins`.
-   - OpenWork MCP install config using `npx -y openwork-ui-mcp`.
+   - OpenWork Connect endpoint `https://api.openworklabs.com/mcp/agent`, with OpenCode verified and setup guides for Codex, Cursor Web/Agents, ChatGPT Desktop, Claude Code, VS Code, and other MCP clients.
    - Example prompt: `Package this skill as a plugin, put it on a marketplace, and assign it to my team.`
 7. Open `View marketplaces` and confirm both default marketplaces are listed.
 

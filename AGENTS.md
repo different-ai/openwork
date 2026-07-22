@@ -58,6 +58,15 @@ repro steps. Pure docs/comments and types-only changes with no runtime path may
 skip — but say so explicitly. For changes you expect to be inert, the `fraimz`
 skill's canonical core flow proves the core experience is unchanged.
 
+## Demo-Driven Development (the paved path)
+
+Feature work starts with the demo, not a PRD:
+
+1. `/voiceover <feature>` — align on the demo script; **no code until it is approved** (`voiceover` skill).
+2. Build on a fresh worktree/branch (`git worktree add ...`), never on the user's checkout.
+3. Prove it with fraimz until every frame holds (`fraimz` skill).
+4. Open a PR against `dev` and post the proof on it: `pnpm fraimz --flow <id> --pr`.
+
 ## Coding Guidelines
 
 ### TypeScript

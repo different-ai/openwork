@@ -1,11 +1,13 @@
-import { and, asc, count, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
+import { and, asc, count, eq, gt, inArray, isNull, sql } from "@openwork-ee/den-db/drizzle"
 import {
   AuthSessionTable,
   AuthUserTable,
+  ConnectedAccountTable,
   InvitationTable,
   MemberTable,
   OrganizationRoleTable,
   OrganizationTable,
+  SsoConnectionTable,
   TeamMemberTable,
   TeamTable,
 } from "@openwork-ee/den-db/schema"
@@ -13,6 +15,7 @@ import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { revokeOrganizationApiKeysForMember } from "./api-keys.js"
 import { revokeMembershipSessionCredentials } from "./credential-revocation.js"
 import { db } from "./db.js"
+import { env } from "./env.js"
 import {
   getRoleValueAfterOwnershipTransfer,
   roleIncludesPrivileged,
@@ -22,7 +25,13 @@ import {
   type MemberLifecycleValidation,
 } from "./organization-member-guards.js"
 import { runPostOrganizationMemberChangeHooks } from "./organization-member-hooks.js"
-import { DEFAULT_ORGANIZATION_LIMITS, normalizeOrganizationMetadata, serializeOrganizationMetadata } from "./organization-limits.js"
+import { getScimManagedTeamIds } from "./scim-groups.js"
+import {
+  DEFAULT_ORGANIZATION_LIMITS,
+  normalizeOrganizationMetadata,
+  serializeOrganizationMetadata,
+  type ManagedBrandAssetMetadata,
+} from "./organization-limits.js"
 import {
   denDefaultDynamicOrganizationRoles,
   denOrganizationStaticRoles,
@@ -30,6 +39,7 @@ import {
   type OrganizationPermissionRecord,
 } from "./organization-access.js"
 import { ensureDefaultDesktopPolicyForOrganization } from "./desktop-policies.js"
+import { isSingleOrgOwnerEmailEligible, resolveSingleOrgMembershipRole } from "./single-org-policy.js"
 
 type UserId = typeof AuthUserTable.$inferSelect.id
 type SessionId = typeof AuthSessionTable.$inferSelect.id
@@ -164,6 +174,7 @@ export type OrganizationContext = {
     createdAt: Date
     updatedAt: Date
     memberIds: MemberId[]
+    managedByScim: boolean
   }>
 }
 
@@ -408,10 +419,10 @@ async function ensureDefaultDynamicRoles(orgId: OrgId) {
   }
 }
 
-function normalizeAssignableRole(input: string, availableRoles: Set<string>) {
+function normalizeAssignableRole(input: string, availableRoles: Set<string>, fallbackRole = "member") {
   const roles = splitRoles(input).filter((role) => availableRoles.has(role))
   if (roles.length === 0) {
-    return "member"
+    return fallbackRole
   }
   return roles.join(",")
 }
@@ -431,6 +442,7 @@ async function insertMemberIfMissing(input: {
   organizationId: OrgId
   userId: UserId
   role: string
+  email?: string | null
 }) {
   const existing = await db
     .select()
@@ -442,13 +454,25 @@ async function insertMemberIfMissing(input: {
     return existing[0]
   }
 
-  await db.insert(MemberTable).values({
-    id: createDenTypeId("member"),
+  const invitedMember = await acceptPendingInvitationForBootstrapMembership({
     organizationId: input.organizationId,
     userId: input.userId,
-    role: input.role,
-    joinedAt: new Date(),
+    email: input.email ?? null,
+    defaultRole: input.role,
   })
+  if (invitedMember) {
+    return invitedMember
+  }
+
+  try {
+    await db.insert(MemberTable).values({
+      id: createDenTypeId("member"),
+      organizationId: input.organizationId,
+      userId: input.userId,
+      role: input.role,
+      joinedAt: new Date(),
+    })
+  } catch {}
 
   const created = await db
     .select()
@@ -463,9 +487,101 @@ async function insertMemberIfMissing(input: {
   return created[0]
 }
 
-async function acceptInvitation(invitation: InvitationRow, userId: UserId) {
+export async function ensureBootstrapMembershipForOrganization(input: {
+  organizationId: OrgId
+  userId: UserId
+  role: string
+  email?: string | null
+}) {
+  return insertMemberIfMissing(input)
+}
+
+export async function acceptPendingInvitationForBootstrapMembership(input: {
+  organizationId: OrgId
+  userId: UserId
+  email: string | null
+  defaultRole: string
+}) {
+  const email = input.email?.trim().toLowerCase()
+  if (!email) {
+    return null
+  }
+
+  const invitationRows = await db
+    .select()
+    .from(InvitationTable)
+    .where(and(
+      eq(InvitationTable.organizationId, input.organizationId),
+      eq(InvitationTable.status, "pending"),
+      gt(InvitationTable.expiresAt, new Date()),
+      sql`lower(${InvitationTable.email}) = ${email}`,
+    ))
+    .limit(1)
+
+  const invitation = invitationRows.find((row) => (
+    row.organizationId === input.organizationId
+    && row.status === "pending"
+    && row.expiresAt > new Date()
+    && row.email.trim().toLowerCase() === email
+  )) ?? null
+  if (!invitation) {
+    return null
+  }
+
+  // Bootstrap paths already grant same-org membership before email verification.
+  // organization-join-verification.ts keeps that gate on the explicit accept endpoint.
+  return acceptInvitation(invitation, input.userId, { fallbackRole: input.defaultRole })
+}
+
+export async function reconcilePendingInvitationsForUser(userId: UserId) {
+  const userRows = await db
+    .select({ email: AuthUserTable.email })
+    .from(AuthUserTable)
+    .where(eq(AuthUserTable.id, userId))
+    .limit(1)
+  const email = userRows[0]?.email.trim().toLowerCase()
+  if (!email) {
+    return 0
+  }
+
+  const now = new Date()
+  const invitations = await db
+    .select()
+    .from(InvitationTable)
+    .where(and(
+      eq(InvitationTable.status, "pending"),
+      gt(InvitationTable.expiresAt, now),
+      sql`lower(${InvitationTable.email}) = ${email}`,
+    ))
+    .limit(20)
+
+  let acceptedCount = 0
+  for (const invitation of invitations) {
+    if (invitation.status !== "pending" || invitation.expiresAt <= now || invitation.email.trim().toLowerCase() !== email) {
+      continue
+    }
+
+    const existingMemberRows = await db
+      .select({ id: MemberTable.id })
+      .from(MemberTable)
+      .where(and(eq(MemberTable.organizationId, invitation.organizationId), eq(MemberTable.userId, userId), isNull(MemberTable.removedAt)))
+      .limit(1)
+    if (!existingMemberRows[0]) {
+      // No cross-org auto-join here; organization-join-verification.ts keeps
+      // that email-verification boundary on the explicit accept endpoint.
+      continue
+    }
+
+    await acceptInvitation(invitation, userId)
+    acceptedCount += 1
+  }
+
+  return acceptedCount
+}
+
+async function acceptInvitation(invitation: InvitationRow, userId: UserId, options?: { fallbackRole?: string }) {
   const availableRoles = await listAssignableRoles(invitation.organizationId)
-  const role = normalizeAssignableRole(invitation.role, availableRoles)
+  const role = normalizeAssignableRole(invitation.role, availableRoles, options?.fallbackRole)
   const joinedAt = new Date()
 
   const existingMemberRows = await db
@@ -483,6 +599,19 @@ async function acceptInvitation(invitation: InvitationRow, userId: UserId) {
   const invitedMember = invitedMemberRows[0] ?? null
   const existingMember = existingMemberRows[0] ?? null
   let member = existingMember
+
+  if (existingMember && invitedMember) {
+    const existingJoinedAt = existingMember.joinedAt ?? joinedAt
+    const existingRole = roleIncludesOwner(existingMember.role) ? existingMember.role : role
+    await db
+      .update(MemberTable)
+      .set({ role: existingRole, joinedAt: existingJoinedAt })
+      .where(eq(MemberTable.id, existingMember.id))
+    if (invitedMember.id !== existingMember.id) {
+      await db.delete(MemberTable).where(eq(MemberTable.id, invitedMember.id))
+    }
+    member = { ...existingMember, role: existingRole, joinedAt: existingJoinedAt }
+  }
 
   if (!member && invitedMember) {
     await db
@@ -551,7 +680,23 @@ export async function acceptInvitationForUser(input: {
     return null
   }
 
-  if (getInvitationStatus(invitation) !== "pending") {
+  const invitationStatus = getInvitationStatus(invitation)
+  if (invitationStatus !== "pending") {
+    if (invitationStatus === "accepted") {
+      const memberRows = await db
+        .select()
+        .from(MemberTable)
+        .where(and(eq(MemberTable.organizationId, invitation.organizationId), eq(MemberTable.userId, input.userId), isNull(MemberTable.removedAt)))
+        .limit(1)
+      const member = memberRows[0]
+      if (member) {
+        return {
+          invitation,
+          member,
+        }
+      }
+    }
+
     return null
   }
 
@@ -622,6 +767,7 @@ export async function getInvitationPreview(invitationIdRaw: string): Promise<Inv
 async function createOrganizationRecord(input: {
   userId: UserId
   name: string
+  slug?: string
   logo?: string | null
   metadata?: Record<string, unknown> | null
 }) {
@@ -637,7 +783,7 @@ async function createOrganizationRecord(input: {
   await db.insert(OrganizationTable).values({
     id: organizationId,
     name: input.name,
-    slug: organizationId,
+    slug: input.slug ?? organizationId,
     logo: input.logo ?? null,
     metadata,
   })
@@ -660,9 +806,119 @@ async function createOrganizationRecord(input: {
   return organizationId
 }
 
+export async function getSingletonOrganization() {
+  const rows = await db
+    .select()
+    .from(OrganizationTable)
+    .where(eq(OrganizationTable.slug, env.singleOrg.slug))
+    .limit(1)
+
+  return rows[0] ?? null
+}
+
+export async function getSingletonSsoStatus() {
+  const organization = await getSingletonOrganization()
+  const organizationSlug = organization?.slug || env.singleOrg.slug
+  const fallbackSignInPath = `/sso/${encodeURIComponent(organizationSlug)}`
+
+  if (!organization) {
+    return {
+      configured: false,
+      organizationSlug,
+      signInPath: fallbackSignInPath,
+    }
+  }
+
+  const rows = await db
+    .select({ signInPath: SsoConnectionTable.signInPath })
+    .from(SsoConnectionTable)
+    .where(eq(SsoConnectionTable.organizationId, organization.id))
+    .limit(1)
+  const signInPath = rows[0]?.signInPath || fallbackSignInPath
+
+  return {
+    configured: Boolean(rows[0]),
+    organizationSlug,
+    signInPath,
+  }
+}
+
+async function countActiveOwners(organizationId: OrgId) {
+  const rows = await db
+    .select({ role: MemberTable.role })
+    .from(MemberTable)
+    .where(and(eq(MemberTable.organizationId, organizationId), isNull(MemberTable.removedAt)))
+
+  return rows.filter((row) => roleIncludesOwner(row.role)).length
+}
+
+export async function ensureSingletonOrganizationForUser(userId: UserId) {
+  const userRows = await db
+    .select({
+      email: AuthUserTable.email,
+    })
+    .from(AuthUserTable)
+    .where(eq(AuthUserTable.id, userId))
+    .limit(1)
+  const userEmail = userRows[0]?.email ?? null
+
+  let organization = await getSingletonOrganization()
+  if (!organization) {
+    if (!isSingleOrgOwnerEmailEligible({
+      email: userEmail,
+      ownerEmails: env.singleOrg.ownerEmails,
+    })) {
+      return null
+    }
+
+    try {
+      const organizationId = await createOrganizationRecord({
+        userId,
+        name: env.singleOrg.name,
+        slug: env.singleOrg.slug,
+      })
+      return organizationId
+    } catch {
+      organization = await getSingletonOrganization()
+      if (!organization) {
+        throw new Error("failed_to_create_single_org")
+      }
+    }
+  }
+
+  const activeOwnerCount = await countActiveOwners(organization.id)
+  const role = resolveSingleOrgMembershipRole({
+    activeOwnerCount,
+    email: userEmail,
+    ownerEmails: env.singleOrg.ownerEmails,
+  })
+  if (!role) {
+    return null
+  }
+
+  const member = await ensureBootstrapMembershipForOrganization({
+    organizationId: organization.id,
+    userId,
+    role,
+    email: userEmail,
+  })
+
+  await ensureDefaultDesktopPolicyForOrganization({
+    organizationId: organization.id,
+    createdByOrgMemberId: member.id,
+  })
+  await ensureDefaultDynamicRoles(organization.id)
+
+  return organization.id
+}
+
 export async function ensureUserOrgAccess(input: {
   userId: UserId
 }) {
+  if (env.orgMode === "single_org") {
+    return ensureSingletonOrganizationForUser(input.userId)
+  }
+
   const memberships = await listMembershipRows(input.userId)
   if (memberships.length > 0) {
     const organizationIds = [...new Set(memberships.map((membership) => membership.organizationId))]
@@ -677,6 +933,10 @@ export async function ensurePersonalOrganizationForUser(userId: UserId) {
   const existingOrgId = await ensureUserOrgAccess({ userId })
   if (existingOrgId) {
     return existingOrgId
+  }
+
+  if (env.orgMode === "single_org") {
+    return null
   }
 
   const userRows = await db
@@ -726,7 +986,11 @@ export async function updateOrganizationSettings(input: {
   allowedEmailDomains?: readonly string[] | null
   allowedDesktopVersions?: readonly string[] | null
   requireSso?: boolean
+  brandAppName?: string | null
   brandLogoUrl?: string | null
+  brandIconUrl?: string | null
+  brandLogoAsset?: ManagedBrandAssetMetadata | null
+  brandIconAsset?: ManagedBrandAssetMetadata | null
   brandAccentColor?: string | null
 }) {
   const nextName = typeof input.name === "string" ? input.name.trim() : null
@@ -741,7 +1005,7 @@ export async function updateOrganizationSettings(input: {
   if (input.allowedEmailDomains !== undefined) {
     updates.allowedEmailDomains = normalizeAllowedEmailDomains(input.allowedEmailDomains).domains
   }
-  if (input.allowedDesktopVersions !== undefined || input.requireSso !== undefined || input.brandLogoUrl !== undefined || input.brandAccentColor !== undefined) {
+  if (input.allowedDesktopVersions !== undefined || input.requireSso !== undefined || input.brandAppName !== undefined || input.brandLogoUrl !== undefined || input.brandIconUrl !== undefined || input.brandLogoAsset !== undefined || input.brandIconAsset !== undefined || input.brandAccentColor !== undefined) {
     const rows = await db
       .select({ metadata: OrganizationTable.metadata })
       .from(OrganizationTable)
@@ -769,11 +1033,49 @@ export async function updateOrganizationSettings(input: {
       nextMetadata.requireSso = input.requireSso
     }
 
+    if (input.brandAppName !== undefined) {
+      if (input.brandAppName === null) {
+        delete nextMetadata.brandAppName
+      } else {
+        nextMetadata.brandAppName = input.brandAppName
+      }
+    }
+
     if (input.brandLogoUrl !== undefined) {
       if (input.brandLogoUrl === null) {
         delete nextMetadata.brandLogoUrl
       } else {
         nextMetadata.brandLogoUrl = input.brandLogoUrl
+      }
+      if (input.brandLogoAsset === undefined) {
+        delete nextMetadata.brandLogoAsset
+      }
+    }
+
+    if (input.brandIconUrl !== undefined) {
+      if (input.brandIconUrl === null) {
+        delete nextMetadata.brandIconUrl
+      } else {
+        nextMetadata.brandIconUrl = input.brandIconUrl
+      }
+      if (input.brandIconAsset === undefined) {
+        delete nextMetadata.brandIconAsset
+      }
+    }
+
+    if (input.brandLogoAsset !== undefined) {
+      if (input.brandLogoAsset === null) {
+        delete nextMetadata.brandLogoAsset
+      } else {
+        nextMetadata.brandLogoAsset = input.brandLogoAsset
+      }
+    }
+
+    if (input.brandIconAsset !== undefined) {
+      if (input.brandIconAsset === null) {
+        delete nextMetadata.brandIconAsset
+      } else {
+        nextMetadata.brandIconAsset = input.brandIconAsset
       }
     }
 
@@ -876,7 +1178,10 @@ export async function resolveUserOrganizations(input: {
 }) {
   await ensureUserOrgAccess({ userId: input.userId })
 
-  const orgs = await listUserOrgs(input.userId)
+  const visibleOrgs = await listUserOrgs(input.userId)
+  const orgs = env.orgMode === "single_org"
+    ? visibleOrgs.filter((org) => org.slug === env.singleOrg.slug)
+    : visibleOrgs
 
   const availableOrgIds = new Set(orgs.map((org) => org.id))
 
@@ -892,7 +1197,9 @@ export async function resolveUserOrganizations(input: {
     }
   }
 
-  activeOrgId ??= orgs[0]?.id ?? null
+  if (!activeOrgId && orgs.length === 1) {
+    activeOrgId = orgs[0].id
+  }
 
   const activeOrg = orgs.find((org) => org.id === activeOrgId) ?? null
 
@@ -1047,16 +1354,19 @@ export async function getOrganizationContextForUser(input: {
 }
 
 async function listOrganizationTeams(organizationId: OrgId) {
-  const teams = await db
-    .select({
-      id: TeamTable.id,
-      name: TeamTable.name,
-      createdAt: TeamTable.createdAt,
-      updatedAt: TeamTable.updatedAt,
-    })
-    .from(TeamTable)
-    .where(eq(TeamTable.organizationId, organizationId))
-    .orderBy(asc(TeamTable.createdAt))
+  const [teams, scimManagedTeamIds] = await Promise.all([
+    db
+      .select({
+        id: TeamTable.id,
+        name: TeamTable.name,
+        createdAt: TeamTable.createdAt,
+        updatedAt: TeamTable.updatedAt,
+      })
+      .from(TeamTable)
+      .where(eq(TeamTable.organizationId, organizationId))
+      .orderBy(asc(TeamTable.createdAt)),
+    getScimManagedTeamIds(organizationId),
+  ])
 
   if (teams.length === 0) {
     return []
@@ -1080,6 +1390,7 @@ async function listOrganizationTeams(organizationId: OrgId) {
   return teams.map((team) => ({
     ...team,
     memberIds: memberIdsByTeamId.get(team.id) ?? [],
+    managedByScim: scimManagedTeamIds.has(team.id),
   }))
 }
 
@@ -1373,7 +1684,26 @@ export async function removeOrganizationMember(input: {
     userId: member.userId,
   })
 
-  await db.transaction(async (tx) => {
+  const removed = await db.transaction(async (tx) => {
+    const lockedMembers = await tx
+      .select({ id: MemberTable.id })
+      .from(MemberTable)
+      .where(and(
+        eq(MemberTable.id, member.id),
+        eq(MemberTable.organizationId, input.organizationId),
+        isNull(MemberTable.removedAt),
+      ))
+      .limit(1)
+      .for("update")
+    if (!lockedMembers[0]) return false
+
+    await tx
+      .delete(ConnectedAccountTable)
+      .where(and(
+        eq(ConnectedAccountTable.organizationId, input.organizationId),
+        eq(ConnectedAccountTable.orgMembershipId, member.id),
+      ))
+
     await tx
       .delete(TeamMemberTable)
       .where(eq(TeamMemberTable.orgMembershipId, member.id))
@@ -1382,7 +1712,9 @@ export async function removeOrganizationMember(input: {
       .update(MemberTable)
       .set({ removedAt: new Date(), removedByOrgMember: input.removedByOrgMemberId ?? null, userId: null })
       .where(eq(MemberTable.id, member.id))
+    return true
   })
+  if (!removed) return memberNotFound()
 
   await runPostOrganizationMemberChangeHooks({ organizationId: input.organizationId, memberId: member.id, change: "removed" })
 

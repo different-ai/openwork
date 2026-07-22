@@ -17,9 +17,12 @@ import { db } from "../../db.js"
 import { env } from "../../env.js"
 import type { UserOrganizationsContext } from "../../middleware/index.js"
 import { denTypeIdSchema } from "../../openapi.js"
+import { appLogger } from "../../observability/logger.js"
 import type { AuthContextVariables } from "../../session.js"
 import { deprovisionWorker, provisionWorker } from "../../workers/provisioner.js"
 import { customDomainForWorker } from "../../workers/vanity-domain.js"
+
+const logger = appLogger.child({ component: "worker_routes" })
 
 export const createWorkerSchema = z.object({
   name: z.string().min(1),
@@ -354,8 +357,7 @@ export async function continueCloudProvisioning(input: {
       .set({ status: "failed" })
       .where(and(eq(WorkerTable.id, input.workerId), eq(WorkerTable.status, "provisioning")))
 
-    const message = error instanceof Error ? error.message : "provisioning_failed"
-    console.error(`[workers] provisioning failed for ${input.workerId}: ${message}`)
+    logger.error("worker provisioning failed", { worker_id: input.workerId, error })
   }
 }
 
@@ -412,8 +414,7 @@ export async function deleteWorkerCascade(worker: WorkerRow) {
         instanceUrl: instance?.url ?? null,
       })
     } catch (error) {
-      const message = error instanceof Error ? error.message : "deprovision_failed"
-      console.warn(`[workers] deprovision warning for ${worker.id}: ${message}`)
+      logger.warn("worker deprovision warning", { worker_id: worker.id, error })
     }
   }
 

@@ -1,6 +1,5 @@
 import { BUILD_LATEST_APP_VERSION } from "./generated/app-version.js";
-
-const MIN_APP_VERSION = "0.11.207";
+import { MIN_SUPPORTED_DESKTOP_VERSION } from "./generated/desktop-versions.js";
 
 function normalizeVersion(value: string | undefined | null) {
   const trimmed = value?.trim() ?? "";
@@ -8,6 +7,6 @@ function normalizeVersion(value: string | undefined | null) {
 }
 
 export const denApiAppVersion = {
-  minAppVersion: MIN_APP_VERSION,
+  minAppVersion: MIN_SUPPORTED_DESKTOP_VERSION,
   latestAppVersion: normalizeVersion(BUILD_LATEST_APP_VERSION) ?? "0.0.0",
 } as const;

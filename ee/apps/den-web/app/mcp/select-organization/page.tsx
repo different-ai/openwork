@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { useOrgListWindow } from "../../(den)/_lib/use-org-list-window";
 
 type Organization = {
   id: string;
@@ -105,6 +106,15 @@ export default function McpSelectOrganizationPage() {
     [orgs, selectedOrgId],
   );
   const isBusy = flowState === "submitting" || flowState === "redirecting";
+  const {
+    query: orgQuery,
+    setQuery: setOrgQuery,
+    visible: visibleOrgs,
+    filteredCount: orgFilteredCount,
+    hasMore: orgHasMore,
+    showMore: showMoreOrgs,
+    showSearch: showOrgSearch,
+  } = useOrgListWindow(orgs);
 
   useEffect(() => {
     let cancelled = false;
@@ -300,59 +310,90 @@ export default function McpSelectOrganizationPage() {
             (flowState === "ready" ||
               flowState === "submitting" ||
               flowState === "redirecting") ? (
-              <ul className="grid gap-2">
-                {orgs.map((org) => {
-                  const display = org.name || org.slug || org.id;
-                  const isSelected = selectedOrgId === org.id;
-                  return (
-                    <li key={org.id}>
-                      <label
-                        className={`flex cursor-pointer items-center gap-3 rounded-2xl border bg-white px-4 py-3 transition-colors ${
-                          isSelected
-                            ? "border-[var(--dls-accent)] shadow-[0_0_0_4px_rgba(15,23,42,0.06)]"
-                            : "border-[var(--dls-border)] hover:bg-[var(--dls-hover)]"
-                        } ${isBusy ? "pointer-events-none opacity-70" : ""}`}
-                      >
-                        <input
-                          type="radio"
-                          name="mcp-organization"
-                          checked={isSelected}
-                          onChange={() => setSelectedOrgId(org.id)}
-                          className="sr-only"
-                          disabled={isBusy}
-                        />
-                        <span
-                          aria-hidden
-                          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#011627] text-[12px] font-semibold uppercase tracking-[0.08em] text-white"
-                        >
-                          {getInitials(display)}
-                        </span>
-                        <span className="grid flex-1 gap-0.5">
-                          <span className="text-[15px] font-medium text-[var(--dls-text-primary)]">
-                            {display}
-                          </span>
-                          <span className="text-[12px] text-[var(--dls-text-secondary)]">
-                            {formatRole(org.role)}
-                            {org.isActive ? " · Current workspace" : ""}
-                          </span>
-                        </span>
-                        <span
-                          aria-hidden
-                          className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border ${
+              <div className="grid gap-3">
+                {showOrgSearch ? (
+                  <input
+                    type="search"
+                    value={orgQuery}
+                    onChange={(event) => setOrgQuery(event.target.value)}
+                    placeholder="Search organizations"
+                    className="rounded-2xl border border-[var(--dls-border)] px-4 py-3 text-[14px] text-[var(--dls-text-primary)] outline-none transition focus:border-[var(--dls-accent)]"
+                  />
+                ) : null}
+
+                <ul className="grid gap-2">
+                  {visibleOrgs.map((org) => {
+                    const display = org.name || org.slug || org.id;
+                    const isSelected = selectedOrgId === org.id;
+                    return (
+                      <li key={org.id}>
+                        <label
+                          className={`flex cursor-pointer items-center gap-3 rounded-2xl border bg-white px-4 py-3 transition-colors ${
                             isSelected
-                              ? "border-[var(--dls-accent)] bg-[var(--dls-accent)]"
-                              : "border-[var(--dls-border)] bg-white"
-                          }`}
+                              ? "border-[var(--dls-accent)] shadow-[0_0_0_4px_rgba(15,23,42,0.06)]"
+                              : "border-[var(--dls-border)] hover:bg-[var(--dls-hover)]"
+                          } ${isBusy ? "pointer-events-none opacity-70" : ""}`}
                         >
-                          {isSelected ? (
-                            <span className="h-2 w-2 rounded-full bg-white" />
-                          ) : null}
-                        </span>
-                      </label>
-                    </li>
-                  );
-                })}
-              </ul>
+                          <input
+                            type="radio"
+                            name="mcp-organization"
+                            checked={isSelected}
+                            onChange={() => setSelectedOrgId(org.id)}
+                            className="sr-only"
+                            disabled={isBusy}
+                          />
+                          <span
+                            aria-hidden
+                            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#011627] text-[12px] font-semibold uppercase tracking-[0.08em] text-white"
+                          >
+                            {getInitials(display)}
+                          </span>
+                          <span className="grid flex-1 gap-0.5">
+                            <span className="text-[15px] font-medium text-[var(--dls-text-primary)]">
+                              {display}
+                            </span>
+                            <span className="text-[12px] text-[var(--dls-text-secondary)]">
+                              {formatRole(org.role)}
+                              {org.isActive ? " · Current workspace" : ""}
+                            </span>
+                          </span>
+                          <span
+                            aria-hidden
+                            className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border ${
+                              isSelected
+                                ? "border-[var(--dls-accent)] bg-[var(--dls-accent)]"
+                                : "border-[var(--dls-border)] bg-white"
+                            }`}
+                          >
+                            {isSelected ? (
+                              <span className="h-2 w-2 rounded-full bg-white" />
+                            ) : null}
+                          </span>
+                        </label>
+                      </li>
+                    );
+                  })}
+                </ul>
+
+                {orgFilteredCount === 0 && orgQuery ? (
+                  <p className="text-[13px] text-[var(--dls-text-secondary)]">No organizations match your search.</p>
+                ) : null}
+
+                {orgHasMore ? (
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <p className="text-[13px] text-[var(--dls-text-secondary)]">
+                      Showing {visibleOrgs.length} of {orgFilteredCount} organizations
+                    </p>
+                    <button
+                      type="button"
+                      onClick={showMoreOrgs}
+                      className="den-button-ghost w-full sm:w-auto"
+                    >
+                      Show more
+                    </button>
+                  </div>
+                ) : null}
+              </div>
             ) : null}
 
             {errorMessage ? (

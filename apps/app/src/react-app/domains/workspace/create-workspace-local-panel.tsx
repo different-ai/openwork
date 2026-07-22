@@ -1,10 +1,23 @@
 /** @jsxImportSource react */
-import { Check, FolderPlus, Loader2, XCircle } from "lucide-react";
+import {
+  ChartNoAxesColumnIncreasing,
+  Check,
+  FolderPlus,
+  Loader2,
+  XCircle,
+} from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
 import { DialogClose, DialogFooter } from "@/components/ui/dialog";
 import type { WorkspacePreset } from "../../../app/types";
 import { t } from "../../../i18n";
+import type { CreateWorkspaceOptions } from "./types";
 import {
   errorBannerClass,
   modalBodyClass,
@@ -39,13 +52,16 @@ export type CreateWorkspaceLocalPanelProps = {
   hasSelectedFolder: boolean;
   pickingFolder: boolean;
   onPickFolder: () => void;
+  projectLabel: string;
+  onProjectLabelInput: (value: string) => void;
+  showProjectLabel: boolean;
   submitting: boolean;
   localError: string | null;
   onClose: () => void;
   onSubmit: () => void;
   confirmLabel?: string;
   workerLabel?: string;
-  onConfirmWorker?: (preset: WorkspacePreset, folder: string | null) => void;
+  onConfirmWorker?: (preset: WorkspacePreset, folder: string | null, options?: CreateWorkspaceOptions) => void;
   preset: WorkspacePreset;
   workerSubmitting: boolean;
   workerDisabled: boolean;
@@ -91,6 +107,7 @@ export function CreateWorkspaceLocalPanel(
   props: CreateWorkspaceLocalPanelProps,
 ) {
   const progress = props.progress;
+  const hasProjectLabel = props.projectLabel.trim().length > 0;
 
   return (
     <>
@@ -134,6 +151,47 @@ export function CreateWorkspaceLocalPanel(
                 </span>
               )}
             </div>
+
+            {props.showProjectLabel ? (
+              <Accordion
+                multiple
+                defaultValue={hasProjectLabel ? ["analytics"] : []}
+                className="mt-4 overflow-hidden rounded-[20px] border-dls-border bg-dls-hover/60 shadow-none before:hidden"
+              >
+                <AccordionItem value="analytics" className="border-b-0">
+                  <AccordionTrigger className="items-center px-4 py-4 hover:no-underline focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.18)]">
+                    <span className="flex min-w-0 flex-1 items-start gap-3">
+                      <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-xl border border-dls-border bg-dls-surface text-dls-text">
+                        <ChartNoAxesColumnIncreasing size={17} className="shrink-0 text-current" />
+                      </span>
+                      <span className="min-w-0">
+                        <span className="block text-[14px] font-semibold text-dls-text">
+                          Want more analytics?
+                        </span>
+                        <span className="mt-1 block text-[12px] leading-5 text-dls-secondary">
+                          Add a project name to group this workspace's sessions in Analytics.
+                        </span>
+                      </span>
+                    </span>
+                  </AccordionTrigger>
+                  <AccordionContent className="space-y-3 px-4 pb-4">
+                    <div>
+                      <label className="text-[13px] font-medium text-dls-text">
+                        Project name <span className="text-dls-secondary">(optional)</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={props.projectLabel}
+                        onChange={(event) => props.onProjectLabelInput(event.currentTarget.value)}
+                        placeholder="Billing API"
+                        disabled={props.submitting}
+                        className="mt-2 w-full rounded-[20px] border border-dls-border bg-dls-surface px-4 py-3 text-[14px] text-dls-text outline-none placeholder:text-dls-secondary transition-colors focus:border-dls-accent disabled:cursor-not-allowed disabled:opacity-60"
+                      />
+                    </div>
+                  </AccordionContent>
+                </AccordionItem>
+              </Accordion>
+            ) : null}
             <div className="mt-4">
               <button
                 type="button"
@@ -300,7 +358,9 @@ export function CreateWorkspaceLocalPanel(
               type="button"
               variant="secondary"
               onClick={() =>
-                props.onConfirmWorker?.(props.preset, props.selectedFolder)
+                props.onConfirmWorker?.(props.preset, props.selectedFolder, {
+                  projectLabel: props.projectLabel.trim() || null,
+                })
               }
               disabled={
                 !props.selectedFolder ||

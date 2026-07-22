@@ -41,6 +41,11 @@
       "development": "./src/schema/teams.ts",
       "default": "./dist/schema/teams.js"
     },
+    "./schema/telegram": {
+      "types": "./src/schema/telegram.ts",
+      "development": "./src/schema/telegram.ts",
+      "default": "./dist/schema/telegram.js"
+    },
     "./schema/sharables/skills": {
       "types": "./src/schema/sharables/skills.ts",
       "development": "./src/schema/sharables/skills.ts",
@@ -73,13 +78,16 @@
     }
   },
   "scripts": {
-    "build": "pnpm run build:utils && tsup",
+    "build": "pnpm run build:utils && tsup && tsup --config tsup.scripts.config.ts && node scripts/build-assets.mjs",
     "build:utils": "pnpm --dir ../utils run build",
     "db:baseline": "node --import tsx scripts/baseline-migrations.ts",
-    "db:bootstrap": "pnpm run build && node --import tsx scripts/bootstrap.ts",
+    "db:bootstrap": "pnpm run build && node dist/scripts/bootstrap.js",
     "db:generate": "pnpm run build && node --import tsx ./node_modules/drizzle-kit/bin.cjs generate --config drizzle.config.ts",
-    "db:migrate": "pnpm run build && node --import tsx ./node_modules/drizzle-kit/bin.cjs migrate --config drizzle.config.ts",
-    "db:push": "pnpm run build && node --import tsx ./node_modules/drizzle-kit/bin.cjs push --config drizzle.config.ts"
+    "db:migrate": "pnpm run build && node --import tsx ./node_modules/drizzle-kit/bin.cjs migrate --config drizzle.config.ts && node --import tsx scripts/ensure-fulltext-indexes.ts && node --import tsx scripts/ensure-schema-repairs.ts",
+    "db:push": "pnpm run build && node --import tsx ./node_modules/drizzle-kit/bin.cjs push --config drizzle.config.ts && node --import tsx scripts/ensure-fulltext-indexes.ts && node --import tsx scripts/ensure-schema-repairs.ts",
+    "test": "tsx --test test/*.test.ts",
+    "db:verify-memory": "pnpm run build && node --import tsx scripts/verify-memory-schema.ts",
+    "benchmark:admin-scale:mysql": "node --import tsx scripts/admin-scale-benchmark.ts"
   },
   "dependencies": {
     "@openwork/types": "workspace:*",

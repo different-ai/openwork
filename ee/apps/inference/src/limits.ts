@@ -1,4 +1,4 @@
-import { and, eq, isNull, sql } from "drizzle-orm"
+import { and, eq, isNull, sql } from "@openwork-ee/den-db/drizzle"
 import { InferenceOrgLimitPolicyTable, InferenceOrgUsageBucketTable, MemberTable, OrganizationTable } from "@openwork-ee/den-db"
 import { createDenTypeId, normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { INFERENCE_TIER_LIMITS, INFERENCE_WINDOW_DURATIONS_MS } from "@openwork/types/den/inference"

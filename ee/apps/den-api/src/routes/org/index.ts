@@ -1,15 +1,23 @@
 import type { Hono } from "hono"
+import type { RequestIdVariables } from "hono/request-id"
 import { delegatedRoute } from "../../middleware/index.js"
 import { registerOrgApiKeyRoutes } from "./api-keys.js"
 import { registerOrgBillingRoutes } from "./billing.js"
+import { registerOrgBrandAssetRoutes } from "./brand-assets.js"
 import { LEGACY_ORG_PROXY_HEADER } from "../../middleware/user-organizations.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { registerOrgCoreRoutes } from "./core.js"
 import { registerOrgDesktopPolicyRoutes } from "./desktop-policies.js"
+import { registerOrgEgressDiagnosticRoutes } from "./egress-diagnostics.js"
 import { registerOrgInvitationRoutes } from "./invitations.js"
+import { registerGoogleWorkspaceRoutes } from "./google-workspace.js"
+import { registerOrgInstallLinkRoutes } from "./install-links.js"
 import { registerOrgInferenceRoutes } from "./inference.js"
 import { registerOrgLlmProviderRoutes } from "./llm-providers.js"
 import { registerOrgMemberRoutes } from "./members.js"
+import { registerMcpConnectionRoutes } from "./mcp-connections.js"
+import { registerMicrosoft365Routes } from "./microsoft-365.js"
+import { registerOAuthProviderRoutes } from "./oauth-providers.js"
 import { registerPluginArchRoutes } from "./plugin-system/routes.js"
 import { registerOrgRoleRoutes } from "./roles.js"
 import { registerOrgScimRoutes } from "./scim.js"
@@ -17,6 +25,7 @@ import { registerOrgSsoRoutes } from "./sso.js"
 import { registerOrgSkillRoutes } from "./skills.js"
 import { registerOrgResourceRoutes } from "./resources.js"
 import { registerOrgTeamRoutes } from "./teams.js"
+import { registerTelegramOrgRoutes } from "./telegram.js"
 
 const LEGACY_ORG_PATH_PREFIX = "/v1/orgs/"
 
@@ -44,22 +53,30 @@ function extractLegacyOrgProxyTarget(pathname: string) {
   return { organizationId, targetPath }
 }
 
-export function registerOrgRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
+export function registerOrgRoutes<T extends { Variables: OrgRouteVariables & RequestIdVariables }>(app: Hono<T>) {
   registerOrgCoreRoutes(app)
   registerOrgApiKeyRoutes(app)
   registerOrgBillingRoutes(app)
+  registerOrgBrandAssetRoutes(app)
   registerOrgDesktopPolicyRoutes(app)
+  registerOrgEgressDiagnosticRoutes(app)
   registerOrgInferenceRoutes(app)
   registerOrgScimRoutes(app)
   registerOrgSsoRoutes(app)
   registerOrgInvitationRoutes(app)
+  registerOrgInstallLinkRoutes(app)
   registerOrgLlmProviderRoutes(app)
   registerOrgMemberRoutes(app)
+  registerOAuthProviderRoutes(app)
+  registerGoogleWorkspaceRoutes(app)
+  registerMicrosoft365Routes(app)
+  registerMcpConnectionRoutes(app)
   registerPluginArchRoutes(app)
   registerOrgRoleRoutes(app)
   registerOrgResourceRoutes(app)
   registerOrgSkillRoutes(app)
   registerOrgTeamRoutes(app)
+  registerTelegramOrgRoutes(app)
 
   app.all("/v1/orgs/:orgId/*", delegatedRoute, async (c) => {
     const url = new URL(c.req.raw.url)

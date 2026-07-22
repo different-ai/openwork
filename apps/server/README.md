@@ -133,15 +133,6 @@ OpenCode proxy:
 - `GET|POST|... /opencode/*`
 - `GET|POST|... /w/:id/opencode/*`
 
-OpenCode Router proxy:
-
-- `GET|POST|... /opencode-router/*`
-- `GET|POST|... /w/:id/opencode-router/*`
-
-Auth policy:
-- `GET /opencode-router/health` requires client auth.
-- All other `/opencode-router/*` endpoints require host/owner auth.
-
 ## Approvals
 
 All writes are gated by host approval.

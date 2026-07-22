@@ -66,16 +66,6 @@ export type CloudPluginRow = {
   status: "available" | "imported" | "out_of_sync";
 };
 
-export type CloudWorker = {
-  workerId: string;
-  workerName: string;
-  status: string;
-  instanceUrl: string | null;
-  provider: string | null;
-  isMine: boolean;
-  createdAt: string | null;
-};
-
 const statusBadgeVariants = cva("", {
   variants: {
     tone: {
@@ -89,7 +79,6 @@ const statusBadgeVariants = cva("", {
 
 const skillSearchKeys = ["title"];
 const pluginSearchKeys = ["plugin.name"];
-const workerSearchKeys = ["workerName"];
 const nameSearchKeys = ["name"];
 
 function resourceStatusTone(status: string) {
@@ -103,33 +92,6 @@ function resourceStatusTone(status: string) {
       return "error" as const;
     default:
       return "neutral" as const;
-  }
-}
-
-function workerStatusValue(status: string) {
-  return status.trim().toLowerCase() || "unknown";
-}
-
-function workerStatusMeta(status: string) {
-  const normalized = workerStatusValue(status);
-
-  switch (normalized) {
-    case "healthy":
-      return { label: t("dashboard.worker_status_ready"), tone: "ready" as const, canOpen: true };
-    case "provisioning":
-      return { label: t("dashboard.worker_status_starting"), tone: "warning" as const, canOpen: false };
-    case "failed":
-      return { label: t("dashboard.worker_status_attention"), tone: "error" as const, canOpen: false };
-    case "stopped":
-      return { label: t("dashboard.worker_status_stopped"), tone: "neutral" as const, canOpen: false };
-    default:
-      return {
-        label: normalized
-          ? `${normalized.slice(0, 1).toUpperCase()}${normalized.slice(1)}`
-          : t("dashboard.worker_status_unknown"),
-        tone: "neutral" as const,
-        canOpen: normalized === "ready",
-      };
   }
 }
 
@@ -290,45 +252,6 @@ function MarketplacePluginListItem({
   );
 }
 
-interface CloudWorkerListItemProps {
-  openingWorkerId: string | null;
-  worker: CloudWorker;
-  onOpenWorker: (workerId: string, workerName: string) => void | Promise<void>;
-}
-
-function CloudWorkerListItem({ openingWorkerId, worker, onOpenWorker }: CloudWorkerListItemProps) {
-  const status = workerStatusMeta(worker.status);
-
-  return (
-    <SettingsListItem>
-      <SettingsListItemContent>
-        <SettingsListTitle>
-          <SettingsListItemTitle>{worker.workerName}</SettingsListItemTitle>
-          <SettingsPill className={statusBadgeVariants({ tone: status.tone })}>
-            {status.label}
-          </SettingsPill>
-        </SettingsListTitle>
-        <SettingsListItemDescription>
-          {[
-            worker.isMine ? t("den.worker_mine_badge") : null,
-            worker.provider ? t("den.worker_provider_label", { provider: worker.provider }) : t("den.worker_secondary_cloud"),
-            worker.instanceUrl,
-          ].filter(Boolean).join(" · ")}
-        </SettingsListItemDescription>
-      </SettingsListItemContent>
-      <Button
-        variant="outline"
-        size="sm"
-        onClick={() => void onOpenWorker(worker.workerId, worker.workerName)}
-        disabled={[openingWorkerId !== null, !status.canOpen].some(Boolean)}
-        title={!status.canOpen ? t("den.worker_not_ready_title") : undefined}
-      >
-        {openingWorkerId === worker.workerId ? t("den.opening") : t("den.open")}
-      </Button>
-    </SettingsListItem>
-  );
-}
-
 interface CloudProviderListItemProps {
   actionId: string | null;
   actionKind: ResourceActionKind | null;
@@ -353,7 +276,7 @@ function CloudProviderListItem({ actionId, actionKind, row, onImport, onRemove, 
     ? `All Models · ${source} provider`
     : t("den.cloud_provider_detail", { count: modelCount, source });
   const cloudProviderSyncDetail = modelCount === 0
-    ? `Cloud provider changed. Sync the All Models ${source} config into opencode.jsonc.`
+    ? `Cloud provider changed. Sync the All Models ${source} config into this workspace.`
     : t("den.cloud_provider_sync_detail", { count: modelCount, source });
 
   return (
@@ -673,117 +596,6 @@ export function MarketplacePluginsSection({
     </SettingsSection>
   );
 }
-
-export interface CloudWorkersSectionProps {
-  openingWorkerId: string | null;
-  workers: CloudWorker[];
-  workersBusy: boolean;
-  workersError: string | null;
-  onOpenWorker: (workerId: string, workerName: string) => void | Promise<void>;
-  onRefreshWorkers: () => void | Promise<void>;
-}
-
-export function CloudWorkersSection({
-  openingWorkerId,
-  workers,
-  workersBusy,
-  workersError,
-  onOpenWorker,
-  onRefreshWorkers,
-}: CloudWorkersSectionProps) {
-  const { hasActiveOrg } = useCloudSession();
-  const [searchQuery, setSearchQuery] = React.useState("");
-  const visibleWorkers = useSearch({ items: workers, keys: workerSearchKeys, query: searchQuery });
-  const workerGroups: { value: string; label: string; rows: CloudWorker[] }[] = [];
-  const workerGroupsByValue = new Map<string, { value: string; label: string; rows: CloudWorker[] }>();
-
-  for (const worker of visibleWorkers) {
-    const value = workerStatusValue(worker.status);
-    const group = workerGroupsByValue.get(value);
-
-    if (group) {
-      group.rows.push(worker);
-    } else {
-      const nextGroup = { value, label: workerStatusMeta(worker.status).label, rows: [worker] };
-      workerGroups.push(nextGroup);
-      workerGroupsByValue.set(value, nextGroup);
-    }
-  }
-
-  const workerDefaultGroups = workerGroups.flatMap((group) => group.value !== "stopped" ? [group.value] : []);
-
-  return (
-    <SettingsSection>
-      <SettingsSectionHeader>
-        <SettingsSectionHeaderContent>
-          <SettingsSectionHeaderTitle>
-            {t("den.cloud_workers_title")}
-          </SettingsSectionHeaderTitle>
-          <SettingsSectionHeaderDescription>{t("den.cloud_workers_hint")}</SettingsSectionHeaderDescription>
-        </SettingsSectionHeaderContent>
-        <SettingsSectionHeaderActions>
-          <RefreshButton
-            busy={workersBusy}
-            disabled={[workersBusy, !hasActiveOrg].some(Boolean)}
-            onRefresh={onRefreshWorkers}
-          >
-            {t("den.refresh")}
-          </RefreshButton>
-        </SettingsSectionHeaderActions>
-      </SettingsSectionHeader>
-
-      {workersError ? <SettingsNotice tone="error">{workersError}</SettingsNotice> : null}
-
-      {!workersBusy && workers.length === 0 ? (
-        <SettingsListEmptyState>{t("den.no_cloud_workers")}</SettingsListEmptyState>
-      ) : null}
-
-      {workers.length > 0 ? (
-        <>
-          <Field>
-            <FieldLabel className="sr-only" htmlFor="cloud-worker-search">
-              Search
-            </FieldLabel>
-            <SettingsListSearchInput
-              id="cloud-worker-search"
-              value={searchQuery}
-              onChange={(event) => setSearchQuery(event.currentTarget.value)}
-            />
-            <FieldDescription className="sr-only">Search for a worker.</FieldDescription>
-          </Field>
-
-          {visibleWorkers.length > 0 ? (
-            <Accordion multiple defaultValue={workerDefaultGroups}>
-              {workerGroups.map((group) => (
-                <AccordionItem key={group.value} value={group.value}>
-                  <AccordionTrigger className="items-center hover:no-underline group gap-x-3">
-                    <span className="group-hover:underline">{group.label}</span>
-                    <SettingsPill>{group.rows.length}</SettingsPill>
-                  </AccordionTrigger>
-                  <AccordionContent className="px-1.5 pb-1.5">
-                    <SettingsList>
-                      {group.rows.map((worker) => (
-                        <CloudWorkerListItem
-                          key={worker.workerId}
-                          openingWorkerId={openingWorkerId}
-                          worker={worker}
-                          onOpenWorker={onOpenWorker}
-                        />
-                      ))}
-                    </SettingsList>
-                  </AccordionContent>
-                </AccordionItem>
-              ))}
-            </Accordion>
-          ) : (
-            <SettingsListEmptyState>No workers match your search.</SettingsListEmptyState>
-          )}
-        </>
-      ) : null}
-    </SettingsSection>
-  );
-}
-
 
 export interface CloudProvidersSectionProps {
   actionError: string | null;

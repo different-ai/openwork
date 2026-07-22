@@ -4,7 +4,9 @@ import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { z } from "zod"
 import { auth } from "./auth.js"
 import { db } from "./db.js"
+import { isOrganizationSsoReady } from "./sso-readiness.js"
 import { env } from "./env.js"
+import { isMicrosoftEntraManagedDomain } from "./sso-entra-domain.js"
 import { SSO_IDENTITY_EXTRA_FIELDS } from "./sso-jit.js"
 import { ORGANIZATION_SAML_WANT_ASSERTIONS_SIGNED } from "./sso-saml-policy.js"
 
@@ -130,24 +132,26 @@ async function getSsoProviderByProviderId(providerId: string) {
 }
 
 async function registerBetterAuthSsoProvider(input: OrganizationSsoRegistrationInput, providerId: string) {
-  const common = {
-    providerId,
-    issuer: input.issuer,
-    domain: input.domain,
-    organizationId: input.organizationId,
-  }
-
   if (input.kind === "saml") {
+    const audience = input.audience || env.betterAuthUrl
     return auth.api.registerSSOProvider({
       body: {
-        ...common,
+        providerId,
+        issuer: audience,
+        domain: input.domain,
+        organizationId: input.organizationId,
         samlConfig: {
           entryPoint: input.entryPoint,
           cert: input.cert,
           callbackUrl: getSsoAcsUrl(providerId),
-          audience: input.audience || env.betterAuthUrl,
+          audience,
+          idpMetadata: {
+            entityID: input.issuer,
+          },
           wantAssertionsSigned: ORGANIZATION_SAML_WANT_ASSERTIONS_SIGNED,
-          spMetadata: {},
+          spMetadata: {
+            entityID: audience,
+          },
           mapping: {
             id: "nameID",
             email: "email",
@@ -163,7 +167,10 @@ async function registerBetterAuthSsoProvider(input: OrganizationSsoRegistrationI
   const oidcEndpoints = await resolveOidcEndpoints(input)
   return auth.api.registerSSOProvider({
     body: {
-      ...common,
+      providerId,
+      issuer: input.issuer,
+      domain: input.domain,
+      organizationId: input.organizationId,
       oidcConfig: {
         clientId: input.clientId,
         clientSecret: input.clientSecret,
@@ -244,11 +251,22 @@ export async function deleteOrganizationSsoConnection(organizationId: Organizati
 export async function registerOrganizationSsoConnection(input: OrganizationSsoRegistrationInput) {
   const providerId = buildOrganizationSsoProviderId(input.organizationId)
   const existing = await getOrganizationSsoConnection(input.organizationId)
+  const domainVerified = isMicrosoftEntraManagedDomain({
+    domain: input.domain,
+    issuer: input.issuer,
+    entryPoint: input.kind === "saml" ? input.entryPoint : null,
+  })
 
   if (existing) {
     const existingProvider = await getSsoProviderByProviderId(providerId)
     if (!existingProvider) {
       await registerBetterAuthSsoProvider(input, providerId)
+      if (domainVerified) {
+        await db
+          .update(SsoProviderTable)
+          .set({ domainVerified: true })
+          .where(eq(SsoProviderTable.providerId, providerId))
+      }
       await db
         .update(SsoConnectionTable)
         .set({
@@ -286,7 +304,7 @@ export async function registerOrganizationSsoConnection(input: OrganizationSsoRe
           domain: draftProvider.domain,
           oidcConfig: draftProvider.oidcConfig,
           samlConfig: draftProvider.samlConfig,
-          domainVerified: false,
+          domainVerified,
         })
         .where(eq(SsoProviderTable.providerId, providerId))
 
@@ -317,6 +335,12 @@ export async function registerOrganizationSsoConnection(input: OrganizationSsoRe
   }
 
   await registerBetterAuthSsoProvider(input, providerId)
+  if (domainVerified) {
+    await db
+      .update(SsoProviderTable)
+      .set({ domainVerified: true })
+      .where(eq(SsoProviderTable.providerId, providerId))
+  }
 
   await db.insert(SsoConnectionTable).values({
     id: createDenTypeId("ssoConnection"),
@@ -364,4 +388,14 @@ export async function getSsoProviderForConnection(connection: SsoConnection) {
     .limit(1)
 
   return rows[0] ?? null
+}
+
+export async function hasEnabledOrganizationSsoConnection(organizationId: OrganizationId) {
+  const connection = await getOrganizationSsoConnection(organizationId)
+  if (!connection) {
+    return false
+  }
+
+  const provider = await getSsoProviderForConnection(connection)
+  return isOrganizationSsoReady({ connection, providerExists: Boolean(provider) })
 }

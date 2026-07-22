@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS `config_object` (
   `search_text` text,
   `current_file_name` varchar(255),
   `current_file_extension` varchar(64),
-  `current_relative_path` varchar(2048),
+  `current_relative_path` varchar(255),
   `status` enum('active','inactive','deleted','archived','ingestion_error') NOT NULL DEFAULT 'active',
   `created_by_org_membership_id` varchar(64) NOT NULL,
   `connector_instance_id` varchar(64),
@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS `config_object` (
 
 CREATE TABLE IF NOT EXISTS `config_object_version` (
   `id` varchar(64) NOT NULL,
+  `organization_id` varchar(64) NOT NULL,
   `config_object_id` varchar(64) NOT NULL,
   `normalized_payload_json` text,
   `raw_source_text` text,
@@ -38,6 +39,7 @@ CREATE TABLE IF NOT EXISTS `config_object_version` (
   `is_deleted_version` boolean NOT NULL DEFAULT false,
   `created_at` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   CONSTRAINT `config_object_version_id` PRIMARY KEY(`id`),
+  KEY `config_object_version_organization_id` (`organization_id`),
   KEY `config_object_version_config_object_id` (`config_object_id`),
   KEY `config_object_version_created_by_org_membership_id` (`created_by_org_membership_id`),
   KEY `config_object_version_connector_sync_event_id` (`connector_sync_event_id`),
@@ -64,6 +66,7 @@ CREATE TABLE IF NOT EXISTS `plugin` (
 
 CREATE TABLE IF NOT EXISTS `plugin_config_object` (
   `id` varchar(64) NOT NULL,
+  `organization_id` varchar(64) NOT NULL,
   `plugin_id` varchar(64) NOT NULL,
   `config_object_id` varchar(64) NOT NULL,
   `membership_source` enum('manual','connector','api','system') NOT NULL DEFAULT 'manual',
@@ -73,6 +76,7 @@ CREATE TABLE IF NOT EXISTS `plugin_config_object` (
   `removed_at` timestamp(3) NULL,
   CONSTRAINT `plugin_config_object_id` PRIMARY KEY(`id`),
   CONSTRAINT `plugin_config_object_plugin_config_object` UNIQUE(`plugin_id`, `config_object_id`),
+  KEY `plugin_config_object_organization_id` (`organization_id`),
   KEY `plugin_config_object_plugin_id` (`plugin_id`),
   KEY `plugin_config_object_config_object_id` (`config_object_id`),
   KEY `plugin_config_object_connector_mapping_id` (`connector_mapping_id`)
@@ -80,6 +84,7 @@ CREATE TABLE IF NOT EXISTS `plugin_config_object` (
 
 CREATE TABLE IF NOT EXISTS `config_object_access_grant` (
   `id` varchar(64) NOT NULL,
+  `organization_id` varchar(64) NOT NULL,
   `config_object_id` varchar(64) NOT NULL,
   `org_membership_id` varchar(64),
   `team_id` varchar(64),
@@ -91,6 +96,7 @@ CREATE TABLE IF NOT EXISTS `config_object_access_grant` (
   CONSTRAINT `config_object_access_grant_id` PRIMARY KEY(`id`),
   CONSTRAINT `config_object_access_grant_object_org_membership` UNIQUE(`config_object_id`, `org_membership_id`),
   CONSTRAINT `config_object_access_grant_object_team` UNIQUE(`config_object_id`, `team_id`),
+  KEY `config_object_access_grant_organization_id` (`organization_id`),
   KEY `config_object_access_grant_config_object_id` (`config_object_id`),
   KEY `config_object_access_grant_org_membership_id` (`org_membership_id`),
   KEY `config_object_access_grant_team_id` (`team_id`),
@@ -99,6 +105,7 @@ CREATE TABLE IF NOT EXISTS `config_object_access_grant` (
 
 CREATE TABLE IF NOT EXISTS `plugin_access_grant` (
   `id` varchar(64) NOT NULL,
+  `organization_id` varchar(64) NOT NULL,
   `plugin_id` varchar(64) NOT NULL,
   `org_membership_id` varchar(64),
   `team_id` varchar(64),
@@ -110,6 +117,7 @@ CREATE TABLE IF NOT EXISTS `plugin_access_grant` (
   CONSTRAINT `plugin_access_grant_id` PRIMARY KEY(`id`),
   CONSTRAINT `plugin_access_grant_plugin_org_membership` UNIQUE(`plugin_id`, `org_membership_id`),
   CONSTRAINT `plugin_access_grant_plugin_team` UNIQUE(`plugin_id`, `team_id`),
+  KEY `plugin_access_grant_organization_id` (`organization_id`),
   KEY `plugin_access_grant_plugin_id` (`plugin_id`),
   KEY `plugin_access_grant_org_membership_id` (`org_membership_id`),
   KEY `plugin_access_grant_team_id` (`team_id`),
@@ -162,6 +170,7 @@ CREATE TABLE IF NOT EXISTS `connector_instance` (
 
 CREATE TABLE IF NOT EXISTS `connector_instance_access_grant` (
   `id` varchar(64) NOT NULL,
+  `organization_id` varchar(64) NOT NULL,
   `connector_instance_id` varchar(64) NOT NULL,
   `org_membership_id` varchar(64),
   `team_id` varchar(64),
@@ -173,6 +182,7 @@ CREATE TABLE IF NOT EXISTS `connector_instance_access_grant` (
   CONSTRAINT `connector_instance_access_grant_id` PRIMARY KEY(`id`),
   CONSTRAINT `connector_instance_access_grant_instance_org_membership` UNIQUE(`connector_instance_id`, `org_membership_id`),
   CONSTRAINT `connector_instance_access_grant_instance_team` UNIQUE(`connector_instance_id`, `team_id`),
+  KEY `connector_instance_access_grant_organization_id` (`organization_id`),
   KEY `connector_instance_access_grant_instance_id` (`connector_instance_id`),
   KEY `connector_instance_access_grant_org_membership_id` (`org_membership_id`),
   KEY `connector_instance_access_grant_team_id` (`team_id`),
@@ -181,6 +191,7 @@ CREATE TABLE IF NOT EXISTS `connector_instance_access_grant` (
 
 CREATE TABLE IF NOT EXISTS `connector_target` (
   `id` varchar(64) NOT NULL,
+  `organization_id` varchar(64) NOT NULL,
   `connector_instance_id` varchar(64) NOT NULL,
   `connector_type` enum('github') NOT NULL,
   `remote_id` varchar(255) NOT NULL,
@@ -191,6 +202,7 @@ CREATE TABLE IF NOT EXISTS `connector_target` (
   `updated_at` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
   CONSTRAINT `connector_target_id` PRIMARY KEY(`id`),
   CONSTRAINT `connector_target_instance_remote_id` UNIQUE(`connector_instance_id`, `remote_id`),
+  KEY `connector_target_organization_id` (`organization_id`),
   KEY `connector_target_connector_instance_id` (`connector_instance_id`),
   KEY `connector_target_connector_type` (`connector_type`),
   KEY `connector_target_target_kind` (`target_kind`)
@@ -198,12 +210,13 @@ CREATE TABLE IF NOT EXISTS `connector_target` (
 
 CREATE TABLE IF NOT EXISTS `connector_mapping` (
   `id` varchar(64) NOT NULL,
+  `organization_id` varchar(64) NOT NULL,
   `connector_instance_id` varchar(64) NOT NULL,
   `connector_target_id` varchar(64) NOT NULL,
   `connector_type` enum('github') NOT NULL,
   `remote_id` varchar(255),
   `mapping_kind` enum('path','api','custom') NOT NULL,
-  `selector` varchar(1024) NOT NULL,
+  `selector` varchar(255) NOT NULL,
   `object_type` enum('skill','agent','command','tool','mcp','hook','context','custom') NOT NULL,
   `plugin_id` varchar(64),
   `auto_add_to_plugin` boolean NOT NULL DEFAULT false,
@@ -212,6 +225,7 @@ CREATE TABLE IF NOT EXISTS `connector_mapping` (
   `updated_at` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
   CONSTRAINT `connector_mapping_id` PRIMARY KEY(`id`),
   CONSTRAINT `connector_mapping_target_selector_object_type` UNIQUE(`connector_target_id`, `selector`, `object_type`),
+  KEY `connector_mapping_organization_id` (`organization_id`),
   KEY `connector_mapping_connector_instance_id` (`connector_instance_id`),
   KEY `connector_mapping_connector_target_id` (`connector_target_id`),
   KEY `connector_mapping_object_type` (`object_type`),
@@ -220,6 +234,7 @@ CREATE TABLE IF NOT EXISTS `connector_mapping` (
 
 CREATE TABLE IF NOT EXISTS `connector_sync_event` (
   `id` varchar(64) NOT NULL,
+  `organization_id` varchar(64) NOT NULL,
   `connector_instance_id` varchar(64) NOT NULL,
   `connector_target_id` varchar(64),
   `connector_type` enum('github') NOT NULL,
@@ -232,6 +247,7 @@ CREATE TABLE IF NOT EXISTS `connector_sync_event` (
   `started_at` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   `completed_at` timestamp(3) NULL,
   CONSTRAINT `connector_sync_event_id` PRIMARY KEY(`id`),
+  KEY `connector_sync_event_organization_id` (`organization_id`),
   KEY `connector_sync_event_connector_instance_id` (`connector_instance_id`),
   KEY `connector_sync_event_connector_target_id` (`connector_target_id`),
   KEY `connector_sync_event_event_type` (`event_type`),
@@ -242,13 +258,14 @@ CREATE TABLE IF NOT EXISTS `connector_sync_event` (
 
 CREATE TABLE IF NOT EXISTS `connector_source_binding` (
   `id` varchar(64) NOT NULL,
+  `organization_id` varchar(64) NOT NULL,
   `config_object_id` varchar(64) NOT NULL,
   `connector_instance_id` varchar(64) NOT NULL,
   `connector_target_id` varchar(64) NOT NULL,
   `connector_mapping_id` varchar(64) NOT NULL,
   `connector_type` enum('github') NOT NULL,
   `remote_id` varchar(255),
-  `external_locator` varchar(2048) NOT NULL,
+  `external_locator` varchar(255) NOT NULL,
   `external_stable_ref` varchar(255),
   `last_seen_source_revision_ref` varchar(255),
   `status` enum('active','inactive','deleted','archived','ingestion_error') NOT NULL DEFAULT 'active',
@@ -257,6 +274,8 @@ CREATE TABLE IF NOT EXISTS `connector_source_binding` (
   `deleted_at` timestamp(3) NULL,
   CONSTRAINT `connector_source_binding_id` PRIMARY KEY(`id`),
   CONSTRAINT `connector_source_binding_config_object` UNIQUE(`config_object_id`),
+  KEY `connector_source_binding_organization_id` (`organization_id`),
+  KEY `connector_source_binding_config_object_id` (`config_object_id`),
   KEY `connector_source_binding_connector_instance_id` (`connector_instance_id`),
   KEY `connector_source_binding_connector_target_id` (`connector_target_id`),
   KEY `connector_source_binding_connector_mapping_id` (`connector_mapping_id`),
@@ -265,17 +284,19 @@ CREATE TABLE IF NOT EXISTS `connector_source_binding` (
 
 CREATE TABLE IF NOT EXISTS `connector_source_tombstone` (
   `id` varchar(64) NOT NULL,
+  `organization_id` varchar(64) NOT NULL,
   `connector_instance_id` varchar(64) NOT NULL,
   `connector_target_id` varchar(64) NOT NULL,
   `connector_mapping_id` varchar(64) NOT NULL,
   `connector_type` enum('github') NOT NULL,
   `remote_id` varchar(255),
-  `external_locator` varchar(2048) NOT NULL,
+  `external_locator` varchar(255) NOT NULL,
   `former_config_object_id` varchar(64) NOT NULL,
   `deleted_in_sync_event_id` varchar(64) NOT NULL,
   `deleted_source_revision_ref` varchar(255),
   `created_at` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   CONSTRAINT `connector_source_tombstone_id` PRIMARY KEY(`id`),
+  KEY `connector_source_tombstone_organization_id` (`organization_id`),
   KEY `connector_source_tombstone_connector_instance_id` (`connector_instance_id`),
   KEY `connector_source_tombstone_connector_target_id` (`connector_target_id`),
   KEY `connector_source_tombstone_connector_mapping_id` (`connector_mapping_id`),

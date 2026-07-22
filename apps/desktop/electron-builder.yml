@@ -9,6 +9,8 @@ protocols:
       - openwork
 directories:
   output: dist-electron
+toolsets:
+  appimage: "1.0.3"
 files:
   - electron/**/*
   - server/**/*
@@ -74,6 +76,7 @@ mac:
     - zip
 linux:
   icon: resources/icons/icon.png
+  executableName: openwork
   extraResources:
     - from: resources/sidecars
       to: sidecars
@@ -107,4 +110,6 @@ win:
         - versions.json-x86_64-pc-windows-msvc.exe
   target:
     - nsis
+nsis:
+  include: build/installer.nsh
 artifactName: openwork-${os}-${arch}-${version}.${ext}

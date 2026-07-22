@@ -73,6 +73,8 @@ The standard OpenWork Cloud email/password path is protected server-side against
 
 OpenWork does not call the breached-password service during normal sign-in. Existing-password sign-in should be protected by rate limiting, lockout, identity-provider controls, monitoring, and a forced reset process if a credential is later suspected to be compromised.
 
+Private deployments without external egress can disable breached-password screening with `DEN_PASSWORD_BREACH_SCREENING_ENABLED=false`. The Helm chart sets `config.auth.passwordBreachScreeningEnabled: "false"` by default for isolated self-hosted installs. This removes the external range API dependency and the known-compromised password rejection.
+
 For mover and leaver handling:
 
 - Change roles when responsibilities change.

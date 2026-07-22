@@ -1,0 +1,54 @@
+---
+title: "Connect OpenWork MCP from a remote machine"
+description: "Authenticate OpenWork Connect for OpenCode on a remote host while using a browser on your local machine"
+---
+
+Use this when OpenCode runs on a remote machine, SSH host, or cloud VM, but the OAuth browser opens on your laptop or another local machine. In the commands below, `<server-name>` is the OpenWork MCP name in your OpenCode config, often `openwork`.
+
+## Why remote OAuth times out
+
+During `opencode mcp auth <server-name>`, OpenCode listens for the OAuth redirect on the remote host at:
+
+```text
+http://127.0.0.1:19876/mcp/oauth/callback
+```
+
+If you open the printed authorization URL in a browser on another machine, that browser resolves `127.0.0.1` to the browser's own machine, not the remote host where OpenCode is listening. The OAuth approval succeeds in the browser, but the callback never reaches OpenCode, so the auth command eventually times out.
+
+## Recommended: open SSH with a local port forward
+
+From the local machine where you will open the browser, start SSH with a loopback-only local port forward and a remote shell:
+
+```sh
+ssh -o ExitOnForwardFailure=yes -L 127.0.0.1:19876:127.0.0.1:19876 user@remote-host
+```
+
+In that SSH shell on the remote host, run:
+
+```sh
+opencode mcp auth <server-name>
+```
+
+Open the printed authorization URL in your local browser. Keep the SSH session open until OpenCode reports that authentication succeeded.
+
+The `-L` option makes the local browser's `http://127.0.0.1:19876/...` callback travel through SSH to `127.0.0.1:19876` on the remote host. The callback stays bound to loopback on both machines.
+
+## Optional: add a tunnel from a second terminal
+
+If you are already connected to the remote host in one terminal, keep that terminal for OpenCode and open a second local terminal for the tunnel:
+
+```sh
+ssh -N -o ExitOnForwardFailure=yes -L 127.0.0.1:19876:127.0.0.1:19876 user@remote-host
+```
+
+Then run `opencode mcp auth <server-name>` in your existing remote shell, open the printed URL locally, and keep both terminals open until authentication succeeds.
+
+## Troubleshooting
+
+- **Timeout or stale URL**: keep the SSH tunnel open, stop the timed-out auth command, run `opencode mcp auth <server-name>` again, and open the new printed URL. OAuth URLs can expire after a failed attempt.
+- **Port already occupied**: something on the local or remote machine is already using port `19876`. Stop that process, or configure a different OpenCode `oauth.callbackPort` and update both sides of the SSH forward to use the same port.
+- **Custom callback port**: if your OpenCode MCP config sets `oauth.callbackPort`, both forwarding endpoints must match it. For example, with port `34567`, use `-L 127.0.0.1:34567:127.0.0.1:34567`.
+- **Cannot reach the remote host**: SSH must be able to reach `user@remote-host` from the local/browser machine. Use the same hostname, bastion, VPN, or SSH config entry you normally use to open a remote shell.
+- **No device-code fallback**: OpenCode currently does not have an OAuth device-code flow for MCP, so browser-based auth still needs the loopback callback to reach OpenCode.
+
+Keep the callback on loopback. Do not expose the callback listener on `0.0.0.0`, change it to a public redirect URL, or paste authorization codes into chats or terminals.

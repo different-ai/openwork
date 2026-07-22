@@ -8,12 +8,16 @@ import {
   createDenClient,
   readDenBootstrapConfig,
   readDenSettings,
+  setDenBootstrapConfig,
 } from "../../app/lib/den";
 import { exchangeHandoffAndSignIn } from "../../app/lib/den-handoff";
 import {
   denSettingsChangedEvent,
   denSessionUpdatedEvent,
 } from "../../app/lib/den-session-events";
+import { evalRelaunchDesktopApp } from "../../app/lib/desktop";
+import { Button } from "../../components/ui/button";
+import { t } from "../../i18n";
 import { useDenAuth } from "../domains/cloud/den-auth-provider";
 import { ForcedSigninPage } from "../domains/cloud/forced-signin-page";
 import { OrgOnboardingPage } from "../domains/cloud/org-onboarding-page";
@@ -39,9 +43,9 @@ type DenSigninGateProps = {
   children: ReactNode;
 };
 
-const readRequireSigninSnapshot = () => readDenBootstrapConfig().requireSignin;
+const readDenBootstrapSnapshot = () => readDenBootstrapConfig();
 
-const subscribeToRequireSignin = (onStoreChange: () => void) => {
+const subscribeToDenBootstrap = (onStoreChange: () => void) => {
   if (typeof window === "undefined") return () => {};
   window.addEventListener(denSettingsChangedEvent, onStoreChange);
   return () => {
@@ -64,23 +68,28 @@ function DenSigninGate({ children }: DenSigninGateProps) {
   const denAuth = useDenAuth();
   const location = useLocation();
   const navigate = useNavigate();
-  const requireSignin = useSyncExternalStore(
-    subscribeToRequireSignin,
-    readRequireSigninSnapshot,
-    readRequireSigninSnapshot,
+  const bootstrap = useSyncExternalStore(
+    subscribeToDenBootstrap,
+    readDenBootstrapSnapshot,
+    readDenBootstrapSnapshot,
   );
+  const requireSignin = bootstrap.requireSignin;
+  const path = location.pathname.toLowerCase();
+  const onSignin = path === "/signin" || path.startsWith("/signin/");
+  const onOnboarding = path === "/onboarding" || path.startsWith("/onboarding/");
+  const hasPreparedBootstrap = Boolean(bootstrap.prepared);
+  const redirectingPreparedWorkspace =
+    denAuth.status !== "checking" &&
+    !requireSignin &&
+    !denAuth.isSignedIn &&
+    hasPreparedBootstrap &&
+    !onOnboarding;
 
   useEffect(() => {
     // Wait for the first auth check so we don't bounce the user between
     // `/session` and `/signin` every navigation while we figure out if
     // their cached token is still valid.
     if (denAuth.status === "checking") return;
-
-    const path = location.pathname.toLowerCase();
-    const onSignin = path === "/signin" || path.startsWith("/signin/");
-
-    const onOnboarding = path === "/onboarding" || path.startsWith("/onboarding/");
-    const hasPreparedBootstrap = Boolean(readDenBootstrapConfig().prepared);
 
     if (requireSignin) {
       if (!denAuth.isSignedIn && !onSignin) {
@@ -102,8 +111,11 @@ function DenSigninGate({ children }: DenSigninGateProps) {
   }, [
     denAuth.isSignedIn,
     denAuth.status,
+    hasPreparedBootstrap,
     location,
     navigate,
+    onOnboarding,
+    onSignin,
     requireSignin,
   ]);
 
@@ -136,7 +148,35 @@ function DenSigninGate({ children }: DenSigninGateProps) {
     return <ForcedSigninPage developerMode={false} />;
   }
 
-  return <>{children}</>;
+  if (redirectingPreparedWorkspace) return <Navigate to="/onboarding" replace />;
+
+  return (
+    <>
+      {denAuth.status === "unavailable" ? (
+        <div className="pointer-events-none fixed inset-x-0 top-3 z-[100] flex justify-center px-4">
+          <div
+            role="status"
+            aria-live="polite"
+            className="pointer-events-auto flex max-w-xl items-center gap-3 rounded-2xl border border-amber-7/50 bg-popover/95 px-4 py-3 text-popover-foreground shadow-md backdrop-blur-sm"
+          >
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium">{t("den.cloud_unavailable_title")}</p>
+              <p className="text-xs text-muted-foreground">{t("den.cloud_unavailable_body")}</p>
+            </div>
+            <Button
+              type="button"
+              size="xs"
+              variant="outline"
+              onClick={() => void denAuth.refresh()}
+            >
+              {t("den.refresh")}
+            </Button>
+          </div>
+        </div>
+      ) : null}
+      {children}
+    </>
+  );
 }
 
 /**
@@ -161,7 +201,7 @@ function DenAuthControlActions() {
       if (!grant?.trim()) return { ok: false, error: "grant is required" };
       const settings = readDenSettings();
       const targetBaseUrl = argBaseUrl?.trim() || settings.baseUrl;
-      const client = createDenClient({ baseUrl: targetBaseUrl, apiBaseUrl: settings.apiBaseUrl });
+      const client = createDenClient({ baseUrl: targetBaseUrl });
       const result = await exchangeHandoffAndSignIn(grant.trim(), {
         baseUrl: targetBaseUrl,
         client,
@@ -185,11 +225,44 @@ function DenAuthControlActions() {
   }), [denAuth.status, denAuth.user]);
   useControlAction(authStatusAction);
 
+  const setEvalBaseUrlAction = useMemo<OpenworkControlAction | null>(() => {
+    if (!import.meta.env.DEV) return null;
+    return {
+      id: "eval.auth.set-base-url",
+      label: "Set the eval Cloud URL",
+      description: "Point the live auth provider at an eval control plane and refresh its session state.",
+      sideEffect: "mutation",
+      requiresArgs: true,
+      args: [
+        { name: "baseUrl", type: "string", required: true, description: "Temporary Den base URL." },
+      ],
+      execute: async (args) => {
+        if (
+          !args ||
+          typeof args !== "object" ||
+          !("baseUrl" in args) ||
+          typeof args.baseUrl !== "string" ||
+          !args.baseUrl.trim()
+        ) {
+          return { ok: false, error: "baseUrl is required" };
+        }
+        const current = readDenBootstrapConfig();
+        await setDenBootstrapConfig({
+          baseUrl: args.baseUrl.trim(),
+          requireSignin: current.requireSignin,
+        });
+        await denAuth.refresh();
+        return { baseUrl: readDenBootstrapConfig().baseUrl };
+      },
+    };
+  }, [denAuth.refresh]);
+  useControlAction(setEvalBaseUrlAction);
+
   return null;
 }
 
 /**
- * Control action for eval automation: inject brand theme (logo, accent color)
+ * Control action for eval automation: inject brand theme (logo, icon, accent color)
  * via the dev-only desktop config bridge. Placed inside OpenworkControlProvider.
  */
 function BrandThemeControlActions() {
@@ -198,10 +271,11 @@ function BrandThemeControlActions() {
     return {
       id: "eval.brand_theme.apply",
       label: "Apply brand theme override",
-      description: "Inject brand theme (logo, accent color) via desktop config for eval testing.",
+      description: "Inject brand theme (logo, icon, accent color) via desktop config for eval testing.",
       sideEffect: "mutation",
       args: [
         { name: "brandLogoUrl", type: "string", description: "Logo URL" },
+        { name: "brandIconUrl", type: "string", description: "Icon URL" },
         { name: "brandAccentColor", type: "string", description: "Radix color family" },
       ],
       execute: (args) => {
@@ -215,6 +289,18 @@ function BrandThemeControlActions() {
     };
   }, []);
   useControlAction(applyAction);
+
+  const relaunchAction = useMemo<OpenworkControlAction | null>(() => {
+    if (!import.meta.env.DEV) return null;
+    return {
+      id: "eval.app.relaunch",
+      label: "Relaunch app for eval",
+      description: "Dev-only eval hook that relaunches the Electron app.",
+      sideEffect: "mutation",
+      execute: () => evalRelaunchDesktopApp(),
+    };
+  }, []);
+  useControlAction(relaunchAction);
 
   return null;
 }

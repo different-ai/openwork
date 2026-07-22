@@ -106,6 +106,19 @@ export const encryptedTextColumn = (columnName: string) =>
     deserialize: (value) => value,
   })
 
+export const mediumBlobColumn = (columnName: string) =>
+  customType<{ data: Uint8Array; driverData: Uint8Array }>({
+    dataType() {
+      return "mediumblob"
+    },
+    toDriver(value) {
+      return value
+    },
+    fromDriver(value) {
+      return Uint8Array.from(value)
+    },
+  })(columnName)
+
 export const denTypeIdColumn = <TName extends DenTypeIdName>(
   name: TName,
   columnName: string,

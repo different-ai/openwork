@@ -155,38 +155,24 @@ export const MCP_QUICK_CONNECT: McpDirectoryInfo[] = [
     serverName: "openwork-cloud",
     get description() { return t("mcp.quick_connect_openwork_cloud_desc"); },
     get url() {
-      // The Den MCP server is hosted by den-api (see
-      // packages/docs/cloud/run-in-the-cloud/cloud-mcp.mdx), never at the
-      // web app's root — getDenMcpUrl heals stale web-app origins.
+      // The desktop app connects to the minimal, harness-facing surface
+      // (/mcp/agent: search_capabilities + execute_capability only), not the
+      // full catalog at bare /mcp. getDenMcpUrl heals stale web-app origins;
+      // never at the web app's root (see
+      // packages/docs/cloud/run-in-the-cloud/cloud-mcp.mdx).
       try {
-        return getDenMcpUrl();
+        return `${getDenMcpUrl()}/agent`;
       } catch {
-        return "https://api.openworklabs.com/mcp";
+        return "https://app.openworklabs.com/api/den/mcp/agent";
       }
     },
     type: "remote",
     oauth: true,
     kind: "mcp",
     iconSrc: "/openwork-mark.svg",
-  },
-  {
-    get name() { return t("mcp.quick_connect_openwork_admin_title"); },
-    serverName: "openwork-admin",
-    get description() { return t("mcp.quick_connect_openwork_admin_desc"); },
-    get url() {
-      // den-api serves the admin MCP at /mcp/admin, next to the org-scoped
-      // /mcp endpoint. Access is enforced server-side via the platform-admin
-      // allowlist, so this entry stays hidden from the default catalog.
-      try {
-        return `${getDenMcpUrl()}/admin`;
-      } catch {
-        return "https://api.openworklabs.com/mcp/admin";
-      }
-    },
-    type: "remote",
-    oauth: true,
-    kind: "mcp",
-    iconSrc: "/openwork-mark.svg",
+    // Auto-managed by the signed-in cloud reconciler (syncCloudControlMcp):
+    // configured + enabled while signed in to OpenWork Cloud. Hidden from the
+    // default catalog; "Show hidden" reveals it.
     defaultHidden: true,
   },
   {
@@ -199,6 +185,9 @@ export const MCP_QUICK_CONNECT: McpDirectoryInfo[] = [
     oauth: false,
     kind: "ui-control",
     iconSrc: "/openwork-mark.svg",
+    // Internal UI-control surface for agents driving the desktop app. Hidden
+    // from the default catalog; "Show hidden" reveals it.
+    defaultHidden: true,
   },
   ...BUILT_IN_OPENWORK_EXTENSION_MANIFESTS.map(extensionManifestToDirectoryInfo),
 ];

@@ -23,16 +23,12 @@ ENV OPENWORK_WORKSPACE=/workspace
 # OpenWork host contract surface.
 EXPOSE 8787
 
-# Optional: opencode-router health (only relevant if you enable the router).
-EXPOSE 3005
-
 VOLUME ["/workspace", "/data"]
 
 # Defaults:
 # - OpenWork server is published intentionally via --remote-access
 # - OpenCode stays internal (127.0.0.1:4096)
 # - OpenWork server proxies OpenCode via localhost
-# - OpenCode Router disabled by default
 CMD [
   "openwork",
   "serve",
@@ -43,6 +39,5 @@ CMD [
   "--opencode-port", "4096",
   "--connect-host", "127.0.0.1",
   "--cors", "*",
-  "--approval", "manual",
-  "--no-opencode-router"
+  "--approval", "manual"
 ]

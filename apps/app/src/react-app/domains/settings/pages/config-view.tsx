@@ -1,9 +1,6 @@
 /** @jsxImportSource react */
-import { useEffect, useMemo, useReducer, useRef } from "react";
-import { RefreshCcw } from "lucide-react";
-
-import { readDevLogs } from "../../../../app/lib/dev-log";
-import { readPerfLogs } from "../../../../app/lib/perf-log";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import { buildDiagnosticsBundleJson } from "../../../../app/lib/diagnostics-bundle";
 import {
   buildOpenworkWorkspaceBaseUrl,
   parseOpenworkWorkspaceIdFromUrl,
@@ -16,7 +13,6 @@ import { t } from "../../../../i18n";
 import {
   ConfigDiagnosticsSection,
   ConfigEngineReloadSection,
-  ConfigMessagingIdentitiesSection,
   ConfigServerConnectionSection,
   ConfigServerSharingSection,
   ConfigWorkspaceSummary,
@@ -47,71 +43,6 @@ export type ConfigViewProps = {
   developerMode: boolean;
 };
 
-function buildDiagnosticsBundleJson(input: {
-  anyActiveRuns: boolean;
-  canReloadWorkspace: boolean;
-  clientConnected: boolean;
-  developerMode: boolean;
-  hostConnectUrl: string;
-  hostConnectUrlUsesMdns: boolean;
-  hostInfo: OpenworkServerInfo | null;
-  openworkServerSettings: OpenworkServerSettings;
-  openworkServerStatus: OpenworkServerStatus;
-  openworkServerUrl: string;
-  runtimeWorkspaceId: string | null;
-}) {
-  const urlOverride = input.openworkServerSettings.urlOverride?.trim() ?? "";
-  const token = input.openworkServerSettings.token?.trim() ?? "";
-  const developerLogs = input.developerMode ? readDevLogs(80) : [];
-  const perfLogs = input.developerMode ? readPerfLogs(80) : [];
-  const bundle = {
-    capturedAt: new Date().toISOString(),
-    runtime: {
-      tauri: isDesktopRuntime(),
-      developerMode: input.developerMode,
-    },
-    workspace: {
-      runtimeWorkspaceId: input.runtimeWorkspaceId ?? null,
-      clientConnected: input.clientConnected,
-      anyActiveRuns: input.anyActiveRuns,
-    },
-    openworkServer: {
-      status: input.openworkServerStatus,
-      url: input.openworkServerUrl,
-      settings: {
-        urlOverride: urlOverride || null,
-        tokenPresent: Boolean(token),
-      },
-      host: input.hostInfo
-        ? {
-            running: Boolean(input.hostInfo.running),
-            remoteAccessEnabled: input.hostInfo.remoteAccessEnabled,
-            baseUrl: input.hostInfo.baseUrl ?? null,
-            connectUrl: input.hostInfo.connectUrl ?? null,
-            mdnsUrl: input.hostInfo.mdnsUrl ?? null,
-            lanUrl: input.hostInfo.lanUrl ?? null,
-          }
-        : null,
-    },
-    reload: {
-      canReloadWorkspace: input.canReloadWorkspace,
-    },
-    sharing: {
-      hostConnectUrl: input.hostConnectUrl || null,
-      hostConnectUrlUsesMdns: input.hostConnectUrlUsesMdns,
-    },
-    performance: {
-      retainedEntries: perfLogs.length,
-      recent: perfLogs,
-    },
-    developerLogs: {
-      retainedEntries: developerLogs.length,
-      recent: developerLogs,
-    },
-  };
-  return JSON.stringify(bundle, null, 2);
-}
-
 export function ConfigView(props: ConfigViewProps) {
   const [localState, dispatchLocal] = useReducer(
     configLocalReducer,
@@ -123,6 +54,7 @@ export function ConfigView(props: ConfigViewProps) {
   const openworkTestState = openworkConnection.testState;
   const openworkTestMessage = openworkConnection.testMessage;
   const copyTimeoutRef = useRef<number | undefined>(undefined);
+  const [diagnosticsBundleJson, setDiagnosticsBundleJson] = useState("");
 
   useEffect(() => {
     dispatchLocal({
@@ -225,7 +157,7 @@ export function ConfigView(props: ConfigViewProps) {
     "";
   const hostConnectUrlUsesMdns = hostConnectUrl.includes(".local");
 
-  const diagnosticsBundleJson = useMemo(() => {
+  const buildCurrentDiagnosticsBundle = useCallback(() => {
     return buildDiagnosticsBundleJson({
       anyActiveRuns: props.anyActiveRuns,
       canReloadWorkspace: props.canReloadWorkspace,
@@ -234,7 +166,6 @@ export function ConfigView(props: ConfigViewProps) {
       hostConnectUrl,
       hostConnectUrlUsesMdns,
       hostInfo,
-      openworkServerSettings: props.openworkServerSettings,
       openworkServerStatus: props.openworkServerStatus,
       openworkServerUrl: props.openworkServerUrl,
       runtimeWorkspaceId: props.runtimeWorkspaceId,
@@ -247,12 +178,25 @@ export function ConfigView(props: ConfigViewProps) {
     props.canReloadWorkspace,
     props.clientConnected,
     props.developerMode,
+    props.openworkServerSettings.hostToken,
     props.openworkServerSettings.token,
     props.openworkServerSettings.urlOverride,
     props.openworkServerStatus,
     props.openworkServerUrl,
     props.runtimeWorkspaceId,
   ]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void buildCurrentDiagnosticsBundle().then((json) => {
+      if (!cancelled) {
+        setDiagnosticsBundleJson(json);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [buildCurrentDiagnosticsBundle]);
 
   const handleCopy = async (value: string, field: string) => {
     if (!value) return;
@@ -269,6 +213,12 @@ export function ConfigView(props: ConfigViewProps) {
     } catch {
       // ignore
     }
+  };
+
+  const handleCopyDiagnostics = async (_value: string, field: string) => {
+    const json = await buildCurrentDiagnosticsBundle();
+    setDiagnosticsBundleJson(json);
+    await handleCopy(json, field);
   };
 
   const handleTestConnection = async () => {
@@ -319,7 +269,7 @@ export function ConfigView(props: ConfigViewProps) {
           busy={props.busy}
           diagnosticsBundleJson={diagnosticsBundleJson}
           copyingField={copyingField}
-          onCopy={handleCopy}
+          onCopy={handleCopyDiagnostics}
         />
       ) : null}
       {hostInfo ? (
@@ -355,7 +305,6 @@ export function ConfigView(props: ConfigViewProps) {
         onSave={() => props.updateOpenworkServerSettings(buildOpenworkSettings())}
         onReset={props.resetOpenworkServerSettings}
       />
-      <ConfigMessagingIdentitiesSection />
       {!isDesktopRuntime() ? <div className="text-xs text-gray-9">{t("config.desktop_only_hint")}</div> : null}
     </section>
   );

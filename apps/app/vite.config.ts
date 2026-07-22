@@ -1,5 +1,6 @@
-import os from "node:os";
+import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
+import os from "node:os";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
@@ -29,6 +30,28 @@ const appRoot = resolve(fileURLToPath(new URL(".", import.meta.url)));
 const appPackagePath = resolve(appRoot, "package.json");
 const desktopPackagePath = resolve(appRoot, "..", "desktop", "package.json");
 
+function firstNonEmpty(values: Array<string | null | undefined>): string | null {
+  for (const value of values) {
+    const trimmed = value?.trim();
+    if (trimmed) return trimmed;
+  }
+
+  return null;
+}
+
+function readLocalGitSha(): string | null {
+  try {
+    const output = execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: appRoot,
+      encoding: "utf8",
+      stdio: "pipe",
+    });
+    return output.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
 function readPackageVersion(packagePath: string): string | null {
   if (!existsSync(packagePath)) return null;
 
@@ -41,6 +64,12 @@ const buildAppVersion =
   readPackageVersion(desktopPackagePath) ||
   readPackageVersion(appPackagePath) ||
   "0.0.0";
+const buildSha = firstNonEmpty([
+  process.env.VITE_OPENWORK_BUILD_SHA,
+  process.env.OPENWORK_GIT_SHA,
+  process.env.GITHUB_SHA,
+]) ?? readLocalGitSha();
+const shortBuildSha = buildSha ? buildSha.slice(0, 7) : "";
 
 // Load the Tauri → Electron migration-release fragment if present. Written
 // by scripts/migration/01-cut-migration-release.mjs for the specific
@@ -80,6 +109,7 @@ export default defineConfig({
       ]),
     ),
     "import.meta.env.VITE_OPENWORK_APP_VERSION": JSON.stringify(buildAppVersion),
+    "import.meta.env.VITE_OPENWORK_BUILD_SHA": JSON.stringify(shortBuildSha),
   },
   plugins: [
     {

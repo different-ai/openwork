@@ -12,6 +12,7 @@ import {
   Pin,
   PinOff,
   Plus,
+  Search,
   Share2,
   Trash2,
   RefreshCw,
@@ -33,14 +34,17 @@ import {
   isRemoteConnectionErrorMessage,
   getWorkspaceTaskLoadErrorDisplay,
   isRemoteConnectionWorkspace,
+  isMacPlatform,
   isWindowsPlatform,
 } from "../../../../app/utils";
 import { t } from "../../../../i18n";
+import { useBrandLogoUrl } from "../../cloud/brand-theme";
 
 import {
   Sidebar,
   SidebarFooter,
   SidebarGroup,
+  SidebarHeader,
   SidebarGroupContent,
   SidebarMenu,
   SidebarMenuButton,
@@ -76,6 +80,22 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 import { SidebarContext, useSidebarContext } from "./app-sidebar-provider";
 import type { SidebarContextValue } from "./app-sidebar-provider";
@@ -99,7 +119,6 @@ import {
   type SessionGroupDefinition,
 } from "./session-management-store";
 import { cn } from "@/lib/utils";
-import { useBrandLogoUrl } from "../../cloud/brand-theme";
 import { WorkspaceIcon } from "../../../design-system/workspace-icon";
 import { getSessionActivityStatusLabel, type SessionActivityStatus } from "../status/session-activity-store";
 
@@ -569,7 +588,7 @@ export type AppSidebarProps = {
   onSelectWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
   onOpenSession: (workspaceId: string, sessionId: string) => void;
   onPrefetchSession?: (workspaceId: string, sessionId: string) => void;
-  onCreateTaskInWorkspace: (workspaceId: string) => void;
+  onCreateTaskInWorkspace: (workspaceId: string, groupId?: string) => void;
   onOpenRenameSession?: (sessionId: string) => void;
   onOpenDeleteSession?: (sessionId: string) => void;
   onArchiveSession?: (sessionId: string, archived: boolean) => void;
@@ -582,6 +601,8 @@ export type AppSidebarProps = {
   onEditWorkspaceConnection: (workspaceId: string) => void;
   onForgetWorkspace: (workspaceId: string) => void;
   onOpenCreateWorkspace: () => void;
+  /** Opens the cross-session message search dialog (Cmd/Ctrl+Shift+F). */
+  onOpenSessionSearch?: () => void;
   onReorderWorkspaces?: (workspaceIds: string[]) => void;
   onStartResize?: React.PointerEventHandler<HTMLButtonElement>;
 };
@@ -725,6 +746,20 @@ export function AppSidebar(props: AppSidebarProps) {
   };
 
   const brandLogoUrl = useBrandLogoUrl();
+  const pinnedIds = useSessionManagementStore((state) => state.pinnedIds);
+  const pinnedSessions = React.useMemo(() => {
+    const sessionsById = new Map<string, GlobalPinnedSessionEntry>();
+    for (const group of props.workspaceSessionGroups) {
+      const roots = getRootSessions(partitionArchivedSessions(group.sessions).active);
+      for (const session of roots) {
+        sessionsById.set(session.id, { group, sessionId: session.id });
+      }
+    }
+    return pinnedIds.flatMap((sessionId) => {
+      const entry = sessionsById.get(sessionId);
+      return entry ? [entry] : [];
+    });
+  }, [pinnedIds, props.workspaceSessionGroups]);
 
   return (
     <SidebarContext.Provider value={contextValue}>
@@ -736,14 +771,33 @@ export function AppSidebar(props: AppSidebarProps) {
         {brandLogoUrl ? (
           <div
             data-testid="brand-logo"
-            className="flex shrink-0 items-center px-3 pb-3 pt-2 mac:pt-0"
+            className="flex h-14 shrink-0 items-center px-3 pb-3 pt-2 mac:pt-0"
           >
             <img
               src={brandLogoUrl}
               alt="Organization logo"
-              className="h-9 max-h-9 w-auto max-w-[180px] object-contain object-left"
+              className="max-h-9 w-auto max-w-[140px] object-contain object-left"
             />
           </div>
+        ) : null}
+        {props.onOpenSessionSearch ? (
+          <SidebarHeader className="pb-2">
+            <SidebarMenu>
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  onClick={props.onOpenSessionSearch}
+                  aria-keyshortcuts={isMacPlatform() ? "Meta+Shift+F" : "Control+Shift+F"}
+                  className="text-sidebar-foreground/70"
+                >
+                  <Search className="size-4" />
+                  <span className="flex-1 truncate">{t("workspace_list.search_sessions")}</span>
+                  <kbd className="ml-auto font-sans text-[11px] tracking-wide text-sidebar-foreground/50">
+                    {isMacPlatform() ? "⌘⇧F" : "Ctrl+Shift+F"}
+                  </kbd>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            </SidebarMenu>
+          </SidebarHeader>
         ) : null}
         <LazyMotion features={domMax}>
           <m.div
@@ -752,6 +806,9 @@ export function AppSidebar(props: AppSidebarProps) {
             data-sidebar="content"
             className="no-scrollbar flex min-h-0 flex-1 flex-col gap-px overflow-auto [--radius:var(--radius-xl)] group-data-[collapsible=icon]:overflow-hidden"
           >
+            {pinnedSessions.length > 0 ? (
+              <GlobalPinnedSessions entries={pinnedSessions} />
+            ) : null}
             <Reorder.Group
               as="div"
               axis="y"
@@ -784,6 +841,8 @@ export function AppSidebar(props: AppSidebarProps) {
           </SidebarMenu>
         </SidebarFooter>
         <SidebarRail
+          className="before:pointer-events-none before:absolute before:inset-y-0 before:left-[calc(50%+1px)] before:right-0 before:content-[''] group-data-[state=expanded]:before:bg-sidebar"
+          style={{ cursor: "col-resize" }}
           aria-label={props.onStartResize ? t("session.resize_workspace_column") : undefined}
           title={props.onStartResize ? t("session.resize_workspace_column") : undefined}
           onClick={props.onStartResize ? (event) => {
@@ -794,6 +853,75 @@ export function AppSidebar(props: AppSidebarProps) {
       </Sidebar>
     </SidebarContext.Provider>
   );
+}
+
+type GlobalPinnedSessionEntry = {
+  group: WorkspaceSessionGroup;
+  sessionId: string;
+};
+
+function GlobalPinnedSessions({ entries }: { entries: GlobalPinnedSessionEntry[] }) {
+  return (
+    <SidebarGroup data-global-pinned-sessions className="pb-1 pt-2">
+      <SidebarGroupContent>
+        <div className="flex items-center gap-1.5 px-3 pb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+          <Pin className="size-3" />
+          {t("session_management.pinned")}
+        </div>
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuSub>
+              {entries.map((entry) => (
+                <GlobalPinnedSessionTree
+                  key={`${entry.group.workspace.id}:${entry.sessionId}`}
+                  group={entry.group}
+                  sessionId={entry.sessionId}
+                />
+              ))}
+            </SidebarMenuSub>
+          </SidebarMenuItem>
+        </SidebarMenu>
+      </SidebarGroupContent>
+    </SidebarGroup>
+  );
+}
+
+function GlobalPinnedSessionTree({ group, sessionId }: GlobalPinnedSessionEntry) {
+  const ctx = useSidebarContext();
+  const pinnedIds = usePinnedSessionIds();
+  const tree = useSessionTree(group.sessions, ctx.sessionStatusById);
+  const forcedExpandedSessionIds = React.useMemo(
+    () => new Set(
+      ctx.selectedSessionId
+        ? tree.ancestorIdsBySessionId.get(ctx.selectedSessionId) ?? []
+        : [],
+    ),
+    [ctx.selectedSessionId, tree.ancestorIdsBySessionId],
+  );
+  const rootIds = React.useMemo(() => new Set([sessionId]), [sessionId]);
+  const rows = flattenSessionRows(
+    group.sessions,
+    1,
+    tree,
+    ctx.expandedSessionIds,
+    forcedExpandedSessionIds,
+    pinnedIds,
+    [],
+    { include: rootIds },
+  );
+
+  return rows.map((row) => (
+    <SessionMenuItem
+      key={row.session.id}
+      session={row.session}
+      depth={row.depth}
+      tree={tree}
+      workspaceId={group.workspace.id}
+      forcedExpandedSessionIds={forcedExpandedSessionIds}
+      isPinned={pinnedIds.has(row.session.id)}
+      workspaceName={row.depth === 0 ? workspaceLabel(group.workspace) : undefined}
+    />
+  ));
 }
 
 type WorkspaceReorderItemProps = {
@@ -975,16 +1103,17 @@ function WorkspaceSidebarGroup({
     tree,
     ctx.expandedSessionIds,
     forcedExpandedSessionIds,
-    pinnedIds,
+    EMPTY_PINNED_IDS,
     orderIds,
+    { exclude: pinnedIds },
   );
   const visibleRootIds = React.useMemo(
     () => sessionRows.flatMap((row) => (row.depth === 0 ? [row.session.id] : [])),
     [sessionRows],
   );
   const activeRootCount = React.useMemo(
-    () => getRootSessions(activeSessions).length,
-    [activeSessions],
+    () => getRootSessions(activeSessions).filter((session) => !pinnedIds.has(session.id)).length,
+    [activeSessions, pinnedIds],
   );
   const [archivedExpanded, setArchivedExpanded] = React.useState(false);
   const remainingRootSessions = Math.max(0, activeRootCount - previewCount);
@@ -1187,20 +1316,196 @@ function WorkspaceSidebarGroup({
 }
 
 const SESSION_DRAG_TYPE = "application/x-openwork-session-id";
+const EMPTY_PINNED_IDS = new Set<string>();
 const UNGROUPED_GROUP_ID = "__openwork_ungrouped";
 
-function SessionGroupSeparator({ label, count, expanded, onToggle, onRemove, onTitlePointerDown }: {
+function SessionGroupActions({ group, groups, workspaceId, count }: {
+  group: SessionGroupDefinition;
+  groups: SessionGroupDefinition[];
+  workspaceId: string;
+  count: number;
+}) {
+  const ctx = useSidebarContext();
+  const [expanded, setExpanded] = React.useState(false);
+  const [renameOpen, setRenameOpen] = React.useState(false);
+  const [renameLabel, setRenameLabel] = React.useState(group.label);
+  const [deleteOpen, setDeleteOpen] = React.useState(false);
+  const [deleteDestination, setDeleteDestination] = React.useState(UNGROUPED_GROUP_ID);
+  const otherGroups = groups.filter((candidate) => candidate.id !== group.id);
+  const trimmedRenameLabel = renameLabel.trim();
+  const deleteDestinationLabel = deleteDestination === UNGROUPED_GROUP_ID
+    ? t("session_management.ungrouped")
+    : otherGroups.find((candidate) => candidate.id === deleteDestination)?.label;
+
+  React.useEffect(() => {
+    if (!renameOpen) setRenameLabel(group.label);
+  }, [group.label, renameOpen]);
+
+  const saveRename = () => {
+    if (!trimmedRenameLabel) return;
+    useSessionManagementStore.getState().renameGroup(workspaceId, group.id, trimmedRenameLabel);
+    setRenameOpen(false);
+  };
+
+  return (
+    <>
+      <span
+        data-session-group-actions={group.id}
+        className={cn(
+          "relative ml-auto flex h-5 shrink-0 items-center justify-end overflow-hidden transition-[width] duration-150",
+          expanded ? "w-15" : "w-4",
+        )}
+        onMouseLeave={() => setExpanded(false)}
+      >
+        <span data-session-group-count className="text-[10px] tabular-nums text-muted-foreground/70 group-hover/separator:hidden">
+          {count}
+        </span>
+        {!expanded ? (
+          <button
+            type="button"
+            className="hidden size-5 items-center justify-center rounded text-muted-foreground hover:bg-sidebar-accent hover:text-foreground group-hover/separator:flex"
+            onMouseEnter={() => setExpanded(true)}
+            onFocus={() => setExpanded(true)}
+            onClick={(event) => event.stopPropagation()}
+            aria-label={t("session_management.group_actions")}
+          >
+            <MoreHorizontal className="size-3.5" />
+          </button>
+        ) : (
+          <span className="flex items-center">
+            <button
+              type="button"
+              className="flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
+              onClick={(event) => {
+                event.stopPropagation();
+                ctx.onCreateTaskInWorkspace(workspaceId, group.id);
+                setExpanded(false);
+              }}
+              aria-label={t("session_management.new_session_in_group")}
+            >
+              <Plus className="size-3" />
+            </button>
+            <button
+              type="button"
+              className="flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
+              onClick={(event) => {
+                event.stopPropagation();
+                setRenameLabel(group.label);
+                setRenameOpen(true);
+              }}
+              aria-label={t("session_management.rename_group")}
+            >
+              <Pencil className="size-3" />
+            </button>
+            <button
+              type="button"
+              className="flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+              onClick={(event) => {
+                event.stopPropagation();
+                setDeleteDestination(UNGROUPED_GROUP_ID);
+                setDeleteOpen(true);
+              }}
+              aria-label={t("session_management.delete_group")}
+            >
+              <Trash2 className="size-3" />
+            </button>
+          </span>
+        )}
+      </span>
+
+      <Dialog open={renameOpen} onOpenChange={setRenameOpen}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>{t("session_management.rename_group")}</DialogTitle>
+          </DialogHeader>
+          <Input
+            autoFocus
+            value={renameLabel}
+            onChange={(event) => setRenameLabel(event.currentTarget.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") saveRename();
+            }}
+            aria-label={t("session_management.group_name")}
+          />
+          <DialogFooter>
+            <DialogClose render={<Button variant="outline" type="button" />}>
+              {t("common.cancel")}
+            </DialogClose>
+            <Button type="button" disabled={!trimmedRenameLabel} onClick={saveRename}>
+              {t("common.save")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>{t("session_management.delete_group")}</DialogTitle>
+          </DialogHeader>
+          <label className="grid gap-2 text-sm font-medium">
+            {t("session_management.move_sessions_to")}
+            <Select
+              value={deleteDestination}
+              onValueChange={(value) => setDeleteDestination(value ?? UNGROUPED_GROUP_ID)}
+            >
+              <SelectTrigger className="w-full rounded-xl" data-destination-group-id={deleteDestination}>
+                <SelectValue>{deleteDestinationLabel}</SelectValue>
+              </SelectTrigger>
+              <SelectContent align="start">
+                <SelectItem value={UNGROUPED_GROUP_ID}>{t("session_management.ungrouped")}</SelectItem>
+                {otherGroups.map((candidate) => (
+                  <SelectItem key={candidate.id} value={candidate.id}>{candidate.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </label>
+          <DialogFooter>
+            <DialogClose render={<Button variant="outline" type="button" />}>
+              {t("common.cancel")}
+            </DialogClose>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={() => {
+                useSessionManagementStore.getState().removeGroup(
+                  workspaceId,
+                  group.id,
+                  deleteDestination === UNGROUPED_GROUP_ID ? null : deleteDestination,
+                );
+                setDeleteOpen(false);
+              }}
+            >
+              {t("common.confirm")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+function SessionGroupSeparator({ label, count, expanded, onToggle, group, groups, workspaceId, onTitlePointerDown }: {
   label: string;
   count: number;
   expanded: boolean;
   onToggle: () => void;
-  onRemove?: () => void;
+  group?: SessionGroupDefinition;
+  groups?: SessionGroupDefinition[];
+  workspaceId?: string;
   onTitlePointerDown?: React.PointerEventHandler<HTMLSpanElement>;
 }) {
   return (
-    <button
-      type="button"
+    <div
+      data-session-group={group?.id}
+      role="button"
+      tabIndex={0}
       onClick={onToggle}
+      onKeyDown={(event) => {
+        if (event.target !== event.currentTarget || (event.key !== "Enter" && event.key !== " ")) return;
+        event.preventDefault();
+        onToggle();
+      }}
       className="group/separator flex w-full items-center gap-1.5 rounded px-2 pb-1 pt-2.5 text-left transition-colors first:pt-1 hover:bg-sidebar-accent/50"
       aria-expanded={expanded}
     >
@@ -1211,28 +1516,12 @@ function SessionGroupSeparator({ label, count, expanded, onToggle, onRemove, onT
       >
         {label}
       </span>
-      <span className="text-[10px] tabular-nums text-muted-foreground/70">{count}</span>
-      {onRemove ? (
-        <span
-          role="button"
-          tabIndex={0}
-          onClick={(event) => {
-            event.stopPropagation();
-            onRemove();
-          }}
-          onKeyDown={(event) => {
-            if (event.key !== "Enter" && event.key !== " ") return;
-            event.preventDefault();
-            event.stopPropagation();
-            onRemove();
-          }}
-          className="ml-auto size-4 shrink-0 text-muted-foreground/50 opacity-0 transition-opacity hover:text-destructive group-hover/separator:opacity-100"
-          aria-label={t("session_management.remove_group")}
-        >
-          <Trash2 className="size-3" />
-        </span>
-      ) : null}
-    </button>
+      {group && groups && workspaceId ? (
+        <SessionGroupActions group={group} groups={groups} workspaceId={workspaceId} count={count} />
+      ) : (
+        <span className="ml-auto text-[10px] tabular-nums text-muted-foreground/70">{count}</span>
+      )}
+    </div>
   );
 }
 
@@ -1484,7 +1773,9 @@ function SessionGroupSection({ group, rows, expanded, workspaceId, store, render
             count={rows.length}
             expanded={expanded}
             onToggle={() => store.getState().toggleGroupExpanded(workspaceId, group.id)}
-            onRemove={() => store.getState().removeGroup(workspaceId, group.id)}
+            group={group}
+            groups={store.getState().groupsByWorkspace[workspaceId]?.groups ?? []}
+            workspaceId={workspaceId}
             onTitlePointerDown={(event) => dragControls.start(event)}
           />
           <CollapsibleContent>
@@ -1538,6 +1829,7 @@ type SessionMenuItemProps = {
   forcedExpandedSessionIds: Set<string>;
   isPinned?: boolean;
   draggable?: boolean;
+  workspaceName?: string;
 };
 
 function SessionMenuItem({
@@ -1548,10 +1840,12 @@ function SessionMenuItem({
   depth,
   isPinned = false,
   draggable = false,
+  workspaceName,
 }: SessionMenuItemProps) {
   const ctx = useSidebarContext();
   const isSelected = ctx.selectedSessionId === session.id;
   const displayTitle = getDisplaySessionTitle(session.title);
+  const itemTitle = workspaceName ? `${displayTitle} — ${workspaceName}` : displayTitle;
   const hasChildren = (tree.descendantCountBySessionId.get(session.id) ?? 0) > 0;
   const isExpanded = ctx.expandedSessionIds.has(session.id) || forcedExpandedSessionIds.has(session.id);
   const sessionActivityStatus = ctx.sessionStatusById?.[session.id];
@@ -1595,11 +1889,13 @@ function SessionMenuItem({
                 onClick={openSession}
                 onPointerEnter={prefetchSession}
                 onFocus={prefetchSession}
+                aria-label={itemTitle}
               >
                 <PinnedIndicator isPinned={isPinned} />
+                {workspaceName ? <WorkspaceIcon workspaceId={workspaceId} sizeClass="size-3.5" /> : null}
                 <span
-                  className={cn("min-w-0 flex-1 truncate transition-[padding] duration-75 group-hover/menu-sub-item:pe-12 group-has-data-popup-open/menu-sub-item:pe-12 pe-4", isSessionStreaming || isSessionActive && "pe-12")}
-                  title={displayTitle}
+                  className={cn("min-w-0 flex-1 truncate transition-[padding] duration-75 group-hover/menu-sub-item:pe-12 group-has-data-popup-open/menu-sub-item:pe-12 pe-4", (isSessionStreaming || isSessionActive) && "pe-12")}
+                  title={itemTitle}
                 >
                   {displayTitle}
                 </span>
@@ -1628,10 +1924,12 @@ function SessionMenuItem({
           onClick={openSession}
           onPointerEnter={prefetchSession}
           onFocus={prefetchSession}
-          className={cn("transition-[padding] duration-75 group-hover/menu-sub-item:pe-8 group-has-data-popup-open/menu-sub-item:pe-8", depth > 0 && "ps-13", isSessionStreaming || isSessionActive && "pe-8")}
+          aria-label={itemTitle}
+          className={cn("transition-[padding] duration-75 group-hover/menu-sub-item:pe-8 group-has-data-popup-open/menu-sub-item:pe-8", depth > 0 && "ps-13", (isSessionStreaming || isSessionActive) && "pe-12")}
         >
           <PinnedIndicator isPinned={isPinned} />
-          <span className="truncate" title={displayTitle}>{displayTitle}</span>
+          {workspaceName ? <WorkspaceIcon workspaceId={workspaceId} sizeClass="size-3.5" /> : null}
+          <span className="min-w-0 flex-1 truncate" title={itemTitle}>{displayTitle}</span>
         </SidebarMenuSubButton>
       </SessionContextMenu>
       <SessionActions

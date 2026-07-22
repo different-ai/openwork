@@ -1,0 +1,90 @@
+# Google Cloud GKE starter values for a first OpenWork EE self-host install.
+#
+# Copy this file, replace every REPLACE_* value, and install with:
+#
+#   helm upgrade --install openwork-ee oci://ghcr.io/different-ai/charts/openwork-ee \
+#     --version REPLACE_OPENWORK_VERSION \
+#     --namespace openwork-ee \
+#     --create-namespace \
+#     -f values.gcp.yaml
+#
+# This example exposes Den Web and Den API through GKE Ingress with a reserved
+# global IP and Google-managed certificate. Apply the ManagedCertificate and
+# BackendConfig manifests from docs/gcp-gke-helm.md before installing.
+
+image:
+  tag: "REPLACE_OPENWORK_VERSION"
+  pullPolicy: IfNotPresent
+
+config:
+  tenancy:
+    mode: single_org
+    singleOrgName: "REPLACE_COMPANY_NAME"
+    singleOrgSlug: "REPLACE_COMPANY_SLUG"
+    ownerEmails: "REPLACE_ADMIN_EMAIL"
+    allowPublicSignup: "false"
+    requireEmailVerification: "false"
+  auth:
+    passwordBreachScreeningEnabled: "false"
+  public:
+    webOrigin: "https://REPLACE_WEB_HOST"
+    apiOrigin: "https://REPLACE_API_HOST"
+    mcpResourceUrl: "https://REPLACE_API_HOST/mcp"
+    mcpClaimNamespace: "https://REPLACE_WEB_HOST"
+    desktopDenBaseUrl: "https://REPLACE_WEB_HOST"
+    corsOrigins: "https://REPLACE_WEB_HOST,https://REPLACE_API_HOST"
+    betterAuthTrustedOrigins: "https://REPLACE_WEB_HOST"
+    webAppHosts: "REPLACE_WEB_HOST"
+    bootstrapAdminEmails: "REPLACE_ADMIN_EMAIL"
+    authCallbackUrl: "https://REPLACE_WEB_HOST"
+  provisioner:
+    mode: stub
+
+secret:
+  create: true
+  values:
+    # Direct private IP Cloud SQL example. The current chart does not inject
+    # Cloud SQL Auth Proxy sidecars, so use a private IP reachable from GKE.
+    databaseUrl: "mysql://openwork:REPLACE_DB_PASSWORD@REPLACE_CLOUD_SQL_PRIVATE_IP:3306/openwork_den"
+    # Generate with: openssl rand -base64 48
+    betterAuthSecret: "REPLACE_BETTER_AUTH_SECRET"
+    # Generate separately with: openssl rand -base64 48
+    denDbEncryptionKey: "REPLACE_DEN_DB_ENCRYPTION_KEY"
+
+denApi:
+  replicaCount: 1
+  service:
+    type: ClusterIP
+    port: 8788
+    annotations:
+      cloud.google.com/backend-config: '{"default": "openwork-ee-den-api-backend"}'
+      cloud.google.com/neg: '{"ingress": true}'
+
+denWeb:
+  replicaCount: 1
+  service:
+    type: ClusterIP
+    port: 3005
+    annotations:
+      cloud.google.com/backend-config: '{"default": "openwork-ee-den-web-backend"}'
+      cloud.google.com/neg: '{"ingress": true}'
+
+inference:
+  enabled: false
+
+migrations:
+  enabled: true
+  hook: true
+
+ingress:
+  enabled: true
+  className: ""
+  annotations:
+    kubernetes.io/ingress.class: gce
+    kubernetes.io/ingress.global-static-ip-name: REPLACE_GLOBAL_STATIC_IP_NAME
+    networking.gke.io/managed-certificates: REPLACE_MANAGED_CERTIFICATE_NAME
+  web:
+    host: REPLACE_WEB_HOST
+  api:
+    enabled: true
+    host: REPLACE_API_HOST

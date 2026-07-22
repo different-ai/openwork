@@ -2,11 +2,12 @@
 import type * as React from "react";
 import {
   ArrowLeft,
+  BrainCircuit,
   Bug,
+  Cable,
   ChevronDown,
   CloudCog,
   Cog,
-  Container,
   FolderLock,
   Info,
   Layout,
@@ -42,6 +43,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { t } from "../../../../i18n";
 import type { SettingsTab } from "../../../../app/types";
+import { cn } from "@/lib/utils";
 import { useOrgRestrictions } from "../../cloud/desktop-config-provider";
 import {
   SettingsContent,
@@ -56,6 +58,7 @@ import {
   SettingsPanelToolbarStatus,
 } from "./panel";
 import { WorkspaceIcon } from "../../../design-system/workspace-icon";
+import { useFeatureFlagsPreferences } from "../state/feature-flags-preferences";
 
 export function getSettingsTabIcon(tab: SettingsTab) {
   switch (tab) {
@@ -69,14 +72,16 @@ export function getSettingsTabIcon(tab: SettingsTab) {
       return FolderLock;
     case "cloud-account":
       return UserCircle;
+    case "connect":
+      return Cable;
     case "cloud-marketplaces":
       return Store;
-    case "cloud-workers":
-      return Container;
     case "cloud-providers":
       return CloudCog;
     case "skills":
       return Sparkles;
+    case "memory":
+      return BrainCircuit;
     case "extensions":
       return Puzzle;
     case "environment":
@@ -108,14 +113,16 @@ export function getSettingsTabLabel(tab: SettingsTab) {
       return "Permissions";
     case "cloud-account":
       return t("settings.tab_cloud_account");
+    case "connect":
+      return t("settings.tab_connect");
     case "cloud-marketplaces":
       return t("settings.tab_cloud_marketplaces");
-    case "cloud-workers":
-      return t("settings.tab_cloud_workers");
     case "cloud-providers":
       return t("settings.tab_cloud_providers");
     case "skills":
       return t("settings.tab_skills");
+    case "memory":
+      return t("memory.tab_label");
     case "extensions":
       return t("settings.tab_extensions");
     case "environment":
@@ -149,14 +156,16 @@ export function getSettingsTabDescription(tab: SettingsTab) {
       return "Authorized folders and file access";
     case "cloud-account":
       return t("settings.tab_description_cloud_account");
+    case "connect":
+      return t("settings.tab_description_connect");
     case "cloud-marketplaces":
       return t("settings.tab_description_cloud_marketplaces");
-    case "cloud-workers":
-      return t("settings.tab_description_cloud_workers");
     case "cloud-providers":
       return t("settings.tab_description_cloud_providers");
     case "skills":
       return t("settings.tab_description_skills");
+    case "memory":
+      return t("memory.tab_description");
     case "extensions":
       return t("settings.tab_description_extensions");
     case "environment":
@@ -190,8 +199,43 @@ export function getGlobalSettingsTabs(developerMode: boolean): SettingsTab[] {
 
 export const CLOUD_SETTINGS_TABS: SettingsTab[] = [
   "cloud-account",
-  "cloud-workers",
+  "connect",
 ];
+
+export function isSettingsTabBeta(tab: SettingsTab) {
+  return tab === "connect";
+}
+
+export function SettingsBetaBadge({ className }: { className?: string }) {
+  return (
+    <span
+      className={cn(
+        "shrink-0 rounded-full border border-amber-6/40 bg-amber-3/60 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-amber-11",
+        className,
+      )}
+    >
+      {t("common.beta")}
+    </span>
+  );
+}
+
+function SettingsSidebarTabLabel({ tab }: { tab: SettingsTab }) {
+  return (
+    <>
+      <span>{getSettingsTabLabel(tab)}</span>
+      {isSettingsTabBeta(tab) ? <SettingsBetaBadge className="ml-auto" /> : null}
+    </>
+  );
+}
+
+/**
+ * Cloud settings tabs, gated by client-only preview flags. The Memory tab is
+ * surfaced only when `featureFlags.memory` is on (C-4). Both settings nav
+ * surfaces (sidebar + compact section menu) must use this so they can't drift.
+ */
+export function getCloudSettingsTabs(memoryEnabled: boolean): SettingsTab[] {
+  return memoryEnabled ? ["cloud-account", "memory", "connect"] : CLOUD_SETTINGS_TABS;
+}
 
 type SettingsPageProps = {
   activeTab: SettingsTab;
@@ -219,9 +263,10 @@ type SettingsSidebarProps = Pick<SettingsPageProps, "activeTab" | "onSelectTab" 
 };
 
 export function SettingsSidebar(props: SettingsSidebarProps) {
+  const { memoryEnabled } = useFeatureFlagsPreferences();
   const workspaceTabs = getWorkspaceSettingsTabs();
   const globalTabs = getGlobalSettingsTabs(props.developerMode);
-  const cloudTabs = CLOUD_SETTINGS_TABS;
+  const cloudTabs = getCloudSettingsTabs(memoryEnabled);
 
   return (
     <Sidebar className="mac:**:data-[sidebar=sidebar]:bg-transparent">
@@ -294,7 +339,7 @@ export function SettingsSidebar(props: SettingsSidebarProps) {
                       onClick={() => props.onSelectTab(tab)}
                     >
                       <Icon />
-                      <span>{getSettingsTabLabel(tab)}</span>
+                      <SettingsSidebarTabLabel tab={tab} />
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                 );
@@ -317,7 +362,7 @@ export function SettingsSidebar(props: SettingsSidebarProps) {
                       onClick={() => props.onSelectTab(tab)}
                     >
                       <Icon />
-                      <span>{getSettingsTabLabel(tab)}</span>
+                      <SettingsSidebarTabLabel tab={tab} />
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                 );
@@ -340,7 +385,7 @@ export function SettingsSidebar(props: SettingsSidebarProps) {
                       onClick={() => props.onSelectTab(tab)}
                     >
                       <Icon />
-                      <span>{getSettingsTabLabel(tab)}</span>
+                      <SettingsSidebarTabLabel tab={tab} />
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                 );
@@ -361,7 +406,7 @@ function DesktopPolicyBanner() {
   const hasRestriction = Object.entries(config).some(
     ([key, value]) => typeof value === "boolean" && value === false && key !== "allowedDesktopVersions",
   );
-  const hasBranding = Boolean(config.brandLogoUrl ?? config.brandAccentColor);
+  const hasBranding = Boolean(config.brandAppName ?? config.brandLogoUrl ?? config.brandAccentColor);
 
   if (!hasRestriction && !hasBranding) return null;
 

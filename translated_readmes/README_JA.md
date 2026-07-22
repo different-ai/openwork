@@ -132,7 +132,7 @@ curl -fsSL https://opencode.ai/install | bash -s -- --version "$(node -e "const 
 ## アーキテクチャ（概要）
 
 - **ホストモード**では、OpenWorkはローカルホストスタックを実行し、UIをそれに接続します。
-  - デフォルトランタイム: `openwork`（`openwork-orchestrator` からインストール）。`opencode`、`openwork-server`、およびオプションで `opencode-router` をオーケストレーションします。
+  - デフォルトランタイム: `openwork`（`openwork-orchestrator` からインストール）。`opencode` と `openwork-server` をオーケストレーションします。
   - フォールバックランタイム: `direct`。デスクトップアプリが直接 `opencode serve --hostname 127.0.0.1 --port <free-port>` を起動します。
 
 プロジェクトフォルダを選択すると、OpenWorkはそのフォルダを使用してローカルでホストスタックを実行し、デスクトップUIを接続します。

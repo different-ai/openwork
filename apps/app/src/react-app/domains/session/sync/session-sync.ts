@@ -18,6 +18,7 @@ import { applyRevertCursor, reconcileTranscriptMessages } from "./transcript-rec
 import {
   useSessionActivityStore,
 } from "../status/session-activity-store";
+import { notifyDesktopEvent } from "../../../shell/desktop-notifications";
 
 type SyncOptions = {
   workspaceId: string;
@@ -144,6 +145,18 @@ function sessionIdFromProperties(properties: unknown) {
 function sessionErrorFromProperties(properties: unknown) {
   if (!properties || typeof properties !== "object") return undefined;
   return (properties as { error?: unknown }).error;
+}
+
+function permissionNotificationDetail(permission: PermissionRequest | PermissionV2Request) {
+  if ("action" in permission) {
+    return `A session is waiting for permission to ${permission.action.replace(/[._-]/g, " ")}.`;
+  }
+  return `A session is waiting for ${permission.permission} permission.`;
+}
+
+function questionNotificationText(question: QuestionRequest) {
+  const prompt = question.questions.find((item) => item.question.trim())?.question.trim();
+  return prompt ? `Question: ${prompt}` : undefined;
 }
 
 function latestAssistantMessageId(messages: UIMessage[]) {
@@ -630,6 +643,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
         });
         trackTaskFailed(sessionId, Date.now() - runStartedAt);
       }
+      notifyDesktopEvent({ type: "task.failed", sessionId, errorText });
       useSessionActivityStore.getState().setError(workspaceId, sessionId, errorText);
       if (isTrackedSession(entry, sessionId)) {
         queryClient.setQueryData<UIMessage[]>(transcriptKey(workspaceId, sessionId), (current = []) => {
@@ -683,6 +697,11 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
   if (event.type === "permission.asked") {
     const permission = event.properties as PermissionRequest;
     if (!permission?.id || !permission.sessionID) return;
+    notifyDesktopEvent({
+      type: "permission.asked",
+      sessionId: permission.sessionID,
+      detail: permissionNotificationDetail(permission),
+    });
     useSessionActivityStore.getState().setWaitingRequest(workspaceId, permission.sessionID, "permission", permission.id, true);
     if (!isTrackedSession(entry, permission.sessionID)) return;
     const receivedAt = Date.now();
@@ -700,6 +719,11 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
   if (event.type === "permission.v2.asked") {
     const permission = event.properties as PermissionV2Request;
     if (!permission?.id || !permission.sessionID) return;
+    notifyDesktopEvent({
+      type: "permission.asked",
+      sessionId: permission.sessionID,
+      detail: permissionNotificationDetail(permission),
+    });
     useSessionActivityStore.getState().setWaitingRequest(workspaceId, permission.sessionID, "permission", permission.id, true);
     if (!isTrackedSession(entry, permission.sessionID)) return;
     const receivedAt = Date.now();
@@ -728,6 +752,11 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
   if (event.type === "question.asked") {
     const question = event.properties as QuestionRequest;
     if (!question?.id || !question.sessionID) return;
+    notifyDesktopEvent({
+      type: "question.asked",
+      sessionId: question.sessionID,
+      question: questionNotificationText(question),
+    });
     useSessionActivityStore.getState().setWaitingRequest(workspaceId, question.sessionID, "question", question.id, true);
     if (!isTrackedSession(entry, question.sessionID)) return;
     const receivedAt = Date.now();
@@ -895,6 +924,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
         duration_ms: Date.now() - runStartedAt,
       });
       trackTaskCompleted(props.sessionID, Date.now() - runStartedAt);
+      notifyDesktopEvent({ type: "task.completed", sessionId: props.sessionID });
     }
     useSessionActivityStore.getState().setRunStatus(workspaceId, props.sessionID, idleStatus);
     const tracked = isTrackedSession(entry, props.sessionID);

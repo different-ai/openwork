@@ -8,10 +8,16 @@
 import { mkdir } from "node:fs/promises";
 import { resolveServerConfig, type CliArgs } from "./config.js";
 import { createManagedOpencodeServer, type ManagedOpencodeServer, type OpencodeExecutionSnapshot } from "./managed-opencode.js";
-import { startServer, syncAllWorkspacesRuntimeMcpToEngine } from "./server.js";
+import {
+  clearTrustedOpencodeProcess,
+  registerTrustedOpencodeProcess,
+  startServer,
+  syncAllWorkspacesRuntimeMcpToEngine,
+} from "./server.js";
 import { ensureLocalWorkspaceFiles } from "./workspace-init.js";
 import { findManagedEngineWorkspace } from "./workspaces.js";
 import { keepOpenworkRuntimeConfigFileFresh, writeOpenworkRuntimeConfigFile } from "./openwork-runtime-config.js";
+import { sweepLegacyOpenCodeConfig } from "./legacy-config-sweep.js";
 import type { ServeResult } from "./serve-node.js";
 import type { ServerConfig } from "./types.js";
 
@@ -33,6 +39,8 @@ export type EmbeddedServerHandle = {
   config: ServerConfig;
   /** Redacted details for the managed OpenCode child process, when spawned. */
   managedOpencodeExecution: OpencodeExecutionSnapshot | null;
+  /** Liveness for the managed OpenCode child process, when spawned. */
+  managedOpencode: { pid: number | null; isAlive: () => boolean } | null;
   /** Stop the HTTP server and managed OpenCode (if any). */
   stop: () => Promise<void>;
 };
@@ -46,6 +54,7 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
 
   // Spawn managed OpenCode if requested and no explicit base URL was provided.
   let managedOpencode: ManagedOpencodeServer | null = null;
+  let managedOpencodeIdentity: string | null = null;
 
   if (!config.readOnly) {
     await ensureLocalWorkspaceFiles(config.workspaces);
@@ -63,6 +72,7 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
         || process.env.OPENWORK_MANAGED_OPENCODE_CWD?.trim()
         || workspace.path;
       await mkdir(cwd, { recursive: true });
+      await sweepLegacyOpenCodeConfig(config).catch(() => undefined);
 
       managedOpencode = await createManagedOpencodeServer({
         bin: options.opencodeBin || process.env.OPENWORK_OPENCODE_BIN,
@@ -94,6 +104,16 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
         entry.opencodePassword = managedOpencode.password;
         entry.directory = entry.path;
       }
+      managedOpencodeIdentity = [
+        managedOpencode.pid ?? "unknown",
+        managedOpencode.username,
+        managedOpencode.password,
+      ].join(":");
+      registerTrustedOpencodeProcess(config, {
+        baseUrl: managedOpencode.url,
+        identity: managedOpencodeIdentity,
+        isAlive: managedOpencode.isAlive,
+      });
     }
   }
 
@@ -111,7 +131,13 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
     url: `http://${config.host === "0.0.0.0" ? "127.0.0.1" : config.host}:${server.port}`,
     config,
     managedOpencodeExecution: managedOpencode?.execution ?? null,
+    managedOpencode: managedOpencode
+      ? { pid: managedOpencode.pid ?? null, isAlive: managedOpencode.isAlive }
+      : null,
     async stop() {
+      if (managedOpencodeIdentity) {
+        clearTrustedOpencodeProcess(config, managedOpencodeIdentity);
+      }
       await managedOpencode?.close();
       await server.stop();
     },

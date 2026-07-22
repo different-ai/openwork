@@ -1,11 +1,14 @@
 .turbo/
 node_modules/
 apps/desktop/dist-electron/
+apps/desktop/dist-electron-demo-a/
+apps/desktop/dist-electron-demo-b/
 packages/*/node_modules/
 apps/*/node_modules/
 ee/apps/*/node_modules/
 ee/packages/*/node_modules/
 .next/
+ee/apps/landing/.next-prod-eval/
 out/
 dist/
 packages/*/dist/
@@ -17,6 +20,7 @@ tmp/
 
 # Local git worktrees
 _worktrees/
+.worktrees/
 
 # Desktop sidecars
 apps/desktop/resources/sidecars/
@@ -65,3 +69,5 @@ opencode.jsonc
 transcript-analysis
 # Eval runner output
 evals/results/
+.playwright-mcp/
+.vscode/

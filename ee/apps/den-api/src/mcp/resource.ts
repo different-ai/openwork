@@ -11,6 +11,10 @@
  * Kept dependency-free so it stays unit-testable without booting env/db.
  */
 
+import { firstForwardedValue, trustedForwardedOrigin } from "../request-url.js"
+
+const DEN_WEB_PROXY_PREFIX = "/api/den"
+
 export function isHostedWebAppHost(hostname: string, webAppHosts: readonly string[]): boolean {
   const normalized = hostname.trim().toLowerCase()
   if (!normalized) return false
@@ -38,4 +42,71 @@ export function deriveDenMcpResource(betterAuthUrl: string, webAppHosts: readonl
     // Unparseable values keep the legacy bare form.
   }
   return `${origin}/mcp`
+}
+
+export type McpResourceRoute = "mcp" | "agent" | "admin"
+
+export function mcpEndpointResource(resource: string, endpoint: "agent" | "admin"): string {
+  return `${resource.replace(/\/+$/, "")}/${endpoint}`
+}
+
+export function deriveDenMcpAgentResource(input: { apiPublicUrl: string | undefined; mcpResource: string }): string {
+  const base = input.apiPublicUrl ? `${input.apiPublicUrl.replace(/\/+$/, "")}/mcp` : input.mcpResource
+  return mcpEndpointResource(base, "agent")
+}
+
+export function mcpProtectedResourceMetadataUrl(resource: string): string {
+  const url = new URL(resource)
+  const pathname = url.pathname.replace(/\/+$/, "")
+  return `${url.origin}/.well-known/oauth-protected-resource${pathname === "" ? "" : pathname}`
+}
+
+export function mcpRouteResource(input: {
+  route: McpResourceRoute
+  parentResource: string
+  agentResource: string
+}): string {
+  return input.route === "agent" ? input.agentResource : input.parentResource
+}
+
+export function resolveMcpResourceFromRequest(
+  requestUrl: string,
+  resources: readonly string[],
+  fallback: string,
+): string {
+  const url = new URL(requestUrl)
+  const bareResource = `${url.origin}/mcp`
+  const proxiedResource = `${url.origin}/api/den/mcp`
+  // Prefer the shape the client actually requested, then the configured
+  // same-origin fallback, so the legacy bare compat resource does not shadow
+  // the proxied public route on web-app origins.
+  if (url.pathname.startsWith("/api/den") && resources.includes(proxiedResource)) {
+    return proxiedResource
+  }
+
+  if ((fallback === bareResource || fallback === proxiedResource) && resources.includes(fallback)) {
+    return fallback
+  }
+
+  const candidates = [bareResource, proxiedResource]
+  const match = candidates.find((candidate) => resources.includes(candidate))
+  return match ?? fallback
+}
+
+function normalizedForwardedPrefix(value: string | null): string | null {
+  const prefix = firstForwardedValue(value)
+  if (!prefix) return null
+  return prefix.replace(/\/+$/, "") || "/"
+}
+
+export function deriveFirstPartyMcpTokenResourceFromRequest(
+  request: Request,
+  options: { fallback: string; trustedOrigins: readonly string[] },
+): string {
+  if (normalizedForwardedPrefix(request.headers.get("x-forwarded-prefix")) !== DEN_WEB_PROXY_PREFIX) {
+    return options.fallback
+  }
+
+  const forwarded = trustedForwardedOrigin(request, { trustedOrigins: options.trustedOrigins })
+  return forwarded ? `${forwarded.origin}${DEN_WEB_PROXY_PREFIX}/mcp` : options.fallback
 }

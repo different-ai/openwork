@@ -6,6 +6,7 @@ import {
   isOrganizationAuditAlertAction,
   ORGANIZATION_AUDIT_ACTIONS,
 } from "../src/audit-events.js"
+import { AUDIT_ALERT_OPERATIONAL_MARKER } from "../src/operational-log-markers.js"
 
 test("organization audit events normalize org ids and keep actor context", () => {
   const organizationId = createDenTypeId("organization")
@@ -218,7 +219,7 @@ test("organization audit alert log line is structured and secret-free", () => {
   })
 
   const logLine = buildOrganizationAuditAlertLogLine(event)
-  expect(logLine.startsWith("[audit-alert] ")).toBe(true)
+  expect(logLine.startsWith(`${AUDIT_ALERT_OPERATIONAL_MARKER} `)).toBe(true)
   expect(logLine).toContain("organization.sso.connection_deleted")
   expect(logLine).toContain(event.org_id)
   expect(logLine).not.toContain("secret")

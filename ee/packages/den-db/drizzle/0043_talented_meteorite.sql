@@ -1,0 +1,2 @@
+ALTER TABLE `plugin_mcp_requirement_binding` ADD `required_auth_type` enum('oauth','apikey','none');--> statement-breakpoint
+ALTER TABLE `plugin_mcp_requirement_binding` ADD `connection_owned_by_plugin` boolean DEFAULT false NOT NULL;

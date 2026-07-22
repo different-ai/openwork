@@ -41,12 +41,31 @@ Next, you want to make sure you can sign in the desktop app.
 3. Finish sign-in in your browser.
 4. If the browser does not return to OpenWork automatically, click `Paste sign-in code`, paste the `openwork://den-auth?...` link or one-time code from OpenWork Cloud, then click `Finish sign-in`.
 
+## Cloud URL used by the desktop app
+
+The desktop app uses a single Cloud URL: the Den web `baseUrl`. The hosted
+default is `https://app.openworklabs.com`.
+
+All Cloud API and MCP traffic is derived from that one URL through the web app
+proxy:
+
+- Cloud API requests go to `<baseUrl>/api/den/v1/...`.
+- OpenWork Cloud MCP requests go to `<baseUrl>/api/den/mcp/...`.
+
+The desktop app does not store or read a separate API URL. On startup it reads
+the Cloud URL from `desktop-bootstrap.json`; if that file is missing, it falls
+back to `https://app.openworklabs.com`. When you change the Cloud URL in
+`Settings -> Cloud`, OpenWork writes the new `baseUrl` back to the bootstrap
+file so the next launch uses the same source of truth.
+
 ## Choose your organization
 
 After sign-in, pick your org in `Settings -> Cloud -> Active org`.
 
 ## What to do next
 
+- Send members to [Connect your services](/start-here/connect-your-stack/connect-services) to sign in to team-approved accounts from the desktop app.
+- Use [MCP Connections](/cloud/share-with-your-team/shared-mcp-connections) to publish a managed service and grant member or team access.
 - Use marketplace plugins to publish grouped skills and MCPs for teams, or save a single skill directly from the desktop app and install it from `Skills -> Cloud`.
 - Use [Shared workspaces](/cloud/run-in-the-cloud/shared-workspace) to deploy hosted OpenWork runtimes that teammates can open from the desktop app.
 - Use [LLM providers](/cloud/share-with-your-team/managed-llm-provider) or [custom LLM providers](/cloud/share-with-your-team/custom-llm-provider) to manage shared model access.

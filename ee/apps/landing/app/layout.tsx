@@ -4,6 +4,12 @@ import Script from "next/script";
 import { BotIdClient } from "botid/client";
 import { WebMcpProvider } from "../components/webmcp-provider";
 import { StructuredData } from "../components/structured-data";
+import { POSTHOG_PROJECT_KEY } from "../lib/posthog-client";
+
+// Matches the server-side gate in lib/posthog-server.ts.
+// Local pnpm dev, local prod builds, and Vercel previews load no PostHog at all (no autocapture/pageviews), so only real production traffic reaches analytics.
+// VERCEL_ENV is baked at build time for static pages, which is correct on Vercel production builds.
+const posthogEnabled = process.env.VERCEL_ENV === "production";
 
 const organizationSchema = {
   "@context": "https://schema.org",
@@ -66,18 +72,20 @@ export default function RootLayout({
       <head>
         <StructuredData data={organizationSchema} />
         <BotIdClient protect={protectedRoutes} />
-        <Script
-          id="posthog"
-          strategy="beforeInteractive"
-          dangerouslySetInnerHTML={{
+        {posthogEnabled ? (
+          <Script
+            id="posthog"
+            strategy="beforeInteractive"
+            dangerouslySetInnerHTML={{
             __html: `!function(t,e){var o,n,p,r;e.__SV||(window.posthog && window.posthog.__loaded)||(window.posthog=e,e._i=[],e.init=function(i,s,a){function g(t,e){var o=e.split(".");2==o.length&&(t=t[o[0]],e=o[1]),t[e]=function(){t.push([e].concat(Array.prototype.slice.call(arguments,0)))}}(p=t.createElement("script")).type="text/javascript",p.crossOrigin="anonymous",p.async=!0,p.src=s.api_host.replace(".i.posthog.com","-assets.i.posthog.com")+"/static/array.js",(r=t.getElementsByTagName("script")[0]).parentNode.insertBefore(p,r);var u=e;for(void 0!==a?u=e[a]=[]:a="posthog",u.people=u.people||[],u.toString=function(t){var e="posthog";return"posthog"!==a&&(e+="."+a),t||(e+=" (stub)"),e},u.people.toString=function(){return u.toString(1)+".people (stub)"},o="init rs ls wi ns us ts ss capture calculateEventProperties vs register register_once register_for_session unregister unregister_for_session gs getFeatureFlag getFeatureFlagPayload getFeatureFlagResult isFeatureEnabled reloadFeatureFlags updateFlags updateEarlyAccessFeatureEnrollment getEarlyAccessFeatures on onFeatureFlags onSurveysLoaded onSessionId getSurveys getActiveMatchingSurveys renderSurvey displaySurvey cancelPendingSurvey canRenderSurvey canRenderSurveyAsync identify setPersonProperties group resetGroups setPersonPropertiesForFlags resetPersonPropertiesForFlags setGroupPropertiesForFlags resetGroupPropertiesForFlags reset get_distinct_id getGroups get_session_id get_session_replay_url alias set_config startSessionRecording stopSessionRecording sessionRecordingStarted captureException startExceptionAutocapture stopExceptionAutocapture loadToolbar get_property getSessionProperty fs ds createPersonProfile setInternalOrTestUser ps Qr opt_in_capturing opt_out_capturing has_opted_in_capturing has_opted_out_capturing get_explicit_consent_status is_capturing clear_opt_in_out_capturing hs debug M cs getPageViewId captureTraceFeedback captureTraceMetric Kr".split(" "),n=0;n<o.length;n++)g(u,o[n]);e._i.push([i,s,a])},e.__SV=1)}(document,window.posthog||[]);
-    posthog.init('phc_4YnPTlDVYPjgwKvLuNxhbHjV5kadgvd7XLzVHWnCXAI', {
+    posthog.init('${POSTHOG_PROJECT_KEY}', {
         api_host: 'https://us.i.posthog.com',
         defaults: '2025-11-30',
         person_profiles: 'identified_only',
     })`
-          }}
-        />
+            }}
+          />
+        ) : null}
       </head>
       <body className="overflow-x-hidden antialiased">
         <WebMcpProvider />

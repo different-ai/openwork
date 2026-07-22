@@ -1,9 +1,14 @@
 ---
-title: "Add an MCP server"
-description: "How to connect a custom MCP server with openwork"
+title: "Add a custom MCP server"
+description: "Connect a custom or local MCP server that is not available through OpenWork Connect"
 ---
 
-Connecting a custom MCP server with openwork takes four clicks.
+Use this guide only when you need a custom or local MCP server that is not available through OpenWork Connect.
+
+For Gmail, Google Calendar, Google Drive, Slack, Notion, Linear, and other
+managed services, follow [Connect your services](/start-here/connect-your-stack/connect-services).
+
+Connecting a custom MCP server with OpenWork takes four clicks.
 
 - Inside your workspace, click in `Extensions` \> `Advanced Settings` \> `Add MCP server`
 
@@ -11,27 +16,30 @@ Connecting a custom MCP server with openwork takes four clicks.
   ![Extensions page with Advanced Settings link](/images/mcp-extensions-advanced-settings.png)
 </Frame>
 
-You can choose to add the MCP server in this workspace or for all workspaces (global Ow config)
+You can add the MCP server to this workspace or to your global OpenCode configuration for all workspaces.
 
 <Frame>
   ![Add MCP Server dialog with name, URL, and OAuth toggle](/images/mcp-add-server-dialog.png)
 
-  You should indicate wether it requires OAuth or not.
+  Indicate whether the server requires OAuth.
 </Frame>
 
-This setup is aimed at servers that allow for dynamic user registration (eg: OAuth based MCPs)
+This setup is intended for servers that support dynamic OAuth client registration.
 
 <Frame>
   ![OAuth approval page for MCP server](/images/mcp-oauth-approval-page.png)
 </Frame>
 
-Once in their Oath page, you should just continue with the registration or custom setup. It should redirect back to openwork. Feel free to [open an issue](https://github.com/different-ai/openwork/issues/) if you require a custom MCP that we currently do not support.
+Complete the provider's OAuth approval flow in your browser. It should redirect
+back to OpenWork. If a custom MCP needs behavior OpenWork does not support,
+[open an issue](https://github.com/different-ai/openwork/issues/).
 
 ### Troubleshooting
 
 Some MCP servers do not support dynamic client registration. If the server gives you a pre-registered OAuth client ID and client secret, add it through `Add Custom App` > `Advanced OAuth`.
 
-For Slack, follow [Connect Slack MCP](/start-here/connect-your-stack/connect-slack-mcp).
+For an advanced local Slack setup, follow
+[Connect Slack as a custom MCP](/start-here/connect-your-stack/connect-slack-mcp).
 
 <Frame>
   ![Error when MCP server does not support dynamic client registration](/images/mcp-dynamic-registration-error.png)

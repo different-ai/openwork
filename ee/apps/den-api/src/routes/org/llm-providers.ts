@@ -14,6 +14,14 @@ import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { db } from "../../db.js"
 import { CustomProviderConfigError, normalizeCustomProviderConfig } from "../../llm/custom-provider.js"
+import { probeEndpoint, verifyModels } from "../../llm/endpoint-probe.js"
+import {
+  ProviderCredentialError,
+  decodeProviderCredential,
+  listConfiguredEnvKeys,
+  readProviderEnvNames,
+  resolveProviderCredential,
+} from "../../llm/provider-credentials.js"
 import {
   jsonValidator,
   orgMemberRoute,
@@ -62,6 +70,7 @@ const llmProviderWriteSchema = z.object({
   customConfigText: z.string().trim().min(1).optional(),
   customConfig: z.unknown().optional(),
   apiKey: z.string().trim().max(65535).optional(),
+  apiKeys: z.record(z.string().trim().min(1).max(255), z.string().trim().max(65535)).optional(),
   memberIds: z.array(denTypeIdSchema("member")).max(500).optional().default([]),
   teamIds: z.array(denTypeIdSchema("team")).max(500).optional().default([]),
 }).superRefine((value, ctx) => {
@@ -91,6 +100,30 @@ const llmProviderWriteSchema = z.object({
     })
   }
 })
+
+const endpointProbeRequestSchema = z.object({
+  api: z.string().trim().min(1).max(2048),
+  apiKey: z.string().trim().max(65535).optional(),
+  modelIds: z.array(z.string().trim().min(1).max(255)).max(8).optional(),
+})
+
+const endpointProbeResponseSchema = z.object({
+  result: z.object({
+    ok: z.boolean(),
+    vendor: z.enum(["azure", "openai-compatible"]),
+    normalizedApi: z.string().nullable(),
+    attempted: z.array(z.string()),
+    models: z.array(z.object({ id: z.string() })),
+    hint: z.string().nullable(),
+    status: z.number().nullable(),
+  }),
+  verifications: z.array(z.object({
+    id: z.string(),
+    status: z.enum(["ok", "adjusted", "failed"]),
+    npm: z.enum(["@ai-sdk/openai-compatible", "@ai-sdk/openai"]),
+    message: z.string().nullable(),
+  })).optional(),
+}).meta({ ref: "LlmProviderTestConnectionResponse" })
 
 const providerCatalogListResponseSchema = z.object({
   providers: z.array(z.object({}).passthrough()),
@@ -258,7 +291,37 @@ async function resolveTeamIds(input: {
   return teamIds
 }
 
-async function normalizeLlmProviderInput(input: z.infer<typeof llmProviderWriteSchema>) {
+function resolveCredentialColumn(input: {
+  providerConfig: Record<string, unknown>
+  existingProvider: Pick<LlmProviderRow, "apiKey" | "providerConfig"> | null
+  apiKey?: string
+  apiKeys?: Record<string, string>
+}) {
+  try {
+    return resolveProviderCredential({
+      envNames: readProviderEnvNames(input.providerConfig),
+      existing: input.existingProvider
+        ? {
+            value: input.existingProvider.apiKey,
+            envNames: readProviderEnvNames(input.existingProvider.providerConfig ?? {}),
+          }
+        : null,
+      apiKey: input.apiKey,
+      apiKeys: input.apiKeys,
+    })
+  } catch (error) {
+    if (error instanceof ProviderCredentialError) {
+      throw createFailure(400, "invalid_api_keys", error.message)
+    }
+
+    throw error
+  }
+}
+
+async function normalizeLlmProviderInput(
+  input: z.infer<typeof llmProviderWriteSchema>,
+  existingProvider: Pick<LlmProviderRow, "apiKey" | "providerConfig"> | null = null,
+) {
   if (input.source === "models_dev") {
     const provider = await getModelsDevProvider(input.providerId ?? "")
     if (!provider) {
@@ -267,15 +330,20 @@ async function normalizeLlmProviderInput(input: z.infer<typeof llmProviderWriteS
 
     const requestedModelIds = [...new Set(input.modelIds ?? [])]
     const modelsById = new Map(provider.models.map((model) => [model.id, model]))
+    // Azure model lists come from the resource's *deployments*, which admins
+    // can name anything — accept ids outside the models.dev catalog for
+    // Azure providers instead of rejecting the save.
+    const allowDeploymentIds = provider.npm === "@ai-sdk/azure"
     const models = requestedModelIds.map((modelId) => {
       const model = modelsById.get(modelId)
       if (!model) {
+        if (allowDeploymentIds) {
+          return { id: modelId, name: modelId, config: { id: modelId, name: modelId } }
+        }
         throw createFailure(404, "model_not_found", `Model ${modelId} is not available for ${provider.name}.`)
       }
       return model
     })
-
-    const apiKey = input.apiKey?.trim() || null
 
     return {
       source: input.source,
@@ -287,7 +355,12 @@ async function normalizeLlmProviderInput(input: z.infer<typeof llmProviderWriteS
         name: model.name,
         config: model.config,
       })),
-      apiKey,
+      apiKey: resolveCredentialColumn({
+        providerConfig: provider.config,
+        existingProvider,
+        apiKey: input.apiKey,
+        apiKeys: input.apiKeys,
+      }),
     }
   }
 
@@ -303,7 +376,12 @@ async function normalizeLlmProviderInput(input: z.infer<typeof llmProviderWriteS
       name: input.name,
       providerConfig: customProvider.providerConfig,
       models: customProvider.models,
-      apiKey: input.apiKey?.trim() || null,
+      apiKey: resolveCredentialColumn({
+        providerConfig: customProvider.providerConfig,
+        existingProvider,
+        apiKey: input.apiKey,
+        apiKeys: input.apiKeys,
+      }),
     }
   } catch (error) {
     if (error instanceof CustomProviderConfigError) {
@@ -441,6 +519,7 @@ async function loadLlmProviders(input: {
   return providers.map((provider) => ({
     ...provider,
     hasApiKey: Boolean(provider.apiKey && provider.apiKey.trim().length > 0),
+    configuredEnvKeys: listConfiguredEnvKeys(provider.apiKey, readProviderEnvNames(provider.providerConfig ?? {})),
     models: (modelsByProviderId.get(provider.id) ?? [])
       .map((model) => ({
         id: model.modelId,
@@ -478,6 +557,35 @@ async function loadLlmProviders(input: {
 }
 
 export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVariables & Partial<MemberTeamsContext> }>(app: Hono<T>) {
+  app.post(
+    "/v1/llm-providers/test-connection",
+    describeRoute({
+      tags: ["LLM Providers"],
+      summary: "Test a custom LLM provider endpoint",
+      description: "Probes an OpenAI-compatible endpoint (Azure AI Foundry, LiteLLM, vLLM, gateways) with the given credential: normalizes common base-URL mistakes, calls GET /models, and returns the model ids the endpoint actually serves — on Azure these are the deployment names. Nothing is stored.",
+      responses: {
+        200: jsonResponse("Probe completed (ok=false carries a human hint).", endpointProbeResponseSchema),
+        400: jsonResponse("The probe request was invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to test provider endpoints.", unauthorizedSchema),
+      },
+    }),
+    orgMemberRoute(),
+    jsonValidator(endpointProbeRequestSchema),
+    async (c) => {
+      const input = c.req.valid("json")
+      const result = await probeEndpoint({ api: input.api, apiKey: input.apiKey ?? "" })
+      if (result.ok && result.normalizedApi && input.modelIds?.length) {
+        const verifications = await verifyModels({
+          api: result.normalizedApi,
+          apiKey: input.apiKey ?? "",
+          modelIds: input.modelIds,
+        })
+        return c.json({ result, verifications })
+      }
+      return c.json({ result })
+    },
+  )
+
   app.get(
     "/v1/llm-provider-catalog",
     describeRoute({
@@ -647,9 +755,17 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
         .from(LlmProviderModelTable)
         .where(eq(LlmProviderModelTable.llmProviderId, llmProviderId))
 
+      // Decode the stored credential so the wire format stays additive: legacy
+      // single-secret providers keep returning `apiKey`, multi-env providers
+      // return `apiKeys` with `apiKey: null` so old clients fail with their
+      // missing-credential error instead of applying a JSON blob as the key.
+      const credential = decodeProviderCredential(provider.apiKey)
+
       return c.json({
         llmProvider: {
           ...provider,
+          apiKey: credential.apiKey,
+          apiKeys: credential.apiKeys,
           models: models
             .map((model) => ({
               id: model.modelId,
@@ -756,6 +872,7 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
             name: normalized.name,
             providerConfig: normalized.providerConfig,
             hasApiKey: Boolean(normalized.apiKey),
+            configuredEnvKeys: listConfiguredEnvKeys(normalized.apiKey, readProviderEnvNames(normalized.providerConfig)),
             createdAt: now,
             updatedAt: now,
           },
@@ -828,7 +945,7 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
       }
 
       try {
-        const normalized = await normalizeLlmProviderInput(input)
+        const normalized = await normalizeLlmProviderInput(input, provider)
         const memberIds = await resolveMemberIds({
           organizationId: payload.organization.id,
           values: input.memberIds,
@@ -848,7 +965,7 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
               providerId: normalized.providerId,
               name: normalized.name,
               providerConfig: normalized.providerConfig,
-              apiKey: input.apiKey === undefined ? provider.apiKey : normalized.apiKey,
+              apiKey: normalized.apiKey,
               updatedAt,
             })
             .where(eq(LlmProviderTable.id, provider.id))
@@ -898,7 +1015,9 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
             providerId: normalized.providerId,
             name: normalized.name,
             providerConfig: normalized.providerConfig,
-            hasApiKey: input.apiKey === undefined ? Boolean(provider.apiKey) : Boolean(normalized.apiKey),
+            apiKey: undefined,
+            hasApiKey: Boolean(normalized.apiKey),
+            configuredEnvKeys: listConfiguredEnvKeys(normalized.apiKey, readProviderEnvNames(normalized.providerConfig)),
             updatedAt,
           },
         })

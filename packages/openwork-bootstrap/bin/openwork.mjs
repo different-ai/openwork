@@ -70,8 +70,9 @@ function printHelp() {
     "  openwork-bootstrap install [--bin-dir <path>] [--install-dir <path>] [--source <path>] [--json]",
     "  openwork-bootstrap install app --manifest <url-or-file> [--app-dir <path>] [--json]",
     "  openwork-bootstrap doctor [--bin-dir <path>] [--install-dir <path>] [--base-url <url>] [--desktop-bootstrap] [--json]",
-    "  OPENWORK_OWNER_PASSWORD=<password> openwork-bootstrap cloud onboard --base-url <url> --owner-email <email> --org-name <name> --invite-email <email> [--skill-name <name>] [--prepare-desktop] [--json]",
-    "  openwork-bootstrap cloud bootstrap-workspace --base-url <url> --workspace-name <name> [--skill-name <name>] [--claim-roles owner,member] [--prepare-desktop] [--json]",
+    "  OPENWORK_OWNER_PASSWORD=<password> openwork-bootstrap cloud onboard --base-url <url> --owner-email <email> --org-name <name> --invite-email <email> [--skill-name <name>] [--web-base-url <url>] [--prepare-desktop] [--json]",
+    "  openwork-bootstrap cloud bootstrap-workspace --base-url <url> --workspace-name <name> [--skill-name <name>] [--owner-email <email>] [--teammate-emails a@x.com,b@y.com] [--claim-roles owner,member] [--web-base-url <url>] [--prepare-desktop] [--json]",
+    "  openwork-bootstrap cloud claim-link [--role owner] [--desktop-bootstrap-path <path>] [--json]",
     "",
     "Commands:",
     "  install          Install the openwork-bootstrap CLI into a user bin dir",
@@ -79,8 +80,16 @@ function printHelp() {
     "  doctor           Check CLI installation and optional Den API health",
     "  cloud onboard    Sign up, create an org, invite a teammate, and create a skill",
     "  cloud bootstrap-workspace  Create a provisional workspace without email/password auth",
+    "  cloud claim-link Retrieve a claim link saved by --prepare-desktop. Only run",
+    "                   this when you are ready to hand the link to a human; do",
+    "                   not print claim links preemptively.",
     "",
     "Options:",
+    "  --web-base-url   Browser-facing origin written into --prepare-desktop's",
+    "                   config (used for the app's Sign In button and claim",
+    "                   links). Defaults to https://app.openworklabs.com when",
+    "                   --base-url is the hosted API (api.openworklabs.com);",
+    "                   set explicitly for self-hosted/custom deployments.",
     "  --json           Print machine-readable JSON",
     "  --version        Print version",
     "  --help           Show help",
@@ -113,7 +122,12 @@ function defaultAppDir() {
 
 function configHomeDir() {
   if (process.env.XDG_CONFIG_HOME) return process.env.XDG_CONFIG_HOME
-  if (process.platform === "win32" && process.env.APPDATA) return process.env.APPDATA
+  if (process.platform === "win32") {
+    // Match the Electron shell (apps/desktop/electron/workspace-store.mjs):
+    // LOCALAPPDATA, then the conventional Local dir — never ~/.config on Windows.
+    if (process.env.LOCALAPPDATA) return process.env.LOCALAPPDATA
+    return join(process.env.USERPROFILE || process.env.HOME || process.cwd(), "AppData", "Local")
+  }
   return join(process.env.HOME || process.cwd(), ".config")
 }
 
@@ -127,6 +141,28 @@ function defaultSkillsDir() {
 
 function defaultDeviceKeyPath() {
   return process.env.OPENWORK_DEVICE_KEY_PATH || join(configHomeDir(), "openwork", "bootstrap-device-key.json")
+}
+
+// The desktop app's `desktop-bootstrap.json` `baseUrl` field is the WEB origin
+// it opens in the user's browser for sign-in (e.g. for "Sign in" and claim
+// links) - it is a different host than the API origin used for CLI/API calls
+// (`--base-url`, `apiBaseUrl`). Reusing the API host here breaks sign-in: the
+// browser opens `https://api.openworklabs.com/?mode=sign-in...` and shows raw
+// API JSON instead of the sign-in page. Derive the correct web host instead
+// of assuming it equals the API host.
+function deriveWebBaseUrl(apiBaseUrl) {
+  try {
+    const url = new URL(apiBaseUrl)
+    if (url.hostname === "api.openworklabs.com") {
+      return "https://app.openworklabs.com"
+    }
+    // Local/self-hosted dev: den-web commonly proxies the API at a different
+    // port on the same host (see ee/apps/den-web's /api/den proxy). Callers
+    // that need this to be exact should pass --web-base-url explicitly.
+    return apiBaseUrl
+  } catch {
+    return apiBaseUrl
+  }
 }
 
 function slugifySkillName(value) {
@@ -582,6 +618,15 @@ async function createDesktopHandoff(baseUrl, auth) {
 
 function writePreparedDesktop(input) {
   const bootstrapPath = resolve(input.bootstrapPath)
+  let existingBrandAppName = null
+  if (existsSync(bootstrapPath)) {
+    try {
+      const existingBootstrap = JSON.parse(readFileSync(bootstrapPath, "utf8"))
+      existingBrandAppName = typeof existingBootstrap.brandAppName === "string"
+        ? existingBootstrap.brandAppName.trim().slice(0, 64)
+        : null
+    } catch {}
+  }
   const skillName = slugifySkillName(input.skill.title)
   const skillDir = resolve(input.skillsDir, skillName)
   const skillPath = join(skillDir, "SKILL.md")
@@ -603,6 +648,7 @@ function writePreparedDesktop(input) {
     baseUrl: input.baseUrl,
     apiBaseUrl: input.apiBaseUrl,
     requireSignin: false,
+    ...(existingBrandAppName ? { brandAppName: existingBrandAppName } : {}),
     prepared,
     ...(input.claimLinks ? { claimLinks: input.claimLinks } : {}),
   }
@@ -628,8 +674,17 @@ function writePreparedDesktop(input) {
     bootstrapPath,
     skillsDir: resolve(input.skillsDir),
     skillPath,
-    ...(input.handoff ? { handoffExpiresAt: input.handoff.expiresAt, handoffGrant: "written-to-bootstrap-file" } : {}),
-    ...(input.claimLinks ? { claimLinks: input.claimLinks.map((link) => ({ id: link.id, role: link.role, expiresAt: link.expiresAt, url: "written-to-bootstrap-file" })) } : {}),
+    ...(input.handoff ? { handoffExpiresAt: input.handoff.expiresAt, handoffGrant: "redacted: saved to bootstrapPath" } : {}),
+    ...(input.claimLinks
+      ? {
+          claimLinks: input.claimLinks.map((link) => ({
+            id: link.id,
+            role: link.role,
+            expiresAt: link.expiresAt,
+            url: `redacted: run "openwork-bootstrap cloud claim-link --role ${link.role}" to view`,
+          })),
+        }
+      : {}),
   }
 }
 
@@ -689,6 +744,7 @@ async function runCloudOnboard(args) {
   const prepareDesktop = hasFlag(args.flags, "prepare-desktop")
   const desktopBootstrapPath = getFlag(args.flags, "desktop-bootstrap-path", defaultDesktopBootstrapPath())
   const skillsDir = getFlag(args.flags, "skills-dir", defaultSkillsDir())
+  const webBaseUrl = getFlag(args.flags, "web-base-url", deriveWebBaseUrl(baseUrl))?.replace(/\/$/, "")
 
   for (const [name, value] of Object.entries({ baseUrl, ownerEmail, ownerPassword, orgName, inviteEmail })) {
     if (!value) throw new Error(`missing_required_flag: --${name.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}`)
@@ -742,7 +798,7 @@ async function runCloudOnboard(args) {
   if (prepareDesktop) {
     const handoff = await createDesktopHandoff(baseUrl, auth)
     desktop = writePreparedDesktop({
-      baseUrl,
+      baseUrl: webBaseUrl,
       apiBaseUrl: baseUrl,
       bootstrapPath: desktopBootstrapPath,
       skillsDir,
@@ -769,13 +825,19 @@ async function runCloudBootstrapWorkspace(args) {
   const baseUrl = getFlag(args.flags, "base-url", "https://api.openworklabs.com")?.replace(/\/$/, "")
   const workspaceName = getFlag(args.flags, "workspace-name")
   const skillName = getFlag(args.flags, "skill-name", "First OpenWork Skill")
+  const ownerEmail = getFlag(args.flags, "owner-email")
   const prepareDesktop = hasFlag(args.flags, "prepare-desktop")
   const desktopBootstrapPath = getFlag(args.flags, "desktop-bootstrap-path", defaultDesktopBootstrapPath())
   const skillsDir = getFlag(args.flags, "skills-dir", defaultSkillsDir())
   const deviceKeyPath = getFlag(args.flags, "device-key-path", defaultDeviceKeyPath())
+  const webBaseUrl = getFlag(args.flags, "web-base-url", deriveWebBaseUrl(baseUrl))?.replace(/\/$/, "")
   const claimRoles = String(getFlag(args.flags, "claim-roles", "owner"))
     .split(",")
     .map((role) => role.trim())
+    .filter(Boolean)
+  const teammateEmails = String(getFlag(args.flags, "teammate-emails", ""))
+    .split(",")
+    .map((email) => email.trim())
     .filter(Boolean)
 
   for (const [name, value] of Object.entries({ baseUrl, workspaceName })) {
@@ -795,6 +857,8 @@ async function runCloudBootstrapWorkspace(args) {
       skillName,
       devicePublicKey: deviceKey.publicKey,
       claimRoles,
+      ...(ownerEmail ? { ownerEmail } : {}),
+      ...(teammateEmails.length > 0 ? { teammateEmails } : {}),
     }),
   })
   if (response.status !== 200 || response.body?.ok !== true || !response.body?.organization?.id || !response.body?.skill?.id) {
@@ -814,7 +878,7 @@ async function runCloudBootstrapWorkspace(args) {
   let desktop = null
   if (prepareDesktop) {
     desktop = writePreparedDesktop({
-      baseUrl,
+      baseUrl: webBaseUrl,
       apiBaseUrl: baseUrl,
       bootstrapPath: desktopBootstrapPath,
       skillsDir,
@@ -831,14 +895,54 @@ async function runCloudBootstrapWorkspace(args) {
     setup: response.body.setup,
     skill: response.body.skill,
     skillRun,
-    claimLinks: response.body.claimLinks.map((link) => ({ id: link.id, role: link.role, expiresAt: link.expiresAt, url: "written-to-bootstrap-file" })),
+    claimLinks: response.body.claimLinks.map((link) => ({
+      id: link.id,
+      role: link.role,
+      expiresAt: link.expiresAt,
+      url: prepareDesktop
+        ? `redacted: run "openwork-bootstrap cloud claim-link --role ${link.role}" to view`
+        : "discarded: rerun with --prepare-desktop to persist this link, otherwise it cannot be retrieved later",
+    })),
     device: { publicKeyPath: deviceKey.path, reused: deviceKey.reused },
     desktop,
   }, json)
 }
 
+function runCloudClaimLink(args) {
+  const json = hasFlag(args.flags, "json")
+  const desktopBootstrapPath = resolve(getFlag(args.flags, "desktop-bootstrap-path", defaultDesktopBootstrapPath()))
+  const roleFilter = getFlag(args.flags, "role")
+
+  if (!existsSync(desktopBootstrapPath)) {
+    throw new Error(`desktop_bootstrap_not_found: ${desktopBootstrapPath} (run cloud bootstrap-workspace --prepare-desktop first)`)
+  }
+
+  const bootstrap = JSON.parse(readFileSync(desktopBootstrapPath, "utf8"))
+  const allLinks = Array.isArray(bootstrap.claimLinks) ? bootstrap.claimLinks : []
+  const claimLinks = roleFilter ? allLinks.filter((link) => link.role === roleFilter) : allLinks
+
+  if (claimLinks.length === 0) {
+    throw new Error(
+      allLinks.length === 0
+        ? `no_claim_links: ${desktopBootstrapPath} has no claim links (this workspace may have been bootstrapped without --prepare-desktop, or claimRoles was empty)`
+        : `no_claim_links_for_role: no claim link with role "${roleFilter}" in ${desktopBootstrapPath}`,
+    )
+  }
+
+  jsonOut({
+    ok: true,
+    message: "Claim link retrieved. Share this URL only with the person who should own this workspace.",
+    bootstrapPath: desktopBootstrapPath,
+    claimLinks,
+  }, json)
+}
+
 async function runCloud(args) {
   const subcommand = args.positionals[1]
+  if (subcommand === "claim-link") {
+    runCloudClaimLink(args)
+    return
+  }
   if (subcommand === "onboard") {
     await runCloudOnboard(args)
     return

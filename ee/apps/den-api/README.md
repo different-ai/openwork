@@ -24,6 +24,18 @@ This creates `Acme Robotics` with demo users, teams, pending invites, and an imp
 
 Default owner login: `alex@acme.test` / `OpenWorkDemo123!`.
 
+## Observability
+
+`DEN_OBSERVABILITY_BACKEND` selects one backend: `none`, `otel`, or `sentry`.
+
+- `none` (default): structured JSON logs are written to stdout.
+- `otel`: initializes the OpenTelemetry Node SDK before Hono/DB imports, exports OTLP HTTP/protobuf traces, metrics, and logs from standard `OTEL_*` variables, and uses `@hono/otel` for normalized request spans/metrics without inbound HTTP auto-instrumentation.
+- `sentry`: initializes `@sentry/hono/node` before app imports and uses the official Hono middleware for errors/tracing/Sentry Logs. Do not combine it with the OTEL backend.
+
+The request access log records request id, method, normalized route, status, and duration, and omits health/readiness noise. Health/readiness requests also skip den-api's Hono observability middleware. Authorization, cookie, body, and query values are redacted from app telemetry. `OTEL_SERVICE_NAME` overrides the default `den-api` service name. Daytona's own OTEL bootstrap remains disabled; do not set Daytona OTEL enable variables from den-api.
+
+Builds generate source maps. Sentry source maps are uploaded only when `DEN_OBSERVABILITY_BACKEND=sentry` and `SENTRY_AUTH_TOKEN`, `SENTRY_ORG`, `SENTRY_PROJECT`, and `SENTRY_RELEASE` are present; `SENTRY_DIST` is passed through when set. The auth token must stay in secret storage and is never written to env examples or logs.
+
 ## Current routes
 
 - `GET /` -> `302 https://openworklabs.com`

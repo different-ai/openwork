@@ -6,7 +6,11 @@ import { addMcp, listMcp, setMcpEnabled } from "./mcp.js";
 import { buildOpenworkRuntimeConfig } from "./openwork-runtime-config.js";
 import { readOpenworkWorkspaceConfig } from "./openwork-workspace-config-store.js";
 import { addPlugin, listPlugins, removePlugin } from "./plugins.js";
-import { readRuntimeOpencodeConfig } from "./runtime-opencode-config-store.js";
+import {
+  onRuntimeOpencodeConfigWrite,
+  readRuntimeOpencodeConfig,
+  writeRuntimeOpencodeConfig,
+} from "./runtime-opencode-config-store.js";
 import { startServer } from "./server.js";
 import type { ServerConfig } from "./types.js";
 
@@ -56,6 +60,43 @@ async function expectMissing(path: string): Promise<void> {
 }
 
 describe("runtime OpenCode config store", () => {
+  test("reports no-op writes without notifying listeners", async () => {
+    await withWorkspace(async ({ config }) => {
+      let writes = 0;
+      const unsubscribe = onRuntimeOpencodeConfigWrite((writtenConfig, workspaceId) => {
+        if (writtenConfig === config && workspaceId === WORKSPACE_ID) {
+          writes += 1;
+        }
+      });
+
+      try {
+        const first = await writeRuntimeOpencodeConfig(config, WORKSPACE_ID, (current) => ({
+          ...current,
+          mcp: { posthog: { type: "remote", url: "https://mcp.posthog.com/mcp", enabled: true } },
+        }));
+        expect(first.changed).toBe(true);
+        expect(writes).toBe(1);
+
+        const second = await writeRuntimeOpencodeConfig(config, WORKSPACE_ID, (current) => ({
+          ...current,
+          mcp: { posthog: { type: "remote", url: "https://mcp.posthog.com/mcp", enabled: true } },
+        }));
+        expect(second.changed).toBe(false);
+        expect(second.config).toEqual(first.config);
+        expect(writes).toBe(1);
+
+        const third = await writeRuntimeOpencodeConfig(config, WORKSPACE_ID, (current) => ({
+          ...current,
+          mcp: { posthog: { type: "remote", url: "https://mcp.posthog.com/mcp", enabled: false } },
+        }));
+        expect(third.changed).toBe(true);
+        expect(writes).toBe(2);
+      } finally {
+        unsubscribe();
+      }
+    });
+  });
+
   test("stores MCP changes in the OpenWork runtime DB without rewriting workspace files", async () => {
     await withWorkspace(async ({ root, config }) => {
       const opencodePath = join(root, "opencode.jsonc");

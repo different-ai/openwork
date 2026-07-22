@@ -32,6 +32,7 @@ export DEN_DB_ENCRYPTION_KEY="${DEN_DB_ENCRYPTION_KEY:-daytona-den-db-encryption
 export BETTER_AUTH_SECRET="${BETTER_AUTH_SECRET:-daytona-den-auth-secret-please-change-1234567890}"
 export BETTER_AUTH_URL="${BETTER_AUTH_URL:-$DEN_WEB_PUBLIC_URL}"
 export DEN_BETTER_AUTH_URL="$BETTER_AUTH_URL"
+export DEN_API_PUBLIC_URL
 export DEN_MCP_RESOURCE_URL="${DEN_MCP_RESOURCE_URL:-$DEN_API_PUBLIC_URL/mcp}"
 export DEN_API_BASE="${DEN_API_BASE:-http://127.0.0.1:$DEN_API_PORT}"
 export DEN_AUTH_ORIGIN="${DEN_AUTH_ORIGIN:-$DEN_WEB_PUBLIC_URL}"
@@ -43,7 +44,7 @@ export DAYTONA_WORKER_PROXY_BASE_URL="${DAYTONA_WORKER_PROXY_BASE_URL:-$DEN_WORK
 export DEN_DAYTONA_WORKER_PROXY_BASE_URL="$DAYTONA_WORKER_PROXY_BASE_URL"
 export DEN_WEB_ALLOWED_DEV_ORIGINS="${DEN_WEB_ALLOWED_DEV_ORIGINS:-$DEN_WEB_PUBLIC_HOST}"
 
-DEFAULT_ORIGINS="http://localhost:$DEN_WEB_PORT,http://127.0.0.1:$DEN_WEB_PORT,http://localhost:$DEN_API_PORT,http://127.0.0.1:$DEN_API_PORT,http://localhost:$DEN_WORKER_PROXY_PORT,http://127.0.0.1:$DEN_WORKER_PROXY_PORT,$DEN_WEB_PUBLIC_URL,$DEN_API_PUBLIC_URL,$DEN_WORKER_PROXY_PUBLIC_URL"
+DEFAULT_ORIGINS="$DEN_WEB_PUBLIC_URL,$DEN_API_PUBLIC_URL,$DEN_WORKER_PROXY_PUBLIC_URL,http://localhost:$DEN_WEB_PORT,http://127.0.0.1:$DEN_WEB_PORT,http://localhost:$DEN_API_PORT,http://127.0.0.1:$DEN_API_PORT,http://localhost:$DEN_WORKER_PROXY_PORT,http://127.0.0.1:$DEN_WORKER_PROXY_PORT"
 export CORS_ORIGINS="${CORS_ORIGINS:-$DEFAULT_ORIGINS}"
 export DEN_BETTER_AUTH_TRUSTED_ORIGINS="${DEN_BETTER_AUTH_TRUSTED_ORIGINS:-$CORS_ORIGINS}"
 
@@ -118,27 +119,32 @@ echo "==> Pushing Den DB schema..."
 pnpm --filter @openwork-ee/den-db db:push > /tmp/den-db-push.log 2>&1
 
 echo "==> Starting Den API on :$DEN_API_PORT..."
-pkill -f "ee/apps/den-api/src/server.ts" >/dev/null 2>&1 || true
+# The den-api process cmdline is "tsx watch src/main.ts" (cwd-relative), so a
+# pattern anchored on the repo path never matches and restarts silently keep
+# the old server alive on the port. main.ts is unique to den-api here.
+pkill -f "tsx watch src/main.ts" >/dev/null 2>&1 || true
 nohup env \
   PORT="$DEN_API_PORT" \
   DATABASE_URL="$DATABASE_URL" \
   DEN_DB_ENCRYPTION_KEY="$DEN_DB_ENCRYPTION_KEY" \
   BETTER_AUTH_SECRET="$BETTER_AUTH_SECRET" \
   BETTER_AUTH_URL="$BETTER_AUTH_URL" \
+  DEN_API_PUBLIC_URL="$DEN_API_PUBLIC_URL" \
   DEN_MCP_RESOURCE_URL="$DEN_MCP_RESOURCE_URL" \
   DEN_BETTER_AUTH_TRUSTED_ORIGINS="$DEN_BETTER_AUTH_TRUSTED_ORIGINS" \
   CORS_ORIGINS="$CORS_ORIGINS" \
   PROVISIONER_MODE="$DEN_PROVISIONER_MODE" \
   WORKER_URL_TEMPLATE="$DEN_WORKER_URL_TEMPLATE" \
   DAYTONA_WORKER_PROXY_BASE_URL="$DAYTONA_WORKER_PROXY_BASE_URL" \
+  DEN_ORG_MODE="${DEN_ORG_MODE:-multi_org}" \
   OPENWORK_DEV_MODE="$OPENWORK_DEV_MODE" \
   NODE_OPTIONS="--conditions=development" \
-  pnpm --filter @openwork-ee/den-api exec tsx watch src/server.ts > /tmp/den-api.log 2>&1 &
+  pnpm --filter @openwork-ee/den-api exec tsx watch src/main.ts > /tmp/den-api.log 2>&1 &
 
 wait_for_http "http://127.0.0.1:$DEN_API_PORT/health" "Den API" 180
 
 echo "==> Starting worker proxy on :$DEN_WORKER_PROXY_PORT..."
-pkill -f "ee/apps/den-worker-proxy/src/server.ts" >/dev/null 2>&1 || true
+pkill -f "tsx watch src/server.ts" >/dev/null 2>&1 || true
 nohup env \
   PORT="$DEN_WORKER_PROXY_PORT" \
   DATABASE_URL="$DATABASE_URL" \
@@ -183,6 +189,7 @@ nohup env \
   NEXT_PUBLIC_OPENWORK_AUTH_CALLBACK_URL="$NEXT_PUBLIC_OPENWORK_AUTH_CALLBACK_URL" \
   NEXT_PUBLIC_POSTHOG_KEY= \
   NEXT_PUBLIC_POSTHOG_API_KEY= \
+  DEN_ORG_MODE="${DEN_ORG_MODE:-multi_org}" \
   OPENWORK_DEV_MODE="$OPENWORK_DEV_MODE" \
   DEN_WEB_ALLOWED_DEV_ORIGINS="$DEN_WEB_ALLOWED_DEV_ORIGINS" \
   pnpm --filter @openwork-ee/den-web exec next dev --hostname 0.0.0.0 --port "$DEN_WEB_PORT" > /tmp/den-web.log 2>&1 &

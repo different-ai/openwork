@@ -4,6 +4,7 @@ import { Cpu } from "lucide-react";
 
 import { t } from "../../../../i18n";
 import { Button } from "@/components/ui/button";
+import { shouldShowExtensionsMarketplacePane } from "@/react-app/domains/settings/connect-delivery";
 
 import { PluginsView, type PluginsExtensionsStore } from "./plugins-view";
 
@@ -41,6 +42,7 @@ export type ExtensionsViewProps = {
   /** Organization marketplace content, rendered in the same Extensions pane. */
   cloudMarketplaceView?: ReactNode;
   onRefresh: () => void;
+  onOpenConnect?: () => void;
   initialSection?: ExtensionsSection;
   setSectionRoute?: (tab: "mcp" | "skills" | "plugins") => void;
   showHeader?: boolean;
@@ -48,6 +50,8 @@ export type ExtensionsViewProps = {
 
 export function ExtensionsView(props: ExtensionsViewProps) {
   const [view, setView] = useState<"my" | "marketplace">("my");
+  const showMarketplacePane = shouldShowExtensionsMarketplacePane();
+  const activeView = showMarketplacePane ? view : "my";
   const pluginCount = useMemo(
     () => props.extensions.pluginList().length,
     [props.extensions],
@@ -71,24 +75,33 @@ export function ExtensionsView(props: ExtensionsViewProps) {
         </Button>
       </div>
 
-      <div className="flex w-fit rounded-xl border border-dls-border bg-dls-surface p-1">
-        <Button
-          variant={view === "my" ? "secondary" : "ghost"}
-          size="sm"
-          onClick={() => setView("my")}
-        >
-          My Extensions
-        </Button>
-        <Button
-          variant={view === "marketplace" ? "secondary" : "ghost"}
-          size="sm"
-          onClick={() => setView("marketplace")}
-        >
-          Marketplace
-        </Button>
-      </div>
+      {showMarketplacePane ? (
+        <div className="flex w-fit rounded-xl border border-dls-border bg-dls-surface p-1">
+          <Button
+            variant={view === "my" ? "secondary" : "ghost"}
+            size="sm"
+            onClick={() => setView("my")}
+          >
+            {t("extensions.my_extensions_tab")}
+          </Button>
+          <Button
+            variant={view === "marketplace" ? "secondary" : "ghost"}
+            size="sm"
+            onClick={() => setView("marketplace")}
+          >
+            {t("extensions.marketplace_tab")}
+          </Button>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-2 rounded-xl border border-dls-border bg-dls-surface px-4 py-3 text-sm text-dls-secondary sm:flex-row sm:items-center sm:justify-between">
+          <span>{t("extensions.connect_marketplace_hint")}</span>
+          <Button size="sm" variant="outline" className="w-fit" onClick={props.onOpenConnect}>
+            {t("extensions.open_connect")}
+          </Button>
+        </div>
+      )}
 
-      {view === "my" ? (
+      {activeView === "my" ? (
         <>
           {/* Runtime extensions: MCPs + skills + marketplace imports in one view */}
           {props.mcpView}

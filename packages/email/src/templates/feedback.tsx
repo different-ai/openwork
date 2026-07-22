@@ -11,7 +11,6 @@ export type FeedbackEmailProps = {
   openworkServerVersion: string
   opencodeVersion: string
   orchestratorVersion: string
-  opencodeRouterVersion: string
   osName: string
   osVersion: string
   platform: string
@@ -30,7 +29,6 @@ export function FeedbackEmail({
   openworkServerVersion,
   opencodeVersion,
   orchestratorVersion,
-  opencodeRouterVersion,
   osName,
   osVersion,
   platform,
@@ -46,7 +44,6 @@ export function FeedbackEmail({
     ["OpenWork server", openworkServerVersion],
     ["OpenCode", opencodeVersion],
     ["Orchestrator", orchestratorVersion],
-    ["Router", opencodeRouterVersion],
     ["OS", osLabel],
     ["Platform", platform],
     ["Submitted", submittedAt],

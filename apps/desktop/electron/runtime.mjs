@@ -5,6 +5,7 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
+import tls from "node:tls";
 import { fileURLToPath } from "node:url";
 import { pathToFileURL } from "node:url";
 
@@ -82,6 +83,18 @@ export function commandMatchesPackagedSidecar(command, sidecarDirs = []) {
     /(?:^|[/\\])opencode[^/\\\s]*\s+serve\b/.test(value);
 }
 
+export function embeddedServerImportUrl(embeddedPath) {
+  const url = pathToFileURL(embeddedPath);
+  try {
+    const stats = statSync(embeddedPath);
+    url.searchParams.set("mtimeMs", String(stats.mtimeMs));
+    url.searchParams.set("size", String(stats.size));
+  } catch {
+    // Fall back to the deterministic file URL if stat fails; startup can continue.
+  }
+  return url.href;
+}
+
 function nowMs() {
   return Date.now();
 }
@@ -99,17 +112,30 @@ function createEngineState() {
     opencodePassword: null,
     opencodeBinPath: null,
     opencodeBinSource: null,
+    managedByServer: false,
+    managedPid: null,
+    managedIsAlive: null,
     lastStdout: null,
     lastStderr: null,
     execution: null,
   };
 }
 
-function snapshotEngineState(state) {
+export function snapshotEngineState(state) {
   const child = state.childExited ? null : state.child;
+  let managedRunning = false;
+  if (state.managedByServer && typeof state.managedIsAlive === "function") {
+    try {
+      managedRunning = state.managedIsAlive() === true;
+    } catch {
+      managedRunning = false;
+    }
+  }
+  const childRunning = Boolean(child && child.exitCode === null && !child.killed);
   return {
-    running: Boolean(child && child.exitCode === null && !child.killed),
+    running: managedRunning || childRunning,
     runtime: state.runtime,
+    managedByServer: state.managedByServer === true,
     baseUrl: state.baseUrl,
     projectDir: state.projectDir,
     hostname: state.hostname,
@@ -118,7 +144,7 @@ function snapshotEngineState(state) {
     opencodePassword: state.opencodePassword,
     opencodeBinPath: state.opencodeBinPath,
     opencodeBinSource: state.opencodeBinSource,
-    pid: child?.pid ?? null,
+    pid: state.managedByServer ? state.managedPid ?? null : child?.pid ?? null,
     lastStdout: state.lastStdout,
     lastStderr: state.lastStderr,
     execution: state.execution,
@@ -483,6 +509,66 @@ function loadUserEnvFile() {
   }
 }
 
+/**
+ * @typedef {Object} RuntimeSystemCaTlsModule
+ * @property {(type?: string) => string[]} [getCACertificates]
+ */
+
+/**
+ * @typedef {Object} ResolveSystemCaEnvOptions
+ * @property {RuntimeSystemCaTlsModule} [tlsModule]
+ * @property {string} userDataDir
+ * @property {NodeJS.ProcessEnv} [parentEnv]
+ * @property {(...args: unknown[]) => void} [logInfo]
+ */
+
+/**
+ * @param {ResolveSystemCaEnvOptions} options
+ * @returns {Promise<NodeJS.ProcessEnv>}
+ */
+export async function resolveSystemCaEnv({
+  tlsModule = tls,
+  userDataDir,
+  parentEnv = process.env,
+  logInfo = console.info,
+}) {
+  const env = parentEnv ?? {};
+  if (Object.prototype.hasOwnProperty.call(env, "NODE_EXTRA_CA_CERTS")) {
+    if (typeof logInfo === "function") {
+      logInfo("OpenWork runtime: NODE_EXTRA_CA_CERTS is already set; skipping system CA bundle export.");
+    }
+    return {};
+  }
+
+  try {
+    if (typeof tlsModule?.getCACertificates !== "function") return {};
+    const certs = tlsModule.getCACertificates("system");
+    if (!Array.isArray(certs) || certs.length === 0) return {};
+    const pem = certs.filter((cert) => typeof cert === "string" && cert.trim()).join("\n");
+    if (!pem) return {};
+    const bundlePath = path.join(userDataDir, "system-ca-bundle.pem");
+    await mkdir(path.dirname(bundlePath), { recursive: true });
+    await writeFile(bundlePath, `${pem}\n`, "utf8");
+    return { NODE_EXTRA_CA_CERTS: bundlePath };
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * @param {NodeJS.ProcessEnv} [baseEnv]
+ * @param {NodeJS.ProcessEnv} [caEnv]
+ * @param {NodeJS.ProcessEnv} [extra]
+ * @returns {NodeJS.ProcessEnv}
+ */
+export function mergeSystemCaChildEnv(baseEnv = {}, caEnv = {}, extra = {}) {
+  return {
+    ...baseEnv,
+    ...(Object.prototype.hasOwnProperty.call(baseEnv, "NODE_EXTRA_CA_CERTS") ? {} : caEnv),
+    ...extra,
+  };
+}
+
 export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths }) {
   const engineState = createEngineState();
   const openworkServerState = createOpenworkServerState();
@@ -515,6 +601,12 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     process.resourcesPath ? path.join(process.resourcesPath, "sidecars") : null,
     path.join(path.dirname(app.getPath("exe")), "sidecars"),
   ].filter(Boolean);
+  let systemCaEnvPromise = null;
+
+  function systemCaEnv() {
+    systemCaEnvPromise ??= resolveSystemCaEnv({ tlsModule: tls, userDataDir, parentEnv: process.env });
+    return systemCaEnvPromise;
+  }
 
   function openworkServerTokenStorePath() {
     return path.join(userDataDir, "openwork-server-tokens.json");
@@ -692,12 +784,15 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     // User env is layered first so process.env + any caller overrides always
     // win. See apps/server/src/env-file.ts and apps/orchestrator/src/cli.ts —
     // all loaders must agree on path + reserved-keys policy.
-    const env = {
+    const baseEnv = {
       ...loadUserEnvFile(),
       ...process.env,
       BUN_CONFIG_DNS_RESULT_ORDER: "verbatim",
-      ...extra,
     };
+    const caEnv = Object.prototype.hasOwnProperty.call(baseEnv, "NODE_EXTRA_CA_CERTS") ? {} : await systemCaEnv();
+    // Bun honors Node's NODE_EXTRA_CA_CERTS, so bundled Bun sidecars inherit
+    // the exported OS trust store through the same child env variable.
+    const env = mergeSystemCaChildEnv(baseEnv, caEnv, extra);
     const pathKey =
       Object.prototype.hasOwnProperty.call(env, "PATH") ||
       !Object.prototype.hasOwnProperty.call(env, "Path")
@@ -1118,7 +1213,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     if (!embeddedPath) {
       throw new Error(`Cannot find OpenWork embedded server bundle. Checked: ${candidates.join(", ")}`);
     }
-    const { startEmbeddedServer } = await import(pathToFileURL(embeddedPath).href);
+    const { startEmbeddedServer } = await import(embeddedServerImportUrl(embeddedPath));
     // startEmbeddedServer falls back to an OS-assigned port if `port` races
     // into EADDRINUSE (see apps/server/src/serve-node.ts), so the bound port
     // below is authoritative.
@@ -1139,6 +1234,9 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     });
     inProcessServer = handle;
     openworkServerState.managedOpencodeExecution = handle.managedOpencodeExecution ?? null;
+    engineState.managedByServer = Boolean(handle.managedOpencode);
+    engineState.managedPid = handle.managedOpencode?.pid ?? null;
+    engineState.managedIsAlive = handle.managedOpencode?.isAlive ?? null;
 
     const boundPort = handle.port;
     const baseUrl = handle.url;
@@ -1286,6 +1384,9 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     engineState.opencodePassword = password;
     engineState.opencodeBinPath = opencodeBinary.path;
     engineState.opencodeBinSource = opencodeBinary.source;
+    engineState.managedByServer = false;
+    engineState.managedPid = null;
+    engineState.managedIsAlive = null;
 
     return snapshotEngineState(engineState);
   }
@@ -1328,6 +1429,9 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     engineState.opencodePassword = password;
     engineState.opencodeBinPath = opencodeBinary.path;
     engineState.opencodeBinSource = opencodeBinary.source;
+    engineState.managedByServer = false;
+    engineState.managedPid = null;
+    engineState.managedIsAlive = null;
 
     await waitForHttpOk(`${engineState.baseUrl}/health`, 10_000).catch(() => undefined);
     return snapshotEngineState(engineState);

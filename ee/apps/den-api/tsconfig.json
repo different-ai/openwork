@@ -9,6 +9,8 @@
     "esModuleInterop": true,
     "jsx": "react-jsx",
     "skipLibCheck": true,
+    "sourceMap": true,
+    "inlineSources": true,
     "resolveJsonModule": true
   },
   "include": ["src"]

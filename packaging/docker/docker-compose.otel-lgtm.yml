@@ -1,0 +1,31 @@
+# docker-compose.otel-lgtm.yml — Local OpenTelemetry validation backend
+#
+# Bundles an OTLP receiver, Grafana, Tempo, Loki, Prometheus, and Pyroscope for
+# local development/testing only. Send OTLP/HTTP protobuf to http://127.0.0.1:4318.
+
+services:
+  otel-lgtm:
+    image: docker.io/grafana/otel-lgtm:0.11.16@sha256:6fbacaa2db3851ecb4234f74e14d8a072298e15922a3af976fcc03ae834d9d73
+    restart: unless-stopped
+    ports:
+      - "${OTEL_LGTM_GRAFANA_PORT:-3000}:3000"
+      - "${OTEL_LGTM_OTLP_GRPC_PORT:-4317}:4317"
+      - "${OTEL_LGTM_OTLP_HTTP_PORT:-4318}:4318"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >
+          curl -fsS http://localhost:3000/api/health >/dev/null &&
+          curl -fsS http://localhost:3100/ready >/dev/null &&
+          curl -fsS http://localhost:3200/ready >/dev/null &&
+          curl -fsS http://localhost:9090/-/ready >/dev/null &&
+          curl -fsS http://localhost:13133/ready >/dev/null
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    volumes:
+      - otel-lgtm-data:/data
+
+volumes:
+  otel-lgtm-data:

@@ -7,6 +7,7 @@
 const ACTIVE_WORKSPACE_KEY = "openwork.react.activeWorkspace";
 const SESSION_BY_WORKSPACE_KEY = "openwork.react.sessionByWorkspace";
 const WORKSPACE_ORDER_KEY = "openwork.react.workspaceOrder";
+const WORKSPACE_PROJECT_DIMENSION_KEY = "openwork.react.workspaceProjectDimension";
 
 function safeGet(key: string): string | null {
   if (typeof window === "undefined") return null;
@@ -63,6 +64,9 @@ export function writeWorkspaceOrderIds(ids: string[]): void {
 }
 
 type SessionByWorkspace = Record<string, string>;
+export type WorkspaceProjectDimension = {
+  label: string;
+};
 
 function readSessionByWorkspaceMap(): SessionByWorkspace {
   const raw = safeGet(SESSION_BY_WORKSPACE_KEY);
@@ -105,6 +109,52 @@ export function writeLastSessionFor(workspaceId: string, sessionId: string | nul
   safeSet(SESSION_BY_WORKSPACE_KEY, Object.keys(map).length ? JSON.stringify(map) : null);
 }
 
+function readWorkspaceProjectDimensionMap(): Record<string, WorkspaceProjectDimension> {
+  const raw = safeGet(WORKSPACE_PROJECT_DIMENSION_KEY);
+  if (!raw) return {};
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    const result: Record<string, WorkspaceProjectDimension> = {};
+    for (const [workspaceId, value] of Object.entries(parsed)) {
+      if (!workspaceId.trim() || !value || typeof value !== "object" || Array.isArray(value)) continue;
+      const record = value as Record<string, unknown>;
+      const label = typeof record.label === "string" ? record.label.trim() : "";
+      if (!label) continue;
+      result[workspaceId] = {
+        label,
+      };
+    }
+    return result;
+  } catch {
+    return {};
+  }
+}
+
+export function readWorkspaceProjectDimension(workspaceId: string | null | undefined): WorkspaceProjectDimension | null {
+  const wsId = workspaceId?.trim();
+  if (!wsId) return null;
+  return readWorkspaceProjectDimensionMap()[wsId] ?? null;
+}
+
+export function writeWorkspaceProjectDimension(
+  workspaceId: string | null | undefined,
+  dimension: WorkspaceProjectDimension | null,
+): void {
+  const wsId = workspaceId?.trim();
+  if (!wsId) return;
+  const map = readWorkspaceProjectDimensionMap();
+  const label = dimension?.label.trim() ?? "";
+  if (!label) {
+    delete map[wsId];
+  } else {
+    map[wsId] = {
+      label,
+    };
+  }
+  safeSet(WORKSPACE_PROJECT_DIMENSION_KEY, Object.keys(map).length ? JSON.stringify(map) : null);
+}
+
 export function forgetWorkspaceMemory(workspaceId: string): void {
   const wsId = workspaceId?.trim();
   if (!wsId) return;
@@ -112,6 +162,11 @@ export function forgetWorkspaceMemory(workspaceId: string): void {
   if (wsId in map) {
     delete map[wsId];
     safeSet(SESSION_BY_WORKSPACE_KEY, Object.keys(map).length ? JSON.stringify(map) : null);
+  }
+  const dimensionMap = readWorkspaceProjectDimensionMap();
+  if (wsId in dimensionMap) {
+    delete dimensionMap[wsId];
+    safeSet(WORKSPACE_PROJECT_DIMENSION_KEY, Object.keys(dimensionMap).length ? JSON.stringify(dimensionMap) : null);
   }
   const active = readActiveWorkspaceId();
   if (active === wsId) writeActiveWorkspaceId(null);

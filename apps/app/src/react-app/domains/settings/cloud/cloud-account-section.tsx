@@ -3,12 +3,14 @@ import { Building2, Check, LogOut, Loader2 } from "lucide-react";
 
 import type { DenOrgSummary } from "../../../../app/lib/den";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   SettingsNotice,
   SettingsSectionHeaderDescription,
 } from "../settings-section";
 import { t } from "@/i18n";
 import { useCloudSession } from "./cloud-session-provider";
+import { useOrgListWindow } from "../../cloud/use-org-list-window";
 
 export interface CloudAccountSectionProps {
   activeOrgId: string;
@@ -129,6 +131,9 @@ function OrgPicker({
   onSelect: (orgId: string) => void | Promise<void>;
   onRefresh: () => void | Promise<void>;
 }) {
+  const { filtered, query, showMore, updateQuery, visible } = useOrgListWindow(orgs);
+  const hasMore = visible.length < filtered.length;
+
   if (orgsBusy) {
     return (
       <div className="flex flex-col items-center gap-3 py-6 text-sm text-dls-secondary">
@@ -161,8 +166,17 @@ function OrgPicker({
       <div className="text-xs text-dls-secondary">
         Choose the organization to use with this workspace. Sign out to switch later.
       </div>
+      {orgs.length > 10 ? (
+        <Input
+          aria-label="Search organizations"
+          placeholder="Search organizations..."
+          value={query}
+          className="h-auto rounded-xl border-dls-border bg-dls-surface px-4 py-2.5 text-sm text-dls-text shadow-none placeholder:text-dls-secondary focus-visible:border-dls-text/30 focus-visible:ring-0 dark:bg-dls-surface"
+          onChange={(event) => updateQuery(event.target.value)}
+        />
+      ) : null}
       <div className="flex flex-col gap-2">
-        {orgs.map((org) => (
+        {visible.map((org) => (
           <button
             key={org.id}
             type="button"
@@ -182,6 +196,27 @@ function OrgPicker({
           </button>
         ))}
       </div>
+      {filtered.length === 0 && query.trim() ? (
+        <div className="text-sm text-dls-secondary">
+          No organizations match your search.
+        </div>
+      ) : null}
+      {hasMore ? (
+        <div className="flex flex-col items-start gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="rounded-xl border-dls-border text-dls-text hover:bg-dls-hover"
+            onClick={showMore}
+          >
+            Show more
+          </Button>
+          <div className="text-xs text-dls-secondary">
+            Showing {visible.length} of {filtered.length} organizations
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

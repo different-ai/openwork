@@ -1,0 +1,90 @@
+# AWS EKS Auto Mode starter values for a first OpenWork EE self-host install.
+#
+# Copy this file, replace every REPLACE_* value, and install with:
+#
+#   helm upgrade --install openwork-ee oci://ghcr.io/different-ai/charts/openwork-ee \
+#     --version REPLACE_OPENWORK_VERSION \
+#     --namespace openwork-ee \
+#     --create-namespace \
+#     -f values.aws.yaml
+#
+# This example exposes Den Web and Den API through separate AWS Network Load
+# Balancers created from Kubernetes Services. Use it for the first AWS smoke
+# test and for installs where separate web/API hostnames are acceptable.
+
+image:
+  tag: "REPLACE_OPENWORK_VERSION"
+  pullPolicy: IfNotPresent
+
+config:
+  tenancy:
+    mode: single_org
+    singleOrgName: "REPLACE_COMPANY_NAME"
+    singleOrgSlug: "REPLACE_COMPANY_SLUG"
+    ownerEmails: "REPLACE_ADMIN_EMAIL"
+    allowPublicSignup: "false"
+    requireEmailVerification: "false"
+  auth:
+    passwordBreachScreeningEnabled: "false"
+  public:
+    webOrigin: "https://REPLACE_WEB_HOST"
+    apiOrigin: "https://REPLACE_API_HOST"
+    mcpResourceUrl: "https://REPLACE_API_HOST/mcp"
+    mcpClaimNamespace: "https://REPLACE_WEB_HOST"
+    desktopDenBaseUrl: "https://REPLACE_WEB_HOST"
+    corsOrigins: "https://REPLACE_WEB_HOST,https://REPLACE_API_HOST"
+    betterAuthTrustedOrigins: "https://REPLACE_WEB_HOST"
+    webAppHosts: "REPLACE_WEB_HOST"
+    bootstrapAdminEmails: "REPLACE_ADMIN_EMAIL"
+    authCallbackUrl: "https://REPLACE_WEB_HOST"
+  provisioner:
+    mode: stub
+
+secret:
+  create: true
+  values:
+    # RDS MySQL private-network smoke path. sslaccept=accept preserves TLS but
+    # does not require the RDS CA chain to be mounted into the image.
+    databaseUrl: "mysql://openwork:REPLACE_DB_PASSWORD@REPLACE_RDS_ENDPOINT:3306/openwork_den?sslaccept=accept"
+    # Generate with: openssl rand -base64 48
+    betterAuthSecret: "REPLACE_BETTER_AUTH_SECRET"
+    # Generate separately with: openssl rand -base64 48
+    denDbEncryptionKey: "REPLACE_DEN_DB_ENCRYPTION_KEY"
+
+denApi:
+  replicaCount: 1
+  service:
+    type: LoadBalancer
+    port: 443
+    loadBalancerClass: eks.amazonaws.com/nlb
+    annotations:
+      service.beta.kubernetes.io/aws-load-balancer-scheme: internet-facing
+      service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: ip
+      service.beta.kubernetes.io/aws-load-balancer-healthcheck-protocol: HTTP
+      service.beta.kubernetes.io/aws-load-balancer-healthcheck-path: /ready
+      service.beta.kubernetes.io/aws-load-balancer-ssl-cert: REPLACE_ACM_CERT_ARN
+      service.beta.kubernetes.io/aws-load-balancer-ssl-ports: "443"
+
+denWeb:
+  replicaCount: 1
+  service:
+    type: LoadBalancer
+    port: 443
+    loadBalancerClass: eks.amazonaws.com/nlb
+    annotations:
+      service.beta.kubernetes.io/aws-load-balancer-scheme: internet-facing
+      service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: ip
+      service.beta.kubernetes.io/aws-load-balancer-healthcheck-protocol: HTTP
+      service.beta.kubernetes.io/aws-load-balancer-healthcheck-path: /api/ready
+      service.beta.kubernetes.io/aws-load-balancer-ssl-cert: REPLACE_ACM_CERT_ARN
+      service.beta.kubernetes.io/aws-load-balancer-ssl-ports: "443"
+
+inference:
+  enabled: false
+
+migrations:
+  enabled: true
+  hook: true
+
+ingress:
+  enabled: false

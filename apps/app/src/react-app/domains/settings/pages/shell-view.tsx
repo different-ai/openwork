@@ -22,6 +22,7 @@ import {
 } from "../settings-layout";
 import { useShellConfig, DEFAULT_SHELL_CONFIG, type ShellConfig } from "../../../shell/shell-config";
 import { useUiStateStore } from "../../../shell/ui-state-store";
+import { useBrandAppName } from "../../cloud/brand-theme";
 
 /* ------------------------------------------------------------------ */
 /*  Interactive wireframe preview                                      */
@@ -230,6 +231,7 @@ function ToggleRow(props: ToggleRowProps) {
 
 export function ShellCustomizationView() {
   const { config, update, reset } = useShellConfig();
+  const brandAppName = useBrandAppName();
   const applicationMenuVisible = useUiStateStore((state) => state.applicationMenuVisible);
   const setApplicationMenuVisible = useUiStateStore((state) => state.setApplicationMenuVisible);
 
@@ -267,7 +269,7 @@ export function ShellCustomizationView() {
                 <Input
                   id="shell-app-name"
                   className="h-8 text-xs"
-                  value={config.appName}
+                  value={brandAppName}
                   placeholder="OpenWork"
                   disabled
                   onChange={(event) => update({ appName: event.currentTarget.value || DEFAULT_SHELL_CONFIG.appName })}
@@ -277,7 +279,9 @@ export function ShellCustomizationView() {
           </LayoutSectionItemHeader>
           <Alert>
             <Info />
-            <AlertDescription>Changing the application name is not available yet.</AlertDescription>
+            <AlertDescription>
+              {brandAppName === "OpenWork" ? "Your organization has not set a custom application name." : "This application name is managed by your organization."}
+            </AlertDescription>
           </Alert>
         </LayoutSectionItem>
       </LayoutSection>
@@ -300,7 +304,7 @@ export function ShellCustomizationView() {
         </Alert>
 
         <LayoutSectionItem className="rounded-2xl border border-dls-border p-4">
-          <ShellWireframe config={config} />
+          <ShellWireframe config={{ ...config, appName: brandAppName }} />
         </LayoutSectionItem>
 
         <ToggleRow

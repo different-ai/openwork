@@ -33,20 +33,6 @@ function defaultBehaviorOption(): ModelBehaviorOption {
   };
 }
 
-const humanize = (value: string) => {
-  const cleaned = value.replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
-  if (!cleaned) return value;
-  return cleaned
-    .split(" ")
-    .flatMap((word) => {
-      if (!word) return [];
-      if (/\d/.test(word) || word.length <= 3) return [word.toUpperCase()];
-      const lower = word.toLowerCase();
-      return [lower.charAt(0).toUpperCase() + lower.slice(1)];
-    })
-    .join(" ");
-};
-
 export const normalizeModelBehaviorValue = (value: string | null) => {
   if (!value) return null;
   const normalized = value.trim().toLowerCase();
@@ -143,21 +129,12 @@ const getBehaviorTitle = (
   return t("model_behavior.title_standard_generation");
 };
 
-const getVariantLabel = (providerID: string, key: string, providerName?: string | null) => {
-  const family = providerFamily(providerID, providerName);
-  if (key === "none") return t("model_behavior.label_fast");
-  if (key === "minimal") return t("model_behavior.label_quick");
-  if (key === "low") return t("model_behavior.label_light");
-  if (key === "medium") return t("model_behavior.label_balanced");
-  if (key === "high") return family === "anthropic" ? t("model_behavior.label_extended") : t("model_behavior.label_deep");
-  if (key === "xhigh" || key === "max") return t("model_behavior.label_maximum");
-  return humanize(key);
-};
+const getVariantLabel = (key: string) => key.charAt(0).toUpperCase() + key.slice(1);
 
 export const formatGenericBehaviorLabel = (value: string | null) => {
   const normalized = normalizeModelBehaviorValue(value);
   if (!normalized) return defaultBehaviorOption().label;
-  return getVariantLabel("generic", normalized);
+  return getVariantLabel(normalized);
 };
 
 const getVariantDescription = (
@@ -189,17 +166,14 @@ export const getModelBehaviorOptions = (
 ): ModelBehaviorOption[] => {
   const variantKeys = sortVariantKeys(getVariantKeys(model));
   if (!variantKeys.length) return [];
-  return [
-    defaultBehaviorOption(),
-    ...variantKeys.map((key) => {
-      const label = getVariantLabel(providerID, key, providerName);
-      return {
-        value: key,
-        label,
-        description: getVariantDescription(providerID, key, label, providerName),
-      };
-    }),
-  ];
+  return variantKeys.map((key) => {
+    const label = getVariantLabel(key);
+    return {
+      value: key,
+      label,
+      description: getVariantDescription(providerID, key, label, providerName),
+    };
+  });
 };
 
 const getDefaultModelBehaviorValue = (model: ProviderModel) =>

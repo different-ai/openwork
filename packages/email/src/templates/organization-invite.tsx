@@ -1,3 +1,4 @@
+import React, { type CSSProperties } from "react"
 import { Body, Button, Container, Head, Heading, Hr, Html, Preview, Text } from "@react-email/components"
 
 export type OrganizationInviteEmailProps = {
@@ -61,7 +62,7 @@ const styles = {
     fontWeight: 700,
     letterSpacing: "0.08em",
     margin: "0 0 12px",
-    textTransform: "uppercase" as const,
+    textTransform: "uppercase",
   },
   heading: {
     color: "#171412",
@@ -100,6 +101,6 @@ const styles = {
     fontSize: "13px",
     lineHeight: "19px",
     margin: 0,
-    wordBreak: "break-all" as const,
+    wordBreak: "break-all",
   },
-}
+} satisfies Record<string, CSSProperties>

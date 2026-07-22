@@ -56,5 +56,4 @@ exec openwork serve \
   --sidecar-source external \
   --opencode-source external \
   --openwork-server-bin /usr/local/bin/openwork-server \
-  --opencode-bin /usr/local/bin/opencode \
-  --no-opencode-router
+  --opencode-bin /usr/local/bin/opencode

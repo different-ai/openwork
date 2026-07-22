@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 
+import { denWebLogger } from "../../../observability/runtime-logger";
+
 export const dynamic = "force-dynamic";
 
 type CheckStatus = "ok" | "error";
@@ -43,7 +45,10 @@ async function checkUpstream(apiBase: string): Promise<CheckStatus> {
     });
     return response.ok ? "ok" : "error";
   } catch (error) {
-    console.error("[readiness] den-web upstream check failed", error);
+    denWebLogger.warn("den-web readiness upstream check failed", {
+      upstream_path: "/ready",
+      error_name: error instanceof Error ? error.name : typeof error,
+    });
     return "error";
   } finally {
     clearTimeout(timeout);

@@ -1,0 +1,33 @@
+{
+  "name": "@openwork/enterprise-mcp-client",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Package-first remote MCP client runtime for enterprise Den connections",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "development": "./src/index.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "test": "tsx --test test/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.30",
+    "tsx": "^4.15.7",
+    "tsup": "^8.5.0",
+    "typescript": "^5.6.3"
+  }
+}

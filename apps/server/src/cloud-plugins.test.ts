@@ -48,7 +48,7 @@ async function expectMissing(path: string): Promise<void> {
 describe("cloud plugin installs", () => {
   test("stores installed plugin state in the server DB and projects runtime resources", async () => {
     await withWorkspace(async ({ root, config }) => {
-      const imported = await installCloudPlugin({
+      const result = await installCloudPlugin({
         serverConfig: config,
         workspaceId: WORKSPACE_ID,
         workspaceRoot: root,
@@ -99,8 +99,10 @@ describe("cloud plugin installs", () => {
           ],
         },
       });
+      const imported = result.item;
 
       expect(imported.pluginId).toBe("plugin_1");
+      expect(result.warnings).toEqual([]);
       expect(imported.files.map((file) => file.objectType).sort()).toEqual(["mcp", "skill"]);
 
       const installed = await readInstalledCloudPlugins(config, WORKSPACE_ID);
@@ -143,7 +145,7 @@ describe("cloud plugin installs", () => {
         "Summarize commits since the last tag.",
       ].join("\n");
 
-      const imported = await installCloudPlugin({
+      const result = await installCloudPlugin({
         serverConfig: config,
         workspaceId: WORKSPACE_ID,
         workspaceRoot: root,
@@ -198,6 +200,7 @@ describe("cloud plugin installs", () => {
           ],
         },
       });
+      const imported = result.item;
 
       const agentPath = join(root, ".opencode", "agents", "review-plugin", "fancy-code-reviewer.md");
       const commandPath = join(root, ".opencode", "commands", "review-plugin", "release-notes.md");
@@ -207,6 +210,7 @@ describe("cloud plugin installs", () => {
         ".opencode/commands/review-plugin/release-notes.md",
         ".opencode/context/review-plugin/style-guide.md",
       ]);
+      expect(result.warnings).toEqual([]);
 
       const agentContent = await readFile(agentPath, "utf8");
       expect(agentContent).toContain("description: Reviews pull requests");
@@ -247,7 +251,7 @@ describe("cloud plugin installs", () => {
         "Triage issues.",
       ].join("\n");
 
-      await installCloudPlugin({
+      const result = await installCloudPlugin({
         serverConfig: config,
         workspaceId: WORKSPACE_ID,
         workspaceRoot: root,
@@ -271,6 +275,7 @@ describe("cloud plugin installs", () => {
           ],
         },
       });
+      expect(result.warnings).toEqual([]);
 
       const agentPath = join(root, ".opencode", "agents", "triage-plugin", "triage.md");
       const agentContent = await readFile(agentPath, "utf8");

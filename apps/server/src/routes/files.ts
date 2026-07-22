@@ -147,6 +147,7 @@ function contentTypeForPath(path: string): string {
   if (lowered.endsWith(".gif")) return "image/gif";
   if (lowered.endsWith(".webp")) return "image/webp";
   if (lowered.endsWith(".pdf")) return "application/pdf";
+  if (lowered.endsWith(".docx")) return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
   if (lowered.endsWith(".csv")) return "text/csv; charset=utf-8";
   if (lowered.endsWith(".tsv")) return "text/tab-separated-values; charset=utf-8";
   if (lowered.endsWith(".xlsx")) return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
@@ -176,6 +177,7 @@ function artifactPreviewForPath(path: string): string {
   if (/\.(md|markdown|mdx)$/.test(lowered)) return "markdown";
   if (/\.(csv|tsv|xlsx|xls|ods)$/.test(lowered)) return "sheet";
   if (/\.(ppt|pptx|pptm|pot|potx|odp|key|sxi)$/.test(lowered)) return "slides";
+  if (lowered.endsWith(".docx")) return "document";
   if (/\.(png|jpe?g|gif|webp|svg)$/.test(lowered)) return "image";
   if (lowered.endsWith(".pdf")) return "pdf";
   if (/\.(html|htm)$/.test(lowered)) return "html";

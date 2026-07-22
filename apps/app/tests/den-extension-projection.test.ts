@@ -88,7 +88,7 @@ describe("Den extension projections", () => {
     const resolved = await client.getOrgMarketplaceResolved("organization_test", "marketplace_test");
     const plugin = resolved.plugins[0];
 
-    expect(calls).toEqual(["http://den.local/v1/marketplaces/marketplace_test/resolved"]);
+    expect(calls).toEqual(["http://den.local/api/den/v1/marketplaces/marketplace_test/resolved"]);
     expect(plugin.extension?.sourceFormat).toBe("claude-plugin");
     expect(plugin.extension?.manifest?.resources).toEqual([{
       type: "command",

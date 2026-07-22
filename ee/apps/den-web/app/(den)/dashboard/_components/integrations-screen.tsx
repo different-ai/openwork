@@ -2,11 +2,12 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { Cable, Check, GitBranch, Github, Loader2, Plus, Settings, Trash2 } from "lucide-react";
+import { Cable, Check, GitBranch, Loader2, Plus, Settings, Trash2 } from "lucide-react";
 import { getGithubIntegrationAccountRoute, getGithubIntegrationRoute, getGithubIntegrationSetupRoute } from "../../_lib/den-org";
 import { DenButton } from "../../_components/ui/button";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
 import { IntegrationConnectDialog } from "./integration-connect-dialog";
+import { IntegrationIcon } from "./integration-icon";
 import {
   type ConnectedIntegration,
   type IntegrationProvider,
@@ -56,7 +57,7 @@ export function IntegrationsScreen() {
     <DashboardPageTemplate
       icon={Cable}
       badgeLabel="Preview"
-      title="Integrations"
+      title="Sources"
       description="Connect to GitHub or Bitbucket. Once an account is linked, plugins and skills from those repositories show up on the Plugins page."
       colors={["#E0F2FE", "#0C4A6E", "#0284C7", "#7DD3FC"]}
     >
@@ -366,16 +367,13 @@ function DisconnectConfirmDialog({
 }
 
 function ProviderLogo({ provider }: { provider: IntegrationProvider }) {
-  if (provider === "github") {
-    return (
-      <div className="flex h-10 w-10 items-center justify-center rounded-[12px] bg-[#0f172a] text-white">
-        <Github className="h-5 w-5" aria-hidden />
-      </div>
-    );
-  }
-  return (
-    <div className="flex h-10 w-10 items-center justify-center rounded-[12px] bg-[#2684FF] text-[13px] font-semibold text-white">
-      BB
-    </div>
-  );
+  const providerIconSlugs: Record<IntegrationProvider, string> = {
+    github: "github",
+    bitbucket: "bitbucket",
+  };
+  const providerNames: Record<IntegrationProvider, string> = {
+    github: "GitHub",
+    bitbucket: "Bitbucket",
+  };
+  return <IntegrationIcon name={providerNames[provider]} simpleIconSlug={providerIconSlugs[provider]} fallbackIcon={Cable} />;
 }

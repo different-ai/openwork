@@ -30,4 +30,4 @@ EXPOSE 8791
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 CMD node -e "fetch('http://127.0.0.1:' + (process.env.PORT || '8791') + '/health').then((res) => process.exit(res.ok ? 0 : 1)).catch(() => process.exit(1))"
 
-CMD ["node", "/app/ee/apps/inference/dist/server.js"]
+CMD ["node", "--import", "/app/ee/apps/inference/dist/instrumentation.js", "/app/ee/apps/inference/dist/server.js"]
