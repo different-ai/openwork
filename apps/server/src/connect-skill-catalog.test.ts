@@ -18,6 +18,9 @@ describe("OpenWork Connect skill catalog", () => {
     expect(instruction).toContain("<location>skill://customer-briefing/SKILL.md</location>");
     expect(instruction).toContain("<capability>skill:skill_customer_briefing</capability>");
     expect(instruction).toContain("openwork-cloud_execute_capability");
+    expect(instruction).toContain("NEVER use the native Load Skill tool");
+    expect(instruction).toContain("exact value from that skill's <capability> field");
+    expect(instruction).toContain("Do not call openwork-cloud_search_capabilities first");
     expect(instruction).not.toContain("# Customer Briefing");
   });
 
@@ -74,5 +77,44 @@ describe("OpenWork Connect skill catalog", () => {
     ]);
     expect(requests[2]?.headers.get("authorization")).toBe("Bearer secret");
     expect(requests[2]?.headers.get("mcp-session-id")).toBe("session-1");
+  });
+
+  test("accepts marketplace plugin capability pointers for remote skill retrieval", async () => {
+    const fetcher = async (_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      if (body.method === "initialize") {
+        return Response.json({ jsonrpc: "2.0", id: 1, result: { protocolVersion: "2025-06-18", capabilities: {} } });
+      }
+      if (body.method === "notifications/initialized") return new Response(null, { status: 202 });
+      return Response.json({
+        jsonrpc: "2.0",
+        id: 2,
+        result: {
+          contents: [{
+            uri: "skill://index.json",
+            mimeType: "application/json",
+            text: JSON.stringify({
+              $schema: "https://schemas.agentskills.io/discovery/0.2.0/schema.json",
+              skills: [{
+                name: "test-me-a1b2c3d4",
+                type: "skill-md",
+                description: "Use when the user asks to test the skill.",
+                url: "skill://test-me-a1b2c3d4/SKILL.md",
+                capability: "plugin:plg_test:cfg_test",
+              }],
+            }),
+          }],
+        },
+      });
+    };
+
+    const skills = await readMcpSkillIndex({
+      type: "remote",
+      url: "https://connect.example/mcp/agent",
+      enabled: true,
+    }, fetcher);
+
+    expect(skills).toHaveLength(1);
+    expect(skills[0]?.capability).toBe("plugin:plg_test:cfg_test");
   });
 });
