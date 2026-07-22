@@ -99,6 +99,35 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     }
   }
 
+  async function createWorkspaceSession(
+    workspace: WorkspaceInfo,
+    input: { title: string; prompt?: string },
+  ) {
+    const opencode = createWorkspaceOpencodeClient(config, workspace);
+    const session = buildSession(
+      unwrapOpencodeResult(
+        await opencode.session.create({ title: input.title }),
+        "/session",
+      ),
+    );
+
+    if (input.prompt) {
+      const result = await opencode.session.promptAsync({
+        sessionID: session.id,
+        parts: [{ type: "text", text: input.prompt }],
+      });
+      if (result.error !== undefined) {
+        throw new ApiError(502, "opencode_request_failed", "OpenCode request failed", {
+          status: result.response.status,
+          body: result.error,
+          path: `/session/${encodeURIComponent(session.id)}/prompt_async`,
+        });
+      }
+    }
+
+    return { item: session, started: Boolean(input.prompt) };
+  }
+
   async function readWorkspaceSession(workspace: WorkspaceInfo, sessionId: string) {
     try {
       const opencode = createWorkspaceOpencodeClient(config, workspace);
@@ -170,6 +199,32 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     }
     return value.trim();
   }
+
+  function optionalStringField(body: Record<string, unknown>, field: string): string | undefined {
+    const value = body[field];
+    if (value === undefined || value === null || value === "") return undefined;
+    if (typeof value !== "string" || !value.trim()) {
+      throw new ApiError(400, "invalid_payload", `${field} must be a non-empty string`);
+    }
+    return value.trim();
+  }
+
+  addRoute(routes, "POST", "/workspace/:id/sessions", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const body = await readJsonBody(ctx.request);
+    const title = requireStringField(body, "title");
+    if (title.length > 120) {
+      throw new ApiError(400, "invalid_payload", "title must be 120 characters or fewer");
+    }
+    const prompt = optionalStringField(body, "prompt");
+    if (prompt && prompt.length > 100_000) {
+      throw new ApiError(400, "invalid_payload", "prompt must be 100000 characters or fewer");
+    }
+    const result = await createWorkspaceSession(workspace, { title, ...(prompt ? { prompt } : {}) });
+    return jsonResponse(result, 201);
+  });
 
   addRoute(routes, "GET", "/workspace/:id/sessions", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);

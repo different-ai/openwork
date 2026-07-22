@@ -54,6 +54,14 @@ const sessionReadArgsSchema = z.object({
   count: z.number().int().positive().max(100).optional().describe("Number of recent transcript messages to return. Defaults to 30, max 100."),
 });
 
+const sessionCreateArgsSchema = z.object({
+  sessions: z.array(z.object({
+    title: z.string().trim().min(1).max(120).describe("Short title shown in the OpenWork session list."),
+    prompt: z.string().trim().min(1).max(100_000).describe("Self-contained task to start in the new session."),
+  })).min(1).max(20).describe("One entry per new session to create and start. Maximum 20."),
+  workspaceId: z.string().trim().optional().describe("Optional OpenWork workspace id/name. Defaults to the workspace containing the current session."),
+});
+
 const extensionsExportArgsSchema = z.object({
   skills: z.array(z.string().trim().min(1)).optional().describe("Names of installed skills to export, as shown in Settings > Skills or .opencode/skills/**."),
   mcps: z.array(z.string().trim().min(1)).optional().describe("Names of installed MCP servers to export, including OpenWork-managed runtime MCPs."),
@@ -88,6 +96,11 @@ const sessionListEnvelopeSchema = z.object({
 
 const sessionEnvelopeSchema = z.object({
   item: sessionInfoSchema,
+}).passthrough();
+
+const createdSessionEnvelopeSchema = z.object({
+  item: sessionInfoSchema,
+  started: z.boolean(),
 }).passthrough();
 
 const sessionPartSchema = z.object({
@@ -125,6 +138,11 @@ When the user asks what they said, what happened, or what was decided in another
 Use openwork_session_search first to search session titles and message transcripts across workspaces. If there is one clear match, use openwork_session_read with the returned sessionId/workspaceId to retrieve transcript context without navigating the UI.
 Answer only from the returned search/read results. If multiple sessions match, ask a short clarifying question. If the returned transcript is limited or missing the older context needed, say so instead of guessing.`;
 
+const OPENWORK_SESSION_CREATION_INSTRUCTION =
+  `## Creating sessions
+When the user asks to create one or more new OpenWork sessions or chats, ALWAYS use openwork_session_create. Do not use UI-control tools or browser automation to create sessions.
+Pass one entry per requested session, with a short title and a self-contained prompt describing the work for that session. The tool creates and starts every session in the background without navigating away from the current chat. After the call, report only the sessions in created and clearly report any failures.`;
+
 const OPENWORK_BROWSER_INSTRUCTION =
   `Do NOT use browser_navigate, browser_click, or browser_snapshot to interact with the OpenWork app itself. Those are for browsing external websites.
 
@@ -155,6 +173,18 @@ type SessionSearchResult = {
   role?: string;
   messageId?: string;
   messageIndex?: number;
+};
+type CreatedOpenWorkSessionResult = {
+  ok: true;
+  sessionId: string;
+  title: string;
+  started: boolean;
+  route: string;
+};
+type FailedOpenWorkSessionResult = {
+  ok: false;
+  title: string;
+  error: string;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -634,6 +664,41 @@ async function exportOpenWorkExtensions(rawArgs: unknown, context: OpenCodeConte
   return Object.assign(base, { result: payload });
 }
 
+async function createOpenWorkSessions(rawArgs: unknown, context: OpenCodeContext): Promise<object> {
+  const args = sessionCreateArgsSchema.parse(rawArgs);
+  const workspace = await resolveContextWorkspace(args.workspaceId, context);
+  const results = await Promise.all(args.sessions.map(async (session): Promise<CreatedOpenWorkSessionResult | FailedOpenWorkSessionResult> => {
+    try {
+      const payload = createdSessionEnvelopeSchema.parse(await postJson(
+        `/workspace/${encodeURIComponent(workspace.id)}/sessions`,
+        session,
+      ));
+      return {
+        ok: true,
+        sessionId: payload.item.id,
+        title: payload.item.title?.trim() || session.title,
+        started: payload.started,
+        route: `/workspace/${encodeURIComponent(workspace.id)}/session/${encodeURIComponent(payload.item.id)}`,
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        title: session.title,
+        error: unknownErrorMessage(error),
+      };
+    }
+  }));
+  const created = results.filter((result): result is CreatedOpenWorkSessionResult => result.ok);
+  const failures = results.filter((result): result is FailedOpenWorkSessionResult => !result.ok);
+  return {
+    ok: failures.length === 0,
+    workspaceId: workspace.id,
+    workspace: workspaceLabel(workspace),
+    created,
+    failures,
+  };
+}
+
 async function postJson(path: string, body: ExtensionActionPayload | Record<string, unknown>): Promise<unknown> {
   const { url, token } = requireOpenWorkServer();
   const response = await fetch(url + path, {
@@ -674,6 +739,7 @@ export const OpenWorkExtensionsPreview = async (factoryInput?: unknown) => {
       client: engineMcpStatusClient,
       directory: engineMcpStatusDirectory,
     }));
+    output.system.push(OPENWORK_SESSION_CREATION_INSTRUCTION);
     output.system.push(OPENWORK_SESSION_MEMORY_INSTRUCTION);
     output.system.push(OPENWORK_BROWSER_INSTRUCTION);
     if (uiControlEnabled) output.system.push(OPENWORK_UI_CONTROL_INSTRUCTION);
@@ -738,6 +804,15 @@ export const OpenWorkExtensionsPreview = async (factoryInput?: unknown) => {
       },
     },
     } : {}),
+    openwork_session_create: {
+      description: "Create and start one or more new OpenWork sessions directly in the backend without navigating or controlling the UI. Use one sessions entry per requested chat and make each prompt self-contained.",
+      args: sessionCreateArgsSchema.shape,
+      async execute(rawArgs: unknown, context: OpenCodeContext) {
+        const mergedContext = { ...factoryContext, ...normalizeOpenCodeContext(context) };
+        const result = await createOpenWorkSessions(rawArgs, mergedContext);
+        return JSON.stringify(result, null, 2);
+      },
+    },
     openwork_session_search: {
       description: "Search OpenWork past chat sessions by title and full message transcript text without navigating the UI. Use this when the user refers to another/past chat or asks what was said, decided, or done previously.",
       args: sessionSearchArgsSchema.shape,

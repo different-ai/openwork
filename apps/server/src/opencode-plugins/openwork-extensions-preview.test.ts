@@ -33,6 +33,21 @@ const readResultSchema = z.object({
   }).passthrough()),
 }).passthrough();
 
+const createResultSchema = z.object({
+  ok: z.boolean(),
+  workspaceId: z.string(),
+  created: z.array(z.object({
+    sessionId: z.string(),
+    title: z.string(),
+    started: z.boolean(),
+    route: z.string(),
+  })),
+  failures: z.array(z.object({
+    title: z.string(),
+    error: z.string(),
+  })),
+});
+
 afterEach(() => {
   while (stops.length) stops.pop()?.();
   if (originalServerUrl === undefined) delete process.env.OPENWORK_SERVER_URL;
@@ -50,7 +65,7 @@ async function transformedSystem(plugin: Awaited<ReturnType<typeof OpenWorkExten
 }
 
 function startFakeOpenWorkServer() {
-  const requests: Array<{ pathname: string; search: string; authorization: string | null }> = [];
+  const requests: Array<{ pathname: string; search: string; authorization: string | null; method: string; body?: unknown }> = [];
 
   const workspaceOne = { id: "ws_1", name: "Main", path: "/tmp/main" };
   const workspaceTwo = { id: "ws_2", name: "Archive", displayName: "Archive", path: "/tmp/archive" };
@@ -61,13 +76,16 @@ function startFakeOpenWorkServer() {
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
-    fetch(request) {
+    async fetch(request) {
       const url = new URL(request.url);
-      requests.push({
+      const record: { pathname: string; search: string; authorization: string | null; method: string; body?: unknown } = {
         pathname: url.pathname,
         search: url.search,
         authorization: request.headers.get("authorization"),
-      });
+        method: request.method,
+      };
+      if (request.method === "POST") record.body = await request.json();
+      requests.push(record);
 
       if (request.headers.get("authorization") !== "Bearer test-token") {
         return Response.json({ message: "Unauthorized" }, { status: 401 });
@@ -101,6 +119,17 @@ function startFakeOpenWorkServer() {
         return Response.json({ items: [sessionAlpha, sessionBeta] });
       }
       if (url.pathname === "/workspace/ws_2/sessions") {
+        if (request.method === "POST") {
+          const body = z.object({ title: z.string(), prompt: z.string() }).parse(record.body);
+          return Response.json({
+            item: {
+              id: `ses_created_${requests.filter((entry) => entry.pathname === url.pathname && entry.method === "POST").length}`,
+              title: body.title,
+              time: { created: 400, updated: 400 },
+            },
+            started: true,
+          }, { status: 201 });
+        }
         return Response.json({ items: [sessionArchive] });
       }
 
@@ -254,6 +283,36 @@ describe("OpenWorkExtensionsPreview session tools", () => {
       },
     ]);
   });
+
+  test("creates and starts multiple sessions through the OpenWork backend", async () => {
+    const fake = startFakeOpenWorkServer();
+    const plugin = await OpenWorkExtensionsPreview({ directory: "/tmp/archive" });
+
+    const output = await plugin.tool.openwork_session_create.execute({
+      sessions: [
+        { title: "Look into dolphins", prompt: "Research dolphins." },
+        { title: "Look into bananas", prompt: "Research bananas." },
+        { title: "Look into apple pies", prompt: "Research apple pies." },
+      ],
+    }, { sessionID: "ses_origin" });
+    const parsed = createResultSchema.parse(JSON.parse(output));
+
+    expect(parsed.ok).toBe(true);
+    expect(parsed.workspaceId).toBe("ws_2");
+    expect(parsed.created).toHaveLength(3);
+    expect(parsed.failures).toEqual([]);
+    expect(parsed.created.map((session) => session.title)).toEqual([
+      "Look into dolphins",
+      "Look into bananas",
+      "Look into apple pies",
+    ]);
+    expect(parsed.created[0]?.route).toBe("/workspace/ws_2/session/ses_created_1");
+
+    const createRequests = fake.requests.filter((request) => request.pathname === "/workspace/ws_2/sessions" && request.method === "POST");
+    expect(createRequests).toHaveLength(3);
+    expect(createRequests[0]?.authorization).toBe("Bearer test-token");
+    expect(createRequests[0]?.body).toEqual({ title: "Look into dolphins", prompt: "Research dolphins." });
+  });
 });
 
 describe("OpenWorkExtensionsPreview UI control tools", () => {
@@ -265,11 +324,13 @@ describe("OpenWorkExtensionsPreview UI control tools", () => {
     expect(tools).not.toContain("openwork_ui_snapshot");
     expect(tools).not.toContain("openwork_ui_list_actions");
     expect(tools).not.toContain("openwork_ui_execute_action");
+    expect(tools).toContain("openwork_session_create");
     expect(tools).toContain("openwork_session_search");
     expect(tools).toContain("openwork_extension_list_actions");
 
     const system = await transformedSystem(plugin);
     expect(system).not.toContain("openwork_ui_");
+    expect(system).toContain("ALWAYS use openwork_session_create");
     expect(system).toContain("openwork_session_search");
   });
 
