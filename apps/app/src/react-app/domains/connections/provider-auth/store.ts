@@ -152,6 +152,7 @@ type CreateProviderAuthStoreOptions = {
   checkDesktopAppRestriction: DesktopAppRestrictionChecker;
   selectedWorkspaceDisplay: () => WorkspaceDisplay;
   selectedWorkspaceRoot: () => string;
+  opencodeBaseUrl?: () => string;
   runtimeWorkspaceId: () => string | null;
   ensureRuntimeWorkspaceId?: () => Promise<string | null | undefined>;
   openworkServer: ProviderAuthOpenworkServer;
@@ -1221,6 +1222,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       const updated = filterProviderList(
         await ensureProviderListQuery(getReactQueryClient(), {
           client: activeClient,
+          baseUrl: options.opencodeBaseUrl?.(),
           directory: options.selectedWorkspaceRoot(),
           force: Boolean(optionsArg?.dispose),
         }),

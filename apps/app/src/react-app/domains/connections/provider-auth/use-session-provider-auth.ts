@@ -99,6 +99,7 @@ export function useSessionProviderAuth(input: UseSessionProviderAuthInput) {
               } as WorkspaceDisplay)
             : emptyWorkspaceDisplay,
         selectedWorkspaceRoot: () => stateRef.current.selectedWorkspaceRoot,
+        opencodeBaseUrl: () => stateRef.current.selectedWorkspaceEndpoint?.opencodeBaseUrl,
         runtimeWorkspaceId: () => stateRef.current.selectedWorkspaceEndpoint?.workspaceId ?? null,
         openworkServer: {
           getSnapshot: () => ({

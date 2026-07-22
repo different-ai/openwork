@@ -179,8 +179,8 @@ export async function writeOpenworkRuntimeConfigFile(config: ServerConfig, works
  * Returns an unsubscribe function.
  */
 export function keepOpenworkRuntimeConfigFileFresh(config: ServerConfig, workspaceId: string): () => void {
-  return onRuntimeOpencodeConfigWrite((writeConfig, writtenWorkspaceId) => {
+  return onRuntimeOpencodeConfigWrite(async (writeConfig, writtenWorkspaceId) => {
     if (writtenWorkspaceId !== workspaceId) return;
-    void writeOpenworkRuntimeConfigFile(writeConfig, workspaceId).catch(() => undefined);
+    await writeOpenworkRuntimeConfigFile(writeConfig, workspaceId).catch(() => undefined);
   });
 }

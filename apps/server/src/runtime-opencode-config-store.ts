@@ -74,7 +74,7 @@ export function runtimeStorageDir(config: ServerConfig): string {
   return dirname(runtimeDbPath(config));
 }
 
-export type RuntimeOpencodeConfigWriteListener = (config: ServerConfig, workspaceId: string) => void;
+export type RuntimeOpencodeConfigWriteListener = (config: ServerConfig, workspaceId: string) => void | Promise<void>;
 
 const writeListeners = new Set<RuntimeOpencodeConfigWriteListener>();
 
@@ -364,7 +364,7 @@ export async function writeRuntimeOpencodeConfig(
     return { config: next, changed: false };
   }
   db.upsert({ workspaceId, configJson, updatedAt: now });
-  for (const listener of writeListeners) listener(config, workspaceId);
+  await Promise.all([...writeListeners].map(l => l(config, workspaceId)));
   return { config: next, changed: true };
 }
 
