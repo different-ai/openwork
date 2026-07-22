@@ -1,9 +1,8 @@
 "use client";
 
-import { Dithering } from "@paper-design/shaders-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { getErrorMessage, requestJson } from "../_lib/den-flow";
 import {
   PENDING_ORG_INVITATION_STORAGE_KEY,
@@ -17,79 +16,19 @@ import {
 import { useDenFlow } from "../_providers/den-flow-provider";
 import { AuthPanel } from "./auth-panel";
 import { JoinOrgSuccess } from "./join-org-success";
-
-const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
+import { OnboardingShell } from "./onboarding-shell";
+import type { OrganizationBrand } from "./organization-brand-identity";
 
 type JoinedOrg = {
   id: string;
   name: string;
   slug: string;
+  brand: OrganizationBrand;
 };
 
 type AccountSummary = {
   email: string;
 } | null;
-
-function subscribeToReducedMotion(onStoreChange: () => void) {
-  if (typeof window === "undefined") {
-    return () => {};
-  }
-
-  const mediaQuery = window.matchMedia(REDUCED_MOTION_QUERY);
-  mediaQuery.addEventListener("change", onStoreChange);
-
-  return () => mediaQuery.removeEventListener("change", onStoreChange);
-}
-
-function getReducedMotionSnapshot() {
-  return typeof window === "undefined" ? true : window.matchMedia(REDUCED_MOTION_QUERY).matches;
-}
-
-function getReducedMotionServerSnapshot() {
-  return true;
-}
-
-function useReducedMotion() {
-  return useSyncExternalStore(subscribeToReducedMotion, getReducedMotionSnapshot, getReducedMotionServerSnapshot);
-}
-
-function JoinOrgShell({
-  children,
-  shaderSpeed,
-  state,
-}: {
-  children: ReactNode;
-  shaderSpeed: number;
-  state: string;
-}) {
-  return (
-    <div className="relative isolate min-h-dvh overflow-y-auto bg-[#f8fbff] px-4 py-8 text-slate-950 sm:py-12" data-testid="join-org-root" data-state={state}>
-      <div
-        aria-hidden="true"
-        className="pointer-events-none fixed inset-0 z-0 overflow-hidden bg-[#f8fbff] opacity-[0.09]"
-        data-motion={shaderSpeed === 0 ? "reduced" : "ambient"}
-        data-shader-speed={shaderSpeed}
-        data-testid="join-org-background"
-      >
-        <Dithering
-          speed={shaderSpeed}
-          shape="warp"
-          type="4x4"
-          size={2.4}
-          scale={0.9}
-          frame={24017.6}
-          colorBack="#F8FBFF"
-          colorFront="#8FB7E8"
-          style={{ backgroundColor: "#F8FBFF", width: "100%", height: "100%" }}
-        />
-      </div>
-
-      <main className="relative z-10 mx-auto flex min-h-[calc(100dvh-4rem)] w-full max-w-md flex-col justify-center sm:min-h-[calc(100dvh-6rem)]" data-testid="join-org-foreground">
-        {children}
-      </main>
-    </div>
-  );
-}
 
 function DetailRow({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -165,16 +104,16 @@ function InlineAlert({ children }: { children: ReactNode }) {
   );
 }
 
-function LoadingState({ shaderSpeed }: { shaderSpeed: number }) {
+function LoadingState() {
   return (
-    <JoinOrgShell shaderSpeed={shaderSpeed} state="loading">
+    <OnboardingShell state="loading">
       <div className="grid gap-5" aria-busy="true">
         <InvitationHeading title="Loading invite." copy="Checking the invite details and your account state..." />
         <div className="h-1.5 overflow-hidden rounded-full bg-white shadow-[inset_0_0_0_1px_rgba(148,163,184,0.18)]">
           <div className="h-full w-1/3 animate-pulse rounded-full bg-slate-900" />
         </div>
       </div>
-    </JoinOrgShell>
+    </OnboardingShell>
   );
 }
 
@@ -223,8 +162,6 @@ export function JoinOrgScreen({ invitationId }: { invitationId: string }) {
   const [joinBusy, setJoinBusy] = useState(false);
   const [joinError, setJoinError] = useState<string | null>(null);
   const [joinedOrg, setJoinedOrg] = useState<JoinedOrg | null>(null);
-  const reducedMotion = useReducedMotion();
-  const shaderSpeed = reducedMotion ? 0 : 0.012;
 
   const invitedEmailMatches = preview && user
     ? preview.invitation.email.trim().toLowerCase() === user.email.trim().toLowerCase()
@@ -347,6 +284,7 @@ export function JoinOrgScreen({ invitationId }: { invitationId: string }) {
         id: organizationId,
         name: preview.organization.name,
         slug: organizationSlug,
+        brand: preview.organization.branding,
       });
     } catch (error) {
       setJoinError(error instanceof Error ? error.message : "Could not join the organization.");
@@ -364,7 +302,7 @@ export function JoinOrgScreen({ invitationId }: { invitationId: string }) {
   }
 
   if (!sessionHydrated || previewBusy) {
-    return <LoadingState shaderSpeed={shaderSpeed} />;
+    return <LoadingState />;
   }
 
   if (joinedOrg) {
@@ -372,6 +310,7 @@ export function JoinOrgScreen({ invitationId }: { invitationId: string }) {
       <JoinOrgSuccess
         organizationId={joinedOrg.id}
         organizationName={joinedOrg.name}
+        brand={joinedOrg.brand}
         onContinueInBrowser={() => router.replace(joinedOrg.slug ? getOrgDashboardRoute(joinedOrg.slug) : "/dashboard")}
       />
     );
@@ -379,7 +318,7 @@ export function JoinOrgScreen({ invitationId }: { invitationId: string }) {
 
   if (!preview) {
     return (
-      <JoinOrgShell shaderSpeed={shaderSpeed} state="invalid">
+      <OnboardingShell state="invalid">
         <div className="grid gap-5">
           <InvitationHeading title="This invite can't be opened." copy={previewError ?? "This invite could not be loaded."} />
           <ActionGroup>
@@ -388,7 +327,7 @@ export function JoinOrgScreen({ invitationId }: { invitationId: string }) {
             </button>
           </ActionGroup>
         </div>
-      </JoinOrgShell>
+      </OnboardingShell>
     );
   }
 
@@ -397,7 +336,7 @@ export function JoinOrgScreen({ invitationId }: { invitationId: string }) {
 
   if (preview.invitation.status === "pending" && !invitedEmailAllowed) {
     return (
-      <JoinOrgShell shaderSpeed={shaderSpeed} state="domain-blocked">
+      <OnboardingShell state="domain-blocked">
         <div className="grid gap-5">
           <InvitationHeading
             title="This invite needs a different email domain."
@@ -410,13 +349,13 @@ export function JoinOrgScreen({ invitationId }: { invitationId: string }) {
             </button>
           </ActionGroup>
         </div>
-      </JoinOrgShell>
+      </OnboardingShell>
     );
   }
 
   if (preview.invitation.status === "pending" && !user) {
     return (
-      <JoinOrgShell shaderSpeed={shaderSpeed} state="signed-out">
+      <OnboardingShell state="signed-out">
         <div className="grid gap-4">
           <div className="grid gap-4">
             <InvitationHeading title={`Join ${preview.organization.name}.`} copy="Your invitation is ready. Review the details, then sign in or create an account to join." />
@@ -461,12 +400,12 @@ export function JoinOrgScreen({ invitationId }: { invitationId: string }) {
             <NotNowButton onClick={handleNotNow} />
           </ActionGroup>
         </div>
-      </JoinOrgShell>
+      </OnboardingShell>
     );
   }
 
   return (
-    <JoinOrgShell shaderSpeed={shaderSpeed} state="signed-in">
+    <OnboardingShell state="signed-in">
       <div className="grid gap-5">
         <InvitationHeading title={`Join ${preview.organization.name}.`} copy="Review the invitation and continue with the right account." />
         <InvitationDetails preview={preview} account={account} roleLabel={roleLabel} />
@@ -542,6 +481,6 @@ export function JoinOrgScreen({ invitationId }: { invitationId: string }) {
         {joinError ? <InlineAlert>{joinError}</InlineAlert> : null}
         {previewError ? <InlineAlert>{previewError}</InlineAlert> : null}
       </div>
-    </JoinOrgShell>
+    </OnboardingShell>
   );
 }

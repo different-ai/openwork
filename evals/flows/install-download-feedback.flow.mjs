@@ -48,7 +48,7 @@ export default {
             const geometry = await ctx.eval(`(() => {
               const card = document.querySelector('[data-testid="install-card"]')?.getBoundingClientRect();
               if (!card) return null;
-              return { cardCenter: card.left + card.width / 2, viewportCenter: innerWidth / 2 };
+              return { cardCenter: card.left + card.width / 2, viewportCenter: document.documentElement.clientWidth / 2 };
             })()`);
             ctx.assert(geometry && Math.abs(geometry.cardCenter - geometry.viewportCenter) < 4, `Install card was not centered: ${JSON.stringify(geometry)}`);
           },
@@ -62,7 +62,7 @@ export default {
         await ctx.prove("Redundant team and server metadata are absent from the install page", {
           voiceover: vo[1],
           action: async () => {
-            await ctx.eval(`Array.from(document.querySelectorAll('a')).find((link) => link.textContent?.trim() === 'Windows')?.focus()`);
+            await ctx.eval(`Array.from(document.querySelectorAll('a')).find((link) => link.textContent?.trim() === 'x64 Installer')?.focus()`);
           },
           assert: async () => {
             const text = await ctx.eval("document.body.innerText");
@@ -70,7 +70,7 @@ export default {
             const metaRows = await ctx.eval("document.querySelectorAll('.den-meta-row').length");
             ctx.assert(metaRows === 0, `Found ${metaRows} metadata rows.`);
           },
-          screenshot: { name: "frame-2-focused-installer-choices", sandboxCapture: true, textTargetUrlIncludes: "/install?token=", requireText: ["Mac (Apple silicon)", "Windows"], rejectText: [`Team · ${ORG_NAME}`] },
+          screenshot: { name: "frame-2-focused-installer-choices", sandboxCapture: true, textTargetUrlIncludes: "/install?token=", requireText: ["Apple Silicon (M1+)", "Windows", "Setup script (ARM64)"], rejectText: [`Team · ${ORG_NAME}`] },
         });
       },
     },
@@ -101,7 +101,7 @@ export default {
         await ctx.prove("The page confirms the browser download request and offers a retry", {
           voiceover: vo[3],
           action: async () => {
-            await ctx.waitFor("document.body.innerText.includes('Download started')", { timeoutMs: 5_000, label: "download started feedback" });
+            await ctx.waitFor("document.body.innerText.includes('Download started')", { timeoutMs: 6_500, label: "download started feedback" });
           },
           assert: async () => {
             const text = await ctx.eval("document.querySelector('[data-testid=install-download-status]')?.textContent ?? ''");

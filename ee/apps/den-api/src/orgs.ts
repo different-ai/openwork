@@ -99,6 +99,11 @@ export type InvitationPreview = {
     name: string
     slug: string
     allowedEmailDomains: AllowedEmailDomains
+    branding: {
+      appName: string
+      logoUrl: string | null
+      iconUrl: string | null
+    }
   }
 }
 
@@ -739,6 +744,8 @@ export async function getInvitationPreview(invitationIdRaw: string): Promise<Inv
         id: OrganizationTable.id,
         name: OrganizationTable.name,
         slug: OrganizationTable.slug,
+        logo: OrganizationTable.logo,
+        metadata: OrganizationTable.metadata,
         allowedEmailDomains: OrganizationTable.allowedEmailDomains,
       },
     })
@@ -752,14 +759,23 @@ export async function getInvitationPreview(invitationIdRaw: string): Promise<Inv
     return null
   }
 
+  const organizationMetadata = normalizeOrganizationMetadata(row.organization.metadata).metadata
+
   return {
     invitation: {
       ...row.invitation,
       status: getInvitationStatus(row.invitation),
     },
     organization: {
-      ...row.organization,
+      id: row.organization.id,
+      name: row.organization.name,
+      slug: row.organization.slug,
       allowedEmailDomains: normalizeStoredAllowedEmailDomains(row.organization.allowedEmailDomains),
+      branding: {
+        appName: typeof organizationMetadata.brandAppName === "string" ? organizationMetadata.brandAppName : "OpenWork",
+        logoUrl: typeof organizationMetadata.brandLogoUrl === "string" ? organizationMetadata.brandLogoUrl : row.organization.logo,
+        iconUrl: typeof organizationMetadata.brandIconUrl === "string" ? organizationMetadata.brandIconUrl : null,
+      },
     },
   }
 }

@@ -92,7 +92,27 @@ const organizationOwnerSchema = z.object({
   image: z.string().nullable().optional(),
 }).meta({ ref: "OrganizationOwner" })
 
-const invitationPreviewResponseSchema = z.object({}).passthrough().meta({ ref: "InvitationPreviewResponse" })
+const invitationPreviewResponseSchema = z.object({
+  invitation: z.object({
+    id: denTypeIdSchema("invitation"),
+    email: z.string().email(),
+    role: z.string(),
+    status: z.enum(["pending", "accepted", "canceled", "expired"]),
+    expiresAt: z.string().datetime(),
+    createdAt: z.string().datetime(),
+  }),
+  organization: z.object({
+    id: denTypeIdSchema("organization"),
+    name: z.string(),
+    slug: z.string(),
+    allowedEmailDomains: z.array(z.string()).nullable(),
+    branding: z.object({
+      appName: z.string(),
+      logoUrl: z.string().url().nullable(),
+      iconUrl: z.string().url().nullable(),
+    }),
+  }),
+}).meta({ ref: "InvitationPreviewResponse" })
 
 const invitationAcceptedResponseSchema = z.object({
   accepted: z.literal(true),

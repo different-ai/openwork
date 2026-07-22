@@ -70,6 +70,11 @@ export type DenInvitationPreview = {
     name: string;
     slug: string;
     allowedEmailDomains: string[] | null;
+    branding: {
+      appName: string;
+      logoUrl: string | null;
+      iconUrl: string | null;
+    };
   };
 };
 
@@ -857,6 +862,7 @@ export function parseInvitationPreviewPayload(payload: unknown): DenInvitationPr
   const organizationId = asString(organization.id);
   const organizationName = asString(organization.name);
   const organizationSlug = asString(organization.slug);
+  const branding = isRecord(organization.branding) ? organization.branding : null;
 
   if (!invitationId || !invitationEmail || !invitationRole || !invitationStatus || !organizationId || !organizationName || !organizationSlug) {
     return null;
@@ -876,6 +882,11 @@ export function parseInvitationPreviewPayload(payload: unknown): DenInvitationPr
       name: organizationName,
       slug: organizationSlug,
       allowedEmailDomains: asStringArray(organization.allowedEmailDomains),
+      branding: {
+        appName: asString(branding?.appName) ?? "OpenWork",
+        logoUrl: asString(branding?.logoUrl),
+        iconUrl: asString(branding?.iconUrl),
+      },
     },
   };
 }
