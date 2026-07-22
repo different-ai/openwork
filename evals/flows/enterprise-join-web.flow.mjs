@@ -139,6 +139,10 @@ export default {
             assertEvidence(ctx, state.installerUrl.length > 0, "The installer/download action produced a non-empty URL", redactedInstaller);
             ctx.output("installer-download-url", JSON.stringify({ url: redactUrlParam(state.installerUrl, "token"), source: installer.source }, null, 2));
             ctx.log(`Installer/download URL: ${redactUrlParam(state.installerUrl, "token")}`);
+            await ctx.waitFor("Boolean(document.querySelector('[data-testid=install-guide]'))", {
+              timeoutMs: 30_000,
+              label: "company install guide",
+            });
             await redactCurrentUrlParam(ctx, "token");
           },
           assert: async () => {
@@ -152,7 +156,7 @@ export default {
           screenshot: {
             name: "enterprise-installer-download",
             claim: "The desktop-app CTA yields an installer or guided-install URL for this organization.",
-            requireText: ["OpenWork"],
+            requireText: ["Download OpenWork", "Download the OpenWork installer"],
             rejectText: ["Something went wrong"],
           },
         });
