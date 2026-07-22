@@ -28,7 +28,7 @@ async function openInstallPage(ctx) {
 
 export default {
   id: "install-download-feedback",
-  title: "Installer downloads stay clear while the bundle is prepared",
+  title: "Installer downloads hand progress off to the browser clearly",
   kind: "user-facing",
   requiredEnv: ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_TOKEN", "OPENWORK_EVAL_DEN_WEB_URL"],
   steps: [
@@ -39,75 +39,28 @@ export default {
       },
     },
     {
-      name: "Centered install card",
+      name: "Browser download feedback",
       run: async (ctx) => {
-        await ctx.prove("The organization install page presents a centered, focused download card", {
+        await ctx.prove("Choosing a platform immediately confirms the request and points to browser progress", {
           voiceover: vo[0],
-          action: async () => {},
-          assert: async () => {
-            const geometry = await ctx.eval(`(() => {
-              const card = document.querySelector('[data-testid="install-card"]')?.getBoundingClientRect();
-              if (!card) return null;
-              return { cardCenter: card.left + card.width / 2, viewportCenter: innerWidth / 2 };
-            })()`);
-            ctx.assert(geometry && Math.abs(geometry.cardCenter - geometry.viewportCenter) < 4, `Install card was not centered: ${JSON.stringify(geometry)}`);
-          },
-          screenshot: { name: "frame-1-centered-install-card", sandboxCapture: true, textTargetUrlIncludes: "/install?token=", requireText: [`Download OpenWork for ${ORG_NAME}`] },
-        });
-      },
-    },
-    {
-      name: "Focused installer choices",
-      run: async (ctx) => {
-        await ctx.prove("Redundant team and server metadata are absent from the install page", {
-          voiceover: vo[1],
-          action: async () => {
-            await ctx.eval(`Array.from(document.querySelectorAll('a')).find((link) => link.textContent?.trim() === 'Windows')?.focus()`);
-          },
-          assert: async () => {
-            const text = await ctx.eval("document.body.innerText");
-            ctx.assert(!text.includes(`Team · ${ORG_NAME}`), "The redundant team footer is still visible.");
-            const metaRows = await ctx.eval("document.querySelectorAll('.den-meta-row').length");
-            ctx.assert(metaRows === 0, `Found ${metaRows} metadata rows.`);
-          },
-          screenshot: { name: "frame-2-focused-installer-choices", sandboxCapture: true, textTargetUrlIncludes: "/install?token=", requireText: ["Mac (Apple silicon)", "Windows"], rejectText: [`Team · ${ORG_NAME}`] },
-        });
-      },
-    },
-    {
-      name: "Preparing feedback",
-      run: async (ctx) => {
-        await ctx.prove("Choosing a platform immediately explains that the download is being prepared", {
-          voiceover: vo[2],
           action: async () => {
             await ctx.eval(`(() => {
               const cancelDownload = (event) => event.preventDefault();
               document.addEventListener('click', cancelDownload, { capture: true, once: true });
               document.querySelector('[data-testid="install-download-primary"]')?.click();
             })()`);
-            await ctx.waitFor("document.body.innerText.includes('Preparing your')", { timeoutMs: 1_000, label: "preparing download feedback" });
+            await ctx.waitFor("document.body.innerText.includes('Download requested')", { timeoutMs: 1_000, label: "browser download feedback" });
           },
           assert: async () => {
             const text = await ctx.eval("document.querySelector('[data-testid=install-download-status]')?.textContent ?? ''");
-            ctx.assert(text.includes("The first download may take up to a minute"), `Preparation guidance was missing: ${text}`);
-          },
-          screenshot: { name: "frame-3-preparing-download", sandboxCapture: true, textTargetUrlIncludes: "/install?token=", requireText: ["Preparing your", "The first download may take up to a minute"] },
-        });
-      },
-    },
-    {
-      name: "Download started feedback",
-      run: async (ctx) => {
-        await ctx.prove("The page confirms the browser download request and offers a retry", {
-          voiceover: vo[3],
-          action: async () => {
-            await ctx.waitFor("document.body.innerText.includes('Download started')", { timeoutMs: 5_000, label: "download started feedback" });
-          },
-          assert: async () => {
-            const text = await ctx.eval("document.querySelector('[data-testid=install-download-status]')?.textContent ?? ''");
+            ctx.assert(text.includes("browser's Downloads menu"), `Browser download guidance was missing: ${text}`);
+            ctx.assert(!text.includes("Preparing your"), `Synthetic preparation feedback is still visible: ${text}`);
             ctx.assert(text.includes("Try again"), `Retry action was missing: ${text}`);
+            ctx.assert(!text.includes("Download started"), `The page still claims the browser download completed: ${text}`);
+            const spinners = await ctx.eval("document.querySelectorAll('[data-testid=install-download-status] .animate-spin').length");
+            ctx.assert(spinners === 0, `Found ${spinners} synthetic download spinners.`);
           },
-          screenshot: { name: "frame-4-download-started", sandboxCapture: true, textTargetUrlIncludes: "/install?token=", requireText: ["Download started", "Try again"] },
+          screenshot: { name: "browser-download-feedback", sandboxCapture: true, textTargetUrlIncludes: "/install?token=", requireText: ["Download requested", "Check your browser's Downloads menu", "Try again"], rejectText: ["Download started", "Preparing your"] },
         });
       },
     },

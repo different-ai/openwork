@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { requestJson } from "../_lib/den-flow";
 import { LAST_DESKTOP_HANDOFF_GRANT_STORAGE_KEY, readLastDesktopHandoffGrant } from "../_lib/desktop-handoff";
@@ -140,12 +140,9 @@ export function InstallScreen() {
   const [isMobile, setIsMobile] = useState<boolean | null>(null);
   const [platform, setPlatform] = useState<InstallPlatform>("mac-arm64");
   const [copied, setCopied] = useState(false);
-  const [downloadState, setDownloadState] = useState<"idle" | "preparing" | "started">("idle");
-  const [downloadLabel, setDownloadLabel] = useState("");
-  const [downloadHref, setDownloadHref] = useState("");
+  const [download, setDownload] = useState<{ label: string; href: string } | null>(null);
   const [currentLink, setCurrentLink] = useState("");
   const [handoffGrant, setHandoffGrant] = useState<string | null>(null);
-  const downloadStartedTimer = useRef<number | null>(null);
   const handoffStatus = useDesktopHandoffStatus(handoffGrant);
 
   useEffect(() => {
@@ -207,12 +204,6 @@ export function InstallScreen() {
     };
   }, [token]);
 
-  useEffect(() => () => {
-    if (downloadStartedTimer.current !== null) {
-      window.clearTimeout(downloadStartedTimer.current);
-    }
-  }, []);
-
   const secondaryPlatforms = useMemo(() => platformOptions.filter((option) => option.value !== platform), [platform]);
 
   async function copyCurrentLink() {
@@ -222,16 +213,7 @@ export function InstallScreen() {
   }
 
   function beginDownload(label: string, href: string) {
-    setDownloadLabel(label);
-    setDownloadHref(href);
-    setDownloadState("preparing");
-    if (downloadStartedTimer.current !== null) {
-      window.clearTimeout(downloadStartedTimer.current);
-    }
-    downloadStartedTimer.current = window.setTimeout(() => {
-      setDownloadState("started");
-      downloadStartedTimer.current = null;
-    }, 5000);
+    setDownload({ label, href });
   }
 
   if (busy) {
@@ -329,23 +311,13 @@ export function InstallScreen() {
                       );
                     })}
                   </div>
-                  {downloadState !== "idle" ? (
+                  {download ? (
                     <div className="den-frame-inset grid gap-2 rounded-[1.25rem] p-4" aria-live="polite" data-testid="install-download-status">
-                      {downloadState === "preparing" ? (
-                        <>
-                          <span className="size-5 animate-spin rounded-full border-2 border-[var(--dls-border-strong)] border-t-[var(--dls-accent)]" aria-hidden="true" />
-                          <p className="m-0 font-medium text-[var(--dls-text-primary)]">Preparing your {downloadLabel} download...</p>
-                          <p className="den-copy">The first download may take up to a minute. Your browser will begin downloading when it is ready.</p>
-                        </>
-                      ) : (
-                        <>
-                          <p className="m-0 font-medium text-[var(--dls-text-primary)]">Download started</p>
-                          <p className="den-copy">Your browser is preparing the file. If it does not appear, try the download again.</p>
-                          <a className="den-button-secondary w-fit" href={downloadHref} onClick={() => beginDownload(downloadLabel, downloadHref)}>
-                            Try again
-                          </a>
-                        </>
-                      )}
+                      <p className="m-0 font-medium text-[var(--dls-text-primary)]">Download requested</p>
+                      <p className="den-copy">Check your browser&apos;s Downloads menu for the {download.label} installer and its progress.</p>
+                      <a className="den-button-secondary w-fit" href={download.href} onClick={() => beginDownload(download.label, download.href)}>
+                        Try again
+                      </a>
                     </div>
                   ) : null}
                 </div>
