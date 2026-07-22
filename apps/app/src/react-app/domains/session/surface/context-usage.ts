@@ -4,6 +4,7 @@ import type { UIMessage } from "ai";
 import type { OpenworkSessionSnapshot } from "@/app/lib/openwork-server";
 import type { ModelRef } from "@/app/types";
 
+// UI-only fallback: real tokenization varies by model, especially for code-heavy transcripts.
 const ESTIMATED_CHARS_PER_TOKEN = 4;
 const WARNING_THRESHOLD = 70;
 const DANGER_THRESHOLD = 90;
@@ -31,6 +32,11 @@ export type ContextUsage = {
   tone: ContextUsageTone;
   isEstimate: boolean;
   showCompactionHint: boolean;
+};
+
+export type ContextTranscriptUsage = {
+  tokens: number;
+  isEstimate: boolean;
 };
 
 function positiveInteger(value: number | null | undefined) {
@@ -122,26 +128,37 @@ function compactTokenCount(tokens: number) {
   return String(tokens);
 }
 
-export function buildContextUsage(input: {
-  contextLimit: number | null | undefined;
+export function buildContextTranscriptUsage(input: {
   snapshot: OpenworkSessionSnapshot | null | undefined;
   renderedMessages?: UIMessage[] | null | undefined;
-  draftText: string;
-}): ContextUsage | null {
-  const limitTokens = positiveInteger(input.contextLimit);
-  if (limitTokens === null) return null;
-
+}): ContextTranscriptUsage {
   const reportedTokens = getLatestReportedContextTokens(input.snapshot);
-  const draftTokens = estimateTextTokens(input.draftText);
   const renderedEstimate = estimateRenderedMessageTokens(input.renderedMessages);
   const snapshotEstimate = estimateSnapshotTokens(input.snapshot);
   const liveTokensAfterSnapshot = estimateRenderedMessagesAfterSnapshot(input.snapshot, input.renderedMessages);
   const transcriptTokens = reportedTokens !== null
     ? reportedTokens + liveTokensAfterSnapshot
     : Math.max(snapshotEstimate, renderedEstimate);
+
+  return {
+    tokens: transcriptTokens,
+    isEstimate: liveTokensAfterSnapshot > 0 || (reportedTokens === null && transcriptTokens > 0),
+  };
+}
+
+export function buildContextUsage(input: {
+  contextLimit: number | null | undefined;
+  transcriptUsage: ContextTranscriptUsage;
+  draftText: string;
+}): ContextUsage | null {
+  const limitTokens = positiveInteger(input.contextLimit);
+  if (limitTokens === null) return null;
+
+  const draftTokens = estimateTextTokens(input.draftText);
+  const transcriptTokens = input.transcriptUsage.tokens;
   const usedTokens = Math.min(limitTokens, transcriptTokens + draftTokens);
   const percent = Math.min(100, Math.round((usedTokens / limitTokens) * 100));
-  const isEstimate = draftTokens > 0 || liveTokensAfterSnapshot > 0 || (reportedTokens === null && usedTokens > 0);
+  const isEstimate = draftTokens > 0 || input.transcriptUsage.isEstimate;
   const label = `ctx ${isEstimate ? "~" : ""}${compactTokenCount(usedTokens)} / ${compactTokenCount(limitTokens)} - ${percent}%`;
 
   return {

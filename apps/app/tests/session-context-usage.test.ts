@@ -3,6 +3,7 @@ import type { UIMessage } from "ai";
 
 import type { OpenworkSessionSnapshot } from "../src/app/lib/openwork-server";
 import {
+  buildContextTranscriptUsage,
   buildContextUsage,
   estimateTextTokens,
   getLatestReportedContextTokens,
@@ -61,9 +62,25 @@ function uiTextMessage(id: string, role: UIMessage["role"], text: string): UIMes
   };
 }
 
+function buildUsage(input: {
+  contextLimit: number | null;
+  snapshot: OpenworkSessionSnapshot | null;
+  renderedMessages?: UIMessage[];
+  draftText: string;
+}) {
+  return buildContextUsage({
+    contextLimit: input.contextLimit,
+    transcriptUsage: buildContextTranscriptUsage({
+      snapshot: input.snapshot,
+      renderedMessages: input.renderedMessages,
+    }),
+    draftText: input.draftText,
+  });
+}
+
 describe("session context usage", () => {
   test("does not render usage without a known context limit", () => {
-    const usage = buildContextUsage({
+    const usage = buildUsage({
       contextLimit: null,
       snapshot: snapshot([assistantMessage("assistant-1", { input: 60, output: 8, reasoning: 0 })]),
       draftText: "abcdefgh",
@@ -90,7 +107,7 @@ describe("session context usage", () => {
       assistantMessage("assistant-old", { input: 800, output: 100, reasoning: 0 }),
       assistantMessage("assistant-new", { input: 450, output: 50, reasoning: 0 }),
     ]);
-    const usage = buildContextUsage({
+    const usage = buildUsage({
       contextLimit: 1_000,
       snapshot: contextSnapshot,
       draftText: "",
@@ -106,7 +123,7 @@ describe("session context usage", () => {
     const contextSnapshot = snapshot([
       assistantMessage("assistant-old", { input: 450, output: 50, reasoning: 0 }),
     ]);
-    const usage = buildContextUsage({
+    const usage = buildUsage({
       contextLimit: 1_000,
       snapshot: contextSnapshot,
       renderedMessages: [
@@ -122,7 +139,7 @@ describe("session context usage", () => {
   });
 
   test("uses rendered transcript estimate when the snapshot is behind", () => {
-    const usage = buildContextUsage({
+    const usage = buildUsage({
       contextLimit: 1_000,
       snapshot: snapshot([]),
       renderedMessages: [
@@ -137,7 +154,7 @@ describe("session context usage", () => {
   });
 
   test("marks draft text as estimated and moves into warning state", () => {
-    const usage = buildContextUsage({
+    const usage = buildUsage({
       contextLimit: 100,
       snapshot: snapshot([assistantMessage("assistant-1", { input: 60, output: 8, reasoning: 0 })]),
       draftText: "abcdefgh",
@@ -149,8 +166,30 @@ describe("session context usage", () => {
     expect(usage?.tone).toBe("warning");
   });
 
+  test("reuses transcript usage while only adding the current draft estimate", () => {
+    const transcriptUsage = buildContextTranscriptUsage({
+      snapshot: snapshot([assistantMessage("assistant-1", { input: 40, output: 10, reasoning: 0 })]),
+    });
+
+    const emptyDraftUsage = buildContextUsage({
+      contextLimit: 100,
+      transcriptUsage,
+      draftText: "",
+    });
+    const nextDraftUsage = buildContextUsage({
+      contextLimit: 100,
+      transcriptUsage,
+      draftText: "abcdefgh",
+    });
+
+    expect(transcriptUsage.tokens).toBe(50);
+    expect(emptyDraftUsage?.usedTokens).toBe(50);
+    expect(nextDraftUsage?.usedTokens).toBe(52);
+    expect(nextDraftUsage?.isEstimate).toBe(true);
+  });
+
   test("falls back to visible text estimate when no reported assistant tokens exist", () => {
-    const usage = buildContextUsage({
+    const usage = buildUsage({
       contextLimit: 1_000,
       snapshot: snapshot([{
         info: {
@@ -177,7 +216,7 @@ describe("session context usage", () => {
   });
 
   test("warns about compaction near the model limit", () => {
-    const usage = buildContextUsage({
+    const usage = buildUsage({
       contextLimit: 100,
       snapshot: snapshot([assistantMessage("assistant-1", { total: 95, input: 0, output: 0, reasoning: 0 })]),
       draftText: "",

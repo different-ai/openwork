@@ -52,7 +52,7 @@ import { deriveRenderedSessionMessages, resolveRenderedSessionSnapshot } from ".
 import { useLocal } from "@/react-app/kernel/local-provider";
 import { isAttachmentFileReadable, resolveAttachmentFileMetadata } from "@/react-app/domains/session/sync/attachment-file-part";
 import { deriveSessionRenderModel } from "@/react-app/domains/session/sync/transition-controller";
-import { buildContextUsage } from "./context-usage";
+import { buildContextTranscriptUsage, buildContextUsage } from "./context-usage";
 import { useSessionScrollController } from "./scroll-controller";
 import { SessionScrollOverlay } from "./scroll-overlay";
 import { SessionFindBar } from "./find-bar";
@@ -799,14 +799,26 @@ export function SessionSurface(props: SessionSurfaceProps) {
     };
   }, [mentions, pasteParts]);
 
+  const contextTranscriptUsage = useMemo(
+    () => buildContextTranscriptUsage({
+      snapshot,
+      renderedMessages,
+    }),
+    [renderedMessages, snapshot],
+  );
+
+  const contextDraftText = useMemo(
+    () => resolveDraftContextText(draft, pasteParts, mentions),
+    [draft, mentions, pasteParts],
+  );
+
   const contextUsage = useMemo(
     () => buildContextUsage({
       contextLimit: props.selectedModelContextLimit,
-      snapshot,
-      renderedMessages,
-      draftText: resolveDraftContextText(draft, pasteParts, mentions),
+      transcriptUsage: contextTranscriptUsage,
+      draftText: contextDraftText,
     }),
-    [draft, mentions, pasteParts, props.selectedModelContextLimit, renderedMessages, snapshot],
+    [contextDraftText, contextTranscriptUsage, props.selectedModelContextLimit],
   );
 
   const handleComposerDraftChange = useCallback((value: string) => {
