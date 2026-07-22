@@ -426,6 +426,8 @@ function diffInstalledCloudResources(
     });
   }
 
+  const installedPluginIds = new Set(Object.keys(cloudImports.plugins));
+
   for (const plugin of Object.values(cloudImports.plugins)) {
     const remote = findRemotePlugin(snapshot, { marketplaceId: plugin.marketplaceId, pluginId: plugin.pluginId });
     queueInstalledChange({
@@ -449,6 +451,23 @@ function diffInstalledCloudResources(
         queuedAt,
         remoteLastUpdatedAt: remoteConfigItem?.lastUpdatedAt ?? null,
         resourceKind: "configItem",
+      });
+    }
+  }
+
+  // Also detect remote plugins that aren't installed yet — surface them as "new"
+  // so the client can prompt the user to install.
+  for (const [marketplaceId, marketplace] of Object.entries(snapshot.resources.marketplaces)) {
+    for (const remotePlugin of marketplace.plugins) {
+      if (installedPluginIds.has(remotePlugin.pluginId)) continue;
+      queueInstalledChange({
+        changes,
+        id: remotePlugin.pluginId,
+        installedLastUpdatedAt: null,
+        marketplaceId,
+        queuedAt,
+        remoteLastUpdatedAt: remotePlugin.lastUpdatedAt,
+        resourceKind: "plugin",
       });
     }
   }

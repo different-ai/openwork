@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import type { McpDirectoryInfo } from "../src/app/constants";
-import type { DenExternalMcpConnection } from "../src/app/lib/den";
+import type { DenExternalMcpConnection, DenOrgPlugin } from "../src/app/lib/den";
 import type { McpServerEntry } from "../src/app/types";
 import { buildExtensionItems } from "../src/react-app/domains/settings/extension-items";
 
@@ -72,7 +72,59 @@ function orgMcpConnection(input: Partial<DenExternalMcpConnection> = {}): DenExt
   };
 }
 
+function marketplace(input: Partial<{ id: string; name: string; updatedAt: string; plugins: DenOrgPlugin[] }> = {}) {
+  return {
+    marketplace: {
+      id: input.id ?? "mkt_test",
+      name: input.name ?? "Test Marketplace",
+      description: null,
+      status: "active",
+      pluginCount: input.plugins?.length ?? 0,
+      updatedAt: input.updatedAt ?? "2026-07-19T00:00:00.000Z",
+    },
+    plugins: input.plugins ?? [],
+  };
+}
+
+function plugin(input: Partial<DenOrgPlugin> = {}): DenOrgPlugin {
+  return {
+    id: input.id ?? "plg_test",
+    name: input.name ?? "Test Plugin",
+    description: input.description ?? null,
+    status: input.status ?? "active",
+    memberCount: input.memberCount ?? 0,
+    updatedAt: input.updatedAt ?? "2026-07-19T00:00:00.000Z",
+    componentCounts: input.componentCounts ?? {},
+    extension: input.extension ?? null,
+    cloudReadiness: input.cloudReadiness,
+  };
+}
+
 describe("extension item projection", () => {
+  test("dedupes cloud plugins that appear in multiple marketplaces", () => {
+    const benhvienPhuTho = plugin({
+      id: "plg_benhvienphutho",
+      name: "benhvienphutho-skills",
+      memberCount: 12,
+      componentCounts: { skill: 12 },
+    });
+    const result = buildExtensionItems({
+      quickConnect: [],
+      mcpServers: [],
+      installedSkills: [],
+      importedCloudPlugins: {},
+      cloudMarketplaces: [
+        marketplace({ id: "mkt_old", name: "Old Marketplace", updatedAt: "2026-07-15T00:00:00.000Z", plugins: [benhvienPhuTho] }),
+        marketplace({ id: "mkt_new", name: "New Marketplace", updatedAt: "2026-07-19T00:00:00.000Z", plugins: [benhvienPhuTho] }),
+      ],
+      enablementContext: {},
+      isBuiltInConnected: () => false,
+    });
+
+    const cloudItems = result.items.filter((item) => item.source === "marketplace");
+    expect(cloudItems.map((item) => item.marketplaceId)).toEqual(["mkt_new"]);
+  });
+
   test("keeps unconnected built-ins out of My Extensions quick connect", () => {
     const result = buildExtensionItems({
       quickConnect: [connectedBuiltIn, availableBuiltIn],
