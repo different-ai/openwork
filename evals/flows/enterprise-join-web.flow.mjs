@@ -13,6 +13,7 @@
  * - OPENWORK_EVAL_ENTERPRISE_NEW_MEMBER_EMAIL: invited member email (default new.member@example.com).
  * - OPENWORK_EVAL_ENTERPRISE_NEW_MEMBER_DISPLAY_NAME: invited member display name (default Alex).
  * - OPENWORK_EVAL_ENTERPRISE_PASSWORD: account password (default TutorialDemo123!).
+ * - OPENWORK_EVAL_ENTERPRISE_ACCOUNT_MODE: use sign-in to rerun with an existing invited account (default create).
  *
  * Runner note: evals/runner/run.mjs selects one CDP page per run. For this web
  * flow, point OPENWORK_EVAL_CDP_URL (or --cdp-url) at a clean headless Chrome
@@ -54,6 +55,7 @@ export default {
       run: async (ctx) => {
         const email = newMemberEmail(ctx);
         state.adminToken = await signInByEmail(ctx, adminEmail(ctx));
+        await selectEnterpriseOrganization(ctx, state.adminToken);
 
         const invite = await denApiFetch(ctx, "/v1/invitations", {
           method: "POST",
@@ -110,8 +112,13 @@ export default {
       run: async (ctx) => {
         await ctx.prove("New member joins the organization and lands on the welcome step", {
           action: async () => {
-            await restoreCurrentUrl(ctx, requireState(state.inviteUrl, "invite URL"));
-            await fillPasswordAndJoin(ctx, password(ctx));
+            if (envText(ctx, "OPENWORK_EVAL_ENTERPRISE_ACCOUNT_MODE") === "sign-in") {
+              await authenticateExistingInvitee(ctx);
+            } else {
+              await navigateAbsolute(ctx, requireState(state.inviteUrl, "invite URL"));
+              await ctx.waitForText(joinTitle(ctx), { timeoutMs: 30_000 });
+              await fillPasswordAndJoin(ctx, password(ctx));
+            }
             await redactCurrentUrlParam(ctx, "invite");
           },
           assert: async () => {
@@ -139,7 +146,6 @@ export default {
       run: async (ctx) => {
         await ctx.prove("New member can get the desktop app installer from the welcome screen", {
           action: async () => {
-            await restoreCurrentUrl(ctx, requireState(state.inviteUrl, "invite URL"));
             const cta = await getInstallerCta(ctx);
             assertEvidence(ctx, cta.exists, "The joined welcome screen exposes a Get the desktop app CTA", cta);
             const installer = await captureInstallerTarget(ctx);
@@ -225,6 +231,57 @@ function joinedWelcomeLead() {
   return "You're in, welcome to";
 }
 
+async function authenticateExistingInvitee(ctx) {
+  state.newMemberToken = await signInByEmail(ctx, newMemberEmail(ctx));
+  const cookie = await ctx.client.send("Network.setCookie", {
+    name: "better-auth.session_token",
+    value: state.newMemberToken,
+    url: denApiBase(ctx),
+    sameSite: "Lax",
+  });
+  assertEvidence(ctx, cookie?.success === true, "The browser received the invited account session cookie", {
+    cookieName: "better-auth.session_token",
+  });
+  await ctx.eval(`(() => {
+    localStorage.setItem('openwork:web:auth-token', ${JSON.stringify(state.newMemberToken)});
+    location.assign(${JSON.stringify(requireState(state.inviteUrl, "invite URL"))});
+    return true;
+  })()`);
+  await ctx.waitForText(newMemberEmail(ctx), { timeoutMs: 30_000 });
+  await ctx.eval(`(() => {
+    const originalFetch = window.fetch.bind(window);
+    window.fetch = (input, init = {}) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input?.url ?? '';
+      if (!url.includes('/v1/')) return originalFetch(input, init);
+      const headers = new Headers(init.headers);
+      headers.set('Authorization', 'Bearer ' + ${JSON.stringify(state.newMemberToken)});
+      return originalFetch(input, { ...init, headers });
+    };
+    return true;
+  })()`);
+  await clickButtonStartingWith(ctx, joinTitle(ctx), 30_000);
+  await ctx.waitForText(joinedWelcomeLead(), { timeoutMs: 60_000 });
+}
+
+async function selectEnterpriseOrganization(ctx, bearer) {
+  const organizations = await denApiFetch(ctx, "/v1/me/orgs", {
+    headers: { authorization: `Bearer ${bearer}` },
+  });
+  assertHttpOk(ctx, "GET /v1/me/orgs failed for the inviter", organizations);
+
+  const organization = organizations.body?.orgs?.find((entry) => entry?.name === enterpriseOrgName(ctx));
+  assertEvidence(ctx, Boolean(organization?.id), "The inviter can access the enterprise organization", {
+    organizationName: enterpriseOrgName(ctx),
+  });
+
+  const selected = await denApiFetch(ctx, "/v1/me/active-organization", {
+    method: "POST",
+    headers: { authorization: `Bearer ${bearer}` },
+    body: JSON.stringify({ organizationId: organization.id }),
+  });
+  assertHttpOk(ctx, "POST /v1/me/active-organization failed for the inviter", selected);
+}
+
 async function denApiFetch(ctx, pathname, init = {}) {
   const url = `${denApiBase(ctx)}${pathname}`;
   const response = await fetch(url, {
@@ -300,13 +357,6 @@ async function clearDenWebSession(ctx) {
 
 async function navigateAbsolute(ctx, url) {
   await ctx.eval(`(() => { location.assign(${JSON.stringify(url)}); return true; })()`);
-}
-
-async function restoreCurrentUrl(ctx, url) {
-  await ctx.eval(`(() => {
-    history.replaceState(history.state, '', ${JSON.stringify(url)});
-    return true;
-  })()`);
 }
 
 async function redactCurrentUrlParam(ctx, param) {
