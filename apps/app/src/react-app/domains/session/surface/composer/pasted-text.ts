@@ -1,7 +1,6 @@
 export const PASTE_CHIP_CHAR_THRESHOLD = 50;
 export const FILE_URL_RE = /^file:\/\//i;
 export const HTTP_URL_RE = /^https?:\/\//i;
-export const PASTED_TEXT_INLINE_STYLE = "background-color: rgba(229, 231, 235, 0.6); border-radius: 4px; box-decoration-break: clone; -webkit-box-decoration-break: clone; padding: 1px 2px;";
 
 export type PastedTextSegment =
   | { kind: "text"; text: string }

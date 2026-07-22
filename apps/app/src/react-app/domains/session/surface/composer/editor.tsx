@@ -36,7 +36,7 @@ import {
 import type { InitialConfigType } from "@lexical/react/LexicalComposer.js";
 import { decodeComposerMentionValue, encodeComposerMentionValue, type ComposerMentionKind } from "./mention-encoding";
 import { shouldCollapsePastedText } from "./pasted-text";
-import { insertStyledPastedText } from "./pasted-text-insertion";
+import { insertPastedText } from "./pasted-text-insertion";
 
 type PastedTextToken = { label: string; lines: number; text: string };
 
@@ -678,7 +678,7 @@ function PasteChipPlugin(props: { onPasteText?: (text: string) => void }) {
           return true;
         }
         event.preventDefault();
-        return insertStyledPastedText(text);
+        return insertPastedText(text);
       },
       COMMAND_PRIORITY_CRITICAL,
     );
@@ -697,12 +697,12 @@ function replacePastedTextChip(label: string, text: string, button: HTMLButtonEl
   const nearest = $getNearestNodeFromDOMNode(button);
   if (nearest instanceof ComposerPastedTextNode && nearest.getPastedLabel() === label) {
     nearest.select(0, nearest.getTextContentSize());
-    return insertStyledPastedText(text);
+    return insertPastedText(text);
   }
   for (const node of $nodesOfType(ComposerPastedTextNode)) {
     if (node.getPastedLabel() !== label) continue;
     node.select(0, node.getTextContentSize());
-    return insertStyledPastedText(text);
+    return insertPastedText(text);
   }
   return false;
 }
