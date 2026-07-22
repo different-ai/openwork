@@ -20,8 +20,11 @@ export const resolveOrganizationContextMiddleware: MiddlewareHandler<{
   const apiKey = c.get("apiKey")
   const apiKeyScopedOrganizationId = getApiKeyScopedOrganizationId(apiKey)
   const headerOrganizationId = getRequestScopedOrganizationId(c.req.raw.headers)
-  const scopedOrganizationId = apiKeyScopedOrganizationId ?? headerOrganizationId
   const session = c.get("session")
+  const internalMcpOrganizationId = session?.id === "mcp_internal"
+    ? session.activeOrganizationId
+    : null
+  const scopedOrganizationId = apiKeyScopedOrganizationId ?? headerOrganizationId ?? internalMcpOrganizationId
   const userId = normalizeDenTypeId("user", user.id)
 
   let organizationId = scopedOrganizationId ?? c.get("activeOrganizationId") ?? null

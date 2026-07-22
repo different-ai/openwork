@@ -123,10 +123,11 @@ function createApiKey(input: { organizationId: string; memberId: string; userId:
 
 function createOrgContextApp(state: TestState, input: {
   apiKey?: TestApiKey | null
+  sessionId?: string
   sessionActiveOrganizationId: string | null
 }) {
   const app = new Hono()
-  const sessionId = createDenTypeId("session")
+  const sessionId = input.sessionId ?? createDenTypeId("session")
   stateBySessionId.set(sessionId, state)
   app.use("*", async (c, next) => {
     c.set("user", {
@@ -227,6 +228,23 @@ test("an explicit header for a non-member org hard fails instead of falling back
   const response = await app.request("http://den.local/v1/org", {
     headers: { "x-openwork-org-id": nonMemberOrgId },
   })
+
+  expect(response.status).toBe(404)
+  await expect(response.json()).resolves.toEqual({ error: "organization_not_found" })
+  expect(state.resolveUserOrganizationsCalls).toHaveLength(0)
+})
+
+test("an internal MCP principal cannot fall back from its signed organization scope", async () => {
+  const userId = createDenTypeId("user")
+  const state = createTestState(userId)
+  const nonMemberOrgId = createDenTypeId("organization")
+  addVisibleOrg(state, "only-org")
+  const app = createOrgContextApp(state, {
+    sessionId: "mcp_internal",
+    sessionActiveOrganizationId: nonMemberOrgId,
+  })
+
+  const response = await app.request("http://den.local/v1/org")
 
   expect(response.status).toBe(404)
   await expect(response.json()).resolves.toEqual({ error: "organization_not_found" })
