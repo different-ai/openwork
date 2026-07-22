@@ -80,6 +80,9 @@ importers:
       '@openwork/install-config':
         specifier: workspace:*
         version: link:../../packages/install-config
+      '@openwork/observability':
+        specifier: workspace:*
+        version: link:../../packages/observability
       '@openwork/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -228,6 +231,9 @@ importers:
       '@opencode-ai/sdk':
         specifier: ^1.17.11
         version: 1.17.11
+      '@openwork/observability':
+        specifier: workspace:*
+        version: link:../../packages/observability
       better-sqlite3:
         specifier: ^11.10.0
         version: 11.10.0
@@ -345,6 +351,9 @@ importers:
         specifier: ^4.3.6
         version: 4.3.6
     devDependencies:
+      '@openwork/observability':
+        specifier: workspace:*
+        version: link:../../packages/observability
       '@openwork/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -1004,6 +1013,12 @@ importers:
       tsup:
         specifier: ^8.5.0
         version: 8.5.1(jiti@2.6.1)(postcss@8.5.6)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.9.0)
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+
+  packages/observability:
+    devDependencies:
       typescript:
         specifier: ^5.6.3
         version: 5.9.3

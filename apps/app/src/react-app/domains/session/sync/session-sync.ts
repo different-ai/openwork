@@ -19,6 +19,10 @@ import {
   useSessionActivityStore,
 } from "../status/session-activity-store";
 import { notifyDesktopEvent } from "../../../shell/desktop-notifications";
+import {
+  formatSessionSyncObservation,
+  recordRendererObservation,
+} from "../../../shell/observability-bridge";
 
 type SyncOptions = {
   workspaceId: string;
@@ -1079,13 +1083,30 @@ function startSync(input: SyncOptions) {
   const connect = async () => {
     const connectionController = new AbortController();
     activeConnectionController = connectionController;
+    let closeReason = "stream-ended";
+    recordRendererObservation(() => formatSessionSyncObservation({
+      phase: "start",
+      workspaceId: input.workspaceId,
+    }));
     try {
       const sub = await client.event.subscribe(undefined, { signal: connectionController.signal });
       retryDelayMs = 1_000;
       lastEventAt = Date.now();
+      recordRendererObservation(() => formatSessionSyncObservation({
+        phase: "connected",
+        workspaceId: input.workspaceId,
+      }));
       for await (const raw of sub.stream) {
-        if (controller.signal.aborted || connectionController.signal.aborted) return;
+        if (controller.signal.aborted || connectionController.signal.aborted) {
+          closeReason = controller.signal.aborted ? "disposed" : "connection-aborted";
+          return;
+        }
         lastEventAt = Date.now();
+        recordRendererObservation(() => formatSessionSyncObservation({
+          phase: "event",
+          workspaceId: input.workspaceId,
+          raw,
+        }));
         const event = normalizeEvent(raw);
         if (!event) continue;
         if (!entry) continue;
@@ -1093,6 +1114,20 @@ function startSync(input: SyncOptions) {
       }
       if (!controller.signal.aborted && activeConnectionController === connectionController) scheduleRetry();
     } catch (error) {
+      const shuttingDown = disposed || controller.signal.aborted;
+      closeReason = shuttingDown
+        ? "disposed"
+        : connectionController.signal.aborted
+          ? "connection-aborted"
+          : "subscribe-error";
+      if (!shuttingDown) {
+        recordRendererObservation(() => formatSessionSyncObservation({
+          phase: "error",
+          workspaceId: input.workspaceId,
+          error,
+          reason: closeReason,
+        }));
+      }
       if (
         !controller.signal.aborted &&
         (connectionController.signal.aborted || shouldRetrySyncSubscribe(error))
@@ -1100,6 +1135,11 @@ function startSync(input: SyncOptions) {
         scheduleRetry();
       }
     } finally {
+      recordRendererObservation(() => formatSessionSyncObservation({
+        phase: "closed",
+        workspaceId: input.workspaceId,
+        reason: closeReason,
+      }));
       if (activeConnectionController === connectionController) activeConnectionController = null;
     }
   };

@@ -153,6 +153,7 @@ import {
 import { saveSessionDraft } from "@/react-app/domains/session/sync/draft-store";
 import { useControlAction, type OpenworkControlAction } from "./control/control-provider";
 import { useReactRenderWatchdog } from "./react-render-watchdog";
+import { toggleDeveloperMode, useDeveloperMode } from "./developer-mode";
 
 import { readDenSettings } from "@/app/lib/den";
 import { denSessionUpdatedEvent, denSettingsChangedEvent } from "@/app/lib/den-session-events";
@@ -327,10 +328,7 @@ export function SessionRoute() {
   const restrictionNotice = useRestrictionNotice();
   const [openworkServerHostInfoState, setOpenworkServerHostInfoState] = useState<OpenworkServerInfo | null>(null);
   const [openworkServerSettingsVersion, setOpenworkServerSettingsVersion] = useState(0);
-  const [developerMode, setDeveloperMode] = useState(() => {
-    if (typeof window === "undefined") return false;
-    return window.localStorage.getItem("openwork.developerMode") === "1";
-  });
+  const developerMode = useDeveloperMode();
   const {
     navigateToWorkspaceSession,
     routeWorkspaceId,
@@ -1558,11 +1556,7 @@ export function SessionRoute() {
     searchText: "developer dev mode debug diagnostics toggle enable disable",
     action: () => {
       setCommandPaletteOpen(false);
-      setDeveloperMode((current) => {
-        const next = !current;
-        try { window.localStorage.setItem("openwork.developerMode", next ? "1" : "0"); } catch {}
-        return next;
-      });
+      toggleDeveloperMode();
     },
   }), [developerMode]);
 

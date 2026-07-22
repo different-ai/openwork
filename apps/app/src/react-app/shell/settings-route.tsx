@@ -101,6 +101,7 @@ import { CloudSessionProvider, useCloudSession } from "@/react-app/domains/setti
 import { useDenSession } from "@/react-app/domains/settings/cloud/use-den-session";
 import { useControlAction, type OpenworkControlAction } from "./control/control-provider";
 import { useBootState } from "./boot-state";
+import { toggleDeveloperMode, useDeveloperMode } from "./developer-mode";
 import { SettingsShell } from "@/react-app/domains/settings/shell/settings-shell";
 import { createExtensionsStore, useExtensionsStoreSnapshot } from "@/react-app/domains/settings/state/extensions-store";
 import { usePlatform } from "@/react-app/kernel/platform";
@@ -415,10 +416,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const [providerDefaults, setProviderDefaults] = useState<Record<string, string>>({});
   const [providerConnectedIds, setProviderConnectedIds] = useState<string[]>([]);
   const [disabledProviders, setDisabledProviders] = useState<string[]>([]);
-  const [developerMode, setDeveloperMode] = useState(() => {
-    if (typeof window === "undefined") return false;
-    return window.localStorage.getItem("openwork.developerMode") === "1";
-  });
+  const developerMode = useDeveloperMode();
   const [themeMode, setThemeModeState] = useState<ThemeMode>(getInitialThemeMode);
   const [hideTitlebar, setHideTitlebar] = useState(() => readStoredBoolean(SETTINGS_HIDE_TITLEBAR_KEY, false));
   const [updateAutoCheck, setUpdateAutoCheck] = useState(() =>
@@ -2390,11 +2388,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             opencodeConnectStatus={null}
             openworkServerStatus={openworkServerSnapshot.openworkServerStatus}
             developerMode={developerMode}
-            toggleDeveloperMode={() => setDeveloperMode((current) => {
-              const next = !current;
-              try { window.localStorage.setItem("openwork.developerMode", next ? "1" : "0"); } catch {}
-              return next;
-            })}
+            toggleDeveloperMode={toggleDeveloperMode}
             opencodeDevModeEnabled={false}
             openDebugDeepLink={async () => ({ ok: false, message: "Debug deep links are not wired into the React settings route yet." })}
             cloudMcpUrl={openworkCloudMcpUrl}

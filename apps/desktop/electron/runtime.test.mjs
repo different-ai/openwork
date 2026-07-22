@@ -8,12 +8,35 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   commandMatchesPackagedSidecar,
   embeddedServerImportUrl,
+  normalizeDesktopObservabilityConfig,
   prioritizeWorkspacePaths,
   resolveOpenworkServerConfigPath,
   seedWorkspacePathsForEmbeddedServer,
   selectStickyOpenworkPortWorkspace,
   snapshotEngineState,
 } from "./runtime.mjs";
+
+describe("normalizeDesktopObservabilityConfig", () => {
+  it("defaults off and preserves only bounded known settings", () => {
+    assert.deepEqual(normalizeDesktopObservabilityConfig(undefined), { enabled: false });
+    assert.deepEqual(normalizeDesktopObservabilityConfig({
+      enabled: true,
+      level: "debug",
+      scopes: ["prompt", "prompt", "unknown"],
+      console: true,
+      content: "hash",
+      maxEvents: 321.9,
+      arbitrary: "ignored",
+    }), {
+      enabled: true,
+      level: "debug",
+      scopes: ["prompt"],
+      console: true,
+      content: "hash",
+      maxEvents: 321,
+    });
+  });
+});
 
 describe("prioritizeWorkspacePaths", () => {
   it("keeps the active runtime workspace first", () => {

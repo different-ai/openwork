@@ -15,6 +15,39 @@ const DIRECT_RUNTIME = "direct";
 const ORCHESTRATOR_RUNTIME = "openwork-orchestrator";
 const OPENWORK_SERVER_PORT_RANGE_START = 48_000;
 const OPENWORK_SERVER_PORT_RANGE_END = 51_000;
+const OBSERVABILITY_LEVELS = new Set(["debug", "info", "warn", "error"]);
+const OBSERVABILITY_SCOPES = new Set([
+  "lifecycle",
+  "prompt",
+  "config",
+  "mcp",
+  "tool",
+  "event",
+  "process",
+  "renderer",
+]);
+const OBSERVABILITY_CONTENT_MODES = new Set(["metadata", "hash", "full"]);
+
+export function normalizeDesktopObservabilityConfig(input) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return { enabled: false };
+  }
+  try {
+    const scopes = Array.isArray(input.scopes)
+      ? [...new Set(input.scopes.filter((scope) => OBSERVABILITY_SCOPES.has(scope)))]
+      : undefined;
+    return {
+      enabled: input.enabled === true,
+      ...(OBSERVABILITY_LEVELS.has(input.level) ? { level: input.level } : {}),
+      ...(scopes ? { scopes } : {}),
+      ...(typeof input.console === "boolean" ? { console: input.console } : {}),
+      ...(OBSERVABILITY_CONTENT_MODES.has(input.content) ? { content: input.content } : {}),
+      ...(Number.isFinite(input.maxEvents) ? { maxEvents: Math.trunc(input.maxEvents) } : {}),
+    };
+  } catch {
+    return { enabled: false };
+  }
+}
 
 function truncateOutput(value, limit = 8000) {
   const text = String(value ?? "");
@@ -581,6 +614,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
   /** @type {Promise<unknown>} */
   let runtimeLifecycleQueue = Promise.resolve();
   let lifecycleState = "idle";
+  let observabilityConfig = normalizeDesktopObservabilityConfig(undefined);
   /**
    * Serialize engine lifecycle operations; preserves the wrapped function's
    * return type (untyped, this collapsed runtime-manager inference to
@@ -1160,11 +1194,35 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
 
   // In-process server handle. Kept alive across restarts so we can stop it.
   let inProcessServer = null;
+  let observabilityHeartbeatTimer = null;
+
+  function stopObservabilityHeartbeat() {
+    if (!observabilityHeartbeatTimer) return;
+    clearInterval(observabilityHeartbeatTimer);
+    observabilityHeartbeatTimer = null;
+  }
+
+  function startObservabilityHeartbeat() {
+    stopObservabilityHeartbeat();
+    observabilityHeartbeatTimer = setInterval(() => {
+      if (!observabilityConfig.enabled) return;
+      try {
+        inProcessServer?.heartbeatObservability?.();
+      } catch {
+        // Diagnostics must never affect the desktop runtime lifecycle.
+      }
+    }, 60_000);
+    observabilityHeartbeatTimer.unref?.();
+  }
 
   async function startOpenworkServer(options) {
     const currentPort = openworkServerState.port;
+    if (options.observability !== undefined) {
+      observabilityConfig = normalizeDesktopObservabilityConfig(options.observability);
+    }
     // Stop any previously running in-process server
     if (inProcessServer) {
+      stopObservabilityHeartbeat();
       try { await inProcessServer.stop(); } catch { /* ignore */ }
       inProcessServer = null;
     }
@@ -1231,8 +1289,13 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
       manageOpencode: options.manageOpencode === true,
       opencodeBin: managedOpencode?.path ?? undefined,
       opencodeCwd: managedOpencodeWorkdir(),
+      observability: observabilityConfig,
     });
     inProcessServer = handle;
+    // An IPC toggle can race the async embedded startup. Reconcile the newest
+    // main-process snapshot before exposing the handle or starting heartbeats.
+    handle.configureObservability?.(observabilityConfig);
+    startObservabilityHeartbeat();
     openworkServerState.managedOpencodeExecution = handle.managedOpencodeExecution ?? null;
     engineState.managedByServer = Boolean(handle.managedOpencode);
     engineState.managedPid = handle.managedOpencode?.pid ?? null;
@@ -1440,6 +1503,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
   async function stopAllRuntimeChildren() {
     // Stop the in-process server (and its managed OpenCode child) if running.
     if (inProcessServer) {
+      stopObservabilityHeartbeat();
       try { await inProcessServer.stop(); } catch { /* ignore */ }
       inProcessServer = null;
     }
@@ -1473,6 +1537,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
         remoteAccessEnabled: options.remoteAccessEnabled,
         manageOpencode: options.manageOpencode === true,
         opencodeBinPath: options.opencodeBinPath,
+        observability: options.observability,
       });
     } catch (error) {
       appendOutput(engineState, "lastStderr", `OpenWork server: ${error instanceof Error ? error.message : String(error)}\n`);
@@ -1531,6 +1596,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
         remoteAccessEnabled: options.openworkRemoteAccess === true,
         manageOpencode: true,
         opencodeBinPath: options.opencodeBinPath,
+        observability: options.observability,
       });
 
       lifecycleState = "healthy";
@@ -1594,7 +1660,19 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
       remoteAccessEnabled: options.remoteAccessEnabled === true,
       manageOpencode: shouldManageOpencode,
       opencodeBinPath: engineState.opencodeBinPath ?? openworkServerState.managedOpencodeBinPath,
+      observability: options.observability,
     });
+  }
+
+  async function setDeveloperObservabilityConfig(input) {
+    observabilityConfig = normalizeDesktopObservabilityConfig(input);
+    try {
+      inProcessServer?.configureObservability?.(observabilityConfig);
+      if (observabilityConfig.enabled) inProcessServer?.heartbeatObservability?.();
+    } catch {
+      // The HTTP owner path remains a retrying fallback in the renderer.
+    }
+    return { ok: true };
   }
 
   async function orchestratorStatus() {
@@ -2005,6 +2083,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     engineInstall,
     openworkServerInfo,
     openworkServerRestart: (options) => withRuntimeLifecycle(() => openworkServerRestart(options)),
+    setDeveloperObservabilityConfig,
     orchestratorStatus,
     orchestratorWorkspaceActivate,
     orchestratorInstanceDispose,

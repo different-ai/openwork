@@ -17,6 +17,7 @@ import { ArchitectureMismatchGate } from "./architecture-mismatch-gate";
 import { BootStateProvider } from "./boot-state";
 import { DesktopRuntimeBoot } from "./desktop-runtime-boot";
 import { startDebugLogger, stopDebugLogger } from "./debug-logger";
+import { ObservabilityProvider } from "./observability-provider";
 import { resolveOpenworkConnection } from "./openwork-connection";
 import { ReloadCoordinatorProvider } from "./reload-coordinator";
 
@@ -73,8 +74,10 @@ export function AppProviders({ children }: AppProvidersProps) {
                 <BrandThemeProvider>
                 <RestrictionNoticeProvider>
                   <LocalProvider>
-                    <ReloadCoordinatorProvider>{children}</ReloadCoordinatorProvider>
-                    <Toaster />
+                    <ObservabilityProvider>
+                      <ReloadCoordinatorProvider>{children}</ReloadCoordinatorProvider>
+                      <Toaster />
+                    </ObservabilityProvider>
                   </LocalProvider>
                 </RestrictionNoticeProvider>
                 </BrandThemeProvider>

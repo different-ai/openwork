@@ -379,6 +379,15 @@ export type RunningAppsResult = {
   apps: string[];
 };
 
+export type DeveloperObservabilityConfig = {
+  enabled: boolean;
+  level?: string;
+  scopes?: string[];
+  console?: boolean;
+  content?: string;
+  maxEvents?: number;
+};
+
 // ---------------------------------------------------------------------------
 // The command map
 // ---------------------------------------------------------------------------
@@ -434,7 +443,10 @@ export type DesktopCommandMap = {
   // Engine / runtime lifecycle
   engineStart: { args: [projectDir: string, options?: Record<string, unknown>]; result: EngineInfo };
   prepareFreshRuntime: { args: []; result: unknown };
-  runtimeBootstrap: { args: []; result: unknown };
+  runtimeBootstrap: {
+    args: [options?: { observability?: DeveloperObservabilityConfig }];
+    result: unknown;
+  };
   runtimeStatus: { args: []; result: unknown };
   engineStop: { args: []; result: EngineInfo };
   engineRestart: { args: [options?: Record<string, unknown>]; result: EngineInfo };
@@ -498,6 +510,10 @@ export type DesktopCommandMap = {
   openworkServerRestart: {
     args: [options?: Record<string, unknown>];
     result: OpenworkServerInfo;
+  };
+  setDeveloperObservabilityConfig: {
+    args: [config: DeveloperObservabilityConfig];
+    result: { ok: boolean };
   };
 
   // Dialogs

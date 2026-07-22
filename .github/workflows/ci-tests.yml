@@ -117,6 +117,13 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Validate observability package
+        run: |
+          pnpm --filter @openwork/observability typecheck
+          pnpm --filter @openwork/observability test
+          pnpm --filter @openwork/observability build
+          pnpm --filter openwork-server exec node -e "import('@openwork/observability').then((module) => { if (typeof module.createObservabilityJournal !== 'function') process.exit(1) })"
+
       - name: Run app unit tests
         run: pnpm --filter @openwork/app test
 

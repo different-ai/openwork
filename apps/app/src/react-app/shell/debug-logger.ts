@@ -214,15 +214,22 @@ export function startDebugLogger(opts?: { serverUrl?: () => string | Promise<str
   (Object.keys(nativeConsole) as LogLevel[]).forEach((level) => {
     const original = nativeConsole[level];
     console[level] = (...args: unknown[]) => {
-      try {
-        enqueue({
-          level,
-          url: typeof location !== "undefined" ? location.pathname + location.search : undefined,
-          message: typeof args[0] === "string" ? args[0] : undefined,
-          args: args.map((arg) => safeStringify(arg)),
-        });
-      } catch {
-        // ignore
+      // Observability lines have their own bounded, policy-controlled journal.
+      // Mirroring them into this legacy logger would retain full prompt content
+      // after a downgrade, clear, or Developer Mode shutdown.
+      const reservedObservabilityLine = typeof args[0] === "string"
+        && args[0].startsWith("[openwork:");
+      if (!reservedObservabilityLine) {
+        try {
+          enqueue({
+            level,
+            url: typeof location !== "undefined" ? location.pathname + location.search : undefined,
+            message: typeof args[0] === "string" ? args[0] : undefined,
+            args: args.map((arg) => safeStringify(arg)),
+          });
+        } catch {
+          // ignore
+        }
       }
       original(...args);
     };
@@ -278,13 +285,13 @@ export function startDebugLogger(opts?: { serverUrl?: () => string | Promise<str
     } catch {
       // ignore
     }
-    const isDevLogCall = url.includes("/dev/log");
-    if (!isDevLogCall) {
+    const isInternalObservabilityCall = url.includes("/dev/log") || url.includes("/observability");
+    if (!isInternalObservabilityCall) {
       pendingFetches.set(id, { url, method, startedAt: Date.now() });
     }
     try {
       const response = await nativeFetch(input as RequestInfo, init);
-      if (!isDevLogCall) {
+      if (!isInternalObservabilityCall) {
         const duration = Date.now() - (pendingFetches.get(id)?.startedAt ?? Date.now());
         enqueue({
           level: "fetch",
@@ -296,7 +303,7 @@ export function startDebugLogger(opts?: { serverUrl?: () => string | Promise<str
       }
       return response;
     } catch (error) {
-      if (!isDevLogCall) {
+      if (!isInternalObservabilityCall) {
         const duration = Date.now() - (pendingFetches.get(id)?.startedAt ?? Date.now());
         enqueue({
           level: "fetch",
@@ -309,7 +316,7 @@ export function startDebugLogger(opts?: { serverUrl?: () => string | Promise<str
       }
       throw error;
     } finally {
-      if (!isDevLogCall) pendingFetches.delete(id);
+      if (!isInternalObservabilityCall) pendingFetches.delete(id);
     }
   }) as typeof window.fetch;
 

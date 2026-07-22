@@ -40,6 +40,7 @@ import {
   AgentContextDiagnosticsSection,
   type AgentContextDiagnosticsSectionProps,
 } from "./agent-context-diagnostics-section";
+import { ObservabilityPanel } from "./observability-panel";
 
 const sectionHeaderClass = "flex flex-col gap-1 pb-2";
 const sectionTitleClass = "text-[15px] font-semibold tracking-[-0.2px] text-dls-text";
@@ -812,11 +813,13 @@ export function DebugView(props: DebugViewProps) {
         </div>
       </div>
 
-      {/* Section: Developer log stream */}
+      <ObservabilityPanel />
+
+      {/* Section: Legacy developer log stream */}
       <div className={cardClass}>
         <div className="flex items-start justify-between gap-3">
           <div>
-            <div className={sectionTitleClass}>{t("settings.developer_log_title")}</div>
+            <div className={sectionTitleClass}>Legacy renderer developer log</div>
             <div className={sectionDescClass}>{t("settings.developer_log_desc")}</div>
           </div>
           <div className="flex shrink-0 items-center gap-2">

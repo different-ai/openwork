@@ -25,6 +25,7 @@ import {
 import { isDesktopRuntime, isElectronRuntime, safeStringify } from "../../app/utils";
 import { useServer } from "../kernel/server-provider";
 import { useBootState } from "./boot-state";
+import { readStartupObservabilityConfig } from "./observability-provider";
 
 // Module-scoped latch so React Strict-Mode's "mount-unmount-remount" cycle in
 // dev only triggers the boot sequence once per app launch, and the async work
@@ -94,6 +95,7 @@ export function useDesktopRuntimeBoot() {
         }
         hydrateOpenworkServerSettingsFromEnv();
         const preferredRemoteAccess = readOpenworkServerSettings().remoteAccessEnabled === true;
+        const startupObservability = readStartupObservabilityConfig();
 
         const publishOpenworkServerInfo = (serverInfo: BootOpenworkServerInfo | null | undefined) => {
           if (!serverInfo?.baseUrl) return;
@@ -116,7 +118,10 @@ export function useDesktopRuntimeBoot() {
 
         const startServerWithoutDesktopWorkspace = async () => {
           setPhase("starting-engine", "Starting OpenWork server");
-          const serverInfo = await openworkServerRestart({ remoteAccessEnabled: preferredRemoteAccess }).catch((error) => {
+          const serverInfo = await openworkServerRestart({
+            remoteAccessEnabled: preferredRemoteAccess,
+            observability: startupObservability,
+          }).catch((error) => {
             console.warn("[desktop-boot] openworkServerRestart failed:", error);
             return null;
           });
@@ -152,7 +157,7 @@ export function useDesktopRuntimeBoot() {
 
         if (isElectronRuntime()) {
           setPhase("starting-engine", "Starting your workspace");
-          const boot = (await runtimeBootstrap().catch((error) => ({
+          const boot = (await runtimeBootstrap({ observability: startupObservability }).catch((error) => ({
             ok: false,
             error: error instanceof Error ? error.message : safeStringify(error),
           }))) as {
@@ -178,7 +183,10 @@ export function useDesktopRuntimeBoot() {
           }
           let serverInfo = boot.openworkServer;
           if (preferredRemoteAccess && serverInfo?.remoteAccessEnabled !== true) {
-            const restarted = await openworkServerRestart({ remoteAccessEnabled: true }).catch((error) => {
+            const restarted = await openworkServerRestart({
+              remoteAccessEnabled: true,
+              observability: startupObservability,
+            }).catch((error) => {
               console.warn("[desktop-boot] openworkServerRestart failed:", error);
               return null;
             });

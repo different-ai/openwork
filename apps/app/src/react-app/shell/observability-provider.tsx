@@ -1,0 +1,586 @@
+/** @jsxImportSource react */
+import {
+  createContext,
+  use,
+  useCallback,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import {
+  DEFAULT_OBSERVABILITY_CONFIG,
+  formatObservabilityEvent,
+  MAX_OBSERVABILITY_JOURNAL_BYTES,
+  normalizeObservabilityConfig,
+  type ObservabilityConfig,
+  type ObservabilityEvent,
+  type ObservabilityEventInput,
+} from "@openwork/observability";
+
+import { getDeveloperMode, useDeveloperMode } from "./developer-mode";
+import {
+  configureRendererObservationBridge,
+  resetRendererObservationBridgeDroppedCount,
+} from "./observability-bridge";
+import { resolveOpenworkConnection } from "./openwork-connection";
+import { setDeveloperObservabilityConfig } from "../../app/lib/desktop";
+import { isElectronRuntime } from "../../app/utils";
+
+export const OBSERVABILITY_PREFERENCES_STORAGE_KEY = "openwork.observability.config";
+
+type ObservabilityPreferences = Omit<ObservabilityConfig, "enabled">;
+type ObservabilityStatus = "disabled" | "connecting" | "connected" | "error";
+
+type ObservabilityContextValue = {
+  config: ObservabilityConfig;
+  events: ObservabilityEvent[];
+  droppedCount: number;
+  status: ObservabilityStatus;
+  statusMessage: string | null;
+  updateConfig: (patch: Partial<ObservabilityPreferences>) => void;
+  clear: () => Promise<void>;
+};
+
+type StorageAdapter = Pick<Storage, "getItem" | "setItem">;
+
+type RetainedObservabilityEvents = {
+  events: ObservabilityEvent[];
+  evictedCount: number;
+};
+
+type RetainedObservabilityEventsAction =
+  | { type: "reset" }
+  | {
+      type: "constrain";
+      content: ObservabilityConfig["content"];
+      maxEvents: number;
+    }
+  | {
+      type: "append";
+      events: ObservabilityEvent[];
+      maxEvents: number;
+    };
+
+const ObservabilityContext = createContext<ObservabilityContextValue | undefined>(undefined);
+
+function estimatedObservabilityEventBytes(event: ObservabilityEvent): number {
+  try {
+    // Match the server journal's conservative UTF-16 retained-memory estimate.
+    return (JSON.stringify(event)?.length ?? 0) * 2;
+  } catch {
+    return MAX_OBSERVABILITY_JOURNAL_BYTES;
+  }
+}
+
+export function retainNewestObservabilityEvents(
+  events: readonly ObservabilityEvent[],
+  options: { maxEvents: number; maxBytes?: number },
+): { events: ObservabilityEvent[]; evictedCount: number; retainedBytes: number } {
+  const maxEvents = Number.isFinite(options.maxEvents)
+    ? Math.max(0, Math.trunc(options.maxEvents))
+    : 0;
+  const maxBytes = options.maxBytes === undefined
+    ? MAX_OBSERVABILITY_JOURNAL_BYTES
+    : Number.isFinite(options.maxBytes)
+      ? Math.max(0, Math.trunc(options.maxBytes))
+      : 0;
+  const eventBytes = events.map(estimatedObservabilityEventBytes);
+  let retainedBytes = eventBytes.reduce((total, size) => total + size, 0);
+  let firstRetainedIndex = 0;
+
+  while (
+    firstRetainedIndex < events.length
+    && (
+      events.length - firstRetainedIndex > maxEvents
+      || retainedBytes > maxBytes
+    )
+  ) {
+    retainedBytes -= eventBytes[firstRetainedIndex] ?? 0;
+    firstRetainedIndex += 1;
+  }
+
+  return {
+    events: events.slice(firstRetainedIndex),
+    evictedCount: firstRetainedIndex,
+    retainedBytes,
+  };
+}
+
+function retainedObservabilityEventsReducer(
+  state: RetainedObservabilityEvents,
+  action: RetainedObservabilityEventsAction,
+): RetainedObservabilityEvents {
+  if (action.type === "reset") return { events: [], evictedCount: 0 };
+
+  const candidates = action.type === "constrain"
+    ? state.events.map((event) => applyDefensiveContentPolicy(event, action.content))
+    : (() => {
+        const byId = new Map(state.events.map((event) => [event.id, event]));
+        for (const event of action.events) byId.set(event.id, event);
+        return [...byId.values()].sort((left, right) => left.sequence - right.sequence);
+      })();
+  const retained = retainNewestObservabilityEvents(candidates, {
+    maxEvents: action.maxEvents,
+  });
+  return {
+    events: retained.events,
+    evictedCount: state.evictedCount + retained.evictedCount,
+  };
+}
+
+function storageAdapter(): StorageAdapter | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+function withoutEnabled(config: ObservabilityConfig): ObservabilityPreferences {
+  return {
+    level: config.level,
+    scopes: [...config.scopes],
+    console: config.console,
+    content: config.content,
+    maxEvents: config.maxEvents,
+  };
+}
+
+const APP_DEFAULT_OBSERVABILITY_CONFIG = normalizeObservabilityConfig({
+  ...DEFAULT_OBSERVABILITY_CONFIG,
+  // Developer Mode promises an end-to-end trace. Raw events are metadata-only
+  // by default and bounded, so event/renderer scopes should be visible without
+  // requiring a second, easy-to-miss opt-in.
+  scopes: [...DEFAULT_OBSERVABILITY_CONFIG.scopes, "event", "renderer"],
+});
+
+export function readObservabilityPreferences(storage: StorageAdapter | null): ObservabilityPreferences {
+  if (!storage) return withoutEnabled(APP_DEFAULT_OBSERVABILITY_CONFIG);
+  try {
+    const raw = storage.getItem(OBSERVABILITY_PREFERENCES_STORAGE_KEY);
+    if (!raw) return withoutEnabled(APP_DEFAULT_OBSERVABILITY_CONFIG);
+    return withoutEnabled(normalizeObservabilityConfig(
+      { ...JSON.parse(raw), enabled: false },
+      APP_DEFAULT_OBSERVABILITY_CONFIG,
+    ));
+  } catch {
+    return withoutEnabled(APP_DEFAULT_OBSERVABILITY_CONFIG);
+  }
+}
+
+export function persistObservabilityPreferences(
+  storage: StorageAdapter | null,
+  config: ObservabilityConfig | ObservabilityPreferences,
+) {
+  if (!storage) return;
+  const normalized = normalizeObservabilityConfig({ ...config, enabled: false });
+  try {
+    storage.setItem(
+      OBSERVABILITY_PREFERENCES_STORAGE_KEY,
+      JSON.stringify(withoutEnabled(normalized)),
+    );
+  } catch {
+    // Preferences are best effort in privacy-restricted webviews.
+  }
+}
+
+export function readStartupObservabilityConfig(): ObservabilityConfig {
+  return normalizeObservabilityConfig({
+    ...readObservabilityPreferences(storageAdapter()),
+    enabled: getDeveloperMode(),
+  });
+}
+
+function isObservabilityEvent(input: unknown): input is ObservabilityEvent {
+  if (!input || typeof input !== "object") return false;
+  const event = input as Partial<ObservabilityEvent>;
+  return typeof event.id === "string"
+    && typeof event.sequence === "number"
+    && typeof event.timestamp === "string"
+    && typeof event.action === "string"
+    && typeof event.scope === "string"
+    && typeof event.level === "string"
+    && Boolean(event.source && typeof event.source.component === "string");
+}
+
+export function applyDefensiveContentPolicy(
+  event: ObservabilityEvent,
+  mode: ObservabilityConfig["content"],
+): ObservabilityEvent {
+  if (!event.content) return event;
+  const content: NonNullable<ObservabilityEvent["content"]> = {};
+  if (typeof event.content.kind === "string") content.kind = event.content.kind;
+  if (typeof event.content.length === "number") content.length = event.content.length;
+  if (typeof event.content.complete === "boolean") content.complete = event.content.complete;
+  if (typeof event.content.truncated === "boolean") content.truncated = event.content.truncated;
+  if (typeof event.content.redactionCount === "number") {
+    content.redactionCount = event.content.redactionCount;
+  }
+  if (mode !== "metadata") {
+    if (typeof event.content.hash === "string") content.hash = event.content.hash;
+    if (typeof event.content.rawHash === "string") content.rawHash = event.content.rawHash;
+    if (typeof event.content.capturedHash === "string") {
+      content.capturedHash = event.content.capturedHash;
+    }
+  }
+  if (mode === "full") content.value = event.content.value;
+  return { ...event, content };
+}
+
+function consoleEvent(event: ObservabilityEvent) {
+  const line = `[openwork:${event.scope}] ${formatObservabilityEvent(event)}`;
+  if (event.level === "error") console.error(line);
+  else if (event.level === "warn") console.warn(line);
+  else if (event.level === "debug") console.debug(line);
+  else console.info(line);
+}
+
+async function parseJson(response: Response): Promise<Record<string, unknown>> {
+  try {
+    const value = await response.json();
+    return value && typeof value === "object" ? value as Record<string, unknown> : {};
+  } catch {
+    return {};
+  }
+}
+
+export function ObservabilityProvider({ children }: { children: ReactNode }) {
+  const developerMode = useDeveloperMode();
+  const [preferences, setPreferences] = useState<ObservabilityPreferences>(() =>
+    readObservabilityPreferences(storageAdapter()),
+  );
+  const config = useMemo<ObservabilityConfig>(() =>
+    normalizeObservabilityConfig({ ...preferences, enabled: developerMode }),
+  [developerMode, preferences]);
+  const configRef = useRef(config);
+  configRef.current = config;
+  const [retainedEvents, dispatchRetainedEvents] = useReducer(
+    retainedObservabilityEventsReducer,
+    { events: [], evictedCount: 0 },
+  );
+  const events = retainedEvents.events;
+  const [serverDroppedCount, setServerDroppedCount] = useState(0);
+  const [rendererDroppedCount, setRendererDroppedCount] = useState(0);
+  const [status, setStatus] = useState<ObservabilityStatus>(
+    developerMode ? "connecting" : "disabled",
+  );
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const afterSequenceRef = useRef(0);
+  const connectionRef = useRef<{ baseUrl: string; token: string } | null>(null);
+
+  useEffect(() => {
+    if (!config.enabled) {
+      dispatchRetainedEvents({ type: "reset" });
+      setServerDroppedCount(0);
+      setRendererDroppedCount(0);
+      resetRendererObservationBridgeDroppedCount();
+      afterSequenceRef.current = 0;
+      return;
+    }
+    dispatchRetainedEvents({
+      type: "constrain",
+      content: config.content,
+      maxEvents: config.maxEvents,
+    });
+  }, [config.content, config.enabled, config.maxEvents]);
+  const lastConnectionRef = useRef<{ baseUrl: string; token: string } | null>(null);
+
+  useEffect(() => {
+    if (!isElectronRuntime()) return;
+    // Keep Electron's restart-time snapshot aligned with the canonical
+    // renderer preference. The initial boot passes the same config directly.
+    void setDeveloperObservabilityConfig(config).catch(() => undefined);
+  }, [config]);
+
+  const updateConfig = useCallback((patch: Partial<ObservabilityPreferences>) => {
+    setPreferences((current) => {
+      const normalized = normalizeObservabilityConfig({ ...current, ...patch, enabled: false });
+      const next = withoutEnabled(normalized);
+      persistObservabilityPreferences(storageAdapter(), next);
+      return next;
+    });
+  }, []);
+
+  const request = useCallback(async (
+    path: string,
+    init: RequestInit = {},
+    signal?: AbortSignal,
+  ) => {
+    let connection = connectionRef.current;
+    if (!connection) {
+      const resolved = await resolveOpenworkConnection();
+      if (!resolved.normalizedBaseUrl || !resolved.resolvedToken) {
+        throw new Error("OpenWork server connection is unavailable");
+      }
+      connection = {
+        baseUrl: resolved.normalizedBaseUrl.replace(/\/+$/, ""),
+        token: resolved.resolvedToken,
+      };
+      const previous = lastConnectionRef.current;
+      if (previous && (previous.baseUrl !== connection.baseUrl || previous.token !== connection.token)) {
+        afterSequenceRef.current = 0;
+        dispatchRetainedEvents({ type: "reset" });
+      }
+      lastConnectionRef.current = connection;
+      connectionRef.current = connection;
+    }
+    const response = await fetch(`${connection.baseUrl}${path}`, {
+      ...init,
+      signal,
+      headers: {
+        Authorization: `Bearer ${connection.token}`,
+        ...(init.body === undefined ? {} : { "Content-Type": "application/json" }),
+        ...init.headers,
+      },
+    });
+    if (!response.ok) throw new Error(`Observability request failed (${response.status})`);
+    return response;
+  }, []);
+
+  const clear = useCallback(async () => {
+    dispatchRetainedEvents({ type: "reset" });
+    setServerDroppedCount(0);
+    setRendererDroppedCount(0);
+    resetRendererObservationBridgeDroppedCount();
+    if (!configRef.current.enabled) return;
+    try {
+      await request("/observability/events", { method: "DELETE" });
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : String(error));
+    }
+  }, [request]);
+
+  useEffect(() => {
+    let active = true;
+    const controller = new AbortController();
+    let pollTimer: ReturnType<typeof setTimeout> | null = null;
+    let disableRetryTimer: ReturnType<typeof setTimeout> | null = null;
+    connectionRef.current = null;
+
+    const pushDisabled = async () => {
+      let retry = true;
+      try {
+        const resolved = await resolveOpenworkConnection();
+        if (!resolved.normalizedBaseUrl || !resolved.resolvedToken) {
+          throw new Error("OpenWork server connection is unavailable");
+        }
+        const baseUrl = resolved.normalizedBaseUrl.replace(/\/+$/, "");
+        const currentResponse = await fetch(`${baseUrl}/observability/config`, {
+          headers: { Authorization: `Bearer ${resolved.resolvedToken}` },
+          signal: controller.signal,
+        });
+        if (currentResponse.status === 401 || currentResponse.status === 403) {
+          retry = false;
+          return;
+        }
+        if (!currentResponse.ok) {
+          throw new Error(`Observability status failed (${currentResponse.status})`);
+        }
+        const currentBody = await parseJson(currentResponse);
+        const currentConfig = currentBody.config;
+        if (
+          currentConfig
+          && typeof currentConfig === "object"
+          && (currentConfig as { enabled?: unknown }).enabled === false
+        ) return;
+        const response = await fetch(`${baseUrl}/observability/config`, {
+          method: "PUT",
+          headers: {
+            Authorization: `Bearer ${resolved.resolvedToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ enabled: false }),
+          signal: controller.signal,
+        });
+        if (response.status === 401 || response.status === 403) {
+          retry = false;
+          return;
+        }
+        if (!response.ok) throw new Error(`Observability disable failed (${response.status})`);
+      } catch {
+        // Disabling is a privacy boundary, not a one-shot hint. Keep retrying
+        // while this provider remains off so a transient restart or network
+        // failure cannot leave the server collecting behind an "off" UI.
+        if (retry && active && !controller.signal.aborted) {
+          disableRetryTimer = setTimeout(() => void pushDisabled(), 1_000);
+        }
+      }
+    };
+
+    if (!config.enabled) {
+      configureRendererObservationBridge({ enabled: false });
+      setStatus("disabled");
+      setStatusMessage(null);
+      void pushDisabled();
+      return () => {
+        active = false;
+        controller.abort();
+        if (disableRetryTimer) clearTimeout(disableRetryTimer);
+      };
+    }
+
+    setStatus("connecting");
+    setStatusMessage(null);
+
+    const postRendererEvents = async (batch: ObservabilityEventInput[]) => {
+      const activeConfig = configRef.current;
+      const levelPriority = { debug: 10, info: 20, warn: 30, error: 40 } as const;
+      const filtered = batch
+        .filter((event) => activeConfig.scopes.includes(event.scope))
+        .filter((event) => levelPriority[event.level] >= levelPriority[activeConfig.level])
+        .map((event) => {
+          if (!event.content || activeConfig.content === "full") return event;
+          const content = { ...event.content };
+          delete content.value;
+          if (activeConfig.content === "metadata") delete content.hash;
+          return { ...event, content };
+        });
+      if (filtered.length === 0) return;
+      await request("/observability/events", {
+        method: "POST",
+        body: JSON.stringify({ events: filtered }),
+      }, controller.signal);
+    };
+    configureRendererObservationBridge({
+      enabled: true,
+      transport: postRendererEvents,
+      onDropped: setRendererDroppedCount,
+      content: config.content,
+      level: config.level,
+      scopes: config.scopes,
+    });
+
+    const appendEvents = (incoming: unknown[]) => {
+      const nextEvents = incoming
+        .filter(isObservabilityEvent)
+        .map((event) => applyDefensiveContentPolicy(event, config.content));
+      if (nextEvents.length === 0) return;
+      const fresh = nextEvents.filter((event) => event.sequence > afterSequenceRef.current);
+      if (fresh.length === 0) return;
+      afterSequenceRef.current = Math.max(
+        afterSequenceRef.current,
+        ...fresh.map((event) => event.sequence),
+      );
+      if (config.console) {
+        for (const event of fresh) consoleEvent(event);
+      }
+      dispatchRetainedEvents({
+        type: "append",
+        events: fresh,
+        maxEvents: config.maxEvents,
+      });
+    };
+
+    const schedule = (task: () => Promise<void>) => {
+      if (active) pollTimer = setTimeout(() => void task(), 750);
+    };
+
+    async function poll() {
+      if (!active) return;
+      try {
+        const response = await request(
+          `/observability/events?after=${afterSequenceRef.current}&limit=250`,
+          {},
+          controller.signal,
+        );
+        const body = await parseJson(response);
+        if (
+          body.config
+          && typeof body.config === "object"
+          && (body.config as { enabled?: unknown }).enabled === false
+        ) {
+          schedule(activate);
+          return;
+        }
+        if (
+          typeof body.lastSequence === "number"
+          && body.lastSequence < afterSequenceRef.current
+        ) {
+          afterSequenceRef.current = 0;
+          dispatchRetainedEvents({ type: "reset" });
+          schedule(poll);
+          return;
+        }
+        appendEvents(Array.isArray(body.events) ? body.events : []);
+        if (typeof body.droppedCount === "number") setServerDroppedCount(body.droppedCount);
+        if (active) {
+          setStatus("connected");
+          setStatusMessage(null);
+        }
+        schedule(poll);
+      } catch (error) {
+        if (active && !controller.signal.aborted) {
+          connectionRef.current = null;
+          setStatus("error");
+          setStatusMessage(error instanceof Error ? error.message : String(error));
+          schedule(activate);
+        }
+      }
+    }
+
+    async function activate() {
+      try {
+        const response = await request("/observability/config", {
+          method: "PUT",
+          body: JSON.stringify(config),
+        }, controller.signal);
+        await parseJson(response);
+        if (active) void poll();
+      } catch (error) {
+        if (active && !controller.signal.aborted) {
+          connectionRef.current = null;
+          setStatus("error");
+          setStatusMessage(error instanceof Error ? error.message : String(error));
+          schedule(activate);
+        }
+      }
+    }
+
+    void activate();
+
+    return () => {
+      active = false;
+      controller.abort();
+      if (pollTimer) clearTimeout(pollTimer);
+      if (disableRetryTimer) clearTimeout(disableRetryTimer);
+      configureRendererObservationBridge({ enabled: false });
+    };
+  }, [config, request]);
+
+  const value = useMemo<ObservabilityContextValue>(() => ({
+    config,
+    events,
+    // The app mirrors the server journal's limits, so these eviction counts
+    // describe the same lost retained events. Use the larger observed count
+    // instead of double-counting them; bridge transport drops are independent.
+    droppedCount:
+      Math.max(serverDroppedCount, retainedEvents.evictedCount)
+      + rendererDroppedCount,
+    status,
+    statusMessage,
+    updateConfig,
+    clear,
+  }), [
+    clear,
+    config,
+    events,
+    retainedEvents.evictedCount,
+    rendererDroppedCount,
+    serverDroppedCount,
+    status,
+    statusMessage,
+    updateConfig,
+  ]);
+
+  return <ObservabilityContext value={value}>{children}</ObservabilityContext>;
+}
+
+export function useObservability() {
+  const value = use(ObservabilityContext);
+  if (!value) throw new Error("useObservability must be used inside ObservabilityProvider");
+  return value;
+}

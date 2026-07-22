@@ -1162,7 +1162,7 @@ function assertOpenworkServerReady(info) {
   return info;
 }
 
-async function bootRuntimeForSelectedWorkspace() {
+async function bootRuntimeForSelectedWorkspace(options = {}) {
   const list = await workspaceStore.readWorkspaceState();
   const selectedId = list.selectedId || list.activeId || list.workspaces[0]?.id || "";
   const workspace = selectedId
@@ -1188,6 +1188,7 @@ async function bootRuntimeForSelectedWorkspace() {
     engine = await runtimeManager.engineStart(workspaceRoot, {
       runtime: "direct",
       workspacePaths,
+      observability: options.observability,
     });
   } catch (error) {
     const fallback = list.workspaces.find((entry) => {
@@ -1208,6 +1209,7 @@ async function bootRuntimeForSelectedWorkspace() {
     engine = await runtimeManager.engineStart(fallbackRoot, {
       runtime: "direct",
       workspacePaths: fallbackWorkspacePaths,
+      observability: options.observability,
     });
     bootWorkspace = fallback;
     bootWorkspaceRoot = fallbackRoot;
@@ -1225,9 +1227,9 @@ async function bootRuntimeForSelectedWorkspace() {
   return { ok: true, skipped: false, engine, openworkServer, workspaceId: bootWorkspace.id ?? null };
 }
 
-function ensureRuntimeBootstrap() {
+function ensureRuntimeBootstrap(options = {}) {
   if (!runtimeBootstrapPromise) {
-    runtimeBootstrapPromise = bootRuntimeForSelectedWorkspace().catch((error) => ({
+    runtimeBootstrapPromise = bootRuntimeForSelectedWorkspace(options).catch((error) => ({
       ok: false,
       error: error instanceof Error ? error.message : String(error),
     }));
@@ -1591,7 +1593,7 @@ const desktopCommandHandlers = {
       return runtimeManager.prepareFreshRuntime();
   },
   "runtimeBootstrap": async (event, ...args) => {
-      return ensureRuntimeBootstrap();
+      return ensureRuntimeBootstrap(args[0] ?? {});
   },
   "runtimeStatus": async (event, ...args) => {
       return runtimeManager.runtimeStatus();
@@ -1753,6 +1755,9 @@ const desktopCommandHandlers = {
   },
   "openworkServerRestart": async (event, ...args) => {
       return runtimeManager.openworkServerRestart(args[0] ?? {});
+  },
+  "setDeveloperObservabilityConfig": async (event, ...args) => {
+      return runtimeManager.setDeveloperObservabilityConfig(args[0] ?? {});
   },
   "pickDirectory": async (event, ...args) => {
       const options = args[0] ?? {};
@@ -2447,10 +2452,11 @@ if (!app.requestSingleInstanceLock()) {
     await uiControlServer.start().catch((error) => {
       console.warn("[ui-control] failed to start", error);
     });
-    runtimeBootstrapPromise = bootRuntimeForSelectedWorkspace().catch((error) => ({
-      ok: false,
-      error: error instanceof Error ? error.message : String(error),
-    }));
+    // The renderer owns Developer Mode. It starts the runtime through
+    // runtimeBootstrap after reading the persisted setting, so startup,
+    // runtime-config, managed-process, and plugin-factory events are either
+    // captured from the beginning or remain completely off.
+    runtimeBootstrapPromise = null;
 
     queueDeepLinks(forwardedDeepLinks(process.argv));
     const win = await createMainWindow();
