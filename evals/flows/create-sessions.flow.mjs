@@ -234,13 +234,20 @@ export default {
             );
             await ctx.control("composer.send");
             state.createdSessions = await waitForCreatedSessions(ctx);
-            const sidebarTitlesExpression = state.createdSessions
-              .map((session) => `document.body.innerText.includes(${JSON.stringify(session.title)})`)
+            const sidebarSessionsExpression = state.createdSessions
+              .map((session) => `Array.from(document.querySelectorAll("[data-sidebar-session-id]")).some((element) => element.getAttribute("data-sidebar-session-id") === ${JSON.stringify(session.id)})`)
               .join(" && ");
-            await ctx.waitFor(sidebarTitlesExpression, {
+            await ctx.waitFor(sidebarSessionsExpression, {
               timeoutMs: 60_000,
               label: "created sessions in the sidebar",
             });
+            const resultCardsExpression = state.createdSessions
+              .map((session) => `document.querySelector(${JSON.stringify(`[data-open-created-session="${session.id}"]`)})`)
+              .join(" && ");
+            await ctx.waitFor(
+              `document.querySelector('[data-openwork-session-create-card][data-created-session-count="3"]') && ${resultCardsExpression}`,
+              { timeoutMs: 60_000, label: "created chat card and Open chat actions" },
+            );
             await ctx.eval(`(() => {
               document.querySelectorAll("[data-sonner-toast] [data-close-button]")
                 .forEach((button) => button.click());
@@ -262,6 +269,25 @@ export default {
             rejectText: ["Something went wrong"],
           },
         });
+      },
+    },
+    {
+      name: "Open chat action navigates to the selected created session",
+      run: async (ctx) => {
+        const target = state.createdSessions[0];
+        ctx.assert(Boolean(target), "Expected a created session to open.");
+        await ctx.eval(`(() => {
+          const button = document.querySelector(${JSON.stringify(`[data-open-created-session="${target?.id}"]`)});
+          if (!(button instanceof HTMLElement)) throw new Error("Open chat action is unavailable");
+          button.click();
+          return true;
+        })()`);
+        await ctx.waitFor(
+          `window.location.hash.includes(${JSON.stringify(`/session/${target?.id}`)})`,
+          { timeoutMs: 30_000, label: "created session route" },
+        );
+        const currentHash = await ctx.eval("window.location.hash");
+        ctx.assert(currentHash.includes(`/session/${target?.id}`), `Open chat navigated to ${currentHash}`);
       },
     },
     {

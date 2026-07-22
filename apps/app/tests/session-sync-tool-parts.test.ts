@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import type { Part } from "@opencode-ai/sdk/v2/client";
+import type { Part, Session } from "@opencode-ai/sdk/v2/client";
 import type { UIMessage } from "ai";
 
 import { getReactQueryClient } from "../src/react-app/infra/query-client";
@@ -13,6 +13,7 @@ import {
   parseDynamicToolUIPart,
   parseStructuredOutputUIPart,
 } from "../src/react-app/domains/session/sync/parse-tool-parts";
+import { parseOpenWorkSessionCreateResult } from "../src/components/tools/openwork-session-create";
 
 afterEach(() => {
   getReactQueryClient().clear();
@@ -120,6 +121,32 @@ describe("tool part mapper", () => {
     });
   });
 
+  test("parses session creation output for rich chat rendering", () => {
+    expect(parseOpenWorkSessionCreateResult(JSON.stringify({
+      ok: true,
+      workspaceId: "workspace-a",
+      workspace: "Research",
+      created: [{
+        sessionId: "session-dolphins",
+        title: "Dolphin research",
+        started: true,
+        route: "/workspace/workspace-a/session/session-dolphins",
+      }],
+      failures: [],
+    }))).toEqual({
+      ok: true,
+      workspaceId: "workspace-a",
+      workspace: "Research",
+      created: [{
+        sessionId: "session-dolphins",
+        title: "Dolphin research",
+        started: true,
+        route: "/workspace/workspace-a/session/session-dolphins",
+      }],
+      failures: [],
+    });
+  });
+
   test("skips empty structured output while streaming", () => {
     const part = writeToolPart("running", {}, { tool: "StructuredOutput" });
     expect(parseStructuredOutputUIPart(part)).toBeNull();
@@ -169,6 +196,44 @@ describe("tool part mapper", () => {
       });
     } finally {
       release();
+      cleanup();
+    }
+  });
+
+  test("delivers untracked session lifecycle events for sidebar synchronization", () => {
+    const created: Session = {
+      id: "session-created",
+      slug: "session-created",
+      projectID: "project-a",
+      directory: "/tmp/workspace-a",
+      title: "Created in the background",
+      version: "1",
+      time: { created: 1, updated: 1 },
+    };
+    const createdIds: string[] = [];
+    const deletedIds: string[] = [];
+    const syncInput = {
+      workspaceId: "workspace-a",
+      baseUrl: "http://127.0.0.1:1234",
+      openworkToken: "token",
+      onSessionCreated: (session: Session) => createdIds.push(session.id),
+      onSessionDeleted: (sessionId: string) => deletedIds.push(sessionId),
+    };
+    const cleanup = __createWorkspaceSessionSyncForTest(syncInput);
+
+    try {
+      __applySessionSyncEventForTest(syncInput, {
+        type: "session.created",
+        properties: { sessionID: created.id, info: created },
+      });
+      __applySessionSyncEventForTest(syncInput, {
+        type: "session.deleted",
+        properties: { sessionID: created.id, info: created },
+      });
+
+      expect(createdIds).toEqual([created.id]);
+      expect(deletedIds).toEqual([created.id]);
+    } finally {
       cleanup();
     }
   });

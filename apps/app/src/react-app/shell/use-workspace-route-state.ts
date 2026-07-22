@@ -7,6 +7,7 @@
 // composition, handlers, and JSX.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import type { Session } from "@opencode-ai/sdk/v2/client";
 
 import {
   publishInspectorOpencodeClient,
@@ -525,6 +526,29 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
       return next;
     });
   }, [selectedWorkspaceId]);
+  const handleRuntimeSessionCreated = useCallback((session: Session) => {
+    if (!selectedWorkspaceId) return;
+    rememberPendingCreatedSession(selectedWorkspaceId, session.id);
+    setSessionsByWorkspaceId((current) => {
+      const list = current[selectedWorkspaceId] ?? [];
+      const nextList = mergeWorkspaceRouteSession(list, session);
+      if (nextList === list) return current;
+      const next = { ...current, [selectedWorkspaceId]: nextList };
+      sessionsByWorkspaceIdRef.current = next;
+      return next;
+    });
+  }, [rememberPendingCreatedSession, selectedWorkspaceId]);
+  const handleRuntimeSessionDeleted = useCallback((sessionId: string) => {
+    if (!selectedWorkspaceId) return;
+    setSessionsByWorkspaceId((current) => {
+      const list = current[selectedWorkspaceId] ?? [];
+      const nextList = removeWorkspaceRouteSession(list, sessionId);
+      if (nextList === list) return current;
+      const next = { ...current, [selectedWorkspaceId]: nextList };
+      sessionsByWorkspaceIdRef.current = next;
+      return next;
+    });
+  }, [selectedWorkspaceId]);
 
   useEffect(() => {
     workspacesRef.current = workspaces;
@@ -995,7 +1019,9 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
     refreshRouteState,
     loadWorkspaceSessionsInBackground,
     rememberPendingCreatedSession,
+    handleRuntimeSessionCreated,
     handleRuntimeSessionUpdated,
+    handleRuntimeSessionDeleted,
     handleRemoteWorkspaceConnectionSaved,
     runRemoteWorkspaceConnectionCheck,
   };

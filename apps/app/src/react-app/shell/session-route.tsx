@@ -378,7 +378,9 @@ export function SessionRoute() {
     refreshRouteState,
     loadWorkspaceSessionsInBackground,
     rememberPendingCreatedSession,
+    handleRuntimeSessionCreated,
     handleRuntimeSessionUpdated,
+    handleRuntimeSessionDeleted,
     handleRemoteWorkspaceConnectionSaved,
     runRemoteWorkspaceConnectionCheck,
   } = useWorkspaceRouteState({
@@ -1894,7 +1896,9 @@ export function SessionRoute() {
         activeSessionIds={activeSelectedWorkspaceSessionIds}
         opencodeBaseUrl={opencodeBaseUrl}
         openworkToken={selectedWorkspaceServerToken}
+        onSessionCreated={handleRuntimeSessionCreated}
         onSessionUpdated={handleRuntimeSessionUpdated}
+        onSessionDeleted={handleRuntimeSessionDeleted}
       />
     ) : null}
     <SessionPage

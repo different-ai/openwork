@@ -1788,7 +1788,7 @@ function SessionMenuItem({
       onOpenChange={() => ctx.toggleSessionExpanded(session.id)}
       className="group/session-collapsible"
     >
-      <SidebarMenuSubItem {...dragProps}>
+      <SidebarMenuSubItem {...dragProps} data-sidebar-session-id={session.id}>
         <SessionContextMenu sessionId={session.id} workspaceId={workspaceId} isPinned={isPinned} isArchived={isArchived}>
           <CollapsibleTrigger
             render={
@@ -1824,7 +1824,7 @@ function SessionMenuItem({
       </SidebarMenuSubItem>
     </Collapsible>
   ) : (
-    <SidebarMenuSubItem {...dragProps}>
+    <SidebarMenuSubItem {...dragProps} data-sidebar-session-id={session.id}>
       <SessionContextMenu sessionId={session.id} workspaceId={workspaceId} isPinned={isPinned} isArchived={isArchived}>
         <SidebarMenuSubButton
           isActive={isSelected}
