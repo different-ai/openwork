@@ -17,6 +17,10 @@ skill: script → worktree → build → fraimz → PR) this is how the build is
 verified; when orchestrating, the orchestrator drives this loop and delegates
 code repairs to the executor.
 
+Runner mode split: `pnpm evals` is automation mode (no voiceover requirements or
+unnarrated-frame warnings). `pnpm fraimz` is the demo mode this skill describes:
+voiceover drift is enforced and the artifact expects narrated frames.
+
 ## Every fraimz is a demo
 
 A fraimz is never a bare test log. The flow declares which demo it is via

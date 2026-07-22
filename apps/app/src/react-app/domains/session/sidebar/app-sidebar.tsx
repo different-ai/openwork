@@ -746,6 +746,20 @@ export function AppSidebar(props: AppSidebarProps) {
   };
 
   const brandLogoUrl = useBrandLogoUrl();
+  const pinnedIds = useSessionManagementStore((state) => state.pinnedIds);
+  const pinnedSessions = React.useMemo(() => {
+    const sessionsById = new Map<string, GlobalPinnedSessionEntry>();
+    for (const group of props.workspaceSessionGroups) {
+      const roots = getRootSessions(partitionArchivedSessions(group.sessions).active);
+      for (const session of roots) {
+        sessionsById.set(session.id, { group, sessionId: session.id });
+      }
+    }
+    return pinnedIds.flatMap((sessionId) => {
+      const entry = sessionsById.get(sessionId);
+      return entry ? [entry] : [];
+    });
+  }, [pinnedIds, props.workspaceSessionGroups]);
 
   return (
     <SidebarContext.Provider value={contextValue}>
@@ -792,6 +806,9 @@ export function AppSidebar(props: AppSidebarProps) {
             data-sidebar="content"
             className="no-scrollbar flex min-h-0 flex-1 flex-col gap-px overflow-auto [--radius:var(--radius-xl)] group-data-[collapsible=icon]:overflow-hidden"
           >
+            {pinnedSessions.length > 0 ? (
+              <GlobalPinnedSessions entries={pinnedSessions} />
+            ) : null}
             <Reorder.Group
               as="div"
               axis="y"
@@ -836,6 +853,75 @@ export function AppSidebar(props: AppSidebarProps) {
       </Sidebar>
     </SidebarContext.Provider>
   );
+}
+
+type GlobalPinnedSessionEntry = {
+  group: WorkspaceSessionGroup;
+  sessionId: string;
+};
+
+function GlobalPinnedSessions({ entries }: { entries: GlobalPinnedSessionEntry[] }) {
+  return (
+    <SidebarGroup data-global-pinned-sessions className="pb-1 pt-2">
+      <SidebarGroupContent>
+        <div className="flex items-center gap-1.5 px-3 pb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+          <Pin className="size-3" />
+          {t("session_management.pinned")}
+        </div>
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuSub>
+              {entries.map((entry) => (
+                <GlobalPinnedSessionTree
+                  key={`${entry.group.workspace.id}:${entry.sessionId}`}
+                  group={entry.group}
+                  sessionId={entry.sessionId}
+                />
+              ))}
+            </SidebarMenuSub>
+          </SidebarMenuItem>
+        </SidebarMenu>
+      </SidebarGroupContent>
+    </SidebarGroup>
+  );
+}
+
+function GlobalPinnedSessionTree({ group, sessionId }: GlobalPinnedSessionEntry) {
+  const ctx = useSidebarContext();
+  const pinnedIds = usePinnedSessionIds();
+  const tree = useSessionTree(group.sessions, ctx.sessionStatusById);
+  const forcedExpandedSessionIds = React.useMemo(
+    () => new Set(
+      ctx.selectedSessionId
+        ? tree.ancestorIdsBySessionId.get(ctx.selectedSessionId) ?? []
+        : [],
+    ),
+    [ctx.selectedSessionId, tree.ancestorIdsBySessionId],
+  );
+  const rootIds = React.useMemo(() => new Set([sessionId]), [sessionId]);
+  const rows = flattenSessionRows(
+    group.sessions,
+    1,
+    tree,
+    ctx.expandedSessionIds,
+    forcedExpandedSessionIds,
+    pinnedIds,
+    [],
+    { include: rootIds },
+  );
+
+  return rows.map((row) => (
+    <SessionMenuItem
+      key={row.session.id}
+      session={row.session}
+      depth={row.depth}
+      tree={tree}
+      workspaceId={group.workspace.id}
+      forcedExpandedSessionIds={forcedExpandedSessionIds}
+      isPinned={pinnedIds.has(row.session.id)}
+      workspaceName={row.depth === 0 ? workspaceLabel(group.workspace) : undefined}
+    />
+  ));
 }
 
 type WorkspaceReorderItemProps = {
@@ -1017,16 +1103,17 @@ function WorkspaceSidebarGroup({
     tree,
     ctx.expandedSessionIds,
     forcedExpandedSessionIds,
-    pinnedIds,
+    EMPTY_PINNED_IDS,
     orderIds,
+    { exclude: pinnedIds },
   );
   const visibleRootIds = React.useMemo(
     () => sessionRows.flatMap((row) => (row.depth === 0 ? [row.session.id] : [])),
     [sessionRows],
   );
   const activeRootCount = React.useMemo(
-    () => getRootSessions(activeSessions).length,
-    [activeSessions],
+    () => getRootSessions(activeSessions).filter((session) => !pinnedIds.has(session.id)).length,
+    [activeSessions, pinnedIds],
   );
   const [archivedExpanded, setArchivedExpanded] = React.useState(false);
   const remainingRootSessions = Math.max(0, activeRootCount - previewCount);
@@ -1229,6 +1316,7 @@ function WorkspaceSidebarGroup({
 }
 
 const SESSION_DRAG_TYPE = "application/x-openwork-session-id";
+const EMPTY_PINNED_IDS = new Set<string>();
 const UNGROUPED_GROUP_ID = "__openwork_ungrouped";
 
 function SessionGroupActions({ group, groups, workspaceId, count }: {
@@ -1741,6 +1829,7 @@ type SessionMenuItemProps = {
   forcedExpandedSessionIds: Set<string>;
   isPinned?: boolean;
   draggable?: boolean;
+  workspaceName?: string;
 };
 
 function SessionMenuItem({
@@ -1751,10 +1840,12 @@ function SessionMenuItem({
   depth,
   isPinned = false,
   draggable = false,
+  workspaceName,
 }: SessionMenuItemProps) {
   const ctx = useSidebarContext();
   const isSelected = ctx.selectedSessionId === session.id;
   const displayTitle = getDisplaySessionTitle(session.title);
+  const itemTitle = workspaceName ? `${displayTitle} — ${workspaceName}` : displayTitle;
   const hasChildren = (tree.descendantCountBySessionId.get(session.id) ?? 0) > 0;
   const isExpanded = ctx.expandedSessionIds.has(session.id) || forcedExpandedSessionIds.has(session.id);
   const sessionActivityStatus = ctx.sessionStatusById?.[session.id];
@@ -1798,11 +1889,13 @@ function SessionMenuItem({
                 onClick={openSession}
                 onPointerEnter={prefetchSession}
                 onFocus={prefetchSession}
+                aria-label={itemTitle}
               >
                 <PinnedIndicator isPinned={isPinned} />
+                {workspaceName ? <WorkspaceIcon workspaceId={workspaceId} sizeClass="size-3.5" /> : null}
                 <span
                   className={cn("min-w-0 flex-1 truncate transition-[padding] duration-75 group-hover/menu-sub-item:pe-12 group-has-data-popup-open/menu-sub-item:pe-12 pe-4", (isSessionStreaming || isSessionActive) && "pe-12")}
-                  title={displayTitle}
+                  title={itemTitle}
                 >
                   {displayTitle}
                 </span>
@@ -1831,10 +1924,12 @@ function SessionMenuItem({
           onClick={openSession}
           onPointerEnter={prefetchSession}
           onFocus={prefetchSession}
+          aria-label={itemTitle}
           className={cn("transition-[padding] duration-75 group-hover/menu-sub-item:pe-8 group-has-data-popup-open/menu-sub-item:pe-8", depth > 0 && "ps-13", (isSessionStreaming || isSessionActive) && "pe-12")}
         >
           <PinnedIndicator isPinned={isPinned} />
-          <span className="min-w-0 flex-1 truncate" title={displayTitle}>{displayTitle}</span>
+          {workspaceName ? <WorkspaceIcon workspaceId={workspaceId} sizeClass="size-3.5" /> : null}
+          <span className="min-w-0 flex-1 truncate" title={itemTitle}>{displayTitle}</span>
         </SidebarMenuSubButton>
       </SessionContextMenu>
       <SessionActions

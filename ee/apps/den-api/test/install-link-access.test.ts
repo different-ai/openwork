@@ -370,7 +370,7 @@ test("unordered organization allowed desktop versions select the maximum direct 
   expect(response.headers.get("location")).not.toContain("opaque-token")
 })
 
-test("mounted artifact lookup uses the organization-specific allowed desktop version filename", async () => {
+test("mounted artifact lookup uses the generic Windows installer filename", async () => {
   organizationMetadata = {
     ...defaultOrganizationMetadata(),
     allowedDesktopVersions: ["0.17.26", "0.17.27"],
@@ -386,8 +386,8 @@ test("mounted artifact lookup uses the organization-specific allowed desktop ver
   }).request("http://den.local/v1/install/win-x64?token=opaque-token")
 
   expect(response.status).toBe(200)
-  expect(artifactFileNames).toEqual(["openwork-win-x64-0.17.27.exe"])
-  expect(response.headers.get("content-disposition")).toContain("openwork-win-x64-0.17.27.exe")
+  expect(artifactFileNames).toEqual(["openwork-installer-win-x64.exe"])
+  expect(response.headers.get("content-disposition")).toContain("OpenWork-Installer--den.local--opaque-token.exe")
   expect(Buffer.from(await response.arrayBuffer())).toEqual(installer)
 })
 
@@ -451,7 +451,7 @@ test("guided semi-air-gapped downloads return a provisioned standard installer w
 
   expect(response.status).toBe(200)
   expect(response.headers.get("content-type")).toBe("application/vnd.microsoft.portable-executable")
-  expect(response.headers.get("content-disposition")).toContain("openwork-win-x64-")
+  expect(response.headers.get("content-disposition")).toContain("OpenWork-Installer--den.local--opaque-token.exe")
   expect(Buffer.from(await response.arrayBuffer())).toEqual(installer)
 })
 

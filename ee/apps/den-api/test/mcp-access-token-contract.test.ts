@@ -49,7 +49,7 @@ function signJwt(overrides) {
     sid: sessionId,
     iss: apiOrigin + "/api/auth",
     iat: now,
-    exp: now + 900,
+    exp: now + 45 * 60,
     [tokenUseClaim]: "mcp",
     [resourceClaim]: agentResource,
     [orgIdClaim]: organizationId,
@@ -98,7 +98,7 @@ const db = {
               userId,
               sessionId,
               referenceId: organizationId,
-              expiresAt: new Date(Date.now() + 900_000),
+              expiresAt: new Date(Date.now() + 45 * 60 * 1000),
               createdAt: new Date(Date.now() - 1_000),
               scopes: JSON.stringify(["mcp:read"]),
             }])

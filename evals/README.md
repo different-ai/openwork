@@ -19,14 +19,21 @@ A growing subset of flows is codified under [`flows/`](./flows) and executed by
 the zero-dependency runner in [`runner/`](./runner) with machine-checkable
 assertions, poll-until-condition waits (no fixed sleeps), and JSON + markdown
 reports with screenshots. The runner also writes a browseable frame-by-frame
-`index.html` in each result directory.
+`index.html` in each result directory. New flows should be typed
+`*.flow.ts` files using `defineFlow` from `../runner/flow.ts`; legacy
+`*.flow.mjs` files are still supported.
 
 ```bash
-pnpm evals --list                 # show available coded flows
-pnpm evals --all                  # run everything runnable
-pnpm evals --flow app-smoke       # run one flow
+pnpm evals --list                 # automation mode: show available coded flows
+pnpm evals --all                  # automation mode: no narration policy
+pnpm evals --flow app-smoke       # automation mode: run one flow
+pnpm evals:typecheck              # typecheck *.flow.ts + runner TypeScript
 pnpm evals --all --cdp-url http://127.0.0.1:9825   # explicit CDP endpoint
 ```
+
+`pnpm evals` is automation mode: it never enforces voice-over coverage and
+unnarrated frames render without a warning. `pnpm fraimz` is demo mode: it keeps
+the voice-over drift check and narrated-frame warnings described below.
 
 ### fraimz — the deliverable
 
@@ -55,7 +62,7 @@ title, optional context prose, and one **numbered paragraph per frame**.
 On approval the build moves to a fresh worktree/branch; the journey ends with the PR carrying the proof (see the `voiceover` skill).
 
 ```bash
-pnpm fraimz scaffold <flow-id>    # generate evals/flows/<flow-id>.flow.mjs
+pnpm fraimz scaffold <flow-id>    # generate evals/flows/<flow-id>.flow.ts
                                   # from the approved script: one ctx.prove
                                   # stub per paragraph, narration pre-wired
 pnpm fraimz --flow <flow-id> --pr # after the run, post the frame proof as a
@@ -71,10 +78,13 @@ can follow the demo step by step. If the token is missing or an upload fails,
 the comment still posts with a note and the screenshots stay available in
 `evals/results/<run-id>/`.
 
-Flows load their narration with `loadVoiceoverParagraphs(<flow-id>)`; when a
-script exists for a flow, the runner appends a **Voice-over script coverage**
-step that fails the flow if the run's narration drifts from the approved file
-(a scripted frame never narrated, or an unapproved line narrated).
+Flows load their narration with `loadVoiceoverParagraphs(<flow-id>)`; in demo
+mode, when a script exists for a flow, the runner appends a **Voice-over script
+coverage** step that fails the flow if the run's narration drifts from the
+approved file (a scripted frame never narrated, or an unapproved line narrated).
+`pnpm evals scaffold <flow-id>` in automation mode emits the same narrated stub
+when a script exists; without a script it emits a plain typed stub instead.
+`pnpm fraimz scaffold <flow-id>` still requires the approved script.
 
 Internal demos of terminal/tooling experiences can set `requiresApp: false` to
 run without a CDP endpoint; their frames carry claims, assertions, and
@@ -156,7 +166,8 @@ plugin (configured in `.opencode/opencode.json`). Every tool takes
 
 ## Conventions
 
-- Prefer coded flows in `evals/flows/*.flow.mjs` over ad hoc browser tool calls.
+- Prefer coded flows in `evals/flows/*.flow.ts` using `defineFlow` over ad hoc
+  browser tool calls; legacy `*.flow.mjs` files remain runnable.
 - Declare the demo kind on every new flow: `kind: "user-facing"` (a flow demo
   where the end user is the protagonist) or `kind: "internal"` (an internal
   demo, e.g. perf improvements or invariants). The runner rejects other values
@@ -168,7 +179,7 @@ plugin (configured in `.opencode/opencode.json`). Every tool takes
   evidence. It records the claim, voiceover, assertions, screenshot, and
   validation results together so the HTML frame proof explains why each image
   proves the step.
-- Every `ctx.prove` should carry a `voiceover`: one or two spoken-style
+- In demo mode, every `ctx.prove` should carry a `voiceover`: one or two spoken-style
   sentences narrating what the viewer sees in that frame. `fraimz.html` renders
   it per frame with a play button (Web Speech API) and a per-flow "Play full
   voiceover". Write the voiceover script for the whole demo before coding the

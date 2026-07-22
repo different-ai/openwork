@@ -8,6 +8,7 @@ description: do e2e tests, run e2e, validate feature, prove it works, PR proof, 
 Launch a real OpenWork app and run coded eval flows against it. This skill owns
 **launch + run**; the prove/repair/verdict loop and evidence standard live in
 the **`fraimz` skill** — load that too for anything that ends in a verdict.
+`pnpm evals` runs automation mode; use `pnpm fraimz` for demo/voiceover mode.
 
 ## Prerequisites
 

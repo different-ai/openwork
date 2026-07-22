@@ -144,9 +144,15 @@ export const flattenSessionRows = (
   forcedExpandedSessionIds: Set<string>,
   pinnedIds: Set<string> = EMPTY_SET,
   orderIds: string[] = EMPTY_ARRAY,
+  rootFilter?: { include?: Set<string>; exclude?: Set<string> },
 ) => {
   const { active } = partitionArchivedSessions(sessions);
-  const orderedRoots = orderRootSessions(getRootSessions(active), pinnedIds, orderIds).slice(0, rootLimit);
+  const orderedRoots = orderRootSessions(getRootSessions(active), pinnedIds, orderIds)
+    .filter((root) => (
+      (!rootFilter?.include || rootFilter.include.has(root.id)) &&
+      !rootFilter?.exclude?.has(root.id)
+    ))
+    .slice(0, rootLimit);
   const rows: FlattenedSessionRow[] = [];
   const visited = new Set<string>();
 

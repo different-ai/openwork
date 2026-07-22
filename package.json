@@ -50,12 +50,14 @@
     "test:session-scope": "pnpm --filter @openwork/app test:session-scope",
     "test:session-switch": "pnpm --filter @openwork/app test:session-switch",
     "test:fs-engine": "pnpm --filter @openwork/app test:fs-engine",
-    "test:eval-runner": "node --test evals/runner/*.test.mjs",
+    "test:eval-runner": "pnpm evals:test",
     "test:e2e": "pnpm --filter @openwork/app test:e2e",
     "test:admin-scale": "pnpm --filter @openwork-ee/den-api test:admin-scale",
     "benchmark:admin-scale:mysql": "pnpm --filter @openwork-ee/den-db benchmark:admin-scale:mysql",
-    "evals": "node evals/runner/run.mjs",
-    "fraimz": "node evals/runner/run.mjs",
+    "evals": "node evals/runner/run.mjs --mode automation",
+    "fraimz": "node evals/runner/run.mjs --mode demo",
+    "evals:typecheck": "tsc -p evals",
+    "evals:test": "node --test evals/runner/context.test.ts",
     "test:orchestrator": "pnpm --filter openwork-orchestrator test:router",
     "bump:patch": "pnpm --filter @openwork/app bump:patch",
     "bump:minor": "pnpm --filter @openwork/app bump:minor",
@@ -68,7 +70,9 @@
     "release:ship:watch": "node scripts/release/ship.mjs --watch"
   },
   "devDependencies": {
-    "turbo": "^2.5.5"
+    "@types/node": "^24.0.0",
+    "turbo": "^2.5.5",
+    "typescript": "^5.9.0"
   },
   "packageManager": "pnpm@11.4.0"
 }

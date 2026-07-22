@@ -124,12 +124,13 @@ export default {
               });
               witness(ctx, scaffold.status === 0, "pnpm fraimz scaffold <id> exits 0", scaffold.stderr?.trim() || String(scaffold.status));
               ctx.output("$ pnpm fraimz scaffold _scaffold-demo", scaffold.stdout.trim());
-              const stub = await readFile(join(flowsDir, `${scaffoldId}.flow.mjs`), "utf8");
+              const stub = await readFile(join(flowsDir, `${scaffoldId}.flow.ts`), "utf8");
               witness(ctx, (stub.match(/ctx\.prove\(/g) ?? []).length === 2, "The generated flow has one ctx.prove per script paragraph");
+              witness(ctx, stub.includes("defineFlow"), "The generated flow uses the typed defineFlow contract");
               witness(ctx, stub.includes("loadVoiceoverParagraphs"), "The generated flow loads its narration from the script file");
               // Drift, end to end: a flow that skips a scripted frame and
               // narrates an unapproved line must fail the real runner.
-              await writeFile(join(flowsDir, `${scaffoldId}.flow.mjs`), `export default {
+              await writeFile(join(flowsDir, `${scaffoldId}.flow.ts`), `export default {
   id: ${JSON.stringify(scaffoldId)},
   title: "Drifted narration fixture",
   kind: "internal",

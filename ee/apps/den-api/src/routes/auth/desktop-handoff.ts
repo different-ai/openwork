@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto"
 import { and, eq, gt, isNull } from "@openwork-ee/den-db/drizzle"
-import { AuthSessionTable, AuthUserTable, DesktopHandoffGrantTable } from "@openwork-ee/den-db/schema"
-import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import { AuthSessionTable, AuthUserTable, DesktopHandoffGrantTable, RateLimitTable } from "@openwork-ee/den-db/schema"
+import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
@@ -20,6 +20,10 @@ const exchangeGrantSchema = z.object({
   grant: z.string().trim().min(12).max(128),
 })
 
+const statusGrantSchema = z.object({
+  grant: z.string().trim().min(12).max(128),
+})
+
 const desktopHandoffGrantResponseSchema = z.object({
   grant: z.string(),
   expiresAt: z.string().datetime(),
@@ -35,10 +39,59 @@ const desktopHandoffExchangeResponseSchema = z.object({
   }),
 }).meta({ ref: "DesktopHandoffExchangeResponse" })
 
+const desktopHandoffStatusResponseSchema = z.object({
+  status: z.enum(["pending", "consumed", "unknown"]),
+}).meta({ ref: "DesktopHandoffStatusResponse" })
+
 const grantNotFoundSchema = z.object({
   error: z.literal("grant_not_found"),
   message: z.string(),
 }).meta({ ref: "DesktopHandoffGrantNotFoundError" })
+
+const rateLimitedSchema = z.object({
+  error: z.literal("rate_limited"),
+  message: z.string(),
+}).meta({ ref: "DesktopHandoffRateLimitedError" })
+
+const HANDOFF_STATUS_RATE_LIMIT_WINDOW_MS = 60 * 1000
+const HANDOFF_STATUS_RATE_LIMIT_MAX = 240
+
+function requestAddress(headers: Headers) {
+  const forwarded = headers.get("x-forwarded-for")?.split(",")[0]?.trim()
+  return forwarded || headers.get("x-real-ip")?.trim() || "unknown"
+}
+
+async function checkRateLimit(key: string, maxRequests: number, now: number) {
+  const [row] = await db
+    .select({ id: RateLimitTable.id, count: RateLimitTable.count, lastRequest: RateLimitTable.lastRequest })
+    .from(RateLimitTable)
+    .where(eq(RateLimitTable.key, key))
+    .limit(1)
+
+  if (row && now - row.lastRequest <= HANDOFF_STATUS_RATE_LIMIT_WINDOW_MS && row.count >= maxRequests) {
+    return Math.max(1, Math.ceil((HANDOFF_STATUS_RATE_LIMIT_WINDOW_MS - (now - row.lastRequest)) / 1000))
+  }
+
+  if (!row) {
+    await db.insert(RateLimitTable).values({
+      id: createDenTypeId("rateLimit"),
+      key,
+      count: 1,
+      lastRequest: now,
+    })
+    return null
+  }
+
+  await db
+    .update(RateLimitTable)
+    .set({ count: now - row.lastRequest > HANDOFF_STATUS_RATE_LIMIT_WINDOW_MS ? 1 : row.count + 1, lastRequest: now })
+    .where(eq(RateLimitTable.id, row.id))
+  return null
+}
+
+async function enforceRateLimit(headers: Headers, scope: string, maxRequests: number) {
+  return checkRateLimit(`handoff:${scope}:${requestAddress(headers)}`, maxRequests, Date.now())
+}
 
 function readSingleHeader(value: string | null) {
   const first = value?.split(",")[0]?.trim() ?? ""
@@ -195,6 +248,47 @@ export function registerDesktopAuthRoutes<T extends { Variables: AuthContextVari
         denBaseUrl,
       }),
     })
+    },
+  )
+
+  app.post(
+    "/v1/auth/desktop-handoff/status",
+    describeRoute({
+      hide: true,
+      tags: ["Authentication"],
+      summary: "Check desktop handoff grant status",
+      description: "Returns whether a short-lived desktop handoff grant is still pending, has been consumed, or is no longer valid. It never returns session tokens or user details.",
+      responses: {
+        200: jsonResponse("Desktop handoff grant status resolved successfully.", desktopHandoffStatusResponseSchema),
+        400: jsonResponse("The handoff status request body was invalid.", invalidRequestSchema),
+        429: jsonResponse("Too many handoff status checks.", rateLimitedSchema),
+      },
+    }),
+    publicRoute,
+    jsonValidator(statusGrantSchema),
+    async (c) => {
+      const retryAfter = await enforceRateLimit(c.req.raw.headers, "handoff-status", HANDOFF_STATUS_RATE_LIMIT_MAX)
+      if (retryAfter !== null) {
+        c.header("Retry-After", String(retryAfter))
+        return c.json({ error: "rate_limited", message: "Too many handoff status checks. Try again later." }, 429)
+      }
+
+      const input = c.req.valid("json")
+      const [grant] = await db
+        .select({ consumedAt: DesktopHandoffGrantTable.consumed_at, expiresAt: DesktopHandoffGrantTable.expires_at })
+        .from(DesktopHandoffGrantTable)
+        .where(eq(DesktopHandoffGrantTable.id, input.grant))
+        .limit(1)
+
+      if (!grant) {
+        return c.json({ status: "unknown" })
+      }
+
+      if (grant.consumedAt) {
+        return c.json({ status: "consumed" })
+      }
+
+      return c.json({ status: grant.expiresAt > new Date() ? "pending" : "unknown" })
     },
   )
 

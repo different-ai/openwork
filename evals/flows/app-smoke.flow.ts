@@ -2,7 +2,9 @@
  * Smoke: the app boots, the automation control API is live, and a known route
  * renders real content.
  */
-export default {
+import { defineFlow } from "../runner/flow.ts";
+
+export default defineFlow({
   id: "app-smoke",
   title: "App boots and renders a known route",
   spec: "evals/react-session-flows.md",
@@ -46,4 +48,4 @@ export default {
       },
     },
   ],
-};
+});

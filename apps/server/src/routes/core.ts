@@ -5,9 +5,11 @@ import {
   type ConnectSnapshotOptions,
   getConnectSnapshot,
   googleWorkspaceStatusConnectExtra,
+  resolveConnectWorkspace,
   writeConnectState,
 } from "../connect-state.js";
 import type { CloudMcpLiveStatusObserver } from "../cloud-mcp-health.js";
+import { readOpenWorkConnectSkillCatalog, renderOpenWorkConnectSkillInstruction } from "../connect-skill-catalog.js";
 import { EnvStoreReadError, InvalidEnvKeyError, isValidEnvKey, type EnvService } from "../env-file.js";
 import { ApiError } from "../errors.js";
 import {
@@ -319,6 +321,21 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
       ok: true,
       schemaVersion: 1,
       ...(await getConnectSnapshot(config, { ...connectSnapshotBaseOptions, ...connectSnapshotOptionsFromQuery(ctx.url) })),
+    });
+  });
+
+  addRoute(routes, "GET", "/experimental/connect/skills", "client", async (ctx) => {
+    const resolved = resolveConnectWorkspace(config, {
+      ...connectSnapshotOptionsFromQuery(ctx.url),
+      resolveOpencodeDirectory,
+    });
+    const workspaceId = "workspace" in resolved ? resolved.workspace.id : null;
+    const skills = workspaceId ? await readOpenWorkConnectSkillCatalog(config, workspaceId) : [];
+    return jsonResponse({
+      ok: true,
+      schemaVersion: 1,
+      skills,
+      instruction: renderOpenWorkConnectSkillInstruction(skills),
     });
   });
 

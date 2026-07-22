@@ -7,6 +7,7 @@
  * that prefix before streaming requests upstream.
  */
 import http from "node:http";
+import type { IncomingMessage, ServerResponse } from "node:http";
 
 const listenPort = Number(process.env.DEN_PROXY_LISTEN_PORT);
 const upstreamPort = Number(process.env.DEN_PROXY_UPSTREAM_PORT);
@@ -15,7 +16,7 @@ const AUTH_DELAY_CONTROL_PATH = "/__openwork_eval/auth-delay";
 const authDelayControlEnabled = process.env.OPENWORK_EVAL_DEN_PROXY_CONTROL === "1";
 let authDelayEnabled = false;
 let authDelayCalls = 0;
-const authDelayWaiters = new Set();
+const authDelayWaiters = new Set<() => void>();
 
 if (!Number.isInteger(listenPort) || listenPort <= 0) {
   console.error("DEN_PROXY_LISTEN_PORT must be a positive integer.");
@@ -27,7 +28,7 @@ if (!Number.isInteger(upstreamPort) || upstreamPort <= 0) {
   process.exit(1);
 }
 
-function rewritePath(rawUrl) {
+function rewritePath(rawUrl: string | undefined): string {
   const url = new URL(rawUrl ?? "/", "http://127.0.0.1");
   if (url.pathname === DEN_PREFIX || url.pathname.startsWith(`${DEN_PREFIX}/`)) {
     return `${url.pathname.slice(DEN_PREFIX.length) || "/"}${url.search}`;
@@ -35,25 +36,25 @@ function rewritePath(rawUrl) {
   return `${url.pathname}${url.search}`;
 }
 
-function writeJson(res, status, body) {
+function writeJson(res: ServerResponse, status: number, body: Record<string, unknown>): void {
   res.writeHead(status, { "content-type": "application/json; charset=utf-8" });
   res.end(`${JSON.stringify(body)}\n`);
 }
 
-function releaseAuthDelay() {
+function releaseAuthDelay(): void {
   authDelayEnabled = false;
   const waiters = [...authDelayWaiters];
   authDelayWaiters.clear();
   for (const resolve of waiters) resolve();
 }
 
-function isSessionValidation(rawUrl, method) {
+function isSessionValidation(rawUrl: string | undefined, method: string | undefined): boolean {
   if (method !== "GET") return false;
   const pathname = new URL(rawUrl ?? "/", "http://127.0.0.1").pathname;
   return pathname === "/v1/me" || pathname === `${DEN_PREFIX}/v1/me`;
 }
 
-const server = http.createServer(async (req, res) => {
+const server = http.createServer(async (req: IncomingMessage, res: ServerResponse) => {
   const requestUrl = new URL(req.url ?? "/", "http://127.0.0.1");
   if (requestUrl.pathname === AUTH_DELAY_CONTROL_PATH) {
     if (!authDelayControlEnabled) {
@@ -79,7 +80,7 @@ const server = http.createServer(async (req, res) => {
 
   if (authDelayControlEnabled && authDelayEnabled && isSessionValidation(req.url, req.method)) {
     authDelayCalls += 1;
-    await new Promise((resolve) => authDelayWaiters.add(resolve));
+    await new Promise<void>((resolve) => authDelayWaiters.add(resolve));
   }
 
   const upstreamReq = http.request({

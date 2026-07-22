@@ -2302,6 +2302,9 @@ async function createMainWindow() {
   return mainWindow;
 }
 
+ipcMain.on("openwork:desktop-bootstrap-sync", (event) => {
+  event.returnValue = workspaceStore.readDesktopBootstrapConfigSync();
+});
 ipcMain.handle("openwork:desktop", handleDesktopInvoke);
 ipcMain.handle("openwork:shell:openExternal", async (_event, url) => {
   if (typeof url !== "string" || url.trim().length === 0) {

@@ -231,7 +231,7 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
   const pinControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "session.pin",
     label: "Pin or unpin a session",
-    description: "Toggle pin on a session. Pinned sessions float to the top of the sidebar.",
+    description: "Toggle pin on a session. Pinned sessions appear in a global section at the top of the sidebar.",
     sideEffect: "mutation",
     requiresArgs: true,
     args: [{ name: "sessionId", type: "string", required: true, description: "Session ID to pin/unpin." }],

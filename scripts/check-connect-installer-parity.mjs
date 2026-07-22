@@ -127,8 +127,8 @@ assert.ok(cloudDocs.includes("https://app.openworklabs.com/api/auth"), "Cloud MC
 assert.ok(cloudDocs.includes("RFC9728"), "Cloud MCP docs are missing RFC9728 discovery guidance");
 assert.ok(cloudDocs.includes("PKCE") && cloudDocs.includes("S256"), "Cloud MCP docs are missing PKCE S256 guidance");
 assert.ok(cloudDocs.includes("OAuth authorize and token requests must include exactly one"), "Cloud MCP docs are missing exact resource guidance");
-assert.ok(cloudDocs.includes("JWTs signed and validated with EdDSA") && cloudDocs.includes("issuer is exactly") && cloudDocs.includes("audience is exactly") && cloudDocs.includes("15 minutes"), "Cloud MCP docs are missing JWT access token contract guidance");
-assert.ok(cloudDocs.includes("Refresh tokens are opaque rotating grants") && cloudDocs.includes("30-day inactivity window"), "Cloud MCP docs are missing refresh grant lifetime guidance");
+assert.ok(cloudDocs.includes("JWTs signed and validated with EdDSA") && cloudDocs.includes("issuer is exactly") && cloudDocs.includes("audience is exactly") && cloudDocs.includes("45 minutes"), "Cloud MCP docs are missing JWT access token contract guidance");
+assert.ok(cloudDocs.includes("Refresh tokens are opaque rotating grants") && cloudDocs.includes("30-day inactivity window") && cloudDocs.includes("30-second rotation overlap") && cloudDocs.includes("a replay during the overlap can issue another successor"), "Cloud MCP docs are missing refresh grant lifetime and overlap guidance");
 assert.ok(cloudDocs.includes("invalid_grant"), "Cloud MCP docs are missing invalid_grant reconnect guidance");
 assert.ok(cloudDocs.includes("Retry-After"), "Cloud MCP docs are missing 429 Retry-After guidance");
 assert.ok(cloudDocs.includes("X-Request-Id") && cloudDocs.includes("referenceId") && cloudDocs.includes("reference_id"), "Cloud MCP docs are missing support reference guidance");

@@ -34,6 +34,7 @@ export type {
 import type {
   BrandIconApplyResult,
   BrandIconState,
+  DesktopBootstrapConfig,
   DesktopCommandArgs,
   DesktopCommandInvokers,
   DesktopCommandName,
@@ -172,6 +173,7 @@ declare global {
         onExit?: (callback: (payload: { terminalId: string; exitCode: number | null; signal?: number }) => void) => () => void;
       };
       meta?: {
+        desktopBootstrap?: DesktopBootstrapConfig | null;
         initialDeepLinks?: string[];
         platform?: "darwin" | "linux" | "windows";
         version?: string;
@@ -467,6 +469,11 @@ export async function subscribeDesktopDeepLinks(
   return () => {
     window.removeEventListener(nativeDeepLinkEvent, listener as EventListener);
   };
+}
+
+export function readInitialDesktopBootstrapConfig(): DesktopBootstrapConfig | null | undefined {
+  if (typeof window === "undefined") return undefined;
+  return window.__OPENWORK_ELECTRON__?.meta?.desktopBootstrap;
 }
 
 // ---------------------------------------------------------------------------

@@ -2,7 +2,7 @@
 // on-disk workspace state, per-workspace openwork.json files, remote workspace
 // normalization/discovery, and the workspace-facing command operations.
 import { createHash, randomBytes } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -331,6 +331,44 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
     }
   }
 
+  function readDesktopBootstrapCandidateSync(candidatePath) {
+    let exists = false;
+    let mtimeMs = 0;
+    try {
+      const stats = statSync(candidatePath);
+      exists = true;
+      mtimeMs = stats.mtimeMs;
+    } catch {
+      // Missing paths are normal; keep the read error below for diagnostics.
+    }
+
+    try {
+      const raw = readFileSync(candidatePath, "utf8");
+      const parsed = JSON.parse(raw);
+      return {
+        ok: true,
+        path: candidatePath,
+        exists: true,
+        raw,
+        parsed,
+        normalized: normalizeDesktopBootstrapConfig(parsed),
+        mtimeMs,
+        error: null,
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        path: candidatePath,
+        exists,
+        raw: null,
+        parsed: null,
+        normalized: null,
+        mtimeMs,
+        error,
+      };
+    }
+  }
+
   async function migrateLegacyDesktopBootstrapConfig(configPath, legacyCandidate) {
     try {
       await mkdir(path.dirname(configPath), { recursive: true });
@@ -428,16 +466,16 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
     if (primary.ok && legacy?.ok) {
       if (compareDesktopBootstrapCandidates(legacy, primary) > 0) {
         await migrateLegacyDesktopBootstrapConfig(configPath, legacy);
-        return legacy.normalized;
+        return { ...legacy.normalized, fromFile: true };
       }
-      return primary.normalized;
+      return { ...primary.normalized, fromFile: true };
     }
 
-    if (primary.ok) return primary.normalized;
+    if (primary.ok) return { ...primary.normalized, fromFile: true };
 
     if (legacy?.ok) {
       await migrateLegacyDesktopBootstrapConfig(configPath, legacy);
-      return legacy.normalized;
+      return { ...legacy.normalized, fromFile: true };
     }
 
     console.warn("[desktop-bootstrap] falling back to defaults", {
@@ -447,6 +485,30 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
     return {
       baseUrl: defaultDenBaseUrl,
       requireSignin: defaultRequireSignin,
+      fromFile: false,
+    };
+  }
+
+  function readDesktopBootstrapConfigSync() {
+    const configPath = desktopBootstrapPath();
+    const primary = readDesktopBootstrapCandidateSync(configPath);
+    const legacyPath = legacyDesktopBootstrapPath();
+    const legacy = legacyPath ? readDesktopBootstrapCandidateSync(legacyPath) : null;
+
+    if (primary.ok && legacy?.ok) {
+      return {
+        ...(compareDesktopBootstrapCandidates(legacy, primary) > 0 ? legacy.normalized : primary.normalized),
+        fromFile: true,
+      };
+    }
+
+    if (primary.ok) return { ...primary.normalized, fromFile: true };
+    if (legacy?.ok) return { ...legacy.normalized, fromFile: true };
+
+    return {
+      baseUrl: defaultDenBaseUrl,
+      requireSignin: defaultRequireSignin,
+      fromFile: false,
     };
   }
 
@@ -1212,6 +1274,7 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
     importBundledDesktopBootstrapConfigIfPreferred,
     listLocalWorkspacePaths,
     migrateLegacyElectronWorkspaceStateIfNeeded,
+    readDesktopBootstrapConfigSync,
     readWorkspaceOpenworkConfig,
     readWorkspaceState,
     resetOpenworkState,

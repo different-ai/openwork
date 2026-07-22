@@ -129,6 +129,7 @@ type WelcomePageProps = {
   onUseManualFolder?: () => void;
   showManualFolder?: boolean;
   onTeamSignIn?: () => void;
+  onJoinOrganization: () => void;
   organizationServerBusy: boolean;
   organizationServerError: string | null;
   organizationServerUrl: string;
@@ -165,6 +166,7 @@ export function WelcomePage({
   onUseManualFolder,
   showManualFolder,
   onTeamSignIn,
+  onJoinOrganization,
   organizationServerBusy,
   organizationServerError,
   organizationServerUrl,
@@ -206,14 +208,43 @@ export function WelcomePage({
                   </OnboardingStep>
                 </div>
 
-                <div className="space-y-2">
+                <div className="flex flex-col gap-2">
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    {onTeamSignIn ? (
+                      <Button
+                        type="button"
+                        size="lg"
+                        className="h-auto min-h-24 flex-col items-start justify-start gap-2 whitespace-normal px-4 py-4 text-left"
+                        onClick={onTeamSignIn}
+                        data-testid="welcome-team-signin"
+                      >
+                        <span>{t("welcome.use_cloud")}</span>
+                        <span className="text-xs font-normal opacity-80">
+                          {t("welcome.use_cloud_subtitle")}
+                        </span>
+                      </Button>
+                    ) : null}
+                    <Button
+                      type="button"
+                      size="lg"
+                      className="h-auto min-h-24 flex-col items-start justify-start gap-2 whitespace-normal px-4 py-4 text-left"
+                      onClick={onJoinOrganization}
+                      data-testid="welcome-join-org"
+                    >
+                      <span>{t("welcome.join_org")}</span>
+                      <span className="text-xs font-normal opacity-80">
+                        {t("welcome.join_org_subtitle")}
+                      </span>
+                    </Button>
+                  </div>
                   <Button
                     size="lg"
+                    variant="outline"
                     className="w-full"
                     onClick={onGetStarted}
                     disabled={busy}
                   >
-                    {busy ? t("welcome.creating_workspace") : (getStartedLabel || t("welcome.get_started"))}
+                    {busy ? t("welcome.creating_workspace") : (getStartedLabel || t("welcome.local_only"))}
                   </Button>
                   <OrganizationServerAffordance
                     busy={organizationServerBusy}
@@ -221,17 +252,6 @@ export function WelcomePage({
                     onSave={onOrganizationServerSave}
                     url={organizationServerUrl}
                   />
-                  {onTeamSignIn ? (
-                    <Button
-                      type="button"
-                      variant="link"
-                      className="h-auto w-full p-0 text-sm text-muted-foreground"
-                      onClick={onTeamSignIn}
-                      data-testid="welcome-team-signin"
-                    >
-                      {t("welcome.team_signin")}
-                    </Button>
-                  ) : null}
                   {error ? (
                     <p className="text-center text-xs text-destructive">{error}</p>
                   ) : null}

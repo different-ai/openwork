@@ -1,22 +1,28 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { EvalContext, EvalError } from "./context.mjs";
+import { EvalContext, EvalError } from "./context.ts";
 
-function createContext(send) {
+function createContext(send: (method: string, params?: Record<string, unknown>) => Promise<unknown>): EvalContext {
   return new EvalContext({
-    client: { send },
+    client: { send, close: () => undefined },
     outDir: "/tmp/openwork-eval-context-test",
     flowId: "context-test",
     env: {},
   });
 }
 
-function evaluated(value) {
+function evaluated(value: unknown): Record<string, unknown> {
   return { result: { value } };
 }
 
-function evaluateInPage(expression, window) {
+function expressionFromParams(params: Record<string, unknown> | undefined): string {
+  assert(params);
+  if (typeof params.expression !== "string") throw new Error("Expected expression param.");
+  return params.expression;
+}
+
+function evaluateInPage(expression: string, window: Record<string, unknown>): unknown {
   return Function("window", `return ${expression}`)(window);
 }
 
@@ -25,9 +31,10 @@ test("waitForRoute prefers the canonical control route immediately", async () =>
   const ctx = createContext(async (method, params) => {
     calls += 1;
     assert.equal(method, "Runtime.evaluate");
-    assert.match(params.expression, /__openworkControl/);
-    assert.match(params.expression, /location\.hash/);
-    return evaluated(evaluateInPage(params.expression, {
+    const expression = expressionFromParams(params);
+    assert.match(expression, /__openworkControl/);
+    assert.match(expression, /location\.hash/);
+    return evaluated(evaluateInPage(expression, {
       __openworkControl: { snapshot: () => ({ route: "/settings/general" }) },
       location: { hash: "#/settings/advanced", pathname: "/" },
     }));
@@ -38,7 +45,7 @@ test("waitForRoute prefers the canonical control route immediately", async () =>
 });
 
 test("waitForRoute falls back to the Electron URL hash", async () => {
-  const ctx = createContext(async (_method, params) => evaluated(evaluateInPage(params.expression, {
+  const ctx = createContext(async (_method, params) => evaluated(evaluateInPage(expressionFromParams(params), {
     location: { hash: "#/settings/general", pathname: "/" },
   })));
 

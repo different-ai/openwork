@@ -18,7 +18,7 @@ if (!destructure?.[1]) {
 }
 
 const clientOnlyBridgeMethods = new Set([
-  // Pure helper implemented in apps/app/src/app/lib/desktop-tauri.ts and
+  // Pure helper implemented in apps/app/src/app/lib/desktop.ts and
   // intentionally satisfied inside the renderer proxy, not over Electron IPC.
   "resolveWorkspaceListSelectedId",
 ]);

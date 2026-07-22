@@ -161,6 +161,7 @@ export type DesktopBootstrapConfig = {
   brandLogoUrl?: string | null;
   brandIconUrl?: string | null;
   writtenAt?: string | null;
+  fromFile?: boolean;
   claimLinks?: Array<{
     id: string;
     role: string;

@@ -40,6 +40,7 @@ describe("desktop Den bootstrap settings", () => {
   let bootstrapConfig: {
     baseUrl: string;
     requireSignin: boolean;
+    fromFile?: boolean;
     writtenAt?: string;
     claimLinks?: Array<{ id: string; role: string; url: string; expiresAt: string }>;
     prepared?: {
@@ -123,6 +124,44 @@ describe("desktop Den bootstrap settings", () => {
 
     expect(readDenBootstrapConfig().prepared?.orgName).toBe("Different AI");
     expect(readDenBootstrapConfig().claimLinks?.[0]?.role).toBe("owner");
+  });
+
+  test("threads desktop bootstrap file origin into the shared bootstrap snapshot", async () => {
+    bootstrapConfig.fromFile = true;
+
+    await initializeDenBootstrapConfig();
+
+    expect(readDenBootstrapConfig().source).toBe("file");
+  });
+
+  test("uses preload desktop bootstrap before async desktop IPC", async () => {
+    let ipcReads = 0;
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: {
+        localStorage: memoryStorage(),
+        dispatchEvent: () => true,
+        __OPENWORK_ELECTRON__: {
+          meta: {
+            desktopBootstrap: {
+              baseUrl: "https://preload.example.com",
+              requireSignin: true,
+              fromFile: true,
+            },
+          },
+          invokeDesktop: async (command: string) => {
+            if (command === "getDesktopBootstrapConfig") ipcReads += 1;
+            throw new Error(`Unexpected desktop command: ${command}`);
+          },
+        },
+      },
+    });
+
+    await initializeDenBootstrapConfig();
+
+    expect(readDenBootstrapConfig().baseUrl).toBe("https://preload.example.com");
+    expect(readDenBootstrapConfig().source).toBe("file");
+    expect(ipcReads).toBe(0);
   });
 
   test("saves base URL changes to bootstrap and clears legacy endpoint storage", async () => {

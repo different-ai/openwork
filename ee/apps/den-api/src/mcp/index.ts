@@ -49,7 +49,7 @@ export function protectedResourceMetadata(request: Request, route: "mcp" | "agen
     // The MCP SDK uses protected-resource scopes for both dynamic client
     // registration and the authorization request. Advertising offline access
     // lets it explicitly request a rotating refresh grant (and prompt for
-    // consent) instead of falling back to browser auth every 15 minutes.
+    // consent) instead of falling back to browser auth every 45 minutes.
     scopes_supported: [...DEN_MCP_REQUESTED_SCOPES],
     bearer_methods_supported: ["header"],
   }

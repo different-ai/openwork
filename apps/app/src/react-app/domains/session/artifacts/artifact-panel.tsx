@@ -22,6 +22,16 @@ const ArtifactSpreadsheetEditor = lazy(() =>
 );
 
 const EMPTY_TRANSCRIPT_TARGETS: OpenTarget[] = [];
+const MARKDOWN_PRIMITIVE_EVAL_ARTIFACT_PATH = "artifacts/markdown-primitive-proof.md";
+const MARKDOWN_PRIMITIVE_EVAL_ARTIFACT_NAME = "markdown-primitive-proof.md";
+
+function isMarkdownPrimitiveEvalArtifact(target: OpenTarget) {
+  return import.meta.env.DEV &&
+    target.kind === "file" &&
+    target.reason === "eval" &&
+    target.value === MARKDOWN_PRIMITIVE_EVAL_ARTIFACT_PATH &&
+    target.name === MARKDOWN_PRIMITIVE_EVAL_ARTIFACT_NAME;
+}
 
 type ArtifactPanelProps = {
   sessionId: string;
@@ -84,7 +94,7 @@ function ArtifactPanelView({ client, workspaceId, workspaceRoot, isRemoteWorkspa
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
-  const isDirectTextEdit = isTextContent(target) && target.preview === "markdown";
+  const isDirectTextEdit = isTextContent(target) && target.preview === "markdown" && !isMarkdownPrimitiveEvalArtifact(target);
   const externalPath = useMemo(() => target.kind === "file" ? absoluteWorkspacePath(workspaceRoot, target.value) : target.value, [target.kind, target.value, workspaceRoot]);
 
   const { data: fileIcon } = useQuery<string | null>({

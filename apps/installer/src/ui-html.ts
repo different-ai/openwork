@@ -41,8 +41,8 @@ export function renderInstallerHtml(resolution: InstallerConfigResolution | null
   <div class="status" id="status"></div>`
     : `
   <div class="logo">${OPENWORK_LOGO_SVG}</div>
-  <div class="title">Paste your OpenWork install link</div>
-  <div class="client">Your organization admin can copy this link from the Members page.</div>
+  <div class="title">Paste your install link</div>
+  <div class="client">It's in the copy box on your team's install page — the tab you downloaded this from. Your organization admin can also copy it from the Members page.</div>
   <form class="paste" id="paste-form">
     <input id="install-link" type="url" placeholder="https://.../install?token=..." autocomplete="off" required />
     <button class="primary" id="continue" type="submit">Continue</button>

@@ -158,7 +158,7 @@ function workspaceDirectory(workspace: WorkspaceInfo, resolveOpencodeDirectory?:
   return resolveOpencodeDirectory?.(workspace) ?? (workspace.workspaceType === "local" ? workspace.path : workspace.directory ?? null);
 }
 
-function resolveConnectWorkspace(config: ServerConfig, options: ConnectSnapshotOptions): { workspace: WorkspaceInfo; directory: string | null } | { resolution: "unknown" | "ambiguous"; directory: string | null; reason: string } {
+export function resolveConnectWorkspace(config: ServerConfig, options: ConnectSnapshotOptions): { workspace: WorkspaceInfo; directory: string | null } | { resolution: "unknown" | "ambiguous"; directory: string | null; reason: string } {
   const workspaceId = options.workspaceId?.trim();
   const requestedDirectory = options.directory?.trim();
   if (workspaceId) {

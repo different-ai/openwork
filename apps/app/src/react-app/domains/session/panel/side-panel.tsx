@@ -58,6 +58,15 @@ if (import.meta.hot) {
   });
 }
 
+const MARKDOWN_PRIMITIVE_ARTIFACT_CONTENT = `# Artifact Markdown Proof
+
+The artifact preview keeps **outside-chat Markdown** readable with inline \`surface renderer\`, a fenced code block, and [OpenWork](https://openworklabs.com).
+
+\`\`\`ts
+const surface = "shared markdown primitive";
+console.log(surface);
+\`\`\``;
+
 type SidePanelTabProps = {
   tab: PanelTabEntry;
   active: boolean;
@@ -467,6 +476,48 @@ export function SidePanel({
     };
   }, [client, sessionId, workspaceId]);
   useControlAction(seedArtifactOverflowControlAction);
+
+  const seedMarkdownPrimitiveArtifactControlAction = React.useMemo<OpenworkControlAction | null>(() => {
+    if (!import.meta.env.DEV) return null;
+
+    return {
+      id: "eval.markdown_primitive.seed_artifact",
+      label: "Seed markdown primitive artifact proof",
+      description: "Create a deterministic markdown artifact and open it in the preview panel.",
+      sideEffect: "mutation",
+      disabled: !client || !workspaceId,
+      execute: async () => {
+        if (!client || !workspaceId) return { ok: false, error: "Workspace client is not ready." };
+
+        const value = "artifacts/markdown-primitive-proof.md";
+        await client.writeWorkspaceFile(workspaceId, {
+          path: value,
+          content: MARKDOWN_PRIMITIVE_ARTIFACT_CONTENT,
+          baseUpdatedAt: null,
+        });
+
+        const target: OpenTarget = {
+          id: `file:${value}`,
+          kind: "file",
+          value,
+          name: "markdown-primitive-proof.md",
+          preview: "markdown",
+          confidence: 100,
+          reason: "eval",
+          exists: true,
+          size: MARKDOWN_PRIMITIVE_ARTIFACT_CONTENT.length,
+        };
+
+        const store = usePanelTabStore.getState();
+        store.syncTranscriptArtifacts(sessionId, [target]);
+        store.openTab(sessionId, { id: target.id, type: "artifact", label: target.name, preview: target.preview });
+        store.selectTab(sessionId, target.id);
+
+        return { ok: true, activeTabId: target.id, path: value };
+      },
+    };
+  }, [client, sessionId, workspaceId]);
+  useControlAction(seedMarkdownPrimitiveArtifactControlAction);
 
   const seedPdfArtifactControlAction = React.useMemo<OpenworkControlAction | null>(() => {
     if (!import.meta.env.DEV) return null;

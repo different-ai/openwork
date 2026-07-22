@@ -28,6 +28,7 @@ import {
   markOpenWorkModelsStartupPromoShown,
 } from "../domains/cloud/openwork-models-promo";
 import { useDenAuth } from "../domains/cloud/den-auth-provider";
+import { JoinOrganizationDialog } from "../domains/cloud/join-organization-dialog";
 import { resolveOpenworkConnection } from "./openwork-connection";
 import { captureAnalyticsEvent } from "../../app/lib/analytics";
 import { buildOpenworkWorkspaceBaseUrl, createOpenworkServerClient } from "../../app/lib/openwork-server";
@@ -134,6 +135,7 @@ export function WelcomeRoute() {
   const [organizationServerUrl, setOrganizationServerUrl] = useState(() => readDenSettings().baseUrl);
   const [organizationServerBusy, setOrganizationServerBusy] = useState(false);
   const [organizationServerError, setOrganizationServerError] = useState<string | null>(null);
+  const [joinOrganizationOpen, setJoinOrganizationOpen] = useState(false);
   const showOpenWorkModelsPromo = useOpenWorkModelsPromoEligibility();
 
   // If user already completed onboarding, redirect away immediately.
@@ -358,9 +360,10 @@ export function WelcomeRoute() {
   }, [handleCreateWorkspace, manualFolder]);
 
   const handleTeamSignIn = useCallback(() => {
+    markOnboardingComplete();
     const settings = readDenSettings();
     platform.openLink(buildDenAuthUrl(settings.baseUrl || DEFAULT_DEN_BASE_URL, "sign-in"));
-  }, [platform]);
+  }, [markOnboardingComplete, platform]);
 
   const finishOnboarding = useCallback(() => {
     markOnboardingComplete();
@@ -391,7 +394,7 @@ export function WelcomeRoute() {
     <>
       <WelcomePage
         onGetStarted={handleGetStarted}
-        getStartedLabel={t("welcome.pick_folder")}
+        getStartedLabel={t("welcome.local_only")}
         busy={state.createBusy}
         error={state.createError}
         manualFolder={manualFolder}
@@ -399,10 +402,19 @@ export function WelcomeRoute() {
         onUseManualFolder={handleUseManualFolder}
         showManualFolder={import.meta.env.DEV && isDesktopRuntime()}
         onTeamSignIn={handleTeamSignIn}
+        onJoinOrganization={() => setJoinOrganizationOpen(true)}
         organizationServerBusy={organizationServerBusy}
         organizationServerError={organizationServerError}
         organizationServerUrl={organizationServerUrl}
         onOrganizationServerSave={handleOrganizationServerSave}
+      />
+      <JoinOrganizationDialog
+        open={joinOrganizationOpen}
+        onOpenChange={setJoinOrganizationOpen}
+        onConnected={() => {
+          markOnboardingComplete();
+          setJoinOrganizationOpen(false);
+        }}
       />
       <CreateWorkspaceModal
         open={state.modalOpen}

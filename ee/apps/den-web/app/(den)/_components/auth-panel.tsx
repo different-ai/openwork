@@ -8,6 +8,7 @@ import { isSamePathname } from "../_lib/client-route";
 import { getDesktopGrant } from "../_lib/desktop-handoff";
 import { getErrorMessage, getSocialCallbackUrl, requestJson, type AuthMode } from "../_lib/den-flow";
 import { getMcpOAuthSelectOrganizationRoute } from "../_lib/mcp-oauth-route";
+import { useDesktopHandoffStatus } from "../_lib/use-desktop-handoff-status";
 import { useDenFlow } from "../_providers/den-flow-provider";
 
 type PanelContent = {
@@ -88,6 +89,78 @@ function SocialButton({
   );
 }
 
+function DesktopHandoffAction({
+  openworkUrl,
+  grant,
+  organizationName,
+  helperText,
+  buttonClassName = "den-button-primary w-full",
+}: {
+  openworkUrl: string;
+  grant: string | null;
+  organizationName: string | null;
+  helperText?: string;
+  buttonClassName?: string;
+}) {
+  const { status, timedOut } = useDesktopHandoffStatus(grant);
+  const [copied, setCopied] = useState(false);
+  const resolvedOrganizationName = organizationName?.trim() || "your team";
+
+  async function copyOpenworkUrl() {
+    await navigator.clipboard.writeText(openworkUrl);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1800);
+  }
+
+  if (status === "consumed") {
+    return (
+      <div className="den-frame-inset rounded-[1.5rem] px-4 py-3 text-center text-sm font-medium text-emerald-700" data-testid="desktop-connected" aria-live="polite">
+        ✓ Connected — OpenWork is set up for {resolvedOrganizationName}
+      </div>
+    );
+  }
+
+  if (timedOut || status === "unknown") {
+    return (
+      <div className="den-frame-inset grid gap-3 rounded-[1.5rem] px-4 py-3 text-sm text-[var(--dls-text-secondary)]" data-testid="desktop-handoff-troubleshoot" aria-live="polite">
+        <p className="m-0">
+          Nothing opened?{" "}
+          <button type="button" className="font-medium text-[var(--dls-text-primary)] underline-offset-4 hover:underline" onClick={() => window.location.assign(openworkUrl)}>
+            Open OpenWork again
+          </button>
+        </p>
+        <div className="grid gap-2">
+          <p className="m-0">Still stuck? Paste this sign-in code in OpenWork:</p>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <input className="den-input min-w-0 flex-1 text-xs" value={openworkUrl} readOnly onFocus={(event) => event.currentTarget.select()} />
+            <button type="button" className="den-button-secondary sm:w-auto" onClick={() => void copyOpenworkUrl()}>
+              {copied ? "Copied" : "Copy"}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid gap-3">
+      <button
+        type="button"
+        className={buttonClassName}
+        onClick={() => window.location.assign(openworkUrl)}
+      >
+        Open OpenWork
+        <ArrowRight className="h-4 w-4" />
+      </button>
+      {helperText ? (
+        <p className="m-0 text-center text-xs text-[var(--dls-text-secondary)]">
+          {helperText}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 export function AuthPanel({
   prefilledEmail,
   prefillKey,
@@ -123,7 +196,6 @@ export function AuthPanel({
   const router = useRouter();
   const pathname = usePathname();
   const prefillRef = useRef<string | null>(null);
-  const [copiedDesktopField, setCopiedDesktopField] = useState<"link" | "code" | null>(null);
   const [passwordResetRequested, setPasswordResetRequested] = useState(false);
   const [passwordResetBusy, setPasswordResetBusy] = useState(false);
   const [passwordResetInfo, setPasswordResetInfo] = useState("");
@@ -307,15 +379,6 @@ export function AuthPanel({
     setAuthMode(mode);
   };
 
-  const copyDesktopValue = async (field: "link" | "code", value: string | null) => {
-    if (!value) return;
-    await navigator.clipboard.writeText(value);
-    setCopiedDesktopField(field);
-    window.setTimeout(() => {
-      setCopiedDesktopField((current) => (current === field ? null : current));
-    }, 1800);
-  };
-
   const startSingleOrgSso = () => {
     if (!singleOrgSlug) return;
     const nextUrl = new URL(`/sso/${encodeURIComponent(singleOrgSlug)}`, window.location.origin);
@@ -445,38 +508,11 @@ export function AuthPanel({
           </div>
         </div>
 
-        <button
-          type="button"
-          className="den-button-primary w-full"
-          onClick={() => window.location.assign(desktopRedirectUrl)}
-        >
-          Open OpenWork
-          <ArrowRight className="h-4 w-4" />
-        </button>
-
-        <div className="grid gap-2 text-center">
-          <p className="m-0 text-xs text-[var(--dls-text-secondary)]">
-            App didn&apos;t open?
-          </p>
-          <div className="flex justify-center gap-3">
-            <button
-              type="button"
-              className="den-button-secondary"
-              onClick={() => void copyDesktopValue("link", desktopRedirectUrl)}
-            >
-              {copiedDesktopField === "link" ? "Copied!" : "Copy sign-in link"}
-            </button>
-            {desktopGrant ? (
-              <button
-                type="button"
-                className="den-button-secondary"
-                onClick={() => void copyDesktopValue("code", desktopGrant)}
-              >
-                {copiedDesktopField === "code" ? "Copied!" : "Copy code"}
-              </button>
-            ) : null}
-          </div>
-        </div>
+        <DesktopHandoffAction
+          openworkUrl={desktopRedirectUrl}
+          grant={desktopGrant}
+          organizationName={isSingleOrgMode ? singleOrgName : null}
+        />
 
         <div className="border-t border-[var(--dls-border)] pt-4 text-center">
           <button
@@ -506,19 +542,12 @@ export function AuthPanel({
         </div>
 
         {desktopAuthRequested && desktopRedirectUrl ? (
-          <div className="grid gap-3">
-            <button
-              type="button"
-              className="den-button-primary w-full"
-              onClick={() => window.location.assign(desktopRedirectUrl)}
-            >
-              Open OpenWork
-              <ArrowRight className="h-4 w-4" />
-            </button>
-            <p className="m-0 text-center text-xs text-[var(--dls-text-secondary)]">
-              Sign in below, then click above to return to the app.
-            </p>
-          </div>
+          <DesktopHandoffAction
+            openworkUrl={desktopRedirectUrl}
+            grant={desktopGrant}
+            organizationName={isSingleOrgMode ? singleOrgName : null}
+            helperText="Sign in below, then click above to return to the app."
+          />
         ) : null}
 
         {emailFirstStep === "email" ? (
@@ -732,19 +761,12 @@ export function AuthPanel({
       ) : null}
 
       {desktopAuthRequested && desktopRedirectUrl ? (
-        <div className="grid gap-3">
-          <button
-            type="button"
-            className="den-button-primary w-full"
-            onClick={() => window.location.assign(desktopRedirectUrl)}
-          >
-            Open OpenWork
-            <ArrowRight className="h-4 w-4" />
-          </button>
-          <p className="m-0 text-center text-xs text-[var(--dls-text-secondary)]">
-            Sign in below, then click above to return to the app.
-          </p>
-        </div>
+        <DesktopHandoffAction
+          openworkUrl={desktopRedirectUrl}
+          grant={desktopGrant}
+          organizationName={isSingleOrgMode ? singleOrgName : null}
+          helperText="Sign in below, then click above to return to the app."
+        />
       ) : null}
 
       <form

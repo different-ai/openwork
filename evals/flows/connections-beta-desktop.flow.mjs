@@ -249,7 +249,7 @@ async function readExtensionsMarketplaceState(ctx, name) {
 
 export default {
   id: "connections-beta-desktop",
-  title: "Desktop Connect: alpha org connections appear only in Connect",
+  title: "Desktop Connect: beta org connections appear only in Connect",
   kind: "user-facing",
   spec: "evals/voiceovers/connections-beta-desktop.md",
   requiredEnv: ["OPENWORK_EVAL_DEN_API_URL"],
