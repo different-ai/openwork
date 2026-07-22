@@ -120,8 +120,8 @@ function DownloadLink({
       onClick={onDownload}
       className={
         recommended
-          ? "inline-flex items-center gap-2 rounded-lg border border-[#07192C] bg-[#07192C] px-3 py-2 text-[12px] font-medium text-white transition-colors hover:border-[#12283F] hover:bg-[#12283F]"
-          : "inline-flex items-center gap-2 rounded-lg border border-[#DFE5EE] bg-[#F8FAFC] px-3 py-2 text-[12px] font-medium text-[#1C2B44] transition-colors hover:border-[#C9D5E7] hover:bg-[#EEF4FC]"
+          ? "inline-flex items-center gap-2 whitespace-nowrap rounded-lg border border-[#07192C] bg-[#07192C] px-3 py-2 text-[12px] font-medium text-white transition-colors hover:border-[#12283F] hover:bg-[#12283F]"
+          : "inline-flex items-center gap-2 whitespace-nowrap rounded-lg border border-[#DFE5EE] bg-[#F8FAFC] px-3 py-2 text-[12px] font-medium text-[#1C2B44] transition-colors hover:border-[#C9D5E7] hover:bg-[#EEF4FC]"
       }
     >
       <DownloadIcon className={`h-3 w-3 shrink-0 ${recommended ? "text-white/70" : "text-[#5A6886]"}`} />
@@ -180,7 +180,7 @@ function DownloadPlatformGridContent({
   onDownload?: (option: DownloadPlatformOption) => void
 }) {
   return (
-    <div className="grid gap-px border-t border-[#E9EDF3] bg-[#E9EDF3] sm:grid-cols-3">
+    <div className="grid gap-px border-t border-[#E9EDF3] bg-[#E9EDF3] lg:grid-cols-3">
       {groups.map((group) => (
         <DownloadColumn key={group.os} os={group.os} title={group.title} detectedLabel={getDetectedLabel(detected, group.os)}>
           {group.options.map((option) => (
