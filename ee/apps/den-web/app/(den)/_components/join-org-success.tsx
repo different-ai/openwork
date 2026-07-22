@@ -1,18 +1,81 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import {
+  getDesktopHandoffGrant,
+  getDesktopHandoffOpenworkUrl,
+  rememberDesktopHandoffGrant,
+} from "../_lib/desktop-handoff";
 import { getErrorMessage, requestJson } from "../_lib/den-flow";
 import { createOrganizationInstallLink } from "../_lib/install-link-data";
 import { isMobileUserAgent } from "../_lib/platform";
+import { useDesktopHandoffStatus } from "../_lib/use-desktop-handoff-status";
 import { OnboardingShell } from "./onboarding-shell";
 import { OrganizationBrandIdentity, type OrganizationBrand } from "./organization-brand-identity";
 
 const OPENWORK_DOWNLOAD_URL = "https://openworklabs.com/download";
 
+function ReturnToOpenWorkStatus({
+  openworkUrl,
+  grant,
+  organizationName,
+}: {
+  openworkUrl: string;
+  grant: string | null;
+  organizationName: string;
+}) {
+  const { status, timedOut } = useDesktopHandoffStatus(grant);
+  const [copied, setCopied] = useState(false);
+
+  async function copyOpenworkUrl() {
+    await navigator.clipboard.writeText(openworkUrl);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1800);
+  }
+
+  if (status === "consumed") {
+    return (
+      <div className="rounded-2xl bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700" data-testid="desktop-connected" aria-live="polite">
+        Connected — {organizationName} is ready in OpenWork.
+      </div>
+    );
+  }
+
+  if (timedOut || status === "unknown") {
+    return (
+      <div className="grid gap-3 rounded-2xl bg-slate-50 p-4 text-sm text-slate-600" data-testid="desktop-handoff-troubleshoot" aria-live="polite">
+        <p className="m-0">
+          Nothing opened?{" "}
+          <button type="button" className="font-medium text-slate-950 underline-offset-4 hover:underline" onClick={() => window.location.assign(openworkUrl)}>
+            Return to OpenWork again
+          </button>
+        </p>
+        <div className="grid gap-2">
+          <p className="m-0">Still stuck? Copy this sign-in link into OpenWork:</p>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <input className="den-input min-w-0 flex-1 text-xs" value={openworkUrl} readOnly onFocus={(event) => event.currentTarget.select()} />
+            <button type="button" className="den-button-secondary sm:w-auto" onClick={() => void copyOpenworkUrl()}>
+              {copied ? "Copied" : "Copy link"}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <p className="m-0 text-sm text-slate-500" aria-live="polite">
+      Returning to OpenWork…
+    </p>
+  );
+}
+
 type JoinOrgSuccessProps = {
   organizationId: string;
   organizationName: string;
   brand: OrganizationBrand;
+  desktopAuthRequested: boolean;
+  desktopAuthScheme: string;
   onContinueInBrowser: () => void;
 };
 
@@ -20,6 +83,8 @@ export function JoinOrgSuccess({
   organizationId,
   organizationName,
   brand,
+  desktopAuthRequested,
+  desktopAuthScheme,
   onContinueInBrowser,
 }: JoinOrgSuccessProps) {
   const [isMobile, setIsMobile] = useState<boolean | null>(null);
@@ -27,6 +92,9 @@ export function JoinOrgSuccess({
   const [emailBusy, setEmailBusy] = useState(false);
   const [emailSent, setEmailSent] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [handoffBusy, setHandoffBusy] = useState(false);
+  const [desktopOpenworkUrl, setDesktopOpenworkUrl] = useState<string | null>(null);
+  const [desktopGrant, setDesktopGrant] = useState<string | null>(null);
 
   useEffect(() => {
     setIsMobile(isMobileUserAgent());
@@ -42,6 +110,39 @@ export function JoinOrgSuccess({
       setActionError(error instanceof Error ? error.message : "Could not prepare your download.");
     } finally {
       setInstallBusy(false);
+    }
+  }
+
+  async function handleReturnToOpenWork() {
+    setHandoffBusy(true);
+    setActionError(null);
+
+    try {
+      const { response, payload } = await requestJson(
+        "/v1/auth/desktop-handoff",
+        { method: "POST", body: JSON.stringify({ desktopScheme: desktopAuthScheme }) },
+        12000,
+      );
+      if (!response.ok) {
+        setActionError(getErrorMessage(payload, `Could not return to OpenWork (${response.status}).`));
+        return;
+      }
+
+      const openworkUrl = getDesktopHandoffOpenworkUrl(payload);
+      if (!openworkUrl) {
+        setActionError("OpenWork sign-in was prepared, but no app link was returned.");
+        return;
+      }
+
+      const grant = getDesktopHandoffGrant(payload, openworkUrl);
+      rememberDesktopHandoffGrant(grant);
+      setDesktopOpenworkUrl(openworkUrl);
+      setDesktopGrant(grant);
+      window.location.assign(openworkUrl);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Could not return to OpenWork.");
+    } finally {
+      setHandoffBusy(false);
     }
   }
 
@@ -74,7 +175,9 @@ export function JoinOrgSuccess({
               &apos;s {brand.appName}
             </h1>
             <p className="m-0 max-w-2xl text-sm leading-6 text-slate-600">
-              The desktop app is where OpenWork runs on your computer and puts your team&apos;s setup to work.
+              {desktopAuthRequested
+                ? "Your team setup is ready. Return to OpenWork to continue where you left off."
+                : "The desktop app is where OpenWork runs on your computer and puts your team's setup to work."}
             </p>
           </div>
 
@@ -99,6 +202,20 @@ export function JoinOrgSuccess({
               </button>
               {emailSent ? <div className="den-notice is-info">Sent — check your inbox when you&apos;re back at your desk.</div> : null}
             </div>
+          ) : desktopAuthRequested ? (
+            desktopOpenworkUrl ? (
+              <ReturnToOpenWorkStatus openworkUrl={desktopOpenworkUrl} grant={desktopGrant} organizationName={organizationName} />
+            ) : (
+              <button
+                type="button"
+                className="den-button-primary w-full sm:w-fit"
+                onClick={() => void handleReturnToOpenWork()}
+                disabled={handoffBusy}
+                data-testid="join-org-return-openwork"
+              >
+                {handoffBusy ? "Returning to OpenWork..." : "Return to OpenWork"}
+              </button>
+            )
           ) : (
             <button
               type="button"
@@ -123,9 +240,11 @@ export function JoinOrgSuccess({
           {actionError ? (
             <div className="grid gap-3">
               <div className="den-notice is-error">{actionError}</div>
-              <a href={OPENWORK_DOWNLOAD_URL} className="den-button-secondary w-full sm:w-fit">
-                Open the public download page
-              </a>
+              {desktopAuthRequested ? null : (
+                <a href={OPENWORK_DOWNLOAD_URL} className="den-button-secondary w-full sm:w-fit">
+                  Open the public download page
+                </a>
+              )}
             </div>
           ) : null}
         </div>

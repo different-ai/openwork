@@ -26,6 +26,21 @@ async function openInstallPage(ctx) {
   });
 }
 
+async function redactInstallLinkForEvidence(ctx) {
+  const redacted = await ctx.eval(`(() => {
+    const input = [...document.querySelectorAll('input[readonly]')]
+      .find((entry) => entry instanceof HTMLInputElement && entry.value.includes('/install?token='));
+    if (!(input instanceof HTMLInputElement)) return false;
+    const value = new URL(input.value);
+    value.searchParams.set('token', 'REDACTED');
+    const descriptor = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+    descriptor?.set?.call(input, value.toString());
+    input.setAttribute('value', value.toString());
+    return true;
+  })()`);
+  ctx.assert(redacted, "The guided install token is redacted in screenshot evidence.");
+}
+
 export default {
   id: "install-download-feedback",
   title: "Installer downloads stay clear while the bundle is prepared",
@@ -51,6 +66,7 @@ export default {
               return { cardCenter: card.left + card.width / 2, viewportCenter: document.documentElement.clientWidth / 2 };
             })()`);
             ctx.assert(geometry && Math.abs(geometry.cardCenter - geometry.viewportCenter) < 4, `Install card was not centered: ${JSON.stringify(geometry)}`);
+            await redactInstallLinkForEvidence(ctx);
           },
           screenshot: { name: "frame-1-centered-install-card", sandboxCapture: true, textTargetUrlIncludes: "/install?token=", requireText: [`Download OpenWork for ${ORG_NAME}`] },
         });
@@ -69,6 +85,7 @@ export default {
             ctx.assert(!text.includes(`Team · ${ORG_NAME}`), "The redundant team footer is still visible.");
             const metaRows = await ctx.eval("document.querySelectorAll('.den-meta-row').length");
             ctx.assert(metaRows === 0, `Found ${metaRows} metadata rows.`);
+            await redactInstallLinkForEvidence(ctx);
           },
           screenshot: { name: "frame-2-focused-installer-choices", sandboxCapture: true, textTargetUrlIncludes: "/install?token=", requireText: ["Apple Silicon (M1+)", "Windows", "Setup script (ARM64)"], rejectText: [`Team · ${ORG_NAME}`] },
         });
@@ -90,6 +107,7 @@ export default {
           assert: async () => {
             const text = await ctx.eval("document.querySelector('[data-testid=install-download-status]')?.textContent ?? ''");
             ctx.assert(text.includes("The first download may take up to a minute"), `Preparation guidance was missing: ${text}`);
+            await redactInstallLinkForEvidence(ctx);
           },
           screenshot: { name: "frame-3-preparing-download", sandboxCapture: true, textTargetUrlIncludes: "/install?token=", requireText: ["Preparing your", "The first download may take up to a minute"] },
         });
@@ -106,6 +124,7 @@ export default {
           assert: async () => {
             const text = await ctx.eval("document.querySelector('[data-testid=install-download-status]')?.textContent ?? ''");
             ctx.assert(text.includes("Try again"), `Retry action was missing: ${text}`);
+            await redactInstallLinkForEvidence(ctx);
           },
           screenshot: { name: "frame-4-download-started", sandboxCapture: true, textTargetUrlIncludes: "/install?token=", requireText: ["Download started", "Try again"] },
         });

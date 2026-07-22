@@ -8,7 +8,7 @@ const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
 const widthClasses = {
   compact: "max-w-md",
   wide: "max-w-3xl",
-  full: "max-w-6xl",
+  full: "max-w-5xl",
 } as const;
 
 function subscribeToReducedMotion(onStoreChange: () => void) {

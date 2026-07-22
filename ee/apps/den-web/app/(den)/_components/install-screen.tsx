@@ -282,7 +282,7 @@ export function InstallScreen() {
       <section data-testid="install-page">
         <div className="grid gap-6 rounded-[1.75rem] border border-slate-200/80 bg-white p-5 text-center sm:p-6 md:p-8" data-testid="install-card">
           <div className="grid justify-items-center gap-3">
-            <h1 className="den-title-xl">
+            <h1 className="m-0 max-w-[22ch] text-balance text-[2rem] font-semibold leading-[1.04] tracking-[-0.05em] text-slate-950 sm:text-[2.4rem]">
               Download OpenWork for{" "}
               <OrganizationBrandIdentity
                 organizationName={config.clientName}

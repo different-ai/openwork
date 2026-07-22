@@ -166,6 +166,8 @@ describe("join organization invite clean layout contract", () => {
     const identitySource = readFileSync(brandIdentityPath, "utf8");
 
     expect(successSource).toContain("Get the desktop app");
+    expect(successSource).toContain("Return to OpenWork");
+    expect(successSource).toContain("desktopAuthRequested");
     expect(successSource).toContain("Continue in the browser");
     expect(successSource).toContain("Email me the download link");
     expect(successSource).not.toContain("capabilities");

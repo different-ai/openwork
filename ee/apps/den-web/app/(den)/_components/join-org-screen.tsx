@@ -155,7 +155,7 @@ function getStringProperty(value: unknown, key: string) {
 
 export function JoinOrgScreen({ invitationId }: { invitationId: string }) {
   const router = useRouter();
-  const { user, sessionHydrated, signOut } = useDenFlow();
+  const { user, sessionHydrated, signOut, desktopAuthRequested, desktopAuthScheme } = useDenFlow();
   const [preview, setPreview] = useState<DenInvitationPreview | null>(null);
   const [previewBusy, setPreviewBusy] = useState(true);
   const [previewError, setPreviewError] = useState<string | null>(null);
@@ -311,6 +311,8 @@ export function JoinOrgScreen({ invitationId }: { invitationId: string }) {
         organizationId={joinedOrg.id}
         organizationName={joinedOrg.name}
         brand={joinedOrg.brand}
+        desktopAuthRequested={desktopAuthRequested}
+        desktopAuthScheme={desktopAuthScheme}
         onContinueInBrowser={() => router.replace(joinedOrg.slug ? getOrgDashboardRoute(joinedOrg.slug) : "/dashboard")}
       />
     );
