@@ -13,7 +13,7 @@ let schema: typeof import("@openwork-ee/den-db/schema/telegram")
 let store: typeof import("../src/capability-sources/telegram-store.js")
 
 function seedEnv() {
-  process.env.DATABASE_URL = "mysql://root:password@127.0.0.1:3306/openwork_test_telegram"
+  process.env.DATABASE_URL ??= "mysql://root:password@127.0.0.1:3306/openwork_test_telegram"
   process.env.DB_MODE = "mysql"
   process.env.DEN_DB_ENCRYPTION_KEY = "telegram-test-encryption-key-1234567890"
   process.env.BETTER_AUTH_SECRET = "telegram-test-better-auth-secret-123456"

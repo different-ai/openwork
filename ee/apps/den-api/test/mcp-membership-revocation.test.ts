@@ -88,6 +88,9 @@ beforeAll(async () => {
 
   mock.module("../src/middleware/admin.js", () => ({
     isPlatformAdminUserId: () => Promise.resolve(platformAdmin),
+    requireAdminMiddleware: async (_context: unknown, next: () => Promise<void>) => {
+      await next()
+    },
   }))
 
   mcpAuth = await import("../src/mcp/auth.js")

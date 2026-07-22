@@ -4,7 +4,7 @@ process.env.DEN_DB_ENCRYPTION_KEY = "test-den-db-encryption-key-please-change-12
 process.env.BETTER_AUTH_SECRET = "test-better-auth-secret-please-change-1234567890";
 process.env.BETTER_AUTH_URL = "http://localhost:3005";
 process.env.CORS_ORIGINS = "http://localhost:3005";
-process.env.DATABASE_URL = "mysql://root:password@127.0.0.1:3306/openwork_test";
+process.env.DATABASE_URL ??= "mysql://root:password@127.0.0.1:3306/openwork_test";
 
 const { githubPluginMcpImportSchema } = await import("../src/routes/org/plugin-system/schemas");
 

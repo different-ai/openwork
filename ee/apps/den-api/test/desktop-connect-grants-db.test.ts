@@ -4,6 +4,7 @@ import { afterAll, beforeAll, expect, test } from "bun:test"
 // MySQL integration coverage for the multi-replica trust boundary. Run after
 // pushing the current schema to the dedicated test database.
 process.env.DATABASE_URL = process.env.DESKTOP_CONNECT_TEST_DATABASE_URL
+  ?? process.env.DATABASE_URL
   ?? "mysql://root:password@127.0.0.1:3306/openwork_test_connect"
 process.env.DB_MODE = "mysql"
 process.env.DEN_DB_ENCRYPTION_KEY = "connect-grant-test-encryption-key-1234567890"
