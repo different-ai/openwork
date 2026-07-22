@@ -2,6 +2,7 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
+import { pushSystemBlock } from "./lib/system-provenance.js";
 
 /**
  * OpenWork Capabilities Knowledge Plugin
@@ -229,7 +230,7 @@ function excerpt(content: string, query: string): string {
 
 export const OpenWorkCapabilitiesKnowledge = async () => ({
   "experimental.chat.system.transform": async (_input: unknown, output: { system: string[] }) => {
-    output.system.push(OPENWORK_CAPABILITIES_KNOWLEDGE);
+    pushSystemBlock(output.system, OPENWORK_CAPABILITIES_KNOWLEDGE, "openwork.capabilities-knowledge");
   },
   tool: {
     openwork_docs_search: {

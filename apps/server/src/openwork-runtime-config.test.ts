@@ -5,11 +5,13 @@ import { join } from "node:path";
 
 import {
   buildOpenworkRuntimeConfig,
+  buildOpenworkRuntimeConfigObjectFromSnapshot,
   keepOpenworkRuntimeConfigFileFresh,
   openworkRuntimeConfigFilePath,
   writeOpenworkRuntimeConfigFile,
 } from "./openwork-runtime-config.js";
 import { writeRuntimeOpencodeConfig } from "./runtime-opencode-config-store.js";
+import { createServerObservabilityController } from "./observability.js";
 import type { ServerConfig } from "./types.js";
 
 const roots: string[] = [];
@@ -55,6 +57,14 @@ async function readConfigFile(config: ServerConfig): Promise<Record<string, unkn
 }
 
 describe("openwork runtime config file", () => {
+  test("keeps the final prompt observer after every runtime plugin", () => {
+    const runtimePlugin = "file:///tmp/custom-runtime-plugin.js";
+    const built = buildOpenworkRuntimeConfigObjectFromSnapshot({ plugin: [runtimePlugin] });
+    const plugins = built.plugin as string[];
+    expect(plugins.at(-1)).toContain("openwork-observability");
+    expect(plugins.indexOf(runtimePlugin)).toBeLessThan(plugins.length - 1);
+  });
+
   test("writes runtime-DB MCPs and openwork defaults into the file", async () => {
     const { config } = await setup();
     await writeRuntimeOpencodeConfig(config, "ws_1", (current) => ({
@@ -70,6 +80,48 @@ describe("openwork runtime config file", () => {
     expect(mcp.posthog?.enabled).toBe(true);
     expect(parsed.default_agent).toBe("openwork");
     expect(Array.isArray(parsed.plugin)).toBe(true);
+  });
+
+  test("records initial and changed runtime config writes without retaining config bodies", async () => {
+    const { config } = await setup();
+    const observability = createServerObservabilityController({
+      enabled: true,
+      scopes: ["config"],
+      content: "full",
+    });
+    await writeOpenworkRuntimeConfigFile(config, "ws_1", observability);
+    await writeRuntimeOpencodeConfig(config, "ws_1", (current) => ({
+      ...current,
+      mcp: { private: { type: "remote", url: "https://example.com?token=do-not-retain" } },
+    }));
+    await writeOpenworkRuntimeConfigFile(config, "ws_1", observability);
+
+    expect(observability.list().map((event) => event.action)).toEqual([
+      "runtime-config.written",
+      "runtime-config.changed",
+    ]);
+    const serialized = JSON.stringify(observability.snapshot());
+    expect(serialized).not.toContain("do-not-retain");
+    expect(serialized).not.toContain('"value"');
+  });
+
+  test("does not expose runtime-config hashes in metadata mode", async () => {
+    const { config } = await setup();
+    const observability = createServerObservabilityController({
+      enabled: true,
+      scopes: ["config"],
+      content: "metadata",
+    });
+    await writeOpenworkRuntimeConfigFile(config, "ws_1", observability);
+    await writeRuntimeOpencodeConfig(config, "ws_1", (current) => ({
+      ...current,
+      disabled_providers: ["example"],
+    }));
+    await writeOpenworkRuntimeConfigFile(config, "ws_1", observability);
+
+    const serialized = JSON.stringify(observability.list());
+    expect(serialized).not.toContain('"hash"');
+    expect(serialized).not.toContain('"previousHash"');
   });
 
   test("openwork prompt has a static search-first Memory Bank section, distinct from ## Memory", async () => {

@@ -9,6 +9,7 @@ import {
   type OpenCodeContext,
   type OpenWorkEngineMcpStatusClient,
 } from "./openwork-extensions-preview-steering.js";
+import { pushSystemBlock } from "./lib/system-provenance.js";
 
 type ExtensionActionPayload = {
   extensionId: string;
@@ -743,12 +744,16 @@ export const OpenWorkExtensionsPreview = async (factoryInput?: unknown) => {
       }),
       resolveOpenWorkConnectSkillInstruction(mergedInput, fetch),
     ]);
-    output.system.push(extensionInstruction);
-    if (skillInstruction) output.system.push(skillInstruction);
-    output.system.push(OPENWORK_SESSION_CREATION_INSTRUCTION);
-    output.system.push(OPENWORK_SESSION_MEMORY_INSTRUCTION);
-    output.system.push(OPENWORK_BROWSER_INSTRUCTION);
-    if (uiControlEnabled) output.system.push(OPENWORK_UI_CONTROL_INSTRUCTION);
+    pushSystemBlock(output.system, extensionInstruction, "openwork.extensions-preview.connect-steering");
+    if (skillInstruction) {
+      pushSystemBlock(output.system, skillInstruction, "openwork.extensions-preview.connect-skills");
+    }
+    pushSystemBlock(output.system, OPENWORK_SESSION_CREATION_INSTRUCTION, "openwork.extensions-preview.session-creation");
+    pushSystemBlock(output.system, OPENWORK_SESSION_MEMORY_INSTRUCTION, "openwork.extensions-preview.session-memory");
+    pushSystemBlock(output.system, OPENWORK_BROWSER_INSTRUCTION, "openwork.extensions-preview.browser-guidance");
+    if (uiControlEnabled) {
+      pushSystemBlock(output.system, OPENWORK_UI_CONTROL_INSTRUCTION, "openwork.extensions-preview.ui-control-guidance");
+    }
   },
   tool: {
     openwork_extension_list_actions: {

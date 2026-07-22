@@ -65,6 +65,11 @@ import { addRoute, matchRoute, type AuthMode, type RequestContext, type Route } 
 import { registerSessionRoutes } from "./routes/sessions.js";
 import { registerWorkspaceRoutes } from "./routes/workspaces.js";
 import { registerCloudMcpRoutes } from "./routes/cloud-mcp.js";
+import { registerObservabilityRoutes } from "./routes/observability.js";
+import {
+  createServerObservabilityController,
+  type ServerObservabilityController,
+} from "./observability.js";
 import {
   markOpenworkCloudMcpStale,
   reconcilePersistedOpenworkCloudMcp,
@@ -796,12 +801,23 @@ function isSessionCommandProxyRequest(method: string, proxyPath: string) {
   return method === "POST" && /^\/session\/[^/]+\/command$/.test(normalizeOpencodeProxyPath(proxyPath));
 }
 
-export async function startServer(config: ServerConfig): Promise<ServeResult> {
+export async function startServer(
+  config: ServerConfig,
+  options: { observability?: ServerObservabilityController } = {},
+): Promise<ServeResult> {
   const approvals = new ApprovalService(config.approval);
   const reloadEvents = new ReloadEventStore();
   const tokens = new TokenService(config);
   const env = new EnvService();
   const logger = createServerLogger(config);
+  const observability = options.observability ?? createServerObservabilityController();
+  observability.record({
+    level: "info",
+    scope: "lifecycle",
+    action: "server.starting",
+    source: { runtime: "openwork-server", component: "http-server" },
+    data: { host: config.host, requestedPort: config.port },
+  });
   let watcherHandle = startReloadWatchers({ config, reloadEvents, logger });
   const refreshWorkspaceReloadBaseline = (workspaceId: string, reasons?: ReloadReason[]) =>
     watcherHandle.refreshWorkspace(workspaceId, reasons);
@@ -818,6 +834,7 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
     env,
     restartReloadWatchers,
     engineMcpServerState,
+    observability,
   );
 
   const serverOptions: {
@@ -860,7 +877,14 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
           const workspace = await resolveWorkspace(config, mount.workspaceId);
           proxyService = "opencode";
           proxyBaseUrl = workspace.baseUrl?.trim() || undefined;
-          const response = await proxyOpencodeRequest({ config, request, url, workspace, proxyPath: mount.restPath });
+          const response = await proxyOpencodeRequest({
+            config,
+            request,
+            url,
+            workspace,
+            proxyPath: mount.restPath,
+            observability,
+          });
           return finalize(response);
         } catch (error) {
           const apiError = error instanceof ApiError
@@ -909,7 +933,13 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
           const actor = await requireClient(request, config, tokens);
           assertOpencodeProxyAllowed(actor, request.method, url.pathname);
           proxyService = "opencode";
-          const response = await proxyOpencodeRequest({ config, request, url, workspace: config.workspaces[0] });
+          const response = await proxyOpencodeRequest({
+            config,
+            request,
+            url,
+            workspace: config.workspaces[0],
+            observability,
+          });
           return finalize(response);
         } catch (error) {
           const apiError = error instanceof ApiError
@@ -958,7 +988,9 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
         const response = jsonResponse(formatError(apiError), apiError.status);
         const isAgentDiagnosticsRequest =
           request.method === "POST" && /^\/workspace\/[^/]+\/diagnostics\/agent-context$/.test(url.pathname);
-        if (isAgentDiagnosticsRequest) {
+        const isOversizedObservabilityRequest =
+          apiError.code === "observability_payload_too_large";
+        if (isAgentDiagnosticsRequest || isOversizedObservabilityRequest) {
           // Every diagnostics error closes the connection because failures such
           // as cooldown or in-flight rejection happen before body consumption.
           // Abort after a short flush window so the stable JSON error reaches the
@@ -967,7 +999,7 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
           const requestBody = request.body;
           if (requestBody) {
             setTimeout(() => {
-              void requestBody.cancel(new Error("Agent diagnostics request was rejected")).catch(() => undefined);
+              void requestBody.cancel(new Error("Request body was rejected")).catch(() => undefined);
             }, AGENT_DIAGNOSTICS_ERROR_FLUSH_MS);
           }
         }
@@ -983,13 +1015,34 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
       idleTimeout: 120,
     });
   } catch (error) {
+    observability.record({
+      level: "error",
+      scope: "lifecycle",
+      action: "server.start.failed",
+      source: { runtime: "openwork-server", component: "http-server" },
+      cause: error,
+    });
     invalidateEngineMcpServerState(config, engineMcpServerState);
     throw error;
   }
 
+  observability.record({
+    level: "info",
+    scope: "lifecycle",
+    action: "server.listening",
+    source: { runtime: "openwork-server", component: "http-server" },
+    data: { host: config.host, port: server.port },
+  });
+
   return {
     ...server,
     stop: async () => {
+      observability.record({
+        level: "info",
+        scope: "lifecycle",
+        action: "server.stopping",
+        source: { runtime: "openwork-server", component: "http-server" },
+      });
       invalidateEngineMcpServerState(config, engineMcpServerState);
       watcherHandle.close();
       reloadBaselineRefreshers.delete(config);
@@ -1066,6 +1119,7 @@ async function proxyOpencodeRequest(input: {
   url: URL;
   workspace?: WorkspaceInfo;
   proxyPath?: string;
+  observability?: ServerObservabilityController;
 }) {
   const workspace = input.workspace;
   const baseUrl = workspace ? resolveWorkspaceOpencodeConnection(input.config, workspace).baseUrl?.trim() ?? "" : "";
@@ -1093,6 +1147,9 @@ async function proxyOpencodeRequest(input: {
   }
 
   const method = input.request.method.toUpperCase();
+  const normalizedProxyPath = normalizeOpencodeProxyPath(proxyPath);
+  const isMcpRequest = normalizedProxyPath === "/mcp" || normalizedProxyPath.startsWith("/mcp/");
+  const mcpStartedAt = Date.now();
   // Buffer the request body so it can be forwarded reliably across Node.js
   // stream boundaries (Readable.toWeb streams from the HTTP adapter aren't
   // always accepted directly by Node's global fetch as a body).
@@ -1110,11 +1167,91 @@ async function proxyOpencodeRequest(input: {
     });
     return jsonResponse({ ok: true, accepted: true });
   }
-  const response = await loopbackFetch(targetUrl, {
-    method,
-    headers,
-    body,
-  });
+  let response: Response;
+  try {
+    response = await loopbackFetch(targetUrl, {
+      method,
+      headers,
+      body,
+    });
+  } catch (error) {
+    if (isMcpRequest) {
+      const message = error instanceof Error ? error.message : String(error);
+      input.observability?.record({
+        level: "error",
+        scope: "mcp",
+        action: "mcp.request.failed",
+        source: { runtime: "openwork-server", component: "opencode-proxy", operation: `${method} ${normalizedProxyPath}` },
+        context: { workspaceId: workspace?.id },
+        data: { method, path: normalizedProxyPath, durationMs: Date.now() - mcpStartedAt },
+        content: { kind: "mcp-error", hash: hashToken(message), length: message.length, value: message },
+      });
+    }
+    throw error;
+  }
+
+  if (isMcpRequest) {
+    const baseData = {
+      method,
+      path: normalizedProxyPath,
+      statusCode: response.status,
+      durationMs: Date.now() - mcpStartedAt,
+    };
+    if (!response.ok) {
+      input.observability?.record({
+        level: "error",
+        scope: "mcp",
+        action: "mcp.request.failed",
+        source: { runtime: "openwork-server", component: "opencode-proxy", operation: `${method} ${normalizedProxyPath}` },
+        context: { workspaceId: workspace?.id },
+        data: baseData,
+      });
+    } else if (method === "GET" && normalizedProxyPath === "/mcp") {
+      try {
+        const statuses: unknown = await response.clone().json();
+        if (isRecord(statuses)) {
+          for (const [serverName, rawStatus] of Object.entries(statuses)) {
+            if (!isRecord(rawStatus) || typeof rawStatus.status !== "string") continue;
+            const status = rawStatus.status;
+            const failed = status === "failed";
+            const needsAuth = status === "needs_auth" || status === "needs_client_registration";
+            const error = typeof rawStatus.error === "string" ? rawStatus.error : undefined;
+            input.observability?.record({
+              level: failed ? "error" : needsAuth ? "warn" : "info",
+              scope: "mcp",
+              action: failed
+                ? "mcp.connection.failed"
+                : needsAuth
+                  ? "mcp.connection.needs-auth"
+                  : `mcp.connection.${status}`,
+              source: { runtime: "openwork-server", component: "opencode-proxy", operation: "GET /mcp" },
+              context: { workspaceId: workspace?.id },
+              data: { server: serverName, status, ...baseData },
+              ...(error ? {
+                content: {
+                  kind: "mcp-error",
+                  hash: hashToken(error),
+                  length: error.length,
+                  value: error,
+                },
+              } : {}),
+            });
+          }
+        }
+      } catch {
+        // The proxied response remains authoritative even if diagnostics fail.
+      }
+    } else {
+      input.observability?.record({
+        level: "info",
+        scope: "mcp",
+        action: "mcp.request.completed",
+        source: { runtime: "openwork-server", component: "opencode-proxy", operation: `${method} ${normalizedProxyPath}` },
+        context: { workspaceId: workspace?.id },
+        data: baseData,
+      });
+    }
+  }
 
   return sanitizeProxyResponse(response);
 }
@@ -1481,6 +1618,7 @@ function createRoutes(
   env: EnvService,
   onWorkspacesChanged: () => void,
   engineMcpServerState: EngineMcpServerState,
+  observability: ServerObservabilityController,
 ): Route[] {
   const routes: Route[] = [];
   registerCoreRoutes({
@@ -1506,6 +1644,8 @@ function createRoutes(
     resolveDevLogPath,
     createOpenAiRealtimeVoiceSession,
   });
+
+  registerObservabilityRoutes({ routes, observability, jsonResponse });
 
   registerWorkspaceRoutes({
     routes,

@@ -14,15 +14,17 @@
  */
 import { mkdir, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   openworkExtensionsPreviewPluginPath,
   openworkCapabilitiesKnowledgePluginPath,
   openworkAnthropicAdaptiveThinkingPluginPath,
   openworkAnthropicToolSchemaPluginPath,
   openworkOfficeAttachmentsPluginPath,
+  openworkObservabilityPluginPath,
 } from "./openwork-extensions-plugin-path.js";
 import type { ServerConfig } from "./types.js";
+import type { ServerObservabilityController } from "./observability.js";
 import { runtimeStorageDir } from "./runtime-db.js";
 import {
   onRuntimeOpencodeConfigWrite,
@@ -84,6 +86,14 @@ Manage: to show what is saved, discover and execute the list capability (getMemo
 
 Never persist secrets, credentials, API keys, tokens, or sensitive PII into a memory. This applies to both the content sentence and any cited snippets — redact secrets from a snippet before saving it.`;
 
+export function openworkAgentPromptSha256(): string {
+  return createHash("sha256").update(OPENWORK_AGENT_PROMPT).digest("hex");
+}
+
+export function openworkAgentPromptLength(): number {
+  return OPENWORK_AGENT_PROMPT.length;
+}
+
 export async function buildOpenworkRuntimeConfigObject(
   config?: ServerConfig,
   workspaceId?: string,
@@ -115,6 +125,10 @@ export function buildOpenworkRuntimeConfigObjectFromSnapshot(
       openworkAnthropicAdaptiveThinkingPluginPath(),
       openworkAnthropicToolSchemaPluginPath(),
       ...runtimePluginList(runtimeConfig),
+      // Keep this final: it observes the complete configured plugin prompt
+      // array without modifying it. Provider-native additions after hooks are
+      // explicitly outside this boundary.
+      openworkObservabilityPluginPath(),
     ],
     ...(disabledProviders.length ? { disabled_providers: disabledProviders } : {}),
     mcp: runtimeMcpMap(runtimeConfig),
@@ -151,20 +165,68 @@ export function openworkRuntimeConfigFilePath(config: ServerConfig): string {
 // (and clobber) a newer one. Content is built inside the queued job so each
 // job reads the latest runtime-DB state.
 const fileWriteQueue = new Map<string, Promise<void>>();
+const lastRuntimeConfigHash = new Map<string, string>();
+const MAX_TRACKED_RUNTIME_CONFIGS = 200;
 
 /**
  * Rebuild the engine-visible runtime config file from the runtime DB.
  * Atomic (temp file + rename) so the engine never reads a partial file
  * mid-dispose.
  */
-export async function writeOpenworkRuntimeConfigFile(config: ServerConfig, workspaceId: string): Promise<string> {
+export async function writeOpenworkRuntimeConfigFile(
+  config: ServerConfig,
+  workspaceId: string,
+  observability?: ServerObservabilityController,
+): Promise<string> {
   const path = openworkRuntimeConfigFilePath(config);
   const job = async () => {
-    const content = await buildOpenworkRuntimeConfig(config, workspaceId);
-    await mkdir(runtimeStorageDir(config), { recursive: true });
-    const tmp = `${path}.${randomUUID()}.tmp`;
-    await writeFile(tmp, content, "utf8");
-    await rename(tmp, path);
+    try {
+      const content = await buildOpenworkRuntimeConfig(config, workspaceId);
+      const hash = createHash("sha256").update(content).digest("hex");
+      const previousHash = lastRuntimeConfigHash.get(path);
+      await mkdir(runtimeStorageDir(config), { recursive: true });
+      const tmp = `${path}.${randomUUID()}.tmp`;
+      await writeFile(tmp, content, "utf8");
+      await rename(tmp, path);
+      lastRuntimeConfigHash.delete(path);
+      lastRuntimeConfigHash.set(path, hash);
+      while (lastRuntimeConfigHash.size > MAX_TRACKED_RUNTIME_CONFIGS) {
+        const oldest = lastRuntimeConfigHash.keys().next().value;
+        if (typeof oldest !== "string") break;
+        lastRuntimeConfigHash.delete(oldest);
+      }
+      const includeHashes = observability?.getConfig().content !== "metadata";
+      observability?.record({
+        level: "info",
+        scope: "config",
+        action: previousHash && previousHash !== hash
+          ? "runtime-config.changed"
+          : "runtime-config.written",
+        source: { runtime: "openwork-server", component: "runtime-config" },
+        context: { workspaceId },
+        data: {
+          path,
+          status: !previousHash ? "initial" : previousHash === hash ? "unchanged" : "changed",
+          ...(includeHashes && previousHash ? { previousHash } : {}),
+        },
+        content: {
+          kind: "runtime-config",
+          hash,
+          length: content.length,
+        },
+      });
+    } catch (error) {
+      observability?.record({
+        level: "error",
+        scope: "config",
+        action: "runtime-config.write.failed",
+        source: { runtime: "openwork-server", component: "runtime-config" },
+        context: { workspaceId },
+        cause: error,
+        data: { path },
+      });
+      throw error;
+    }
   };
   const previous = fileWriteQueue.get(path) ?? Promise.resolve();
   const next = previous.then(job, job);
@@ -178,9 +240,13 @@ export async function writeOpenworkRuntimeConfigFile(config: ServerConfig, works
  * instance rebuild reads fresh state instead of a spawn-time snapshot.
  * Returns an unsubscribe function.
  */
-export function keepOpenworkRuntimeConfigFileFresh(config: ServerConfig, workspaceId: string): () => void {
+export function keepOpenworkRuntimeConfigFileFresh(
+  config: ServerConfig,
+  workspaceId: string,
+  observability?: ServerObservabilityController,
+): () => void {
   return onRuntimeOpencodeConfigWrite((writeConfig, writtenWorkspaceId) => {
     if (writtenWorkspaceId !== workspaceId) return;
-    void writeOpenworkRuntimeConfigFile(writeConfig, workspaceId).catch(() => undefined);
+    void writeOpenworkRuntimeConfigFile(writeConfig, workspaceId, observability).catch(() => undefined);
   });
 }
