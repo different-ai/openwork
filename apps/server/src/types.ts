@@ -179,6 +179,12 @@ export interface McpItem {
   config: Record<string, unknown>;
   source: "config.project" | "config.global" | "config.remote";
   disabledByTools?: boolean;
+  toolDenies?: Array<{
+    source: "config.project" | "config.global";
+    style: "tools.deny" | "tools" | "permission" | "permissions";
+    pattern: string;
+    matched: string;
+  }>;
 }
 
 export interface SkillItem {

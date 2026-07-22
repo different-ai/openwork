@@ -41,6 +41,23 @@ export function normalizeToolBody(body: unknown): unknown {
   }
 }
 
+/**
+ * MCP clients frequently pass `path`/`query` as a JSON-encoded string instead of an
+ * object. Parse such strings back into a record so a stringified `{"q":"acme"}` does not
+ * fail tool-input validation (the same hazard `normalizeToolBody` guards for the body).
+ */
+export function normalizeToolRecord(value: unknown): Record<string, unknown> | undefined {
+  const parsed = typeof value === "string" ? normalizeToolBody(value) : value
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return undefined
+  }
+  const record: Record<string, unknown> = {}
+  for (const [key, entry] of Object.entries(parsed)) {
+    record[key] = entry
+  }
+  return record
+}
+
 function buildPath(template: string, values: Record<string, unknown>) {
   return template.replace(/\{([^}]+)\}/g, (_match, key: string) => {
     const value = values[key]

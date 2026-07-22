@@ -39,7 +39,7 @@ on:
         type: boolean
         default: true
       publish_npm:
-        description: "Publish openwork-orchestrator/openwork-server/opencode-router to npm if versions changed"
+        description: "Publish openwork-orchestrator/openwork-server to npm if versions changed"
         required: false
         type: boolean
         default: true
@@ -228,20 +228,19 @@ jobs:
             exit 0
           fi
 
-          DRAFT_FLAG=""
           PRERELEASE_FLAG=""
-          if [ "${{ steps.resolve.outputs.draft }}" = "true" ]; then
-            DRAFT_FLAG="--draft"
-          fi
           if [ "${{ steps.resolve.outputs.prerelease }}" = "true" ]; then
             PRERELEASE_FLAG="--prerelease"
           fi
 
+          # A new release must never be public while its artifacts are still
+          # building. The final publish-release job is the only place that
+          # removes draft status, after every required asset has been checked.
           gh release create "${{ steps.resolve.outputs.release_tag }}" \
             --repo "$GITHUB_REPOSITORY" \
             --title "${{ steps.resolve.outputs.release_name }}" \
             --notes-file "$BODY_FILE" \
-            $DRAFT_FLAG $PRERELEASE_FLAG
+            --draft $PRERELEASE_FLAG
 
   verify-release:
     name: Verify Release Versions
@@ -313,6 +312,11 @@ jobs:
             artifact: electron-windows-x64
             electron_args: "--win --x64"
             target_triple: x86_64-pc-windows-msvc
+          - platform: windows-11-arm
+            os_type: windows
+            artifact: electron-windows-arm64
+            electron_args: "--win --arm64"
+            target_triple: aarch64-pc-windows-msvc
 
     steps:
       - name: Checkout
@@ -339,7 +343,8 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.9
+          # Bun >= 1.3.10 is required to compile bun-windows-arm64 sidecars.
+          bun-version: 1.3.10
 
       - name: Get pnpm store path
         id: pnpm-store
@@ -472,7 +477,7 @@ jobs:
 
           mkdir -p "$RUNNER_TEMP/signpath-unsigned"
           shopt -s nullglob
-          installers=(apps/desktop/dist-electron/openwork-win-x64-*.exe)
+          installers=(apps/desktop/dist-electron/openwork-win-*.exe)
           if [ "${#installers[@]}" -ne 1 ]; then
             printf 'Expected exactly one unsigned Windows installer, found %s.\n' "${#installers[@]}" >&2
             printf '%s\n' "${installers[@]}" >&2
@@ -485,7 +490,7 @@ jobs:
         id: upload-unsigned-windows-installer
         uses: actions/upload-artifact@v4
         with:
-          name: unsigned-openwork-windows-${{ github.run_id }}-${{ github.run_attempt }}
+          name: unsigned-${{ matrix.artifact }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/signpath-unsigned/*.exe
           if-no-files-found: error
           retention-days: 1
@@ -612,7 +617,8 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v1
         with:
-          bun-version: "1.3.6"
+          # Bun >= 1.3.10 is required to compile bun-windows-arm64 sidecars.
+          bun-version: "1.3.10"
 
       - name: Get pnpm store path
         id: pnpm-store
@@ -635,7 +641,7 @@ jobs:
         id: sidecar-versions
         shell: bash
         run: |
-          node -e "const fs=require('fs'); const orchestrator=JSON.parse(fs.readFileSync('apps/orchestrator/package.json','utf8')); const server=JSON.parse(fs.readFileSync('apps/server/package.json','utf8')); const opencodeRouter=JSON.parse(fs.readFileSync('apps/opencode-router/package.json','utf8')); console.log('orchestrator=' + orchestrator.version); console.log('server=' + server.version); console.log('opencodeRouter=' + opencodeRouter.version);" >> "$GITHUB_OUTPUT"
+          node -e "const fs=require('fs'); const orchestrator=JSON.parse(fs.readFileSync('apps/orchestrator/package.json','utf8')); const server=JSON.parse(fs.readFileSync('apps/server/package.json','utf8')); console.log('orchestrator=' + orchestrator.version); console.log('server=' + server.version);" >> "$GITHUB_OUTPUT"
 
       - name: Resolve SOURCE_DATE_EPOCH
         id: source-date
@@ -677,7 +683,7 @@ jobs:
         run: |
           version="${{ steps.sidecar-versions.outputs.orchestrator }}"
           tag="openwork-orchestrator-v${version}"
-          notes="Sidecar bundle for openwork-orchestrator v${version}.\n\nopenwork-server: ${{ steps.sidecar-versions.outputs.server }}\nopencodeRouter: ${{ steps.sidecar-versions.outputs.opencodeRouter }}"
+          notes="Sidecar bundle for openwork-orchestrator v${version}.\n\nopenwork-server: ${{ steps.sidecar-versions.outputs.server }}"
           gh release create "$tag" \
             --repo "$GITHUB_REPOSITORY" \
             --title "openwork-orchestrator v${version}" \
@@ -725,7 +731,8 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v1
         with:
-          bun-version: "1.3.6"
+          # Bun >= 1.3.10 is required to compile bun-windows-arm64 sidecars.
+          bun-version: "1.3.10"
 
       - name: Get pnpm store path
         id: pnpm-store
@@ -748,7 +755,7 @@ jobs:
         id: package-versions
         shell: bash
         run: |
-          node -e "const fs=require('fs'); const orchestrator=JSON.parse(fs.readFileSync('apps/orchestrator/package.json','utf8')); const server=JSON.parse(fs.readFileSync('apps/server/package.json','utf8')); const opencodeRouter=JSON.parse(fs.readFileSync('apps/opencode-router/package.json','utf8')); console.log('orchestrator=' + orchestrator.version); console.log('server=' + server.version); console.log('opencodeRouter=' + opencodeRouter.version);" >> "$GITHUB_OUTPUT"
+          node -e "const fs=require('fs'); const orchestrator=JSON.parse(fs.readFileSync('apps/orchestrator/package.json','utf8')); const server=JSON.parse(fs.readFileSync('apps/server/package.json','utf8')); console.log('orchestrator=' + orchestrator.version); console.log('server=' + server.version);" >> "$GITHUB_OUTPUT"
 
       - name: Check npm versions
         id: npm-versions
@@ -756,14 +763,12 @@ jobs:
         env:
           ORCHESTRATOR_VERSION: ${{ steps.package-versions.outputs.orchestrator }}
           SERVER_VERSION: ${{ steps.package-versions.outputs.server }}
-          OPENCODE_ROUTER_VERSION: ${{ steps.package-versions.outputs.opencodeRouter }}
         run: |
           set -euo pipefail
           # npm view exits non-zero for packages that don't exist yet (404).
           # Treat missing packages as "not published" so release can publish them.
           orchestrator_current="$(npm view openwork-orchestrator version 2>/dev/null || true)"
           server_current="$(npm view openwork-server version 2>/dev/null || true)"
-          opencodeRouter_current="$(npm view opencode-router version 2>/dev/null || true)"
 
           if [ "$orchestrator_current" = "$ORCHESTRATOR_VERSION" ]; then
             echo "publish_orchestrator=false" >> "$GITHUB_OUTPUT"
@@ -777,14 +782,8 @@ jobs:
             echo "publish_server=true" >> "$GITHUB_OUTPUT"
           fi
 
-          if [ "$opencodeRouter_current" = "$OPENCODE_ROUTER_VERSION" ]; then
-            echo "publish_opencodeRouter=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "publish_opencodeRouter=true" >> "$GITHUB_OUTPUT"
-          fi
-
           publish_any=false
-          if [ "$orchestrator_current" != "$ORCHESTRATOR_VERSION" ] || [ "$server_current" != "$SERVER_VERSION" ] || [ "$opencodeRouter_current" != "$OPENCODE_ROUTER_VERSION" ]; then
+          if [ "$orchestrator_current" != "$ORCHESTRATOR_VERSION" ] || [ "$server_current" != "$SERVER_VERSION" ]; then
             publish_any=true
           fi
           echo "publish_any=$publish_any" >> "$GITHUB_OUTPUT"
@@ -815,10 +814,6 @@ jobs:
       - name: Publish openwork-server
         if: steps.npm-auth.outputs.enabled == 'true' && steps.npm-versions.outputs.publish_server == 'true'
         run: pnpm --filter openwork-server publish --access public --no-git-checks
-
-      - name: Publish opencode-router
-        if: steps.npm-auth.outputs.enabled == 'true' && steps.npm-versions.outputs.publish_opencodeRouter == 'true'
-        run: pnpm --filter opencode-router publish --access public --no-git-checks
 
       - name: Publish openwork-orchestrator
         if: steps.npm-auth.outputs.enabled == 'true' && steps.npm-versions.outputs.publish_orchestrator == 'true'

@@ -4,16 +4,33 @@ import { useEffect, useReducer, useState } from "react";
 import { Separator } from "@/components/ui/separator";
 
 import type { OpencodeConnectStatus } from "@/app/types";
-import type { OpenworkRuntimeConfigStatus, OpenworkServerStatus } from "@/app/lib/openwork-server";
+import type { OpenworkCloudMcpHealth, OpenworkRuntimeConfigStatus, OpenworkServerStatus } from "@/app/lib/openwork-server";
 import { t } from "@/i18n";
 import { LayoutStack } from "../settings-layout";
+import type { useDenSession } from "../cloud/use-den-session";
 
 import { advancedLocalReducer, initialAdvancedLocalState } from "./advanced-view-state";
 import {
   AdvancedDeveloperSection,
+  AdvancedCloudMcpDiagnosticsSection,
+  AdvancedOrganizationServerSection,
   AdvancedRuntimeMigrationSection,
   AdvancedRuntimeSection,
 } from "./advanced-view-sections";
+
+type AdvancedOrganizationServerSession = Pick<
+  ReturnType<typeof useDenSession>,
+  | "authBusy"
+  | "baseUrl"
+  | "baseUrlBusy"
+  | "baseUrlDraft"
+  | "baseUrlError"
+  | "onApplyBaseUrl"
+  | "onBaseUrlDraftChange"
+  | "onClearServerConfiguration"
+  | "onResetBaseUrlToDefault"
+  | "sessionBusy"
+>;
 
 export type AdvancedViewProps = {
   busy: boolean;
@@ -27,6 +44,10 @@ export type AdvancedViewProps = {
   canMigrateRuntimeConfig: boolean;
   migrateRuntimeConfig: () => Promise<{ migrated: boolean; keys: string[] }>;
   getRuntimeConfigStatus: () => Promise<OpenworkRuntimeConfigStatus>;
+  organizationServer: AdvancedOrganizationServerSession;
+  cloudMcpUrl: string | null;
+  cloudMcpHealth: OpenworkCloudMcpHealth | null;
+  refreshCloudMcpHealth: () => Promise<OpenworkCloudMcpHealth | null>;
 };
 
 type AdvancedStatusTone = "ready" | "warning" | "error" | "neutral";
@@ -160,6 +181,20 @@ export function AdvancedView(props: AdvancedViewProps) {
 
   return (
     <LayoutStack>
+      <AdvancedOrganizationServerSection
+        authBusy={props.organizationServer.authBusy}
+        baseUrl={props.organizationServer.baseUrl}
+        baseUrlBusy={props.organizationServer.baseUrlBusy}
+        baseUrlDraft={props.organizationServer.baseUrlDraft}
+        baseUrlError={props.organizationServer.baseUrlError}
+        onApplyBaseUrl={props.organizationServer.onApplyBaseUrl}
+        onBaseUrlDraftChange={props.organizationServer.onBaseUrlDraftChange}
+        onClearServerConfiguration={props.organizationServer.onClearServerConfiguration}
+        onResetBaseUrlToDefault={props.organizationServer.onResetBaseUrlToDefault}
+        sessionBusy={props.organizationServer.sessionBusy}
+        cloudMcpUrl={props.cloudMcpUrl}
+      />
+
       <AdvancedRuntimeSection
         clientStatusLabel={clientStatusLabel}
         clientTone={clientTone}
@@ -167,6 +202,11 @@ export function AdvancedView(props: AdvancedViewProps) {
         openworkStatusLabel={openworkStatusLabel}
         openworkTone={openworkTone}
         openworkDetailLines={openworkDetailLines}
+      />
+
+      <AdvancedCloudMcpDiagnosticsSection
+        cloudMcpHealth={props.cloudMcpHealth}
+        onRefresh={props.refreshCloudMcpHealth}
       />
 
       <AdvancedRuntimeMigrationSection

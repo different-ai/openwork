@@ -3,28 +3,47 @@
 import { ArrowRight, CheckCircle2 } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { isSingleOrgSignupDisabled, resolveVisibleAuthMode } from "../_lib/auth-ui-policy";
 import { isSamePathname } from "../_lib/client-route";
-import { getErrorMessage, requestJson, type AuthMode } from "../_lib/den-flow";
+import { getDesktopGrant } from "../_lib/desktop-handoff";
+import { getErrorMessage, getSocialCallbackUrl, requestJson, type AuthMode } from "../_lib/den-flow";
 import { getMcpOAuthSelectOrganizationRoute } from "../_lib/mcp-oauth-route";
+import { useDesktopHandoffStatus } from "../_lib/use-desktop-handoff-status";
 import { useDenFlow } from "../_providers/den-flow-provider";
 
 type PanelContent = {
   title: string;
   copy: string;
   submitLabel: string;
-  togglePrompt?: string;
-  toggleActionLabel?: string;
 };
 
-function getDesktopGrant(url: string | null) {
-  if (!url) return null;
-  try {
-    const parsed = new URL(url);
-    const grant = parsed.searchParams.get("grant")?.trim() ?? "";
-    return grant || null;
-  } catch {
+type EmailFirstStep = "email" | "sso" | "google" | "github" | "password" | "new_account";
+type ResolvedLoginStep = Exclude<EmailFirstStep, "email">;
+
+type LoginOption = {
+  nextStep: ResolvedLoginStep;
+  signInPath: string | null;
+  signInUrl: string | null;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isResolvedLoginStep(value: unknown): value is ResolvedLoginStep {
+  return value === "sso" || value === "google" || value === "github" || value === "password" || value === "new_account";
+}
+
+function readLoginOption(payload: unknown): LoginOption | null {
+  if (!isRecord(payload) || !isResolvedLoginStep(payload.nextStep)) {
     return null;
   }
+
+  return {
+    nextStep: payload.nextStep,
+    signInPath: typeof payload.signInPath === "string" ? payload.signInPath : null,
+    signInUrl: typeof payload.signInUrl === "string" ? payload.signInUrl : null,
+  };
 }
 
 function GitHubLogo() {
@@ -70,6 +89,78 @@ function SocialButton({
   );
 }
 
+function DesktopHandoffAction({
+  openworkUrl,
+  grant,
+  organizationName,
+  helperText,
+  buttonClassName = "den-button-primary w-full",
+}: {
+  openworkUrl: string;
+  grant: string | null;
+  organizationName: string | null;
+  helperText?: string;
+  buttonClassName?: string;
+}) {
+  const { status, timedOut } = useDesktopHandoffStatus(grant);
+  const [copied, setCopied] = useState(false);
+  const resolvedOrganizationName = organizationName?.trim() || "your team";
+
+  async function copyOpenworkUrl() {
+    await navigator.clipboard.writeText(openworkUrl);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1800);
+  }
+
+  if (status === "consumed") {
+    return (
+      <div className="den-frame-inset rounded-[1.5rem] px-4 py-3 text-center text-sm font-medium text-emerald-700" data-testid="desktop-connected" aria-live="polite">
+        ✓ Connected — OpenWork is set up for {resolvedOrganizationName}
+      </div>
+    );
+  }
+
+  if (timedOut || status === "unknown") {
+    return (
+      <div className="den-frame-inset grid gap-3 rounded-[1.5rem] px-4 py-3 text-sm text-[var(--dls-text-secondary)]" data-testid="desktop-handoff-troubleshoot" aria-live="polite">
+        <p className="m-0">
+          Nothing opened?{" "}
+          <button type="button" className="font-medium text-[var(--dls-text-primary)] underline-offset-4 hover:underline" onClick={() => window.location.assign(openworkUrl)}>
+            Open OpenWork again
+          </button>
+        </p>
+        <div className="grid gap-2">
+          <p className="m-0">Still stuck? Paste this sign-in code in OpenWork:</p>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <input className="den-input min-w-0 flex-1 text-xs" value={openworkUrl} readOnly onFocus={(event) => event.currentTarget.select()} />
+            <button type="button" className="den-button-secondary sm:w-auto" onClick={() => void copyOpenworkUrl()}>
+              {copied ? "Copied" : "Copy"}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid gap-3">
+      <button
+        type="button"
+        className={buttonClassName}
+        onClick={() => window.location.assign(openworkUrl)}
+      >
+        Open OpenWork
+        <ArrowRight className="h-4 w-4" />
+      </button>
+      {helperText ? (
+        <p className="m-0 text-center text-xs text-[var(--dls-text-secondary)]">
+          {helperText}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 export function AuthPanel({
   prefilledEmail,
   prefillKey,
@@ -77,7 +168,10 @@ export function AuthPanel({
   lockEmail = false,
   hideSocialAuth = false,
   hideEmailField = false,
+  hideLockedEmailSummary = false,
+  emailFirstFlow = false,
   eyebrow = "Account",
+  bare = false,
   signUpContent,
   signInContent,
   verificationContent,
@@ -88,7 +182,13 @@ export function AuthPanel({
   lockEmail?: boolean;
   hideSocialAuth?: boolean;
   hideEmailField?: boolean;
+  hideLockedEmailSummary?: boolean;
+  emailFirstFlow?: boolean;
   eyebrow?: string;
+  // When true the panel renders without its own `den-frame`/padding, so a parent
+  // (the unified split auth card) can own the surface. Defaults to a self-framed
+  // card for standalone callers (invite, workspace-claim).
+  bare?: boolean;
   signUpContent?: Partial<PanelContent>;
   signInContent?: Partial<PanelContent>;
   verificationContent?: Partial<PanelContent>;
@@ -96,16 +196,20 @@ export function AuthPanel({
   const router = useRouter();
   const pathname = usePathname();
   const prefillRef = useRef<string | null>(null);
-  const [copiedDesktopField, setCopiedDesktopField] = useState<"link" | "code" | null>(null);
   const [passwordResetRequested, setPasswordResetRequested] = useState(false);
   const [passwordResetBusy, setPasswordResetBusy] = useState(false);
   const [passwordResetInfo, setPasswordResetInfo] = useState("");
   const [passwordResetError, setPasswordResetError] = useState<string | null>(null);
+  const [loginOption, setLoginOption] = useState<LoginOption | null>(null);
+  const [loginOptionBusy, setLoginOptionBusy] = useState(false);
+  const [loginOptionError, setLoginOptionError] = useState<string | null>(null);
   const {
     authMode,
     setAuthMode,
     email,
     setEmail,
+    authName,
+    setAuthName,
     password,
     setPassword,
     verificationCode,
@@ -118,32 +222,58 @@ export function AuthPanel({
     desktopRedirectUrl,
     desktopRedirectBusy,
     showAuthFeedback,
-    continueSignInWithEmail,
     submitAuth,
     submitVerificationCode,
     resendVerificationCode,
     cancelVerification,
     beginSocialAuth,
     resolveUserLandingRoute,
+    runtimeConfig,
+    runtimeConfigLoaded,
   } = useDenFlow();
-  const [signInEmailConfirmed, setSignInEmailConfirmed] = useState(false);
+  const isSingleOrgMode = runtimeConfigLoaded && runtimeConfig.orgMode === "single_org";
+  const isSingleOrgSsoMode = isSingleOrgMode && runtimeConfig.singleOrgSsoConfigured;
+  const isSingleOrgPrivateSignup = isSingleOrgSignupDisabled(runtimeConfig, runtimeConfigLoaded);
+  const visibleAuthMode = resolveVisibleAuthMode({ authMode, runtimeConfig, runtimeConfigLoaded });
+  const singleOrgName = runtimeConfig.singleOrgName || "OpenWork";
+  const singleOrgSlug = runtimeConfig.singleOrgSlug.trim();
+
+  useEffect(() => {
+    if (isSingleOrgPrivateSignup && authMode === "sign-up") {
+      setAuthMode("sign-in");
+    }
+  }, [authMode, isSingleOrgPrivateSignup, setAuthMode]);
+
+  useEffect(() => {
+    if (!isSingleOrgSsoMode || pathname === "/") {
+      return;
+    }
+
+    router.replace("/");
+  }, [isSingleOrgSsoMode, pathname, router]);
 
   const resolvedSignUpContent: PanelContent = {
-    title: "Get started.",
-    copy: "Free to try. Team plans from $50/mo.",
+    title: isSingleOrgMode ? "Create your account." : "Get started.",
+    copy: isSingleOrgMode
+      ? `Join ${singleOrgName}. The organization is managed by this deployment.`
+      : "Free to try. Team plans from $50/mo.",
     submitLabel: "Create account",
-    togglePrompt: "Have an account?",
-    toggleActionLabel: "Sign in",
     ...signUpContent,
   };
 
   const resolvedSignInContent: PanelContent = {
-    title: "Welcome back.",
-    copy: "Sign in to open your team workspace.",
+    title: isSingleOrgMode ? `Sign in to ${singleOrgName}.` : "Welcome back.",
+    copy: isSingleOrgMode
+      ? "Use your organization account to continue."
+      : "Sign in to open your team workspace.",
     submitLabel: "Sign in",
-    togglePrompt: "Need an account?",
-    toggleActionLabel: "Create one",
     ...signInContent,
+  };
+
+  const singleOrgSsoContent: PanelContent = {
+    title: `Sign in to ${singleOrgName}.`,
+    copy: "Use your organization's SSO to continue.",
+    submitLabel: "Continue with SSO",
   };
 
   const resolvedVerificationContent: PanelContent = {
@@ -159,25 +289,71 @@ export function AuthPanel({
     submitLabel: "Send reset link",
   };
 
+  const requestedEmailFirstStep = loginOption?.nextStep ?? "email";
+  const emailFirstStep: EmailFirstStep = isSingleOrgPrivateSignup && requestedEmailFirstStep === "new_account" ? "password" : requestedEmailFirstStep;
+  const emailFirstEmail = email.trim();
+  const emailFirstContent: PanelContent =
+    emailFirstStep === "email"
+      ? {
+          title: "Start using OpenWork",
+          copy: "Enter your email and we'll send you to the right sign-in step.",
+          submitLabel: "Next",
+        }
+      : emailFirstStep === "sso"
+      ? {
+          title: "Sign in with SSO.",
+          copy: emailFirstEmail ? `${emailFirstEmail} is managed by your organization.` : "Your organization manages this account.",
+          submitLabel: "Sign in with SSO",
+        }
+      : emailFirstStep === "google"
+      ? {
+          title: "Welcome back.",
+          copy: "Use Google to continue with this account.",
+          submitLabel: "Sign in with Google",
+        }
+      : emailFirstStep === "github"
+      ? {
+          title: "Welcome back.",
+          copy: "Use GitHub to continue with this account.",
+          submitLabel: "Sign in with GitHub",
+        }
+      : emailFirstStep === "password"
+      ? {
+          title: "Enter your password.",
+          copy: emailFirstEmail ? `Sign in as ${emailFirstEmail}.` : "Sign in with your password.",
+          submitLabel: "Sign in",
+        }
+      : {
+          title: "Create your account.",
+          copy: "Set up your OpenWork Cloud account.",
+          submitLabel: "Sign up",
+        };
+
   const desktopGrant = getDesktopGrant(desktopRedirectUrl);
   const isPasswordResetRequest = authMode === "sign-in" && passwordResetRequested && !verificationRequired;
-  const isEmailFirstSignIn = authMode === "sign-in" && !verificationRequired && !isPasswordResetRequest && !hideEmailField;
-  const isSignInEmailStep = isEmailFirstSignIn && !signInEmailConfirmed;
-  const formBusy = isPasswordResetRequest ? passwordResetBusy : authBusy || desktopRedirectBusy;
+  const formBusy = !runtimeConfigLoaded || (isPasswordResetRequest ? passwordResetBusy : authBusy || desktopRedirectBusy);
   const activeContent = verificationRequired
     ? resolvedVerificationContent
     : isPasswordResetRequest
       ? passwordResetContent
-      : isSignInEmailStep
-      ? {
-          ...resolvedSignInContent,
-          copy: "Enter your email and we’ll send you to the right sign-in method.",
-          submitLabel: "Next",
-        }
-      : authMode === "sign-in"
+      : emailFirstFlow
+      ? emailFirstContent
+      : isSingleOrgSsoMode
+      ? singleOrgSsoContent
+      : visibleAuthMode === "sign-in"
       ? resolvedSignInContent
       : resolvedSignUpContent;
-  const showLockedEmailSummary = Boolean(prefilledEmail && lockEmail && hideEmailField);
+  const showLockedEmailSummary = Boolean(prefilledEmail && lockEmail && hideEmailField && !hideLockedEmailSummary);
+  const shellClass = (gap: string, padding: string) =>
+    bare ? `grid ${gap}` : `den-frame grid ${gap} ${padding}`;
+  // The segmented tabs are the primary sign-in/sign-up switch. Hide them for the
+  // focused sub-flows (email verification, password reset) where switching mode
+  // mid-step would be confusing.
+  const showModeTabs = !emailFirstFlow && !isSingleOrgSsoMode && !isSingleOrgPrivateSignup && !verificationRequired && !isPasswordResetRequest;
+  const showSingleOrgSso = isSingleOrgMode && Boolean(singleOrgSlug) && !verificationRequired && !isPasswordResetRequest && (!hideSocialAuth || isSingleOrgSsoMode);
+  const showSingleOrgSsoDivider = showSingleOrgSso && !isSingleOrgSsoMode;
+  const showEmailPasswordAuth = !isSingleOrgSsoMode;
+  const showSocialAuth = showEmailPasswordAuth && !verificationRequired && !isPasswordResetRequest && !hideSocialAuth;
 
   useEffect(() => {
     const key = prefillKey ?? prefilledEmail?.trim() ?? null;
@@ -188,18 +364,97 @@ export function AuthPanel({
     prefillRef.current = key;
     setAuthMode(initialMode);
     setEmail(prefilledEmail?.trim() ?? "");
+    setAuthName("");
     setPassword("");
     setVerificationCode("");
-    setSignInEmailConfirmed(false);
-  }, [initialMode, prefillKey, prefilledEmail, setAuthMode, setEmail, setPassword, setVerificationCode]);
+  }, [initialMode, prefillKey, prefilledEmail, setAuthMode, setAuthName, setEmail, setPassword, setVerificationCode]);
 
-  const copyDesktopValue = async (field: "link" | "code", value: string | null) => {
-    if (!value) return;
-    await navigator.clipboard.writeText(value);
-    setCopiedDesktopField(field);
-    window.setTimeout(() => {
-      setCopiedDesktopField((current) => (current === field ? null : current));
-    }, 1800);
+  const switchMode = (mode: AuthMode) => {
+    if (mode === authMode && !passwordResetRequested) {
+      return;
+    }
+    setPasswordResetRequested(false);
+    setPasswordResetInfo("");
+    setPasswordResetError(null);
+    setAuthMode(mode);
+  };
+
+  const startSingleOrgSso = () => {
+    if (!singleOrgSlug) return;
+    const nextUrl = new URL(`/sso/${encodeURIComponent(singleOrgSlug)}`, window.location.origin);
+    nextUrl.searchParams.set("callbackURL", getSocialCallbackUrl(runtimeConfig.openworkAuthCallbackUrl));
+    const trimmedEmail = email.trim();
+    if (trimmedEmail) {
+      nextUrl.searchParams.set("loginHint", trimmedEmail);
+    }
+    window.location.assign(nextUrl.toString());
+  };
+
+  const startEmailFirstSso = () => {
+    const target = loginOption?.signInPath ?? loginOption?.signInUrl;
+    if (!target) {
+      setLoginOptionError("Could not find your organization SSO sign-in link. Try again.");
+      return;
+    }
+
+    const nextUrl = new URL(target, window.location.origin);
+    nextUrl.searchParams.set("callbackURL", getSocialCallbackUrl(runtimeConfig.openworkAuthCallbackUrl));
+    const trimmedEmail = email.trim();
+    if (trimmedEmail) {
+      nextUrl.searchParams.set("loginHint", trimmedEmail);
+    }
+    window.location.assign(nextUrl.toString());
+  };
+
+  const resolveEmailFirstStep = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail) {
+      setLoginOptionError("Enter your email to continue.");
+      return;
+    }
+
+    setLoginOptionBusy(true);
+    setLoginOptionError(null);
+    setLoginOption(null);
+    setPassword("");
+    setAuthName("");
+
+    try {
+      const { response, payload } = await requestJson(`/v1/auth/login-options?email=${encodeURIComponent(trimmedEmail)}`, { method: "GET" }, 12000);
+      if (!response.ok) {
+        setLoginOptionError(getErrorMessage(payload, `Could not check sign-in options (${response.status}).`));
+        return;
+      }
+
+      const nextOption = readLoginOption(payload);
+      if (!nextOption) {
+        setLoginOptionError("The sign-in options response was incomplete. Try again.");
+        return;
+      }
+
+      setEmail(trimmedEmail);
+      setAuthMode(nextOption.nextStep === "new_account" ? "sign-up" : "sign-in");
+      setLoginOption(nextOption);
+    } catch (error) {
+      setLoginOptionError(error instanceof Error ? error.message : "Could not check sign-in options.");
+    } finally {
+      setLoginOptionBusy(false);
+    }
+  };
+
+  const handleAuthNavigation = async (next: Awaited<ReturnType<typeof submitAuth>>) => {
+    const oauthRoute = typeof window === "undefined" ? null : getMcpOAuthSelectOrganizationRoute(window.location.search);
+    if (next && oauthRoute) {
+      router.replace(oauthRoute);
+      return;
+    }
+    if (next === "dashboard" || next === "join-org") {
+      const target = await resolveUserLandingRoute();
+      if (target && !isSamePathname(pathname, target)) {
+        router.replace(target);
+      }
+    }
   };
 
   const submitPasswordResetRequest = async (event: FormEvent<HTMLFormElement>) => {
@@ -239,10 +494,12 @@ export function AuthPanel({
   /*  Already signed in + desktop handoff: simplified view               */
   /* ------------------------------------------------------------------ */
   const isSignedInWithDesktopHandoff = desktopAuthRequested && desktopRedirectUrl && showAuthFeedback && authInfo && !authError;
+  const emailFirstPanelActive = emailFirstFlow && !verificationRequired && !isPasswordResetRequest;
+  const emailFirstFormBusy = loginOptionBusy || authBusy || desktopRedirectBusy;
 
   if (isSignedInWithDesktopHandoff) {
     return (
-      <div className="den-frame grid gap-6 p-6 md:p-7">
+      <div className={shellClass("gap-6", "p-6 md:p-7")}>
         <div className="grid gap-3">
           <p className="den-eyebrow">{eyebrow}</p>
           <div className="grid gap-2">
@@ -251,38 +508,11 @@ export function AuthPanel({
           </div>
         </div>
 
-        <button
-          type="button"
-          className="den-button-primary w-full"
-          onClick={() => window.location.assign(desktopRedirectUrl)}
-        >
-          Open OpenWork
-          <ArrowRight className="h-4 w-4" />
-        </button>
-
-        <div className="grid gap-2 text-center">
-          <p className="m-0 text-xs text-[var(--dls-text-secondary)]">
-            App didn&apos;t open?
-          </p>
-          <div className="flex justify-center gap-3">
-            <button
-              type="button"
-              className="den-button-secondary"
-              onClick={() => void copyDesktopValue("link", desktopRedirectUrl)}
-            >
-              {copiedDesktopField === "link" ? "Copied!" : "Copy sign-in link"}
-            </button>
-            {desktopGrant ? (
-              <button
-                type="button"
-                className="den-button-secondary"
-                onClick={() => void copyDesktopValue("code", desktopGrant)}
-              >
-                {copiedDesktopField === "code" ? "Copied!" : "Copy code"}
-              </button>
-            ) : null}
-          </div>
-        </div>
+        <DesktopHandoffAction
+          openworkUrl={desktopRedirectUrl}
+          grant={desktopGrant}
+          organizationName={isSingleOrgMode ? singleOrgName : null}
+        />
 
         <div className="border-t border-[var(--dls-border)] pt-4 text-center">
           <button
@@ -300,8 +530,195 @@ export function AuthPanel({
     );
   }
 
+  if (emailFirstPanelActive) {
+    return (
+      <div className={shellClass("gap-4 sm:gap-5", "p-5 sm:p-6 md:p-7")}>
+        <div className="grid gap-3">
+          <p className="den-eyebrow">{eyebrow}</p>
+          <div className="grid gap-2">
+            <h2 className="den-title-lg">{activeContent.title}</h2>
+            <p className="den-copy">{activeContent.copy}</p>
+          </div>
+        </div>
+
+        {desktopAuthRequested && desktopRedirectUrl ? (
+          <DesktopHandoffAction
+            openworkUrl={desktopRedirectUrl}
+            grant={desktopGrant}
+            organizationName={isSingleOrgMode ? singleOrgName : null}
+            helperText="Sign in below, then click above to return to the app."
+          />
+        ) : null}
+
+        {emailFirstStep === "email" ? (
+          <form className="grid gap-4" onSubmit={resolveEmailFirstStep}>
+            <label className="grid gap-2">
+              <span className="den-label">Email</span>
+              <input
+                className="den-input"
+                type="email"
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+                autoComplete="email"
+                required
+              />
+            </label>
+            <button
+              type="submit"
+              className="den-button-primary w-full"
+              disabled={emailFirstFormBusy}
+            >
+              {loginOptionBusy ? "Checking..." : "Next"}
+              {!loginOptionBusy ? <ArrowRight className="h-4 w-4" /> : null}
+            </button>
+          </form>
+        ) : null}
+
+        {emailFirstStep === "sso" ? (
+          <button
+            type="button"
+            className="den-button-primary w-full"
+            onClick={startEmailFirstSso}
+            disabled={!runtimeConfigLoaded || authBusy || desktopRedirectBusy}
+          >
+            Sign in with SSO
+            <ArrowRight className="h-4 w-4" />
+          </button>
+        ) : null}
+
+        {emailFirstStep === "google" ? (
+          <SocialButton
+            onClick={() => void beginSocialAuth("google")}
+            disabled={!runtimeConfigLoaded || authBusy || desktopRedirectBusy}
+          >
+            <GoogleLogo />
+            <span>Sign in with Google</span>
+          </SocialButton>
+        ) : null}
+
+        {emailFirstStep === "github" ? (
+          <SocialButton
+            onClick={() => void beginSocialAuth("github")}
+            disabled={!runtimeConfigLoaded || authBusy || desktopRedirectBusy}
+          >
+            <GitHubLogo />
+            <span>Sign in with GitHub</span>
+          </SocialButton>
+        ) : null}
+
+        {emailFirstStep === "password" ? (
+          <form
+            className="grid gap-4"
+            onSubmit={async (event) => {
+              const next = await submitAuth(event);
+              await handleAuthNavigation(next);
+            }}
+          >
+            <label className="grid gap-2">
+              <span className="den-label">Password</span>
+              <input
+                className="den-input"
+                type="password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                autoComplete="current-password"
+                required
+              />
+            </label>
+            <div className="-mt-2 flex justify-end">
+              <button
+                type="button"
+                className="text-sm font-medium text-[var(--dls-text-primary)] transition hover:opacity-70"
+                onClick={() => {
+                  setAuthMode("sign-in");
+                  setPasswordResetRequested(true);
+                  setPasswordResetInfo("");
+                  setPasswordResetError(null);
+                }}
+              >
+                Forgot password?
+              </button>
+            </div>
+            <button type="submit" className="den-button-primary w-full" disabled={formBusy}>
+              {formBusy ? "Working..." : "Sign in"}
+              {!formBusy ? <ArrowRight className="h-4 w-4" /> : null}
+            </button>
+          </form>
+        ) : null}
+
+        {emailFirstStep === "new_account" ? (
+          <form
+            className="grid gap-4"
+            onSubmit={async (event) => {
+              const next = await submitAuth(event);
+              await handleAuthNavigation(next);
+            }}
+          >
+            <label className="grid gap-2">
+              <span className="den-label">Email</span>
+              <input
+                className="den-input"
+                type="email"
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+                autoComplete="email"
+                required
+              />
+            </label>
+            <label className="grid gap-2">
+              <span className="den-label">Name</span>
+              <input
+                className="den-input"
+                type="text"
+                value={authName}
+                onChange={(event) => setAuthName(event.target.value)}
+                autoComplete="name"
+                required
+              />
+            </label>
+            <div className="den-divider" aria-hidden="true">
+              <span>or</span>
+            </div>
+            <SocialButton
+              onClick={() => void beginSocialAuth("google")}
+              disabled={!runtimeConfigLoaded || authBusy || desktopRedirectBusy}
+            >
+              <GoogleLogo />
+              <span>Sign up with Google</span>
+            </SocialButton>
+            <label className="grid gap-2">
+              <span className="den-label">Password</span>
+              <input
+                className="den-input"
+                type="password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                autoComplete="new-password"
+                required
+              />
+            </label>
+            <button type="submit" className="den-button-primary w-full" disabled={formBusy}>
+              {formBusy ? "Working..." : "Sign up"}
+              {!formBusy ? <ArrowRight className="h-4 w-4" /> : null}
+            </button>
+          </form>
+        ) : null}
+
+        {loginOptionError || showAuthFeedback ? (
+          <div
+            className="den-frame-inset grid gap-1 rounded-[1.5rem] px-4 py-3 text-center text-[13px] text-[var(--dls-text-secondary)]"
+            aria-live="polite"
+          >
+            {loginOptionError ? <p className="font-medium text-rose-600">{loginOptionError}</p> : <p>{authInfo}</p>}
+            {!loginOptionError && authError ? <p className="font-medium text-rose-600">{authError}</p> : null}
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
   return (
-    <div className="den-frame grid gap-4 p-5 sm:gap-5 sm:p-6 md:p-7">
+    <div className={shellClass("gap-4 sm:gap-5", "p-5 sm:p-6 md:p-7")}>
       <div className="grid gap-3">
         <p className="den-eyebrow">{eyebrow}</p>
         <div className="grid gap-2">
@@ -310,20 +727,46 @@ export function AuthPanel({
         </div>
       </div>
 
-      {desktopAuthRequested && desktopRedirectUrl ? (
-        <div className="grid gap-3">
+      {showModeTabs ? (
+        <div
+          className="grid grid-cols-2 gap-1 rounded-full border border-[var(--dls-border)] bg-[var(--dls-hover)] p-1"
+          role="group"
+          aria-label="Choose sign in or create account"
+        >
           <button
             type="button"
-            className="den-button-primary w-full"
-            onClick={() => window.location.assign(desktopRedirectUrl)}
+            aria-pressed={visibleAuthMode === "sign-in"}
+            onClick={() => switchMode("sign-in")}
+            className={`rounded-full px-4 py-2 text-sm font-semibold transition ${
+              visibleAuthMode === "sign-in"
+                ? "bg-[var(--dls-surface)] text-[var(--dls-text-primary)] shadow-[0_1px_2px_rgba(15,23,42,0.08)]"
+                : "text-[var(--dls-text-secondary)] hover:text-[var(--dls-text-primary)]"
+            }`}
           >
-            Open OpenWork
-            <ArrowRight className="h-4 w-4" />
+            Sign in
           </button>
-          <p className="m-0 text-center text-xs text-[var(--dls-text-secondary)]">
-            Sign in below, then click above to return to the app.
-          </p>
+          <button
+            type="button"
+            aria-pressed={visibleAuthMode === "sign-up"}
+            onClick={() => switchMode("sign-up")}
+            className={`rounded-full px-4 py-2 text-sm font-semibold transition ${
+              visibleAuthMode === "sign-up"
+                ? "bg-[var(--dls-surface)] text-[var(--dls-text-primary)] shadow-[0_1px_2px_rgba(15,23,42,0.08)]"
+                : "text-[var(--dls-text-secondary)] hover:text-[var(--dls-text-primary)]"
+            }`}
+          >
+            Create account
+          </button>
         </div>
+      ) : null}
+
+      {desktopAuthRequested && desktopRedirectUrl ? (
+        <DesktopHandoffAction
+          openworkUrl={desktopRedirectUrl}
+          grant={desktopGrant}
+          organizationName={isSingleOrgMode ? singleOrgName : null}
+          helperText="Sign in below, then click above to return to the app."
+        />
       ) : null}
 
       <form
@@ -334,46 +777,45 @@ export function AuthPanel({
             return;
           }
 
-          if (isSignInEmailStep) {
-            event.preventDefault();
-            const shouldContinue = await continueSignInWithEmail();
-            if (shouldContinue) {
-              setSignInEmailConfirmed(true);
-            }
-            return;
-          }
-
           const next = verificationRequired
             ? await submitVerificationCode(event)
             : await submitAuth(event);
-          const oauthRoute = typeof window === "undefined" ? null : getMcpOAuthSelectOrganizationRoute(window.location.search);
-          if (next && oauthRoute) {
-            router.replace(oauthRoute);
-            return;
-          }
-          if (next === "dashboard" || next === "join-org") {
-            const target = await resolveUserLandingRoute();
-            if (target && !isSamePathname(pathname, target)) {
-              router.replace(target);
-            }
-          }
+          await handleAuthNavigation(next);
         }}
       >
-        {!verificationRequired && !isPasswordResetRequest && !hideSocialAuth ? (
+        {showSingleOrgSso ? (
           <>
-            {authMode !== "sign-in" ? (
-              <SocialButton
-                onClick={() => void beginSocialAuth("github")}
-                disabled={authBusy || desktopRedirectBusy}
-              >
-                <GitHubLogo />
-                <span>Continue with GitHub</span>
-              </SocialButton>
+            <button
+              type="button"
+              className="den-button-primary w-full"
+              onClick={startSingleOrgSso}
+              disabled={!runtimeConfigLoaded || authBusy || desktopRedirectBusy}
+            >
+              Continue with SSO
+              <ArrowRight className="h-4 w-4" />
+            </button>
+
+            {showSingleOrgSsoDivider ? (
+              <div className="den-divider" aria-hidden="true">
+                <span>or</span>
+              </div>
             ) : null}
+          </>
+        ) : null}
+
+        {showSocialAuth ? (
+          <>
+            <SocialButton
+              onClick={() => void beginSocialAuth("github")}
+              disabled={!runtimeConfigLoaded || authBusy || desktopRedirectBusy}
+            >
+              <GitHubLogo />
+              <span>Continue with GitHub</span>
+            </SocialButton>
 
             <SocialButton
               onClick={() => void beginSocialAuth("google")}
-              disabled={authBusy || desktopRedirectBusy}
+              disabled={!runtimeConfigLoaded || authBusy || desktopRedirectBusy}
             >
               <GoogleLogo />
               <span>Continue with Google</span>
@@ -392,19 +834,14 @@ export function AuthPanel({
           </div>
         ) : null}
 
-        {!hideEmailField ? (
+        {showEmailPasswordAuth && !hideEmailField ? (
           <label className="grid gap-2">
             <span className="den-label">Email</span>
             <input
               className="den-input disabled:cursor-not-allowed disabled:bg-gray-50 disabled:text-gray-500"
               type="email"
               value={email}
-              onChange={(event) => {
-                setEmail(event.target.value);
-                if (authMode === "sign-in") {
-                  setSignInEmailConfirmed(false);
-                }
-              }}
+              onChange={(event) => setEmail(event.target.value)}
               autoComplete="email"
               readOnly={lockEmail}
               disabled={lockEmail}
@@ -413,7 +850,7 @@ export function AuthPanel({
           </label>
         ) : null}
 
-        {!verificationRequired && !isPasswordResetRequest && !isSignInEmailStep ? (
+        {showEmailPasswordAuth && !verificationRequired && !isPasswordResetRequest ? (
           <label className="grid gap-2">
             <span className="den-label">Password</span>
             <input
@@ -421,7 +858,7 @@ export function AuthPanel({
               type="password"
               value={password}
               onChange={(event) => setPassword(event.target.value)}
-              autoComplete={authMode === "sign-up" ? "new-password" : "current-password"}
+              autoComplete={visibleAuthMode === "sign-up" ? "new-password" : "current-password"}
               required
             />
           </label>
@@ -443,10 +880,14 @@ export function AuthPanel({
           </label>
         ) : null}
 
-        {authMode === "sign-in" && !verificationRequired && !isPasswordResetRequest && !isSignInEmailStep && !hideEmailField ? (
-          <div className="-mt-2 flex justify-end">
+        {showEmailPasswordAuth && !verificationRequired && !isPasswordResetRequest && !hideEmailField ? (
+          // Always rendered (invisible in sign-up) so switching modes never
+          // changes the card height.
+          <div className={`-mt-2 flex justify-end ${visibleAuthMode === "sign-in" ? "" : "invisible"}`}>
             <button
               type="button"
+              tabIndex={visibleAuthMode === "sign-in" ? 0 : -1}
+              aria-hidden={visibleAuthMode !== "sign-in"}
               className="text-sm font-medium text-[var(--dls-text-primary)] transition hover:opacity-70"
               onClick={() => {
                 setAuthMode("sign-in");
@@ -460,14 +901,16 @@ export function AuthPanel({
           </div>
         ) : null}
 
-        <button
-          type="submit"
-          className="den-button-primary w-full"
-          disabled={formBusy}
-        >
-          {formBusy ? "Working..." : activeContent.submitLabel}
-          {!formBusy ? <ArrowRight className="h-4 w-4" /> : null}
-        </button>
+        {showEmailPasswordAuth ? (
+          <button
+            type="submit"
+            className="den-button-primary w-full"
+            disabled={formBusy}
+          >
+            {formBusy ? "Working..." : activeContent.submitLabel}
+            {!formBusy ? <ArrowRight className="h-4 w-4" /> : null}
+          </button>
+        ) : null}
 
         {verificationRequired ? (
           <div className="flex flex-col gap-3 sm:flex-row">
@@ -483,7 +926,6 @@ export function AuthPanel({
               type="button"
               className="den-button-secondary w-full"
               onClick={() => {
-                setSignInEmailConfirmed(false);
                 cancelVerification();
               }}
               disabled={authBusy || desktopRedirectBusy}
@@ -504,34 +946,10 @@ export function AuthPanel({
               setPasswordResetRequested(false);
               setPasswordResetInfo("");
               setPasswordResetError(null);
-              setSignInEmailConfirmed(false);
               setAuthMode("sign-in");
             }}
           >
             Back to sign in
-          </button>
-        </div>
-      ) : !verificationRequired ? (
-        <div className="flex flex-col gap-2 border-t border-[var(--dls-border)] pt-4 text-sm text-[var(--dls-text-secondary)] sm:flex-row sm:items-center sm:justify-between sm:gap-3">
-          <p className="m-0">
-            {authMode === "sign-in"
-              ? resolvedSignInContent.togglePrompt
-              : resolvedSignUpContent.togglePrompt}
-          </p>
-          <button
-            type="button"
-            className="font-medium text-[var(--dls-text-primary)] transition hover:opacity-70"
-            onClick={() => {
-              setPasswordResetRequested(false);
-              setPasswordResetInfo("");
-              setPasswordResetError(null);
-              setSignInEmailConfirmed(false);
-              setAuthMode(authMode === "sign-in" ? "sign-up" : "sign-in");
-            }}
-          >
-            {authMode === "sign-in"
-              ? resolvedSignInContent.toggleActionLabel
-              : resolvedSignUpContent.toggleActionLabel}
           </button>
         </div>
       ) : null}
@@ -553,11 +971,21 @@ export function AuthPanel({
         >
           <p>{authInfo}</p>
           {authError ? <p className="font-medium text-rose-600">{authError}</p> : null}
-          {!authError && verificationRequired ? (
+          {!authError && verificationRequired && !isSingleOrgMode ? (
             <div className="mt-1 inline-flex items-center justify-center gap-1 text-emerald-600">
               <CheckCircle2 className="h-3.5 w-3.5" />
               <span>Waiting for your verification code</span>
             </div>
+          ) : null}
+          {authError && visibleAuthMode === "sign-in" && !isSingleOrgPrivateSignup && !verificationRequired && showEmailPasswordAuth ? (
+            <button
+              type="button"
+              className="mt-1 inline-flex items-center justify-center gap-1 font-medium text-[var(--dls-text-primary)] transition hover:opacity-70"
+              onClick={() => switchMode("sign-up")}
+            >
+              New here? Create an account
+              <ArrowRight className="h-3.5 w-3.5" />
+            </button>
           ) : null}
         </div>
       ) : null}

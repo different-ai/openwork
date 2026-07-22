@@ -10,17 +10,37 @@ imagePullSecrets: []
 config:
   databaseMode: mysql
   openworkDevMode: "0"
+  # Passed to the den-api Node.js process as NODE_OPTIONS at container startup.
+  denApiNodeOptions: ""
+  tenancy:
+    mode: single_org
+    singleOrgName: OpenWork
+    singleOrgSlug: default
+    ownerEmails: ""
+    allowPublicSignup: "false"
+    requireEmailVerification: "false"
+  auth:
+    passwordBreachScreeningEnabled: "false"
+  githubConnector:
+    appId: ""
+    clientId: ""
   public:
     webOrigin: https://openwork.example.com
     apiOrigin: https://api.openwork.example.com
     mcpResourceUrl: https://api.openwork.example.com/mcp
+    mcpAdditionalResources: ""
     mcpClaimNamespace: ""
     desktopDenBaseUrl: https://openwork.example.com
     corsOrigins: https://openwork.example.com,https://api.openwork.example.com
     betterAuthTrustedOrigins: https://openwork.example.com
     webAppHosts: openwork.example.com
     bootstrapAdminEmails: ""
+    installLinksGatingEnabled: "false"
+    connectLinkMode: exchange
+    connectLinkKeyId: ""
     openworkAppConnectUrl: ""
+    installerReleaseTag: ""
+    installerReleaseRepo: ""
     authCallbackUrl: https://openwork.example.com
   internal:
     apiBaseUrl: ""
@@ -74,6 +94,42 @@ config:
     posthogKey: ""
     posthogHost: ""
 
+observability:
+  backend: none
+  serviceNames:
+    denApi: den-api
+    denWeb: den-web
+  otel:
+    endpoint: ""
+    tracesEndpoint: ""
+    metricsEndpoint: ""
+    logsEndpoint: ""
+    protocol: http/protobuf
+    exporters:
+      traces: otlp
+      metrics: otlp
+      logs: otlp
+    tracesSampler: parentbased_always_on
+    tracesSamplerArg: ""
+    headers:
+      existingSecret: ""
+      key: OTEL_EXPORTER_OTLP_HEADERS
+  sentry:
+    dsn: ""
+    dsnSecret:
+      existingSecret: ""
+      key: SENTRY_DSN
+    tracesSampleRate: "1"
+    environment: ""
+    release: ""
+    dist: ""
+
+customCa:
+  enabled: false
+  existingSecret: ""
+  existingConfigMap: ""
+  key: ca.crt
+
 secret:
   create: true
   existingSecret: ""
@@ -86,6 +142,16 @@ secret:
     openRouterManagementApiKey: OPENROUTER_MANAGEMENT_API_KEY
     inferenceAdminToken: INFERENCE_ADMIN_TOKEN
     inferenceWebhookSecret: INFERENCE_WEBHOOK_SECRET
+    emailFrom: EMAIL_FROM
+    smtpHost: SMTP_HOST
+    smtpPort: SMTP_PORT
+    smtpUser: SMTP_USER
+    smtpPass: SMTP_PASS
+    smtpSecure: SMTP_SECURE
+    githubConnectorAppClientSecret: GITHUB_CONNECTOR_APP_CLIENT_SECRET
+    githubConnectorAppPrivateKey: GITHUB_CONNECTOR_APP_PRIVATE_KEY
+    githubConnectorAppWebhookSecret: GITHUB_CONNECTOR_APP_WEBHOOK_SECRET
+    connectLinkPrivateKey: DEN_CONNECT_LINK_PRIVATE_KEY
   values:
     databaseUrl: mysql://openwork:change-me@mysql:3306/openwork_den
     betterAuthSecret: CHANGE_ME_32_CHARS_MINIMUM_BETTER_AUTH
@@ -95,6 +161,22 @@ secret:
     openRouterManagementApiKey: ""
     inferenceAdminToken: ""
     inferenceWebhookSecret: ""
+    emailFrom: ""
+    smtpHost: ""
+    smtpPort: "587"
+    smtpUser: ""
+    smtpPass: ""
+    smtpSecure: "false"
+    githubConnectorAppClientSecret: ""
+    githubConnectorAppPrivateKey: ""
+    githubConnectorAppWebhookSecret: ""
+    connectLinkPrivateKey: ""
+
+installerArtifacts:
+  enabled: false
+  existingClaim: ""
+  hostPath: ""
+  mountPath: /var/lib/openwork/installer-artifacts
 
 denApi:
   replicaCount: 1
@@ -104,6 +186,9 @@ denApi:
   service:
     type: ClusterIP
     port: 8788
+    annotations: {}
+    loadBalancerClass: ""
+    loadBalancerSourceRanges: []
   containerPort: 8788
   env: {}
   podAnnotations: {}
@@ -129,6 +214,9 @@ denWeb:
   service:
     type: ClusterIP
     port: 3005
+    annotations: {}
+    loadBalancerClass: ""
+    loadBalancerSourceRanges: []
   containerPort: 3005
   env: {}
   podAnnotations: {}
@@ -155,6 +243,9 @@ inference:
   service:
     type: ClusterIP
     port: 8791
+    annotations: {}
+    loadBalancerClass: ""
+    loadBalancerSourceRanges: []
   containerPort: 8791
   env: {}
   podAnnotations: {}
@@ -175,15 +266,15 @@ inference:
 migrations:
   enabled: true
   hook: true
+  hookDeletePolicy: before-hook-creation,hook-succeeded
   backoffLimit: 2
   activeDeadlineSeconds: 600
   podAnnotations: {}
   resources: {}
   command:
-    - sh
-    - -lc
+    - node
   args:
-    - pnpm --dir /app/ee/packages/den-db run db:bootstrap
+    - /app/ee/packages/den-db/dist/scripts/bootstrap.js
 
 ingress:
   enabled: false

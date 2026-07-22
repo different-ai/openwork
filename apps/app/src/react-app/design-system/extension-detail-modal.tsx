@@ -1,6 +1,5 @@
 /** @jsxImportSource react */
 import { CheckCircle2, ExternalLink, Loader2 } from "lucide-react";
-import type { LucideIcon } from "lucide-react";
 import {
   Card,
   CardContent,
@@ -27,7 +26,7 @@ import {
 import { cn } from "@/lib/utils";
 import type { ExtensionKind } from "@/app/constants";
 import { MarkdownBlock } from "../domains/session/surface/markdown";
-import { resolveExtensionIconSrc } from "./extension-icon-src";
+import { resolveExtensionIconUrl } from "./extension-icon-src";
 import { ExtensionMeshAvatar } from "./extension-mesh-avatar";
 
 export type ExtensionDetailModalProps = {
@@ -37,7 +36,6 @@ export type ExtensionDetailModalProps = {
   description: string;
   iconSlug?: string;
   iconSrc?: string;
-  fallbackIcon?: LucideIcon;
   kind?: ExtensionKind;
   connected?: boolean;
   connectedLabel?: string;
@@ -47,6 +45,8 @@ export type ExtensionDetailModalProps = {
   hidden?: boolean;
   /** Whether this extension is still in preview. */
   preview?: boolean;
+  /** Whether this extension is beta / untested. */
+  beta?: boolean;
   /** Reason this item is visible but unavailable. */
   disabledReason?: string | null;
   /** Remote URL if applicable. */
@@ -191,6 +191,7 @@ export function ExtensionDetailModal({
   connecting = false,
   hidden = false,
   preview = false,
+  beta = false,
   disabledReason = null,
   url,
   setupInstructions,
@@ -215,6 +216,7 @@ export function ExtensionDetailModal({
   size = "default",
 }: ExtensionDetailModalProps) {
   "use memo";
+  const resolvedIconSrc = resolveExtensionIconUrl({ iconSrc, iconSlug, serviceUrl: url });
 
   return (
     <Dialog
@@ -239,13 +241,9 @@ export function ExtensionDetailModal({
                   connected ? "border-green-6 bg-green-2" : "border-dls-border bg-dls-hover",
                 )}
               >
-                {iconSrc ? (
+                {resolvedIconSrc ? (
                   <div className="flex size-8 items-center justify-center rounded-md bg-white">
-                    <img src={resolveExtensionIconSrc(iconSrc)} alt="" width={20} height={20} loading="lazy" style={{ display: "block" }} />
-                  </div>
-                ) : iconSlug ? (
-                  <div className="flex size-8 items-center justify-center rounded-md bg-white">
-                    <img src={`https://cdn.simpleicons.org/${iconSlug}`} alt="" width={20} height={20} loading="lazy" style={{ display: "block" }} />
+                    <img src={resolvedIconSrc} alt="" width={20} height={20} loading="lazy" style={{ display: "block" }} />
                   </div>
                 ) : (
                   <ExtensionMeshAvatar
@@ -269,6 +267,11 @@ export function ExtensionDetailModal({
                 {preview ? (
                   <span className="rounded-md bg-blue-3 px-1.5 py-0.5 text-[10px] font-medium text-blue-11">
                     Preview
+                  </span>
+                ) : null}
+                {beta ? (
+                  <span className="rounded-md bg-amber-3 px-1.5 py-0.5 text-[10px] font-medium text-amber-11">
+                    Beta
                   </span>
                 ) : null}
               </DialogDescription>
@@ -400,6 +403,13 @@ export function ExtensionDetailModal({
                     <div className="flex items-center justify-between text-sm">
                       <span className="text-muted-foreground">Release stage</span>
                       <span className="font-medium text-blue-11">Preview</span>
+                    </div>
+                  ) : null}
+
+                  {beta ? (
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-muted-foreground">Release stage</span>
+                      <span className="font-medium text-amber-11">Beta</span>
                     </div>
                   ) : null}
 

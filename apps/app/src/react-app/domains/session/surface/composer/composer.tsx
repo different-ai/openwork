@@ -1,7 +1,7 @@
 /** @jsxImportSource react */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Agent } from "@opencode-ai/sdk/v2/client";
-import { AppWindowMac, ArrowUp, Check, ChevronDown, ChevronRight, FileText, ListPlus, Paperclip, Plug, Settings, Square, Terminal, X, Zap } from "lucide-react";
+import { AppWindowMac, ArrowUp, Check, ChevronDown, ChevronRight, FileText, ListPlus, LoaderCircle, Paperclip, Plug, Settings, Square, Terminal, X, Zap } from "lucide-react";
 import fuzzysort from "fuzzysort";
 import { toast } from "@/components/ui/sonner";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuShortcut, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -12,12 +12,20 @@ import { formatBytes, isMacPlatform } from "@/app/utils";
 import { t } from "@/i18n";
 import { isOpenWorkExtensionEnabled, isOpenWorkExtensionHidden, OPENWORK_EXTENSION_STATE_CHANGED } from "@/react-app/domains/settings/extension-state";
 import { useDesktopRestriction } from "@/react-app/domains/cloud/desktop-config-provider";
+import { resolveExtensionIconUrl } from "@/react-app/design-system/extension-icon-src";
 import { ModelBehaviorSelect } from "@/components/model-behavior-select";
 import { ModelSelect } from "@/components/model-select";
 import { LexicalPromptEditor, type LexicalPromptEditorHandle } from "./editor";
 import { listRunningAppsForMention } from "./app-mentions";
 import type { ComposerMentionKind } from "./mention-encoding";
-import { getSlashCommandQuery } from "./slash-command";
+import {
+  connectSkillSlashCommandOptions,
+  getSlashCommandQuery,
+  skillMenuSlashCommandName,
+  skillSlashCommandName,
+  type ComposerSlashCommandOption,
+} from "./slash-command";
+import { FILE_URL_RE, HTTP_URL_RE } from "./pasted-text";
 
 type MentionItem = {
   id: string;
@@ -53,6 +61,8 @@ type ComposerProps = {
   onQueue: () => void | Promise<void>;
   onStop: () => void | Promise<void>;
   busy: boolean;
+  steering: boolean;
+  submissionPreparing: boolean;
   queuedCount: number;
   disabled: boolean;
   modelUnavailable?: boolean;
@@ -108,8 +118,6 @@ const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
 const IMAGE_COMPRESS_MAX_PX = 2048;
 const IMAGE_COMPRESS_QUALITY = 0.82;
 const IMAGE_COMPRESS_TARGET_BYTES = 1_500_000;
-const FILE_URL_RE = /^file:\/\//i;
-const HTTP_URL_RE = /^https?:\/\//i;
 const DEFAULT_AGENT_NAME = "openwork";
 
 function isNonDefaultAgent(agent: Agent) {
@@ -240,12 +248,15 @@ function mcpStatusBadgeClass(status: McpServerStatus) {
   }
 }
 
+function isLocalCapability(origin: SkillCard["origin"] | McpServerEntry["origin"]) {
+  return origin !== "openwork-connect";
+}
+
 function extensionIcon(entry: McpDirectoryInfo, size = 16) {
-  if (entry.iconSrc) {
-    return <img src={entry.iconSrc} alt="" width={size} height={size} loading="lazy" style={{ display: "block" }} />;
-  }
-  if (entry.iconSlug) {
-    return <img src={`https://cdn.simpleicons.org/${entry.iconSlug}`} alt="" width={size} height={size} loading="lazy" style={{ display: "block" }} />;
+  const serviceUrl = typeof entry.url === "string" ? entry.url : undefined;
+  const iconUrl = resolveExtensionIconUrl({ iconSrc: entry.iconSrc, iconSlug: entry.iconSlug, serviceUrl });
+  if (iconUrl) {
+    return <img src={iconUrl} alt="" width={size} height={size} loading="lazy" style={{ display: "block" }} />;
   }
   return <Plug size={size} className="text-gray-9" />;
 }
@@ -294,6 +305,7 @@ export function ReactSessionComposer(props: ComposerProps) {
   const menuItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const commandsCacheRef = useRef<SlashCommandOption[] | null>(null);
   const commandsRequestRef = useRef<Promise<SlashCommandOption[]> | null>(null);
+  const skillsRequestRef = useRef<Promise<SkillCard[]> | null>(null);
   const commandsLoadVersionRef = useRef(0);
   const listCommandsRef = useRef(props.listCommands);
   const listSkillsRef = useRef(props.listSkills);
@@ -349,6 +361,12 @@ export function ReactSessionComposer(props: ComposerProps) {
     if (!props.busy) disarmEscape();
   }, [props.busy, disarmEscape]);
 
+  useEffect(() => {
+    if (props.steering && props.modelPickerOpen) {
+      props.onModelPickerOpenChange(false);
+    }
+  }, [props.modelPickerOpen, props.onModelPickerOpenChange, props.steering]);
+
   // Input history recall (#2012): ArrowUp on an empty composer recalls the
   // previous sent prompt; repeated ArrowUp/ArrowDown walk the history.
   // Editing the recalled text exits recall mode, and ArrowDown past the
@@ -375,13 +393,14 @@ export function ReactSessionComposer(props: ComposerProps) {
   const handleEditorSubmit = useCallback((options: { queue: boolean }) => {
     const hasContent = props.draft.trim().length > 0 || props.attachments.length > 0;
     if (!hasContent) return;
+    if (props.submissionPreparing) return;
     if (props.busy) {
       if (options.queue) void props.onQueue();
       else void props.onSteer();
       return;
     }
     void props.onSend();
-  }, [props.busy, props.draft, props.attachments, props.onSend, props.onSteer, props.onQueue]);
+  }, [props.busy, props.draft, props.attachments, props.onSend, props.onSteer, props.onQueue, props.submissionPreparing]);
 
   const slashCommandQuery = getSlashCommandQuery(props.draft);
   const slashOpenNext = slashCommandQuery !== null;
@@ -487,6 +506,17 @@ export function ReactSessionComposer(props: ComposerProps) {
       }
     });
     commandsRequestRef.current = request;
+    return request;
+  }, []);
+
+  const loadSkills = useCallback(() => {
+    if (skillsRequestRef.current) return skillsRequestRef.current;
+    const listSkills = listSkillsRef.current;
+    if (!listSkills) return Promise.resolve([]);
+    const request = listSkills().finally(() => {
+      if (skillsRequestRef.current === request) skillsRequestRef.current = null;
+    });
+    skillsRequestRef.current = request;
     return request;
   }, []);
 
@@ -636,32 +666,34 @@ export function ReactSessionComposer(props: ComposerProps) {
   }, [toolMenuOpen]);
 
   useEffect(() => {
-    if (!toolMenuOpen) return;
+    if (!slashOpen && !toolMenuOpen) return;
     const openId = toolMenuLoadRef.current.openId;
-    const listSkills = listSkillsRef.current;
     const listMcp = listMcpRef.current;
-    if (toolMenuSection === "skills" && listSkills && !toolMenuLoadRef.current.skills) {
+    if ((slashOpen || toolMenuSection === "skills") && (!toolMenuOpen || !toolMenuLoadRef.current.skills)) {
       let cancelled = false;
-      toolMenuLoadRef.current.skills = true;
+      if (toolMenuOpen) toolMenuLoadRef.current.skills = true;
       setSkillsLoading(true);
-      void listSkills()
+      void loadSkills()
         .then((next) => {
-          if (!cancelled && toolMenuLoadRef.current.openId === openId) {
+          if (!cancelled && (!toolMenuOpen || toolMenuLoadRef.current.openId === openId)) {
             setSkills(next);
             setSkillsLoaded(true);
           }
         })
         .catch(() => {
-          if (!cancelled && toolMenuLoadRef.current.openId === openId) {
+          if (!cancelled && (!toolMenuOpen || toolMenuLoadRef.current.openId === openId)) {
             setSkills([]);
             setSkillsLoaded(true);
           }
         })
         .finally(() => {
-          if (!cancelled && toolMenuLoadRef.current.openId === openId) setSkillsLoading(false);
+          if (!cancelled && (!toolMenuOpen || toolMenuLoadRef.current.openId === openId)) setSkillsLoading(false);
         });
       return () => {
         cancelled = true;
+        if (toolMenuOpen && toolMenuLoadRef.current.openId === openId) {
+          toolMenuLoadRef.current.skills = false;
+        }
       };
     }
     if (toolMenuSection === "mcps" && listMcp && !toolMenuLoadRef.current.mcps) {
@@ -690,20 +722,24 @@ export function ReactSessionComposer(props: ComposerProps) {
       };
     }
     return undefined;
-  }, [toolMenuOpen, toolMenuSection]);
+  }, [loadSkills, slashOpen, toolMenuOpen, toolMenuSection]);
 
+  const slashItems = useMemo<ComposerSlashCommandOption[]>(
+    () => [...commands, ...connectSkillSlashCommandOptions(skills)],
+    [commands, skills],
+  );
   const slashFiltered = useMemo(() => {
     if (!slashOpen) return [];
-    if (!slashQuery) return commands.slice(0, 8);
-    return fuzzysort.go(slashQuery, commands, { keys: ["name", "description"], limit: 8 }).map((entry) => entry.obj);
-  }, [commands, slashOpen, slashQuery]);
+    if (!slashQuery) return slashItems.slice(0, 8);
+    return fuzzysort.go(slashQuery, slashItems, { keys: ["name", "description"], limit: 8 }).map((entry) => entry.obj);
+  }, [slashItems, slashOpen, slashQuery]);
   const mentionFiltered = useMemo(() => {
     if (!mentionOpen) return [];
     if (!mentionQuery) return mentionItems.slice(0, 8);
     return fuzzysort.go(mentionQuery, mentionItems, { keys: ["label"], limit: 8 }).map((entry) => entry.obj);
   }, [mentionItems, mentionOpen, mentionQuery]);
   const pastedTextTokens = useMemo(
-    () => props.pastedText.map((item) => ({ label: item.label, lines: item.lines })),
+    () => props.pastedText.map((item) => ({ label: item.label, lines: item.lines, text: item.text })),
     [props.pastedText],
   );
 
@@ -719,6 +755,18 @@ export function ReactSessionComposer(props: ComposerProps) {
   const toolSkillItems = commands.filter((command) => command.source === "skill");
   const toolMcpItems = commands.filter((command) => command.source === "mcp");
   void toolMcpItems;
+  const localCommandSkillNames = new Set(toolSkillItems.map((command) => command.name));
+  const skillMenuItems: SkillCard[] = [
+    ...toolSkillItems.map((command) => ({
+      name: command.name,
+      path: `command://${command.id}`,
+      description: command.description,
+      origin: "local" as const,
+    })),
+    ...skills.filter((skill) =>
+      skill.origin === "openwork-connect" || !localCommandSkillNames.has(skill.name)
+    ),
+  ];
   const pluginSections = importedPlugins
     .filter((plugin) => plugin.files.length > 0)
     .map((plugin) => ({ section: `plugin:${plugin.pluginId}` as const, plugin }));
@@ -751,7 +799,11 @@ export function ReactSessionComposer(props: ComposerProps) {
     target?.scrollIntoView({ block: "nearest" });
   }, [menuIndex, activeItems.length]);
 
-  const applyCommandSelection = (command: SlashCommandOption, options?: { replaceSkillDraft?: boolean }) => {
+  const applyCommandSelection = (command: ComposerSlashCommandOption, options?: { replaceSkillDraft?: boolean }) => {
+    if (command.skill) {
+      applySkillSelection(command.skill, options);
+      return;
+    }
     if (command.source === "skill") {
       applySkillSelection(command.name, options);
       return;
@@ -761,7 +813,27 @@ export function ReactSessionComposer(props: ComposerProps) {
     setToolMenuOpen(false);
   };
 
-  const applySkillSelection = (name: string, options?: { replaceSkillDraft?: boolean }) => {
+  const applySkillSelection = (input: string | SkillCard, options?: { replaceSkillDraft?: boolean }) => {
+    const skill = typeof input === "string"
+      ? { name: input, path: "", origin: "local" as const }
+      : input;
+    if (skill.origin === "openwork-connect") {
+      const prompt = t("composer.connect_skill_prompt", {
+        name: skill.name,
+        marketplace: skill.marketplaceName ?? "assigned",
+        capability: skill.connectCapabilityName ?? skill.name,
+      });
+      if (options?.replaceSkillDraft) {
+        props.onDraftChange(prompt);
+      } else {
+        const separator = props.draft.length > 0 && !/\s$/.test(props.draft) ? " " : "";
+        props.onDraftChange(`${props.draft}${separator}${prompt}`);
+      }
+      setSlashOpen(false);
+      setToolMenuOpen(false);
+      return;
+    }
+    const name = skill.name;
     if (options?.replaceSkillDraft) {
       props.onDraftChange(`[skill ${name}] `);
     } else {
@@ -1015,7 +1087,7 @@ export function ReactSessionComposer(props: ComposerProps) {
 
   const activeMcpItems = mcpServers.map((entry) => ({
     entry,
-    status: toReactMcpStatus(entry.name, entry, mcpStatuses),
+    status: toReactMcpStatus(entry.id ?? entry.name, entry, mcpStatuses),
   }));
 
   const panelRoundedClass =
@@ -1070,7 +1142,7 @@ export function ReactSessionComposer(props: ComposerProps) {
               </div>
             ) : (
               <div className="px-3 py-2 text-xs text-gray-10">
-                {!commandsLoaded && commandsLoading ? t("composer.loading_commands") : t("composer.no_commands")}
+                {(!commandsLoaded && commandsLoading) || skillsLoading ? t("composer.loading_commands") : t("composer.no_commands")}
               </div>
             )}
           </div>
@@ -1243,11 +1315,10 @@ export function ReactSessionComposer(props: ComposerProps) {
 
                 const text = event.clipboardData?.getData("text/plain") ?? "";
 
-                // Long pastes (3+ lines / 200+ chars) are collapsed into
-                // an inline chip by PasteChipPlugin inside the Lexical
-                // editor. Do NOT duplicate that here — calling onPasteText
-                // from both the React onPaste handler and the Lexical
-                // PASTE_COMMAND handler causes double chip creation.
+                // Plain text paste display is owned by PasteChipPlugin inside
+                // the Lexical editor: >50 chars collapse unless the whole
+                // string is a standalone HTTP(S) URL; expanded pasted text gets
+                // the gray pasted-content styling. Do NOT duplicate that here.
 
                 if (
                   text.trim() &&
@@ -1445,19 +1516,33 @@ export function ReactSessionComposer(props: ComposerProps) {
                             )
                           ) : null}
                           {toolMenuSection === "skills" ? (
-                            (skills.length > 0 || toolSkillItems.length > 0) ? (
+                            skillMenuItems.length > 0 ? (
                               <div className="grid gap-1">
-                                {[...toolSkillItems, ...skills.filter((skill) => !toolSkillItems.some((command) => command.name === skill.name)).map((skill) => ({ id: `skill:${skill.name}`, name: skill.name, description: skill.description, source: "skill" as const }))].map((command) => (
+                                {skillMenuItems.map((skill) => (
                                   <button
-                                    key={command.id}
+                                    key={`${skill.origin ?? "local"}:${skill.path || skill.name}`}
                                     type="button"
-                                    className="flex w-full items-start gap-3 rounded-[16px] px-3 py-2.5 text-left text-gray-11 transition-colors hover:bg-gray-2/70"
-                                    onClick={() => applyCommandSelection(command)}
+                                    className="flex min-w-0 w-full items-start gap-3 rounded-[16px] px-3 py-2.5 text-left text-gray-11 transition-colors hover:bg-gray-2/70"
+                                    onClick={() => applySkillSelection(skill)}
                                   >
                                     <Zap size={14} className="mt-0.5 shrink-0 text-gray-9" />
-                                    <div className="min-w-0">
-                                      <div className="truncate text-xs font-semibold text-gray-11">/{command.name}</div>
-                                      {command.description ? <div className="truncate text-xs text-gray-10">{command.description}</div> : null}
+                                    <div className="min-w-0 flex-1">
+                                      <div className="flex items-center justify-between gap-3">
+                                        <div className="min-w-0 flex-1 truncate text-xs font-semibold text-gray-11">
+                                          /{skillMenuSlashCommandName(skill)}
+                                        </div>
+                                        {isLocalCapability(skill.origin) ? (
+                                          <span className="shrink-0 rounded-full bg-gray-3 px-2 py-0.5 text-[10px] font-medium text-gray-11">
+                                            {t("composer.source_local")}
+                                          </span>
+                                        ) : null}
+                                      </div>
+                                      {skill.description ? <div className="truncate text-xs text-gray-10">{skill.description}</div> : null}
+                                      {skill.origin === "openwork-connect" ? (
+                                        <div className="truncate text-[10px] text-gray-9">
+                                          {[skill.marketplaceName, skill.pluginName].filter(Boolean).join(" · ")}
+                                        </div>
+                                      ) : null}
                                     </div>
                                   </button>
                                 ))}
@@ -1472,16 +1557,31 @@ export function ReactSessionComposer(props: ComposerProps) {
                             activeMcpItems.length > 0 ? (
                               <div className="grid gap-1">
                                 {activeMcpItems.map(({ entry, status }) => (
-                                  <div key={entry.name} className="flex items-start gap-3 rounded-[16px] px-3 py-2.5 text-gray-11">
+                                  <div key={entry.id ?? entry.name} className="flex items-start gap-3 rounded-[16px] px-3 py-2.5 text-gray-11">
                                     <Plug size={14} className="mt-0.5 shrink-0 text-gray-9" />
                                     <div className="min-w-0 flex-1">
                                       <div className="flex items-center justify-between gap-3">
                                         <div className="truncate text-xs font-semibold text-gray-11">{entry.name}</div>
-                                        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${mcpStatusBadgeClass(status)}`}>
-                                          {formatMcpStatusLabel(status)}
-                                        </span>
+                                        <div className="flex shrink-0 items-center gap-1">
+                                          {isLocalCapability(entry.origin) ? (
+                                            <span className="rounded-full bg-gray-3 px-2 py-0.5 text-[10px] font-medium text-gray-11">
+                                              {t("composer.source_local")}
+                                            </span>
+                                          ) : null}
+                                          <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${mcpStatusBadgeClass(status)}`}>
+                                            {formatMcpStatusLabel(status)}
+                                          </span>
+                                        </div>
                                       </div>
-                                      <div className="truncate text-xs text-gray-10">{entry.config.type === "remote" ? entry.config.url ?? entry.config.command?.join(" ") ?? "Remote MCP" : entry.config.command?.join(" ") ?? "Local MCP"}</div>
+                                      <div className="truncate text-xs text-gray-10">
+                                        {entry.origin === "openwork-connect"
+                                          ? [entry.marketplaceName, entry.pluginName].filter(Boolean).join(" · ")
+                                            || entry.config.url
+                                            || "Remote MCP"
+                                          : entry.config.type === "remote"
+                                            ? entry.config.url ?? entry.config.command?.join(" ") ?? "Remote MCP"
+                                            : entry.config.command?.join(" ") ?? "Local MCP"}
+                                      </div>
                                     </div>
                                   </div>
                                 ))}
@@ -1628,8 +1728,10 @@ export function ReactSessionComposer(props: ComposerProps) {
                   open={props.modelPickerOpen}
                   value={props.selectedModel}
                   onOpenChange={props.onModelPickerOpenChange}
-                  onChange={props.onModelChange}
-                  disabled={props.busy}
+                  onChange={(model) => {
+                    if (!props.steering) props.onModelChange(model);
+                  }}
+                  disabled={props.steering}
                 />
                 {props.modelUnavailable ? (
                   <span className="text-xs font-medium text-red-10">Model no longer available</span>
@@ -1639,8 +1741,10 @@ export function ReactSessionComposer(props: ComposerProps) {
                   value={props.modelVariant}
                   label={props.modelVariantLabel}
                   options={props.modelBehaviorOptions}
-                  onChange={props.onModelVariantChange}
-                  disabled={props.busy}
+                  onChange={(value) => {
+                    if (!props.steering) props.onModelVariantChange(value);
+                  }}
+                  disabled={props.steering}
                 />
               </div>
 
@@ -1729,17 +1833,17 @@ export function ReactSessionComposer(props: ComposerProps) {
                 ) : (
                   <button
                     type="button"
-                    onClick={canSend ? props.onSend : undefined}
-                    disabled={props.disabled || !canSend}
+                    onClick={canSend && !props.submissionPreparing ? props.onSend : undefined}
+                    disabled={props.disabled || !canSend || props.submissionPreparing}
                     className={`inline-flex h-9 max-h-9 items-center gap-2 rounded-full px-4 text-[13px] font-medium transition-colors ${
-                      !canSend || props.disabled
+                      !canSend || props.disabled || props.submissionPreparing
                         ? "bg-gray-4 text-gray-10"
                         : "bg-[var(--dls-accent)] text-[var(--dls-accent-fg)] hover:bg-[var(--dls-accent-hover)]"
                     }`}
-                    title={t("composer.run_task")}
+                    title={props.submissionPreparing ? "Preparing connected service tools…" : t("composer.run_task")}
                   >
-                    <ArrowUp size={15} />
-                    <span>{t("composer.run_task")}</span>
+                    {props.submissionPreparing ? <LoaderCircle size={15} className="animate-spin" /> : <ArrowUp size={15} />}
+                    <span>{props.submissionPreparing ? "Preparing connected service tools…" : t("composer.run_task")}</span>
                   </button>
                 )}
               </div>

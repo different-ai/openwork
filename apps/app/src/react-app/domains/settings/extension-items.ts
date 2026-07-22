@@ -3,10 +3,11 @@ import type { CloudImportedPlugin, CloudImportedPluginFile } from "../../../app/
 import type { PendingCloudPluginChange } from "../../../app/cloud/desktop-cloud-sync";
 import { evaluateEnablement, type EnablementContext } from "../../../app/enablement";
 import type { EnablementResult } from "../../../app/extensions";
-import type { DenOrgMarketplaceResolved, DenOrgPlugin } from "../../../app/lib/den";
+import type { DenExternalMcpConnection, DenOrgMarketplaceResolved, DenOrgPlugin } from "../../../app/lib/den";
 import type { McpServerEntry } from "../../../app/types";
+import { connectionNeedsReconnect } from "../connections/native-provider-connections";
 
-export type ExtensionItemSource = "builtin" | "marketplace" | "mcp-directory" | "skill";
+export type ExtensionItemSource = "builtin" | "marketplace" | "org-connection" | "mcp-directory" | "skill";
 export type ExtensionInstallState = "available" | "installed" | "update_available";
 export type ExtensionSetupState = "ready" | "needs_setup" | "partial";
 
@@ -34,6 +35,7 @@ export type ExtensionItem = {
   importedPlugin?: CloudImportedPlugin;
   /** Installed cloud plugin that was removed from the organization marketplace. */
   removedUpstream?: boolean;
+  orgMcpConnection?: DenExternalMcpConnection;
   mcpEntry?: McpDirectoryInfo;
   skill?: { name: string; description?: string; path: string };
 };
@@ -45,6 +47,7 @@ export type ExtensionItemBuildInput = {
   importedCloudPlugins: Record<string, CloudImportedPlugin>;
   pendingCloudPluginChanges?: Record<string, PendingCloudPluginChange>;
   cloudMarketplaces: DenOrgMarketplaceResolved[];
+  orgMcpConnections?: DenExternalMcpConnection[];
   enablementContext: EnablementContext;
   isBuiltInConnected: (entry: McpDirectoryInfo) => boolean;
 };
@@ -68,6 +71,56 @@ function cloudPluginStatus(imported: CloudImportedPlugin | null, plugin: DenOrgP
   return "installed";
 }
 
+export function isOrgMcpConnectionReady(connection: Pick<DenExternalMcpConnection, "credentialMode" | "connected" | "connectedForMe" | "needsReconnect" | "missingFeatures">) {
+  return connection.credentialMode === "shared" ? connection.connected : connection.connectedForMe && !connectionNeedsReconnect(connection);
+}
+
+export function orgMcpConnectionDescription(connection: Pick<DenExternalMcpConnection, "credentialMode" | "connectedForMe" | "needsReconnect" | "missingFeatures">) {
+  if (connection.credentialMode === "shared") return "One org account managed by your organization — the AI acts as it.";
+  if (connection.connectedForMe && connectionNeedsReconnect(connection)) return "Reconnect your account to grant newly requested permissions.";
+  if (connection.connectedForMe) return "Connected with your own account.";
+  return "Available from your organization. Connect your own account to use it.";
+}
+
+export function orgMcpConnectionActionLabel(connection: Pick<DenExternalMcpConnection, "credentialMode" | "connected" | "connectedForMe" | "needsReconnect" | "missingFeatures">) {
+  if (connection.credentialMode === "shared") return "Managed by your organization";
+  if (connection.connectedForMe && connectionNeedsReconnect(connection)) return "Reconnect";
+  if (connection.connectedForMe) return "Connected";
+  return "Connect your account";
+}
+
+export function isOrgMcpConnectionItem(item: ExtensionItem): item is ExtensionItem & { orgMcpConnection: DenExternalMcpConnection } {
+  return item.source === "org-connection" && Boolean(item.orgMcpConnection);
+}
+
+function normalizeProviderKey(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "").trim();
+}
+
+function normalizeProviderUrl(value: string | undefined) {
+  if (!value) return "";
+  try {
+    const url = new URL(value);
+    return `${url.protocol}//${url.host}${url.pathname}`.replace(/\/+$/, "").toLowerCase();
+  } catch {
+    return value.trim().replace(/\/+$/, "").toLowerCase();
+  }
+}
+
+function orgConnectionMatchesQuickEntry(connection: DenExternalMcpConnection, entry: McpDirectoryInfo) {
+  const entryUrl = normalizeProviderUrl(entry.url);
+  const connectionUrl = normalizeProviderUrl(connection.url);
+  if (entryUrl && connectionUrl && entryUrl === connectionUrl) return true;
+
+  const entryKeys = [entry.serverName ?? "", entry.name].map(normalizeProviderKey).filter(Boolean);
+  const connectionKey = normalizeProviderKey(connection.name);
+  return entryKeys.some((key) => key && key === connectionKey);
+}
+
+function orgConnectionCanRender(connection: DenExternalMcpConnection) {
+  return connection.credentialMode === "per_member" || connection.connected;
+}
+
 function resourceFromImportedFile(file: CloudImportedPluginFile): ExtensionResourceItem {
   return {
     id: file.configObjectId,
@@ -79,11 +132,15 @@ function resourceFromImportedFile(file: CloudImportedPluginFile): ExtensionResou
 
 function childKeysForPlugin(plugin: CloudImportedPlugin) {
   const mcpServerNames = new Set<string>();
+  const externalMcpConnectionIds = new Set<string>();
   const skillPaths = new Set<string>();
   const skillNames = new Set<string>();
   for (const file of plugin.files) {
     if (file.path.startsWith(MCP_IMPORT_PATH_PREFIX)) {
       mcpServerNames.add(file.path.slice(MCP_IMPORT_PATH_PREFIX.length));
+    }
+    if (file.externalMcpConnectionId) {
+      externalMcpConnectionIds.add(file.externalMcpConnectionId);
     }
     if (file.objectType === "skill") {
       skillPaths.add(file.path);
@@ -92,7 +149,7 @@ function childKeysForPlugin(plugin: CloudImportedPlugin) {
       skillNames.add(file.title);
     }
   }
-  return { mcpServerNames, skillPaths, skillNames };
+  return { externalMcpConnectionIds, mcpServerNames, skillPaths, skillNames };
 }
 
 export function buildExtensionItems(input: ExtensionItemBuildInput) {
@@ -126,14 +183,24 @@ export function buildExtensionItems(input: ExtensionItemBuildInput) {
     const enablement = manifest?.enablement ? evaluateEnablement(manifest.enablement, input.enablementContext) : null;
     const pendingChange = input.pendingCloudPluginChanges?.[plugin.id];
     const installState = imported && pendingChange === "modified" ? "update_available" : cloudPluginStatus(imported, plugin);
+    const externalConnectionIds = new Set(imported?.files.flatMap((file) => file.externalMcpConnectionId ? [file.externalMcpConnectionId] : []) ?? []);
+    const connectionStates = [...externalConnectionIds].flatMap((id) => {
+      const connection = input.orgMcpConnections?.find((entry) => entry.id === id);
+      return connection ? [isOrgMcpConnectionReady(connection)] : [false];
+    });
+    const connectionSetupState = connectionStates.length === 0
+      ? null
+      : connectionStates.every(Boolean)
+        ? "ready"
+        : "needs_setup";
     return {
       id: `marketplace:${marketplace.marketplace.id}:${plugin.id}`,
       source: "marketplace",
       name: plugin.extension?.name ?? plugin.name,
       description: plugin.extension?.description ?? plugin.description,
       installState,
-      setupState: enablement ? setupStateFromEnablement(enablement) : installState === "available" ? "needs_setup" : "ready",
-      active: enablement?.active ?? installState !== "available",
+      setupState: enablement ? setupStateFromEnablement(enablement) : installState === "available" ? "needs_setup" : connectionSetupState ?? "ready",
+      active: enablement?.active ?? (installState !== "available" && connectionSetupState !== "needs_setup"),
       enablement,
       resources: imported?.files.map(resourceFromImportedFile) ?? Object.entries(plugin.componentCounts).flatMap(([type, count]) => count > 0 ? [{
         id: `${plugin.id}:${type}`,
@@ -165,11 +232,37 @@ export function buildExtensionItems(input: ExtensionItemBuildInput) {
     }];
   });
 
+  const orgMcpConnectionItems = (input.orgMcpConnections ?? []).flatMap((connection): ExtensionItem[] => {
+    if (!orgConnectionCanRender(connection)) return [];
+    const ready = isOrgMcpConnectionReady(connection);
+    return [{
+      id: `org-mcp:${connection.id}`,
+      source: "org-connection",
+      name: connection.name,
+      description: orgMcpConnectionDescription(connection),
+      installState: ready ? "installed" : "available",
+      setupState: ready ? "ready" : "needs_setup",
+      active: ready,
+      enablement: null,
+      resources: [{ id: connection.id, type: "mcp", title: connection.name }],
+      orgMcpConnection: connection,
+    }];
+  });
+
+  const renderableOrgConnections = orgMcpConnectionItems.flatMap((item) => item.orgMcpConnection ? [item.orgMcpConnection] : []);
+  const hasRenderableOrgEquivalent = (entry: McpDirectoryInfo) => {
+    if (entry.type !== "remote") return false;
+    if (input.mcpServers.some((server) => server.name === getMcpServerName(entry))) return false;
+    return renderableOrgConnections.some((connection) => orgConnectionMatchesQuickEntry(connection, entry));
+  };
+
   const groupedMcpServerNames = new Set<string>();
+  const groupedExternalMcpConnectionIds = new Set<string>();
   const groupedSkillPaths = new Set<string>();
   const groupedSkillNames = new Set<string>();
   for (const plugin of Object.values(input.importedCloudPlugins)) {
     const keys = childKeysForPlugin(plugin);
+    keys.externalMcpConnectionIds.forEach((value) => groupedExternalMcpConnectionIds.add(value));
     keys.mcpServerNames.forEach((value) => groupedMcpServerNames.add(value));
     keys.skillPaths.forEach((value) => groupedSkillPaths.add(value));
     keys.skillNames.forEach((value) => groupedSkillNames.add(value));
@@ -199,7 +292,11 @@ export function buildExtensionItems(input: ExtensionItemBuildInput) {
     skill,
   }));
 
+  const visibleOrgMcpConnectionItems = orgMcpConnectionItems.filter((item) =>
+    !item.orgMcpConnection || !groupedExternalMcpConnectionIds.has(item.orgMcpConnection.id));
+
   return {
+    // Org-managed MCP connections are beta, so keep them last in unified lists.
     items: [...builtInItems, ...cloudPluginItems, ...importedPluginItems, ...standaloneMcpEntries.map((entry): ExtensionItem => ({
       id: `mcp:${getMcpServerName(entry)}`,
       source: "mcp-directory",
@@ -211,9 +308,10 @@ export function buildExtensionItems(input: ExtensionItemBuildInput) {
       enablement: null,
       resources: [{ id: getMcpServerName(entry), type: "mcp", title: entry.name }],
       mcpEntry: entry,
-    })), ...standaloneSkillItems],
+    })), ...standaloneSkillItems, ...visibleOrgMcpConnectionItems],
     builtInItems,
     cloudPluginItems: [...cloudPluginItems, ...importedPluginItems],
+    orgMcpConnectionItems: visibleOrgMcpConnectionItems,
     installedMcpEntries: [
       ...builtInItems.flatMap((item) => item.active && item.builtInEntry ? [item.builtInEntry] : []),
       ...standaloneMcpEntries,
@@ -230,6 +328,7 @@ export function buildExtensionItems(input: ExtensionItemBuildInput) {
         if (isBuiltInOpenWorkExtension(entry)) return false;
         const serverName = getMcpServerName(entry);
         if (groupedMcpServerNames.has(serverName)) return false;
+        if (hasRenderableOrgEquivalent(entry)) return false;
         return !input.mcpServers.some((server) => server.name === serverName);
       }),
     ],

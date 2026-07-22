@@ -12,6 +12,10 @@ export type RemoteWorkspaceInput = {
   closeModal?: boolean;
 };
 
+export type CreateWorkspaceOptions = {
+  projectLabel?: string | null;
+};
+
 export type CreateWorkspaceProgress = {
   runId: string;
   startedAt: number;
@@ -29,14 +33,15 @@ export type CreateWorkspaceProgress = {
 export type CreateWorkspaceModalProps = {
   open: boolean;
   onClose: () => void;
-  onConfirm: (preset: WorkspacePreset, folder: string | null) => void;
+  onConfirm: (preset: WorkspacePreset, folder: string | null, options?: CreateWorkspaceOptions) => void;
   onConfirmRemote?: (input: RemoteWorkspaceInput) => Promise<boolean> | boolean | void;
-  onConfirmWorker?: (preset: WorkspacePreset, folder: string | null) => void;
+  onConfirmWorker?: (preset: WorkspacePreset, folder: string | null, options?: CreateWorkspaceOptions) => void;
   onPickFolder: () => Promise<string | null>;
   onImportConfig?: () => void;
   importingConfig?: boolean;
   submitting?: boolean;
   localError?: string | null;
+  showProjectLabel?: boolean;
   remoteSubmitting?: boolean;
   remoteError?: string | null;
   showClose?: boolean;

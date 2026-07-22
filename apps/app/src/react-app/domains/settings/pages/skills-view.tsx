@@ -545,7 +545,8 @@ export function SkillsView(props: SkillsViewProps) {
 
   const openCloudSignIn = useCallback(() => {
     const base = readDenSettings().baseUrl?.trim() || DEFAULT_DEN_BASE_URL;
-    props.onOpenLink(buildDenAuthUrl(base, "sign-in"));
+    // Label stays "Sign in"; opens the sign-up tab (returning users can toggle).
+    props.onOpenLink(buildDenAuthUrl(base, "sign-up"));
   }, [props]);
 
   const openShareLink = useCallback(
@@ -558,7 +559,8 @@ export function SkillsView(props: SkillsViewProps) {
 
   const startShareSkillSignIn = useCallback(() => {
     const settings = readDenSettings();
-    props.onOpenLink(buildDenAuthUrl(settings.baseUrl, "sign-in"));
+    // Label stays "Sign in"; opens the sign-up tab (returning users can toggle).
+    props.onOpenLink(buildDenAuthUrl(settings.baseUrl, "sign-up"));
   }, [props]);
 
   const publishSkillToTeam = useCallback(async () => {

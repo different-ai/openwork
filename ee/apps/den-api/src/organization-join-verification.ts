@@ -5,17 +5,16 @@ export type JoinVerificationResult =
 /**
  * Verification boundary for organization membership.
  *
- * Unverified accounts are intentionally allowed to sign up, create their OWN
- * organization, and invite teammates so that an agent can bootstrap a workspace
- * end-to-end with no human in the loop. The one hard boundary is JOINING an
- * organization owned by someone else: that requires a verified email. This keeps
- * the open self-serve signup path agent-friendly while ensuring an unverified
- * actor can only ever affect their own sandbox org.
+ * Unverified accounts are intentionally allowed to sign up when a deployment
+ * does not require email verification. When verification is required, joining
+ * another organization remains the hard boundary; when it is not required (the
+ * single-org default), the email invite itself is the join proof.
  */
 export function validateInvitationAcceptVerification(input: {
   emailVerified: boolean | null | undefined
+  emailVerificationRequired: boolean
 }): JoinVerificationResult {
-  if (input.emailVerified === true) {
+  if (!input.emailVerificationRequired || input.emailVerified === true) {
     return { ok: true }
   }
 

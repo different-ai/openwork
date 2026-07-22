@@ -57,11 +57,20 @@ import {
 } from "../_lib/den-flow";
 import { EMPTY_RUNTIME_CONFIG, getRuntimeConfig, type DenWebRuntimeConfig } from "../_lib/runtime-config";
 import {
+  getDesktopHandoffGrant,
+  getDesktopHandoffOpenworkUrl,
+  rememberDesktopHandoffGrant,
+} from "../_lib/desktop-handoff";
+import {
   PENDING_ORG_INVITATION_STORAGE_KEY,
+  PENDING_ORG_SELECTION_STORAGE_KEY,
+  PENDING_WORKSPACE_CLAIM_STORAGE_KEY,
   getInferenceRoute,
   getJoinOrgRoute,
   getOrgDashboardRoute,
+  getWorkspaceClaimRoute,
   parseOrgListPayload,
+  shouldOfferOrgSelection,
 } from "../_lib/den-org";
 
 type LaunchWorkerResult = "success" | "limit" | "error";
@@ -72,6 +81,8 @@ type DenFlowContextValue = {
   setAuthMode: (mode: AuthMode) => void;
   email: string;
   setEmail: (value: string) => void;
+  authName: string;
+  setAuthName: (value: string) => void;
   password: string;
   setPassword: (value: string) => void;
   verificationCode: string;
@@ -87,13 +98,13 @@ type DenFlowContextValue = {
   desktopRedirectUrl: string | null;
   desktopRedirectBusy: boolean;
   showAuthFeedback: boolean;
-  continueSignInWithEmail: () => Promise<boolean>;
   submitAuth: (event: FormEvent<HTMLFormElement>) => Promise<AuthNavigationResult>;
   submitVerificationCode: (event: FormEvent<HTMLFormElement>) => Promise<AuthNavigationResult>;
   resendVerificationCode: () => Promise<void>;
   cancelVerification: () => void;
   beginSocialAuth: (provider: SocialAuthProvider) => Promise<void>;
   signOut: () => Promise<void>;
+  updateUserProfile: (input: { firstName: string; lastName: string }) => Promise<AuthUser>;
   resolveUserLandingRoute: () => Promise<string | null>;
   billingSummary: BillingSummary | null;
   billingBusy: boolean;
@@ -131,6 +142,7 @@ type DenFlowContextValue = {
   copiedField: string | null;
   events: LaunchEvent[];
   runtimeConfig: DenWebRuntimeConfig;
+  runtimeConfigLoaded: boolean;
   openworkDeepLink: string | null;
   openworkAppConnectUrl: string | null;
   hasWorkspaceScopedUrl: boolean;
@@ -162,6 +174,15 @@ function getPendingOrgInvitationId() {
   return invitationId || null;
 }
 
+function getPendingWorkspaceClaimToken() {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  const token = window.sessionStorage.getItem(PENDING_WORKSPACE_CLAIM_STORAGE_KEY)?.trim() ?? "";
+  return token || null;
+}
+
 function getPendingAuthIntent() {
   if (typeof window === "undefined") {
     return null;
@@ -178,6 +199,7 @@ function clearPendingAuthIntent() {
 export function DenFlowProvider({ children }: { children: ReactNode }) {
   const [authMode, setAuthModeState] = useState<AuthMode>("sign-up");
   const [email, setEmail] = useState("");
+  const [authName, setAuthName] = useState("");
   const [password, setPassword] = useState("");
   const [verificationCode, setVerificationCode] = useState("");
   const [verificationRequired, setVerificationRequired] = useState(false);
@@ -234,6 +256,8 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
   const [runtimeUpgradeBusy, setRuntimeUpgradeBusy] = useState(false);
   const [runtimeConfig, setRuntimeConfig] = useState<DenWebRuntimeConfig>(EMPTY_RUNTIME_CONFIG);
+  const [runtimeConfigLoaded, setRuntimeConfigLoaded] = useState(false);
+  const isSingleOrgMode = runtimeConfigLoaded && runtimeConfig.orgMode === "single_org";
 
   const [onboardingIntent, setOnboardingIntent] = useState<OnboardingIntent | null>(null);
   const onboardingAutoLaunchKeyRef = useRef<string | null>(null);
@@ -386,38 +410,6 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     return true;
   }
 
-  async function continueSignInWithEmail() {
-    const trimmedEmail = email.trim();
-    if (!trimmedEmail) {
-      setAuthError("Enter your email to continue.");
-      return false;
-    }
-
-    setAuthBusy(true);
-    setAuthError(null);
-    setAuthInfo("Checking your workspace sign-in settings...");
-    trackPosthogEvent("den_auth_submitted", {
-      mode: "sign-in",
-      method: "email_next",
-      email_domain: getEmailDomain(trimmedEmail),
-    });
-
-    try {
-      if (await redirectToRequiredSso(trimmedEmail)) {
-        return false;
-      }
-
-      setAuthInfo("Enter your password to finish signing in.");
-      return true;
-    } catch (error) {
-      setAuthError(error instanceof Error ? error.message : "Could not check workspace sign-in settings.");
-      setAuthInfo(getAuthInfoForMode("sign-in"));
-      return false;
-    } finally {
-      setAuthBusy(false);
-    }
-  }
-
   async function finalizeEmailPasswordSignIn(
     nextMode: AuthMode,
     trimmedEmail: string,
@@ -491,7 +483,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
       return null;
     }
 
-    if (authenticatedUser && getPendingOrgInvitationId()) {
+    if (authenticatedUser && (getPendingWorkspaceClaimToken() || getPendingOrgInvitationId())) {
       return "join-org";
     }
 
@@ -503,6 +495,11 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
   }
 
   async function resendVerificationCode() {
+    if (isSingleOrgMode) {
+      setAuthError("Email verification codes are not used for this single-organization deployment.");
+      return;
+    }
+
     const trimmedEmail = email.trim();
     if (!trimmedEmail) {
       setAuthError("Enter your email before requesting a verification code.");
@@ -540,6 +537,12 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
 
   async function submitVerificationCode(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (isSingleOrgMode) {
+      setVerificationRequired(false);
+      setAuthError("Email verification codes are not used for this single-organization deployment.");
+      return null;
+    }
+
     const trimmedEmail = email.trim();
     const otp = verificationCode.trim();
     if (!trimmedEmail || !otp) {
@@ -969,6 +972,10 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
 
   async function resolveDashboardRoute() {
     const orgDirectory = await loadOrgDirectory();
+    if (typeof window !== "undefined" && shouldOfferOrgSelection(orgDirectory.orgs)) {
+      window.sessionStorage.setItem(PENDING_ORG_SELECTION_STORAGE_KEY, "1");
+    }
+
     const activeOrgSlug = orgDirectory.activeOrgSlug ?? orgDirectory.orgs[0]?.slug ?? null;
     return activeOrgSlug ? getOrgDashboardRoute(activeOrgSlug) : null;
   }
@@ -999,13 +1006,13 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
         return;
       }
 
-      const openworkPayload = payload as { openworkUrl?: unknown } | null;
-      const openworkUrl = typeof openworkPayload?.openworkUrl === "string" ? openworkPayload.openworkUrl.trim() : "";
+      const openworkUrl = getDesktopHandoffOpenworkUrl(payload) ?? "";
       if (!openworkUrl) {
         setAuthError("Desktop handoff succeeded, but no OpenWork redirect URL was returned.");
         return;
       }
 
+      rememberDesktopHandoffGrant(getDesktopHandoffGrant(payload, openworkUrl));
       setDesktopRedirectUrl(openworkUrl);
       window.location.assign(openworkUrl);
     } catch (error) {
@@ -1025,8 +1032,17 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
   }
 
   async function resolveUserLandingRoute() {
-    if (!user || desktopAuthRequested) {
+    // Deliberately ignores desktopAuthRequested: callers that auto-redirect
+    // (auth-screen) gate on it themselves, while explicit actions — the
+    // "Go to dashboard" button on the signed-in handoff card — must resolve
+    // a destination even mid desktop handoff.
+    if (!user) {
       return null;
+    }
+
+    const pendingClaimToken = getPendingWorkspaceClaimToken();
+    if (pendingClaimToken) {
+      return getWorkspaceClaimRoute(pendingClaimToken);
     }
 
     const pendingInvitationId = getPendingOrgInvitationId();
@@ -1053,21 +1069,22 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
 
     setAuthBusy(true);
     setAuthError(null);
+    const submitMode: AuthMode = isSingleOrgMode && !runtimeConfig.singleOrgAllowPublicSignup && authMode === "sign-up" ? "sign-in" : authMode;
     trackPosthogEvent("den_auth_submitted", {
-      mode: authMode,
+      mode: submitMode,
       method: "email"
     });
 
     try {
-      const endpoint = authMode === "sign-up" ? "/api/auth/sign-up/email" : "/api/auth/sign-in/email";
+      const endpoint = submitMode === "sign-up" ? "/api/auth/sign-up/email" : "/api/auth/sign-in/email";
       const trimmedEmail = email.trim();
       if (trimmedEmail && await redirectToRequiredSso(trimmedEmail)) {
         return null;
       }
       const body =
-        authMode === "sign-up"
+        submitMode === "sign-up"
           ? {
-              name: DEFAULT_AUTH_NAME,
+              name: authName.trim() || DEFAULT_AUTH_NAME,
               email: trimmedEmail,
               password
             }
@@ -1082,12 +1099,12 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
       });
 
       if (!response.ok) {
-        if (response.status === 403) {
+        if (response.status === 403 && !isSingleOrgMode) {
           openVerificationStep(trimmedEmail, `Enter the 6-digit code we sent to ${trimmedEmail} to finish verifying your email.`);
         }
         setAuthError(getErrorMessage(payload, `Authentication failed with ${response.status}.`));
         trackPosthogEvent("den_auth_failed", {
-          mode: authMode,
+          mode: submitMode,
           method: "email",
           status: response.status
         });
@@ -1096,29 +1113,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
 
       const token = getToken(payload);
 
-      if (authMode === "sign-up" && !token) {
-        const signInResult = await requestJson("/api/auth/sign-in/email", {
-          method: "POST",
-          body: JSON.stringify({
-            email: trimmedEmail,
-            password,
-          })
-        });
-
-        if (signInResult.response.ok) {
-          return await finalizeEmailPasswordSignIn(authMode, trimmedEmail, signInResult.payload);
-        }
-
-        if (signInResult.response.status !== 403) {
-          setAuthError(getErrorMessage(signInResult.payload, `Authentication failed with ${signInResult.response.status}.`));
-          trackPosthogEvent("den_auth_failed", {
-            mode: authMode,
-            method: "email",
-            status: signInResult.response.status
-          });
-          return null;
-        }
-
+      if (submitMode === "sign-up" && !token) {
         setUser(null);
         openVerificationStep(trimmedEmail, `We emailed a 6-digit verification code to ${trimmedEmail}. Enter it below to finish creating your account.`);
         appendEvent("info", "Verification code sent", trimmedEmail);
@@ -1128,12 +1123,12 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
         });
         return null;
       }
-      return await finalizeEmailPasswordSignIn(authMode, trimmedEmail);
+      return await finalizeEmailPasswordSignIn(submitMode, trimmedEmail);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown network error";
       setAuthError(message);
       trackPosthogEvent("den_auth_failed", {
-        mode: authMode,
+        mode: submitMode,
         method: "email",
         reason: "network_error"
       });
@@ -1261,6 +1256,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     setDesktopRedirectAttempted(false);
     setAuthMode("sign-up");
     setEmail("");
+    setAuthName("");
     setPassword("");
     setAuthInfo(getAuthInfoForMode("sign-up"));
     setLaunchStatus("Choose a worker name and launch.");
@@ -1276,7 +1272,32 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
       window.localStorage.removeItem(LAST_WORKER_STORAGE_KEY);
       window.sessionStorage.removeItem(PENDING_SOCIAL_SIGNUP_STORAGE_KEY);
       window.sessionStorage.removeItem(PENDING_ORG_INVITATION_STORAGE_KEY);
+      window.sessionStorage.removeItem(PENDING_WORKSPACE_CLAIM_STORAGE_KEY);
     }
+  }
+
+  async function updateUserProfile(input: { firstName: string; lastName: string }) {
+    const { response, payload } = await requestJson(
+      "/v1/me/profile",
+      {
+        method: "PATCH",
+        body: JSON.stringify(input),
+      },
+      12000,
+    );
+
+    if (!response.ok) {
+      throw new Error(getErrorMessage(payload, `Failed to update profile (${response.status}).`));
+    }
+
+    const nextUser = getUser(payload);
+    if (!nextUser) {
+      throw new Error("Profile update response did not include a user.");
+    }
+
+    setUser(nextUser);
+    identifyPosthogUser(nextUser);
+    return nextUser;
   }
 
   async function launchWorker(options: { source?: "manual" | "signup_auto"; workerNameOverride?: string } = {}) {
@@ -1735,6 +1756,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     void getRuntimeConfig().then((config) => {
       if (!cancelled) {
         setRuntimeConfig(config);
+        setRuntimeConfigLoaded(true);
       }
     });
 
@@ -2048,6 +2070,8 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     setAuthMode,
     email,
     setEmail,
+    authName,
+    setAuthName,
     password,
     setPassword,
     verificationCode,
@@ -2063,13 +2087,13 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     desktopRedirectUrl,
     desktopRedirectBusy,
     showAuthFeedback,
-    continueSignInWithEmail,
     submitAuth,
     submitVerificationCode,
     resendVerificationCode,
     cancelVerification,
     beginSocialAuth,
     signOut,
+    updateUserProfile,
     resolveUserLandingRoute,
     billingSummary,
     billingBusy,
@@ -2107,6 +2131,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     copiedField,
     events,
     runtimeConfig,
+    runtimeConfigLoaded,
     openworkDeepLink,
     openworkAppConnectUrl,
     hasWorkspaceScopedUrl,

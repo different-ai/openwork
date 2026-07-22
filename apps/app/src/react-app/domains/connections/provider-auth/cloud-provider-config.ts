@@ -21,18 +21,11 @@ const getStringList = (value: unknown): string[] =>
       )
     : [];
 
-const sortStrings = (values: string[]) => values.toSorted();
-
 const sameStringList = (a: string[], b: string[]) =>
   a.length === b.length && a.every((value, index) => value === b[index]);
 
 const escapeRegExp = (value: string) =>
   value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
-const cloudProviderComment = (provider: Pick<DenOrgLlmProvider, "id" | "name">) =>
-  `// OpenWork Cloud import: ${provider.name
-    .replace(/\s+/g, " ")
-    .trim()} (${provider.id}). Manage this entry from Cloud settings.`;
 
 const removeCloudProviderComment = (raw: string, providerId: string) =>
   raw.replace(
@@ -43,24 +36,35 @@ const removeCloudProviderComment = (raw: string, providerId: string) =>
     "$1",
   );
 
-const addCloudProviderComment = (
-  raw: string,
-  provider: Pick<DenOrgLlmProvider, "id" | "name">,
-  localProviderId: string,
-) => {
-  const withoutExisting = removeCloudProviderComment(raw, localProviderId);
-  const propertyPattern = new RegExp(
-    `^([ \t]*)"${escapeRegExp(localProviderId)}":`,
-    "m",
-  );
-  return withoutExisting.replace(
-    propertyPattern,
-    `$1${cloudProviderComment(provider)}\n$1"${localProviderId}":`,
-  );
-};
-
 export const getCloudProviderEnv = (config: Record<string, unknown>) =>
   getStringList(config.env);
+
+/**
+ * Split a connect payload's credential into the opencode auth.json entry and
+ * the env vars to upsert. Multi-env providers (`apiKeys`) set every value as
+ * an env var and use the first env-ordered value as the auth entry, following
+ * the models.dev convention that `env[0]` is the primary credential. Legacy
+ * single-credential payloads (`apiKey`) keep today's auth-only behaviour.
+ */
+export const resolveCloudProviderCredentials = (
+  provider: Pick<
+    DenOrgLlmProviderConnection,
+    "apiKey" | "apiKeys" | "providerConfig"
+  >,
+) => {
+  const apiKeys = provider.apiKeys ?? {};
+  const envNames = getCloudProviderEnv(provider.providerConfig);
+  const orderedNames = [
+    ...envNames.filter((name) => name in apiKeys),
+    ...Object.keys(apiKeys).filter((name) => !envNames.includes(name)),
+  ];
+  const envEntries = orderedNames.flatMap((name) => {
+    const value = apiKeys[name]?.trim();
+    return value ? [{ key: name, value }] : [];
+  });
+  const primaryApiKey = provider.apiKey?.trim() || envEntries[0]?.value || "";
+  return { envEntries, primaryApiKey };
+};
 
 export const getCloudManagedProviderId = (
   provider: Pick<DenOrgLlmProvider, "id" | "providerId" | "source">,
@@ -97,7 +101,9 @@ export const isCloudProviderOutOfSync = (
   (importedProvider.updatedAt ?? null) !== (provider.updatedAt ?? null) ||
   !sameStringList(
     importedProvider.modelIds,
-    sortStrings(provider.models.map((model) => model.id)),
+    // Normalize both sides: raw Den ids can include whitespace/empty values,
+    // which otherwise made providers permanently out-of-sync.
+    getProviderModelIds(provider),
   );
 
 export const buildCloudProviderConfig = (
@@ -172,50 +178,22 @@ export const buildCloudProviderConfig = (
 };
 
 /**
- * Rewrite the cloud-managed provider block in `opencode.jsonc`. This fully
- * replaces the block via jsonc `modify()`, so an updated Den model list (added,
- * changed, or removed models) is reconciled into the file rather than keeping
- * the first-import snapshot.
+ * Build the per-key runtime provider patch for a cloud import/reconcile.
+ * Sent to `PATCH /workspace/:id/config` where record values upsert and
+ * explicit `null` deletes (`mergeRuntimeProviderUpdate`) — no client-side
+ * read-modify-write of the user's `opencode.jsonc` at all.
  */
-export const formatConfigWithCloudProvider = (
-  raw: string,
+export const buildRuntimeProviderPatch = (
   provider: DenOrgLlmProviderConnection,
   localProviderId: string,
-  options: { previousProviderId?: string | null; disabledProviders: string[] },
-) => {
-  const previousProviderId = options.previousProviderId ?? null;
-  const nextProviderConfig = buildCloudProviderConfig(
-    provider,
-  ) as unknown as Record<string, unknown>;
-  let updated = raw.trim()
-    ? raw
-    : '{\n  "$schema": "https://opencode.ai/config.json"\n}\n';
-
+  previousProviderId?: string | null,
+): Record<string, unknown> => {
+  const patch: Record<string, unknown> = {};
   if (previousProviderId && previousProviderId !== localProviderId) {
-    updated = removeCloudProviderComment(updated, previousProviderId);
-    const previousEdits = modify(updated, ["provider", previousProviderId], undefined, {
-      formattingOptions: { insertSpaces: true, tabSize: 2 },
-    });
-    updated = applyEdits(updated, previousEdits);
+    patch[previousProviderId] = null;
   }
-
-  const providerEdits = modify(updated, ["provider", localProviderId], nextProviderConfig, {
-    formattingOptions: { insertSpaces: true, tabSize: 2 },
-  });
-  updated = applyEdits(updated, providerEdits);
-  updated = addCloudProviderComment(updated, provider, localProviderId);
-
-  const disabledToRemove = new Set([localProviderId, previousProviderId ?? ""]);
-  const currentDisabled = options.disabledProviders;
-  if (currentDisabled.some((id) => disabledToRemove.has(id))) {
-    const nextDisabled = currentDisabled.filter((id) => !disabledToRemove.has(id));
-    const disabledEdits = modify(updated, ["disabled_providers"], nextDisabled, {
-      formattingOptions: { insertSpaces: true, tabSize: 2 },
-    });
-    updated = applyEdits(updated, disabledEdits);
-  }
-
-  return updated.endsWith("\n") ? updated : `${updated}\n`;
+  patch[localProviderId] = buildCloudProviderConfig(provider) as unknown as Record<string, unknown>;
+  return patch;
 };
 
 export const formatConfigWithoutCloudProvider = (

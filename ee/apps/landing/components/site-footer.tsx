@@ -24,6 +24,9 @@ export function SiteFooter() {
           <Link href="/pricing" className="transition-colors hover:text-gray-800">
             Pricing
           </Link>
+          <Link href="/roadmap" className="transition-colors hover:text-gray-800">
+            Roadmap
+          </Link>
           <Link href="/download" className="transition-colors hover:text-gray-800">
             Desktop
           </Link>

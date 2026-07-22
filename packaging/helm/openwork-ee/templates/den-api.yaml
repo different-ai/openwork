@@ -1,11 +1,23 @@
+{{- include "openwork-ee.customCa.validate" . }}
 apiVersion: v1
 kind: Service
 metadata:
   name: {{ include "openwork-ee.denApiServiceName" . }}
   labels:
     {{- include "openwork-ee.componentLabels" (dict "root" . "component" "den-api") | nindent 4 }}
+  {{- with .Values.denApi.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 spec:
   type: {{ .Values.denApi.service.type }}
+  {{- with .Values.denApi.service.loadBalancerClass }}
+  loadBalancerClass: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.denApi.service.loadBalancerSourceRanges }}
+  loadBalancerSourceRanges:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
   ports:
     - name: http
       port: {{ .Values.denApi.service.port }}
@@ -31,14 +43,41 @@ spec:
         {{- with .Values.denApi.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
-      {{- with .Values.denApi.podAnnotations }}
       annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- with .Values.denApi.podAnnotations }}
         {{- toYaml . | nindent 8 }}
-      {{- end }}
+        {{- end }}
     spec:
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.installerArtifacts.enabled }}
+      {{- if and .Values.installerArtifacts.existingClaim .Values.installerArtifacts.hostPath }}
+      {{- fail "installerArtifacts.existingClaim and installerArtifacts.hostPath are mutually exclusive" }}
+      {{- end }}
+      {{- if not (or .Values.installerArtifacts.existingClaim .Values.installerArtifacts.hostPath) }}
+      {{- fail "installerArtifacts.existingClaim or installerArtifacts.hostPath is required when installerArtifacts.enabled=true" }}
+      {{- end }}
+      {{- end }}
+      {{- if or .Values.installerArtifacts.enabled .Values.customCa.enabled }}
+      volumes:
+        {{- if .Values.installerArtifacts.enabled }}
+        - name: installer-artifacts
+          {{- if .Values.installerArtifacts.existingClaim }}
+          persistentVolumeClaim:
+            claimName: {{ .Values.installerArtifacts.existingClaim | quote }}
+          {{- else }}
+          hostPath:
+            path: {{ .Values.installerArtifacts.hostPath | quote }}
+            type: Directory
+          {{- end }}
+        {{- end }}
+        {{- if .Values.customCa.enabled }}
+        {{- include "openwork-ee.customCa.volume" . | nindent 8 }}
+        {{- end }}
       {{- end }}
       containers:
         - name: den-api
@@ -47,6 +86,17 @@ spec:
           ports:
             - name: http
               containerPort: {{ .Values.denApi.containerPort }}
+          {{- if or .Values.installerArtifacts.enabled .Values.customCa.enabled }}
+          volumeMounts:
+            {{- if .Values.installerArtifacts.enabled }}
+            - name: installer-artifacts
+              mountPath: {{ .Values.installerArtifacts.mountPath | quote }}
+              readOnly: true
+            {{- end }}
+            {{- if .Values.customCa.enabled }}
+            {{- include "openwork-ee.customCa.volumeMount" . | nindent 12 }}
+            {{- end }}
+          {{- end }}
           envFrom:
             - configMapRef:
                 name: {{ include "openwork-ee.configName" . }}
@@ -55,6 +105,22 @@ spec:
           env:
             - name: PORT
               value: {{ .Values.denApi.containerPort | quote }}
+            {{- if not (hasKey .Values.denApi.env "NODE_OPTIONS") }}
+            # Keep this as a direct value so upgrades from legacy denApi.env.NODE_OPTIONS
+            # do not leave both value and valueFrom in Kubernetes' strategic merge patch.
+            - name: NODE_OPTIONS
+              value: {{ .Values.config.denApiNodeOptions | quote }}
+              # Explicitly clear the valueFrom emitted by chart 0.17.24 during upgrades.
+              valueFrom: null
+            {{- end }}
+            {{- if .Values.installerArtifacts.enabled }}
+            - name: OPENWORK_INSTALLER_ARTIFACTS_DIR
+              value: {{ .Values.installerArtifacts.mountPath | quote }}
+            {{- end }}
+            {{- if .Values.customCa.enabled }}
+            {{- include "openwork-ee.customCa.env" . | nindent 12 }}
+            {{- end }}
+            {{- include "openwork-ee.observabilityEnv" (dict "root" . "serviceName" .Values.observability.serviceNames.denApi) | nindent 12 }}
             {{- range $key, $value := .Values.denApi.env }}
             - name: {{ $key }}
               value: {{ $value | quote }}

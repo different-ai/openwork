@@ -37,7 +37,7 @@ interface MarkdownPreviewProps extends React.ComponentProps<"div"> {
 
 export function MarkdownPreview({ content, className, ...props }: MarkdownPreviewProps) {
   return (
-    <div className={cn("h-full overflow-auto p-4", className)} {...props}>
+    <div data-openwork-markdown-preview="" className={cn("h-full overflow-auto p-4", className)} {...props}>
       <MarkdownBlock text={content} />
     </div>
   );

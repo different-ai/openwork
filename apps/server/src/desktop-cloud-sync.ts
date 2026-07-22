@@ -237,7 +237,7 @@ function readImportedPlugins(value: unknown): Record<string, CloudImportedPlugin
   return plugins;
 }
 
-function readWorkspaceCloudImports(openwork: Record<string, unknown>): WorkspaceCloudImports {
+export function readWorkspaceCloudImports(openwork: Record<string, unknown>): WorkspaceCloudImports {
   const cloudImports = isRecord(openwork.cloudImports) ? openwork.cloudImports : {};
   return {
     providers: readImportedProviders(cloudImports.providers),

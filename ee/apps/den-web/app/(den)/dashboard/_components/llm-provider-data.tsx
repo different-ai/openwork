@@ -42,6 +42,7 @@ export type DenLlmProvider = {
   name: string;
   providerConfig: Record<string, unknown>;
   hasApiKey: boolean;
+  configuredEnvKeys: string[];
   createdAt: string | null;
   updatedAt: string | null;
   canManage: boolean;
@@ -92,6 +93,15 @@ function asStringList(value: unknown): string[] {
 }
 
 function asJsonRecord(value: unknown): Record<string, unknown> {
+  // Depending on the MySQL driver, JSON columns can come back as strings.
+  if (typeof value === "string") {
+    try {
+      const parsed: unknown = JSON.parse(value);
+      return isRecord(parsed) ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
   return isRecord(value) ? value : {};
 }
 
@@ -191,6 +201,7 @@ function asLlmProvider(value: unknown): DenLlmProvider | null {
     name,
     providerConfig: asJsonRecord(value.providerConfig),
     hasApiKey: value.hasApiKey === true,
+    configuredEnvKeys: asStringList(value.configuredEnvKeys),
     createdAt: asIsoString(value.createdAt),
     updatedAt: asIsoString(value.updatedAt),
     canManage: value.canManage === true,
@@ -353,6 +364,82 @@ export function buildEditableCustomProviderText(provider: DenLlmProvider) {
     null,
     2,
   );
+}
+
+export type LlmProviderProbeResult = {
+  ok: boolean;
+  vendor: "azure" | "openai-compatible";
+  normalizedApi: string | null;
+  attempted: string[];
+  models: Array<{ id: string }>;
+  hint: string | null;
+  status: number | null;
+};
+
+export type LlmProviderModelVerification = {
+  id: string;
+  status: "ok" | "adjusted" | "failed";
+  npm: "@ai-sdk/openai-compatible" | "@ai-sdk/openai";
+  message: string | null;
+};
+
+function asModelVerification(value: unknown): LlmProviderModelVerification | null {
+  if (!isRecord(value)) return null;
+  const id = asString(value.id);
+  const status = value.status === "ok" || value.status === "adjusted" || value.status === "failed" ? value.status : null;
+  const npm = value.npm === "@ai-sdk/openai" ? "@ai-sdk/openai" : "@ai-sdk/openai-compatible";
+  if (!id || !status) return null;
+  return { id, status, npm, message: asString(value.message) };
+}
+
+function asProbeResult(value: unknown): LlmProviderProbeResult | null {
+  if (!isRecord(value)) return null;
+  const models = Array.isArray(value.models)
+    ? value.models.flatMap((entry) => {
+        if (!isRecord(entry)) return [];
+        const id = asString(entry.id);
+        return id ? [{ id }] : [];
+      })
+    : [];
+  return {
+    ok: value.ok === true,
+    vendor: value.vendor === "azure" ? "azure" : "openai-compatible",
+    normalizedApi: asString(value.normalizedApi),
+    attempted: asStringList(value.attempted),
+    models,
+    hint: asString(value.hint),
+    status: typeof value.status === "number" ? value.status : null,
+  };
+}
+
+/**
+ * Probe an OpenAI-compatible endpoint through den-api: heals common URL
+ * mistakes and returns the model ids the endpoint actually serves.
+ */
+export async function requestLlmProviderTestConnection(input: {
+  api: string;
+  apiKey?: string;
+  modelIds?: string[];
+}) {
+  const timeoutMs = input.modelIds?.length ? 60000 : 20000;
+  const { response, payload } = await requestJson(
+    `/v1/llm-providers/test-connection`,
+    { method: "POST", body: JSON.stringify(input) },
+    timeoutMs,
+  );
+  if (!response.ok) {
+    throw new Error(getErrorMessage(payload, `Endpoint test failed (${response.status}).`));
+  }
+  const result = isRecord(payload) ? asProbeResult(payload.result) : null;
+  if (!result) {
+    throw new Error("Endpoint test returned an unexpected response.");
+  }
+  const verifications = isRecord(payload) && Array.isArray(payload.verifications)
+    ? payload.verifications
+        .map(asModelVerification)
+        .filter((entry): entry is LlmProviderModelVerification => entry !== null)
+    : [];
+  return { ...result, verifications };
 }
 
 export async function requestLlmProviderCatalog(orgId: string) {

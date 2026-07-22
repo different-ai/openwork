@@ -1,0 +1,88 @@
+# AWS EKS Auto Mode HTTP smoke-test values for a first OpenWork EE install when
+# DNS and ACM TLS are not ready yet.
+#
+# Copy this file, replace every REPLACE_* value, and install with:
+#
+#   helm upgrade --install openwork-ee oci://ghcr.io/different-ai/charts/openwork-ee \
+#     --version REPLACE_OPENWORK_VERSION \
+#     --namespace openwork-ee \
+#     --create-namespace \
+#     -f values.aws-http-smoke.yaml
+#
+# This creates two public AWS Network Load Balancers on clear HTTP ports. After
+# the first successful install, replace the pending origins with the real NLB
+# hostnames, run helm upgrade again, and then validate browser auth. Prefer the
+# HTTPS/ACM example for production.
+
+image:
+  tag: "REPLACE_OPENWORK_VERSION"
+  pullPolicy: IfNotPresent
+
+config:
+  tenancy:
+    mode: single_org
+    singleOrgName: "REPLACE_COMPANY_NAME"
+    singleOrgSlug: "REPLACE_COMPANY_SLUG"
+    ownerEmails: "REPLACE_ADMIN_EMAIL"
+    allowPublicSignup: "false"
+    requireEmailVerification: "false"
+  auth:
+    passwordBreachScreeningEnabled: "false"
+  public:
+    webOrigin: "http://pending-web-nlb:3005"
+    apiOrigin: "http://pending-api-nlb:8788"
+    mcpResourceUrl: "http://pending-api-nlb:8788/mcp"
+    mcpClaimNamespace: "http://pending-web-nlb:3005"
+    desktopDenBaseUrl: "http://pending-web-nlb:3005"
+    corsOrigins: "http://pending-web-nlb:3005,http://pending-api-nlb:8788"
+    betterAuthTrustedOrigins: "http://pending-web-nlb:3005"
+    webAppHosts: "pending-web-nlb"
+    bootstrapAdminEmails: "REPLACE_ADMIN_EMAIL"
+    authCallbackUrl: "http://pending-web-nlb:3005"
+  provisioner:
+    mode: stub
+
+secret:
+  create: true
+  values:
+    # RDS MySQL private-network smoke path. sslaccept=accept preserves TLS but
+    # does not require the RDS CA chain to be mounted into the image.
+    databaseUrl: "mysql://openwork:REPLACE_DB_PASSWORD@REPLACE_RDS_ENDPOINT:3306/openwork_den?sslaccept=accept"
+    # Generate with: openssl rand -base64 48
+    betterAuthSecret: "REPLACE_BETTER_AUTH_SECRET"
+    # Generate separately with: openssl rand -base64 48
+    denDbEncryptionKey: "REPLACE_DEN_DB_ENCRYPTION_KEY"
+
+denApi:
+  replicaCount: 1
+  service:
+    type: LoadBalancer
+    port: 8788
+    loadBalancerClass: eks.amazonaws.com/nlb
+    annotations:
+      service.beta.kubernetes.io/aws-load-balancer-scheme: internet-facing
+      service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: ip
+      service.beta.kubernetes.io/aws-load-balancer-healthcheck-protocol: HTTP
+      service.beta.kubernetes.io/aws-load-balancer-healthcheck-path: /ready
+
+denWeb:
+  replicaCount: 1
+  service:
+    type: LoadBalancer
+    port: 3005
+    loadBalancerClass: eks.amazonaws.com/nlb
+    annotations:
+      service.beta.kubernetes.io/aws-load-balancer-scheme: internet-facing
+      service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: ip
+      service.beta.kubernetes.io/aws-load-balancer-healthcheck-protocol: HTTP
+      service.beta.kubernetes.io/aws-load-balancer-healthcheck-path: /api/ready
+
+inference:
+  enabled: false
+
+migrations:
+  enabled: true
+  hook: true
+
+ingress:
+  enabled: false

@@ -100,9 +100,14 @@ function startMockOpencode() {
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
-    fetch(request) {
+    async fetch(request) {
       const url = new URL(request.url);
       requests.push({ method: request.method, pathname: url.pathname });
+      if (request.method === "POST" && url.pathname === "/mcp") {
+        const body = await request.json().catch(() => null) as { name?: unknown } | null;
+        const name = typeof body?.name === "string" ? body.name : "";
+        return Response.json(name ? { [name]: { status: "connected" } } : {});
+      }
       return Response.json({});
     },
   }) as Served;

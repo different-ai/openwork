@@ -1,0 +1,386 @@
+name: Build Client Installer
+
+# Builds a per-client OpenWork desktop installer (apps/installer): a single
+# binary with the client's deployment config baked in. When run by an end
+# user it writes desktop-bootstrap.json, asks the client's Den API which app
+# version it supports (GET /v1/app-version), downloads that version from the
+# public GitHub releases, and installs it.
+#
+# Outputs are uploaded as WORKFLOW ARTIFACTS, not release assets: client
+# names and deployment URLs must not be published on the public repo.
+
+on:
+  workflow_dispatch:
+    inputs:
+      app_name:
+        description: "Application display name shown to end users"
+        required: false
+        type: string
+        default: "OpenWork"
+      client_name:
+        description: "Client name shown in the installer UI"
+        required: true
+        type: string
+      web_url:
+        description: "Deployment web origin (desktop-bootstrap baseUrl, e.g. https://openwork.acme.com)"
+        required: true
+        type: string
+      api_url:
+        description: "Deployment Den API origin (desktop-bootstrap apiBaseUrl, e.g. https://openwork-api.acme.com)"
+        required: true
+        type: string
+      client_logo_url:
+        description: "Optional client logo URL (png or svg) shown in the installer UI"
+        required: false
+        type: string
+        default: ""
+      require_signin:
+        description: "Force cloud sign-in in the desktop app (requireSignin)"
+        required: false
+        type: boolean
+        default: true
+      notarize_macos:
+        description: "Sign + notarize the macOS installers (requires Apple secrets)"
+        required: false
+        type: boolean
+        default: true
+      sign_windows:
+        description: "Sign the Windows installer via SignPath"
+        required: false
+        type: boolean
+        default: false
+      smoke_check_deployment:
+        description: "Run the compiled installer against the deployment API (requires GitHub-hosted runners to reach api_url)"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-client-installer-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build installer (${{ matrix.artifact }})
+    runs-on: ${{ matrix.platform }}
+    env:
+      MACOS_NOTARIZE: ${{ github.event.inputs.notarize_macos }}
+      SIGN_WINDOWS: ${{ github.event.inputs.sign_windows }}
+      SIGNPATH_ORGANIZATION_ID: ${{ secrets.SIGNPATH_ORGANIZATION_ID || vars.SIGNPATH_ORGANIZATION_ID }}
+      SIGNPATH_PROJECT_SLUG: ${{ secrets.SIGNPATH_PROJECT_SLUG || vars.SIGNPATH_PROJECT_SLUG }}
+      SIGNPATH_SIGNING_POLICY_SLUG: ${{ secrets.SIGNPATH_SIGNING_POLICY_SLUG || vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+      SIGNPATH_ARTIFACT_CONFIGURATION_SLUG: ${{ secrets.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG || vars.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-14
+            os_type: macos
+            artifact: installer-macos-arm64
+            bun_target: bun-darwin-arm64
+          - platform: macos-14
+            os_type: macos
+            artifact: installer-macos-x64
+            bun_target: bun-darwin-x64
+          - platform: ubuntu-22.04
+            os_type: linux
+            artifact: installer-linux-x64
+            bun_target: bun-linux-x64
+          - platform: ubuntu-22.04-arm
+            os_type: linux
+            artifact: installer-linux-arm64
+            bun_target: bun-linux-arm64
+          - platform: windows-2022
+            os_type: windows
+            artifact: installer-windows-x64
+            bun_target: bun-windows-x64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.9
+
+      - name: Resolve client slug
+        id: client
+        shell: bash
+        env:
+          CLIENT_NAME: ${{ github.event.inputs.client_name }}
+        run: |
+          slug=$(printf '%s' "$CLIENT_NAME" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+|-+$//g')
+          if [ -z "$slug" ]; then
+            echo "client_name produced an empty slug" >&2
+            exit 1
+          fi
+          echo "slug=$slug" >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Build the workspace dependency's dist first: @openwork/install-config's
+          # "default" export points at dist/, which a fresh checkout lacks.
+          (cd packages/install-config && bun install && bun run build)
+          # bun 1.3.9 on Windows can fail to create the parent-relative
+          # workspace symlink (ENOENT) after installing every other package;
+          # the copy fallback below repairs exactly that case.
+          (cd apps/installer && bun install) || [ "${{ matrix.os_type }}" = "windows" ]
+          if [ ! -e "apps/installer/node_modules/@openwork/install-config/package.json" ]; then
+            rm -rf "apps/installer/node_modules/@openwork/install-config"
+            mkdir -p "apps/installer/node_modules/@openwork"
+            cp -R "packages/install-config" "apps/installer/node_modules/@openwork/install-config"
+          fi
+          test -e "apps/installer/node_modules/@openwork/install-config/package.json"
+
+      - name: Test
+        shell: bash
+        run: cd apps/installer && bun test
+
+      - name: Write client build config
+        shell: bash
+        env:
+          APP_NAME: ${{ github.event.inputs.app_name }}
+          CLIENT_NAME: ${{ github.event.inputs.client_name }}
+          WEB_URL: ${{ github.event.inputs.web_url }}
+          API_URL: ${{ github.event.inputs.api_url }}
+          LOGO_URL: ${{ github.event.inputs.client_logo_url }}
+          REQUIRE_SIGNIN: ${{ github.event.inputs.require_signin }}
+        run: |
+          bun -e '
+            const config = [
+              "// Generated by build-client-installer.yml — do not commit real client values.",
+              `export const BUILD_APP_NAME = ${JSON.stringify(process.env.APP_NAME?.trim() || "OpenWork")}`,
+              `export const BUILD_CLIENT_NAME = ${JSON.stringify(process.env.CLIENT_NAME ?? "")}`,
+              `export const BUILD_WEB_URL = ${JSON.stringify(process.env.WEB_URL ?? "")}`,
+              `export const BUILD_API_URL = ${JSON.stringify(process.env.API_URL ?? "")}`,
+              `export const BUILD_LOGO_URL = ${JSON.stringify(process.env.LOGO_URL ?? "")}`,
+              `export const BUILD_REQUIRE_SIGNIN = ${process.env.REQUIRE_SIGNIN === "true"}`,
+              "",
+            ].join("\n")
+            await Bun.write("apps/installer/src/generated/build-config.ts", config)
+          '
+
+      - name: Compile installer
+        shell: bash
+        run: |
+          cd apps/installer
+          bun build --compile --minify --target=${{ matrix.bun_target }} \
+            src/index.ts src/server-worker.ts \
+            --outfile "dist/openwork-installer"
+
+      - name: Smoke test (headless dry run against the client deployment)
+        # Cross-compiled mac x64 output cannot run on the arm64 runner.
+        if: github.event.inputs.smoke_check_deployment == 'true' && matrix.bun_target != 'bun-darwin-x64'
+        shell: bash
+        env:
+          OPENWORK_DESKTOP_BOOTSTRAP_PATH: ${{ runner.temp }}/smoke/desktop-bootstrap.json
+        run: |
+          cd apps/installer
+          binary=dist/openwork-installer
+          if [ "${{ matrix.os_type }}" = "windows" ]; then binary=dist/openwork-installer.exe; fi
+          "$binary" --headless --dry-run
+
+      # --- macOS: wrap in a .app bundle, sign, notarize ------------------
+      - name: Bundle macOS app
+        if: matrix.os_type == 'macos'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd apps/installer
+          APP="dist/OpenWork Installer.app"
+          rm -rf "$APP"
+          mkdir -p "$APP/Contents/MacOS"
+          cp dist/openwork-installer "$APP/Contents/MacOS/openwork-installer"
+          cat > "$APP/Contents/Info.plist" <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleName</key><string>OpenWork Installer</string>
+            <key>CFBundleDisplayName</key><string>OpenWork Installer</string>
+            <key>CFBundleIdentifier</key><string>com.differentai.openwork.installer</string>
+            <key>CFBundleExecutable</key><string>openwork-installer</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>CFBundleShortVersionString</key><string>1.0.0</string>
+            <key>CFBundleVersion</key><string>1</string>
+            <key>LSMinimumSystemVersion</key><string>11.0</string>
+            <key>NSHighResolutionCapable</key><true/>
+          </dict>
+          </plist>
+          PLIST
+
+      - name: Sign and notarize macOS app
+        if: matrix.os_type == 'macos' && env.MACOS_NOTARIZE == 'true'
+        shell: bash
+        env:
+          APPLE_CODESIGN_CERT_P12_BASE64: ${{ secrets.APPLE_CODESIGN_CERT_P12_BASE64 }}
+          APPLE_CODESIGN_CERT_PASSWORD: ${{ secrets.APPLE_CODESIGN_CERT_PASSWORD }}
+          APPLE_NOTARY_API_KEY_P8_BASE64: ${{ secrets.APPLE_NOTARY_API_KEY_P8_BASE64 }}
+          APPLE_NOTARY_API_KEY_ID: ${{ secrets.APPLE_NOTARY_API_KEY_ID }}
+          APPLE_NOTARY_API_ISSUER_ID: ${{ secrets.APPLE_NOTARY_API_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          missing=()
+          for name in \
+            APPLE_CODESIGN_CERT_P12_BASE64 \
+            APPLE_CODESIGN_CERT_PASSWORD \
+            APPLE_NOTARY_API_KEY_P8_BASE64 \
+            APPLE_NOTARY_API_KEY_ID \
+            APPLE_NOTARY_API_ISSUER_ID; do
+            if [ -z "${!name:-}" ]; then missing+=("$name"); fi
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            printf 'Missing macOS signing secrets: %s\n' "${missing[*]}" >&2
+            exit 1
+          fi
+
+          cd apps/installer
+          APP="dist/OpenWork Installer.app"
+
+          KEYCHAIN="$RUNNER_TEMP/installer.keychain-db"
+          KEYCHAIN_PASSWORD=$(openssl rand -hex 16)
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          printf '%s' "$APPLE_CODESIGN_CERT_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "$APPLE_CODESIGN_CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" > /dev/null
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
+          IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN" | awk -F'"' 'NR==1{print $2}')
+          if [ -z "$IDENTITY" ]; then
+            echo "No codesigning identity found in imported certificate" >&2
+            exit 1
+          fi
+
+          # Bun-compiled binaries need JIT entitlements to pass notarization.
+          cat > "$RUNNER_TEMP/entitlements.plist" <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>com.apple.security.cs.allow-jit</key><true/>
+            <key>com.apple.security.cs.allow-unsigned-executable-memory</key><true/>
+            <key>com.apple.security.cs.disable-library-validation</key><true/>
+          </dict>
+          </plist>
+          PLIST
+
+          codesign --force --options runtime --timestamp \
+            --entitlements "$RUNNER_TEMP/entitlements.plist" \
+            --sign "$IDENTITY" "$APP/Contents/MacOS/openwork-installer"
+          codesign --force --options runtime --timestamp \
+            --entitlements "$RUNNER_TEMP/entitlements.plist" \
+            --sign "$IDENTITY" "$APP"
+          codesign --verify --deep --strict "$APP"
+
+          NOTARY_KEY_PATH="$RUNNER_TEMP/AuthKey.p8"
+          printf '%s' "$APPLE_NOTARY_API_KEY_P8_BASE64" | base64 --decode > "$NOTARY_KEY_PATH"
+          chmod 600 "$NOTARY_KEY_PATH"
+          ditto -c -k --keepParent "$APP" "$RUNNER_TEMP/notarize.zip"
+          xcrun notarytool submit "$RUNNER_TEMP/notarize.zip" \
+            --key "$NOTARY_KEY_PATH" \
+            --key-id "$APPLE_NOTARY_API_KEY_ID" \
+            --issuer "$APPLE_NOTARY_API_ISSUER_ID" \
+            --wait
+          xcrun stapler staple "$APP"
+
+      - name: Package macOS artifact
+        if: matrix.os_type == 'macos'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd apps/installer
+          if [ "$MACOS_NOTARIZE" != "true" ]; then
+            echo "::warning::Packaging UNSIGNED macOS installer (notarize_macos=false)."
+          fi
+          ditto -c -k --keepParent "dist/OpenWork Installer.app" "dist/${{ matrix.artifact }}.zip"
+          mkdir -p "$RUNNER_TEMP/out"
+          mv "dist/${{ matrix.artifact }}.zip" "$RUNNER_TEMP/out/"
+
+      # --- Linux -----------------------------------------------------------
+      - name: Package Linux artifact
+        if: matrix.os_type == 'linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd apps/installer/dist
+          chmod +x openwork-installer
+          tar -czf "${{ matrix.artifact }}.tar.gz" openwork-installer
+          mkdir -p "$RUNNER_TEMP/out"
+          mv "${{ matrix.artifact }}.tar.gz" "$RUNNER_TEMP/out/"
+
+      # --- Windows: optional SignPath signing ------------------------------
+      - name: Stage unsigned Windows installer for SignPath
+        if: matrix.os_type == 'windows' && env.SIGN_WINDOWS == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/signpath-unsigned"
+          cp apps/installer/dist/openwork-installer.exe "$RUNNER_TEMP/signpath-unsigned/"
+
+      - name: Upload unsigned Windows installer for SignPath
+        if: matrix.os_type == 'windows' && env.SIGN_WINDOWS == 'true'
+        id: upload-unsigned-windows-installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-openwork-installer-windows-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/signpath-unsigned/*.exe
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Submit Windows signing request to SignPath
+        if: matrix.os_type == 'windows' && env.SIGN_WINDOWS == 'true' && env.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG == ''
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ env.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ env.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ env.SIGNPATH_SIGNING_POLICY_SLUG }}
+          github-artifact-id: ${{ steps.upload-unsigned-windows-installer.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: ${{ runner.temp }}/signpath-signed
+
+      - name: Submit Windows signing request to SignPath (artifact configuration)
+        if: matrix.os_type == 'windows' && env.SIGN_WINDOWS == 'true' && env.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG != ''
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ env.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ env.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ env.SIGNPATH_SIGNING_POLICY_SLUG }}
+          artifact-configuration-slug: ${{ env.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG }}
+          github-artifact-id: ${{ steps.upload-unsigned-windows-installer.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: ${{ runner.temp }}/signpath-signed
+
+      - name: Package Windows artifact
+        if: matrix.os_type == 'windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/out"
+          if [ "$SIGN_WINDOWS" = "true" ]; then
+            signed=$(find "$RUNNER_TEMP/signpath-signed" -name '*.exe' | head -n 1)
+            if [ -z "$signed" ]; then
+              echo "SignPath returned no signed executable" >&2
+              exit 1
+            fi
+            cp "$signed" "$RUNNER_TEMP/out/openwork-installer.exe"
+          else
+            echo "::warning::Packaging UNSIGNED Windows installer (sign_windows=false)."
+            cp apps/installer/dist/openwork-installer.exe "$RUNNER_TEMP/out/openwork-installer.exe"
+          fi
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: openwork-installer-${{ steps.client.outputs.slug }}-${{ matrix.artifact }}
+          path: ${{ runner.temp }}/out/*
+          if-no-files-found: error
+          retention-days: 30

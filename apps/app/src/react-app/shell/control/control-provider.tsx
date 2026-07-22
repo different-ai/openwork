@@ -468,13 +468,6 @@ export function OpenworkRouteControlActions() {
       execute: () => navigate("/settings/general"),
     },
     {
-      id: "route.settings.extensions",
-      label: "Open MCP and extension settings",
-      description: "Navigate to extension and MCP settings.",
-      sideEffect: "navigation",
-      execute: () => navigate("/settings/extensions"),
-    },
-    {
       id: "route.settings.skills",
       label: "Open skills settings",
       description: "Navigate to skills settings.",
@@ -514,7 +507,7 @@ export function OpenworkRouteControlActions() {
           type: "string",
           required: true,
           description:
-            "Settings tab: general | ai | preferences | permissions | shell | extensions | skills | environment | advanced | appearance | updates | recovery | debug | cloud-account | cloud-workers | cloud-providers | cloud-marketplaces",
+            "Settings tab: general | ai | preferences | permissions | shell | extensions | skills | environment | advanced | appearance | updates | recovery | debug | cloud-account | cloud-providers | cloud-marketplaces",
         },
       ],
       previewArgs: { panel: "ai" },

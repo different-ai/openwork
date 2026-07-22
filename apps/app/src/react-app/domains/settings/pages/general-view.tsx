@@ -2,6 +2,7 @@
 import {
   ArrowRight,
   ArrowUpRight,
+  Cable,
   Cloud,
   Cog,
   FolderLock,
@@ -28,21 +29,35 @@ export type GeneralSettingsViewProps = {
   onReportIssue: () => void;
 };
 
-const workspaceCards: { tab: SettingsTab; icon: typeof Sparkles; title: string; desc: string }[] = [
+type SettingsCardDefinition = { tab: SettingsTab; icon: typeof Sparkles } & (
+  | { title: string; desc: string }
+  | { titleKey: string; descKey: string }
+);
+
+const workspaceCards: SettingsCardDefinition[] = [
   { tab: "preferences", icon: Cog, title: "Preferences", desc: "Default model, reasoning, and compaction." },
   { tab: "permissions", icon: FolderLock, title: "Permissions", desc: "Authorized folders and file access." },
-  { tab: "extensions", icon: Puzzle, title: "Extensions", desc: "MCPs, skills, plugins, and integrations." },
+  { tab: "extensions", icon: Puzzle, titleKey: "settings.tab_extensions", descKey: "settings.tab_description_extensions" },
   { tab: "advanced", icon: Wrench, title: "Advanced", desc: "Runtime, engine, and developer options." },
 ];
 
-const globalCards: { tab: SettingsTab; icon: typeof Sparkles; title: string; desc: string }[] = [
+const globalCards: SettingsCardDefinition[] = [
   { tab: "ai", icon: Sparkles, title: "AI Providers", desc: "Connect services that provide AI models." },
   { tab: "cloud-account", icon: Cloud, title: "Cloud", desc: "OpenWork Cloud account and organization." },
+  { tab: "connect", icon: Cable, titleKey: "settings.tab_connect", descKey: "settings.tab_description_connect" },
   { tab: "appearance", icon: Paintbrush, title: "Appearance", desc: "Theme, font size, and display." },
   { tab: "environment", icon: Terminal, title: "Environment", desc: "Environment variables and paths." },
   { tab: "updates", icon: RefreshCcw, title: "Updates", desc: "App version and update channel." },
   { tab: "recovery", icon: ShieldCheck, title: "Recovery", desc: "Reset onboarding and clear data." },
 ];
+
+function cardTitle(card: SettingsCardDefinition) {
+  return "titleKey" in card ? t(card.titleKey) : card.title;
+}
+
+function cardDescription(card: SettingsCardDefinition) {
+  return "descKey" in card ? t(card.descKey) : card.desc;
+}
 
 function SettingsCard(props: {
   icon: typeof Sparkles;
@@ -81,8 +96,8 @@ export function GeneralSettingsView(props: GeneralSettingsViewProps) {
             <SettingsCard
               key={card.tab}
               icon={card.icon}
-              title={card.title}
-              desc={card.desc}
+              title={cardTitle(card)}
+              desc={cardDescription(card)}
               onClick={() => props.onNavigateTab(card.tab)}
             />
           ))}
@@ -99,8 +114,8 @@ export function GeneralSettingsView(props: GeneralSettingsViewProps) {
             <SettingsCard
               key={card.tab}
               icon={card.icon}
-              title={card.title}
-              desc={card.desc}
+              title={cardTitle(card)}
+              desc={cardDescription(card)}
               onClick={() => props.onNavigateTab(card.tab)}
             />
           ))}

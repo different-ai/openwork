@@ -3,11 +3,13 @@ import { eq } from "@openwork-ee/den-db/drizzle"
 import { RateLimitTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "./db.js"
+import { env } from "./env.js"
 
 export const EMAIL_PASSWORD_SIGN_IN_PATH = "/api/auth/sign-in/email"
 export const EMAIL_PASSWORD_SIGN_UP_PATH = "/api/auth/sign-up/email"
 export const CHANGE_PASSWORD_PATH = "/api/auth/change-password"
 export const RESET_PASSWORD_PATH = "/api/auth/reset-password"
+export const MIN_PASSWORD_LENGTH = 8
 export const LOGIN_LOCKOUT_FAILURE_THRESHOLD = 5
 export const LOGIN_LOCKOUT_FAILURE_WINDOW_MS = 60 * 60 * 1000
 export const LOGIN_LOCKOUT_BASE_MS = 5 * 60 * 1000
@@ -227,7 +229,15 @@ export async function isPasswordCompromised(password: string, fetchPasswordRange
     })
 }
 
-export async function getBreachedPasswordResponse(request: Request, fetchPasswordRange?: PwnedPasswordsFetch) {
+export async function getBreachedPasswordResponse(
+  request: Request,
+  fetchPasswordRange?: PwnedPasswordsFetch,
+  screeningEnabled = env.passwordBreachScreeningEnabled,
+) {
+  if (!screeningEnabled) {
+    return null
+  }
+
   const password = await readPasswordForBreachCheck(request)
   if (!password) {
     return null
@@ -239,7 +249,7 @@ export async function getBreachedPasswordResponse(request: Request, fetchPasswor
   } catch {
     return jsonError(503, {
       error: "password_screening_unavailable",
-      message: "Password screening is temporarily unavailable. Try again later.",
+      message: "Something went wrong. Please try again in a moment.",
     })
   }
 
@@ -249,6 +259,18 @@ export async function getBreachedPasswordResponse(request: Request, fetchPasswor
 
   return jsonError(400, {
     error: "password_compromised",
-    message: "Choose a different password.",
+    message: "This password appeared in a data breach. Choose a different one.",
+  })
+}
+
+export async function getShortPasswordResponse(request: Request) {
+  const password = await readPasswordForBreachCheck(request)
+  if (password === null || password.length >= MIN_PASSWORD_LENGTH) {
+    return null
+  }
+
+  return jsonError(400, {
+    error: "password_too_short",
+    message: `Password must be at least ${MIN_PASSWORD_LENGTH} characters.`,
   })
 }

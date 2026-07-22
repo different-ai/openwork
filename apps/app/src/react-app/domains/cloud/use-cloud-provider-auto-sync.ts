@@ -1,32 +1,58 @@
 /** @jsxImportSource react */
 import { useEffect, useRef } from "react";
 
-import { CLOUD_SYNC_INTERVAL_MS } from "../../../app/cloud/sync/constants";
 import { denSettingsChangedEvent } from "../../../app/lib/den-session-events";
 import { useDenAuth } from "./den-auth-provider";
 
-type CloudProviderSyncReason = "sign_in" | "app_launch" | "interval" | "settings_cloud_opened";
+type CloudProviderSyncReason = "sign_in" | "app_resume";
 type SyncFn = (reason: CloudProviderSyncReason) => Promise<unknown>;
 
+export function subscribeCloudProviderSyncTriggers(input: {
+  windowTarget: EventTarget;
+  documentTarget: EventTarget;
+  isDocumentVisible: () => boolean;
+  sync: (reason: CloudProviderSyncReason) => void;
+}) {
+  const handleDenSettingsChanged = () => {
+    input.sync("sign_in");
+  };
+  const handleAppResume = () => {
+    input.sync("app_resume");
+  };
+  const handleVisibilityChange = () => {
+    if (input.isDocumentVisible()) {
+      handleAppResume();
+    }
+  };
+
+  input.windowTarget.addEventListener(denSettingsChangedEvent, handleDenSettingsChanged);
+  input.windowTarget.addEventListener("focus", handleAppResume);
+  input.windowTarget.addEventListener("online", handleAppResume);
+  input.documentTarget.addEventListener("visibilitychange", handleVisibilityChange);
+
+  return () => {
+    input.windowTarget.removeEventListener(denSettingsChangedEvent, handleDenSettingsChanged);
+    input.windowTarget.removeEventListener("focus", handleAppResume);
+    input.windowTarget.removeEventListener("online", handleAppResume);
+    input.documentTarget.removeEventListener("visibilitychange", handleVisibilityChange);
+  };
+}
+
 /**
-  * Periodic cloud-provider reconciliation, ported from dev #1509 "auto-sync
-  * cloud providers". Runs the provided sync function immediately, whenever Den
-  * settings change (for example active-org selection), and every
-  * `CLOUD_SYNC_INTERVAL_MS` while the Den session is signed-in; suspends while
-  * signed-out and lets the provider-auth store own user-visible errors.
+ * Event-driven cloud-provider reconciliation. Runs immediately after sign-in,
+ * whenever Den settings change (for example active-org selection), and when
+ * the user returns to the app or reconnects to the network. Workspace gate
+ * transitions and explicit product actions are handled by the provider store.
  *
- * Mount once (e.g. from the settings route) — the hook is idempotent
- * within a single mount, and avoids overlapping ticks using an in-flight
- * ref guard.
+ * Mount once — the provider store coalesces overlapping triggers.
  */
 export function useCloudProviderAutoSync(sync: SyncFn) {
   const denAuth = useDenAuth();
   const syncRef = useRef(sync);
-  const inFlightRef = useRef(false);
 
   // Keep the ref current so we always call the latest closure (store
-  // identity can change between mounts and we don't want to restart the
-  // timer just because the parent re-rendered).
+  // identity can change between mounts and we don't want to restart event
+  // subscriptions just because the parent re-rendered).
   useEffect(() => {
     syncRef.current = sync;
   }, [sync]);
@@ -36,36 +62,32 @@ export function useCloudProviderAutoSync(sync: SyncFn) {
 
     let cancelled = false;
 
-    const tick = async (reason: CloudProviderSyncReason = "interval") => {
-      if (inFlightRef.current || cancelled) return;
-      inFlightRef.current = true;
+    const tick = async (reason: CloudProviderSyncReason) => {
+      if (cancelled) return;
       try {
         await syncRef.current(reason);
       } catch {
-        // Network errors, org misconfig, etc. are non-fatal — we'll try
-        // again on the next interval. The refresh function owns surfacing
-        // any user-visible error state.
-      } finally {
-        inFlightRef.current = false;
+        // Network errors, org misconfig, etc. are non-fatal — the next user
+        // or lifecycle trigger retries. The refresh function owns surfacing
+        // user-visible error state.
       }
     };
 
     // Immediate pass so users see server state quickly after sign-in.
     void tick("sign_in");
 
-    const handleDenSettingsChanged = () => {
-      void tick("sign_in");
-    };
-    window.addEventListener(denSettingsChangedEvent, handleDenSettingsChanged);
-
-    const interval = window.setInterval(() => {
-      void tick();
-    }, CLOUD_SYNC_INTERVAL_MS);
+    const unsubscribe = subscribeCloudProviderSyncTriggers({
+      windowTarget: window,
+      documentTarget: document,
+      isDocumentVisible: () => document.visibilityState === "visible",
+      sync: (reason) => {
+        void tick(reason);
+      },
+    });
 
     return () => {
       cancelled = true;
-      window.removeEventListener(denSettingsChangedEvent, handleDenSettingsChanged);
-      window.clearInterval(interval);
+      unsubscribe();
     };
   }, [denAuth.isSignedIn]);
 }

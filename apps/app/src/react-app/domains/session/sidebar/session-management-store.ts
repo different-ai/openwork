@@ -31,7 +31,12 @@ type SessionGroupSyncHandler = {
   createGroup: (workspaceId: string, group: SessionGroupDefinition) => Promise<SessionGroupServerState | null>;
   assignGroup: (workspaceId: string, sessionId: string, groupId: string | null) => Promise<SessionGroupServerState | null>;
   reorderGroups: (workspaceId: string, groupIds: string[]) => Promise<SessionGroupServerState | null>;
-  removeGroup: (workspaceId: string, groupId: string) => Promise<SessionGroupServerState | null>;
+  renameGroup: (workspaceId: string, groupId: string, label: string) => Promise<SessionGroupServerState | null>;
+  removeGroup: (
+    workspaceId: string,
+    groupId: string,
+    destinationGroupId: string | null,
+  ) => Promise<SessionGroupServerState | null>;
 };
 
 type SessionGroupMutationSuccess = {
@@ -64,11 +69,12 @@ type SessionManagementActions = {
   reorderSessions: (workspaceId: string, sessionIds: string[]) => void;
   assignGroup: (workspaceId: string, sessionId: string, groupId: string | null) => void;
   createGroup: (workspaceId: string, label: string) => void;
+  renameGroup: (workspaceId: string, groupId: string, label: string) => void;
   reorderGroups: (workspaceId: string, groupIds: string[]) => void;
   toggleGroupExpanded: (workspaceId: string, groupId: string) => void;
   replaceWorkspaceGroups: (workspaceId: string, state: SessionGroupServerState) => void;
-  /** Remove a group definition. Sessions assigned to it become ungrouped. */
-  removeGroup: (workspaceId: string, groupId: string) => void;
+  /** Remove a group definition and move its sessions to another group or ungrouped. */
+  removeGroup: (workspaceId: string, groupId: string, destinationGroupId?: string | null) => void;
   forgetWorkspace: (workspaceId: string) => void;
 };
 
@@ -222,6 +228,22 @@ export const useSessionManagementStore = create<SessionManagementStore>()(
         syncServerState(sessionGroupSyncHandler?.createGroup(workspaceId, group), workspaceId);
       },
 
+      renameGroup: (workspaceId, groupId, label) => {
+        set((state) => {
+          const ws = state.groupsByWorkspace[workspaceId] ?? EMPTY_GROUP_STATE;
+          return {
+            groupsByWorkspace: {
+              ...state.groupsByWorkspace,
+              [workspaceId]: {
+                ...ws,
+                groups: ws.groups.map((group) => group.id === groupId ? { ...group, label } : group),
+              },
+            },
+          };
+        });
+        syncServerState(sessionGroupSyncHandler?.renameGroup(workspaceId, groupId, label), workspaceId);
+      },
+
       reorderGroups: (workspaceId, groupIds) => {
         set((state) => {
           const ws = state.groupsByWorkspace[workspaceId] ?? EMPTY_GROUP_STATE;
@@ -283,14 +305,24 @@ export const useSessionManagementStore = create<SessionManagementStore>()(
           };
         }),
 
-      removeGroup: (workspaceId, groupId) => {
+      removeGroup: (workspaceId, groupId, destinationGroupId = null) => {
+        const ws = useSessionManagementStore.getState().groupsByWorkspace[workspaceId] ?? EMPTY_GROUP_STATE;
+        const validDestinationGroupId = destinationGroupId && ws.groups.some(
+          (group) => group.id === destinationGroupId && group.id !== groupId,
+        ) ? destinationGroupId : null;
+        const sessionIds = Object.entries(ws.assignments)
+          .filter(([, assignedGroupId]) => assignedGroupId === groupId)
+          .map(([sessionId]) => sessionId);
         set((state) => {
           const ws = state.groupsByWorkspace[workspaceId] ?? EMPTY_GROUP_STATE;
           const groups = ws.groups.filter((g) => g.id !== groupId);
-          // Unassign sessions that belonged to the removed group.
-          const assignments: Record<string, string> = {};
-          for (const [sid, gid] of Object.entries(ws.assignments)) {
-            if (gid !== groupId) assignments[sid] = gid;
+          const assignments = { ...ws.assignments };
+          for (const sessionId of sessionIds) {
+            if (validDestinationGroupId) {
+              assignments[sessionId] = validDestinationGroupId;
+            } else {
+              delete assignments[sessionId];
+            }
           }
           const collapsedGroupIds = (ws.collapsedGroupIds ?? []).filter((id) => id !== groupId);
           return {
@@ -300,7 +332,14 @@ export const useSessionManagementStore = create<SessionManagementStore>()(
             },
           };
         });
-        syncServerState(sessionGroupSyncHandler?.removeGroup(workspaceId, groupId), workspaceId);
+        syncServerState(
+          sessionGroupSyncHandler?.removeGroup(
+            workspaceId,
+            groupId,
+            validDestinationGroupId,
+          ),
+          workspaceId,
+        );
       },
 
       forgetWorkspace: (workspaceId) =>

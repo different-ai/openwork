@@ -27,6 +27,7 @@
               "start-here/connect-your-stack/sign-in-with-chatgpt",
               "start-here/connect-your-stack/add-anthropic-api-key",
               "start-here/connect-your-stack/add-a-custom-llm",
+              "start-here/connect-your-stack/connect-services",
               "start-here/connect-your-stack/add-an-mcp-server",
               "start-here/connect-your-stack/connect-slack-mcp",
               "start-here/connect-your-stack/enable-exa-search"
@@ -45,7 +46,15 @@
           {
             "group": "Self-host",
             "pages": [
-              "start-here/self-host"
+              "start-here/self-host",
+              "start-here/on-prem-branding",
+              "start-here/github-connector-helm"
+            ]
+          },
+          {
+            "group": "Troubleshooting",
+            "pages": [
+              "start-here/troubleshooting/diagnostic-prompts"
             ]
           },
           {
@@ -61,23 +70,28 @@
         "tab": "Cloud",
         "pages": [
           "cloud/get-started",
+          "cloud/team-quickstart",
           {
             "group": "Share with your team",
             "pages": [
               "cloud/share-with-your-team/team-templates",
               "cloud/share-with-your-team/desktop-policies",
               "cloud/share-with-your-team/managed-llm-provider",
-              "cloud/share-with-your-team/custom-llm-provider"
+              "cloud/share-with-your-team/custom-llm-provider",
+              "cloud/share-with-your-team/shared-mcp-connections"
             ]
           },
           {
             "group": "Run in the cloud",
             "pages": [
               "cloud/run-in-the-cloud/shared-workspace",
-              "cloud/run-in-the-cloud/cloud-mcp"
+              "cloud/run-in-the-cloud/cloud-mcp",
+              "cloud/run-in-the-cloud/connect-openwork-mcp-remote-machine"
             ]
           },
           "cloud/members-and-rbac",
+          "cloud/sso-microsoft-entra",
+          "cloud/scim-microsoft-entra",
           "cloud/security-and-operations",
           "cloud/enterprise"
         ]

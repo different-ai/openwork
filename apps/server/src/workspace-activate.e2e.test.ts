@@ -68,13 +68,13 @@ async function readPersistedConfig(configPath: string): Promise<unknown> {
 }
 
 function startMockOpencode() {
-  const requests: Array<{ pathname: string; search: string }> = [];
+  const requests: Array<{ method: string; pathname: string; search: string }> = [];
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
     fetch(request) {
       const url = new URL(request.url);
-      requests.push({ pathname: url.pathname, search: url.search });
+      requests.push({ method: request.method, pathname: url.pathname, search: url.search });
 
       if (url.pathname === "/instance/dispose") {
         return Response.json({ disposed: true });
@@ -113,37 +113,6 @@ function startMockRemoteOpenwork() {
   return { server, requests };
 }
 
-async function startOpenworkServer(input: { workspaceRoot: string; opencodeBaseUrl: string }) {
-  const config: ServerConfig = {
-    host: "127.0.0.1",
-    port: 0,
-    token: "owt_test_token",
-    hostToken: "owt_host_token",
-    approval: { mode: "auto", timeoutMs: 1000 },
-    corsOrigins: ["*"],
-    workspaces: [
-      {
-        id: "ws_1",
-        name: "Workspace",
-        path: input.workspaceRoot,
-        preset: "starter",
-        workspaceType: "local",
-        baseUrl: input.opencodeBaseUrl,
-      },
-    ],
-    authorizedRoots: [input.workspaceRoot],
-    readOnly: false,
-    startedAt: Date.now(),
-    tokenSource: "cli",
-    hostTokenSource: "cli",
-    logFormat: "pretty",
-    logRequests: false,
-  };
-  const server = await startServer(config) as Served;
-  stops.push(() => server.stop(true));
-  return { server, hostToken: config.hostToken };
-}
-
 async function startOpenworkServerWithWorkspaces(input: {
   configPath: string;
   workspaces: ServerConfig["workspaces"];
@@ -178,31 +147,65 @@ async function startOpenworkServerWithWorkspaces(input: {
 }
 
 describe("workspace activation", () => {
-  test("reloads the bound OpenCode engine on activate", async () => {
-    const workspaceRoot = await createWorkspaceRoot();
+  test("reloads the bound OpenCode engine on workspace switch only", async () => {
+    const firstRoot = await createWorkspaceRoot();
+    const secondRoot = await createWorkspaceRoot();
     const mock = startMockOpencode();
-    const openwork = await startOpenworkServer({
-      workspaceRoot,
-      opencodeBaseUrl: `http://127.0.0.1:${mock.server.port}`,
+    const opencodeBaseUrl = `http://127.0.0.1:${mock.server.port}`;
+    const workspaces: ServerConfig["workspaces"] = [
+      {
+        id: "ws_1",
+        name: "One",
+        path: firstRoot,
+        preset: "starter",
+        workspaceType: "local",
+        baseUrl: opencodeBaseUrl,
+      },
+      {
+        id: "ws_2",
+        name: "Two",
+        path: secondRoot,
+        preset: "starter",
+        workspaceType: "local",
+        baseUrl: opencodeBaseUrl,
+      },
+    ];
+    const openwork = await startOpenworkServerWithWorkspaces({
+      configPath: join(firstRoot, "server.json"),
+      workspaces,
+      authorizedRoots: [firstRoot, secondRoot],
     });
 
     const base = `http://127.0.0.1:${openwork.server.port}`;
-    const response = await fetch(`${base}/workspaces/ws_1/activate`, {
+    const disposeCount = () => mock.requests.filter(
+      (request) => request.method === "POST" && request.pathname === "/instance/dispose",
+    ).length;
+
+    const response = await fetch(`${base}/workspaces/ws_2/activate`, {
       method: "POST",
       headers: hostAuth(openwork.hostToken),
     });
 
     expect(response.status).toBe(200);
     const body = await response.json();
-    expect(body.activeId).toBe("ws_1");
+    expect(body.activeId).toBe("ws_2");
+    expect(disposeCount()).toBe(1);
 
     const reloadRequest = mock.requests.find(
-      (request) => request.pathname === "/instance/dispose",
+      (request) => request.method === "POST" && request.pathname === "/instance/dispose",
     );
     expect(reloadRequest).toBeDefined();
     expect(reloadRequest?.search).toContain(
-      `directory=${encodeURIComponent(workspaceRoot)}`,
+      `directory=${encodeURIComponent(secondRoot)}`,
     );
+
+    const sameWorkspaceResponse = await fetch(`${base}/workspaces/ws_2/activate`, {
+      method: "POST",
+      headers: hostAuth(openwork.hostToken),
+    });
+
+    expect(sameWorkspaceResponse.status).toBe(200);
+    expect(disposeCount()).toBe(1);
   });
 
   test("persists activation order only when requested", async () => {

@@ -68,6 +68,24 @@ export type DenOrgExtensionProjection = {
   manifest: OpenWorkExtensionManifest | null;
 };
 
+export type DenPluginCloudReadinessState = "ready" | "needs_signin" | "needs_admin_setup" | "desktop_only" | "not_synced";
+
+export type DenPluginCloudReadinessConnection = {
+  id: string | null;
+  name: string;
+  url: string;
+  configObjectId?: string;
+  serverName?: string;
+  credentialMode?: "shared" | "per_member";
+  connectedForMe?: boolean;
+};
+
+export type DenPluginCloudReadiness = {
+  state: DenPluginCloudReadinessState;
+  hasInstructional: boolean;
+  connections: DenPluginCloudReadinessConnection[];
+};
+
 export type DenOrgPlugin = {
   id: string;
   name: string;
@@ -78,6 +96,7 @@ export type DenOrgPlugin = {
   componentCounts: Record<string, number>;
   /** Preferred Den surface: plugins are normalized into OpenWork extensions. */
   extension?: DenOrgExtensionProjection | null;
+  cloudReadiness?: DenPluginCloudReadiness;
 };
 
 export type DenOrgMarketplace = {

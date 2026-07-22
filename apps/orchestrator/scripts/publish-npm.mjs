@@ -31,6 +31,7 @@ const targets = [
   { id: "linux-x64", bun: "bun-linux-x64", os: "linux", cpu: "x64" },
   { id: "linux-arm64", bun: "bun-linux-arm64", os: "linux", cpu: "arm64" },
   { id: "windows-x64", bun: "bun-windows-x64", os: "win32", cpu: "x64" },
+  { id: "windows-arm64", bun: "bun-windows-arm64", os: "win32", cpu: "arm64" },
 ]
 
 function run(cmd, args, cwd) {
@@ -118,7 +119,7 @@ copyFileSync(constantsSrc, join(meta, "constants.json"))
 writeJson(join(meta, "package.json"), {
   name: "openwork-orchestrator",
   version,
-  description: "OpenWork host orchestrator for opencode + OpenWork server + opencode-router",
+  description: "OpenWork host orchestrator for opencode + OpenWork server",
   license: "MIT",
   bin: {
     openwork: "./bin/openwork",

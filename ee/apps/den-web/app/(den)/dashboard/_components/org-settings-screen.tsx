@@ -3,14 +3,25 @@
 import { Check, Copy, Pencil, SlidersHorizontal } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { getErrorMessage, requestJson } from "../../_lib/den-flow";
-import { getAllowedDesktopVersionsFromMetadata, getRequireSsoFromMetadata, parseOrganizationMetadata } from "../../_lib/den-org";
+import {
+  getAllowedDesktopVersionsFromMetadata,
+  getOrgAccessFlags,
+  getRequireSsoFromMetadata,
+} from "../../_lib/den-org";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
 import { DenButton } from "../../_components/ui/button";
 import { DenCard } from "../../_components/ui/card";
 import { DenInput } from "../../_components/ui/input";
 import { DenTextarea } from "../../_components/ui/textarea";
+import { DenNotice } from "../../_components/ui/notice";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { EnterprisePlanNotice } from "./enterprise-plan-notice";
+import {
+  allPublishedDesktopVersionsAllowed,
+  compareDesktopVersions,
+  getDesktopVersionMetadata,
+  initialAllowedDesktopVersions,
+} from "./desktop-version-options";
 
 function normalizeAllowedEmailDomainsInput(value: string): string[] | null {
   const domains = [
@@ -25,64 +36,6 @@ function normalizeAllowedEmailDomainsInput(value: string): string[] | null {
   return domains.length > 0 ? domains : null;
 }
 
-function normalizeDesktopVersionString(value: string): string | null {
-  const normalized = value.trim().replace(/^v/i, "");
-  return /^\d+\.\d+\.\d+$/.test(normalized) ? normalized : null;
-}
-
-function getDesktopVersionMetadata(payload: unknown): {
-  minAppVersion: string;
-  latestAppVersion: string;
-} | null {
-  if (!payload || typeof payload !== "object") {
-    return null;
-  }
-
-  const record = payload as Record<string, unknown>;
-
-  const minAppVersion =
-    typeof record.minAppVersion === "string"
-      ? normalizeDesktopVersionString(record.minAppVersion)
-      : null;
-  const latestAppVersion =
-    typeof record.latestAppVersion === "string"
-      ? normalizeDesktopVersionString(record.latestAppVersion)
-      : null;
-
-  if (!minAppVersion || !latestAppVersion) {
-    return null;
-  }
-
-  return { minAppVersion, latestAppVersion };
-}
-
-function buildDesktopVersionOptions(
-  minVersion: string,
-  maxVersion: string,
-): string[] {
-  const minMatch = minVersion.match(/^(\d+)\.(\d+)\.(\d+)$/);
-  const maxMatch = maxVersion.match(/^(\d+)\.(\d+)\.(\d+)$/);
-  if (!minMatch || !maxMatch) {
-    return [...new Set([minVersion, maxVersion])];
-  }
-
-  const minMajor = Number(minMatch[1]);
-  const minMinor = Number(minMatch[2]);
-  const minPatch = Number(minMatch[3]);
-  const maxMajor = Number(maxMatch[1]);
-  const maxMinor = Number(maxMatch[2]);
-  const maxPatch = Number(maxMatch[3]);
-
-  if (minMajor !== maxMajor || minMinor !== maxMinor || minPatch > maxPatch) {
-    return [...new Set([minVersion, maxVersion])];
-  }
-
-  return Array.from(
-    { length: maxPatch - minPatch + 1 },
-    (_, index) => `${minMajor}.${minMinor}.${minPatch + index}`,
-  );
-}
-
 function toggleAllowedDesktopVersion(
   current: string[],
   version: string,
@@ -93,18 +46,6 @@ function toggleAllowedDesktopVersion(
   }
 
   return current.filter((entry) => entry !== version);
-}
-
-function filterAllowedDesktopVersionsToVisibleOptions(
-  storedVersions: string[] | null,
-  visibleOptions: string[],
-) {
-  if (storedVersions === null) {
-    return null;
-  }
-
-  const visibleOptionSet = new Set(visibleOptions);
-  return storedVersions.filter((version) => visibleOptionSet.has(version));
 }
 
 function SettingsToggle({
@@ -152,6 +93,8 @@ export function OrgSettingsScreen() {
     orgBusy,
     orgError,
     mutationBusy,
+    orgSettingsCompletion,
+    clearOrgSettingsCompletion,
     updateOrganizationSettings,
   } = useOrgDashboard();
   const [orgNameDraft, setOrgNameDraft] = useState("");
@@ -163,6 +106,10 @@ export function OrgSettingsScreen() {
   const [desktopVersionOptions, setDesktopVersionOptions] = useState<string[]>(
     [],
   );
+  const [desktopVersionRange, setDesktopVersionRange] = useState<{
+    minVersion: string;
+    maxVersion: string;
+  } | null>(null);
   const [allowedDesktopVersionsDraft, setAllowedDesktopVersionsDraft] =
     useState<string[]>([]);
   const [desktopVersionOptionsBusy, setDesktopVersionOptionsBusy] =
@@ -171,36 +118,59 @@ export function OrgSettingsScreen() {
     string | null
   >(null);
   const [pageError, setPageError] = useState<string | null>(null);
-  const [pageSuccess, setPageSuccess] = useState<string | null>(null);
-  const [brandLogoUrlDraft, setBrandLogoUrlDraft] = useState("");
-  const [brandAccentColorDraft, setBrandAccentColorDraft] = useState("");
   const [copiedOrgId, setCopiedOrgId] = useState(false);
+  const [denVersion, setDenVersion] = useState<string | null>(null);
 
   const currentAllowedDomains =
     orgContext?.organization.allowedEmailDomains ?? null;
   const isOwner = orgContext?.currentMember.isOwner ?? false;
+  const access = getOrgAccessFlags(
+    orgContext?.currentMember.role ?? "member",
+    isOwner,
+    orgContext?.roles,
+  );
+  const canManageDesktopVersions = access.isAdmin;
   const draftAllowedDomains = useMemo(
     () => normalizeAllowedEmailDomainsInput(allowedDomainsDraft),
     [allowedDomainsDraft],
   );
   const hasDraftDomains = (draftAllowedDomains?.length ?? 0) > 0;
-  const visibleAllowedDesktopVersionsDraft = useMemo(
+  const supportedDesktopVersionOptions = useMemo(
     () =>
-      filterAllowedDesktopVersionsToVisibleOptions(
-        allowedDesktopVersionsDraft,
-        desktopVersionOptions,
-      ) ?? [],
-    [allowedDesktopVersionsDraft, desktopVersionOptions],
+      desktopVersionRange
+        ? desktopVersionOptions.filter(
+            (version) =>
+              compareDesktopVersions(version, desktopVersionRange.maxVersion) <= 0,
+          )
+        : [],
+    [desktopVersionOptions, desktopVersionRange],
   );
   const selectedDesktopVersions = useMemo(
-    () => new Set(visibleAllowedDesktopVersionsDraft),
-    [visibleAllowedDesktopVersionsDraft],
+    () => new Set(allowedDesktopVersionsDraft),
+    [allowedDesktopVersionsDraft],
   );
-  const allDesktopVersionsAllowed =
-    desktopVersionOptions.length > 0 &&
-    desktopVersionOptions.every((version) =>
-      selectedDesktopVersions.has(version),
-    );
+  const allDesktopVersionsAllowed = allPublishedDesktopVersionsAllowed({
+    draftVersions: allowedDesktopVersionsDraft,
+    publishedVersions: supportedDesktopVersionOptions,
+  });
+  const pageSuccess = orgSettingsCompletion?.message ?? null;
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void requestJson("/health", { method: "GET" }, 5000)
+      .then(({ response, payload }) => {
+        const version = Object.getOwnPropertyDescriptor(payload ?? {}, "version")?.value;
+        if (!cancelled && response.ok && typeof version === "string" && version.trim()) {
+          setDenVersion(version.trim());
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!orgContext) {
@@ -215,9 +185,6 @@ export function OrgSettingsScreen() {
       (orgContext.organization.allowedEmailDomains?.length ?? 0) > 0,
     );
     setRequireSsoEnabled(getRequireSsoFromMetadata(orgContext.organization.metadata));
-    const meta = parseOrganizationMetadata(orgContext.organization.metadata);
-    setBrandLogoUrlDraft(typeof meta?.brandLogoUrl === "string" ? meta.brandLogoUrl : "");
-    setBrandAccentColorDraft(typeof meta?.brandAccentColor === "string" ? meta.brandAccentColor : "");
     setDomainEditModeEnabled(false);
   }, [orgContext]);
 
@@ -253,15 +220,15 @@ export function OrgSettingsScreen() {
           return;
         }
 
-        setDesktopVersionOptions(
-          buildDesktopVersionOptions(
-            metadata.minAppVersion,
-            metadata.latestAppVersion,
-          ),
-        );
+        setDesktopVersionOptions(metadata.publishedDesktopVersions);
+        setDesktopVersionRange({
+          minVersion: metadata.minAppVersion,
+          maxVersion: metadata.latestAppVersion,
+        });
       } catch (error) {
         if (!cancelled) {
           setDesktopVersionOptions([]);
+          setDesktopVersionRange(null);
           setDesktopVersionOptionsError(
             error instanceof Error
               ? error.message
@@ -283,34 +250,15 @@ export function OrgSettingsScreen() {
   }, []);
 
   useEffect(() => {
-    if (!orgContext || desktopVersionOptions.length === 0) {
+    if (!orgContext || supportedDesktopVersionOptions.length === 0) {
       return;
     }
 
-    const storedAllowedDesktopVersions =
-      filterAllowedDesktopVersionsToVisibleOptions(
-        getAllowedDesktopVersionsFromMetadata(orgContext.organization.metadata),
-        desktopVersionOptions,
-      );
-
-    if (storedAllowedDesktopVersions === null) {
-      setAllowedDesktopVersionsDraft(desktopVersionOptions);
-      return;
-    }
-
-    setAllowedDesktopVersionsDraft(storedAllowedDesktopVersions);
-  }, [desktopVersionOptions, orgContext]);
-
-  useEffect(() => {
-    if (
-      visibleAllowedDesktopVersionsDraft.length ===
-      allowedDesktopVersionsDraft.length
-    ) {
-      return;
-    }
-
-    setAllowedDesktopVersionsDraft(visibleAllowedDesktopVersionsDraft);
-  }, [allowedDesktopVersionsDraft.length, visibleAllowedDesktopVersionsDraft]);
+    setAllowedDesktopVersionsDraft(initialAllowedDesktopVersions(
+      getAllowedDesktopVersionsFromMetadata(orgContext.organization.metadata),
+      supportedDesktopVersionOptions,
+    ).filter((version) => supportedDesktopVersionOptions.includes(version)));
+  }, [orgContext, supportedDesktopVersionOptions]);
 
   useEffect(() => {
     if (!copiedOrgId) {
@@ -366,7 +314,7 @@ export function OrgSettingsScreen() {
     }
 
     setPageError(null);
-    setPageSuccess(null);
+    clearOrgSettingsCompletion();
     setDomainRestrictionsEnabled(nextValue);
     setDomainEditModeEnabled(nextValue && !currentAllowedDomains?.length);
   }
@@ -374,29 +322,30 @@ export function OrgSettingsScreen() {
   async function handleSaveSettings(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setPageError(null);
-    setPageSuccess(null);
+    clearOrgSettingsCompletion();
 
     try {
       await updateOrganizationSettings({
-        name: orgNameDraft,
-        allowedEmailDomains: domainRestrictionsEnabled
-          ? draftAllowedDomains
-          : null,
-        ...(desktopVersionOptions.length > 0
+        ...(isOwner
+          ? {
+              name: orgNameDraft,
+              allowedEmailDomains: domainRestrictionsEnabled
+                ? draftAllowedDomains
+                : null,
+              requireSso: requireSsoEnabled,
+            }
+          : {}),
+        ...(supportedDesktopVersionOptions.length > 0
           ? {
               allowedDesktopVersions: allDesktopVersionsAllowed
                 ? null
-                : desktopVersionOptions.filter((version) =>
+                : supportedDesktopVersionOptions.filter((version) =>
                     selectedDesktopVersions.has(version),
                   ),
             }
           : {}),
-        requireSso: requireSsoEnabled,
-        brandLogoUrl: brandLogoUrlDraft.trim() || null,
-        brandAccentColor: brandAccentColorDraft.trim() || null,
       });
       setDomainEditModeEnabled(false);
-      setPageSuccess("Workspace settings updated.");
     } catch (error) {
       setPageError(
         error instanceof Error
@@ -410,16 +359,27 @@ export function OrgSettingsScreen() {
     <DashboardPageTemplate
       icon={SlidersHorizontal}
       title="Org settings"
-      description="Control your organization's settings."
+      description={(
+        <span className="flex w-full items-baseline justify-between gap-4">
+          <span>Control your organization&apos;s settings.</span>
+          {denVersion ? (
+            <span
+              className="font-normal tabular-nums text-gray-300"
+              data-den-runtime-version={denVersion}
+              title={`Den API version ${denVersion}`}
+            >
+              Den {denVersion}
+            </span>
+          ) : null}
+        </span>
+      )}
       colors={["#D9F99D", "#0F172A", "#0F766E", "#FDE68A"]}
     >
       {orgContext && !orgContext.entitlements.orgControls ? (
         <EnterprisePlanNotice feature="Enforced SSO and desktop version control" />
       ) : null}
       {pageError ? (
-        <div className="mb-6 rounded-[24px] border border-red-200 bg-red-50 px-5 py-4 text-[14px] text-red-700">
-          {pageError}
-        </div>
+        <DenNotice message={pageError} className="mb-6" />
       ) : null}
       {pageSuccess ? (
         <div className="mb-6 rounded-[24px] border border-emerald-200 bg-emerald-50 px-5 py-4 text-[14px] text-emerald-700">
@@ -427,7 +387,7 @@ export function OrgSettingsScreen() {
         </div>
       ) : null}
 
-      <form className="grid gap-6" onSubmit={handleSaveSettings}>
+      <form className="grid min-w-0 grid-cols-1 gap-6" onSubmit={handleSaveSettings}>
         <DenCard size="spacious" className="grid gap-6">
           <div className="grid gap-2">
             <p className="text-[12px] font-semibold uppercase tracking-[0.16em] text-gray-400">
@@ -550,7 +510,7 @@ export function OrgSettingsScreen() {
                     icon={Pencil}
                     onClick={() => {
                       setPageError(null);
-                      setPageSuccess(null);
+                      clearOrgSettingsCompletion();
                       setDomainEditModeEnabled(true);
                     }}
                   >
@@ -603,11 +563,11 @@ export function OrgSettingsScreen() {
               Choose which supported desktop versions can sign in to this
               workspace.
             </p>
-            {desktopVersionOptions.length > 0 ? (
+            {desktopVersionRange ? (
               <p className="text-[10px] text-gray-400">
-                This server currently supports desktop
-                {` ${desktopVersionOptions[0]} `}
-                to {desktopVersionOptions[desktopVersionOptions.length - 1]}.
+                This server currently supports desktop v
+                {desktopVersionRange.minVersion} to v
+                {desktopVersionRange.maxVersion}.
               </p>
             ) : null}
           </div>
@@ -628,25 +588,53 @@ export function OrgSettingsScreen() {
           !desktopVersionOptionsError &&
           desktopVersionOptions.length > 0 ? (
             <div className="grid gap-4">
-              <div className="grid gap-3">
+              <div
+                data-testid="desktop-version-list"
+                className="grid max-h-[400px] gap-3 overflow-y-auto pr-2"
+              >
                 {desktopVersionOptions.map((version) => {
                   const checked = selectedDesktopVersions.has(version);
+                  const requiresServerUpgrade =
+                    desktopVersionRange !== null &&
+                    compareDesktopVersions(
+                      version,
+                      desktopVersionRange.maxVersion,
+                    ) > 0;
 
                   return (
                     <label
                       key={version}
-                      className="flex items-center justify-between gap-4 rounded-[24px] border border-gray-200 bg-white px-5 py-4"
+                      data-desktop-version={version}
+                      data-supported={!requiresServerUpgrade}
+                      className={[
+                        "flex items-center justify-between gap-4 rounded-[24px] border px-5 py-4",
+                        requiresServerUpgrade
+                          ? "cursor-not-allowed border-gray-200 bg-gray-100 text-gray-400"
+                          : "border-gray-200 bg-white",
+                      ].join(" ")}
                     >
                       <div className="grid gap-1">
-                        <p className="text-[15px] font-medium text-gray-900">
-                          {version}
+                        <p
+                          className={[
+                            "text-[15px] font-medium",
+                            requiresServerUpgrade
+                              ? "text-gray-400"
+                              : "text-gray-900",
+                          ].join(" ")}
+                        >
+                          v{version}
                         </p>
+                        {requiresServerUpgrade ? (
+                          <p className="text-[12px] text-gray-400">
+                            Upgrade server to allow this version
+                          </p>
+                        ) : null}
                       </div>
                       <input
                         type="checkbox"
                         checked={checked}
-                        disabled={!isOwner}
-                        aria-label={`Allow desktop version ${version}`}
+                        disabled={!canManageDesktopVersions || requiresServerUpgrade}
+                        aria-label={`Allow desktop version v${version}`}
                         onChange={(event) =>
                           setAllowedDesktopVersionsDraft((current) =>
                             toggleAllowedDesktopVersion(
@@ -665,84 +653,15 @@ export function OrgSettingsScreen() {
           ) : null}
         </DenCard>
 
-        <DenCard size="spacious" className="grid gap-6">
-          <div className="grid gap-2">
-            <p className="text-[12px] font-semibold uppercase tracking-[0.16em] text-gray-400">
-              White-label
-            </p>
-            <h2 className="text-[24px] font-semibold tracking-[-0.04em] text-gray-900">
-              Brand Appearance
-            </h2>
-            <p className="text-[14px] text-gray-500">
-              Customize the desktop app with your organization's branding. Changes apply to all members in real-time.
-            </p>
-          </div>
-
-          {orgContext && !orgContext.entitlements.desktopPolicies ? (
-            <EnterprisePlanNotice feature="White-label brand appearance" />
-          ) : (
-          <div className="grid gap-5 lg:grid-cols-2">
-            <label className="grid gap-3">
-              <span className="text-[14px] font-medium text-gray-700">
-                Logo URL
-              </span>
-              <DenInput
-                type="url"
-                value={brandLogoUrlDraft}
-                onChange={(event) => setBrandLogoUrlDraft(event.target.value)}
-                placeholder="https://example.com/logo.svg"
-                maxLength={2048}
-                disabled={!isOwner}
-              />
-              <span className="text-[11px] text-gray-400">
-                Displayed in the sidebar top-left. Use an SVG or PNG with a transparent background.
-              </span>
-            </label>
-
-            <label className="grid gap-3">
-              <span className="text-[14px] font-medium text-gray-700">
-                Accent color
-              </span>
-              <select
-                value={brandAccentColorDraft}
-                onChange={(event) => setBrandAccentColorDraft(event.target.value)}
-                disabled={!isOwner}
-                className="h-11 rounded-2xl border border-gray-200 bg-white px-4 text-[14px] text-gray-900 outline-none"
-              >
-                <option value="">Default (OpenWork)</option>
-                <option value="blue">Blue</option>
-                <option value="violet">Violet</option>
-                <option value="purple">Purple</option>
-                <option value="indigo">Indigo</option>
-                <option value="iris">Iris</option>
-                <option value="crimson">Crimson</option>
-                <option value="red">Red</option>
-                <option value="ruby">Ruby</option>
-                <option value="pink">Pink</option>
-                <option value="plum">Plum</option>
-                <option value="orange">Orange</option>
-                <option value="tomato">Tomato</option>
-                <option value="gold">Gold</option>
-                <option value="green">Green</option>
-                <option value="grass">Grass</option>
-                <option value="jade">Jade</option>
-                <option value="teal">Teal</option>
-                <option value="cyan">Cyan</option>
-                <option value="sky">Sky</option>
-              </select>
-              <span className="text-[11px] text-gray-400">
-                Overrides buttons and accent highlights across the desktop app.
-              </span>
-            </label>
-          </div>
-          )}
-        </DenCard>
-
-        <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
           <p className="text-[13px] text-gray-500">
-            {!isOwner && "Only workspace owners can change these settings."}
+            {!isOwner && canManageDesktopVersions
+              ? "Admins can change allowed desktop versions. Other settings require a workspace owner."
+              : !isOwner
+                ? "Only workspace owners and admins can change these settings."
+                : null}
           </p>
-          {isOwner ? (
+          {access.isAdmin ? (
             <DenButton
               type="submit"
               loading={mutationBusy === "update-organization-settings"}

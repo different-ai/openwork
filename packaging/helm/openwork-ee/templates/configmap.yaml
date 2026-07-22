@@ -8,17 +8,42 @@ data:
   CI: "true"
   NODE_ENV: "production"
   OPENWORK_DEV_MODE: {{ .Values.config.openworkDevMode | quote }}
+  DEN_API_NODE_OPTIONS: {{ .Values.config.denApiNodeOptions | quote }}
   DB_MODE: {{ .Values.config.databaseMode | quote }}
+  DEN_ORG_MODE: {{ .Values.config.tenancy.mode | quote }}
+  DEN_SINGLE_ORG_NAME: {{ .Values.config.tenancy.singleOrgName | quote }}
+  DEN_SINGLE_ORG_SLUG: {{ .Values.config.tenancy.singleOrgSlug | quote }}
+  DEN_SINGLE_ORG_OWNER_EMAILS: {{ .Values.config.tenancy.ownerEmails | quote }}
+  DEN_SINGLE_ORG_ALLOW_PUBLIC_SIGNUP: {{ .Values.config.tenancy.allowPublicSignup | quote }}
+  DEN_REQUIRE_EMAIL_VERIFICATION: {{ .Values.config.tenancy.requireEmailVerification | quote }}
+  DEN_PASSWORD_BREACH_SCREENING_ENABLED: {{ .Values.config.auth.passwordBreachScreeningEnabled | quote }}
+  GITHUB_CONNECTOR_APP_ID: {{ .Values.config.githubConnector.appId | quote }}
+  GITHUB_CONNECTOR_APP_CLIENT_ID: {{ .Values.config.githubConnector.clientId | quote }}
   BETTER_AUTH_URL: {{ .Values.config.public.webOrigin | quote }}
   DEN_MCP_RESOURCE_URL: {{ .Values.config.public.mcpResourceUrl | quote }}
+  # Extra MCP resource URLs beyond the DEN_API_PUBLIC_URL API origin and web-app defaults.
+  {{ if .Values.config.public.mcpAdditionalResources }}
+  DEN_MCP_ADDITIONAL_RESOURCES: {{ .Values.config.public.mcpAdditionalResources | quote }}
+  {{ end }}
   DEN_MCP_CLAIM_NAMESPACE: {{ .Values.config.public.mcpClaimNamespace | quote }}
   DEN_BETTER_AUTH_TRUSTED_ORIGINS: {{ .Values.config.public.betterAuthTrustedOrigins | quote }}
   DEN_WEB_APP_HOSTS: {{ .Values.config.public.webAppHosts | quote }}
   DEN_BOOTSTRAP_ADMIN_EMAILS: {{ .Values.config.public.bootstrapAdminEmails | quote }}
+  DEN_INSTALL_LINKS_GATING_ENABLED: {{ .Values.config.public.installLinksGatingEnabled | quote }}
+  DEN_CONNECT_LINK_MODE: {{ .Values.config.public.connectLinkMode | quote }}
+  {{ if .Values.config.public.connectLinkKeyId }}
+  DEN_CONNECT_LINK_KEY_ID: {{ .Values.config.public.connectLinkKeyId | quote }}
+  {{ end }}
   CORS_ORIGINS: {{ .Values.config.public.corsOrigins | quote }}
   DEN_CORS_ORIGINS: {{ .Values.config.public.corsOrigins | quote }}
   DEN_API_PUBLIC_URL: {{ .Values.config.public.apiOrigin | quote }}
   DEN_DESKTOP_DEN_BASE_URL: {{ .Values.config.public.desktopDenBaseUrl | quote }}
+  {{ if .Values.config.public.installerReleaseTag }}
+  OPENWORK_INSTALLER_RELEASE_TAG: {{ .Values.config.public.installerReleaseTag | quote }}
+  {{ end }}
+  {{ if .Values.config.public.installerReleaseRepo }}
+  OPENWORK_INSTALLER_RELEASE_REPO: {{ .Values.config.public.installerReleaseRepo | quote }}
+  {{ end }}
   PROVISIONER_MODE: {{ .Values.config.provisioner.mode | quote }}
   WORKER_PROVISIONING_RECONCILE_INTERVAL_MS: {{ .Values.config.provisioner.reconcileIntervalMs | quote }}
   WORKER_PROVISIONING_RECONCILE_STALE_MS: {{ .Values.config.provisioner.reconcileStaleMs | quote }}

@@ -1,0 +1,175 @@
+---
+title: "Microsoft Entra SCIM provisioning"
+description: "Provision OpenWork members and teams from Microsoft Entra ID"
+---
+
+Use Microsoft Entra ID provisioning to create, update, and deactivate OpenWork
+members automatically. Entra security groups can also become OpenWork teams
+whose membership is managed by Entra.
+
+## Before you start
+
+You need:
+
+- An OpenWork organization with Enterprise SSO and SCIM.
+- An OpenWork owner, or a member who can manage security configuration.
+- A working OpenWork SAML connection. Complete and test
+  [Microsoft Entra SAML SSO](/cloud/sso-microsoft-entra) first.
+- A Microsoft Entra role that can manage enterprise applications and
+  provisioning.
+- An Entra plan that supports assigning groups to enterprise applications if
+  you want to synchronize groups.
+
+Keep SSO enforcement off until you have tested both SAML sign-in and SCIM. Make
+sure at least one OpenWork owner can sign in through SAML before relying on
+Entra as the identity source.
+
+## 1. Get the OpenWork connection values
+
+In OpenWork, select the organization you want to connect, then open
+**Settings → SCIM**.
+
+Confirm that the page shows **SAML/SSO active**, then:
+
+1. Select **Create connector**. If a connector already exists, select
+   **Rotate token** only when you intend to replace its current secret.
+2. Copy the **SCIM base URL**.
+3. Copy the **SCIM bearer token** immediately. OpenWork shows the full token
+   only after creating or rotating it.
+4. To synchronize Entra groups as OpenWork teams, select **Enable team sync**
+   under **Create teams from SCIM groups**.
+
+You will enter these values in Entra:
+
+| Entra field | Where to get the value |
+| --- | --- |
+| Tenant URL | OpenWork **Settings → SCIM → SCIM base URL**. It normally ends in `/api/auth/scim/v2`. |
+| Secret Token | The one-time **SCIM bearer token** shown after you create or rotate the connector. |
+
+Treat the bearer token like a password. Do not put it in tickets, screenshots,
+or shared setup notes. Rotating it immediately invalidates the previous token,
+so update Entra at the same time.
+
+## 2. Configure provisioning in Entra
+
+In the [Microsoft Entra admin center](https://entra.microsoft.com):
+
+1. Open **Entra ID → Enterprise apps**.
+2. Select the same enterprise application used for OpenWork SAML SSO.
+3. Open **Provisioning**.
+4. Select **Get started**, then choose **Automatic** provisioning.
+5. Open **Connectivity** or **Admin Credentials**, depending on the Entra
+   interface shown for your tenant.
+6. Paste the OpenWork **SCIM base URL** into **Tenant URL**.
+7. Paste the OpenWork **SCIM bearer token** into **Secret Token**.
+8. Select **Test Connection** and wait for a successful result.
+9. Save the configuration.
+
+If **Test Connection** fails, confirm that the URL has no extra path or trailing
+text and that the token has not been rotated since it was copied.
+
+## 3. Review mappings and scope
+
+Open **Attribute mapping** in the provisioning configuration. Entra should show
+mappings for both **Users** and **Groups**.
+
+For a controlled rollout, set **Scope** to **Sync only assigned users and
+groups**. This limits provisioning to identities assigned under the enterprise
+application's **Users and groups** page.
+
+Use a stable, unique email address for the SCIM user name. If your Entra user
+principal names use an `onmicrosoft.com` domain but users sign in to OpenWork
+with another email domain, verify which Entra attribute is mapped to
+`userName`. Keep the SAML NameID and SCIM identity consistent so Entra does not
+create a second OpenWork member for the same person.
+
+## 4. Assign test users and groups
+
+In the enterprise application, open **Users and groups** and select **Add
+user/group**.
+
+Start with:
+
+- One or two test users who can sign in through the configured SAML app.
+- One assigned security group containing those users.
+
+Assignments control which objects are in scope when provisioning is set to
+**Sync only assigned users and groups**. Creating a group elsewhere in Entra is
+not enough; assign it to the OpenWork enterprise application as well.
+
+## 5. Test with Provision on demand
+
+Open **Provisioning → Provision on demand**.
+
+Test a user first:
+
+1. Search for and select an assigned test user.
+2. Select **Provision**.
+3. Confirm that import, scope evaluation, matching, and the final action all
+   succeed.
+4. In OpenWork, open **Members** and confirm that the member appears with the
+   expected email.
+
+Then test a group:
+
+1. Make sure the test group already contains at least one assigned test user.
+2. Search for and select the assigned group.
+3. Under **Selected users**, explicitly select up to five members to include in
+   the on-demand test.
+4. Select **Provision**.
+5. Open the result's **Group membership operations** tab and confirm each member
+   shows **Add member — Success**.
+6. In OpenWork, open **Members → Teams** and confirm that the group appears as a
+   SCIM-managed team with the expected members.
+
+<Note>
+Entra's on-demand group workflow can return a generic internal server error for
+an empty group, or when no members are selected. This can happen before Entra
+sends a group-create request to OpenWork. Add members and select them explicitly
+for the on-demand test. Entra's regular background provisioning cycle can still
+synchronize empty assigned groups.
+</Note>
+
+## 6. Start scheduled provisioning
+
+After the on-demand tests pass:
+
+1. Return to **Provisioning → Overview**.
+2. Set **Provisioning Status** to **On**, or select **Start provisioning** in
+   the newer Entra interface.
+3. Save the change.
+4. Check **Provisioning logs** after the first cycle completes.
+5. Refresh OpenWork **Members** and **Teams** to verify the final state.
+
+Regular provisioning is incremental. A newly assigned object might not appear
+until the next cycle; use the Entra provisioning logs to distinguish a pending
+cycle from a failed operation.
+
+## Verify lifecycle changes
+
+Before expanding the assignment scope, verify the complete lifecycle:
+
+1. Remove a test user from the Entra group and confirm that OpenWork removes the
+   user from the SCIM-managed team.
+2. Disable or unassign a test user and confirm the expected OpenWork
+   deprovisioning behavior.
+3. Add another assigned group and confirm that OpenWork creates a second
+   SCIM-managed team.
+
+Change SCIM-managed teams in Entra, not in OpenWork. OpenWork keeps manually
+created teams separate from identity-provider-managed teams.
+
+## Troubleshooting
+
+| Symptom | Likely cause | Fix |
+| --- | --- | --- |
+| **Test Connection** fails | Incorrect Tenant URL, expired or rotated token, or copied whitespace | Copy the base URL and a current token again from OpenWork, then retest |
+| User or group is not found in **Provision on demand** | The object is outside the provisioning scope | Assign it under the enterprise application's **Users and groups** page |
+| Entra will not allow a group assignment | The tenant plan does not support assigning groups to enterprise applications | Enable a suitable Entra plan or test with directly assigned users |
+| On-demand group provisioning reports an internal server error without an OpenWork request | The group is empty or no members were selected for the on-demand run | Add members, select up to five under **Selected users**, and retry |
+| A group provisions but no OpenWork team appears | OpenWork team synchronization is disabled | Open **Settings → SCIM** and enable **Create teams from SCIM groups** |
+| Entra creates a duplicate OpenWork member | SAML and SCIM use different email identifiers | Align the SAML NameID and the SCIM `userName` mapping |
+| Entra reports success but OpenWork still shows the old state | The UI or incremental cycle has not refreshed | Refresh OpenWork, check Entra **Provisioning logs**, and review the SCIM health status in OpenWork |
+
+For member and team behavior after provisioning, see
+[Members and RBAC](/cloud/members-and-rbac).

@@ -12,8 +12,10 @@ import {
   $createRangeSelection,
   $createParagraphNode,
   $createTextNode,
+  $getNearestNodeFromDOMNode,
   $getRoot,
   $getSelection,
+  $nodesOfType,
   $setSelection,
   $isElementNode,
   $isRangeSelection,
@@ -33,11 +35,15 @@ import {
 } from "lexical";
 import type { InitialConfigType } from "@lexical/react/LexicalComposer.js";
 import { decodeComposerMentionValue, encodeComposerMentionValue, type ComposerMentionKind } from "./mention-encoding";
+import { shouldCollapsePastedText } from "./pasted-text";
+import { insertStyledPastedText } from "./pasted-text-insertion";
+
+type PastedTextToken = { label: string; lines: number; text: string };
 
 type EditorProps = {
   value: string;
   mentions: Record<string, ComposerMentionKind>;
-  pastedText?: Array<{ label: string; lines: number }>;
+  pastedText?: PastedTextToken[];
   disabled: boolean;
   placeholder: string;
   onChange: (value: string) => void;
@@ -316,20 +322,27 @@ function createPastedTextChipDom(label: string, lines: number) {
 
   const button = document.createElement("button");
   button.type = "button";
-  button.className = "ml-0.5 inline-flex h-4 w-4 items-center justify-center rounded-full text-amber-10 transition-colors hover:bg-amber-4 hover:text-amber-12";
-  button.title = "Expand pasted text";
-  button.setAttribute("aria-label", "Expand pasted text");
+  button.className = "ml-1 inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-[11px] font-medium text-amber-11 underline decoration-amber-8 underline-offset-2 transition-colors hover:bg-amber-4 hover:text-amber-12";
+  button.title = "Expand";
+  button.setAttribute("aria-label", "Expand pasted text in composer");
   button.dataset.pastedExpandLabel = label;
+
+  const actionText = document.createElement("span");
+  actionText.textContent = "Expand";
 
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   svg.setAttribute("viewBox", "0 0 16 16");
-  svg.setAttribute("fill", "currentColor");
+  svg.setAttribute("fill", "none");
+  svg.setAttribute("stroke", "currentColor");
+  svg.setAttribute("stroke-width", "1.5");
+  svg.setAttribute("stroke-linecap", "round");
+  svg.setAttribute("stroke-linejoin", "round");
   svg.setAttribute("class", "h-3 w-3");
   svg.setAttribute("aria-hidden", "true");
   const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-  path.setAttribute("d", "M5 3h8v8h-1.5V5.56l-7.97 7.97-1.06-1.06 7.97-7.97H5V3Z");
+  path.setAttribute("d", "m6 3 5 5-5 5");
   svg.append(path);
-  button.append(svg);
+  button.append(actionText, svg);
   dom.append(text, button);
   return dom;
 }
@@ -339,6 +352,8 @@ function updatePastedTextChipDom(dom: HTMLElement, label: string, lines: number)
   if (text) text.textContent = pastedTextChipLabel(lines);
   const button = dom.querySelector("button[data-pasted-expand-label]");
   if (button instanceof HTMLButtonElement) {
+    button.title = "Expand";
+    button.setAttribute("aria-label", "Expand pasted text in composer");
     button.dataset.pastedExpandLabel = label;
   }
   dom.title = `Pasted text · ${label}`;
@@ -374,6 +389,10 @@ class ComposerPastedTextNode extends TextNode {
     super(`[pasted text ${label}]`, key);
     this.__pastedLabel = label;
     this.__pastedLines = lines;
+  }
+
+  getPastedLabel() {
+    return this.__pastedLabel;
   }
 
   override exportJSON(): SerializedComposerPastedTextNode {
@@ -467,7 +486,7 @@ function appendSegmentWithNewlines(
   return current;
 }
 
-function setPrompt(value: string, mentions: Record<string, ComposerMentionKind>, pastedText?: Array<{ label: string; lines: number }>) {
+function setPrompt(value: string, mentions: Record<string, ComposerMentionKind>, pastedText?: PastedTextToken[]) {
   const root = $getRoot();
   root.clear();
   let paragraph = $createParagraphNode();
@@ -546,7 +565,7 @@ function serializePromptFromRoot(): string {
     .join("\n");
 }
 
-function SyncPlugin(props: { value: string; mentions: Record<string, ComposerMentionKind>; pastedText?: Array<{ label: string; lines: number }>; disabled: boolean }) {
+function SyncPlugin(props: { value: string; mentions: Record<string, ComposerMentionKind>; pastedText?: PastedTextToken[]; disabled: boolean }) {
   const [editor] = useLexicalComposerContext();
   const valueRef = useRef(props.value);
 
@@ -633,9 +652,6 @@ function SubmitPlugin(props: { onSubmit: (options: { queue: boolean }) => void |
   return null;
 }
 
-const PASTE_CHIP_LINE_THRESHOLD = 3;
-const PASTE_CHIP_CHAR_THRESHOLD = 200;
-
 function PasteChipPlugin(props: { onPasteText?: (text: string) => void }) {
   const [editor] = useLexicalComposerContext();
   const onPasteTextRef = useRef(props.onPasteText);
@@ -648,23 +664,88 @@ function PasteChipPlugin(props: { onPasteText?: (text: string) => void }) {
     return editor.registerCommand(
       PASTE_COMMAND,
       (event: ClipboardEvent) => {
-        if (!onPasteTextRef.current) return false;
-        // Only handle plain-text pastes; files are handled in the React onPaste.
+        if (event.defaultPrevented) return false;
+        // Only handle plain-text pastes; files and URI lists are handled in the React onPaste.
         const files = event.clipboardData?.files;
         if (files && files.length > 0) return false;
+        if (event.clipboardData?.getData("text/uri-list").trim()) return false;
         const text = event.clipboardData?.getData("text/plain") ?? "";
         if (!text.trim()) return false;
-        const lineCount = text.split(/\r?\n/).length;
-        if (lineCount < PASTE_CHIP_LINE_THRESHOLD && text.length < PASTE_CHIP_CHAR_THRESHOLD) {
-          return false;
+        if (shouldCollapsePastedText(text)) {
+          if (!onPasteTextRef.current) return false;
+          event.preventDefault();
+          onPasteTextRef.current(text);
+          return true;
         }
-        // Collapse into a paste chip.
         event.preventDefault();
-        onPasteTextRef.current(text);
-        return true;
+        return insertStyledPastedText(text);
       },
       COMMAND_PRIORITY_CRITICAL,
     );
+  }, [editor]);
+
+  return null;
+}
+
+function pastedExpandButton(target: EventTarget | null) {
+  if (!(target instanceof Element)) return null;
+  const button = target.closest("button[data-pasted-expand-label]");
+  return button instanceof HTMLButtonElement ? button : null;
+}
+
+function replacePastedTextChip(label: string, text: string, button: HTMLButtonElement) {
+  const nearest = $getNearestNodeFromDOMNode(button);
+  if (nearest instanceof ComposerPastedTextNode && nearest.getPastedLabel() === label) {
+    nearest.select(0, nearest.getTextContentSize());
+    return insertStyledPastedText(text);
+  }
+  for (const node of $nodesOfType(ComposerPastedTextNode)) {
+    if (node.getPastedLabel() !== label) continue;
+    node.select(0, node.getTextContentSize());
+    return insertStyledPastedText(text);
+  }
+  return false;
+}
+
+function PastedTextExpandPlugin(props: { pastedText?: PastedTextToken[]; onExpandPastedText?: (label: string) => void }) {
+  const [editor] = useLexicalComposerContext();
+  const pastedTextRef = useRef(props.pastedText);
+  const onExpandPastedTextRef = useRef(props.onExpandPastedText);
+
+  useEffect(() => {
+    pastedTextRef.current = props.pastedText;
+    onExpandPastedTextRef.current = props.onExpandPastedText;
+  }, [props.onExpandPastedText, props.pastedText]);
+
+  useEffect(() => {
+    const handleMouseDown = (event: MouseEvent) => {
+      if (!pastedExpandButton(event.target)) return;
+      event.preventDefault();
+      event.stopPropagation();
+    };
+
+    const handleClick = (event: MouseEvent) => {
+      const button = pastedExpandButton(event.target);
+      if (!button) return;
+      const label = button.dataset.pastedExpandLabel;
+      if (!label) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const target = pastedTextRef.current?.find((item) => item.label === label);
+      if (target) {
+        editor.update(() => {
+          replacePastedTextChip(label, target.text, button);
+        });
+      }
+      onExpandPastedTextRef.current?.(label);
+    };
+
+    return editor.registerRootListener((rootElement, previousRootElement) => {
+      previousRootElement?.removeEventListener("mousedown", handleMouseDown, true);
+      previousRootElement?.removeEventListener("click", handleClick, true);
+      rootElement?.addEventListener("mousedown", handleMouseDown, true);
+      rootElement?.addEventListener("click", handleClick, true);
+    });
   }, [editor]);
 
   return null;
@@ -839,26 +920,6 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
     [],
   );
 
-  const handlePastedTextExpandPointer = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
-    const target = event.target;
-    if (!(target instanceof Element)) return;
-    const button = target.closest("button[data-pasted-expand-label]");
-    if (!(button instanceof HTMLButtonElement)) return;
-    const label = button.dataset.pastedExpandLabel;
-    if (!label) return;
-    event.preventDefault();
-    event.stopPropagation();
-    props.onExpandPastedText?.(label);
-  }, [props.onExpandPastedText]);
-
-  const handlePastedTextExpandMouseDown = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
-    const target = event.target;
-    if (!(target instanceof Element)) return;
-    if (!target.closest("button[data-pasted-expand-label]")) return;
-    event.preventDefault();
-    event.stopPropagation();
-  }, []);
-
   return (
     <LexicalComposer initialConfig={initialConfig}>
       {/*
@@ -867,7 +928,7 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
         - max-h caps the composer — long pastes / multi-paragraph drafts scroll
           inside the editor instead of pushing the transcript out of view.
       */}
-      <div className="relative" onClickCapture={handlePastedTextExpandPointer} onMouseDownCapture={handlePastedTextExpandMouseDown}>
+      <div className="relative">
         <PlainTextPlugin
           contentEditable={
             <ContentEditable
@@ -892,6 +953,7 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
         <SyncPlugin value={props.value} mentions={props.mentions} pastedText={props.pastedText} disabled={props.disabled} />
         <SubmitPlugin onSubmit={props.onSubmit} disabled={props.disabled} />
         <PasteChipPlugin onPasteText={props.onPasteText} />
+        <PastedTextExpandPlugin pastedText={props.pastedText} onExpandPastedText={props.onExpandPastedText} />
         <MentionChipNavigationPlugin />
         <ImperativeHandlePlugin editorRef={ref} />
       </div>

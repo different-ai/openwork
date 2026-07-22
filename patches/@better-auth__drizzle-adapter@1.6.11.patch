@@ -1,0 +1,22 @@
+diff --git a/dist/index.mjs b/dist/index.mjs
+index fc9d7f415780e9a011b86df222adf32a6e04a026..4fc2d585a3794bd2acc907d9e9f4699e5d30de0b 100644
+--- a/dist/index.mjs
++++ b/dist/index.mjs
+@@ -53,1 +53,6 @@ const drizzleAdapter = (db, config) => {
+-			await builder.execute();
++			const mutationResult = await builder.execute();
++			const mysqlResult = Array.isArray(mutationResult) ? mutationResult[0] : mutationResult;
++			if (model === "oauthRefreshToken" && where?.some((w) => w.field === "revoked")) {
++				const affectedRows = mysqlResult?.affectedRows ?? mysqlResult?.rowsAffected ?? mysqlResult?.changes;
++				if (affectedRows === 0) return null;
++			}
+@@ -434,7 +434,8 @@ const drizzleAdapter = (db, config) => {
+ 						const targetId = target[idField] ?? target.id;
+ 						if (targetId === void 0 || targetId === null || !idColumn) return null;
+ 						const delRes = await tx.delete(schemaModel).where(eq(idColumn, targetId)).execute();
+-						return ((delRes && (delRes.rowsAffected ?? delRes.affectedRows ?? delRes.changes)) ?? 0) > 0 ? target : null;
++						const deleteResult = Array.isArray(delRes) ? delRes[0] : delRes;
++						return ((deleteResult && (deleteResult.rowsAffected ?? deleteResult.affectedRows ?? deleteResult.changes)) ?? 0) > 0 ? target : null;
+ 					};
+ 					return inTransaction ? claimFromTransaction(db) : db.transaction(claimFromTransaction);
+ 				}

@@ -19,14 +19,21 @@ A growing subset of flows is codified under [`flows/`](./flows) and executed by
 the zero-dependency runner in [`runner/`](./runner) with machine-checkable
 assertions, poll-until-condition waits (no fixed sleeps), and JSON + markdown
 reports with screenshots. The runner also writes a browseable frame-by-frame
-`index.html` in each result directory.
+`index.html` in each result directory. New flows should be typed
+`*.flow.ts` files using `defineFlow` from `../runner/flow.ts`; legacy
+`*.flow.mjs` files are still supported.
 
 ```bash
-pnpm evals --list                 # show available coded flows
-pnpm evals --all                  # run everything runnable
-pnpm evals --flow app-smoke       # run one flow
+pnpm evals --list                 # automation mode: show available coded flows
+pnpm evals --all                  # automation mode: no narration policy
+pnpm evals --flow app-smoke       # automation mode: run one flow
+pnpm evals:typecheck              # typecheck *.flow.ts + runner TypeScript
 pnpm evals --all --cdp-url http://127.0.0.1:9825   # explicit CDP endpoint
 ```
+
+`pnpm evals` is automation mode: it never enforces voice-over coverage and
+unnarrated frames render without a warning. `pnpm fraimz` is demo mode: it keeps
+the voice-over drift check and narrated-frame warnings described below.
 
 ### fraimz — the deliverable
 
@@ -45,6 +52,44 @@ the `/fraimz` command or:
 pnpm fraimz --flow <id>           # same runner; headline output is fraimz.html
 pnpm fraimz --flow core-flow --cdp-url http://127.0.0.1:9825
 ```
+
+### Voice-over first: the script is the spec
+
+Demo-driven development starts with the narration, not a PRD. The `/voiceover`
+command (and `voiceover` skill) aligns on the demo script with the user before
+any code; the approved script lands at `evals/voiceovers/<flow-id>.md` — a
+title, optional context prose, and one **numbered paragraph per frame**.
+On approval the build moves to a fresh worktree/branch; the journey ends with the PR carrying the proof (see the `voiceover` skill).
+
+```bash
+pnpm fraimz scaffold <flow-id>    # generate evals/flows/<flow-id>.flow.ts
+                                  # from the approved script: one ctx.prove
+                                  # stub per paragraph, narration pre-wired
+pnpm fraimz --flow <flow-id> --pr # after the run, post the frame proof as a
+                                  # PR comment via gh (--pr <number> to target)
+```
+
+`--pr` uploads each frame screenshot to Vercel Blob so it renders inline in
+the comment (see the `upload-photo` skill); this requires
+`BLOB_READ_WRITE_TOKEN` in the environment (`get-env-var` skill /
+`infisical secrets get BLOB_READ_WRITE_TOKEN --plain --silent`). The comment
+renders each frame as claim → voiceover → assertions → screenshot so reviewers
+can follow the demo step by step. If the token is missing or an upload fails,
+the comment still posts with a note and the screenshots stay available in
+`evals/results/<run-id>/`.
+
+Flows load their narration with `loadVoiceoverParagraphs(<flow-id>)`; in demo
+mode, when a script exists for a flow, the runner appends a **Voice-over script
+coverage** step that fails the flow if the run's narration drifts from the
+approved file (a scripted frame never narrated, or an unapproved line narrated).
+`pnpm evals scaffold <flow-id>` in automation mode emits the same narrated stub
+when a script exists; without a script it emits a plain typed stub instead.
+`pnpm fraimz scaffold <flow-id>` still requires the approved script.
+
+Internal demos of terminal/tooling experiences can set `requiresApp: false` to
+run without a CDP endpoint; their frames carry claims, assertions, and
+`ctx.output(name, text)` command output instead of screenshots. The reference
+is `voiceover-first-dx` — this workflow demoing itself.
 
 The runner probes `http://127.0.0.1:9825` (Daytona) then `:9823` (local
 `pnpm dev`) by default. Flows that need cloud credentials declare
@@ -121,13 +166,25 @@ plugin (configured in `.opencode/opencode.json`). Every tool takes
 
 ## Conventions
 
-- Prefer coded flows in `evals/flows/*.flow.mjs` over ad hoc browser tool calls.
+- Prefer coded flows in `evals/flows/*.flow.ts` using `defineFlow` over ad hoc
+  browser tool calls; legacy `*.flow.mjs` files remain runnable.
+- Declare the demo kind on every new flow: `kind: "user-facing"` (a flow demo
+  where the end user is the protagonist) or `kind: "internal"` (an internal
+  demo, e.g. perf improvements or invariants). The runner rejects other values
+  and flags legacy flows without one in `fraimz.html`.
 - Use runner helpers such as `ctx.clickText`, `ctx.fill`, `ctx.waitFor`,
   `ctx.expectText`, `ctx.expectNoText`, `ctx.expectHashIncludes`,
   `ctx.control`, `ctx.prove`, and validated `ctx.screenshot` calls.
-- Prefer `ctx.prove("claim", { action, assert, screenshot })` for PR evidence.
-  It records the claim, assertions, screenshot, and validation results together
-  so the HTML frame proof explains why each image proves the step.
+- Prefer `ctx.prove("claim", { voiceover, action, assert, screenshot })` for PR
+  evidence. It records the claim, voiceover, assertions, screenshot, and
+  validation results together so the HTML frame proof explains why each image
+  proves the step.
+- In demo mode, every `ctx.prove` should carry a `voiceover`: one or two spoken-style
+  sentences narrating what the viewer sees in that frame. `fraimz.html` renders
+  it per frame with a play button (Web Speech API) and a per-flow "Play full
+  voiceover". Write the voiceover script for the whole demo before coding the
+  flow. See `evals/flows/session-search-grouped.flow.mjs` for the reference
+  shape.
 - Screenshots should include `claim`, `requireText`, `rejectText`, or
   `hashIncludes` whenever possible. A screenshot without an assertion is only a
   visual checkpoint, not proof that the workflow passed.
@@ -140,6 +197,11 @@ plugin (configured in `.opencode/opencode.json`). Every tool takes
   `__reactFiber$` → reducer dispatch pattern documented in `daytona-flows.md`.
 - Prefer poll-until-condition waits (`ctx.waitFor`, `ctx.waitForText`) over
   fixed sleeps.
+- The runner forces **light mode** by default before every flow runs
+  (`ctx.ensureLightMode()`, called automatically in `runner/run.mjs`) so
+  screenshot evidence stays readable regardless of the host machine's OS theme.
+  A flow that is itself testing theme/dark-mode behavior can opt out with
+  `preserveTheme: true` on the flow definition; no current flow needs this.
 
 ## Evidence and repair standard
 
@@ -208,8 +270,6 @@ Before reporting a flow as passed:
   marketplace plugin import/update/removal sync between Den and the desktop.
 - [`cloud-org-membership-flows.md`](./cloud-org-membership-flows.md) — org
   invitations, role updates, member removal, and domain restrictions.
-- [`cloud-worker-flows.md`](./cloud-worker-flows.md) — legacy cloud worker
-  launch/connect flows (feature being sunset; kept for regression context).
 - [`daytona-server-failure-recovery-flows.md`](./daytona-server-failure-recovery-flows.md)
   — Den API/Web/proxy/MySQL outage and recovery behavior.
 - [`default-openwork-marketplace-onboarding-flow.md`](./default-openwork-marketplace-onboarding-flow.md)

@@ -108,7 +108,7 @@ test("breached password response blocks compromised passwords and fails closed o
   expect(blocked?.status).toBe(400)
   await expect(blocked?.json()).resolves.toEqual({
     error: "password_compromised",
-    message: "Choose a different password.",
+    message: "This password appeared in a data breach. Choose a different one.",
   })
 
   const unavailable = await authProtection.getBreachedPasswordResponse(
@@ -118,6 +118,62 @@ test("breached password response blocks compromised passwords and fails closed o
   expect(unavailable?.status).toBe(503)
   await expect(unavailable?.json()).resolves.toEqual({
     error: "password_screening_unavailable",
-    message: "Password screening is temporarily unavailable. Try again later.",
+    message: "Something went wrong. Please try again in a moment.",
   })
+})
+
+test("short password response rejects passwords below the minimum length on creation routes", async () => {
+  const tooShort = new Request("http://den.local/api/auth/sign-up/email", {
+    body: JSON.stringify({ email: "user@example.com", password: "short" }),
+    headers: { "content-type": "application/json" },
+    method: "POST",
+  })
+  const rejected = await authProtection.getShortPasswordResponse(tooShort)
+  expect(rejected?.status).toBe(400)
+  await expect(rejected?.json()).resolves.toEqual({
+    error: "password_too_short",
+    message: `Password must be at least ${authProtection.MIN_PASSWORD_LENGTH} characters.`,
+  })
+
+  const atBoundary = new Request("http://den.local/api/auth/sign-up/email", {
+    body: JSON.stringify({ email: "user@example.com", password: "a".repeat(authProtection.MIN_PASSWORD_LENGTH) }),
+    headers: { "content-type": "application/json" },
+    method: "POST",
+  })
+  await expect(authProtection.getShortPasswordResponse(atBoundary)).resolves.toBeNull()
+
+  const longEnough = new Request("http://den.local/api/auth/sign-up/email", {
+    body: JSON.stringify({ email: "user@example.com", password: "longenough" }),
+    headers: { "content-type": "application/json" },
+    method: "POST",
+  })
+  await expect(authProtection.getShortPasswordResponse(longEnough)).resolves.toBeNull()
+
+  const signIn = new Request("http://den.local/api/auth/sign-in/email", {
+    body: JSON.stringify({ email: "user@example.com", password: "x" }),
+    headers: { "content-type": "application/json" },
+    method: "POST",
+  })
+  await expect(authProtection.getShortPasswordResponse(signIn)).resolves.toBeNull()
+})
+
+test("breached password response can skip screening for isolated deployments", async () => {
+  const request = new Request("http://den.local/api/auth/sign-up/email", {
+    body: JSON.stringify({ email: "user@example.com", password: "password" }),
+    headers: { "content-type": "application/json" },
+    method: "POST",
+  })
+  let fetchCount = 0
+
+  const response = await authProtection.getBreachedPasswordResponse(
+    request,
+    async () => {
+      fetchCount += 1
+      return new Response("1E4C9B93F3F0682250B6CF8331B7EE68FD8:3303003\n", { status: 200 })
+    },
+    false,
+  )
+
+  expect(response).toBeNull()
+  expect(fetchCount).toBe(0)
 })

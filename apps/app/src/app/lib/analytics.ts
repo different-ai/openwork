@@ -8,27 +8,25 @@
  *   into an explicit survey field (e.g. the onboarding attribution survey).
  * - Fire-and-forget: analytics must never break or slow the app.
  * - Respect the user: a single `analyticsEnabled` preference (Settings ->
- *   Preferences) turns everything off; no key baked in means no network.
+ *   Preferences) turns everything off; an explicitly blank PostHog key means
+ *   no network.
  * - Every capture is mirrored into the local app inspector
  *   (`window.__openwork.record("analytics.<event>")`) so coded evals can
  *   assert instrumentation without any analytics backend.
  */
 import { denSessionUpdatedEvent, type DenSessionUpdatedDetail } from "./den-session-events";
 import { recordInspectorEvent } from "./app-inspector";
+import { resolvePosthogKey } from "./analytics-key";
 
-const ENV_POSTHOG_KEY = String(import.meta.env.VITE_OPENWORK_POSTHOG_KEY ?? "").trim();
 const ENV_POSTHOG_HOST = String(import.meta.env.VITE_OPENWORK_POSTHOG_HOST ?? "").trim();
 const ENV_APP_VERSION = String(import.meta.env.VITE_OPENWORK_APP_VERSION ?? "").trim();
 
-// Same public project key the landing page and den-web use; PostHog client
-// keys are publishable by design. Override or blank via VITE_OPENWORK_POSTHOG_KEY.
-const DEFAULT_POSTHOG_KEY = "phc_4YnPTlDVYPjgwKvLuNxhbHjV5kadgvd7XLzVHWnCXAI";
 const DEFAULT_POSTHOG_HOST = "https://us.i.posthog.com";
 
-// Dev builds send nothing unless a key is explicitly provided, so local
-// runs, CI, and evals never pollute production analytics. The inspector
-// mirror still records events locally either way.
-const POSTHOG_KEY = ENV_POSTHOG_KEY || (import.meta.env.DEV ? "" : DEFAULT_POSTHOG_KEY);
+// Packaged releases use the default publishable key; dev builds stay silent
+// unless VITE_OPENWORK_POSTHOG_KEY is set. Set it to "" to disable analytics
+// in any build. The inspector mirror still records events locally either way.
+const POSTHOG_KEY = resolvePosthogKey(import.meta.env.VITE_OPENWORK_POSTHOG_KEY, import.meta.env.DEV);
 const POSTHOG_HOST = (ENV_POSTHOG_HOST || DEFAULT_POSTHOG_HOST).replace(/\/+$/, "");
 
 const PREFS_STORAGE_KEY = "openwork.preferences";

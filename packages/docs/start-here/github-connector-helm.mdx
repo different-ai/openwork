@@ -1,0 +1,129 @@
+---
+title: "GitHub connector for Helm"
+description: "Create a GitHub App and configure the OpenWork EE Helm chart for repository connectors."
+---
+
+The GitHub connector lets a self-hosted OpenWork deployment install a GitHub App, list repositories the installation can read, discover plugin or marketplace manifests, import selected repositories, and keep imported content fresh from GitHub webhooks.
+
+This is separate from GitHub social sign-in. Social sign-in uses `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` for Better Auth. The repository connector uses the `GITHUB_CONNECTOR_APP_*` settings below.
+
+## Public URLs
+
+Use the same public hosts that you set in the Helm chart:
+
+```yaml
+config:
+  public:
+    webOrigin: "https://openwork.example.com"
+    apiOrigin: "https://api.openwork.example.com"
+```
+
+The GitHub App needs these OpenWork URLs:
+
+| GitHub App field | Value |
+| --- | --- |
+| Homepage URL | `https://openwork.example.com` |
+| Setup URL | `https://openwork.example.com/dashboard/integrations/github` |
+| Webhook URL | `https://api.openwork.example.com/v1/webhooks/connectors/github` |
+
+Enable **Redirect on update** for the setup URL. GitHub redirects back to the setup URL with `installation_id` and `state`; Den web completes the installation by calling Den API.
+
+No OAuth callback URL is required for the current repository connector flow. If you also enable GitHub user authorization later, treat that as a separate OAuth setup from this connector.
+
+## Create the GitHub App
+
+In GitHub, create a new GitHub App for the account that should own the connector.
+
+Use these settings:
+
+- **Webhook**: active.
+- **Webhook URL**: `https://api.openwork.example.com/v1/webhooks/connectors/github`.
+- **Webhook secret**: generate a strong random secret and keep it for Helm.
+- **Setup URL**: `https://openwork.example.com/dashboard/integrations/github`.
+- **Redirect on update**: enabled.
+- **Repository permissions**:
+  - **Contents**: read-only.
+  - **Metadata**: read-only. GitHub grants this automatically.
+- **Subscribe to events**:
+  - `push`
+  - `installation`
+  - `installation_repositories`
+  - `repository`
+
+After creating the app, copy:
+
+- **App ID**
+- **Client ID**
+- **Client secret** if you generated one
+- **Private key** (`.pem`)
+- **Webhook secret**
+
+The connector currently requires the App ID and private key for live GitHub App calls. The webhook secret is required for webhook ingestion. The client ID and client secret are exposed by the Helm chart because GitHub Apps have them, but the current install and repository sync path does not depend on them.
+
+## Configure Helm
+
+Add the GitHub App values to your production values file:
+
+```yaml
+config:
+  githubConnector:
+    appId: "123456"
+    clientId: "Iv1.example"
+
+secret:
+  values:
+    githubConnectorAppClientSecret: "github-app-client-secret-if-used"
+    githubConnectorAppPrivateKey: |-
+      -----BEGIN PRIVATE KEY-----
+      ...
+      -----END PRIVATE KEY-----
+    githubConnectorAppWebhookSecret: "replace-with-the-github-webhook-secret"
+```
+
+You can also paste the private key with escaped newlines (`\n`). Den normalizes escaped newlines before signing GitHub App JWTs.
+
+If you use an existing Kubernetes Secret instead of `secret.values`, keep `config.githubConnector.appId` in values and include these secret-backed keys in that Secret:
+
+```yaml
+secret:
+  create: false
+  existingSecret: openwork-ee-secrets
+```
+
+Required deployment values:
+
+- `GITHUB_CONNECTOR_APP_ID`
+- `GITHUB_CONNECTOR_APP_PRIVATE_KEY`
+- `GITHUB_CONNECTOR_APP_WEBHOOK_SECRET`
+
+Optional connector keys:
+
+- `GITHUB_CONNECTOR_APP_CLIENT_ID`
+- `GITHUB_CONNECTOR_APP_CLIENT_SECRET`
+
+The chart writes `GITHUB_CONNECTOR_APP_ID` and `GITHUB_CONNECTOR_APP_CLIENT_ID` through the shared ConfigMap, and writes `GITHUB_CONNECTOR_APP_PRIVATE_KEY`, `GITHUB_CONNECTOR_APP_WEBHOOK_SECRET`, and `GITHUB_CONNECTOR_APP_CLIENT_SECRET` through the shared Secret.
+
+## What OpenWork does with it
+
+When an admin clicks **Connect GitHub** in OpenWork:
+
+1. Den API calls `/v1/connectors/github/install/start`.
+2. Den API reads the GitHub App metadata with the app ID and private key.
+3. Den API sends the admin to the GitHub App installation URL with a signed `state`.
+4. GitHub redirects to `/dashboard/integrations/github?installation_id=...&state=...`.
+5. Den web calls `/v1/connectors/github/install/complete`.
+6. Den API stores the GitHub installation as a connector account and lists repositories visible to that installation.
+
+When GitHub sends a webhook to `/v1/webhooks/connectors/github`, Den API verifies the `x-hub-signature-256` header with `GITHUB_CONNECTOR_APP_WEBHOOK_SECRET` before enqueueing connector sync work.
+
+## Validate the setup
+
+After deploying the chart, sign in to Den web and open:
+
+```text
+https://openwork.example.com/dashboard/integrations
+```
+
+Choose GitHub, install the GitHub App on a test account or organization, select a repository, and start discovery. A working setup should return to OpenWork, show repositories visible to the installation, and allow discovery on a selected repository.
+
+For webhook validation, push to a connected repository and check Den API logs for an accepted or intentionally ignored GitHub webhook delivery. A `503` response from `/v1/webhooks/connectors/github` means the webhook secret is not configured in the Den API pod.

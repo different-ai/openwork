@@ -66,7 +66,6 @@ services:
         # The orchestrator can spawn .ts files via Bun directly, which avoids bind-mount
         # issues from bun --compile inside Docker on macOS.
         export OPENWORK_SERVER_BIN="/app/apps/server/src/cli.ts"
-        export OPENCODE_ROUTER_BIN="/app/apps/opencode-router/src/cli.ts"
 
         # --- Resolve tokens ---
         if [ -z "$$OPENWORK_TOKEN" ]; then
@@ -100,7 +99,6 @@ services:
           --openwork-token "$$OPENWORK_TOKEN" \
           --openwork-host-token "$$OPENWORK_HOST_TOKEN" \
           --openwork-server-bin "$$OPENWORK_SERVER_BIN" \
-          --opencode-router-bin "$$OPENCODE_ROUTER_BIN" \
           --approval auto \
           --allow-external \
           --cors "*"

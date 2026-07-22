@@ -45,7 +45,7 @@ import {
 import { formatFileSize } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { OLLAMA_PROVIDER_CONFIG } from "./openai-image-extension";
+import { fetchOllamaModelSupportsVision, OLLAMA_PROVIDER_CONFIG, type LocalProviderInstallInput } from "./openai-image-extension";
 import { registerExtensionConfig, type ExtensionConfigContext } from "./extension-registry";
 
 const ollamaConfigFactory = (ctx: ExtensionConfigContext) => (
@@ -212,14 +212,7 @@ export type OllamaConfigProps = {
   busy: boolean;
   status: string | null;
   error: string | null;
-  onInstall: (input: {
-    providerId: string;
-    name: string;
-    baseURL: string;
-    modelId: string;
-    modelName: string;
-    setDefault: boolean;
-  }) => void | Promise<void>;
+  onInstall: (input: LocalProviderInstallInput) => void | Promise<void>;
 };
 
 export function OllamaConfig(props: OllamaConfigProps) {
@@ -227,6 +220,7 @@ export function OllamaConfig(props: OllamaConfigProps) {
   const [customModel, setCustomModel] = useState(OLLAMA_PROVIDER_CONFIG.defaultModelId);
   const [pullDialogOpen, setPullDialogOpen] = useState(false);
   const [setDefault, setSetDefault] = useState(true);
+  const [checkingCapabilities, setCheckingCapabilities] = useState(false);
 
 
   const { data, isFetching, refetch, status } = useOllamaModels();
@@ -263,14 +257,23 @@ export function OllamaConfig(props: OllamaConfigProps) {
       return; 
     }
 
-    void props.onInstall({
-      providerId: OLLAMA_PROVIDER_CONFIG.providerId,
-      name: OLLAMA_PROVIDER_CONFIG.name,
-      baseURL: OLLAMA_PROVIDER_CONFIG.baseURL,
-      modelId: activeModelId,
-      modelName: activeModelId,
-      setDefault,
-    });
+    void (async () => {
+      setCheckingCapabilities(true);
+      try {
+        const supportsVision = await fetchOllamaModelSupportsVision(activeModelId, OLLAMA_PROVIDER_CONFIG.baseURL);
+        await props.onInstall({
+          providerId: OLLAMA_PROVIDER_CONFIG.providerId,
+          name: OLLAMA_PROVIDER_CONFIG.name,
+          baseURL: OLLAMA_PROVIDER_CONFIG.baseURL,
+          modelId: activeModelId,
+          modelName: activeModelId,
+          setDefault,
+          supportsVision,
+        });
+      } finally {
+        setCheckingCapabilities(false);
+      }
+    })();
   };
 
   if (status === "unreachable") {
@@ -435,9 +438,9 @@ export function OllamaConfig(props: OllamaConfigProps) {
         </FieldGroup>
         <Button
           onClick={handleInstall}
-          disabled={props.busy || isPulling || !activeModelId || status !== "running"}
+          disabled={props.busy || isPulling || checkingCapabilities || !activeModelId || status !== "running"}
         >
-          {props.busy && <Loader2 className="size-4 animate-spin" />}
+          {(props.busy || checkingCapabilities) && <Loader2 className="size-4 animate-spin" />}
           Add to workspace
         </Button>
       </CardFooter>

@@ -10,16 +10,23 @@
  * The client never sends prompt contents, code, or file paths.
  */
 
-import { isDesktopRuntime } from "./runtime-env";
 import { type DenSettings, readDenSettings, resolveDenBaseUrls } from "./den";
 
 const INGEST_PATH = "/v1/telemetry/ingest";
 const INGEST_TIMEOUT_MS = 5_000;
 
+export type TelemetryDimensionInput = {
+  type: string;
+  value?: string;
+  label: string;
+  metadata?: Record<string, unknown>;
+};
+
 type TelemetryEventFields = {
   sessionId?: string;
   durationMs?: number;
   success?: boolean;
+  dimensions?: TelemetryDimensionInput[];
 };
 
 type TelemetryEvent = TelemetryEventFields & {
@@ -38,7 +45,6 @@ function getResolvedIngestUrl(settings: DenSettings): string | null {
 
   const baseUrls = resolveDenBaseUrls({
     baseUrl: settings.baseUrl,
-    apiBaseUrl: settings.apiBaseUrl,
   });
 
   return `${baseUrls.apiBaseUrl}${INGEST_PATH}`;
@@ -65,20 +71,20 @@ async function flushEvents(): Promise<void> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), INGEST_TIMEOUT_MS);
 
-    const fetchFn = isDesktopRuntime() ? globalThis.fetch : globalThis.fetch;
-
-    await fetchFn(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${settings.authToken}`,
-      },
-      body: JSON.stringify({ events: batch }),
-      signal: controller.signal,
-      credentials: "include",
-    });
-
-    clearTimeout(timeout);
+    try {
+      await globalThis.fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${settings.authToken}`,
+        },
+        body: JSON.stringify({ events: batch }),
+        signal: controller.signal,
+        credentials: "include",
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
   } catch {
     // Swallow silently -- telemetry should never affect UX
   }
@@ -118,16 +124,16 @@ export function trackTelemetryEvent(type: string, fields: TelemetryEventFields =
  * Track that the user started an OpenCode session.
  * This is the primary "are people actually using the app" signal.
  */
-export function trackSessionActive(sessionId?: string): void {
-  trackTelemetryEvent("session.active", { sessionId });
+export function trackSessionActive(sessionId?: string, dimensions?: TelemetryDimensionInput[]): void {
+  trackTelemetryEvent("session.active", { sessionId, dimensions });
 }
 
 /**
  * Track that a task run started in a session.
  * Carries only an opaque session id -- never prompt text or file paths.
  */
-export function trackTaskStarted(sessionId: string): void {
-  trackTelemetryEvent("task.started", { sessionId });
+export function trackTaskStarted(sessionId: string, dimensions?: TelemetryDimensionInput[]): void {
+  trackTelemetryEvent("task.started", { sessionId, dimensions });
 }
 
 /**

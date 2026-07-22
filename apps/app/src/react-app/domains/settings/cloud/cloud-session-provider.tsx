@@ -11,7 +11,7 @@ import {
 } from "../../../../app/lib/den";
 import { denSettingsChangedEvent } from "../../../../app/lib/den-session-events";
 
-type CloudActiveOrganization = Pick<DenOrgSummary, "id" | "name" | "slug">;
+type CloudActiveOrganization = Pick<DenOrgSummary, "id" | "name" | "role" | "slug">;
 
 type CloudSessionContextValue = {
   client: DenClient;
@@ -41,7 +41,6 @@ export function CloudSessionProvider({ children }: CloudSessionProviderProps) {
   const initial = React.useMemo(() => readDenSettings(), []);
 
   const [baseUrl, setBaseUrl] = React.useState(() => initial.baseUrl || DEFAULT_DEN_BASE_URL);
-  const [apiBaseUrl, setApiBaseUrl] = React.useState(() => initial.apiBaseUrl || "");
   const [authToken, setAuthToken] = React.useState(initial.authToken?.trim() || "");
   const [isSignedIn, setIsSignedIn] = React.useState(false);
   const [user, setUser] = React.useState<DenUser | null>(null);
@@ -54,6 +53,7 @@ export function CloudSessionProvider({ children }: CloudSessionProviderProps) {
       return {
         id,
         name: initial.activeOrgName?.trim() || "",
+        role: "member",
         slug: initial.activeOrgSlug?.trim() || "",
       };
     });
@@ -64,7 +64,7 @@ export function CloudSessionProvider({ children }: CloudSessionProviderProps) {
     if (typeof window === "undefined") return;
 
     const handleSettingsChanged = () => {
-      setApiBaseUrl(readDenSettings().apiBaseUrl || "");
+      setBaseUrl(readDenSettings().baseUrl || DEFAULT_DEN_BASE_URL);
     };
 
     window.addEventListener(denSettingsChangedEvent, handleSettingsChanged);
@@ -72,8 +72,8 @@ export function CloudSessionProvider({ children }: CloudSessionProviderProps) {
   }, []);
 
   const client = React.useMemo(
-    () => createDenClient({ baseUrl, apiBaseUrl, token: authToken }),
-    [apiBaseUrl, authToken, baseUrl],
+    () => createDenClient({ baseUrl, token: authToken }),
+    [authToken, baseUrl],
   );
 
   const value = React.useMemo<CloudSessionContextValue>(

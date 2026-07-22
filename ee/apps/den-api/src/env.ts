@@ -1,5 +1,12 @@
+import os from "node:os"
+import path from "node:path"
 import { DEN_WORKER_POLL_INTERVAL_MS } from "./CONSTS.js"
+import { normalizeConfiguredPublicApiBaseUrl } from "./request-url.js"
+import { resolveDenServiceVersion } from "./service-version.js"
+import { denApiAppVersion } from "./version.js"
 import { z } from "zod"
+
+export const DEFAULT_DEN_DIAGNOSTICS_ORIGIN = "https://diagnostic.openworklabs.com"
 
 const EnvSchema = z.object({
   DATABASE_URL: z.string().min(1).optional(),
@@ -11,6 +18,7 @@ const EnvSchema = z.object({
   BETTER_AUTH_SECRET: z.string().min(32),
   BETTER_AUTH_URL: z.string().min(1),
   DEN_MCP_RESOURCE_URL: z.string().optional(),
+  DEN_MCP_ADDITIONAL_RESOURCES: z.string().optional(),
   DEN_BETTER_AUTH_TRUSTED_ORIGINS: z.string().optional(),
   DEN_WEB_APP_HOSTS: z.string().optional(),
   GITHUB_CLIENT_ID: z.string().optional(),
@@ -23,7 +31,13 @@ const EnvSchema = z.object({
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   EMAIL_FROM: z.string().optional(),
+  DEN_ORG_MODE: z.string().optional(),
+  DEN_SINGLE_ORG_NAME: z.string().optional(),
+  DEN_SINGLE_ORG_SLUG: z.string().optional(),
+  DEN_SINGLE_ORG_OWNER_EMAILS: z.string().optional(),
+  DEN_SINGLE_ORG_ALLOW_PUBLIC_SIGNUP: z.string().optional(),
   DEN_REQUIRE_EMAIL_VERIFICATION: z.string().optional(),
+  DEN_PASSWORD_BREACH_SCREENING_ENABLED: z.string().optional(),
   RESEND_API_KEY: z.string().optional(),
   SMTP_HOST: z.string().optional(),
   SMTP_PORT: z.string().optional(),
@@ -33,9 +47,24 @@ const EnvSchema = z.object({
   LOOPS_API_KEY: z.string().optional(),
   LOOPS_MARKETING_ENABLED: z.string().optional(),
   OPENWORK_DEV_MODE: z.string().optional(),
+  DEN_ALLOW_PRIVATE_MCP_URLS: z.string().optional(),
+  DEN_DIAGNOSTICS_ORIGIN: z.string().optional(),
+  DEN_DIAGNOSTICS_BEARER_TOKEN: z.string().optional(),
+  DEN_GOOGLE_OAUTH_AUTHORIZE_URL: z.string().optional(),
+  DEN_GOOGLE_OAUTH_TOKEN_URL: z.string().optional(),
+  DEN_GOOGLE_API_BASE_URL: z.string().optional(),
+  DEN_MICROSOFT_OAUTH_AUTHORIZE_URL: z.string().optional(),
+  DEN_MICROSOFT_OAUTH_TOKEN_URL: z.string().optional(),
+  DEN_MICROSOFT_GRAPH_BASE_URL: z.string().optional(),
   PORT: z.string().optional(),
   CORS_ORIGINS: z.string().optional(),
   DEN_API_PUBLIC_URL: z.string().optional(),
+  DEN_API_VERSION: z.string().optional(),
+  RENDER_GIT_COMMIT: z.string().optional(),
+  OPENWORK_INSTALLER_ARTIFACTS_DIR: z.string().optional(),
+  OPENWORK_INSTALLER_RELEASE_TAG: z.string().optional(),
+  OPENWORK_INSTALLER_RELEASE_REPO: z.string().optional(),
+  OPENWORK_INSTALLER_CACHE_DIR: z.string().optional(),
   DEN_DESKTOP_DEN_BASE_URL: z.string().optional(),
   DEN_MARKETING_URL: z.string().optional(),
   DEN_MCP_CLAIM_NAMESPACE: z.string().optional(),
@@ -69,6 +98,11 @@ const EnvSchema = z.object({
   VERCEL_TEAM_SLUG: z.string().optional(),
   VERCEL_DNS_DOMAIN: z.string().optional(),
   DEN_PLAN_GATING_ENABLED: z.string().optional(),
+  DEN_INSTALL_LINKS_GATING_ENABLED: z.string().optional(),
+  DEN_CONNECT_LINK_MODE: z.enum(["exchange", "signed"]).optional(),
+  DEN_CONNECT_LINK_PRIVATE_KEY: z.string().optional(),
+  DEN_CONNECT_LINK_KEY_ID: z.string().max(64).optional(),
+  DEN_MCP_CONNECTIONS_GATING_ENABLED: z.string().optional(),
   SCIM_MAINTENANCE_INTERVAL_MS: z.string().optional(),
   POLAR_FEATURE_GATE_ENABLED: z.string().optional(),
   POLAR_API_BASE: z.string().optional(),
@@ -163,6 +197,52 @@ function optionalString(value: string | undefined) {
   return trimmed ? trimmed : undefined
 }
 
+export type DenOrgMode = "single_org" | "multi_org"
+
+export function parseDenOrgMode(value: string | undefined): DenOrgMode {
+  const normalized = value?.trim()
+  if (!normalized) {
+    return "single_org"
+  }
+  if (normalized === "single_org") {
+    return "single_org"
+  }
+  if (normalized === "multi_org") {
+    return "multi_org"
+  }
+  throw new Error("DEN_ORG_MODE must be single_org or multi_org")
+}
+
+export function normalizeSingleOrgSlug(value: string | undefined) {
+  const normalized = (value ?? "default").trim().toLowerCase()
+  if (!normalized) {
+    return "default"
+  }
+
+  if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(normalized)) {
+    throw new Error("DEN_SINGLE_ORG_SLUG must contain only lowercase letters, numbers, and single hyphens")
+  }
+
+  return normalized
+}
+
+export function parseSingleOrgAllowPublicSignup(value: string | undefined, orgMode: DenOrgMode) {
+  const normalized = value?.trim().toLowerCase()
+  if (!normalized) {
+    return orgMode === "multi_org"
+  }
+
+  if (["1", "true", "yes", "y", "on"].includes(normalized)) {
+    return true
+  }
+
+  if (["0", "false", "no", "n", "off"].includes(normalized)) {
+    return false
+  }
+
+  throw new Error("DEN_SINGLE_ORG_ALLOW_PUBLIC_SIGNUP must be true or false")
+}
+
 function normalizeOrigin(origin: string) {
   const value = origin.trim()
   if (value === "*") {
@@ -171,9 +251,56 @@ function normalizeOrigin(origin: string) {
   return value.replace(/\/+$/, "")
 }
 
+function normalizeDiagnosticsOrigin(value: string | undefined, allowInsecureHttp: boolean) {
+  const configured = optionalString(value) ?? DEFAULT_DEN_DIAGNOSTICS_ORIGIN
+
+  let url: URL
+  try {
+    url = new URL(configured)
+  } catch {
+    throw new Error("DEN_DIAGNOSTICS_ORIGIN must be an absolute http or https origin.")
+  }
+
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error("DEN_DIAGNOSTICS_ORIGIN must be an absolute http or https origin.")
+  }
+  if (url.username || url.password || url.search || url.hash || (url.pathname !== "/" && url.pathname !== "")) {
+    throw new Error("DEN_DIAGNOSTICS_ORIGIN cannot contain credentials, a path, a query string, or a fragment.")
+  }
+  if (url.protocol !== "https:" && !allowInsecureHttp) {
+    throw new Error("DEN_DIAGNOSTICS_ORIGIN must use HTTPS outside development.")
+  }
+  return url.origin
+}
+
+function normalizeAbsoluteUrlCsv(envName: string, value: string | undefined) {
+  const entries = splitCsv(value)
+  const invalidEntries: string[] = []
+
+  for (const entry of entries) {
+    try {
+      new URL(entry)
+    } catch {
+      invalidEntries.push(entry)
+    }
+  }
+
+  if (invalidEntries.length > 0) {
+    const label = invalidEntries.length === 1 ? "entry" : "entries"
+    throw new Error(`${envName} must contain only absolute URLs; invalid ${label}: ${invalidEntries.join(", ")}`)
+  }
+
+  return entries.map((entry) => normalizeOrigin(entry))
+}
+
 const corsOrigins = splitCsv(parsed.CORS_ORIGINS).map((origin) => normalizeOrigin(origin))
 const betterAuthTrustedOrigins = splitCsv(parsed.DEN_BETTER_AUTH_TRUSTED_ORIGINS)
   .map((origin) => normalizeOrigin(origin))
+const mcpResourceUrl = optionalString(parsed.DEN_MCP_RESOURCE_URL)
+const mcpAdditionalResources = normalizeAbsoluteUrlCsv(
+  "DEN_MCP_ADDITIONAL_RESOURCES",
+  parsed.DEN_MCP_ADDITIONAL_RESOURCES,
+)
 
 const polarFeatureGateEnabled =
   (parsed.POLAR_FEATURE_GATE_ENABLED ?? "false").toLowerCase() === "true"
@@ -181,10 +308,61 @@ const polarFeatureGateEnabled =
 const planGatingEnabled =
   (parsed.DEN_PLAN_GATING_ENABLED ?? "false").toLowerCase() === "true"
 
+// Deprecated compatibility knob for organization install links. The environment
+// variable is still parsed so existing deployment configs keep starting, but
+// organizationInstallLinksEnabled ignores this value: install links are
+// default-on unless org metadata explicitly disables them.
+const installLinksGatingEnabled =
+  (parsed.DEN_INSTALL_LINKS_GATING_ENABLED ?? String(planGatingEnabled)).toLowerCase() === "true"
+
+// Exchange mode is the zero-config default. Signed mode is an explicit v2
+// opt-in because its public key must already be trusted by the desktop build.
+const connectLinkMode = parsed.DEN_CONNECT_LINK_MODE ?? "exchange"
+const connectLinkPrivateKeyPem = optionalString(parsed.DEN_CONNECT_LINK_PRIVATE_KEY)
+const connectLinkKid = optionalString(parsed.DEN_CONNECT_LINK_KEY_ID)
+if (connectLinkMode === "signed" && (!connectLinkPrivateKeyPem || !connectLinkKid)) {
+  throw new Error(
+    "DEN_CONNECT_LINK_MODE=signed requires DEN_CONNECT_LINK_PRIVATE_KEY and DEN_CONNECT_LINK_KEY_ID.",
+  )
+}
+const connectLink = connectLinkMode === "signed" && connectLinkPrivateKeyPem && connectLinkKid
+  ? { privateKeyPem: connectLinkPrivateKeyPem, kid: connectLinkKid }
+  : null
+
+// Deprecated compatibility knob for member-facing org MCP connections. The
+// environment variable is still parsed so existing deployment configs keep
+// starting, but memberFacingMcpConnectionsEnabled ignores this value: Connect is
+// default-on unless org metadata explicitly disables it.
+const mcpConnectionsGatingEnabled =
+  (parsed.DEN_MCP_CONNECTIONS_GATING_ENABLED ?? "false").toLowerCase() === "true"
+
 const devMode = (parsed.OPENWORK_DEV_MODE ?? "0").trim() === "1"
+const diagnosticsOrigin = normalizeDiagnosticsOrigin(parsed.DEN_DIAGNOSTICS_ORIGIN, devMode)
+const diagnosticsBearerToken = optionalString(parsed.DEN_DIAGNOSTICS_BEARER_TOKEN)
+if (diagnosticsBearerToken && diagnosticsBearerToken.length < 24) {
+  throw new Error("DEN_DIAGNOSTICS_BEARER_TOKEN must contain at least 24 characters.")
+}
+const apiPublicUrl = normalizeConfiguredPublicApiBaseUrl(parsed.DEN_API_PUBLIC_URL, {
+  allowInsecureHttp: devMode,
+})
+const publicUrlTrustedOrigins = Array.from(new Set([
+  ...corsOrigins,
+  ...betterAuthTrustedOrigins,
+])).filter((origin) => origin !== "*")
+const orgMode = parseDenOrgMode(parsed.DEN_ORG_MODE)
+// SSRF guard for External MCP Connection URLs: on hosted (multi-tenant)
+// deployments, Den must not fetch private/reserved addresses on behalf of
+// users. Self-hosted deployments whose MCP servers legitimately live on a
+// private network can opt out with DEN_ALLOW_PRIVATE_MCP_URLS=1; local dev
+// (OPENWORK_DEV_MODE=1) is exempt automatically so evals against a local
+// stand-in server keep working.
+const allowPrivateMcpUrls = devMode || (parsed.DEN_ALLOW_PRIVATE_MCP_URLS ?? "0").trim() === "1"
 const requireEmailVerification = parsed.DEN_REQUIRE_EMAIL_VERIFICATION === undefined
-  ? !devMode
+  ? orgMode === "multi_org" && !devMode
   : parsed.DEN_REQUIRE_EMAIL_VERIFICATION.trim().toLowerCase() !== "false"
+const passwordBreachScreeningEnabled = parsed.DEN_PASSWORD_BREACH_SCREENING_ENABLED === undefined
+  ? true
+  : parsed.DEN_PASSWORD_BREACH_SCREENING_ENABLED.trim().toLowerCase() !== "false"
 const port = Number(parsed.PORT ?? "8790")
 
 const daytonaSandboxPublic =
@@ -206,20 +384,30 @@ export const env = {
   planetscale: planetscaleCredentials,
   betterAuthSecret: parsed.BETTER_AUTH_SECRET,
   betterAuthUrl: normalizeOrigin(parsed.BETTER_AUTH_URL),
-  mcpResourceUrl: optionalString(parsed.DEN_MCP_RESOURCE_URL)
-    ? normalizeOrigin(parsed.DEN_MCP_RESOURCE_URL!)
+  mcpResourceUrl: mcpResourceUrl
+    ? normalizeOrigin(mcpResourceUrl)
     : devMode
       ? `http://127.0.0.1:${port}/mcp`
       : undefined,
+  mcpAdditionalResources,
   betterAuthTrustedOrigins: betterAuthTrustedOrigins.length > 0 ? betterAuthTrustedOrigins : corsOrigins,
   // Extra hostnames that serve the den-web frontend (and therefore expose
   // the Den API behind the /api/den proxy path). Entries starting with "."
   // are treated as suffix matches, e.g. ".example.com".
   webAppHosts: splitCsv(parsed.DEN_WEB_APP_HOSTS).map((host) => host.toLowerCase()),
   devMode,
+  allowPrivateMcpUrls,
+  diagnostics: {
+    origin: diagnosticsOrigin,
+    bearerToken: diagnosticsBearerToken,
+  },
   planGatingEnabled,
+  installLinksGatingEnabled,
+  connectLink,
+  mcpConnectionsGatingEnabled,
   scimMaintenanceIntervalMs: Number(parsed.SCIM_MAINTENANCE_INTERVAL_MS ?? "300000"),
   requireEmailVerification,
+  passwordBreachScreeningEnabled,
   github: {
     clientId: optionalString(parsed.GITHUB_CLIENT_ID),
     clientSecret: optionalString(parsed.GITHUB_CLIENT_SECRET),
@@ -252,10 +440,37 @@ export const env = {
     apiKey: optionalString(parsed.LOOPS_API_KEY),
     marketingEnabled: parsed.LOOPS_MARKETING_ENABLED?.trim() === "1",
   },
+  orgMode,
+  singleOrg: {
+    name: optionalString(parsed.DEN_SINGLE_ORG_NAME) ?? "OpenWork",
+    slug: normalizeSingleOrgSlug(parsed.DEN_SINGLE_ORG_SLUG),
+    allowPublicSignup: parseSingleOrgAllowPublicSignup(parsed.DEN_SINGLE_ORG_ALLOW_PUBLIC_SIGNUP, orgMode),
+    ownerEmails: splitCsv(parsed.DEN_SINGLE_ORG_OWNER_EMAILS)
+      .map((email) => email.toLowerCase()),
+  },
   port,
   workerProxyPort: Number(parsed.WORKER_PROXY_PORT ?? "8789"),
   corsOrigins,
-  apiPublicUrl: optionalString(parsed.DEN_API_PUBLIC_URL),
+  apiPublicUrl,
+  serviceVersion: resolveDenServiceVersion({
+    configuredVersion: parsed.DEN_API_VERSION,
+    renderGitCommit: parsed.RENDER_GIT_COMMIT,
+  }),
+  publicUrlTrustedOrigins,
+  installerArtifactsDir: optionalString(parsed.OPENWORK_INSTALLER_ARTIFACTS_DIR),
+  // Standard desktop release assets: the release tag to download from,
+  // defaulting to the pinned app release this den-api build shipped with.
+  installerReleaseTag: optionalString(parsed.OPENWORK_INSTALLER_RELEASE_TAG) ?? `v${denApiAppVersion.latestAppVersion}`,
+  installerReleaseRepo: optionalString(parsed.OPENWORK_INSTALLER_RELEASE_REPO) ?? "different-ai/openwork",
+  installerCacheDir: optionalString(parsed.OPENWORK_INSTALLER_CACHE_DIR) ?? path.join(os.tmpdir(), "openwork-desktop-artifacts"),
+  // Native-provider endpoint overrides for evals/self-host testing. Unset in
+  // production so Google, Microsoft Entra, and Graph use their public APIs.
+  googleOAuthAuthorizeUrl: optionalString(parsed.DEN_GOOGLE_OAUTH_AUTHORIZE_URL),
+  googleOAuthTokenUrl: optionalString(parsed.DEN_GOOGLE_OAUTH_TOKEN_URL),
+  googleApiBaseUrl: optionalString(parsed.DEN_GOOGLE_API_BASE_URL),
+  microsoftOAuthAuthorizeUrl: optionalString(parsed.DEN_MICROSOFT_OAUTH_AUTHORIZE_URL),
+  microsoftOAuthTokenUrl: optionalString(parsed.DEN_MICROSOFT_OAUTH_TOKEN_URL),
+  microsoftGraphBaseUrl: optionalString(parsed.DEN_MICROSOFT_GRAPH_BASE_URL),
   desktopDenBaseUrl: optionalString(parsed.DEN_DESKTOP_DEN_BASE_URL),
   marketingUrl: optionalString(parsed.DEN_MARKETING_URL),
   mcpClaimNamespace: normalizeOrigin(optionalString(parsed.DEN_MCP_CLAIM_NAMESPACE) ?? parsed.BETTER_AUTH_URL),

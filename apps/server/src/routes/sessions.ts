@@ -35,6 +35,7 @@ interface RegisterSessionRoutesOptions {
   ensureWritable: (config: ServerConfig) => void;
   requireClientScope: (ctx: RequestContext, required: TokenScope) => void;
   resolveWorkspace: (config: ServerConfig, id: string) => Promise<WorkspaceInfo>;
+  resolveWorkspaceWithoutBootstrap: (config: ServerConfig, id: string) => Promise<WorkspaceInfo>;
   createWorkspaceOpencodeClient: (config: ServerConfig, workspace: WorkspaceInfo) => WorkspaceOpencodeClient;
   unwrapOpencodeResult: UnwrapOpencodeResult;
 }
@@ -55,6 +56,7 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     ensureWritable,
     requireClientScope,
     resolveWorkspace,
+    resolveWorkspaceWithoutBootstrap,
     createWorkspaceOpencodeClient,
     unwrapOpencodeResult,
   } = options;
@@ -181,7 +183,7 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
   });
 
   addRoute(routes, "GET", "/workspace/:id/session-groups", "client", async (ctx) => {
-    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const workspace = await resolveWorkspaceWithoutBootstrap(config, ctx.params.id);
     const result = await readSessionGroupState(config, workspace.id);
     return jsonResponse({ state: result.state, updatedAt: result.updatedAt });
   });
@@ -284,10 +286,18 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const groupId = (ctx.params.groupId ?? "").trim();
     if (!groupId) throw new ApiError(400, "invalid_payload", "groupId is required");
+    const requestedDestinationGroupId = ctx.url.searchParams.get("destinationGroupId")?.trim() || null;
     const result = await updateWorkspaceSessionGroups(workspace.id, (current) => {
+      const destinationGroupId = requestedDestinationGroupId && current.groups.some(
+        (group) => group.id === requestedDestinationGroupId && group.id !== groupId,
+      ) ? requestedDestinationGroupId : null;
       const assignments: Record<string, string> = {};
       for (const [sessionId, assignedGroupId] of Object.entries(current.assignments)) {
-        if (assignedGroupId !== groupId) assignments[sessionId] = assignedGroupId;
+        if (assignedGroupId !== groupId) {
+          assignments[sessionId] = assignedGroupId;
+        } else if (destinationGroupId) {
+          assignments[sessionId] = destinationGroupId;
+        }
       }
       return {
         groups: current.groups.filter((group) => group.id !== groupId),
@@ -299,7 +309,7 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
   });
 
   addRoute(routes, "GET", "/workspace/:id/session-groups/events", "client", async (ctx) => {
-    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const workspace = await resolveWorkspaceWithoutBootstrap(config, ctx.params.id);
     const sinceRaw = ctx.url.searchParams.get("since");
     const since = sinceRaw ? Number(sinceRaw) : undefined;
     const items = sessionGroupEvents.list(workspace.id, since);

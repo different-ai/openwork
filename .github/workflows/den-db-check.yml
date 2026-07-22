@@ -3,7 +3,15 @@ name: Den DB Check
 on:
   pull_request:
     paths:
+      - ".github/workflows/den-db-check.yml"
+      - ".github/workflows/den-db-migrate.yml"
+      - ".github/workflows/publish-ee-images.yml"
+      - "ee/apps/den-api/package.json"
+      - "ee/apps/den-api/scripts/build.mjs"
       - "ee/packages/den-db/**"
+      - "packaging/docker/Dockerfile.den"
+      - "packaging/helm/openwork-ee/values.yaml"
+      - "packaging/helm/openwork-ee/templates/migration-job.yaml"
 
 permissions:
   contents: read
@@ -12,6 +20,19 @@ jobs:
   migrations-in-sync:
     name: Schema and migrations in sync
     runs-on: blacksmith-4vcpu-ubuntu-2204
+    services:
+      mysql:
+        image: mysql:8
+        env:
+          MYSQL_ROOT_PASSWORD: repro
+          MYSQL_DATABASE: mysql
+        ports:
+          - 33062:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -prepro"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
 
     steps:
       - name: Checkout
@@ -32,6 +53,11 @@ jobs:
 
       - name: Generate migrations from schema
         run: pnpm --filter @openwork-ee/den-db db:generate
+
+      - name: Run migration readiness tests
+        run: pnpm --filter @openwork-ee/den-db test
+        env:
+          DEN_DB_MYSQL_TEST_URL: mysql://root:repro@127.0.0.1:33062/mysql
 
       - name: Fail if schema changed without a committed migration
         run: |

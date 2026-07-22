@@ -103,7 +103,7 @@ describeMaybe("mcp oauth flow against mock provider", () => {
     );
 
     mockProc = spawn("node", [join(repoRoot, "scripts/mock-oauth-mcp-server.mjs")], {
-      env: { ...process.env, PORT: String(mockPort), AUTO_APPROVE: "1" },
+      env: { ...process.env, PORT: String(mockPort), AUTO_APPROVE: "1", STRICT_REFRESH_TOKENS: "1" },
       stdio: "ignore",
     });
     await waitFor(
@@ -223,6 +223,76 @@ describeMaybe("mcp oauth flow against mock provider", () => {
       expect(paths).toContain("POST /mcp");
     },
     90_000,
+  );
+
+  test(
+    "engine silently refreshes an expired access token without re-authorization",
+    async () => {
+      const authFile = join(dataDir, "xdg-data", "opencode", "mcp-auth.json");
+      const before = JSON.parse(readFileSync(authFile, "utf8")) as Record<
+        string,
+        { tokens?: { accessToken?: string; refreshToken?: string } }
+      >;
+      const beforeAccess = before[MCP_NAME]?.tokens?.accessToken;
+      expect(beforeAccess).toStartWith("mock-access-");
+      expect(before[MCP_NAME]?.tokens?.refreshToken).toStartWith("mock-refresh-");
+
+      // Only assert on traffic that happens after this point.
+      const markLog = (await (await fetch(`${mockUrl()}/requests`)).json()) as { requests: Array<unknown> };
+      const mark = markLog.requests.length;
+
+      // Kill every live access token server-side (refresh grants stay
+      // valid). The engine's next MCP round-trip gets a 401 challenge —
+      // exactly what an expired access token looks like in production.
+      const expire = await fetch(`${mockUrl()}/admin/expire-access-tokens`, { method: "POST" });
+      expect(expire.ok).toBe(true);
+
+      // Force a fresh authenticated round-trip: re-register the MCP so the
+      // engine reconnects using its stored tokens.
+      const reregister = await engineFetch("/mcp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: MCP_NAME,
+          config: { type: "remote", url: `${mockUrl()}/mcp`, enabled: true, oauth: {} },
+        }),
+      });
+      expect(reregister.ok).toBe(true);
+
+      const connected = await waitFor(
+        async () => {
+          const res = await engineFetch("/mcp");
+          if (!res.ok) return null;
+          const statuses = (await res.json()) as Record<string, { status: string }>;
+          return statuses[MCP_NAME]?.status === "connected" ? statuses : null;
+        },
+        30_000,
+        "mcp reconnected after access-token expiry",
+      );
+      expect(connected[MCP_NAME].status).toBe("connected");
+
+      // Recovery must have used the refresh grant — never a new browser
+      // authorization or a re-registration.
+      const log = (await (await fetch(`${mockUrl()}/requests`)).json()) as {
+        requests: Array<{ method: string; path: string; grantType?: string }>;
+      };
+      const afterMark = log.requests.slice(mark);
+      expect(
+        afterMark.some((r) => r.method === "POST" && r.path === "/token" && r.grantType === "refresh_token"),
+      ).toBe(true);
+      expect(afterMark.some((r) => r.path === "/authorize")).toBe(false);
+      expect(afterMark.some((r) => r.method === "POST" && r.path === "/register")).toBe(false);
+
+      // The rotated tokens were persisted for the next restart.
+      const after = JSON.parse(readFileSync(authFile, "utf8")) as Record<
+        string,
+        { tokens?: { accessToken?: string; refreshToken?: string } }
+      >;
+      expect(after[MCP_NAME]?.tokens?.accessToken).toStartWith("mock-access-");
+      expect(after[MCP_NAME]?.tokens?.accessToken).not.toBe(beforeAccess);
+      expect(after[MCP_NAME]?.tokens?.refreshToken).not.toBe(before[MCP_NAME]?.tokens?.refreshToken);
+    },
+    60_000,
   );
 
   test("logout removes stored tokens and drops the connection", async () => {

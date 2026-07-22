@@ -21,15 +21,18 @@ import { t } from "../../../../i18n";
 import { NotificationBell } from "../../../shell/notification-center";
 import type { SettingsTab } from "../../../../app/types";
 import {
-  CLOUD_SETTINGS_TABS,
   SettingsPage,
+  SettingsBetaBadge,
   SettingsSidebar,
+  getCloudSettingsTabs,
   getGlobalSettingsTabs,
   getSettingsTabIcon,
   getSettingsTabLabel,
   getWorkspaceSettingsTabs,
+  isSettingsTabBeta,
 } from "./settings-page";
 import { WorkspaceIcon } from "../../../design-system/workspace-icon";
+import { useFeatureFlagsPreferences } from "../state/feature-flags-preferences";
 
 type SettingsPageFrameProps = Omit<React.ComponentProps<typeof SettingsPage>, "children">;
 
@@ -70,7 +73,6 @@ export function SettingsShell(props: SettingsShellProps) {
             />
           </div>
           <div className="flex shrink-0 items-center gap-1 mac:titlebar-no-drag">
-            <NotificationBell />
             <Button
               variant="ghost"
               type="button"
@@ -162,11 +164,12 @@ export function SettingsShell(props: SettingsShellProps) {
 }
 
 function SettingsSectionMenu(props: Pick<SettingsPageFrameProps, "activeTab" | "developerMode" | "onSelectTab">) {
+  const { memoryEnabled } = useFeatureFlagsPreferences();
   const sections: Array<{ label: string | null; tabs: SettingsTab[] }> = [
     { label: null, tabs: ["general"] },
     { label: t("settings.group_workspace"), tabs: getWorkspaceSettingsTabs() },
     { label: t("settings.group_global"), tabs: getGlobalSettingsTabs(props.developerMode) },
-    { label: t("settings.group_cloud"), tabs: CLOUD_SETTINGS_TABS },
+    { label: t("settings.group_cloud"), tabs: getCloudSettingsTabs(memoryEnabled) },
   ];
   const ActiveIcon = getSettingsTabIcon(props.activeTab);
 
@@ -177,6 +180,7 @@ function SettingsSectionMenu(props: Pick<SettingsPageFrameProps, "activeTab" | "
           <Button variant="outline" size="sm" className="min-w-0 max-w-46 justify-start gap-2">
             <ActiveIcon className="size-4 shrink-0" />
             <span className="truncate">{getSettingsTabLabel(props.activeTab)}</span>
+            {isSettingsTabBeta(props.activeTab) ? <SettingsBetaBadge /> : null}
             <ChevronDown className="ml-auto size-4 shrink-0" />
           </Button>
         )}
@@ -196,6 +200,7 @@ function SettingsSectionMenu(props: Pick<SettingsPageFrameProps, "activeTab" | "
                 >
                   <Icon />
                   <span>{getSettingsTabLabel(tab)}</span>
+                  {isSettingsTabBeta(tab) ? <SettingsBetaBadge className="ml-auto" /> : null}
                 </DropdownMenuItem>
               );
             })}

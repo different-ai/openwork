@@ -1,9 +1,9 @@
 /** @jsxImportSource react */
 import { AlertCircle, CheckCircle2, Loader2 } from "lucide-react";
-import type { LucideIcon } from "lucide-react";
 import type { ExtensionKind } from "../../app/constants";
 import type { EnablementResult } from "../../app/extensions";
-import { resolveExtensionIconSrc } from "./extension-icon-src";
+import { t } from "../../i18n";
+import { resolveExtensionIconUrl } from "./extension-icon-src";
 import { ExtensionMeshAvatar } from "./extension-mesh-avatar";
 
 export type ExtensionCardProps = {
@@ -13,8 +13,8 @@ export type ExtensionCardProps = {
   iconSlug?: string;
   /** Direct icon URL (e.g. local SVG). Takes priority over iconSlug. */
   iconSrc?: string;
-  /** Lucide icon fallback when no iconSlug or iconSrc is provided. */
-  fallbackIcon?: LucideIcon;
+  /** Related service URL used for favicon fallback when no icon is configured. */
+  url?: string;
   /** Extension category badge. */
   kind?: ExtensionKind;
   /** Whether the extension is already installed/connected. */
@@ -30,6 +30,8 @@ export type ExtensionCardProps = {
   hidden?: boolean;
   /** Whether this extension is still in preview. */
   preview?: boolean;
+  /** Whether this extension is beta / untested. */
+  beta?: boolean;
   /** Reason this item is visible but unavailable. */
   disabledReason?: string | null;
   /** Action label shown at bottom. */
@@ -57,7 +59,7 @@ const kindStyle: Record<ExtensionKind, string> = {
 /**
  * A reusable card for displaying an extension (MCP server, plugin, or skill)
  * in the extensions directory. Supports brand icons from Simple Icons CDN,
- * Lucide icon fallbacks, kind badges, and connected/connecting states.
+ * favicon fallbacks, kind badges, and connected/connecting states.
  */
 export function ExtensionCard(props: ExtensionCardProps) {
   const {
@@ -65,6 +67,7 @@ export function ExtensionCard(props: ExtensionCardProps) {
     description,
     iconSlug,
     iconSrc,
+    url,
     kind = "mcp",
     connected: connectedProp = false,
     connectedLabel = "Connected",
@@ -73,6 +76,7 @@ export function ExtensionCard(props: ExtensionCardProps) {
     disabled = false,
     hidden = false,
     preview = false,
+    beta = false,
     disabledReason = null,
     actionLabel,
     onClick,
@@ -82,7 +86,7 @@ export function ExtensionCard(props: ExtensionCardProps) {
   const allMet = enablement ? enablement.every((r) => r.met) : connectedProp;
   const someMet = enablement ? enablement.some((r) => r.met) && !allMet : false;
   const connected = allMet;
-  const resolvedIconSrc = iconSrc ? resolveExtensionIconSrc(iconSrc) : undefined;
+  const resolvedIconSrc = resolveExtensionIconUrl({ iconSrc, iconSlug, serviceUrl: url });
 
   return (
     <button
@@ -110,10 +114,6 @@ export function ExtensionCard(props: ExtensionCardProps) {
             ) : resolvedIconSrc ? (
               <div className="flex size-6 items-center justify-center rounded-md bg-white">
                 <img src={resolvedIconSrc} alt="" width={16} height={16} loading="lazy" style={{ display: "block" }} />
-              </div>
-            ) : iconSlug ? (
-              <div className="flex size-6 items-center justify-center rounded-md bg-white">
-                <img src={`https://cdn.simpleicons.org/${iconSlug}`} alt="" width={16} height={16} loading="lazy" style={{ display: "block" }} />
               </div>
             ) : (
               <ExtensionMeshAvatar
@@ -159,6 +159,11 @@ export function ExtensionCard(props: ExtensionCardProps) {
             {preview ? (
               <span className="rounded-md bg-blue-3 px-1.5 py-0.5 text-[10px] font-medium text-blue-11">
                 Preview
+              </span>
+            ) : null}
+            {beta ? (
+              <span className="shrink-0 rounded-md bg-amber-3 px-1.5 py-0.5 text-[10px] font-medium text-amber-11">
+                {t("common.beta")}
               </span>
             ) : null}
             {disabledReason ? (

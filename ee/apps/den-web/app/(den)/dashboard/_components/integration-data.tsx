@@ -442,73 +442,84 @@ export function useStartGithubInstall() {
 }
 
 export function useGithubInstallCompletion(input: { installationId: number | null; state: string | null }) {
+  const { runReauthableAction } = useOrgDashboard();
+
   return useQuery({
     enabled: Number.isFinite(input.installationId ?? NaN) && (input.installationId ?? 0) > 0 && Boolean(input.state?.trim()),
     queryKey: [...integrationQueryKeys.githubInstall(input.installationId), input.state ?? "no-state"] as const,
     retry: false,
     queryFn: async (): Promise<GithubInstallCompleteResult> => {
-      const { response, payload } = await requestJson(
-        "/v1/connectors/github/install/complete",
-        {
-          method: "POST",
-          body: JSON.stringify({ installationId: input.installationId, state: input.state }),
-        },
-        20000,
-      );
+      let result: GithubInstallCompleteResult | null = null;
+      await runReauthableAction("complete-github-install", async () => {
+        const { response, payload } = await requestJson(
+          "/v1/connectors/github/install/complete",
+          {
+            method: "POST",
+            body: JSON.stringify({ installationId: input.installationId, state: input.state }),
+          },
+          20000,
+        );
 
-      if (!response.ok) {
-        throw new Error(getErrorMessage(payload, `Failed to complete GitHub installation (${response.status}).`));
-      }
+        if (!response.ok) {
+          throw getRequestError(payload, response, `Failed to complete GitHub installation (${response.status}).`);
+        }
 
-      const item = isRecord(payload) && isRecord(payload.item) ? payload.item : null;
-      const connectorAccount = item && isRecord(item.connectorAccount) ? item.connectorAccount : null;
-      const repositories = item && Array.isArray(item.repositories)
-        ? item.repositories.flatMap((entry) => {
-            if (!isRecord(entry)) {
-              return [];
-            }
+        const item = isRecord(payload) && isRecord(payload.item) ? payload.item : null;
+        const connectorAccount = item && isRecord(item.connectorAccount) ? item.connectorAccount : null;
+        const repositories = item && Array.isArray(item.repositories)
+          ? item.repositories.flatMap((entry) => {
+              if (!isRecord(entry)) {
+                return [];
+              }
 
-            const id = typeof entry.id === "number" ? String(entry.id) : asString(entry.id);
-            const fullName = asString(entry.fullName);
-            if (!id || !fullName) {
-              return [];
-            }
+              const id = typeof entry.id === "number" ? String(entry.id) : asString(entry.id);
+              const fullName = asString(entry.fullName);
+              if (!id || !fullName) {
+                return [];
+              }
 
-            const manifestKindValue = entry.manifestKind;
-            const manifestKind: IntegrationRepoManifestKind = manifestKindValue === "marketplace" || manifestKindValue === "plugin"
-              ? manifestKindValue
-              : null;
-            return [{
-              defaultBranch: asNullableString(entry.defaultBranch),
-              description: manifestKind === "marketplace"
-                ? "Claude marketplace manifest detected."
-                : manifestKind === "plugin"
-                  ? "Claude plugin manifest detected."
-                  : "Repository available to connect.",
-              fullName,
-              hasPluginManifest: Boolean(entry.hasPluginManifest),
-              hasPlugins: Boolean(entry.hasPluginManifest),
-              id,
-              manifestKind,
-              marketplacePluginCount: typeof entry.marketplacePluginCount === "number" ? entry.marketplacePluginCount : null,
-              name: toRepoName(fullName),
-              private: Boolean(entry.private),
-            } satisfies IntegrationRepo];
-          })
-        : [];
+              const manifestKindValue = entry.manifestKind;
+              const manifestKind: IntegrationRepoManifestKind = manifestKindValue === "marketplace" || manifestKindValue === "plugin"
+                ? manifestKindValue
+                : null;
+              return [{
+                defaultBranch: asNullableString(entry.defaultBranch),
+                description: manifestKind === "marketplace"
+                  ? "Claude marketplace manifest detected."
+                  : manifestKind === "plugin"
+                    ? "Claude plugin manifest detected."
+                    : "Repository available to connect.",
+                fullName,
+                hasPluginManifest: Boolean(entry.hasPluginManifest),
+                hasPlugins: Boolean(entry.hasPluginManifest),
+                id,
+                manifestKind,
+                marketplacePluginCount: typeof entry.marketplacePluginCount === "number" ? entry.marketplacePluginCount : null,
+                name: toRepoName(fullName),
+                private: Boolean(entry.private),
+              } satisfies IntegrationRepo];
+            })
+          : [];
 
-      if (!connectorAccount || !asString(connectorAccount.id) || !asString(connectorAccount.displayName)) {
+        const connectorAccountId = connectorAccount ? asString(connectorAccount.id) : null;
+        const connectorAccountName = connectorAccount ? asString(connectorAccount.displayName) : null;
+        if (!connectorAccount || !connectorAccountId || !connectorAccountName) {
+          throw new Error("GitHub install completion response was incomplete.");
+        }
+
+        result = {
+          connectorAccount: {
+            displayName: connectorAccountName,
+            id: connectorAccountId,
+            metadata: isRecord(connectorAccount.metadata) ? connectorAccount.metadata : undefined,
+          },
+          repositories,
+        };
+      });
+      if (!result) {
         throw new Error("GitHub install completion response was incomplete.");
       }
-
-      return {
-        connectorAccount: {
-          displayName: asString(connectorAccount.displayName) ?? "GitHub",
-          id: asString(connectorAccount.id) ?? "",
-          metadata: isRecord(connectorAccount.metadata) ? connectorAccount.metadata : undefined,
-        },
-        repositories,
-      };
+      return result;
     },
   });
 }

@@ -17,12 +17,36 @@ export type OrgRouteVariables =
   & Partial<MemberTeamsContext>
 
 export const PRIVILEGED_SESSION_MAX_AGE_MS = 15 * 60 * 1000
+export const CONNECTIONS_READ_SESSION_MAX_AGE_MS = 24 * 60 * 60 * 1000
+export const WORKSPACE_REAUTH_SECURITY_MESSAGE = "For security, confirm it's you before changing workspace settings."
+
+export type FreshPrivilegedSessionRequiredResponse = {
+  error: "reauth"
+  reason: "fresh_auth_required"
+  message: string
+}
+
+export function getFreshPrivilegedSessionRequiredResponse(): FreshPrivilegedSessionRequiredResponse {
+  return {
+    error: "reauth",
+    reason: "fresh_auth_required",
+    message: WORKSPACE_REAUTH_SECURITY_MESSAGE,
+  }
+}
 
 type PrivilegedOrgRouteContext = {
   get: <K extends "organizationContext" | "session">(key: K) => OrgRouteVariables[K]
 }
 
-export function hasFreshPrivilegedSession(payload: { session: { createdAt?: Date | string | null } | null | undefined }, now = new Date()) {
+type OrganizationAdminRouteContext = {
+  get: (key: "organizationContext") => OrgRouteVariables["organizationContext"]
+}
+
+export function hasFreshPrivilegedSession(
+  payload: { session: { createdAt?: Date | string | null } | null | undefined },
+  now = new Date(),
+  maxAgeMs = PRIVILEGED_SESSION_MAX_AGE_MS,
+) {
   const createdAt = payload.session?.createdAt
   const createdAtMs = createdAt instanceof Date
     ? createdAt.getTime()
@@ -35,21 +59,20 @@ export function hasFreshPrivilegedSession(payload: { session: { createdAt?: Date
   }
 
   const ageMs = now.getTime() - createdAtMs
-  return ageMs >= 0 && ageMs <= PRIVILEGED_SESSION_MAX_AGE_MS
+  return ageMs >= 0 && ageMs <= maxAgeMs
 }
 
-function ensureFreshPrivilegedSession(c: { get: (key: "session") => OrgRouteVariables["session"] }) {
-  if (hasFreshPrivilegedSession({ session: c.get("session") })) {
+function ensureFreshPrivilegedSession(
+  c: { get: (key: "session") => OrgRouteVariables["session"] },
+  maxAgeMs = PRIVILEGED_SESSION_MAX_AGE_MS,
+) {
+  if (hasFreshPrivilegedSession({ session: c.get("session") }, new Date(), maxAgeMs)) {
     return { ok: true as const }
   }
 
   return {
     ok: false as const,
-    response: {
-      error: "reauth",
-      reason: "fresh_auth_required",
-      message: "Sign in again before performing this privileged action.",
-    },
+    response: getFreshPrivilegedSessionRequiredResponse(),
   }
 }
 
@@ -123,7 +146,12 @@ export function ensureOwner(c: PrivilegedOrgRouteContext) {
   return ensureFreshPrivilegedSession(c)
 }
 
-export function ensureOrganizationAdmin(c: PrivilegedOrgRouteContext, message: string) {
+/**
+ * Checks workspace owner/admin authorization without requiring a recent login.
+ * Use this for routine workspace administration; security-sensitive or
+ * destructive actions should use ensureOrganizationAdmin instead.
+ */
+export function ensureOrganizationAdminRole(c: OrganizationAdminRouteContext, message: string) {
   const payload = c.get("organizationContext")
   if (!payload) {
     return {
@@ -135,7 +163,7 @@ export function ensureOrganizationAdmin(c: PrivilegedOrgRouteContext, message: s
   }
 
   if (payload.currentMember.isOwner || memberHasRole(payload.currentMember.role, "admin")) {
-    return ensureFreshPrivilegedSession(c)
+    return { ok: true as const }
   }
 
   return {
@@ -145,6 +173,19 @@ export function ensureOrganizationAdmin(c: PrivilegedOrgRouteContext, message: s
       message,
     },
   }
+}
+
+export function ensureOrganizationAdmin(
+  c: PrivilegedOrgRouteContext,
+  message: string,
+  maxAgeMs = PRIVILEGED_SESSION_MAX_AGE_MS,
+) {
+  const permission = ensureOrganizationAdminRole(c, message)
+  if (!permission.ok) {
+    return permission
+  }
+
+  return ensureFreshPrivilegedSession(c, maxAgeMs)
 }
 
 export function ensureInviteManager(c: PrivilegedOrgRouteContext) {

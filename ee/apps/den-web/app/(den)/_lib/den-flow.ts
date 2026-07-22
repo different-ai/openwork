@@ -1,9 +1,10 @@
 import { DEN_WORKER_POLL_INTERVAL_MS } from "./CONSTS";
+import { ORG_SCOPE_HEADER, getRequestOrgScope, shouldPinOrgScopePath } from "./org-scope";
 
 export type AuthMode = "sign-in" | "sign-up";
 export type SocialAuthProvider = "github" | "google";
 export type WorkerStatusBucket = "ready" | "starting" | "attention" | "other";
-export type RuntimeServiceName = "openwork-server" | "opencode" | "opencode-router";
+export type RuntimeServiceName = "openwork-server" | "opencode";
 export type EventLevel = "info" | "success" | "warning" | "error";
 export type AuthMethod = "email" | SocialAuthProvider;
 
@@ -82,6 +83,38 @@ export class ReauthRequiredError extends Error {
     super(message);
     this.name = "ReauthRequiredError";
     this.reason = reason;
+  }
+}
+
+function formatDeadlineDuration(timeoutMs: number): string {
+  if (timeoutMs < 1000) return `${timeoutMs} milliseconds`;
+  const seconds = timeoutMs / 1000;
+  return Number.isInteger(seconds) ? `${seconds} seconds` : `${seconds.toFixed(1)} seconds`;
+}
+
+export class DenRequestTimeoutError extends Error {
+  readonly timeoutMs: number;
+  readonly outcome: "unknown" = "unknown";
+
+  constructor(timeoutMs: number, cause?: unknown) {
+    super(
+      `OpenWork stopped waiting after ${formatDeadlineDuration(timeoutMs)}. The operation’s outcome is unknown.`,
+      cause === undefined ? undefined : { cause },
+    );
+    this.name = "DenRequestTimeoutError";
+    this.timeoutMs = timeoutMs;
+  }
+}
+
+export class DenRequestCanceledError extends Error {
+  readonly outcome: "unknown" = "unknown";
+
+  constructor(cause?: unknown) {
+    super(
+      "The OpenWork request was canceled before the dashboard received a result. The operation’s outcome is unknown.",
+      cause === undefined ? undefined : { cause },
+    );
+    this.name = "DenRequestCanceledError";
   }
 }
 
@@ -180,6 +213,7 @@ export const PENDING_AUTH_INTENT_STORAGE_KEY = "openwork:web:pending-auth-intent
 export const WORKER_STATUS_POLL_MS = DEN_WORKER_POLL_INTERVAL_MS;
 export const DEFAULT_AUTH_NAME = "OpenWork User";
 export const DEFAULT_WORKER_NAME = "My Worker";
+export const WORKSPACE_REAUTH_SECURITY_MESSAGE = "For security, confirm it's you before changing workspace settings.";
 
 export type AuthIntent = "models";
 
@@ -461,7 +495,7 @@ export function getReauthRequiredError(payload: unknown, response: Response): Re
   }
 
   return new ReauthRequiredError(
-    getErrorMessage(payload, "Sign in again before continuing."),
+    getErrorMessage(payload, WORKSPACE_REAUTH_SECURITY_MESSAGE),
     typeof payload.reason === "string" ? payload.reason : null,
   );
 }
@@ -622,8 +656,6 @@ export function getRuntimeServiceLabel(name: RuntimeServiceName): string {
       return "OpenWork server";
     case "opencode":
       return "OpenCode";
-    case "opencode-router":
-      return "OpenCode Router";
   }
 }
 
@@ -1047,14 +1079,21 @@ export async function requestJson(path: string, init: RequestInit = {}, timeoutM
   const headers = new Headers(init.headers);
   headers.set("Accept", "application/json");
 
-  if (init.body && !headers.has("Content-Type")) {
+  if (init.body && !(init.body instanceof FormData) && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
+  }
+
+  const orgScope = getRequestOrgScope();
+  if (orgScope && !headers.has(ORG_SCOPE_HEADER) && shouldPinOrgScopePath(path)) {
+    headers.set(ORG_SCOPE_HEADER, orgScope);
   }
 
   const shouldAttachTimeout = !init.signal && timeoutMs > 0;
   const timeoutController = shouldAttachTimeout ? new AbortController() : null;
+  let didReachDashboardDeadline = false;
   const timeoutHandle = timeoutController
     ? setTimeout(() => {
+        didReachDashboardDeadline = true;
         timeoutController.abort();
       }, timeoutMs)
     : null;
@@ -1068,6 +1107,16 @@ export async function requestJson(path: string, init: RequestInit = {}, timeoutM
       credentials: "include",
       signal: init.signal ?? timeoutController?.signal
     });
+  } catch (error) {
+    // Only the deadline created by this helper becomes a timeout. An abort
+    // supplied by a caller becomes a distinct cancellation error.
+    if (didReachDashboardDeadline) {
+      throw new DenRequestTimeoutError(timeoutMs, error);
+    }
+    if (init.signal?.aborted && error instanceof Error && error.name === "AbortError") {
+      throw new DenRequestCanceledError(error);
+    }
+    throw error;
   } finally {
     if (timeoutHandle) {
       clearTimeout(timeoutHandle);
@@ -1083,6 +1132,11 @@ export async function requestJson(path: string, init: RequestInit = {}, timeoutM
     } catch {
       payload = text;
     }
+  }
+
+  const reauthError = getReauthRequiredError(payload, response);
+  if (reauthError) {
+    throw reauthError;
   }
 
   return { response, payload, text };

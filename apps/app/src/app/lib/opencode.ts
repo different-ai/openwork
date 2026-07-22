@@ -455,7 +455,7 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
 
   const promptAsyncOriginal = sessionOverrides.promptAsync.bind(session);
   sessionOverrides.promptAsync = (parameters: PromptAsyncParameters, options?: { throwOnError?: boolean }) => {
-    if (!("reasoning_effort" in parameters)) {
+    if (!openworkMount && !("reasoning_effort" in parameters)) {
       return promptAsyncOriginal(parameters, options);
     }
     const { sessionID, directory: requestDirectory, ...body } = parameters;
@@ -468,7 +468,7 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
 
   const commandOriginal = sessionOverrides.command.bind(session);
   sessionOverrides.command = (parameters: CommandParameters, options?: { throwOnError?: boolean }) => {
-    if (!("reasoning_effort" in parameters)) {
+    if (!openworkMount && !("reasoning_effort" in parameters)) {
       return commandOriginal(parameters, options);
     }
     const { sessionID, directory: requestDirectory, ...body } = parameters;

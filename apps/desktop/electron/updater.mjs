@@ -69,6 +69,12 @@ function electronUpdaterFeedUrl(channel) {
   return ELECTRON_UPDATER_FEEDS[normalizeElectronUpdaterChannel(channel)];
 }
 
+function normalizeStableTargetVersion(value) {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().replace(/^v/i, "");
+  return /^\d+\.\d+\.\d+$/.test(normalized) ? normalized : null;
+}
+
 function parseComparableVersion(value) {
   if (typeof value !== "string") return null;
   const normalized = value.trim().replace(/^v/i, "");
@@ -141,22 +147,43 @@ function isVersionNewer(candidate, current) {
   return comparison === null ? candidate !== current : comparison > 0;
 }
 
-function updaterChannelState(app, channel) {
+export function targetedStableUpdaterFeed(currentVersion, targetVersion) {
+  const normalizedTarget = normalizeStableTargetVersion(targetVersion);
+  if (!normalizedTarget) {
+    throw new Error("Target update version must use the stable x.y.z format.");
+  }
+  const comparison = compareVersions(normalizedTarget, currentVersion);
+  if (comparison === null) {
+    throw new Error("Installed version could not be validated for a targeted update.");
+  }
+  if (comparison <= 0) {
+    throw new Error("Target update version must be newer than the installed version.");
+  }
+  return `https://github.com/different-ai/openwork/releases/download/v${normalizedTarget}`;
+}
+
+function updaterChannelState(app, channel, targetVersion = null) {
   const normalized = normalizeElectronUpdaterChannel(channel);
+  const currentVersion = resolveAppVersion(app);
   return {
     channel: normalized,
-    feedUrl: electronUpdaterFeedUrl(normalized),
-    currentVersion: resolveAppVersion(app),
+    feedUrl: targetVersion
+      ? targetedStableUpdaterFeed(currentVersion, targetVersion)
+      : electronUpdaterFeedUrl(normalized),
+    currentVersion,
   };
 }
 
-async function applyElectronUpdaterFeed(app, updater) {
+async function applyElectronUpdaterFeed(app, updater, targetVersion = null) {
   const channel = await readElectronUpdaterChannel(app);
-  const state = updaterChannelState(app, channel);
+  if (targetVersion && channel !== "stable") {
+    throw new Error("Version-specific update feeds are supported only on the stable channel.");
+  }
+  const state = updaterChannelState(app, channel, targetVersion);
   updater.allowPrerelease = state.channel === "alpha";
   // Moving from alpha back to stable can be a semver downgrade; still show
   // the latest stable so users can return to the stable channel deliberately.
-  updater.allowDowngrade = state.channel === "stable";
+  updater.allowDowngrade = state.channel === "stable" && !targetVersion;
   if (updater?.setFeedURL) {
     updater.setFeedURL({ provider: "generic", url: state.feedUrl });
   }
@@ -215,10 +242,16 @@ async function cleanStaleUpdaterState(app) {
 
 // electron-updater wiring. Packaged-only; dev builds skip this so the
 // updater doesn't try to probe a non-existent release channel.
+export function preventPendingUpdaterInstall(updater) {
+  if (updater) updater.autoInstallOnAppQuit = false;
+}
+
 export function registerUpdaterIpc({ app, ipcMain, getMainWindow }) {
   let autoUpdaterInstance = null;
   let autoUpdaterLoaded = false;
   let checkedUpdateVersion = null;
+  let checkedUpdateTargetVersion = null;
+  let updateDownloaded = false;
 
   function sendToRenderer(channel, data) {
     try {
@@ -251,7 +284,11 @@ export function registerUpdaterIpc({ app, ipcMain, getMainWindow }) {
         // bundles (see enableSquirrelDirectContentsWrite for why).
         await enableSquirrelDirectContentsWrite();
         autoUpdaterInstance.on("error", (err) => {
+          updateDownloaded = false;
           console.warn("[updater] error", err);
+        });
+        autoUpdaterInstance.on("update-downloaded", () => {
+          updateDownloaded = true;
         });
         // Forward download progress to the renderer so the UI can show
         // incremental bytes instead of staying stuck at 0.
@@ -281,39 +318,63 @@ export function registerUpdaterIpc({ app, ipcMain, getMainWindow }) {
   ipcMain.handle("openwork:updater:setChannel", async (_event, rawChannel) => {
     const channel = await writeElectronUpdaterChannel(app, rawChannel);
     checkedUpdateVersion = null;
+    checkedUpdateTargetVersion = null;
+    updateDownloaded = false;
     const updater = await ensureAutoUpdater();
     if (updater) {
+      // A channel change invalidates any previously downloaded update. This
+      // also prevents an Alpha build from installing automatically on quit
+      // after an organization policy moves the desktop back to Stable.
+      preventPendingUpdaterInstall(updater);
       return applyElectronUpdaterFeed(app, updater);
     }
     return updaterChannelState(app, channel);
   });
 
-  ipcMain.handle("openwork:updater:check", async (_event, rawChannel) => {
+  ipcMain.handle("openwork:updater:check", async (_event, rawChannel, rawTargetVersion) => {
     if (rawChannel !== undefined) {
       await writeElectronUpdaterChannel(app, rawChannel);
     }
     const updater = await ensureAutoUpdater();
-    const channelState = updater
-      ? await applyElectronUpdaterFeed(app, updater)
-      : updaterChannelState(app, await readElectronUpdaterChannel(app));
-    if (!updater) return { available: false, reason: "unavailable", ...channelState };
     try {
+      const targetVersion = rawTargetVersion === undefined
+        ? null
+        : normalizeStableTargetVersion(rawTargetVersion);
+      if (rawTargetVersion !== undefined && !targetVersion) {
+        throw new Error("Target update version must use the stable x.y.z format.");
+      }
+      const channelState = updater
+        ? await applyElectronUpdaterFeed(app, updater, targetVersion)
+        : updaterChannelState(app, await readElectronUpdaterChannel(app), targetVersion);
+      if (!updater) return { available: false, reason: "unavailable", ...channelState };
+
       const result = await updater.checkForUpdates();
       const info = result?.updateInfo ?? null;
       const currentVersion = resolveAppVersion(app);
+      if (targetVersion && compareVersions(info?.version ?? "", targetVersion) !== 0) {
+        throw new Error(`Target update manifest did not resolve to v${targetVersion}.`);
+      }
       const available = Boolean(info?.version && isVersionNewer(info.version, currentVersion));
       checkedUpdateVersion = available ? info.version : null;
+      checkedUpdateTargetVersion = available ? targetVersion : null;
+      if (!available) updateDownloaded = false;
       return {
         available,
         currentVersion,
-        latestVersion: info?.version ?? null,
+        latestVersion: targetVersion ?? info?.version ?? null,
         releaseDate: info?.releaseDate ?? null,
         releaseNotes: info?.releaseNotes ?? null,
         ...channelState,
       };
     } catch (error) {
       checkedUpdateVersion = null;
-      return { available: false, reason: String(error?.message ?? error), ...channelState };
+      checkedUpdateTargetVersion = null;
+      updateDownloaded = false;
+      return {
+        available: false,
+        reason: String(error?.message ?? error),
+        ...updaterChannelState(app, await readElectronUpdaterChannel(app)),
+      };
     }
   });
 
@@ -321,11 +382,17 @@ export function registerUpdaterIpc({ app, ipcMain, getMainWindow }) {
     const updater = await ensureAutoUpdater();
     if (!updater) return { ok: false, reason: "unavailable" };
     try {
-      await applyElectronUpdaterFeed(app, updater);
+      await applyElectronUpdaterFeed(app, updater, checkedUpdateTargetVersion);
       const currentVersion = resolveAppVersion(app);
       if (!checkedUpdateVersion || !isVersionNewer(checkedUpdateVersion, currentVersion)) {
         const result = await updater.checkForUpdates();
         const info = result?.updateInfo ?? null;
+        if (
+          checkedUpdateTargetVersion &&
+          compareVersions(info?.version ?? "", checkedUpdateTargetVersion) !== 0
+        ) {
+          throw new Error(`Target update manifest did not resolve to v${checkedUpdateTargetVersion}.`);
+        }
         checkedUpdateVersion = info?.version && isVersionNewer(info.version, currentVersion)
           ? info.version
           : null;
@@ -336,14 +403,18 @@ export function registerUpdaterIpc({ app, ipcMain, getMainWindow }) {
       // Clear any stuck ShipIt state from a prior aborted install so this
       // download applies cleanly on quit.
       await cleanStaleUpdaterState(app);
+      updater.autoInstallOnAppQuit = true;
       await updater.downloadUpdate();
+      updateDownloaded = true;
       return { ok: true };
     } catch (error) {
+      updateDownloaded = false;
       return { ok: false, reason: String(error?.message ?? error) };
     }
   });
 
   ipcMain.handle("openwork:updater:installAndRestart", async () => {
+    if (!updateDownloaded) return { ok: false, reason: "update-not-downloaded" };
     const updater = await ensureAutoUpdater();
     if (!updater) return { ok: false, reason: "unavailable" };
     try {

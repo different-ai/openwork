@@ -1,15 +1,33 @@
 /** @jsxImportSource react */
-import type { ComponentProps, ReactNode } from "react";
+import { useState, type ComponentProps, type ReactNode } from "react";
 import { CircleAlert, Cpu, Database, Info, RefreshCcw, Server } from "lucide-react";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import type { OpenworkRuntimeConfigStatus, OpenworkServerStatus } from "@/app/lib/openwork-server";
+import type { OpenworkCloudMcpHealth, OpenworkRuntimeConfigStatus, OpenworkServerStatus } from "@/app/lib/openwork-server";
+import { sanitizeCloudMcpHealthDiagnostic, sanitizeDiagnosticRecord } from "@/app/lib/diagnostic-sanitizer";
+import {
+  DEFAULT_DEN_API_BASE_URL,
+  DEFAULT_DEN_BASE_URL,
+  readDenBootstrapConfig,
+  readDenSettings,
+} from "@/app/lib/den";
+import {
+  describeCloudMcpTarget,
+  describeDenEndpointSource,
+  type DenEndpointSource,
+} from "@/app/lib/den-endpoint-sources";
 import { isDesktopRuntime } from "@/app/utils";
 import { t } from "@/i18n";
+import { ControlPlaneUrlEditor } from "../cloud/control-plane-url-editor";
+import {
+  displayCustomControlPlaneUrl,
+  isValidControlPlaneUrl,
+} from "../cloud/control-plane-url";
 import {
   SettingsInset,
   SettingsNotice,
@@ -29,6 +47,205 @@ import {
 } from "../settings-layout";
 
 type SettingsTone = ComponentProps<typeof SettingsStatusBadge>["tone"];
+
+const DESKTOP_BOOTSTRAP_PATH_HINT = "~/.config/openwork/desktop-bootstrap.json";
+
+function sourceBadgeLabel(source: DenEndpointSource): string {
+  switch (source) {
+    case "custom":
+      return t("settings.server_endpoints_source_custom");
+    case "bootstrap":
+      return t("settings.server_endpoints_source_bootstrap");
+    case "default":
+      return t("settings.server_endpoints_source_default");
+  }
+}
+
+function sourceBadgeClass(source: DenEndpointSource): string {
+  switch (source) {
+    case "custom":
+      return "border-blue-7/40 bg-blue-3 text-blue-11";
+    case "bootstrap":
+      return "border-amber-7/40 bg-amber-3 text-amber-11";
+    case "default":
+      return "border-gray-7/50 bg-gray-3 text-gray-11";
+  }
+}
+
+function EndpointSourceBadge(props: { source: DenEndpointSource }) {
+  return (
+    <Badge variant="outline" className={sourceBadgeClass(props.source)}>
+      {sourceBadgeLabel(props.source)}
+    </Badge>
+  );
+}
+
+function EndpointWarningBadge(props: { children: ReactNode }) {
+  return (
+    <Badge variant="outline" className="border-amber-7/40 bg-amber-3 text-amber-11">
+      {props.children}
+    </Badge>
+  );
+}
+
+function EndpointRow(props: { label: string; value: string; children?: ReactNode }) {
+  return (
+    <div className="grid gap-1 rounded-xl border border-gray-6/50 bg-gray-1/60 p-3 sm:grid-cols-[9rem_minmax(0,1fr)] sm:gap-3">
+      <div className="text-[11px] font-medium uppercase tracking-wide text-gray-9">
+        {props.label}
+      </div>
+      <div className="min-w-0 space-y-2">
+        <div className="truncate font-mono text-xs text-gray-12" title={props.value}>
+          {props.value}
+        </div>
+        {props.children ? <div className="flex flex-wrap gap-1.5">{props.children}</div> : null}
+      </div>
+    </div>
+  );
+}
+
+function bootstrapValueWhenNotDefault(value: string, buildDefault: string): string | null {
+  const fallback = describeDenEndpointSource({
+    storedValue: null,
+    bootstrapValue: null,
+    buildDefault,
+  });
+  return value === fallback.effective ? null : value;
+}
+
+function ServerEndpointsCard(props: { cloudMcpUrl: string | null }) {
+  const settings = readDenSettings();
+  const effectiveApiBaseUrl = settings.apiBaseUrl ?? DEFAULT_DEN_API_BASE_URL;
+  const bootstrap = readDenBootstrapConfig();
+  const organizationServer = describeDenEndpointSource({
+    storedValue: null,
+    bootstrapValue: bootstrapValueWhenNotDefault(bootstrap.baseUrl, DEFAULT_DEN_BASE_URL),
+    buildDefault: DEFAULT_DEN_BASE_URL,
+  });
+  const apiEndpoint = describeDenEndpointSource({
+    storedValue: null,
+    bootstrapValue: bootstrapValueWhenNotDefault(bootstrap.apiBaseUrl, DEFAULT_DEN_API_BASE_URL),
+    buildDefault: DEFAULT_DEN_API_BASE_URL,
+  });
+  const cloudMcp = describeCloudMcpTarget({
+    mcpUrl: props.cloudMcpUrl,
+    effectiveApiBaseUrl,
+  });
+  const hasBootstrapSource = organizationServer.source === "bootstrap" || apiEndpoint.source === "bootstrap";
+
+  return (
+    <SettingsInset className="space-y-3 bg-gray-1/40">
+      <div className="space-y-1">
+        <div className="text-sm font-medium text-gray-12">{t("settings.server_endpoints_title")}</div>
+        <div className="text-xs text-gray-9">{t("settings.server_endpoints_desc")}</div>
+      </div>
+
+      <div className="space-y-2">
+        <EndpointRow label={t("settings.server_endpoints_org")} value={settings.baseUrl}>
+          <EndpointSourceBadge source={organizationServer.source} />
+        </EndpointRow>
+        <EndpointRow label={t("settings.server_endpoints_api")} value={effectiveApiBaseUrl}>
+          <EndpointSourceBadge source={apiEndpoint.source} />
+        </EndpointRow>
+        <EndpointRow
+          label={t("settings.server_endpoints_cloud_mcp")}
+          value={cloudMcp.url ?? t("settings.server_endpoints_not_configured")}
+        >
+          {cloudMcp.url && cloudMcp.isLocalhost ? (
+            <EndpointWarningBadge>{t("settings.server_endpoints_local_dev")}</EndpointWarningBadge>
+          ) : null}
+          {cloudMcp.url && !cloudMcp.matchesApi ? (
+            <EndpointWarningBadge>{t("settings.server_endpoints_mismatch")}</EndpointWarningBadge>
+          ) : null}
+        </EndpointRow>
+      </div>
+
+      {hasBootstrapSource ? (
+        <div className="text-[11px] text-amber-11">
+          {t("settings.server_endpoints_bootstrap_hint", { path: DESKTOP_BOOTSTRAP_PATH_HINT })}
+        </div>
+      ) : null}
+    </SettingsInset>
+  );
+}
+
+interface AdvancedOrganizationServerSectionProps {
+  authBusy: boolean;
+  baseUrl: string;
+  baseUrlBusy: boolean;
+  baseUrlDraft: string;
+  baseUrlError: string | null;
+  onApplyBaseUrl: () => void | Promise<void>;
+  onBaseUrlDraftChange: (value: string) => void;
+  onClearServerConfiguration: () => void | Promise<void>;
+  onResetBaseUrlToDefault: () => void | Promise<void>;
+  sessionBusy: boolean;
+  cloudMcpUrl: string | null;
+}
+
+export function AdvancedOrganizationServerSection(props: AdvancedOrganizationServerSectionProps) {
+  const [clearConfirming, setClearConfirming] = useState(false);
+  const controlsDisabled = [props.authBusy, props.baseUrlBusy, props.sessionBusy].some(Boolean);
+  const customUrl = displayCustomControlPlaneUrl(props.baseUrlDraft);
+  const currentUrl = displayCustomControlPlaneUrl(props.baseUrl);
+  const clearServerConfiguration = () => {
+    if (!clearConfirming) {
+      setClearConfirming(true);
+      return;
+    }
+    setClearConfirming(false);
+    void props.onClearServerConfiguration();
+  };
+
+  return (
+    <LayoutSection>
+      <LayoutSectionHeader>
+        <LayoutSectionTitle>{t("settings.organization_server_title")}</LayoutSectionTitle>
+        <LayoutSectionDescription>{t("settings.organization_server_desc")}</LayoutSectionDescription>
+      </LayoutSectionHeader>
+
+      <LayoutSectionItem>
+        <ControlPlaneUrlEditor
+          disabled={controlsDisabled}
+          hint={t("settings.organization_server_url_hint")}
+          label={t("settings.organization_server_url_label")}
+          onReset={props.onResetBaseUrlToDefault}
+          onSave={props.onApplyBaseUrl}
+          onValueChange={props.onBaseUrlDraftChange}
+          placeholder={DEFAULT_DEN_BASE_URL}
+          resetLabel={t("common.reset")}
+          saveDisabled={!isValidControlPlaneUrl(customUrl)}
+          saveLabel={t("common.save")}
+          value={customUrl}
+        />
+        <LayoutSectionItemFootnote>
+          {currentUrl
+            ? t("settings.organization_server_current", { url: currentUrl })
+            : t("settings.organization_server_default")}
+        </LayoutSectionItemFootnote>
+        {isDesktopRuntime() ? <ServerEndpointsCard cloudMcpUrl={props.cloudMcpUrl} /> : null}
+        <div className="flex flex-wrap items-center gap-2 text-[11px] text-gray-9">
+          <Button
+            variant={clearConfirming ? "destructive" : "outline"}
+            size="sm"
+            onClick={clearServerConfiguration}
+            disabled={controlsDisabled}
+          >
+            {clearConfirming
+              ? t("den.cloud_control_plane_clear_confirm")
+              : t("den.cloud_control_plane_clear")}
+          </Button>
+          <span>
+            {clearConfirming
+              ? t("den.cloud_control_plane_clear_confirm_hint")
+              : t("den.cloud_control_plane_clear_hint")}
+          </span>
+        </div>
+        {props.baseUrlError ? <SettingsNotice tone="error">{props.baseUrlError}</SettingsNotice> : null}
+      </LayoutSectionItem>
+    </LayoutSection>
+  );
+}
 
 interface RuntimeStatusCardProps {
   icon: ReactNode;
@@ -104,6 +321,159 @@ export function AdvancedRuntimeSection(props: AdvancedRuntimeSectionProps) {
   );
 }
 
+function DiagnosticRow(props: { label: string; value: string }) {
+  return (
+    <div className="grid gap-1 rounded-lg border border-gray-6 bg-gray-2/50 p-2 sm:grid-cols-[12rem_minmax(0,1fr)]">
+      <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-8">{props.label}</div>
+      <div className="min-w-0 break-all font-mono text-[11px] text-gray-12">{props.value}</div>
+    </div>
+  );
+}
+
+function joinList(values: string[]): string {
+  return values.length ? values.join(", ") : "none";
+}
+
+function formatMaybe(value: string | number | boolean | null | undefined): string {
+  if (value === null || value === undefined || value === "") return "unknown";
+  return String(value);
+}
+
+function formatMetadataRecord(value: Record<string, string | number | boolean | null> | null | undefined): string {
+  if (!value || Object.keys(value).length === 0) return "none";
+  return Object.entries(value).map(([key, nested]) => `${key}=${formatMaybe(nested)}`).join(", ");
+}
+
+function formatSupportedFeatures(features: OpenworkCloudMcpHealth["compatibility"]["supportedFeatures"]): string {
+  return Object.entries(features).map(([key, enabled]) => `${key}:${enabled ? "yes" : "no"}`).join(", ");
+}
+
+function formatPluginHashes(hashes: OpenworkCloudMcpHealth["compatibility"]["pluginFileHashes"]): string {
+  if (hashes.length === 0) return "none";
+  return hashes.map((hash) => `${hash.name}=${hash.sha256 ? hash.sha256.slice(0, 12) : `unavailable${hash.error ? ` (${hash.error})` : ""}`}`).join(", ");
+}
+
+function formatMcpToolExposure(input: { checked: boolean; includesMcpTools: boolean | null; present: string[]; missing: string[]; limitation?: string }): string {
+  if (!input.checked) return "not checked";
+  const includes = input.includesMcpTools === null ? "unknown" : input.includesMcpTools ? "yes" : "no";
+  return `includes MCP tools: ${includes}; present ${joinList(input.present)}; missing ${joinList(input.missing)}${input.limitation ? `; limitation: ${input.limitation}` : ""}`;
+}
+
+interface AdvancedCloudMcpDiagnosticsSectionProps {
+  cloudMcpHealth: OpenworkCloudMcpHealth | null;
+  onRefresh: () => Promise<OpenworkCloudMcpHealth | null>;
+}
+
+export function AdvancedCloudMcpDiagnosticsSection(props: AdvancedCloudMcpDiagnosticsSectionProps) {
+  const [busy, setBusy] = useState(false);
+  const [copyStatus, setCopyStatus] = useState<string | null>(null);
+  const safeHealth = sanitizeCloudMcpHealthDiagnostic(props.cloudMcpHealth);
+  const projection = props.cloudMcpHealth?.tools.providerProjection;
+  const compatibility = props.cloudMcpHealth?.compatibility;
+
+  const refresh = async () => {
+    setBusy(true);
+    setCopyStatus(null);
+    try {
+      await props.onRefresh();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const copy = async () => {
+    const payload = JSON.stringify({ cloudMcpHealth: safeHealth }, null, 2);
+    await navigator.clipboard.writeText(payload);
+    setCopyStatus("Copied sanitized Cloud diagnostic.");
+  };
+
+  return (
+    <LayoutSection>
+      <LayoutSectionHeader>
+        <LayoutSectionTitle>Agent access diagnostics</LayoutSectionTitle>
+        <LayoutSectionDescription>
+          Technical details for OpenWork Cloud MCP delivery. Tokens and Authorization headers are redacted before display or copy.
+        </LayoutSectionDescription>
+      </LayoutSectionHeader>
+
+      <LayoutSectionItem>
+        <LayoutSectionItemHeader>
+          <LayoutSectionItemTitle>OpenWork Cloud MCP health</LayoutSectionItemTitle>
+          <LayoutSectionItemDescription>
+            Use this when support needs exact runtime state. The main Connect card stays user-facing.
+          </LayoutSectionItemDescription>
+          <LayoutSectionItemHeaderActions>
+            <Button type="button" variant="outline" size="sm" onClick={() => void refresh()} disabled={busy}>
+              <RefreshCcw size={14} className={busy ? "animate-spin" : ""} />
+              Refresh
+            </Button>
+            <Button type="button" variant="outline" size="sm" onClick={() => void copy()} disabled={!props.cloudMcpHealth}>
+              Copy sanitized diagnostic
+            </Button>
+          </LayoutSectionItemHeaderActions>
+        </LayoutSectionItemHeader>
+
+        {copyStatus ? <SettingsNotice>{copyStatus}</SettingsNotice> : null}
+        {props.cloudMcpHealth ? (
+          <div className="space-y-2 rounded-xl border border-gray-6 bg-gray-1/60 p-3">
+            <div className="grid gap-2">
+              <DiagnosticRow label="Active workspace" value={`${props.cloudMcpHealth.workspace.id} (${props.cloudMcpHealth.workspace.directory ?? "no directory"})`} />
+              <DiagnosticRow label="Desired revision" value={props.cloudMcpHealth.desired.revision ?? "none"} />
+              <DiagnosticRow label="Applied revision" value={props.cloudMcpHealth.delivery.appliedRevision ?? "none"} />
+              <DiagnosticRow label="Delivery" value={`${props.cloudMcpHealth.delivery.state}${props.cloudMcpHealth.delivery.trigger ? ` / ${props.cloudMcpHealth.delivery.trigger}` : ""}`} />
+              <DiagnosticRow label="Engine status" value={props.cloudMcpHealth.engine.status} />
+              {props.cloudMcpHealth.engineInspection?.checked ? (
+                <DiagnosticRow
+                  label="Engine MCP servers"
+                  value={(props.cloudMcpHealth.engineInspection.servers ?? []).length
+                    ? (props.cloudMcpHealth.engineInspection.servers ?? []).map((server) => `${server.name} ${server.status}${server.error ? ` (${server.error})` : ""}`).join("; ")
+                    : "none tracked"}
+                />
+              ) : null}
+              <DiagnosticRow label="Provider/model" value={projection?.checked ? `${projection.provider ?? "unknown"}/${projection.model ?? "unknown"}; source ${projection.source ?? "unknown"}; tool calling ${formatMaybe(projection.toolCalling)}; present ${joinList(projection.present)}; missing ${joinList(projection.missing)}${projection.limitation ? `; limitation: ${projection.limitation}` : ""}` : "not checked"} />
+              <DiagnosticRow label="Cloud tools" value={`derived present ${joinList(props.cloudMcpHealth.tools.present)}; missing ${joinList(props.cloudMcpHealth.tools.missing)}`} />
+              <DiagnosticRow label="Direct tools/list" value={`checked ${props.cloudMcpHealth.tools.direct.checked ? "yes" : "no"}; present ${joinList(props.cloudMcpHealth.tools.direct.present)}; missing ${joinList(props.cloudMcpHealth.tools.direct.missing)}`} />
+              {props.cloudMcpHealth.tools.direct.trace ? (
+                <DiagnosticRow
+                  label="Direct probe"
+                  value={`${props.cloudMcpHealth.tools.direct.trace.endpoint ?? "unknown endpoint"} · ${props.cloudMcpHealth.tools.direct.trace.latencyMs} ms · ${props.cloudMcpHealth.tools.direct.trace.steps.map((step) => `${step.step} ${step.ok ? "ok" : "failed"}${step.httpStatus !== undefined ? ` (HTTP ${step.httpStatus})` : ""} ${Math.max(0, Math.round(step.latencyMs))}ms`).join(" → ") || "no steps"}`}
+                />
+              ) : null}
+              {props.cloudMcpHealth.firstFailure ? (
+                <DiagnosticRow
+                  label="First failure"
+                  value={`${props.cloudMcpHealth.firstFailure.code} (stage ${props.cloudMcpHealth.firstFailure.stage}; ${props.cloudMcpHealth.firstFailure.retryable ? "retryable" : "not retryable"}): ${props.cloudMcpHealth.firstFailure.message}`}
+                />
+              ) : null}
+              <DiagnosticRow label="Plugin canaries" value={`present ${joinList(props.cloudMcpHealth.pluginCanaries.present)}; missing ${joinList(props.cloudMcpHealth.pluginCanaries.missing)}`} />
+              <DiagnosticRow label="Safe capabilities" value={`schema v${props.cloudMcpHealth.schemaVersion}; connect catalog ${props.cloudMcpHealth.connectCatalogEnabled ? "enabled" : "disabled"}`} />
+              {compatibility ? (
+                <>
+                  <DiagnosticRow label="OpenWork versions" value={`server ${formatMaybe(compatibility.openwork.serverVersion)}; app ${formatMetadataRecord(compatibility.openwork.app)}`} />
+                  <DiagnosticRow label="OpenCode compatibility" value={`expected ${formatMaybe(compatibility.opencode.expectedVersion)}; actual ${formatMaybe(compatibility.opencode.actualVersion)}; probe ${compatibility.opencode.probe}`} />
+                  <DiagnosticRow label="Feature probes" value={formatSupportedFeatures(compatibility.supportedFeatures)} />
+                  <DiagnosticRow label="Experimental tool IDs" value={formatMcpToolExposure(compatibility.experimentalToolIds)} />
+                  <DiagnosticRow label="Experimental provider tools" value={formatMcpToolExposure(compatibility.experimentalProviderTools)} />
+                  <DiagnosticRow label="Plugin hashes" value={formatPluginHashes(compatibility.pluginFileHashes)} />
+                </>
+              ) : null}
+              <DiagnosticRow label="Live verification" value={props.cloudMcpHealth.checkedAt} />
+            </div>
+            <details className="rounded-lg bg-gray-3 p-2">
+              <summary className="cursor-pointer text-[11px] font-medium text-gray-11">Show sanitized health JSON</summary>
+              <pre className="mt-2 max-h-72 overflow-auto font-mono text-[11px] text-gray-11">
+                {JSON.stringify(safeHealth, null, 2)}
+              </pre>
+            </details>
+          </div>
+        ) : (
+          <SettingsNotice>No Cloud MCP health has been loaded for this workspace yet.</SettingsNotice>
+        )}
+      </LayoutSectionItem>
+    </LayoutSection>
+  );
+}
+
 interface AdvancedRuntimeMigrationSectionProps {
   busy: boolean;
   canMigrate: boolean;
@@ -122,6 +492,10 @@ function formatKeys(keys: string[]) {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function sanitizedConfig(config: Record<string, unknown>): Record<string, unknown> {
+  return sanitizeDiagnosticRecord(config);
 }
 
 function countRecord(value: unknown) {
@@ -187,6 +561,7 @@ function RuntimeConfigSourceBlock(props: {
   keys: string[];
   config: Record<string, unknown>;
 }) {
+  const safeConfig = sanitizedConfig(props.config);
   return (
     <div className="space-y-2 rounded-xl border border-gray-6 bg-gray-1/70 p-3">
       <div>
@@ -196,11 +571,11 @@ function RuntimeConfigSourceBlock(props: {
         {props.exists !== undefined ? <div className="text-[11px] text-gray-9">{props.exists ? "Found" : "Not found"}</div> : null}
         <div className="text-[11px] text-gray-9">Keys: {formatKeys(props.keys)}</div>
       </div>
-      <RuntimeConfigSummary config={props.config} />
+      <RuntimeConfigSummary config={safeConfig} />
       <details className="rounded-lg bg-gray-3 p-2">
         <summary className="cursor-pointer text-[11px] font-medium text-gray-11">Show raw JSON</summary>
         <pre className="mt-2 max-h-56 overflow-auto font-mono text-[11px] text-gray-11">
-          {JSON.stringify(props.config, null, 2)}
+          {JSON.stringify(safeConfig, null, 2)}
         </pre>
       </details>
     </div>
@@ -208,6 +583,10 @@ function RuntimeConfigSourceBlock(props: {
 }
 
 export function AdvancedRuntimeMigrationSection(props: AdvancedRuntimeMigrationSectionProps) {
+  const effectiveRuntimeConfig = props.configStatus
+    ? sanitizedConfig(props.configStatus.effectiveRuntime ?? props.configStatus.runtime)
+    : null;
+  const runtimeConfig = props.configStatus ? sanitizedConfig(props.configStatus.runtime) : null;
   return (
     <LayoutSection>
       <LayoutSectionHeader>
@@ -251,15 +630,15 @@ export function AdvancedRuntimeMigrationSection(props: AdvancedRuntimeMigrationS
         {props.configStatus ? (
           <div className="space-y-3 rounded-xl border border-gray-6 bg-gray-1/60 p-3 text-xs text-gray-10">
             <div className="space-y-2 rounded-xl border border-blue-6/50 bg-blue-2/40 p-3">
-              <div className="font-medium text-gray-12">Effective injected OpenCode config</div>
+              <div className="font-medium text-gray-12">Desired OpenWork runtime config</div>
               <div className="text-[11px] text-gray-9">
-                This is the OpenWork-built config object injected through the server-managed `OPENCODE_CONFIG` file. It includes OpenWork defaults plus runtime DB values and is rewritten on every runtime config change.
+                This is the OpenWork-built config object requested for the runtime database and injected safely by the server. Sensitive headers are redacted here.
               </div>
-              <RuntimeConfigSummary config={props.configStatus.effectiveRuntime ?? props.configStatus.runtime} />
+              <RuntimeConfigSummary config={effectiveRuntimeConfig ?? {}} />
               <details className="rounded-lg bg-gray-3 p-2">
-                <summary className="cursor-pointer text-[11px] font-medium text-gray-11">Show raw injected JSON</summary>
+                <summary className="cursor-pointer text-[11px] font-medium text-gray-11">Show desired JSON</summary>
                 <pre className="mt-2 max-h-72 overflow-auto font-mono text-[11px] text-gray-11">
-                  {JSON.stringify(props.configStatus.effectiveRuntime ?? props.configStatus.runtime, null, 2)}
+                  {JSON.stringify(effectiveRuntimeConfig, null, 2)}
                 </pre>
               </details>
             </div>
@@ -323,7 +702,7 @@ export function AdvancedRuntimeMigrationSection(props: AdvancedRuntimeMigrationS
             <div>
               <div className="font-medium text-gray-12">Runtime DB JSON</div>
               <pre className="mt-1 max-h-48 overflow-auto rounded-lg bg-gray-3 p-2 font-mono text-[11px] text-gray-11">
-                {JSON.stringify(props.configStatus.runtime, null, 2)}
+                {JSON.stringify(runtimeConfig, null, 2)}
               </pre>
             </div>
           </div>

@@ -4,9 +4,11 @@ import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
-import { DEN_MCP_OPAQUE_ACCESS_TOKEN_PREFIX, DEN_MCP_RESOURCE } from "../../auth.js"
+import { DEN_MCP_FIRST_PARTY_CLIENT_ID, DEN_MCP_OPAQUE_ACCESS_TOKEN_PREFIX, DEN_MCP_RESOURCE } from "../../auth.js"
 import { db } from "../../db.js"
+import { env } from "../../env.js"
 import { hashOpaqueMcpSecret } from "../../mcp/auth.js"
+import { deriveFirstPartyMcpTokenResourceFromRequest } from "../../mcp/resource.js"
 import { resolveMcpTokenScopes } from "../../mcp/scopes.js"
 import { DEN_FIRST_PARTY_MCP_TOKEN_TTL_MS } from "../../mcp/token-lifetime.js"
 import {
@@ -27,12 +29,10 @@ import type { AuthContextVariables } from "../../session.js"
  * session's active organization, validated for membership and API-key scope by
  * `resolveOrganizationContextMiddleware`.
  *
- * Tokens are stored exactly like oauthProvider-issued opaque tokens
- * (sha256 of the secret in OAuthAccessTokenTable, org in referenceId), so
- * `verifyOpaqueMcpToken` accepts them with no verification changes.
+ * These first-party tokens are stored as opaque grants (sha256 of the secret
+ * in OAuthAccessTokenTable, org in referenceId), so `verifyOpaqueMcpToken`
+ * accepts them without changing the public OAuth JWT access-token contract.
  */
-
-const FIRST_PARTY_MCP_CLIENT_ID = "openwork-desktop"
 
 const mintMcpTokenSchema = z.object({
   scopes: z.array(z.enum(["mcp:read", "mcp:write"])).min(1).optional(),
@@ -52,6 +52,11 @@ const organizationRequiredSchema = z.object({
 }).meta({ ref: "McpTokenOrganizationRequiredError" })
 
 type McpRouteVariables = AuthContextVariables & Partial<OrganizationContextVariables>
+
+const firstPartyMcpTokenTrustedOrigins = Array.from(new Set([
+  env.betterAuthUrl,
+  ...env.publicUrlTrustedOrigins,
+]))
 
 export function registerMcpTokenRoutes<T extends { Variables: McpRouteVariables }>(app: Hono<T>) {
   app.post(
@@ -100,7 +105,7 @@ export function registerMcpTokenRoutes<T extends { Variables: McpRouteVariables 
       await db.insert(OAuthAccessTokenTable).values({
         id: createDenTypeId("oauthAccessToken"),
         token: hashOpaqueMcpSecret(secret),
-        clientId: FIRST_PARTY_MCP_CLIENT_ID,
+        clientId: DEN_MCP_FIRST_PARTY_CLIENT_ID,
         sessionId,
         userId: normalizeDenTypeId("user", user.id),
         referenceId: normalizeDenTypeId("organization", orgId),
@@ -113,7 +118,10 @@ export function registerMcpTokenRoutes<T extends { Variables: McpRouteVariables 
         expiresAt: expiresAt.toISOString(),
         organizationId: normalizeDenTypeId("organization", orgId),
         scopes,
-        resource: DEN_MCP_RESOURCE,
+        resource: deriveFirstPartyMcpTokenResourceFromRequest(c.req.raw, {
+          fallback: DEN_MCP_RESOURCE,
+          trustedOrigins: firstPartyMcpTokenTrustedOrigins,
+        }),
       })
     },
   )

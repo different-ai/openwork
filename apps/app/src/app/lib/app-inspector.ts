@@ -1,3 +1,5 @@
+import type { Client } from "../types";
+
 /**
  * Lightweight runtime-inspection surface for the React app.
  *
@@ -17,6 +19,8 @@ export type InspectorSliceGetter = () => unknown;
 
 type InspectorAPI = {
   version: number;
+  /** Active workspace's authenticated OpenCode SDK client when developer mode is enabled. */
+  readonly opencode: Client | null;
   snapshot(): Record<string, unknown>;
   slice(name: string): unknown;
   listSlices(): string[];
@@ -39,12 +43,14 @@ const EVENT_BUFFER_MAX = 200;
 type Registry = {
   slices: Map<string, InspectorSliceGetter>;
   events: Array<{ at: number; name: string; data: unknown }>;
+  opencodeClient: Client | null;
   installed: boolean;
 };
 
 const registry: Registry = {
   slices: new Map(),
   events: [],
+  opencodeClient: null,
   installed: false,
 };
 
@@ -74,6 +80,9 @@ function installIfNeeded() {
 
   const api: InspectorAPI = {
     version: INSPECTOR_VERSION,
+    get opencode() {
+      return registry.opencodeClient;
+    },
     snapshot: buildSnapshot,
     slice(name) {
       const getter = registry.slices.get(name);
@@ -115,6 +124,14 @@ export function publishInspectorSlice(
   return () => {
     const current = registry.slices.get(name);
     if (current === getter) registry.slices.delete(name);
+  };
+}
+
+export function publishInspectorOpencodeClient(client: Client): () => void {
+  installIfNeeded();
+  registry.opencodeClient = client;
+  return () => {
+    if (registry.opencodeClient === client) registry.opencodeClient = null;
   };
 }
 

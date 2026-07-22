@@ -4,7 +4,8 @@ You are an agent helping a user install and set up OpenWork.
 
 Goal: install OpenWork, create a provisional workspace without requiring email
 identity first, create a first skill, prepare the desktop app with that
-workspace/skill, and verify the running app opens to the setup-complete state.
+workspace/skill, verify the running app opens to the setup-complete state, and
+offer to connect the OpenWork MCP to the agent the user is already using.
 
 > The bootstrap command is `openwork-bootstrap` (NOT `openwork`). The bare
 > `openwork` command belongs to the separate `openwork-orchestrator` package and
@@ -63,6 +64,13 @@ create a provisional workspace first. This does not create an email/password
 account. It writes claim links to the local desktop bootstrap file so a human can
 claim ownership later.
 
+Optionally ask the user for their own email address first. It is only used to
+pre-fill the claim page later (not a security boundary, not an account, no
+password) - skip it if the user does not want to share it. Also optionally ask
+for teammate email addresses to invite. Invites only go out once the workspace
+is claimed (a provisional workspace has no authenticated owner yet to send them
+as) - they fire automatically the moment a human claims ownership.
+
 ```bash
 openwork-bootstrap cloud bootstrap-workspace \
   --base-url https://api.openworklabs.com \
@@ -70,6 +78,8 @@ openwork-bootstrap cloud bootstrap-workspace \
   --skill-name "First OpenWork Skill" \
   --claim-roles owner \
   --prepare-desktop \
+  [--owner-email "<email-if-given>"] \
+  [--teammate-emails "<email1>,<email2>"] \
   --json
 ```
 
@@ -97,16 +107,60 @@ friendly, human message that gives momentum:
 2. Point them at ONE concrete first task they can run right now, e.g. "OpenWork
    is open — try typing: 'summarize the files in my Downloads folder' and hit
    Run."
-3. Offer the next steps as things you can do FOR them, as a short menu: invite a
-   teammate, claim the workspace (to attach billing + a human owner), or suggest
-   another first task idea.
-4. End with a single question like "Want me to invite someone or help with your
-   first task?" so the conversation keeps going.
+3. Mention that teammates whose emails were already provided will be invited
+   automatically once the workspace is claimed. If no emails were provided,
+   offer to collect them later.
+4. End with this single question: "Want me to connect the OpenWork MCP to this
+   agent so you can manage your organization from here?"
 
 Keep it to a few sentences. Warm, concrete, action-oriented. No JSON, no
 checklists, no internal flag names in the final message.
 
-## 6. Success Criteria (internal — do not show the user)
+If the user says yes:
+
+1. A provisional workspace must be claimed before its owner can authenticate
+   the OpenWork MCP. If it has not been claimed yet, explain that dependency and
+   ask whether to open the claim step now. Retrieve and open the claim link only
+   after the user confirms.
+2. After the user has claimed the workspace and signed in, configure the MCP in
+   the agent they are currently using. The server URL is:
+
+   ```text
+   https://api.openworklabs.com/mcp/agent
+   ```
+
+3. For Codex, run:
+
+   ```bash
+   codex mcp add openwork --url https://api.openworklabs.com/mcp/agent
+   codex mcp login openwork
+   ```
+
+   If an `openwork` entry already exists, do not add a duplicate. Authenticate
+   the existing entry instead. To switch organizations or recover stale auth,
+   run `codex mcp logout openwork` before `codex mcp login openwork`.
+4. For another agent, use its current instructions from
+   `https://openworklabs.com/docs/cloud/run-in-the-cloud/cloud-mcp`; do not guess
+   unsupported client commands.
+5. Tell the user to restart or reopen the current agent after setup so the new
+   MCP tools are loaded. Do not claim the connection works until the restarted
+   client can see OpenWork's `search_capabilities` and `execute_capability`
+   tools.
+
+## 6. Retrieving the Claim Link
+
+Do not print the claim URL preemptively. Only retrieve it when the user
+explicitly says they want to claim the workspace now (for example, after
+asking "claim the workspace").
+
+```bash
+openwork-bootstrap cloud claim-link --role owner --json
+```
+
+Then open the returned `url` for the user (for example `open <url>` on macOS)
+instead of pasting the raw link into chat.
+
+## 7. Success Criteria (internal — do not show the user)
 
 You are done only when all are true:
 
@@ -128,7 +182,7 @@ You are done only when all are true:
   green "Setup complete" banner, the organization name, a "First skill ready"
   tile, and a "Claim this workspace" action.
 
-## 7. If Something Fails
+## 8. If Something Fails
 
 - If CLI install fails: report OS, shell, command, and stderr.
 - If the `openwork-bootstrap` command is not found after install: ensure
@@ -139,14 +193,14 @@ You are done only when all are true:
   the app, and use `Claim this workspace` so email verification happens in the
   browser/app instead of in the CLI.
 
-## 8. Constraints
+## 9. Constraints
 
 - Do not require admin privileges.
 - Prefer user-local install paths.
 - Do not print passwords or tokens in final output.
 - Report exactly what was installed and where.
 
-## 9. Security note: desktop preparation
+## 10. Security note: desktop preparation
 
 `--prepare-desktop` writes machine-local setup state to
 `desktop-bootstrap.json`. For passwordless workspace bootstrap, this includes

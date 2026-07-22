@@ -13,23 +13,32 @@ import { t } from "../../../i18n";
 import { DEFAULT_DEN_BASE_URL } from "../../../app/lib/den";
 import { Button } from "@/components/ui/button";
 import { TextInput } from "../../design-system/text-input";
+import { OrganizationServerAffordance } from "../settings/cloud/organization-server-affordance";
+import { SignInFallbackNotice } from "./signin-fallback-notice";
 
 export type DenSignInSurfaceVariant = "panel" | "fullscreen";
 
 export type DenSignInSurfaceProps = {
   variant?: DenSignInSurfaceVariant;
+  appName?: string;
+  logoUrl?: string | null;
   developerMode: boolean;
   baseUrl: string;
   baseUrlDraft: string;
   baseUrlError: string | null;
   statusMessage: string | null;
+  signinFallbackUrl?: string | null;
   authError: string | null;
   authBusy: boolean;
   baseUrlBusy: boolean;
   sessionBusy: boolean;
   manualAuthOpen: boolean;
   manualAuthInput: string;
+  organizationServerBusy?: boolean;
+  organizationServerError?: string | null;
+  organizationServerUrl?: string;
   onBaseUrlDraftInput: (value: string) => void;
+  onOrganizationServerSave?: (url: string) => Promise<boolean>;
   onResetBaseUrl: () => void;
   onApplyBaseUrl: () => void;
   onOpenControlPlane: () => void;
@@ -152,6 +161,7 @@ function ShowcasePanel() {
  */
 export function DenSignInSurface(props: DenSignInSurfaceProps) {
   const variant: DenSignInSurfaceVariant = props.variant ?? "panel";
+  const appName = props.appName?.trim() || "OpenWork";
 
   /* -- Panel content (reused by both variants) -- */
   const panelContent = (
@@ -249,6 +259,10 @@ export function DenSignInSurface(props: DenSignInSurfaceProps) {
         </Button>
       </div>
 
+      {props.signinFallbackUrl ? (
+        <SignInFallbackNotice url={props.signinFallbackUrl} />
+      ) : null}
+
       {props.manualAuthOpen ? (
         <div className={`${settingsPanelSoftClass} space-y-3`}>
           <TextInput
@@ -308,8 +322,11 @@ export function DenSignInSurface(props: DenSignInSurfaceProps) {
           <div className="flex w-full flex-col items-center justify-center px-8 py-16 lg:w-[45%] lg:px-12">
             <div className="w-full max-w-md space-y-8">
               <div className="space-y-2">
+                {props.logoUrl ? (
+                  <img src={props.logoUrl} alt={`${appName} logo`} className="mb-6 max-h-16 max-w-64 object-contain object-left" />
+                ) : null}
                 <h1 className="text-2xl font-semibold tracking-tight text-dls-text">
-                  Welcome to OpenWork
+                  Welcome to {appName}
                 </h1>
                 <p className="text-sm text-dls-secondary">
                   Sign in to get started with your workspace.
@@ -319,12 +336,28 @@ export function DenSignInSurface(props: DenSignInSurfaceProps) {
               <button
                 type="button"
                 className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-full bg-dls-accent text-sm font-semibold text-[var(--dls-accent-fg)] transition-all hover:bg-[var(--dls-accent-hover)] disabled:opacity-60 disabled:cursor-not-allowed"
-                onClick={() => props.onOpenBrowserAuth("sign-in")}
+                // Opens on the sign-up tab (label stays "Sign in"): most
+                // people hitting this are new, and the web page's tabs let
+                // returning users switch to sign-in in one tap.
+                onClick={() => props.onOpenBrowserAuth("sign-up")}
                 disabled={props.authBusy || props.sessionBusy}
               >
-                Sign in with OpenWork Cloud
+                Sign in to {appName}
                 <ArrowUpRight size={15} />
               </button>
+
+              {props.signinFallbackUrl ? (
+                <SignInFallbackNotice url={props.signinFallbackUrl} />
+              ) : null}
+
+              {props.onOrganizationServerSave ? (
+                <OrganizationServerAffordance
+                  busy={props.organizationServerBusy === true}
+                  error={props.organizationServerError ?? null}
+                  onSave={props.onOrganizationServerSave}
+                  url={props.organizationServerUrl ?? props.baseUrl}
+                />
+              ) : null}
 
               {props.statusMessage && !props.authError ? (
                 <div className={softNoticeClass}>{props.statusMessage}</div>

@@ -171,6 +171,13 @@ function validateManifest(name, manifest) {
       }
     }
   }
+  if (name === "latest.yml") {
+    for (const arch of ["win-arm64", "win-x64"]) {
+      if (!urls.some((url) => url.includes(arch))) {
+        throw new Error(`${name} is missing ${arch} artifacts.`);
+      }
+    }
+  }
   if (name === "latest-linux.yml" && urls.some((url) => url.includes("arm64"))) {
     throw new Error(`${name} should remain the Linux x64 feed; arm64 belongs in latest-linux-arm64.yml.`);
   }

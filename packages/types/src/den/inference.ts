@@ -54,9 +54,9 @@ export const INFERENCE_WINDOW_DURATIONS_MS: Record<
 // For upstreamModel values, please get from models.dev/api.json provider = openrouter.models.id
 
 export const INFERENCE_MODEL_ALIASES = {
-  "openrouter/fusion": {
-    upstreamModel: "openrouter/fusion",
-    displayName: "OpenWork: Fusion",
+  "moonshotai/kimi-k3": {
+    upstreamModel: "moonshotai/kimi-k3",
+    displayName: "OpenWork: Kimi K3",
     enabled: true,
     usageFactor: 1,
   },

@@ -19,6 +19,7 @@ export type SessionSearchMatch = {
   session: SearchableSession;
   /** Whether the query matched the title or a message body. */
   kind: "title" | "message";
+  messageId?: string;
   role?: "user" | "assistant";
   snippet?: SessionSearchSnippet;
 };
@@ -32,7 +33,7 @@ export type SessionSearchProgress = {
 type CacheEntry = {
   updatedAt: number;
   /** One entry per message that contains searchable text. */
-  texts: Array<{ role: "user" | "assistant"; text: string; lower: string }>;
+  texts: Array<{ messageId: string; role: "user" | "assistant"; text: string; lower: string }>;
   /** Set when the transcript fetch failed; retried after a short cool-down. */
   failedAt?: number;
 };
@@ -70,7 +71,7 @@ function toCacheEntry(updatedAt: number, messages: OpenworkSessionMessage[]): Ca
       if (part.synthetic || part.ignored) continue;
       const text = part.text.trim();
       if (!text) continue;
-      texts.push({ role, text, lower: text.toLowerCase() });
+      texts.push({ messageId: message.info.id, role, text, lower: text.toLowerCase() });
     }
   }
   return { updatedAt, texts };
@@ -89,6 +90,7 @@ function matchEntry(
     const match: SessionSearchMatch = {
       session,
       kind: "message",
+      messageId: item.messageId,
       role: item.role,
       snippet: buildSnippet(item.text, index, queryLower.length),
     };

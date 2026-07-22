@@ -1,10 +1,16 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { StreamableHTTPTransport } from "@hono/mcp"
 import type { Hono } from "hono"
+import { z } from "zod"
+import { env } from "../env.js"
 import { publicRoute, tokenRoute } from "../middleware/index.js"
-import { getMcpResourceUrl, verifyMcpRequest } from "./auth.js"
+import { getMcpResourceContext, verifyMcpRequest } from "./auth.js"
 import { buildMcpCatalog, getToolDescription, loadOpenApiDocument, type McpToolOperation } from "./catalog.js"
 import { invokeMcpOperation } from "./invoke.js"
+import { preflightMcpJsonRpcRequest } from "./json-rpc-preflight.js"
+import { getDenAuthIssuer } from "./jwt-policy.js"
+import { DEN_MCP_REQUESTED_SCOPES } from "./scopes.js"
+import { SEARCH_CAPABILITIES_TOOL_NAME, searchCapabilities } from "./search.js"
 
 const CATALOG_CACHE_TTL_MS = 5 * 60 * 1000
 
@@ -14,8 +20,11 @@ let catalogCache: { catalog: McpToolOperation[]; expiresAt: number } | null = nu
  * The tool catalog is derived from the OpenAPI document, which only changes
  * on deploy. Cache it briefly instead of self-fetching openapi.json and
  * rebuilding the catalog on every /mcp request.
+ *
+ * Exported so the minimal agent-facing endpoint (./agent.ts) shares this
+ * exact cache instead of re-fetching/rebuilding the catalog separately.
  */
-async function getCatalog(app: Hono, env: unknown) {
+export async function getCatalog(app: Hono, env: unknown) {
   if (catalogCache && catalogCache.expiresAt > Date.now()) {
     return catalogCache.catalog
   }
@@ -25,12 +34,23 @@ async function getCatalog(app: Hono, env: unknown) {
   return catalog
 }
 
-export function protectedResourceMetadata(request: Request) {
-  const resource = getMcpResourceUrl(request)
+export function protectedResourceMetadata(request: Request, route: "mcp" | "agent" | "admin" = "mcp") {
+  const resource = getMcpResourceContext(request, route).resourceUrl
   return {
     resource,
-    authorization_servers: [resource.replace(/\/mcp$/, "/api/auth")],
-    scopes_supported: ["mcp:read", "mcp:write"],
+    // Better Auth 1.6 can safely advertise only one public OAuth audience for
+    // this deployment. /mcp/agent metadata is exact for public OAuth; /mcp and
+    // /mcp/admin retain their parent resource metadata for first-party desktop
+    // and legacy discovery, but public JWTs are accepted only on /mcp/agent.
+    // OAuth issuers are invariant; the resource may live on a separate API or
+    // reverse-proxy origin, but Better Auth completes the callback with this
+    // configured issuer.
+    authorization_servers: [getDenAuthIssuer(env.betterAuthUrl)],
+    // The MCP SDK uses protected-resource scopes for both dynamic client
+    // registration and the authorization request. Advertising offline access
+    // lets it explicitly request a rotating refresh grant (and prompt for
+    // consent) instead of falling back to browser auth every 45 minutes.
+    scopes_supported: [...DEN_MCP_REQUESTED_SCOPES],
     bearer_methods_supported: ["header"],
   }
 }
@@ -41,9 +61,19 @@ export function registerMcpRoutes<T extends { Variables: Record<string, unknown>
   app.get("/mcp/.well-known/oauth-protected-resource", publicRoute, (c) => c.json(protectedResourceMetadata(c.req.raw)))
 
   app.all("/mcp", tokenRoute, async (c) => {
-    const principal = await verifyMcpRequest(c.req.raw.headers, getMcpResourceUrl(c.req.raw))
+    const requestIdValue = c.get("requestId")
+    const requestId = typeof requestIdValue === "string" ? requestIdValue : "unknown"
+    const principal = await verifyMcpRequest(
+      c.req.raw.headers,
+      getMcpResourceContext(c.req.raw, "mcp", requestId),
+    )
     if (principal instanceof Response) {
       return principal
+    }
+
+    const preflightResponse = await preflightMcpJsonRpcRequest(c.req.raw, requestId)
+    if (preflightResponse) {
+      return preflightResponse
     }
 
     const catalog = await getCatalog(app as unknown as Hono, c.env)
@@ -51,6 +81,29 @@ export function registerMcpRoutes<T extends { Variables: Record<string, unknown>
       name: "openwork-den-api",
       version: "1.0.0",
     })
+
+    server.registerTool(
+      SEARCH_CAPABILITIES_TOOL_NAME,
+      {
+        title: "Search capabilities",
+        description: [
+          "Search this catalog by keyword instead of browsing every tool at once.",
+          "Returns the best-matching tool names with a short summary of each.",
+          "Call the matched tool name directly via the normal tools/call protocol; this tool does not execute anything itself.",
+        ].join(" "),
+        inputSchema: z.object({
+          query: z.string().min(1).describe("Keywords describing the capability you need, e.g. \"create organization\" or \"list workers\"."),
+          limit: z.number().int().min(1).max(20).optional().describe("Max number of matches to return. Defaults to 5."),
+        }),
+      },
+      async ({ query, limit }) => {
+        const matches = searchCapabilities(catalog, query, limit ?? 5)
+        const text = matches.length > 0
+          ? JSON.stringify({ matches }, null, 2)
+          : JSON.stringify({ matches: [], hint: "No matches. Try broader or different keywords." }, null, 2)
+        return { content: [{ type: "text" as const, text }] }
+      },
+    )
 
     for (const operation of catalog) {
       server.registerTool(

@@ -99,7 +99,7 @@ jobs:
           # Optional cloud coverage: flows skip cleanly when unset.
           OPENWORK_EVAL_DEN_API_URL: ${{ secrets.OPENWORK_EVAL_DEN_API_URL }}
           OPENWORK_EVAL_DEN_TOKEN: ${{ secrets.OPENWORK_EVAL_DEN_TOKEN }}
-        run: pnpm evals --all
+        run: pnpm fraimz --all
 
       - name: Upload eval reports
         if: always()

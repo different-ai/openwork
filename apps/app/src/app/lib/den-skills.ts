@@ -10,7 +10,7 @@ export async function saveInstalledSkillToOpenWorkOrg(input: {
     throw new Error("Sign in to OpenWork Cloud in Settings to share with your team.");
   }
 
-  const cloudClient = createDenClient({ baseUrl: settings.baseUrl, apiBaseUrl: settings.apiBaseUrl, token });
+  const cloudClient = createDenClient({ baseUrl: settings.baseUrl, token });
   let orgId = settings.activeOrgId?.trim() ?? "";
   let orgSlug = settings.activeOrgSlug?.trim() ?? "";
   let orgName = settings.activeOrgName?.trim() ?? "";

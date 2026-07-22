@@ -1,0 +1,135 @@
+---
+title: "Brand an on-prem deployment"
+description: "Configure an organization name, wordmark, accent color, and desktop icon without depending on a public CDN."
+---
+
+Organization branding lets an owner customize the OpenWork experience for everyone signed in to an on-prem Den organization. Uploaded images stay inside the deployment: Den stores the binary image data in the existing MySQL database and serves signed, versioned URLs from your Den API origin.
+
+No separate asset PVC, public object store, or public image CDN is required.
+
+## What branding changes
+
+| Setting | Where members see it |
+| --- | --- |
+| Application name | Download, setup, window title, and desktop screens |
+| Wordmark | Top-left of the desktop sidebar |
+| Square app icon | Windows title bar, Alt-Tab, and taskbar; macOS Dock; Linux window icon |
+| Accent color | Supported buttons and accent highlights |
+
+<Note>
+  Branding changes the displayed organization experience. It does not rename or re-sign the installed executable, and the signed application identity remains OpenWork.
+</Note>
+
+## Configure the on-prem origins
+
+Desktops must be able to resolve and trust both the Den web origin and the Den API origin. The API origin is especially important because uploaded wordmarks and icons are served from signed URLs under that origin.
+
+For Helm installations, set internal HTTPS names that are reachable from member devices:
+
+```yaml
+config:
+  public:
+    webOrigin: "https://openwork.example.internal"
+    apiOrigin: "https://api.openwork.example.internal"
+    desktopDenBaseUrl: "https://openwork.example.internal"
+    corsOrigins: "https://openwork.example.internal,https://api.openwork.example.internal"
+    betterAuthTrustedOrigins: "https://openwork.example.internal"
+    webAppHosts: "openwork.example.internal"
+```
+
+This maps `config.public.apiOrigin` to `DEN_API_PUBLIC_URL`. Do not set it to `localhost`, a Kubernetes service name, or an Internet hostname that air-gapped desktops cannot reach.
+
+If your organization uses a private certificate authority, install that CA in the operating-system trust store on every desktop. OpenWork uses Electron networking for the native icon download, so it follows the operating system's proxy and certificate trust.
+
+## Upload the brand
+
+You must be an organization owner, and the deployment must entitle the organization to desktop policies.
+
+1. Open your on-prem Den web URL and select the organization.
+2. Go to `Org settings` and find `Brand Appearance`.
+3. Enter the application name you want members to see.
+4. Upload a wordmark:
+   - PNG or JPEG
+   - 128×32 through 4096×4096
+   - horizontal aspect ratio between 1.5:1 and 8:1
+   - under 2 MB
+5. Upload a square app icon:
+   - PNG or JPEG
+   - square, from 64×64 through 4096×4096
+   - under 2 MB
+6. Select an accent color and click `Save settings`.
+
+Den validates and normalizes each image before saving it. Replacing an image produces a new SHA-256 versioned URL so desktops do not retain stale cached bytes.
+
+<Frame>
+  ![Brand Appearance showing a wordmark stored in the Example Corp Den](/images/on-prem-branding/brand-assets-saved-in-den.png)
+</Frame>
+
+## When members receive a new icon
+
+A desktop restart is **not required** to apply a new icon after the desktop has received the updated organization configuration.
+
+There are two separate timing steps:
+
+| Step | Expected timing |
+| --- | --- |
+| Organization configuration reaches a running desktop | Immediately after a Cloud session/settings refresh, otherwise on the background refresh that runs once per hour |
+| Windows applies an icon after receiving the configuration | Image download and validation, then about 500 ms of deliberate Explorer taskbar staging plus normal disk and operating-system work |
+
+In the real Windows validation flow, the visible taskbar and Alt-Tab update completed without a restart in about 5.4 seconds after a controlled configuration refresh. Treat that as a validation result rather than a network SLA.
+
+An already-running desktop that receives no refresh event can therefore remain on the old organization configuration for up to one hour. Closing and reopening OpenWork starts an immediate configuration fetch, so reopening is the fastest user action when an update appears stale.
+
+On Windows, OpenWork briefly removes the live taskbar button, stages the new icon and AppUserModelID, and re-adds the button. The two 250 ms waits prevent Explorer from collapsing the operation and retaining the executable's stock icon. This behavior uses Electron's [`setSkipTaskbar`, `setAppDetails`, and `setIcon`](https://www.electronjs.org/docs/latest/api/browser-window) APIs.
+
+<Frame>
+  ![A company icon displayed in the real Windows taskbar and Alt-Tab switcher](/images/on-prem-branding/windows-taskbar-and-alt-tab.png)
+</Frame>
+
+## Relaunch and offline behavior
+
+After the first successful download, the desktop caches a normalized PNG and, on Windows, a multi-resolution ICO. A relaunch applies that cached identity before the first window becomes visible. The branded icon therefore survives a desktop restart and can appear while Den is temporarily unreachable.
+
+Windows also creates or replaces a per-user `OpenWork Organization` Start Menu shortcut with the same AppUserModelID and icon. This does not require administrator access. Microsoft uses the AppUserModelID and [`RelaunchIconResource`](https://learn.microsoft.com/en-us/windows/win32/properties/props-system-appusermodel-relaunchiconresource) to associate taskbar grouping, pinning, relaunch information, and the icon. See Microsoft's [Application User Model ID guidance](https://learn.microsoft.com/en-us/windows/win32/shell/appids) for the underlying Windows behavior.
+
+<Tip>
+  If Windows still shows a separate, older stock pinned shortcut, unpin that stale shortcut and pin the currently running branded taskbar button once. The live window does not otherwise require re-pinning or a restart.
+</Tip>
+
+## Backup and restore
+
+Brand image bytes are stored as raw binary data in the `organization_brand_asset` MySQL table. Organization metadata stores the active version and signed Den URL.
+
+Include these in the same operational plan:
+
+- MySQL backups and restore testing
+- the Kubernetes Secret or secret-manager value containing `BETTER_AUTH_SECRET`
+- the private CA and DNS configuration used by desktop devices
+
+Restore the same `BETTER_AUTH_SECRET` with the database. Existing asset URLs contain signatures derived from that secret; changing it invalidates those URLs until the assets are uploaded again.
+
+Because every Den API replica reads the same database, multiple replicas do not need a shared filesystem volume for branding.
+
+## Clear or replace branding
+
+- Use `Replace image` and save to publish a new immutable version.
+- Use `Clear` and save to return to stock OpenWork branding.
+
+After the next desktop configuration refresh, clearing the icon removes the cached organization icon and the per-user Windows shortcut, then restores the stock taskbar identity. Reopen the desktop if you want to force the configuration fetch immediately.
+
+## Troubleshooting
+
+### The dashboard saved, but a desktop still shows the old icon
+
+1. Confirm the member is signed in to the intended organization.
+2. Reopen OpenWork to force an immediate configuration fetch instead of waiting for the hourly background refresh.
+3. From the member device, confirm `config.public.apiOrigin` resolves and the signed asset URL is reachable.
+4. Confirm the private CA is installed in the operating-system trust store.
+
+### The title bar changed but the Windows taskbar did not
+
+Confirm the desktop release includes the organization taskbar identity support. Older releases only changed the window icon. If an old pinned shortcut remains as a separate stock button, unpin it and pin the running branded button.
+
+### Images disappear after a Den container replacement
+
+Check the MySQL connection and migrations. Brand assets are database rows, not files inside the Den container, so replacing a Den application container must not remove them. A database replacement without restoring its data will.

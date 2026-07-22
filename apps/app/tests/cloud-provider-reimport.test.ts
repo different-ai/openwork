@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { parse } from "jsonc-parser";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 import type {
   DenOrgLlmProviderConnection,
@@ -7,7 +8,7 @@ import type {
 } from "../src/app/lib/den";
 import type { CloudImportedProvider } from "../src/app/cloud/import-state";
 import {
-  formatConfigWithCloudProvider,
+  buildRuntimeProviderPatch,
   getCloudManagedProviderId,
   getProviderModelIds,
   isCloudManagedProviderKey,
@@ -15,6 +16,17 @@ import {
 } from "../src/react-app/domains/connections/provider-auth/cloud-provider-config";
 
 const LPR_ID = "lpr_openrouter";
+
+const providerAuthStoreSourcePath = join(
+  import.meta.dir,
+  "..",
+  "src",
+  "react-app",
+  "domains",
+  "connections",
+  "provider-auth",
+  "store.ts",
+);
 
 const makeModel = (id: string, name = id): DenOrgLlmProviderModel => ({
   id,
@@ -44,6 +56,7 @@ const makeProvider = (
   createdAt: "2024-01-01T00:00:00.000Z",
   updatedAt,
   apiKey: "sk-test",
+  apiKeys: null,
 });
 
 const importedFrom = (
@@ -59,86 +72,38 @@ const importedFrom = (
   importedAt: Date.now(),
 });
 
-const providerModelKeys = (raw: string): string[] => {
-  const parsed = parse(raw) as
-    | { provider?: Record<string, { models?: Record<string, unknown> }> }
-    | undefined;
-  const block = parsed?.provider?.[LPR_ID];
+const patchModelKeys = (patch: Record<string, unknown>): string[] => {
+  const block = patch[LPR_ID] as { models?: Record<string, unknown> } | null | undefined;
   return block?.models ? Object.keys(block.models).sort() : [];
 };
 
-describe("cloud provider re-import diff (#2346)", () => {
-  test("first import writes the lpr_* block with the initial model", () => {
+describe("cloud provider runtime patch (re-import diff #2346)", () => {
+  test("first import upserts the lpr_* entry with the initial model", () => {
     const provider = makeProvider([makeModel("model-x")], "2024-02-01T00:00:00.000Z");
-    const config = formatConfigWithCloudProvider("", provider, LPR_ID, {
-      disabledProviders: [],
-    });
-    expect(providerModelKeys(config)).toEqual(["model-x"]);
+    const patch = buildRuntimeProviderPatch(provider, LPR_ID);
+    expect(Object.keys(patch)).toEqual([LPR_ID]);
+    expect(patchModelKeys(patch)).toEqual(["model-x"]);
   });
 
-  test("re-import adds a newly added model (X then X + Y)", () => {
-    const first = makeProvider([makeModel("model-x")], "2024-02-01T00:00:00.000Z");
-    const initial = formatConfigWithCloudProvider("", first, LPR_ID, {
-      disabledProviders: [],
-    });
-    expect(providerModelKeys(initial)).toEqual(["model-x"]);
-
+  test("re-import replaces the entry wholesale (adds and drops models)", () => {
     const updated = makeProvider(
       [makeModel("model-x"), makeModel("model-y")],
       "2024-03-01T00:00:00.000Z",
     );
-    const reimported = formatConfigWithCloudProvider(initial, updated, LPR_ID, {
-      previousProviderId: LPR_ID,
-      disabledProviders: [],
-    });
-    expect(providerModelKeys(reimported)).toEqual(["model-x", "model-y"]);
-  });
-
-  test("re-import drops a removed model (X + Y then only Y)", () => {
-    const both = makeProvider(
-      [makeModel("model-x"), makeModel("model-y")],
-      "2024-03-01T00:00:00.000Z",
-    );
-    const initial = formatConfigWithCloudProvider("", both, LPR_ID, {
-      disabledProviders: [],
-    });
-    expect(providerModelKeys(initial)).toEqual(["model-x", "model-y"]);
+    expect(patchModelKeys(buildRuntimeProviderPatch(updated, LPR_ID, LPR_ID))).toEqual([
+      "model-x",
+      "model-y",
+    ]);
 
     const onlyY = makeProvider([makeModel("model-y")], "2024-04-01T00:00:00.000Z");
-    const reimported = formatConfigWithCloudProvider(initial, onlyY, LPR_ID, {
-      previousProviderId: LPR_ID,
-      disabledProviders: [],
-    });
-    expect(providerModelKeys(reimported)).toEqual(["model-y"]);
+    expect(patchModelKeys(buildRuntimeProviderPatch(onlyY, LPR_ID, LPR_ID))).toEqual(["model-y"]);
   });
 
-  test("re-import preserves unrelated provider blocks and config keys", () => {
-    const base = [
-      "{",
-      '  "$schema": "https://opencode.ai/config.json",',
-      '  "provider": {',
-      '    "anthropic": { "models": { "claude": { "id": "claude", "name": "Claude" } } }',
-      "  }",
-      "}",
-      "",
-    ].join("\n");
-    const provider = makeProvider(
-      [makeModel("model-x"), makeModel("model-y")],
-      "2024-03-01T00:00:00.000Z",
-    );
-    const result = formatConfigWithCloudProvider(base, provider, LPR_ID, {
-      disabledProviders: [],
-    });
-    const parsed = parse(result) as {
-      provider?: Record<string, unknown>;
-      $schema?: string;
-    };
-    expect(parsed.$schema).toBe("https://opencode.ai/config.json");
-    expect(Object.keys(parsed.provider ?? {}).sort()).toEqual([
-      "anthropic",
-      LPR_ID,
-    ]);
-    expect(providerModelKeys(result)).toEqual(["model-x", "model-y"]);
+  test("a renamed provider id deletes the predecessor entry", () => {
+    const provider = makeProvider([makeModel("model-x")], "2024-03-01T00:00:00.000Z");
+    const patch = buildRuntimeProviderPatch(provider, LPR_ID, "lpr_previous");
+    expect(patch["lpr_previous"]).toBeNull();
+    expect(patchModelKeys(patch)).toEqual(["model-x"]);
   });
 
   test("cloud-managed key predicate guards re-import vs manual clobber", () => {
@@ -165,5 +130,22 @@ describe("cloud provider re-import diff (#2346)", () => {
 
     // After re-import the baseline advances -> in sync again.
     expect(isCloudProviderOutOfSync(updated, importedFrom(updated))).toBe(false);
+  });
+
+  test("provider baseline persistence does not refresh the desktop cloud snapshot", () => {
+    const source = readFileSync(providerAuthStoreSourcePath, "utf8");
+    const persistStart = source.indexOf("const persistImportedCloudProviders = async");
+    const persistEnd = source.indexOf("const readProjectConfigFile", persistStart);
+    expect(persistStart).toBeGreaterThanOrEqual(0);
+    expect(persistEnd).toBeGreaterThan(persistStart);
+
+    const persistSource = source.slice(persistStart, persistEnd);
+    expect(persistSource).toContain("const config = await readWorkspaceOpenworkConfigRecord();");
+    expect(persistSource).toContain("const cloudImports = readWorkspaceCloudImports(config);");
+    expect(persistSource).toContain("const nextConfig = withWorkspaceCloudImports(config");
+    expect(persistSource).toContain("const persisted = await writeWorkspaceOpenworkConfigRecord(nextConfig);");
+    expect(persistSource).toContain('setStateField("importedCloudProviders", nextProviders);');
+    expect(source).not.toContain("refreshDesktop" + "CloudSync");
+    expect(source).not.toContain("getResource" + "Snapshot");
   });
 });

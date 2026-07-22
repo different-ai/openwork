@@ -1,0 +1,19 @@
+{
+  "name": "@openwork/installer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "OpenWork desktop installer: resolves an install-link config, writes desktop bootstrap config, then downloads and installs the newest supported desktop app.",
+  "workspaces": [
+    "../../packages/install-config"
+  ],
+  "scripts": {
+    "dev": "bun run src/index.ts",
+    "test": "bun test",
+    "compile": "bun build --compile --minify src/index.ts src/server-worker.ts --outfile dist/openwork-installer"
+  },
+  "dependencies": {
+    "@openwork/install-config": "workspace:*",
+    "webview-bun": "2.4.0"
+  }
+}

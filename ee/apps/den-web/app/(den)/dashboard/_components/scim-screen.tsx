@@ -4,7 +4,8 @@ import { Copy, RefreshCw, Shield, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
 import { DenButton } from "../../_components/ui/button";
-import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
+import { DenNotice } from "../../_components/ui/notice";
+import { getRequestError, isReauthRequiredError, requestJson } from "../../_lib/den-flow";
 import {
   type DenOrgScimConnection,
   type DenOrgScimHealth,
@@ -29,6 +30,7 @@ function formatDateTime(value: string | null) {
 export function ScimScreen() {
   const { orgId, orgContext, runReauthableAction } = useOrgDashboard();
   const [baseUrl, setBaseUrl] = useState<string | null>(null);
+  const [ssoReady, setSsoReady] = useState(false);
   const [connection, setConnection] = useState<DenOrgScimConnection | null>(null);
   const [health, setHealth] = useState<DenOrgScimHealth>({
     unresolvedFailureCount: 0,
@@ -43,6 +45,7 @@ export function ScimScreen() {
   const [rotating, setRotating] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [reconciling, setReconciling] = useState(false);
+  const [updatingGroupMapping, setUpdatingGroupMapping] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copiedValue, setCopiedValue] = useState<"base-url" | "token" | null>(null);
 
@@ -60,6 +63,7 @@ export function ScimScreen() {
     if (!orgId || !access.canManageScim) {
       if (isCurrent()) {
         setBaseUrl(null);
+        setSsoReady(false);
         setConnection(null);
         setHealth({
           unresolvedFailureCount: 0,
@@ -83,18 +87,21 @@ export function ScimScreen() {
       );
 
       if (!response.ok) {
-        throw new Error(
-          getErrorMessage(payload, `Failed to load SCIM settings (${response.status}).`),
-        );
+        throw getRequestError(payload, response, `Failed to load SCIM settings (${response.status}).`);
       }
 
       const parsed = parseOrgScimPayload(payload);
       if (isCurrent()) {
         setBaseUrl(parsed.baseUrl);
+        setSsoReady(parsed.ssoReady);
         setConnection(parsed.connection);
         setHealth(parsed.health);
       }
     } catch (nextError) {
+      if (isReauthRequiredError(nextError)) {
+        throw nextError;
+      }
+
       if (isCurrent()) {
         setError(
           nextError instanceof Error ? nextError.message : "Failed to load SCIM settings.",
@@ -109,7 +116,11 @@ export function ScimScreen() {
 
   useEffect(() => {
     let active = true;
-    void loadScimConfig(() => active);
+    void runReauthableAction("load-scim-settings", () => loadScimConfig(() => active)).catch((nextError) => {
+      if (active) {
+        setError(nextError instanceof Error ? nextError.message : "Failed to load SCIM settings.");
+      }
+    });
     return () => {
       active = false;
     };
@@ -165,6 +176,7 @@ export function ScimScreen() {
           }
 
           setBaseUrl(parsed.baseUrl);
+          setSsoReady(parsed.ssoReady);
           setConnection(parsed.connection);
           setHealth(parsed.health);
           setVisibleToken(parsed.scimToken);
@@ -210,6 +222,39 @@ export function ScimScreen() {
       setError(
         nextError instanceof Error ? nextError.message : "Failed to reconcile SCIM.",
       );
+    }
+  }
+
+  async function handleGroupMappingChange() {
+    if (!connection) {
+      setError("Create the SCIM connector before enabling group synchronization.");
+      return;
+    }
+
+    const groupMappingMode = connection.groupMappingMode === "create_teams"
+      ? "metadata_only"
+      : "create_teams";
+    setError(null);
+    setUpdatingGroupMapping(true);
+    try {
+      const { response, payload } = await requestJson(
+        "/v1/scim",
+        { method: "PATCH", body: JSON.stringify({ groupMappingMode }) },
+        12000,
+      );
+      if (!response.ok) {
+        throw getRequestError(payload, response, `Failed to update SCIM group mapping (${response.status}).`);
+      }
+      const parsed = parseOrgScimPayload(payload);
+      if (!parsed.connection) {
+        throw new Error("SCIM settings were updated, but the response was incomplete.");
+      }
+      setConnection(parsed.connection);
+      setHealth(parsed.health);
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "Failed to update SCIM group mapping.");
+    } finally {
+      setUpdatingGroupMapping(false);
     }
   }
 
@@ -283,9 +328,25 @@ export function ScimScreen() {
         </div>
       ) : (
         <>
+          <div className="mb-6 flex flex-wrap gap-2 rounded-[24px] border border-gray-200 bg-white px-5 py-4 text-[12px] font-semibold shadow-[0_18px_48px_-34px_rgba(15,23,42,0.22)]">
+            <span className={`rounded-full px-3 py-1.5 ${orgContext.authMethods.sso ? "bg-emerald-50 text-emerald-700" : "bg-gray-100 text-gray-500"}`}>
+              {orgContext.authMethods.sso ? "SAML/SSO active" : "SAML/SSO not configured"}
+            </span>
+            <span className={`rounded-full px-3 py-1.5 ${connection ? "bg-cyan-50 text-cyan-700" : "bg-gray-100 text-gray-500"}`}>
+              {connection ? "SCIM connected" : "SCIM not configured"}
+            </span>
+          </div>
+
           {error ? (
-            <div className="mb-6 rounded-[28px] border border-red-200 bg-red-50 px-6 py-4 text-[14px] text-red-700">
-              {error}
+            <DenNotice message={error} className="mb-6" />
+          ) : null}
+
+          {!ssoReady ? (
+            <div className="mb-6 rounded-[28px] border border-amber-200 bg-amber-50 px-6 py-5 text-[14px] text-amber-900">
+              <p className="font-semibold">Configure SAML/SSO before enabling SCIM</p>
+              <p className="mt-1 leading-6">
+                Add an enabled SSO connection for this workspace before creating or rotating its SCIM connector token.
+              </p>
             </div>
           ) : null}
 
@@ -323,7 +384,7 @@ export function ScimScreen() {
                   Use this URL when your identity provider asks for the SCIM endpoint.
                 </p>
                 <p className="mt-2 text-[13px] leading-6 text-gray-500">
-                  SCIM currently supports User provisioning and deprovisioning. SCIM Groups are not enabled yet.
+                  SCIM supports user lifecycle management and group synchronization.
                 </p>
               </div>
               <DenButton
@@ -344,6 +405,32 @@ export function ScimScreen() {
           </div>
 
           <div className="mb-6 rounded-[30px] border border-gray-200 bg-white p-6 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.22)]">
+            <div className="flex flex-wrap items-center justify-between gap-5">
+              <div className="max-w-2xl">
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="text-[16px] font-semibold tracking-[-0.03em] text-gray-900">
+                    Create teams from SCIM groups
+                  </p>
+                  <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${connection?.groupMappingMode === "create_teams" ? "bg-cyan-50 text-cyan-700" : "bg-gray-100 text-gray-500"}`}>
+                    {connection?.groupMappingMode === "create_teams" ? "Enabled" : "Off"}
+                  </span>
+                </div>
+                <p className="mt-1 text-[14px] leading-6 text-gray-500">
+                  Create matching OpenWork teams and keep their memberships synchronized from your identity provider. Manually managed teams remain unchanged.
+                </p>
+              </div>
+              <DenButton
+                variant={connection?.groupMappingMode === "create_teams" ? "secondary" : "primary"}
+                onClick={() => void handleGroupMappingChange()}
+                loading={updatingGroupMapping}
+                disabled={!connection}
+              >
+                {connection?.groupMappingMode === "create_teams" ? "Disable" : "Enable team sync"}
+              </DenButton>
+            </div>
+          </div>
+
+          <div className="mb-6 rounded-[30px] border border-gray-200 bg-white p-6 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.22)]">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div>
                 <p className="text-[16px] font-semibold tracking-[-0.03em] text-gray-900">
@@ -357,7 +444,7 @@ export function ScimScreen() {
               </div>
 
               <div className="flex flex-wrap gap-3">
-                <DenButton icon={RefreshCw} onClick={() => void handleRotateToken()} loading={rotating}>
+                <DenButton icon={RefreshCw} onClick={() => void handleRotateToken()} loading={rotating} disabled={!ssoReady}>
                   {connection ? "Rotate token" : "Create connector"}
                 </DenButton>
                 {connection ? (
@@ -392,7 +479,7 @@ export function ScimScreen() {
               </div>
 
               <div className="rounded-[20px] border border-cyan-100 bg-cyan-50 p-4 text-[13px] leading-6 text-cyan-900">
-                SCIM deprovisioning removes workspace access and the SCIM provider account, but it does not blindly delete the global OpenWork user record.
+                SCIM deprovisioning retains a disconnected member record. The global user is deleted only after their final active organization membership is removed.
                 <p className="mt-2">
                   Last successful SCIM sync: {formatDateTime(health.lastSuccessfulSyncAt)}.
                 </p>

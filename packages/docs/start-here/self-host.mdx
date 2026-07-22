@@ -28,6 +28,27 @@ helm upgrade --install openwork-ee oci://ghcr.io/different-ai/charts/openwork-ee
 
 The chart pulls the matching GHCR images for `openwork-den-api`, `openwork-den-web`, and optional `openwork-inference`.
 
+### Configure Den API Node.js options
+
+Use `config.denApiNodeOptions` when `den-api` needs Node.js startup flags, such
+as using the OpenSSL CA store or increasing the old-space heap limit:
+
+```yaml
+config:
+  denApiNodeOptions: "--use-openssl-ca --max-old-space-size=4096"
+```
+
+The chart stores this value in its ConfigMap as `DEN_API_NODE_OPTIONS` and
+passes it to the `den-api` container as `NODE_OPTIONS` before Node starts. It
+does not change the Node.js options for Den web or the optional inference
+service. Leaving the value empty preserves the default Node.js behavior.
+Existing deployments using `denApi.env.NODE_OPTIONS` can keep that setting when
+upgrading; it takes precedence over `config.denApiNodeOptions`.
+
+If you want self-hosted repository imports and sync from GitHub, configure the [GitHub connector for Helm](/start-here/github-connector-helm) after the core Den web and Den controller hosts are reachable.
+
+To keep organization names, wordmarks, and desktop icons entirely inside your deployment, follow [Brand an on-prem deployment](/start-here/on-prem-branding).
+
 ## How we deploy hosted workers
 
 Our hosted deployment uses Render for long-running services and worker provisioning. Render gives us service deploys, env vars, health checks, logs, and worker builds without asking us to operate raw AWS services directly. If you want to run closer to AWS yourself, use the same service boundaries on ECS/Fargate, EC2, Kubernetes, or another container platform.
@@ -66,6 +87,16 @@ Den uses Better Auth. It runs in your deployment, uses your database, and is con
 
 SSO (SAML/OIDC) is in the current rollout and is designed to run against your own identity provider. When enabled, callback URLs and trusted origins should point at your self-hosted Den web/controller hosts.
 
+For isolated Kubernetes deployments without external egress, the Helm chart disables the external breached-password lookup by default:
+
+```yaml
+config:
+  auth:
+    passwordBreachScreeningEnabled: "false"
+```
+
+This avoids calls to the Have I Been Pwned Pwned Passwords range API during password creation and reset. Email/password sign-in lockout remains local. If your deployment has approved egress, set the value to `"true"` to restore known-compromised password rejection through the external range API.
+
 If you do not deploy Den, worker access is token-based with `OPENWORK_TOKEN` and `OPENWORK_HOST_TOKEN`.
 
 ## Minimal Working Stack
@@ -77,6 +108,16 @@ OpenWork cloud is composed of two services:
 - NextJS frontend
 - NodeJS backend (Hono) with MySQL DB
 - Electron/React desktop app
+
+The desktop app should be pointed at the Den web URL only. It derives API and
+MCP traffic through the Den web proxy:
+
+- API: `<baseUrl>/api/den/v1/...`
+- MCP: `<baseUrl>/api/den/mcp/...`
+
+For self-hosted deployments, configure `baseUrl` to the public Den web origin
+and make sure that web app's `/api/den` route can reach your Den API backend.
+The desktop app no longer needs, reads, or writes a separate API URL.
 
 These three alone cover most feature but do not include:
 
@@ -96,6 +137,7 @@ OpenWork does not require many third-party services for the core runtime. These 
 - Polar: optional billing/paywall for hosted cloud workers.
 - Loops: optional user sync and lifecycle messaging.
 - GitHub/Google OAuth: optional social sign-in providers for Better Auth.
+- GitHub connector app: optional repository connector for importing and syncing plugins or marketplaces from GitHub. For Helm installs, use the [GitHub connector setup guide](/start-here/github-connector-helm).
 
 ## Don't want to run infra?
 

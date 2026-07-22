@@ -5,18 +5,24 @@ import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { auth } from "../../auth.js"
+import { validateBrandIconUrl } from "../../brand-icon-validation.js"
+import { memberFacingMcpConnectionsEnabled } from "../../capability-sources/external-mcp-rollout.js"
+import { organizationInstallLinksEnabled } from "../../capability-sources/install-links-rollout.js"
 import { db } from "../../db.js"
 import { checkEntitlement, getOrganizationEntitlements, parseOrganizationPlan } from "../../entitlements.js"
 import { env } from "../../env.js"
 import { findEnterpriseAuthRequirementForEmail } from "../../enterprise-auth-requirement.js"
 import { authenticatedRoute, jsonValidator, orgMemberRoute, orgRoleRoute, publicRoute, queryValidator, resolveMemberTeamsMiddleware } from "../../middleware/index.js"
 import { denTypeIdSchema, enterprisePlanRequiredSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
+import { normalizeOrganizationCapabilities } from "../../organization-capabilities.js"
 import { validateInvitationAcceptVerification } from "../../organization-join-verification.js"
 import { normalizeOrganizationMetadata } from "../../organization-limits.js"
+import { isDesktopVersionOnlyOrganizationUpdate } from "../../organization-settings-permissions.js"
 import {
   acceptInvitationForUser,
   createOrganizationForUser,
   getInvitationPreview,
+  getSingletonSsoStatus,
   normalizeAllowedEmailDomains,
   OrganizationEmailDomainRestrictionError,
   setSessionActiveOrganization,
@@ -35,9 +41,11 @@ const updateOrganizationSchema = z.object({
   allowedEmailDomains: z.array(z.string().trim().min(1).max(255)).max(100).nullable().optional(),
   allowedDesktopVersions: z.array(z.string().trim().min(1).max(32)).max(200).nullable().optional(),
   requireSso: z.boolean().optional(),
+  brandAppName: z.string().trim().min(1).max(64).nullable().optional(),
   brandLogoUrl: z.string().url().max(2048).nullable().optional(),
+  brandIconUrl: z.string().url().max(2048).nullable().optional(),
   brandAccentColor: z.string().trim().min(1).max(32).nullable().optional(),
-}).refine((value) => value.name !== undefined || value.allowedEmailDomains !== undefined || value.allowedDesktopVersions !== undefined || value.requireSso !== undefined || value.brandLogoUrl !== undefined || value.brandAccentColor !== undefined, {
+}).refine((value) => value.name !== undefined || value.allowedEmailDomains !== undefined || value.allowedDesktopVersions !== undefined || value.requireSso !== undefined || value.brandAppName !== undefined || value.brandLogoUrl !== undefined || value.brandIconUrl !== undefined || value.brandAccentColor !== undefined, {
   message: "Provide at least one organization field to update.",
 })
 
@@ -52,6 +60,13 @@ const resolveSsoByEmailResponseSchema = z.object({
   signInUrl: z.string().url(),
 }).meta({ ref: "ResolveOrganizationSsoByEmailResponse" })
 
+const singleOrgSsoStatusResponseSchema = z.object({
+  configured: z.boolean(),
+  organizationSlug: z.string(),
+  signInPath: z.string(),
+  signInUrl: z.string().url(),
+}).meta({ ref: "SingleOrgSsoStatusResponse" })
+
 const invitationPreviewQuerySchema = z.object({
   id: z.string().trim().min(1).max(255),
 })
@@ -63,6 +78,11 @@ const acceptInvitationSchema = z.object({
 const organizationResponseSchema = z.object({
   organization: z.object({}).passthrough().nullable(),
 }).meta({ ref: "OrganizationResponse" })
+
+const singleOrgModeSchema = z.object({
+  error: z.literal("single_org_mode"),
+  message: z.string(),
+}).meta({ ref: "SingleOrgModeError" })
 
 const organizationOwnerSchema = z.object({
   memberId: denTypeIdSchema("member"),
@@ -98,6 +118,18 @@ const invalidEmailDomainSchema = z.object({
   message: z.string(),
   invalidDomains: z.array(z.string()),
 }).meta({ ref: "InvalidEmailDomainError" })
+
+const invalidBrandIconSchema = z.object({
+  error: z.literal("invalid_brand_icon"),
+  reason: z.string(),
+  message: z.string(),
+}).meta({ ref: "InvalidBrandIconError" })
+
+const updateOrganizationBadRequestSchema = z.union([
+  invalidRequestSchema,
+  invalidEmailDomainSchema,
+  invalidBrandIconSchema,
+]).meta({ ref: "UpdateOrganizationBadRequest" })
 
 const accountEmailDomainNotAllowedSchema = z.object({
   error: z.literal("account_email_domain_not_allowed"),
@@ -152,6 +184,7 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         400: jsonResponse("The organization creation request body was invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in to create an organization.", unauthorizedSchema),
         403: jsonResponse("API keys cannot create organizations.", forbiddenSchema),
+        409: jsonResponse("Organization creation is disabled in single-org mode.", singleOrgModeSchema),
       },
     }),
     authenticatedRoute(),
@@ -162,6 +195,13 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         error: "forbidden",
         message: "API keys cannot create organizations.",
       }, 403)
+    }
+
+    if (env.orgMode === "single_org") {
+      return c.json({
+        error: "single_org_mode",
+        message: "This deployment is configured for one organization. New organizations cannot be created.",
+      }, 409)
     }
 
     const user = c.get("user")
@@ -220,7 +260,7 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         200: jsonResponse("Invitation accepted successfully.", invitationAcceptedResponseSchema),
         400: jsonResponse("The invitation acceptance request body was invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in to accept an invitation.", unauthorizedSchema),
-        403: jsonResponse("API keys cannot accept invitations, or the account email is unverified.", forbiddenSchema),
+        403: jsonResponse("API keys cannot accept invitations, or the deployment requires a verified account email.", forbiddenSchema),
         409: jsonResponse("The current account email is not allowed to join this organization.", accountEmailDomainNotAllowedSchema),
         404: jsonResponse("The invitation could not be found.", notFoundSchema),
       },
@@ -243,7 +283,10 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
       return c.json({ error: "user_email_required" }, 400)
     }
 
-    const verification = validateInvitationAcceptVerification({ emailVerified: user.emailVerified })
+    const verification = validateInvitationAcceptVerification({
+      emailVerified: user.emailVerified,
+      emailVerificationRequired: env.requireEmailVerification,
+    })
     if (!verification.ok) {
       return c.json({ error: verification.error, message: verification.message }, 403)
     }
@@ -293,29 +336,35 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
     describeRoute({
       tags: ["Organizations"],
       summary: "Update organization",
-      description: "Updates organization fields that workspace owners are allowed to change, including the display name, allowed invitation email domains, and allowed desktop versions. The slug is immutable to avoid breaking dashboard URLs.",
+      description: "Updates organization fields. Workspace admins can change allowed desktop versions; all other fields remain owner-only. The slug is immutable to avoid breaking dashboard URLs.",
       responses: {
         200: jsonResponse("Organization updated successfully.", organizationResponseSchema),
-        400: jsonResponse("The organization update request body was invalid or contained malformed email domains.", invalidEmailDomainSchema),
+        400: jsonResponse("The organization update request body was invalid, contained malformed email domains, or contained an invalid brand icon URL.", updateOrganizationBadRequestSchema),
         401: jsonResponse("The caller must be signed in to update an organization.", unauthorizedSchema),
         402: jsonResponse("Enabling enforced SSO or desktop version controls requires an Enterprise plan.", enterprisePlanRequiredSchema),
-        403: jsonResponse("Only workspace owners can update the organization.", forbiddenSchema),
+        403: jsonResponse("The caller does not have permission to update the requested organization fields.", forbiddenSchema),
         404: jsonResponse("The organization could not be found.", notFoundSchema),
       },
     }),
-    orgRoleRoute(["owner"]),
+    orgRoleRoute(["admin"]),
     jsonValidator(updateOrganizationSchema),
     async (c) => {
-      const permission = ensureOwner(c)
-      if (!permission.ok) {
-        return c.json(permission.response, 403)
-      }
-
       const payload = c.get("organizationContext")
       const input = c.req.valid("json")
+      if (payload.currentMember.isOwner) {
+        const permission = ensureOwner(c)
+        if (!permission.ok) {
+          return c.json(permission.response, 403)
+        }
+      } else if (!isDesktopVersionOnlyOrganizationUpdate(input)) {
+        return c.json({
+          error: "forbidden",
+          message: "Workspace admins can only change allowed desktop versions.",
+        }, 403)
+      }
 
-      const normalizedDomains = input.allowedEmailDomains === undefined
-        ? { domains: undefined, invalidDomains: [] as string[] }
+      const normalizedDomains: { domains: string[] | null | undefined; invalidDomains: string[] } = input.allowedEmailDomains === undefined
+        ? { domains: undefined, invalidDomains: [] }
         : normalizeAllowedEmailDomains(input.allowedEmailDomains)
 
       if (normalizedDomains.invalidDomains.length > 0) {
@@ -336,11 +385,22 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         }
       }
 
-      const enablesBranding = (typeof input.brandLogoUrl === "string") || (typeof input.brandAccentColor === "string")
+      const enablesBranding = (typeof input.brandAppName === "string") || (typeof input.brandLogoUrl === "string") || (typeof input.brandIconUrl === "string") || (typeof input.brandAccentColor === "string")
       if (enablesBranding) {
         const entitlement = checkEntitlement(payload.organization.metadata, "desktopPolicies")
         if (!entitlement.ok) {
           return c.json(entitlement.response, entitlement.status)
+        }
+      }
+
+      if (typeof input.brandIconUrl === "string") {
+        const brandIconCheck = await validateBrandIconUrl(input.brandIconUrl)
+        if (!brandIconCheck.ok) {
+          return c.json({
+            error: "invalid_brand_icon",
+            reason: brandIconCheck.reason,
+            message: brandIconCheck.message,
+          }, 400)
         }
       }
 
@@ -350,7 +410,9 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         allowedEmailDomains: normalizedDomains.domains,
         allowedDesktopVersions: input.allowedDesktopVersions,
         requireSso: input.requireSso,
+        brandAppName: input.brandAppName,
         brandLogoUrl: input.brandLogoUrl,
+        brandIconUrl: input.brandIconUrl,
         brandAccentColor: input.brandAccentColor,
       })
 
@@ -359,6 +421,29 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
       }
 
       return c.json({ organization: updated })
+    },
+  )
+
+  app.get(
+    "/v1/orgs/sso/singleton",
+    describeRoute({
+      tags: ["Organizations"],
+      hide: true,
+      summary: "Resolve singleton organization SSO status",
+      description: "Returns whether the singleton organization has SSO configured for single-org deployments.",
+      responses: {
+        200: jsonResponse("Singleton organization SSO status returned successfully.", singleOrgSsoStatusResponseSchema),
+      },
+    }),
+    publicRoute,
+    async (c) => {
+      const status = await getSingletonSsoStatus()
+      return c.json({
+        configured: env.orgMode === "single_org" && status.configured,
+        organizationSlug: status.organizationSlug,
+        signInPath: status.signInPath,
+        signInUrl: new URL(status.signInPath, env.betterAuthTrustedOrigins[0] ?? env.betterAuthUrl).toString(),
+      })
     },
   )
 
@@ -410,6 +495,7 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
     async (c) => {
       const payload = c.get("organizationContext")
       const owner = payload.members.find((member: typeof payload.members[number]) => member.isOwner) ?? null
+      const capabilities = normalizeOrganizationCapabilities(payload.organization.metadata)
       const [ssoRows, scimRows] = await Promise.all([
         db
           .select({ id: SsoConnectionTable.id })
@@ -440,6 +526,17 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         currentMemberTeams: c.get("memberTeams") ?? [],
         plan: parseOrganizationPlan(payload.organization.metadata),
         entitlements: getOrganizationEntitlements(payload.organization.metadata),
+        capabilities: {
+          ...capabilities,
+          // Expose the effective value, not the raw stored flag: Connect is
+          // member-facing default-on unless an explicit org kill switch says no.
+          mcpConnections: memberFacingMcpConnectionsEnabled(payload.organization.metadata, {
+            gatingEnabled: env.mcpConnectionsGatingEnabled,
+          }),
+          installLinks: organizationInstallLinksEnabled(payload.organization.metadata, {
+            gatingEnabled: env.installLinksGatingEnabled,
+          }),
+        },
         authMethods: {
           sso: Boolean(ssoRows[0]),
           scim: Boolean(scimRows[0]),

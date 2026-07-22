@@ -4,7 +4,6 @@ import { swaggerUI } from "@hono/swagger-ui"
 import { sql } from "@openwork-ee/den-db/drizzle"
 import { cors } from "hono/cors"
 import { Hono } from "hono"
-import { logger } from "hono/logger"
 import type { RequestIdVariables } from "hono/request-id"
 import { requestId } from "hono/request-id"
 import { describeRoute, openAPIRouteHandler, resolver } from "hono-openapi"
@@ -13,13 +12,18 @@ import { db } from "./db.js"
 import { env } from "./env.js"
 import { publicRoute } from "./middleware/index.js"
 import { registerAdminMcpRoutes } from "./mcp/admin.js"
+import { registerAgentMcpRoutes } from "./mcp/agent.js"
 import { registerMcpRoutes } from "./mcp/index.js"
 import type { MemberTeamsContext, OrganizationContextVariables, UserOrganizationsContext } from "./middleware/index.js"
 import { buildOperationId, emptyResponse, htmlResponse, jsonResponse } from "./openapi.js"
+import { appLogger } from "./observability/logger.js"
+import { createRequestAccessLogMiddleware, createTelemetryErrorSanitizerMiddleware, registerAppErrorHandler, registerObservabilityMiddleware } from "./observability/hono.js"
 import { registerAdminRoutes } from "./routes/admin/index.js"
 import { registerAuthRoutes } from "./routes/auth/index.js"
 import { registerBootstrapRoutes } from "./routes/bootstrap/index.js"
+import { registerDevRoutes } from "./routes/dev/index.js"
 import { registerMcpTokenRoutes } from "./routes/mcp/index.js"
+import { registerMemoryRoutes } from "./routes/memory/index.js"
 import { registerMeRoutes } from "./routes/me/index.js"
 import { registerOrgRoutes } from "./routes/org/index.js"
 import { registerTelemetryRoutes } from "./routes/telemetry/index.js"
@@ -28,12 +32,14 @@ import { registerWebhookRoutes } from "./routes/webhooks/index.js"
 import { registerWorkerRoutes } from "./routes/workers/index.js"
 import type { AuthContextVariables } from "./session.js"
 import { sessionMiddleware } from "./session.js"
+import { isOperationalErrorPath, normalizeOperationalErrorResponse, operationalErrorResponse } from "./operational-errors.js"
 
 type AppVariables = RequestIdVariables & AuthContextVariables & Partial<UserOrganizationsContext> & Partial<OrganizationContextVariables> & Partial<MemberTeamsContext>
 
 const healthResponseSchema = z.object({
   ok: z.literal(true),
   service: z.literal("den-api"),
+  version: z.string(),
 }).meta({ ref: "DenApiHealthResponse" })
 
 const readinessResponseSchema = z.object({
@@ -56,16 +62,7 @@ const openApiDocumentSchema = z.object({
 
 const app = new Hono<{ Variables: AppVariables }>()
 
-const requestLogger = logger()
-
-app.use("*", async (c, next) => {
-  if (c.req.path === "/health" || c.req.path === "/ready") {
-    await next()
-    return
-  }
-
-  return requestLogger(c, next)
-})
+registerObservabilityMiddleware(app)
 app.use("*", requestId({
   headerName: "",
   generator: () => createDenTypeId("request"),
@@ -73,6 +70,18 @@ app.use("*", requestId({
 app.use("*", async (c, next) => {
   await next()
   c.header("X-Request-Id", c.get("requestId"))
+})
+app.use("*", createTelemetryErrorSanitizerMiddleware())
+app.use("*", async (c, next) => {
+  await next()
+  c.res = await normalizeOperationalErrorResponse(c.req.path, c.res, c.get("requestId"))
+})
+app.use("*", createRequestAccessLogMiddleware())
+registerAppErrorHandler(app, (error, c, requestId) => {
+  if (!isOperationalErrorPath(c.req.path)) {
+    return undefined
+  }
+  return operationalErrorResponse(error, c, requestId)
 })
 
 if (env.corsOrigins.length > 0) {
@@ -131,7 +140,7 @@ app.get(
   }),
   publicRoute,
   (c) => {
-    return c.json({ ok: true, service: "den-api" })
+    return c.json({ ok: true, service: "den-api", version: env.serviceVersion })
   },
 )
 
@@ -152,7 +161,7 @@ app.get(
       await db.execute(sql`select 1`)
       return c.json({ ok: true, service: "den-api", checks: { database: "ok" } })
     } catch (error) {
-      console.error("[readiness] den-api database check failed", error)
+      appLogger.error("readiness database check failed", { component: "readiness", error })
       return c.json({ ok: false, service: "den-api", checks: { database: "error" } }, 503)
     }
   },
@@ -161,13 +170,16 @@ app.get(
 registerAdminRoutes(app)
 registerAuthRoutes(app)
 registerBootstrapRoutes(app)
+registerDevRoutes(app)
 registerMeRoutes(app)
+registerMemoryRoutes(app)
 registerOrgRoutes(app)
 registerVersionRoutes(app)
 registerWebhookRoutes(app)
 registerWorkerRoutes(app)
 registerMcpTokenRoutes(app)
 registerMcpRoutes(app)
+registerAgentMcpRoutes(app)
 registerAdminMcpRoutes(app)
 registerTelemetryRoutes(app)
 

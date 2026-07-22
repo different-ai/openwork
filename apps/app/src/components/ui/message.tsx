@@ -51,6 +51,7 @@ export type MessageContentProps = {
   children: React.ReactNode
   markdown?: boolean
   isStreaming?: boolean
+  highlightQuery?: string
   className?: string
 } & React.ComponentProps<typeof motion.div>
 
@@ -59,6 +60,7 @@ const MessageContent = ({
   markdown = false,
   className,
   isStreaming,
+  highlightQuery,
   ...props
 }: MessageContentProps) => {
   if (markdown) {
@@ -67,6 +69,7 @@ const MessageContent = ({
         className={cn(messageContentClassName, className)}
         text={children as string}
         streaming={isStreaming}
+        highlightQuery={highlightQuery}
         {...props}
       />
     )
