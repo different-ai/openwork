@@ -5,6 +5,11 @@ import {
   connectDebugProxyConfig,
   encodeUpstreamParameter,
 } from "../src/connect-debug-proxy-config"
+import {
+  CONNECT_DEBUG_PROXY_BROWSER_ROUTE_COOKIE,
+  connectDebugProxyBrowserRouteCookie,
+  readConnectDebugProxyBrowserRoute,
+} from "../src/connect-debug-proxy-browser-route"
 import { proxyConnectDebugRequest } from "../src/connect-debug-proxy"
 import { clearConnectDebugProxyFlakyWindows, connectDebugProxyFault } from "../src/connect-debug-proxy-faults"
 import { clearConnectDebugProxyRequests, listConnectDebugProxyRequests } from "../src/connect-debug-proxy-log"
@@ -121,6 +126,7 @@ describe("Connect debug proxy rewriting and streaming", () => {
     expect(rewriteLocationHeader("https://identity.example/login", upstreamUrl, proxyBase)).toBe("https://identity.example/login")
     expect(rewriteSetCookieHeader("session=value; Domain=api.openworklabs.com; Path=/; Secure; HttpOnly", "/via/default/access-key"))
       .toBe("session=value;Path=/via/default/access-key; Secure; HttpOnly")
+    expect(rewriteSetCookieHeader("session=value; Path=/api; Secure", "/")).toBe("session=value;Path=/api; Secure")
 
     const response = await buildConnectDebugProxyResponse({
       proxyBase,
@@ -156,6 +162,7 @@ describe("Connect debug proxy rewriting and streaming", () => {
       "x-connect-debug-proxy-key": "do-not-forward",
       origin: "https://proxy.example",
       referer: "https://proxy.example/via/default/access-key/login?next=1",
+      cookie: `${CONNECT_DEBUG_PROXY_BROWSER_ROUTE_COOKIE}=%2Fvia%2Fdefault%2Faccess-key; den-session=opaque`,
     }), {
       proxyBase: "https://proxy.example/via/default/access-key",
       upstreamOrigin: "https://api.openworklabs.com",
@@ -163,6 +170,37 @@ describe("Connect debug proxy rewriting and streaming", () => {
     expect(headers.has("x-connect-debug-proxy-key")).toBe(false)
     expect(headers.get("origin")).toBe("https://api.openworklabs.com")
     expect(headers.get("referer")).toBe("https://api.openworklabs.com/login?next=1")
+    expect(headers.get("cookie")).toBe("den-session=opaque")
+  })
+
+  test("sets a short-lived browser route without exposing it to Den", async () => {
+    delete process.env.VERCEL
+    process.env.DEBUG_PROXY_ACCESS_KEY = "debug-access-key-1234"
+    process.env.DEBUG_PROXY_DEFAULT_UPSTREAM = "https://app.openworklabs.com"
+    let forwardedCookie = ""
+    const response = await proxyConnectDebugRequest({
+      pathSegments: ["debug-access-key-1234"],
+      request: new Request("https://proxy.example/via/default/debug-access-key-1234?desktopAuth=1", {
+        headers: { accept: "text/html", cookie: `${CONNECT_DEBUG_PROXY_BROWSER_ROUTE_COOKIE}=%2Fvia%2Fdefault%2Fdebug-access-key-1234; den-session=opaque` },
+      }),
+      scenarioSlug: "default",
+    }, {
+      fetchImpl: async (_url, init) => {
+        forwardedCookie = new Headers(init?.headers).get("cookie") ?? ""
+        return new Response("<html>Den</html>", {
+          headers: { "content-type": "text/html", "set-cookie": "den-session=next; Path=/; Secure; HttpOnly" },
+        })
+      },
+    })
+    const cookies = response.headers.getSetCookie()
+    const routeCookie = cookies.find((cookie) => cookie.startsWith(`${CONNECT_DEBUG_PROXY_BROWSER_ROUTE_COOKIE}=`))
+
+    expect(forwardedCookie).toBe("den-session=opaque")
+    expect(cookies).toContain("den-session=next;Path=/; Secure; HttpOnly")
+    expect(routeCookie).toContain("HttpOnly")
+    expect(routeCookie).toContain("SameSite=Lax")
+    expect(readConnectDebugProxyBrowserRoute(routeCookie)).toBe("/via/default/debug-access-key-1234")
+    expect(connectDebugProxyBrowserRouteCookie("http://localhost:3010/via/default/local-connect-debug-proxy")).not.toContain("Secure")
   })
 
   test("passes SSE through without waiting for the stream to finish", async () => {

@@ -1,6 +1,7 @@
 import { createMcpSseTamperStream, tamperJsonRpcText } from "./connect-debug-proxy-tamper"
 import type { McpTamperMode } from "./connect-debug-proxy-tamper"
 import { CONNECT_DEBUG_PROXY_KEY_HEADER } from "./connect-debug-proxy-config"
+import { stripConnectDebugProxyBrowserRouteCookie } from "./connect-debug-proxy-browser-route"
 
 const hopByHopHeaders = new Set([
   "connection",
@@ -77,7 +78,8 @@ export function rewriteSetCookieHeader(cookie: string, proxyPath: string): strin
       if (/^path=/iu.test(trimmed)) {
         const upstreamPath = trimmed.slice(5).trim()
         const suffix = upstreamPath === "/" ? "" : upstreamPath.startsWith("/") ? upstreamPath : `/${upstreamPath}`
-        return `Path=${proxyPath}${suffix}`
+        const basePath = proxyPath === "/" ? "" : proxyPath.replace(/\/+$/u, "")
+        return `Path=${suffix ? `${basePath}${suffix}` : basePath || "/"}`
       }
       return index === 0 ? trimmed : ` ${trimmed}`
     })
@@ -89,7 +91,10 @@ export function forwardRequestHeaders(source: Headers, input?: { proxyBase: stri
   const headers = new Headers()
   source.forEach((value, name) => {
     const lower = name.toLowerCase()
-    if (!hopByHopHeaders.has(lower) && lower !== "host" && lower !== "content-length"
+    if (lower === "cookie") {
+      const cookie = stripConnectDebugProxyBrowserRouteCookie(value)
+      if (cookie) headers.append(name, cookie)
+    } else if (!hopByHopHeaders.has(lower) && lower !== "host" && lower !== "content-length"
       && lower !== "accept-encoding" && lower !== CONNECT_DEBUG_PROXY_KEY_HEADER) {
       headers.append(name, value)
     }
@@ -104,7 +109,7 @@ export function forwardRequestHeaders(source: Headers, input?: { proxyBase: stri
   return headers
 }
 
-function responseHeaders(upstream: Response, upstreamRequestUrl: URL, proxyBase: string, transformed: boolean): Headers {
+function responseHeaders(upstream: Response, upstreamRequestUrl: URL, proxyBase: string, transformed: boolean, browserRoute: boolean): Headers {
   const headers = new Headers()
   upstream.headers.forEach((value, name) => {
     const lower = name.toLowerCase()
@@ -118,12 +123,13 @@ function responseHeaders(upstream: Response, upstreamRequestUrl: URL, proxyBase:
       headers.append(name, value)
     }
   })
-  const proxyPath = new URL(proxyBase).pathname
+  const proxyPath = browserRoute ? "/" : new URL(proxyBase).pathname
   for (const cookie of upstream.headers.getSetCookie()) headers.append("set-cookie", rewriteSetCookieHeader(cookie, proxyPath))
   return headers
 }
 
 export async function buildConnectDebugProxyResponse(input: {
+  browserRoute?: boolean
   proxyBase: string
   tamperMode: McpTamperMode | null
   upstream: Response
@@ -134,7 +140,7 @@ export async function buildConnectDebugProxyResponse(input: {
   const isJson = contentType.includes("application/json") || contentType.includes("application/problem+json")
   const isHtml = contentType.includes("text/html")
   const transformed = Boolean(input.tamperMode) || isJson || isHtml
-  const headers = responseHeaders(input.upstream, input.upstreamRequestUrl, input.proxyBase, transformed)
+  const headers = responseHeaders(input.upstream, input.upstreamRequestUrl, input.proxyBase, transformed, Boolean(input.browserRoute))
   if (input.tamperMode === "bad-protocol") headers.set("mcp-protocol-version", "1900-01-01")
   if (!input.upstream.body) {
     return new Response(null, { headers, status: input.upstream.status, statusText: input.upstream.statusText })

@@ -38,9 +38,11 @@ http://localhost:3010/debug-proxy/local-connect-debug-proxy
 
 The final path segment is the local-only access key. The control page generates
 scenario URLs such as
-`http://localhost:3010/via/auth-expired/local-connect-debug-proxy`. Paste a
-complete generated URL into the desktop's **Settings → Connect → Den base URL**
-field. Run its standalone local MCP smoke journey with:
+`http://localhost:3010/via/auth-expired/local-connect-debug-proxy`. In the
+desktop, enable **Settings → Advanced → Developer mode**, then paste a complete
+generated URL into **Settings → Cloud → Account → Cloud control plane URL**.
+The same editor is visible on the OpenWork Connect sign-in surface while signed
+out. Run the standalone local MCP smoke journey with:
 
 ```bash
 pnpm --filter @openwork-ee/diagnostics smoke:debug-proxy
@@ -138,6 +140,33 @@ desktop-compatible path format is:
 ```text
 https://<deployment>/via/<scenario>/<DEBUG_PROXY_ACCESS_KEY>[/~<encoded-upstream>]
 ```
+
+This is a Den **control plane base URL**, not a manually configured MCP server
+URL. Saving it signs the desktop out of the previous control plane. Sign in
+again through the browser; the desktop will derive the `/api/den` API routes,
+mint its short-lived MCP token, and manage the hidden `openwork-cloud` MCP
+entry automatically.
+
+Browser sign-in uses root-relative Den web assets and API calls. The first HTML
+response therefore sets a ten-minute, HTTP-only routing cookie that sends those
+browser requests back through the selected scenario. That cookie contains the
+same access-key path already present in the generated URL, is removed before
+forwarding to Den, and is cleared when the debug control page is opened. The
+one-time `openwork://den-auth` handoff also has its encoded Den base URL
+rewritten so the desktop exchanges the grant through the selected scenario
+instead of switching back to the upstream origin.
+
+There are two independent authorization layers:
+
+1. `DEBUG_PROXY_ACCESS_KEY` authorizes use of this diagnostic proxy. The
+   desktop-compatible URL carries it in the path; the proxy consumes it and
+   never forwards it to Den.
+2. Den authentication remains unchanged. Browser session cookies, the
+   one-time desktop handoff grant, the Den session bearer, and the minted MCP
+   bearer transit the proxy to the configured upstream. The proxy rewrites the
+   minted `resource` URL to the scenario base, so the managed Agent MCP traffic
+   remains proxied. Provider OAuth tokens stay encrypted in Den and are not
+   copied into the desktop or engine.
 
 Non-browser probes may omit the key path segment and instead send it in the
 `x-connect-debug-proxy-key` header. The desktop cannot be assumed to add that

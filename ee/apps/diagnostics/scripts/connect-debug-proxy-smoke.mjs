@@ -5,6 +5,8 @@ import { fileURLToPath } from "node:url"
 
 const packageDirectory = fileURLToPath(new URL("../", import.meta.url))
 const accessKey = "local-smoke-access-key"
+let upstreamOrigin = ""
+let observedBrowserCookie = ""
 
 function listen(server, port = 0) {
   return new Promise((resolve, reject) => {
@@ -40,6 +42,24 @@ function json(response, status, payload, headers = {}) {
 const upstream = createServer(async (request, response) => {
   const url = new URL(request.url ?? "/", "http://127.0.0.1")
   if (url.pathname === "/health") return json(response, 200, { ok: true })
+  if (url.pathname === "/" && request.method === "GET") {
+    response.writeHead(200, {
+      "content-type": "text/html",
+      "set-cookie": "den-session=browser-session; Path=/; HttpOnly",
+    })
+    return response.end('<html><script src="/_next/static/den.js"></script></html>')
+  }
+  if (url.pathname === "/_next/static/den.js" && request.method === "GET") {
+    response.writeHead(200, { "content-type": "application/javascript" })
+    return response.end('globalThis.denLoaded = true;')
+  }
+  if (url.pathname === "/api/den/v1/auth/desktop-handoff" && request.method === "POST") {
+    observedBrowserCookie = request.headers.cookie ?? ""
+    const openworkUrl = new URL("openwork://den-auth")
+    openworkUrl.searchParams.set("grant", "one-time-smoke-grant")
+    openworkUrl.searchParams.set("denBaseUrl", `${upstreamOrigin}/api/den`)
+    return json(response, 200, { openworkUrl: openworkUrl.toString() })
+  }
   if (url.pathname !== "/api/den/mcp/agent" || request.method !== "POST") return json(response, 404, { error: "not_found" })
   if (request.headers.authorization !== "Bearer fake-smoke-token") return json(response, 401, { error: "invalid_token" })
   const payload = JSON.parse(await body(request))
@@ -106,7 +126,7 @@ function assert(condition, message) {
 try {
   const upstreamPort = await listen(upstream)
   const proxyPort = await freePort()
-  const upstreamOrigin = `http://127.0.0.1:${upstreamPort}`
+  upstreamOrigin = `http://127.0.0.1:${upstreamPort}`
   const proxyOrigin = `http://127.0.0.1:${proxyPort}`
   child = spawn("pnpm", ["exec", "next", "dev", "--hostname", "127.0.0.1", "--port", String(proxyPort)], {
     cwd: packageDirectory,
@@ -129,6 +149,30 @@ try {
   assert(controlPage.ok, `Control UI returned HTTP ${controlPage.status}.`)
   assert(controlPageHtml.includes("Connect debug proxy") && controlPageHtml.includes(`${proxyOrigin}/via/auth-expired/${accessKey}`), "Control UI did not render the scenario matrix and deployment-specific URLs.")
 
+  const browserPage = await fetch(`${defaultBase}?desktopAuth=1`, { headers: { accept: "text/html" } })
+  const browserCookies = browserPage.headers.getSetCookie()
+  const routeCookie = browserCookies.find((cookie) => cookie.startsWith("openwork_connect_debug_route="))?.split(";", 1)[0]
+  const denCookie = browserCookies.find((cookie) => cookie.startsWith("den-session="))?.split(";", 1)[0]
+  assert(browserPage.ok && routeCookie && denCookie, "Browser sign-in bootstrap did not return Den HTML and both routing/session cookies.")
+  const browserCookie = `${routeCookie}; ${denCookie}`
+  const browserAsset = await fetch(`${proxyOrigin}/_next/static/den.js`, { headers: { cookie: browserCookie } })
+  assert(browserAsset.ok && (await browserAsset.text()).includes("denLoaded"), "Root-relative Den browser assets did not remain on the scenario route.")
+  const handoff = await fetch(`${proxyOrigin}/api/den/v1/auth/desktop-handoff`, {
+    body: "{}",
+    headers: { accept: "application/json", cookie: browserCookie, "content-type": "application/json", origin: proxyOrigin },
+    method: "POST",
+  })
+  const handoffPayload = await handoff.json()
+  const handoffDenBaseUrl = new URL(handoffPayload.openworkUrl).searchParams.get("denBaseUrl")
+  const handoffDenUrl = new URL(handoffDenBaseUrl)
+  assert(
+    handoff.ok
+      && handoffDenUrl.port === String(proxyPort)
+      && handoffDenUrl.pathname === `/via/default/${accessKey}/api/den`,
+    `Desktop handoff did not preserve the selected scenario base (received ${handoffDenBaseUrl}).`,
+  )
+  assert(observedBrowserCookie === denCookie, "The private browser routing cookie was forwarded to Den.")
+
   const initialized = await mcp(defaultBase, { jsonrpc: "2.0", id: 1, method: "initialize", params: { capabilities: {}, clientInfo: { name: "smoke", version: "1" }, protocolVersion: "2025-06-18" } })
   assert(initialized.ok, `Default initialize failed with HTTP ${initialized.status}.`)
   const initializedPayload = await initialized.json()
@@ -146,7 +190,7 @@ try {
   assert(!missingPayload.result?.tools?.some((tool) => tool.name === "execute_capability"), "missing-tools did not remove execute_capability.")
   assert(missingPayload.result?.tools?.some((tool) => tool.name === "search_capabilities"), "missing-tools removed search_capabilities.")
 
-  process.stdout.write("Connect debug proxy smoke passed: default pass-through, auth-expired, and missing-tools.\n")
+  process.stdout.write("Connect debug proxy smoke passed: browser auth routing, desktop handoff, default pass-through, auth-expired, and missing-tools.\n")
 } catch (error) {
   process.stderr.write(`${error instanceof Error ? error.stack : String(error)}\n${output}`)
   process.exitCode = 1

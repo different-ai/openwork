@@ -4,6 +4,10 @@ import {
   allowedUpstreamOverride,
   connectDebugProxyConfig,
 } from "./connect-debug-proxy-config"
+import {
+  connectDebugProxyBrowserRouteCookie,
+  readConnectDebugProxyBrowserRoute,
+} from "./connect-debug-proxy-browser-route"
 import { connectDebugProxyFault } from "./connect-debug-proxy-faults"
 import { recordConnectDebugProxyRequest } from "./connect-debug-proxy-log"
 import { buildConnectDebugProxyResponse, forwardRequestHeaders } from "./connect-debug-proxy-rewrite"
@@ -87,6 +91,10 @@ export async function proxyConnectDebugRequest(input: {
   if (pathKey) baseSegments.push(pathKey)
   if (overrideParameter) baseSegments.push(overrideParameter)
   const proxyBase = `${requestUrl.origin}/${baseSegments.map(encodedSegment).join("/")}`
+  const browserRoute = Boolean(pathKey) && (
+    input.request.headers.get("accept")?.toLowerCase().includes("text/html")
+    || readConnectDebugProxyBrowserRoute(input.request.headers.get("cookie")) === new URL(proxyBase).pathname
+  )
   const body = await requestBody(input.request)
   let fault = connectDebugProxyFault({
     flakyKey: `${scenario.slug}:${upstreamOrigin}:${pathname}`,
@@ -127,11 +135,13 @@ export async function proxyConnectDebugRequest(input: {
   }
 
   const response = await buildConnectDebugProxyResponse({
+    browserRoute,
     proxyBase,
     tamperMode: fault?.kind === "tamper" ? fault.mode : null,
     upstream,
     upstreamRequestUrl: upstreamUrl,
   })
+  if (browserRoute) response.headers.append("set-cookie", connectDebugProxyBrowserRouteCookie(proxyBase))
   logResult({ appliedFault: fault?.label ?? "none", method: input.request.method, now, pathname, scenario: scenario.slug, startedAt, status: response.status })
   return response
 }
