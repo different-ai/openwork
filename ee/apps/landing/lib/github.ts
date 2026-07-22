@@ -129,9 +129,19 @@ export const getGithubData = async () => {
     (latestRelease && hasWindowsDesktopAsset(latestRelease) ? latestRelease : null) ||
     releaseList.find((release) => isStableDesktopRelease(release) && hasWindowsDesktopAsset(release));
 
-  const assets = Array.isArray(pick?.assets) ? pick.assets : [];
+  // Since v0.17.38 releases also ship the paste-gated organization installers
+  // ("OpenWork-Installer-*", the two-door model's door 2). They match the
+  // loose per-arch keywords below ("mac-arm64", "win-x64", ...) and sort
+  // first, so they must be excluded here: the public landing only ever serves
+  // the plain desktop app artifacts.
+  const isGatedInstallerAsset = (asset: ReleaseAsset) =>
+    String(asset?.name || "").toLowerCase().startsWith("openwork-installer-");
+  const publicAssets = (list: ReleaseAsset[] | undefined) =>
+    (Array.isArray(list) ? list : []).filter((asset) => !isGatedInstallerAsset(asset));
+
+  const assets = publicAssets(pick?.assets);
   const releaseUrl = pick?.html_url || FALLBACK_RELEASE;
-  const windowsAssets = Array.isArray(windowsPick?.assets) ? windowsPick.assets : assets;
+  const windowsAssets = windowsPick ? publicAssets(windowsPick.assets) : assets;
   const windowsReleaseUrl = windowsPick?.html_url || releaseUrl;
   const dmg = selectAsset(assets, [".dmg"], ["openwork-mac-"]);
   const exe = selectAsset(windowsAssets, [".exe"], ["openwork-win-"]);
