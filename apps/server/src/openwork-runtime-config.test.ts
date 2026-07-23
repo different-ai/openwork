@@ -72,6 +72,19 @@ describe("openwork runtime config file", () => {
     expect(Array.isArray(parsed.plugin)).toBe(true);
   });
 
+  test("includes the XKW provider without an API key", async () => {
+    const { config } = await setup();
+    await writeOpenworkRuntimeConfigFile(config, "ws_1");
+    const parsed = await readConfigFile(config);
+    const providers = parsed.provider as Record<string, Record<string, unknown>>;
+    const xkw = providers.xkw;
+    expect(xkw?.npm).toBe("@ai-sdk/openai-compatible");
+    expect(xkw?.env).toEqual(["XKW_API_KEY"]);
+    expect((xkw?.options as Record<string, unknown>)?.baseURL).toBe("https://esp.xkw.cn/ai/v1");
+    expect((xkw?.models as Record<string, unknown>)?.["qwen3.7-plus"]).toEqual({ name: "Qwen 3.7 Plus" });
+    expect(parsed.disabled_providers).toEqual(["opencode", "openai", "anthropic", "google", "github-copilot"]);
+  });
+
   test("openwork prompt has a static search-first Memory Bank section, distinct from ## Memory", async () => {
     const { config } = await setup();
     await writeOpenworkRuntimeConfigFile(config, "ws_1");
