@@ -240,6 +240,13 @@ function errorStatus(error: unknown) {
   return null
 }
 
+function routeFailure(error: unknown) {
+  if (typeof error !== "object" || error === null) return null
+  if (!("error" in error) || typeof error.error !== "string") return null
+  if (!("message" in error) || typeof error.message !== "string") return null
+  return { error: error.error, message: error.message }
+}
+
 test("pluginCreateSchema accepts legacy and bundle bodies while rejecting empty component input", () => {
   expect(schemas.pluginCreateSchema.safeParse({ name: "X" }).success).toBe(true)
 
@@ -260,6 +267,73 @@ test("pluginCreateSchema accepts legacy and bundle bodies while rejecting empty 
     name: "Broken",
     components: [{ type: "skill", input: { metadata: { name: "Broken" } } }],
   }).success).toBe(false)
+})
+
+test("createPluginBundle rejects invalid standard SKILL.md content before any write", async () => {
+  const invalidSkills = [
+    {
+      value: { normalizedPayloadJson: { name: "missing-source" } },
+      error: "invalid_skill_source",
+      message: "Skill components require rawSourceText containing the complete SKILL.md.",
+    },
+    {
+      value: { rawSourceText: "# Missing frontmatter\n\nInstructions." },
+      error: "invalid_skill_frontmatter",
+      message: "SKILL.md must start with YAML frontmatter delimited by --- lines.",
+    },
+    {
+      value: { rawSourceText: "---\ndescription: Missing name\n---\nInstructions." },
+      error: "invalid_skill_name",
+      message: "SKILL.md frontmatter requires a non-empty name.",
+    },
+    {
+      value: { rawSourceText: "---\nname: Invalid--Name\ndescription: Invalid name\n---\nInstructions." },
+      error: "invalid_skill_name",
+      message: "SKILL.md frontmatter name must be 1-64 characters, contain only lowercase letters, numbers, and hyphens, and cannot start, end, or use consecutive hyphens.",
+    },
+    {
+      value: { rawSourceText: `---\nname: ${"a".repeat(65)}\ndescription: Name is too long\n---\nInstructions.` },
+      error: "invalid_skill_name",
+      message: "SKILL.md frontmatter name must be 1-64 characters, contain only lowercase letters, numbers, and hyphens, and cannot start, end, or use consecutive hyphens.",
+    },
+    {
+      value: { rawSourceText: "---\nname: missing-description\n---\nInstructions." },
+      error: "invalid_skill_description",
+      message: "SKILL.md frontmatter requires a non-empty description.",
+    },
+    {
+      value: { rawSourceText: `---\nname: long-description\ndescription: ${"x".repeat(1_025)}\n---\nInstructions.` },
+      error: "invalid_skill_description",
+      message: "SKILL.md frontmatter description must be 1024 characters or fewer.",
+    },
+    {
+      value: { rawSourceText: "---\nname: missing-body\ndescription: Missing body\n---\n" },
+      error: "invalid_skill_body",
+      message: "SKILL.md requires a non-empty Markdown instruction body after the frontmatter.",
+    },
+  ]
+
+  for (const invalidSkill of invalidSkills) {
+    resetDb()
+    let failure: ReturnType<typeof routeFailure> = null
+    let status: number | null = null
+    try {
+      await storeModule.createPluginBundle({
+        components: [{ type: "skill", value: invalidSkill.value }],
+        context: ownerContext(),
+        name: "Invalid skill",
+      })
+      throw new Error("expected rejection")
+    } catch (error) {
+      failure = routeFailure(error)
+      status = errorStatus(error)
+    }
+
+    expect(status).toBe(400)
+    expect(failure).toEqual({ error: invalidSkill.error, message: invalidSkill.message })
+    expect(insertCalls).toBe(0)
+    expect(updateCalls).toBe(0)
+  }
 })
 
 test("createPluginBundle rejects an unknown marketplace before any write", async () => {
@@ -299,12 +373,25 @@ test("createPluginBundle composes component creation, org-wide grants, and marke
     deletedAt: null,
   }
   resetDb({ marketplace: [marketplace] })
+  const skillMarkdown = [
+    "---",
+    "name: sales-call-prep",
+    "description: >",
+    "  Prepare for sales calls from account notes.",
+    "  Use before customer meetings.",
+    "---",
+    "",
+    "# Sales call preparation",
+    "",
+    "Review the account notes.",
+  ].join("\n")
 
   await storeModule.createPluginBundle({
     components: [{
       type: "skill",
       value: {
-        rawSourceText: "---\nname: sales-call-prep\ndescription: Prep calls\n---\nReview the account notes.",
+        metadata: { title: "Caller title", description: "Caller description" },
+        rawSourceText: skillMarkdown,
       },
     }],
     context: ownerContext(organizationId, memberId),
@@ -322,8 +409,16 @@ test("createPluginBundle composes component creation, org-wide grants, and marke
   expect(recordedInserts.filter((entry) => entry.table === "config_object_access_grant")).toHaveLength(2)
   expect(recordedInserts.filter((entry) => entry.table === "plugin_config_object")).toHaveLength(1)
   expect(recordedInserts.filter((entry) => entry.table === "marketplace_plugin")).toHaveLength(1)
+  const configObjectInserts = recordedInserts.filter((entry) => entry.table === "config_object")
+  expect(configObjectInserts[0]?.value.title).toBe("sales-call-prep")
+  expect(configObjectInserts[0]?.value.description).toBe("Prepare for sales calls from account notes. Use before customer meetings.")
+  expect(configObjectInserts[0]?.value.searchText).toBe([
+    "sales-call-prep",
+    "Prepare for sales calls from account notes. Use before customer meetings.",
+    "# Sales call preparation\n\nReview the account notes.",
+  ].join("\n"))
   const versionInserts = recordedInserts.filter((entry) => entry.table === "config_object_version")
-  expect(versionInserts[0]?.value.rawSourceText).toBe("---\nname: sales-call-prep\ndescription: Prep calls\n---\nReview the account notes.")
+  expect(versionInserts[0]?.value.rawSourceText).toBe(skillMarkdown)
   expect(versionInserts[0]?.value.normalizedPayloadJson).toBeNull()
   expect(versionInserts[0]?.value.schemaVersion).toBeNull()
   expect(JSON.stringify(versionInserts)).not.toContain(["den", "skill"].join("_"))

@@ -552,7 +552,80 @@ async function getPublicGithubDiscoveryFileTexts(snapshot: PublicGithubTreeSnaps
   return fileTextByPath
 }
 
+const STANDARD_SKILL_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
+
+function deriveSkillProjection(value: ConfigObjectInput) {
+  const rawSourceText = normalizeOptionalString(value.rawSourceText)
+  if (!rawSourceText) {
+    throw new PluginArchRouteFailure(
+      400,
+      "invalid_skill_source",
+      "Skill components require rawSourceText containing the complete SKILL.md.",
+    )
+  }
+
+  const parsed = parseSkillMarkdown(rawSourceText)
+  if (!parsed.hasFrontmatter) {
+    throw new PluginArchRouteFailure(
+      400,
+      "invalid_skill_frontmatter",
+      "SKILL.md must start with YAML frontmatter delimited by --- lines.",
+    )
+  }
+
+  const name = parsed.name.trim()
+  if (!name) {
+    throw new PluginArchRouteFailure(
+      400,
+      "invalid_skill_name",
+      "SKILL.md frontmatter requires a non-empty name.",
+    )
+  }
+  if (name.length > 64 || !STANDARD_SKILL_NAME_PATTERN.test(name)) {
+    throw new PluginArchRouteFailure(
+      400,
+      "invalid_skill_name",
+      "SKILL.md frontmatter name must be 1-64 characters, contain only lowercase letters, numbers, and hyphens, and cannot start, end, or use consecutive hyphens.",
+    )
+  }
+
+  const description = parsed.description.trim()
+  if (!description) {
+    throw new PluginArchRouteFailure(
+      400,
+      "invalid_skill_description",
+      "SKILL.md frontmatter requires a non-empty description.",
+    )
+  }
+  if (description.length > 1_024) {
+    throw new PluginArchRouteFailure(
+      400,
+      "invalid_skill_description",
+      "SKILL.md frontmatter description must be 1024 characters or fewer.",
+    )
+  }
+
+  const body = parsed.body.trim()
+  if (!body) {
+    throw new PluginArchRouteFailure(
+      400,
+      "invalid_skill_body",
+      "SKILL.md requires a non-empty Markdown instruction body after the frontmatter.",
+    )
+  }
+
+  return {
+    description,
+    searchText: [name, description, body].join("\n"),
+    title: name,
+  }
+}
+
 function deriveProjection(input: { objectType: ConfigObjectRow["objectType"]; value: ConfigObjectInput }) {
+  if (input.objectType === "skill") {
+    return deriveSkillProjection(input.value)
+  }
+
   const metadata = input.value.metadata ?? {}
   const payload = input.value.normalizedPayloadJson ?? {}
   const rawSourceText = normalizeOptionalString(input.value.rawSourceText)
@@ -1932,6 +2005,10 @@ export async function createPluginBundle(input: {
   name: string
   orgWide?: boolean
 }) {
+  for (const component of input.components ?? []) {
+    deriveProjection({ objectType: component.type, value: component.value })
+  }
+
   if (input.marketplaceId) {
     // Validate the publish target before creating anything so a bad marketplace cannot leave an orphan plugin.
     await ensureEditableMarketplace(input.context, input.marketplaceId)
