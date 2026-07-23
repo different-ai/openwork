@@ -30,7 +30,7 @@ describe("OpenWork capabilities knowledge plugin", () => {
     expect(knowledge).toContain("OpenWork documentation tools answer product questions. Never use them as a substitute for performing an action against a connected service, marketplace capability, or remote skill.");
     expect(knowledge).toContain("require the user to sign in to OpenWork first");
     expect(knowledge).toContain("Runtime steering from the OpenWork extensions plugin is the source of truth");
-    expect(knowledge).toContain("default `skill-creator` instructions already injected into the system context");
+    expect(knowledge).toContain("retrieve the listed remote `skill-creator` skill with its exact capability");
     expect(knowledge).toContain("Follow the separate runtime `Skill creation:` instruction");
     expect(knowledge).not.toContain("create custom skills in `.opencode/skills/`");
     expect(knowledge).not.toContain("First call `openwork-cloud_search_capabilities`");

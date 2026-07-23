@@ -3,6 +3,12 @@ import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js"
 import type { Transport, TransportSendOptions } from "@modelcontextprotocol/sdk/shared/transport.js"
 import { beforeAll, expect, test } from "bun:test"
 import type { ExecuteCapabilityToolResult } from "../src/mcp/agent.js"
+import {
+  BUILTIN_SKILL_CREATOR_CAPABILITY,
+  BUILTIN_SKILL_CREATOR_DESCRIPTOR,
+  executeBuiltinSkillCapability,
+  searchBuiltinSkillCapabilities,
+} from "../src/mcp/builtin-skills.js"
 import { compareCapabilityMatches, type CapabilityMatch } from "../src/mcp/search.js"
 
 function seedRequiredEnv() {
@@ -107,6 +113,8 @@ test("agent MCP server exposes steering instructions during initialize", async (
 
   expect(client.getInstructions()).toBe(agentModule.AGENT_MCP_INSTRUCTIONS)
   expect(client.getInstructions()).toContain("search_capabilities and execute_capability")
+  expect(client.getInstructions()).toContain("retrieve and follow the skill-creator skill")
+  expect(client.getInstructions()).toContain("search for skill creator with type skills")
   expect(client.getInstructions()).toContain("add a public GitHub plugin to an organization marketplace")
   expect(client.getInstructions()).toContain("Preview first")
   expect(client.getInstructions()).toContain("Do not choose one authentication type for every server")
@@ -187,6 +195,59 @@ test("agent MCP server publishes the authorized skill index as an MCP resource",
     capability: "skill:skill_customer_briefing",
     location: "skill://customer-briefing/SKILL.md",
   }]))
+
+  await client.close()
+  await server.close()
+})
+
+test("built-in skill creator is searchable and executable as a skill capability", () => {
+  expect(searchBuiltinSkillCapabilities("create a skill")).toEqual([
+    expect.objectContaining({
+      name: BUILTIN_SKILL_CREATOR_CAPABILITY,
+      method: "SKILL",
+      path: BUILTIN_SKILL_CREATOR_DESCRIPTOR.location,
+      kind: "skill",
+      hasBody: false,
+    }),
+  ])
+  expect(searchBuiltinSkillCapabilities("calendar events")).toEqual([])
+
+  const result = executeBuiltinSkillCapability(BUILTIN_SKILL_CREATOR_CAPABILITY)
+  expect(result).toMatchObject({
+    kind: "skill",
+    name: "Skill Creator",
+    provenance: "Built into OpenWork Cloud.",
+  })
+  expect(result?.content).toContain("name: skill-creator")
+  expect(result?.content).toContain("## Required skill format")
+  expect(result?.content).toContain("## Cloud authoring workflow")
+  expect(executeBuiltinSkillCapability("skill:missing")).toBeNull()
+})
+
+test("agent MCP server publishes the built-in skill creator as a readable MCP resource", async () => {
+  const server = agentModule.createAgentMcpServer()
+  agentModule.registerAgentSkillResources({
+    server,
+    organizationId: "org_test",
+    member: null,
+    skills: [BUILTIN_SKILL_CREATOR_DESCRIPTOR],
+  })
+  const client = new Client({ name: "test-client", version: "1.0.0" })
+  const transports = createMemoryTransportPair()
+
+  await server.connect(transports.server)
+  await client.connect(transports.client)
+
+  const resources = await client.listResources()
+  expect(resources.resources).toContainEqual(expect.objectContaining({
+    uri: BUILTIN_SKILL_CREATOR_DESCRIPTOR.location,
+    name: "skill-creator",
+  }))
+  const resource = await client.readResource({ uri: BUILTIN_SKILL_CREATOR_DESCRIPTOR.location })
+  const content = resource.contents[0]
+  const source = content && "text" in content ? content.text : ""
+  expect(source).toContain("name: skill-creator")
+  expect(source).toContain("## Cloud authoring workflow")
 
   await client.close()
   await server.close()

@@ -133,10 +133,10 @@ describe("composeOpenWorkExtensionDiscoveryInstruction", () => {
       prompt: OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION,
     });
     expect(OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain("Skill creation: Cloud");
-    expect(OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain("injected default skill-creator instructions");
-    expect(OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain("their Remote Cloud flow directly");
+    expect(OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain("retrieve and follow the listed skill-creator remote skill");
+    expect(OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain("openwork-cloud_execute_capability");
+    expect(OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain("exact <capability>");
     expect(OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain("OpenWork Cloud, not in the workspace");
-    expect(OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain("Do not look for a skill-creator tool");
     expect(OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain("workspace-local skill");
     expect(OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain("Do not create both copies");
     expect(OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain("migrate an existing local skill only when the user asks");
@@ -153,9 +153,8 @@ describe("composeOpenWorkExtensionDiscoveryInstruction", () => {
       });
     }
     expect(OPENWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION).toContain("Skill creation: Local");
-    expect(OPENWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION).toContain("injected default skill-creator instructions");
-    expect(OPENWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION).toContain("their local flow directly");
-    expect(OPENWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION).toContain("Do not look for a skill-creator tool");
+    expect(OPENWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION).toContain("only when the user requests one");
+    expect(OPENWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION).toContain(".opencode/skills/<skill-name>/SKILL.md");
     expect(OPENWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION).not.toContain("Skill creation: Cloud");
   });
 
