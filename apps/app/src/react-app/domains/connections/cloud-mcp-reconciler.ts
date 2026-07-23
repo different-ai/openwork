@@ -3,6 +3,7 @@ import {
   type DenMcpTokenMintContext,
   resolveCloudMcpResourceUrl,
 } from "../../../app/lib/den";
+import { CONNECT_DIAGNOSTIC_CLIENT_HEADER } from "@openwork/types/den/connect-diagnostics";
 import type {
   OpenworkCloudMcpEngineRefresh,
   OpenworkCloudMcpEngineRefreshResult,
@@ -25,6 +26,7 @@ import {
   type CloudMcpScope,
   type CloudMcpUserState,
 } from "./cloud-mcp-user-state";
+import { getConnectDiagnosticsClientId } from "./connect-diagnostics-preferences";
 
 export const OPENWORK_CLOUD_EXPECTED_TOOLS = [
   "openwork-cloud_search_capabilities",
@@ -180,6 +182,7 @@ export function buildOpenworkCloudMcpReconcilePayload(input: {
   const url = resolveMcpUrl(input.token, input.context.fallbackUrl);
   if (!workspaceId || !url) return null;
   const app = appMetadata();
+  const diagnosticsClientId = getConnectDiagnosticsClientId();
   return {
     workspaceId,
     name: CLOUD_MCP_SERVER_NAME,
@@ -187,7 +190,10 @@ export function buildOpenworkCloudMcpReconcilePayload(input: {
       type: "remote",
       enabled: true,
       url,
-      headers: { Authorization: `Bearer ${input.token.token}` },
+      headers: {
+        Authorization: `Bearer ${input.token.token}`,
+        ...(diagnosticsClientId ? { [CONNECT_DIAGNOSTIC_CLIENT_HEADER]: diagnosticsClientId } : {}),
+      },
       oauth: false,
     },
     tokenMetadata: tokenMetadata(input.token),

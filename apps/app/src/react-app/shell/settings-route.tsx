@@ -58,6 +58,7 @@ import {
 } from "@/react-app/shell/route-workspaces";
 import { createConnectionsStore, useConnectionsStoreSnapshot } from "@/react-app/domains/connections/store";
 import { cleanupOpenworkCloudMcpAfterSignOut } from "@/react-app/domains/connections/cloud-mcp-reconciler";
+import { clearConnectDiagnosticLocalData } from "@/react-app/domains/connections/connect-diagnostics-preferences";
 import { useOrgMcpConnections } from "@/react-app/domains/connections/use-org-mcp-connections";
 import { createOpenworkServerStore, useOpenworkServerStoreSnapshot } from "@/react-app/domains/connections/openwork-server-store";
 import { createProviderAuthStore, useProviderAuthStoreSnapshot } from "@/react-app/domains/connections/provider-auth/store";
@@ -2236,6 +2237,12 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             analyticsEnabled={local.prefs.analyticsEnabled}
             onToggleAnalytics={() => {
               local.setPrefs((previous) => ({ ...previous, analyticsEnabled: !previous.analyticsEnabled }));
+            }}
+            connectionDiagnosticsEnabled={local.prefs.connectionDiagnosticsEnabled}
+            onToggleConnectionDiagnostics={() => {
+              const connectionDiagnosticsEnabled = !local.prefs.connectionDiagnosticsEnabled;
+              if (!connectionDiagnosticsEnabled) clearConnectDiagnosticLocalData();
+              local.setPrefs((previous) => ({ ...previous, connectionDiagnosticsEnabled }));
             }}
             desktopNotifications={local.prefs.desktopNotifications}
             onDesktopNotificationsChange={(desktopNotifications) => {

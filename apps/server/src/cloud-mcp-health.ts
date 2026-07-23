@@ -12,6 +12,7 @@ import type { ServerConfig, WorkspaceInfo } from "./types.js";
 import { validateMcpConfig } from "./validators.js";
 
 export const OPENWORK_CLOUD_MCP_NAME = "openwork-cloud";
+const CONNECT_DIAGNOSTIC_CLIENT_HEADER = "x-openwork-connect-client";
 export const OPENWORK_CLOUD_EXPECTED_TOOLS = [
   "openwork-cloud_search_capabilities",
   "openwork-cloud_execute_capability",
@@ -613,6 +614,18 @@ function authorizationHeader(config: Record<string, unknown>): string | null {
   if (!headers) return null;
   for (const [key, value] of Object.entries(headers)) {
     if (key.toLowerCase() === "authorization" && typeof value === "string") return value;
+  }
+  return null;
+}
+
+function stringHeader(config: Record<string, unknown>, name: string): string | null {
+  const headers = isRecord(config.headers) ? config.headers : null;
+  if (!headers) return null;
+  for (const [key, value] of Object.entries(headers)) {
+    if (key.toLowerCase() === name.toLowerCase() && typeof value === "string") {
+      const normalized = value.trim();
+      return normalized || null;
+    }
   }
   return null;
 }
@@ -1245,10 +1258,14 @@ async function readDirectCloudTools(config: Record<string, unknown>): Promise<Di
     return { ...directToolsNotChecked(), checked: true, missing: expectedDirectToolNames(), trace: trace(), error: failureResult.details, failure: failureResult };
   }
 
+  const diagnosticsClientId = stringHeader(config, CONNECT_DIAGNOSTIC_CLIENT_HEADER);
   const baseHeaders: Record<string, string> = {
     accept: "application/json, text/event-stream",
     authorization,
     "content-type": "application/json",
+    ...(diagnosticsClientId
+      ? { [CONNECT_DIAGNOSTIC_CLIENT_HEADER]: diagnosticsClientId }
+      : {}),
   };
   try {
     const initialized = await timed({

@@ -25,6 +25,7 @@ import {
   runOpenworkCloudMcpReconciler,
   type CloudMcpClient,
 } from "./cloud-mcp-reconciler";
+import { recordConnectDiagnosticAttempt } from "./connect-diagnostics-reporter";
 
 export const SESSION_MCP_MAINTENANCE_INTERVAL_MS = 5 * 60 * 1000;
 export const SESSION_MCP_MAINTENANCE_TIMEOUT_MS = 2 * 60 * 1000;
@@ -389,6 +390,12 @@ export function useSessionMcpMaintenance(input: {
         stage: issue?.stage ?? null,
         retryable: issue?.retryable ?? null,
       });
+      recordConnectDiagnosticAttempt({
+        outcome: attemptInput.result.outcome,
+        health: attemptInput.result.health,
+        issue,
+        maintenanceAttempt: attemptInput.attempt,
+      }, settings);
       if (cancelled) return;
       setCloudMcpState({
         status: attemptInput.result.outcome === "ready"

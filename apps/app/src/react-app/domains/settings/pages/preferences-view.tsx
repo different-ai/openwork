@@ -37,6 +37,8 @@ export type PreferencesViewProps = {
   onToggleAutoCompactContext: () => void;
   analyticsEnabled: boolean;
   onToggleAnalytics: () => void;
+  connectionDiagnosticsEnabled: boolean;
+  onToggleConnectionDiagnostics: () => void;
   desktopNotifications: DesktopNotificationPreference;
   onDesktopNotificationsChange: (value: DesktopNotificationPreference) => void;
   memoryEnabled: boolean;
@@ -158,6 +160,21 @@ export function PreferencesView(props: PreferencesViewProps) {
                 checked={props.analyticsEnabled}
                 disabled={props.busy}
                 onCheckedChange={props.onToggleAnalytics}
+              />
+            </LayoutSectionItemHeaderActions>
+          </LayoutSectionItemHeader>
+        </LayoutSectionItem>
+
+        <LayoutSectionItem>
+          <LayoutSectionItemHeader>
+            <LayoutSectionItemTitle>{t("settings.connection_diagnostics_toggle")}</LayoutSectionItemTitle>
+            <LayoutSectionItemDescription>{t("settings.connection_diagnostics_toggle_desc")}</LayoutSectionItemDescription>
+            <LayoutSectionItemHeaderActions>
+              <Switch
+                aria-label={t("settings.connection_diagnostics_toggle")}
+                checked={props.connectionDiagnosticsEnabled}
+                disabled={props.busy}
+                onCheckedChange={props.onToggleConnectionDiagnostics}
               />
             </LayoutSectionItemHeaderActions>
           </LayoutSectionItemHeader>

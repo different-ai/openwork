@@ -26,6 +26,10 @@ import {
   listBuiltinSkillDescriptors,
   searchBuiltinSkillCapabilities,
 } from "./builtin-skills.js"
+import {
+  connectDiagnosticClientId,
+  reportDenMcpDiagnostic,
+} from "../connect-diagnostics.js"
 
 export const EXECUTE_CAPABILITY_TOOL_NAME = "execute_capability"
 const searchCapabilityTypeSchema = z.enum(["all", "api", "admin", "mcp", "marketplace", "skills"])
@@ -371,6 +375,7 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
     c.json(protectedResourceMetadata(c.req.raw, "agent")))
 
   app.all("/mcp/agent", tokenRoute, async (c) => {
+    const startedAt = Date.now()
     const requestIdValue = c.get("requestId")
     const requestId = typeof requestIdValue === "string" ? requestIdValue : "unknown"
     const principal = await verifyMcpRequest(
@@ -381,8 +386,21 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
       return principal
     }
 
+    const method = await mcpRequestMethod(c.req.raw)
+    const clientId = connectDiagnosticClientId(c.req.raw)
     const preflightResponse = await preflightMcpJsonRpcRequest(c.req.raw, requestId)
     if (preflightResponse) {
+      reportDenMcpDiagnostic({
+        organizationId: principal.organizationId,
+        clientId,
+        requestId,
+        method,
+        observedAt: new Date(startedAt).toISOString(),
+        durationMs: Date.now() - startedAt,
+        outcome: "failure",
+        httpStatus: preflightResponse.status,
+        errorCode: "mcp_preflight_failed",
+      })
       return preflightResponse
     }
 
@@ -409,7 +427,6 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
       gatingEnabled: env.mcpConnectionsGatingEnabled,
     })
     let remoteSkills: RemoteSkillDescriptor[] = []
-    const method = await mcpRequestMethod(c.req.raw)
     if (method === "initialize" || method === "resources/list" || method === "resources/read") {
       remoteSkills = [
         ...listBuiltinSkillDescriptors(),
@@ -606,8 +623,42 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
     )
 
     const transport = new StreamableHTTPTransport()
-    await server.connect(transport)
-    const response = await transport.handleRequest(c)
-    return response ?? new Response(null, { status: 204 })
+    let response: Response
+    try {
+      await server.connect(transport)
+      response = await transport.handleRequest(c) ?? new Response(null, { status: 204 })
+    } catch (error) {
+      reportDenMcpDiagnostic({
+        organizationId: principal.organizationId,
+        clientId,
+        requestId,
+        method,
+        observedAt: new Date(startedAt).toISOString(),
+        durationMs: Date.now() - startedAt,
+        outcome: "failure",
+        httpStatus: null,
+        errorCode: "mcp_transport_exception",
+      })
+      throw error
+    }
+    if (
+      response.status >= 400
+      || method === "initialize"
+      || method === "notifications/initialized"
+      || method === "tools/list"
+    ) {
+      reportDenMcpDiagnostic({
+        organizationId: principal.organizationId,
+        clientId,
+        requestId,
+        method,
+        observedAt: new Date(startedAt).toISOString(),
+        durationMs: Date.now() - startedAt,
+        outcome: response.status >= 400 ? "failure" : "ok",
+        httpStatus: response.status,
+        errorCode: response.status >= 400 ? `mcp_http_${response.status}` : null,
+      })
+    }
+    return response
   })
 }
