@@ -421,8 +421,8 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
     jsonValidator(configObjectCreateVersionSchema),
     describeRoute({
       tags: ["Config Objects"],
-      summary: "Create config object version",
-      description: "Creates a new immutable config object version.",
+      summary: "Update config object with new version",
+      description: "Updates an existing config object, including a Cloud skill, by creating a new immutable version without creating a duplicate.",
       responses: {
         201: jsonResponse("Config object version created successfully.", configObjectMutationResponseSchema),
         400: jsonResponse("The config object version request was invalid.", invalidRequestSchema),

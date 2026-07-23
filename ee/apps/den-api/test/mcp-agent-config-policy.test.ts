@@ -125,6 +125,24 @@ describe("agent-configurable org connections policy", () => {
     }))
   })
 
+  test("agent capability search discovers the Cloud skill update workflow", () => {
+    const catalog = buildMcpCatalog(document)
+    const findMatches = searchCapabilities(catalog, "list skill config objects", 20)
+    const updateMatches = searchCapabilities(catalog, "update existing Cloud skill", 20)
+
+    expect(findMatches).toContainEqual(expect.objectContaining({
+      method: "GET",
+      path: "/v1/config-objects",
+      queryParams: expect.arrayContaining(["q", "type"]),
+    }))
+    expect(updateMatches).toContainEqual(expect.objectContaining({
+      method: "POST",
+      path: "/v1/config-objects/{configObjectId}/versions",
+      pathParams: ["configObjectId"],
+      hasBody: true,
+    }))
+  })
+
   test("chat capability search discovers the Den GitHub marketplace import workflow", () => {
     const catalog = buildMcpCatalog(document)
     const previewMatches = searchCapabilities(catalog, "preview github plugin marketplace import", 10)

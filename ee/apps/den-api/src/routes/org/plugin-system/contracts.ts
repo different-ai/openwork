@@ -243,7 +243,7 @@ export const pluginArchEndpointContracts: Record<string, EndpointContract> = {
   },
   createConfigObjectVersion: {
     audience: "admin",
-    description: "Create a new immutable version for an existing config object.",
+    description: "Update an existing config object, including a Cloud skill, by creating a new immutable version without creating a duplicate.",
     method: "POST",
     path: pluginArchRoutePaths.configObjectVersions,
     request: { body: configObjectCreateVersionSchema, params: configObjectParamsSchema },

@@ -9,7 +9,7 @@ import {
   PluginConfigObjectTable,
   PluginTable,
 } from "@openwork-ee/den-db/schema"
-import { createDenTypeId } from "@openwork-ee/utils/typeid"
+import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { PluginArchActorContext } from "../src/routes/org/plugin-system/access.js"
 
 function seedRequiredEnv() {
@@ -60,6 +60,11 @@ type InsertRecord = {
   value: Row
 }
 
+type UpdateRecord = {
+  table: TableName
+  value: Row
+}
+
 const tableNames: TableName[] = [
   "config_object",
   "config_object_access_grant",
@@ -83,6 +88,7 @@ const rowsByTable: Record<TableName, Row[]> = {
 }
 
 const recordedInserts: InsertRecord[] = []
+const recordedUpdates: UpdateRecord[] = []
 let insertCalls = 0
 let updateCalls = 0
 
@@ -107,6 +113,7 @@ function resetDb(seed: Partial<Record<TableName, Row[]>> = {}) {
     rowsByTable[name] = [...(seed[name] ?? [])]
   }
   recordedInserts.length = 0
+  recordedUpdates.length = 0
   insertCalls = 0
   updateCalls = 0
 }
@@ -163,10 +170,16 @@ function insertBuilder(table: unknown): WriteBuilder {
   }
 }
 
-function updateBuilder(_table: unknown): WriteBuilder {
+function updateBuilder(table: unknown): WriteBuilder {
+  const name = tableName(table)
   updateCalls += 1
   return {
-    set: () => ({ where: () => Promise.resolve() }),
+    set: (value) => {
+      if (name && isRecord(value)) {
+        recordedUpdates.push({ table: name, value: { ...value } })
+      }
+      return { where: () => Promise.resolve() }
+    },
     values: () => Promise.resolve(),
     where: () => Promise.resolve(),
   }
@@ -354,6 +367,53 @@ test("createPluginBundle rejects an unknown marketplace before any write", async
   expect(status).toBe(404)
   expect(insertCalls).toBe(0)
   expect(updateCalls).toBe(0)
+})
+
+test("createConfigObjectVersion updates a same-name skill without creating a duplicate", async () => {
+  resetDb()
+  const skillName = "sales-call-prep"
+  const originalSkill = `---\nname: ${skillName}\ndescription: Prepare for sales calls.\n---\nReview the account notes.`
+
+  await storeModule.createPluginBundle({
+    components: [{ type: "skill", value: { rawSourceText: originalSkill } }],
+    context: ownerContext(),
+    name: "Sales call prep",
+  })
+
+  const configObject = recordedInserts.find((entry) => entry.table === "config_object")
+  if (!configObject || typeof configObject.value.id !== "string") {
+    throw new Error("expected created skill config object")
+  }
+
+  const updatedSkill = `---\nname: ${skillName}\ndescription: Prepare for sales calls from current account notes.\n---\nReview the account notes and list the open risks.`
+  const configObjectId = normalizeDenTypeId("configObject", configObject.value.id)
+  await storeModule.createConfigObjectVersion({
+    configObjectId,
+    context: ownerContext(),
+    reason: "Improve preparation guidance",
+    value: { rawSourceText: updatedSkill },
+  })
+
+  expect(recordedInserts.filter((entry) => entry.table === "plugin")).toHaveLength(1)
+  expect(recordedInserts.filter((entry) => entry.table === "config_object")).toHaveLength(1)
+  expect(recordedInserts.filter((entry) => entry.table === "config_object_version")).toHaveLength(2)
+  expect(recordedInserts.at(-1)?.value).toMatchObject({
+    configObjectId,
+    rawSourceText: updatedSkill,
+    sourceRevisionRef: "Improve preparation guidance",
+  })
+  expect(recordedUpdates).toContainEqual({
+    table: "config_object",
+    value: expect.objectContaining({
+      description: "Prepare for sales calls from current account notes.",
+      searchText: [
+        skillName,
+        "Prepare for sales calls from current account notes.",
+        "Review the account notes and list the open risks.",
+      ].join("\n"),
+      title: skillName,
+    }),
+  })
 })
 
 test("createPluginBundle composes component creation, org-wide grants, and marketplace publishing", async () => {

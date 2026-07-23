@@ -23,12 +23,13 @@ Follow the runtime `Skill creation:` instruction for this workspace/model:
 
 Use this flow only when the runtime instruction says `Cloud`:
 
-1. Search OpenWork Cloud with 2-4 variants for existing skills/plugins, marketplaces, and the plugin create/read operations. Use only exact capability names returned by search.
-2. If the same name or purpose already exists, stop and ask whether to use it, update it, or choose a distinct name.
-3. Draft one complete `SKILL.md` with YAML frontmatter containing a matching `name`, a trigger-oriented `description`, and a non-empty instruction body. Do not include secrets.
-4. Execute the returned plugin-create capability with one component: `{"type":"skill","input":{"rawSourceText":"<complete SKILL.md>"}}`. Set organization-wide access or a marketplace only when the user requested and confirmed it.
-5. Read back the created plugin or resolved marketplace detail. Verify the stored skill name, plugin/config-object IDs, marketplace, and access before reporting success.
-6. If Cloud returns an authorization, validation, or persistence error, report it. Do not silently create a local copy.
+1. Search OpenWork Cloud with 2-4 variants for existing skills/config objects, plugins, marketplaces, plugin creation, config-object version creation, and read operations. Use only exact capability names returned by search.
+2. Resolve exact-name matches before writing: create when none exists, update when one exists and the user requested changes, or ask the user to choose when matches are ambiguous.
+3. Draft one complete replacement `SKILL.md` with frontmatter containing a matching `name`, a trigger-oriented `description`, and a non-empty instruction body. Do not include secrets.
+4. To create, execute the returned plugin-create capability with one component: `{"type":"skill","input":{"rawSourceText":"<complete SKILL.md>"}}`. Set organization-wide access or a marketplace only when the user requested and confirmed it.
+5. To update, execute the returned config-object-version creation capability with the existing `configObjectId` in `path` and `{"input":{"rawSourceText":"<complete SKILL.md>"},"reason":"<short change summary>"}` in `body`. Keep the existing name unless the user requested a rename. Never call plugin-create for an update.
+6. Read back the config object or resolved plugin detail. Verify the latest stored name, description, content, IDs, marketplace, and access before reporting success.
+7. If Cloud returns an authorization, validation, ambiguity, or persistence error, report it. Do not create a duplicate or silently create a local copy.
 
 ## Design goals
 
