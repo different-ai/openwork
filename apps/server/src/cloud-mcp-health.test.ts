@@ -33,6 +33,7 @@ const stops: Array<() => void> = [];
 type DirectProbeMode = "ok" | "missing" | "unauthorized";
 type ReadHealthOptions = {
   probe?: boolean;
+  diagnosticsClientId?: string;
   beforeRead?: (directUrl: string) => void;
 };
 
@@ -159,7 +160,12 @@ async function readHealthForDirectProbe(mode: DirectProbeMode, options: ReadHeal
         type: "remote",
         url: directUrl,
         enabled: true,
-        headers: { Authorization: "Bearer owt_health_cloud_token" },
+        headers: {
+          Authorization: "Bearer owt_health_cloud_token",
+          ...(options.diagnosticsClientId
+            ? { "x-openwork-connect-client": options.diagnosticsClientId }
+            : {}),
+        },
         oauth: false,
       },
     },
@@ -181,6 +187,20 @@ function watchDirectFetches(directUrl: string, onFetch: () => void): void {
     (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
       const url = input instanceof Request ? input.url : String(input);
       if (url === directUrl) onFetch();
+      return originalFetch(input, init);
+    },
+    { preconnect: originalFetch.preconnect },
+  );
+}
+
+function watchDirectHeaders(directUrl: string, onHeaders: (headers: Headers) => void): void {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = Object.assign(
+    (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url === directUrl) {
+        onHeaders(new Headers(input instanceof Request ? input.headers : init?.headers));
+      }
       return originalFetch(input, init);
     },
     { preconnect: originalFetch.preconnect },
@@ -395,6 +415,20 @@ describe("cloud MCP health foundation", () => {
     expect(trace?.serverInfo).toEqual({ name: "openwork-cloud-test", version: "1.0.0" });
     expect(trace?.protocolVersion).toBe("2025-06-18");
     expect(health.durationMs).toBeGreaterThanOrEqual(0);
+  });
+
+  test("forwards the desktop correlation ID on every direct MCP probe request", async () => {
+    const clientId = "a54264a2-93b1-42c2-a62a-c23ea8ae1e2c";
+    const seen: Array<string | null> = [];
+    await readHealthForDirectProbe("ok", {
+      probe: true,
+      diagnosticsClientId: clientId,
+      beforeRead: (directUrl) => watchDirectHeaders(directUrl, (headers) => {
+        seen.push(headers.get("x-openwork-connect-client"));
+      }),
+    });
+
+    expect(seen).toEqual([clientId, clientId, clientId]);
   });
 
   test("captures the rejected initialize step in the probe trace on HTTP 401", async () => {
