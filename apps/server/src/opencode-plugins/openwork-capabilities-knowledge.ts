@@ -92,7 +92,7 @@ Here is what you can help users with:
 ## Skills
 - Specialized instruction packs for specific workflows.
 - Manageable via Settings > Skills.
-- Users can install skill templates or create custom skills in \`.opencode/skills/\`.
+- When a user asks to create or update a skill, use the built-in \`skill-creator\` skill. Follow the separate runtime \`Skill creation:\` instruction to choose its Remote Cloud or local flow; do not default to creating a workspace file.
 
 ## Packaging & Publishing Skills and MCPs
 - Some skills and MCP servers are managed by OpenWork at runtime (stored server-side and injected into the engine config), so they are not visible as plain workspace files. Do not try to read the OPENCODE_CONFIG file or runtime database directly.

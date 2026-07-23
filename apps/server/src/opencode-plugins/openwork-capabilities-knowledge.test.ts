@@ -30,6 +30,9 @@ describe("OpenWork capabilities knowledge plugin", () => {
     expect(knowledge).toContain("OpenWork documentation tools answer product questions. Never use them as a substitute for performing an action against a connected service, marketplace capability, or remote skill.");
     expect(knowledge).toContain("require the user to sign in to OpenWork first");
     expect(knowledge).toContain("Runtime steering from the OpenWork extensions plugin is the source of truth");
+    expect(knowledge).toContain("use the built-in `skill-creator` skill");
+    expect(knowledge).toContain("Follow the separate runtime `Skill creation:` instruction");
+    expect(knowledge).not.toContain("create custom skills in `.opencode/skills/`");
     expect(knowledge).not.toContain("First call `openwork-cloud_search_capabilities`");
     expect(knowledge).not.toContain("then call `openwork-cloud_execute_capability`");
     expect(knowledge).toContain("Settings > Connect");
@@ -74,6 +77,15 @@ describe("OpenWork capabilities knowledge plugin", () => {
     expect(read).toContain("Needs your sign-in");
     expect(read).toContain("Ready to use");
     expect(read).toContain("advanced path for a custom or local server");
+  });
+
+  test("does not expose the retired local skill import guide", async () => {
+    process.env.OPENWORK_DOCS_DIR = resolve(import.meta.dir, "../../../../packages/docs");
+
+    const plugin = await OpenWorkCapabilitiesKnowledge();
+    const search = await plugin.tool.openwork_docs_search.execute({ query: "import a skill", limit: 10 });
+
+    expect(search).not.toContain("start-here/do-work-with-it/import-a-skill.mdx");
   });
 
   test("reads current Cloud MCP endpoint and proxy guidance from bundled docs", async () => {
