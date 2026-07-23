@@ -9,6 +9,7 @@ import {
   type CloudMcpProviderModelContext,
   type CloudMcpServerMetadata,
 } from "./cloud-mcp-health.js";
+import { OPENWORK_CLOUD_MCP_NAME } from "./context/constants.js";
 import { googleWorkspaceLegacyConfigured } from "./extensions/google-workspace.js";
 import { readBoundedRegularTextFile } from "./jsonc.js";
 import { runtimeStorageDir } from "./runtime-db.js";
@@ -22,7 +23,6 @@ import { ensureDir } from "./utils.js";
 const CONNECT_STATE_FILE = "connect-state.json";
 const CONNECT_STATE_MAX_BYTES = 16 * 1024;
 const CONNECT_SNAPSHOT_MAX_RUNTIME_ROWS = 100;
-const OPENWORK_CLOUD_MCP_NAME = "openwork-cloud";
 type WorkspaceOpencodeClient = ReturnType<typeof createOpencodeClient>;
 
 type PersistedConnectState = {

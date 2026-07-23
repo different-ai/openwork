@@ -1,4 +1,8 @@
 import { nativeDeepLinkEvent } from "./deep-link-bridge";
+import {
+  clearDesktopDeveloperModeRestartPending,
+  withDesktopDeveloperModeObservability,
+} from "./developer-mode";
 
 export type * from "./desktop-types";
 export type {
@@ -481,7 +485,7 @@ export function readInitialDesktopBootstrapConfig(): DesktopBootstrapConfig | nu
 // ---------------------------------------------------------------------------
 
 const {
-  engineStart,
+  engineStart: invokeEngineStart,
   workspaceBootstrap,
   workspaceSetSelected,
   workspaceSetRuntimeActive,
@@ -499,7 +503,7 @@ const {
   opencodeCommandWrite,
   opencodeCommandDelete,
   engineStop,
-  engineRestart,
+  engineRestart: invokeEngineRestart,
   appBuildInfo,
   getDesktopBootstrapConfig,
   debugDesktopBootstrapConfig,
@@ -514,9 +518,9 @@ const {
   sandboxStop,
   sandboxCleanupOpenworkContainers,
   sandboxDebugProbe,
-  openworkServerInfo,
-  openworkServerRestart,
-  runtimeBootstrap,
+  openworkServerInfo: invokeOpenworkServerInfo,
+  openworkServerRestart: invokeOpenworkServerRestart,
+  runtimeBootstrap: invokeRuntimeBootstrap,
   engineInfo,
   engineDoctor,
   pickDirectory,
@@ -538,6 +542,66 @@ const {
   opencodeMcpAuth,
   setWindowDecorations,
 } = desktopBridge;
+
+async function clearAppliedObservabilityRestart(
+  desiredDeveloperMode: boolean,
+  desiredExact: boolean,
+): Promise<void> {
+  try {
+    const info = await invokeOpenworkServerInfo();
+    if (
+      info.running
+      && info.developerModeRequested === desiredDeveloperMode
+      && info.promptLogRequested === desiredExact
+    ) {
+      clearDesktopDeveloperModeRestartPending();
+    }
+  } catch {
+    // Keep the latch set so a later lifecycle operation can reconcile it.
+  }
+}
+
+const engineStart: DesktopCommandInvokers["engineStart"] = async (projectDir, options) => {
+  const effectiveOptions = withDesktopDeveloperModeObservability(options);
+  const result = await invokeEngineStart(projectDir, effectiveOptions);
+  await clearAppliedObservabilityRestart(
+    effectiveOptions.openworkDeveloperMode === true,
+    effectiveOptions.openworkPromptLog === true,
+  );
+  return result;
+};
+
+const engineRestart: DesktopCommandInvokers["engineRestart"] = async (options) => {
+  const effectiveOptions = withDesktopDeveloperModeObservability(options);
+  const result = await invokeEngineRestart(effectiveOptions);
+  await clearAppliedObservabilityRestart(
+    effectiveOptions.openworkDeveloperMode === true,
+    effectiveOptions.openworkPromptLog === true,
+  );
+  return result;
+};
+
+const openworkServerRestart: DesktopCommandInvokers["openworkServerRestart"] = async (options) => {
+  const effectiveOptions = withDesktopDeveloperModeObservability(options);
+  const result = await invokeOpenworkServerRestart(effectiveOptions);
+  await clearAppliedObservabilityRestart(
+    effectiveOptions.openworkDeveloperMode === true,
+    effectiveOptions.openworkPromptLog === true,
+  );
+  return result;
+};
+
+const runtimeBootstrap: DesktopCommandInvokers["runtimeBootstrap"] = async (options) => {
+  const effectiveOptions = withDesktopDeveloperModeObservability(options);
+  const result = await invokeRuntimeBootstrap(effectiveOptions);
+  await clearAppliedObservabilityRestart(
+    effectiveOptions.openworkDeveloperMode === true,
+    effectiveOptions.openworkPromptLog === true,
+  );
+  return result;
+};
+
+const openworkServerInfo = invokeOpenworkServerInfo;
 
 export {
   engineStart,

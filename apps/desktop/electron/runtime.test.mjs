@@ -9,11 +9,62 @@ import {
   commandMatchesPackagedSidecar,
   embeddedServerImportUrl,
   prioritizeWorkspacePaths,
+  resolvePromptLogRuntimeControl,
   resolveOpenworkServerConfigPath,
   seedWorkspacePathsForEmbeddedServer,
   selectStickyOpenworkPortWorkspace,
   snapshotEngineState,
 } from "./runtime.mjs";
+
+describe("resolvePromptLogRuntimeControl", () => {
+  it("reports requested and effective prompt logging with explicit env precedence", () => {
+    assert.deepEqual(resolvePromptLogRuntimeControl(true, { OPENWORK_PROMPT_LOG: "0" }), {
+      developerModeRequested: false,
+      requested: true,
+      enabled: false,
+      level: "off",
+      source: "OPENWORK_PROMPT_LOG",
+    });
+    assert.deepEqual(resolvePromptLogRuntimeControl(false, { OPENWORK_PROMPT_LOG: "yes" }), {
+      developerModeRequested: false,
+      requested: false,
+      enabled: true,
+      level: "exact",
+      source: "OPENWORK_PROMPT_LOG",
+    });
+    assert.deepEqual(resolvePromptLogRuntimeControl(true, { OPENWORK_PROMPT_LOG: "invalid" }), {
+      developerModeRequested: false,
+      requested: true,
+      enabled: false,
+      level: "off",
+      source: "OPENWORK_PROMPT_LOG_INVALID",
+    });
+    assert.deepEqual(resolvePromptLogRuntimeControl(true, {}, true), {
+      developerModeRequested: true,
+      requested: true,
+      enabled: true,
+      level: "exact",
+      source: "desktop-option",
+    });
+    assert.deepEqual(resolvePromptLogRuntimeControl(false, {}, true), {
+      developerModeRequested: true,
+      requested: false,
+      enabled: false,
+      level: "metadata",
+      source: "desktop-option",
+    });
+    assert.deepEqual(resolvePromptLogRuntimeControl(true, {
+      OPENWORK_OBSERVABILITY: "metadata",
+      OPENWORK_PROMPT_LOG: "1",
+    }, true), {
+      developerModeRequested: true,
+      requested: true,
+      enabled: false,
+      level: "metadata",
+      source: "OPENWORK_OBSERVABILITY",
+    });
+  });
+});
 
 describe("prioritizeWorkspacePaths", () => {
   it("keeps the active runtime workspace first", () => {

@@ -2,13 +2,16 @@ import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { deflateRawSync } from "node:zlib";
 
 import { buildOpenworkRuntimeConfigObject } from "../openwork-runtime-config.js";
-import { openworkOfficeAttachmentsPluginPath } from "../openwork-extensions-plugin-path.js";
-import { OpenWorkOfficeAttachments } from "./openwork-office-attachments.js";
+import {
+  openworkContextPluginPath,
+  openworkPromptLogPluginPath,
+} from "../openwork-extensions-plugin-path.js";
+import { OpenWorkContext } from "./openwork-context.js";
 
 const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 const PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
@@ -19,7 +22,6 @@ const XLSX_SENTINEL = "XLSX sentinel fact: Northstar revenue is 1742.42.";
 const ZIP_LOCAL_FILE_HEADER = 0x04034b50;
 const ZIP_CENTRAL_DIRECTORY_HEADER = 0x02014b50;
 const ZIP_END_OF_CENTRAL_DIRECTORY = 0x06054b50;
-const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), "../..");
 
 type ZipFile = {
   name: string;
@@ -158,13 +160,15 @@ function xlsxFixture(text = XLSX_SENTINEL) {
 }
 
 async function transform(root: string, messages: unknown[]) {
-  const plugin = await OpenWorkOfficeAttachments({ directory: root });
+  const plugin = await OpenWorkContext({ directory: root });
   const output = { messages: structuredClone(messages) };
-  await plugin["experimental.chat.messages.transform"]({ context: { sessionID: "ses_test" } }, output);
+  const transformMessages = plugin["experimental.chat.messages.transform"];
+  if (!transformMessages) throw new Error("Consolidated context messages transform is missing");
+  await transformMessages({ context: { sessionID: "ses_test" } }, output);
   return output.messages;
 }
 
-describe("OpenWorkOfficeAttachments", () => {
+describe("OpenWorkContext Office attachments", () => {
   test("extracts DOCX/PPTX text, materializes exact bytes, strips binary parts, and preserves ids", async () => {
     await withWorkspace(async (root) => {
       const docx = docxFixture();
@@ -229,10 +233,12 @@ describe("OpenWorkOfficeAttachments", () => {
   test("preserves the output messages array reference", async () => {
     await withWorkspace(async (root) => {
       const docx = docxFixture();
-      const plugin = await OpenWorkOfficeAttachments({ directory: root });
+      const plugin = await OpenWorkContext({ directory: root });
       const messages = [{ role: "user", parts: [{ id: "stable", type: "file", filename: "QuarterlyBrief.docx", mediaType: DOCX_MIME, url: dataUrl(DOCX_MIME, docx) }] }];
       const output = { messages };
-      await plugin["experimental.chat.messages.transform"]({ context: { sessionID: "ses_test" } }, output);
+      const transformMessages = plugin["experimental.chat.messages.transform"];
+      if (!transformMessages) throw new Error("Consolidated context messages transform is missing");
+      await transformMessages({ context: { sessionID: "ses_test" } }, output);
       expect(output.messages).toBe(messages);
       expect(textOf(messageParts(output.messages[0])[0])).toContain(DOCX_SENTINEL);
     });
@@ -334,9 +340,11 @@ describe("OpenWorkOfficeAttachments", () => {
   test("uses factory directory and ignores Daytona non-git worktree root", async () => {
     await withWorkspace(async (root) => {
       const docx = docxFixture();
-      const plugin = await OpenWorkOfficeAttachments({ directory: root, worktree: "/" });
+      const plugin = await OpenWorkContext({ directory: root, worktree: "/" });
       const output = { messages: [{ role: "user", parts: [{ type: "file", filename: "QuarterlyBrief.docx", mediaType: DOCX_MIME, url: dataUrl(DOCX_MIME, docx) }] }] };
-      await plugin["experimental.chat.messages.transform"]({}, output);
+      const transformMessages = plugin["experimental.chat.messages.transform"];
+      if (!transformMessages) throw new Error("Consolidated context messages transform is missing");
+      await transformMessages({}, output);
       const text = textOf(messageParts(output.messages[0])[0]);
       const materialized = pathFromText(text);
       expect(text).toContain(DOCX_SENTINEL);
@@ -427,19 +435,14 @@ describe("OpenWorkOfficeAttachments", () => {
     });
   });
 
-  test("is registered in runtime config and bundled by the build script", async () => {
+  test("is served by the consolidated runtime plugin", async () => {
     const runtime = await buildOpenworkRuntimeConfigObject();
     const plugin = runtime.plugin;
     if (!Array.isArray(plugin)) throw new Error("Expected plugin list");
-    expect(plugin).toContain(openworkOfficeAttachmentsPluginPath());
-
-    const packageJson = JSON.parse(await readFile(join(PACKAGE_ROOT, "package.json"), "utf8"));
-    if (!isRecord(packageJson) || !isRecord(packageJson.scripts) || typeof packageJson.scripts.build !== "string") throw new Error("Expected package build script");
-    expect(packageJson.scripts.build).toContain("openwork-office-attachments.ts");
-  });
-
-  test("module exposes only the plugin factory", async () => {
-    const mod = await import("./openwork-office-attachments.js");
-    expect(Object.keys(mod)).toEqual(["OpenWorkOfficeAttachments"]);
+    expect(plugin).toEqual([
+      "opencode-chrome-devtools",
+      openworkContextPluginPath(),
+      openworkPromptLogPluginPath(),
+    ]);
   });
 });

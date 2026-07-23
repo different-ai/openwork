@@ -5,6 +5,7 @@ const NATIVE_MENU_OPEN_SETTINGS_EVENT = "openwork:native-menu:open-settings";
 const NATIVE_MENU_TOGGLE_SIDEBAR_EVENT = "openwork:native-menu:toggle-sidebar";
 const NATIVE_MENU_CHECK_UPDATES_EVENT = "openwork:native-menu:check-updates";
 const NATIVE_MENU_ZOOM_EVENT = "openwork:native-menu:zoom";
+const OBSERVABILITY_CONSOLE_EVENT = "openwork:observability-console";
 
 function normalizePlatform(value) {
   if (value === "darwin" || value === "linux") return value;
@@ -215,6 +216,15 @@ ipcRenderer.on(NATIVE_MENU_CHECK_UPDATES_EVENT, () => {
 ipcRenderer.on(NATIVE_MENU_ZOOM_EVENT, (_event, action) => {
   if (typeof window === "undefined") return;
   window.dispatchEvent(new CustomEvent(NATIVE_MENU_ZOOM_EVENT, { detail: action }));
+});
+
+ipcRenderer.on(OBSERVABILITY_CONSOLE_EVENT, (_event, payload) => {
+  const line = typeof payload?.line === "string" ? payload.line : "";
+  if (!line || line.length > 2 * 1024 * 1024 + 256) return;
+  // This is intentionally a console sink rather than a renderer API. No
+  // renderer history is retained; the Electron main process still writes the
+  // same record to its original stderr sink.
+  console.info(line);
 });
 
 if (!applyShellDocumentMarkers() && typeof document !== "undefined") {

@@ -14,6 +14,7 @@ import {
 import { ensureLocalWorkspaceFiles } from "./workspace-init.js";
 import { findManagedEngineWorkspace } from "./workspaces.js";
 import { keepOpenworkRuntimeConfigFileFresh, writeOpenworkRuntimeConfigFile } from "./openwork-runtime-config.js";
+import { buildManagedEngineEnv } from "./managed-engine-env.js";
 import pkg from "../package.json" with { type: "json" };
 
 const args = parseCliArgs(process.argv.slice(2));
@@ -45,20 +46,19 @@ if (!config.opencodeBaseUrl && process.env.OPENWORK_MANAGE_OPENCODE === "1") {
     // instance rebuild, and keepOpenworkRuntimeConfigFileFresh rewrites it
     // on every runtime-DB write — so disposes always pick up current state.
     const runtimeConfigPath = await writeOpenworkRuntimeConfigFile(config, workspace.id);
-    keepOpenworkRuntimeConfigFileFresh(config, workspace.id);
+    keepOpenworkRuntimeConfigFileFresh(config, workspace.id, logger);
     const managedOpencodeCwd = process.env.OPENWORK_MANAGED_OPENCODE_CWD?.trim() || workspace.path;
     await mkdir(managedOpencodeCwd, { recursive: true });
     managedOpencode = await createManagedOpencodeServer({
       bin: process.env.OPENWORK_OPENCODE_BIN,
       cwd: managedOpencodeCwd,
       excludedPorts: [config.port],
-      env: {
-        ...(process.env.OPENWORK_DEV_MODE ? { OPENWORK_DEV_MODE: process.env.OPENWORK_DEV_MODE } : {}),
-        ...(process.env.OPENWORK_UI_CONTROL_DISCOVERY ? { OPENWORK_UI_CONTROL_DISCOVERY: process.env.OPENWORK_UI_CONTROL_DISCOVERY } : {}),
-        OPENWORK_SERVER_URL: serverUrl,
-        OPENWORK_SERVER_TOKEN: config.token,
-        OPENCODE_CONFIG: runtimeConfigPath,
-      },
+      env: buildManagedEngineEnv({
+        sourceEnv: process.env,
+        serverUrl,
+        serverToken: config.token,
+        runtimeConfigPath,
+      }),
     });
     config.opencodeBaseUrl = managedOpencode.url;
     config.opencodeUsername = managedOpencode.username;

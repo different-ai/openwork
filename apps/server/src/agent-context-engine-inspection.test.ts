@@ -4,6 +4,7 @@ import {
   createAgentDiagnosticsEngineFetch,
   effectiveToolDecision,
   validateEffectiveEngineSnapshot,
+  validateObservedRegistryToolIds,
 } from "./agent-context-engine-inspection.js";
 
 function fetchStub(run: (request: Request) => Response | Promise<Response>): typeof fetch {
@@ -20,7 +21,7 @@ describe("agent diagnostics effective engine inspection", () => {
     const snapshot = validateEffectiveEngineSnapshot({
       config: {
         default_agent: "openwork",
-        plugin: [["file:///plugins/openwork-extensions-preview.ts", { secret: "not-copied" }]],
+        plugin: [["file:///plugins/openwork-context.ts", { secret: "not-copied" }]],
         mcp: {
           "openwork-cloud": {
             type: "remote",
@@ -41,7 +42,7 @@ describe("agent diagnostics effective engine inspection", () => {
 
     expect(snapshot).toMatchObject({
       defaultAgent: "openwork",
-      pluginSpecs: ["file:///plugins/openwork-extensions-preview.ts"],
+      pluginSpecs: ["file:///plugins/openwork-context.ts"],
       agents: [{ name: "openwork", mode: "primary", hidden: false }],
       mcps: [{ name: "openwork-cloud" }],
     });
@@ -57,6 +58,19 @@ describe("agent diagnostics effective engine inspection", () => {
 
     expect(effectiveToolDecision(rules, "openwork-cloud_search_capabilities")).toBe("allow");
     expect(effectiveToolDecision(rules, "openwork-cloud_execute_capability")).toBe("deny");
+  });
+
+  test("retains only declared OpenWork tool IDs from the bounded engine catalog", () => {
+    const declared = ["openwork_docs_search", "openwork_docs_read"];
+    expect(validateObservedRegistryToolIds([
+      "read",
+      "custom_private_tool",
+      "openwork_docs_read",
+      "openwork_docs_search",
+      "openwork_docs_read",
+    ], declared)).toEqual(declared);
+    expect(validateObservedRegistryToolIds({ tools: declared }, declared)).toBeNull();
+    expect(validateObservedRegistryToolIds([123], declared)).toBeNull();
   });
 
   test("bounds engine bodies and rejects redirects without following them", async () => {

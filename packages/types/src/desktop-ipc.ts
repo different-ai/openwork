@@ -65,6 +65,16 @@ export type DesktopNotificationResult =
 export type OpenworkServerInfo = {
   running: boolean;
   remoteAccessEnabled: boolean;
+  developerModeRequested: boolean;
+  promptLogRequested: boolean;
+  promptLogEnabled: boolean;
+  observabilityLevel: "off" | "metadata" | "exact";
+  promptLogSource:
+    | "OPENWORK_OBSERVABILITY"
+    | "OPENWORK_OBSERVABILITY_INVALID"
+    | "OPENWORK_PROMPT_LOG"
+    | "OPENWORK_PROMPT_LOG_INVALID"
+    | "desktop-option";
   host: string | null;
   port: number | null;
   baseUrl: string | null;
@@ -434,7 +444,7 @@ export type DesktopCommandMap = {
   // Engine / runtime lifecycle
   engineStart: { args: [projectDir: string, options?: Record<string, unknown>]; result: EngineInfo };
   prepareFreshRuntime: { args: []; result: unknown };
-  runtimeBootstrap: { args: []; result: unknown };
+  runtimeBootstrap: { args: [options?: Record<string, unknown>]; result: unknown };
   runtimeStatus: { args: []; result: unknown };
   engineStop: { args: []; result: EngineInfo };
   engineRestart: { args: [options?: Record<string, unknown>]; result: EngineInfo };

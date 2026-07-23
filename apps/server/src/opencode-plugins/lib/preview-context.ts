@@ -2,20 +2,12 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { homedir, platform } from "node:os";
 import { z } from "zod";
+import { OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION } from "./connect-steering.js";
 import {
-  OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION,
-  resolveOpenWorkConnectSkillInstruction,
-  resolveOpenWorkExtensionDiscoveryInstruction,
+  normalizeOpenCodeContext,
   type OpenCodeContext,
-  type OpenWorkEngineMcpStatusClient,
-} from "./openwork-extensions-preview-steering.js";
-
-type ExtensionActionPayload = {
-  extensionId: string;
-  action: string;
-  args: Record<string, unknown>;
-  context: ReturnType<typeof contextPayload>;
-};
+} from "./context.js";
+import { getJson, postJson } from "./server-client.js";
 
 const listActionsArgsSchema = z.object({
   extensionId: z.string().optional().describe("Optional extension id to filter by, such as google-workspace."),
@@ -124,7 +116,7 @@ const sessionMessagesEnvelopeSchema = z.object({
   items: z.array(sessionMessageSchema),
 }).passthrough();
 
-const OPENWORK_UI_CONTROL_INSTRUCTION =
+export const OPENWORK_UI_CONTROL_INSTRUCTION =
   `IMPORTANT: You are running inside the OpenWork desktop app. When the user asks you to open settings, navigate the app, add providers, or control the OpenWork UI in any way, ALWAYS use the openwork_ui_* tools — NOT the browser_* tools. The browser tools are for external websites only. The openwork_ui_* tools control the app directly and are instant (one tool call).
 
 To open settings: openwork_ui_execute_action with actionId "settings.panel.open" and args {panel:"general"} (or "ai", "extensions", "permissions", "skills", "appearance", etc.)
@@ -133,18 +125,18 @@ To see what the user sees: openwork_ui_snapshot
 To list all available actions: openwork_ui_list_actions
 To ask what OpenWork can do: openwork_ui_execute_action with actionId "help.capabilities"`;
 
-const OPENWORK_SESSION_MEMORY_INSTRUCTION =
+export const OPENWORK_SESSION_MEMORY_INSTRUCTION =
   `## Cross-session memory
 When the user asks what they said, what happened, or what was decided in another OpenWork chat/session, treat it as a session-history lookup, not hidden model memory.
 Use openwork_session_search first to search session titles and message transcripts across workspaces. If there is one clear match, use openwork_session_read with the returned sessionId/workspaceId to retrieve transcript context without navigating the UI.
 Answer only from the returned search/read results. If multiple sessions match, ask a short clarifying question. If the returned transcript is limited or missing the older context needed, say so instead of guessing.`;
 
-const OPENWORK_SESSION_CREATION_INSTRUCTION =
+export const OPENWORK_SESSION_CREATION_INSTRUCTION =
   `## Creating sessions
 When the user asks to create one or more new OpenWork sessions or chats, ALWAYS use openwork_session_create. Do not use UI-control tools or browser automation to create sessions.
 Pass one entry per requested session, with a short title and a self-contained prompt describing the work for that session. The tool creates and starts every session in the background without navigating away from the current chat. After the call, report only the sessions in created and clearly report any failures.`;
 
-const OPENWORK_BROWSER_INSTRUCTION =
+export const OPENWORK_BROWSER_INSTRUCTION =
   `Do NOT use browser_navigate, browser_click, or browser_snapshot to interact with the OpenWork app itself. Those are for browsing external websites.
 
 ## Built-in Browser (external websites)
@@ -188,63 +180,6 @@ type FailedOpenWorkSessionResult = {
   error: string;
 };
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function optionalStringProperty(value: unknown, key: string): string | undefined {
-  if (!isRecord(value)) return undefined;
-  const property = value[key];
-  return typeof property === "string" && property.trim().length > 0 ? property : undefined;
-}
-
-type OpenWorkEngineMcpStatusFunction = OpenWorkEngineMcpStatusClient["mcp"]["status"];
-
-function isOpenWorkEngineMcpStatusFunction(value: unknown): value is OpenWorkEngineMcpStatusFunction {
-  return typeof value === "function";
-}
-
-function readEngineMcpStatusClient(value: unknown): OpenWorkEngineMcpStatusClient | undefined {
-  const client = isRecord(value) ? value.client : undefined;
-  const mcp = isRecord(client) ? client.mcp : undefined;
-  const status = isRecord(mcp) ? mcp.status : undefined;
-  if (!isOpenWorkEngineMcpStatusFunction(status)) return undefined;
-  return { mcp: { status: (request) => status.call(mcp, request) } };
-}
-
-function normalizeOpenCodeContext(value: unknown): OpenCodeContext {
-  const nested = isRecord(value) && isRecord(value.context) ? value.context : value;
-  const agent = optionalStringProperty(nested, "agent");
-  const sessionID = optionalStringProperty(nested, "sessionID");
-  const messageID = optionalStringProperty(nested, "messageID");
-  const directory = optionalStringProperty(nested, "directory");
-  const worktree = optionalStringProperty(nested, "worktree");
-  const workspaceId = optionalStringProperty(nested, "workspaceId");
-  const workspaceID = optionalStringProperty(nested, "workspaceID");
-  return {
-    ...(agent ? { agent } : {}),
-    ...(sessionID ? { sessionID } : {}),
-    ...(messageID ? { messageID } : {}),
-    ...(directory ? { directory } : {}),
-    ...(worktree ? { worktree } : {}),
-    ...(workspaceId ? { workspaceId } : {}),
-    ...(workspaceID ? { workspaceID } : {}),
-  };
-}
-
-function mergeTransformInputWithFactoryContext(input: unknown, factoryContext: OpenCodeContext): unknown {
-  if (Object.keys(factoryContext).length === 0) return input;
-  const inputRecord = isRecord(input) ? input : {};
-  const inputContext = isRecord(inputRecord.context) ? inputRecord.context : {};
-  return {
-    ...inputRecord,
-    context: {
-      ...factoryContext,
-      ...inputContext,
-    },
-  };
-}
-
 const SESSION_SEARCH_DEFAULT_LIMIT = 10;
 const SESSION_SEARCH_DEFAULT_SCAN_LIMIT = 100;
 const SESSION_SEARCH_DEFAULT_MESSAGE_LIMIT = 400;
@@ -263,8 +198,8 @@ function userAppDataDir(): string {
 // to grant agents UI control is the hidden "OpenWork UI Control" MCP in
 // Settings -> Extensions. Set OPENWORK_UI_CONTROL_TOOLS=1 to re-enable the
 // built-in preview surface (used by internal tooling).
-function uiControlToolsEnabled(): boolean {
-  const raw = process.env.OPENWORK_UI_CONTROL_TOOLS?.trim().toLowerCase() ?? "";
+export function uiControlToolsEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const raw = env.OPENWORK_UI_CONTROL_TOOLS?.trim().toLowerCase() ?? "";
   return raw === "1" || raw === "true";
 }
 
@@ -314,16 +249,6 @@ async function uiBridgeRequest(path: string, options: { method?: string; body?: 
     cachedBridgeAt = 0;
     return { ok: false, error: `UI bridge unreachable: ${error instanceof Error ? error.message : String(error)}` };
   }
-}
-
-async function serverGet(path: string): Promise<unknown> {
-  const { url, token } = requireOpenWorkServer();
-  const response = await fetch(`${url}${path}`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  const payload = await parseResponse(response);
-  if (!response.ok) throw new Error(errorMessage(payload, "OpenWork server request failed"));
-  return payload;
 }
 
 function collapseWhitespace(value: string): string {
@@ -426,7 +351,7 @@ function messageSearchResult(workspace: OpenWorkWorkspace, session: SessionInfo,
 }
 
 async function listOpenWorkWorkspaces(): Promise<OpenWorkWorkspace[]> {
-  return workspaceListEnvelopeSchema.parse(await serverGet("/workspaces")).items;
+  return workspaceListEnvelopeSchema.parse(await getJson("/workspaces")).items;
 }
 
 function filterWorkspaces(workspaces: OpenWorkWorkspace[], workspaceId?: string): OpenWorkWorkspace[] {
@@ -443,20 +368,20 @@ function filterWorkspaces(workspaces: OpenWorkWorkspace[], workspaceId?: string)
 async function listWorkspaceSessions(workspace: OpenWorkWorkspace, limit: number): Promise<SessionInfo[]> {
   const query = new URLSearchParams({ roots: "true", limit: String(limit) });
   return sessionListEnvelopeSchema.parse(
-    await serverGet(`/workspace/${encodeURIComponent(workspace.id)}/sessions?${query.toString()}`),
+    await getJson(`/workspace/${encodeURIComponent(workspace.id)}/sessions?${query.toString()}`),
   ).items;
 }
 
 async function readWorkspaceSession(workspace: OpenWorkWorkspace, sessionId: string): Promise<SessionInfo> {
   return sessionEnvelopeSchema.parse(
-    await serverGet(`/workspace/${encodeURIComponent(workspace.id)}/sessions/${encodeURIComponent(sessionId)}`),
+    await getJson(`/workspace/${encodeURIComponent(workspace.id)}/sessions/${encodeURIComponent(sessionId)}`),
   ).item;
 }
 
 async function readSessionMessages(workspace: OpenWorkWorkspace, sessionId: string, limit: number): Promise<SessionMessage[]> {
   const query = new URLSearchParams({ limit: String(limit) });
   return sessionMessagesEnvelopeSchema.parse(
-    await serverGet(`/workspace/${encodeURIComponent(workspace.id)}/sessions/${encodeURIComponent(sessionId)}/messages?${query.toString()}`),
+    await getJson(`/workspace/${encodeURIComponent(workspace.id)}/sessions/${encodeURIComponent(sessionId)}/messages?${query.toString()}`),
   ).items;
 }
 
@@ -569,49 +494,11 @@ async function readOpenWorkSession(rawArgs: unknown): Promise<object> {
   return { ok: false, error: `Session ${args.sessionId} was not found in matching OpenWork workspaces` };
 }
 
-function serverUrl(): string {
-  return String(process.env.OPENWORK_SERVER_URL || "").replace(/\/$/, "");
-}
-
-function serverToken(): string {
-  return String(process.env.OPENWORK_SERVER_TOKEN || "");
-}
-
-function requireOpenWorkServer(): { url: string; token: string } {
-  const url = serverUrl();
-  const token = serverToken();
-  if (!url || !token) {
-    throw new Error("OpenWork extension tools are only available when OpenCode is launched by OpenWork.");
-  }
-  return { url, token };
-}
-
-async function parseResponse(response: Response): Promise<unknown> {
-  const text = await response.text();
-  if (!text) return null;
-  try {
-    const parsed: unknown = JSON.parse(text);
-    return parsed;
-  } catch {
-    return { message: text };
-  }
-}
-
-function getStringProperty(value: unknown, key: string): string | null {
-  if (typeof value !== "object" || value === null) return null;
-  const property = Reflect.get(value, key);
-  return typeof property === "string" ? property : null;
-}
-
 function addContext(payload: unknown, context: OpenCodeContext): object {
   if (typeof payload === "object" && payload !== null && !Array.isArray(payload)) {
     return Object.assign({}, payload, { context: contextPayload(context) });
   }
   return { payload, context: contextPayload(context) };
-}
-
-function errorMessage(payload: unknown, fallback: string): string {
-  return getStringProperty(payload, "message") ?? getStringProperty(payload, "code") ?? fallback;
 }
 
 function unknownErrorMessage(error: unknown): string {
@@ -700,23 +587,6 @@ async function createOpenWorkSessions(rawArgs: unknown, context: OpenCodeContext
   };
 }
 
-async function postJson(path: string, body: ExtensionActionPayload | Record<string, unknown>): Promise<unknown> {
-  const { url, token } = requireOpenWorkServer();
-  const response = await fetch(url + path, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
-  });
-  const payload = await parseResponse(response);
-  if (!response.ok) {
-    throw new Error(errorMessage(payload, "OpenWork extension call failed"));
-  }
-  return payload;
-}
-
 function contextPayload(context: OpenCodeContext) {
   return {
     agent: context.agent,
@@ -728,28 +598,13 @@ function contextPayload(context: OpenCodeContext) {
   };
 }
 
-export const OpenWorkExtensionsPreview = async (factoryInput?: unknown) => {
-  const uiControlEnabled = uiControlToolsEnabled();
+export function createOpenWorkPreviewHooks(
+  factoryInput?: unknown,
+  env: NodeJS.ProcessEnv = process.env,
+) {
+  const uiControlEnabled = uiControlToolsEnabled(env);
   const factoryContext = normalizeOpenCodeContext(factoryInput);
-  const engineMcpStatusClient = readEngineMcpStatusClient(factoryInput);
-  const engineMcpStatusDirectory = factoryContext.directory ?? factoryContext.worktree;
   return {
-  "experimental.chat.system.transform": async (input: unknown, output: { system: string[] }) => {
-    const mergedInput = mergeTransformInputWithFactoryContext(input, factoryContext);
-    const [extensionInstruction, skillInstruction] = await Promise.all([
-      resolveOpenWorkExtensionDiscoveryInstruction(mergedInput, fetch, {
-        client: engineMcpStatusClient,
-        directory: engineMcpStatusDirectory,
-      }),
-      resolveOpenWorkConnectSkillInstruction(mergedInput, fetch),
-    ]);
-    output.system.push(extensionInstruction);
-    if (skillInstruction) output.system.push(skillInstruction);
-    output.system.push(OPENWORK_SESSION_CREATION_INSTRUCTION);
-    output.system.push(OPENWORK_SESSION_MEMORY_INSTRUCTION);
-    output.system.push(OPENWORK_BROWSER_INSTRUCTION);
-    if (uiControlEnabled) output.system.push(OPENWORK_UI_CONTROL_INSTRUCTION);
-  },
   tool: {
     openwork_extension_list_actions: {
       description: `List extension actions currently exposed by OpenWork. ${OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION}`,
@@ -757,12 +612,11 @@ export const OpenWorkExtensionsPreview = async (factoryInput?: unknown) => {
       async execute(rawArgs: unknown, context: OpenCodeContext) {
         const args = listActionsArgsSchema.parse(rawArgs);
         const query = args.extensionId ? `?extensionId=${encodeURIComponent(args.extensionId)}` : "";
-        const { url, token } = requireOpenWorkServer();
-        const response = await fetch(`${url}/experimental/extensions/actions${query}`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        const payload = await parseResponse(response);
-        if (!response.ok) throw new Error(errorMessage(payload, "OpenWork extension action listing failed"));
+        const payload = await getJson(
+          `/experimental/extensions/actions${query}`,
+          fetch,
+          "OpenWork extension action listing failed",
+        );
         return JSON.stringify(addContext(payload, context), null, 2);
       },
     },
@@ -887,4 +741,4 @@ export const OpenWorkExtensionsPreview = async (factoryInput?: unknown) => {
     },
   },
   };
-};
+}

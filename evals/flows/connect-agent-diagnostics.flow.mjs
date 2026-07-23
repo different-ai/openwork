@@ -313,7 +313,7 @@ export default {
               `Required context markers were absent: ${JSON.stringify(report.agent.configuredOpenworkAgent.prompt.markers)}`,
             );
             ctx.assert(
-              report.agent.pluginLabels.includes("openwork-extensions-preview"),
+              report.agent.pluginLabels.includes("openwork-context"),
               `Connect steering plugin evidence was absent: ${JSON.stringify(report.agent.pluginLabels)}`,
             );
             if (effective) {
@@ -366,7 +366,7 @@ export default {
             for (const marker of ["search_capabilities", "execute_capability", "Memory marker"]) {
               ctx.assert(rendered.report.includes(marker), `Rendered marker was missing: ${marker}`);
             }
-            ctx.assert(rendered.plugins.includes("openwork-extensions-preview"), "Connect plugin evidence was not rendered.");
+            ctx.assert(rendered.plugins.includes("openwork-context"), "Connect plugin evidence was not rendered.");
             ctx.assert(
               JSON.stringify(rendered.mcps.sort()) === JSON.stringify(report.mcps.map((mcp) => mcp.name).sort()),
               `Rendered MCP rows diverged from the real report: ${JSON.stringify(rendered.mcps)} vs ${JSON.stringify(report.mcps)}`,
@@ -381,7 +381,7 @@ export default {
           screenshot: {
             name: "agent-diagnostics-real-injection-intent",
             claim: "Agent markers, plugin labels, and the real MCP inventory state are visibly labeled as effective engine evidence or configured fallback intent.",
-            requireText: ["OpenWork agent", "search_capabilities", "execute_capability", "openwork-extensions-preview", "MCP inventory"],
+            requireText: ["OpenWork agent", "search_capabilities", "execute_capability", "openwork-context", "MCP inventory"],
             rejectText: ["Something went wrong"],
           },
         });

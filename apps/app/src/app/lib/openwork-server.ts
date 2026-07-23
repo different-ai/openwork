@@ -131,8 +131,10 @@ export type OpenworkSessionSnapshot = {
 
 export type OpenworkPluginItem = {
   spec: string;
-  source: "config" | "dir.project" | "dir.global";
+  source: "core" | "config" | "dir.project" | "dir.global";
   scope: "project" | "global";
+  stage?: "config.managed" | "config.project" | "dir.project" | "dir.global";
+  shadowedWithinInventoryBy?: string;
   path?: string;
 };
 
@@ -198,6 +200,15 @@ export type OpenworkAuthorizedFoldersUpdateResponse = {
   folders: string[];
   hiddenCount: number;
   updatedAt: number;
+};
+
+export type OpenworkWorkspaceConfigResponse = {
+  /** User-editable project and runtime configuration; PATCH round-trips this surface. */
+  opencode: Record<string, unknown>;
+  openwork: Record<string, unknown>;
+  /** Read-only configuration assembled for the managed OpenCode engine. */
+  engine: Record<string, unknown>;
+  updatedAt?: number | null;
 };
 
 export type OpenworkRuntimeConfigMigrationResult = {
@@ -1598,7 +1609,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         },
       ),
     getConfig: (workspaceId: string) =>
-      requestJson<{ opencode: Record<string, unknown>; openwork: Record<string, unknown>; updatedAt?: number | null }>(
+      requestJson<OpenworkWorkspaceConfigResponse>(
         baseUrl,
         `/workspace/${workspaceId}/config`,
         { token, hostToken, timeoutMs: timeouts.config },
@@ -1739,20 +1750,20 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       }),
     listPlugins: (workspaceId: string, options?: { includeGlobal?: boolean }) => {
       const query = options?.includeGlobal ? "?includeGlobal=true" : "";
-      return requestJson<{ items: OpenworkPluginItem[]; loadOrder: string[] }>(
+      return requestJson<{ items: OpenworkPluginItem[]; loadOrder: string[]; orderSemantics: "partial-stage-order"; uninspectedStages: string[] }>(
         baseUrl,
         `/workspace/${workspaceId}/plugins${query}`,
         { token, hostToken },
       );
     },
     addPlugin: (workspaceId: string, spec: string) =>
-      requestJson<{ items: OpenworkPluginItem[]; loadOrder: string[] }>(
+      requestJson<{ items: OpenworkPluginItem[]; loadOrder: string[]; orderSemantics: "partial-stage-order"; uninspectedStages: string[] }>(
         baseUrl,
         `/workspace/${workspaceId}/plugins`,
         { token, hostToken, method: "POST", body: { spec } },
       ),
     removePlugin: (workspaceId: string, name: string) =>
-      requestJson<{ items: OpenworkPluginItem[]; loadOrder: string[] }>(
+      requestJson<{ items: OpenworkPluginItem[]; loadOrder: string[]; orderSemantics: "partial-stage-order"; uninspectedStages: string[] }>(
         baseUrl,
         `/workspace/${workspaceId}/plugins/${encodeURIComponent(name)}`,
         { token, hostToken, method: "DELETE" },

@@ -10,6 +10,7 @@ import { resolveServerConfig, type CliArgs } from "./config.js";
 import { createManagedOpencodeServer, type ManagedOpencodeServer, type OpencodeExecutionSnapshot } from "./managed-opencode.js";
 import {
   clearTrustedOpencodeProcess,
+  createServerLogger,
   registerTrustedOpencodeProcess,
   startServer,
   syncAllWorkspacesRuntimeMcpToEngine,
@@ -18,6 +19,7 @@ import { ensureLocalWorkspaceFiles } from "./workspace-init.js";
 import { findManagedEngineWorkspace } from "./workspaces.js";
 import { keepOpenworkRuntimeConfigFileFresh, writeOpenworkRuntimeConfigFile } from "./openwork-runtime-config.js";
 import { sweepLegacyOpenCodeConfig } from "./legacy-config-sweep.js";
+import { buildManagedEngineEnv, buildPromptDebugControlEnv } from "./managed-engine-env.js";
 import type { ServeResult } from "./serve-node.js";
 import type { ServerConfig } from "./types.js";
 
@@ -28,6 +30,10 @@ export type EmbeddedServerOptions = CliArgs & {
   opencodeBin?: string;
   /** Working directory for the managed OpenCode process. */
   opencodeCwd?: string;
+  /** Desktop Developer Mode preference, scoped to prompt observability. */
+  developerModeEnabled?: boolean;
+  /** Separate exact-content consent nested under Developer Mode. */
+  promptLogEnabled?: boolean;
 };
 
 export type EmbeddedServerHandle = {
@@ -47,6 +53,7 @@ export type EmbeddedServerHandle = {
 
 export async function startEmbeddedServer(options: EmbeddedServerOptions): Promise<EmbeddedServerHandle> {
   const config = await resolveServerConfig(options);
+  const logger = createServerLogger(config);
   const serverUrl = `http://${config.host === "0.0.0.0" ? "127.0.0.1" : config.host}:${config.port}`;
   const opencodeModelsUrl = process.env.OPENWORK_DEV_MODE === "1"
     ? "http://localhost:8791/models"
@@ -67,25 +74,29 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
       // instance rebuild, and keepOpenworkRuntimeConfigFileFresh rewrites it
       // on every runtime-DB write — so disposes always pick up current state.
       const runtimeConfigPath = await writeOpenworkRuntimeConfigFile(config, workspace.id);
-      keepOpenworkRuntimeConfigFileFresh(config, workspace.id);
+      keepOpenworkRuntimeConfigFileFresh(config, workspace.id, logger);
       const cwd = options.opencodeCwd
         || process.env.OPENWORK_MANAGED_OPENCODE_CWD?.trim()
         || workspace.path;
       await mkdir(cwd, { recursive: true });
+      // Follow-up decision: embedded startup intentionally remains the only
+      // path that sweeps legacy config and supplies OPENCODE_MODELS_URL. Do not
+      // converge these compatibility behaviors with CLI startup implicitly.
       await sweepLegacyOpenCodeConfig(config).catch(() => undefined);
 
       managedOpencode = await createManagedOpencodeServer({
         bin: options.opencodeBin || process.env.OPENWORK_OPENCODE_BIN,
         cwd,
         excludedPorts: [config.port],
-        env: {
-          ...(process.env.OPENWORK_DEV_MODE ? { OPENWORK_DEV_MODE: process.env.OPENWORK_DEV_MODE } : {}),
-          ...(process.env.OPENWORK_UI_CONTROL_DISCOVERY ? { OPENWORK_UI_CONTROL_DISCOVERY: process.env.OPENWORK_UI_CONTROL_DISCOVERY } : {}),
-          OPENWORK_SERVER_URL: serverUrl,
-          OPENWORK_SERVER_TOKEN: config.token,
-          OPENCODE_CONFIG: runtimeConfigPath,
-          OPENCODE_MODELS_URL: opencodeModelsUrl,
-        },
+        env: buildManagedEngineEnv({
+          sourceEnv: process.env,
+          serverUrl,
+          serverToken: config.token,
+          runtimeConfigPath,
+          opencodeModelsUrl,
+          developerModeEnabled: options.developerModeEnabled,
+          promptLogEnabled: options.promptLogEnabled,
+        }),
       });
 
       config.opencodeBaseUrl = managedOpencode.url;
@@ -117,7 +128,16 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
     }
   }
 
-  const server = await startServer(config);
+  const server = await startServer(config, {
+    // Keep this setting scoped to the embedded server instance. Mutating the
+    // Electron main process environment would leak a stale toggle across
+    // restarts and make independently embedded servers affect one another.
+    promptDebugEnv: buildPromptDebugControlEnv(
+      process.env,
+      options.developerModeEnabled,
+      options.promptLogEnabled,
+    ),
+  });
 
   // The runtime config file above only covers workspaces[0]. Push every
   // workspace's runtime-DB MCPs into the engine so they aren't invisible

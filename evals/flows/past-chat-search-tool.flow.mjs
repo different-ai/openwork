@@ -108,8 +108,8 @@ function startMockOpenWorkServer() {
 
 async function runInjectedSessionTools(baseUrl) {
   const script = `
-    const { OpenWorkExtensionsPreview } = await import("./apps/server/src/opencode-plugins/openwork-extensions-preview.ts");
-    const plugin = await OpenWorkExtensionsPreview();
+    const { OpenWorkContext } = await import("./apps/server/src/opencode-plugins/openwork-context.ts");
+    const plugin = await OpenWorkContext();
     const search = JSON.parse(await plugin.tool.openwork_session_search.execute({ query: "raven launch", limit: 5, scanLimit: 10 }));
     const read = JSON.parse(await plugin.tool.openwork_session_read.execute({ sessionId: "ses_archive", count: 2 }));
     console.log(JSON.stringify({ search, read }));

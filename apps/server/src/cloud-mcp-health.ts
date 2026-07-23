@@ -1,17 +1,20 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import type { createOpencodeClient, McpStatus, ToolIds, ToolList } from "@opencode-ai/sdk/v2/client";
+import { OPENWORK_CLOUD_MCP_NAME } from "./context/constants.js";
 import { ApiError } from "./errors.js";
 import { diagnoseMcpToolDenies, type McpToolDeny } from "./mcp.js";
 import { sanitizeDiagnosticString, sanitizeDiagnosticValue } from "./diagnostic-sanitizer.js";
 import { readRuntimeOpencodeConfig, runtimeMcpMap, writeRuntimeOpencodeConfig } from "./runtime-opencode-config-store.js";
 import { externalFetch } from "./server-fetch.js";
+import {
+  openworkContextPluginPath,
+  openworkPromptLogPluginPath,
+} from "./openwork-extensions-plugin-path.js";
 import type { ServerConfig, WorkspaceInfo } from "./types.js";
 import { validateMcpConfig } from "./validators.js";
 
-export const OPENWORK_CLOUD_MCP_NAME = "openwork-cloud";
+export { OPENWORK_CLOUD_MCP_NAME } from "./context/constants.js";
 export const OPENWORK_CLOUD_EXPECTED_TOOLS = [
   "openwork-cloud_search_capabilities",
   "openwork-cloud_execute_capability",
@@ -1930,18 +1933,20 @@ function baseUrlConfigured(config: ServerConfig, workspace: WorkspaceInfo): bool
 }
 
 async function pluginFileHashes(): Promise<CloudMcpCompatibilitySnapshot["pluginFileHashes"]> {
-  const here = dirname(fileURLToPath(import.meta.url));
-  const names = ["openwork-extensions-preview", "openwork-capabilities-knowledge"];
-  return Promise.all(names.map(async (name) => {
-    let lastError = "not found";
-    for (const extension of ["ts", "js"]) {
-      try {
-        return { name, sha256: hashString(await readFile(join(here, "opencode-plugins", `${name}.${extension}`), "utf8")) };
-      } catch (error) {
-        lastError = error instanceof Error ? error.message : String(error);
-      }
+  // Hash the exact bundles injected into OpenCode. In packaged Electron builds
+  // these live outside app.asar under extraResources; in-asar compiler output
+  // is not the executable artifact.
+  return Promise.all([
+    { name: "openwork-context", path: openworkContextPluginPath() },
+    { name: "openwork-prompt-log", path: openworkPromptLogPluginPath() },
+  ].map(async ({ name, path }) => {
+    try {
+      const source = await readFile(path, "utf8");
+      return { name, sha256: hashString(source) };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { name, sha256: null, error: sanitizeDiagnosticString(message) };
     }
-    return { name, sha256: null, error: sanitizeDiagnosticString(lastError) };
   }));
 }
 

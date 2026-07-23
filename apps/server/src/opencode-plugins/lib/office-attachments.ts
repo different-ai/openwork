@@ -4,6 +4,9 @@ import { link, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises
 import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { normalizeOpenCodeContext, type OpenCodeContext } from "./context.js";
+import { isRecord, optionalStringProperty } from "./records.js";
+
 const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 const PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
 const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
@@ -26,10 +29,6 @@ const MAX_XLSX_SHEETS = 24;
 const MAX_XLSX_CELLS = 600;
 const MAX_XLSX_SHARED_STRINGS = 4_000;
 const MATERIALIZED_DIR = join(".opencode", "openwork", "inbox", "chat-attachments");
-
-type RuntimeContext = {
-  directory?: string;
-};
 
 type OfficeKind = "docx" | "pptx" | "xlsx";
 
@@ -55,24 +54,7 @@ type ZipEntry = {
   localOffset: number;
 };
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function optionalStringProperty(value: unknown, key: string): string | undefined {
-  if (!isRecord(value)) return undefined;
-  const property = value[key];
-  return typeof property === "string" && property.trim().length > 0 ? property : undefined;
-}
-
-function normalizeOpenCodeContext(value: unknown): RuntimeContext {
-  const directory = optionalStringProperty(value, "directory");
-  return {
-    ...(directory ? { directory } : {}),
-  };
-}
-
-function workspaceRoot(factoryContext: RuntimeContext): string | null {
+function workspaceRoot(factoryContext: OpenCodeContext): string | null {
   return factoryContext.directory ? resolve(factoryContext.directory) : null;
 }
 
@@ -711,16 +693,23 @@ async function transformMessage(value: unknown, root: string | null): Promise<un
   return value;
 }
 
-// Single export: the OpenCode plugin loader treats every export of a plugin
-// module as a plugin factory, so helpers must stay module-private.
-export const OpenWorkOfficeAttachments = async (factoryInput?: unknown) => {
+export type OfficeMessagesOutput = { messages: unknown[] };
+
+export async function transformOfficeAttachmentMessages(
+  factoryContext: OpenCodeContext,
+  output: OfficeMessagesOutput,
+): Promise<void> {
+  const root = workspaceRoot(factoryContext);
+  const messages = await Promise.all(output.messages.map((message) => transformMessage(message, root)));
+  output.messages.splice(0, output.messages.length, ...messages);
+}
+
+export async function createOfficeAttachmentsHooks(factoryInput?: unknown) {
   const factoryContext = normalizeOpenCodeContext(factoryInput);
   return {
-    "experimental.chat.messages.transform": async (input: unknown, output: { messages: unknown[] }) => {
+    "experimental.chat.messages.transform": async (input: unknown, output: OfficeMessagesOutput) => {
       void input;
-      const root = workspaceRoot(factoryContext);
-      const messages = await Promise.all(output.messages.map((message) => transformMessage(message, root)));
-      output.messages.splice(0, output.messages.length, ...messages);
+      await transformOfficeAttachmentMessages(factoryContext, output);
     },
   };
-};
+}

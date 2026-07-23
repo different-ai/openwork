@@ -3,6 +3,7 @@ const MAX_ENGINE_AGENT_COUNT = 200;
 const MAX_ENGINE_PERMISSION_RULES = 2_000;
 const MAX_ENGINE_MCP_COUNT = 200;
 const MAX_ENGINE_PLUGIN_COUNT = 200;
+const MAX_ENGINE_TOOL_ID_COUNT = 5_000;
 const MAX_ENGINE_PROMPT_LENGTH = 1024 * 1024;
 const MAX_ENGINE_TEXT_LENGTH = 500;
 
@@ -32,6 +33,8 @@ export type EffectiveEngineSnapshot = {
 export type AgentDiagnosticsEngineInspectionPayload = {
   config: unknown;
   agents: unknown;
+  toolIds?: unknown;
+  toolIdsReadPerformed?: boolean;
 };
 
 export type InspectAgentDiagnosticsEngine = (
@@ -118,6 +121,25 @@ function parseMcps(value: unknown): EffectiveEngineSnapshot["mcps"] | null {
     mcps.push({ name, config });
   }
   return mcps;
+}
+
+/**
+ * Reduce the engine's complete tool-ID response to the registry-declared
+ * OpenWork subset. Custom and non-OpenWork names never cross into the
+ * diagnostics analyzer or report.
+ */
+export function validateObservedRegistryToolIds(
+  value: unknown,
+  declaredToolIds: readonly string[],
+): string[] | null {
+  if (!Array.isArray(value) || value.length > MAX_ENGINE_TOOL_ID_COUNT) return null;
+  const declared = new Set(declaredToolIds);
+  const observed = new Set<string>();
+  for (const raw of value) {
+    if (typeof raw !== "string" || raw.length > MAX_ENGINE_TEXT_LENGTH) return null;
+    if (declared.has(raw)) observed.add(raw);
+  }
+  return [...new Set(declaredToolIds)].filter((toolId) => observed.has(toolId));
 }
 
 /**
@@ -216,7 +238,7 @@ async function bufferBoundedResponse(response: Response, maxBytes: number): Prom
   });
 }
 
-/** A dedicated fetch wrapper for the two diagnostics engine reads. */
+/** A dedicated fetch wrapper for the bounded diagnostics engine reads. */
 export function createAgentDiagnosticsEngineFetch(
   fetchImpl: typeof fetch,
   maxBytes = MAX_ENGINE_RESPONSE_BYTES,

@@ -7,8 +7,8 @@ const execFile = promisify(execFileCallback);
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 const PROBE_SCRIPT = `
-  const { OpenWorkExtensionsPreview } = await import("./apps/server/src/opencode-plugins/openwork-extensions-preview.ts");
-  const plugin = await OpenWorkExtensionsPreview();
+  const { OpenWorkContext } = await import("./apps/server/src/opencode-plugins/openwork-context.ts");
+  const plugin = await OpenWorkContext();
   const output = { system: [] };
   await plugin["experimental.chat.system.transform"](undefined, output);
   console.log(JSON.stringify({ tools: Object.keys(plugin.tool).sort(), system: output.system.join("\\n") }));

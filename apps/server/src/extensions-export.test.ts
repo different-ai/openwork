@@ -3,11 +3,27 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { addMcp } from "./mcp.js";
+import { OpenWorkContext } from "./opencode-plugins/openwork-context.js";
 import { exportExtensions, redactMcpConfig, type ExportedMcp, type ExportedSkill } from "./extensions-export.js";
 import { startServer } from "./server.js";
 import type { ServerConfig } from "./types.js";
 
 const WORKSPACE_ID = "ws_extensions_export_test";
+
+async function executeContextTool(
+  plugin: Awaited<ReturnType<typeof OpenWorkContext>>,
+  name: string,
+  args: unknown,
+  context?: unknown,
+): Promise<string> {
+  const execute = plugin.tool?.[name]?.execute;
+  if (typeof execute !== "function") throw new Error(`Consolidated context tool ${name} is missing`);
+  const result: unknown = context === undefined
+    ? await execute(args)
+    : await execute(args, context);
+  if (typeof result !== "string") throw new Error(`Consolidated context tool ${name} returned a non-string result`);
+  return result;
+}
 
 type Served = {
   port: number;
@@ -224,9 +240,10 @@ describe("openwork_extensions_export plugin tool", () => {
       process.env.OPENWORK_SERVER_URL = `http://127.0.0.1:${server.port}`;
       process.env.OPENWORK_SERVER_TOKEN = config.token;
       try {
-        const { OpenWorkExtensionsPreview } = await import("./opencode-plugins/openwork-extensions-preview.js");
-        const plugin = await OpenWorkExtensionsPreview();
-        const output = await plugin.tool.openwork_extensions_export.execute(
+        const plugin = await OpenWorkContext();
+        const output = await executeContextTool(
+          plugin,
+          "openwork_extensions_export",
           { skills: ["release-notes"], mcps: ["linear", "not-installed"] },
           { directory: root },
         );

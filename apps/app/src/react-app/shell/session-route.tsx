@@ -44,6 +44,11 @@ import {
   type WorkspaceInfo,
   type WorkspaceList,
 } from "@/app/lib/desktop";
+import {
+  desktopDeveloperModeRestartPending,
+  readDesktopDeveloperMode,
+  writeDesktopDeveloperMode,
+} from "@/app/lib/developer-mode";
 import type {
   ComposerDraft,
   ComposerPart,
@@ -328,8 +333,7 @@ export function SessionRoute() {
   const [openworkServerHostInfoState, setOpenworkServerHostInfoState] = useState<OpenworkServerInfo | null>(null);
   const [openworkServerSettingsVersion, setOpenworkServerSettingsVersion] = useState(0);
   const [developerMode, setDeveloperMode] = useState(() => {
-    if (typeof window === "undefined") return false;
-    return window.localStorage.getItem("openwork.developerMode") === "1";
+    return readDesktopDeveloperMode();
   });
   const {
     navigateToWorkspaceSession,
@@ -1558,13 +1562,18 @@ export function SessionRoute() {
     searchText: "developer dev mode debug diagnostics toggle enable disable",
     action: () => {
       setCommandPaletteOpen(false);
-      setDeveloperMode((current) => {
-        const next = !current;
-        try { window.localStorage.setItem("openwork.developerMode", next ? "1" : "0"); } catch {}
-        return next;
-      });
+      const next = !developerMode;
+      writeDesktopDeveloperMode(next);
+      setDeveloperMode(next);
+      if (isDesktopRuntime() && desktopDeveloperModeRestartPending()) {
+        reloadCoordinator.markReloadRequired("config", {
+          type: "config",
+          name: "Developer observability",
+          action: "updated",
+        });
+      }
     },
-  }), [developerMode]);
+  }), [developerMode, reloadCoordinator]);
 
   const buildCommandDiagnosticsBundle = useCallback(() => buildDiagnosticsBundleJson({
     anyActiveRuns: activeReloadBlockingSessions.length > 0,

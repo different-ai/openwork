@@ -122,6 +122,14 @@ import {
   type WorkspaceList,
   revealDesktopItemInDir,
 } from "@/app/lib/desktop";
+import {
+  clearDesktopDeveloperModeRestartPending,
+  desktopDeveloperModeRestartPending,
+  readDesktopExactPromptLogging,
+  readDesktopDeveloperMode,
+  writeDesktopDeveloperMode,
+  writeDesktopExactPromptLogging,
+} from "@/app/lib/developer-mode";
 import { isDesktopProviderBlocked } from "@/app/cloud/desktop-app-restrictions";
 import { useCheckDesktopRestriction, useDesktopConfig } from "@/react-app/domains/cloud/desktop-config-provider";
 import { useRestrictionNotice } from "@/react-app/domains/cloud/restriction-notice-provider";
@@ -195,6 +203,12 @@ async function reloadEngineOrRestartDesktop(
   workspaceId: string,
   afterRestart?: () => Promise<void>,
 ): Promise<void> {
+  if (isDesktopRuntime() && desktopDeveloperModeRestartPending()) {
+    await engineRestart({});
+    clearDesktopDeveloperModeRestartPending();
+    await afterRestart?.();
+    return;
+  }
   try {
     await client.reloadEngine(workspaceId);
   } catch (error) {
@@ -416,9 +430,19 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const [providerConnectedIds, setProviderConnectedIds] = useState<string[]>([]);
   const [disabledProviders, setDisabledProviders] = useState<string[]>([]);
   const [developerMode, setDeveloperMode] = useState(() => {
-    if (typeof window === "undefined") return false;
-    return window.localStorage.getItem("openwork.developerMode") === "1";
+    return readDesktopDeveloperMode();
   });
+  const [exactPromptLogging, setExactPromptLogging] = useState(() => {
+    return readDesktopExactPromptLogging();
+  });
+  const [promptLogRuntime, setPromptLogRuntime] = useState<{
+    running: boolean;
+    developerModeRequested: boolean;
+    requested: boolean;
+    enabled: boolean;
+    level: "off" | "metadata" | "exact";
+    source: string;
+  } | null>(null);
   const [themeMode, setThemeModeState] = useState<ThemeMode>(getInitialThemeMode);
   const [hideTitlebar, setHideTitlebar] = useState(() => readStoredBoolean(SETTINGS_HIDE_TITLEBAR_KEY, false));
   const [updateAutoCheck, setUpdateAutoCheck] = useState(() =>
@@ -692,6 +716,36 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const providerAuthSnapshot = useProviderAuthStoreSnapshot(providerAuthStore);
   const extensionsSnapshot = useExtensionsStoreSnapshot(extensionsStore);
   const orgMcpConnections = useOrgMcpConnections();
+
+  useEffect(() => {
+    if (!isDesktopRuntime()) {
+      setPromptLogRuntime(null);
+      return;
+    }
+    let disposed = false;
+    const refresh = async () => {
+      try {
+        const info = await openworkServerInfo();
+        if (disposed) return;
+        setPromptLogRuntime({
+          running: info.running,
+          developerModeRequested: info.developerModeRequested,
+          requested: info.promptLogRequested,
+          enabled: info.promptLogEnabled,
+          level: info.observabilityLevel,
+          source: info.promptLogSource,
+        });
+      } catch {
+        if (!disposed) setPromptLogRuntime(null);
+      }
+    };
+    void refresh();
+    const interval = window.setInterval(() => void refresh(), 3_000);
+    return () => {
+      disposed = true;
+      window.clearInterval(interval);
+    };
+  }, [developerMode, exactPromptLogging]);
 
   const openworkServerStatusForMcp = openworkServerSnapshot.openworkServerStatus;
   useEffect(() => {
@@ -2390,11 +2444,32 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             opencodeConnectStatus={null}
             openworkServerStatus={openworkServerSnapshot.openworkServerStatus}
             developerMode={developerMode}
-            toggleDeveloperMode={() => setDeveloperMode((current) => {
-              const next = !current;
-              try { window.localStorage.setItem("openwork.developerMode", next ? "1" : "0"); } catch {}
-              return next;
-            })}
+            toggleDeveloperMode={() => {
+              const next = !developerMode;
+              writeDesktopDeveloperMode(next);
+              setDeveloperMode(next);
+              setExactPromptLogging(readDesktopExactPromptLogging());
+              if (isDesktopRuntime() && desktopDeveloperModeRestartPending()) {
+                reloadCoordinator.markReloadRequired("config", {
+                  type: "config",
+                  name: "Developer observability",
+                  action: "updated",
+                });
+              }
+            }}
+            exactPromptLogging={exactPromptLogging}
+            toggleExactPromptLogging={() => {
+              writeDesktopExactPromptLogging(!exactPromptLogging);
+              setExactPromptLogging(readDesktopExactPromptLogging());
+              if (isDesktopRuntime() && desktopDeveloperModeRestartPending()) {
+                reloadCoordinator.markReloadRequired("config", {
+                  type: "config",
+                  name: "Developer observability",
+                  action: "updated",
+                });
+              }
+            }}
+            promptLogRuntime={promptLogRuntime}
             opencodeDevModeEnabled={false}
             openDebugDeepLink={async () => ({ ok: false, message: "Debug deep links are not wired into the React settings route yet." })}
             cloudMcpUrl={openworkCloudMcpUrl}

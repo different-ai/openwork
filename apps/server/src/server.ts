@@ -6,7 +6,14 @@ import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 import type { ApprovalRequest, Capabilities, ServerConfig, WorkspaceInfo, Actor, ReloadReason, ReloadTrigger, TokenScope } from "./types.js";
 import { agentContextDiagnosticsRequestSchema } from "./agent-context-diagnostics-schema.js";
 import { ApprovalService } from "./approvals.js";
-import { addPlugin, listPlugins, normalizePluginSpec, removePlugin } from "./plugins.js";
+import {
+  addPlugin,
+  assertPluginAddable,
+  assertPluginRemovable,
+  listPlugins,
+  normalizePluginSpec,
+  removePlugin,
+} from "./plugins.js";
 import { sanitizePortableOpencodeConfig } from "./portable-opencode.js";
 import { addMcp, listMcp, removeMcp, setMcpEnabled } from "./mcp.js";
 import { exportExtensions } from "./extensions-export.js";
@@ -88,7 +95,11 @@ import {
   seedOpenworkWorkspaceConfigIfEmpty,
   writeOpenworkWorkspaceConfig,
 } from "./openwork-workspace-config-store.js";
-import { buildOpenworkRuntimeConfigObject, openworkRuntimeConfigFilePath } from "./openwork-runtime-config.js";
+import {
+  buildOpenworkRuntimeConfigObject,
+  buildOpenworkRuntimeConfigObjectFromSnapshot,
+  openworkRuntimeConfigFilePath,
+} from "./openwork-runtime-config.js";
 import { readLegacyConfigSweepState } from "./legacy-config-sweep.js";
 import pkg from "../package.json" with { type: "json" };
 import constants from "../../../constants.json" with { type: "json" };
@@ -796,7 +807,10 @@ function isSessionCommandProxyRequest(method: string, proxyPath: string) {
   return method === "POST" && /^\/session\/[^/]+\/command$/.test(normalizeOpencodeProxyPath(proxyPath));
 }
 
-export async function startServer(config: ServerConfig): Promise<ServeResult> {
+export async function startServer(
+  config: ServerConfig,
+  options: { promptDebugEnv?: NodeJS.ProcessEnv } = {},
+): Promise<ServeResult> {
   const approvals = new ApprovalService(config.approval);
   const reloadEvents = new ReloadEventStore();
   const tokens = new TokenService(config);
@@ -818,6 +832,7 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
     env,
     restartReloadWatchers,
     engineMcpServerState,
+    options.promptDebugEnv ?? process.env,
   );
 
   const serverOptions: {
@@ -1481,6 +1496,7 @@ function createRoutes(
   env: EnvService,
   onWorkspacesChanged: () => void,
   engineMcpServerState: EngineMcpServerState,
+  promptDebugEnv: NodeJS.ProcessEnv,
 ): Route[] {
   const routes: Route[] = [];
   registerCoreRoutes({
@@ -1505,6 +1521,7 @@ function createRoutes(
     resolveToyUiEnabled,
     resolveDevLogPath,
     createOpenAiRealtimeVoiceSession,
+    promptDebugEnv,
   });
 
   registerWorkspaceRoutes({
@@ -1596,13 +1613,21 @@ function createRoutes(
         dependencies: {
           signal: diagnosticsSignal,
           inspectEffectiveEngine: async (signal) => {
-            const [configResult, agentResult] = await Promise.all([
+            const [configResult, agentResult, toolIdsInspection] = await Promise.all([
               opencode.config.get({}, { signal }),
               opencode.app.agents({}, { signal }),
+              opencode.tool.ids({}, { signal })
+                .then((result) => ({
+                  toolIds: unwrapOpencodeResult(result, "/experimental/tool/ids"),
+                  readPerformed: true as const,
+                }))
+                .catch(() => ({ readPerformed: true as const })),
             ]);
             return {
               config: unwrapOpencodeResult(configResult, "/config"),
               agents: unwrapOpencodeResult(agentResult, "/agent"),
+              toolIdsReadPerformed: toolIdsInspection.readPerformed,
+              ...("toolIds" in toolIdsInspection ? { toolIds: toolIdsInspection.toolIds } : {}),
             };
           },
         },
@@ -1617,12 +1642,16 @@ function createRoutes(
   addRoute(routes, "GET", "/workspace/:id/config", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const openwork = await readOpenworkConfigForWorkspace(config, workspace);
+    const runtime = await readRuntimeOpencodeConfig(config, workspace.id);
     const opencode = mergeOpencodeConfigs(
       await readOpencodeConfig(workspace.path),
-      await readRuntimeOpencodeConfig(config, workspace.id),
+      runtime,
     );
+    const engine = buildOpenworkRuntimeConfigObjectFromSnapshot(runtime);
     const lastAudit = await readLastAudit(workspace.path, workspace.id);
-    return jsonResponse({ opencode, openwork, updatedAt: lastAudit?.timestamp ?? null });
+    const response = jsonResponse({ opencode, openwork, engine, updatedAt: lastAudit?.timestamp ?? null });
+    response.headers.set("Cache-Control", "no-store");
+    return response;
   });
 
   addRoute(routes, "GET", "/workspace/:id/desktop-cloud-sync", "client", async (ctx) => {
@@ -2251,6 +2280,7 @@ function createRoutes(
     const body = await readJsonBody(ctx.request);
     const spec = String(body.spec ?? "");
     const normalized = normalizePluginSpec(spec);
+    assertPluginAddable(spec);
     await requireApproval(ctx, {
       workspaceId: workspace.id,
       action: "plugins.add",
@@ -2284,6 +2314,7 @@ function createRoutes(
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const name = ctx.params.name ?? "";
     const normalized = normalizePluginSpec(name);
+    await assertPluginRemovable(config, workspace.id, name);
     await requireApproval(ctx, {
       workspaceId: workspace.id,
       action: "plugins.remove",

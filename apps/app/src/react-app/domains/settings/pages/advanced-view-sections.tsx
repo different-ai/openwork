@@ -788,18 +788,42 @@ export function AdvancedFeatureFlagsSection(props: AdvancedFeatureFlagsSectionPr
 interface AdvancedDeveloperSectionProps {
   busy: boolean;
   developerMode: boolean;
+  exactPromptLogging: boolean;
+  promptLogRuntime: {
+    running: boolean;
+    developerModeRequested: boolean;
+    requested: boolean;
+    enabled: boolean;
+    level: "off" | "metadata" | "exact";
+    source: string;
+  } | null;
   opencodeDevModeEnabled: boolean;
   deepLinkOpen: boolean;
   deepLinkInput: string;
   deepLinkBusy: boolean;
   deepLinkStatus: string | null;
   onToggleDeveloperMode: () => void;
+  onToggleExactPromptLogging: () => void;
   onToggleDeepLink: () => void;
   onDeepLinkInput: (input: string) => void;
   onSubmitDeepLink: () => Promise<void>;
 }
 
 export function AdvancedDeveloperSection(props: AdvancedDeveloperSectionProps) {
+  const desiredLevel = props.developerMode
+    ? props.exactPromptLogging ? "exact" : "metadata"
+    : "off";
+  const runtimeSource = props.promptLogRuntime?.source ?? "";
+  const desktopRuntimePending = props.promptLogRuntime?.running === true
+    && runtimeSource === "desktop-option"
+    && (
+      props.promptLogRuntime.developerModeRequested !== props.developerMode
+      || props.promptLogRuntime.requested !== props.exactPromptLogging
+      || props.promptLogRuntime.level !== desiredLevel
+    );
+  const environmentOverride = props.promptLogRuntime?.running === true
+    && runtimeSource !== "desktop-option"
+    && props.promptLogRuntime.level !== desiredLevel;
   return (
     <LayoutSection>
       <LayoutSectionHeader>
@@ -819,6 +843,42 @@ export function AdvancedDeveloperSection(props: AdvancedDeveloperSectionProps) {
           </LayoutSectionItemHeaderActions>
         </LayoutSectionItemHeader>
       </LayoutSectionItem>
+
+      {isDesktopRuntime() && (
+        props.developerMode || (props.promptLogRuntime?.level !== undefined && props.promptLogRuntime.level !== "off")
+      ) ? (
+        <LayoutSectionItem>
+          <LayoutSectionItemHeader>
+            <LayoutSectionItemTitle>Exact prepared-prompt tracing</LayoutSectionItemTitle>
+            <LayoutSectionItemDescription>
+              Logs the exact prepared OpenCode system array to Electron main-process stderr and mirrors it live into the Developer Tools console. Prompt text can contain messages, workspace context, file content, and secrets; terminal or OS log collectors may retain it. Enable only while actively debugging. An idle engine restart applies the change.
+            </LayoutSectionItemDescription>
+            <LayoutSectionItemHeaderActions>
+              <Switch
+                aria-label="Exact prepared-prompt tracing"
+                checked={props.exactPromptLogging}
+                disabled={props.busy || !props.developerMode}
+                onCheckedChange={props.onToggleExactPromptLogging}
+              />
+            </LayoutSectionItemHeaderActions>
+          </LayoutSectionItemHeader>
+          <div className="text-xs text-gray-8">
+            Open View → Toggle Developer Tools → Console. Exact content requested: {props.exactPromptLogging ? "on" : "off"}. Runtime level: {props.promptLogRuntime?.running
+              ? `${props.promptLogRuntime.level} (${props.promptLogRuntime.source})`
+              : "not running"}.
+          </div>
+          {desktopRuntimePending ? (
+              <SettingsNotice>
+                The running engine is still at {props.promptLogRuntime?.level}. Finish active tasks, then apply the pending restart to reach {desiredLevel}.
+              </SettingsNotice>
+            ) : null}
+          {environmentOverride ? (
+              <SettingsNotice>
+                An environment override supersedes the desktop preference. Requested level: {desiredLevel}. Effective runtime level: {props.promptLogRuntime?.level}; source: {props.promptLogRuntime?.source}.
+              </SettingsNotice>
+            ) : null}
+        </LayoutSectionItem>
+      ) : null}
 
       {isDesktopRuntime() && props.opencodeDevModeEnabled && props.developerMode ? (
         <LayoutSectionItem>

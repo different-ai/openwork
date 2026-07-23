@@ -15,6 +15,49 @@ const DIRECT_RUNTIME = "direct";
 const ORCHESTRATOR_RUNTIME = "openwork-orchestrator";
 const OPENWORK_SERVER_PORT_RANGE_START = 48_000;
 const OPENWORK_SERVER_PORT_RANGE_END = 51_000;
+const TRUE_VALUES = new Set(["1", "true", "yes", "on"]);
+const FALSE_VALUES = new Set(["0", "false", "no", "off"]);
+
+export function resolvePromptLogRuntimeControl(
+  requested,
+  env = process.env,
+  developerModeRequested = false,
+) {
+  const observability = String(env.OPENWORK_OBSERVABILITY ?? "").trim().toLowerCase();
+  if (observability) {
+    const level = ["off", "metadata", "exact"].includes(observability) ? observability : "off";
+    return {
+      developerModeRequested: developerModeRequested === true,
+      requested: requested === true,
+      enabled: level === "exact",
+      level,
+      source: observability === level ? "OPENWORK_OBSERVABILITY" : "OPENWORK_OBSERVABILITY_INVALID",
+    };
+  }
+  const explicit = String(env.OPENWORK_PROMPT_LOG ?? "").trim().toLowerCase();
+  if (explicit) {
+    if (TRUE_VALUES.has(explicit)) {
+      return { developerModeRequested: developerModeRequested === true, requested: requested === true, enabled: true, level: "exact", source: "OPENWORK_PROMPT_LOG" };
+    }
+    if (FALSE_VALUES.has(explicit)) {
+      return { developerModeRequested: developerModeRequested === true, requested: requested === true, enabled: false, level: "off", source: "OPENWORK_PROMPT_LOG" };
+    }
+    return { developerModeRequested: developerModeRequested === true, requested: requested === true, enabled: false, level: "off", source: "OPENWORK_PROMPT_LOG_INVALID" };
+  }
+  const level = requested === true ? "exact" : developerModeRequested === true ? "metadata" : "off";
+  return {
+    developerModeRequested: developerModeRequested === true,
+    requested: requested === true,
+    enabled: level === "exact",
+    level,
+    source: "desktop-option",
+  };
+}
+
+/**
+ * @param {ReturnType<typeof resolvePromptLogRuntimeControl>} _control
+ */
+function ignorePromptLogRuntimeControl(_control) {}
 
 function truncateOutput(value, limit = 8000) {
   const text = String(value ?? "");
@@ -157,6 +200,11 @@ function createOpenworkServerState() {
     childExited: true,
     inProcess: false,
     remoteAccessEnabled: false,
+    developerModeRequested: false,
+    promptLogRequested: false,
+    promptLogEnabled: false,
+    observabilityLevel: "off",
+    promptLogSource: "desktop-option",
     host: null,
     port: null,
     baseUrl: null,
@@ -180,6 +228,11 @@ function snapshotOpenworkServerState(state) {
   return {
     running,
     remoteAccessEnabled: state.remoteAccessEnabled,
+    developerModeRequested: state.developerModeRequested,
+    promptLogRequested: state.promptLogRequested,
+    promptLogEnabled: state.promptLogEnabled,
+    observabilityLevel: state.observabilityLevel,
+    promptLogSource: state.promptLogSource,
     host: state.host,
     port: state.port,
     baseUrl: state.baseUrl,
@@ -569,7 +622,12 @@ export function mergeSystemCaChildEnv(baseEnv = {}, caEnv = {}, extra = {}) {
   };
 }
 
-export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths }) {
+export function createRuntimeManager({
+  app,
+  desktopRoot,
+  listLocalWorkspacePaths,
+  onPromptLogControl = ignorePromptLogRuntimeControl,
+}) {
   const engineState = createEngineState();
   const openworkServerState = createOpenworkServerState();
   const orchestratorState = createOrchestratorState();
@@ -1183,6 +1241,19 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     // Inject user env vars so the server and managed OpenCode inherit them.
     const serverEnv = await buildChildEnv({});
     Object.assign(process.env, serverEnv);
+    const promptLogControl = resolvePromptLogRuntimeControl(
+      options.openworkPromptLog === true,
+      process.env,
+      options.openworkDeveloperMode === true,
+    );
+    try {
+      // Notify the main-process console bridge after user env files have been
+      // merged but before the embedded server or managed engine can emit its
+      // observer initialization record.
+      onPromptLogControl(promptLogControl);
+    } catch {
+      // Observability display failures must not prevent runtime startup.
+    }
 
     // Once the embedded server has a persisted registry, it is the source of
     // truth. Do not pass Electron's legacy workspace list as CLI workspaces or
@@ -1231,6 +1302,8 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
       manageOpencode: options.manageOpencode === true,
       opencodeBin: managedOpencode?.path ?? undefined,
       opencodeCwd: managedOpencodeWorkdir(),
+      developerModeEnabled: options.openworkDeveloperMode === true,
+      promptLogEnabled: options.openworkPromptLog === true,
     });
     inProcessServer = handle;
     openworkServerState.managedOpencodeExecution = handle.managedOpencodeExecution ?? null;
@@ -1243,6 +1316,11 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
 
     openworkServerState.inProcess = true;
     openworkServerState.remoteAccessEnabled = options.remoteAccessEnabled;
+    openworkServerState.developerModeRequested = promptLogControl.developerModeRequested;
+    openworkServerState.promptLogRequested = promptLogControl.requested;
+    openworkServerState.promptLogEnabled = promptLogControl.enabled;
+    openworkServerState.observabilityLevel = promptLogControl.level;
+    openworkServerState.promptLogSource = promptLogControl.source;
     openworkServerState.host = host;
     openworkServerState.port = boundPort;
     openworkServerState.baseUrl = baseUrl;
@@ -1473,6 +1551,8 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
         remoteAccessEnabled: options.remoteAccessEnabled,
         manageOpencode: options.manageOpencode === true,
         opencodeBinPath: options.opencodeBinPath,
+        openworkDeveloperMode: options.openworkDeveloperMode === true,
+        openworkPromptLog: options.openworkPromptLog === true,
       });
     } catch (error) {
       appendOutput(engineState, "lastStderr", `OpenWork server: ${error instanceof Error ? error.message : String(error)}\n`);
@@ -1488,20 +1568,23 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
       throw new Error("projectDir is required");
     }
 
-    // Reuse a healthy server instead of tearing it down. During boot the
-    // main process kicks off bootRuntimeForSelectedWorkspace while renderer
-    // routes independently call ensureDesktopLocalOpenworkConnection. Both go
-    // through this serialized path; without this guard the second call runs
-    // prepareFreshRuntime (killing the freshly bound server) and then rebinds
-    // the sticky preferred port, racing the not-yet-released socket into
-    // EADDRINUSE and leaving the runtime in error -> boot screen.
+    // Reuse a healthy server instead of tearing it down. During boot the main
+    // process and renderer routes can independently request the same runtime.
+    // Both go through this serialized path; without this guard the second call
+    // runs prepareFreshRuntime (killing the freshly bound server) and then
+    // rebinds the sticky preferred port, racing the not-yet-released socket
+    // into EADDRINUSE and leaving the runtime in error -> boot screen.
     const requestedRemoteAccess = options.openworkRemoteAccess === true;
+    const requestedDeveloperMode = options.openworkDeveloperMode === true;
+    const requestedPromptLog = options.openworkPromptLog === true;
     if (
       options.forceRestart !== true &&
       openworkServerState.inProcess &&
       lifecycleState === "healthy" &&
       normalizeWorkspaceKey(engineState.projectDir) === normalizeWorkspaceKey(safeProjectDir) &&
-      openworkServerState.remoteAccessEnabled === requestedRemoteAccess
+      openworkServerState.remoteAccessEnabled === requestedRemoteAccess &&
+      openworkServerState.developerModeRequested === requestedDeveloperMode &&
+      openworkServerState.promptLogRequested === requestedPromptLog
     ) {
       const existing = snapshotOpenworkServerState(openworkServerState);
       if (existing.running && existing.baseUrl && (existing.ownerToken || existing.clientToken)) {
@@ -1531,6 +1614,8 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
         remoteAccessEnabled: options.openworkRemoteAccess === true,
         manageOpencode: true,
         opencodeBinPath: options.opencodeBinPath,
+        openworkDeveloperMode: requestedDeveloperMode,
+        openworkPromptLog: requestedPromptLog,
       });
 
       lifecycleState = "healthy";
@@ -1556,11 +1641,19 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     const openworkRemoteAccess = typeof options.openworkRemoteAccess === "boolean"
       ? options.openworkRemoteAccess
       : openworkServerState.remoteAccessEnabled;
+    const openworkPromptLog = typeof options.openworkPromptLog === "boolean"
+      ? options.openworkPromptLog
+      : openworkServerState.promptLogRequested;
+    const openworkDeveloperMode = typeof options.openworkDeveloperMode === "boolean"
+      ? options.openworkDeveloperMode
+      : openworkServerState.developerModeRequested;
     return engineStart(projectDir, {
       runtime: engineState.runtime,
       workspacePaths: [projectDir],
       opencodeEnableExa: options.opencodeEnableExa,
       openworkRemoteAccess,
+      openworkDeveloperMode,
+      openworkPromptLog,
       forceRestart: true,
     });
   }
@@ -1592,6 +1685,12 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
       opencodeUsername: shouldManageOpencode ? null : engineState.opencodeUsername,
       opencodePassword: shouldManageOpencode ? null : engineState.opencodePassword,
       remoteAccessEnabled: options.remoteAccessEnabled === true,
+      openworkDeveloperMode: typeof options.openworkDeveloperMode === "boolean"
+        ? options.openworkDeveloperMode
+        : openworkServerState.developerModeRequested,
+      openworkPromptLog: typeof options.openworkPromptLog === "boolean"
+        ? options.openworkPromptLog
+        : openworkServerState.promptLogRequested,
       manageOpencode: shouldManageOpencode,
       opencodeBinPath: engineState.opencodeBinPath ?? openworkServerState.managedOpencodeBinPath,
     });

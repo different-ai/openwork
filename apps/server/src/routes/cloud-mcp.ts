@@ -1,6 +1,5 @@
 import type { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 import {
-  OPENWORK_CLOUD_MCP_NAME,
   readOpenworkCloudMcpHealth,
   reconcileOpenworkCloudMcp,
   refreshOpenworkCloudMcpEngine,
@@ -9,6 +8,7 @@ import {
   type CloudMcpRuntimeRegistrar,
   type CloudMcpLiveStatusObserver,
 } from "../cloud-mcp-health.js";
+import { OPENWORK_CLOUD_MCP_NAME } from "../context/constants.js";
 import { ApiError } from "../errors.js";
 import type { ServerConfig, TokenScope, WorkspaceInfo } from "../types.js";
 import { addRoute, type RequestContext, type Route } from "./registry.js";

@@ -1,14 +1,22 @@
 import { z } from "zod";
 
-export type OpenCodeContext = {
-  agent?: string;
-  sessionID?: string;
-  messageID?: string;
-  directory?: string;
-  worktree?: string;
-  workspaceId?: string;
-  workspaceID?: string;
-};
+import { logPromptDebug, promptTraceId } from "../openwork-debug-log.js";
+import {
+  readContext,
+  readProviderModel,
+  type OpenCodeContext,
+  type OpenWorkEngineMcpStatusClient,
+} from "./context.js";
+import { OPENWORK_CLOUD_MCP_NAME } from "./constants.js";
+import { getRecordProperty, isRecord, readNestedString, readString } from "./records.js";
+import {
+  errorMessage,
+  parseResponse,
+  requireOpenWorkServer,
+  type OpenWorkFetch,
+} from "./server-client.js";
+
+export type { OpenCodeContext, OpenWorkEngineMcpStatusClient } from "./context.js";
 
 export type OpenWorkExtensionConnectState = {
   connectEnabled: boolean;
@@ -25,6 +33,48 @@ export type OpenWorkExtensionConnectState = {
     legacyConfigured: boolean;
   };
 };
+
+export type OpenWorkContextBundle = {
+  ok: true;
+  schemaVersion: 1;
+  steering: OpenWorkExtensionConnectState | null;
+  skills: {
+    instruction: string;
+    count: number;
+  };
+  diagnostics: string[];
+  generatedAt: number;
+};
+
+export type OpenWorkContextBundleFailure =
+  | { classification: "configuration" }
+  | { classification: "auth"; status: number }
+  | { classification: "http"; status: number }
+  | { classification: "schema" }
+  | { classification: "transport" }
+  | { classification: "unknown" };
+
+class OpenWorkContextBundleFetchError extends Error {
+  readonly failure: OpenWorkContextBundleFailure;
+
+  constructor(failure: OpenWorkContextBundleFailure) {
+    super(`OpenWork context bundle request failed (${failure.classification})`);
+    this.name = "OpenWorkContextBundleFetchError";
+    this.failure = failure;
+  }
+}
+
+/**
+ * Reduces a context-bundle failure to fields that are safe for diagnostics.
+ * Deliberately excludes thrown messages, response bodies, request URLs, and
+ * authorization values.
+ */
+export function classifyOpenWorkContextBundleFailure(
+  error: unknown,
+): OpenWorkContextBundleFailure {
+  if (error instanceof OpenWorkContextBundleFetchError) return error.failure;
+  return { classification: "unknown" };
+}
 
 export type OpenWorkCloudHealthSummary = {
   usable: boolean;
@@ -53,20 +103,6 @@ export type OpenWorkCloudHealthSummary = {
   } | null;
 };
 
-type OpenWorkFetch = (url: string, init?: RequestInit) => Promise<Response>;
-
-type EngineMcpStatusRequest = {
-  query?: {
-    directory?: string;
-  };
-};
-
-export type OpenWorkEngineMcpStatusClient = {
-  mcp: {
-    status: (request?: EngineMcpStatusRequest) => Promise<unknown>;
-  };
-};
-
 export type OpenWorkEngineMcpStatusSource = {
   client?: OpenWorkEngineMcpStatusClient;
   directory?: string;
@@ -75,11 +111,6 @@ export type OpenWorkEngineMcpStatusSource = {
 type EngineMcpStatusResult =
   | { found: true; status: string | undefined }
   | { found: false };
-
-type ProviderModel = {
-  provider: string;
-  model: string;
-};
 
 const cloudFailureSchema = z.object({
   code: z.string(),
@@ -110,9 +141,7 @@ const cloudHealthSchema = z.object({
   firstFailure: cloudFailureSchema.nullable(),
 }).passthrough();
 
-const connectStateResponseSchema = z.object({
-  ok: z.literal(true),
-  schemaVersion: z.number(),
+const connectSnapshotSchema = z.object({
   connectEnabled: z.boolean(),
   connectCatalogEnabled: z.boolean().optional(),
   cloudMcpPresent: z.boolean(),
@@ -128,10 +157,28 @@ const connectStateResponseSchema = z.object({
   }).passthrough(),
 }).passthrough();
 
+const connectStateResponseSchema = connectSnapshotSchema.extend({
+  ok: z.literal(true),
+  schemaVersion: z.number(),
+});
+
 const connectSkillsResponseSchema = z.object({
   ok: z.literal(true),
   schemaVersion: z.number(),
   instruction: z.string(),
+  diagnostics: z.array(z.string()).optional(),
+}).passthrough();
+
+const contextBundleResponseSchema = z.object({
+  ok: z.literal(true),
+  schemaVersion: z.literal(1),
+  steering: connectSnapshotSchema.nullable(),
+  skills: z.object({
+    instruction: z.string(),
+    count: z.number().int().nonnegative(),
+  }).passthrough(),
+  diagnostics: z.array(z.string()),
+  generatedAt: z.number(),
 }).passthrough();
 
 export const OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION =
@@ -145,90 +192,6 @@ export const OPENWORK_CONNECT_SIGN_IN_INSTRUCTION =
 
 export const OPENWORK_CONNECT_DISABLED_INSTRUCTION =
   `${OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION} OpenWork Cloud agent access is explicitly disabled for this workspace. Explain that the user can enable agent access in Settings → Connect.`;
-
-const OPENWORK_CLOUD_MCP_NAME = "openwork-cloud";
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function readString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
-}
-
-function getRecordProperty(value: unknown, key: string): unknown {
-  return isRecord(value) ? value[key] : undefined;
-}
-
-function readNestedString(value: unknown, keys: string[]): string | undefined {
-  let current = value;
-  for (const key of keys) current = getRecordProperty(current, key);
-  return readString(current);
-}
-
-function readContext(input: unknown): OpenCodeContext {
-  const context = getRecordProperty(input, "context");
-  const session = getRecordProperty(input, "session");
-  const directory = readNestedString(input, ["directory"]) ?? readNestedString(context, ["directory"]) ?? readNestedString(session, ["directory"]);
-  const worktree = readNestedString(input, ["worktree"]) ?? readNestedString(context, ["worktree"]) ?? readNestedString(session, ["worktree"]);
-  const workspaceId = readNestedString(input, ["workspaceId"]) ?? readNestedString(input, ["workspaceID"]) ?? readNestedString(context, ["workspaceId"]) ?? readNestedString(context, ["workspaceID"]);
-  return {
-    ...(directory ? { directory } : {}),
-    ...(worktree ? { worktree } : {}),
-    ...(workspaceId ? { workspaceId } : {}),
-  };
-}
-
-function readProviderModel(input: unknown): ProviderModel | undefined {
-  const model = getRecordProperty(input, "model");
-  const provider = readNestedString(model, ["providerID"]) ?? readNestedString(model, ["provider"]) ?? readNestedString(input, ["provider"]);
-  const modelId = readNestedString(model, ["modelID"]) ?? readNestedString(model, ["id"]) ?? readNestedString(input, ["modelID"]);
-  if (provider && modelId) return { provider, model: modelId };
-  const combined = modelId?.includes("/") ? modelId : readNestedString(input, ["model"]) ?? readNestedString(model, ["name"]);
-  if (combined?.includes("/")) {
-    const [providerPart, ...modelParts] = combined.split("/");
-    const joinedModel = modelParts.join("/").trim();
-    if (providerPart?.trim() && joinedModel) return { provider: providerPart.trim(), model: joinedModel };
-  }
-  return undefined;
-}
-
-function serverUrl(): string {
-  return String(process.env.OPENWORK_SERVER_URL || "").replace(/\/$/, "");
-}
-
-function serverToken(): string {
-  return String(process.env.OPENWORK_SERVER_TOKEN || "");
-}
-
-function requireOpenWorkServer(): { url: string; token: string } {
-  const url = serverUrl();
-  const token = serverToken();
-  if (!url || !token) {
-    throw new Error("OpenWork extension tools are only available when OpenCode is launched by OpenWork.");
-  }
-  return { url, token };
-}
-
-async function parseResponse(response: Response): Promise<unknown> {
-  const text = await response.text();
-  if (!text) return null;
-  try {
-    return JSON.parse(text);
-  } catch {
-    return { message: text };
-  }
-}
-
-function getStringProperty(value: unknown, key: string): string | null {
-  if (!isRecord(value)) return null;
-  const property = value[key];
-  return typeof property === "string" ? property : null;
-}
-
-function errorMessage(payload: unknown, fallback: string): string {
-  return getStringProperty(payload, "message") ?? getStringProperty(payload, "code") ?? fallback;
-}
 
 function readEngineDirectory(input: unknown, fallback?: string): string | undefined {
   const context = readContext(input);
@@ -259,26 +222,31 @@ async function fetchEngineMcpStatus(input: unknown, engine: OpenWorkEngineMcpSta
   return readEngineMcpStatus(await engine.client.mcp.status(request));
 }
 
-async function fetchOpenWorkConnectState(input: unknown, fetcher: OpenWorkFetch): Promise<OpenWorkExtensionConnectState> {
-  const { url, token } = requireOpenWorkServer();
+function connectQuery(
+  input: unknown,
+  includeProviderModel: boolean,
+  options: { steering?: "active" | "passive" | "omit" } = {},
+): string {
   const context = readContext(input);
-  const providerModel = readProviderModel(input);
   const query = new URLSearchParams();
   const workspaceId = context.workspaceId ?? context.workspaceID;
   const directory = context.worktree ?? context.directory;
   if (workspaceId) query.set("workspaceId", workspaceId);
   if (directory) query.set("directory", directory);
-  if (providerModel) {
-    query.set("provider", providerModel.provider);
-    query.set("model", providerModel.model);
+  if (includeProviderModel) {
+    const providerModel = readProviderModel(input);
+    if (providerModel) {
+      query.set("provider", providerModel.provider);
+      query.set("model", providerModel.model);
+    }
   }
-  const suffix = query.size ? `?${query.toString()}` : "";
-  const response = await fetcher(`${url}/experimental/connect/state${suffix}`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  const payload = await parseResponse(response);
-  if (!response.ok) throw new Error(errorMessage(payload, "OpenWork connect state request failed"));
-  const parsed = connectStateResponseSchema.parse(payload);
+  if (options.steering && options.steering !== "active") query.set("steering", options.steering);
+  return query.size ? `?${query.toString()}` : "";
+}
+
+function normalizeConnectState(
+  parsed: z.infer<typeof connectSnapshotSchema>,
+): OpenWorkExtensionConnectState {
   return {
     connectEnabled: parsed.connectEnabled,
     connectCatalogEnabled: parsed.connectCatalogEnabled ?? parsed.connectEnabled,
@@ -291,18 +259,138 @@ async function fetchOpenWorkConnectState(input: unknown, fetcher: OpenWorkFetch)
   };
 }
 
-export async function resolveOpenWorkConnectSkillInstruction(_input?: unknown, fetcher: OpenWorkFetch = fetch): Promise<string> {
+async function fetchOpenWorkConnectState(input: unknown, fetcher: OpenWorkFetch): Promise<OpenWorkExtensionConnectState> {
+  const { url, token } = requireOpenWorkServer();
+  const response = await fetcher(`${url}/experimental/connect/state${connectQuery(input, true)}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const payload = await parseResponse(response);
+  if (!response.ok) throw new Error(errorMessage(payload, "OpenWork connect state request failed"));
+  return normalizeConnectState(connectStateResponseSchema.parse(payload));
+}
+
+export async function fetchOpenWorkContextBundle(
+  input?: unknown,
+  fetcher: OpenWorkFetch = fetch,
+  traceId: string = promptTraceId(input),
+): Promise<OpenWorkContextBundle> {
+  let server: { url: string; token: string };
+  try {
+    server = requireOpenWorkServer();
+    const parsedUrl = new URL(server.url);
+    if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
+      throw new Error("Unsupported OpenWork server protocol");
+    }
+  } catch {
+    throw new OpenWorkContextBundleFetchError({ classification: "configuration" });
+  }
+
+  let response: Response;
+  try {
+    response = await fetcher(
+      `${server.url}/experimental/connect/context${connectQuery(input, false, { steering: "passive" })}`,
+      {
+        headers: {
+          Authorization: `Bearer ${server.token}`,
+          "X-OpenWork-Prompt-Trace": traceId,
+        },
+        signal: AbortSignal.timeout(5_000),
+      },
+    );
+  } catch {
+    throw new OpenWorkContextBundleFetchError({ classification: "transport" });
+  }
+
+  if (!response.ok) {
+    const classification = response.status === 401 || response.status === 403
+      ? "auth"
+      : "http";
+    throw new OpenWorkContextBundleFetchError({ classification, status: response.status });
+  }
+
+  let payload: unknown;
+  try {
+    payload = await parseResponse(response);
+  } catch {
+    throw new OpenWorkContextBundleFetchError({ classification: "transport" });
+  }
+
+  let parsed: z.infer<typeof contextBundleResponseSchema>;
+  try {
+    parsed = contextBundleResponseSchema.parse(payload);
+  } catch {
+    throw new OpenWorkContextBundleFetchError({ classification: "schema" });
+  }
+  return {
+    ok: true,
+    schemaVersion: parsed.schemaVersion,
+    steering: parsed.steering ? normalizeConnectState(parsed.steering) : null,
+    skills: {
+      instruction: parsed.skills.instruction,
+      count: parsed.skills.count,
+    },
+    diagnostics: parsed.diagnostics,
+    generatedAt: parsed.generatedAt,
+  };
+}
+
+export async function resolveOpenWorkConnectSkillInstruction(input?: unknown, fetcher: OpenWorkFetch = fetch): Promise<string> {
+  const trace = promptTraceId(input);
   try {
     const { url, token } = requireOpenWorkServer();
-    // Connect skills are server-scoped; workspace/directory query params are unused.
+    // Connect skills are server/account-scoped; workspace query values are
+    // relevant to steering but must not gate the remote skill catalog.
     const response = await fetcher(`${url}/experimental/connect/skills`, {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "X-OpenWork-Prompt-Trace": trace,
+      },
     });
-    if (!response.ok) return "";
-    return connectSkillsResponseSchema.parse(await parseResponse(response)).instruction;
+    if (!response.ok) {
+      logPromptDebug("connect-skills", `trace=${trace} skill instruction skipped: /experimental/connect/skills returned HTTP ${response.status}`);
+      return "";
+    }
+    const parsed = connectSkillsResponseSchema.parse(await parseResponse(response));
+    for (const message of parsed.diagnostics ?? []) {
+      logPromptDebug("connect-skills", `trace=${trace} server: ${message}`);
+    }
+    if (parsed.instruction) {
+      logPromptDebug("connect-skills", `trace=${trace} skill instruction resolved (${parsed.instruction.length} chars) from server-scoped catalog`);
+    } else {
+      logPromptDebug("connect-skills", `trace=${trace} skill instruction skipped: server returned an empty instruction (see server reasons above)`);
+    }
+    return parsed.instruction;
   } catch {
+    logPromptDebug(
+      "connect-skills",
+      `trace=${trace} skill instruction skipped: classification=configuration_transport_or_schema (details redacted)`,
+    );
     return "";
   }
+}
+
+export function resolveOpenWorkConnectSkillInstructionFromBundle(
+  input: unknown,
+  bundle: OpenWorkContextBundle | null,
+  trace: string = promptTraceId(input),
+): string {
+  if (!bundle) {
+    logPromptDebug("connect-skills", `trace=${trace} skill instruction skipped: context bundle unavailable`);
+    return "";
+  }
+  for (const message of bundle.diagnostics) {
+    logPromptDebug("connect-skills", `trace=${trace} server: ${message}`);
+  }
+  const context = readContext(input);
+  const workspaceId = context.workspaceId ?? context.workspaceID;
+  const directory = context.worktree ?? context.directory;
+  const scope = workspaceId ? "workspace" : directory ? "directory" : "unscoped";
+  if (bundle.skills.instruction) {
+    logPromptDebug("connect-skills", `trace=${trace} skill instruction resolved (${bundle.skills.instruction.length} chars, ${bundle.skills.count} catalog entries, scope=${scope})`);
+  } else {
+    logPromptDebug("connect-skills", `trace=${trace} skill instruction skipped: server returned an empty instruction (see server reasons above)`);
+  }
+  return bundle.skills.instruction;
 }
 
 export function composeOpenWorkExtensionDiscoveryInstruction(state: OpenWorkExtensionConnectState | null): string {
@@ -316,6 +404,7 @@ export function composeOpenWorkExtensionDiscoveryInstruction(state: OpenWorkExte
     return OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION;
   }
   if (!state.connectCatalogEnabled || state.googleWorkspace.legacyConfigured) return OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION;
+  if (state.cloudMcpPresent) return OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION;
   return OPENWORK_CONNECT_SIGN_IN_INSTRUCTION;
 }
 
@@ -326,14 +415,11 @@ export function composeSteeringFromEngineMcpStatus(status: string | undefined): 
   return OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION;
 }
 
-export function resetOpenWorkExtensionDiscoveryInstructionCacheForTests(): void {
-  // Retained for older tests; steering is deliberately uncached so repair is observed immediately.
-}
-
 export async function resolveOpenWorkExtensionDiscoveryInstruction(
   input?: unknown,
   fetcher: OpenWorkFetch = fetch,
   engine: OpenWorkEngineMcpStatusSource = {},
+  bundleSteering?: OpenWorkExtensionConnectState | null,
 ): Promise<string> {
   if (engine.client) {
     try {
@@ -346,6 +432,9 @@ export async function resolveOpenWorkExtensionDiscoveryInstruction(
     } catch {
       return OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION;
     }
+  }
+  if (bundleSteering !== undefined) {
+    return composeOpenWorkExtensionDiscoveryInstruction(bundleSteering);
   }
   try {
     return composeOpenWorkExtensionDiscoveryInstruction(await fetchOpenWorkConnectState(input, fetcher));

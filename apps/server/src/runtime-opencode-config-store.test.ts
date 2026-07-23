@@ -131,7 +131,13 @@ describe("runtime OpenCode config store", () => {
       expect((await readRuntimeOpencodeConfig(config, WORKSPACE_ID)).plugin).toEqual(["runtime-plugin"]);
 
       const result = await listPlugins(config, WORKSPACE_ID, root, false);
-      expect(result.items.map((item) => item.spec)).toEqual(["project-plugin", "runtime-plugin"]);
+      expect(result.items.map((item) => item.spec)).toEqual([
+        "opencode-chrome-devtools",
+        "openwork-context",
+        "runtime-plugin",
+        "openwork-prompt-log",
+        "project-plugin",
+      ]);
 
       await addMcp(config, WORKSPACE_ID, "runtime", { type: "remote", url: "https://runtime.example/mcp", enabled: true });
       const runtimeConfig = JSON.parse(await buildOpenworkRuntimeConfig(config, WORKSPACE_ID)) as {
@@ -153,7 +159,12 @@ describe("runtime OpenCode config store", () => {
       const pluginItems = await listPlugins(config, WORKSPACE_ID, root, false);
 
       expect(mcpItems.map((item) => item.name)).toEqual(["runtime"]);
-      expect(pluginItems.items.map((item) => item.spec)).toEqual(["runtime-plugin"]);
+      expect(pluginItems.items.map((item) => item.spec)).toEqual([
+        "opencode-chrome-devtools",
+        "openwork-context",
+        "runtime-plugin",
+        "openwork-prompt-log",
+      ]);
     });
   });
 

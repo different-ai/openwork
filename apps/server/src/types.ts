@@ -169,8 +169,11 @@ export interface ApiErrorBody {
 
 export interface PluginItem {
   spec: string;
-  source: "config" | "dir.project" | "dir.global";
+  source: "core" | "config" | "dir.project" | "dir.global";
   scope: "project" | "global";
+  stage?: "config.managed" | "config.project" | "dir.project" | "dir.global";
+  /** A later declaration with the same OpenCode identity among inspected stages. */
+  shadowedWithinInventoryBy?: string;
   path?: string;
 }
 
