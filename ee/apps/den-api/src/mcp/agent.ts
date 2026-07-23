@@ -516,6 +516,7 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
           "Pass path/query/body only as described by that match's pathParams/queryParams/hasBody.",
           "For external MCP capabilities, provider-advertised schema mismatches are returned as advisory schemaGuidance alongside the provider result; they do not block the downstream call.",
           "For skill:<id> matches, this returns that skill's stored SKILL.md content.",
+          "For plugin:<pluginId>:<configObjectId> capabilities listed in the remote skill catalog, this returns the authorized marketplace skill content.",
           "Returns unknown_capability if name doesn't match a current capability — call search_capabilities again.",
         ].join(" "),
         annotations: EXECUTE_CAPABILITY_ANNOTATIONS,
