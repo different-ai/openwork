@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { z } from "zod";
 
+import skillCreatorTemplate from "../../../app/src/app/data/skill-creator.md" with { type: "text" };
 import { OpenWorkExtensionsPreview } from "./openwork-extensions-preview.js";
 import * as OpenWorkExtensionsPreviewEntry from "./openwork-extensions-preview.js";
 import {
@@ -474,6 +475,10 @@ describe("OpenWorkExtensionsPreview semantic tool surface", () => {
     expect(tools).toEqual(["openwork_context", "openwork_execute", "openwork_query"]);
 
     const system = await transformedSystem(plugin);
+    expect(system).toContain("## Default Skill: skill-creator");
+    expect(system).toContain("already loaded the complete skill-creator instructions");
+    expect(system).toContain(skillCreatorTemplate.trim());
+    expect(system).toContain("Do not call a native skill loader");
     expect(system).not.toContain("openwork_ui_");
     expect(system).not.toContain("openwork_session_");
     expect(system).not.toContain("openwork_extension_");

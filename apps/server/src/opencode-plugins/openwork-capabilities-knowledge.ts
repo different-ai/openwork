@@ -92,7 +92,7 @@ Here is what you can help users with:
 ## Skills
 - Specialized instruction packs for specific workflows.
 - Manageable via Settings > Skills.
-- When a user asks to create or update a skill, use the built-in \`skill-creator\` skill. Follow the separate runtime \`Skill creation:\` instruction to choose its Remote Cloud or local flow; do not default to creating a workspace file.
+- When a user asks to create or update a skill, follow the default \`skill-creator\` instructions already injected into the system context. Follow the separate runtime \`Skill creation:\` instruction to choose its Remote Cloud or local flow; do not default to creating a workspace file.
 
 ## Creating Plugins
 - Plugins extend OpenWork/OpenCode with custom tools.

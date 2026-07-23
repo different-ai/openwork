@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { homedir, platform } from "node:os";
 import { z } from "zod";
 import type { OpenworkAffordanceEffects } from "@openwork/types/openwork-affordance";
+import skillCreatorTemplate from "../../../app/src/app/data/skill-creator.md" with { type: "text" };
 import {
   combineInstructionSections,
   composeAgentInstructions,
@@ -55,6 +56,14 @@ const connectSkillDescriptorSchema = z.object({
 const connectSkillsEnvelopeSchema = z.object({
   skills: z.array(connectSkillDescriptorSchema),
 }).passthrough();
+
+const OPENWORK_DEFAULT_SKILL_CREATOR_INSTRUCTION = [
+  "## Default Skill: skill-creator",
+  "OpenWork has already loaded the complete skill-creator instructions below. When the user asks to create or update a skill, follow these instructions directly. Do not call a native skill loader, search OpenWork Connect for skill-creator, or create a workspace-local copy just to access them.",
+  '<openwork_default_skill name="skill-creator">',
+  skillCreatorTemplate.trim(),
+  "</openwork_default_skill>",
+].join("\n\n");
 
 const sessionSearchArgsSchema = z.object({
   query: z.string().trim().min(1).describe("Text to search for across OpenWork session titles and message transcripts."),
@@ -888,6 +897,7 @@ export const OpenWorkExtensionsPreview = async (factoryInput?: unknown) => {
       createInstructionSection("routing", extensionInstruction),
       createInstructionSection("agent-surface", OPENWORK_AGENT_SURFACE_INSTRUCTION),
       createInstructionSection("skill-authoring", skillAuthoring.prompt),
+      createInstructionSection("default-skill-creator", OPENWORK_DEFAULT_SKILL_CREATOR_INSTRUCTION),
       createInstructionSection("connect-skills", skillInstruction),
       createInstructionSection("browser", OPENWORK_BROWSER_INSTRUCTION),
     );
