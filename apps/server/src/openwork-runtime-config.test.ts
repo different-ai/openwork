@@ -75,6 +75,10 @@ describe("openwork runtime config file", () => {
         permission: {
           skill: {
             "customize-opencode": "deny",
+            "get-started": "deny",
+            "command-creator": "deny",
+            "agent-creator": "deny",
+            "plugin-creator": "deny",
           },
         },
       },

@@ -107,8 +107,13 @@ export function buildOpenworkRuntimeConfigObjectFromSnapshot(
         prompt: OPENWORK_AGENT_PROMPT,
         permission: {
           skill: {
-            // OpenWork supplies its own Cloud/local skill-creator routing.
+            // OpenWork supplies its own current skill routing and no longer
+            // supports these engine or legacy workspace skills.
             "customize-opencode": "deny",
+            "get-started": "deny",
+            "command-creator": "deny",
+            "agent-creator": "deny",
+            "plugin-creator": "deny",
           },
         },
       },

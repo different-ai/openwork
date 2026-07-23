@@ -34,6 +34,7 @@ import {
 } from "@/react-app/domains/workspace/modal-styles";
 import { Button } from "@/components/ui/button";
 import { ConfirmModal } from "@/react-app/design-system/modals/confirm-modal";
+import { isOpenworkProvidedSkill } from "../extension-items";
 
 type InstallResult = { ok: boolean; message: string };
 type SkillsFilter = "all" | "installed";
@@ -42,15 +43,6 @@ const pageTitleClass = "text-[28px] font-semibold tracking-[-0.5px] text-dls-tex
 const sectionTitleClass = "text-[15px] font-medium tracking-[-0.2px] text-dls-text";
 const panelCardClass =
   "rounded-[20px] border border-dls-border bg-dls-surface p-5 transition-all hover:border-dls-border hover:shadow-[0_2px_12px_-4px_rgba(0,0,0,0.06)]";
-
-const OPENWORK_DEFAULT_SKILL_NAMES = new Set([
-  "workspace-guide",
-  "get-started",
-  "skill-creator",
-  "command-creator",
-  "agent-creator",
-  "plugin-creator",
-]);
 
 export type SkillsExtensionsStore = {
   skills: () => SkillCard[];
@@ -264,13 +256,6 @@ export function SkillsView(props: SkillsViewProps) {
     }
   }, [extensions, maskError, selectedContent, selectedDirty, selectedSkill]);
 
-  const isOpenworkInjectedSkill = (skill: SkillCard) => {
-    const normalizedName = skill.name.trim().toLowerCase();
-    const normalizedPath = skill.path.replace(/\\/g, "/").toLowerCase();
-    return normalizedPath.includes("/.opencode/skills/") &&
-      (OPENWORK_DEFAULT_SKILL_NAMES.has(normalizedName) || normalizedName.endsWith("-creator"));
-  };
-
   const handleSkillCardKeyDown = (
     event: ReactKeyboardEvent<HTMLDivElement>,
     skill: SkillCard,
@@ -400,7 +385,7 @@ export function SkillsView(props: SkillsViewProps) {
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2">
                           <h4 className="truncate text-[14px] font-semibold text-dls-text">{skill.name}</h4>
-                          {isOpenworkInjectedSkill(skill) ? <span className={tagClass}>OpenWork</span> : null}
+                          {isOpenworkProvidedSkill(skill) ? <span className={tagClass}>OpenWork</span> : null}
                         </div>
                         <p className="mt-2 line-clamp-2 text-[13px] leading-relaxed text-dls-secondary">
                           {skill.description || t("skills.no_description")}

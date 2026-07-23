@@ -3,7 +3,10 @@ import { describe, expect, test } from "bun:test";
 import type { McpDirectoryInfo } from "../src/app/constants";
 import type { DenExternalMcpConnection } from "../src/app/lib/den";
 import type { McpServerEntry } from "../src/app/types";
-import { buildExtensionItems } from "../src/react-app/domains/settings/extension-items";
+import {
+  buildExtensionItems,
+  isOpenworkProvidedSkill,
+} from "../src/react-app/domains/settings/extension-items";
 
 const connectedBuiltIn: McpDirectoryInfo = {
   id: "openwork-browser",
@@ -73,6 +76,30 @@ function orgMcpConnection(input: Partial<DenExternalMcpConnection> = {}): DenExt
 }
 
 describe("extension item projection", () => {
+  test("attributes only current OpenWork-provided local skills", () => {
+    expect(isOpenworkProvidedSkill({
+      name: "skill-creator",
+      path: "/workspace/.opencode/skills/skill-creator/SKILL.md",
+    })).toBe(true);
+    expect(isOpenworkProvidedSkill({
+      name: "workspace-guide",
+      path: String.raw`C:\workspace\.opencode\skills\workspace-guide\SKILL.md`,
+    })).toBe(true);
+
+    for (const name of [
+      "get-started",
+      "command-creator",
+      "agent-creator",
+      "plugin-creator",
+      "customer-creator",
+    ]) {
+      expect(isOpenworkProvidedSkill({
+        name,
+        path: `/workspace/.opencode/skills/${name}/SKILL.md`,
+      })).toBe(false);
+    }
+  });
+
   test("keeps unconnected built-ins out of My Extensions quick connect", () => {
     const result = buildExtensionItems({
       quickConnect: [connectedBuiltIn, availableBuiltIn],
