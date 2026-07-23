@@ -171,8 +171,29 @@ function escapeXml(value: string): string {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&apos;");
 }
 
+type InjectedMarketplaceSkill = {
+  name: string;
+  title: string;
+  description: string;
+  marketplaceName?: string;
+  pluginName?: string;
+  capability: string;
+};
+
+function logInjectedMarketplaceSkills(skills: InjectedMarketplaceSkill[]): void {
+  if (process.env.OPENWORK_DEV_MODE !== "1") return;
+  console.log("[openwork:skills] marketplace skills injected into prompt", {
+    count: skills.length,
+    skills,
+  });
+}
+
 export function renderOpenWorkConnectSkillInstruction(skills: OpenWorkConnectSkill[]): string {
-  if (skills.length === 0) return "";
+  if (skills.length === 0) {
+    logInjectedMarketplaceSkills([]);
+    return "";
+  }
+  const injectedMarketplaceSkills: InjectedMarketplaceSkill[] = [];
   const lines = [
     "Remote Agent Skills are available from OpenWork Connect. The catalog below contains discovery metadata only.",
     "Use each skill's human-readable title and description to decide whether it applies. The name is its stable machine identifier; marketplace and plugin identify its source when present.",
@@ -197,7 +218,18 @@ export function renderOpenWorkConnectSkillInstruction(skills: OpenWorkConnectSki
     ];
     if ([...lines, ...entry, "</available_skills>"].join("\n").length > MAX_PROMPT_CHARS) break;
     lines.push(...entry);
+    if (skill.marketplaceName || skill.pluginName) {
+      injectedMarketplaceSkills.push({
+        name: skill.name,
+        title,
+        description,
+        ...(skill.marketplaceName ? { marketplaceName: skill.marketplaceName } : {}),
+        ...(skill.pluginName ? { pluginName: skill.pluginName } : {}),
+        capability: skill.capability,
+      });
+    }
   }
   lines.push("</available_skills>");
+  logInjectedMarketplaceSkills(injectedMarketplaceSkills);
   return lines.join("\n");
 }
