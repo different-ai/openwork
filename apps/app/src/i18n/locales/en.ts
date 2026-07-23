@@ -1627,7 +1627,7 @@ export default {
   "skills.install": "Install",
   "skills.install_failed": "Skill install failed.",
   "skills.installed": "Installed skills",
-  "skills.installed_desc": "Installed skills live on this worker and can be edited or shared.",
+  "skills.installed_desc": "Installed skills live on this worker and are edited locally.",
   "skills.installed_status": "Installed",
   "skills.installing_skill_creator": "Installing skill creator...",
   "skills.loading": "Loading…",

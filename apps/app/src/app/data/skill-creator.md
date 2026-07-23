@@ -15,9 +15,9 @@ A local skill is a folder under `.opencode/skills/<skill-name>/` or `.claude/ski
 
 Follow the runtime `Skill creation:` instruction for this workspace/model:
 
-- `Cloud`: use the remote flow below. Do not write `.opencode/skills`.
+- `Cloud`: use the remote flow below. Cloud is the default while OpenWork Cloud is connected. Do not create, stage, mirror, or back up the skill in `.opencode/skills` or `.claude/skills`.
 - `Local`: inspect `.opencode/skills/` and `.claude/skills/`, then write or update exactly one `.opencode/skills/<skill-name>/SKILL.md` and re-read it.
-- An explicit request for a workspace-local skill overrides Cloud mode. Never create both copies.
+- Only an explicit request for a workspace-local skill overrides Cloud mode. Never create both copies or upload a local skill to Cloud unless the user explicitly requests that migration.
 
 ## Remote Cloud flow
 

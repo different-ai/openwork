@@ -1,7 +1,6 @@
 /** @jsxImportSource react */
 import {
   useCallback,
-  useEffect,
   useMemo,
   useReducer,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -16,41 +15,25 @@ import {
   Sparkles,
   Trash2,
   Upload,
-  Users,
 } from "lucide-react";
 import { toast } from "@/components/ui/sonner";
 
 import {
   Dialog,
-  DialogClose,
   DialogContent,
-  DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
 import { t } from "@/i18n";
-import { saveInstalledSkillToOpenWorkOrg } from "@/app/lib/den-skills";
-import {
-  buildDenAuthUrl,
-  readDenSettings,
-} from "@/app/lib/den";
 import type { SkillCard } from "@/app/types";
 import {
-  modalNoticeErrorClass,
-  modalNoticeSuccessClass,
   pillGhostClass,
   pillPrimaryClass,
   pillSecondaryClass,
-  surfaceCardClass,
   tagClass,
 } from "@/react-app/domains/workspace/modal-styles";
 import { Button } from "@/components/ui/button";
 import { ConfirmModal } from "@/react-app/design-system/modals/confirm-modal";
-import {
-  SelectMenu,
-  type SelectMenuOption,
-} from "@/react-app/design-system/select-menu";
 
 type InstallResult = { ok: boolean; message: string };
 type SkillsFilter = "all" | "installed";
@@ -73,7 +56,6 @@ export type SkillsExtensionsStore = {
   skills: () => SkillCard[];
   skillsStatus: () => string | null;
   refreshSkills: (options?: { force?: boolean }) => void | Promise<void>;
-  refreshCloudOrgMarketplaces: (options?: { force?: boolean }) => void | Promise<void>;
   installSkillCreator: () => Promise<InstallResult>;
   importLocalSkill: () => void | Promise<void>;
   revealSkillsFolder: () => void | Promise<void>;
@@ -94,7 +76,6 @@ export type SkillsViewProps = {
   canUseDesktopTools: boolean;
   accessHint?: string | null;
   extensions: SkillsExtensionsStore;
-  onOpenLink: (url: string) => void;
   createSessionAndOpen: (initialPrompt?: string) => Promise<string | undefined> | string | void;
 };
 
@@ -102,12 +83,6 @@ type SkillsViewLocalState = {
   uninstallTarget: SkillCard | null;
   searchQuery: string;
   activeFilter: SkillsFilter;
-  shareTarget: SkillCard | null;
-  cloudSessionNonce: number;
-  shareTeamBusy: boolean;
-  shareTeamError: string | null;
-  shareTeamSuccess: string | null;
-  sharePermissionChoice: string;
   selectedSkill: SkillCard | null;
   selectedContent: string;
   selectedLoading: boolean;
@@ -117,21 +92,12 @@ type SkillsViewLocalState = {
 };
 
 type SkillsViewLocalAction<K extends keyof SkillsViewLocalState = keyof SkillsViewLocalState> =
-  | { type: "set"; key: K; value: SetStateAction<any> }
-  | { type: "denSessionUpdated" }
-  | { type: "closeShare" }
-  | { type: "openShare"; skill: SkillCard };
+  { type: "set"; key: K; value: SetStateAction<any> };
 
 const initialSkillsViewLocalState: SkillsViewLocalState = {
   uninstallTarget: null,
   searchQuery: "",
   activeFilter: "all",
-  shareTarget: null,
-  cloudSessionNonce: 0,
-  shareTeamBusy: false,
-  shareTeamError: null,
-  shareTeamSuccess: null,
-  sharePermissionChoice: "org",
   selectedSkill: null,
   selectedContent: "",
   selectedLoading: false,
@@ -154,30 +120,6 @@ function skillsViewLocalReducer(
       if (Object.is(current, next)) return state;
       return { ...state, [action.key]: next };
     }
-    case "denSessionUpdated":
-      return {
-        ...state,
-        cloudSessionNonce: state.cloudSessionNonce + 1,
-      };
-    case "closeShare":
-      return {
-        ...state,
-        shareTarget: null,
-        shareTeamBusy: false,
-        shareTeamError: null,
-        shareTeamSuccess: null,
-        sharePermissionChoice: "org",
-      };
-    case "openShare":
-      return {
-        ...state,
-        shareTarget: action.skill,
-        shareTeamBusy: false,
-        shareTeamError: null,
-        shareTeamSuccess: null,
-        sharePermissionChoice: "org",
-        cloudSessionNonce: state.cloudSessionNonce + 1,
-      };
   }
 }
 
@@ -191,12 +133,6 @@ export function SkillsView(props: SkillsViewProps) {
     uninstallTarget,
     searchQuery,
     activeFilter,
-    shareTarget,
-    cloudSessionNonce,
-    shareTeamBusy,
-    shareTeamError,
-    shareTeamSuccess,
-    sharePermissionChoice,
     selectedSkill,
     selectedContent,
     selectedLoading,
@@ -211,10 +147,6 @@ export function SkillsView(props: SkillsViewProps) {
   const setUninstallTarget = (value: SetStateAction<SkillCard | null>) => setLocal("uninstallTarget", value);
   const setSearchQuery = (value: SetStateAction<string>) => setLocal("searchQuery", value);
   const setActiveFilter = (value: SetStateAction<SkillsFilter>) => setLocal("activeFilter", value);
-  const setShareTeamBusy = (value: SetStateAction<boolean>) => setLocal("shareTeamBusy", value);
-  const setShareTeamError = (value: SetStateAction<string | null>) => setLocal("shareTeamError", value);
-  const setShareTeamSuccess = (value: SetStateAction<string | null>) => setLocal("shareTeamSuccess", value);
-  const setSharePermissionChoice = (value: SetStateAction<string>) => setLocal("sharePermissionChoice", value);
   const setSelectedSkill = (value: SetStateAction<SkillCard | null>) => setLocal("selectedSkill", value);
   const setSelectedContent = (value: SetStateAction<string>) => setLocal("selectedContent", value);
   const setSelectedLoading = (value: SetStateAction<boolean>) => setLocal("selectedLoading", value);
@@ -227,46 +159,6 @@ export function SkillsView(props: SkillsViewProps) {
       value instanceof Error ? value.message : t("common.something_went_wrong"),
     [],
   );
-
-  useEffect(() => {
-    const onDenSession = () => {
-      dispatchLocal({ type: "denSessionUpdated" });
-      void extensions.refreshCloudOrgMarketplaces({ force: true });
-    };
-    window.addEventListener("openwork-den-session-updated", onDenSession);
-    return () => window.removeEventListener("openwork-den-session-updated", onDenSession);
-  }, [extensions]);
-
-  useEffect(() => {
-    if (!shareTarget) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      event.preventDefault();
-      dispatchLocal({ type: "closeShare" });
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [shareTarget]);
-
-  const shareCloudSignedIn = useMemo(() => {
-    cloudSessionNonce;
-    return Boolean(readDenSettings().authToken?.trim());
-  }, [cloudSessionNonce]);
-
-  const shareTeamOrgLabel = useMemo(() => {
-    cloudSessionNonce;
-    const name = readDenSettings().activeOrgName?.trim();
-    return name || t("skills.share_team_org_fallback");
-  }, [cloudSessionNonce]);
-
-  const shareTeamDisabledReason = useMemo(() => {
-    if (!shareCloudSignedIn) return null;
-    const settings = readDenSettings();
-    if (!settings.activeOrgId?.trim() && !settings.activeOrgSlug?.trim()) {
-      return t("skills.share_team_choose_org");
-    }
-    return null;
-  }, [shareCloudSignedIn]);
 
   const skills = extensions.skills();
   const skillsStatus = extensions.skillsStatus();
@@ -285,28 +177,8 @@ export function SkillsView(props: SkillsViewProps) {
     });
   }, [searchQuery, skills]);
 
-  const sharePermissionOptions = useMemo<SelectMenuOption[]>(
-    () => [
-      { value: "private", label: t("skills.share_team_permission_private") },
-      { value: "org", label: t("skills.share_team_permission_org") },
-    ],
-    [],
-  );
-
-  const shareModalSubtitle = t("skills.share_subtitle_team");
-
   const showInstalledSection = activeFilter === "all" || activeFilter === "installed";
   const canCreateInChat = !props.busy && (props.canInstallSkillCreator || props.canUseDesktopTools);
-
-  const resolveSharePermission = () => {
-    const choice = sharePermissionChoice.trim();
-    if (choice === "private") return { shared: null };
-    return { shared: "org" as const };
-  };
-
-  const closeShareLink = useCallback(() => {
-    dispatchLocal({ type: "closeShare" });
-  }, []);
 
   const runDesktopAction = useCallback(
     (action: () => void | Promise<void>) => {
@@ -350,42 +222,6 @@ export function SkillsView(props: SkillsViewProps) {
     }
     await Promise.resolve(props.createSessionAndOpen("/skill-creator"));
   }, [installSkillCreator, props, skillCreatorInstalled]);
-
-  const openShareLink = useCallback(
-    (skill: SkillCard) => {
-      if (props.busy) return;
-      dispatchLocal({ type: "openShare", skill });
-    },
-    [props.busy],
-  );
-
-  const startShareSkillSignIn = useCallback(() => {
-    const settings = readDenSettings();
-    // Label stays "Sign in"; opens the sign-up tab (returning users can toggle).
-    props.onOpenLink(buildDenAuthUrl(settings.baseUrl, "sign-up"));
-  }, [props]);
-
-  const publishSkillToTeam = useCallback(async () => {
-    if (!shareTarget || props.busy || shareTeamBusy || shareTeamDisabledReason) return;
-    setShareTeamBusy(true);
-    setShareTeamError(null);
-    setShareTeamSuccess(null);
-    try {
-      const skill = await extensions.readSkill(shareTarget.name);
-      if (!skill) throw new Error("Failed to load skill");
-      const sharing = resolveSharePermission();
-      const { orgName } = await saveInstalledSkillToOpenWorkOrg({
-        skillText: skill.content,
-        shared: sharing.shared,
-      });
-      setShareTeamSuccess(t("skills.share_team_uploaded_success", undefined, { org: orgName }));
-      void extensions.refreshCloudOrgMarketplaces({ force: true });
-    } catch (error) {
-      setShareTeamError(maskError(error));
-    } finally {
-      setShareTeamBusy(false);
-    }
-  }, [extensions, maskError, props.busy, shareTarget, shareTeamBusy, shareTeamDisabledReason]);
 
   const openSkill = useCallback(
     async (skill: SkillCard) => {
@@ -577,20 +413,6 @@ export function SkillsView(props: SkillsViewProps) {
                       <div className="flex flex-wrap gap-2">
                         <button
                           type="button"
-                          className={pillGhostClass}
-                          onClick={(event) => {
-                            event.preventDefault();
-                            event.stopPropagation();
-                            openShareLink(skill);
-                          }}
-                          disabled={props.busy}
-                          title={t("skills.share_option_team_title")}
-                        >
-                          <Users size={14} />
-                          {t("skills.share_option_team_title")}
-                        </button>
-                        <button
-                          type="button"
                           className={pillSecondaryClass}
                           onClick={(event) => {
                             event.preventDefault();
@@ -693,79 +515,6 @@ export function SkillsView(props: SkillsViewProps) {
           void extensions.uninstallSkill(target.name);
         }}
       />
-
-      <Dialog
-        open={Boolean(shareTarget)}
-        onOpenChange={(open) => {
-          if (!open) closeShareLink();
-        }}
-      >
-        <DialogContent className="flex max-h-[78vh] min-h-0 w-full max-w-md flex-col overflow-hidden sm:max-w-md">
-          <DialogHeader>
-            <div className="min-w-0 flex flex-col gap-1.5">
-              <div className="flex flex-wrap items-center gap-2">
-                <DialogTitle>{t("skills.share_title")}</DialogTitle>
-                <span className={tagClass}>{shareTarget?.name}</span>
-              </div>
-              <DialogDescription>{shareModalSubtitle}</DialogDescription>
-            </div>
-          </DialogHeader>
-
-          <div className="min-h-0 flex-1 overflow-y-auto">
-            <div className="space-y-5 pt-2">
-              <p className="text-[14px] leading-relaxed text-dls-secondary">{t("skills.share_team_permissions_intro")}</p>
-              <div className={surfaceCardClass}>
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className={tagClass}>{shareTeamOrgLabel}</span>
-                </div>
-                {shareTeamError?.trim() ? <div className={`mt-4 ${modalNoticeErrorClass}`}>{shareTeamError}</div> : null}
-                {shareTeamSuccess?.trim() ? <div className={`mt-4 ${modalNoticeSuccessClass}`}>{shareTeamSuccess}</div> : null}
-                {shareCloudSignedIn && shareTeamDisabledReason?.trim() ? (
-                  <div className="mt-4 text-[12px] text-dls-secondary">{shareTeamDisabledReason}</div>
-                ) : null}
-                {shareCloudSignedIn ? (
-                  <div className="mt-4">
-                    <span id="skills-share-permissions-label" className="mb-1.5 block text-[13px] font-medium text-dls-text">
-                      {t("skills.share_team_permissions_label")}
-                    </span>
-                    <SelectMenu
-                      ariaLabelledBy="skills-share-permissions-label"
-                      options={sharePermissionOptions}
-                      value={sharePermissionChoice}
-                      onChange={setSharePermissionChoice}
-                      disabled={shareTeamBusy || Boolean(shareTeamSuccess?.trim())}
-                    />
-                  </div>
-                ) : null}
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (!shareCloudSignedIn) {
-                      startShareSkillSignIn();
-                      return;
-                    }
-                    void publishSkillToTeam();
-                  }}
-                  disabled={shareCloudSignedIn ? Boolean(shareTeamDisabledReason) || shareTeamBusy || Boolean(shareTeamSuccess?.trim()) : false}
-                  className={`${pillPrimaryClass} mt-4 w-full`}
-                >
-                  {!shareCloudSignedIn
-                    ? t("skills.share_team_sign_in")
-                    : shareTeamBusy
-                      ? t("skills.share_team_uploading")
-                      : t("skills.share_team_upload_and_save")}
-                </button>
-                {!shareCloudSignedIn ? <p className="mt-3 text-[12px] text-dls-secondary">{t("skills.share_team_sign_in_hint")}</p> : null}
-              </div>
-            </div>
-          </div>
-          <DialogFooter>
-            <DialogClose render={<Button variant="outline" />}>
-              {t("skills.share_done")}
-            </DialogClose>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
     </section>
   );

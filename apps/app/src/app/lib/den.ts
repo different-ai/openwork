@@ -240,14 +240,6 @@ export type DenOrgMarketplaceResolved = {
   plugins: DenOrgPlugin[];
 };
 
-type DenOrgSkillPluginCreateInput = {
-  name: string;
-  description?: string | null;
-  rawSourceText: string;
-  orgWide?: boolean;
-  marketplaceId?: string;
-};
-
 export type DenBillingPrice = {
   amount: number | null;
   currency: string | null;
@@ -2140,29 +2132,6 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
         throw new DenApiError(500, "invalid_worker_token_payload", "Worker token response was missing token values.");
       }
       return tokens;
-    },
-
-    async createOrgSkillPlugin(orgId: string, input: DenOrgSkillPluginCreateInput): Promise<DenOrgPlugin> {
-      const components: Array<{ type: "skill"; input: { rawSourceText: string } }> = [
-        { type: "skill", input: { rawSourceText: input.rawSourceText } },
-      ];
-      const payload = await requestJson<unknown>(baseUrls, "/v1/plugins", {
-        method: "POST",
-        token,
-        organizationId: orgId,
-        body: {
-          name: input.name,
-          ...(input.description === undefined ? {} : { description: input.description }),
-          components,
-          ...(input.orgWide === undefined ? {} : { orgWide: input.orgWide }),
-          ...(input.marketplaceId ? { marketplaceId: input.marketplaceId } : {}),
-        },
-      });
-      const plugin = isRecord(payload) ? parseOrgPlugin(payload.item) : null;
-      if (!plugin) {
-        throw new DenApiError(500, "invalid_skill_plugin_payload", "Skill plugin response was missing plugin details.");
-      }
-      return plugin;
     },
 
     async listOrgLlmProviders(orgId: string): Promise<DenOrgLlmProvider[]> {

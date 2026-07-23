@@ -133,7 +133,10 @@ describe("composeOpenWorkExtensionDiscoveryInstruction", () => {
       prompt: OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION,
     });
     expect(OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain("Skill creation: Cloud");
+    expect(OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain("Cloud is the default");
     expect(OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain("skill-creator Remote Cloud flow");
+    expect(OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain("Do not create, stage, mirror, or back up");
+    expect(OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain("Never create both copies");
     expect(OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).not.toContain("Skill creation: Local");
 
     for (const instruction of [
