@@ -1,9 +1,7 @@
-import { logPromptDebug } from "../openwork-debug-log.js";
 import { applyAnthropicAdaptiveThinking } from "./anthropic-adaptive-thinking.js";
 import { installAnthropicToolSchemaFetchPatch } from "./anthropic-tool-schema.js";
 import {
   OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION,
-  resolveOpenWorkConnectSkillInstructionFromBundle,
   resolveOpenWorkExtensionDiscoveryInstruction,
 } from "./connect-steering.js";
 import {
@@ -80,24 +78,8 @@ async function resolveConnectSteering(input: ResolveInput): Promise<string> {
   );
 }
 
-async function resolveConnectSkills(input: ResolveInput): Promise<string | null> {
-  const instruction = resolveOpenWorkConnectSkillInstructionFromBundle(
-    contributorTransformInput(input),
-    input.bundle,
-    input.traceId,
-  );
-  if (instruction) {
-    logPromptDebug(
-      "connect-skills",
-      `trace=${input.traceId} injected Connect skills block into system prompt (${instruction.length} chars)`,
-    );
-    return instruction;
-  }
-  logPromptDebug(
-    "connect-skills",
-    `trace=${input.traceId} no Connect skills block injected into system prompt (empty instruction — reasons logged above)`,
-  );
-  return null;
+function resolveConnectSkills(input: ResolveInput): string | null {
+  return input.bundle?.skills.instruction || null;
 }
 
 function previewTools(env: ContributorEnv): Record<string, EngineToolDefinition> {

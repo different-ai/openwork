@@ -1138,7 +1138,7 @@ const runtimeManager = createRuntimeManager({
   desktopRoot: path.resolve(__dirname, ".."),
   listLocalWorkspacePaths: () => workspaceStore.listLocalWorkspacePaths(),
   onPromptLogControl: (control) => {
-    observabilityConsoleBridge.setEnabled(control?.level !== "off");
+    observabilityConsoleBridge.setEnabled(control?.consoleEnabled === true);
   },
 });
 

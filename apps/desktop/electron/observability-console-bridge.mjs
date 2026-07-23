@@ -1,20 +1,11 @@
 import { StringDecoder } from "node:string_decoder";
 
+import { resolveDesktopObservabilityControl } from "./observability-control.mjs";
+
 export const OBSERVABILITY_CONSOLE_EVENT = "openwork:observability-console";
 
-const TRUE_VALUES = new Set(["1", "true", "yes", "on"]);
-const FALSE_VALUES = new Set(["0", "false", "no", "off"]);
-
 export function resolveObservabilityConsoleEnabled(options = {}, env = process.env) {
-  const observability = String(env.OPENWORK_OBSERVABILITY ?? "").trim().toLowerCase();
-  if (observability) return observability === "metadata" || observability === "exact";
-  const explicit = String(env.OPENWORK_PROMPT_LOG ?? "").trim().toLowerCase();
-  if (explicit) {
-    if (TRUE_VALUES.has(explicit)) return true;
-    if (FALSE_VALUES.has(explicit)) return false;
-    return false;
-  }
-  return options?.openworkPromptLog === true || options?.openworkDeveloperMode === true;
+  return resolveDesktopObservabilityControl(options, env).consoleEnabled;
 }
 
 /**

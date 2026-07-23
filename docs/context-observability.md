@@ -58,10 +58,11 @@ All records have stable `[openwork][<scope>]` prefixes.
   booleans, and the winning control source. It contains no control value.
 - `context trace=<id> id=<contributor>` gives include/omit/failure outcome,
   character count, and full SHA-256 for an OpenWork contributor.
-- `connect-context` and `connect-skills` give bounded candidate source,
-  candidate hash, cache state, MCP phase, HTTP status or JSON-RPC code, and
-  selection/omission reasons. URLs, headers, payloads, and exception messages
-  are excluded.
+- `connect-context` owns bounded backend diagnostics: candidate source/hash,
+  cache state, MCP phase, HTTP status or JSON-RPC code, and selection/omission
+  reasons. `context ... id=connect-skills` owns the contributor's
+  resolved/omitted outcome, character count, and hash. URLs, headers, payloads,
+  and exception messages are excluded.
 - `agent-prompt observed system array` gives a full SHA-256 of JSON `system[]`,
   per-block hashes and sizes, and an initial/unchanged/changed delta. The
   baseline is scoped by hashed session + agent + model so title, summary, and
@@ -126,6 +127,9 @@ Returns schema v1 of the same single bundle requested by the prompt plugin:
 - passive steering snapshot resolved for the requested workspace/directory;
 - server/account-scoped remote skill instruction and count;
 - sanitized diagnostics and generation time.
+
+The route emits those detailed backend diagnostics once under
+`[openwork][connect-context]`. The prompt-side registry does not replay them.
 
 Passive is the default and does not call OpenCode health. The engine's in-process
 `mcp.status` remains authoritative; passive steering is used only when that MCP

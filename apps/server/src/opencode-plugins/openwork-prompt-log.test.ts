@@ -168,7 +168,6 @@ describe("OpenWork prompt log plugin", () => {
           properties: { server: "private-enterprise-server" },
         },
       });
-      await plugin.dispose();
 
       const rendered = errors.join("\n");
       expect(calls).toBeGreaterThanOrEqual(4);

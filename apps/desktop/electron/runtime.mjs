@@ -9,53 +9,17 @@ import tls from "node:tls";
 import { fileURLToPath } from "node:url";
 import { pathToFileURL } from "node:url";
 
+import { resolveDesktopObservabilityControl } from "./observability-control.mjs";
+
 const __runtimeDir = path.dirname(fileURLToPath(import.meta.url));
 
 const DIRECT_RUNTIME = "direct";
 const ORCHESTRATOR_RUNTIME = "openwork-orchestrator";
 const OPENWORK_SERVER_PORT_RANGE_START = 48_000;
 const OPENWORK_SERVER_PORT_RANGE_END = 51_000;
-const TRUE_VALUES = new Set(["1", "true", "yes", "on"]);
-const FALSE_VALUES = new Set(["0", "false", "no", "off"]);
-
-export function resolvePromptLogRuntimeControl(
-  requested,
-  env = process.env,
-  developerModeRequested = false,
-) {
-  const observability = String(env.OPENWORK_OBSERVABILITY ?? "").trim().toLowerCase();
-  if (observability) {
-    const level = ["off", "metadata", "exact"].includes(observability) ? observability : "off";
-    return {
-      developerModeRequested: developerModeRequested === true,
-      requested: requested === true,
-      enabled: level === "exact",
-      level,
-      source: observability === level ? "OPENWORK_OBSERVABILITY" : "OPENWORK_OBSERVABILITY_INVALID",
-    };
-  }
-  const explicit = String(env.OPENWORK_PROMPT_LOG ?? "").trim().toLowerCase();
-  if (explicit) {
-    if (TRUE_VALUES.has(explicit)) {
-      return { developerModeRequested: developerModeRequested === true, requested: requested === true, enabled: true, level: "exact", source: "OPENWORK_PROMPT_LOG" };
-    }
-    if (FALSE_VALUES.has(explicit)) {
-      return { developerModeRequested: developerModeRequested === true, requested: requested === true, enabled: false, level: "off", source: "OPENWORK_PROMPT_LOG" };
-    }
-    return { developerModeRequested: developerModeRequested === true, requested: requested === true, enabled: false, level: "off", source: "OPENWORK_PROMPT_LOG_INVALID" };
-  }
-  const level = requested === true ? "exact" : developerModeRequested === true ? "metadata" : "off";
-  return {
-    developerModeRequested: developerModeRequested === true,
-    requested: requested === true,
-    enabled: level === "exact",
-    level,
-    source: "desktop-option",
-  };
-}
 
 /**
- * @param {ReturnType<typeof resolvePromptLogRuntimeControl>} _control
+ * @param {ReturnType<typeof resolveDesktopObservabilityControl>} _control
  */
 function ignorePromptLogRuntimeControl(_control) {}
 
@@ -1241,11 +1205,10 @@ export function createRuntimeManager({
     // Inject user env vars so the server and managed OpenCode inherit them.
     const serverEnv = await buildChildEnv({});
     Object.assign(process.env, serverEnv);
-    const promptLogControl = resolvePromptLogRuntimeControl(
-      options.openworkPromptLog === true,
-      process.env,
-      options.openworkDeveloperMode === true,
-    );
+    const promptLogControl = resolveDesktopObservabilityControl({
+      openworkDeveloperMode: options.openworkDeveloperMode === true,
+      openworkPromptLog: options.openworkPromptLog === true,
+    }, process.env);
     try {
       // Notify the main-process console bridge after user env files have been
       // merged but before the embedded server or managed engine can emit its
