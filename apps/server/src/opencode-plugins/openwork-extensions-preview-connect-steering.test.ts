@@ -136,6 +136,8 @@ describe("composeOpenWorkExtensionDiscoveryInstruction", () => {
     expect(OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain("OpenWork Cloud first when it is available");
     expect(OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain("skill-creator Remote Cloud flow");
     expect(OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain("workspace-local skill");
+    expect(OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain("Do not create both copies");
+    expect(OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain("migrate an existing local skill only when the user asks");
     expect(OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).not.toContain("Skill creation: Local");
 
     for (const instruction of [

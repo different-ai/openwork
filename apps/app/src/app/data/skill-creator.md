@@ -17,7 +17,7 @@ Follow the runtime `Skill creation:` instruction for this workspace/model:
 
 - `Cloud`: create or update the skill in OpenWork Cloud first when it is available, then follow the remote flow below.
 - `Local`: inspect `.opencode/skills/` and `.claude/skills/`, then write or update exactly one `.opencode/skills/<skill-name>/SKILL.md` and re-read it.
-- Use the local flow when the user explicitly requests a workspace-local skill.
+- Use the local flow only when the user explicitly requests a workspace-local skill. Do not create both copies. Move an existing local skill to Cloud only when the user explicitly requests migration.
 
 ## Remote Cloud flow
 
