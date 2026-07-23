@@ -8,6 +8,7 @@ import {
   readOpenWorkConnectSkillCatalog,
   renderOpenWorkConnectSkillInstruction,
   resetOpenWorkConnectSkillCatalogCacheForTests,
+  type OpenWorkConnectSkill,
 } from "./connect-skill-catalog.js";
 import { readConnectCloudMcp, writeConnectCloudMcp } from "./connect-state.js";
 import { writeRuntimeOpencodeConfig } from "./runtime-opencode-config-store.js";
@@ -84,7 +85,7 @@ async function serverConfig(): Promise<ServerConfig> {
 }
 
 describe("OpenWork Connect skill catalog", () => {
-  test("renders bounded discovery metadata and capability retrieval guidance", () => {
+  test("renders discovery metadata and capability retrieval guidance", () => {
     const instruction = renderOpenWorkConnectSkillInstruction([{
       name: "customer-briefing",
       type: "skill-md",
@@ -111,6 +112,26 @@ describe("OpenWork Connect skill catalog", () => {
     expect(instruction).toContain("transient HTTP 502, 503, or 504");
     expect(instruction).toContain("retry the same capability once");
     expect(instruction).not.toContain("# Customer Briefing");
+  });
+
+  test("renders every authorized skill beyond the former count and character limits", () => {
+    const skills: OpenWorkConnectSkill[] = Array.from({ length: 150 }, (_, index) => ({
+      name: `marketplace-skill-${index}`,
+      type: "skill-md",
+      title: `Marketplace Skill ${index}`,
+      description: `Use marketplace skill ${index} when requested. ${"Detailed discovery context. ".repeat(12)}`,
+      marketplaceName: "Enterprise Marketplace",
+      pluginName: `Plugin ${index}`,
+      url: `skill://marketplace-skill-${index}/SKILL.md`,
+      capability: `plugin:plg_${index}:cob_${index}`,
+    }));
+
+    const instruction = renderOpenWorkConnectSkillInstruction(skills);
+
+    expect(instruction.length).toBeGreaterThan(32_000);
+    expect(instruction.match(/  <skill>/g)).toHaveLength(150);
+    expect(instruction).toContain("<title>Marketplace Skill 149</title>");
+    expect(instruction).toContain("<capability>plugin:plg_149:cob_149</capability>");
   });
 
   test("keeps older skill indexes compatible by falling back from title to name", () => {
