@@ -6,7 +6,7 @@ import {
 import {
   desktopConnectDiagnosticIncidents,
   denMcpDiagnosticIncident,
-} from "../../../ee/apps/den-api/src/connect-diagnostics";
+} from "../../../ee/apps/den-api/src/connect-diagnostic-contract";
 import { POST as diagnosticsIntake } from "../../../ee/apps/diagnostics/app/api/connections/incidents/route";
 import {
   connectionIncidentFilters,
@@ -165,6 +165,7 @@ describe("Connect incident telemetry end-to-end", () => {
       httpStatus: 200,
       errorCode: null,
       bearerToken,
+      serverVersion: "0.17.40",
     });
     expect((await diagnosticsIntake(new Request(
       "https://diagnostics.example/api/connections/incidents",

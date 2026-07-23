@@ -75,8 +75,11 @@ function buildSnapshot(): Record<string, unknown> {
 }
 
 function installIfNeeded() {
-  if (registry.installed) return;
   if (typeof window === "undefined") return;
+  // Development reloads and isolated tests can replace the Window object while
+  // this module stays alive. Reinstall the API when the active window no
+  // longer owns it instead of trusting module-local state alone.
+  if (registry.installed && window.__openwork?.version === INSPECTOR_VERSION) return;
 
   const api: InspectorAPI = {
     version: INSPECTOR_VERSION,
