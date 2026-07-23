@@ -138,7 +138,7 @@ export const OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION =
   "If the user asks for something you cannot do with obvious built-in tools, check OpenWork extensions before saying the capability is unavailable. Use openwork_extension_list_actions to inspect available extension actions, then call the matching action with openwork_extension_call.";
 
 export const OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION =
-  "Skill creation: Cloud. Cloud is the default while this connection is ready. Follow the skill-creator Remote Cloud flow. Do not create, stage, mirror, or back up a skill in .opencode/skills or .claude/skills unless the user explicitly requests a workspace-local skill. Never create both copies.";
+  "Skill creation: Cloud. Create or update the skill in OpenWork Cloud first when it is available. Follow the skill-creator Remote Cloud flow. Use a workspace-local skill when the user explicitly requests one.";
 
 export const OPENWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION =
   "Skill creation: Local. Follow the skill-creator local flow and do not create a Cloud copy.";

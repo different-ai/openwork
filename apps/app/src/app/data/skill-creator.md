@@ -1,6 +1,6 @@
 ---
 name: skill-creator
-description: Guide for creating effective skills. Use when users want to create or update a skill that extends OpenCode with specialized knowledge, workflows, or tool integrations.
+description: Create or update skills in OpenWork Cloud when available, or locally when requested.
 ---
 
 # Skill Creator
@@ -15,9 +15,9 @@ A local skill is a folder under `.opencode/skills/<skill-name>/` or `.claude/ski
 
 Follow the runtime `Skill creation:` instruction for this workspace/model:
 
-- `Cloud`: use the remote flow below. Cloud is the default while OpenWork Cloud is connected. Do not create, stage, mirror, or back up the skill in `.opencode/skills` or `.claude/skills`.
+- `Cloud`: create or update the skill in OpenWork Cloud first when it is available, then follow the remote flow below.
 - `Local`: inspect `.opencode/skills/` and `.claude/skills/`, then write or update exactly one `.opencode/skills/<skill-name>/SKILL.md` and re-read it.
-- Only an explicit request for a workspace-local skill overrides Cloud mode. Never create both copies or upload a local skill to Cloud unless the user explicitly requests that migration.
+- Use the local flow when the user explicitly requests a workspace-local skill.
 
 ## Remote Cloud flow
 
