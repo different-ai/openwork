@@ -22,20 +22,31 @@ const openworkAgentSkillCapabilityRuntimeSchema = z.string()
 
 export const openworkAgentSkillIndexEntryRuntimeSchema = z.object({
   name: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).max(64),
+  title: z.string().max(255).optional(),
   type: z.literal("skill-md"),
   description: z.string().max(1_024),
   url: z.string().startsWith("skill://").max(2_048),
   capability: openworkAgentSkillCapabilityRuntimeSchema,
+  marketplaceName: z.string().max(255).optional(),
+  pluginName: z.string().max(255).optional(),
 }).passthrough() satisfies z.ZodType<OpenWorkAgentSkillIndexEntry>;
+
+const openworkAgentSkillIndexMetadataRuntimeSchema = z.object({
+  totalSkills: z.number().int().nonnegative().max(1_000_000),
+  truncated: z.boolean(),
+  truncationReason: z.enum(["entry-count", "serialized-bytes"]).optional(),
+}).passthrough();
 
 export const openworkAgentSkillIndexEnvelopeRuntimeSchema = z.object({
   $schema: z.literal(OPENWORK_AGENT_SKILL_DISCOVERY_SCHEMA_URI),
   skills: z.array(z.unknown()),
+  openwork: openworkAgentSkillIndexMetadataRuntimeSchema.optional(),
 }).passthrough();
 
 export const openworkAgentSkillIndexRuntimeSchema = z.object({
   $schema: z.literal(OPENWORK_AGENT_SKILL_DISCOVERY_SCHEMA_URI),
   skills: z.array(openworkAgentSkillIndexEntryRuntimeSchema),
+  openwork: openworkAgentSkillIndexMetadataRuntimeSchema.optional(),
 }).passthrough() satisfies z.ZodType<OpenWorkAgentSkillIndex>;
 
 export type OpenWorkAgentSkillSchemaIssue = {

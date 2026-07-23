@@ -130,7 +130,10 @@ test("agent MCP server exposes the shared OpenWork MCP skill-index profile", () 
   const index = agentModule.buildAgentSkillIndex([{
     name: "customer-briefing",
     description: "Use for accounts & renewals",
-    capability: "skill:skill_customer_briefing",
+    title: "Customer Briefing",
+    marketplaceName: "Revenue Library",
+    pluginName: "Account Intelligence",
+    capability: "plugin:plg_customer:cfg_briefing",
     location: "skill://customer-briefing/SKILL.md",
   }])
   expect(index).toEqual({
@@ -139,11 +142,87 @@ test("agent MCP server exposes the shared OpenWork MCP skill-index profile", () 
       name: "customer-briefing",
       type: "skill-md",
       description: "Use for accounts & renewals",
+      title: "Customer Briefing",
+      marketplaceName: "Revenue Library",
+      pluginName: "Account Intelligence",
       url: "skill://customer-briefing/SKILL.md",
-      capability: "skill:skill_customer_briefing",
+      capability: "plugin:plg_customer:cfg_briefing",
     }],
+    openwork: {
+      totalSkills: 1,
+      truncated: false,
+    },
   })
   expect(openworkAgentSkillIndexSchema.parse(index)).toEqual(index)
+})
+
+test("agent skill index falls back to the human title for a blank description", () => {
+  const index = agentModule.buildAgentSkillIndex([{
+    name: "customer-briefing",
+    description: " \n\t ",
+    title: "Customer Briefing",
+    capability: "skill:skill_customer_briefing",
+    location: "skill://customer-briefing/SKILL.md",
+  }])
+
+  expect(index.skills[0]).toMatchObject({
+    name: "customer-briefing",
+    title: "Customer Briefing",
+    description: "Customer Briefing",
+  })
+  expect(index.skills[0]).not.toHaveProperty("marketplaceName")
+  expect(index.skills[0]).not.toHaveProperty("pluginName")
+})
+
+test("agent skill index reports deterministic entry-count truncation", () => {
+  const index = agentModule.buildAgentSkillIndex(Array.from({ length: 101 }, (_, entryIndex) => ({
+    name: `catalog-skill-${entryIndex}`,
+    description: `Catalog skill ${entryIndex}`,
+    title: `Catalog Skill ${entryIndex}`,
+    capability: `skill:skill_${entryIndex}`,
+    location: `skill://catalog-skill-${entryIndex}/SKILL.md`,
+  })))
+
+  expect(index.skills).toHaveLength(agentModule.AGENT_SKILL_INDEX_MAX_ENTRIES)
+  expect(index.openwork).toEqual({
+    totalSkills: 101,
+    truncated: true,
+    truncationReason: "entry-count",
+  })
+})
+
+test("agent skill index remains safe when embedded in the bounded MCP response", () => {
+  const index = agentModule.buildAgentSkillIndex(Array.from({ length: 100 }, (_, entryIndex) => ({
+    name: `escaped-skill-${entryIndex}`,
+    description: "\\".repeat(1_024),
+    title: "\\".repeat(255),
+    marketplaceName: "\\".repeat(255),
+    pluginName: "\\".repeat(255),
+    capability: `plugin:plg_${entryIndex}:cfg_${entryIndex}`,
+    location: `skill://escaped-skill-${entryIndex}/SKILL.md`,
+  })))
+  const serializedIndex = JSON.stringify(index)
+  const responseEnvelope = JSON.stringify({
+    jsonrpc: "2.0",
+    id: 2,
+    result: {
+      contents: [{
+        uri: "skill://index.json",
+        mimeType: "application/json",
+        text: serializedIndex,
+      }],
+    },
+  })
+
+  expect(new TextEncoder().encode(serializedIndex).byteLength)
+    .toBeLessThanOrEqual(agentModule.AGENT_SKILL_INDEX_MAX_SERIALIZED_BYTES)
+  expect(new TextEncoder().encode(responseEnvelope).byteLength).toBeLessThan(512 * 1_024)
+  expect(index.skills.length).toBeLessThan(100)
+  expect(index.openwork).toEqual({
+    totalSkills: 100,
+    truncated: true,
+    truncationReason: "serialized-bytes",
+  })
 })
 
 test("agent MCP server publishes the authorized skill index as an MCP resource", async () => {
@@ -155,6 +234,7 @@ test("agent MCP server publishes the authorized skill index as an MCP resource",
     skills: [{
       name: "customer-briefing",
       description: "Prepare customer briefings.",
+      title: "Customer Briefing",
       capability: "skill:skill_customer_briefing",
       location: "skill://customer-briefing/SKILL.md",
     }],
@@ -168,11 +248,16 @@ test("agent MCP server publishes the authorized skill index as an MCP resource",
   const resources = await client.listResources()
   expect(resources.resources.map((resource) => resource.uri)).toContain("skill://index.json")
   expect(resources.resources.map((resource) => resource.uri)).toContain("skill://customer-briefing/SKILL.md")
+  expect(resources.resources.find((resource) => resource.uri === "skill://customer-briefing/SKILL.md")).toMatchObject({
+    title: "Customer Briefing",
+    description: "Prepare customer briefings.",
+  })
   const index = await client.readResource({ uri: "skill://index.json" })
   const content = index.contents[0]
   expect(content && "text" in content ? JSON.parse(content.text) : null).toEqual(agentModule.buildAgentSkillIndex([{
     name: "customer-briefing",
     description: "Prepare customer briefings.",
+    title: "Customer Briefing",
     capability: "skill:skill_customer_briefing",
     location: "skill://customer-briefing/SKILL.md",
   }]))

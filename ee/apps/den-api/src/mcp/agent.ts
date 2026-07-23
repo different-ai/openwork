@@ -6,9 +6,13 @@ import { OrganizationTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import {
   OPENWORK_AGENT_SKILL_DISCOVERY_SCHEMA_URI,
+  OPENWORK_AGENT_SKILL_INDEX_MAX_ENTRIES,
+  OPENWORK_AGENT_SKILL_INDEX_MAX_SERIALIZED_BYTES,
   OPENWORK_AGENT_SKILL_INDEX_URI,
+  openworkAgentSkillIndexEntrySchema,
   openworkAgentSkillIndexSchema,
   type OpenWorkAgentSkillIndex,
+  type OpenWorkAgentSkillIndexEntry,
 } from "@openwork/types/den/agent-skill-index"
 import { openworkCloudMcpConnectionActionSchema } from "@openwork/types/den/mcp-connection-action"
 import type { Hono } from "hono"
@@ -23,7 +27,7 @@ import { preflightMcpJsonRpcRequest } from "./json-rpc-preflight.js"
 import { compareCapabilityMatches, SEARCH_CAPABILITIES_TOOL_NAME, searchCapabilities, searchCapabilitySourceFilter, type CapabilityMatch } from "./search.js"
 import { executeExternalCapability, externalMcpSearchCoverageHint, parseExternalCapabilityName, resolveMcpMemberIdentity, searchExternalCapabilities, type ExternalCapabilityExecuteResult } from "./external-capabilities.js"
 import { executeMarketplaceCapability, listAccessibleMarketplaceSkillDescriptors, parseMarketplaceCapabilityName, searchMarketplaceCapabilities, type MarketplaceCapabilityObjectType } from "./marketplace-capabilities.js"
-import { executeSkillCapability, listAccessibleSkillDescriptors, parseSkillCapabilityName, searchSkillCapabilities, type RemoteSkillDescriptor } from "./skill-capabilities.js"
+import { executeSkillCapability, listAccessibleSkillDescriptors, normalizeRemoteSkillDescription, parseSkillCapabilityName, searchSkillCapabilities, type RemoteSkillDescriptor } from "./skill-capabilities.js"
 import { resolvePublicOrigin } from "../capability-sources/generic-oauth.js"
 import { env } from "../env.js"
 import { isPlatformAdminUserId } from "../middleware/admin.js"
@@ -141,23 +145,72 @@ async function mcpRequestMethod(request: Request): Promise<string | null> {
 
 export const AGENT_SKILL_INDEX_URI = OPENWORK_AGENT_SKILL_INDEX_URI
 export const AGENT_SKILL_INDEX_SCHEMA = OPENWORK_AGENT_SKILL_DISCOVERY_SCHEMA_URI
+export const AGENT_SKILL_INDEX_MAX_ENTRIES = OPENWORK_AGENT_SKILL_INDEX_MAX_ENTRIES
+// resources/read embeds this JSON document as a JSON string. Keeping the inner
+// payload at 240 KiB leaves room for worst-case escaping and the JSON-RPC
+// envelope under OpenWork server's 512 KiB response limit.
+export const AGENT_SKILL_INDEX_MAX_SERIALIZED_BYTES =
+  OPENWORK_AGENT_SKILL_INDEX_MAX_SERIALIZED_BYTES
+
+type AgentSkillIndexTruncationReason = "entry-count" | "serialized-bytes"
+
+function agentSkillIndexDocument(
+  skills: OpenWorkAgentSkillIndexEntry[],
+  totalSkills: number,
+  truncationReason?: AgentSkillIndexTruncationReason,
+): OpenWorkAgentSkillIndex {
+  return {
+    $schema: AGENT_SKILL_INDEX_SCHEMA,
+    skills,
+    openwork: {
+      totalSkills,
+      truncated: truncationReason !== undefined,
+      ...(truncationReason ? { truncationReason } : {}),
+    },
+  }
+}
+
+function serializedAgentSkillIndexBytes(index: OpenWorkAgentSkillIndex): number {
+  return new TextEncoder().encode(JSON.stringify(index)).byteLength
+}
 
 export function buildAgentSkillIndex(skills: RemoteSkillDescriptor[]): OpenWorkAgentSkillIndex {
-  return openworkAgentSkillIndexSchema.parse({
-    $schema: AGENT_SKILL_INDEX_SCHEMA,
-    skills: skills.map((skill) => ({
+  const entries: OpenWorkAgentSkillIndexEntry[] = []
+  let truncationReason: AgentSkillIndexTruncationReason | undefined
+  for (const skill of skills) {
+    if (entries.length >= AGENT_SKILL_INDEX_MAX_ENTRIES) {
+      truncationReason = "entry-count"
+      break
+    }
+    const entry = openworkAgentSkillIndexEntrySchema.parse({
       name: skill.name,
       type: "skill-md" as const,
-      description: (skill.description ?? skill.name).replace(/\s+/g, " ").trim().slice(0, 1_024),
+      title: skill.title,
+      description: normalizeRemoteSkillDescription(skill),
       url: skill.location,
       capability: skill.capability,
-    })),
-  })
+      ...(skill.marketplaceName ? { marketplaceName: skill.marketplaceName } : {}),
+      ...(skill.pluginName ? { pluginName: skill.pluginName } : {}),
+    })
+    const candidate = agentSkillIndexDocument(
+      [...entries, entry],
+      skills.length,
+      "serialized-bytes",
+    )
+    if (serializedAgentSkillIndexBytes(candidate) > AGENT_SKILL_INDEX_MAX_SERIALIZED_BYTES) {
+      truncationReason = "serialized-bytes"
+      break
+    }
+    entries.push(entry)
+  }
+  return openworkAgentSkillIndexSchema.parse(
+    agentSkillIndexDocument(entries, skills.length, truncationReason),
+  )
 }
 
 function standardSkillMarkdown(skill: RemoteSkillDescriptor, source: string): string {
   const body = source.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "").replace(/^\s+/, "")
-  const description = (skill.description ?? skill.name).replace(/\s+/g, " ").trim().slice(0, 1_024)
+  const description = normalizeRemoteSkillDescription(skill)
   return `---\nname: ${skill.name}\ndescription: ${JSON.stringify(description)}\n---\n\n${body}`
 }
 
@@ -316,8 +369,8 @@ export function registerAgentSkillResources(input: {
   }))
   for (const skill of input.skills) {
     input.server.registerResource(skill.name, skill.location, {
-      title: skill.name,
-      description: (skill.description ?? skill.name).replace(/\s+/g, " ").trim().slice(0, 1_024),
+      title: skill.title,
+      description: normalizeRemoteSkillDescription(skill),
       mimeType: "text/markdown",
     }, async () => {
       const skillId = parseSkillCapabilityName(skill.capability)

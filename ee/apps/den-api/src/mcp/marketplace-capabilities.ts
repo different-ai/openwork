@@ -32,7 +32,11 @@ import { listPluginMcpRequirementBindings, type PluginMcpRequirementBindingRow }
 import { scoreText, tokenize } from "./search.js"
 import type { McpMemberIdentity } from "./external-capabilities.js"
 import type { CapabilityMatch } from "./search.js"
-import { standardSkillName, type RemoteSkillDescriptor } from "./skill-capabilities.js"
+import {
+  normalizeRemoteSkillDescription,
+  standardSkillName,
+  type RemoteSkillDescriptor,
+} from "./skill-capabilities.js"
 
 const MARKETPLACE_CAPABILITY_PREFIX = "plugin:"
 const PROVENANCE_SUFFIX = "in your organization's library."
@@ -506,7 +510,14 @@ export async function listAccessibleMarketplaceSkillDescriptors(input: {
     const name = standardSkillName(row.configObject.title, uniqueSuffix)
     descriptors.set(capability, {
       name,
-      description: row.configObject.description,
+      title: row.configObject.title,
+      description: normalizeRemoteSkillDescription({
+        description: row.configObject.description,
+        name,
+        title: row.configObject.title,
+      }),
+      marketplaceName: row.marketplace.name,
+      pluginName: row.plugin.name,
       capability,
       location: `skill://${name}/SKILL.md`,
     })

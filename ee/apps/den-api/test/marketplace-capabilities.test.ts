@@ -502,12 +502,40 @@ describe("marketplace capabilities source", () => {
 
     expect(descriptors).toHaveLength(1)
     expect(descriptors[0]).toMatchObject({
+      title: "Renewal Playbook",
       description: "Use for enterprise renewal strategy",
+      marketplaceName: "Team Marketplace",
+      pluginName: "Revenue Ops Plugin",
       capability: assigned.name,
     })
     expect(descriptors[0]?.name).toStartWith("renewal-playbook-")
     expect(descriptors[0]?.location).toBe(`skill://${descriptors[0]?.name}/SKILL.md`)
     expect(descriptors.some((descriptor) => descriptor.capability === unassigned.name)).toBe(false)
+  })
+
+  test("uses the human skill title when marketplace description text is blank", async () => {
+    const owner = await seedMember()
+    await seedCapability({
+      owner,
+      objectType: "skill",
+      title: "Whitespace Rescue",
+      description: " \n\t ",
+      rawSourceText: "# Whitespace Rescue",
+    })
+
+    const descriptors = await marketplaceCapabilities.listAccessibleMarketplaceSkillDescriptors({
+      organizationId: owner.organizationId,
+      member: owner.member,
+      enabled: true,
+    })
+
+    expect(descriptors).toHaveLength(1)
+    expect(descriptors[0]).toMatchObject({
+      title: "Whitespace Rescue",
+      description: "Whitespace Rescue",
+      marketplaceName: "Team Marketplace",
+      pluginName: "Revenue Ops Plugin",
+    })
   })
 
   test("search finds a published plugin skill and execute returns provenance-framed raw content", async () => {

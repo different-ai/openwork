@@ -14,12 +14,19 @@ const validIndex = {
   $schema: "https://schemas.agentskills.io/discovery/0.2.0/schema.json",
   skills: [{
     name: "customer-briefing",
+    title: "Customer Briefing",
     type: "skill-md",
     description: "Prepare customer briefings.",
     url: "skill://customer-briefing/SKILL.md",
     capability: "plugin:plg_customer:cfg_briefing",
+    marketplaceName: "Customer Success Marketplace",
+    pluginName: "Account Planning",
     openworkExtension: true,
   }],
+  openwork: {
+    totalSkills: 1,
+    truncated: false,
+  },
   openworkProfile: "authenticated-mcp",
 };
 
@@ -27,6 +34,23 @@ describe("OpenWork agent skill-index server-local schema parity", () => {
   test("accepts the same OpenWork MCP profile as the shared contract", () => {
     expect(localSkillIndexSchema.parse(validIndex)).toEqual(
       sharedSkillIndexSchema.parse(validIndex),
+    );
+  });
+
+  test("keeps new display metadata optional for older skill indexes", () => {
+    const legacyIndex = {
+      $schema: validIndex.$schema,
+      skills: [{
+        name: validIndex.skills[0].name,
+        type: validIndex.skills[0].type,
+        description: validIndex.skills[0].description,
+        url: validIndex.skills[0].url,
+        capability: validIndex.skills[0].capability,
+      }],
+    };
+
+    expect(localSkillIndexSchema.parse(legacyIndex)).toEqual(
+      sharedSkillIndexSchema.parse(legacyIndex),
     );
   });
 
@@ -49,6 +73,30 @@ describe("OpenWork agent skill-index server-local schema parity", () => {
       {
         ...validIndex,
         skills: [{ ...validIndex.skills[0], capability: "plugin:missing-config-object" }],
+      },
+      {
+        ...validIndex,
+        skills: [{ ...validIndex.skills[0], title: "x".repeat(256) }],
+      },
+      {
+        ...validIndex,
+        skills: [{ ...validIndex.skills[0], marketplaceName: "x".repeat(256) }],
+      },
+      {
+        ...validIndex,
+        skills: [{ ...validIndex.skills[0], pluginName: "x".repeat(256) }],
+      },
+      {
+        ...validIndex,
+        openwork: { totalSkills: -1, truncated: true },
+      },
+      {
+        ...validIndex,
+        openwork: {
+          totalSkills: 2,
+          truncated: true,
+          truncationReason: "unknown-limit",
+        },
       },
     ];
 

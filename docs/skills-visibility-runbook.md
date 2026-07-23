@@ -19,6 +19,27 @@ OpenWork capability pointer and authenticated `skill://` activation. It is an
 OpenWork MCP wire profile, not the public well-known distribution profile or a
 claim of full artifact-digest compatibility.
 
+Each current remote entry carries:
+
+- `title`: the human marketplace or organization skill title;
+- `name`: the bounded stable machine name used by the `skill://` resource;
+- `description`: normalized nonblank discovery text, falling back to `title`;
+- optional `marketplaceName` and `pluginName` provenance; and
+- `capability`: the exact value passed to
+  `openwork-cloud_execute_capability`.
+
+Current Den indexes also include safe top-level `openwork.totalSkills`,
+`openwork.truncated`, and an optional `openwork.truncationReason`. The producer
+stops at 100 entries or 240 KiB of serialized index JSON, whichever comes
+first. The byte budget leaves room for worst-case JSON string escaping and the
+MCP envelope beneath OpenWork's independent 512 KiB response cap.
+
+The prompt renders those as `<title>`, `<name>`, `<description>`, optional
+`<marketplace>` / `<plugin>`, `<location>`, and `<capability>`. Older Den
+deployments that omit the new display/provenance fields remain readable:
+OpenWork falls back from a missing title to the machine name and from a blank
+description to the resolved title.
+
 ## Fast trace
 
 1. Enable desktop Developer Mode. This enables metadata, not prompt text.
@@ -67,9 +88,9 @@ Candidate diagnostics contain only safe fields:
 Catalog reads never promote a legacy workspace candidate or mutate local
 configuration. Four deduplicated candidates share a five-second deadline and
 each MCP response is capped at 512 KiB; successful sessions are closed
-best-effort. Valid indexes may exceed the prompt budget, but rendering still
-stops at 100 skills or 32,000 characters. A stale value can be served for at
-most five minutes while one background refresh runs.
+best-effort. Old or alternate producers may still exceed the prompt budget, so
+rendering independently stops at 100 skills or 32,000 characters. A stale value
+can be served for at most five minutes while one background refresh runs.
 
 ### Remote diagnosis
 
@@ -85,6 +106,9 @@ most five minutes while one background refresh runs.
 | `phase=schema ... unsupported-schema / invalid-envelope / all-entries-invalid` | Compare the remote index with the shared OpenWork MCP profile; issue code/path identifies the rejected field without copying its value |
 | `phase=schema ... invalid-entries rejectedEntries=<n>` | Some entries were rejected safely; remaining valid entries can still be injected |
 | `skills=0` with a selected schema | Catalog is valid but authorization/filtering returned no skills |
+| `producerTruncated=true` with reason `entry-count` or `serialized-bytes` | Den returned a deterministic prefix and reported the authorized pre-budget count; use the capability inventory/search path for skills outside that discovery prefix |
+| Entry has a machine-looking title and no marketplace/plugin tags | The selected Den index uses the older compatible shape; upgrade the producer, then wait for the 30-second catalog cache to refresh |
+| Entry has a human title but title-like fallback description | The source description is blank; the producer deliberately supplied the human title so the agent never receives an empty description |
 | `id=connect-skills chars=<n> sha256=<64 hex>` | OpenWork appended a remote skill block |
 | Metadata array hash changed | Prepared context changed; use per-block delta to locate it |
 | Exact text-correspondence span present | The recorded OpenWork text occurs at that final span; causal owner is still unproven |

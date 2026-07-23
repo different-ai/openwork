@@ -125,11 +125,16 @@ environment values.
 Returns schema v1 of the same single bundle requested by the prompt plugin:
 
 - passive steering snapshot resolved for the requested workspace/directory;
-- server/account-scoped remote skill instruction and count;
+- server/account-scoped remote skill instruction and count, including each
+  resolved human title, nonblank description, machine name, capability, and
+  optional marketplace/plugin provenance;
 - sanitized diagnostics and generation time.
 
 The route emits those detailed backend diagnostics once under
 `[openwork][connect-context]`. The prompt-side registry does not replay them.
+Current Den indexes report the authorized pre-budget count plus deterministic
+entry-count or serialized-byte truncation; schema-phase diagnostics surface
+that state without copying skill metadata.
 
 Passive is the default and does not call OpenCode health. The engine's in-process
 `mcp.status` remains authoritative; passive steering is used only when that MCP

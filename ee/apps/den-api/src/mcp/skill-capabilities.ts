@@ -26,12 +26,26 @@ type SkillReadRow = SkillSearchRow & {
 
 export type RemoteSkillDescriptor = {
   name: string
-  description: string | null
+  title: string
+  description: string
+  marketplaceName?: string
+  pluginName?: string
   capability: string
   location: string
 }
 
 const AGENT_SKILL_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
+
+export function normalizeRemoteSkillDescription(input: {
+  description: string | null | undefined
+  name: string
+  title: string
+}): string {
+  const description = input.description?.replace(/\s+/g, " ").trim()
+  if (description) return description.slice(0, 1_024)
+  const title = input.title.replace(/\s+/g, " ").trim()
+  return (title || input.name).slice(0, 1_024)
+}
 
 export function standardSkillName(title: string, stableId: string): string {
   const suffix = stableId.replace(/^skill_/, "").slice(-8).toLowerCase()
@@ -150,7 +164,12 @@ export async function listAccessibleSkillDescriptors(input: {
       const name = standardSkillName(skill.title, skill.id)
       return {
         name,
-        description: skill.description,
+        title: skill.title,
+        description: normalizeRemoteSkillDescription({
+          description: skill.description,
+          name,
+          title: skill.title,
+        }),
         capability: buildSkillCapabilityName(skill.id),
         location: `skill://${name}/SKILL.md`,
       }
