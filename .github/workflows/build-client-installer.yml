@@ -288,7 +288,12 @@ jobs:
             --key-id "$APPLE_NOTARY_API_KEY_ID" \
             --issuer "$APPLE_NOTARY_API_ISSUER_ID" \
             --wait
-          xcrun stapler staple "$APP"
+          for attempt in 1 2 3 4 5; do
+            if xcrun stapler staple "$APP"; then break; fi
+            if [ "$attempt" -eq 5 ]; then echo "stapler staple failed after 5 attempts" >&2; exit 1; fi
+            echo "stapler staple failed (attempt $attempt/5); retrying in $((attempt * 30))s..."
+            sleep $((attempt * 30))
+          done
 
       - name: Package macOS artifact
         if: matrix.os_type == 'macos'

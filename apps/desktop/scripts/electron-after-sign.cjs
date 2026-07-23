@@ -12,6 +12,21 @@ function run(command, args) {
   }
 }
 
+async function runWithRetry(command, args, attempts, baseDelayMs = 30_000) {
+  for (let attempt = 1; ; attempt++) {
+    const result = spawnSync(command, args, { stdio: "inherit" });
+    if (result.status === 0) return;
+    if (attempt >= attempts) {
+      throw new Error(`${command} ${args.join(" ")} failed with status ${result.status} after ${attempts} attempts`);
+    }
+    const delayMs = baseDelayMs * attempt;
+    console.warn(
+      `[electron-after-sign] ${command} ${args.join(" ")} failed with status ${result.status}; retrying in ${delayMs / 1000}s (attempt ${attempt}/${attempts}).`,
+    );
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+  }
+}
+
 function requireEnv(name) {
   const value = process.env[name];
   if (!value) {
@@ -75,7 +90,8 @@ async function afterSign(context) {
       issuer,
       "--wait",
     ]);
-    run("xcrun", ["stapler", "staple", appPath]);
+    // Notarization tickets can take minutes to propagate to Apple's CDN after acceptance; stapler can transiently fail with status 65 ("CloudKit query failed").
+    await runWithRetry("xcrun", ["stapler", "staple", appPath], 5);
     run("xcrun", ["stapler", "validate", appPath]);
   } finally {
     rmSync(notaryTempDir, { recursive: true, force: true });
@@ -84,3 +100,4 @@ async function afterSign(context) {
 
 module.exports = afterSign;
 module.exports.default = afterSign;
+module.exports.runWithRetry = runWithRetry;

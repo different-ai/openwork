@@ -231,6 +231,16 @@ jobs:
           APPLE_NOTARY_API_ISSUER_ID: ${{ secrets.APPLE_NOTARY_API_ISSUER_ID }}
         run: |
           set -euo pipefail
+          staple_with_retry() {
+            local target="$1"
+            for attempt in 1 2 3 4 5; do
+              if xcrun stapler staple "$target"; then break; fi
+              if [ "$attempt" -eq 5 ]; then echo "stapler staple failed after 5 attempts" >&2; exit 1; fi
+              echo "stapler staple failed (attempt $attempt/5); retrying in $((attempt * 30))s..."
+              sleep $((attempt * 30))
+            done
+          }
+
           missing=()
           for name in \
             APPLE_CODESIGN_CERT_P12_BASE64 \
@@ -293,7 +303,7 @@ jobs:
             --key-id "$APPLE_NOTARY_API_KEY_ID" \
             --issuer "$APPLE_NOTARY_API_ISSUER_ID" \
             --wait
-          xcrun stapler staple "$APP"
+          staple_with_retry "$APP"
 
           mkdir -p "$RUNNER_TEMP/out"
           DMG="$RUNNER_TEMP/out/${{ matrix.asset }}"
@@ -306,7 +316,7 @@ jobs:
             --key-id "$APPLE_NOTARY_API_KEY_ID" \
             --issuer "$APPLE_NOTARY_API_ISSUER_ID" \
             --wait
-          xcrun stapler staple "$DMG"
+          staple_with_retry "$DMG"
           xcrun stapler validate "$DMG"
 
       # --- Windows: optional SignPath signing --------------------------------
