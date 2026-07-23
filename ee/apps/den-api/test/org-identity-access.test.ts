@@ -14,7 +14,7 @@ beforeAll(async () => {
   sharedModule = await import("../src/routes/org/shared.js")
 })
 
-test("identity configuration management requires owner or delegated security permission", () => {
+test("identity configuration management requires owner or super-admin", () => {
   expect(sharedModule.canManageIdentityConfiguration({
     currentMember: { isOwner: true, role: "owner" },
     roles: [],
@@ -31,16 +31,21 @@ test("identity configuration management requires owner or delegated security per
   })).toBe(false)
 
   expect(sharedModule.canManageIdentityConfiguration({
+    currentMember: { isOwner: false, role: "super-admin" },
+    roles: [],
+  })).toBe(true)
+
+  expect(sharedModule.canManageIdentityConfiguration({
     currentMember: { isOwner: false, role: "security-admin" },
     roles: [
       { role: "security-admin", permission: { security_configuration: ["manage"] } },
     ],
-  })).toBe(true)
+  })).toBe(false)
 
   expect(sharedModule.canManageIdentityConfiguration(null)).toBe(false)
 })
 
-test("api key management requires owner or delegated security permission", () => {
+test("api key management requires owner or super-admin", () => {
   expect(sharedModule.canManageApiKeys({
     currentMember: { isOwner: true, role: "owner" },
     roles: [],
@@ -57,11 +62,16 @@ test("api key management requires owner or delegated security permission", () =>
   })).toBe(false)
 
   expect(sharedModule.canManageApiKeys({
+    currentMember: { isOwner: false, role: "super-admin" },
+    roles: [],
+  })).toBe(true)
+
+  expect(sharedModule.canManageApiKeys({
     currentMember: { isOwner: false, role: "security-admin" },
     roles: [
       { role: "security-admin", permission: { security_configuration: ["manage"] } },
     ],
-  })).toBe(true)
+  })).toBe(false)
 
   expect(sharedModule.canManageApiKeys(null)).toBe(false)
 })
@@ -108,6 +118,12 @@ test("routine admin authorization checks the role without requiring session fres
   expect(sharedModule.ensureOrganizationAdminRole({
     get: () => ({
       currentMember: { isOwner: false, role: "member,admin" },
+    }),
+  }, message)).toEqual({ ok: true })
+
+  expect(sharedModule.ensureOrganizationAdminRole({
+    get: () => ({
+      currentMember: { isOwner: false, role: "super-admin" },
     }),
   }, message)).toEqual({ ok: true })
 

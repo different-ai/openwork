@@ -34,7 +34,17 @@ import {
   canManageSecurityConfiguration,
   denOrganizationAccess,
   denOrganizationStaticRoles,
+  validateInvitationRoleAssignment,
 } from "./organization-access.js";
+import {
+  ORGANIZATION_ADMIN_ROLE,
+  ORGANIZATION_MEMBER_ROLE,
+  ORGANIZATION_OWNER_ROLE,
+  ORGANIZATION_SUPER_ADMIN_ROLE,
+  normalizeOrganizationRoleName,
+  organizationRoleValueIncludes,
+  splitOrganizationRoles,
+} from "./organization-role-hierarchy.js";
 import {
   getOrganizationSsoJitRole,
   ORGANIZATION_SSO_JIT_ROLE,
@@ -47,6 +57,7 @@ import {
 } from "./sso-saml-policy.js";
 import {
   getOrganizationContextForUser,
+  listAssignableRoles,
   reconcilePendingInvitationsForUser,
   seedDefaultOrganizationRoles,
   validateOrganizationMemberRemovalForHook,
@@ -67,7 +78,7 @@ import { betterAuth } from "better-auth";
 import { APIError, createAuthMiddleware } from "better-auth/api";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { deleteSessionCookie } from "better-auth/cookies";
-import { and, eq, sql } from "@openwork-ee/den-db/drizzle";
+import { and, eq, gt, sql } from "@openwork-ee/den-db/drizzle";
 import { emailOTP, jwt, organization } from "better-auth/plugins";
 
 const logger = appLogger.child({ component: "auth" });
@@ -176,11 +187,7 @@ const socialProviders = {
 };
 
 function hasRole(roleValue: string, roleName: string) {
-  return roleValue
-    .split(",")
-    .map((entry) => entry.trim())
-    .filter(Boolean)
-    .includes(roleName);
+  return organizationRoleValueIncludes(roleValue, roleName);
 }
 
 function maybeString(value: unknown) {
@@ -273,6 +280,184 @@ function removedMemberIdentity(value: unknown): { id: string; organizationId: st
     return null;
   }
   return { id, organizationId };
+}
+
+const RAW_BETTER_AUTH_MUTATION_DENIALS: readonly (readonly [string, string])[] = [
+  ["/organization/update", "Use the Den organization settings API to update workspace configuration."],
+  ["/organization/delete", "Workspace deletion through Better Auth is disabled."],
+  ["/organization/update-member-role", "Use the Den member role API to change organization roles."],
+  ["/organization/remove-member", "Use the Den member API to remove organization members."],
+  ["/organization/create-role", "Use the Den roles API to manage organization roles."],
+  ["/organization/update-role", "Use the Den roles API to manage organization roles."],
+  ["/organization/delete-role", "Use the Den roles API to manage organization roles."],
+  ["/sso/register", "Use the Den SSO API to manage SSO providers."],
+  ["/sso/update-provider", "Use the Den SSO API to manage SSO providers."],
+  ["/sso/delete-provider", "Use the Den SSO API to manage SSO providers."],
+  ["/sso/request-domain-verification", "Use the Den SSO API to verify SSO domains."],
+  ["/sso/verify-domain", "Use the Den SSO API to verify SSO domains."],
+  ["/api-key/create", "Use the Den API key API to manage organization API keys."],
+  ["/api-key/update", "Use the Den API key API to manage organization API keys."],
+  ["/api-key/delete", "Use the Den API key API to manage organization API keys."],
+  ["/scim/generate-token", "Use the Den SCIM API to manage SCIM tokens."],
+  ["/scim/delete-provider-connection", "Use the Den SCIM API to manage SCIM providers."],
+];
+
+export function getRawBetterAuthMutationDenial(path: string) {
+  const denial = RAW_BETTER_AUTH_MUTATION_DENIALS.find(([deniedPath]) => deniedPath === path);
+  if (!denial) {
+    return null;
+  }
+  return {
+    error: "forbidden",
+    message: denial[1],
+  };
+}
+
+function readStringProperty(value: unknown, propertyName: string) {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const property = Object.getOwnPropertyDescriptor(value, propertyName)?.value;
+  return typeof property === "string" && property.trim() ? property.trim() : null;
+}
+
+function normalizeRawRoleValue(roleValue: string) {
+  return splitOrganizationRoles(roleValue)
+    .map((role) => normalizeOrganizationRoleName(role))
+    .filter(Boolean)
+    .join(",");
+}
+
+function readRoleProperty(value: unknown, propertyName: string) {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const property = Object.getOwnPropertyDescriptor(value, propertyName)?.value;
+  if (typeof property === "string") {
+    const normalized = normalizeRawRoleValue(property);
+    return normalized || null;
+  }
+
+  if (!Array.isArray(property)) {
+    return null;
+  }
+
+  const roles: string[] = [];
+  for (const entry of property) {
+    if (typeof entry === "string") {
+      const normalized = normalizeOrganizationRoleName(entry);
+      if (normalized) {
+        roles.push(normalized);
+      }
+    }
+  }
+  return roles[0] ? roles.join(",") : null;
+}
+
+function readBooleanProperty(value: unknown, propertyName: string) {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  return Object.getOwnPropertyDescriptor(value, propertyName)?.value === true;
+}
+
+async function assertBetterAuthInvitationRoleAssignment(input: {
+  organizationId: string;
+  userId: string;
+  role: string;
+}) {
+  const organizationId = normalizeDenTypeId("organization", input.organizationId);
+  const context = await getOrganizationContextForUser({
+    organizationId,
+    userId: normalizeDenTypeId("user", input.userId),
+  });
+  if (!context) {
+    throw new APIError("FORBIDDEN", {
+      message: "Only organization members can assign invitation roles.",
+    });
+  }
+
+  const validation = validateInvitationRoleAssignment({
+    role: input.role || ORGANIZATION_MEMBER_ROLE,
+    availableRoles: await listAssignableRoles(organizationId),
+    currentMember: context.currentMember,
+    roles: context.roles,
+  });
+  if (!validation.ok) {
+    throw new APIError(validation.error === "invalid_role" ? "BAD_REQUEST" : "FORBIDDEN", {
+      message: validation.message,
+    });
+  }
+}
+
+async function assertBetterAuthInvitationRefreshRole(input: {
+  organizationId: string;
+  userId: string;
+  email: string;
+  resend: boolean;
+}) {
+  if (!input.resend) {
+    return;
+  }
+
+  const organizationId = normalizeDenTypeId("organization", input.organizationId);
+  const context = await getOrganizationContextForUser({
+    organizationId,
+    userId: normalizeDenTypeId("user", input.userId),
+  });
+  if (!context) {
+    throw new APIError("FORBIDDEN", {
+      message: "Only organization members can refresh invitation roles.",
+    });
+  }
+
+  const invitations = await db
+    .select({ role: schema.InvitationTable.role })
+    .from(schema.InvitationTable)
+    .where(and(
+      eq(schema.InvitationTable.organizationId, organizationId),
+      eq(schema.InvitationTable.email, input.email.trim().toLowerCase()),
+      eq(schema.InvitationTable.status, "pending"),
+      gt(schema.InvitationTable.expiresAt, new Date()),
+    ))
+    .limit(1);
+
+  const invitation = invitations[0] ?? null;
+  if (!invitation) {
+    return;
+  }
+
+  const validation = validateInvitationRoleAssignment({
+    role: invitation.role,
+    availableRoles: await listAssignableRoles(organizationId),
+    currentMember: context.currentMember,
+    roles: context.roles,
+  });
+  if (!validation.ok) {
+    throw new APIError(validation.error === "invalid_role" ? "BAD_REQUEST" : "FORBIDDEN", {
+      message: validation.message,
+    });
+  }
+}
+
+async function getOrganizationMemberRole(input: {
+  organizationId: string;
+  userId: string;
+}) {
+  const member = await getOrganizationContextForUser({
+    organizationId: normalizeDenTypeId("organization", input.organizationId),
+    userId: normalizeDenTypeId("user", input.userId),
+  });
+  if (!member) {
+    return null;
+  }
+  return {
+    role: member.currentMember.role,
+    isOwner: member.currentMember.isOwner,
+  };
 }
 
 function getEnterpriseAuthRedirectUrl(input: {
@@ -377,6 +562,73 @@ export const auth = betterAuth({
                 updatedAt: new Date(),
               },
             });
+          }
+        }
+      }
+
+      if (ctx.request) {
+        const deniedMutation = getRawBetterAuthMutationDenial(ctx.path);
+        if (deniedMutation) {
+          throw new APIError("FORBIDDEN", { message: deniedMutation.message });
+        }
+
+        if (ctx.path === "/organization/leave") {
+          const organizationId = readStringProperty(ctx.body, "organizationId");
+          const session = await ctx.context.getSession(ctx).catch(() => null);
+          if (organizationId && session?.user.id) {
+            const member = await getOrganizationMemberRole({
+              organizationId,
+              userId: session.user.id,
+            });
+            if (member?.isOwner) {
+              throw new APIError("FORBIDDEN", {
+                message: "The organization owner cannot leave the workspace. Transfer ownership first.",
+              });
+            }
+          }
+        }
+
+        if (ctx.path === "/organization/add-member") {
+          const session = await ctx.context.getSession(ctx).catch(() => null);
+          const organizationId = readStringProperty(ctx.body, "organizationId")
+            ?? (typeof session?.session.activeOrganizationId === "string" ? session.session.activeOrganizationId : null);
+          if (organizationId && session?.user.id) {
+            await assertBetterAuthInvitationRoleAssignment({
+              organizationId,
+              userId: session.user.id,
+              role: readRoleProperty(ctx.body, "role") ?? ORGANIZATION_MEMBER_ROLE,
+            });
+            const email = readStringProperty(ctx.body, "email");
+            if (email) {
+              await assertBetterAuthInvitationRefreshRole({
+                organizationId,
+                userId: session.user.id,
+                email,
+                resend: readBooleanProperty(ctx.body, "resend"),
+              });
+            }
+          }
+        }
+
+        if (ctx.path === "/organization/invite-member") {
+          const session = await ctx.context.getSession(ctx).catch(() => null);
+          const organizationId = readStringProperty(ctx.body, "organizationId")
+            ?? (typeof session?.session.activeOrganizationId === "string" ? session.session.activeOrganizationId : null);
+          if (organizationId && session?.user.id) {
+            await assertBetterAuthInvitationRoleAssignment({
+              organizationId,
+              userId: session.user.id,
+              role: readRoleProperty(ctx.body, "role") ?? ORGANIZATION_MEMBER_ROLE,
+            });
+            const email = readStringProperty(ctx.body, "email");
+            if (email) {
+              await assertBetterAuthInvitationRefreshRole({
+                organizationId,
+                userId: session.user.id,
+                email,
+                resend: readBooleanProperty(ctx.body, "resend"),
+              });
+            }
           }
         }
       }
@@ -595,6 +847,39 @@ export const auth = betterAuth({
             normalizeDenTypeId("organization", organization.id),
           );
         },
+        beforeAddMember: async ({ member }) => {
+          const role = typeof member.role === "string" ? member.role : "";
+          if (hasRole(role, ORGANIZATION_SUPER_ADMIN_ROLE)) {
+            throw new APIError("FORBIDDEN", {
+              message: "Use the Den invitation and member role APIs to grant privileged organization roles.",
+            });
+          }
+
+          if (hasRole(role, ORGANIZATION_OWNER_ROLE)) {
+            const existingMembers = await db
+              .select({ id: schema.MemberTable.id })
+              .from(schema.MemberTable)
+              .where(eq(schema.MemberTable.organizationId, normalizeDenTypeId("organization", member.organizationId)))
+              .limit(1);
+            if (existingMembers[0]) {
+              throw new APIError("FORBIDDEN", {
+                message: "Owner can only be assigned during organization creation or ownership transfer.",
+              });
+            }
+          }
+        },
+        beforeCreateInvitation: async ({ invitation, inviter }) => {
+          const organizationId = readStringProperty(invitation, "organizationId");
+          if (!organizationId) {
+            return;
+          }
+
+          await assertBetterAuthInvitationRoleAssignment({
+            organizationId,
+            userId: inviter.id,
+            role: readRoleProperty(invitation, "role") ?? ORGANIZATION_MEMBER_ROLE,
+          });
+        },
         beforeRemoveMember: async ({ member }) => {
           const validation = await validateOrganizationMemberRemovalForHook({
             organizationId: normalizeDenTypeId("organization", member.organizationId),
@@ -714,6 +999,7 @@ export const auth = betterAuth({
     }),
     scim({
       storeSCIMToken: SCIM_TOKEN_STORAGE_STRATEGY,
+      requiredRole: [ORGANIZATION_OWNER_ROLE, ORGANIZATION_SUPER_ADMIN_ROLE, ORGANIZATION_ADMIN_ROLE],
       beforeSCIMTokenGenerated: async ({ member }) => {
         if (!member?.organizationId || !member.userId) {
           throw new APIError("FORBIDDEN", {
@@ -728,7 +1014,7 @@ export const auth = betterAuth({
 
         if (!canManageSecurityConfiguration(organizationContext)) {
           throw new APIError("FORBIDDEN", {
-            message: "Only workspace owners or members with security configuration permission can manage SCIM.",
+            message: "Only workspace owners and super-admins can manage SCIM.",
           });
         }
       },

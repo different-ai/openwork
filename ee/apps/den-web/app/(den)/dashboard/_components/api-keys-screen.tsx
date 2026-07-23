@@ -76,7 +76,7 @@ export function ApiKeysScreen() {
     );
 
     async function loadApiKeys(isCurrent = () => true) {
-        if (!orgId || !access.canManageApiKeys) {
+        if (!orgId || !access.canViewSettings) {
             if (isCurrent()) {
                 setApiKeys([]);
             }
@@ -133,7 +133,7 @@ export function ApiKeysScreen() {
         return () => {
             active = false;
         };
-    }, [orgId, access.canManageApiKeys]);
+    }, [orgId, access.canViewSettings]);
 
     useEffect(() => {
         if (!copied) {
@@ -148,6 +148,10 @@ export function ApiKeysScreen() {
         event.preventDefault();
         if (!orgId) {
             setError("Organization not found.");
+            return;
+        }
+        if (!access.canManageApiKeys) {
+            setError("Only workspace owners and super-admins can create API keys.");
             return;
         }
 
@@ -202,6 +206,11 @@ export function ApiKeysScreen() {
     }
 
     function openCreateForm() {
+        if (!access.canManageApiKeys) {
+            setError("Only workspace owners and super-admins can create API keys.");
+            return;
+        }
+
         setError(null);
         setCopied(false);
         setCreatedKey(null);
@@ -216,6 +225,11 @@ export function ApiKeysScreen() {
     }
 
     async function handleDelete(apiKey: DenOrgApiKey) {
+        if (!access.canManageApiKeys) {
+            setError("Only workspace owners and super-admins can delete API keys.");
+            return;
+        }
+
         if (
             !orgId ||
             !window.confirm(
@@ -297,10 +311,9 @@ export function ApiKeysScreen() {
             description="Manage your OpenWork API keys."
             colors={["#E6FFFA", "#0F766E", "#14B8A6", "#99F6E4"]}
         >
-            {!access.canManageApiKeys ? (
+            {!access.canViewSettings ? (
                 <div className="rounded-[28px] border border-amber-200 bg-amber-50 px-6 py-5 text-[14px] text-amber-900">
-                    Only organization owners and admins can view or manage API
-                    keys.
+                    Only workspace admins can view API keys.
                 </div>
             ) : (
                 <>
@@ -308,8 +321,14 @@ export function ApiKeysScreen() {
                         <DenNotice message={error} className="mb-6" />
                     ) : null}
 
+                    {!access.canManageApiKeys ? (
+                        <div className="mb-6 rounded-[24px] border border-amber-200 bg-amber-50 px-5 py-4 text-[14px] text-amber-800">
+                            Read-only: owners and super-admins can create or delete API keys.
+                        </div>
+                    ) : null}
+
                     <DenCard className="mb-6">
-                        {createdKey ? (
+                        {createdKey && access.canManageApiKeys ? (
                             <div className="rounded-[24px] bg-[#0f172a] p-6 text-white">
                                 <div className="flex flex-wrap items-start justify-between gap-4">
                                     <div>
@@ -343,7 +362,7 @@ export function ApiKeysScreen() {
                                     </DenButton>
                                 </div>
                             </div>
-                        ) : showCreateForm ? (
+                        ) : showCreateForm && access.canManageApiKeys ? (
                             <form onSubmit={handleCreate}>
                                 <div className="mb-5 flex items-start justify-between gap-4">
                                     <div>
@@ -392,7 +411,7 @@ export function ApiKeysScreen() {
                                         Create a new API key
                                     </p>
                                 </div>
-                                 <DenButton onClick={openCreateForm}>
+                                 <DenButton onClick={openCreateForm} disabled={!access.canManageApiKeys}>
                                     New key
                                 </DenButton>
                             </div>
@@ -454,7 +473,7 @@ export function ApiKeysScreen() {
                                             onClick={() =>
                                                 void handleDelete(apiKey)
                                             }
-                                            disabled={deletingId === apiKey.id}
+                                            disabled={!access.canManageApiKeys || deletingId === apiKey.id}
                                         >
                                             {deletingId === apiKey.id
                                                 ? "Deleting..."

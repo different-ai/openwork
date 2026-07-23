@@ -16,7 +16,7 @@ import { getCatalog, protectedResourceMetadata } from "./index.js"
 import { preflightMcpJsonRpcRequest } from "./json-rpc-preflight.js"
 import { compareCapabilityMatches, SEARCH_CAPABILITIES_TOOL_NAME, searchCapabilities, searchCapabilitySourceFilter, type CapabilityMatch } from "./search.js"
 import { executeExternalCapability, externalMcpSearchCoverageHint, parseExternalCapabilityName, resolveMcpMemberIdentity, searchExternalCapabilities, type ExternalCapabilityExecuteResult } from "./external-capabilities.js"
-import { executeMarketplaceCapability, parseMarketplaceCapabilityName, searchMarketplaceCapabilities, type MarketplaceCapabilityObjectType } from "./marketplace-capabilities.js"
+import { executeMarketplaceCapability, listAccessibleMarketplaceSkillDescriptors, parseMarketplaceCapabilityName, searchMarketplaceCapabilities, type MarketplaceCapabilityObjectType } from "./marketplace-capabilities.js"
 import { executeSkillCapability, listAccessibleSkillDescriptors, parseSkillCapabilityName, searchSkillCapabilities, type RemoteSkillDescriptor } from "./skill-capabilities.js"
 import { resolvePublicOrigin } from "../capability-sources/generic-oauth.js"
 import { env } from "../env.js"
@@ -295,6 +295,7 @@ export function registerAgentSkillResources(input: {
   skills: RemoteSkillDescriptor[]
   organizationId: string
   member: Awaited<ReturnType<typeof resolveMcpMemberIdentity>>
+  marketplaceEnabled?: boolean
 }) {
   input.server.registerResource("agent-skills-index", AGENT_SKILL_INDEX_URI, {
     title: "Available Agent Skills",
@@ -314,17 +315,30 @@ export function registerAgentSkillResources(input: {
       mimeType: "text/markdown",
     }, async () => {
       const skillId = parseSkillCapabilityName(skill.capability)
-      const result = skillId ? await executeSkillCapability({
+      const nativeResult = skillId ? await executeSkillCapability({
         organizationId: input.organizationId,
         member: input.member,
         skillId,
       }) : null
-      if (!result?.ok) throw new McpError(ErrorCode.InvalidRequest, "Skill is no longer available")
+      const marketplace = parseMarketplaceCapabilityName(skill.capability)
+      const marketplaceResult = marketplace ? await executeMarketplaceCapability({
+        organizationId: input.organizationId,
+        member: input.member,
+        pluginId: marketplace.pluginId,
+        configObjectId: marketplace.configObjectId,
+        enabled: input.marketplaceEnabled,
+      }) : null
+      const source = nativeResult?.ok
+        ? nativeResult.skill.skillText
+        : marketplaceResult?.ok && marketplaceResult.result.kind === "skill"
+          ? marketplaceResult.result.content
+          : null
+      if (typeof source !== "string") throw new McpError(ErrorCode.InvalidRequest, "Skill is no longer available")
       return {
         contents: [{
           uri: skill.location,
           mimeType: "text/markdown",
-          text: standardSkillMarkdown(skill, result.skill.skillText),
+          text: standardSkillMarkdown(skill, source),
         }],
       }
     })
@@ -396,10 +410,19 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
     let remoteSkills: RemoteSkillDescriptor[] = []
     const method = await mcpRequestMethod(c.req.raw)
     if (method === "initialize" || method === "resources/list" || method === "resources/read") {
-      remoteSkills = await listAccessibleSkillDescriptors({
-        organizationId: principal.organizationId,
-        member: memberIdentity,
-      })
+      const [nativeSkills, marketplaceSkills] = await Promise.all([
+        listAccessibleSkillDescriptors({
+          organizationId: principal.organizationId,
+          member: memberIdentity,
+        }),
+        listAccessibleMarketplaceSkillDescriptors({
+          organizationId: principal.organizationId,
+          member: memberIdentity,
+          enabled: externalMcpConnectionsEnabled,
+        }),
+      ])
+      remoteSkills = [...nativeSkills, ...marketplaceSkills]
+        .sort((a, b) => a.name.localeCompare(b.name) || a.capability.localeCompare(b.capability))
     }
     const server = createAgentMcpServer()
     if (method === "initialize" || method === "resources/list" || method === "resources/read") {
@@ -408,6 +431,7 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
         skills: remoteSkills,
         organizationId: principal.organizationId,
         member: memberIdentity,
+        marketplaceEnabled: externalMcpConnectionsEnabled,
       })
     }
 

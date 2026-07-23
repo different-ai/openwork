@@ -146,7 +146,7 @@ export default {
             },
             assert: async () => {
               await ctx.expectText("Download OpenWork for Acme Robotics");
-              await ctx.expectText("Download for");
+              await ctx.expectText("Apple Silicon (M1+)");
               await ctx.expectText("Download the OpenWork installer");
               await ctx.expectText("Open the installer and paste this link:");
               await ctx.expectText("Sign in");

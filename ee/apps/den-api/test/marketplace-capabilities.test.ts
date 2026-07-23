@@ -471,6 +471,45 @@ function expectOrganizationConnectionsUrl(value: string | undefined) {
 }
 
 describe("marketplace capabilities source", () => {
+  test("lists only marketplace plugin skills assigned to the member for prompt discovery", async () => {
+    const owner = await seedMember()
+    const assigned = await seedCapability({
+      owner,
+      objectType: "skill",
+      title: "Renewal Playbook",
+      description: "Use for enterprise renewal strategy",
+      rawSourceText: "# Renewal Playbook\n\nAlways mention expansion risk.",
+    })
+    const unassigned = await seedCapability({
+      owner,
+      objectType: "skill",
+      title: "Private Acquisition Playbook",
+      grant: "none",
+      rawSourceText: "# Private Acquisition Playbook",
+    })
+    await seedCapability({
+      owner,
+      objectType: "command",
+      title: "Assigned Command",
+      rawSourceText: "Draft a follow-up.",
+    })
+
+    const descriptors = await marketplaceCapabilities.listAccessibleMarketplaceSkillDescriptors({
+      organizationId: owner.organizationId,
+      member: owner.member,
+      enabled: true,
+    })
+
+    expect(descriptors).toHaveLength(1)
+    expect(descriptors[0]).toMatchObject({
+      description: "Use for enterprise renewal strategy",
+      capability: assigned.name,
+    })
+    expect(descriptors[0]?.name).toStartWith("renewal-playbook-")
+    expect(descriptors[0]?.location).toBe(`skill://${descriptors[0]?.name}/SKILL.md`)
+    expect(descriptors.some((descriptor) => descriptor.capability === unassigned.name)).toBe(false)
+  })
+
   test("search finds a published plugin skill and execute returns provenance-framed raw content", async () => {
     const owner = await seedMember()
     const seeded = await seedCapability({

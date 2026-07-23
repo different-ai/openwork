@@ -198,7 +198,7 @@ jobs:
         run: |
           set -euo pipefail
           cd apps/installer
-          APP="dist/OpenWork Installer.app"
+          APP="dist/Install OpenWork.app"
           rm -rf "$APP"
           mkdir -p "$APP/Contents/MacOS"
           cp dist/openwork-installer "$APP/Contents/MacOS/openwork-installer"
@@ -207,8 +207,8 @@ jobs:
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
           <dict>
-            <key>CFBundleName</key><string>OpenWork Installer</string>
-            <key>CFBundleDisplayName</key><string>OpenWork Installer</string>
+            <key>CFBundleName</key><string>Install OpenWork</string>
+            <key>CFBundleDisplayName</key><string>Install OpenWork</string>
             <key>CFBundleIdentifier</key><string>com.differentai.openwork.installer</string>
             <key>CFBundleExecutable</key><string>openwork-installer</string>
             <key>CFBundlePackageType</key><string>APPL</string>
@@ -246,7 +246,7 @@ jobs:
           fi
 
           cd apps/installer
-          APP="dist/OpenWork Installer.app"
+          APP="dist/Install OpenWork.app"
 
           KEYCHAIN="$RUNNER_TEMP/installer.keychain-db"
           KEYCHAIN_PASSWORD=$(openssl rand -hex 16)
@@ -296,13 +296,8 @@ jobs:
           xcrun stapler staple "$APP"
 
           mkdir -p "$RUNNER_TEMP/out"
-          STAGE="$RUNNER_TEMP/dmg-root"
-          rm -rf "$STAGE"
-          mkdir -p "$STAGE"
-          ditto "$APP" "$STAGE/OpenWork Installer.app"
-          ln -s /Applications "$STAGE/Applications"
           DMG="$RUNNER_TEMP/out/${{ matrix.asset }}"
-          hdiutil create -volname "OpenWork Installer" -srcfolder "$STAGE" -ov -format UDZO "$DMG"
+          node scripts/package-mac-dmg.mjs --input "$APP" --output "$DMG"
           hdiutil verify "$DMG"
           codesign --force --timestamp --sign "$IDENTITY" "$DMG"
           codesign --verify --verbose "$DMG"

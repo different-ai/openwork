@@ -227,7 +227,7 @@ describe("OpenWorkExtensionsPreview session tools", () => {
     const connectStateRequest = fake.requests.find((request) => request.pathname === "/experimental/connect/state");
     const connectSkillsRequest = fake.requests.find((request) => request.pathname === "/experimental/connect/skills");
     expect(connectStateRequest?.search).toBe("?directory=%2Ftmp%2Farchive&provider=anthropic&model=claude-sonnet-4");
-    expect(connectSkillsRequest?.search).toBe("?directory=%2Ftmp%2Farchive");
+    expect(connectSkillsRequest?.search).toBe("");
     expect(output.system.join("\n")).toContain("verified ready for this exact workspace/model");
     expect(output.system.join("\n")).toContain("<name>customer-briefing</name>");
   });
@@ -318,12 +318,20 @@ describe("OpenWorkExtensionsPreview session tools", () => {
       "Look into bananas",
       "Look into apple pies",
     ]);
-    expect(parsed.created[0]?.route).toBe("/workspace/ws_2/session/ses_created_1");
+    expect(parsed.created.map((session) => session.route).sort()).toEqual([
+      "/workspace/ws_2/session/ses_created_1",
+      "/workspace/ws_2/session/ses_created_2",
+      "/workspace/ws_2/session/ses_created_3",
+    ]);
 
     const createRequests = fake.requests.filter((request) => request.pathname === "/workspace/ws_2/sessions" && request.method === "POST");
     expect(createRequests).toHaveLength(3);
-    expect(createRequests[0]?.authorization).toBe("Bearer test-token");
-    expect(createRequests[0]?.body).toEqual({ title: "Look into dolphins", prompt: "Research dolphins." });
+    expect(createRequests.every((request) => request.authorization === "Bearer test-token")).toBe(true);
+    expect(createRequests.map((request) => request.body)).toEqual(expect.arrayContaining([
+      { title: "Look into dolphins", prompt: "Research dolphins." },
+      { title: "Look into bananas", prompt: "Research bananas." },
+      { title: "Look into apple pies", prompt: "Research apple pies." },
+    ]));
   });
 
   test("creates more than twenty sessions in one tool call", async () => {

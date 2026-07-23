@@ -2072,39 +2072,55 @@ export async function listMarketplaces(input: { context: PluginArchActorContext;
 }
 
 async function ensureDefaultOpenWorkMarketplace(context: PluginArchActorContext) {
-  const now = new Date()
-  const anthropicMarketplace = await ensureDefaultMarketplace({
-    context,
-    createdAt: now,
-    description: DEFAULT_ANTHROPIC_MARKETPLACE_DESCRIPTION,
-    logoUrl: DEFAULT_ANTHROPIC_MARKETPLACE_LOGO_URL,
-    name: DEFAULT_ANTHROPIC_MARKETPLACE_NAME,
-  })
-  await ensureDefaultMarketplacePlugins({
-    context,
-    createdAt: now,
-    entries: DEFAULT_ANTHROPIC_STARTER_PLUGINS,
-    marketplaceId: anthropicMarketplace.id,
-  })
+  const organizationId = context.organizationContext.organization.id
+  await db.transaction(async (tx) => {
+    const organization = (await tx
+      .select({ id: OrganizationTable.id })
+      .from(OrganizationTable)
+      .where(eq(OrganizationTable.id, organizationId))
+      .limit(1)
+      .for("update"))[0]
+    if (!organization) throw new Error("Organization not found while provisioning default marketplaces.")
 
-  const marketplace = await ensureDefaultMarketplace({
-    context,
-    createdAt: now,
-    description: DEFAULT_OPENWORK_MARKETPLACE_DESCRIPTION,
-    logoUrl: DEFAULT_OPENWORK_MARKETPLACE_LOGO_URL,
-    name: DEFAULT_OPENWORK_MARKETPLACE_NAME,
-  })
-  await ensureDefaultMarketplacePlugins({
-    context,
-    createdAt: now,
-    entries: DEFAULT_OPENWORK_EXTENSION_MANIFESTS.map((manifest) => ({ description: manifest.description, name: manifest.name })),
-    marketplaceId: marketplace.id,
+    const now = new Date()
+    const anthropicMarketplace = await ensureDefaultMarketplace({
+      context,
+      createdAt: now,
+      database: tx,
+      description: DEFAULT_ANTHROPIC_MARKETPLACE_DESCRIPTION,
+      logoUrl: DEFAULT_ANTHROPIC_MARKETPLACE_LOGO_URL,
+      name: DEFAULT_ANTHROPIC_MARKETPLACE_NAME,
+    })
+    await ensureDefaultMarketplacePlugins({
+      context,
+      createdAt: now,
+      database: tx,
+      entries: DEFAULT_ANTHROPIC_STARTER_PLUGINS,
+      marketplaceId: anthropicMarketplace.id,
+    })
+
+    const marketplace = await ensureDefaultMarketplace({
+      context,
+      createdAt: now,
+      database: tx,
+      description: DEFAULT_OPENWORK_MARKETPLACE_DESCRIPTION,
+      logoUrl: DEFAULT_OPENWORK_MARKETPLACE_LOGO_URL,
+      name: DEFAULT_OPENWORK_MARKETPLACE_NAME,
+    })
+    await ensureDefaultMarketplacePlugins({
+      context,
+      createdAt: now,
+      database: tx,
+      entries: DEFAULT_OPENWORK_EXTENSION_MANIFESTS.map((manifest) => ({ description: manifest.description, name: manifest.name })),
+      marketplaceId: marketplace.id,
+    })
   })
 }
 
 async function ensureDefaultMarketplacePlugins(input: {
   context: PluginArchActorContext
   createdAt: Date
+  database: DbTransaction
   entries: DefaultMarketplacePluginEntry[]
   marketplaceId: MarketplaceId
 }) {
@@ -2112,7 +2128,7 @@ async function ensureDefaultMarketplacePlugins(input: {
   const createdByOrgMembershipId = input.context.organizationContext.currentMember.id
 
   for (const entry of input.entries) {
-    let plugin = (await db
+    let plugin = (await input.database
       .select()
       .from(PluginTable)
       .where(and(
@@ -2135,13 +2151,13 @@ async function ensureDefaultMarketplacePlugins(input: {
         status: "active" as const,
         updatedAt: input.createdAt,
       }
-      await db.insert(PluginTable).values(pluginRow)
+      await input.database.insert(PluginTable).values(pluginRow)
       plugin = pluginRow
     }
 
-    await ensureOrgWidePluginAccess({ context: input.context, pluginId: plugin.id, role: "viewer" })
+    await ensureOrgWidePluginAccess({ context: input.context, database: input.database, pluginId: plugin.id, role: "viewer" })
 
-    const existingMembership = (await db
+    const existingMembership = (await input.database
       .select()
       .from(MarketplacePluginTable)
       .where(and(
@@ -2152,12 +2168,12 @@ async function ensureDefaultMarketplacePlugins(input: {
 
     if (existingMembership) {
       if (existingMembership.removedAt) {
-        await db.update(MarketplacePluginTable).set({ membershipSource: "system", removedAt: null }).where(eq(MarketplacePluginTable.id, existingMembership.id))
+        await input.database.update(MarketplacePluginTable).set({ membershipSource: "system", removedAt: null }).where(eq(MarketplacePluginTable.id, existingMembership.id))
       }
       continue
     }
 
-    await db.insert(MarketplacePluginTable).values({
+    await input.database.insert(MarketplacePluginTable).values({
       createdAt: input.createdAt,
       createdByOrgMembershipId,
       id: createDenTypeId("marketplacePlugin"),
@@ -2173,6 +2189,7 @@ async function ensureDefaultMarketplacePlugins(input: {
 async function ensureDefaultMarketplace(input: {
   context: PluginArchActorContext
   createdAt: Date
+  database: DbTransaction
   description: string
   logoUrl: string
   name: string
@@ -2180,7 +2197,7 @@ async function ensureDefaultMarketplace(input: {
   const organizationId = input.context.organizationContext.organization.id
   const createdByOrgMembershipId = input.context.organizationContext.currentMember.id
 
-  let marketplace = (await db
+  let marketplace = (await input.database
     .select()
     .from(MarketplaceTable)
     .where(and(
@@ -2203,19 +2220,20 @@ async function ensureDefaultMarketplace(input: {
       status: "active" as const,
       updatedAt: input.createdAt,
     }
-    await db.insert(MarketplaceTable).values(marketplaceRow)
+    await input.database.insert(MarketplaceTable).values(marketplaceRow)
     marketplace = marketplaceRow
   } else if (!marketplace.logoUrl) {
-    await db.update(MarketplaceTable).set({ logoUrl: input.logoUrl }).where(eq(MarketplaceTable.id, marketplace.id))
+    await input.database.update(MarketplaceTable).set({ logoUrl: input.logoUrl }).where(eq(MarketplaceTable.id, marketplace.id))
     marketplace = { ...marketplace, logoUrl: input.logoUrl }
   }
 
-  await ensureOrgWideMarketplaceAccess({ context: input.context, marketplaceId: marketplace.id, role: "viewer" })
+  await ensureOrgWideMarketplaceAccess({ context: input.context, database: input.database, marketplaceId: marketplace.id, role: "viewer" })
   return marketplace
 }
 
 async function ensureOrgWideMarketplaceAccess(input: {
   context: PluginArchActorContext
+  database: DbTransaction
   marketplaceId: MarketplaceId
   role: PluginArchRole
 }) {
@@ -2223,18 +2241,18 @@ async function ensureOrgWideMarketplaceAccess(input: {
   const createdByOrgMembershipId = input.context.organizationContext.currentMember.id
   const organizationId = input.context.organizationContext.organization.id
 
-  const existing = (await db
+  const existing = (await input.database
     .select()
     .from(MarketplaceAccessGrantTable)
     .where(and(eq(MarketplaceAccessGrantTable.marketplaceId, input.marketplaceId), eq(MarketplaceAccessGrantTable.orgWide, true)))
     .limit(1))[0]
   if (existing) {
     if (existing.removedAt || existing.role !== input.role) {
-      await db.update(MarketplaceAccessGrantTable).set({ createdByOrgMembershipId, removedAt: null, role: input.role }).where(eq(MarketplaceAccessGrantTable.id, existing.id))
+      await input.database.update(MarketplaceAccessGrantTable).set({ createdByOrgMembershipId, removedAt: null, role: input.role }).where(eq(MarketplaceAccessGrantTable.id, existing.id))
     }
     return
   }
-  await db.insert(MarketplaceAccessGrantTable).values({
+  await input.database.insert(MarketplaceAccessGrantTable).values({
     createdAt,
     createdByOrgMembershipId,
     id: createDenTypeId("marketplaceAccessGrant"),
@@ -2249,6 +2267,7 @@ async function ensureOrgWideMarketplaceAccess(input: {
 
 async function ensureOrgWidePluginAccess(input: {
   context: PluginArchActorContext
+  database: DbTransaction
   pluginId: PluginId
   role: PluginArchRole
 }) {
@@ -2256,18 +2275,18 @@ async function ensureOrgWidePluginAccess(input: {
   const createdByOrgMembershipId = input.context.organizationContext.currentMember.id
   const organizationId = input.context.organizationContext.organization.id
 
-  const existing = (await db
+  const existing = (await input.database
     .select()
     .from(PluginAccessGrantTable)
     .where(and(eq(PluginAccessGrantTable.pluginId, input.pluginId), eq(PluginAccessGrantTable.orgWide, true)))
     .limit(1))[0]
   if (existing) {
     if (existing.removedAt || existing.role !== input.role) {
-      await db.update(PluginAccessGrantTable).set({ createdByOrgMembershipId, removedAt: null, role: input.role }).where(eq(PluginAccessGrantTable.id, existing.id))
+      await input.database.update(PluginAccessGrantTable).set({ createdByOrgMembershipId, removedAt: null, role: input.role }).where(eq(PluginAccessGrantTable.id, existing.id))
     }
     return
   }
-  await db.insert(PluginAccessGrantTable).values({
+  await input.database.insert(PluginAccessGrantTable).values({
     createdAt,
     createdByOrgMembershipId,
     id: createDenTypeId("pluginAccessGrant"),

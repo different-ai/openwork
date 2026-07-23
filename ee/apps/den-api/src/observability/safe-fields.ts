@@ -5,6 +5,15 @@ const MAX_STRING_LENGTH = 2_000
 const MAX_DEPTH = 4
 const SENSITIVE_KEY_PATTERN = /(?:authorization|cookie|set-cookie|password|secret|token|api[-_]?key|client[-_]?secret|credential|dsn|email|header|body|query)/iu
 const URL_PATTERN = /https?:\/\/[^\s)"'<>\]}]+/giu
+const QUERY_PARAMS_PATTERN = /(\bparams:\s*)[^\r\n]*/giu
+
+class SanitizedTelemetryError extends Error {
+  code?: string
+  errno?: number
+  sqlState?: string
+}
+
+type SanitizedErrorMetadata = Pick<SanitizedTelemetryError, "code" | "errno" | "sqlState">
 
 function truncate(value: string) {
   return value.length > MAX_STRING_LENGTH
@@ -30,11 +39,16 @@ export function stripUrlQuery(value: string) {
 export function sanitizeText(value: string) {
   return truncate(value.replace(URL_PATTERN, (match) => stripUrlQuery(match))
     .replace(/\b(Bearer|Basic)\s+[^\s,;]+/giu, "$1 [redacted]")
-    .replace(/\b([^\s=]*(?:token|secret|password|api[-_]?key|client[-_]?secret)[^\s=]*=)[^\s&]+/giu, "$1[redacted]"))
+    .replace(/\b([^\s=]*(?:token|secret|password|api[-_]?key|client[-_]?secret)[^\s=]*=)[^\s&]+/giu, "$1[redacted]")
+    .replace(QUERY_PARAMS_PATTERN, "$1[redacted]"))
 }
 
 function isJsonValue(value: JsonValue | undefined): value is JsonValue {
   return value !== undefined
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null
 }
 
 export function serializeError(error: unknown): JsonObject {
@@ -50,14 +64,44 @@ export function serializeError(error: unknown): JsonObject {
   return { message: sanitizeText(String(error)) }
 }
 
-export function sanitizeExceptionForTelemetry(error: unknown) {
+function sanitizedErrorMetadata(error: unknown): SanitizedErrorMetadata {
+  if (!isRecord(error)) return {}
+  return {
+    code: typeof error.code === "string" ? sanitizeText(error.code) : undefined,
+    errno: typeof error.errno === "number" && Number.isFinite(error.errno) ? error.errno : undefined,
+    sqlState: typeof error.sqlState === "string" ? sanitizeText(error.sqlState) : undefined,
+  }
+}
+
+function sanitizedTelemetryError(error: unknown, depth: number): Error {
   const serialized = serializeError(error)
-  const sanitized = new Error(typeof serialized.message === "string" ? serialized.message : "unknown error")
+  const metadata = sanitizedErrorMetadata(error)
+  const diagnostic = [
+    metadata.code,
+    metadata.errno === undefined ? undefined : `errno ${metadata.errno}`,
+    metadata.sqlState ? `SQLSTATE ${metadata.sqlState}` : undefined,
+  ].filter((value) => value !== undefined).join(", ")
+  const message = diagnostic
+    ? `Underlying error (${diagnostic})`
+    : typeof serialized.message === "string" ? serialized.message : "unknown error"
+  const sanitized = new SanitizedTelemetryError(message)
   sanitized.name = typeof serialized.name === "string" ? serialized.name : "Error"
-  if (typeof serialized.stack === "string") {
+  sanitized.code = metadata.code
+  sanitized.errno = metadata.errno
+  sanitized.sqlState = metadata.sqlState
+  if (diagnostic) {
+    sanitized.stack = undefined
+  } else if (typeof serialized.stack === "string") {
     sanitized.stack = serialized.stack
   }
+  if (error instanceof Error && error.cause !== undefined && depth < MAX_DEPTH) {
+    sanitized.cause = sanitizedTelemetryError(error.cause, depth + 1)
+  }
   return sanitized
+}
+
+export function sanitizeExceptionForTelemetry(error: unknown) {
+  return sanitizedTelemetryError(error, 0)
 }
 
 function sanitizeValue(key: string, value: unknown, depth: number): JsonValue | undefined {

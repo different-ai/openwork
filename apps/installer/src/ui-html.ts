@@ -44,7 +44,10 @@ export function renderInstallerHtml(resolution: InstallerConfigResolution | null
   <div class="title">Paste your install link</div>
   <div class="client">It's in the copy box on your team's install page — the tab you downloaded this from. Your organization admin can also copy it from the Members page.</div>
   <form class="paste" id="paste-form">
-    <input id="install-link" type="url" placeholder="https://.../install?token=..." autocomplete="off" required />
+    <div class="link-row">
+      <input id="install-link" type="url" placeholder="https://.../install?token=..." autocomplete="off" required />
+      <button class="primary paste-button" id="paste-button" type="button">Paste</button>
+    </div>
     <button class="primary" id="continue" type="submit">Continue</button>
   </form>
   <div class="buttons single">
@@ -86,6 +89,9 @@ export function renderInstallerHtml(resolution: InstallerConfigResolution | null
   button:disabled { opacity: .4; cursor: default; }
   .single { margin-top: 2px; }
   .paste { display: grid; gap: 10px; width: 100%; margin-top: 10px; }
+  .link-row { display: flex; gap: 8px; width: 100%; }
+  .link-row input { flex: 1; min-width: 0; }
+  .paste-button { padding-left: 16px; padding-right: 16px; }
   input { box-sizing: border-box; width: 100%; border: 1px solid rgba(24,24,27,.16); border-radius: 8px; padding: 9px 10px; font: inherit; font-size: 13px; }
 </style>
 </head>
@@ -103,6 +109,7 @@ ${configuredContent}
   const exitBtn = document.getElementById("exit");
   const pasteForm = document.getElementById("paste-form");
   const installLinkInput = document.getElementById("install-link");
+  const pasteBtn = document.getElementById("paste-button");
   const continueBtn = document.getElementById("continue");
   let polling = null;
   let installed = false;
@@ -111,6 +118,116 @@ ${configuredContent}
     const response = await fetch(path, { method: "POST", headers: { "x-installer-token": TOKEN } });
     if (!response.ok) throw new Error("request failed: " + response.status);
     return response.json();
+  }
+
+  function editableInput() {
+    const element = document.activeElement;
+    if (!element || element.tagName !== "INPUT") return null;
+    if (element.disabled || element.readOnly) return null;
+    return element;
+  }
+
+  function inputRange(input) {
+    const length = input.value.length;
+    const start = typeof input.selectionStart === "number" ? input.selectionStart : length;
+    const end = typeof input.selectionEnd === "number" ? input.selectionEnd : start;
+    return { start, end };
+  }
+
+  function dispatchInput(input) {
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+
+  function showClipboardError() {
+    statusEl.textContent = "Could not read the clipboard. Copy your install link, then click Paste again or type it here.";
+    statusEl.classList.add("error");
+  }
+
+  function clearClipboardError() {
+    if (CONFIGURED) return;
+    statusEl.textContent = "";
+    statusEl.classList.remove("error");
+  }
+
+  function setInputValue(input, text) {
+    input.value = text;
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+    dispatchInput(input);
+  }
+
+  function insertInputValue(input, text) {
+    const range = inputRange(input);
+    input.setRangeText(text, range.start, range.end, "end");
+    input.focus();
+    dispatchInput(input);
+  }
+
+  function deleteInputSelection(input) {
+    const range = inputRange(input);
+    if (range.start === range.end) return;
+    input.setRangeText("", range.start, range.end, "start");
+    input.focus();
+    dispatchInput(input);
+  }
+
+  async function readClipboardText() {
+    if (navigator.clipboard && navigator.clipboard.readText) {
+      return await navigator.clipboard.readText();
+    }
+    return null;
+  }
+
+  async function writeClipboardText(text) {
+    if (!navigator.clipboard || !navigator.clipboard.writeText) return false;
+    await navigator.clipboard.writeText(text);
+    return true;
+  }
+
+  function tryExecCommand(command) {
+    try {
+      return document.execCommand(command);
+    } catch {
+      return false;
+    }
+  }
+
+  async function pasteClipboardText(input, replace) {
+    input.focus();
+    const text = await readClipboardText().catch(() => null);
+    if (text !== null) {
+      if (replace) setInputValue(input, text);
+      else insertInputValue(input, text);
+      clearClipboardError();
+      return;
+    }
+    if (replace) input.select();
+    if (tryExecCommand("paste")) {
+      clearClipboardError();
+      return;
+    }
+    showClipboardError();
+  }
+
+  function selectedInputText(input) {
+    const range = inputRange(input);
+    return range.start === range.end ? "" : input.value.slice(range.start, range.end);
+  }
+
+  async function copyInputSelection(input, cut) {
+    const selectedText = selectedInputText(input);
+    if (!selectedText) return;
+    const wrote = await writeClipboardText(selectedText).catch(() => false);
+    if (wrote) {
+      if (cut) deleteInputSelection(input);
+      clearClipboardError();
+      return;
+    }
+    if (tryExecCommand(cut ? "cut" : "copy")) {
+      clearClipboardError();
+      return;
+    }
+    showClipboardError();
   }
 
   function closeWindow() {
@@ -152,6 +269,15 @@ ${configuredContent}
   }
 
   if (pasteForm) {
+    if (pasteBtn) pasteBtn.addEventListener("click", async () => {
+      pasteBtn.disabled = true;
+      try {
+        await pasteClipboardText(installLinkInput, true);
+      } finally {
+        pasteBtn.disabled = false;
+      }
+    });
+
     pasteForm.addEventListener("submit", async (event) => {
       event.preventDefault();
       continueBtn.disabled = true;
@@ -173,6 +299,33 @@ ${configuredContent}
       }
     });
   }
+
+  document.addEventListener("keydown", (event) => {
+    if (!(event.metaKey || event.ctrlKey) || event.altKey) return;
+    const input = editableInput();
+    if (!input) return;
+    const key = event.key.toLowerCase();
+    if (key === "v") {
+      event.preventDefault();
+      void pasteClipboardText(input, false);
+      return;
+    }
+    if (key === "c") {
+      event.preventDefault();
+      void copyInputSelection(input, false);
+      return;
+    }
+    if (key === "x") {
+      event.preventDefault();
+      void copyInputSelection(input, true);
+      return;
+    }
+    if (key === "a") {
+      event.preventDefault();
+      input.focus();
+      input.select();
+    }
+  });
 
   if (actionBtn) actionBtn.addEventListener("click", async () => {
     if (installed) {

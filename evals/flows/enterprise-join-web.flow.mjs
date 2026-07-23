@@ -8,10 +8,12 @@
  * Optional env:
  * - OPENWORK_EVAL_CDP_URL or --cdp-url: CDP endpoint for a headless Chrome page target.
  * - OPENWORK_EVAL_ENTERPRISE_ORG_NAME: organization display name (default Example Organization).
+ * - OPENWORK_EVAL_ENTERPRISE_APP_NAME: branded app display name (default OpenWork).
  * - OPENWORK_EVAL_ENTERPRISE_ADMIN_EMAIL: inviter/admin email (default admin@example.com).
  * - OPENWORK_EVAL_ENTERPRISE_NEW_MEMBER_EMAIL: invited member email (default new.member@example.com).
  * - OPENWORK_EVAL_ENTERPRISE_NEW_MEMBER_DISPLAY_NAME: invited member display name (default Alex).
  * - OPENWORK_EVAL_ENTERPRISE_PASSWORD: account password (default TutorialDemo123!).
+ * - OPENWORK_EVAL_ENTERPRISE_ACCOUNT_MODE: use sign-in to rerun with an existing invited account (default create).
  *
  * Runner note: evals/runner/run.mjs selects one CDP page per run. For this web
  * flow, point OPENWORK_EVAL_CDP_URL (or --cdp-url) at a clean headless Chrome
@@ -53,6 +55,7 @@ export default {
       run: async (ctx) => {
         const email = newMemberEmail(ctx);
         state.adminToken = await signInByEmail(ctx, adminEmail(ctx));
+        await selectEnterpriseOrganization(ctx, state.adminToken);
 
         const invite = await denApiFetch(ctx, "/v1/invitations", {
           method: "POST",
@@ -89,6 +92,7 @@ export default {
             await clearDenWebSession(ctx);
             await navigateAbsolute(ctx, requireState(state.inviteUrl, "invite URL"));
             await ctx.waitForText(joinTitle(ctx), { timeoutMs: 45_000 });
+            await redactCurrentUrlParam(ctx, "invite");
           },
           assert: async () => {
             await ctx.expectText(joinTitle(ctx));
@@ -108,15 +112,30 @@ export default {
       run: async (ctx) => {
         await ctx.prove("New member joins the organization and lands on the welcome step", {
           action: async () => {
-            await fillPasswordAndJoin(ctx, password(ctx));
+            if (envText(ctx, "OPENWORK_EVAL_ENTERPRISE_ACCOUNT_MODE") === "sign-in") {
+              await authenticateExistingInvitee(ctx);
+            } else {
+              await navigateAbsolute(ctx, requireState(state.inviteUrl, "invite URL"));
+              await ctx.waitForText(joinTitle(ctx), { timeoutMs: 30_000 });
+              await fillPasswordAndJoin(ctx, password(ctx));
+            }
+            await redactCurrentUrlParam(ctx, "invite");
           },
           assert: async () => {
-            await ctx.expectText(joinedWelcomeTitle(ctx), { timeoutMs: 45_000 });
+            await ctx.expectText(joinedWelcomeLead(), { timeoutMs: 45_000 });
+            await ctx.expectText(enterpriseAppName(ctx));
+            const logoAlt = await ctx.eval("document.querySelector('[data-testid=join-org-success] img')?.getAttribute('alt') ?? ''");
+            assertEvidence(
+              ctx,
+              logoAlt === `${enterpriseOrgName(ctx)} logo` || logoAlt === `${enterpriseOrgName(ctx)} icon` || logoAlt === "",
+              "The company welcome uses the organization logo/icon when configured and text otherwise",
+              logoAlt,
+            );
           },
           screenshot: {
             name: "enterprise-joined-welcome",
             claim: "The invite acceptance completes and welcomes the new member to the organization.",
-            requireText: [joinedWelcomeTitle(ctx)],
+            requireText: [joinedWelcomeLead(), enterpriseAppName(ctx)],
             rejectText: ["Something went wrong"],
           },
         });
@@ -131,17 +150,28 @@ export default {
             assertEvidence(ctx, cta.exists, "The joined welcome screen exposes a Get the desktop app CTA", cta);
             const installer = await captureInstallerTarget(ctx);
             state.installerUrl = installer.url.trim();
-            assertEvidence(ctx, state.installerUrl.length > 0, "The installer/download action produced a non-empty URL", installer);
-            ctx.output("installer-download-url", JSON.stringify({ url: state.installerUrl, source: installer.source }, null, 2));
-            ctx.log(`Installer/download URL: ${state.installerUrl}`);
+            const redactedInstaller = redactNavigationWitness(installer);
+            assertEvidence(ctx, state.installerUrl.length > 0, "The installer/download action produced a non-empty URL", redactedInstaller);
+            ctx.output("installer-download-url", JSON.stringify({ url: redactUrlParam(state.installerUrl, "token"), source: installer.source }, null, 2));
+            ctx.log(`Installer/download URL: ${redactUrlParam(state.installerUrl, "token")}`);
+            await ctx.waitFor("Boolean(document.querySelector('[data-testid=install-guide]'))", {
+              timeoutMs: 30_000,
+              label: "company install guide",
+            });
+            await redactCurrentUrlParam(ctx, "token");
           },
           assert: async () => {
-            assertEvidence(ctx, state.installerUrl.length > 0, "Installer/download URL captured for the desktop app", state.installerUrl);
+            assertEvidence(
+              ctx,
+              state.installerUrl.length > 0,
+              "Installer/download URL captured for the desktop app",
+              redactUrlParam(state.installerUrl, "token"),
+            );
           },
           screenshot: {
             name: "enterprise-installer-download",
             claim: "The desktop-app CTA yields an installer or guided-install URL for this organization.",
-            requireText: ["OpenWork"],
+            requireText: ["Download OpenWork", "Download the OpenWork installer"],
             rejectText: ["Something went wrong"],
           },
         });
@@ -185,6 +215,10 @@ function newMemberDisplayName(ctx) {
   return envText(ctx, "OPENWORK_EVAL_ENTERPRISE_NEW_MEMBER_DISPLAY_NAME") || DEFAULT_NEW_MEMBER_DISPLAY_NAME;
 }
 
+function enterpriseAppName(ctx) {
+  return envText(ctx, "OPENWORK_EVAL_ENTERPRISE_APP_NAME") || "OpenWork";
+}
+
 function password(ctx) {
   return envText(ctx, "OPENWORK_EVAL_ENTERPRISE_PASSWORD") || DEFAULT_PASSWORD;
 }
@@ -193,8 +227,59 @@ function joinTitle(ctx) {
   return `Join ${enterpriseOrgName(ctx)}`;
 }
 
-function joinedWelcomeTitle(ctx) {
-  return `You're in, welcome to ${enterpriseOrgName(ctx)}`;
+function joinedWelcomeLead() {
+  return "You're in, welcome to";
+}
+
+async function authenticateExistingInvitee(ctx) {
+  state.newMemberToken = await signInByEmail(ctx, newMemberEmail(ctx));
+  const cookie = await ctx.client.send("Network.setCookie", {
+    name: "better-auth.session_token",
+    value: state.newMemberToken,
+    url: denApiBase(ctx),
+    sameSite: "Lax",
+  });
+  assertEvidence(ctx, cookie?.success === true, "The browser received the invited account session cookie", {
+    cookieName: "better-auth.session_token",
+  });
+  await ctx.eval(`(() => {
+    localStorage.setItem('openwork:web:auth-token', ${JSON.stringify(state.newMemberToken)});
+    location.assign(${JSON.stringify(requireState(state.inviteUrl, "invite URL"))});
+    return true;
+  })()`);
+  await ctx.waitForText(newMemberEmail(ctx), { timeoutMs: 30_000 });
+  await ctx.eval(`(() => {
+    const originalFetch = window.fetch.bind(window);
+    window.fetch = (input, init = {}) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input?.url ?? '';
+      if (!url.includes('/v1/')) return originalFetch(input, init);
+      const headers = new Headers(init.headers);
+      headers.set('Authorization', 'Bearer ' + ${JSON.stringify(state.newMemberToken)});
+      return originalFetch(input, { ...init, headers });
+    };
+    return true;
+  })()`);
+  await clickButtonStartingWith(ctx, joinTitle(ctx), 30_000);
+  await ctx.waitForText(joinedWelcomeLead(), { timeoutMs: 60_000 });
+}
+
+async function selectEnterpriseOrganization(ctx, bearer) {
+  const organizations = await denApiFetch(ctx, "/v1/me/orgs", {
+    headers: { authorization: `Bearer ${bearer}` },
+  });
+  assertHttpOk(ctx, "GET /v1/me/orgs failed for the inviter", organizations);
+
+  const organization = organizations.body?.orgs?.find((entry) => entry?.name === enterpriseOrgName(ctx));
+  assertEvidence(ctx, Boolean(organization?.id), "The inviter can access the enterprise organization", {
+    organizationName: enterpriseOrgName(ctx),
+  });
+
+  const selected = await denApiFetch(ctx, "/v1/me/active-organization", {
+    method: "POST",
+    headers: { authorization: `Bearer ${bearer}` },
+    body: JSON.stringify({ organizationId: organization.id }),
+  });
+  assertHttpOk(ctx, "POST /v1/me/active-organization failed for the inviter", selected);
 }
 
 async function denApiFetch(ctx, pathname, init = {}) {
@@ -274,11 +359,34 @@ async function navigateAbsolute(ctx, url) {
   await ctx.eval(`(() => { location.assign(${JSON.stringify(url)}); return true; })()`);
 }
 
+async function redactCurrentUrlParam(ctx, param) {
+  await ctx.eval(`(() => {
+    const param = ${JSON.stringify(param)};
+    const url = new URL(location.href);
+    if (url.searchParams.has(param)) {
+      url.searchParams.set(param, 'REDACTED');
+      history.replaceState(history.state, '', url.pathname + url.search + url.hash);
+    }
+    for (const input of document.querySelectorAll('input[readonly]')) {
+      if (!(input instanceof HTMLInputElement)) continue;
+      try {
+        const inputUrl = new URL(input.value);
+        if (!inputUrl.searchParams.has(param)) continue;
+        inputUrl.searchParams.set(param, 'REDACTED');
+        const descriptor = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+        descriptor?.set?.call(input, inputUrl.toString());
+        input.setAttribute('value', inputUrl.toString());
+      } catch {}
+    }
+    return true;
+  })()`);
+}
+
 async function fillPasswordAndJoin(ctx, value) {
   const join = joinTitle(ctx);
-  const welcome = joinedWelcomeTitle(ctx);
+  const welcome = joinedWelcomeLead();
   await fillReactInput(ctx, 'input[type="password"]', value);
-  await clickButtonStartingWith(ctx, join, 30_000);
+  await clickButtonStartingWithOneOf(ctx, [join, "Sign in to join"], 30_000);
   await ctx.waitFor(`(() => {
     const text = document.body.innerText || "";
     const buttons = [...document.querySelectorAll("button")].map((button) => (button.textContent ?? "").replace(/\\s+/g, " ").trim());
@@ -316,6 +424,18 @@ async function clickButtonStartingWith(ctx, prefix, timeoutMs) {
     button?.click();
     return Boolean(button);
   })()`, { timeoutMs, label: `button starting with ${JSON.stringify(prefix)}` });
+}
+
+async function clickButtonStartingWithOneOf(ctx, prefixes, timeoutMs) {
+  await ctx.waitFor(`(() => {
+    const normalize = (value) => (value ?? '').replace(/\\s+/g, ' ').trim();
+    const prefixes = ${JSON.stringify(prefixes)};
+    const button = [...document.querySelectorAll('button')]
+      .find((entry) => prefixes.some((prefix) => normalize(entry.textContent).startsWith(prefix)) && entry.disabled !== true && entry.getAttribute('aria-disabled') !== 'true');
+    button?.scrollIntoView({ block: 'center', inline: 'center' });
+    button?.click();
+    return Boolean(button);
+  })()`, { timeoutMs, label: `button starting with one of ${JSON.stringify(prefixes)}` });
 }
 
 async function clickButtonStartingWithIfVisible(ctx, prefix) {
@@ -400,4 +520,24 @@ function requireState(value, label) {
 
 function redactSecret(value) {
   return value ? "[redacted]" : "";
+}
+
+function redactUrlParam(value, param) {
+  if (typeof value !== "string" || !value.trim()) return value;
+  try {
+    const url = new URL(value);
+    if (url.searchParams.has(param)) url.searchParams.set(param, "REDACTED");
+    return url.toString();
+  } catch {
+    return "[redacted URL]";
+  }
+}
+
+function redactNavigationWitness(witness) {
+  return {
+    ...witness,
+    url: redactUrlParam(witness?.url, "token"),
+    before: redactUrlParam(witness?.before, "invite"),
+    after: redactUrlParam(witness?.after, "token"),
+  };
 }

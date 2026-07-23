@@ -382,18 +382,18 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
     : null;
   const settingsChildren: DashboardNavChild[] = activeOrg
     ? [
-        ...(access.isAdmin
+        ...(access.canViewSettings
           ? [
               { href: getOrgSettingsRoute(activeOrg.slug), label: "General" },
               { href: getDiagnosticsRoute(activeOrg.slug), label: "Diagnostics" },
               { href: getBrandAppearanceRoute(activeOrg.slug), label: "Brand appearance" },
               { href: getDesktopPoliciesRoute(activeOrg.slug), label: "Desktop Policies" },
               { href: getBillingRoute(activeOrg.slug), label: "Stripe" },
+              { href: getApiKeysRoute(activeOrg.slug), label: "API Keys" },
+              { href: getSsoRoute(activeOrg.slug), label: "SSO" },
+              { href: getScimRoute(activeOrg.slug), label: "SCIM" },
             ]
           : []),
-        ...(access.canManageApiKeys ? [{ href: getApiKeysRoute(activeOrg.slug), label: "API Keys" }] : []),
-        ...(access.canManageSso ? [{ href: getSsoRoute(activeOrg.slug), label: "SSO" }] : []),
-        ...(access.canManageScim ? [{ href: getScimRoute(activeOrg.slug), label: "SCIM" }] : []),
       ]
     : [];
   const settingsGroup: DashboardNavItem | null = settingsChildren.length > 0

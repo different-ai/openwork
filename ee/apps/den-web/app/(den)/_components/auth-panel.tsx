@@ -89,28 +89,60 @@ function SocialButton({
   );
 }
 
-function DesktopHandoffAction({
+function DesktopHandoffCopyLink({
   openworkUrl,
-  grant,
-  organizationName,
-  helperText,
-  buttonClassName = "den-button-primary w-full",
+  label,
 }: {
   openworkUrl: string;
-  grant: string | null;
-  organizationName: string | null;
-  helperText?: string;
-  buttonClassName?: string;
+  label: string;
 }) {
-  const { status, timedOut } = useDesktopHandoffStatus(grant);
   const [copied, setCopied] = useState(false);
-  const resolvedOrganizationName = organizationName?.trim() || "your team";
 
   async function copyOpenworkUrl() {
     await navigator.clipboard.writeText(openworkUrl);
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1800);
   }
+
+  return (
+    <div className="grid gap-2" data-testid="desktop-handoff-copy-link">
+      <p className="m-0 text-sm text-[var(--dls-text-secondary)]">{label}</p>
+      <div className="flex flex-col gap-2 sm:flex-row">
+        <input
+          className="den-input min-w-0 flex-1 text-xs"
+          value={openworkUrl}
+          readOnly
+          onFocus={(event) => event.currentTarget.select()}
+          aria-label="OpenWork sign-in link"
+        />
+        <button type="button" className="den-button-secondary sm:w-auto" onClick={() => void copyOpenworkUrl()}>
+          {copied ? "Copied" : "Copy"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function DesktopHandoffAction({
+  openworkUrl,
+  grant,
+  organizationName,
+  helperText,
+  buttonClassName = "den-button-primary w-full",
+  showCopyLinkByDefault = false,
+}: {
+  openworkUrl: string;
+  grant: string | null;
+  organizationName: string | null;
+  helperText?: string;
+  buttonClassName?: string;
+  /** When true, always show the pasteable openwork:// link (signed-in desktop handoff). */
+  showCopyLinkByDefault?: boolean;
+}) {
+  const { status, timedOut } = useDesktopHandoffStatus(grant);
+  const resolvedOrganizationName = organizationName?.trim() || "your team";
+  const showTroubleshoot = timedOut || status === "unknown";
+  const showCopyLink = showCopyLinkByDefault || showTroubleshoot;
 
   if (status === "consumed") {
     return (
@@ -120,7 +152,7 @@ function DesktopHandoffAction({
     );
   }
 
-  if (timedOut || status === "unknown") {
+  if (showTroubleshoot && !showCopyLinkByDefault) {
     return (
       <div className="den-frame-inset grid gap-3 rounded-[1.5rem] px-4 py-3 text-sm text-[var(--dls-text-secondary)]" data-testid="desktop-handoff-troubleshoot" aria-live="polite">
         <p className="m-0">
@@ -129,15 +161,10 @@ function DesktopHandoffAction({
             Open OpenWork again
           </button>
         </p>
-        <div className="grid gap-2">
-          <p className="m-0">Still stuck? Paste this sign-in code in OpenWork:</p>
-          <div className="flex flex-col gap-2 sm:flex-row">
-            <input className="den-input min-w-0 flex-1 text-xs" value={openworkUrl} readOnly onFocus={(event) => event.currentTarget.select()} />
-            <button type="button" className="den-button-secondary sm:w-auto" onClick={() => void copyOpenworkUrl()}>
-              {copied ? "Copied" : "Copy"}
-            </button>
-          </div>
-        </div>
+        <DesktopHandoffCopyLink
+          openworkUrl={openworkUrl}
+          label="Still stuck? Paste this sign-in code in OpenWork:"
+        />
       </div>
     );
   }
@@ -156,6 +183,12 @@ function DesktopHandoffAction({
         <p className="m-0 text-center text-xs text-[var(--dls-text-secondary)]">
           {helperText}
         </p>
+      ) : null}
+      {showCopyLink ? (
+        <DesktopHandoffCopyLink
+          openworkUrl={openworkUrl}
+          label={showTroubleshoot ? "Nothing opened? Paste this sign-in code in OpenWork:" : "Or paste this sign-in code in OpenWork:"}
+        />
       ) : null}
     </div>
   );
@@ -218,6 +251,7 @@ export function AuthPanel({
     authBusy,
     authInfo,
     authError,
+    user,
     desktopAuthRequested,
     desktopRedirectUrl,
     desktopRedirectBusy,
@@ -493,26 +527,45 @@ export function AuthPanel({
   /* ------------------------------------------------------------------ */
   /*  Already signed in + desktop handoff: simplified view               */
   /* ------------------------------------------------------------------ */
-  const isSignedInWithDesktopHandoff = desktopAuthRequested && desktopRedirectUrl && showAuthFeedback && authInfo && !authError;
+  // Gate on the session user (not authInfo feedback). Otherwise a hydrated
+  // desktop session still renders the email-first form underneath the Open
+  // OpenWork button.
+  const isSignedInWithDesktopHandoff = Boolean(desktopAuthRequested && user && !authError);
+  const signedInEmail = user?.email?.trim() || "";
   const emailFirstPanelActive = emailFirstFlow && !verificationRequired && !isPasswordResetRequest;
   const emailFirstFormBusy = loginOptionBusy || authBusy || desktopRedirectBusy;
 
   if (isSignedInWithDesktopHandoff) {
     return (
-      <div className={shellClass("gap-6", "p-6 md:p-7")}>
+      <div className={shellClass("gap-6", "p-6 md:p-7")} data-testid="desktop-signed-in-handoff">
         <div className="grid gap-3">
           <p className="den-eyebrow">{eyebrow}</p>
           <div className="grid gap-2">
             <h2 className="den-title-lg">You&apos;re signed in.</h2>
-            <p className="den-copy">Open the desktop app to continue.</p>
+            <p className="den-copy">
+              {signedInEmail ? (
+                <>
+                  Logged in as <span className="font-medium text-[var(--dls-text-primary)]">{signedInEmail}</span>.
+                </>
+              ) : (
+                "Open the desktop app to continue."
+              )}
+            </p>
           </div>
         </div>
 
-        <DesktopHandoffAction
-          openworkUrl={desktopRedirectUrl}
-          grant={desktopGrant}
-          organizationName={isSingleOrgMode ? singleOrgName : null}
-        />
+        {desktopRedirectUrl ? (
+          <DesktopHandoffAction
+            openworkUrl={desktopRedirectUrl}
+            grant={desktopGrant}
+            organizationName={isSingleOrgMode ? singleOrgName : null}
+            showCopyLinkByDefault
+          />
+        ) : (
+          <div className="den-frame-inset rounded-[1.5rem] px-4 py-3 text-center text-sm text-[var(--dls-text-secondary)]" aria-live="polite">
+            Preparing your OpenWork sign-in link...
+          </div>
+        )}
 
         <div className="border-t border-[var(--dls-border)] pt-4 text-center">
           <button

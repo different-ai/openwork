@@ -1,0 +1,75 @@
+---
+title: "OpenWork MCP for Gemini CLI"
+sidebarTitle: "Gemini CLI"
+description: "Gemini CLI MCP setup for OpenWork Connect, with OAuth access to your org's Gmail, Calendar, Drive, shared connections, skills, and Cloud resources."
+---
+
+The OpenWork MCP server ([OpenWork Connect](/cloud/run-in-the-cloud/cloud-mcp))
+enables Gemini CLI to use the OpenWork capabilities your organization has made
+available to you: Gmail read/search, Calendar list/create, Drive search/read,
+Gmail draft creation, shared MCP connections such as Notion, Linear, Slack,
+Stripe, Exa, and Context7, shared skills, and OpenWork Cloud resources like
+skills, plugins, marketplaces, workers, members, roles, teams, and LLM
+providers. The server exposes only `search_capabilities` and
+`execute_capability`, so Gemini CLI searches what you can access and runs exact
+capability names instead of loading hundreds of tool definitions into context.
+
+## Server URL
+
+```text
+https://api.openworklabs.com/mcp/agent
+```
+
+OAuth sign-in uses your OpenWork account, and the organization you pick is
+pinned into the token. If you do not have an account, create a
+[free OpenWork account](https://app.openworklabs.com?mode=sign-up).
+
+## Setup
+
+1. Add OpenWork Connect as a remote HTTP MCP server:
+
+   ```sh
+   gemini mcp add --transport http openwork https://api.openworklabs.com/mcp/agent
+   ```
+
+2. Start Gemini CLI:
+
+   ```sh
+   gemini
+   ```
+
+3. Authenticate OpenWork inside Gemini:
+
+   ```text
+   /mcp auth openwork
+   ```
+
+4. Finish the browser sign-in and choose your organization.
+
+## Switch organizations
+
+Remove the stored MCP auth token for `openwork`, then run `/mcp auth openwork`
+again and choose the organization you want during browser sign-in.
+
+<Note>
+This is a setup guide. These steps match OpenWork Connect's OAuth profile:
+HTTPS or HTTP loopback callbacks, PKCE S256, and dynamic client registration
+fallback. Gemini CLI is listed as setup only because native proof is not
+complete. See the
+[client support status](/cloud/run-in-the-cloud/cloud-mcp#client-support-status)
+table.
+</Note>
+
+## What you can ask
+
+- "Which OpenWork organization am I connected to?"
+- "Add omar@example.com to my organization."
+- "Search my org's capabilities for calendar tools, then list tomorrow's events."
+- "Create a skill that writes weekly status reports and share it with my whole organization."
+
+## What's next
+
+- Read the [hub overview](/cloud/run-in-the-cloud/cloud-mcp) for OAuth, token,
+  server exposure, and troubleshooting details.
+- Publish Notion, Linear, Slack, and other shared tools with
+  [shared MCP connections](/cloud/share-with-your-team/shared-mcp-connections).

@@ -5,7 +5,7 @@ import Link from "next/link";
 import { Laptop, Plus } from "lucide-react";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
 import { DenButton, buttonVariants } from "../../_components/ui/button";
-import { getDesktopPolicyRoute, getNewDesktopPolicyRoute } from "../../_lib/den-org";
+import { getDesktopPolicyRoute, getNewDesktopPolicyRoute, getOrgAccessFlags } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import {
   deleteDesktopPolicy,
@@ -44,9 +44,18 @@ export function DesktopPoliciesScreen() {
     });
     return list;
   }, [desktopPolicies]);
-  const canManage = orgContext?.currentMember.isOwner || orgContext?.currentMember.role.split(",").map((role) => role.trim()).includes("admin");
+  const access = getOrgAccessFlags(
+    orgContext?.currentMember.role ?? "member",
+    orgContext?.currentMember.isOwner ?? false,
+    orgContext?.roles,
+  );
+  const canManage = access.canManageSettings;
 
   const softDeletePolicy = async (policy: DenDesktopPolicy) => {
+    if (!canManage) {
+      setPageError("Only workspace owners and super-admins can delete desktop policies.");
+      return;
+    }
     if (policy.isDefault || !confirm(`Delete ${policy.policyName}?`)) return;
     setPageError(null);
     setPageSuccess(null);
@@ -77,7 +86,11 @@ export function DesktopPoliciesScreen() {
             <Plus className="h-4 w-4" aria-hidden="true" />
             New policy
           </Link>
-        ) : null}
+        ) : (
+          <DenButton type="button" icon={Plus} disabled>
+            New policy
+          </DenButton>
+        )}
       </div>
 
       {orgContext && !orgContext.entitlements.desktopPolicies ? <EnterprisePlanNotice feature="Desktop policy management" /> : null}
@@ -137,13 +150,11 @@ export function DesktopPoliciesScreen() {
                       </td>
                       <td className="whitespace-nowrap px-4 py-4">
                         <div className="flex justify-end gap-2">
-                          {canManage ? (
-                            <Link href={editHref} className={buttonVariants({ variant: "secondary", size: "sm" })}>
-                              Edit
-                            </Link>
-                          ) : null}
-                          {canManage && !policy.isDefault ? (
-                            <DenButton type="button" variant="destructive" size="sm" onClick={() => void softDeletePolicy(policy)} disabled={deleting}>Delete</DenButton>
+                          <Link href={editHref} className={buttonVariants({ variant: "secondary", size: "sm" })}>
+                            {canManage ? "Edit" : "View"}
+                          </Link>
+                          {!policy.isDefault ? (
+                            <DenButton type="button" variant="destructive" size="sm" onClick={() => void softDeletePolicy(policy)} disabled={!canManage || deleting}>Delete</DenButton>
                           ) : null}
                         </div>
                       </td>

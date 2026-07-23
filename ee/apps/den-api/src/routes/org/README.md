@@ -23,6 +23,8 @@ This folder owns organization-facing Den API routes.
 - Routes under `/v1/orgs/**` are reserved for cross-org flows that are not tied to the active workspace yet, such as invitation preview/accept.
 - If a client needs to change workspaces, it should call Better Auth set-active first, then use the active-org scoped `/v1/...` resource routes.
 
+See [`docs/cloud-organization-role-access.md`](../../../../../../docs/cloud-organization-role-access.md) for the approved cloud organization role hierarchy and access matrix.
+
 ## Middleware expectations
 
 - `requireUserMiddleware`: the route requires a signed-in user

@@ -70,6 +70,11 @@ export type DenInvitationPreview = {
     name: string;
     slug: string;
     allowedEmailDomains: string[] | null;
+    branding: {
+      appName: string;
+      logoUrl: string | null;
+      iconUrl: string | null;
+    };
   };
 };
 
@@ -81,6 +86,31 @@ export type DenOrgRole = {
   protected: boolean;
   createdAt: string | null;
   updatedAt: string | null;
+};
+
+export type DenCanonicalRole = "owner" | "super-admin" | "admin" | "member";
+
+export type DenOrgAccessFlags = {
+  canonicalRole: DenCanonicalRole;
+  isOwner: boolean;
+  isSuperAdmin: boolean;
+  isAdminRole: boolean;
+  isMember: boolean;
+  isAdmin: boolean;
+  canViewSettings: boolean;
+  canManageSettings: boolean;
+  canManageSecurityConfiguration: boolean;
+  canInviteMembers: boolean;
+  canCancelInvitations: boolean;
+  canManageMembers: boolean;
+  canRemoveMembers: boolean;
+  canManageRoles: boolean;
+  canManageTeams: boolean;
+  canManageApiKeys: boolean;
+  canManageScim: boolean;
+  canManageSso: boolean;
+  canTransferOwnership: boolean;
+  canStartSeatCheckout: boolean;
 };
 
 export type DenOrgApiKey = {
@@ -370,32 +400,75 @@ export function splitRoleString(value: string): string[] {
     .filter(Boolean);
 }
 
-function roleHasSecurityConfigurationPermission(roleValue: string, roles: readonly DenOrgRole[]) {
-  const roleNames = new Set(splitRoleString(roleValue));
-  return roles.some((role) => (
-    roleNames.has(role.role)
-    && (role.permission.security_configuration?.includes("manage") ?? false)
-  ));
+function normalizeCanonicalRole(value: string): DenCanonicalRole | null {
+  const normalized = value.trim().toLowerCase().replace(/[\s_]+/g, "-");
+  if (normalized === "owner") return "owner";
+  if (normalized === "super-admin") return "super-admin";
+  if (normalized === "admin") return "admin";
+  if (normalized === "member") return "member";
+  return null;
 }
 
-export function getOrgAccessFlags(roleValue: string, isOwner: boolean, roleDefinitions: readonly DenOrgRole[] = []) {
-  const roleNames = new Set(splitRoleString(roleValue));
-  const isAdmin = isOwner || roleNames.has("admin");
-  const canManageSecurityConfiguration = isOwner || roleHasSecurityConfigurationPermission(roleValue, roleDefinitions);
+function getCanonicalRoleSet(roleValue: string) {
+  const roles = new Set<DenCanonicalRole>();
+  for (const roleName of splitRoleString(roleValue)) {
+    const canonicalRole = normalizeCanonicalRole(roleName);
+    if (canonicalRole) {
+      roles.add(canonicalRole);
+    }
+  }
+  return roles;
+}
+
+export function roleIncludesCanonicalRole(roleValue: string, role: DenCanonicalRole): boolean {
+  return getCanonicalRoleSet(roleValue).has(role);
+}
+
+export function getHighestCanonicalRole(roleValue: string, isOwner: boolean): DenCanonicalRole {
+  const canonicalRoles = getCanonicalRoleSet(roleValue);
+  if (isOwner || canonicalRoles.has("owner")) return "owner";
+  if (canonicalRoles.has("super-admin")) return "super-admin";
+  if (canonicalRoles.has("admin")) return "admin";
+  return "member";
+}
+
+export function isAssignableOrgRole(role: DenOrgRole): boolean {
+  return !roleIncludesCanonicalRole(role.role, "owner") && (role.builtIn || !role.protected);
+}
+
+export function canRefreshInvitationRole(role: string, access: Pick<DenOrgAccessFlags, "canInviteMembers" | "canManageRoles">): boolean {
+  return access.canInviteMembers && (access.canManageRoles || role === "member");
+}
+
+export function getOrgAccessFlags(roleValue: string, isOwner: boolean, _roleDefinitions: readonly DenOrgRole[] = []): DenOrgAccessFlags {
+  const canonicalRole = getHighestCanonicalRole(roleValue, isOwner);
+  const resolvedIsOwner = canonicalRole === "owner";
+  const isSuperAdmin = canonicalRole === "super-admin";
+  const isAdminRole = canonicalRole === "admin";
+  const isAdmin = resolvedIsOwner || isSuperAdmin || isAdminRole;
+  const canManageSettings = resolvedIsOwner || isSuperAdmin;
 
   return {
-    isOwner,
+    canonicalRole,
+    isOwner: resolvedIsOwner,
+    isSuperAdmin,
+    isAdminRole,
+    isMember: canonicalRole === "member",
     isAdmin,
-    canManageSecurityConfiguration,
+    canViewSettings: isAdmin,
+    canManageSettings,
+    canManageSecurityConfiguration: canManageSettings,
     canInviteMembers: isAdmin,
     canCancelInvitations: isAdmin,
-    canManageMembers: isOwner,
+    canManageMembers: isAdmin,
     canRemoveMembers: isAdmin,
-    canManageRoles: isOwner,
+    canManageRoles: canManageSettings,
     canManageTeams: isAdmin,
-    canManageApiKeys: canManageSecurityConfiguration,
-    canManageScim: canManageSecurityConfiguration,
-    canManageSso: canManageSecurityConfiguration,
+    canManageApiKeys: canManageSettings,
+    canManageScim: canManageSettings,
+    canManageSso: canManageSettings,
+    canTransferOwnership: resolvedIsOwner,
+    canStartSeatCheckout: isAdmin,
   };
 }
 
@@ -857,6 +930,7 @@ export function parseInvitationPreviewPayload(payload: unknown): DenInvitationPr
   const organizationId = asString(organization.id);
   const organizationName = asString(organization.name);
   const organizationSlug = asString(organization.slug);
+  const branding = isRecord(organization.branding) ? organization.branding : null;
 
   if (!invitationId || !invitationEmail || !invitationRole || !invitationStatus || !organizationId || !organizationName || !organizationSlug) {
     return null;
@@ -876,6 +950,11 @@ export function parseInvitationPreviewPayload(payload: unknown): DenInvitationPr
       name: organizationName,
       slug: organizationSlug,
       allowedEmailDomains: asStringArray(organization.allowedEmailDomains),
+      branding: {
+        appName: asString(branding?.appName) ?? "OpenWork",
+        logoUrl: asString(branding?.logoUrl),
+        iconUrl: asString(branding?.iconUrl),
+      },
     },
   };
 }

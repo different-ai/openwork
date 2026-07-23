@@ -1,3 +1,12 @@
+import {
+  ORGANIZATION_ADMIN_ROLE,
+  ORGANIZATION_MEMBER_ROLE,
+  ORGANIZATION_OWNER_ROLE,
+  ORGANIZATION_SUPER_ADMIN_ROLE,
+  organizationRoleValueIncludes,
+  splitOrganizationRoles,
+} from "./organization-role-hierarchy.js"
+
 export type MemberLifecycleGuardRow = {
   id: string
   role: string
@@ -12,33 +21,28 @@ export type MemberLifecycleValidation = {
   message: string
 }
 
-function splitRoles(value: string) {
-  return value
-    .split(",")
-    .map((entry) => entry.trim())
-    .filter(Boolean)
-}
-
 function addRole(roleValue: string, roleName: string) {
-  const roles = splitRoles(roleValue).filter((role) => role !== roleName)
+  const roles = splitOrganizationRoles(roleValue).filter((role) => role !== roleName)
   return [roleName, ...roles].join(",")
 }
 
-function removeRole(roleValue: string, roleName: string) {
-  return splitRoles(roleValue).filter((role) => role !== roleName)
+function removeTransferManagedRoles(roleValue: string) {
+  return splitOrganizationRoles(roleValue).filter((role) => (
+    role !== ORGANIZATION_OWNER_ROLE
+    && role !== ORGANIZATION_SUPER_ADMIN_ROLE
+    && role !== ORGANIZATION_ADMIN_ROLE
+    && role !== ORGANIZATION_MEMBER_ROLE
+  ))
 }
 
 export function getRoleValueAfterOwnershipTransfer(input: {
   currentRole: string
   targetRole: string
 }) {
-  const currentRoles = removeRole(input.currentRole, "owner")
-  const previousOwnerRole = currentRoles.includes("admin")
-    ? currentRoles.join(",")
-    : addRole(currentRoles.join(","), "admin")
-  const targetRoles = removeRole(input.targetRole, "owner")
-    .filter((role) => role !== "admin" && role !== "member")
-  const newOwnerRole = addRole(targetRoles.join(","), "owner")
+  const currentRoles = removeTransferManagedRoles(input.currentRole)
+  const previousOwnerRole = addRole(currentRoles.join(","), ORGANIZATION_SUPER_ADMIN_ROLE)
+  const targetRoles = removeTransferManagedRoles(input.targetRole)
+  const newOwnerRole = addRole(targetRoles.join(","), ORGANIZATION_OWNER_ROLE)
 
   return {
     previousOwnerRole,
@@ -47,12 +51,17 @@ export function getRoleValueAfterOwnershipTransfer(input: {
 }
 
 export function roleIncludesOwner(roleValue: string) {
-  return splitRoles(roleValue).includes("owner")
+  return organizationRoleValueIncludes(roleValue, ORGANIZATION_OWNER_ROLE)
+}
+
+export function roleIncludesSuperAdmin(roleValue: string) {
+  return organizationRoleValueIncludes(roleValue, ORGANIZATION_SUPER_ADMIN_ROLE)
 }
 
 export function roleIncludesPrivileged(roleValue: string) {
-  const roles = splitRoles(roleValue)
-  return roles.includes("owner") || roles.includes("admin")
+  return roleIncludesOwner(roleValue)
+    || roleIncludesSuperAdmin(roleValue)
+    || organizationRoleValueIncludes(roleValue, ORGANIZATION_ADMIN_ROLE)
 }
 
 function hasOtherActivePrivilegedMember(input: {
@@ -78,17 +87,6 @@ export function validateOrganizationMemberRemoval(input: {
     }
   }
 
-  if (
-    roleIncludesPrivileged(input.member.role)
-    && !hasOtherActivePrivilegedMember({ memberId: input.member.id, members: input.activeMembers })
-  ) {
-    return {
-      ok: false,
-      error: "last_privileged_member",
-      message: "Add another workspace owner or admin before removing this member.",
-    }
-  }
-
   return { ok: true }
 }
 
@@ -105,6 +103,14 @@ export function validateOrganizationMemberRoleChange(input: {
     }
   }
 
+  if (roleIncludesOwner(input.nextRole)) {
+    return {
+      ok: false,
+      error: "owner_role_locked",
+      message: "The organization owner role cannot be assigned.",
+    }
+  }
+
   if (
     roleIncludesPrivileged(input.member.role)
     && !roleIncludesPrivileged(input.nextRole)
@@ -113,7 +119,7 @@ export function validateOrganizationMemberRoleChange(input: {
     return {
       ok: false,
       error: "last_privileged_member",
-      message: "Add another workspace owner or admin before changing this member's role.",
+      message: "Add another workspace owner, super-admin, or admin before changing this member's role.",
     }
   }
 

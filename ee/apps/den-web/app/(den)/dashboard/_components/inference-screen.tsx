@@ -7,7 +7,7 @@ import { INFERENCE_MODEL_ALIASES } from "@openwork/types/den/inference";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
 import { DenButton } from "../../_components/ui/button";
 import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
-import { getBillingRoute, getCustomLlmProvidersRoute } from "../../_lib/den-org";
+import { getBillingRoute, getCustomLlmProvidersRoute, getOrgAccessFlags } from "../../_lib/den-org";
 import { useDenFlow } from "../../_providers/den-flow-provider";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 
@@ -164,7 +164,7 @@ const VALUE_POINTS = [
 ];
 
 function ModelsValueProp(props: {
-  isOwner: boolean;
+  canManage: boolean;
   memberCount: number;
   subscribeBusy: boolean;
   onSubscribe: () => void;
@@ -191,7 +191,7 @@ function ModelsValueProp(props: {
           <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center">
             <DenButton
               type="button"
-              disabled={!props.isOwner}
+              disabled={!props.canManage}
               loading={props.subscribeBusy}
               onClick={props.onSubscribe}
             >
@@ -201,9 +201,9 @@ function ModelsValueProp(props: {
               $10/user/month · {props.memberCount > 0 ? `${props.memberCount} active member${props.memberCount === 1 ? "" : "s"}` : "billed per active member"} · cancel anytime
             </p>
           </div>
-          {props.isOwner ? null : (
+          {props.canManage ? null : (
             <p className="mt-3 text-[13px] leading-5 text-amber-700">
-              Only workspace owners can subscribe. Ask an owner to enable OpenWork Models for your team.
+              Only workspace admins can subscribe. Ask an owner, super-admin, or admin to enable OpenWork Models for your team.
             </p>
           )}
         </div>
@@ -235,7 +235,12 @@ export function InferenceScreen() {
   const [subscribeBusy, setSubscribeBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const isOwner = orgContext?.currentMember.isOwner === true;
+  const access = getOrgAccessFlags(
+    orgContext?.currentMember.role ?? "member",
+    orgContext?.currentMember.isOwner ?? false,
+    orgContext?.roles,
+  );
+  const canManageModels = access.isAdmin;
   // OpenWork Models are a hosted OpenWork Cloud offering; self-hosted
   // (single-org) deployments manage their own LLM providers instead.
   const isSelfHosted = runtimeConfigLoaded && runtimeConfig.orgMode === "single_org";
@@ -274,6 +279,11 @@ export function InferenceScreen() {
   // instead of bouncing the user to the billing page. Billing stays the
   // status/portal view.
   async function startSubscribeCheckout() {
+    if (!canManageModels) {
+      setError("Only workspace admins can start OpenWork Models checkout.");
+      return;
+    }
+
     setError(null);
     try {
       await runReauthableAction("inference-checkout", async () => {
@@ -299,6 +309,10 @@ export function InferenceScreen() {
   }
 
   async function toggleEnabled() {
+    if (!canManageModels) {
+      setError("Only workspace admins can manage OpenWork Models.");
+      return;
+    }
     if (!status) return;
     if (status.enabled || !status.subscribed) {
       router.push(getBillingRoute(activeOrg?.slug));
@@ -362,7 +376,7 @@ export function InferenceScreen() {
 
         {showValueProp ? (
           <ModelsValueProp
-            isOwner={isOwner}
+            canManage={canManageModels}
             memberCount={status?.memberCount ?? 0}
             subscribeBusy={subscribeBusy}
             onSubscribe={() => void startSubscribeCheckout()}
@@ -378,7 +392,7 @@ export function InferenceScreen() {
                   {cardTitle}
                 </h2>
               </div>
-              <DenButton type="button" onClick={toggleEnabled} loading={saving || loading} variant={enabled ? "secondary" : "primary"}>
+              <DenButton type="button" onClick={toggleEnabled} loading={saving || loading} disabled={!canManageModels} variant={enabled ? "secondary" : "primary"}>
                 {actionLabel}
               </DenButton>
             </div>

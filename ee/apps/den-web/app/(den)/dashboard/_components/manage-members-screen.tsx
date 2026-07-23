@@ -18,11 +18,14 @@ import {
 } from "lucide-react";
 import {
   DEN_ROLE_PERMISSION_OPTIONS,
+  canRefreshInvitationRole,
   formatRoleLabel,
   getJoinOrgRoute,
   getOrgAccessFlags,
+  isAssignableOrgRole,
   getMembersRoute,
   splitRoleString,
+  type DenOrgMember,
 } from "../../_lib/den-org";
 import { type OrgLimitError, type OrgPaymentRequiredError, getOrgLimitError, getOrgPaymentRequiredError } from "../../_lib/den-flow";
 import { buildDenFeedbackUrl } from "../../_lib/feedback";
@@ -133,6 +136,7 @@ export function ManageMembersScreen() {
     cancelInvitation,
     updateMemberRole,
     removeMember,
+    transferOwnership,
     createTeam,
     updateTeam,
     deleteTeam,
@@ -169,7 +173,7 @@ export function ManageMembersScreen() {
   const [installLinkShareCopied, setInstallLinkShareCopied] = useState(false);
 
   const assignableRoles = useMemo(
-    () => (orgContext?.roles ?? []).filter((role) => !role.protected),
+    () => (orgContext?.roles ?? []).filter(isAssignableOrgRole),
     [orgContext?.roles],
   );
 
@@ -182,7 +186,7 @@ export function ManageMembersScreen() {
       ),
     [orgContext?.currentMember.isOwner, orgContext?.currentMember.role, orgContext?.roles],
   );
-  const canStartSeatCheckout = orgContext?.currentMember.isOwner === true;
+  const canStartSeatCheckout = access.canStartSeatCheckout;
 
   const tabCounts: Record<MembersTab, number> = {
     members: orgContext?.members.length ?? 0,
@@ -224,13 +228,13 @@ export function ManageMembersScreen() {
 
   function resetInviteForm() {
     setInviteEmail("");
-    setInviteRole(assignableRoles[0]?.role ?? "member");
+    setInviteRole(access.canManageRoles ? assignableRoles[0]?.role ?? "member" : "member");
     setShowInviteForm(false);
   }
 
   function resetMemberEditor() {
     setEditingMemberId(null);
-    setMemberRoleDraft(assignableRoles[0]?.role ?? "member");
+    setMemberRoleDraft(access.canManageRoles ? assignableRoles[0]?.role ?? "member" : "member");
   }
 
   function resetTeamEditor() {
@@ -309,7 +313,31 @@ export function ManageMembersScreen() {
     }
   }
 
+  async function handleTransferOwnership(member: DenOrgMember) {
+    const targetName = member.user.name || member.user.email;
+    const confirmed = window.confirm(
+      `Transfer workspace ownership to ${targetName}? ${targetName} becomes the sole owner, and your account becomes a super-admin.`,
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setPageError(null);
+    try {
+      await transferOwnership(member.id);
+      setOpenMemberMenuId(null);
+    } catch (error) {
+      setPageError(error instanceof Error ? error.message : "Could not transfer ownership.");
+    }
+  }
+
   useEffect(() => {
+    if (!access.canManageRoles) {
+      setInviteRole("member");
+      setMemberRoleDraft("member");
+      return;
+    }
+
     if (!assignableRoles[0]) {
       return;
     }
@@ -324,7 +352,7 @@ export function ManageMembersScreen() {
         ? current
         : assignableRoles[0].role,
     );
-  }, [assignableRoles]);
+  }, [access.canManageRoles, assignableRoles]);
 
   if (orgBusy && !orgContext) {
     return (
@@ -350,12 +378,12 @@ export function ManageMembersScreen() {
     showInviteForm && access.canInviteMembers ? (
       <DenCard className="mb-6">
         <form
-          className="grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_220px_auto] lg:items-end"
+          className={`grid gap-4 lg:items-end ${access.canManageRoles ? "lg:grid-cols-[minmax(0,1.4fr)_220px_auto]" : "lg:grid-cols-[minmax(0,1fr)_220px_auto]"}`}
           onSubmit={async (event) => {
             event.preventDefault();
             setPageError(null);
             try {
-              await inviteMember({ email: inviteEmail, role: inviteRole });
+              await inviteMember({ email: inviteEmail, role: access.canManageRoles ? inviteRole : "member" });
               resetInviteForm();
             } catch (error) {
               const paymentRequiredError = getOrgPaymentRequiredError(error);
@@ -388,16 +416,23 @@ export function ManageMembersScreen() {
               required
             />
           </label>
-          <label className="grid gap-3">
-            <span className="text-[14px] font-medium text-gray-700">Role</span>
-            <DenSelect value={inviteRole} onChange={(event) => setInviteRole(event.target.value)}>
-              {assignableRoles.map((role) => (
-                <option key={role.id} value={role.role}>
-                  {formatRoleLabel(role.role)}
-                </option>
-              ))}
-            </DenSelect>
-          </label>
+          {access.canManageRoles ? (
+            <label className="grid gap-3">
+              <span className="text-[14px] font-medium text-gray-700">Role</span>
+              <DenSelect value={inviteRole} onChange={(event) => setInviteRole(event.target.value)}>
+                {assignableRoles.map((role) => (
+                  <option key={role.id} value={role.role}>
+                    {formatRoleLabel(role.role)}
+                  </option>
+                ))}
+              </DenSelect>
+            </label>
+          ) : (
+            <div className="grid gap-3">
+              <span className="text-[14px] font-medium text-gray-700">Role</span>
+              <DenInput value="Member" readOnly disabled />
+            </div>
+          )}
           <div className="flex gap-2 lg:justify-end">
             <ActionButton size="md" onClick={resetInviteForm}>Cancel</ActionButton>
             <DenButton type="submit" loading={mutationBusy === "invite-member"}>
@@ -409,7 +444,7 @@ export function ManageMembersScreen() {
     ) : null;
 
   const editMemberForm =
-    editingMemberId && access.canManageMembers ? (
+    editingMemberId && access.canManageRoles ? (
       <DenCard className="mb-6">
         <form
           className="grid gap-4 lg:grid-cols-[240px_auto] lg:items-end"
@@ -699,7 +734,7 @@ export function ManageMembersScreen() {
         eyebrow="Seat billing"
         title="Subscribe to add more users"
         message="The first 5 users in your organization are free, additional users are charged at $10 per user per month"
-        detail={canStartSeatCheckout ? null : "Only workspace owners can start billing checkout."}
+        detail={canStartSeatCheckout ? null : "Only workspace admins can start billing checkout."}
         closeLabel="Cancel"
         actionLabel="Subscribe"
         actionLoading={mutationBusy === "seat-checkout"}
@@ -739,7 +774,7 @@ export function ManageMembersScreen() {
         <div>
           <div className="mb-6 flex items-center justify-between gap-4">
             <p className="text-[15px] text-gray-400">
-              {access.canManageMembers
+              {access.canManageRoles
                 ? "Invite people, update their role, or remove them from the organization."
                 : access.canRemoveMembers
                   ? "Invite people or remove non-owner members from the organization."
@@ -817,11 +852,14 @@ export function ManageMembersScreen() {
               const isInvited = !member.joinedAt;
               const inviteId = member.inviteId;
               const inviteToken = inviteId ? invitationsById.get(inviteId)?.inviteToken : null;
+              const memberAccess = getOrgAccessFlags(member.role, member.isOwner, orgContext.roles);
+              const canResendInvitation = isInvited && canRefreshInvitationRole(member.role, access);
+              const canTransferOwnershipToMember = access.canTransferOwnership && !isInvited && memberAccess.isSuperAdmin;
               const canOpenActions = member.isOwner
                 ? false
                 : isInvited
-                  ? access.canInviteMembers || access.canCancelInvitations
-                  : access.canManageMembers || access.canRemoveMembers;
+                  ? canResendInvitation || access.canCancelInvitations
+                  : access.canManageRoles || access.canManageTeams || access.canRemoveMembers || canTransferOwnershipToMember;
 
               return (
                 <div key={member.id}>
@@ -869,7 +907,7 @@ export function ManageMembersScreen() {
                                 Copy invite link
                               </button>
                             ) : null}
-                            {isInvited && access.canInviteMembers ? (
+                            {canResendInvitation ? (
                               <button
                                 type="button"
                                 onClick={async () => {
@@ -907,7 +945,7 @@ export function ManageMembersScreen() {
                                 Cancel invite
                               </button>
                             ) : null}
-                            {!isInvited && access.canManageMembers ? (
+                            {!isInvited && access.canManageRoles ? (
                               <button
                                 type="button"
                                 onClick={() => {
@@ -920,6 +958,17 @@ export function ManageMembersScreen() {
                               >
                                 <Settings className="h-3.5 w-3.5" />
                                 Edit role
+                              </button>
+                            ) : null}
+                            {canTransferOwnershipToMember ? (
+                              <button
+                                type="button"
+                                onClick={() => void handleTransferOwnership(member)}
+                                disabled={mutationBusy === "transfer-ownership"}
+                                className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-gray-600 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+                              >
+                                <Shield className="h-3.5 w-3.5" />
+                                Transfer ownership
                               </button>
                             ) : null}
                             {!isInvited && access.canManageTeams ? (
@@ -1158,8 +1207,8 @@ export function ManageMembersScreen() {
           <div className="mb-6 flex items-center justify-between gap-4">
             <p className="text-[15px] text-gray-400">
               {access.canManageRoles
-                ? "Default roles stay available, and owners can add, edit, or remove custom roles here."
-                : "Role definitions are visible here, but only owners can change them."}
+                ? "Default roles stay available, and owners or super-admins can add, edit, or remove custom roles here."
+                : "Role definitions are visible here, but only owners and super-admins can change them."}
             </p>
             {toolbarAction ? (
               <DenButton icon={Plus} onClick={toolbarAction.onClick}>

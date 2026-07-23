@@ -4,11 +4,77 @@ import os from "node:os"
 import path from "node:path"
 import { installConfigUrlFor } from "@openwork/install-config"
 
+import {
+  appleScriptString,
+  buildCompressedDmgArgs,
+  buildFinderLayoutScript,
+  buildReadWriteDmgArgs,
+  buildTiffutilArgs,
+  dmgBackgroundPaths,
+  dmgLayout,
+  dmgWindowBounds,
+} from "../scripts/dmg-layout.mjs"
 import { desktopBootstrapPath, legacyDesktopBootstrapPath } from "../src/bootstrap-path"
 import { buildConstantsConfig, parseInstallLinkInput, resolveInstallerConfig } from "../src/config"
-import { writeBootstrapConfig } from "../src/install"
+import { removableInstallerBundlePath, windowsInstalledExePath, writeBootstrapConfig } from "../src/install"
 import { releaseAssetFor } from "../src/release-asset"
 import { startInstallerServer } from "../src/server"
+
+describe("mac DMG layout helpers", () => {
+  test("builds the approved Finder window and icon layout", () => {
+    expect(dmgWindowBounds(dmgLayout.window)).toEqual([100, 100, 760, 500])
+
+    const script = buildFinderLayoutScript({
+      appName: "Install OpenWork.app",
+      backgroundPath: "/Volumes/Install OpenWork/.background/bg.tiff",
+      mountPoint: "/Volumes/Install OpenWork",
+    })
+
+    expect(script).toContain("set bounds of dmgWindow to {100, 100, 760, 500}")
+    expect(script).toContain("set icon size of viewOptions to 128")
+    expect(script).toContain("set label position of viewOptions to bottom")
+    expect(script).toContain("set background picture of viewOptions to backgroundFile")
+    expect(script).toContain('set position of item "Install OpenWork.app" of dmgWindow to {330, 180}')
+  })
+
+  test("builds DMG background and hdiutil arguments", () => {
+    expect(dmgBackgroundPaths("/tmp/root")).toEqual({
+      backgroundDir: "/tmp/root/.background",
+      tiff: "/tmp/root/.background/bg.tiff",
+    })
+    expect(buildTiffutilArgs("/assets/dmg-background", "/tmp/root/.background/bg.tiff")).toEqual([
+      "-cathidpicheck",
+      "/assets/dmg-background/bg.png",
+      "/assets/dmg-background/bg@2x.png",
+      "-out",
+      "/tmp/root/.background/bg.tiff",
+    ])
+    expect(buildReadWriteDmgArgs({ sourceFolder: "/tmp/root", outputPath: "/tmp/openwork.rw.dmg" })).toEqual([
+      "create",
+      "-format",
+      "UDRW",
+      "-volname",
+      "Install OpenWork",
+      "-srcfolder",
+      "/tmp/root",
+      "-ov",
+      "/tmp/openwork.rw.dmg",
+    ])
+    expect(buildCompressedDmgArgs({ inputPath: "/tmp/openwork.rw.dmg", outputPath: "/tmp/OpenWork.dmg" })).toEqual([
+      "convert",
+      "/tmp/openwork.rw.dmg",
+      "-format",
+      "UDZO",
+      "-ov",
+      "-o",
+      "/tmp/OpenWork.dmg",
+    ])
+  })
+
+  test("escapes AppleScript strings", () => {
+    expect(appleScriptString('/tmp/Install "OpenWork"/back\\ground.tiff')).toBe('/tmp/Install \\"OpenWork\\"/back\\\\ground.tiff')
+  })
+})
 
 describe("desktopBootstrapPath", () => {
   test("honors the explicit override", () => {
@@ -55,6 +121,20 @@ describe("releaseAssetFor", () => {
   test("rejects unsupported targets", () => {
     expect(() => releaseAssetFor("0.17.7", "win32", "arm64")).toThrow()
     expect(() => releaseAssetFor("", "darwin", "arm64")).toThrow()
+  })
+})
+
+describe("windowsInstalledExePath", () => {
+  test("reports the installed electron-builder package directory", () => {
+    const temp = mkdtempSync(path.join(os.tmpdir(), "openwork-installed-path-"))
+    const installed = path.join(temp, "Programs", "@openworkdesktop", "OpenWork.exe")
+    mkdirSync(path.dirname(installed), { recursive: true })
+    writeFileSync(installed, "")
+    try {
+      expect(windowsInstalledExePath(temp)).toBe(installed)
+    } finally {
+      rmSync(temp, { recursive: true, force: true })
+    }
   })
 })
 
@@ -382,5 +462,29 @@ describe("writeBootstrapConfig", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+})
+
+describe("removableInstallerBundlePath", () => {
+  const homeDir = "/Users/example"
+  const executablePath = "Contents/MacOS/openwork-installer"
+
+  test("allows only the installer app bundle in common writable locations", () => {
+    expect(removableInstallerBundlePath(`/Applications/Install OpenWork.app/${executablePath}`, homeDir, "darwin")).toBe(
+      "/Applications/Install OpenWork.app",
+    )
+    expect(removableInstallerBundlePath(`${homeDir}/Applications/Install OpenWork.app/${executablePath}`, homeDir, "darwin")).toBe(
+      `${homeDir}/Applications/Install OpenWork.app`,
+    )
+    expect(removableInstallerBundlePath(`${homeDir}/Downloads/Install OpenWork.app/${executablePath}`, homeDir, "darwin")).toBe(
+      `${homeDir}/Downloads/Install OpenWork.app`,
+    )
+  })
+
+  test("rejects DMG mounts, wrong app names, nested copies, and other platforms", () => {
+    expect(removableInstallerBundlePath(`/Volumes/Install OpenWork/Install OpenWork.app/${executablePath}`, homeDir, "darwin")).toBeNull()
+    expect(removableInstallerBundlePath(`/Applications/OpenWork.app/${executablePath}`, homeDir, "darwin")).toBeNull()
+    expect(removableInstallerBundlePath(`${homeDir}/Downloads/OpenWork/Install OpenWork.app/${executablePath}`, homeDir, "darwin")).toBeNull()
+    expect(removableInstallerBundlePath(`/Applications/Install OpenWork.app/${executablePath}`, homeDir, "linux")).toBeNull()
   })
 })

@@ -7,7 +7,7 @@ import { hasEnabledOrganizationSsoConnection } from "../../sso.js"
 import { ORGANIZATION_AUDIT_ACTIONS, recordOrganizationAuditEvent } from "../../audit-events.js"
 import { jsonValidator, orgMemberRoute } from "../../middleware/index.js"
 import type { OrgRouteVariables } from "./shared.js"
-import { ensureScimManager, orgAccessFailureStatus } from "./shared.js"
+import { ensureScimManager, ensureScimReader, orgAccessFailureStatus } from "./shared.js"
 
 const invalidRequestSchema = z.object({
   error: z.literal("invalid_request"),
@@ -135,7 +135,7 @@ export function registerOrgScimRoutes<T extends { Variables: OrgRouteVariables }
           },
         },
         403: {
-          description: "Only workspace owners or members with security configuration permission can manage SCIM.",
+          description: "Only workspace owners and admins can read SCIM.",
           content: {
             "application/json": {
               schema: resolver(forbiddenSchema),
@@ -154,7 +154,7 @@ export function registerOrgScimRoutes<T extends { Variables: OrgRouteVariables }
     }),
     orgMemberRoute(),
     async (c) => {
-      const access = ensureScimManager(c)
+      const access = ensureScimReader(c)
       if (!access.ok) {
         return c.json(access.response, orgAccessFailureStatus(access.response))
       }
@@ -209,7 +209,7 @@ export function registerOrgScimRoutes<T extends { Variables: OrgRouteVariables }
           },
         },
         403: {
-          description: "Only workspace owners or members with security configuration permission can manage SCIM.",
+          description: "Only workspace owners and super-admins can manage SCIM.",
           content: {
             "application/json": {
               schema: resolver(forbiddenSchema),
@@ -289,7 +289,7 @@ export function registerOrgScimRoutes<T extends { Variables: OrgRouteVariables }
           content: { "application/json": { schema: resolver(scimConnectionResponseSchema) } },
         },
         401: { description: "Unauthorized" },
-        403: { description: "Forbidden" },
+        403: { description: "Only workspace owners and super-admins can manage SCIM." },
         404: { description: "SCIM connection not found" },
       },
     }),
@@ -358,7 +358,7 @@ export function registerOrgScimRoutes<T extends { Variables: OrgRouteVariables }
           },
         },
         403: {
-          description: "Only workspace owners or members with security configuration permission can manage SCIM.",
+          description: "Only workspace owners and super-admins can manage SCIM.",
           content: {
             "application/json": {
               schema: resolver(forbiddenSchema),
@@ -422,7 +422,7 @@ export function registerOrgScimRoutes<T extends { Variables: OrgRouteVariables }
           },
         },
         403: {
-          description: "Only workspace owners or members with security configuration permission can manage SCIM.",
+          description: "Only workspace owners and super-admins can manage SCIM.",
           content: {
             "application/json": {
               schema: resolver(forbiddenSchema),

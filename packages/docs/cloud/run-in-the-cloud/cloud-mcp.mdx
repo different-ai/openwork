@@ -1,11 +1,12 @@
 ---
-title: "OpenWork Connect MCP"
-description: "Use your OpenWork organization, skills, and connected tools from OpenCode, Codex, ChatGPT Desktop, Cursor Web/Agents, Claude Code, VS Code, or any MCP client"
+title: "Model Context Protocol (MCP)"
+sidebarTitle: "Overview"
+description: "The OpenWork MCP server is a hosted endpoint that lets your AI agent use OpenWork from Claude Code, Codex, Claude Desktop, Cursor, VS Code, or any MCP client."
 ---
 
 import { OpenWorkConnectInstaller } from "/snippets/openwork-connect-installer.jsx";
 
-OpenWork Connect lets an external MCP client use the OpenWork capabilities your organization has made available to you. The public hosted endpoint is:
+The OpenWork Connect MCP server lets your AI agent use the OpenWork capabilities your organization has made available to you. The public hosted endpoint is:
 
 ```text
 https://api.openworklabs.com/mcp/agent
@@ -22,6 +23,23 @@ Your client opens a browser, you sign in to OpenWork, choose the organization to
 
 <OpenWorkConnectInstaller />
 
+## Set up your client
+
+Step-by-step guides for every client:
+
+<CardGroup cols={3}>
+  <Card title="OpenCode" href="/model-context-protocol/opencode" />
+  <Card title="Claude Code" href="/model-context-protocol/claude-code" />
+  <Card title="Codex" href="/model-context-protocol/codex" />
+  <Card title="Claude Desktop" href="/model-context-protocol/claude-desktop" />
+  <Card title="ChatGPT" href="/model-context-protocol/chatgpt" />
+  <Card title="Cursor" href="/model-context-protocol/cursor" />
+  <Card title="VS Code" href="/model-context-protocol/vs-code" />
+  <Card title="Windsurf" href="/model-context-protocol/windsurf" />
+  <Card title="Zed" href="/model-context-protocol/zed" />
+  <Card title="Gemini CLI" href="/model-context-protocol/gemini-cli" />
+</CardGroup>
+
 ## In the OpenWork desktop app
 
 If you use the OpenWork desktop app, there is no MCP endpoint to configure.
@@ -31,15 +49,19 @@ active organization and refreshes that first-party access automatically. Use
 
 ## Client support status
 
-| Client | Status | Notes |
-| --- | --- | --- |
-| OpenCode | Verified | Native remote MCP OAuth passed end-to-end implementation testing. |
-| Codex | Setup only | Add/login/reconnect steps are below; native remote MCP OAuth must be rerun on this exact branch before Codex is marked verified. |
-| Cursor | Setup only | Cursor Web/Agents can use an HTTPS OAuth callback. Cursor Desktop OAuth requires `cursor://anysphere.cursor-mcp/oauth/callback`, which OpenWork's MCP profile intentionally rejects, so Cursor Desktop OAuth is not currently supported. |
-| ChatGPT Desktop | Setup only | Setup guide only; use ChatGPT `Settings > MCP servers`. Native proof is not complete. |
-| Claude Code | Setup only | Setup guide only; native proof is not complete. |
-| VS Code | Setup only | Setup guide only; native proof is not complete. |
-| Any client | Setup only | Use only with clients that support remote Streamable HTTP MCP servers and OAuth. |
+| Client | Status | Notes | Guide |
+| --- | --- | --- | --- |
+| OpenCode | Verified | Native remote MCP OAuth passed end-to-end implementation testing. | [OpenWork MCP for OpenCode](/model-context-protocol/opencode) |
+| Codex | Setup only | Add/login/reconnect steps are below; native remote MCP OAuth must be rerun on this exact branch before Codex is marked verified. | [OpenWork MCP for Codex](/model-context-protocol/codex) |
+| Cursor | Setup only | Cursor Web/Agents can use an HTTPS OAuth callback. Cursor Desktop OAuth requires `cursor://anysphere.cursor-mcp/oauth/callback`, which OpenWork's MCP profile intentionally rejects, so Cursor Desktop OAuth is not currently supported. | [OpenWork MCP for Cursor](/model-context-protocol/cursor) |
+| ChatGPT Desktop | Setup only | Setup guide only; use ChatGPT `Settings > MCP servers`. Native proof is not complete. | [OpenWork MCP for ChatGPT](/model-context-protocol/chatgpt) |
+| Claude Code | Setup only | Setup guide only; native proof is not complete. | [OpenWork MCP for Claude Code](/model-context-protocol/claude-code) |
+| Claude Desktop | Setup only | Setup guide only; native proof is not complete. | [OpenWork MCP for Claude Desktop](/model-context-protocol/claude-desktop) |
+| VS Code | Setup only | Setup guide only; native proof is not complete. | [OpenWork MCP for VS Code](/model-context-protocol/vs-code) |
+| Windsurf | Setup only | Setup guide only via mcp-remote; native proof is not complete. | [OpenWork MCP for Windsurf](/model-context-protocol/windsurf) |
+| Zed | Setup only | Setup guide only via mcp-remote; native proof is not complete. | [OpenWork MCP for Zed](/model-context-protocol/zed) |
+| Gemini CLI | Setup only | Setup guide only; native proof is not complete. | [OpenWork MCP for Gemini CLI](/model-context-protocol/gemini-cli) |
+| Any client | Setup only | Use only with clients that support remote Streamable HTTP MCP servers and OAuth. | — |
 
 ## OpenCode setup
 
@@ -74,6 +96,8 @@ opencode mcp logout openwork
 opencode mcp auth openwork
 ```
 
+Full guide: [OpenWork MCP for OpenCode](/model-context-protocol/opencode).
+
 ## Codex setup
 
 Codex is setup-only for this PR until its native OAuth flow is rerun on this exact branch.
@@ -92,6 +116,8 @@ codex mcp logout openwork
 codex mcp login openwork
 ```
 
+Full guide: [OpenWork MCP for Codex](/model-context-protocol/codex).
+
 ## Cursor Web/Agents setup-only guide
 
 Use this guide only for Cursor Web/Agents flows that provide an HTTPS OAuth callback. Paste the OpenWork Connect endpoint where Cursor Web/Agents asks for the remote MCP server URL:
@@ -102,6 +128,8 @@ https://api.openworklabs.com/mcp/agent
 
 Cursor Desktop OAuth is not currently supported. The official desktop OAuth callback is `cursor://anysphere.cursor-mcp/oauth/callback`, and OpenWork's MCP profile intentionally rejects private-use callback schemes for public OAuth clients.
 
+Full guide: [OpenWork MCP for Cursor](/model-context-protocol/cursor).
+
 ## ChatGPT setup-only guide
 
 Open ChatGPT `Settings > MCP servers` ([open settings](https://chatgpt.com/#settings/Connectors)), paste the OpenWork Connect endpoint, and start OAuth from ChatGPT's connection prompt:
@@ -109,6 +137,8 @@ Open ChatGPT `Settings > MCP servers` ([open settings](https://chatgpt.com/#sett
 ```text
 https://api.openworklabs.com/mcp/agent
 ```
+
+Full guide: [OpenWork MCP for ChatGPT](/model-context-protocol/chatgpt).
 
 ## Organization selection
 

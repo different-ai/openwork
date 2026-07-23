@@ -28,6 +28,13 @@ type WorkspaceOpencodeClient = ReturnType<typeof createOpencodeClient>;
 type PersistedConnectState = {
   connectEnabled: boolean;
   updatedAt: number;
+  /**
+   * Server-scoped OpenWork Connect (`openwork-cloud`) MCP desired config.
+   * Connect is identity/org scoped, not per-workspace — workspace runtime
+   * copies remain for engine registration, but catalog/skill injection reads
+   * this host-level entry.
+   */
+  cloudMcp: Record<string, unknown> | null;
 };
 
 export type ConnectStateInspectionStatus = "available" | "missing" | "invalid" | "unreadable";
@@ -83,7 +90,15 @@ function connectStatePath(config: ServerConfig): string {
   return join(runtimeStorageDir(config), CONNECT_STATE_FILE);
 }
 
-const DEFAULT_CONNECT_STATE: PersistedConnectState = { connectEnabled: false, updatedAt: 0 };
+const DEFAULT_CONNECT_STATE: PersistedConnectState = {
+  connectEnabled: false,
+  updatedAt: 0,
+  cloudMcp: null,
+};
+
+function normalizeConnectCloudMcp(value: unknown): Record<string, unknown> | null {
+  return isRecord(value) ? value : null;
+}
 
 function normalizeConnectState(value: Record<string, unknown>): PersistedConnectState {
   return {
@@ -91,6 +106,7 @@ function normalizeConnectState(value: Record<string, unknown>): PersistedConnect
     updatedAt: typeof value.updatedAt === "number" && Number.isFinite(value.updatedAt)
       ? value.updatedAt
       : 0,
+    cloudMcp: Object.hasOwn(value, "cloudMcp") ? normalizeConnectCloudMcp(value.cloudMcp) : null,
   };
 }
 
@@ -142,12 +158,41 @@ export async function inspectConnectState(
   }
 }
 
-export async function writeConnectState(config: ServerConfig, state: { connectEnabled: boolean }): Promise<PersistedConnectState> {
-  const next = { connectEnabled: state.connectEnabled, updatedAt: Date.now() };
+async function persistConnectState(
+  config: ServerConfig,
+  state: PersistedConnectState,
+): Promise<PersistedConnectState> {
   const target = connectStatePath(config);
   await ensureDir(runtimeStorageDir(config));
-  await writeFile(target, `${JSON.stringify(next, null, 2)}\n`, "utf8");
-  return next;
+  await writeFile(target, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+  return state;
+}
+
+export async function writeConnectState(config: ServerConfig, state: { connectEnabled: boolean }): Promise<PersistedConnectState> {
+  const current = await readConnectState(config);
+  return persistConnectState(config, {
+    connectEnabled: state.connectEnabled,
+    updatedAt: Date.now(),
+    cloudMcp: current.cloudMcp,
+  });
+}
+
+/** Read the host-level openwork-cloud MCP config used for Connect catalog/skills. */
+export async function readConnectCloudMcp(config: ServerConfig): Promise<Record<string, unknown> | null> {
+  return (await readConnectState(config)).cloudMcp;
+}
+
+/** Persist the host-level openwork-cloud MCP config (server-scoped Connect). */
+export async function writeConnectCloudMcp(
+  config: ServerConfig,
+  cloudMcp: Record<string, unknown> | null,
+): Promise<PersistedConnectState> {
+  const current = await readConnectState(config);
+  return persistConnectState(config, {
+    connectEnabled: current.connectEnabled,
+    updatedAt: Date.now(),
+    cloudMcp: normalizeConnectCloudMcp(cloudMcp),
+  });
 }
 
 function normalizeDirectory(directory: string): string {
@@ -290,6 +335,9 @@ async function inspectConnectRuntime(
   config: ServerConfig,
   options?: ConnectStateInspectionOptions,
 ): Promise<{ cloudMcpPresent: boolean; complete: boolean }> {
+  const serverCloudMcp = await readConnectCloudMcp(config);
+  if (serverCloudMcp) return { cloudMcpPresent: true, complete: true };
+
   const configuredMaxRows = options?.maxRuntimeRows;
   const maxRuntimeRows = typeof configuredMaxRows === "number"
     && Number.isSafeInteger(configuredMaxRows)

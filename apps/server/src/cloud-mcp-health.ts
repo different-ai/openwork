@@ -2135,6 +2135,10 @@ async function persistDesiredConfig(config: ServerConfig, workspaceId: string, d
       [OPENWORK_CLOUD_MCP_NAME]: desiredConfig,
     },
   }));
+  // Connect is server/account-scoped: keep a host-level copy for catalog + skill injection.
+  // Dynamic import avoids a connect-state <-> cloud-mcp-health cycle.
+  const { writeConnectCloudMcp } = await import("./connect-state.js");
+  await writeConnectCloudMcp(config, desiredConfig);
 }
 
 function registrationFailure(failures: CloudMcpRuntimeRegistrationFailure[]): CloudMcpFailure {

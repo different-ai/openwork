@@ -110,11 +110,11 @@ function gmailThreadUrl(threadId: string | undefined): string | null {
 const gmailMessagesQuerySchema = z.object({
   q: z.string().trim().min(1).max(1_000).optional().describe("Optional Gmail search query, using Gmail's search syntax."),
   maxResults: z.coerce.number().int().min(1).max(25).default(10).describe("Maximum messages to return, capped at 25."),
-}).meta({ ref: "GoogleWorkspaceGmailMessagesQuery" })
+})
 
 const gmailMessageParamSchema = z.object({
   messageId: z.string().trim().min(1).max(512).describe("Gmail message id."),
-}).meta({ ref: "GoogleWorkspaceGmailMessageParams" })
+})
 
 const gmailAttachmentSchema = z.object({
   attachmentId: z.string(),
@@ -151,7 +151,7 @@ const gmailMessageResponseSchema = z.object({
 const gmailAttachmentParamSchema = z.object({
   messageId: z.string().trim().min(1).max(512).describe("Gmail message id that contains the attachment."),
   attachmentId: z.string().trim().min(1).max(2_048).describe("Attachment id from the gmail-message capability's attachments metadata."),
-}).meta({ ref: "GoogleWorkspaceGmailAttachmentParams" })
+})
 
 const gmailAttachmentResponseSchema = z.object({
   ok: z.literal(true),
@@ -165,11 +165,11 @@ const calendarEventsQuerySchema = z.object({
   timeMin: z.string().datetime().describe("Inclusive lower bound for event start time."),
   timeMax: z.string().datetime().describe("Exclusive upper bound for event start time."),
   maxResults: z.coerce.number().int().min(1).max(100).default(25).describe("Maximum events to return, capped at 100."),
-}).meta({ ref: "GoogleWorkspaceCalendarEventsQuery" })
+})
 
 const calendarEventParamSchema = z.object({
   eventId: z.string().trim().min(1).max(512).describe("Google Calendar event id."),
-}).meta({ ref: "GoogleWorkspaceCalendarEventParams" })
+})
 
 const calendarEventSchema = z.object({
   id: z.string(),
@@ -227,7 +227,7 @@ const updateCalendarEventResponseSchema = z.object({
 const driveFilesQuerySchema = z.object({
   query: z.string().trim().min(1).max(500).describe("Text to search in Drive file names and full text."),
   maxResults: z.coerce.number().int().min(1).max(25).default(10).describe("Maximum files to return, capped at 25."),
-}).meta({ ref: "GoogleWorkspaceDriveFilesQuery" })
+})
 
 const uploadDriveFileBodySchema = z.object({
   filename: z.string().trim().min(1).max(255).refine((value) => !/[\r\n]/.test(value), "Filename must not contain line breaks.").describe("Filename to create in Google Drive."),
@@ -246,7 +246,7 @@ const uploadDriveFileBodySchema = z.object({
 
 const driveFileParamSchema = z.object({
   fileId: z.string().trim().min(1).max(512).describe("Google Drive file id."),
-}).meta({ ref: "GoogleWorkspaceDriveFileParams" })
+})
 
 const shareDriveFileBodySchema = z.object({
   type: z.enum(["user", "domain"]).describe("Use type=user to share with one person, or type=domain to share with the entire organization."),

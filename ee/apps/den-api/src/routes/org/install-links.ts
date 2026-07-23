@@ -1,8 +1,7 @@
 import { installConfigSchema } from "@openwork/install-config"
 import { connectLinkClaimsSchema } from "@openwork/connect-link"
 import { and, eq, gt, isNull, or } from "@openwork-ee/den-db/drizzle"
-import { InstallLinkTable, OrganizationTable, RateLimitTable } from "@openwork-ee/den-db/schema"
-import { createDenTypeId } from "@openwork-ee/utils/typeid"
+import { InstallLinkTable, OrganizationTable } from "@openwork-ee/den-db/schema"
 import { createReadStream } from "node:fs"
 import type { MiddlewareHandler } from "hono"
 import type { Hono } from "hono"
@@ -30,6 +29,7 @@ import {
   installerReleaseAssetUrl,
   resolveConfiguredInstallerArtifact,
 } from "../../utils/installer-artifacts.js"
+import { checkRateLimit, enforceRateLimit } from "../../utils/rate-limit.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { ensureOrganizationAdmin, orgAccessFailureStatus } from "./shared.js"
 
@@ -104,43 +104,6 @@ const defaultInstallerDependencies: InstallExperienceDependencies = {
   mintConnectGrant: mintDesktopConnectGrant,
   previewConnectGrant: previewDesktopConnectGrant,
   consumeConnectGrant: consumeDesktopConnectGrant,
-}
-
-function requestAddress(headers: Headers) {
-  const forwarded = headers.get("x-forwarded-for")?.split(",")[0]?.trim()
-  return forwarded || headers.get("x-real-ip")?.trim() || "unknown"
-}
-
-async function checkRateLimit(key: string, maxRequests: number, now: number) {
-  const [row] = await db
-    .select({ id: RateLimitTable.id, count: RateLimitTable.count, lastRequest: RateLimitTable.lastRequest })
-    .from(RateLimitTable)
-    .where(eq(RateLimitTable.key, key))
-    .limit(1)
-
-  if (row && now - row.lastRequest <= INSTALL_LINK_RATE_LIMIT_WINDOW_MS && row.count >= maxRequests) {
-    return Math.max(1, Math.ceil((INSTALL_LINK_RATE_LIMIT_WINDOW_MS - (now - row.lastRequest)) / 1000))
-  }
-
-  if (!row) {
-    await db.insert(RateLimitTable).values({
-      id: createDenTypeId("rateLimit"),
-      key,
-      count: 1,
-      lastRequest: now,
-    })
-    return null
-  }
-
-  await db
-    .update(RateLimitTable)
-    .set({ count: now - row.lastRequest > INSTALL_LINK_RATE_LIMIT_WINDOW_MS ? 1 : row.count + 1, lastRequest: now })
-    .where(eq(RateLimitTable.id, row.id))
-  return null
-}
-
-async function enforceRateLimit(headers: Headers, scope: string, maxRequests: number) {
-  return checkRateLimit(`install:${scope}:${requestAddress(headers)}`, maxRequests, Date.now())
 }
 
 function organizationMetadataInput(value: unknown): Record<string, unknown> | string | null {
@@ -415,6 +378,7 @@ export function registerOrgInstallLinkRoutes<T extends { Variables: OrgRouteVari
       const retryAfter = await checkRateLimit(
         `install:mint:user:${payload.currentMember.userId}`,
         INSTALL_LINK_MINT_RATE_LIMIT_MAX,
+        INSTALL_LINK_RATE_LIMIT_WINDOW_MS,
         Date.now(),
       )
       if (retryAfter !== null) {
@@ -453,7 +417,7 @@ export function registerOrgInstallLinkRoutes<T extends { Variables: OrgRouteVari
     publicRoute,
     queryValidator(installLinkQuerySchema),
     async (c) => {
-      const retryAfter = await enforceRateLimit(c.req.raw.headers, "config", INSTALL_CONFIG_RATE_LIMIT_MAX)
+      const retryAfter = await enforceRateLimit(c.req.raw.headers, "install:config", INSTALL_CONFIG_RATE_LIMIT_MAX, INSTALL_LINK_RATE_LIMIT_WINDOW_MS)
       if (retryAfter !== null) {
         c.header("Retry-After", String(retryAfter))
         return c.json({ error: "rate_limited", message: "Too many install-link attempts. Try again later." }, 429)
@@ -513,7 +477,7 @@ export function registerOrgInstallLinkRoutes<T extends { Variables: OrgRouteVari
       publicRoute,
       jsonValidator(connectGrantBodySchema),
       async (c) => {
-        const retryAfter = await enforceRateLimit(c.req.raw.headers, `connect-${mode}`, INSTALL_CONFIG_RATE_LIMIT_MAX)
+        const retryAfter = await enforceRateLimit(c.req.raw.headers, `install:connect-${mode}`, INSTALL_CONFIG_RATE_LIMIT_MAX, INSTALL_LINK_RATE_LIMIT_WINDOW_MS)
         if (retryAfter !== null) {
           c.header("Retry-After", String(retryAfter))
           return c.json({ error: "rate_limited", message: "Too many connection attempts. Try again later." }, 429)
@@ -559,7 +523,7 @@ export function registerOrgInstallLinkRoutes<T extends { Variables: OrgRouteVari
         return c.json({ error: "invalid_request", details: platformResult.error.issues }, 400)
       }
 
-      const retryAfter = await enforceRateLimit(c.req.raw.headers, "artifact", INSTALL_ARTIFACT_RATE_LIMIT_MAX)
+      const retryAfter = await enforceRateLimit(c.req.raw.headers, "install:artifact", INSTALL_ARTIFACT_RATE_LIMIT_MAX, INSTALL_LINK_RATE_LIMIT_WINDOW_MS)
       if (retryAfter !== null) {
         c.header("Retry-After", String(retryAfter))
         return c.json({ error: "rate_limited", message: "Too many installer download attempts. Try again later." }, 429)

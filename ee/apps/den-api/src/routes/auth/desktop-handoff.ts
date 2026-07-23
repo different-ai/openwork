@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto"
 import { and, eq, gt, isNull } from "@openwork-ee/den-db/drizzle"
-import { AuthSessionTable, AuthUserTable, DesktopHandoffGrantTable, RateLimitTable } from "@openwork-ee/den-db/schema"
-import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import { AuthSessionTable, AuthUserTable, DesktopHandoffGrantTable } from "@openwork-ee/den-db/schema"
+import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
@@ -10,6 +10,7 @@ import { db } from "../../db.js"
 import { env } from "../../env.js"
 import { denTypeIdSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import type { AuthContextVariables } from "../../session.js"
+import { enforceRateLimit } from "../../utils/rate-limit.js"
 
 const createGrantSchema = z.object({
   next: z.string().trim().max(128).optional(),
@@ -55,43 +56,6 @@ const rateLimitedSchema = z.object({
 
 const HANDOFF_STATUS_RATE_LIMIT_WINDOW_MS = 60 * 1000
 const HANDOFF_STATUS_RATE_LIMIT_MAX = 240
-
-function requestAddress(headers: Headers) {
-  const forwarded = headers.get("x-forwarded-for")?.split(",")[0]?.trim()
-  return forwarded || headers.get("x-real-ip")?.trim() || "unknown"
-}
-
-async function checkRateLimit(key: string, maxRequests: number, now: number) {
-  const [row] = await db
-    .select({ id: RateLimitTable.id, count: RateLimitTable.count, lastRequest: RateLimitTable.lastRequest })
-    .from(RateLimitTable)
-    .where(eq(RateLimitTable.key, key))
-    .limit(1)
-
-  if (row && now - row.lastRequest <= HANDOFF_STATUS_RATE_LIMIT_WINDOW_MS && row.count >= maxRequests) {
-    return Math.max(1, Math.ceil((HANDOFF_STATUS_RATE_LIMIT_WINDOW_MS - (now - row.lastRequest)) / 1000))
-  }
-
-  if (!row) {
-    await db.insert(RateLimitTable).values({
-      id: createDenTypeId("rateLimit"),
-      key,
-      count: 1,
-      lastRequest: now,
-    })
-    return null
-  }
-
-  await db
-    .update(RateLimitTable)
-    .set({ count: now - row.lastRequest > HANDOFF_STATUS_RATE_LIMIT_WINDOW_MS ? 1 : row.count + 1, lastRequest: now })
-    .where(eq(RateLimitTable.id, row.id))
-  return null
-}
-
-async function enforceRateLimit(headers: Headers, scope: string, maxRequests: number) {
-  return checkRateLimit(`handoff:${scope}:${requestAddress(headers)}`, maxRequests, Date.now())
-}
 
 function readSingleHeader(value: string | null) {
   const first = value?.split(",")[0]?.trim() ?? ""
@@ -152,11 +116,18 @@ function withDenProxyPath(origin: string) {
   return url.toString().replace(/\/+$/, "")
 }
 
-function resolveDesktopDenBaseUrl(request: Request) {
+function configuredDesktopDenBaseUrl() {
+  return env.desktopDenBaseUrl ?? withDenProxyPath(env.betterAuthUrl)
+}
+
+export function resolveDesktopDenBaseUrl(request: Request) {
   const originHeader = readSingleHeader(request.headers.get("origin"))
   if (originHeader) {
     try {
       const originUrl = new URL(originHeader)
+      if (originUrl.hostname === "0.0.0.0") {
+        return configuredDesktopDenBaseUrl()
+      }
       if ((originUrl.protocol === "https:" || originUrl.protocol === "http:") && isWebAppHost(originUrl.hostname)) {
         return withDenProxyPath(originUrl.origin)
       }
@@ -171,12 +142,15 @@ function resolveDesktopDenBaseUrl(request: Request) {
   const protocol = forwardedProto ?? new URL(request.url).protocol.replace(/:$/, "")
   const targetHost = forwardedHost ?? host
   if (!targetHost) {
-    return env.desktopDenBaseUrl ?? `${env.betterAuthUrl}/api/den`
+    return configuredDesktopDenBaseUrl()
   }
 
   const origin = `${protocol}://${targetHost}`
   try {
     const url = new URL(origin)
+    if (url.hostname === "0.0.0.0") {
+      return configuredDesktopDenBaseUrl()
+    }
     if (isWebAppHost(url.hostname)) {
       return withDenProxyPath(url.origin)
     }
@@ -267,7 +241,7 @@ export function registerDesktopAuthRoutes<T extends { Variables: AuthContextVari
     publicRoute,
     jsonValidator(statusGrantSchema),
     async (c) => {
-      const retryAfter = await enforceRateLimit(c.req.raw.headers, "handoff-status", HANDOFF_STATUS_RATE_LIMIT_MAX)
+      const retryAfter = await enforceRateLimit(c.req.raw.headers, "handoff:handoff-status", HANDOFF_STATUS_RATE_LIMIT_MAX, HANDOFF_STATUS_RATE_LIMIT_WINDOW_MS)
       if (retryAfter !== null) {
         c.header("Retry-After", String(retryAfter))
         return c.json({ error: "rate_limited", message: "Too many handoff status checks. Try again later." }, 429)

@@ -5,7 +5,6 @@ import {
   type ConnectSnapshotOptions,
   getConnectSnapshot,
   googleWorkspaceStatusConnectExtra,
-  resolveConnectWorkspace,
   writeConnectState,
 } from "../connect-state.js";
 import type { CloudMcpLiveStatusObserver } from "../cloud-mcp-health.js";
@@ -324,13 +323,9 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
     });
   });
 
-  addRoute(routes, "GET", "/experimental/connect/skills", "client", async (ctx) => {
-    const resolved = resolveConnectWorkspace(config, {
-      ...connectSnapshotOptionsFromQuery(ctx.url),
-      resolveOpencodeDirectory,
-    });
-    const workspaceId = "workspace" in resolved ? resolved.workspace.id : null;
-    const skills = workspaceId ? await readOpenWorkConnectSkillCatalog(config, workspaceId) : [];
+  addRoute(routes, "GET", "/experimental/connect/skills", "client", async (_ctx) => {
+    // Connect skills are server/account-scoped (openwork-cloud on the host), not per-workspace.
+    const skills = await readOpenWorkConnectSkillCatalog(config);
     return jsonResponse({
       ok: true,
       schemaVersion: 1,

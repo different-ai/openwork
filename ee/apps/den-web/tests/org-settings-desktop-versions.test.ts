@@ -24,11 +24,11 @@ describe("organization desktop version settings", () => {
     expect(source).toContain("Upgrade server to allow this version");
   });
 
-  test("allows workspace admins to save desktop version settings", () => {
+  test("keeps workspace admins read-only for desktop version settings", () => {
     const source = readFileSync(settingsPath, "utf8");
 
-    expect(source).toContain("const canManageDesktopVersions = access.isAdmin");
-    expect(source).toContain("Admins can change allowed desktop versions");
-    expect(source).toContain("{access.isAdmin ? (");
+    expect(source).toContain("const canManageDesktopVersions = access.canManageSettings");
+    expect(source).toContain("Admins can view settings here. Owners and super-admins can change them.");
+    expect(source).toContain("disabled={!canManageSettings}");
   });
 });

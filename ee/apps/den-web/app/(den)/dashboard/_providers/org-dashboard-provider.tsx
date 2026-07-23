@@ -17,8 +17,10 @@ import {
   type DenOrgContext,
   type DenOrgSummary,
   getOrgDashboardRoute,
+  getOrgAccessFlags,
   parseOrgContextPayload,
   parseOrgListPayload,
+  roleIncludesCanonicalRole,
   shouldOfferOrgSelection,
   shouldRequireOrgSelection,
 } from "../../_lib/den-org";
@@ -46,6 +48,7 @@ type OrgDashboardContextValue = {
   cancelInvitation: (invitationId: string) => Promise<void>;
   updateMemberRole: (memberId: string, role: string) => Promise<void>;
   removeMember: (memberId: string) => Promise<void>;
+  transferOwnership: (memberId: string) => Promise<void>;
   createTeam: (input: { name: string; memberIds: string[] }) => Promise<void>;
   updateTeam: (teamId: string, input: { name?: string; memberIds?: string[] }) => Promise<void>;
   deleteTeam: (teamId: string) => Promise<void>;
@@ -114,6 +117,34 @@ export function OrgDashboardProvider({
     if (!activeOrgId) {
       throw new Error("Organization not found.");
     }
+  }
+
+  function getCurrentAccess() {
+    return getOrgAccessFlags(
+      orgContext?.currentMember.role ?? "member",
+      orgContext?.currentMember.isOwner ?? false,
+      orgContext?.roles,
+    );
+  }
+
+  function ensureCanManageSettings() {
+    if (!getCurrentAccess().canManageSettings) {
+      throw new Error("Only workspace owners and super-admins can change settings.");
+    }
+  }
+
+  function ensureRoleCanBeAssigned(role: string) {
+    if (roleIncludesCanonicalRole(role, "owner")) {
+      throw new Error("The owner role cannot be assigned from this action.");
+    }
+  }
+
+  function ensureTargetIsNotOwner(memberId: string) {
+    const target = orgContext?.members.find((member) => member.id === memberId) ?? null;
+    if (target?.isOwner) {
+      throw new Error("The workspace owner cannot be changed or removed from this action.");
+    }
+    return target;
   }
 
   async function loadOrgDirectory() {
@@ -483,6 +514,7 @@ export function OrgDashboardProvider({
   }
 
   async function updateOrganizationSettings(input: { name?: string; allowedEmailDomains?: string[] | null; allowedDesktopVersions?: string[] | null; requireSso?: boolean; brandAppName?: string | null; brandLogoUrl?: string | null; brandIconUrl?: string | null; brandAccentColor?: string | null }) {
+    ensureCanManageSettings();
     const shouldPublishOrgSettingsCompletion = pathnameRef.current === ORG_SETTINGS_PATH;
     const body: { name?: string; allowedEmailDomains?: string[] | null; allowedDesktopVersions?: string[] | null; requireSso?: boolean; brandAppName?: string | null; brandLogoUrl?: string | null; brandIconUrl?: string | null; brandAccentColor?: string | null } = {};
     if (typeof input.name === "string") {
@@ -536,13 +568,20 @@ export function OrgDashboardProvider({
   }
 
   async function inviteMember(input: { email: string; role: string }) {
+    const access = getCurrentAccess();
+    if (!access.canInviteMembers) {
+      throw new Error("Only workspace admins can invite members.");
+    }
+    const invitationRole = access.canManageRoles ? input.role : "member";
+    ensureRoleCanBeAssigned(invitationRole);
+
     await runMutation("invite-member", async () => {
       ensureActiveOrganizationSelected();
       const { response, payload } = await requestJson(
         "/v1/invitations",
         {
           method: "POST",
-          body: JSON.stringify(input),
+          body: JSON.stringify({ email: input.email, role: invitationRole }),
         },
         12000,
       );
@@ -563,6 +602,10 @@ export function OrgDashboardProvider({
   }
 
   async function startSeatCheckout() {
+    if (!getCurrentAccess().canStartSeatCheckout) {
+      throw new Error("Only workspace admins can start seat checkout.");
+    }
+
     setMutationBusy("seat-checkout");
     setOrgError(null);
     try {
@@ -596,6 +639,10 @@ export function OrgDashboardProvider({
   }
 
   async function cancelInvitation(invitationId: string) {
+    if (!getCurrentAccess().canCancelInvitations) {
+      throw new Error("Only workspace admins can cancel invitations.");
+    }
+
     await runMutation("cancel-invitation", async () => {
       ensureActiveOrganizationSelected();
       const { response, payload } = await requestJson(
@@ -611,6 +658,12 @@ export function OrgDashboardProvider({
   }
 
   async function updateMemberRole(memberId: string, role: string) {
+    if (!getCurrentAccess().canManageRoles) {
+      throw new Error("Only workspace owners and super-admins can change member roles.");
+    }
+    ensureTargetIsNotOwner(memberId);
+    ensureRoleCanBeAssigned(role);
+
     await runMutation("update-member-role", async () => {
       ensureActiveOrganizationSelected();
       const { response, payload } = await requestJson(
@@ -629,6 +682,11 @@ export function OrgDashboardProvider({
   }
 
   async function removeMember(memberId: string) {
+    if (!getCurrentAccess().canRemoveMembers) {
+      throw new Error("Only workspace admins can remove members.");
+    }
+    ensureTargetIsNotOwner(memberId);
+
     await runMutation("remove-member", async () => {
       ensureActiveOrganizationSelected();
       const { response, payload } = await requestJson(
@@ -643,7 +701,36 @@ export function OrgDashboardProvider({
     });
   }
 
+  async function transferOwnership(memberId: string) {
+    if (!getCurrentAccess().canTransferOwnership) {
+      throw new Error("Only the workspace owner can transfer ownership.");
+    }
+    const target = ensureTargetIsNotOwner(memberId);
+    const targetAccess = getOrgAccessFlags(target?.role ?? "member", target?.isOwner ?? false, orgContext?.roles);
+    if (!target || !target.joinedAt || !targetAccess.isSuperAdmin) {
+      throw new Error("Ownership can only be transferred to an active super-admin.");
+    }
+
+    await runMutation("transfer-ownership", async () => {
+      ensureActiveOrganizationSelected();
+      const { response, payload } = await requestJson(
+        `/v1/members/${encodeURIComponent(memberId)}/transfer-ownership`,
+        { method: "POST", body: JSON.stringify({}) },
+        12000,
+      );
+
+      if (!response.ok) {
+        throw getRequestError(payload, response, `Failed to transfer ownership (${response.status}).`);
+      }
+    });
+  }
+
   async function createRole(input: { roleName: string; permission: Record<string, string[]> }) {
+    if (!getCurrentAccess().canManageRoles) {
+      throw new Error("Only workspace owners and super-admins can manage roles.");
+    }
+    ensureRoleCanBeAssigned(input.roleName);
+
     await runMutation("create-role", async () => {
       ensureActiveOrganizationSelected();
       const { response, payload } = await requestJson(
@@ -662,6 +749,10 @@ export function OrgDashboardProvider({
   }
 
   async function createTeam(input: { name: string; memberIds: string[] }) {
+    if (!getCurrentAccess().canManageTeams) {
+      throw new Error("Only workspace admins can manage teams.");
+    }
+
     await runMutation("create-team", async () => {
       ensureActiveOrganizationSelected();
       const { response, payload } = await requestJson(
@@ -680,6 +771,10 @@ export function OrgDashboardProvider({
   }
 
   async function updateTeam(teamId: string, input: { name?: string; memberIds?: string[] }) {
+    if (!getCurrentAccess().canManageTeams) {
+      throw new Error("Only workspace admins can manage teams.");
+    }
+
     await runMutation("update-team", async () => {
       ensureActiveOrganizationSelected();
       const { response, payload } = await requestJson(
@@ -698,6 +793,10 @@ export function OrgDashboardProvider({
   }
 
   async function deleteTeam(teamId: string) {
+    if (!getCurrentAccess().canManageTeams) {
+      throw new Error("Only workspace admins can manage teams.");
+    }
+
     await runMutation("delete-team", async () => {
       ensureActiveOrganizationSelected();
       const { response, payload } = await requestJson(
@@ -713,6 +812,13 @@ export function OrgDashboardProvider({
   }
 
   async function updateRole(roleId: string, input: { roleName?: string; permission?: Record<string, string[]> }) {
+    if (!getCurrentAccess().canManageRoles) {
+      throw new Error("Only workspace owners and super-admins can manage roles.");
+    }
+    if (typeof input.roleName === "string") {
+      ensureRoleCanBeAssigned(input.roleName);
+    }
+
     await runMutation("update-role", async () => {
       ensureActiveOrganizationSelected();
       const { response, payload } = await requestJson(
@@ -731,6 +837,10 @@ export function OrgDashboardProvider({
   }
 
   async function deleteRole(roleId: string) {
+    if (!getCurrentAccess().canManageRoles) {
+      throw new Error("Only workspace owners and super-admins can manage roles.");
+    }
+
     await runMutation("delete-role", async () => {
       ensureActiveOrganizationSelected();
       const { response, payload } = await requestJson(
@@ -789,12 +899,13 @@ export function OrgDashboardProvider({
     createOrganization,
     updateOrganizationName,
     updateOrganizationSettings,
-      switchOrganization,
-      inviteMember,
-      startSeatCheckout,
-      cancelInvitation,
+    switchOrganization,
+    inviteMember,
+    startSeatCheckout,
+    cancelInvitation,
     updateMemberRole,
     removeMember,
+    transferOwnership,
     createTeam,
     updateTeam,
     deleteTeam,

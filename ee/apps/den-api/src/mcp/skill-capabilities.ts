@@ -33,8 +33,8 @@ export type RemoteSkillDescriptor = {
 
 const AGENT_SKILL_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 
-function standardSkillName(title: string, skillId: string): string {
-  const suffix = skillId.replace(/^skill_/, "").slice(-8).toLowerCase()
+export function standardSkillName(title: string, stableId: string): string {
+  const suffix = stableId.replace(/^skill_/, "").slice(-8).toLowerCase()
   const base = title
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")

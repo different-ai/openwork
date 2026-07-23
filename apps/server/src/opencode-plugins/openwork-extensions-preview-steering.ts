@@ -291,17 +291,11 @@ async function fetchOpenWorkConnectState(input: unknown, fetcher: OpenWorkFetch)
   };
 }
 
-export async function resolveOpenWorkConnectSkillInstruction(input?: unknown, fetcher: OpenWorkFetch = fetch): Promise<string> {
+export async function resolveOpenWorkConnectSkillInstruction(_input?: unknown, fetcher: OpenWorkFetch = fetch): Promise<string> {
   try {
     const { url, token } = requireOpenWorkServer();
-    const context = readContext(input);
-    const query = new URLSearchParams();
-    const workspaceId = context.workspaceId ?? context.workspaceID;
-    const directory = context.worktree ?? context.directory;
-    if (workspaceId) query.set("workspaceId", workspaceId);
-    if (directory) query.set("directory", directory);
-    const suffix = query.size ? `?${query.toString()}` : "";
-    const response = await fetcher(`${url}/experimental/connect/skills${suffix}`, {
+    // Connect skills are server-scoped; workspace/directory query params are unused.
+    const response = await fetcher(`${url}/experimental/connect/skills`, {
       headers: { Authorization: `Bearer ${token}` },
     });
     if (!response.ok) return "";

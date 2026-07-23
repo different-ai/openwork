@@ -65,6 +65,9 @@ export function shortenToolName(operationId: string, taken?: ReadonlySet<string>
 
 type OpenApiDocument = {
   paths?: Record<string, Record<string, OpenApiOperation>>
+  components?: {
+    parameters?: Record<string, unknown>
+  }
 }
 
 type OpenApiParameter = {
@@ -96,7 +99,43 @@ export type McpToolOperation = {
 }
 
 function isOpenApiParameter(value: unknown): value is OpenApiParameter {
-  return typeof value === "object" && value !== null
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function componentParameterName(value: unknown) {
+  if (!isOpenApiParameter(value) || !("$ref" in value)) {
+    return null
+  }
+
+  const ref = value.$ref
+  const prefix = "#/components/parameters/"
+  if (typeof ref !== "string" || !ref.startsWith(prefix)) {
+    return null
+  }
+
+  const name = ref.slice(prefix.length)
+  return name.length > 0 ? name : null
+}
+
+function resolveParameterReference(document: OpenApiDocument, parameter: unknown) {
+  const name = componentParameterName(parameter)
+  if (!name) {
+    return parameter
+  }
+
+  const resolved = document.components?.parameters?.[name]
+  return isOpenApiParameter(resolved) ? resolved : parameter
+}
+
+function resolveOperationParameterRefs(document: OpenApiDocument, operation: OpenApiOperation): OpenApiOperation {
+  if (!operation.parameters) {
+    return operation
+  }
+
+  return {
+    ...operation,
+    parameters: operation.parameters.map((parameter) => resolveParameterReference(document, parameter)),
+  }
 }
 
 export function getParameters(operation: OpenApiOperation, location: "path" | "query") {
@@ -263,11 +302,13 @@ export function buildMcpCatalog(document: OpenApiDocument): McpToolOperation[] {
         continue
       }
 
-      if (!isMcpOperationAllowed({ method, path, operation })) {
+      const resolvedOperation = resolveOperationParameterRefs(document, operation)
+
+      if (!isMcpOperationAllowed({ method, path, operation: resolvedOperation })) {
         continue
       }
 
-      const operationId = operation.operationId
+      const operationId = resolvedOperation.operationId
       if (!operationId) {
         continue
       }
@@ -294,8 +335,8 @@ export function buildMcpCatalog(document: OpenApiDocument): McpToolOperation[] {
         name,
         method: method.toUpperCase(),
         path,
-        operation,
-        inputSchema: buildInputSchema(path, operation),
+        operation: resolvedOperation,
+        inputSchema: buildInputSchema(path, resolvedOperation),
       })
     }
   }

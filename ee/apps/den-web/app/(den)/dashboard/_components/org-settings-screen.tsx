@@ -123,13 +123,13 @@ export function OrgSettingsScreen() {
 
   const currentAllowedDomains =
     orgContext?.organization.allowedEmailDomains ?? null;
-  const isOwner = orgContext?.currentMember.isOwner ?? false;
   const access = getOrgAccessFlags(
     orgContext?.currentMember.role ?? "member",
-    isOwner,
+    orgContext?.currentMember.isOwner ?? false,
     orgContext?.roles,
   );
-  const canManageDesktopVersions = access.isAdmin;
+  const canManageSettings = access.canManageSettings;
+  const canManageDesktopVersions = access.canManageSettings;
   const draftAllowedDomains = useMemo(
     () => normalizeAllowedEmailDomainsInput(allowedDomainsDraft),
     [allowedDomainsDraft],
@@ -305,7 +305,7 @@ export function OrgSettingsScreen() {
   }
 
   function handleDomainRestrictionToggle(nextValue: boolean) {
-    if (!isOwner) {
+    if (!canManageSettings) {
       return;
     }
 
@@ -324,17 +324,18 @@ export function OrgSettingsScreen() {
     setPageError(null);
     clearOrgSettingsCompletion();
 
+    if (!canManageSettings) {
+      setPageError("Only workspace owners and super-admins can change settings.");
+      return;
+    }
+
     try {
       await updateOrganizationSettings({
-        ...(isOwner
-          ? {
-              name: orgNameDraft,
-              allowedEmailDomains: domainRestrictionsEnabled
-                ? draftAllowedDomains
-                : null,
-              requireSso: requireSsoEnabled,
-            }
-          : {}),
+        name: orgNameDraft,
+        allowedEmailDomains: domainRestrictionsEnabled
+          ? draftAllowedDomains
+          : null,
+        requireSso: requireSsoEnabled,
         ...(supportedDesktopVersionOptions.length > 0
           ? {
               allowedDesktopVersions: allDesktopVersionsAllowed
@@ -409,7 +410,7 @@ export function OrgSettingsScreen() {
                 onChange={(event) => setOrgNameDraft(event.target.value)}
                 minLength={2}
                 maxLength={120}
-                disabled={!isOwner}
+                disabled={!canManageSettings}
                 required
               />
             </label>
@@ -458,7 +459,7 @@ export function OrgSettingsScreen() {
                 label="Restrict allowed email domains"
                 checked={domainRestrictionsEnabled}
                 disabled={
-                  !isOwner || (domainRestrictionsEnabled && hasDraftDomains)
+                  !canManageSettings || (domainRestrictionsEnabled && hasDraftDomains)
                 }
                 onChange={handleDomainRestrictionToggle}
               />
@@ -477,7 +478,7 @@ export function OrgSettingsScreen() {
                 value={allowedDomainsDraft}
                 onChange={(event) => setAllowedDomainsDraft(event.target.value)}
                 rows={6}
-                disabled={!isOwner}
+                disabled={!canManageSettings}
                 placeholder={"company.com\npartner.org"}
               />
             </label>
@@ -502,7 +503,7 @@ export function OrgSettingsScreen() {
                     No email domains are configured yet.
                   </p>
                 )}
-                {isOwner ? (
+                {canManageSettings ? (
                   <DenButton
                     type="button"
                     size="sm"
@@ -545,7 +546,7 @@ export function OrgSettingsScreen() {
             <SettingsToggle
               label="Require SSO for this organization"
               checked={requireSsoEnabled}
-              disabled={!isOwner}
+              disabled={!canManageSettings}
               onChange={setRequireSsoEnabled}
             />
           </div>
@@ -655,20 +656,15 @@ export function OrgSettingsScreen() {
 
         <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
           <p className="text-[13px] text-gray-500">
-            {!isOwner && canManageDesktopVersions
-              ? "Admins can change allowed desktop versions. Other settings require a workspace owner."
-              : !isOwner
-                ? "Only workspace owners and admins can change these settings."
-                : null}
+            {!canManageSettings ? "Admins can view settings here. Owners and super-admins can change them." : null}
           </p>
-          {access.isAdmin ? (
-            <DenButton
-              type="submit"
-              loading={mutationBusy === "update-organization-settings"}
-            >
-              Save settings
-            </DenButton>
-          ) : null}
+          <DenButton
+            type="submit"
+            loading={mutationBusy === "update-organization-settings"}
+            disabled={!canManageSettings}
+          >
+            Save settings
+          </DenButton>
         </div>
       </form>
     </DashboardPageTemplate>
