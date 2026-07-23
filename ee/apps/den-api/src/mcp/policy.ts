@@ -19,6 +19,7 @@ const SAFE_INCLUDED_TAGS = new Set([
   "Connectors",
   "GitHub",
   "Capability Sources",
+  "Organization Prompt Suggestions",
 ])
 
 const BLOCKED_OPERATION_IDS = new Set([

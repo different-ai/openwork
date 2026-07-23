@@ -159,6 +159,35 @@ describe("agent-configurable org connections policy", () => {
     }))
   })
 
+  test("chat exposes only the narrow desktop-policy surfaces needed for organization prompt suggestions", () => {
+    expect(allowed("getV1DesktopPolicies")).toBe(true)
+    expect(allowed("putV1DesktopPoliciesByDesktopPolicyIdPromptSuggestions")).toBe(true)
+    expect(allowed("postV1DesktopPolicies")).toBe(false)
+    expect(allowed("patchV1DesktopPoliciesByDesktopPolicyId")).toBe(false)
+    expect(allowed("deleteV1DesktopPoliciesByDesktopPolicyId")).toBe(false)
+
+    const catalog = buildMcpCatalog(document)
+    const listMatches = searchCapabilities(catalog, "list desktop policies", 10)
+    const updateMatches = searchCapabilities(catalog, "update organization prompt suggestions", 10)
+    expect(listMatches).toContainEqual(expect.objectContaining({
+      method: "GET",
+      path: "/v1/desktop-policies",
+    }))
+    expect(updateMatches).toContainEqual(expect.objectContaining({
+      method: "PUT",
+      path: "/v1/desktop-policies/{desktopPolicyId}/prompt-suggestions",
+      hasBody: true,
+      bodySchema: expect.objectContaining({
+        type: "object",
+        properties: expect.objectContaining({
+          onboardingPrompts: expect.objectContaining({}),
+          onboardingPromptDescriptions: expect.objectContaining({}),
+        }),
+        required: expect.arrayContaining(["onboardingPrompts"]),
+      }),
+    }))
+  })
+
   test("agent capability search source filter can restrict searches to skills", () => {
     expect(searchCapabilitySourceFilter()).toEqual({
       api: true,

@@ -78,6 +78,7 @@ export function parseExternalCapabilityName(name: string): { connectionId: strin
 export type McpMemberIdentity = {
   orgMembershipId: DenTypeId<"member">
   teamIds: DenTypeId<"team">[]
+  role?: string
 }
 
 /**
@@ -92,7 +93,7 @@ export async function resolveMcpMemberIdentity(input: {
 }): Promise<McpMemberIdentity | null> {
   const organizationId = normalizeDenTypeId("organization", input.organizationId)
   const rows = await db
-    .select({ id: MemberTable.id })
+    .select({ id: MemberTable.id, role: MemberTable.role })
     .from(MemberTable)
     .where(and(
       eq(MemberTable.userId, normalizeDenTypeId("user", input.userId)),
@@ -103,7 +104,7 @@ export async function resolveMcpMemberIdentity(input: {
   const member = rows[0]
   if (!member) return null
   const teams = await listTeamsForMember({ organizationId, memberId: member.id })
-  return { orgMembershipId: member.id, teamIds: teams.map((team) => team.id) }
+  return { orgMembershipId: member.id, teamIds: teams.map((team) => team.id), role: member.role }
 }
 
 function hasSharedCredential(connection: ExternalMcpConnectionRow): boolean {

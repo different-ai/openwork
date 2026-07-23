@@ -125,6 +125,74 @@ test("agent MCP server exposes steering instructions during initialize", async (
   await server.close()
 })
 
+test("organization prompt authoring instructions are conditional on verified management access", async () => {
+  const unavailableServer = agentModule.createAgentMcpServer()
+  const availableServer = agentModule.createAgentMcpServer({ canManagePromptSuggestions: true })
+  const unavailableClient = new Client({ name: "test-client", version: "1.0.0" })
+  const availableClient = new Client({ name: "test-client", version: "1.0.0" })
+  const unavailableTransports = createMemoryTransportPair()
+  const availableTransports = createMemoryTransportPair()
+
+  await unavailableServer.connect(unavailableTransports.server)
+  await unavailableClient.connect(unavailableTransports.client)
+  await availableServer.connect(availableTransports.server)
+  await availableClient.connect(availableTransports.client)
+
+  expect(unavailableClient.getInstructions()).not.toContain("Organization prompt suggestions: Cloud")
+  expect(availableClient.getInstructions()).toContain(agentModule.ORGANIZATION_PROMPT_SUGGESTIONS_AUTHORING_INSTRUCTION)
+  expect(availableClient.getInstructions()).toContain("confirm the target policy and its audience")
+  expect(availableClient.getInstructions()).toContain("verify the returned policy")
+
+  await unavailableClient.close()
+  await unavailableServer.close()
+  await availableClient.close()
+  await availableServer.close()
+})
+
+test("organization prompt authoring access requires both role and Enterprise entitlement", () => {
+  const enterprise = { plan: { tier: "enterprise", source: "manual" } }
+  const free = { plan: { tier: "free", source: "default" } }
+
+  expect(agentModule.canManageOrganizationPromptSuggestions({
+    role: "owner",
+    organizationMetadata: enterprise,
+    planGatingEnabled: true,
+  })).toBe(true)
+  expect(agentModule.canManageOrganizationPromptSuggestions({
+    role: "super-admin",
+    organizationMetadata: enterprise,
+    planGatingEnabled: true,
+  })).toBe(true)
+  expect(agentModule.canManageOrganizationPromptSuggestions({
+    role: "admin",
+    organizationMetadata: enterprise,
+    planGatingEnabled: true,
+  })).toBe(false)
+  expect(agentModule.canManageOrganizationPromptSuggestions({
+    role: "member",
+    organizationMetadata: enterprise,
+    planGatingEnabled: true,
+  })).toBe(false)
+  expect(agentModule.canManageOrganizationPromptSuggestions({
+    role: "owner",
+    organizationMetadata: free,
+    planGatingEnabled: true,
+  })).toBe(false)
+})
+
+test("desktop-policy capabilities are absent from a member catalog without prompt management access", () => {
+  const catalog = [
+    { name: "list-prompts", path: "/v1/desktop-policies" },
+    { name: "update-prompts", path: "/v1/desktop-policies/{desktopPolicyId}/prompt-suggestions" },
+    { name: "list-plugins", path: "/v1/plugins" },
+  ]
+
+  expect(agentModule.filterAgentApiCatalogForMember(catalog, false)).toEqual([
+    { name: "list-plugins", path: "/v1/plugins" },
+  ])
+  expect(agentModule.filterAgentApiCatalogForMember(catalog, true)).toEqual(catalog)
+})
+
 test("agent MCP server exposes a standards-shaped remote skill index", () => {
   const index = agentModule.buildAgentSkillIndex([{
     name: "customer-briefing",

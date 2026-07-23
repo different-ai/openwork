@@ -8,7 +8,9 @@ import { openworkCloudMcpConnectionActionSchema } from "@openwork/types/den/mcp-
 import type { Hono } from "hono"
 import { z } from "zod"
 import { memberFacingMcpConnectionsEnabled } from "../capability-sources/external-mcp-rollout.js"
+import { checkEntitlement } from "../entitlements.js"
 import { publicRoute, tokenRoute } from "../middleware/index.js"
+import { ORGANIZATION_SUPER_ADMIN_ROLE, organizationRoleValueSatisfies } from "../organization-role-hierarchy.js"
 import { db } from "../db.js"
 import { getMcpResourceContext, verifyMcpRequest } from "./auth.js"
 import { invokeMcpOperation, normalizeToolBody, normalizeToolRecord } from "./invoke.js"
@@ -120,6 +122,43 @@ export const AGENT_MCP_INSTRUCTIONS = [
   "When a match has kind connection_status, name connectionStatus.connectionName and relay connectionStatus.action exactly. Distinguish the member's Your Connections page, the organization Connections dashboard, and the provider's own admin console.",
   "Connection probes are live. After the requested human fixes that connector, search again in the same task; otherwise do not retry unchanged or improvise workarounds through other tools.",
 ].join("\n")
+
+export const ORGANIZATION_PROMPT_SUGGESTIONS_AUTHORING_INSTRUCTION = [
+  "Organization prompt suggestions: Cloud. The signed-in member can manage them.",
+  "When asked, search for the desktop-policy list and organization prompt-suggestion update capabilities.",
+  "List policies first, confirm the target policy and its audience, then replace or clear only its two or three prompt cards.",
+  "Each card has a prompt of at most 500 characters and an optional description of at most 120 characters.",
+  "Execute only the exact capability returned by search, then verify the returned policy before reporting success.",
+].join(" ")
+
+export function canManageOrganizationPromptSuggestions(input: {
+  role?: string
+  organizationMetadata: Record<string, unknown> | null
+  planGatingEnabled?: boolean
+}) {
+  if (
+    !input.role
+    || !organizationRoleValueSatisfies({
+      roleValue: input.role,
+      requiredRole: ORGANIZATION_SUPER_ADMIN_ROLE,
+    })
+  ) {
+    return false
+  }
+  return checkEntitlement(
+    input.organizationMetadata,
+    "desktopPolicies",
+    input.planGatingEnabled === undefined ? {} : { gatingEnabled: input.planGatingEnabled },
+  ).ok
+}
+
+export function filterAgentApiCatalogForMember<T extends { path: string }>(
+  catalog: T[],
+  canManagePromptSuggestions: boolean,
+): T[] {
+  if (canManagePromptSuggestions) return catalog
+  return catalog.filter((operation) => !operation.path.startsWith("/v1/desktop-policies"))
+}
 
 async function mcpRequestMethod(request: Request): Promise<string | null> {
   if (request.method.toUpperCase() !== "POST") return null
@@ -282,12 +321,14 @@ export async function executeCapabilityWithBudget<T extends ExecuteCapabilityToo
   }
 }
 
-export function createAgentMcpServer(): McpServer {
+export function createAgentMcpServer(options: { canManagePromptSuggestions?: boolean } = {}): McpServer {
   return new McpServer({
     name: "openwork-den-api-agent",
     version: "1.0.0",
   }, {
-    instructions: AGENT_MCP_INSTRUCTIONS,
+    instructions: options.canManagePromptSuggestions
+      ? `${AGENT_MCP_INSTRUCTIONS}\n${ORGANIZATION_PROMPT_SUGGESTIONS_AUTHORING_INSTRUCTION}`
+      : AGENT_MCP_INSTRUCTIONS,
   })
 }
 
@@ -400,6 +441,11 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
     const externalMcpConnectionsEnabled = memberFacingMcpConnectionsEnabled(organizationRows[0]?.metadata, {
       gatingEnabled: env.mcpConnectionsGatingEnabled,
     })
+    const canManagePromptSuggestions = canManageOrganizationPromptSuggestions({
+      role: memberIdentity?.role,
+      organizationMetadata: organizationRows[0]?.metadata ?? null,
+    })
+    const agentApiCatalog = filterAgentApiCatalogForMember(catalog, canManagePromptSuggestions)
     let remoteSkills: RemoteSkillDescriptor[] = []
     const method = await mcpRequestMethod(c.req.raw)
     if (method === "initialize" || method === "resources/list" || method === "resources/read") {
@@ -410,7 +456,7 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
       }))
         .sort((a, b) => a.name.localeCompare(b.name) || a.capability.localeCompare(b.capability))
     }
-    const server = createAgentMcpServer()
+    const server = createAgentMcpServer({ canManagePromptSuggestions })
     if (method === "initialize" || method === "resources/list" || method === "resources/read") {
       registerAgentSkillResources({
         server,
@@ -429,6 +475,7 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
           "Search for a capability by keyword. This connection only exposes this tool and execute_capability —",
           "there is no list of individually-named tools to browse. Always search first.",
           "Search covers native Google Workspace capabilities (Gmail, Calendar, Drive, Gmail drafts), org-connected external MCPs, and namespaced OpenWork Admin tools for allowlisted platform admins.",
+          ...(canManagePromptSuggestions ? [ORGANIZATION_PROMPT_SUGGESTIONS_AUTHORING_INSTRUCTION] : []),
           "Try 2-4 keyword variants before deciding a capability is unavailable.",
           "Native API matches include pathParams, queryParams, hasBody, and bodySchema. External MCP matches include argumentsSchema, schemaDigest, and invocation.argumentsField.",
           "Marketplace skill matches return stored SKILL.md content when executed.",
@@ -445,7 +492,7 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
         const boundedLimit = limit ?? 5
         const sourceFilter = searchCapabilitySourceFilter(type)
         const marketplaceObjectTypes = type === "skills" ? skillMarketplaceObjectTypes : undefined
-        const restMatches = sourceFilter.api ? searchCapabilities(catalog, query, boundedLimit) : []
+        const restMatches = sourceFilter.api ? searchCapabilities(agentApiCatalog, query, boundedLimit) : []
         const adminMatches = sourceFilter.admin
           ? await searchAvailableAdminCapabilities(await resolvePlatformAdmin(), query, boundedLimit)
           : []
@@ -562,7 +609,7 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
               return { content: textContent(JSON.stringify(result.result, null, 2)) }
             }
 
-            const operation = catalog.find((candidate) => candidate.name === name)
+            const operation = agentApiCatalog.find((candidate) => candidate.name === name)
             if (!operation) {
               return {
                 isError: true,

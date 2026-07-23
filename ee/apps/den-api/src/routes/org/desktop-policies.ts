@@ -11,6 +11,8 @@ import {
   desktopPolicyDocumentWriteSchema,
   normalizeDefaultDesktopPolicyDocument,
   normalizeDesktopPolicyDocument,
+  onboardingPromptDescriptionsSchema,
+  onboardingPromptsSchema,
   resolveDesktopPolicyDocumentWrite,
 } from "@openwork/types/den/desktop-policies"
 import type { Hono } from "hono"
@@ -36,6 +38,32 @@ const desktopPolicyWriteSchema = z.object({
   isEnabled: z.boolean().optional(),
   memberIds: z.array(denTypeIdSchema("member")).max(500).optional().default([]),
   teamIds: z.array(denTypeIdSchema("team")).max(500).optional().default([]),
+})
+
+const organizationPromptSuggestionsWriteSchema = z.object({
+  onboardingPrompts: onboardingPromptsSchema.nullable(),
+  onboardingPromptDescriptions: onboardingPromptDescriptionsSchema.nullable().optional(),
+}).superRefine((value, ctx) => {
+  if (value.onboardingPrompts === null) {
+    if (Array.isArray(value.onboardingPromptDescriptions)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Descriptions cannot be provided when prompt suggestions are cleared.",
+        path: ["onboardingPromptDescriptions"],
+      })
+    }
+    return
+  }
+  if (
+    Array.isArray(value.onboardingPromptDescriptions)
+    && value.onboardingPromptDescriptions.length !== value.onboardingPrompts.length
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Provide one description for each prompt suggestion.",
+      path: ["onboardingPromptDescriptions"],
+    })
+  }
 })
 
 const desktopPolicyListResponseSchema = z.object({
@@ -147,7 +175,7 @@ export function registerOrgDesktopPolicyRoutes<T extends { Variables: OrgRouteVa
   app.get(
     "/v1/desktop-policies",
     describeRoute({
-      tags: ["Desktop Policies"],
+      tags: ["Desktop Policies", "Organization Prompt Suggestions"],
       summary: "List desktop policies",
       responses: {
         200: jsonResponse("Desktop policies returned successfully.", desktopPolicyListResponseSchema),
@@ -160,6 +188,81 @@ export function registerOrgDesktopPolicyRoutes<T extends { Variables: OrgRouteVa
       const payload = c.get("organizationContext")
       const desktopPolicies = await loadDesktopPolicies(payload.organization.id)
       return c.json({ definitions: desktopPolicyDefinitions, desktopPolicies })
+    },
+  )
+
+  app.put(
+    "/v1/desktop-policies/:desktopPolicyId/prompt-suggestions",
+    describeRoute({
+      tags: ["Desktop Policies", "Organization Prompt Suggestions"],
+      summary: "Update organization prompt suggestions for a desktop policy",
+      description: "Replaces or clears the new-session prompt suggestion cards without changing any other desktop policy settings or assignments.",
+      responses: {
+        200: jsonResponse("Organization prompt suggestions updated successfully.", desktopPolicyResponseSchema),
+        400: jsonResponse("The organization prompt suggestions were invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to update organization prompt suggestions.", unauthorizedSchema),
+        402: jsonResponse("Organization prompt suggestions require an Enterprise plan.", enterprisePlanRequiredSchema),
+        403: jsonResponse("Only workspace owners and super-admins can update organization prompt suggestions.", forbiddenSchema),
+        404: jsonResponse("The desktop policy was not found.", notFoundSchema),
+      },
+    }),
+    orgRoleRoute(["super-admin"]),
+    paramValidator(desktopPolicyParamsSchema),
+    jsonValidator(organizationPromptSuggestionsWriteSchema),
+    async (c) => {
+      const payload = c.get("organizationContext")
+      const permission = ensureOrganizationSuperAdmin(c, "Only workspace owners and super-admins can manage organization prompt suggestions.")
+      if (!permission.ok) {
+        return c.json(permission.response, orgAccessFailureStatus(permission.response))
+      }
+
+      const entitlement = checkEntitlement(payload.organization.metadata, "desktopPolicies")
+      if (!entitlement.ok) {
+        return c.json(entitlement.response, entitlement.status)
+      }
+
+      let desktopPolicyId: DesktopPolicyId
+      try {
+        desktopPolicyId = parseDesktopPolicyId(c.req.valid("param").desktopPolicyId)
+      } catch {
+        return c.json({ error: "desktop_policy_not_found" }, 404)
+      }
+
+      const rows = await db
+        .select()
+        .from(DesktopPolicyTable)
+        .where(and(
+          eq(DesktopPolicyTable.id, desktopPolicyId),
+          eq(DesktopPolicyTable.organizationId, payload.organization.id),
+          isNull(DesktopPolicyTable.deletedAt),
+        ))
+        .limit(1)
+      const existing = rows[0]
+      if (!existing) return c.json({ error: "desktop_policy_not_found" }, 404)
+
+      const input = c.req.valid("json")
+      const currentPolicy = existing.isDefault === true
+        ? normalizeDefaultDesktopPolicyDocument(existing.policy)
+        : normalizeDesktopPolicyDocument(existing.policy)
+      const policy = resolveDesktopPolicyDocumentWrite({
+        value: {
+          ...currentPolicy,
+          onboardingPrompts: input.onboardingPrompts,
+          onboardingPromptDescriptions: input.onboardingPrompts === null
+            ? null
+            : input.onboardingPromptDescriptions ?? null,
+        },
+        isDefault: existing.isDefault === true,
+      })
+
+      await db
+        .update(DesktopPolicyTable)
+        .set({ policy, updatedAt: new Date() })
+        .where(eq(DesktopPolicyTable.id, existing.id))
+
+      const [desktopPolicy] = await loadDesktopPolicies(payload.organization.id)
+        .then((policies) => policies.filter((candidate) => candidate.id === existing.id))
+      return c.json({ desktopPolicy })
     },
   )
 

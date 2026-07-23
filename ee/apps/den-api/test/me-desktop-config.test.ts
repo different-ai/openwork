@@ -327,6 +327,38 @@ test("GET /v1/me/desktop-config returns the effective onboarding prompts", async
   expect(body.onboardingPromptDescriptions).toEqual(highPriorityOnboardingPromptDescriptions)
 })
 
+test("prompt-suggestion update replaces only the selected policy cards", async () => {
+  const invalid = await requestDesktopPolicyAdmin({
+    method: "PUT",
+    path: `/v1/desktop-policies/${encodeURIComponent(defaultPolicyId)}/prompt-suggestions`,
+    expectedStatus: 400,
+    body: {
+      onboardingPrompts: ["First invalid prompt", "Second invalid prompt"],
+      onboardingPromptDescriptions: ["Only one description"],
+    },
+  })
+  expect(invalid?.error).toBe("invalid_request")
+
+  const payload = await requestDesktopPolicyAdmin({
+    method: "PUT",
+    path: `/v1/desktop-policies/${encodeURIComponent(defaultPolicyId)}/prompt-suggestions`,
+    expectedStatus: 200,
+    body: {
+      onboardingPrompts: ["Chat-authored task", "Chat-authored follow-up"],
+      onboardingPromptDescriptions: ["Chat task", "Chat follow-up"],
+    },
+  })
+  if (!payload) throw new Error("Prompt suggestion update response was empty")
+  const updated = expectDesktopPolicy(payload)
+  expect(updated.id).toBe(defaultPolicyId)
+  expect(updated.isDefault).toBe(true)
+  expect(updated.policyName).toBe("Default desktop policy")
+  const policy = expectRecord(updated.policy, "Updated desktop policy was missing policy")
+  expect(policy.allowAlphaUpdates).toBe(false)
+  expect(policy.onboardingPrompts).toEqual(["Chat-authored task", "Chat-authored follow-up"])
+  expect(policy.onboardingPromptDescriptions).toEqual(["Chat task", "Chat follow-up"])
+})
+
 test("desktop policy CRUD preserves, replaces, and clears onboarding prompts and descriptions", async () => {
   const createPayload = await requestDesktopPolicyAdmin({
     method: "POST",
