@@ -125,40 +125,6 @@ describe("agent-configurable org connections policy", () => {
     }))
   })
 
-  test("agent skill creation uses the same validated plugin contract as the Cloud UI", () => {
-    expect(allowed("postV1Plugins")).toBe(true)
-    const catalog = buildMcpCatalog(document)
-    const createMatch = searchCapabilities(catalog, "create cloud skill plugin", 20)
-      .find((match) => match.method === "POST" && match.path === "/v1/plugins")
-
-    expect(createMatch).toMatchObject({
-      name: "postPlugins",
-      hasBody: true,
-      bodySchema: expect.objectContaining({
-        type: "object",
-        properties: expect.objectContaining({
-          name: expect.objectContaining({ type: "string" }),
-          orgWide: expect.objectContaining({ type: "boolean" }),
-          marketplaceId: expect.objectContaining({ type: "string" }),
-          components: expect.objectContaining({
-            type: "array",
-            items: expect.objectContaining({
-              properties: expect.objectContaining({
-                type: expect.objectContaining({ enum: expect.arrayContaining(["skill"]) }),
-                input: expect.objectContaining({
-                  properties: expect.objectContaining({
-                    rawSourceText: expect.objectContaining({ type: "string", minLength: 1 }),
-                  }),
-                }),
-              }),
-            }),
-          }),
-        }),
-        required: expect.arrayContaining(["name"]),
-      }),
-    })
-  })
-
   test("chat capability search discovers the Den GitHub marketplace import workflow", () => {
     const catalog = buildMcpCatalog(document)
     const previewMatches = searchCapabilities(catalog, "preview github plugin marketplace import", 10)

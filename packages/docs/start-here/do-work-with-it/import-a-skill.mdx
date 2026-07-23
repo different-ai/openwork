@@ -34,10 +34,6 @@ Type `/skill-creator` in chat, then either paste the external skill you want to 
   ![Using the /skill-creator command in chat](/images/skill-import-skill-creator-command.png)
 </Frame>
 
-When OpenWork Cloud is connected and verified for the current workspace, the creator saves the new skill directly to Cloud. It checks for an existing skill or plugin first, validates the complete `SKILL.md`, creates the skill through the same plugin API used by the Cloud UI, and reads the saved plugin back before reporting success. It does not create a workspace-local copy.
-
-The creator uses `.opencode/skills/<skill-name>/SKILL.md` only when Cloud is unavailable or you explicitly request a local skill. A Cloud failure never silently becomes a local write.
-
 When pasting an existing skill, the file should follow this structure:
 
 ```text

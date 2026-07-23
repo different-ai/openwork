@@ -240,7 +240,7 @@ function errorStatus(error: unknown) {
   return null
 }
 
-test("pluginCreateSchema validates complete Cloud skills before persistence", () => {
+test("pluginCreateSchema accepts legacy and bundle bodies while rejecting empty component input", () => {
   expect(schemas.pluginCreateSchema.safeParse({ name: "X" }).success).toBe(true)
 
   expect(schemas.pluginCreateSchema.safeParse({
@@ -255,29 +255,6 @@ test("pluginCreateSchema validates complete Cloud skills before persistence", ()
     orgWide: true,
     marketplaceId: createDenTypeId("marketplace"),
   }).success).toBe(true)
-
-  const invalidSkills = [
-    schemas.pluginCreateSchema.safeParse({
-      name: "Missing frontmatter",
-      components: [{ type: "skill", input: { rawSourceText: "# Instructions\n\nDo the work." } }],
-    }),
-    schemas.pluginCreateSchema.safeParse({
-      name: "Missing description",
-      components: [{ type: "skill", input: { rawSourceText: "---\nname: missing-description\n---\nDo the work." } }],
-    }),
-    schemas.pluginCreateSchema.safeParse({
-      name: "Missing body",
-      components: [{ type: "skill", input: { rawSourceText: "---\nname: missing-body\ndescription: Explain the work\n---\n" } }],
-    }),
-  ]
-
-  expect(invalidSkills.every((result) => !result.success)).toBe(true)
-  const validationMessages = invalidSkills.flatMap((result) => result.success
-    ? []
-    : result.error.issues.map((issue) => issue.message))
-  expect(validationMessages).toContain("Cloud skills require YAML frontmatter with a non-empty name.")
-  expect(validationMessages).toContain("Cloud skills require a non-empty frontmatter description.")
-  expect(validationMessages).toContain("Cloud skills require an instruction body after the frontmatter.")
 
   expect(schemas.pluginCreateSchema.safeParse({
     name: "Broken",

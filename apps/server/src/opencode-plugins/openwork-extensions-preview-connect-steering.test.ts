@@ -132,9 +132,9 @@ describe("composeOpenWorkExtensionDiscoveryInstruction", () => {
       mode: "cloud",
       prompt: OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION,
     });
-    expect(OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain("create the skill remotely");
-    expect(OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain("read back the saved skill");
-    expect(OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).not.toContain("Create or update one workspace-local");
+    expect(OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain("Skill creation: Cloud");
+    expect(OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain("skill-creator Remote Cloud flow");
+    expect(OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).not.toContain("Skill creation: Local");
 
     for (const instruction of [
       OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION,
@@ -146,9 +146,9 @@ describe("composeOpenWorkExtensionDiscoveryInstruction", () => {
         prompt: OPENWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION,
       });
     }
-    expect(OPENWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION).toContain("Cloud is not verified");
-    expect(OPENWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION).toContain("workspace-local .opencode/skills");
-    expect(OPENWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION).not.toContain("create the skill remotely");
+    expect(OPENWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION).toContain("Skill creation: Local");
+    expect(OPENWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION).toContain("skill-creator local flow");
+    expect(OPENWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION).not.toContain("Skill creation: Cloud");
   });
 
   test("keeps neutral steering when provider projection is missing", () => {
