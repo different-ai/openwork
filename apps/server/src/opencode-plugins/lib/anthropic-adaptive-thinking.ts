@@ -15,6 +15,8 @@
  * require it, just before the request is sent.
  */
 
+import { getRecordProperty, optionalStringProperty } from "./records.js";
+
 const LEGACY_HIGH_BUDGET_TOKENS = 16000;
 
 /**
@@ -47,14 +49,19 @@ function rewriteLegacyThinkingOptions(apiId: string, options: Record<string, unk
   }
 }
 
-// Single export: the OpenCode plugin loader treats every export of a plugin
-// module as a plugin factory, so helpers must stay module-private.
-export const OpenWorkAnthropicAdaptiveThinking = async () => ({
-  "chat.params": async (
-    input: { model: { id: string; api?: { id?: string } } },
-    output: { options: Record<string, unknown> },
-  ) => {
-    const apiId = input.model.api?.id ?? input.model.id;
-    rewriteLegacyThinkingOptions(apiId, output.options);
-  },
-});
+export type AdaptiveThinkingOutput = { options: Record<string, unknown> };
+
+export function applyAnthropicAdaptiveThinking(input: unknown, output: AdaptiveThinkingOutput): void {
+  const model = getRecordProperty(input, "model");
+  const api = getRecordProperty(model, "api");
+  const apiId = optionalStringProperty(api, "id") ?? optionalStringProperty(model, "id");
+  if (apiId) rewriteLegacyThinkingOptions(apiId, output.options);
+}
+
+export async function createAnthropicAdaptiveThinkingHooks() {
+  return {
+    "chat.params": async (input: unknown, output: AdaptiveThinkingOutput) => {
+      applyAnthropicAdaptiveThinking(input, output);
+    },
+  };
+}

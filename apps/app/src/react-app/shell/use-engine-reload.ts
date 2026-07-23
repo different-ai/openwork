@@ -6,6 +6,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { engineInfo, engineRestart } from "@/app/lib/desktop";
+import {
+  clearDesktopDeveloperModeRestartPending,
+  desktopDeveloperModeRestartPending,
+} from "@/app/lib/developer-mode";
 import type { EngineInfo } from "@/app/lib/desktop-types";
 import { isDesktopRuntime } from "@/app/lib/runtime-env";
 import { OpenworkServerError, type OpenworkServerClient } from "@/app/lib/openwork-server";
@@ -61,16 +65,22 @@ export function useEngineReload(input: UseEngineReloadInput) {
       return false;
     }
     let restartedEngine = false;
-    try {
-      await endpoint.client.reloadEngine(endpoint.workspaceId);
-    } catch (error) {
-      const unreachable =
-        error instanceof OpenworkServerError && error.code === "opencode_engine_unreachable";
-      if (!unreachable || !isDesktopRuntime()) {
-        throw error;
-      }
+    if (isDesktopRuntime() && desktopDeveloperModeRestartPending()) {
       await engineRestart({});
+      clearDesktopDeveloperModeRestartPending();
       restartedEngine = true;
+    } else {
+      try {
+        await endpoint.client.reloadEngine(endpoint.workspaceId);
+      } catch (error) {
+        const unreachable =
+          error instanceof OpenworkServerError && error.code === "opencode_engine_unreachable";
+        if (!unreachable || !isDesktopRuntime()) {
+          throw error;
+        }
+        await engineRestart({});
+        restartedEngine = true;
+      }
     }
     if (restartedEngine) {
       await refreshRouteState();

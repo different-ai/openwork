@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -25,9 +26,13 @@ afterEach(async () => {
 
 function skillIndexFetcher(capability = "skill:skill_customer_briefing"): (url: string, init?: RequestInit) => Promise<Response> {
   return async (_url: string, init?: RequestInit) => {
+    if (init?.method === "DELETE") return new Response(null, { status: 204 });
     const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
     if (body.method === "initialize") {
-      return Response.json({ jsonrpc: "2.0", id: 1, result: { protocolVersion: "2025-06-18", capabilities: {} } });
+      return Response.json(
+        { jsonrpc: "2.0", id: 1, result: { protocolVersion: "2025-06-18", capabilities: {} } },
+        { headers: { "mcp-session-id": "catalog-session" } },
+      );
     }
     if (body.method === "notifications/initialized") return new Response(null, { status: 202 });
     return Response.json({
@@ -109,13 +114,98 @@ describe("OpenWork Connect skill catalog", () => {
     expect(renderOpenWorkConnectSkillInstruction([])).toBe("");
   });
 
-  test("reads the standards-shaped index through an authenticated MCP resource", async () => {
-    const requests: Array<{ body: Record<string, unknown>; headers: Headers }> = [];
+  test("reports why the prompt block was omitted through the diagnostics collector", () => {
+    const reasons: string[] = [];
+    expect(renderOpenWorkConnectSkillInstruction([], (message) => reasons.push(message))).toBe("");
+    expect(reasons.some((message) => message.includes("skill catalog is empty"))).toBe(true);
+  });
+
+  test("reports skip reasons for unusable cloud MCP configs", async () => {
+    const reasons: string[] = [];
+    const never = async () => Response.json({});
+    const invalidUrl = "not-a-url?token=url-secret#fragment-secret";
+    expect(await readMcpSkillIndex({ url: invalidUrl }, never, (message) => reasons.push(message))).toBeNull();
+    expect(reasons.some((message) => message.includes("reason=invalid-url"))).toBe(true);
+    expect(reasons.join("\n")).not.toContain(invalidUrl);
+    expect(reasons.join("\n")).not.toContain("url-secret");
+
+    reasons.length = 0;
+    expect(await readMcpSkillIndex({ url: "https://example.com/mcp", enabled: false }, never, (message) => reasons.push(message))).toBeNull();
+    expect(reasons.some((message) => message.includes("disabled"))).toBe(true);
+  });
+
+  test("rejects a declared oversized MCP response before buffering it", async () => {
+    const fetcher = async () => new Response("{}", {
+      headers: { "content-length": String(600 * 1024) },
+    });
+    await expect(readMcpSkillIndex(
+      { url: "https://connect.example/mcp/agent" },
+      fetcher,
+    )).rejects.toThrow("connect_skill_catalog_response_too_large");
+  });
+
+  test("cancels and rejects a streaming oversized MCP response", async () => {
+    const chunk = new Uint8Array(300 * 1024);
+    const fetcher = async () => new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(chunk);
+        controller.enqueue(chunk);
+        controller.close();
+      },
+    }));
+    await expect(readMcpSkillIndex(
+      { url: "https://connect.example/mcp/agent" },
+      fetcher,
+    )).rejects.toThrow("connect_skill_catalog_response_too_large");
+  });
+
+  test("reports an invalid skill index instead of silently dropping it", async () => {
     const fetcher = async (_url: string, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
-      requests.push({ body, headers: new Headers(init?.headers) });
+      if (body.method === "initialize") return Response.json({ jsonrpc: "2.0", id: 1, result: { capabilities: {} } });
+      if (body.method === "resources/read") {
+        return Response.json({
+          jsonrpc: "2.0",
+          id: 2,
+          result: { contents: [{ uri: "skill://index.json", text: JSON.stringify({ $schema: "https://wrong.example/schema.json", skills: [] }) }] },
+        });
+      }
+      return Response.json({});
+    };
+    const reasons: string[] = [];
+    expect(await readMcpSkillIndex({ url: "https://example.com/mcp" }, fetcher, (message) => reasons.push(message))).toBeNull();
+    expect(reasons.some((message) => message.includes("reason=invalid-schema"))).toBe(true);
+    expect(reasons.join("\n")).not.toContain("wrong.example");
+  });
+
+  test("reports the failing JSON-RPC phase and code without copying the server message", async () => {
+    const reasons: string[] = [];
+    const fetcher = async () => Response.json({
+      jsonrpc: "2.0",
+      id: 1,
+      error: { code: -32001, message: "private auth token and endpoint" },
+    });
+
+    expect(await readMcpSkillIndex(
+      { url: "https://connect.example/mcp" },
+      fetcher,
+      (message) => reasons.push(message),
+    )).toBeNull();
+    expect(reasons.join("\n")).toContain("phase=initialize");
+    expect(reasons.join("\n")).toContain("jsonRpcCode=-32001");
+    expect(reasons.join("\n")).not.toContain("private auth token");
+  });
+
+  test("reads the standards-shaped index through an authenticated MCP resource", async () => {
+    const requests: Array<{ method: string; body: Record<string, unknown> | null; headers: Headers }> = [];
+    const fetcher = async (_url: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : null;
+      requests.push({ method, body, headers: new Headers(init?.headers) });
+      if (method === "DELETE") return new Response(null, { status: 204 });
+      if (!body) throw new Error("Expected MCP POST body");
       if (body.method === "initialize") {
-        return Response.json({ jsonrpc: "2.0", id: 1, result: { protocolVersion: "2025-06-18", capabilities: {} } }, {
+        return Response.json({ jsonrpc: "2.0", id: 1, result: { protocolVersion: "2025-03-26", capabilities: {} } }, {
           headers: { "mcp-session-id": "session-1" },
         });
       }
@@ -151,13 +241,57 @@ describe("OpenWork Connect skill catalog", () => {
 
     expect(skills).toHaveLength(1);
     expect(skills?.[0]?.capability).toBe("skill:skill_customer_briefing");
-    expect(requests.map((request) => request.body.method)).toEqual([
+    expect(requests.map((request) => request.body?.method ?? request.method)).toEqual([
       "initialize",
       "notifications/initialized",
       "resources/read",
+      "DELETE",
     ]);
     expect(requests[2]?.headers.get("authorization")).toBe("Bearer secret");
     expect(requests[2]?.headers.get("mcp-session-id")).toBe("session-1");
+    expect(requests[1]?.headers.get("mcp-protocol-version")).toBe("2025-03-26");
+    expect(requests[2]?.headers.get("mcp-protocol-version")).toBe("2025-03-26");
+    expect(requests[3]?.headers.get("mcp-session-id")).toBe("session-1");
+  });
+
+  test("ignores SSE notifications until the matching JSON-RPC response arrives", async () => {
+    const fetcher = async (_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      if (body.method === "initialize") {
+        return new Response([
+          "event: message\ndata: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\",\"params\":{}}",
+          "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"protocolVersion\":\"2025-06-18\",\"capabilities\":{}}}",
+          "",
+        ].join("\n\n"), { headers: { "content-type": "text/event-stream" } });
+      }
+      if (body.method === "notifications/initialized") return new Response(null, { status: 202 });
+      return new Response([
+        "data: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/resources/list_changed\"}",
+        `data: ${JSON.stringify({
+          jsonrpc: "2.0",
+          id: 2,
+          result: {
+            contents: [{
+              uri: "skill://index.json",
+              text: JSON.stringify({
+                $schema: "https://schemas.agentskills.io/discovery/0.2.0/schema.json",
+                skills: [{
+                  name: "sse-skill",
+                  type: "skill-md",
+                  description: "SSE skill",
+                  url: "skill://sse-skill/SKILL.md",
+                  capability: "skill:sse_skill",
+                }],
+              }),
+            }],
+          },
+        })}`,
+        "",
+      ].join("\n\n"), { headers: { "content-type": "text/event-stream" } });
+    };
+
+    const skills = await readMcpSkillIndex({ url: "https://connect.example/mcp" }, fetcher);
+    expect(skills?.[0]?.name).toBe("sse-skill");
   });
 
   test("accepts marketplace plugin capability pointers for remote skill retrieval", async () => {
@@ -201,6 +335,8 @@ describe("OpenWork Connect skill catalog", () => {
 
   test("reads the skill catalog from server-scoped Connect MCP config", async () => {
     const config = await serverConfig();
+    const databasePath = process.env.OPENWORK_RUNTIME_DB;
+    if (!databasePath) throw new Error("Expected isolated runtime database path");
     await writeConnectCloudMcp(config, {
       type: "remote",
       url: "https://connect.example/mcp/agent",
@@ -211,9 +347,106 @@ describe("OpenWork Connect skill catalog", () => {
     const skills = await readOpenWorkConnectSkillCatalog(config, skillIndexFetcher());
     expect(skills).toHaveLength(1);
     expect(skills[0]?.name).toBe("customer-briefing");
+    expect(existsSync(databasePath)).toBe(false);
   });
 
-  test("promotes legacy workspace openwork-cloud config into server scope", async () => {
+  test("does not create a runtime database while inspecting an empty catalog", async () => {
+    const config = await serverConfig();
+    const databasePath = process.env.OPENWORK_RUNTIME_DB;
+    if (!databasePath) throw new Error("Expected isolated runtime database path");
+    expect(existsSync(databasePath)).toBe(false);
+
+    expect(await readOpenWorkConnectSkillCatalog(config)).toEqual([]);
+    expect(existsSync(databasePath)).toBe(false);
+  });
+
+  test("replays successful candidate diagnostics on cache hits without catalog or credential details", async () => {
+    const config = await serverConfig();
+    const cloudUrl = "https://catalog-user:url-password@connect.example/mcp/agent?token=query-secret#fragment-secret";
+    await writeConnectCloudMcp(config, {
+      type: "remote",
+      url: cloudUrl,
+      enabled: true,
+      headers: { Authorization: "Bearer header-secret" },
+    });
+
+    let requests = 0;
+    const working = skillIndexFetcher("skill:skill_private_capability");
+    const fetcher = async (url: string, init?: RequestInit) => {
+      requests += 1;
+      return working(url, init);
+    };
+    const first: string[] = [];
+    const second: string[] = [];
+
+    expect(await readOpenWorkConnectSkillCatalog(config, fetcher, (message) => first.push(message))).toHaveLength(1);
+    expect(await readOpenWorkConnectSkillCatalog(config, fetcher, (message) => second.push(message))).toHaveLength(1);
+
+    expect(requests).toBe(4);
+    expect(first.some((message) => message.includes("source=server") && message.includes("cache=miss") && message.includes("result=1-skills"))).toBe(true);
+    expect(second.some((message) => message.includes("source=server") && message.includes("cache=hit") && message.includes("result=1-skills"))).toBe(true);
+    expect(first.some((message) => message.includes("phase=schema") && message.includes("outcome=selected skills=1"))).toBe(true);
+    expect(second.some((message) => message.includes("phase=schema") && message.includes("outcome=selected skills=1"))).toBe(true);
+    expect(second).toContain("skill catalog selected from server scope (1 skills)");
+
+    const diagnostics = [...first, ...second].join("\n");
+    for (const secret of [
+      cloudUrl,
+      "catalog-user",
+      "url-password",
+      "query-secret",
+      "fragment-secret",
+      "header-secret",
+      "customer-briefing",
+      "skill_private_capability",
+    ]) {
+      expect(diagnostics).not.toContain(secret);
+    }
+  });
+
+  test("replays sanitized candidate failures on cache hits without raw errors or endpoint details", async () => {
+    const config = await serverConfig();
+    const cloudUrl = "https://catalog-user:url-password@connect.example/mcp/agent?token=query-secret#fragment-secret";
+    await writeConnectCloudMcp(config, {
+      type: "remote",
+      url: cloudUrl,
+      enabled: true,
+      headers: { Authorization: "Bearer header-secret" },
+    });
+
+    let requests = 0;
+    const fetcher = async () => {
+      requests += 1;
+      throw new Error(`remote-payload-secret token=raw-error-secret endpoint=${cloudUrl}`);
+    };
+    const first: string[] = [];
+    const second: string[] = [];
+
+    expect(await readOpenWorkConnectSkillCatalog(config, fetcher, (message) => first.push(message))).toEqual([]);
+    expect(await readOpenWorkConnectSkillCatalog(config, fetcher, (message) => second.push(message))).toEqual([]);
+
+    expect(requests).toBe(1);
+    expect(first.some((message) => message.includes("phase=candidate") && message.includes("reason=request-or-protocol-failure"))).toBe(true);
+    expect(second.some((message) => message.includes("phase=candidate") && message.includes("reason=request-or-protocol-failure"))).toBe(true);
+    expect(second.some((message) => message.includes("cache=hit") && message.includes("result=unusable"))).toBe(true);
+    expect(second).toContain("skipped: every considered openwork-cloud MCP candidate was unusable");
+
+    const diagnostics = [...first, ...second].join("\n");
+    for (const secret of [
+      cloudUrl,
+      "catalog-user",
+      "url-password",
+      "query-secret",
+      "fragment-secret",
+      "header-secret",
+      "remote-payload-secret",
+      "raw-error-secret",
+    ]) {
+      expect(diagnostics).not.toContain(secret);
+    }
+  });
+
+  test("reads a legacy workspace catalog without mutating server-scoped state", async () => {
     const config = await serverConfig();
     await writeRuntimeOpencodeConfig(config, "ws_legacy", (current) => ({
       ...current,
@@ -228,15 +461,18 @@ describe("OpenWork Connect skill catalog", () => {
 
     const skills = await readOpenWorkConnectSkillCatalog(config, skillIndexFetcher("skill:skill_promoted"));
     expect(skills[0]?.capability).toBe("skill:skill_promoted");
+    expect(await readConnectCloudMcp(config)).toBeNull();
 
-    // Second read should use the promoted host-level copy even if workspace config is cleared.
+    // Clearing the only workspace source makes the next read empty; GET-style
+    // catalog inspection must never have promoted it behind the user's back.
     await writeRuntimeOpencodeConfig(config, "ws_legacy", () => ({ mcp: {} }));
     resetOpenWorkConnectSkillCatalogCacheForTests();
     const again = await readOpenWorkConnectSkillCatalog(config, skillIndexFetcher("skill:skill_promoted"));
-    expect(again[0]?.capability).toBe("skill:skill_promoted");
+    expect(again).toEqual([]);
+    expect(await readConnectCloudMcp(config)).toBeNull();
   });
 
-  test("skips revoked or dead configs and promotes the first working candidate", async () => {
+  test("skips revoked or dead configs and selects a working fallback without promotion", async () => {
     const config = await serverConfig();
     // Poisoned server-scoped copy: stale local Den URL with a revoked token.
     await writeConnectCloudMcp(config, {
@@ -268,9 +504,46 @@ describe("OpenWork Connect skill catalog", () => {
     const skills = await readOpenWorkConnectSkillCatalog(config, fetcher);
     expect(skills[0]?.capability).toBe("skill:skill_live");
 
-    // The working workspace config must replace the poisoned server-scoped copy.
-    const promoted = await readConnectCloudMcp(config);
-    expect(promoted?.url).toBe("https://connect.example/mcp/agent");
+    // The read path must leave the explicit server-scoped source untouched.
+    const kept = await readConnectCloudMcp(config);
+    expect(kept?.url).toBe("https://stale.local.test/mcp/agent");
+  });
+
+  test("deduplicates candidates before applying the four-candidate bound", async () => {
+    const config = await serverConfig();
+    config.workspaces = Array.from({ length: 5 }, (_, index) => ({
+      ...config.workspaces[0]!,
+      id: `ws_${index}`,
+      name: `Workspace ${index}`,
+    }));
+    const stale = {
+      type: "remote",
+      url: "https://stale.example/mcp",
+      enabled: true,
+    };
+    await writeConnectCloudMcp(config, stale);
+    for (let index = 0; index < 3; index += 1) {
+      await writeRuntimeOpencodeConfig(config, `ws_${index}`, () => ({
+        mcp: { "openwork-cloud": stale },
+      }));
+    }
+    await writeRuntimeOpencodeConfig(config, "ws_3", () => ({
+      mcp: {
+        "openwork-cloud": {
+          type: "remote",
+          url: "https://live.example/mcp",
+          enabled: true,
+        },
+      },
+    }));
+
+    const working = skillIndexFetcher("skill:deduped_live");
+    const skills = await readOpenWorkConnectSkillCatalog(config, (url, init) => (
+      url.startsWith("https://stale.example")
+        ? Promise.resolve(Response.json({}, { status: 401 }))
+        : working(url, init)
+    ));
+    expect(skills[0]?.capability).toBe("skill:deduped_live");
   });
 
   test("returns empty when every candidate config is unusable", async () => {

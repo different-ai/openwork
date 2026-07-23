@@ -20,6 +20,12 @@ import { fileURLToPath } from "node:url";
 import { configureFakeMediaForTests, installMediaPermissionHandlers } from "./media-permissions.mjs";
 import { registerMigrationIpc } from "./migration.mjs";
 import { createRuntimeManager } from "./runtime.mjs";
+import { createRuntimeBootstrapCoordinator } from "./runtime-bootstrap.mjs";
+import {
+  createObservabilityRendererTarget,
+  createObservabilityConsoleBridge,
+  resolveObservabilityConsoleEnabled,
+} from "./observability-console-bridge.mjs";
 import { registerUpdaterIpc } from "./updater.mjs";
 import {
   checkComputerUsePermissions,
@@ -894,6 +900,11 @@ const IDLE_ENGINE_INFO = Object.freeze({
 const IDLE_OPENWORK_SERVER_INFO = Object.freeze({
   running: false,
   remoteAccessEnabled: false,
+  developerModeRequested: false,
+  promptLogRequested: false,
+  promptLogEnabled: false,
+  observabilityLevel: "off",
+  promptLogSource: "desktop-option",
   host: null,
   port: null,
   baseUrl: null,
@@ -923,6 +934,32 @@ const IDLE_ROUTER_INFO = Object.freeze({
 
 let mainWindow = null;
 const pendingDeepLinks = [];
+
+const observabilityRendererTarget = createObservabilityRendererTarget({
+  getWindow: () => mainWindow,
+});
+
+const observabilityConsoleBridge = createObservabilityConsoleBridge({
+  send: (payload) => observabilityRendererTarget.send(payload),
+});
+observabilityConsoleBridge.setEnabled(resolveObservabilityConsoleEnabled({}, process.env));
+
+// Preserve the normal terminal/file log sink while teeing only bounded,
+// allowlisted observability records into renderer DevTools. The bridge keeps
+// no prompt/MCP history and is disabled unless metadata or exact observability
+// is effective. The original stderr sink remains authoritative.
+const originalStderrWrite = process.stderr.write.bind(process.stderr);
+process.stderr.write = function observabilityStderrWrite(chunk, encoding, callback) {
+  observabilityConsoleBridge.push(chunk);
+  return originalStderrWrite(chunk, encoding, callback);
+};
+
+function applyObservabilityConsoleOptions(options = {}) {
+  observabilityConsoleBridge.setEnabled(
+    resolveObservabilityConsoleEnabled(options, process.env),
+  );
+  return options;
+}
 
 const browserPanel = createBrowserPanel({
   remoteDebugPort,
@@ -1100,11 +1137,13 @@ const runtimeManager = createRuntimeManager({
   app,
   desktopRoot: path.resolve(__dirname, ".."),
   listLocalWorkspacePaths: () => workspaceStore.listLocalWorkspacePaths(),
+  onPromptLogControl: (control) => {
+    observabilityConsoleBridge.setEnabled(control?.level !== "off");
+  },
 });
 
 let runtimeDisposedForQuit = false;
 let runtimeDisposeInProgress = false;
-let runtimeBootstrapPromise = null;
 
 function showShutdownScreen() {
   const win = mainWindow;
@@ -1162,7 +1201,8 @@ function assertOpenworkServerReady(info) {
   return info;
 }
 
-async function bootRuntimeForSelectedWorkspace() {
+async function bootRuntimeForSelectedWorkspace(options = {}) {
+  applyObservabilityConsoleOptions(options);
   const list = await workspaceStore.readWorkspaceState();
   const selectedId = list.selectedId || list.activeId || list.workspaces[0]?.id || "";
   const workspace = selectedId
@@ -1188,6 +1228,8 @@ async function bootRuntimeForSelectedWorkspace() {
     engine = await runtimeManager.engineStart(workspaceRoot, {
       runtime: "direct",
       workspacePaths,
+      openworkDeveloperMode: options.openworkDeveloperMode === true,
+      openworkPromptLog: options.openworkPromptLog === true,
     });
   } catch (error) {
     const fallback = list.workspaces.find((entry) => {
@@ -1208,6 +1250,8 @@ async function bootRuntimeForSelectedWorkspace() {
     engine = await runtimeManager.engineStart(fallbackRoot, {
       runtime: "direct",
       workspacePaths: fallbackWorkspacePaths,
+      openworkDeveloperMode: options.openworkDeveloperMode === true,
+      openworkPromptLog: options.openworkPromptLog === true,
     });
     bootWorkspace = fallback;
     bootWorkspaceRoot = fallbackRoot;
@@ -1225,15 +1269,7 @@ async function bootRuntimeForSelectedWorkspace() {
   return { ok: true, skipped: false, engine, openworkServer, workspaceId: bootWorkspace.id ?? null };
 }
 
-function ensureRuntimeBootstrap() {
-  if (!runtimeBootstrapPromise) {
-    runtimeBootstrapPromise = bootRuntimeForSelectedWorkspace().catch((error) => ({
-      ok: false,
-      error: error instanceof Error ? error.message : String(error),
-    }));
-  }
-  return runtimeBootstrapPromise;
-}
+const ensureRuntimeBootstrap = createRuntimeBootstrapCoordinator(bootRuntimeForSelectedWorkspace);
 
 function resolveOpencodeConfigPath(scope, projectDir) {
   let root;
@@ -1584,14 +1620,15 @@ const desktopCommandHandlers = {
   },
   "engineStart": async (event, ...args) => {
       const projectDir = String(args[0] ?? "").trim();
-      const options = args[1] ?? {};
+      const options = applyObservabilityConsoleOptions(args[1] ?? {});
       return runtimeManager.engineStart(projectDir, options);
   },
   "prepareFreshRuntime": async (event, ...args) => {
       return runtimeManager.prepareFreshRuntime();
   },
   "runtimeBootstrap": async (event, ...args) => {
-      return ensureRuntimeBootstrap();
+      const options = applyObservabilityConsoleOptions(args[0] ?? {});
+      return ensureRuntimeBootstrap(options);
   },
   "runtimeStatus": async (event, ...args) => {
       return runtimeManager.runtimeStatus();
@@ -1600,7 +1637,8 @@ const desktopCommandHandlers = {
       return runtimeManager.engineStop();
   },
   "engineRestart": async (event, ...args) => {
-      return runtimeManager.engineRestart(args[0] ?? {});
+      const options = applyObservabilityConsoleOptions(args[0] ?? {});
+      return runtimeManager.engineRestart(options);
   },
   "engineInfo": async (event, ...args) => {
       return runtimeManager.engineInfo();
@@ -1752,7 +1790,8 @@ const desktopCommandHandlers = {
       return runtimeManager.openworkServerInfo();
   },
   "openworkServerRestart": async (event, ...args) => {
-      return runtimeManager.openworkServerRestart(args[0] ?? {});
+      const options = applyObservabilityConsoleOptions(args[0] ?? {});
+      return runtimeManager.openworkServerRestart(options);
   },
   "pickDirectory": async (event, ...args) => {
       const options = args[0] ?? {};
@@ -2223,6 +2262,15 @@ async function createMainWindow() {
       plugins: true,
     },
   });
+  observabilityRendererTarget.markLoading();
+  mainWindow.webContents.on("did-start-loading", () => {
+    observabilityRendererTarget.markLoading();
+  });
+  mainWindow.webContents.on("did-finish-load", () => {
+    observabilityRendererTarget.markReady();
+    observabilityConsoleBridge.replaySafeInitialization();
+    flushPendingDeepLinks();
+  });
   if (cachedBrandImage && bootSourceUrl) {
     await applyCachedBrandIcon(cachedBrandImage, bootSourceUrl);
   }
@@ -2243,6 +2291,7 @@ async function createMainWindow() {
 
   mainWindow.on("closed", () => {
     browserPanel.destroy();
+    observabilityRendererTarget.markLoading();
     mainWindow = null;
   });
 
@@ -2447,20 +2496,13 @@ if (!app.requestSingleInstanceLock()) {
     await uiControlServer.start().catch((error) => {
       console.warn("[ui-control] failed to start", error);
     });
-    runtimeBootstrapPromise = bootRuntimeForSelectedWorkspace().catch((error) => ({
-      ok: false,
-      error: error instanceof Error ? error.message : String(error),
-    }));
+    void ensureRuntimeBootstrap();
 
     queueDeepLinks(forwardedDeepLinks(process.argv));
     const win = await createMainWindow();
     if (process.platform === "linux") {
       await applyDesktopBootstrapBrandIcon(bootstrapConfig, applyBrandIconUrl);
     }
-    win.webContents.on("did-finish-load", () => {
-      flushPendingDeepLinks();
-    });
-
     // Initialize the packaged updater after the window is up so the user sees
     // a working app first. Renderer-owned checks pass the selected release
     // channel explicitly, avoiding stale stable-feed results for alpha users.

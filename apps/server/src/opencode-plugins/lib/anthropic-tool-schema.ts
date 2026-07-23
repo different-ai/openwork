@@ -103,12 +103,11 @@ function hasAnthropicVersionHeader(headers: RequestInit["headers"]): boolean {
   return Object.keys(headers).some((name) => name.toLowerCase() === "anthropic-version");
 }
 
-let installed = false;
+const patchedFetches = new WeakSet<typeof fetch>();
 
-function installAnthropicFetchPatch(): void {
-  if (installed) return;
-  installed = true;
+export function installAnthropicToolSchemaFetchPatch(): void {
   const base = globalThis.fetch;
+  if (patchedFetches.has(base)) return;
   const patched = async (input: Parameters<typeof fetch>[0], init?: RequestInit): Promise<Response> => {
     if (init && typeof init.body === "string" && hasAnthropicVersionHeader(init.headers)) {
       const sanitized = sanitizeAnthropicBody(init.body);
@@ -116,12 +115,12 @@ function installAnthropicFetchPatch(): void {
     }
     return base(input, init);
   };
-  globalThis.fetch = Object.assign(patched, base);
+  const assigned = Object.assign(patched, base);
+  patchedFetches.add(assigned);
+  globalThis.fetch = assigned;
 }
 
-// Single export: the OpenCode plugin loader treats every export of a plugin
-// module as a plugin factory, so helpers must stay module-private.
-export const OpenWorkAnthropicToolSchema = async () => {
-  installAnthropicFetchPatch();
+export async function createAnthropicToolSchemaHooks() {
+  installAnthropicToolSchemaFetchPatch();
   return {};
-};
+}

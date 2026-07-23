@@ -17,7 +17,7 @@ export type PluginsExtensionsStore = {
   pluginConfig: () => { path?: string | null } | null;
   pluginList: () => Array<{
     name: string;
-    source: "config" | "dir.project" | "dir.global";
+    source: "core" | "config" | "dir.project" | "dir.global";
     removable: boolean;
   }>;
   pluginInput: () => string;
@@ -254,9 +254,11 @@ export function PluginsView(props: PluginsViewProps) {
                   </div>
                   {!plugin.removable ? (
                     <div className="mt-1 text-xs text-gray-10">
-                      {plugin.source === "dir.global"
-                        ? "Discovered from a global plugin folder."
-                        : "Discovered from the workspace plugin folder."}
+                      {plugin.source === "core"
+                        ? "Managed by OpenWork."
+                        : plugin.source === "dir.global"
+                          ? "Discovered from a global plugin folder."
+                          : "Discovered from the workspace plugin folder."}
                     </div>
                   ) : null}
                 </div>

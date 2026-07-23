@@ -15,13 +15,7 @@
 import { mkdir, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import {
-  openworkExtensionsPreviewPluginPath,
-  openworkCapabilitiesKnowledgePluginPath,
-  openworkAnthropicAdaptiveThinkingPluginPath,
-  openworkAnthropicToolSchemaPluginPath,
-  openworkOfficeAttachmentsPluginPath,
-} from "./openwork-extensions-plugin-path.js";
+import { buildOpenworkPluginSpecs } from "./openwork-core-plugin-specs.js";
 import type { ServerConfig } from "./types.js";
 import { runtimeStorageDir } from "./runtime-db.js";
 import {
@@ -107,15 +101,10 @@ export function buildOpenworkRuntimeConfigObjectFromSnapshot(
         prompt: OPENWORK_AGENT_PROMPT,
       },
     },
-    plugin: [
-      "opencode-chrome-devtools",
-      openworkExtensionsPreviewPluginPath(),
-      openworkCapabilitiesKnowledgePluginPath(),
-      openworkOfficeAttachmentsPluginPath(),
-      openworkAnthropicAdaptiveThinkingPluginPath(),
-      openworkAnthropicToolSchemaPluginPath(),
-      ...runtimePluginList(runtimeConfig),
-    ],
+    // Keep the observer last among OpenWork-managed entries for readability.
+    // Its chat.params snapshot retains the live array and does not depend on
+    // being the final effective project/account plugin.
+    plugin: buildOpenworkPluginSpecs(runtimePluginList(runtimeConfig)),
     ...(disabledProviders.length ? { disabled_providers: disabledProviders } : {}),
     mcp: runtimeMcpMap(runtimeConfig),
   };
@@ -152,18 +141,77 @@ export function openworkRuntimeConfigFilePath(config: ServerConfig): string {
 // job reads the latest runtime-DB state.
 const fileWriteQueue = new Map<string, Promise<void>>();
 
+export type RuntimeConfigWriteLogger = {
+  log: (
+    level: "info" | "warn" | "error",
+    message: string,
+    attributes?: Record<string, unknown>,
+  ) => void;
+};
+
+export type RuntimeConfigWriteFailure = {
+  failedAt: number;
+  attemptCount: number;
+};
+
+type RuntimeConfigFreshnessDependencies = {
+  writeRuntimeConfigFile?: typeof writeOpenworkRuntimeConfigFile;
+  writeFile?: (path: string, content: string, encoding: "utf8") => Promise<void>;
+  sleep?: (delayMs: number) => Promise<void>;
+  now?: () => number;
+};
+
+type RuntimeConfigFileDependencies = {
+  writeFile?: (path: string, content: string, encoding: "utf8") => Promise<void>;
+};
+
+const RUNTIME_CONFIG_WRITE_RETRY_DELAY_MS = 1_000;
+const lastRuntimeConfigWriteFailure = new WeakMap<
+  ServerConfig,
+  Map<string, RuntimeConfigWriteFailure>
+>();
+
+function recordRuntimeConfigWriteFailure(
+  config: ServerConfig,
+  workspaceId: string,
+  failure: RuntimeConfigWriteFailure,
+): void {
+  const failures = lastRuntimeConfigWriteFailure.get(config) ?? new Map<string, RuntimeConfigWriteFailure>();
+  failures.set(workspaceId, failure);
+  lastRuntimeConfigWriteFailure.set(config, failures);
+}
+
+function clearRuntimeConfigWriteFailure(config: ServerConfig, workspaceId: string): void {
+  const failures = lastRuntimeConfigWriteFailure.get(config);
+  failures?.delete(workspaceId);
+  if (failures?.size === 0) lastRuntimeConfigWriteFailure.delete(config);
+}
+
+export function inspectLastRuntimeConfigWriteFailure(
+  config: ServerConfig,
+  workspaceId: string,
+): RuntimeConfigWriteFailure | null {
+  const failure = lastRuntimeConfigWriteFailure.get(config)?.get(workspaceId);
+  return failure ? { ...failure } : null;
+}
+
 /**
  * Rebuild the engine-visible runtime config file from the runtime DB.
  * Atomic (temp file + rename) so the engine never reads a partial file
  * mid-dispose.
  */
-export async function writeOpenworkRuntimeConfigFile(config: ServerConfig, workspaceId: string): Promise<string> {
+export async function writeOpenworkRuntimeConfigFile(
+  config: ServerConfig,
+  workspaceId: string,
+  dependencies: RuntimeConfigFileDependencies = {},
+): Promise<string> {
   const path = openworkRuntimeConfigFilePath(config);
+  const writeConfigFile = dependencies.writeFile ?? writeFile;
   const job = async () => {
     const content = await buildOpenworkRuntimeConfig(config, workspaceId);
     await mkdir(runtimeStorageDir(config), { recursive: true });
     const tmp = `${path}.${randomUUID()}.tmp`;
-    await writeFile(tmp, content, "utf8");
+    await writeConfigFile(tmp, content, "utf8");
     await rename(tmp, path);
   };
   const previous = fileWriteQueue.get(path) ?? Promise.resolve();
@@ -178,9 +226,79 @@ export async function writeOpenworkRuntimeConfigFile(config: ServerConfig, works
  * instance rebuild reads fresh state instead of a spawn-time snapshot.
  * Returns an unsubscribe function.
  */
-export function keepOpenworkRuntimeConfigFileFresh(config: ServerConfig, workspaceId: string): () => void {
+export function keepOpenworkRuntimeConfigFileFresh(
+  config: ServerConfig,
+  workspaceId: string,
+  logger: RuntimeConfigWriteLogger,
+  dependencies: RuntimeConfigFreshnessDependencies = {},
+): () => void {
+  const runtimeConfigPath = openworkRuntimeConfigFilePath(config);
+  const writeRuntimeConfigFile = dependencies.writeRuntimeConfigFile
+    ?? ((writeConfig: ServerConfig, writtenWorkspaceId: string) =>
+      writeOpenworkRuntimeConfigFile(writeConfig, writtenWorkspaceId, {
+        writeFile: dependencies.writeFile,
+      }));
+  const sleep = dependencies.sleep ?? ((delayMs: number) =>
+    new Promise<void>((resolve) => setTimeout(resolve, delayMs)));
+  const now = dependencies.now ?? Date.now;
+  let refreshQueue = Promise.resolve();
+
+  const refresh = async (writeConfig: ServerConfig) => {
+    const recovering = inspectLastRuntimeConfigWriteFailure(config, workspaceId) !== null;
+    try {
+      await writeRuntimeConfigFile(writeConfig, workspaceId);
+      clearRuntimeConfigWriteFailure(config, workspaceId);
+      if (recovering) {
+        logger.log("info", "Runtime OpenCode configuration write recovered on a later update.", {
+          "event.name": "runtime_config_write",
+          "workspace.id": workspaceId,
+          attempt: 1,
+        });
+      }
+      return;
+    } catch {
+      recordRuntimeConfigWriteFailure(config, workspaceId, {
+        failedAt: now(),
+        attemptCount: 1,
+      });
+      logger.log("warn", "Runtime OpenCode configuration write failed; retrying once.", {
+        "event.name": "runtime_config_write",
+        "workspace.id": workspaceId,
+        attempt: 1,
+        "retry.delay_ms": RUNTIME_CONFIG_WRITE_RETRY_DELAY_MS,
+      });
+    }
+
+    await sleep(RUNTIME_CONFIG_WRITE_RETRY_DELAY_MS);
+    try {
+      await writeRuntimeConfigFile(writeConfig, workspaceId);
+      clearRuntimeConfigWriteFailure(config, workspaceId);
+      logger.log("info", "Runtime OpenCode configuration write recovered after retry.", {
+        "event.name": "runtime_config_write",
+        "workspace.id": workspaceId,
+        attempt: 2,
+      });
+    } catch {
+      recordRuntimeConfigWriteFailure(config, workspaceId, {
+        failedAt: now(),
+        attemptCount: 2,
+      });
+      logger.log("error", "Runtime OpenCode configuration write failed after retry.", {
+        "event.name": "runtime_config_write",
+        "workspace.id": workspaceId,
+        attempt: 2,
+      });
+    }
+  };
+
   return onRuntimeOpencodeConfigWrite((writeConfig, writtenWorkspaceId) => {
-    if (writtenWorkspaceId !== workspaceId) return;
-    void writeOpenworkRuntimeConfigFile(writeConfig, workspaceId).catch(() => undefined);
+    if (
+      writtenWorkspaceId !== workspaceId
+      || openworkRuntimeConfigFilePath(writeConfig) !== runtimeConfigPath
+    ) return;
+    refreshQueue = refreshQueue.then(
+      () => refresh(writeConfig),
+      () => refresh(writeConfig),
+    );
   });
 }

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 
 import {
   composeOpenWorkExtensionDiscoveryInstruction,
@@ -7,11 +7,10 @@ import {
   OPENWORK_CONNECT_DISABLED_INSTRUCTION,
   OPENWORK_CONNECT_SIGN_IN_INSTRUCTION,
   OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION,
-  resetOpenWorkExtensionDiscoveryInstructionCacheForTests,
   resolveOpenWorkExtensionDiscoveryInstruction,
   type OpenWorkEngineMcpStatusClient,
   type OpenWorkExtensionConnectState,
-} from "./openwork-extensions-preview-steering.js";
+} from "./lib/connect-steering.js";
 
 type CloudHealth = NonNullable<OpenWorkExtensionConnectState["cloudHealth"]>;
 type CloudFailure = NonNullable<CloudHealth["firstFailure"]>;
@@ -22,12 +21,7 @@ const originalServerToken = process.env.OPENWORK_SERVER_TOKEN;
 const UNCHANGED_EXTENSION_DISCOVERY_INSTRUCTION =
   "If the user asks for something you cannot do with obvious built-in tools, check OpenWork extensions before saying the capability is unavailable. Use openwork_extension_list_actions to inspect available extension actions, then call the matching action with openwork_extension_call.";
 
-beforeEach(() => {
-  resetOpenWorkExtensionDiscoveryInstructionCacheForTests();
-});
-
 afterEach(() => {
-  resetOpenWorkExtensionDiscoveryInstructionCacheForTests();
   if (originalServerUrl === undefined) delete process.env.OPENWORK_SERVER_URL;
   else process.env.OPENWORK_SERVER_URL = originalServerUrl;
   if (originalServerToken === undefined) delete process.env.OPENWORK_SERVER_TOKEN;
@@ -294,7 +288,7 @@ describe("composeOpenWorkExtensionDiscoveryInstruction", () => {
 });
 
 describe("resolveOpenWorkExtensionDiscoveryInstruction", () => {
-  test("uses engine connected status without fetching server connect state", async () => {
+  test("uses engine connected status without consulting contradictory bundle steering", async () => {
     const requests: unknown[] = [];
     const client = engineMcpClient({ data: { "openwork-cloud": { status: "connected" } } }, requests);
     let serverFetchCalls = 0;
@@ -307,6 +301,11 @@ describe("resolveOpenWorkExtensionDiscoveryInstruction", () => {
       { context: { directory: "/tmp/ws_1" } },
       serverFetch,
       { client, directory: "/tmp/factory" },
+      state(health({
+        usable: false,
+        phase: "engine_disabled",
+        firstFailure: failure("cloud_mcp_disabled"),
+      })),
     );
 
     expect(instruction).toBe(OPENWORK_CLOUD_CONNECTION_INSTRUCTION);
@@ -326,7 +325,7 @@ describe("resolveOpenWorkExtensionDiscoveryInstruction", () => {
     expect(serverFetchCalls).toBe(0);
   });
 
-  test("fails open without server fetch when engine status lookup errors", async () => {
+  test("fails open without consulting ready bundle steering when engine status lookup errors", async () => {
     const client: OpenWorkEngineMcpStatusClient = {
       mcp: {
         status: async () => {
@@ -340,7 +339,7 @@ describe("resolveOpenWorkExtensionDiscoveryInstruction", () => {
       return Response.json({ message: "unexpected" }, { status: 500 });
     };
 
-    expect(await resolveOpenWorkExtensionDiscoveryInstruction({}, serverFetch, { client })).toBe(UNCHANGED_EXTENSION_DISCOVERY_INSTRUCTION);
+    expect(await resolveOpenWorkExtensionDiscoveryInstruction({}, serverFetch, { client }, state(health()))).toBe(UNCHANGED_EXTENSION_DISCOVERY_INSTRUCTION);
     expect(serverFetchCalls).toBe(0);
   });
 
@@ -377,6 +376,23 @@ describe("resolveOpenWorkExtensionDiscoveryInstruction", () => {
 
     expect(await resolveOpenWorkExtensionDiscoveryInstruction({ context: { directory: "/tmp/ws_1" } }, serverFetch, { client })).toBe(OPENWORK_CLOUD_CONNECTION_INSTRUCTION);
     expect(serverFetchCalls).toBe(1);
+  });
+
+  test("uses bundle steering when the engine has no openwork-cloud entry", async () => {
+    const client = engineMcpClient({ data: { other: { status: "connected" } } });
+    let serverFetchCalls = 0;
+    const serverFetch = async (): Promise<Response> => {
+      serverFetchCalls += 1;
+      return Response.json({ message: "unexpected" }, { status: 500 });
+    };
+
+    expect(await resolveOpenWorkExtensionDiscoveryInstruction(
+      { context: { directory: "/tmp/ws_1" } },
+      serverFetch,
+      { client },
+      state(health()),
+    )).toBe(OPENWORK_CLOUD_CONNECTION_INSTRUCTION);
+    expect(serverFetchCalls).toBe(0);
   });
 
   test("fetches verified health for the current directory/model without caching stale failures", async () => {

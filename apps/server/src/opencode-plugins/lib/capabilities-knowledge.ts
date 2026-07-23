@@ -17,9 +17,7 @@ import { z } from "zod";
  * - Voice mode, browser, skills, automations
  */
 
-const OPENWORK_CAPABILITIES_KNOWLEDGE = `You are running inside OpenWork, a desktop app for agentic work.
-
-CRITICAL: To navigate or control the OpenWork app (open settings, add providers, etc.), use the openwork_ui_execute_action tool, NOT browser tools. For example, to open settings: openwork_ui_execute_action({actionId:"settings.panel.open", args:{panel:"general"}}).
+export const OPENWORK_CAPABILITIES_KNOWLEDGE = `You are running inside OpenWork, a desktop app for agentic work.
 
 For OpenWork product questions, use openwork_docs_search and openwork_docs_read as the first source of truth. OpenWork documentation tools answer product questions. Never use them as a substitute for performing an action against ServiceNow, Slack, Notion, Linear, Google Workspace, a marketplace, or another connected service. Read and summarize relevant docs before answering. Cite the docs path when it helps the user verify or continue. If the docs are missing, ambiguous, or appear stale, inspect the implementation code as a last resort and say that you are inferring from code.
 
@@ -49,7 +47,7 @@ Here is what you can help users with:
 ## Fixing Authorized Folders
 - Go to Settings > Permissions to manage which folders OpenWork can access.
 - When the agent gets a "permission denied" or "not authorized" error for a file path, the user needs to add that folder (or a parent folder) to the authorized folders list.
-- The agent can navigate there: use the UI control action \`settings.panel.open\` with \`{panel: "permissions"}\`.
+- Direct the user to Settings > Permissions to make the change.
 
 ## Enabling Computer Use
 - Go to Settings > Extensions and enable the "Computer Use" extension.
@@ -81,11 +79,7 @@ Here is what you can help users with:
 - The browser panel is visible on the right side of the session view.
 
 ## Cross-chat Session Memory
-- Two sources of cross-chat memory: (1) the durable Memory Bank — a per-user store the user can explicitly save facts to and recall when runtime steering verifies OpenWork Cloud is ready (see the "Memory Bank" section of the system prompt); and (2) saved OpenWork session history, exposed through OpenWork UI actions below.
-- To save or recall a durable fact the user wants remembered across sessions, use the Memory Bank capability only when runtime steering verifies OpenWork Cloud is ready — never a local file.
-- If the user asks what they said, what happened, or what was decided in another OpenWork session, use the UI control actions: list sessions, open the matching session, then read the transcript.
-- Match sessions by ID, title, workspace, or topic words. Ask a short clarifying question if multiple sessions match.
-- Answer only from the returned transcript. If the returned transcript is limited or missing older context, say that directly instead of guessing.
+- For durable facts, follow the canonical \`## Memory Bank\` section in the OpenWork agent prompt when runtime steering verifies OpenWork Cloud is ready; saved OpenWork session history follows the separately injected cross-session-memory guidance.
 
 ## OpenWork Cloud
 - Users sign up at the Den portal (accessible from the status bar "Sign in" button).
@@ -93,10 +87,9 @@ Here is what you can help users with:
 - Organization owners and admins can use desktop policies to control desktop app capabilities for the whole org, specific members, or teams. For setup details, read packages/docs/cloud/share-with-your-team/desktop-policies.mdx.
 - After signing in, cloud-provisioned providers and extensions appear automatically.
 
-## Skills
-- Specialized instruction packs for specific workflows.
-- Manageable via Settings > Skills.
-- Users can install skill templates or create custom skills in \`.opencode/skills/\`.
+## Local Skills
+- Local skills are specialized instruction packs installed in \`.opencode/skills/\`; install templates or create custom skills there, and manage them in Settings > Skills.
+- This section applies only to local skills. For remote OpenWork Connect skills, defer to the separate \`<available_skills>\` block when it is present.
 
 ## Packaging & Publishing Skills and MCPs
 - Some skills and MCP servers are managed by OpenWork at runtime (stored server-side and injected into the engine config), so they are not visible as plain workspace files. Do not try to read the OPENCODE_CONFIG file or runtime database directly.
@@ -130,15 +123,21 @@ type DocsEntry = {
 
 let docsCache: Promise<DocsEntry[]> | null = null;
 
-function docsCandidates(): string[] {
-  const here = dirname(fileURLToPath(import.meta.url));
-  return [
-    process.env.OPENWORK_DOCS_DIR?.trim() ?? "",
+export function docsCandidates(
+  here = dirname(fileURLToPath(import.meta.url)),
+  configuredDocsDir = process.env.OPENWORK_DOCS_DIR?.trim() ?? "",
+): string[] {
+  return [...new Set([
+    configuredDocsDir,
+    // Bundled plugins live beside Electron's extraResources/openwork-docs.
     join(here, "..", "openwork-docs"),
+    // Source execution adds one lib/ directory; retain both source layouts.
     join(here, "..", "..", "openwork-docs"),
+    join(here, "..", "..", "..", "openwork-docs"),
     resolve(here, "..", "..", "..", "..", "packages", "docs"),
     resolve(here, "..", "..", "..", "..", "..", "packages", "docs"),
-  ].filter(Boolean);
+    resolve(here, "..", "..", "..", "..", "..", "..", "packages", "docs"),
+  ].filter(Boolean))];
 }
 
 async function existingDocsDir(): Promise<string | null> {
@@ -227,10 +226,8 @@ function excerpt(content: string, query: string): string {
   return content.slice(from, from + 500).replace(/\s+/g, " ").trim();
 }
 
-export const OpenWorkCapabilitiesKnowledge = async () => ({
-  "experimental.chat.system.transform": async (_input: unknown, output: { system: string[] }) => {
-    output.system.push(OPENWORK_CAPABILITIES_KNOWLEDGE);
-  },
+export function createOpenWorkCapabilitiesHooks() {
+  return {
   tool: {
     openwork_docs_search: {
       description: "Search the bundled OpenWork documentation. Use this first for OpenWork product questions before inspecting implementation code.",
@@ -266,4 +263,5 @@ export const OpenWorkCapabilitiesKnowledge = async () => ({
       },
     },
   },
-});
+  };
+}

@@ -670,7 +670,7 @@ export function AgentContextDiagnosticsReportView(props: {
             <div className="text-sm font-semibold text-dls-text">{t("connect.diagnostics_plugin_tools_title")}</div>
             <div className="text-xs text-dls-secondary">{t("connect.diagnostics_plugin_tools_description")}</div>
           </div>
-          <div data-testid="agent-diagnostics-plugin-tools-unavailable">
+          <div data-testid="agent-diagnostics-registry-tools-scope">
             <SettingsNotice>{t("connect.diagnostics_plugin_tools_empty")}</SettingsNotice>
           </div>
         </div>

@@ -86,7 +86,7 @@ function healthyReport(): AgentContextDiagnosticsReport {
           deniedRelevantToolCount: null,
         },
       },
-      pluginLabels: ["openwork-extensions-preview", "openwork-capabilities-knowledge"],
+      pluginLabels: ["openwork-context"],
     },
     mcps: [
       {
@@ -171,7 +171,7 @@ describe("AgentContextDiagnosticsReportView", () => {
     expect(html).toContain("Expected");
     expect(html).toContain("Client observed");
     expect(html).toContain("Observed");
-    expect(html).toContain("openwork-extensions-preview");
+    expect(html).toContain("openwork-context");
     expect(html).toContain("config.remote");
     expect(html).toContain("Registration record: Connected");
     expect(html).toContain("Configured default-agent intent");
@@ -179,7 +179,7 @@ describe("AgentContextDiagnosticsReportView", () => {
     expect(html).toContain("Configured enabled");
     expect(html).toContain("Configured headers present · values redacted");
     expect(html).toContain("Live connection status not queried");
-    expect(html).toContain("No LLM turn is started");
+    expect(html).toContain("Only registry-declared OpenWork tool IDs are retained");
     expect(html).toContain("/mcp/agent");
     expect(html).not.toContain("/wrong-layer/mcp/agent");
     expect(html).toContain("search_capabilities");
@@ -197,7 +197,7 @@ describe("AgentContextDiagnosticsReportView", () => {
     expect(html).toContain('data-marker-value="true"');
     expect(html).toContain('data-testid="agent-diagnostics-cloud-endpoint"');
     expect(html).toContain('data-testid="agent-diagnostics-mcp-sync"');
-    expect(html).toContain('data-testid="agent-diagnostics-plugin-tools-unavailable"');
+    expect(html).toContain('data-testid="agent-diagnostics-registry-tools-scope"');
     expect(html).not.toContain("Settings Connect marker");
     expect(html.match(/data-testid="agent-diagnostics-check"/g)).toHaveLength(
       AGENT_CONTEXT_DIAGNOSTIC_CHECK_IDS.length,

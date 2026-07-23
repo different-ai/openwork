@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { OpenWorkAnthropicToolSchema } from "./openwork-anthropic-tool-schema.js";
+import { installAnthropicToolSchemaFetchPatch } from "./lib/anthropic-tool-schema.js";
 
 const calls: { input: Parameters<typeof fetch>[0]; init?: RequestInit }[] = [];
 const fakeBase = Object.assign(
@@ -13,9 +13,9 @@ const fakeBase = Object.assign(
 const originalFetch = globalThis.fetch;
 let patchedFetch: typeof fetch;
 
-beforeAll(async () => {
+beforeAll(() => {
   globalThis.fetch = fakeBase;
-  await OpenWorkAnthropicToolSchema();
+  installAnthropicToolSchemaFetchPatch();
   patchedFetch = globalThis.fetch;
   globalThis.fetch = originalFetch;
 });
@@ -57,7 +57,7 @@ async function send(body: unknown, headers: Record<string, string> = ANTHROPIC_H
   return JSON.parse(sent);
 }
 
-describe("OpenWorkAnthropicToolSchema fetch patch", () => {
+describe("OpenWorkContext Anthropic tool-schema fetch patch", () => {
   test("flattens a top-level anyOf into a plain object schema", async () => {
     const body = await send({
       model: "claude-fable-5",
@@ -116,10 +116,5 @@ describe("OpenWorkAnthropicToolSchema fetch patch", () => {
       body: "input_schema not json",
     });
     expect(calls[0]?.init?.body).toBe("input_schema not json");
-  });
-
-  test("module exposes only the plugin factory", async () => {
-    const mod = await import("./openwork-anthropic-tool-schema.js");
-    expect(Object.keys(mod)).toEqual(["OpenWorkAnthropicToolSchema"]);
   });
 });

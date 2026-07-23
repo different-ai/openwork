@@ -9,6 +9,16 @@ import {
 } from "../connect-state.js";
 import type { CloudMcpLiveStatusObserver } from "../cloud-mcp-health.js";
 import { readOpenWorkConnectSkillCatalog, renderOpenWorkConnectSkillInstruction } from "../connect-skill-catalog.js";
+import { buildOpenWorkContextBundle } from "../context/context-bundle.js";
+import {
+  logPromptDebug,
+  normalizePromptTraceId,
+} from "../opencode-plugins/openwork-debug-log.js";
+import {
+  describeContextRegistry,
+  evaluateContextRegistryGates,
+} from "../opencode-plugins/lib/context-registry.js";
+import { OPENWORK_CONTEXT_REGISTRY } from "../opencode-plugins/lib/openwork-context-contributors.js";
 import { EnvStoreReadError, InvalidEnvKeyError, isValidEnvKey, type EnvService } from "../env-file.js";
 import { ApiError } from "../errors.js";
 import {
@@ -62,6 +72,7 @@ interface RegisterCoreRoutesOptions {
   resolveToyUiEnabled: () => boolean;
   resolveDevLogPath: () => string | null;
   createOpenAiRealtimeVoiceSession: (env: EnvService, input: unknown) => Promise<unknown>;
+  promptDebugEnv: NodeJS.ProcessEnv;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -120,6 +131,7 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
     resolveToyUiEnabled,
     resolveDevLogPath,
     createOpenAiRealtimeVoiceSession,
+    promptDebugEnv,
   } = options;
   const googleWorkspaceConnectFlows = createGoogleWorkspaceConnectFlowManager(config);
   const envPendingChangesByRuntime = new Map<string, boolean>();
@@ -315,6 +327,20 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
     return jsonResponse(buildCapabilities(config));
   });
 
+  addRoute(routes, "GET", "/experimental/context/registry", "client", async () => {
+    const response = jsonResponse({
+      ok: true,
+      schemaVersion: 1,
+      contributors: describeContextRegistry(OPENWORK_CONTEXT_REGISTRY),
+      gates: evaluateContextRegistryGates(OPENWORK_CONTEXT_REGISTRY, {
+        env: { ...process.env },
+        factoryContext: {},
+      }),
+    });
+    response.headers.set("Cache-Control", "no-store");
+    return response;
+  });
+
   addRoute(routes, "GET", "/experimental/connect/state", "client", async (ctx) => {
     return jsonResponse({
       ok: true,
@@ -323,15 +349,45 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
     });
   });
 
-  addRoute(routes, "GET", "/experimental/connect/skills", "client", async (_ctx) => {
-    // Connect skills are server/account-scoped (openwork-cloud on the host), not per-workspace.
-    const skills = await readOpenWorkConnectSkillCatalog(config);
-    return jsonResponse({
+  addRoute(routes, "GET", "/experimental/connect/context", "client", async (ctx) => {
+    const trace = normalizePromptTraceId(ctx.request.headers.get("x-openwork-prompt-trace")) ?? "direct";
+    const requestedSteering = ctx.url.searchParams.get("steering");
+    const bundle = await buildOpenWorkContextBundle(config, {
+      ...connectSnapshotBaseOptions,
+      ...connectSnapshotOptionsFromQuery(ctx.url),
+      steeringMode: requestedSteering === "active"
+        ? "active"
+        : requestedSteering === "omit"
+          ? "omit"
+          : "passive",
+    });
+    for (const message of bundle.diagnostics) {
+      logPromptDebug("connect-context", `trace=${trace} ${message}`, promptDebugEnv);
+    }
+    const response = jsonResponse(bundle);
+    response.headers.set("Cache-Control", "no-store");
+    return response;
+  });
+
+  addRoute(routes, "GET", "/experimental/connect/skills", "client", async (ctx) => {
+    const trace = normalizePromptTraceId(ctx.request.headers.get("x-openwork-prompt-trace")) ?? "direct";
+    const diagnostics: string[] = [];
+    const diag = (message: string) => {
+      diagnostics.push(message);
+      logPromptDebug("connect-skills", `trace=${trace} ${message}`, promptDebugEnv);
+    };
+    const skills = await readOpenWorkConnectSkillCatalog(config, undefined, diag);
+    const instruction = renderOpenWorkConnectSkillInstruction(skills, diag);
+    diag(`response: ${skills.length} skills, instruction ${instruction.length} chars`);
+    const response = jsonResponse({
       ok: true,
       schemaVersion: 1,
       skills,
-      instruction: renderOpenWorkConnectSkillInstruction(skills),
+      instruction,
+      diagnostics,
     });
+    response.headers.set("Cache-Control", "no-store");
+    return response;
   });
 
   addRoute(routes, "PUT", "/experimental/connect/state", "host", async (ctx) => {

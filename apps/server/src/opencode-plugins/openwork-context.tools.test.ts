@@ -1,9 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { z } from "zod";
 
-import { OpenWorkExtensionsPreview } from "./openwork-extensions-preview.js";
-import * as OpenWorkExtensionsPreviewEntry from "./openwork-extensions-preview.js";
-import { OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION } from "./openwork-extensions-preview-steering.js";
+import { OpenWorkContext } from "./openwork-context.js";
+import { OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION } from "./lib/connect-steering.js";
 
 const originalServerUrl = process.env.OPENWORK_SERVER_URL;
 const originalServerToken = process.env.OPENWORK_SERVER_TOKEN;
@@ -58,10 +57,27 @@ afterEach(() => {
   else process.env.OPENWORK_UI_CONTROL_TOOLS = originalUiControlTools;
 });
 
-async function transformedSystem(plugin: Awaited<ReturnType<typeof OpenWorkExtensionsPreview>>): Promise<string> {
+async function transformedSystem(plugin: Awaited<ReturnType<typeof OpenWorkContext>>): Promise<string> {
   const output: { system: string[] } = { system: [] };
-  await plugin["experimental.chat.system.transform"]({}, output);
+  const transform = plugin["experimental.chat.system.transform"];
+  if (!transform) throw new Error("Consolidated context system transform is missing");
+  await transform({}, output);
   return output.system.join("\n");
+}
+
+async function executeTool(
+  plugin: Awaited<ReturnType<typeof OpenWorkContext>>,
+  name: string,
+  args: unknown,
+  context?: unknown,
+): Promise<string> {
+  const execute = plugin.tool?.[name]?.execute;
+  if (typeof execute !== "function") throw new Error(`Consolidated context tool ${name} is missing`);
+  const result: unknown = context === undefined
+    ? await execute(args)
+    : await execute(args, context);
+  if (typeof result !== "string") throw new Error(`Consolidated context tool ${name} returned a non-string result`);
+  return result;
 }
 
 function startFakeOpenWorkServer() {
@@ -91,32 +107,32 @@ function startFakeOpenWorkServer() {
         return Response.json({ message: "Unauthorized" }, { status: 401 });
       }
 
-      if (url.pathname === "/experimental/connect/state") {
+      if (url.pathname === "/experimental/connect/context") {
+        const passive = url.searchParams.get("steering") === "passive";
         return Response.json({
           ok: true,
           schemaVersion: 1,
-          connectEnabled: true,
-          connectCatalogEnabled: true,
-          cloudMcpPresent: true,
-          cloudHealth: {
-            usable: true,
-            usableByCurrentModel: true,
-            phase: "ready",
-            workspace: { id: "ws_2", directory: "/tmp/archive" },
-            desired: { present: true, revision: "rev_ready" },
-            firstFailure: null,
+          steering: {
+            connectEnabled: true,
+            connectCatalogEnabled: true,
+            cloudMcpPresent: true,
+            cloudHealth: passive ? null : {
+              usable: true,
+              usableByCurrentModel: true,
+              phase: "ready",
+              workspace: { id: "ws_2", directory: "/tmp/archive" },
+              desired: { present: true, revision: "rev_ready" },
+              firstFailure: null,
+            },
+            workspace: { resolution: "resolved", id: "ws_2", directory: "/tmp/archive" },
+            googleWorkspace: { legacyConfigured: false },
           },
-          workspace: { resolution: "resolved", id: "ws_2", directory: "/tmp/archive" },
-          googleWorkspace: { legacyConfigured: false },
-        });
-      }
-
-      if (url.pathname === "/experimental/connect/skills") {
-        return Response.json({
-          ok: true,
-          schemaVersion: 1,
-          skills: [],
-          instruction: "<available_skills><skill><name>customer-briefing</name></skill></available_skills>",
+          skills: {
+            count: 1,
+            instruction: "<available_skills><skill><name>customer-briefing</name></skill></available_skills>",
+          },
+          diagnostics: [],
+          generatedAt: 1,
         });
       }
 
@@ -187,16 +203,12 @@ function startFakeOpenWorkServer() {
   return { requests };
 }
 
-describe("OpenWorkExtensionsPreview session tools", () => {
-  test("plugin entry exposes only the factory export for the OpenCode loader", () => {
-    expect(Object.keys(OpenWorkExtensionsPreviewEntry)).toEqual(["OpenWorkExtensionsPreview"]);
-  });
-
+describe("OpenWorkContext session tools", () => {
   test("searches past chat transcript text and prefers the user's matching message", async () => {
     const fake = startFakeOpenWorkServer();
-    const plugin = await OpenWorkExtensionsPreview();
+    const plugin = await OpenWorkContext();
 
-    const output = await plugin.tool.openwork_session_search.execute({
+    const output = await executeTool(plugin, "openwork_session_search", {
       query: "raven launch",
       limit: 5,
       scanLimit: 10,
@@ -216,19 +228,21 @@ describe("OpenWorkExtensionsPreview session tools", () => {
 
   test("merges factory directory into transform steering when hook input omits it", async () => {
     const fake = startFakeOpenWorkServer();
-    const plugin = await OpenWorkExtensionsPreview({ directory: "/tmp/archive" });
+    const plugin = await OpenWorkContext({ directory: "/tmp/archive" });
     const output: { system: string[] } = { system: [] };
 
-    await plugin["experimental.chat.system.transform"]({
+    const transform = plugin["experimental.chat.system.transform"];
+    if (!transform) throw new Error("Consolidated context system transform is missing");
+    await transform({
       context: { sessionID: "ses_factory" },
       model: { providerID: "anthropic", modelID: "claude-sonnet-4" },
     }, output);
 
-    const connectStateRequest = fake.requests.find((request) => request.pathname === "/experimental/connect/state");
-    const connectSkillsRequest = fake.requests.find((request) => request.pathname === "/experimental/connect/skills");
-    expect(connectStateRequest?.search).toBe("?directory=%2Ftmp%2Farchive&provider=anthropic&model=claude-sonnet-4");
-    expect(connectSkillsRequest?.search).toBe("");
-    expect(output.system.join("\n")).toContain("verified ready for this exact workspace/model");
+    const connectContextRequests = fake.requests.filter((request) => request.pathname === "/experimental/connect/context");
+    expect(connectContextRequests).toHaveLength(1);
+    expect(connectContextRequests[0]?.search).toBe("?directory=%2Ftmp%2Farchive&steering=passive");
+    expect(output.system[0]).toBe(OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION);
+    expect(fake.requests.some((request) => request.pathname === "/experimental/connect/state")).toBe(false);
     expect(output.system.join("\n")).toContain("<name>customer-briefing</name>");
   });
 
@@ -241,10 +255,12 @@ describe("OpenWorkExtensionsPreview session tools", () => {
         return this.result;
       },
     };
-    const plugin = await OpenWorkExtensionsPreview({ client: { mcp }, directory: "/tmp/archive" });
+    const plugin = await OpenWorkContext({ client: { mcp }, directory: "/tmp/archive" });
     const output: { system: string[] } = { system: [] };
 
-    await plugin["experimental.chat.system.transform"]({}, output);
+    const transform = plugin["experimental.chat.system.transform"];
+    if (!transform) throw new Error("Consolidated context system transform is missing");
+    await transform({}, output);
 
     expect(requests).toEqual([{ query: { directory: "/tmp/archive" } }]);
     expect(output.system.join("\n")).toContain("verified ready for this exact workspace/model");
@@ -259,10 +275,12 @@ describe("OpenWorkExtensionsPreview session tools", () => {
         return this.result;
       },
     };
-    const plugin = await OpenWorkExtensionsPreview({ client: { mcp }, directory: "/tmp/archive" });
+    const plugin = await OpenWorkContext({ client: { mcp }, directory: "/tmp/archive" });
     const output: { system: string[] } = { system: [] };
 
-    await plugin["experimental.chat.system.transform"]({}, output);
+    const transform = plugin["experimental.chat.system.transform"];
+    if (!transform) throw new Error("Consolidated context system transform is missing");
+    await transform({}, output);
 
     expect(requests).toEqual([{ query: { directory: "/tmp/archive" } }]);
     expect(output.system[0]).toBe(OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION);
@@ -271,11 +289,53 @@ describe("OpenWorkExtensionsPreview session tools", () => {
     expect(output.system[0]).not.toContain("Do not use OpenWork documentation tools");
   });
 
+  test("keeps engine-first fallbacks and never calls legacy routes when the context bundle fails", async () => {
+    process.env.OPENWORK_SERVER_URL = "http://openwork.test";
+    process.env.OPENWORK_SERVER_TOKEN = "test-token";
+    const requestedPaths: string[] = [];
+    const fetcher = async (url: string): Promise<Response> => {
+      requestedPaths.push(new URL(url).pathname);
+      return Response.json({ message: "bundle unavailable" }, { status: 503 });
+    };
+    const connected = await OpenWorkContext({
+      fetcher,
+      client: {
+        mcp: {
+          status: async () => ({ data: { "openwork-cloud": { status: "connected" } } }),
+        },
+      },
+    });
+    const engineError = await OpenWorkContext({
+      fetcher,
+      client: {
+        mcp: {
+          status: async () => {
+            throw new Error("engine unavailable");
+          },
+        },
+      },
+    });
+    const connectedOutput: { system: string[] } = { system: [] };
+    const errorOutput: { system: string[] } = { system: [] };
+
+    await connected["experimental.chat.system.transform"]?.({}, connectedOutput);
+    await engineError["experimental.chat.system.transform"]?.({}, errorOutput);
+
+    expect(connectedOutput.system[0]).toContain("verified ready for this exact workspace/model");
+    expect(errorOutput.system[0]).toBe(OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION);
+    expect(requestedPaths).toEqual([
+      "/experimental/connect/context",
+      "/experimental/connect/context",
+    ]);
+    expect(requestedPaths).not.toContain("/experimental/connect/state");
+    expect(requestedPaths).not.toContain("/experimental/connect/skills");
+  });
+
   test("reads a transcript by session id without opening the UI", async () => {
     startFakeOpenWorkServer();
-    const plugin = await OpenWorkExtensionsPreview();
+    const plugin = await OpenWorkContext();
 
-    const output = await plugin.tool.openwork_session_read.execute({
+    const output = await executeTool(plugin, "openwork_session_read", {
       sessionId: "ses_archive",
       count: 2,
     });
@@ -298,9 +358,9 @@ describe("OpenWorkExtensionsPreview session tools", () => {
 
   test("creates and starts multiple sessions through the OpenWork backend", async () => {
     const fake = startFakeOpenWorkServer();
-    const plugin = await OpenWorkExtensionsPreview({ directory: "/tmp/archive" });
+    const plugin = await OpenWorkContext({ directory: "/tmp/archive" });
 
-    const output = await plugin.tool.openwork_session_create.execute({
+    const output = await executeTool(plugin, "openwork_session_create", {
       sessions: [
         { title: "Look into dolphins", prompt: "Research dolphins." },
         { title: "Look into bananas", prompt: "Research bananas." },
@@ -336,13 +396,13 @@ describe("OpenWorkExtensionsPreview session tools", () => {
 
   test("creates more than twenty sessions in one tool call", async () => {
     const fake = startFakeOpenWorkServer();
-    const plugin = await OpenWorkExtensionsPreview({ directory: "/tmp/archive" });
+    const plugin = await OpenWorkContext({ directory: "/tmp/archive" });
     const sessions = Array.from({ length: 21 }, (_, index) => ({
       title: `Research topic ${index + 1}`,
       prompt: `Research topic ${index + 1}.`,
     }));
 
-    const output = await plugin.tool.openwork_session_create.execute({ sessions }, { sessionID: "ses_origin" });
+    const output = await executeTool(plugin, "openwork_session_create", { sessions }, { sessionID: "ses_origin" });
     const parsed = createResultSchema.parse(JSON.parse(output));
 
     expect(parsed.ok).toBe(true);
@@ -352,11 +412,11 @@ describe("OpenWorkExtensionsPreview session tools", () => {
   });
 });
 
-describe("OpenWorkExtensionsPreview UI control tools", () => {
-  test("omits UI-control tools and steering by default", async () => {
+describe("OpenWorkContext UI control tools", () => {
+  test("omits gated UI-control tools and guidance by default", async () => {
     delete process.env.OPENWORK_UI_CONTROL_TOOLS;
-    const plugin = await OpenWorkExtensionsPreview();
-    const tools = Object.keys(plugin.tool);
+    const plugin = await OpenWorkContext();
+    const tools = Object.keys(plugin.tool ?? {});
 
     expect(tools).not.toContain("openwork_ui_snapshot");
     expect(tools).not.toContain("openwork_ui_list_actions");
@@ -366,6 +426,7 @@ describe("OpenWorkExtensionsPreview UI control tools", () => {
     expect(tools).toContain("openwork_extension_list_actions");
 
     const system = await transformedSystem(plugin);
+    expect(system).not.toContain("IMPORTANT: You are running inside the OpenWork desktop app.");
     expect(system).not.toContain("openwork_ui_");
     expect(system).toContain("ALWAYS use openwork_session_create");
     expect(system).toContain("openwork_session_search");
@@ -373,8 +434,8 @@ describe("OpenWorkExtensionsPreview UI control tools", () => {
 
   test("registers UI-control tools and steering when opted in", async () => {
     process.env.OPENWORK_UI_CONTROL_TOOLS = "1";
-    const plugin = await OpenWorkExtensionsPreview();
-    const tools = Object.keys(plugin.tool);
+    const plugin = await OpenWorkContext();
+    const tools = Object.keys(plugin.tool ?? {});
 
     expect(tools).toContain("openwork_ui_snapshot");
     expect(tools).toContain("openwork_ui_list_actions");
@@ -382,5 +443,6 @@ describe("OpenWorkExtensionsPreview UI control tools", () => {
 
     const system = await transformedSystem(plugin);
     expect(system).toContain("openwork_ui_execute_action");
+    expect(system.match(/IMPORTANT: You are running inside the OpenWork desktop app\./g)).toHaveLength(1);
   });
 });

@@ -39,6 +39,16 @@ export type AdvancedViewProps = {
   openworkServerStatus: OpenworkServerStatus;
   developerMode: boolean;
   toggleDeveloperMode: () => void;
+  exactPromptLogging: boolean;
+  toggleExactPromptLogging: () => void;
+  promptLogRuntime: {
+    running: boolean;
+    developerModeRequested: boolean;
+    requested: boolean;
+    enabled: boolean;
+    level: "off" | "metadata" | "exact";
+    source: string;
+  } | null;
   opencodeDevModeEnabled: boolean;
   openDebugDeepLink: (rawUrl: string) => Promise<{ ok: boolean; message: string }>;
   canMigrateRuntimeConfig: boolean;
@@ -224,12 +234,15 @@ export function AdvancedView(props: AdvancedViewProps) {
       <AdvancedDeveloperSection
         busy={props.busy}
         developerMode={props.developerMode}
+        exactPromptLogging={props.exactPromptLogging}
+        promptLogRuntime={props.promptLogRuntime}
         opencodeDevModeEnabled={props.opencodeDevModeEnabled}
         deepLinkOpen={debugDeepLinkOpen}
         deepLinkInput={debugDeepLinkInput}
         deepLinkBusy={debugDeepLinkBusy}
         deepLinkStatus={debugDeepLinkStatus}
         onToggleDeveloperMode={props.toggleDeveloperMode}
+        onToggleExactPromptLogging={props.toggleExactPromptLogging}
         onToggleDeepLink={() => dispatchLocal({ type: "toggleDeepLink" })}
         onDeepLinkInput={(input) => dispatchLocal({ type: "deepLinkInput", input })}
         onSubmitDeepLink={submitDebugDeepLink}

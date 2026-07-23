@@ -14,12 +14,15 @@ toolsets:
 files:
   - electron/**/*
   - server/**/*
-  - "!server/dist/opencode-plugins/**"
+  - "!server/dist/opencode-plugin-bundles/**"
+  - "!server/dist/**/*.test.js"
+  - "!server/dist/**/*.e2e.test.js"
+  - "!server/dist/**/__fixtures__/**"
   - package.json
 extraResources:
   - from: ../app/dist
     to: app-dist
-  - from: server/dist/opencode-plugins
+  - from: server/dist/opencode-plugin-bundles
     to: opencode-plugins
     filter:
       - "*.js"

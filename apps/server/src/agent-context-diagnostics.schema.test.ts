@@ -116,7 +116,7 @@ describe("agent context diagnostics safe output schema", () => {
           deniedRelevantToolCount: null,
         },
       },
-      pluginLabels: ["openwork-extensions-preview"],
+      pluginLabels: ["openwork-context"],
     };
     const mcp = {
       name: "openwork-cloud",

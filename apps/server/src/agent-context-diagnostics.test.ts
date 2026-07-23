@@ -25,7 +25,12 @@ import {
 } from "./agent-context-diagnostics.js";
 import type { InspectAgentDiagnosticsEngine } from "./agent-context-engine-inspection.js";
 import type { ConnectSnapshot } from "./connect-state.js";
-import { buildOpenworkRuntimeConfigObjectFromSnapshot } from "./openwork-runtime-config.js";
+import { describeContextRegistry } from "./opencode-plugins/lib/context-registry.js";
+import { OPENWORK_CONTEXT_REGISTRY } from "./opencode-plugins/lib/openwork-context-contributors.js";
+import {
+  buildOpenworkRuntimeConfigObjectFromSnapshot,
+  keepOpenworkRuntimeConfigFileFresh,
+} from "./openwork-runtime-config.js";
 import { runtimeDbPath } from "./runtime-db.js";
 import {
   inspectEngineMcpRegistration,
@@ -60,7 +65,16 @@ const DYNAMIC_BEARER_CANARY = "Bearer DYNAMIC_LABEL_TOKEN_CANARY";
 const DYNAMIC_SECRET_ASSIGNMENT_CANARY = "client_secret=DYNAMIC_CLIENT_SECRET_CANARY";
 const DYNAMIC_URL_CANARY = "https://labels.invalid/mcp?access_token=DYNAMIC_URL_TOKEN_CANARY";
 const DYNAMIC_PATH_CANARY = "/Users/diagnostics/private/mcp.json";
+const REGISTRY_DESCRIPTIONS = describeContextRegistry(OPENWORK_CONTEXT_REGISTRY);
+const REGISTRY_ALWAYS_ON_TOOL_IDS = REGISTRY_DESCRIPTIONS.flatMap((description) =>
+  description.kind === "tool" && description.gate === "always" ? description.toolNames : [],
+);
+const REGISTRY_GATED_TOOL_IDS = REGISTRY_DESCRIPTIONS.flatMap((description) =>
+  description.kind === "tool" && description.gate !== "always" ? description.toolNames : [],
+);
 const nativeFetch = globalThis.fetch;
+const originalUiControlTools = process.env.OPENWORK_UI_CONTROL_TOOLS;
+const originalRuntimeDb = process.env.OPENWORK_RUNTIME_DB;
 const roots: string[] = [];
 const stops: Array<() => void | Promise<void>> = [];
 
@@ -123,6 +137,7 @@ function effectiveEngineInspection(
     hidden?: boolean;
     prompt?: string;
     pluginSpecs?: string[];
+    toolIds?: readonly string[] | null;
     decisions?: Partial<Record<"openwork-cloud_search_capabilities" | "openwork-cloud_execute_capability", "allow" | "ask" | "deny">>;
   },
 ): InspectAgentDiagnosticsEngine {
@@ -140,6 +155,9 @@ function effectiveEngineInspection(
     && !Array.isArray(canonicalAgents.openwork)
     ? canonicalAgents.openwork as Record<string, unknown>
     : {};
+  const toolIds = options && Object.hasOwn(options, "toolIds")
+    ? options.toolIds
+    : REGISTRY_ALWAYS_ON_TOOL_IDS;
   return async () => ({
     config: {
       default_agent: options?.defaultAgent === null ? undefined : options?.defaultAgent ?? "openwork",
@@ -158,6 +176,8 @@ function effectiveEngineInspection(
       })),
       options: {},
     }],
+    toolIdsReadPerformed: true,
+    ...(toolIds == null ? {} : { toolIds: [...toolIds] }),
   });
 }
 
@@ -264,8 +284,16 @@ function checkById(
   return check;
 }
 
-function startRecordingServer() {
-  const requests: Array<{ method: string; pathname: string; body: unknown }> = [];
+async function waitUntil(predicate: () => boolean, label: string): Promise<void> {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`Timed out waiting for ${label}`);
+}
+
+function startRecordingServer(options?: { toolIdsUnavailable?: boolean }) {
+  const requests: Array<{ method: string; pathname: string; body: unknown; authorization: string | null }> = [];
   const canonicalConfig = buildOpenworkRuntimeConfigObjectFromSnapshot({
     ...diagnosticRuntimeConfig(),
     default_agent: "openwork",
@@ -281,6 +309,7 @@ function startRecordingServer() {
         method: request.method,
         pathname: url.pathname,
         body,
+        authorization: request.headers.get("authorization"),
       });
       if (request.method === "GET" && url.pathname === "/config") {
         return Response.json({
@@ -300,6 +329,15 @@ function startRecordingServer() {
           ],
           options: {},
         }]);
+      }
+      if (request.method === "GET" && url.pathname === "/experimental/tool/ids") {
+        if (options?.toolIdsUnavailable) {
+          return Response.json({ code: "not_found" }, { status: 404 });
+        }
+        return Response.json([
+          ...REGISTRY_ALWAYS_ON_TOOL_IDS,
+          "custom_tool_name_that_must_not_enter_diagnostics",
+        ]);
       }
       if (request.method === "POST" && url.pathname === "/mcp") {
         const name = typeof body === "object" && body !== null && !Array.isArray(body)
@@ -430,10 +468,19 @@ async function snapshotTree(root: string): Promise<Record<string, string>> {
 
 beforeEach(() => {
   globalThis.fetch = nativeFetch;
+  delete process.env.OPENWORK_UI_CONTROL_TOOLS;
+  // Every fixture has its own configPath-backed runtime DB. Never let a parent
+  // Hub/test-runner override redirect corruption and mutation fixtures into a
+  // developer's live isolated runtime database.
+  delete process.env.OPENWORK_RUNTIME_DB;
 });
 
 afterEach(async () => {
   globalThis.fetch = nativeFetch;
+  if (originalUiControlTools === undefined) delete process.env.OPENWORK_UI_CONTROL_TOOLS;
+  else process.env.OPENWORK_UI_CONTROL_TOOLS = originalUiControlTools;
+  if (originalRuntimeDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
+  else process.env.OPENWORK_RUNTIME_DB = originalRuntimeDb;
   while (stops.length) await stops.pop()?.();
   while (roots.length) await rm(roots.pop()!, { recursive: true, force: true });
 });
@@ -513,12 +560,17 @@ describe("agent context diagnostics analyzer", () => {
       inspectRegistration: () => "connected",
       dependencies: {
         fetchImpl: catalogFetch(["search_capabilities", "execute_capability"], fetchCalls),
-        inspectEffectiveEngine: effectiveEngineInspection(),
+        inspectEffectiveEngine: effectiveEngineInspection(diagnosticRuntimeConfig(), {
+          toolIds: [
+            ...REGISTRY_ALWAYS_ON_TOOL_IDS,
+            "custom_tool_name_that_must_not_enter_diagnostics",
+          ],
+        }),
       },
     }));
 
     expect(report.checks.map((check) => check.id)).toEqual([...AGENT_CONTEXT_DIAGNOSTIC_CHECK_IDS]);
-    expect(report.overall).toBe("warning");
+    expect(report.overall).toBe("passed");
     expect(report.firstFailedCheck).toBeNull();
     expect(report.observedCloudToolIds).toEqual(["search_capabilities", "execute_capability"]);
     expect(report.mcps.find((mcp) => mcp.name === "openwork-cloud")?.path).toBe("/mcp/agent");
@@ -558,8 +610,16 @@ describe("agent context diagnostics analyzer", () => {
       code: "cloud_catalog_exact_match",
     });
     expect(checkById(report, "engine-plugin-tools")).toMatchObject({
-      status: "warning",
-      code: "per_request_connect_context_not_observed",
+      status: "passed",
+      evidenceKind: "observed",
+      code: "registry_tools_match_engine_catalog",
+      details: {
+        engineToolCatalogReadPerformed: true,
+        observedDeclaredToolCount: REGISTRY_ALWAYS_ON_TOOL_IDS.length,
+        missingAlwaysOnToolIds: [],
+        gatedMismatchToolIds: [],
+        customToolIdsIncluded: false,
+      },
     });
     expect(report.safety).toMatchObject({
       diagnosticsWorkspaceRuntimeConfigurationReadOnly: true,
@@ -606,6 +666,7 @@ describe("agent context diagnostics analyzer", () => {
       "private-prefix",
       fixture.workspaceRoot,
       RAW_PROMPT_CANARY,
+      "custom_tool_name_that_must_not_enter_diagnostics",
     ]) {
       expect(serialized).not.toContain(canary);
     }
@@ -651,6 +712,97 @@ describe("agent context diagnostics analyzer", () => {
     });
     expect(report.safety.cloudCatalogToolsListPerformed).toBe(false);
     expect(fetchCalls).toEqual([]);
+  });
+
+  test("fails when the bounded engine catalog omits an always-on registry tool", async () => {
+    const fixture = await createFixture();
+    const missingToolId = REGISTRY_ALWAYS_ON_TOOL_IDS[0];
+    if (!missingToolId) throw new Error("Expected at least one always-on registry tool");
+    const observed = REGISTRY_ALWAYS_ON_TOOL_IDS.filter((toolId) => toolId !== missingToolId);
+
+    const report = await runAgentContextDiagnostics({
+      config: fixture.config,
+      workspace: fixture.workspace,
+      request: emptyObservedRequest,
+      inspectRegistration: () => "not-recorded",
+      dependencies: {
+        registryEnv: {},
+        inspectEffectiveEngine: effectiveEngineInspection(diagnosticRuntimeConfig(), { toolIds: observed }),
+      },
+    });
+
+    expect(checkById(report, "engine-plugin-tools")).toMatchObject({
+      status: "failed",
+      evidenceKind: "observed",
+      code: "registry_always_on_tools_missing",
+      details: {
+        missingAlwaysOnToolIds: [missingToolId],
+        gatedMismatchToolIds: [],
+      },
+    });
+  });
+
+  test("warns when gated registry tools do not match the current gate evaluation", async () => {
+    const fixture = await createFixture();
+    expect(REGISTRY_GATED_TOOL_IDS.length).toBeGreaterThan(0);
+
+    const disabledButObserved = await runAgentContextDiagnostics({
+      config: fixture.config,
+      workspace: fixture.workspace,
+      request: emptyObservedRequest,
+      inspectRegistration: () => "not-recorded",
+      dependencies: {
+        registryEnv: {},
+        inspectEffectiveEngine: effectiveEngineInspection(diagnosticRuntimeConfig(), {
+          toolIds: [...REGISTRY_ALWAYS_ON_TOOL_IDS, ...REGISTRY_GATED_TOOL_IDS],
+        }),
+      },
+    });
+    expect(checkById(disabledButObserved, "engine-plugin-tools")).toMatchObject({
+      status: "warning",
+      evidenceKind: "observed",
+      code: "registry_gated_tools_mismatch",
+      details: { gatedMismatchToolIds: REGISTRY_GATED_TOOL_IDS },
+    });
+
+    const enabledButMissing = await runAgentContextDiagnostics({
+      config: fixture.config,
+      workspace: fixture.workspace,
+      request: emptyObservedRequest,
+      inspectRegistration: () => "not-recorded",
+      dependencies: {
+        registryEnv: { OPENWORK_UI_CONTROL_TOOLS: "1" },
+        inspectEffectiveEngine: effectiveEngineInspection(),
+      },
+    });
+    expect(checkById(enabledButMissing, "engine-plugin-tools")).toMatchObject({
+      status: "warning",
+      code: "registry_gated_tools_mismatch",
+      details: { gatedMismatchToolIds: REGISTRY_GATED_TOOL_IDS },
+    });
+  });
+
+  test("keeps effective config and agent evidence when the tool-ID endpoint is unavailable", async () => {
+    const fixture = await createFixture();
+    const report = await runAgentContextDiagnostics({
+      config: fixture.config,
+      workspace: fixture.workspace,
+      request: emptyObservedRequest,
+      inspectRegistration: () => "not-recorded",
+      dependencies: {
+        registryEnv: {},
+        inspectEffectiveEngine: effectiveEngineInspection(diagnosticRuntimeConfig(), { toolIds: null }),
+      },
+    });
+
+    expect(checkById(report, "engine-config")).toMatchObject({ status: "passed", evidenceKind: "observed" });
+    expect(checkById(report, "engine-agent")).toMatchObject({ status: "passed", evidenceKind: "observed" });
+    expect(checkById(report, "engine-plugin-tools")).toMatchObject({
+      status: "warning",
+      evidenceKind: "unavailable",
+      code: "engine_tool_catalog_request_failed",
+      details: { engineToolCatalogReadPerformed: true },
+    });
   });
 
   test("retains the probed runtime cloud MCP when the combined inventory is truncated", async () => {
@@ -978,12 +1130,12 @@ describe("agent context diagnostics analyzer", () => {
       dependencies: {
         fetchImpl: catalogFetch(["search_capabilities", "execute_capability"], []),
         inspectEffectiveEngine: effectiveEngineInspection(diagnosticRuntimeConfig(), {
-          pluginSpecs: ["https://plugins.invalid/spoof/openwork-extensions-preview.ts"],
+          pluginSpecs: ["https://plugins.invalid/spoof/openwork-context.ts"],
         }),
       },
     });
 
-    expect(report.agent.pluginLabels).toContain("openwork-extensions-preview");
+    expect(report.agent.pluginLabels).toContain("openwork-context");
     expect(checkById(report, "plugin-registration")).toMatchObject({
       status: "failed",
       code: "connect_steering_plugin_missing",
@@ -996,7 +1148,7 @@ describe("agent context diagnostics analyzer", () => {
     const fixture = await createFixture();
     const canonicalConfig = buildOpenworkRuntimeConfigObjectFromSnapshot(diagnosticRuntimeConfig());
     const normalizedPlugins = openCodeNormalizedPluginSpecs(canonicalConfig.plugin);
-    const canonicalConnectPlugin = normalizedPlugins.find((spec) => spec.includes("openwork-extensions-preview"));
+    const canonicalConnectPlugin = normalizedPlugins.find((spec) => spec.includes("openwork-context"));
     if (!canonicalConnectPlugin) throw new Error("Expected the canonical Connect plugin fixture.");
     expect(canonicalConnectPlugin.startsWith("file://")).toBe(true);
 
@@ -1013,7 +1165,7 @@ describe("agent context diagnostics analyzer", () => {
       },
     });
 
-    expect(report.agent.pluginLabels).toContain("openwork-extensions-preview");
+    expect(report.agent.pluginLabels).toContain("openwork-context");
     expect(checkById(report, "plugin-registration")).toMatchObject({
       status: "passed",
       code: "connect_steering_plugin_effective",
@@ -1108,6 +1260,74 @@ describe("agent context diagnostics analyzer", () => {
     });
     expect(fetchCalls).toEqual([]);
     expect(JSON.stringify(report)).not.toContain("CANARY_DB_SECRET");
+  });
+
+  test("reports an unresolved runtime config file write failure without exposing the raw error", async () => {
+    const fixture = await createFixture();
+    const rawErrorCanary = "Bearer RUNTIME_WRITE_SECRET at /private/runtime-config.json";
+    const logEntries: Array<{
+      level: string;
+      message: string;
+      attributes: Record<string, unknown> | undefined;
+    }> = [];
+    let writeAttempts = 0;
+    const sleepDelays: number[] = [];
+    const stop = keepOpenworkRuntimeConfigFileFresh(
+      fixture.config,
+      fixture.workspace.id,
+      {
+        log(level, message, attributes) {
+          logEntries.push({ level, message, attributes });
+        },
+      },
+      {
+        async writeFile() {
+          writeAttempts += 1;
+          throw new Error(rawErrorCanary);
+        },
+        async sleep(delayMs) {
+          sleepDelays.push(delayMs);
+        },
+        now: () => 987_654,
+      },
+    );
+    stops.push(stop);
+
+    await writeRuntimeOpencodeConfig(fixture.config, fixture.workspace.id, (current) => ({
+      ...current,
+      disabled_providers: ["runtime-write-failure-test"],
+    }));
+    await waitUntil(() => writeAttempts === 2, "runtime config write failure retry");
+
+    const fetchCalls: CatalogFetchCall[] = [];
+    const report = agentContextDiagnosticsReportSchema.parse(await runAgentContextDiagnostics({
+      config: fixture.config,
+      workspace: fixture.workspace,
+      request: emptyObservedRequest,
+      inspectRegistration: () => "connected",
+      dependencies: {
+        fetchImpl: catalogFetch(["search_capabilities", "execute_capability"], fetchCalls),
+        inspectEffectiveEngine: effectiveEngineInspection(),
+      },
+    }));
+
+    expect(report.firstFailedCheck).toBe("workspace-runtime");
+    expect(checkById(report, "workspace-runtime")).toMatchObject({
+      status: "failed",
+      evidenceKind: "unavailable",
+      code: "runtime_config_write_failed",
+      details: {
+        runtimeConfigWriteFailureRecorded: true,
+        runtimeConfigWriteAttemptCount: 2,
+        runtimeConfigWriteFailedAtMs: 987_654,
+      },
+    });
+    expect(sleepDelays).toEqual([1_000]);
+    expect(logEntries.map((entry) => entry.level)).toEqual(["warn", "error"]);
+    const serializedEvidence = JSON.stringify({ report, logEntries });
+    expect(serializedEvidence).not.toContain(rawErrorCanary);
+    expect(serializedEvidence).not.toContain("RUNTIME_WRITE_SECRET");
+    expect(serializedEvidence).not.toContain("/private/runtime-config.json");
   });
 
   test("does not probe when the current cloud registration fingerprint is not recorded", async () => {
@@ -1531,6 +1751,8 @@ describe("agent context diagnostics route", () => {
       workspace: {
         id: "ws_agent_diagnostics_no_policy_authority",
         baseUrl: engine.baseUrl,
+        opencodeUsername: "diagnostics-user",
+        opencodePassword: "diagnostics-password",
       },
     });
     const downstreamFetches: string[] = [];
@@ -1567,6 +1789,16 @@ describe("agent context diagnostics route", () => {
     });
     expect(checkById(report, "engine-config")).toMatchObject({ status: "passed", evidenceKind: "observed" });
     expect(checkById(report, "engine-agent")).toMatchObject({ status: "passed", evidenceKind: "observed" });
+    expect(checkById(report, "engine-plugin-tools")).toMatchObject({
+      status: "passed",
+      evidenceKind: "observed",
+      code: "registry_tools_match_engine_catalog",
+      details: {
+        engineToolCatalogReadPerformed: true,
+        observedDeclaredToolIds: REGISTRY_ALWAYS_ON_TOOL_IDS,
+        customToolIdsIncluded: false,
+      },
+    });
     expect(checkById(report, "cloud-tool-catalog")).toMatchObject({
       status: "passed",
       code: "cloud_catalog_exact_match",
@@ -1581,12 +1813,46 @@ describe("agent context diagnostics route", () => {
       "tools/list",
     ]);
     expect(downstreamFetches.filter((url) => url === CLOUD_ENDPOINT)).toHaveLength(3);
-    expect(engine.requests
+    const diagnosticEngineReads = engine.requests
       .slice(engineRequestCountBeforeDiagnostics)
       .filter((request) => request.method === "GET")
-      .map((request) => request.pathname)
-      .sort())
-      .toEqual(["/agent", "/config"]);
+    expect(diagnosticEngineReads.map((request) => request.pathname).sort())
+      .toEqual(["/agent", "/config", "/experimental/tool/ids"]);
+    expect(diagnosticEngineReads.every((request) =>
+      request.authorization === `Basic ${Buffer.from("diagnostics-user:diagnostics-password").toString("base64")}`,
+    )).toBe(true);
+    expect(JSON.stringify(report)).not.toContain("custom_tool_name_that_must_not_enter_diagnostics");
+  });
+
+  test("keeps production config and agent evidence when the engine tool-ID endpoint is unavailable", async () => {
+    const engine = startRecordingServer({ toolIdsUnavailable: true });
+    const fixture = await createFixture({
+      runtime: {},
+      workspace: {
+        id: "ws_agent_diagnostics_tool_ids_unavailable",
+        baseUrl: engine.baseUrl,
+      },
+    });
+    const base = await startOpenwork(fixture.config);
+
+    const response = await nativeFetch(`${base}/workspace/${fixture.workspace.id}/diagnostics/agent-context`, {
+      method: "POST",
+      headers: clientHeaders(),
+      body: JSON.stringify(emptyObservedRequest),
+    });
+
+    expect(response.status).toBe(200);
+    const report = agentContextDiagnosticsReportSchema.parse(await response.json());
+    expect(checkById(report, "engine-config")).toMatchObject({ status: "passed", evidenceKind: "observed" });
+    expect(checkById(report, "engine-agent")).toMatchObject({ status: "passed", evidenceKind: "observed" });
+    expect(checkById(report, "engine-plugin-tools")).toMatchObject({
+      status: "warning",
+      evidenceKind: "unavailable",
+      code: "engine_tool_catalog_request_failed",
+      details: { engineToolCatalogReadPerformed: true },
+    });
+    expect(engine.requests.filter((request) => request.method === "GET").map((request) => request.pathname).sort())
+      .toEqual(["/agent", "/config", "/experimental/tool/ids"]);
   });
 
   test("returns a no-store collaborator report on fresh state without creating or changing configuration", async () => {
@@ -1617,7 +1883,11 @@ describe("agent context diagnostics route", () => {
       engineBootstrapSideEffectsInspected: false,
       directNonCloudMcpFetchPerformed: false,
     });
-    expect(downstreamFetches.map((entry) => new URL(entry.input).pathname).sort()).toEqual(["/agent", "/config"]);
+    expect(downstreamFetches.map((entry) => new URL(entry.input).pathname).sort()).toEqual([
+      "/agent",
+      "/config",
+      "/experimental/tool/ids",
+    ]);
     expect(checkById(report, "engine-config")).toMatchObject({
       status: "warning",
       code: "engine_diagnostics_request_failed",

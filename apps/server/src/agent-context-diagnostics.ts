@@ -18,6 +18,7 @@ import {
 } from "./agent-context-diagnostics-schema.js";
 import {
   effectiveToolDecision,
+  validateObservedRegistryToolIds,
   validateEffectiveEngineSnapshot,
   type EffectiveEngineSnapshot,
   type InspectAgentDiagnosticsEngine,
@@ -31,6 +32,12 @@ import {
   type ConnectSnapshot,
   type ConnectStateInspectionStatus,
 } from "./connect-state.js";
+import { OPENWORK_CLOUD_MCP_NAME } from "./context/constants.js";
+import {
+  describeContextRegistry,
+  evaluateContextRegistryGates,
+} from "./opencode-plugins/lib/context-registry.js";
+import { OPENWORK_CONTEXT_REGISTRY } from "./opencode-plugins/lib/openwork-context-contributors.js";
 import { readJsoncFile } from "./jsonc.js";
 import {
   inspectMcpLayersFromRuntimeSnapshot,
@@ -38,7 +45,11 @@ import {
   type McpInventoryInspection,
 } from "./mcp.js";
 import { resolveWorkspaceOpencodeConnection } from "./opencode-connection.js";
-import { buildOpenworkRuntimeConfigObjectFromSnapshot } from "./openwork-runtime-config.js";
+import {
+  buildOpenworkRuntimeConfigObjectFromSnapshot,
+  inspectLastRuntimeConfigWriteFailure,
+  type RuntimeConfigWriteFailure,
+} from "./openwork-runtime-config.js";
 import {
   inspectRuntimeOpencodeConfigState,
   runtimeMcpMap,
@@ -49,7 +60,6 @@ import type { McpItem, ServerConfig, WorkspaceInfo } from "./types.js";
 import { exists } from "./utils.js";
 import { opencodeConfigPath } from "./workspace-files.js";
 
-const OPENWORK_CLOUD_MCP_NAME = "openwork-cloud";
 const CLOUD_MCP_TERMINAL_PATH = "/mcp/agent";
 const REQUIRED_CLOUD_TOOL_IDS = ["search_capabilities", "execute_capability"] as const;
 const REQUIRED_CLOUD_AGENT_TOOL_IDS = REQUIRED_CLOUD_TOOL_IDS.map(
@@ -100,8 +110,56 @@ type DiagnosticDependencies = {
   now?: () => number;
   uuid?: () => string;
   inspectEffectiveEngine?: InspectAgentDiagnosticsEngine;
+  registryEnv?: NodeJS.ProcessEnv;
   signal?: AbortSignal;
 };
+
+type RegistryToolExpectation = {
+  declaredToolIds: string[];
+  alwaysOnToolIds: string[];
+  gatedToolIds: string[];
+  expectedEnabledToolIds: string[];
+  gateErrorContributorIds: string[];
+};
+
+type RegistryToolInspectionStatus =
+  | "observed"
+  | "not-configured"
+  | "not-supplied"
+  | "invalid"
+  | "unavailable";
+
+function uniqueStrings(values: readonly string[]): string[] {
+  return [...new Set(values)];
+}
+
+function registryToolExpectation(
+  env: NodeJS.ProcessEnv,
+  workspace: WorkspaceInfo,
+): RegistryToolExpectation {
+  const descriptions = describeContextRegistry(OPENWORK_CONTEXT_REGISTRY);
+  const gates = evaluateContextRegistryGates(OPENWORK_CONTEXT_REGISTRY, {
+    env: { ...env },
+    factoryContext: workspace.path ? { directory: workspace.path } : {},
+  });
+  const gateById = new Map(gates.map((gate) => [gate.id, gate]));
+  const tools = descriptions.filter((description) => description.kind === "tool");
+  return {
+    declaredToolIds: uniqueStrings(tools.flatMap((description) => description.toolNames)),
+    alwaysOnToolIds: uniqueStrings(
+      tools.flatMap((description) => description.gate === "always" ? description.toolNames : []),
+    ),
+    gatedToolIds: uniqueStrings(
+      tools.flatMap((description) => description.gate === "always" ? [] : description.toolNames),
+    ),
+    expectedEnabledToolIds: uniqueStrings(
+      tools.flatMap((description) => gateById.get(description.id)?.enabled ? description.toolNames : []),
+    ),
+    gateErrorContributorIds: tools.flatMap((description) =>
+      gateById.get(description.id)?.reason === "gate_error" ? [description.id] : [],
+    ),
+  };
+}
 
 type EffectiveToolPolicyAssessment = {
   status: "available" | "denied" | "unavailable";
@@ -818,10 +876,108 @@ function engineAgentCheck(
   });
 }
 
+function registryToolCheck(
+  expectation: RegistryToolExpectation,
+  observedToolIds: string[] | null,
+  inspectionStatus: RegistryToolInspectionStatus,
+  engineToolCatalogReadPerformed: boolean,
+  durationMs: number,
+): AgentContextDiagnosticCheck {
+  const commonDetails = {
+    declaredOpenworkToolCount: expectation.declaredToolIds.length,
+    alwaysOnToolCount: expectation.alwaysOnToolIds.length,
+    gatedToolCount: expectation.gatedToolIds.length,
+    expectedEnabledToolCount: expectation.expectedEnabledToolIds.length,
+    engineToolCatalogReadPerformed,
+    llmTurnStarted: false,
+    perRequestContextTransformObserved: false,
+    customToolIdsIncluded: false,
+  };
+  if (inspectionStatus !== "observed" || observedToolIds === null) {
+    const code = inspectionStatus === "not-configured"
+      ? "engine_tool_catalog_not_configured"
+      : inspectionStatus === "invalid"
+        ? "engine_tool_catalog_response_invalid"
+        : inspectionStatus === "unavailable"
+          ? "engine_tool_catalog_request_failed"
+          : "engine_tool_catalog_reader_unavailable";
+    return diagnosticCheck({
+      id: "engine-plugin-tools",
+      status: "warning",
+      evidenceKind: "unavailable",
+      code,
+      message: "The selected engine's bounded tool-ID catalog could not be safely observed.",
+      owner: "opencode-engine",
+      action: inspectionStatus === "not-configured"
+        ? "Configure or start the selected workspace engine, then rerun diagnostics."
+        : "Check the selected workspace engine health and rerun diagnostics.",
+      details: {
+        ...commonDetails,
+        engineToolInspectionStatus: inspectionStatus,
+        observedDeclaredToolCount: 0,
+      },
+      durationMs,
+    });
+  }
+
+  const observed = new Set(observedToolIds);
+  const expectedEnabled = new Set(expectation.expectedEnabledToolIds);
+  const missingAlwaysOnToolIds = expectation.alwaysOnToolIds.filter((toolId) => !observed.has(toolId));
+  const gatedMismatchToolIds = expectation.gatedToolIds.filter(
+    (toolId) => observed.has(toolId) !== expectedEnabled.has(toolId),
+  );
+  const gateEvaluationFailed = expectation.gateErrorContributorIds.length > 0;
+  const status = missingAlwaysOnToolIds.length > 0
+    ? "failed"
+    : gatedMismatchToolIds.length > 0 || gateEvaluationFailed
+      ? "warning"
+      : "passed";
+  const code = missingAlwaysOnToolIds.length > 0
+    ? "registry_always_on_tools_missing"
+    : gateEvaluationFailed
+      ? "registry_tool_gate_evaluation_failed"
+      : gatedMismatchToolIds.length > 0
+        ? "registry_gated_tools_mismatch"
+        : "registry_tools_match_engine_catalog";
+  const message = missingAlwaysOnToolIds.length > 0
+    ? "The selected engine is missing one or more always-on tools declared by the OpenWork context registry."
+    : gateEvaluationFailed
+      ? "One or more OpenWork tool gates could not be evaluated safely."
+      : gatedMismatchToolIds.length > 0
+        ? "The selected engine's OpenWork tool catalog does not match the current gated registry expectation."
+        : "Every currently enabled tool declared by the OpenWork context registry matches the selected engine catalog.";
+  return diagnosticCheck({
+    id: "engine-plugin-tools",
+    status,
+    evidenceKind: "observed",
+    code,
+    message,
+    owner: status === "passed" || gateEvaluationFailed ? "openwork-server" : "opencode-engine",
+    action: status === "passed"
+      ? "No action is required."
+      : gateEvaluationFailed
+        ? "Repair the OpenWork context registry gate and rerun diagnostics."
+        : missingAlwaysOnToolIds.length > 0
+          ? "Restore the canonical OpenWork context plugin and restart the selected workspace engine."
+          : "Align the selected engine's OpenWork tool gate environment with the server, then restart it and rerun diagnostics.",
+    details: {
+      ...commonDetails,
+      engineToolInspectionStatus: inspectionStatus,
+      observedDeclaredToolCount: observedToolIds.length,
+      observedDeclaredToolIds: observedToolIds,
+      missingAlwaysOnToolIds,
+      gatedMismatchToolIds,
+      gateErrorContributorIds: expectation.gateErrorContributorIds,
+    },
+    durationMs,
+  });
+}
+
 function runtimeHealthCheck(
   workspace: WorkspaceInfo,
   engineConfigured: boolean,
   inspection: RuntimeOpencodeConfigInspection,
+  writeFailure: RuntimeConfigWriteFailure | null,
   durationMs: number,
 ): AgentContextDiagnosticCheck {
   const corrupt = inspection.status === "unreadable"
@@ -830,43 +986,52 @@ function runtimeHealthCheck(
     || inspection.status === "row-missing"
     || inspection.status === "table-missing";
   const remote = inspection.status === "remote-workspace";
-  const status = corrupt || !engineConfigured ? "failed" : absent || remote ? "warning" : "passed";
-  const code = corrupt
-    ? "runtime_config_unreadable"
-    : !engineConfigured
-      ? "workspace_engine_unconfigured"
-      : remote
-        ? "remote_workspace_runtime_not_inspected"
-      : absent
-        ? "runtime_config_not_initialized"
-        : "workspace_runtime_configured";
-  const message = corrupt
-    ? "The selected workspace runtime configuration could not be safely decoded."
-    : !engineConfigured
-      ? "The selected workspace does not have an OpenCode runtime endpoint configured."
-      : absent
-        ? "The runtime configuration database or selected workspace row has not been initialized."
+  const status = writeFailure || corrupt || !engineConfigured ? "failed" : absent || remote ? "warning" : "passed";
+  const code = writeFailure
+    ? "runtime_config_write_failed"
+    : corrupt
+      ? "runtime_config_unreadable"
+      : !engineConfigured
+        ? "workspace_engine_unconfigured"
         : remote
-          ? "A local runtime row was not inspected for the remote workspace shell."
-        : "The selected workspace runtime configuration is available and the engine endpoint is configured.";
+          ? "remote_workspace_runtime_not_inspected"
+          : absent
+            ? "runtime_config_not_initialized"
+            : "workspace_runtime_configured";
+  const message = writeFailure
+    ? "The server could not refresh the engine-visible runtime configuration file."
+    : corrupt
+      ? "The selected workspace runtime configuration could not be safely decoded."
+      : !engineConfigured
+        ? "The selected workspace does not have an OpenCode runtime endpoint configured."
+        : absent
+          ? "The runtime configuration database or selected workspace row has not been initialized."
+          : remote
+            ? "A local runtime row was not inspected for the remote workspace shell."
+            : "The selected workspace runtime configuration is available and the engine endpoint is configured.";
   return diagnosticCheck({
     id: "workspace-runtime",
     status,
-    evidenceKind: corrupt ? "unavailable" : "derived",
+    evidenceKind: writeFailure || corrupt ? "unavailable" : "derived",
     code,
     message,
-    owner: corrupt ? "openwork-server" : engineConfigured ? "openwork-server" : "member",
+    owner: writeFailure || corrupt ? "openwork-server" : engineConfigured ? "openwork-server" : "member",
     action: status === "passed"
       ? "No action is required."
-      : corrupt
-        ? "Repair the OpenWork runtime state before relying on injected configuration."
-        : remote
-          ? "Run diagnostics on the OpenWork server that owns the workspace."
-          : "Start or configure the selected workspace runtime, then rerun diagnostics.",
+      : writeFailure
+        ? "Check server filesystem access, then change runtime configuration or restart the server to retry the write."
+        : corrupt
+          ? "Repair the OpenWork runtime state before relying on injected configuration."
+          : remote
+            ? "Run diagnostics on the OpenWork server that owns the workspace."
+            : "Start or configure the selected workspace runtime, then rerun diagnostics.",
     details: {
       workspaceType: workspace.workspaceType,
       remoteType: workspace.remoteType ?? null,
       runtimeInspectionStatus: inspection.status,
+      runtimeConfigWriteFailureRecorded: writeFailure !== null,
+      runtimeConfigWriteAttemptCount: writeFailure?.attemptCount ?? 0,
+      runtimeConfigWriteFailedAtMs: writeFailure?.failedAt ?? null,
     },
     durationMs,
   });
@@ -888,10 +1053,19 @@ export async function runAgentContextDiagnostics(input: {
   const startedAt = new Date(startedMs).toISOString();
   const runId = uuid();
   const engineConfigured = Boolean(resolveWorkspaceOpencodeConnection(input.config, input.workspace).baseUrl?.trim());
+  const registryTools = registryToolExpectation(
+    input.dependencies?.registryEnv ?? process.env,
+    input.workspace,
+  );
 
   let effectiveEngine: EffectiveEngineSnapshot | null = null;
+  let observedRegistryToolIds: string[] | null = null;
   let engineApiReadPerformed = false;
+  let engineToolCatalogReadPerformed = false;
   let engineInspectionStatus: "observed" | "not-configured" | "not-supplied" | "invalid" | "unavailable" = engineConfigured
+    ? "not-supplied"
+    : "not-configured";
+  let registryToolInspectionStatus: RegistryToolInspectionStatus = engineConfigured
     ? "not-supplied"
     : "not-configured";
   const engineInspectionStarted = now();
@@ -903,11 +1077,23 @@ export async function runAgentContextDiagnostics(input: {
       : timeoutSignal;
     try {
       const payload = await input.dependencies.inspectEffectiveEngine(signal);
+      engineToolCatalogReadPerformed = payload.toolIdsReadPerformed === true
+        || Object.hasOwn(payload, "toolIds");
+      if (Object.hasOwn(payload, "toolIds")) {
+        observedRegistryToolIds = validateObservedRegistryToolIds(
+          payload.toolIds,
+          registryTools.declaredToolIds,
+        );
+        registryToolInspectionStatus = observedRegistryToolIds ? "observed" : "invalid";
+      } else {
+        registryToolInspectionStatus = engineToolCatalogReadPerformed ? "unavailable" : "not-supplied";
+      }
       effectiveEngine = validateEffectiveEngineSnapshot(payload);
       engineInspectionStatus = effectiveEngine ? "observed" : "invalid";
     } catch {
       input.dependencies?.signal?.throwIfAborted();
       engineInspectionStatus = "unavailable";
+      registryToolInspectionStatus = "unavailable";
     }
   }
   const engineInspectionDuration = elapsed(engineInspectionStarted, now);
@@ -921,6 +1107,10 @@ export async function runAgentContextDiagnostics(input: {
     });
   input.dependencies?.signal?.throwIfAborted();
   const runtimeDuration = elapsed(runtimeStarted, now);
+  const runtimeConfigWriteFailure = inspectLastRuntimeConfigWriteFailure(
+    input.config,
+    input.workspace.id,
+  );
   const runtime = runtimeInspection.config;
   const expectedRuntimeConfig = buildOpenworkRuntimeConfigObjectFromSnapshot(runtime);
   const expectedAgents = isRecord(expectedRuntimeConfig.agent) ? expectedRuntimeConfig.agent : {};
@@ -958,7 +1148,7 @@ export async function runAgentContextDiagnostics(input: {
     return label ? [label] : [];
   }))].slice(0, 100);
   const canonicalConnectPluginSpec = expectedPlugins.find(
-    (spec) => pluginLabel(spec) === "openwork-extensions-preview",
+    (spec) => pluginLabel(spec) === "openwork-context",
   ) ?? null;
   const canonicalPluginSpecMatched = canonicalConnectPluginSpec !== null
     && reportedPlugins.some(
@@ -1166,7 +1356,13 @@ export async function runAgentContextDiagnostics(input: {
         organizationConnectionsTruncated: request.organizationConnectionsProbe.truncated,
       },
     }),
-    runtimeHealthCheck(input.workspace, engineConfigured, runtimeInspection, runtimeDuration),
+    runtimeHealthCheck(
+      input.workspace,
+      engineConfigured,
+      runtimeInspection,
+      runtimeConfigWriteFailure,
+      runtimeDuration,
+    ),
     diagnosticCheck({
       id: "connect-steering-scope",
       status: !connectSnapshotAvailable || crossWorkspaceSteeringDrift ? "warning" : "passed",
@@ -1420,22 +1616,13 @@ export async function runAgentContextDiagnostics(input: {
     }),
     engineConfigCheck(effectiveEngine, engineInspectionStatus, engineApiReadPerformed, engineInspectionDuration),
     engineAgentCheck(effectiveEngine, engineInspectionStatus, engineApiReadPerformed, engineInspectionDuration),
-    diagnosticCheck({
-      id: "engine-plugin-tools",
-      status: "warning",
-      evidenceKind: "unavailable",
-      code: "per_request_connect_context_not_observed",
-      message: "The canonical Connect plugin configuration was checked, but diagnostics did not start an LLM turn and cannot prove its per-request context transform or complete tool registry execution.",
-      owner: "opencode-engine",
-      action: "Review the canonical plugin match, effective permission, MCP registration, and cloud catalog checks together; use a controlled agent turn if execution proof is required.",
-      details: {
-        effectivePluginConfigurationObserved: Boolean(effectiveEngine),
-        canonicalPluginSpecMatched,
-        engineToolCatalogReadPerformed: false,
-        llmTurnStarted: false,
-        perRequestContextTransformObserved: false,
-      },
-    }),
+    registryToolCheck(
+      registryTools,
+      observedRegistryToolIds,
+      registryToolInspectionStatus,
+      engineToolCatalogReadPerformed,
+      engineInspectionDuration,
+    ),
     diagnosticCheck({
       id: "engine-mcp-sync",
       status: failedRegistrationCount > 0

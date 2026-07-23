@@ -41,6 +41,7 @@ import {
 import type {
   OpenworkClaudePluginPreview,
   OpenworkHubRepo,
+  OpenworkPluginItem,
   OpenworkServerCapabilities,
   OpenworkServerClient,
   OpenworkServerStatus,
@@ -82,9 +83,9 @@ const HUB_REPOS_STORAGE_KEY = "openwork.skills.hubRepos.v1";
 
 type SetStateAction<T> = T | ((current: T) => T);
 
-type PluginListEntry = {
+export type PluginListEntry = {
   name: string;
-  source: "config" | "dir.project" | "dir.global";
+  source: OpenworkPluginItem["source"];
   removable: boolean;
 };
 
@@ -360,24 +361,43 @@ function toConfigPluginListEntries(names: string[]): PluginListEntry[] {
   return next;
 }
 
-function toProjectPluginListEntries(
-  items: Array<{ spec: string; source: string }>,
+function unexpectedPluginSource(source: never): never {
+  throw new Error(`Unexpected plugin source: ${source}`);
+}
+
+function toPluginListEntrySource(
+  source: OpenworkPluginItem["source"],
+): PluginListEntry["source"] {
+  switch (source) {
+    case "core":
+    case "config":
+    case "dir.project":
+    case "dir.global":
+      return source;
+    default:
+      return unexpectedPluginSource(source);
+  }
+}
+
+export function toProjectPluginListEntries(
+  items: Array<Pick<OpenworkPluginItem, "spec" | "source">>,
 ): PluginListEntry[] {
   const byName = new Map<string, PluginListEntry>();
   for (const item of items) {
     const name = item.spec.trim();
     if (!name) continue;
-    const source: PluginListEntry["source"] =
-      item.source === "dir.project" || item.source === "dir.global"
-        ? item.source
-        : "config";
+    const source = toPluginListEntrySource(item.source);
     const entry: PluginListEntry = {
       name,
       source,
       removable: source === "config",
     };
     const existing = byName.get(name);
-    if (!existing || (entry.removable && !existing.removable)) {
+    if (
+      !existing ||
+      entry.source === "core" ||
+      (existing.source !== "core" && entry.removable && !existing.removable)
+    ) {
       byName.set(name, entry);
     }
   }
@@ -1816,6 +1836,14 @@ export function createExtensionsStore(options: {
       const result = await openworkClient.installHubSkill(openworkWorkspaceId, trimmed, { repo: repoOverride });
       await Promise.all([refreshSkills({ force: true }), refreshHubSkills({ force: true })]);
       if (!result?.ok) return { ok: false, message: "Install failed." };
+      // OpenCode caches its native skill registry for the life of an instance.
+      // Match every other local-skill write path so the desktop offers the
+      // required instance reload instead of showing a server-only success.
+      options.markReloadRequired?.("skills", {
+        type: "skill",
+        name: trimmed,
+        action: "added",
+      });
       return { ok: true, message: `Installed ${trimmed}.` };
     } catch (error) {
       const message = error instanceof Error ? error.message : t("skills.unknown_error");
@@ -2357,7 +2385,12 @@ export function createExtensionsStore(options: {
     const triggerName = stripPluginVersion(name);
     const existingPlugin = snapshot.pluginList.find((entry) => entry.name === name);
     if (existingPlugin && !existingPlugin.removable) {
-      setStateField("pluginStatus", "Directory-discovered plugins are read-only.");
+      setStateField(
+        "pluginStatus",
+        existingPlugin.source === "core"
+          ? "OpenWork core plugins are managed by OpenWork."
+          : "Directory-discovered plugins are read-only.",
+      );
       return;
     }
 

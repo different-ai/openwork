@@ -1,20 +1,37 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile as writeFileToDisk } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
   buildOpenworkRuntimeConfig,
+  inspectLastRuntimeConfigWriteFailure,
   keepOpenworkRuntimeConfigFileFresh,
   openworkRuntimeConfigFilePath,
   writeOpenworkRuntimeConfigFile,
 } from "./openwork-runtime-config.js";
+import {
+  openworkContextPluginPath,
+  openworkPromptLogPluginPath,
+} from "./openwork-extensions-plugin-path.js";
 import { writeRuntimeOpencodeConfig } from "./runtime-opencode-config-store.js";
 import type { ServerConfig } from "./types.js";
 
 const roots: string[] = [];
 const cleanups: Array<() => void> = [];
 let previousDb: string | undefined;
+
+const quietLogger = {
+  log() {},
+};
+
+async function waitFor(predicate: () => boolean, label: string): Promise<void> {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`Timed out waiting for ${label}`);
+}
 
 afterEach(async () => {
   while (cleanups.length) cleanups.pop()?.();
@@ -72,6 +89,24 @@ describe("openwork runtime config file", () => {
     expect(Array.isArray(parsed.plugin)).toBe(true);
   });
 
+  test("orders the context plugin before runtime plugins and the observer last among managed entries", async () => {
+    const { config } = await setup();
+    await writeRuntimeOpencodeConfig(config, "ws_1", (current) => ({
+      ...current,
+      plugin: ["runtime-plugin"],
+    }));
+
+    await writeOpenworkRuntimeConfigFile(config, "ws_1");
+    const parsed = await readConfigFile(config);
+
+    expect(parsed.plugin).toEqual([
+      "opencode-chrome-devtools",
+      openworkContextPluginPath(),
+      "runtime-plugin",
+      openworkPromptLogPluginPath(),
+    ]);
+  });
+
   test("openwork prompt has a static search-first Memory Bank section, distinct from ## Memory", async () => {
     const { config } = await setup();
     await writeOpenworkRuntimeConfigFile(config, "ws_1");
@@ -95,7 +130,7 @@ describe("openwork runtime config file", () => {
   test("keepOpenworkRuntimeConfigFileFresh rewrites the file on runtime-DB writes", async () => {
     const { config } = await setup();
     await writeOpenworkRuntimeConfigFile(config, "ws_1");
-    cleanups.push(keepOpenworkRuntimeConfigFileFresh(config, "ws_1"));
+    cleanups.push(keepOpenworkRuntimeConfigFileFresh(config, "ws_1", quietLogger));
 
     await writeRuntimeOpencodeConfig(config, "ws_1", (current) => ({
       ...current,
@@ -116,7 +151,7 @@ describe("openwork runtime config file", () => {
   test("writes for other workspaces do not rewrite the primary file", async () => {
     const { config } = await setup();
     await writeOpenworkRuntimeConfigFile(config, "ws_1");
-    cleanups.push(keepOpenworkRuntimeConfigFileFresh(config, "ws_1"));
+    cleanups.push(keepOpenworkRuntimeConfigFileFresh(config, "ws_1", quietLogger));
 
     await writeRuntimeOpencodeConfig(config, "ws_other", (current) => ({
       ...current,
@@ -127,6 +162,62 @@ describe("openwork runtime config file", () => {
     const parsed = await readConfigFile(config);
     const mcp = (parsed.mcp ?? {}) as Record<string, Record<string, unknown>>;
     expect(mcp.other).toBeUndefined();
+  });
+
+  test("retries a failed refresh once and clears the recorded failure after recovery", async () => {
+    const { config } = await setup();
+    await writeOpenworkRuntimeConfigFile(config, "ws_1");
+    const logs: Array<{
+      level: string;
+      message: string;
+      attributes: Record<string, unknown> | undefined;
+    }> = [];
+    const logger = {
+      log(level: "info" | "warn" | "error", message: string, attributes?: Record<string, unknown>) {
+        logs.push({ level, message, attributes });
+      },
+    };
+    const sleepDelays: number[] = [];
+    let writeAttempts = 0;
+    const secretBearingError = "Bearer RETRY_SECRET at /private/runtime-config.json";
+
+    cleanups.push(keepOpenworkRuntimeConfigFileFresh(config, "ws_1", logger, {
+      async writeFile(path, content, encoding) {
+        writeAttempts += 1;
+        if (writeAttempts === 1) throw new Error(secretBearingError);
+        await writeFileToDisk(path, content, encoding);
+      },
+      async sleep(delayMs) {
+        sleepDelays.push(delayMs);
+      },
+      now: () => 123_456,
+    }));
+
+    await writeRuntimeOpencodeConfig(config, "ws_1", (current) => ({
+      ...current,
+      mcp: { retry: { type: "remote", url: "https://example.com/mcp", enabled: true } },
+    }));
+    await waitFor(() => writeAttempts === 2, "runtime config retry");
+
+    expect(sleepDelays).toEqual([1_000]);
+    expect(inspectLastRuntimeConfigWriteFailure(config, "ws_1")).toBeNull();
+    expect(logs.map(({ level, message }) => ({ level, message }))).toEqual([
+      {
+        level: "warn",
+        message: "Runtime OpenCode configuration write failed; retrying once.",
+      },
+      {
+        level: "info",
+        message: "Runtime OpenCode configuration write recovered after retry.",
+      },
+    ]);
+    const serializedLogs = JSON.stringify(logs);
+    expect(serializedLogs).not.toContain(secretBearingError);
+    expect(serializedLogs).not.toContain("RETRY_SECRET");
+    expect(serializedLogs).not.toContain("/private/runtime-config.json");
+    expect((await readConfigFile(config)).mcp).toEqual({
+      retry: { enabled: true, type: "remote", url: "https://example.com/mcp" },
+    });
   });
 
   test("builds byte-stable config for repeated snapshots", async () => {
