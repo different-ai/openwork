@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { OpenWorkCapabilitiesKnowledge } from "./openwork-capabilities-knowledge.js";
 
@@ -34,9 +35,39 @@ describe("OpenWork capabilities knowledge plugin", () => {
     expect(knowledge).not.toContain("then call `openwork-cloud_execute_capability`");
     expect(knowledge).toContain("Settings > Connect");
     expect(knowledge).toContain("custom or local MCP server");
+    expect(knowledge).toContain("create or update exactly one workspace-local");
+    expect(knowledge).toContain("Connect skills are remote team capabilities");
+    expect(knowledge).toContain("separate action that requires an explicit user request");
     expect(knowledge).not.toContain("Access tokens are opaque");
     expect(knowledge).not.toContain("https://api.openworklabs.com/mcp`");
     expect(knowledge).not.toContain("openwork-ui-mcp");
+  });
+
+  test("keeps the installed skill creator on one local authoring target", async () => {
+    const template = await readFile(
+      resolve(import.meta.dir, "../../../../apps/app/src/app/data/skill-creator.md"),
+      "utf8",
+    );
+
+    expect(template).toContain("creates one workspace-local skill by default");
+    expect(template).toContain("update its existing `SKILL.md` instead of creating a second copy");
+    expect(template).toContain("OpenWork Connect skills as remote team capabilities");
+    expect(template).toContain("Do not both write a local skill and publish an OpenWork Connect copy");
+    expect(template).toContain("writing and re-reading exactly one `SKILL.md`");
+  });
+
+  test("documents local creation and Connect sharing as separate steps", async () => {
+    process.env.OPENWORK_DOCS_DIR = resolve(import.meta.dir, "../../../../packages/docs");
+
+    const plugin = await OpenWorkCapabilitiesKnowledge();
+    const read = await plugin.tool.openwork_docs_read.execute({
+      path: "start-here/do-work-with-it/import-a-skill.mdx",
+    });
+
+    expect(read).toContain("one canonical file");
+    expect(read).toContain("OpenWork Connect skills are remote team capabilities");
+    expect(read).toContain("Creating a local skill does not also publish it to Connect");
+    expect(read).toContain("Settings -> Skills -> Share with team");
   });
 
   test("retrieves Slack connection guidance from bundled docs", async () => {

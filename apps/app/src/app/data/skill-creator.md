@@ -11,11 +11,14 @@ This skill is a template + checklist for creating skills in a workspace.
 
 A skill is a folder under `.opencode/skills/<skill-name>/` or `.claude/skills/<skill-name>/` anchored by `SKILL.md`.
 
-## OpenWork behavior
+## OpenWork authoring contract
 
-- In OpenWork, prefer creating the skill at `.opencode/skills/<skill-name>/SKILL.md`.
-- Use a file mutation tool (`write`, `edit`, or `apply_patch`) on the real skill path instead of pasting the whole skill into chat.
-- Writing the skill file lets OpenWork show the reload banner above the conversation so the user can activate the new skill immediately.
+- A request to create a skill in OpenWork chat creates one workspace-local skill by default at `.opencode/skills/<skill-name>/SKILL.md`.
+- Before writing, inspect `.opencode/skills/` and `.claude/skills/` for the same name or purpose. If the skill already exists locally, update its existing `SKILL.md` instead of creating a second copy in another root.
+- When the system prompt includes `<available_skills>`, treat those OpenWork Connect skills as remote team capabilities, not as a second filesystem destination. If a matching remote skill exists, ask whether the user wants to use it, create a clearly named local fork, or explicitly replace/share it.
+- Do not both write a local skill and publish an OpenWork Connect copy in one creation step. Sharing is a separate, explicit action from Settings > Skills after the local skill is complete.
+- Use a file mutation tool (`write`, `edit`, or `apply_patch`) on the chosen real skill path instead of pasting the whole skill into chat.
+- Re-read the final file after writing it. A single successful write lets OpenWork show the reload banner so the user can activate the skill immediately.
 
 ## Design goals
 
@@ -70,9 +73,10 @@ description: |
 
 ## Authoring checklist
 
-1. Start with a clear purpose statement: when to use it + what it outputs.
-2. Specify inputs/outputs and any required permissions.
-3. Include “Setup” steps if the skill needs local tooling.
-4. Add examples: at least 2 realistic user prompts.
-5. Keep it safe: avoid destructive defaults; ask for confirmation.
-6. In OpenWork, finish by writing the final `SKILL.md` file to `.opencode/skills/<skill-name>/SKILL.md` so the reload banner can appear.
+1. Choose one destination and check local plus available Connect skills for a name or purpose collision.
+2. Start with a clear purpose statement: when to use it + what it outputs.
+3. Specify inputs/outputs and any required permissions.
+4. Include “Setup” steps if the skill needs local tooling.
+5. Add examples: at least 2 realistic user prompts.
+6. Keep it safe: avoid destructive defaults; ask for confirmation.
+7. In OpenWork, finish by writing and re-reading exactly one `SKILL.md`. Use `.opencode/skills/<skill-name>/SKILL.md` for a new local skill or the existing path when updating one.

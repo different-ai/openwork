@@ -114,6 +114,9 @@ describe("composeOpenWorkExtensionDiscoveryInstruction", () => {
     expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("verified ready for this exact workspace/model");
     expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("use openwork-cloud_search_capabilities");
     expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("available_skills");
+    expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("create or update exactly one workspace-local .opencode/skills/<skill-name>/SKILL.md");
+    expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("Connect skills are remote inventory, not a second write target");
+    expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("separately and explicitly asks to share it");
     expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).not.toContain("Gmail");
     expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).not.toContain("image generation");
     expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("relay connectionStatus.action exactly");

@@ -34,6 +34,10 @@ Type `/skill-creator` in chat, then either paste the external skill you want to 
   ![Using the /skill-creator command in chat](/images/skill-import-skill-creator-command.png)
 </Frame>
 
+The creator checks the workspace's existing skills before it writes. A new skill has one canonical file at `.opencode/skills/<skill-name>/SKILL.md`; an existing local skill is updated at its current path instead of being copied into another skill root.
+
+OpenWork Connect skills are remote team capabilities. If a same-named or equivalent Connect skill is already available, choose whether to use that remote skill or create a clearly named local fork. Creating a local skill does not also publish it to Connect. Use `Settings -> Skills -> Share with team` as a separate, explicit step after the local skill is ready.
+
 When pasting an existing skill, the file should follow this structure:
 
 ```text
