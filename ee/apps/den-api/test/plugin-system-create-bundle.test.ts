@@ -282,16 +282,6 @@ test("createPluginBundle rejects invalid standard SKILL.md content before any wr
       message: "SKILL.md must start with YAML frontmatter delimited by --- lines.",
     },
     {
-      value: { rawSourceText: "---\nname: malformed-yaml\ndescription: [unterminated\n---\nInstructions." },
-      error: "invalid_skill_frontmatter",
-      message: "SKILL.md frontmatter must be valid YAML.",
-    },
-    {
-      value: { rawSourceText: "---\n- name\n- description\n---\nInstructions." },
-      error: "invalid_skill_frontmatter",
-      message: "SKILL.md frontmatter must be a YAML mapping with name and description fields.",
-    },
-    {
       value: { rawSourceText: "---\ndescription: Missing name\n---\nInstructions." },
       error: "invalid_skill_name",
       message: "SKILL.md frontmatter requires a non-empty name.",

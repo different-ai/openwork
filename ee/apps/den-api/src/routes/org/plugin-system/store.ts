@@ -26,7 +26,6 @@ import {
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { hasSkillFrontmatterName, parseSkillMarkdown } from "@openwork-ee/utils"
-import { parseDocument } from "yaml"
 import type { PluginArchActorContext, PluginArchResourceKind, PluginArchRole } from "./access.js"
 import { requirePluginArchResourceRole, resolvePluginArchResourceRole } from "./access.js"
 import {
@@ -554,10 +553,9 @@ async function getPublicGithubDiscoveryFileTexts(snapshot: PublicGithubTreeSnaps
 }
 
 const STANDARD_SKILL_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
-const STANDARD_SKILL_FRONTMATTER_PATTERN = /^---\n([\s\S]*?)\n---\n?/
 
 function deriveSkillProjection(value: ConfigObjectInput) {
-  const rawSourceText = normalizeOptionalString(value.rawSourceText)?.replace(/^\uFEFF/, "").replace(/\r\n/g, "\n")
+  const rawSourceText = normalizeOptionalString(value.rawSourceText)
   if (!rawSourceText) {
     throw new PluginArchRouteFailure(
       400,
@@ -566,8 +564,8 @@ function deriveSkillProjection(value: ConfigObjectInput) {
     )
   }
 
-  const frontmatterMatch = rawSourceText.match(STANDARD_SKILL_FRONTMATTER_PATTERN)
-  if (!frontmatterMatch) {
+  const parsed = parseSkillMarkdown(rawSourceText)
+  if (!parsed.hasFrontmatter) {
     throw new PluginArchRouteFailure(
       400,
       "invalid_skill_frontmatter",
@@ -575,24 +573,7 @@ function deriveSkillProjection(value: ConfigObjectInput) {
     )
   }
 
-  const document = parseDocument(frontmatterMatch[1] ?? "")
-  if (document.errors.length > 0) {
-    throw new PluginArchRouteFailure(
-      400,
-      "invalid_skill_frontmatter",
-      "SKILL.md frontmatter must be valid YAML.",
-    )
-  }
-  const frontmatter = document.toJS()
-  if (!isRecord(frontmatter) || Array.isArray(frontmatter)) {
-    throw new PluginArchRouteFailure(
-      400,
-      "invalid_skill_frontmatter",
-      "SKILL.md frontmatter must be a YAML mapping with name and description fields.",
-    )
-  }
-
-  const name = typeof frontmatter.name === "string" ? frontmatter.name.trim() : ""
+  const name = parsed.name.trim()
   if (!name) {
     throw new PluginArchRouteFailure(
       400,
@@ -608,7 +589,7 @@ function deriveSkillProjection(value: ConfigObjectInput) {
     )
   }
 
-  const description = typeof frontmatter.description === "string" ? frontmatter.description.trim() : ""
+  const description = parsed.description.trim()
   if (!description) {
     throw new PluginArchRouteFailure(
       400,
@@ -624,7 +605,7 @@ function deriveSkillProjection(value: ConfigObjectInput) {
     )
   }
 
-  const body = rawSourceText.slice(frontmatterMatch[0].length).trim()
+  const body = parsed.body.trim()
   if (!body) {
     throw new PluginArchRouteFailure(
       400,
