@@ -58,6 +58,32 @@ function skillIndexFetcher(capability = "skill:skill_customer_briefing"): (url: 
   };
 }
 
+function skillIndexDocumentFetcher(document: unknown): (url: string, init?: RequestInit) => Promise<Response> {
+  return async (_url: string, init?: RequestInit) => {
+    if (init?.method === "DELETE") return new Response(null, { status: 204 });
+    const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    if (body.method === "initialize") {
+      return Response.json({
+        jsonrpc: "2.0",
+        id: 1,
+        result: { protocolVersion: "2025-06-18", capabilities: {} },
+      });
+    }
+    if (body.method === "notifications/initialized") return new Response(null, { status: 202 });
+    return Response.json({
+      jsonrpc: "2.0",
+      id: 2,
+      result: {
+        contents: [{
+          uri: "skill://index.json",
+          mimeType: "application/json",
+          text: JSON.stringify(document),
+        }],
+      },
+    });
+  };
+}
+
 async function serverConfig(): Promise<ServerConfig> {
   const root = await mkdtemp(join(tmpdir(), "openwork-connect-skills-"));
   roots.push(root);
@@ -135,16 +161,21 @@ describe("OpenWork Connect skill catalog", () => {
   });
 
   test("rejects a declared oversized MCP response before buffering it", async () => {
+    const reasons: string[] = [];
     const fetcher = async () => new Response("{}", {
       headers: { "content-length": String(600 * 1024) },
     });
     await expect(readMcpSkillIndex(
       { url: "https://connect.example/mcp/agent" },
       fetcher,
+      (message) => reasons.push(message),
     )).rejects.toThrow("connect_skill_catalog_response_too_large");
+    expect(reasons.some((message) => message.includes("reason=response-too-large"))).toBe(true);
+    expect(reasons.join("\n")).not.toContain("connect.example");
   });
 
   test("cancels and rejects a streaming oversized MCP response", async () => {
+    const reasons: string[] = [];
     const chunk = new Uint8Array(300 * 1024);
     const fetcher = async () => new Response(new ReadableStream<Uint8Array>({
       start(controller) {
@@ -156,7 +187,122 @@ describe("OpenWork Connect skill catalog", () => {
     await expect(readMcpSkillIndex(
       { url: "https://connect.example/mcp/agent" },
       fetcher,
+      (message) => reasons.push(message),
     )).rejects.toThrow("connect_skill_catalog_response_too_large");
+    expect(reasons.some((message) => message.includes("reason=response-too-large"))).toBe(true);
+  });
+
+  test("reports invalid UTF-8 without copying transport details", async () => {
+    const reasons: string[] = [];
+    const fetcher = async (_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      if (body.method === "initialize") {
+        return Response.json({
+          jsonrpc: "2.0",
+          id: 1,
+          result: { protocolVersion: "2025-06-18", capabilities: {} },
+        });
+      }
+      if (body.method === "notifications/initialized") return new Response(null, { status: 202 });
+      return new Response(new Uint8Array([0xc3, 0x28]), {
+        headers: { "content-type": "application/json" },
+      });
+    };
+
+    await expect(readMcpSkillIndex(
+      { url: "https://connect.example/private-mcp" },
+      fetcher,
+      (message) => reasons.push(message),
+    )).rejects.toThrow("connect_skill_catalog_response_invalid_utf8");
+    expect(reasons.some((message) => message.includes("reason=invalid-utf8"))).toBe(true);
+    expect(reasons.join("\n")).not.toContain("private-mcp");
+  });
+
+  test("accepts catalogs above the prompt budget and leaves truncation to the renderer", async () => {
+    const skills = Array.from({ length: 1_001 }, (_, index) => ({
+      name: `skill-${index}`,
+      type: "skill-md",
+      description: "A bounded test skill",
+      url: `skill://skill-${index}/SKILL.md`,
+      capability: `skill:skill_${index}`,
+    }));
+    const reasons: string[] = [];
+    const catalog = await readMcpSkillIndex(
+      { url: "https://example.com/mcp" },
+      skillIndexDocumentFetcher({
+        $schema: "https://schemas.agentskills.io/discovery/0.2.0/schema.json",
+        skills,
+      }),
+      (message) => reasons.push(message),
+    );
+
+    expect(catalog).toHaveLength(1_001);
+    expect(reasons.some((message) => message.includes("outcome=selected skills=1001 rejectedEntries=0"))).toBe(true);
+    const renderReasons: string[] = [];
+    const instruction = renderOpenWorkConnectSkillInstruction(
+      catalog ?? [],
+      (message) => renderReasons.push(message),
+    );
+    expect(instruction).toContain("<available_skills>");
+    expect(renderReasons.some((message) => message.includes("rendered 100 of 1001 skills"))).toBe(true);
+  });
+
+  test("keeps valid entries and reports sanitized per-entry schema failures", async () => {
+    const privateCanary = "private-schema-canary-74ab";
+    const reasons: string[] = [];
+    const skills = await readMcpSkillIndex(
+      { url: "https://example.com/mcp" },
+      skillIndexDocumentFetcher({
+        $schema: "https://schemas.agentskills.io/discovery/0.2.0/schema.json",
+        skills: [
+          {
+            name: "invalid-capability",
+            type: "skill-md",
+            description: "Invalid entry",
+            url: "skill://invalid-capability/SKILL.md",
+            capability: `plugin:${privateCanary}:too:many-segments`,
+          },
+          {
+            name: "customer-briefing",
+            type: "skill-md",
+            description: "Prepare customer briefings.",
+            url: "skill://customer-briefing/SKILL.md",
+            capability: "skill:skill_customer_briefing",
+          },
+        ],
+      }),
+      (message) => reasons.push(message),
+    );
+
+    expect(skills?.map((skill) => skill.name)).toEqual(["customer-briefing"]);
+    const rendered = reasons.join("\n");
+    expect(rendered).toContain("outcome=filtered reason=invalid-entries rejectedEntries=1");
+    expect(rendered).toContain("firstIssueCode=invalid_format");
+    expect(rendered).toContain("firstIssuePath=skills.0.capability");
+    expect(rendered).not.toContain(privateCanary);
+  });
+
+  test("marks a non-empty all-invalid index unusable so candidate fallback can continue", async () => {
+    const reasons: string[] = [];
+    const skills = await readMcpSkillIndex(
+      { url: "https://example.com/mcp" },
+      skillIndexDocumentFetcher({
+        $schema: "https://schemas.agentskills.io/discovery/0.2.0/schema.json",
+        skills: [{
+          name: "Invalid Name",
+          type: "skill-md",
+          description: "Invalid entry",
+          url: "skill://invalid/SKILL.md",
+          capability: "skill:invalid",
+        }],
+      }),
+      (message) => reasons.push(message),
+    );
+
+    expect(skills).toBeNull();
+    expect(reasons.join("\n")).toContain(
+      "outcome=failed reason=all-entries-invalid rejectedEntries=1 firstIssueCode=invalid_format firstIssuePath=skills.0.name",
+    );
   });
 
   test("reports an invalid skill index instead of silently dropping it", async () => {
@@ -174,7 +320,7 @@ describe("OpenWork Connect skill catalog", () => {
     };
     const reasons: string[] = [];
     expect(await readMcpSkillIndex({ url: "https://example.com/mcp" }, fetcher, (message) => reasons.push(message))).toBeNull();
-    expect(reasons.some((message) => message.includes("reason=invalid-schema"))).toBe(true);
+    expect(reasons.some((message) => message.includes("reason=unsupported-schema"))).toBe(true);
     expect(reasons.join("\n")).not.toContain("wrong.example");
   });
 
@@ -196,7 +342,7 @@ describe("OpenWork Connect skill catalog", () => {
     expect(reasons.join("\n")).not.toContain("private auth token");
   });
 
-  test("reads the standards-shaped index through an authenticated MCP resource", async () => {
+  test("reads the OpenWork MCP skill-index profile through an authenticated resource", async () => {
     const requests: Array<{ method: string; body: Record<string, unknown> | null; headers: Headers }> = [];
     const fetcher = async (_url: string, init?: RequestInit) => {
       const method = init?.method ?? "GET";

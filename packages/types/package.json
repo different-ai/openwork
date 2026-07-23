@@ -44,6 +44,11 @@
       "development": "./src/den/mcp-connection-action.ts",
       "default": "./src/den/mcp-connection-action.ts"
     },
+    "./den/agent-skill-index": {
+      "types": "./src/den/agent-skill-index.ts",
+      "development": "./src/den/agent-skill-index.ts",
+      "default": "./src/den/agent-skill-index.ts"
+    },
     "./workspace": {
       "types": "./src/workspace.ts",
       "development": "./src/workspace.ts",

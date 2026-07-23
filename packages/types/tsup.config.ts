@@ -6,6 +6,7 @@ export default defineConfig({
     "agent-context-diagnostics": "src/agent-context-diagnostics.ts",
     "den/desktop-app-restrictions": "src/den/desktop-app-restrictions.ts",
     "den/desktop-policies": "src/den/desktop-policies.ts",
+    "den/agent-skill-index": "src/den/agent-skill-index.ts",
     "den/egress-diagnostics": "src/den/egress-diagnostics.ts",
     "den/inference": "src/den/inference.ts",
     "den/mcp-connection-action": "src/den/mcp-connection-action.ts",

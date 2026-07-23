@@ -1,6 +1,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js"
 import type { Transport, TransportSendOptions } from "@modelcontextprotocol/sdk/shared/transport.js"
+import { openworkAgentSkillIndexSchema } from "@openwork/types/den/agent-skill-index"
 import { beforeAll, expect, test } from "bun:test"
 import type { ExecuteCapabilityToolResult } from "../src/mcp/agent.js"
 import { compareCapabilityMatches, type CapabilityMatch } from "../src/mcp/search.js"
@@ -125,7 +126,7 @@ test("agent MCP server exposes steering instructions during initialize", async (
   await server.close()
 })
 
-test("agent MCP server exposes a standards-shaped remote skill index", () => {
+test("agent MCP server exposes the shared OpenWork MCP skill-index profile", () => {
   const index = agentModule.buildAgentSkillIndex([{
     name: "customer-briefing",
     description: "Use for accounts & renewals",
@@ -142,6 +143,7 @@ test("agent MCP server exposes a standards-shaped remote skill index", () => {
       capability: "skill:skill_customer_briefing",
     }],
   })
+  expect(openworkAgentSkillIndexSchema.parse(index)).toEqual(index)
 })
 
 test("agent MCP server publishes the authorized skill index as an MCP resource", async () => {
