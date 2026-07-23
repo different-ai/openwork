@@ -114,9 +114,11 @@ describe("composeOpenWorkExtensionDiscoveryInstruction", () => {
     expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("verified ready for this exact workspace/model");
     expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("use openwork-cloud_search_capabilities");
     expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("available_skills");
-    expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("create or update exactly one workspace-local .opencode/skills/<skill-name>/SKILL.md");
-    expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("Connect skills are remote inventory, not a second write target");
-    expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("separately and explicitly asks to share it");
+    expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("create new skills in OpenWork Cloud by default");
+    expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("do not write them to .opencode/skills");
+    expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("same validated POST /v1/plugins path as the OpenWork Cloud UI");
+    expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("verify the returned plugin/config-object IDs");
+    expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("never silently create a local fallback");
     expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).not.toContain("Gmail");
     expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).not.toContain("image generation");
     expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("relay connectionStatus.action exactly");

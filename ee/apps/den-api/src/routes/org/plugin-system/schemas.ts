@@ -15,6 +15,7 @@ import {
   membershipSourceValues,
   pluginStatusValues,
 } from "@openwork-ee/den-db/schema"
+import { parseSkillMarkdown } from "@openwork-ee/utils"
 import { z } from "zod"
 import { denTypeIdSchema } from "../../../openapi.js"
 import { idParamSchema } from "../shared.js"
@@ -219,6 +220,43 @@ export const pluginCreateSchema = z.object({
   components: z.array(pluginCreateComponentSchema).max(100).optional(),
   orgWide: z.boolean().optional(),
   marketplaceId: marketplaceIdSchema.optional(),
+}).superRefine((value, ctx) => {
+  for (const [index, component] of (value.components ?? []).entries()) {
+    if (component.type !== "skill") continue
+    const rawSourceText = component.input.rawSourceText
+    const path = ["components", index, "input", "rawSourceText"]
+    if (!rawSourceText) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Cloud skill components require a complete SKILL.md in rawSourceText.",
+        path: [...path],
+      })
+      continue
+    }
+
+    const skill = parseSkillMarkdown(rawSourceText)
+    if (!skill.hasFrontmatter || !skill.name) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Cloud skills require YAML frontmatter with a non-empty name.",
+        path: [...path],
+      })
+    }
+    if (!skill.description) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Cloud skills require a non-empty frontmatter description.",
+        path: [...path],
+      })
+    }
+    if (!skill.body.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Cloud skills require an instruction body after the frontmatter.",
+        path: [...path],
+      })
+    }
+  }
 })
 
 export const pluginUpdateSchema = z.object({

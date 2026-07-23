@@ -35,28 +35,30 @@ describe("OpenWork capabilities knowledge plugin", () => {
     expect(knowledge).not.toContain("then call `openwork-cloud_execute_capability`");
     expect(knowledge).toContain("Settings > Connect");
     expect(knowledge).toContain("custom or local MCP server");
-    expect(knowledge).toContain("create or update exactly one workspace-local");
-    expect(knowledge).toContain("Connect skills are remote team capabilities");
-    expect(knowledge).toContain("separate action that requires an explicit user request");
+    expect(knowledge).toContain("When it says OpenWork Cloud is verified ready, create and validate the skill remotely");
+    expect(knowledge).toContain("do not write a local skill first");
+    expect(knowledge).toContain("only when Cloud is not verified ready or the user explicitly requests a workspace-local skill");
+    expect(knowledge).toContain("Never silently fall back to local");
     expect(knowledge).not.toContain("Access tokens are opaque");
     expect(knowledge).not.toContain("https://api.openworklabs.com/mcp`");
     expect(knowledge).not.toContain("openwork-ui-mcp");
   });
 
-  test("keeps the installed skill creator on one local authoring target", async () => {
+  test("makes verified Cloud the skill creator default and local the last resort", async () => {
     const template = await readFile(
       resolve(import.meta.dir, "../../../../apps/app/src/app/data/skill-creator.md"),
       "utf8",
     );
 
-    expect(template).toContain("creates one workspace-local skill by default");
-    expect(template).toContain("update its existing `SKILL.md` instead of creating a second copy");
-    expect(template).toContain("OpenWork Connect skills as remote team capabilities");
-    expect(template).toContain("Do not both write a local skill and publish an OpenWork Connect copy");
-    expect(template).toContain("writing and re-reading exactly one `SKILL.md`");
+    expect(template).toContain("Cloud is the default and authoritative destination");
+    expect(template).toContain("Do not write the skill to `.opencode/skills/`");
+    expect(template).toContain("Create one Cloud plugin with one skill component");
+    expect(template).toContain("Read back the created plugin or resolved marketplace detail");
+    expect(template).toContain("Do not silently fall back to a local file");
+    expect(template).toContain("only when Cloud is not verified ready or the user explicitly requests a workspace-local skill");
   });
 
-  test("documents local creation and Connect sharing as separate steps", async () => {
+  test("documents verified Cloud creation and explicit local fallback", async () => {
     process.env.OPENWORK_DOCS_DIR = resolve(import.meta.dir, "../../../../packages/docs");
 
     const plugin = await OpenWorkCapabilitiesKnowledge();
@@ -64,10 +66,10 @@ describe("OpenWork capabilities knowledge plugin", () => {
       path: "start-here/do-work-with-it/import-a-skill.mdx",
     });
 
-    expect(read).toContain("one canonical file");
-    expect(read).toContain("OpenWork Connect skills are remote team capabilities");
-    expect(read).toContain("Creating a local skill does not also publish it to Connect");
-    expect(read).toContain("Settings -> Skills -> Share with team");
+    expect(read).toContain("saves the new skill directly to Cloud");
+    expect(read).toContain("same plugin API used by the Cloud UI");
+    expect(read).toContain("It does not create a workspace-local copy");
+    expect(read).toContain("only when Cloud is unavailable or you explicitly request a local skill");
   });
 
   test("retrieves Slack connection guidance from bundled docs", async () => {

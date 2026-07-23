@@ -157,10 +157,11 @@ Once connected, your agent can use OpenWork capabilities from plain English in t
 - **Manage teams** — "Assign Priya to the Sales team." Works for active
   members; the agent explains when someone still has a pending invitation.
 - **Share skills with your org** — "Create a skill that writes weekly status
-  reports and share it with my whole organization." The agent writes the
-  `SKILL.md` locally, then creates a plugin, attaches the skill, publishes it
-  to your marketplace, and grants org-wide access — teammates see it in their
-  marketplace and install it with one click.
+  reports and share it with my whole organization." The agent checks Cloud for
+  an existing skill, validates the complete `SKILL.md` in memory, then creates
+  it through the same plugin API used by the Cloud UI. It reads the persisted
+  plugin and skill config object back before reporting success. No local skill
+  is created; teammates see the Cloud skill in their marketplace.
 
 Org policy still applies: invitations respect seat limits and domain rules, and resource access follows organization membership, roles, policies, and exposure allowlists.
 
