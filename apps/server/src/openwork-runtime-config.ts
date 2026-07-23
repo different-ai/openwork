@@ -84,6 +84,22 @@ Manage: to show what is saved, discover and execute the list capability (getMemo
 
 Never persist secrets, credentials, API keys, tokens, or sensitive PII into a memory. This applies to both the content sentence and any cited snippets — redact secrets from a snippet before saving it.`;
 
+const DEFAULT_XKW_PROVIDER = {
+  npm: "@ai-sdk/openai-compatible",
+  name: "XKW",
+  env: ["XKW_API_KEY"],
+  options: { baseURL: "https://esp.xkw.cn/ai/v1" },
+  models: { "qwen3.7-plus": { name: "Qwen 3.7 Plus" } },
+};
+
+const DEFAULT_DISABLED_PROVIDERS = [
+  "opencode",
+  "openai",
+  "anthropic",
+  "google",
+  "github-copilot",
+];
+
 export async function buildOpenworkRuntimeConfigObject(
   config?: ServerConfig,
   workspaceId?: string,
@@ -95,9 +111,16 @@ export async function buildOpenworkRuntimeConfigObject(
 export function buildOpenworkRuntimeConfigObjectFromSnapshot(
   runtimeConfig: RuntimeOpencodeConfig,
 ): Record<string, unknown> {
-  const disabledProviders = runtimeDisabledProviderList(runtimeConfig);
+  const disabledProviders = Array.from(new Set([
+    ...DEFAULT_DISABLED_PROVIDERS,
+    ...runtimeDisabledProviderList(runtimeConfig),
+  ]));
   return {
     ...runtimeConfig,
+    provider: {
+      xkw: DEFAULT_XKW_PROVIDER,
+      ...(runtimeConfig.provider ?? {}),
+    },
     default_agent: runtimeConfig.default_agent ?? "openwork",
     agent: {
       openwork: {
@@ -116,7 +139,7 @@ export function buildOpenworkRuntimeConfigObjectFromSnapshot(
       openworkAnthropicToolSchemaPluginPath(),
       ...runtimePluginList(runtimeConfig),
     ],
-    ...(disabledProviders.length ? { disabled_providers: disabledProviders } : {}),
+    disabled_providers: disabledProviders,
     mcp: runtimeMcpMap(runtimeConfig),
   };
 }

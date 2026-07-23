@@ -1328,7 +1328,26 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     assertProviderAllowedByDesktopPolicy(providerId);
 
     try {
-      await c.auth.set({ providerID: providerId, auth: { type: "api", key: trimmed } });
+      const provider = getProviderAuthProviders().find((entry) => entry.id === providerId);
+      const envNames = provider?.env ?? [];
+      if (envNames.length > 0) {
+        // Environment-backed providers (for example XKW) must be written to
+        // OpenWork's user environment store. Calling c.auth.set() here would
+        // create an auth.json entry, but the managed OpenCode process would not
+        // receive the environment variable declared by the provider config.
+        const openworkClient = options.openworkServer.getSnapshot().openworkServerClient;
+        if (!openworkClient) {
+          throw new Error(
+            `${provider?.name ?? providerId} needs environment variables (${envNames.join(", ")}) but the OpenWork server is not available.`,
+          );
+        }
+        await openworkClient.upsertUserEnv([
+          { key: envNames[0], value: trimmed },
+        ]);
+        await openworkClient.setUserEnvPendingChanges(true);
+      } else {
+        await c.auth.set({ providerID: providerId, auth: { type: "api", key: trimmed } });
+      }
       await refreshProviders({ dispose: true });
       return `${t("status.connected")} ${providerId}`;
     } catch (error) {
