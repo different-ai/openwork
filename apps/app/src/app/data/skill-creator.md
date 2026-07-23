@@ -13,16 +13,11 @@ A skill is a folder under `.opencode/skills/<skill-name>/` or `.claude/skills/<s
 
 ## OpenWork authoring contract
 
-1. Read the runtime Connect instruction before choosing a destination.
-2. If it says OpenWork Cloud is verified ready, Cloud is the default and authoritative destination. Do not write the skill to `.opencode/skills/`.
-3. Search OpenWork Cloud capabilities with 2-4 variants for existing plugins/skills, available marketplaces, the create-plugin operation, and the resolved plugin or marketplace detail operation. Use only exact capability names returned by search.
-4. If a remote skill with the same name or purpose exists, do not create a duplicate. Ask whether to use or update it, or choose a distinct name.
-5. Draft the complete `SKILL.md` in memory. Validate its frontmatter, matching name, trigger-oriented description, instructions, examples, permissions, and absence of secrets before sending it.
-6. Create one Cloud plugin with one skill component whose `input.rawSourceText` is the complete validated `SKILL.md`. Set `orgWide` and `marketplaceId` only after confirming the user's requested visibility and target marketplace.
-7. Read back the created plugin or resolved marketplace detail. Verify the plugin and skill config-object IDs, stored skill name, marketplace, and access visibility before reporting success.
-8. If Cloud returns a validation, authorization, or persistence error, report that error and the required action. Do not silently fall back to a local file.
-9. Use `.opencode/skills/<skill-name>/SKILL.md` only when Cloud is not verified ready or the user explicitly requests a workspace-local skill. Before writing locally, inspect `.opencode/skills/` and `.claude/skills/`, update an existing path instead of duplicating it, and re-read the final file.
-10. Never create both Cloud and local copies in one flow.
+Follow the runtime `Skill creation:` instruction for this workspace/model:
+
+- In Cloud mode, search for a collision, create one validated `SKILL.md` through the exact returned plugin capability, and read back the saved skill.
+- In local mode, inspect `.opencode/skills/` and `.claude/skills/`, then write or update exactly one `.opencode/skills/<skill-name>/SKILL.md` and re-read it.
+- An explicit user request for a workspace-local skill overrides Cloud mode. Never create both copies.
 
 ## Design goals
 
@@ -77,10 +72,10 @@ description: |
 
 ## Authoring checklist
 
-1. Choose one destination from the verified runtime state: OpenWork Cloud first, local only as the explicit or unavailable-Cloud fallback.
+1. Follow the runtime-selected Cloud or local destination and check it for a name or purpose collision.
 2. Start with a clear purpose statement: when to use it + what it outputs.
 3. Specify inputs/outputs and any required permissions.
 4. Include “Setup” steps if the skill needs local tooling.
 5. Add examples: at least 2 realistic user prompts.
 6. Keep it safe: avoid destructive defaults; ask for confirmation.
-7. For Cloud creation, validate before execution and verify the persisted plugin/config object after execution. For an explicitly local skill, finish by writing and re-reading exactly one `SKILL.md`.
+7. Validate before creation and verify the result after creation.

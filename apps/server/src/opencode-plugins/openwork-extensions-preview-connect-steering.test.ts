@@ -2,11 +2,14 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import {
   composeOpenWorkExtensionDiscoveryInstruction,
+  composeSkillAuthoringInstruction,
   composeSteeringFromEngineMcpStatus,
   OPENWORK_CLOUD_CONNECTION_INSTRUCTION,
+  OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION,
   OPENWORK_CONNECT_DISABLED_INSTRUCTION,
   OPENWORK_CONNECT_SIGN_IN_INSTRUCTION,
   OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION,
+  OPENWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION,
   resetOpenWorkExtensionDiscoveryInstructionCacheForTests,
   resolveOpenWorkExtensionDiscoveryInstruction,
   type OpenWorkEngineMcpStatusClient,
@@ -114,11 +117,7 @@ describe("composeOpenWorkExtensionDiscoveryInstruction", () => {
     expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("verified ready for this exact workspace/model");
     expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("use openwork-cloud_search_capabilities");
     expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("available_skills");
-    expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("create new skills in OpenWork Cloud by default");
-    expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("do not write them to .opencode/skills");
-    expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("same validated POST /v1/plugins path as the OpenWork Cloud UI");
-    expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("verify the returned plugin/config-object IDs");
-    expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("never silently create a local fallback");
+    expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).not.toContain("Skill creation:");
     expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).not.toContain("Gmail");
     expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).not.toContain("image generation");
     expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("relay connectionStatus.action exactly");
@@ -126,6 +125,30 @@ describe("composeOpenWorkExtensionDiscoveryInstruction", () => {
     expect(composeOpenWorkExtensionDiscoveryInstruction(state(health()))).toBe(OPENWORK_CLOUD_CONNECTION_INSTRUCTION);
     expect(composeOpenWorkExtensionDiscoveryInstruction({ ...state(health()), connectCatalogEnabled: false })).toBe(OPENWORK_CLOUD_CONNECTION_INSTRUCTION);
     expect(composeOpenWorkExtensionDiscoveryInstruction({ ...state(health()), googleWorkspace: { legacyConfigured: true } })).toBe(OPENWORK_CLOUD_CONNECTION_INSTRUCTION);
+  });
+
+  test("selects one compact skill-authoring prompt from verified Cloud access", () => {
+    expect(composeSkillAuthoringInstruction(OPENWORK_CLOUD_CONNECTION_INSTRUCTION)).toEqual({
+      mode: "cloud",
+      prompt: OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION,
+    });
+    expect(OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain("create the skill remotely");
+    expect(OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain("read back the saved skill");
+    expect(OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).not.toContain("Create or update one workspace-local");
+
+    for (const instruction of [
+      OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION,
+      OPENWORK_CONNECT_SIGN_IN_INSTRUCTION,
+      OPENWORK_CONNECT_DISABLED_INSTRUCTION,
+    ]) {
+      expect(composeSkillAuthoringInstruction(instruction)).toEqual({
+        mode: "local",
+        prompt: OPENWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION,
+      });
+    }
+    expect(OPENWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION).toContain("Cloud is not verified");
+    expect(OPENWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION).toContain("workspace-local .opencode/skills");
+    expect(OPENWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION).not.toContain("create the skill remotely");
   });
 
   test("keeps neutral steering when provider projection is missing", () => {

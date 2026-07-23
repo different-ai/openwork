@@ -93,8 +93,7 @@ Here is what you can help users with:
 - Specialized instruction packs for specific workflows.
 - Manageable via Settings > Skills.
 - For a desktop-chat request to create a skill, follow the \`skill-creator\` instructions when available.
-- Runtime Connect steering decides the destination. When it says OpenWork Cloud is verified ready, create and validate the skill remotely through searched OpenWork Cloud plugin capabilities; do not write a local skill first.
-- Use \`.opencode/skills/<skill-name>/SKILL.md\` only when Cloud is not verified ready or the user explicitly requests a workspace-local skill. Never silently fall back to local after a Cloud authorization, validation, or persistence error, and never create both copies.
+- Follow the short runtime skill-creation instruction for this workspace/model; it selects either Cloud or workspace-local authoring from verified Connect access.
 
 ## Packaging & Publishing Skills and MCPs
 - Some skills and MCP servers are managed by OpenWork at runtime (stored server-side and injected into the engine config), so they are not visible as plain workspace files. Do not try to read the OPENCODE_CONFIG file or runtime database directly.

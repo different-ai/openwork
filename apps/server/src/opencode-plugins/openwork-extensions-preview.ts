@@ -8,6 +8,7 @@ import {
   createInstructionSection,
 } from "./agent-instruction-compose.js";
 import {
+  composeSkillAuthoringInstruction,
   OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION,
   resolveOpenWorkConnectSkillInstruction,
   resolveOpenWorkExtensionDiscoveryInstruction,
@@ -748,10 +749,19 @@ export const OpenWorkExtensionsPreview = async (factoryInput?: unknown) => {
       }),
       resolveOpenWorkConnectSkillInstruction(mergedInput, fetch),
     ]);
+    const skillAuthoring = composeSkillAuthoringInstruction(extensionInstruction);
+    if (process.env.OPENWORK_DEV_MODE === "1") {
+      console.log("[openwork:skill-authoring] system prompt selected", {
+        mode: skillAuthoring.mode,
+        prompt: skillAuthoring.prompt,
+        directory: normalizeOpenCodeContext(mergedInput).directory ?? factoryContext.directory ?? null,
+      });
+    }
     // One section id per concern — combine drops empties/duplicates so routing,
     // remote skills, session, browser, and UI tools never overlap by accident.
     const sections = combineInstructionSections(
       createInstructionSection("routing", extensionInstruction),
+      createInstructionSection("skill-authoring", skillAuthoring.prompt),
       createInstructionSection("connect-skills", skillInstruction),
       createInstructionSection("session-create", OPENWORK_SESSION_CREATION_INSTRUCTION),
       createInstructionSection("session-memory", OPENWORK_SESSION_MEMORY_INSTRUCTION),

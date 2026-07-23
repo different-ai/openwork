@@ -35,27 +35,25 @@ describe("OpenWork capabilities knowledge plugin", () => {
     expect(knowledge).not.toContain("then call `openwork-cloud_execute_capability`");
     expect(knowledge).toContain("Settings > Connect");
     expect(knowledge).toContain("custom or local MCP server");
-    expect(knowledge).toContain("When it says OpenWork Cloud is verified ready, create and validate the skill remotely");
-    expect(knowledge).toContain("do not write a local skill first");
-    expect(knowledge).toContain("only when Cloud is not verified ready or the user explicitly requests a workspace-local skill");
-    expect(knowledge).toContain("Never silently fall back to local");
+    expect(knowledge).toContain("Follow the short runtime skill-creation instruction");
+    expect(knowledge).not.toContain("create and validate the skill remotely");
+    expect(knowledge).not.toContain("Never silently fall back to local");
     expect(knowledge).not.toContain("Access tokens are opaque");
     expect(knowledge).not.toContain("https://api.openworklabs.com/mcp`");
     expect(knowledge).not.toContain("openwork-ui-mcp");
   });
 
-  test("makes verified Cloud the skill creator default and local the last resort", async () => {
+  test("keeps the skill creator generic so runtime steering selects one destination", async () => {
     const template = await readFile(
       resolve(import.meta.dir, "../../../../apps/app/src/app/data/skill-creator.md"),
       "utf8",
     );
 
-    expect(template).toContain("Cloud is the default and authoritative destination");
-    expect(template).toContain("Do not write the skill to `.opencode/skills/`");
-    expect(template).toContain("Create one Cloud plugin with one skill component");
-    expect(template).toContain("Read back the created plugin or resolved marketplace detail");
-    expect(template).toContain("Do not silently fall back to a local file");
-    expect(template).toContain("only when Cloud is not verified ready or the user explicitly requests a workspace-local skill");
+    expect(template).toContain("Follow the runtime `Skill creation:` instruction");
+    expect(template).toContain("In Cloud mode");
+    expect(template).toContain("In local mode");
+    expect(template).toContain("Never create both copies");
+    expect(template).not.toContain("Cloud is the default and authoritative destination");
   });
 
   test("documents verified Cloud creation and explicit local fallback", async () => {
