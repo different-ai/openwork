@@ -502,7 +502,10 @@ describe("marketplace capabilities source", () => {
 
     expect(descriptors).toHaveLength(1)
     expect(descriptors[0]).toMatchObject({
+      title: "Renewal Playbook",
       description: "Use for enterprise renewal strategy",
+      marketplaceName: "Team Marketplace",
+      pluginName: "Revenue Ops Plugin",
       capability: assigned.name,
     })
     expect(descriptors[0]?.name).toStartWith("renewal-playbook-")

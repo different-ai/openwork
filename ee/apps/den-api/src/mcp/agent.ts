@@ -142,17 +142,19 @@ export function buildAgentSkillIndex(skills: RemoteSkillDescriptor[]) {
     skills: skills.map((skill) => ({
       name: skill.name,
       type: "skill-md" as const,
-      description: (skill.description ?? skill.name).replace(/\s+/g, " ").trim().slice(0, 1_024),
+      title: skill.title,
+      description: skill.description,
       url: skill.location,
       capability: skill.capability,
+      ...(skill.marketplaceName ? { marketplaceName: skill.marketplaceName } : {}),
+      ...(skill.pluginName ? { pluginName: skill.pluginName } : {}),
     })),
   }
 }
 
 function standardSkillMarkdown(skill: RemoteSkillDescriptor, source: string): string {
   const body = source.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "").replace(/^\s+/, "")
-  const description = (skill.description ?? skill.name).replace(/\s+/g, " ").trim().slice(0, 1_024)
-  return `---\nname: ${skill.name}\ndescription: ${JSON.stringify(description)}\n---\n\n${body}`
+  return `---\nname: ${skill.name}\ndescription: ${JSON.stringify(skill.description)}\n---\n\n${body}`
 }
 
 const EXECUTE_CAPABILITY_TIMEOUT_MESSAGE = `The capability call exceeded ${EXECUTE_CAPABILITY_TIMEOUT_MS / 1_000}s. Retry once; if it times out again, narrow the request (fewer results, tighter query) and tell the user the service is slow — do NOT tell them to reconfigure or reconnect.`
@@ -310,8 +312,8 @@ export function registerAgentSkillResources(input: {
   }))
   for (const skill of input.skills) {
     input.server.registerResource(skill.name, skill.location, {
-      title: skill.name,
-      description: (skill.description ?? skill.name).replace(/\s+/g, " ").trim().slice(0, 1_024),
+      title: skill.title,
+      description: skill.description,
       mimeType: "text/markdown",
     }, async () => {
       const skillId = parseSkillCapabilityName(skill.capability)
