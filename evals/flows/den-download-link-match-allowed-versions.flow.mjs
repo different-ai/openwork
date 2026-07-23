@@ -4,8 +4,7 @@ const FLOW_ID = "den-download-link-match-allowed-versions";
 const DEN_API_URL = cleanBaseUrl(process.env.OPENWORK_EVAL_DEN_API_URL);
 const DEN_TOKEN = process.env.OPENWORK_EVAL_DEN_TOKEN?.trim() || "";
 const MEMBER_TOKEN = process.env.OPENWORK_EVAL_MEMBER_DEN_TOKEN?.trim() || DEN_TOKEN;
-const DEFAULT_RELEASE_TAG = process.env.OPENWORK_EVAL_DEFAULT_INSTALLER_RELEASE_TAG?.trim() || "v0.17.39";
-const DEFAULT_RELEASE_VERSION = DEFAULT_RELEASE_TAG.replace(/^v/i, "");
+const LATEST_WINDOWS_INSTALLER_URL = "https://github.com/different-ai/openwork/releases/latest/download/OpenWork-Installer-win-x64.exe";
 const ALLOWED_VERSIONS = ["0.17.37", "0.17.38"];
 const SELECTED_VERSION = "0.17.38";
 const DISALLOWED_VERSION = "0.17.39";
@@ -218,9 +217,9 @@ export default {
       },
     },
     {
-      name: "Frame 5 — Unrestricted org keeps Den default",
+      name: "Frame 5 — Unrestricted orgs follow the latest published release",
       run: async (ctx) => {
-        await ctx.prove("Removing the allowed-version restriction restores Den's configured installer release", {
+        await ctx.prove("Removing the allowed-version restriction redirects to GitHub's latest published installer", {
           voiceover: vo[4],
           action: async () => {
             await setAllowedDesktopVersions(ctx, null);
@@ -228,8 +227,8 @@ export default {
             state.unrestrictedDownload = await fetchInstallerDownload(state.unrestrictedInstallToken);
           },
           assert: async () => {
-            witness(ctx, [200, 302].includes(state.unrestrictedDownload.status), "The unrestricted installer endpoint returns a download or redirect", state.unrestrictedDownload);
-            witness(ctx, downloadMentionsVersion(state.unrestrictedDownload, DEFAULT_RELEASE_VERSION), `The unrestricted download uses Den's configured ${DEFAULT_RELEASE_TAG} release`, state.unrestrictedDownload);
+            witness(ctx, state.unrestrictedDownload.status === 302, "The unrestricted installer endpoint redirects to GitHub", state.unrestrictedDownload);
+            witness(ctx, state.unrestrictedDownload.location === LATEST_WINDOWS_INSTALLER_URL, "The unrestricted download follows the latest published installer release", state.unrestrictedDownload);
           },
         });
       },

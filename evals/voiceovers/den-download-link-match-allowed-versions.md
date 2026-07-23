@@ -10,4 +10,4 @@ The organization-wide desktop version policy applies to every member who uses th
 
 4. If an admin pins legacy versions 0.17.26 and 0.17.27, the guided installer still downloads v0.17.37—the first release that has installer assets—instead of pointing at the missing v0.17.27 asset.
 
-5. Organizations without version restrictions continue downloading Den’s configured latest release.
+5. Organizations without version restrictions follow GitHub’s latest published installer release, avoiding draft-release download windows.

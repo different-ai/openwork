@@ -28,6 +28,7 @@ import {
   DEFAULT_INSTALLER_RELEASE_REPO,
   FIRST_GENERIC_INSTALLER_RELEASE,
   genericInstallerArtifactName,
+  installerLatestReleaseAssetUrl,
   installerReleaseAssetUrl,
   resolveConfiguredInstallerArtifact,
 } from "../../utils/installer-artifacts.js"
@@ -226,6 +227,9 @@ function installerReleaseTagForMetadata(metadataInput: unknown) {
   const metadata = normalizeOrganizationMetadata(organizationMetadataInput(metadataInput)).metadata
   const allowedVersions = metadata.allowedDesktopVersions
   if (!allowedVersions?.length) {
+    if (env.installerReleaseRepo === DEFAULT_INSTALLER_RELEASE_REPO && !env.installerReleaseTagExplicit) {
+      return null
+    }
     return clampInstallerReleaseTag(env.installerReleaseTag)
   }
 
@@ -519,7 +523,7 @@ export function registerOrgInstallLinkRoutes<T extends { Variables: OrgRouteVari
     describeRoute({
       tags: ["Organizations"],
       summary: "Download OpenWork installer",
-      description: "Always serves the OpenWork installer for the requested platform. By default Den redirects to the public release asset; operators can optionally mount installer artifacts for an air-gapped mirror.",
+      description: "Always serves the OpenWork installer for the requested platform. By default Den redirects to the public release asset; unrestricted official-repo organizations follow the latest published release. Operators can optionally mount installer artifacts for an air-gapped mirror.",
       responses: {
         200: textResponse("Installer artifact returned successfully."),
         302: emptyResponse("Den redirected the browser to the public OpenWork installer release asset."),
@@ -577,6 +581,11 @@ export function registerOrgInstallLinkRoutes<T extends { Variables: OrgRouteVari
 
       if (!genericFileName) {
         return c.json({ error: "invalid_request", details: [{ message: "Unsupported installer platform." }] }, 400)
+      }
+
+      if (resolved.installerReleaseTag === null) {
+        // Follow GitHub's latest published release so draft-release windows cannot 404.
+        return c.redirect(installerLatestReleaseAssetUrl(genericFileName), 302)
       }
 
       return c.redirect(installerReleaseAssetUrl(genericFileName, { releaseTag: resolved.installerReleaseTag }), 302)

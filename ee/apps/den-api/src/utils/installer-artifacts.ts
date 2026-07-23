@@ -22,6 +22,16 @@ export function installerReleaseAssetUrl(
   return `https://github.com/${releaseRepo}/releases/download/${encodeURIComponent(releaseTag)}/${encodeURIComponent(fileName)}`
 }
 
+export function installerLatestReleaseAssetUrl(
+  fileName: string,
+  options: { releaseRepo?: string } = {},
+) {
+  const releaseRepo = options.releaseRepo ?? env.installerReleaseRepo
+  // GitHub latest only flips when publish-release un-drafts, which is gated on installer assets,
+  // so this URL cannot 404 during a release window.
+  return `https://github.com/${releaseRepo}/releases/latest/download/${encodeURIComponent(fileName)}`
+}
+
 export function desktopReleaseAssetName(platform: string, releaseTag: string) {
   const version = releaseTag.startsWith("v") ? releaseTag.slice(1) : releaseTag
   if (platform === "mac-arm64" || platform === "mac-x64") {
