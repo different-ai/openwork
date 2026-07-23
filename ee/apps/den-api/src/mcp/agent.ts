@@ -4,6 +4,12 @@ import { StreamableHTTPTransport } from "@hono/mcp"
 import { eq } from "@openwork-ee/den-db/drizzle"
 import { OrganizationTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import {
+  OPENWORK_AGENT_SKILL_DISCOVERY_SCHEMA_URI,
+  OPENWORK_AGENT_SKILL_INDEX_URI,
+  openworkAgentSkillIndexSchema,
+  type OpenWorkAgentSkillIndex,
+} from "@openwork/types/den/agent-skill-index"
 import { openworkCloudMcpConnectionActionSchema } from "@openwork/types/den/mcp-connection-action"
 import type { Hono } from "hono"
 import { z } from "zod"
@@ -133,11 +139,11 @@ async function mcpRequestMethod(request: Request): Promise<string | null> {
     : null
 }
 
-export const AGENT_SKILL_INDEX_URI = "skill://index.json"
-export const AGENT_SKILL_INDEX_SCHEMA = "https://schemas.agentskills.io/discovery/0.2.0/schema.json"
+export const AGENT_SKILL_INDEX_URI = OPENWORK_AGENT_SKILL_INDEX_URI
+export const AGENT_SKILL_INDEX_SCHEMA = OPENWORK_AGENT_SKILL_DISCOVERY_SCHEMA_URI
 
-export function buildAgentSkillIndex(skills: RemoteSkillDescriptor[]) {
-  return {
+export function buildAgentSkillIndex(skills: RemoteSkillDescriptor[]): OpenWorkAgentSkillIndex {
+  return openworkAgentSkillIndexSchema.parse({
     $schema: AGENT_SKILL_INDEX_SCHEMA,
     skills: skills.map((skill) => ({
       name: skill.name,
@@ -146,7 +152,7 @@ export function buildAgentSkillIndex(skills: RemoteSkillDescriptor[]) {
       url: skill.location,
       capability: skill.capability,
     })),
-  }
+  })
 }
 
 function standardSkillMarkdown(skill: RemoteSkillDescriptor, source: string): string {

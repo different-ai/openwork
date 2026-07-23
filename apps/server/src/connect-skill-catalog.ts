@@ -1,7 +1,16 @@
 import { createHash } from "node:crypto";
-import { z } from "zod";
+
+import type { OpenWorkAgentSkillIndexEntry } from "@openwork/types/den/agent-skill-index";
 
 import { readConnectCloudMcp } from "./connect-state.js";
+import {
+  firstOpenWorkAgentSkillSchemaIssue,
+  OPENWORK_AGENT_SKILL_DISCOVERY_SCHEMA_URI,
+  OPENWORK_AGENT_SKILL_INDEX_URI,
+  openworkAgentSkillIndexEntryRuntimeSchema,
+  openworkAgentSkillIndexEnvelopeRuntimeSchema,
+  type OpenWorkAgentSkillSchemaIssue,
+} from "./connect-skill-index-schema.js";
 import { OPENWORK_CLOUD_MCP_NAME } from "./context/constants.js";
 import { createTtlCache } from "./opencode-plugins/lib/ttl-cache.js";
 import {
@@ -11,11 +20,8 @@ import {
 import { externalFetch } from "./server-fetch.js";
 import type { ServerConfig } from "./types.js";
 
-const SKILL_INDEX_URI = "skill://index.json";
-const SKILL_INDEX_SCHEMA = "https://schemas.agentskills.io/discovery/0.2.0/schema.json";
 const MAX_PROMPT_SKILLS = 100;
 const MAX_PROMPT_CHARS = 32_000;
-const MAX_INDEX_SKILLS = 1_000;
 const MAX_MCP_RESPONSE_BYTES = 512 * 1024;
 const CATALOG_CACHE_TTL_MS = 30_000;
 const CATALOG_CACHE_MAX_STALE_MS = 5 * 60_000;
@@ -23,18 +29,21 @@ const CATALOG_REFRESH_DEADLINE_MS = 5_000;
 const MAX_CATALOG_CANDIDATES = 4;
 const MAX_CATALOG_WORKSPACE_ROWS = 100;
 
-const skillIndexSchema = z.object({
-  $schema: z.literal(SKILL_INDEX_SCHEMA),
-  skills: z.array(z.object({
-    name: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).max(64),
-    type: z.literal("skill-md"),
-    description: z.string().max(1_024),
-    url: z.string().startsWith("skill://").max(2_048),
-    capability: z.string().regex(/^(?:skill:[^:]+|plugin:[^:]+:[^:]+)$/).max(256),
-  }).passthrough()).max(MAX_INDEX_SKILLS),
-}).passthrough();
+type McpPayloadFailureReason = "response-too-large" | "invalid-utf8";
 
-export type OpenWorkConnectSkill = z.infer<typeof skillIndexSchema>["skills"][number];
+class McpPayloadError extends Error {
+  readonly reason: McpPayloadFailureReason;
+
+  constructor(reason: McpPayloadFailureReason) {
+    super(reason === "response-too-large"
+      ? "connect_skill_catalog_response_too_large"
+      : "connect_skill_catalog_response_invalid_utf8");
+    this.name = "McpPayloadError";
+    this.reason = reason;
+  }
+}
+
+export type OpenWorkConnectSkill = OpenWorkAgentSkillIndexEntry;
 /** Collector for include/skip reasons along the Connect skill chain. */
 export type ConnectSkillDiag = (message: string) => void;
 type McpFetch = (input: string, init?: RequestInit) => Promise<Response>;
@@ -87,7 +96,7 @@ async function readMcpPayload(
   const declared = declaredHeader === null ? Number.NaN : Number(declaredHeader);
   if (Number.isFinite(declared) && declared > MAX_MCP_RESPONSE_BYTES) {
     await response.body?.cancel().catch(() => undefined);
-    throw new Error("connect_skill_catalog_response_too_large");
+    throw new McpPayloadError("response-too-large");
   }
   const reader = response.body?.getReader();
   const chunks: Uint8Array[] = [];
@@ -100,7 +109,7 @@ async function readMcpPayload(
         size += next.value.byteLength;
         if (size > MAX_MCP_RESPONSE_BYTES) {
           await reader.cancel();
-          throw new Error("connect_skill_catalog_response_too_large");
+          throw new McpPayloadError("response-too-large");
         }
         chunks.push(next.value);
       }
@@ -119,7 +128,7 @@ async function readMcpPayload(
   try {
     raw = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   } catch {
-    throw new Error("connect_skill_catalog_response_invalid_utf8");
+    throw new McpPayloadError("invalid-utf8");
   }
   if (!raw.trim()) return null;
   if (!response.headers.get("content-type")?.toLowerCase().includes("text/event-stream")) {
@@ -157,6 +166,10 @@ function candidateDiagnostic(
   return `catalog candidate phase=${phase} source=${identity.source} candidateHash=${identity.candidateHash} outcome=${outcome}${detail}`;
 }
 
+function schemaIssueDetail(issue: OpenWorkAgentSkillSchemaIssue): string {
+  return ` firstIssueCode=${issue.code} firstIssuePath=${issue.path}`;
+}
+
 async function mcpPost(
   fetcher: McpFetch,
   url: string,
@@ -180,7 +193,7 @@ async function mcpPost(
 }
 
 /**
- * Read the standards-shaped skill index through one openwork-cloud config.
+ * Read the OpenWork MCP skill-index profile through one openwork-cloud config.
  * A valid empty index returns []; an unusable candidate returns null so the
  * host-scoped resolver can continue to another legacy workspace candidate.
  */
@@ -257,7 +270,7 @@ export async function readMcpSkillIndex(
       id: 2,
       jsonrpc: "2.0",
       method: "resources/read",
-      params: { uri: SKILL_INDEX_URI },
+      params: { uri: OPENWORK_AGENT_SKILL_INDEX_URI },
     }, signal);
     if (!resource.response.ok) {
       diag(candidateDiagnostic(identity, "resources-read", "failed", ` httpStatus=${resource.response.status}`));
@@ -279,19 +292,96 @@ export async function readMcpSkillIndex(
       diag(candidateDiagnostic(identity, "resources-read", "skipped", " reason=missing-contents"));
       return null;
     }
-    const text = contents.find((item) => isRecord(item) && item.uri === SKILL_INDEX_URI && typeof item.text === "string")?.text;
+    const text = contents.find((item) =>
+      isRecord(item)
+      && item.uri === OPENWORK_AGENT_SKILL_INDEX_URI
+      && typeof item.text === "string"
+    )?.text;
     if (typeof text !== "string") {
       diag(candidateDiagnostic(identity, "resources-read", "skipped", " reason=missing-index-text"));
       return null;
     }
+    let parsedJson: unknown;
     try {
-      const skills = skillIndexSchema.parse(JSON.parse(text)).skills;
-      diag(candidateDiagnostic(identity, "schema", "selected", ` skills=${skills.length}`));
-      return skills;
+      parsedJson = JSON.parse(text);
     } catch {
-      diag(candidateDiagnostic(identity, "schema", "failed", ` reason=invalid-schema schema=${SKILL_INDEX_SCHEMA}`));
+      diag(candidateDiagnostic(
+        identity,
+        "schema",
+        "failed",
+        ` reason=invalid-json schema=${OPENWORK_AGENT_SKILL_DISCOVERY_SCHEMA_URI}`,
+      ));
       return null;
     }
+    if (isRecord(parsedJson)
+      && typeof parsedJson.$schema === "string"
+      && parsedJson.$schema !== OPENWORK_AGENT_SKILL_DISCOVERY_SCHEMA_URI) {
+      diag(candidateDiagnostic(
+        identity,
+        "schema",
+        "failed",
+        " reason=unsupported-schema",
+      ));
+      return null;
+    }
+    const envelope = openworkAgentSkillIndexEnvelopeRuntimeSchema.safeParse(parsedJson);
+    if (!envelope.success) {
+      const issue = firstOpenWorkAgentSkillSchemaIssue(envelope.error);
+      diag(candidateDiagnostic(
+        identity,
+        "schema",
+        "failed",
+        ` reason=invalid-envelope${schemaIssueDetail(issue)}`,
+      ));
+      return null;
+    }
+
+    const skills: OpenWorkConnectSkill[] = [];
+    let rejectedEntries = 0;
+    let firstRejectedIssue: OpenWorkAgentSkillSchemaIssue | null = null;
+    for (const [index, candidate] of envelope.data.skills.entries()) {
+      const parsed = openworkAgentSkillIndexEntryRuntimeSchema.safeParse(candidate);
+      if (parsed.success) {
+        skills.push(parsed.data);
+        continue;
+      }
+      rejectedEntries += 1;
+      firstRejectedIssue ??= firstOpenWorkAgentSkillSchemaIssue(
+        parsed.error,
+        ["skills", index],
+      );
+    }
+
+    if (rejectedEntries > 0) {
+      const detail = ` rejectedEntries=${rejectedEntries}${schemaIssueDetail(firstRejectedIssue!)}`;
+      if (skills.length === 0) {
+        diag(candidateDiagnostic(
+          identity,
+          "schema",
+          "failed",
+          ` reason=all-entries-invalid${detail}`,
+        ));
+        return null;
+      }
+      diag(candidateDiagnostic(
+        identity,
+        "schema",
+        "filtered",
+        ` reason=invalid-entries${detail}`,
+      ));
+    }
+    diag(candidateDiagnostic(
+      identity,
+      "schema",
+      "selected",
+      ` skills=${skills.length} rejectedEntries=${rejectedEntries}`,
+    ));
+    return skills;
+  } catch (error) {
+    if (error instanceof McpPayloadError) {
+      diag(candidateDiagnostic(identity, "transport", "failed", ` reason=${error.reason} limitBytes=${MAX_MCP_RESPONSE_BYTES}`));
+    }
+    throw error;
   } finally {
     const sessionId = sessionHeaders?.["mcp-session-id"];
     if (sessionHeaders && sessionId) {
@@ -333,8 +423,10 @@ async function readIndexCached(
         identity,
       );
       return { skills, diagnostics: Object.freeze([...diagnostics]) };
-    } catch {
-      diagnostics.push(candidateDiagnostic(identity, "candidate", "failed", " reason=request-or-protocol-failure"));
+    } catch (error) {
+      if (!(error instanceof McpPayloadError)) {
+        diagnostics.push(candidateDiagnostic(identity, "candidate", "failed", " reason=request-or-protocol-failure"));
+      }
       return { skills: null, diagnostics: Object.freeze([...diagnostics]) };
     }
   };

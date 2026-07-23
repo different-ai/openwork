@@ -7,6 +7,7 @@ import type {
   DenPluginConfigObject,
 } from "@/app/lib/den";
 import type { McpServerEntry, McpStatus, McpStatusMap, SkillCard } from "@/app/types";
+import { buildOpenWorkMarketplaceSkillCapabilityName } from "@openwork/types/den/agent-skill-index";
 
 type ConnectCapabilityClient = {
   listOrgMarketplaces: (organizationId: string) => Promise<DenOrgMarketplace[]>;
@@ -44,10 +45,6 @@ type RemoteMcpSpec = {
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
-
-function marketplaceCapabilityName(pluginId: string, configObjectId: string) {
-  return `plugin:${pluginId}:${configObjectId}`;
-}
 
 function skillTrigger(object: DenPluginConfigObject) {
   const path = object.currentRelativePath?.replaceAll("\\", "/");
@@ -114,7 +111,7 @@ function toSkill(
     origin: "openwork-connect",
     marketplaceName: marketplace.name,
     pluginName: plugin.name,
-    connectCapabilityName: marketplaceCapabilityName(plugin.id, object.id),
+    connectCapabilityName: buildOpenWorkMarketplaceSkillCapabilityName(plugin.id, object.id),
   };
 }
 
@@ -135,13 +132,20 @@ function toMcpEntries(
         origin: "openwork-connect",
         marketplaceName: marketplace.name,
         pluginName: plugin.name,
-        connectCapabilityName: marketplaceCapabilityName(plugin.id, object.id),
+        connectCapabilityName: buildOpenWorkMarketplaceSkillCapabilityName(plugin.id, object.id),
       },
       status: remoteMcpStatus(plugin, matchingConnection(plugin, object, spec)),
     };
   });
 }
 
+/**
+ * Build the desktop menu's Den REST assignment projection.
+ *
+ * This inventory is not proof that a skill reached the prompt. The
+ * authenticated `skill://index.json` MCP resource remains prompt authority
+ * after Den applies current rollout, member, and grant filters.
+ */
 export async function listAssignedConnectCapabilities(input: {
   client: ConnectCapabilityClient;
   organizationId: string;

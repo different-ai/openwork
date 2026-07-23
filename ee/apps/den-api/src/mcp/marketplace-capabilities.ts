@@ -12,6 +12,7 @@ import {
   PluginTable,
 } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
+import { buildOpenWorkMarketplaceSkillCapabilityName } from "@openwork/types/den/agent-skill-index"
 import {
   listExternalMcpConnections,
   listUsableExternalMcpConnections,
@@ -170,7 +171,7 @@ type MarketplacePluginMcpRequirement = {
 }
 
 export function buildMarketplaceCapabilityName(pluginId: string, configObjectId: string): string {
-  return `${MARKETPLACE_CAPABILITY_PREFIX}${pluginId}:${configObjectId}`
+  return buildOpenWorkMarketplaceSkillCapabilityName(pluginId, configObjectId)
 }
 
 export function parseMarketplaceCapabilityName(name: string): { configObjectId: string; pluginId: string } | null {
