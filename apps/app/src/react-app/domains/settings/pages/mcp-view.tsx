@@ -80,6 +80,10 @@ export type SkillItem = {
   description?: string;
   trigger?: string;
   path: string;
+  content?: string;
+  origin?: "local" | "openwork-connect";
+  marketplaceName?: string;
+  pluginName?: string;
 };
 
 const getSkillHiddenId = (skill: SkillItem) => `skill:${skill.name}`;
@@ -90,7 +94,10 @@ export type McpViewProps = {
   isRemoteWorkspace: boolean;
   /** Installed skills to render alongside MCPs in the grid. */
   installedSkills?: SkillItem[];
-  /** Installed marketplace packages to render alongside runtime extensions. */
+  /** MCP capabilities assigned through OpenWork Connect. */
+  availableConnectMcpServers?: McpServerEntry[];
+  availableConnectMcpStatuses?: McpStatusMap;
+  /** Installed organization extensions to render alongside runtime extensions. */
   installedPlugins?: CloudImportedPlugin[];
   /** Uninstall a skill by name. */
   uninstallSkill?: (name: string) => void;
@@ -242,9 +249,11 @@ type ExtensionFilter = "all" | "mcp" | "skill" | "plugin";
 
 export function McpView(props: McpViewProps) {
   const showHeader = props.showHeader !== false;
+  const skillCount = props.installedSkills?.length ?? 0;
   const [detailEntry, setDetailEntry] = useState<McpDirectoryInfo | null>(null);
   const [detailSkill, setDetailSkill] = useState<SkillItem | null>(null);
   const [detailSkillContent, setDetailSkillContent] = useState<string | null>(null);
+  const [detailConnectMcp, setDetailConnectMcp] = useState<McpServerEntry | null>(null);
   const [detailPlugin, setDetailPlugin] = useState<CloudImportedPlugin | null>(null);
   const [detailOrgMcpItem, setDetailOrgMcpItem] = useState<ExtensionItem | null>(null);
   const [openworkUiMcpCommand, setOpenworkUiMcpCommand] = useState<string[] | null>(null);
@@ -568,6 +577,7 @@ export function McpView(props: McpViewProps) {
       </div>
 
       <McpQuickConnectSection
+        skillCount={skillCount}
         entries={
           quickConnectList.filter((entry) => {
             if (!showHidden && (isOpenWorkExtensionHidden(entry) || (props.builtInExtensionsDisabled && isBuiltInOpenWorkExtension(entry)))) return false;
@@ -587,6 +597,19 @@ export function McpView(props: McpViewProps) {
             return skill.name.toLowerCase().includes(q) || (skill.description ?? "").toLowerCase().includes(q);
           })
         }
+        availableConnectMcpServers={
+          (props.availableConnectMcpServers ?? []).filter((entry) => {
+            if (filter === "skill") return false;
+            if (!search.trim()) return true;
+            const query = search.toLowerCase();
+            return [
+              entry.name,
+              entry.marketplaceName ?? "",
+              entry.pluginName ?? "",
+            ].join(" ").toLowerCase().includes(query);
+          })
+        }
+        availableConnectMcpStatuses={props.availableConnectMcpStatuses ?? {}}
         installedPlugins={
           (props.installedPlugins ?? []).filter((plugin) => {
             if (!showHidden && isOpenWorkExtensionHidden(`plugin:${plugin.pluginId}`)) return false;
@@ -633,15 +656,16 @@ export function McpView(props: McpViewProps) {
         onDetail={setDetailEntry}
         onSkillDetail={(skill) => {
           setDetailSkill(skill);
-          setDetailSkillContent(null);
-          if (props.readSkill) {
+          setDetailSkillContent(skill.content ?? null);
+          if (!skill.content && skill.origin !== "openwork-connect" && props.readSkill) {
             void props.readSkill(skill.name).then((result) => {
               if (result?.content) {
-                setDetailSkillContent(result.content.slice(0, 2000));
+                setDetailSkillContent(result.content);
               }
             });
           }
         }}
+        onConnectMcpDetail={setDetailConnectMcp}
         onPluginDetail={setDetailPlugin}
         onOrgMcpDetail={setDetailOrgMcpItem}
         orgMcpDisconnectingId={props.orgMcpDisconnectingId ?? null}
@@ -804,14 +828,15 @@ export function McpView(props: McpViewProps) {
             description={detailSkill.description ?? "Installed skill"}
             kind="skill"
             connected={true}
+            connectedLabel={detailSkill.origin === "openwork-connect" ? "Available through OpenWork Connect" : undefined}
             hidden={hidden}
-            path={detailSkill.path}
+            path={detailSkill.origin === "openwork-connect" ? undefined : detailSkill.path}
             trigger={detailSkill.trigger}
             contentPreview={detailSkillContent ?? undefined}
-            onReveal={detailSkill.path ? () => {
+            onReveal={detailSkill.path && detailSkill.origin !== "openwork-connect" ? () => {
               void revealDesktopItemInDir(detailSkill.path);
             } : undefined}
-            onUninstall={props.uninstallSkill ? () => {
+            onUninstall={props.uninstallSkill && detailSkill.origin !== "openwork-connect" ? () => {
               props.uninstallSkill?.(detailSkill.name);
               setDetailSkill(null);
             } : undefined}
@@ -821,6 +846,28 @@ export function McpView(props: McpViewProps) {
         );
       })() : null}
 
+      {detailConnectMcp ? (
+        <ExtensionDetailModal
+          open={true}
+          onClose={() => setDetailConnectMcp(null)}
+          name={detailConnectMcp.name}
+          description={
+            detailConnectMcp.pluginName
+              ? `Provided by ${detailConnectMcp.pluginName}${detailConnectMcp.marketplaceName ? ` · ${detailConnectMcp.marketplaceName}` : ""}.`
+              : detailConnectMcp.marketplaceName
+                ? `Provided by ${detailConnectMcp.marketplaceName}.`
+                : "Available through OpenWork Connect."
+          }
+          kind="mcp"
+          connected={(props.availableConnectMcpStatuses?.[detailConnectMcp.id ?? detailConnectMcp.name]?.status) === "connected"}
+          connectedLabel="Available through OpenWork Connect"
+          disconnectedLabel="Setup required"
+          url={detailConnectMcp.config.type === "remote" ? detailConnectMcp.config.url : undefined}
+          oauth={detailConnectMcp.config.type === "remote"}
+          showEnablementCard
+        />
+      ) : null}
+
       {detailPlugin ? (() => {
         const hidden = isOpenWorkExtensionHidden(`plugin:${detailPlugin.pluginId}`);
         return (
@@ -828,7 +875,7 @@ export function McpView(props: McpViewProps) {
             open={!!detailPlugin}
             onClose={() => setDetailPlugin(null)}
             name={detailPlugin.name}
-            description={detailPlugin.description ?? "Marketplace extension installed in this workspace."}
+            description={detailPlugin.description ?? "Organization extension installed in this workspace."}
             kind="extension"
             connected={true}
             hidden={hidden}
@@ -916,8 +963,11 @@ function McpCustomAppCard(props: { onOpen: () => void; onOpenGithubImport?: () =
 }
 
 function McpQuickConnectSection(props: {
+  skillCount: number;
   entries: McpDirectoryInfo[];
   installedSkills?: SkillItem[];
+  availableConnectMcpServers?: McpServerEntry[];
+  availableConnectMcpStatuses: McpStatusMap;
   installedPlugins?: CloudImportedPlugin[];
   installedOrgMcpItems?: ExtensionItem[];
   busy: boolean;
@@ -932,6 +982,7 @@ function McpQuickConnectSection(props: {
   onConnect: (entry: McpDirectoryInfo) => void;
   onDetail: (entry: McpDirectoryInfo) => void;
   onSkillDetail?: (skill: SkillItem) => void;
+  onConnectMcpDetail?: (entry: McpServerEntry) => void;
   onPluginDetail?: (plugin: CloudImportedPlugin) => void;
   onOrgMcpDetail?: (item: ExtensionItem) => void;
   orgMcpDisconnectingId: string | null;
@@ -940,9 +991,14 @@ function McpQuickConnectSection(props: {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h3 className="text-[11px] font-semibold uppercase tracking-widest text-dls-secondary">
-          {t("mcp.available_apps")}
-        </h3>
+        <div className="flex items-center gap-2">
+          <h3 className="text-[11px] font-semibold uppercase tracking-widest text-dls-secondary">
+            {t("mcp.available_apps")}
+          </h3>
+          <span className="text-[11px] uppercase text-dls-secondary">
+            {t("extensions.skill_count", { count: props.skillCount })}
+          </span>
+        </div>
         <span className="text-[11px] text-dls-secondary">{t("mcp.one_click_connect")}</span>
       </div>
 
@@ -983,14 +1039,37 @@ function McpQuickConnectSection(props: {
           const hidden = props.isSkillHidden(skill);
           return (
             <ExtensionCard
-              key={`skill:${skill.name}`}
+              key={`skill:${skill.path}`}
               name={skill.name}
               description={skill.description ?? "Installed skill"}
               kind="skill"
               connected={true}
+              connectedLabel={skill.origin === "openwork-connect" ? "Available" : undefined}
               hidden={hidden}
               actionLabel="View details"
               onClick={() => props.onSkillDetail?.(skill)}
+            />
+          );
+        })}
+
+        {(props.availableConnectMcpServers ?? []).map((entry) => {
+          const status = props.availableConnectMcpStatuses[entry.id ?? entry.name]?.status;
+          return (
+            <ExtensionCard
+              key={`connect-mcp:${entry.id ?? entry.name}`}
+              name={entry.name}
+              description={
+                entry.pluginName
+                  ? `Provided by ${entry.pluginName}${entry.marketplaceName ? ` · ${entry.marketplaceName}` : ""}.`
+                  : entry.marketplaceName
+                    ? `Provided by ${entry.marketplaceName}.`
+                    : "Available through OpenWork Connect."
+              }
+              kind="mcp"
+              connected={status === "connected"}
+              connectedLabel={status === "connected" ? "Available" : undefined}
+              actionLabel="View details"
+              onClick={() => props.onConnectMcpDetail?.(entry)}
             />
           );
         })}
@@ -1002,7 +1081,7 @@ function McpQuickConnectSection(props: {
             <ExtensionCard
               key={`plugin:${plugin.pluginId}`}
               name={plugin.name}
-              description={plugin.description ?? `Marketplace extension with ${fileCount} installed file${fileCount === 1 ? "" : "s"}.`}
+              description={plugin.description ?? `Organization extension with ${fileCount} installed file${fileCount === 1 ? "" : "s"}.`}
               kind="extension"
               connected={true}
               hidden={hidden}
@@ -1044,11 +1123,11 @@ function McpQuickConnectSection(props: {
           );
         })}
 
-        {props.entries.length === 0 && (props.installedSkills ?? []).length === 0 && (props.installedPlugins ?? []).length === 0 && (props.installedOrgMcpItems ?? []).length === 0 ? (
+        {props.entries.length === 0 && (props.installedSkills ?? []).length === 0 && (props.availableConnectMcpServers ?? []).length === 0 && (props.installedPlugins ?? []).length === 0 && (props.installedOrgMcpItems ?? []).length === 0 ? (
           <div className="col-span-full rounded-xl border border-dashed border-dls-border px-5 py-10 text-center">
             <Unplug size={24} className="mx-auto mb-3 text-dls-secondary/30" />
             <div className="text-sm font-medium text-dls-secondary">No extensions found</div>
-            <div className="mt-1 text-xs text-dls-secondary/60">Try a different search, filter, or open Marketplace to add one.</div>
+            <div className="mt-1 text-xs text-dls-secondary/60">Try a different search or filter, or add an MCP server.</div>
           </div>
         ) : null}
       </div>

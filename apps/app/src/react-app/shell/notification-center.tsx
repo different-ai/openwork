@@ -21,7 +21,7 @@ import {
 import { useNavigate } from "react-router-dom";
 import { requestOpenModelPicker } from "./new-providers-listener";
 import { useControlAction, type OpenworkControlAction } from "./control/control-provider";
-import { openNotificationCenterEvent, requestOpenMarketplacePlugin } from "./notifications";
+import { openNotificationCenterEvent } from "./notifications";
 import { useReloadCoordinator } from "./reload-coordinator";
 import { useShellConfig } from "./shell-config";
 
@@ -114,12 +114,9 @@ export function NotificationBell() {
       } else if (action.type === "reload-engine") {
         void reloadCoordinator.reloadWorkspaceEngine();
       } else if (action.type === "open-extensions-marketplace") {
-        if (action.pluginName) {
-          requestOpenMarketplacePlugin(action.pluginName);
-        }
-        navigate("/settings/cloud-marketplaces");
+        navigate("/settings/extensions");
       } else if (action.type === "install-marketplace-plugin") {
-        navigate("/settings/cloud-marketplaces");
+        navigate("/settings/extensions");
       }
     },
     [markAllRead, navigate, reloadCoordinator],

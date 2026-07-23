@@ -266,16 +266,6 @@ export function CommandPalette(props: CommandPaletteProps) {
       },
     },
     {
-      id: "settings-skills",
-      title: t("settings.tab_skills"),
-      detail: t("settings.tab_description_skills"),
-      meta: t("session.cmd_settings_meta"),
-      action: () => {
-        props.onClose();
-        props.onOpenSettings("/settings/skills");
-      },
-    },
-    {
       id: "settings-extensions",
       title: t("settings.tab_extensions"),
       detail: t("settings.tab_description_extensions"),
