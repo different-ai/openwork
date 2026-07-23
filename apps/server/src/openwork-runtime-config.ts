@@ -105,6 +105,12 @@ export function buildOpenworkRuntimeConfigObjectFromSnapshot(
         mode: "primary",
         temperature: 0.2,
         prompt: OPENWORK_AGENT_PROMPT,
+        permission: {
+          skill: {
+            // OpenWork supplies its own Cloud/local skill-creator routing.
+            "customize-opencode": "deny",
+          },
+        },
       },
     },
     plugin: [

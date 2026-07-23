@@ -70,6 +70,15 @@ describe("openwork runtime config file", () => {
     expect(mcp.posthog?.enabled).toBe(true);
     expect(parsed.default_agent).toBe("openwork");
     expect(Array.isArray(parsed.plugin)).toBe(true);
+    expect(parsed.agent).toMatchObject({
+      openwork: {
+        permission: {
+          skill: {
+            "customize-opencode": "deny",
+          },
+        },
+      },
+    });
   });
 
   test("openwork prompt has a static search-first Memory Bank section, distinct from ## Memory", async () => {
