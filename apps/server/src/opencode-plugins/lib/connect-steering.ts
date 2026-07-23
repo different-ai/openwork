@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { logPromptDebug, promptTraceId } from "../openwork-debug-log.js";
+import { promptTraceId } from "../openwork-debug-log.js";
 import {
   readContext,
   readProviderModel,
@@ -161,13 +161,6 @@ const connectStateResponseSchema = connectSnapshotSchema.extend({
   ok: z.literal(true),
   schemaVersion: z.number(),
 });
-
-const connectSkillsResponseSchema = z.object({
-  ok: z.literal(true),
-  schemaVersion: z.number(),
-  instruction: z.string(),
-  diagnostics: z.array(z.string()).optional(),
-}).passthrough();
 
 const contextBundleResponseSchema = z.object({
   ok: z.literal(true),
@@ -332,65 +325,6 @@ export async function fetchOpenWorkContextBundle(
     diagnostics: parsed.diagnostics,
     generatedAt: parsed.generatedAt,
   };
-}
-
-export async function resolveOpenWorkConnectSkillInstruction(input?: unknown, fetcher: OpenWorkFetch = fetch): Promise<string> {
-  const trace = promptTraceId(input);
-  try {
-    const { url, token } = requireOpenWorkServer();
-    // Connect skills are server/account-scoped; workspace query values are
-    // relevant to steering but must not gate the remote skill catalog.
-    const response = await fetcher(`${url}/experimental/connect/skills`, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "X-OpenWork-Prompt-Trace": trace,
-      },
-    });
-    if (!response.ok) {
-      logPromptDebug("connect-skills", `trace=${trace} skill instruction skipped: /experimental/connect/skills returned HTTP ${response.status}`);
-      return "";
-    }
-    const parsed = connectSkillsResponseSchema.parse(await parseResponse(response));
-    for (const message of parsed.diagnostics ?? []) {
-      logPromptDebug("connect-skills", `trace=${trace} server: ${message}`);
-    }
-    if (parsed.instruction) {
-      logPromptDebug("connect-skills", `trace=${trace} skill instruction resolved (${parsed.instruction.length} chars) from server-scoped catalog`);
-    } else {
-      logPromptDebug("connect-skills", `trace=${trace} skill instruction skipped: server returned an empty instruction (see server reasons above)`);
-    }
-    return parsed.instruction;
-  } catch {
-    logPromptDebug(
-      "connect-skills",
-      `trace=${trace} skill instruction skipped: classification=configuration_transport_or_schema (details redacted)`,
-    );
-    return "";
-  }
-}
-
-export function resolveOpenWorkConnectSkillInstructionFromBundle(
-  input: unknown,
-  bundle: OpenWorkContextBundle | null,
-  trace: string = promptTraceId(input),
-): string {
-  if (!bundle) {
-    logPromptDebug("connect-skills", `trace=${trace} skill instruction skipped: context bundle unavailable`);
-    return "";
-  }
-  for (const message of bundle.diagnostics) {
-    logPromptDebug("connect-skills", `trace=${trace} server: ${message}`);
-  }
-  const context = readContext(input);
-  const workspaceId = context.workspaceId ?? context.workspaceID;
-  const directory = context.worktree ?? context.directory;
-  const scope = workspaceId ? "workspace" : directory ? "directory" : "unscoped";
-  if (bundle.skills.instruction) {
-    logPromptDebug("connect-skills", `trace=${trace} skill instruction resolved (${bundle.skills.instruction.length} chars, ${bundle.skills.count} catalog entries, scope=${scope})`);
-  } else {
-    logPromptDebug("connect-skills", `trace=${trace} skill instruction skipped: server returned an empty instruction (see server reasons above)`);
-  }
-  return bundle.skills.instruction;
 }
 
 export function composeOpenWorkExtensionDiscoveryInstruction(state: OpenWorkExtensionConnectState | null): string {

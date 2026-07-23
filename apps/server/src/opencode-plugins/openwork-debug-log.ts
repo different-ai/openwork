@@ -136,7 +136,7 @@ export function promptDebugEnabled(env: NodeJS.ProcessEnv = process.env): boolea
   return resolvePromptDebugSetting(env).enabled;
 }
 
-export function promptDebugExact(env: NodeJS.ProcessEnv = process.env): boolean {
+function promptDebugExact(env: NodeJS.ProcessEnv = process.env): boolean {
   return resolvePromptDebugSetting(env).exact;
 }
 

@@ -507,6 +507,5 @@ export const OpenWorkPromptLog = async (pluginInput: PromptObserverInput = {}) =
         await observeMcpStatuses("event");
       }
     },
-    "dispose": async () => {},
   };
 };

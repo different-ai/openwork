@@ -11,12 +11,12 @@ import {
   normalizeOpenCodeContext,
   readEngineMcpStatusClient,
   type OpenCodeContext,
-  type OpenWorkEngineMcpStatusClient,
 } from "./context.js";
 import {
   classifyOpenWorkContextBundleFailure,
   fetchOpenWorkContextBundle,
   type OpenWorkContextBundle,
+  type OpenWorkEngineMcpStatusSource,
 } from "./connect-steering.js";
 import { getRecordProperty } from "./records.js";
 import { type OpenWorkFetch } from "./server-client.js";
@@ -31,19 +31,11 @@ export type ContributorEnv = {
   factoryContext: OpenCodeContext;
 };
 
-export type ContextBundle = OpenWorkContextBundle;
-
-export type OpenWorkEngineMcpStatusSource = {
-  client?: OpenWorkEngineMcpStatusClient;
-  directory?: string;
-};
-
 export type ResolveInput = {
-  sessionID?: string;
   traceId: string;
   context: OpenCodeContext;
   sourceInput: unknown;
-  bundle: ContextBundle | null;
+  bundle: OpenWorkContextBundle | null;
   fetcher: OpenWorkFetch;
   engine?: OpenWorkEngineMcpStatusSource;
 };
@@ -338,7 +330,6 @@ function resolveInput(
     ...normalizeOpenCodeContext(input),
   };
   return {
-    ...(context.sessionID ? { sessionID: context.sessionID } : {}),
     traceId: promptTraceId(input),
     context,
     sourceInput,
@@ -350,7 +341,7 @@ function resolveInput(
 
 async function resolveContextBundle(
   input: ResolveInput,
-): Promise<ContextBundle | null> {
+): Promise<OpenWorkContextBundle | null> {
   try {
     return await fetchOpenWorkContextBundle(input.sourceInput, input.fetcher, input.traceId);
   } catch (error) {

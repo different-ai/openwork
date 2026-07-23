@@ -238,7 +238,6 @@ describe("context contributor registry", () => {
 
     expect(trace).toEqual(["first:start", "first:end", "second", "third"]);
     expect(output.system).toEqual(["engine base", "first block", "second block", "third block"]);
-    expect(captured?.sessionID).toBe("session-1");
     expect(captured?.traceId).toMatch(/^pt_[a-z0-9]{12}$/);
     expect(captured?.context).toEqual({
       agent: "factory-agent",

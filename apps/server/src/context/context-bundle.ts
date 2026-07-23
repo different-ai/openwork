@@ -26,8 +26,6 @@ export type OpenWorkContextBundle = {
 export type OpenWorkContextBundleOptions = ConnectSnapshotOptions & {
   now?: () => number;
   steeringMode?: "active" | "passive" | "omit";
-  /** @deprecated Prefer steeringMode. Retained for direct route compatibility. */
-  includeSteering?: boolean;
 };
 
 async function passiveConnectSnapshot(
@@ -63,8 +61,7 @@ export async function buildOpenWorkContextBundle(
 ): Promise<OpenWorkContextBundle> {
   const diagnostics: string[] = [];
   const diag = (message: string) => diagnostics.push(message);
-  const steeringMode = options.steeringMode
-    ?? (options.includeSteering === false ? "omit" : "active");
+  const steeringMode = options.steeringMode ?? "active";
   const steering = steeringMode === "omit"
     ? null
     : steeringMode === "passive"

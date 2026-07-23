@@ -1,20 +1,23 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 
 import {
   classifyOpenWorkContextBundleFailure,
   fetchOpenWorkContextBundle,
-  resolveOpenWorkConnectSkillInstruction,
   type OpenWorkContextBundleFailure,
 } from "./lib/connect-steering.js";
+import { OpenWorkContext } from "./openwork-context.js";
 
 const originalServerUrl = process.env.OPENWORK_SERVER_URL;
 const originalServerToken = process.env.OPENWORK_SERVER_TOKEN;
+const originalPromptLog = process.env.OPENWORK_PROMPT_LOG;
 
 afterEach(() => {
   if (originalServerUrl === undefined) delete process.env.OPENWORK_SERVER_URL;
   else process.env.OPENWORK_SERVER_URL = originalServerUrl;
   if (originalServerToken === undefined) delete process.env.OPENWORK_SERVER_TOKEN;
   else process.env.OPENWORK_SERVER_TOKEN = originalServerToken;
+  if (originalPromptLog === undefined) delete process.env.OPENWORK_PROMPT_LOG;
+  else process.env.OPENWORK_PROMPT_LOG = originalPromptLog;
 });
 
 async function captureContextBundleFailure(
@@ -141,48 +144,36 @@ describe("OpenWorkContext Connect skills", () => {
     expect(rendered).not.toContain("transport-secret-token");
   });
 
-  test("requests the server-scoped catalog and returns its instruction byte-for-byte", async () => {
-    process.env.OPENWORK_SERVER_URL = "http://openwork.test/";
-    process.env.OPENWORK_SERVER_TOKEN = "skills-token";
-    const instruction = "<available_skills>\n<skill><name>briefing</name></skill>\n</available_skills>";
-    const calls: Array<{ url: string; authorization: string | null }> = [];
-    const fetcher = async (url: string, init?: RequestInit): Promise<Response> => {
-      calls.push({
-        url,
-        authorization: new Headers(init?.headers).get("authorization"),
-      });
-      return Response.json({
-        ok: true,
-        schemaVersion: 1,
-        instruction,
-        diagnostics: ["one workspace skill"],
-      });
-    };
-
-    await expect(resolveOpenWorkConnectSkillInstruction({
-      context: { workspaceId: "ws_1", worktree: "/tmp/worktree" },
-    }, fetcher)).resolves.toBe(instruction);
-    expect(calls).toEqual([{
-      url: "http://openwork.test/experimental/connect/skills",
-      authorization: "Bearer skills-token",
-    }]);
-  });
-
-  test("omits empty, failed, invalid, and unavailable catalogs", async () => {
+  test("leaves detailed bundle diagnostics to the route and logs only registry attribution", async () => {
+    process.env.OPENWORK_PROMPT_LOG = "1";
     process.env.OPENWORK_SERVER_URL = "http://openwork.test";
     process.env.OPENWORK_SERVER_TOKEN = "skills-token";
+    const instruction = "<available_skills>\n<skill><name>briefing</name></skill>\n</available_skills>";
+    const errors: string[] = [];
+    const spy = spyOn(console, "error").mockImplementation((message) => errors.push(String(message)));
+    try {
+      const plugin = await OpenWorkContext({
+        fetcher: async () => Response.json({
+          ok: true,
+          schemaVersion: 1,
+          steering: null,
+          skills: { instruction, count: 1 },
+          diagnostics: ["backend diagnostic must remain route-owned"],
+          generatedAt: 1,
+        }),
+      });
+      const output: { system: string[] } = { system: [] };
+      await plugin["experimental.chat.system.transform"]?.({}, output);
 
-    await expect(resolveOpenWorkConnectSkillInstruction({}, async () => Response.json({
-      ok: true,
-      schemaVersion: 1,
-      instruction: "",
-    }))).resolves.toBe("");
-    await expect(resolveOpenWorkConnectSkillInstruction({}, async () =>
-      Response.json({ message: "unavailable" }, { status: 503 })
-    )).resolves.toBe("");
-    await expect(resolveOpenWorkConnectSkillInstruction({}, async () => Response.json({ ok: true }))).resolves.toBe("");
-    await expect(resolveOpenWorkConnectSkillInstruction({}, async () => {
-      throw new Error("network unavailable");
-    })).resolves.toBe("");
+      expect(output.system).toContain(instruction);
+      const rendered = errors.join("\n");
+      expect(rendered).toMatch(
+        /\[openwork\]\[context\] trace=pt_[a-z0-9]{12} id=connect-skills chars=\d+ sha256=[a-f0-9]{64}/,
+      );
+      expect(rendered).not.toContain("[openwork][connect-skills]");
+      expect(rendered).not.toContain("backend diagnostic must remain route-owned");
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
