@@ -23,7 +23,7 @@ import {
   type DesktopBootstrapConfig as ShellDesktopBootstrapConfig,
 } from "./desktop";
 import { isDesktopRuntime } from "./runtime-env";
-import type { DenOrgSkillCard, ReloadReason } from "../types";
+import type { ReloadReason } from "../types";
 import type {
   OpenWorkExtensionContribution,
   OpenWorkExtensionContributionType,
@@ -238,6 +238,14 @@ export type DenOrgLlmProviderConnection = DenOrgLlmProvider & {
 export type DenOrgMarketplaceResolved = {
   marketplace: DenOrgMarketplace;
   plugins: DenOrgPlugin[];
+};
+
+type DenOrgSkillPluginCreateInput = {
+  name: string;
+  description?: string | null;
+  rawSourceText: string;
+  orgWide?: boolean;
+  marketplaceId?: string;
 };
 
 export type DenBillingPrice = {
@@ -1155,32 +1163,6 @@ function getMcpToken(payload: unknown): DenMcpToken | null {
   };
 }
 
-function parseDenOrgSkillRow(record: Record<string, unknown>): DenOrgSkillCard | null {
-  if (typeof record.id !== "string" || typeof record.title !== "string" || typeof record.skillText !== "string") {
-    return null;
-  }
-  const description = typeof record.description === "string" ? record.description : null;
-  const shared = record.shared === "org" || record.shared === "public" ? record.shared : null;
-  return {
-    id: record.id,
-    title: record.title,
-    description,
-    skillText: record.skillText,
-    shared,
-    updatedAt: typeof record.updatedAt === "string" ? record.updatedAt : null,
-  };
-}
-
-function getDenOrgSkillsFromPayload(payload: unknown): DenOrgSkillCard[] {
-  if (!isRecord(payload) || !Array.isArray(payload.skills)) {
-    return [];
-  }
-  return payload.skills.flatMap((entry) => {
-    const skill = isRecord(entry) ? parseDenOrgSkillRow(entry) : null;
-    return skill ? [skill] : [];
-  });
-}
-
 function parseJsonRecord(value: unknown): Record<string, unknown> {
   if (isRecord(value)) return value;
   if (typeof value !== "string") return {};
@@ -1810,11 +1792,6 @@ function getBillingInvoice(value: unknown): DenBillingInvoice | null {
   };
 }
 
-function getCreatedOrgSkillId(payload: unknown): string | null {
-  if (!isRecord(payload) || !isRecord(payload.skill)) return null;
-  return typeof payload.skill.id === "string" ? payload.skill.id : null;
-}
-
 function getBillingSummary(payload: unknown): DenBillingSummary | null {
   if (!isRecord(payload) || !isRecord(payload.billing)) {
     return null;
@@ -2162,34 +2139,27 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
       return tokens;
     },
 
-    async listOrgSkills(orgId: string): Promise<DenOrgSkillCard[]> {
-      const payload = await requestJson<unknown>(baseUrls, "/v1/skills", {
-        method: "GET",
-        token,
-        organizationId: orgId,
-      });
-      return getDenOrgSkillsFromPayload(payload);
-    },
-
-    async createOrgSkill(
-      orgId: string,
-      input: { skillText: string; shared?: "org" | "public" | null },
-    ): Promise<{ id: string }> {
-      const body = {
-        skillText: input.skillText,
-        shared: input.shared === undefined ? ("org" as const) : input.shared,
-      };
-      const payload = await requestJson<unknown>(baseUrls, "/v1/skills", {
+    async createOrgSkillPlugin(orgId: string, input: DenOrgSkillPluginCreateInput): Promise<DenOrgPlugin> {
+      const components: Array<{ type: "skill"; input: { rawSourceText: string } }> = [
+        { type: "skill", input: { rawSourceText: input.rawSourceText } },
+      ];
+      const payload = await requestJson<unknown>(baseUrls, "/v1/plugins", {
         method: "POST",
         token,
         organizationId: orgId,
-        body,
+        body: {
+          name: input.name,
+          ...(input.description === undefined ? {} : { description: input.description }),
+          components,
+          ...(input.orgWide === undefined ? {} : { orgWide: input.orgWide }),
+          ...(input.marketplaceId ? { marketplaceId: input.marketplaceId } : {}),
+        },
       });
-      const id = getCreatedOrgSkillId(payload);
-      if (!id) {
-        throw new DenApiError(500, "invalid_skill_payload", "Skill response was missing id.");
+      const plugin = isRecord(payload) ? parseOrgPlugin(payload.item) : null;
+      if (!plugin) {
+        throw new DenApiError(500, "invalid_skill_plugin_payload", "Skill plugin response was missing plugin details.");
       }
-      return { id };
+      return plugin;
     },
 
     async listOrgLlmProviders(orgId: string): Promise<DenOrgLlmProvider[]> {
@@ -2320,18 +2290,6 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
 }
 
 export type DenClient = ReturnType<typeof createDenClient>;
-
-export async function fetchDenOrgSkillsCatalog(
-  client: ReturnType<typeof createDenClient>,
-  orgId: string,
-): Promise<DenOrgSkillCard[]> {
-  const skills = await client.listOrgSkills(orgId);
-  const byId = new Map<string, DenOrgSkillCard>();
-  for (const skill of skills) {
-    byId.set(skill.id, skill);
-  }
-  return Array.from(byId.values()).toSorted((a, b) => a.title.localeCompare(b.title));
-}
 
 /**
  * Mint an org-scoped MCP access token for the Den cloud MCP using the

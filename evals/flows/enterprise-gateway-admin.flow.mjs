@@ -114,7 +114,7 @@ export default {
             });
           },
           assert: async () => {
-            assertEvidence(ctx, /skl_|created.*skill|saved.*org/i.test(state.latestTranscript), "Transcript confirms a cloud skill was created or saved to the org", state.latestTranscript);
+            assertEvidence(ctx, /plg_|cob_|created.*plugin|skill.*config|marketplace/i.test(state.latestTranscript), "Transcript confirms a cloud skill plugin was created or saved to the org", state.latestTranscript);
           },
           screenshot: {
             name: "admin-created-my-incidents-skill",
@@ -136,11 +136,11 @@ export default {
           },
           assert: async () => {
             assertEvidence(ctx, /granted|access/i.test(state.latestTranscript), "Transcript confirms the member was granted access", state.latestTranscript);
-            assertEvidence(ctx, /marketplace|hub/i.test(state.latestTranscript), "Transcript mentions marketplace or hub sharing", state.latestTranscript);
+            assertEvidence(ctx, /marketplace|plugin/i.test(state.latestTranscript), "Transcript mentions marketplace or plugin sharing", state.latestTranscript);
           },
           screenshot: {
             name: "admin-shared-my-incidents",
-            claim: "The chat confirms my-incidents was shared through the marketplace/hub to the member.",
+            claim: "The chat confirms my-incidents was shared through the marketplace to the member.",
             requireText: ["my-incidents"],
             rejectText: ["Something went wrong"],
           },
@@ -153,7 +153,7 @@ export default {
         const memberToken = await signInByEmail(ctx, memberEmail(ctx));
         const skills = await listSkillsFor(ctx, memberToken);
         const found = skills.some((skill) => String(skill.title ?? "").trim().toLowerCase() === "my-incidents");
-        assertEvidence(ctx, found, "GET /v1/skills as member includes a skill titled my-incidents", skills.map((skill) => ({ id: skill.id, title: skill.title })));
+        assertEvidence(ctx, found, "Marketplace-visible skill plugins as member include my-incidents", skills.map((skill) => ({ id: skill.id, title: skill.title })));
       },
     },
   ],

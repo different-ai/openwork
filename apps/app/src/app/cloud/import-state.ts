@@ -1,13 +1,3 @@
-export type CloudImportedSkill = {
-  cloudSkillId: string;
-  installedName: string;
-  title: string;
-  description: string | null;
-  shared: "org" | "public" | null;
-  updatedAt: string | null;
-  importedAt: number | null;
-};
-
 export type CloudImportedProvider = {
   cloudProviderId: string;
   providerId: string;
@@ -29,7 +19,6 @@ export type CloudImportedMarketplace = {
 
 export type CloudImportedPluginFile = {
   configObjectId: string;
-  denSkillId?: string | null;
   externalMcpConnectionId?: string | null;
   versionId: string | null;
   objectType: string;
@@ -49,7 +38,6 @@ export type CloudImportedPlugin = {
 };
 
 export type WorkspaceCloudImports = {
-  skills: Record<string, CloudImportedSkill>;
   providers: Record<string, CloudImportedProvider>;
   marketplaces: Record<string, CloudImportedMarketplace>;
   plugins: Record<string, CloudImportedPlugin>;
@@ -66,7 +54,6 @@ const readStringArray = (value: unknown) =>
 export function readWorkspaceCloudImports(value: unknown): WorkspaceCloudImports {
   const root = isRecord(value) ? value : {};
   const cloudImports = isRecord(root.cloudImports) ? root.cloudImports : {};
-  const rawSkills = isRecord(cloudImports.skills) ? cloudImports.skills : {};
   const rawProviders = isRecord(cloudImports.providers) ? cloudImports.providers : {};
   const rawMarketplaces = isRecord(cloudImports.marketplaces) ? cloudImports.marketplaces : {};
   const rawPlugins = isRecord(cloudImports.plugins) ? cloudImports.plugins : {};
@@ -96,30 +83,6 @@ export function readWorkspaceCloudImports(value: unknown): WorkspaceCloudImports
           : null,
       } satisfies CloudImportedProvider;
       return [[cloudProviderId, imported] as const];
-    }),
-  );
-
-  const skills = Object.fromEntries(
-    Object.entries(rawSkills).flatMap(([key, entry]) => {
-      if (!isRecord(entry)) return [];
-      const cloudSkillId = typeof entry.cloudSkillId === "string"
-        ? entry.cloudSkillId.trim()
-        : key.trim();
-      const installedName = typeof entry.installedName === "string" ? entry.installedName.trim() : "";
-      const title = typeof entry.title === "string" ? entry.title.trim() : installedName || cloudSkillId;
-      if (!cloudSkillId || !installedName || !title) return [];
-      const imported = {
-        cloudSkillId,
-        installedName,
-        title,
-        description: typeof entry.description === "string" ? entry.description.trim() || null : null,
-        shared: entry.shared === "org" || entry.shared === "public" ? entry.shared : null,
-        updatedAt: typeof entry.updatedAt === "string" ? entry.updatedAt.trim() || null : null,
-        importedAt: typeof entry.importedAt === "number" && Number.isFinite(entry.importedAt)
-          ? entry.importedAt
-          : null,
-      } satisfies CloudImportedSkill;
-      return [[cloudSkillId, imported] as const];
     }),
   );
 
@@ -160,14 +123,10 @@ export function readWorkspaceCloudImports(value: unknown): WorkspaceCloudImports
             const externalMcpConnectionId = typeof file.externalMcpConnectionId === "string"
               ? file.externalMcpConnectionId.trim() || null
               : null;
-            const denSkillId = typeof file.denSkillId === "string"
-              ? file.denSkillId.trim() || null
-              : null;
             if (!configObjectId || !objectType || !title || !path) return [];
             return [
               {
                 configObjectId,
-                denSkillId,
                 externalMcpConnectionId,
                 versionId: typeof file.versionId === "string" ? file.versionId.trim() || null : null,
                 objectType,
@@ -193,7 +152,7 @@ export function readWorkspaceCloudImports(value: unknown): WorkspaceCloudImports
     }),
   );
 
-  return { skills, providers, marketplaces, plugins };
+  return { providers, marketplaces, plugins };
 }
 
 export function withWorkspaceCloudImports(
@@ -203,7 +162,6 @@ export function withWorkspaceCloudImports(
   return {
     ...config,
     cloudImports: {
-      skills: cloudImports.skills,
       providers: cloudImports.providers,
       marketplaces: cloudImports.marketplaces,
       plugins: cloudImports.plugins,

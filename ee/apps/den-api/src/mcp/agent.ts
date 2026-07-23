@@ -16,8 +16,7 @@ import { getCatalog, protectedResourceMetadata } from "./index.js"
 import { preflightMcpJsonRpcRequest } from "./json-rpc-preflight.js"
 import { compareCapabilityMatches, SEARCH_CAPABILITIES_TOOL_NAME, searchCapabilities, searchCapabilitySourceFilter, type CapabilityMatch } from "./search.js"
 import { executeExternalCapability, externalMcpSearchCoverageHint, parseExternalCapabilityName, resolveMcpMemberIdentity, searchExternalCapabilities, type ExternalCapabilityExecuteResult } from "./external-capabilities.js"
-import { executeMarketplaceCapability, listAccessibleMarketplaceSkillDescriptors, parseMarketplaceCapabilityName, searchMarketplaceCapabilities, type MarketplaceCapabilityObjectType } from "./marketplace-capabilities.js"
-import { executeSkillCapability, listAccessibleSkillDescriptors, parseSkillCapabilityName, searchSkillCapabilities, type RemoteSkillDescriptor } from "./skill-capabilities.js"
+import { executeMarketplaceCapability, listAccessibleMarketplaceSkillDescriptors, parseMarketplaceCapabilityName, searchMarketplaceCapabilities, type MarketplaceCapabilityObjectType, type RemoteSkillDescriptor } from "./marketplace-capabilities.js"
 import { resolvePublicOrigin } from "../capability-sources/generic-oauth.js"
 import { env } from "../env.js"
 import { isPlatformAdminUserId } from "../middleware/admin.js"
@@ -316,12 +315,6 @@ export function registerAgentSkillResources(input: {
       description: skill.description,
       mimeType: "text/markdown",
     }, async () => {
-      const skillId = parseSkillCapabilityName(skill.capability)
-      const nativeResult = skillId ? await executeSkillCapability({
-        organizationId: input.organizationId,
-        member: input.member,
-        skillId,
-      }) : null
       const marketplace = parseMarketplaceCapabilityName(skill.capability)
       const marketplaceResult = marketplace ? await executeMarketplaceCapability({
         organizationId: input.organizationId,
@@ -330,11 +323,9 @@ export function registerAgentSkillResources(input: {
         configObjectId: marketplace.configObjectId,
         enabled: input.marketplaceEnabled,
       }) : null
-      const source = nativeResult?.ok
-        ? nativeResult.skill.skillText
-        : marketplaceResult?.ok && marketplaceResult.result.kind === "skill"
-          ? marketplaceResult.result.content
-          : null
+      const source = marketplaceResult?.ok && marketplaceResult.result.kind === "skill"
+        ? marketplaceResult.result.content
+        : null
       if (typeof source !== "string") throw new McpError(ErrorCode.InvalidRequest, "Skill is no longer available")
       return {
         contents: [{
@@ -412,18 +403,11 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
     let remoteSkills: RemoteSkillDescriptor[] = []
     const method = await mcpRequestMethod(c.req.raw)
     if (method === "initialize" || method === "resources/list" || method === "resources/read") {
-      const [nativeSkills, marketplaceSkills] = await Promise.all([
-        listAccessibleSkillDescriptors({
-          organizationId: principal.organizationId,
-          member: memberIdentity,
-        }),
-        listAccessibleMarketplaceSkillDescriptors({
-          organizationId: principal.organizationId,
-          member: memberIdentity,
-          enabled: externalMcpConnectionsEnabled,
-        }),
-      ])
-      remoteSkills = [...nativeSkills, ...marketplaceSkills]
+      remoteSkills = (await listAccessibleMarketplaceSkillDescriptors({
+        organizationId: principal.organizationId,
+        member: memberIdentity,
+        enabled: externalMcpConnectionsEnabled,
+      }))
         .sort((a, b) => a.name.localeCompare(b.name) || a.capability.localeCompare(b.capability))
     }
     const server = createAgentMcpServer()
@@ -447,13 +431,13 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
           "Search covers native Google Workspace capabilities (Gmail, Calendar, Drive, Gmail drafts), org-connected external MCPs, and namespaced OpenWork Admin tools for allowlisted platform admins.",
           "Try 2-4 keyword variants before deciding a capability is unavailable.",
           "Native API matches include pathParams, queryParams, hasBody, and bodySchema. External MCP matches include argumentsSchema, schemaDigest, and invocation.argumentsField.",
-          "Skill matches use method SKILL and return stored SKILL.md content when executed.",
+          "Marketplace skill matches return stored SKILL.md content when executed.",
         ].join(" "),
         annotations: SEARCH_CAPABILITIES_ANNOTATIONS,
         inputSchema: z.object({
           query: z.string().min(1).describe("Keywords describing the capability you need, e.g. \"create organization\" or \"list workers\"."),
           limit: z.number().int().min(1).max(20).optional().describe("Max number of matches to return. Defaults to 5."),
-          type: searchCapabilityTypeSchema.optional().describe("Optional source filter. all searches every available source; api searches Den API capabilities; admin searches allowlisted platform-admin tools; mcp searches connected external MCP tools; marketplace searches marketplace plugin capabilities; skills searches native skills and marketplace skill objects. Defaults to all."),
+          type: searchCapabilityTypeSchema.optional().describe("Optional source filter. all searches every available source; api searches Den API capabilities; admin searches allowlisted platform-admin tools; mcp searches connected external MCP tools; marketplace searches marketplace plugin capabilities; skills searches marketplace skill objects. Defaults to all."),
         }),
         outputSchema: SEARCH_CAPABILITIES_OUTPUT_SCHEMA,
       },
@@ -492,15 +476,7 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
             enabled: externalMcpConnectionsEnabled,
           })
           : []
-        const skillMatches = sourceFilter.skills
-          ? await searchSkillCapabilities({
-            organizationId: principal.organizationId,
-            member: memberIdentity,
-            query,
-            limit: boundedLimit,
-          })
-          : []
-        const matches = [...restMatches, ...adminMatches, ...externalMatches, ...marketplaceMatches, ...skillMatches]
+        const matches = [...restMatches, ...adminMatches, ...externalMatches, ...marketplaceMatches]
           .sort(compareCapabilityMatches)
           .slice(0, boundedLimit)
         return capabilitySearchToolResult(matches, externalCoverageHint)
@@ -515,8 +491,7 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
           "Call a capability found via search_capabilities, by its exact name.",
           "Pass path/query/body only as described by that match's pathParams/queryParams/hasBody.",
           "For external MCP capabilities, provider-advertised schema mismatches are returned as advisory schemaGuidance alongside the provider result; they do not block the downstream call.",
-          "For skill:<id> matches, this returns that skill's stored SKILL.md content.",
-          "For plugin:<pluginId>:<configObjectId> capabilities listed in the remote skill catalog, this returns the authorized marketplace skill content.",
+          "For plugin:<pluginId>:<configObjectId> capabilities listed in the remote skill catalog, this returns the authorized marketplace skill's stored SKILL.md content.",
           "Returns unknown_capability if name doesn't match a current capability — call search_capabilities again.",
         ].join(" "),
         annotations: EXECUTE_CAPABILITY_ANNOTATIONS,
@@ -585,32 +560,6 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
                 }
               }
               return { content: textContent(JSON.stringify(result.result, null, 2)) }
-            }
-
-            const skillId = parseSkillCapabilityName(name)
-            if (skillId) {
-              const result = await executeSkillCapability({
-                organizationId: principal.organizationId,
-                member: memberIdentity,
-                skillId,
-              })
-              if (!result.ok) {
-                return {
-                  isError: true,
-                  content: textContent(JSON.stringify({ error: result.error, message: result.message })),
-                }
-              }
-              return {
-                content: textContent(JSON.stringify({
-                  skill: {
-                    id: result.skill.id,
-                    title: result.skill.title,
-                    description: result.skill.description,
-                    skillText: result.skill.skillText,
-                    updatedAt: result.skill.updatedAt,
-                  },
-                }, null, 2)),
-              }
             }
 
             const operation = catalog.find((candidate) => candidate.name === name)

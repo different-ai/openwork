@@ -1,7 +1,6 @@
 import { and, eq, isNull } from "@openwork-ee/den-db/drizzle"
 import {
   MemberTable,
-  SkillHubMemberTable,
   TeamMemberTable,
   TeamTable,
 } from "@openwork-ee/den-db/schema"
@@ -285,7 +284,7 @@ export function registerOrgTeamRoutes<T extends { Variables: OrgRouteVariables }
     describeRoute({
       tags: ["Teams"],
       summary: "Delete team",
-      description: "Deletes a team and removes its related hub-access and team-membership records.",
+      description: "Deletes a team and removes its related team-membership records.",
       responses: {
         204: emptyResponse("Team deleted successfully."),
         400: jsonResponse("The team deletion path parameters were invalid.", invalidRequestSchema),
@@ -327,7 +326,6 @@ export function registerOrgTeamRoutes<T extends { Variables: OrgRouteVariables }
       }
 
       await db.transaction(async (tx) => {
-        await tx.delete(SkillHubMemberTable).where(eq(SkillHubMemberTable.teamId, team.id))
         await tx.delete(TeamMemberTable).where(eq(TeamMemberTable.teamId, team.id))
         await tx.delete(TeamTable).where(eq(TeamTable.id, team.id))
       })

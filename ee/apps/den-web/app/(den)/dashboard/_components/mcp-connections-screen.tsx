@@ -795,7 +795,7 @@ function ImportPluginConnectionDialog({
       >
         <h2 className="text-[18px] font-semibold tracking-[-0.02em] text-gray-950">Add plugin connection</h2>
         <p className="mt-1 text-[13px] leading-6 text-gray-600">
-          Import a plugin from GitHub. Remote MCPs become Den-hosted org connections; imported skills are saved to Skill Hub storage and show up in capabilities.
+          Import a plugin from GitHub. Remote MCPs become Den-hosted org connections; imported skills are saved as skill config objects on the plugin and published through marketplaces.
         </p>
 
         <div className="mt-5 rounded-2xl border border-gray-100 bg-gray-50 p-4">

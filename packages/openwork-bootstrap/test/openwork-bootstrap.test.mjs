@@ -86,7 +86,7 @@ try {
       baseUrl: "https://api.openworklabs.com",
       apiBaseUrl: "https://api.openworklabs.com",
       requireSignin: false,
-      prepared: { orgId: "org_test", orgName: "Test Org", skillId: "skl_test", skillTitle: "Test Skill", skillPath: "/tmp/skill.md" },
+      prepared: { orgId: "org_test", orgName: "Test Org", skillId: "cob_test", skillTitle: "Test Skill", skillPath: "/tmp/skill.md" },
       claimLinks: [
         { id: "wcl_owner", role: "owner", token: "test-owner-token", url: "https://app.openworklabs.com/workspace-claim?token=test-owner-token", expiresAt: "2030-01-01T00:00:00.000Z" },
         { id: "wcl_member", role: "member", token: "test-member-token", url: "https://app.openworklabs.com/workspace-claim?token=test-member-token", expiresAt: "2030-01-01T00:00:00.000Z" },
@@ -132,7 +132,7 @@ try {
       ok: true,
       organization: { id: "org_test", name: "Stub Org", slug: "org_test", status: "provisional" },
       setup: { id: "wbt_test", expiresAt: "2030-01-01T00:00:00.000Z" },
-      skill: { id: "skl_test", title: "First OpenWork Skill", output: "OPENWORK_BOOTSTRAP_SKILL_TRIGGERED" },
+      skill: { id: "cob_test", title: "First OpenWork Skill", output: "OPENWORK_BOOTSTRAP_SKILL_TRIGGERED" },
       claimLinks: [{ id: "wcl_test", role: "owner", token: "stub-token", url: "https://example.test/workspace-claim?token=stub-token", expiresAt: "2030-01-01T00:00:00.000Z" }],
     }),
     async (baseUrl, getRequestBody) => {
@@ -161,7 +161,7 @@ try {
       ok: true,
       organization: { id: "org_test", name: "Stub Org", slug: "org_test", status: "provisional" },
       setup: { id: "wbt_test", expiresAt: "2030-01-01T00:00:00.000Z" },
-      skill: { id: "skl_test", title: "First OpenWork Skill", output: "OPENWORK_BOOTSTRAP_SKILL_TRIGGERED" },
+      skill: { id: "cob_test", title: "First OpenWork Skill", output: "OPENWORK_BOOTSTRAP_SKILL_TRIGGERED" },
       claimLinks: [{ id: "wcl_test", role: "owner", token: "stub-token", url: "https://example.test/workspace-claim?token=stub-token", expiresAt: "2030-01-01T00:00:00.000Z" }],
     }),
     async (baseUrl, getRequestBody) => {
@@ -193,7 +193,7 @@ try {
       ok: true,
       organization: { id: "org_test", name: "Stub Org", slug: "org_test", status: "provisional" },
       setup: { id: "wbt_test", expiresAt: "2030-01-01T00:00:00.000Z" },
-      skill: { id: "skl_test", title: "First OpenWork Skill", output: "OPENWORK_BOOTSTRAP_SKILL_TRIGGERED" },
+      skill: { id: "cob_test", title: "First OpenWork Skill", output: "OPENWORK_BOOTSTRAP_SKILL_TRIGGERED" },
       claimLinks: [{ id: "wcl_test", role: "owner", token: "stub-token", url: "https://example.test/workspace-claim?token=stub-token", expiresAt: "2030-01-01T00:00:00.000Z" }],
     }),
     async (baseUrl) => {

@@ -18,8 +18,6 @@ Every tagged Den API product surface is allowed unless it is listed under blocke
 - `Organizations`
 - `Plugins`
 - `Roles`
-- `Skill Hubs`
-- `Skills`
 - `Teams`
 - `Users`
 - `Worker Activity`

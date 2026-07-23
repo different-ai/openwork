@@ -683,7 +683,17 @@ export async function retryAfterGatewayLoginIfNeeded(ctx, email, transcript, exp
 }
 
 export async function listSkillsFor(ctx, token) {
-  const result = await denApiFetch(ctx, "/v1/skills", { headers: { authorization: `Bearer ${token}` } });
-  ctx.assert(result.response.ok, httpFailureMessage("GET /v1/skills failed", result));
-  return result.body?.skills ?? [];
+  const marketplaces = await denApiFetch(ctx, "/v1/marketplaces", { headers: { authorization: `Bearer ${token}` } });
+  ctx.assert(marketplaces.response.ok, httpFailureMessage("GET /v1/marketplaces failed", marketplaces));
+  const skills = [];
+  for (const marketplace of marketplaces.body?.items ?? []) {
+    if (!marketplace?.id) continue;
+    const resolved = await denApiFetch(ctx, `/v1/marketplaces/${encodeURIComponent(marketplace.id)}/resolved`, { headers: { authorization: `Bearer ${token}` } });
+    ctx.assert(resolved.response.ok, httpFailureMessage(`GET /v1/marketplaces/${marketplace.id}/resolved failed`, resolved));
+    for (const plugin of resolved.body?.item?.plugins ?? []) {
+      if (!plugin?.componentCounts?.skill) continue;
+      skills.push({ id: plugin.id, title: plugin.name, marketplaceId: marketplace.id });
+    }
+  }
+  return skills;
 }

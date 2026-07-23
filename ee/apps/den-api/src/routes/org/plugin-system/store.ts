@@ -22,10 +22,6 @@ import {
   PluginConfigObjectTable,
   PluginMcpRequirementBindingTable,
   PluginTable,
-  SkillHubMemberTable,
-  SkillHubSkillTable,
-  SkillHubTable,
-  SkillTable,
   TeamTable,
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
@@ -121,7 +117,6 @@ type MarketplaceId = MarketplaceRow["id"]
 type MarketplaceMembershipId = MarketplaceMembershipRow["id"]
 type PluginId = PluginRow["id"]
 type PluginMembershipId = PluginMembershipRow["id"]
-type SkillId = typeof SkillTable.$inferSelect.id
 type AccessGrantRow =
   | typeof ConfigObjectAccessGrantTable.$inferSelect
   | typeof MarketplaceAccessGrantTable.$inferSelect
@@ -2546,7 +2541,9 @@ export async function getMarketplaceResolved(input: { context: PluginArchActorCo
 
 export async function attachPluginToMarketplace(input: { context: PluginArchActorContext; marketplaceId: MarketplaceId; membershipSource?: MarketplaceMembershipRow["membershipSource"]; pluginId: PluginId }) {
   await ensureVisiblePlugin(input.context, input.pluginId)
-  await ensureEditableMarketplace(input.context, input.marketplaceId)
+  if (input.marketplaceId) {
+    await ensureEditableMarketplace(input.context, input.marketplaceId)
+  }
 
   const existing = await db
     .select()
@@ -4327,105 +4324,6 @@ function importedConnectionBackedMcpPayload(input: {
   }
 }
 
-function importedDenSkillPayload(skillId: SkillId) {
-  return {
-    denSkillId: skillId,
-    openworkManaged: "den_skill",
-  }
-}
-
-async function createSkillHubForImportedSkills(input: {
-  access: GithubPluginMcpImportAccess
-  context: PluginArchActorContext
-  name: string
-}) {
-  if (input.access.orgWide) return null
-  const now = new Date()
-  const skillHubId = createDenTypeId("skillHub")
-  const createdByOrgMembershipId = input.context.organizationContext.currentMember.id
-  const organizationId = input.context.organizationContext.organization.id
-  const accessRows: (typeof SkillHubMemberTable.$inferInsert)[] = []
-  for (const memberId of new Set(input.access.memberIds)) {
-    accessRows.push({
-      id: createDenTypeId("skillHubMember"),
-      skillHubId,
-      orgMembershipId: memberId,
-      teamId: null,
-      createdAt: now,
-    })
-  }
-  for (const teamId of new Set(input.access.teamIds)) {
-    accessRows.push({
-      id: createDenTypeId("skillHubMember"),
-      skillHubId,
-      orgMembershipId: null,
-      teamId,
-      createdAt: now,
-    })
-  }
-
-  await db.transaction(async (tx) => {
-    await tx.insert(SkillHubTable).values({
-      id: skillHubId,
-      organizationId,
-      createdByOrgMembershipId,
-      name: input.name,
-      description: "Skills imported from a GitHub plugin.",
-      createdAt: now,
-      updatedAt: now,
-    })
-    if (accessRows.length > 0) {
-      await tx.insert(SkillHubMemberTable).values(accessRows)
-    }
-  })
-  return skillHubId
-}
-
-async function createImportedSkill(input: {
-  access: GithubPluginMcpImportAccess
-  context: PluginArchActorContext
-  skill: GithubPluginSkillImportSkill
-  skillHubId: typeof SkillHubTable.$inferSelect.id | null
-}) {
-  const skillText = input.skill.rawSourceText
-  if (!skillText) {
-    throw new PluginArchRouteFailure(400, "invalid_skill_import", "Selected skill content was unavailable.")
-  }
-  const metadata = skillMetadataFromText(skillText)
-  const now = new Date()
-  const skillId = createDenTypeId("skill")
-  const createdByOrgMembershipId = input.context.organizationContext.currentMember.id
-  const organizationId = input.context.organizationContext.organization.id
-  await db.transaction(async (tx) => {
-    await tx.insert(SkillTable).values({
-      id: skillId,
-      organizationId,
-      createdByOrgMembershipId,
-      title: metadata.title,
-      description: metadata.description,
-      skillText,
-      shared: input.access.orgWide ? "org" : null,
-      createdAt: now,
-      updatedAt: now,
-    })
-    if (input.skillHubId) {
-      await tx.insert(SkillHubSkillTable).values({
-        id: createDenTypeId("skillHubSkill"),
-        skillHubId: input.skillHubId,
-        skillId,
-        addedByOrgMembershipId: createdByOrgMembershipId,
-        createdAt: now,
-      })
-    }
-  })
-  return {
-    description: metadata.description,
-    id: skillId,
-    skillText,
-    title: metadata.title,
-  }
-}
-
 function importedPluginName(plan: GithubPluginMcpImportPlan) {
   if (plan.plugins.length === 1) return plan.plugins[0].name
   return plan.marketplace?.name?.trim() || plan.rootPath.split("/").filter(Boolean).at(-1) || plan.repositoryFullName.split("/").at(-1) || "GitHub MCP Plugin"
@@ -4652,7 +4550,7 @@ export async function importGithubPluginMcps(input: {
   })
 
   const imported: Array<{ connectionId: string; name: string; url: string }> = []
-  const importedSkills: Array<{ name: string; skillId: SkillId; sourcePath: string }> = []
+  const importedSkills: Array<{ configObjectId: ConfigObjectId; name: string; sourcePath: string }> = []
   for (const server of supportedServers) {
     const authType = resolveGithubPluginMcpImportAuthType({
       declaredAuthType: server.authType,
@@ -4714,20 +4612,12 @@ export async function importGithubPluginMcps(input: {
     imported.push({ connectionId: connection.id, name: server.name, url: server.url ?? "" })
   }
 
-  const skillHubId = supportedSkills.length > 0
-    ? await createSkillHubForImportedSkills({
-      access,
-      context: input.context,
-      name: `${plugin.name} skills`,
-    })
-    : null
   for (const skill of supportedSkills) {
-    const createdSkill = await createImportedSkill({
-      access,
-      context: input.context,
-      skill,
-      skillHubId,
-    })
+    const skillText = skill.rawSourceText
+    if (!skillText) {
+      throw new PluginArchRouteFailure(400, "invalid_skill_import", "Selected skill content was unavailable.")
+    }
+    const metadata = skillMetadataFromText(skillText)
     const configObject = await createConfigObject({
       context: input.context,
       objectType: "skill",
@@ -4735,16 +4625,13 @@ export async function importGithubPluginMcps(input: {
       sourceMode: "import",
       value: {
         metadata: {
-          description: createdSkill.description ?? `Den skill imported from ${skill.sourcePath}.`,
-          denSkillId: createdSkill.id,
+          description: metadata.description ?? `Skill imported from ${skill.sourcePath}.`,
           githubUrl: input.githubUrl,
-          name: createdSkill.title,
-          openworkManaged: "den_skill",
+          name: metadata.title,
           repositoryFullName: plan.repositoryFullName,
           sourcePath: skill.sourcePath,
         },
-        normalizedPayloadJson: importedDenSkillPayload(createdSkill.id),
-        schemaVersion: "openwork.den_skill.v1",
+        rawSourceText: skillText,
       },
     })
     await grantImportAccessToPluginArchResource({
@@ -4753,7 +4640,7 @@ export async function importGithubPluginMcps(input: {
       resourceId: configObject.id,
       resourceKind: "config_object",
     })
-    importedSkills.push({ name: createdSkill.title, skillId: createdSkill.id, sourcePath: skill.sourcePath })
+    importedSkills.push({ configObjectId: configObject.id, name: metadata.title, sourcePath: skill.sourcePath })
   }
 
   if (input.marketplaceId) {

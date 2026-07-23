@@ -890,8 +890,8 @@ export const githubPluginMcpImportResponseSchema = pluginArchMutationResponseSch
       url: z.string(),
     })),
     importedSkills: z.array(z.object({
+      configObjectId: configObjectIdSchema,
       name: z.string(),
-      skillId: denTypeIdSchema("skill"),
       sourcePath: z.string(),
     })),
     marketplaceId: marketplaceIdSchema.nullable(),

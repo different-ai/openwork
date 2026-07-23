@@ -224,8 +224,6 @@ app.get(
         { name: "Teams", description: "Organization team management routes." },
         { name: "Templates", description: "Organization shared template routes." },
         { name: "LLM Providers", description: "Organization LLM provider catalog, configuration, and access routes." },
-        { name: "Skills", description: "Organization skill authoring and sharing routes." },
-        { name: "Skill Hubs", description: "Organization skill hub management and access routes." },
         { name: "Workers", description: "Worker lifecycle, billing, and runtime routes." },
         { name: "Worker Runtime", description: "Worker runtime inspection and upgrade routes." },
         { name: "Worker Activity", description: "Worker heartbeat and activity reporting routes." },

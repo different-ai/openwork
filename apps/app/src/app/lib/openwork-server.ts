@@ -17,13 +17,6 @@ import type { CloudImportedMarketplace, CloudImportedPlugin } from "../cloud/imp
 
 export type OpenworkServerCapabilities = {
   skills: { read: boolean; write: boolean; source: "openwork" | "opencode" };
-  hub?: {
-    skills?: {
-      read: boolean;
-      install: boolean;
-      repo?: { owner: string; name: string; ref: string };
-    };
-  };
   plugins: { read: boolean; write: boolean };
   mcp: { read: boolean; write: boolean };
   commands: { read: boolean; write: boolean };
@@ -147,24 +140,6 @@ export type OpenworkSkillItem = {
 export type OpenworkSkillContent = {
   item: OpenworkSkillItem;
   content: string;
-};
-
-export type OpenworkHubSkillItem = {
-  name: string;
-  description: string;
-  trigger?: string;
-  source: {
-    owner: string;
-    repo: string;
-    ref: string;
-    path: string;
-  };
-};
-
-export type OpenworkHubRepo = {
-  owner?: string;
-  repo?: string;
-  ref?: string;
 };
 
 export type OpenworkWorkspaceFileContent = {
@@ -1765,38 +1740,6 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         { token, hostToken },
       );
     },
-    listHubSkills: (options?: { repo?: OpenworkHubRepo }) => {
-      const params = new URLSearchParams();
-      const owner = options?.repo?.owner?.trim();
-      const repo = options?.repo?.repo?.trim();
-      const ref = options?.repo?.ref?.trim();
-      if (owner) params.set("owner", owner);
-      if (repo) params.set("repo", repo);
-      if (ref) params.set("ref", ref);
-      const query = params.size ? `?${params.toString()}` : "";
-      return requestJson<{ items: OpenworkHubSkillItem[] }>(baseUrl, `/hub/skills${query}`, {
-        token,
-        hostToken,
-      });
-    },
-    installHubSkill: (
-      workspaceId: string,
-      name: string,
-      options?: { overwrite?: boolean; repo?: { owner?: string; repo?: string; ref?: string } },
-    ) =>
-      requestJson<{ ok: boolean; name: string; path: string; action: "added" | "updated"; written: number; skipped: number }>(
-        baseUrl,
-        `/workspace/${workspaceId}/skills/hub/${encodeURIComponent(name)}`,
-        {
-          token,
-          hostToken,
-          method: "POST",
-          body: {
-            ...(options?.overwrite ? { overwrite: true } : {}),
-            ...(options?.repo ? { repo: options.repo } : {}),
-          },
-        },
-      ),
     getSkill: (workspaceId: string, name: string, options?: { includeGlobal?: boolean }) => {
       const query = options?.includeGlobal ? "?includeGlobal=true" : "";
       return requestJson<OpenworkSkillContent>(

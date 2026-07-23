@@ -22,7 +22,6 @@ import { registerPluginArchRoutes } from "./plugin-system/routes.js"
 import { registerOrgRoleRoutes } from "./roles.js"
 import { registerOrgScimRoutes } from "./scim.js"
 import { registerOrgSsoRoutes } from "./sso.js"
-import { registerOrgSkillRoutes } from "./skills.js"
 import { registerOrgResourceRoutes } from "./resources.js"
 import { registerOrgTeamRoutes } from "./teams.js"
 import { registerTelegramOrgRoutes } from "./telegram.js"
@@ -74,7 +73,6 @@ export function registerOrgRoutes<T extends { Variables: OrgRouteVariables & Req
   registerPluginArchRoutes(app)
   registerOrgRoleRoutes(app)
   registerOrgResourceRoutes(app)
-  registerOrgSkillRoutes(app)
   registerOrgTeamRoutes(app)
   registerTelegramOrgRoutes(app)
 

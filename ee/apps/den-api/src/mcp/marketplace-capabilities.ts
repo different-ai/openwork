@@ -31,10 +31,41 @@ import { listPluginMcpRequirementBindings, type PluginMcpRequirementBindingRow }
 import { scoreText, tokenize } from "./search.js"
 import type { McpMemberIdentity } from "./external-capabilities.js"
 import type { CapabilityMatch } from "./search.js"
-import { normalizeRemoteSkillDescription, standardSkillName, type RemoteSkillDescriptor } from "./skill-capabilities.js"
 
 const MARKETPLACE_CAPABILITY_PREFIX = "plugin:"
 const PROVENANCE_SUFFIX = "in your organization's library."
+const AGENT_SKILL_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
+
+export type RemoteSkillDescriptor = {
+  name: string
+  title: string
+  description: string
+  marketplaceName?: string
+  pluginName?: string
+  capability: string
+  location: string
+}
+
+export function normalizeRemoteSkillDescription(input: {
+  description: string | null
+  name: string
+  title: string
+}): string {
+  const description = input.description?.replace(/\s+/g, " ").trim()
+  return (description || input.title.trim() || input.name).slice(0, 1_024)
+}
+
+export function standardSkillName(title: string, stableId: string): string {
+  const suffix = stableId.replace(/^skill_/, "").slice(-8).toLowerCase()
+  const base = title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .replace(/-{2,}/g, "-")
+  const bounded = base.slice(0, Math.max(1, 64 - suffix.length - 1)).replace(/-+$/g, "")
+  const name = `${bounded || "skill"}-${suffix}`
+  return AGENT_SKILL_NAME_PATTERN.test(name) ? name : `skill-${suffix}`
+}
 
 type OrganizationId = DenTypeId<"organization">
 type PluginId = DenTypeId<"plugin">
