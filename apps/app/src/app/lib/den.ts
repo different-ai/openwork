@@ -83,14 +83,6 @@ import type {
   DenUser,
 } from "./den-types";
 
-type DenOrgSkillPluginCreateInput = {
-  name: string;
-  description?: string | null;
-  rawSourceText: string;
-  orgWide?: boolean;
-  marketplaceId?: string;
-};
-
 type DenBaseUrls = {
   baseUrl: string;
   apiBaseUrl: string;
@@ -1723,14 +1715,6 @@ function getOrgMarketplaces(payload: unknown): DenOrgMarketplace[] {
   });
 }
 
-function getPluginConfigObjects(payload: unknown): DenPluginConfigObject[] {
-  if (!isRecord(payload) || !Array.isArray(payload.items)) return [];
-  return payload.items.flatMap((item) => {
-    const configObject = parsePluginConfigObject(item);
-    return configObject ? [configObject] : [];
-  });
-}
-
 function getOrgMarketplaceResolved(payload: unknown): DenOrgMarketplaceResolved | null {
   if (!isRecord(payload) || !isRecord(payload.item)) return null;
   const marketplace = parseOrgMarketplace(payload.item.marketplace);
@@ -2148,70 +2132,6 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
         throw new DenApiError(500, "invalid_worker_token_payload", "Worker token response was missing token values.");
       }
       return tokens;
-    },
-
-    async listOrgSkillConfigObjects(orgId: string, query: string): Promise<DenPluginConfigObject[]> {
-      const params = new URLSearchParams({
-        type: "skill",
-        status: "active",
-        limit: "100",
-        q: query,
-      });
-      const payload = await requestJson<unknown>(baseUrls, `/v1/config-objects?${params.toString()}`, {
-        method: "GET",
-        token,
-        organizationId: orgId,
-      });
-      return getPluginConfigObjects(payload);
-    },
-
-    async createOrgSkillConfigObjectVersion(
-      orgId: string,
-      configObjectId: string,
-      rawSourceText: string,
-    ): Promise<DenPluginConfigObject> {
-      const payload = await requestJson<unknown>(
-        baseUrls,
-        `/v1/config-objects/${encodeURIComponent(configObjectId)}/versions`,
-        {
-          method: "POST",
-          token,
-          organizationId: orgId,
-          body: {
-            input: { rawSourceText },
-            reason: "Move local skill to OpenWork Cloud",
-          },
-        },
-      );
-      const configObject = isRecord(payload) ? parsePluginConfigObject(payload.item) : null;
-      if (!configObject) {
-        throw new DenApiError(
-          500,
-          "invalid_skill_config_object_payload",
-          "Skill version response was missing config object details.",
-        );
-      }
-      return configObject;
-    },
-
-    async createOrgSkillPlugin(orgId: string, input: DenOrgSkillPluginCreateInput): Promise<DenOrgPlugin> {
-      const payload = await requestJson<unknown>(baseUrls, "/v1/plugins", {
-        method: "POST",
-        token,
-        organizationId: orgId,
-        body: {
-          name: input.name,
-          ...(input.description === undefined ? {} : { description: input.description }),
-          components: [{ type: "skill", input: { rawSourceText: input.rawSourceText } }],
-          ...(input.orgWide === undefined ? {} : { orgWide: input.orgWide }),
-          ...(input.marketplaceId ? { marketplaceId: input.marketplaceId } : {}),
-        },
-      });
-      const plugin = isRecord(payload) ? parseOrgPlugin(payload.item) : null;
-      if (!plugin) {
-        throw new DenApiError(500, "invalid_skill_plugin_payload", "Skill plugin response was missing plugin details.");
-      }
-      return plugin;
     },
 
     async listOrgLlmProviders(orgId: string): Promise<DenOrgLlmProvider[]> {

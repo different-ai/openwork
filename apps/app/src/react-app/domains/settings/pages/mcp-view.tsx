@@ -48,7 +48,6 @@ import type { McpServerEntry, McpStatusMap } from "../../../../app/types";
 import { formatRelativeTime, isDesktopRuntime, isWindowsPlatform } from "../../../../app/utils";
 import { t } from "../../../../i18n";
 import { Button } from "@/components/ui/button";
-import { toast } from "@/components/ui/sonner";
 import { ConfirmModal } from "../../../design-system/modals/confirm-modal";
 import { AddMcpModal } from "../../connections/modals/add-mcp-modal";
 import { ClaudePluginImportModal } from "../../connections/modals/claude-plugin-import-modal";
@@ -102,8 +101,6 @@ export type McpViewProps = {
   installedPlugins?: CloudImportedPlugin[];
   /** Uninstall a skill by name. */
   uninstallSkill?: (name: string) => void;
-  /** Move a local skill to OpenWork Cloud, removing the local copy only after Cloud persistence succeeds. */
-  moveSkillToCloud?: (name: string) => Promise<void>;
   /** Remove an imported marketplace package by plugin id. */
   removeCloudPlugin?: (pluginId: string) => void | Promise<unknown>;
   /** Read skill content by name. */
@@ -256,8 +253,6 @@ export function McpView(props: McpViewProps) {
   const [detailEntry, setDetailEntry] = useState<McpDirectoryInfo | null>(null);
   const [detailSkill, setDetailSkill] = useState<SkillItem | null>(null);
   const [detailSkillContent, setDetailSkillContent] = useState<string | null>(null);
-  const [moveSkillTarget, setMoveSkillTarget] = useState<SkillItem | null>(null);
-  const [moveSkillBusy, setMoveSkillBusy] = useState(false);
   const [detailConnectMcp, setDetailConnectMcp] = useState<McpServerEntry | null>(null);
   const [detailPlugin, setDetailPlugin] = useState<CloudImportedPlugin | null>(null);
   const [detailOrgMcpItem, setDetailOrgMcpItem] = useState<ExtensionItem | null>(null);
@@ -484,21 +479,6 @@ export function McpView(props: McpViewProps) {
       setLogoutBusy(false);
       setLogoutOpen(false);
       setLogoutTarget(null);
-    }
-  };
-
-  const confirmMoveSkillToCloud = async () => {
-    const skill = moveSkillTarget;
-    if (!skill || !props.moveSkillToCloud || moveSkillBusy) return;
-    setMoveSkillTarget(null);
-    setMoveSkillBusy(true);
-    try {
-      await props.moveSkillToCloud(skill.name);
-      toast.success(t("skills.move_cloud_success", { name: skill.name }));
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : t("common.something_went_wrong"));
-    } finally {
-      setMoveSkillBusy(false);
     }
   };
 
@@ -750,21 +730,6 @@ export function McpView(props: McpViewProps) {
         }}
       />
 
-      <ConfirmModal
-        open={Boolean(moveSkillTarget)}
-        title={t("skills.move_cloud_title")}
-        message={t("skills.move_cloud_warning", { name: moveSkillTarget?.name ?? "" })}
-        confirmLabel={t("skills.move_cloud_action")}
-        cancelLabel={t("common.cancel")}
-        onCancel={() => {
-          if (moveSkillBusy) return;
-          setMoveSkillTarget(null);
-        }}
-        onConfirm={() => {
-          void confirmMoveSkillToCloud();
-        }}
-      />
-
       <McpAdvancedConfigSection
         open={showAdvanced}
         configScope={configScope}
@@ -877,27 +842,6 @@ export function McpView(props: McpViewProps) {
             } : undefined}
             onHide={() => setOpenWorkExtensionHidden(getSkillHiddenId(detailSkill), true)}
             onShow={() => setOpenWorkExtensionHidden(getSkillHiddenId(detailSkill), false)}
-            configSlot={props.moveSkillToCloud && detailSkill.origin !== "openwork-connect" ? (
-              <div className="rounded-xl border border-dls-border bg-dls-hover p-4">
-                <div className="text-sm font-medium text-dls-text">{t("skills.move_cloud_title")}</div>
-                <p className="mt-1 text-xs leading-relaxed text-dls-secondary">
-                  {t("skills.move_cloud_description")}
-                </p>
-                <Button
-                  className="mt-3"
-                  size="sm"
-                  disabled={props.busy || moveSkillBusy}
-                  onClick={() => {
-                    setDetailSkill(null);
-                    setDetailSkillContent(null);
-                    setMoveSkillTarget(detailSkill);
-                  }}
-                >
-                  <Cloud />
-                  {t("skills.move_cloud_action")}
-                </Button>
-              </div>
-            ) : undefined}
           />
         );
       })() : null}

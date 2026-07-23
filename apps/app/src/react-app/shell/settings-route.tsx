@@ -2326,10 +2326,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                 installedPlugins={extensionItems.installedCloudPlugins}
                 installedOrgMcpItems={installedOrgMcpConnectionItems}
                 uninstallSkill={(name) => { void extensionsStore.uninstallSkill(name); }}
-                moveSkillToCloud={cloudSession.isSignedIn && cloudSession.hasActiveOrg ? async (name) => {
-                  await extensionsStore.moveSkillToCloud(name);
-                  await refreshConnectCapabilities();
-                } : undefined}
                 removeCloudPlugin={(pluginId) => { void extensionsStore.removeCloudOrgPlugin(pluginId); }}
                 orgMcpDisconnectingId={orgMcpConnections.disconnectingId}
                 disconnectOrgMcp={(connectionId) => { void orgMcpConnections.disconnect(connectionId); }}

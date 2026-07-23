@@ -49,10 +49,6 @@ import {
   type DenOrgPluginResolved,
 } from "../../../../app/lib/den";
 import {
-  CloudSkillMoveCleanupError,
-  saveInstalledSkillToOpenWorkOrg,
-} from "../../../../app/lib/den-skills";
-import {
   readWorkspaceCloudImports,
   withWorkspaceCloudImports,
   type CloudImportedMarketplace,
@@ -2098,42 +2094,6 @@ export function createExtensionsStore(options: {
     }
   }
 
-  async function moveSkillToCloud(name: string) {
-    const trimmed = name.trim();
-    if (!trimmed) {
-      throw new Error("Choose a local skill to move.");
-    }
-
-    options.setBusy(true);
-    options.setError(null);
-    setStateField("skillsStatus", null);
-    try {
-      const skill = await readSkill(trimmed);
-      if (!skill) {
-        throw new Error("Failed to load the local skill.");
-      }
-      const result = await saveInstalledSkillToOpenWorkOrg({
-        skillText: skill.content,
-        shared: null,
-        removeLocalSkill: () => deleteWorkspaceSkill(trimmed),
-      });
-      options.markReloadRequired?.("skills", { type: "skill", name: trimmed, action: "removed" });
-      await refreshSkills({ force: true });
-      setStateField("skillsStatus", `Moved ${trimmed} to ${result.orgName}.`);
-      return result;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : t("skills.unknown_error");
-      setStateField("skillsStatus", message);
-      options.setError(addOpencodeCacheHint(message));
-      if (error instanceof CloudSkillMoveCleanupError) {
-        await refreshCloudOrgMarketplaces({ force: true });
-      }
-      throw error;
-    } finally {
-      options.setBusy(false);
-    }
-  }
-
   async function readSkill(name: string): Promise<{ name: string; path: string; content: string } | null> {
     const trimmed = name.trim();
     if (!trimmed) return null;
@@ -2394,7 +2354,6 @@ export function createExtensionsStore(options: {
     installClaudePlugin,
     revealSkillsFolder,
     uninstallSkill,
-    moveSkillToCloud,
     readSkill,
     saveSkill,
     abortRefreshes,
