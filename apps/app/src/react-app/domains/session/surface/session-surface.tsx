@@ -40,6 +40,8 @@ import type {
   CloudMcpSubmissionResult,
 } from "@/react-app/domains/connections/cloud-mcp-submit-readiness";
 import { ReactSessionComposer } from "./composer/composer";
+import { useSessionModelSelection } from "./session-model-store";
+import type { ProviderCatalog } from "./use-model-behavior";
 import { decodeComposerMentionValue, encodeComposerMentionValue, type ComposerMentionKind } from "./composer/mention-encoding";
 import { desktopBridge, openDesktopUrl } from "@/app/lib/desktop";
 import { parseSlashCommandInvocation } from "./composer/slash-command";
@@ -245,10 +247,12 @@ export type SessionSurfaceProps = {
   openworkToken: string;
   developerMode: boolean;
   modelLabel: string;
-  onModelClick: () => void;
+  onModelClick: (sessionId?: string) => void;
   modelPickerOpen: boolean;
   modelUnavailable?: boolean;
   selectedModel: ModelRef;
+  /** providerID → modelID → provider model, for per-session variant options. */
+  providerCatalog?: ProviderCatalog;
   /** Den/import includes OpenWork Models for this org member (not just local sync). */
   openWorkModelsEntitled?: boolean;
   onModelPickerOpenChange: (open: boolean) => void;
@@ -613,6 +617,32 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const removeQueuedDraftFromStore = useComposerStateStore((state) => state.removeQueuedDraft);
   const clearQueuedDrafts = useComposerStateStore((state) => state.clearQueuedDrafts);
   const prependQueuedDrafts = useComposerStateStore((state) => state.prependQueuedDrafts);
+  // Per-conversation model controls: each pane resolves its own remembered
+  // model (falling back to the global default) and owns its picker open
+  // state, so split panes never control each other's model picker.
+  const sessionModel = useSessionModelSelection({
+    sessionId: props.sessionId,
+    fallbackModel: props.selectedModel,
+    fallbackModelLabel: props.modelLabel,
+    fallbackVariant: props.modelVariant,
+    fallbackVariantLabel: props.modelVariantLabel,
+    fallbackBehaviorOptions: props.modelBehaviorOptions,
+    providerCatalog: props.providerCatalog,
+    onFallbackVariantChange: props.onModelVariantChange,
+  });
+  const [modelPickerOpen, setModelPickerOpen] = useState(false);
+  const handleModelPickerOpenChange = useCallback((open: boolean) => {
+    setModelPickerOpen(open);
+    // Preserve route side effects (cloud provider sync on open).
+    props.onModelPickerOpenChange(open);
+  }, [props.onModelPickerOpenChange]);
+  const handleModelChange = useCallback((nextModel: ModelRef) => {
+    sessionModel.setModel(nextModel);
+    setModelPickerOpen(false);
+  }, [sessionModel]);
+  const handleOpenModelPicker = useCallback(() => {
+    props.onModelClick(props.sessionId);
+  }, [props.onModelClick, props.sessionId]);
   const [error, setError] = useState<SessionError | null>(null);
   const [showDelayedLoading, setShowDelayedLoading] = useState(false);
   const [awaitingAssistantBaseline, setAwaitingAssistantBaseline] = useState<number | null>(null);
@@ -1826,8 +1856,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
                   <SessionErrorCard
                     error={error}
                     onDismiss={handleDismissError}
-                    onChangeModel={props.onChangeModel}
-                    onOpenModelPicker={props.onModelClick}
+                    onChangeModel={sessionModel.setModel}
+                    onOpenModelPicker={handleOpenModelPicker}
                   />
                 ) : (
                   <div className="mx-auto max-w-xl rounded-3xl border border-red-6/40 bg-red-3/20 px-6 py-5 text-sm text-red-11">
@@ -1843,8 +1873,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
               <SessionErrorCard
                 error={error}
                 onDismiss={handleDismissError}
-                onChangeModel={props.onChangeModel}
-                onOpenModelPicker={props.onModelClick}
+                onChangeModel={sessionModel.setModel}
+                onOpenModelPicker={handleOpenModelPicker}
               />
             ) : (
               <DevProfiler id="MessageList">
@@ -1945,20 +1975,21 @@ export function SessionSurface(props: SessionSurfaceProps) {
         disabled={model.transitionState !== "idle" || Boolean(props.modelUnavailable)}
         modelUnavailable={Boolean(props.modelUnavailable)}
         statusLabel={statusLabel(snapshot ?? undefined, chatStreaming)}
-        modelPickerOpen={props.modelPickerOpen}
-        selectedModel={props.selectedModel}
+        modelPickerOpen={modelPickerOpen}
+        selectedModel={sessionModel.selectedModel}
         openWorkModelsEntitled={props.openWorkModelsEntitled}
-        onModelPickerOpenChange={props.onModelPickerOpenChange}
-        onModelChange={props.onModelChange}
+        onModelPickerOpenChange={handleModelPickerOpenChange}
+        onModelChange={handleModelChange}
+        sessionId={props.sessionId}
         attachments={attachments}
         onAttachFiles={handleAttachFiles}
         onRemoveAttachment={handleRemoveAttachment}
         attachmentsEnabled={props.attachmentsEnabled}
         attachmentsDisabledReason={props.attachmentsDisabledReason}
-        modelVariantLabel={props.modelVariantLabel}
-        modelVariant={props.modelVariant}
-        modelBehaviorOptions={props.modelBehaviorOptions}
-        onModelVariantChange={props.onModelVariantChange}
+        modelVariantLabel={sessionModel.modelVariantLabel}
+        modelVariant={sessionModel.modelVariant}
+        modelBehaviorOptions={sessionModel.modelBehaviorOptions}
+        onModelVariantChange={sessionModel.setVariant}
         agentLabel={props.agentLabel}
         selectedAgent={props.selectedAgent}
         listAgents={props.listAgents}

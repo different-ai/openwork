@@ -69,6 +69,8 @@ type ComposerProps = {
   statusLabel: string;
   modelPickerOpen: boolean;
   selectedModel: ModelRef;
+  /** When set, the full model picker opened from here targets this session. */
+  sessionId?: string;
   openWorkModelsEntitled?: boolean;
   onModelPickerOpenChange: (open: boolean) => void;
   onModelChange: (model: ModelRef) => void;
@@ -1708,6 +1710,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                     if (!props.steering) props.onModelChange(model);
                   }}
                   disabled={props.steering}
+                  sessionId={props.sessionId}
                   openWorkModelsEntitled={props.openWorkModelsEntitled}
                 />
                 {props.modelUnavailable ? (

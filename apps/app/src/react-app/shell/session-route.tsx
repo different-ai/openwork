@@ -103,6 +103,8 @@ import { useSessionInteractions } from "@/react-app/domains/session/sync/use-ses
 import { useModelBehavior } from "@/react-app/domains/session/surface/use-model-behavior";
 import { useSessionFindStore } from "@/react-app/domains/session/surface/find-store";
 import { useModelPicker } from "@/react-app/domains/session/modals/use-model-picker";
+import { getSessionModelSelection, useSessionModelStore } from "@/react-app/domains/session/surface/session-model-store";
+import { openModelPickerEvent } from "@/react-app/shell/new-providers-listener";
 import { appMentionInstruction } from "@/react-app/domains/session/surface/composer/app-mentions";
 import { decodeComposerMentionValue } from "@/react-app/domains/session/surface/composer/mention-encoding";
 import { CreateRemoteWorkspaceModal } from "@/react-app/domains/workspace/create-remote-workspace-modal";
@@ -751,6 +753,19 @@ export function SessionRoute() {
     workspaceRoot: selectedWorkspaceRoot,
     onOpen: handleModelPickerOpen,
   });
+  // Which session the open model picker targets. Selecting a model while a
+  // session is targeted remembers it for that conversation only; null means
+  // the picker edits the global default (e.g. opened from the new-providers
+  // toast). Composer "All models" carries the session id on the open event.
+  const [modelPickerSessionId, setModelPickerSessionId] = useState<string | null>(null);
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<{ sessionId?: string }>).detail;
+      setModelPickerSessionId(typeof detail?.sessionId === "string" ? detail.sessionId : null);
+    };
+    window.addEventListener(openModelPickerEvent, handler);
+    return () => window.removeEventListener(openModelPickerEvent, handler);
+  }, []);
   const selectedModelUsesCloudProvider = Boolean(
     local.prefs.defaultModel && isCloudManagedProviderKey(local.prefs.defaultModel.providerID),
   );
@@ -965,10 +980,12 @@ export function SessionRoute() {
       workspaceRoot: selectedWorkspaceRoot,
       developerMode: false,
       modelLabel,
-      onModelClick: () => {
+      onModelClick: (sessionId?: string) => {
+        setModelPickerSessionId(sessionId ?? null);
         modelPicker.setQuery("");
         modelPicker.setOpen(true);
       },
+      providerCatalog,
       modelPickerOpen: modelPicker.compactOpen,
       modelUnavailable: selectedModelUnavailable,
       selectedModel: local.prefs.defaultModel ?? { providerID: "", modelID: "" },
@@ -1000,7 +1017,12 @@ export function SessionRoute() {
         if (!text && draft.attachments.length === 0) {
           return { outcome: "cancelled", reason: "context_changed" };
         }
-        if (selectedModelUnavailable) throw new Error("Selected model is unavailable. Choose another model before sending.");
+        // Per-conversation model memory: a session that picked its own model
+        // sends with it (and its variant) instead of the global default.
+        const sessionModelSelection = getSessionModelSelection(targetSessionId);
+        const sendModel = sessionModelSelection?.model ?? local.prefs.defaultModel;
+        const sendVariant = sessionModelSelection ? sessionModelSelection.variant : modelVariantValue;
+        if (!sessionModelSelection && selectedModelUnavailable) throw new Error("Selected model is unavailable. Choose another model before sending.");
 
         return submitWithCloudMcpReadiness({
           // Temporarily bypass the pre-send Cloud MCP gate: it blocks every
@@ -1013,8 +1035,8 @@ export function SessionRoute() {
               attachment_count: draft.attachments.length,
               text_length: text.length,
               workspace_type: selectedWorkspace?.workspaceType ?? "unknown",
-              provider_id: local.prefs.defaultModel?.providerID ?? null,
-              model_id: local.prefs.defaultModel?.modelID ?? null,
+              provider_id: sendModel?.providerID ?? null,
+              model_id: sendModel?.modelID ?? null,
             });
             markTaskRunStart(targetSessionId);
             // Den org adoption signals (auth-gated inside; no-op when signed out).
@@ -1055,13 +1077,18 @@ export function SessionRoute() {
             const result = await opencodeClient.session.promptAsync({
               sessionID: targetSessionId,
               parts,
-              model: local.prefs.defaultModel ?? undefined,
+              model: sendModel ?? undefined,
               agent: selectedAgent ?? undefined,
-              ...(modelVariantValue ? { variant: modelVariantValue } : {}),
+              ...(sendVariant ? { variant: sendVariant } : {}),
               ...(envSystemContext ? { system: envSystemContext } : {}),
             });
             if (result.error) {
               throw new Error(serializeSDKError(result.error));
+            }
+            // Remember what this conversation used last so returning to it
+            // (or splitting it beside another session) keeps its own model.
+            if (sendModel) {
+              useSessionModelStore.getState().setModel(targetSessionId, sendModel, sendVariant ?? null);
             }
           },
         });
@@ -1167,6 +1194,7 @@ export function SessionRoute() {
     modelVariantLabel,
     modelVariantValue,
     navigate,
+    providerCatalog,
     openWorkModelsEntitled,
     opencodeBaseUrl,
     opencodeClient,
@@ -2398,15 +2426,26 @@ export function SessionRoute() {
       setQuery={modelPicker.setQuery}
       subtitle={selectedModelUnavailable ? MODEL_PICKER_UNAVAILABLE_SUBTITLE : undefined}
       target="default"
-      current={local.prefs.defaultModel ?? ({ providerID: "", modelID: "" } satisfies ModelRef)}
+      current={
+        (modelPickerSessionId ? getSessionModelSelection(modelPickerSessionId)?.model : null)
+          ?? local.prefs.defaultModel
+          ?? ({ providerID: "", modelID: "" } satisfies ModelRef)
+      }
       onSelect={(next: ModelRef) => {
-        local.setPrefs((previous) => ({
-          ...previous,
-          defaultModel: next,
-          modelVariant: previous.defaultModel?.providerID === next.providerID && previous.defaultModel.modelID === next.modelID
-            ? previous.modelVariant
-            : null,
-        }));
+        if (modelPickerSessionId) {
+          // Opened from a session composer: remember for that conversation
+          // only, so the other split pane keeps its own model.
+          useSessionModelStore.getState().setModel(modelPickerSessionId, next);
+          setModelPickerSessionId(null);
+        } else {
+          local.setPrefs((previous) => ({
+            ...previous,
+            defaultModel: next,
+            modelVariant: previous.defaultModel?.providerID === next.providerID && previous.defaultModel.modelID === next.modelID
+              ? previous.modelVariant
+              : null,
+          }));
+        }
         modelPicker.setOpen(false);
         focusPromptSoon();
       }}

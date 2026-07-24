@@ -198,6 +198,8 @@ interface ModelSelectProps {
   onOpenChange: (open: boolean) => void;
   onChange: (model: ModelRef) => void;
   disabled?: boolean;
+  /** When set, "All models" opens the full picker scoped to this session. */
+  sessionId?: string;
   /** Den/import includes OpenWork Models — never show Subscribe while true. */
   openWorkModelsEntitled?: boolean;
 }
@@ -208,6 +210,7 @@ export function ModelSelect({
   onOpenChange,
   onChange,
   disabled = false,
+  sessionId,
   openWorkModelsEntitled = false,
 }: ModelSelectProps) {
   const [search, setSearch] = React.useState("");
@@ -441,7 +444,7 @@ export function ModelSelect({
                 onClick={() => {
                   onOpenChange(false);
                   setSearch("");
-                  window.dispatchEvent(new CustomEvent(openModelPickerEvent));
+                  window.dispatchEvent(new CustomEvent(openModelPickerEvent, sessionId ? { detail: { sessionId } } : undefined));
                 }}
               >
                 <Settings2 className="size-3.5" />
