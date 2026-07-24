@@ -1390,7 +1390,7 @@ function WorkspaceHeader({
         <SessionDotMatrixLoader label={t("workspace.loading_tasks")} />
       ) : null}
       <div
-        className="min-w-0 flex-1 cursor-grab touch-none transition-[padding] duration-75 active:cursor-grabbing group-hover/workspace-header:pr-22 group-has-[[data-workspace-actions]:focus-within]/workspace-header:pr-22 group-has-data-popup-open/workspace-header:pr-11 group-hover/workspace-header:group-has-data-popup-open/workspace-header:pr-22 pr-2"
+        className="min-w-0 flex-1 cursor-grab touch-none transition-[padding] duration-75 active:cursor-grabbing group-hover/workspace-header:pr-16 group-has-[[data-workspace-actions]:focus-within]/workspace-header:pr-16 group-has-data-popup-open/workspace-header:pr-11 group-hover/workspace-header:group-has-data-popup-open/workspace-header:pr-16 pr-2"
         onPointerDown={onTitlePointerDown}
       >
         <span className="block truncate">{workspaceLabel(workspace)}</span>
@@ -1517,19 +1517,6 @@ function WorkspaceSidebarGroup({
                 onTitlePointerDown={onWorkspaceTitlePointerDown}
               />
               <div data-workspace-actions className="group/workspace-actions absolute right-9 top-1/2 flex -translate-y-1/2 items-center gap-1">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="size-6 text-muted-foreground opacity-0 group-hover/workspace-header:opacity-100 group-focus-within/workspace-actions:opacity-100"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    ctx.onOpenCreateGroupModal?.(workspace.id);
-                  }}
-                  aria-label={t("session_management.new_group")}
-                  title={t("session_management.new_group")}
-                >
-                  <FolderPlus className="size-4" />
-                </Button>
                 <Button
                   variant="ghost"
                   size="icon"
