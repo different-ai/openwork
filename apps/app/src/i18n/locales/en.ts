@@ -1111,6 +1111,8 @@ export default {
   "settings.appearance_title": "Appearance",
   "settings.analytics_toggle": "Share anonymous usage data",
   "settings.analytics_toggle_desc": "Helps us understand which features matter. Never includes your messages, prompts, code, or file contents.",
+  "settings.connection_diagnostics_toggle": "Share desktop Connect diagnostics",
+  "settings.connection_diagnostics_toggle_desc": "Keeps metadata-only OpenWork Connect failures and recoveries for up to 24 hours on this device, then sends pseudonymous reports to OpenWork Diagnostics for seven days. Never includes messages, emails, tokens, URLs, or tool data.",
   "settings.audit_log_title": "Audit log",
   "settings.auto_compact": "Auto context compaction",
   "settings.privacy_section_desc": "Control what OpenWork shares to improve the product.",

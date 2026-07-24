@@ -63,6 +63,10 @@ import {
   cloudMcpProbeTraceLines,
 } from "../../connections/cloud-mcp-diagnostics";
 import { readCloudMcpUserState } from "../../connections/cloud-mcp-user-state";
+import {
+  getConnectDiagnosticsClientId,
+  isConnectDiagnosticsEnabled,
+} from "../../connections/connect-diagnostics-preferences";
 
 export type ConnectViewState = "loading" | "signin" | "active" | "pitch";
 
@@ -452,6 +456,8 @@ function AgentAccessAdvanced(props: {
   const rows = cloudMcpAdvancedRows(props.health);
   const traceLines = cloudMcpProbeTraceLines(props.health?.tools.direct.trace);
   const refreshLines = cloudMcpEngineRefreshLines(props.engineRefresh);
+  const diagnosticsEnabled = isConnectDiagnosticsEnabled();
+  const diagnosticsClientId = diagnosticsEnabled ? getConnectDiagnosticsClientId() : null;
   return (
     <div className="border-t border-dls-border pt-3" data-testid="agent-access-advanced">
       <button
@@ -481,6 +487,14 @@ function AgentAccessAdvanced(props: {
           <div className="text-xs text-dls-secondary">
             Refresh makes the agent engine drop its Cloud connection and reconnect from scratch — the engine never
             retries a failed connection on its own. Diagnostics are redacted before copy.
+          </div>
+          <div className="grid gap-0.5 rounded-lg border border-dls-border p-2.5 sm:grid-cols-[11rem_1fr] sm:gap-2">
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-dls-secondary">Incident reporting</div>
+            <div className="break-words font-mono text-xs text-dls-text">
+              {diagnosticsEnabled
+                ? `enabled · client ${diagnosticsClientId ?? "unavailable"}`
+                : "disabled in Preferences → Privacy"}
+            </div>
           </div>
           {props.copyStatus ? <div className="text-xs text-dls-secondary">{props.copyStatus}</div> : null}
           {rows.length ? (

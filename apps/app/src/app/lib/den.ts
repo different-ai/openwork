@@ -2,6 +2,7 @@ import {
   normalizeDesktopConfig,
   type DesktopConfig as SharedDesktopConfig,
 } from "@openwork/types/den/desktop-policies";
+import type { ConnectDiagnosticClientBatch } from "@openwork/types/den/connect-diagnostics";
 
 // Re-export the shared schema under the local alias so React consumers
 // (e.g. the cloud domain's desktop-config provider) can import it alongside
@@ -2118,6 +2119,25 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
         throw new DenApiError(500, "invalid_mcp_token_payload", "MCP token response was missing required values.");
       }
       return minted;
+    },
+
+    async reportConnectDiagnosticIncidents(
+      orgId: string,
+      batch: ConnectDiagnosticClientBatch,
+    ): Promise<void> {
+      const result = await requestJsonRaw<unknown>(baseUrls, "/v1/diagnostics/connect-incidents", {
+        method: "POST",
+        token,
+        organizationId: orgId,
+        body: batch,
+      });
+      if (!result.ok) {
+        throw new DenApiError(
+          result.status,
+          "connect_diagnostics_delivery_failed",
+          "OpenWork could not deliver connection diagnostics.",
+        );
+      }
     },
 
     async getWorkerTokens(workerId: string, orgId: string): Promise<DenWorkerTokens> {
