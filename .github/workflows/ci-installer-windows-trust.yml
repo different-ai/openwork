@@ -1,0 +1,112 @@
+name: Installer Windows Trust Store
+
+# Proves the installer picks a corporate root up from the real Windows machine
+# trust store. This is the case that broke on an enterprise POC: Bun's fetch
+# trusts only its bundled roots, and the installer's OS-trust fallback used to
+# short-circuit on the runtime's partial list, so it never enumerated
+# LocalMachine\Root where the corporate CA actually lives.
+#
+# macOS cannot cover this: Bun reports 0 system certificates there, so the
+# short-circuit never triggers.
+
+on:
+  pull_request:
+    paths:
+      - "apps/installer/**"
+      - ".github/workflows/ci-installer-windows-trust.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: installer-windows-trust-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-trust:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.9
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          # @openwork/install-config's "default" export points at dist/, which a
+          # fresh checkout lacks.
+          (cd packages/install-config && bun install && bun run build)
+          # bun 1.3.9 on Windows can fail to create the parent-relative workspace
+          # symlink (ENOENT); the copy fallback repairs exactly that case.
+          (cd apps/installer && bun install) || true
+          if [ ! -e "apps/installer/node_modules/@openwork/install-config/package.json" ]; then
+            rm -rf "apps/installer/node_modules/@openwork/install-config"
+            mkdir -p "apps/installer/node_modules/@openwork"
+            cp -R "packages/install-config" "apps/installer/node_modules/@openwork/install-config"
+          fi
+          test -e "apps/installer/node_modules/@openwork/install-config/package.json"
+
+      - name: Compile installer
+        shell: bash
+        run: |
+          cd apps/installer
+          bun build --compile --minify --target=bun-windows-x64 \
+            --windows-icon=assets/icon.ico \
+            src/index.ts src/server-worker.ts --outfile "dist/openwork-installer"
+
+      - name: Build the corporate CA chain
+        shell: bash
+        run: node apps/installer/scripts/make-corporate-ca.mjs --out "$RUNNER_TEMP/corporate-ca"
+
+      - name: Report what Bun sees before anything is trusted
+        shell: bash
+        run: |
+          cd apps/installer
+          bun -e '
+            const { loadSystemCaBundle, summarizeSystemCaSources } = await import("./src/system-ca.ts")
+            const bundle = await loadSystemCaBundle()
+            console.log(`sources: ${summarizeSystemCaSources(bundle.sources)}`)
+            console.log(`total unique roots: ${bundle.certificates.length}`)
+          '
+
+      # Baseline: the corporate root is in no trust store, so the installer must
+      # refuse the link. Guards against the fix blanket-trusting anything.
+      - name: Fail repro - corporate root untrusted
+        shell: bash
+        run: |
+          node apps/installer/scripts/trust-repro.mjs \
+            --installer "apps/installer/dist/openwork-installer.exe" \
+            --certs "$RUNNER_TEMP/corporate-ca" \
+            --expect tls-untrusted
+
+      - name: Trust the corporate root the way enterprise IT does
+        shell: pwsh
+        run: |
+          Import-Certificate -FilePath "$env:RUNNER_TEMP\corporate-ca\root.pem" `
+            -CertStoreLocation Cert:\LocalMachine\Root | Format-List Subject, Thumbprint
+
+      # The real assertion: nothing but the machine trust store changed, so the
+      # installer resolves the link only by enumerating LocalMachine\Root.
+      - name: Valid repro - corporate root in LocalMachine\Root
+        shell: bash
+        run: |
+          node apps/installer/scripts/trust-repro.mjs \
+            --installer "apps/installer/dist/openwork-installer.exe" \
+            --certs "$RUNNER_TEMP/corporate-ca" \
+            --expect resolved
+
+      - name: Public HTTPS still verifies with the corporate root loaded
+        shell: bash
+        run: |
+          cd apps/installer
+          bun -e '
+            const { fetchWithSystemCa } = await import("./src/system-ca.ts")
+            const response = await fetchWithSystemCa("https://api.github.com/zen")
+            if (!response.ok) { console.error(`github.com -> ${response.status}`); process.exit(1) }
+            console.log(`github.com -> ${response.status}`)
+          '
