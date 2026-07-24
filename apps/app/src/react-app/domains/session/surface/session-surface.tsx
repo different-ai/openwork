@@ -52,7 +52,7 @@ import { useReactRenderWatchdog } from "@/react-app/shell/react-render-watchdog"
 import { SessionDebugPanel } from "./debug-panel";
 import { deriveRenderedSessionMessages, resolveRenderedSessionSnapshot } from "./session-render-state";
 import { useLocal } from "@/react-app/kernel/local-provider";
-import { isAttachmentFileReadable, resolveAttachmentFileMetadata } from "@/react-app/domains/session/sync/attachment-file-part";
+import { resolveAttachmentFileMetadata } from "@/react-app/domains/session/sync/attachment-file-part";
 import { deriveSessionRenderModel } from "@/react-app/domains/session/sync/transition-controller";
 import { useSessionScrollController } from "./scroll-controller";
 import { SessionScrollOverlay } from "./scroll-overlay";
@@ -1236,18 +1236,11 @@ export function SessionSurface(props: SessionSurfaceProps) {
         { description: "Files over 25 MB were skipped." },
       );
     }
-    const unreadable = sized.filter((file) => !isAttachmentFileReadable(file));
-    const accepted = sized.filter(isAttachmentFileReadable);
-    if (unreadable.length) {
-      toast.warning(
-        unreadable.length === 1
-          ? `${unreadable[0]?.name ?? "File"} has a format the model can't read`
-          : `${unreadable.length} files have formats the model can't read`,
-        { description: t("composer.any_file_type_supported") },
-      );
-    }
-    if (!accepted.length) return;
-    const next = accepted.map((file) => {
+    // Any file type is accepted: model-readable formats become file parts,
+    // everything else is copied into the workspace so the model reads it
+    // with tools (see modelFacingAttachmentMime in attachment-file-part.ts).
+    if (!sized.length) return;
+    const next = sized.map((file) => {
       const metadata = resolveAttachmentFileMetadata(file);
       return {
         id: `att-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`,

@@ -5,11 +5,18 @@ import {
   buildChatAttachmentInboxPath,
   composerAttachmentsToWorkspaceFileParts,
   composerAttachmentToFilePart,
+  modelFacingAttachmentMime,
   resolveAttachmentFileMetadata,
   safeAttachmentFilename,
   workspaceInboxPath,
   type ChatAttachmentWorkspaceEndpoint,
 } from "../src/react-app/domains/session/sync/attachment-file-part";
+
+async function requireFilePart(attachment: ComposerAttachment) {
+  const part = await composerAttachmentToFilePart(attachment);
+  if (!part) throw new Error("Expected a model-facing file part");
+  return part;
+}
 
 const JPEG_BYTES = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01]);
 const DOCX_BYTES = new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0x14, 0x00, 0x77, 0x6f, 0x72, 0x64]);
@@ -86,7 +93,7 @@ function filePartUrl(parts: Awaited<ReturnType<typeof composerAttachmentsToWorks
 describe("composer attachment file parts", () => {
   test("preserves JPEG filename, mime, data URL, and exact bytes", async () => {
     const file = new File([JPEG_BYTES], "PassaportoPaolo_small.jpg", { type: "image/jpeg" });
-    const part = await composerAttachmentToFilePart(attachmentFor(file));
+    const part = await requireFilePart(attachmentFor(file));
 
     expect(part.filename).toBe("PassaportoPaolo_small.jpg");
     expect(part.mime).toBe("image/jpeg");
@@ -96,7 +103,7 @@ describe("composer attachment file parts", () => {
 
   test("stale ComposerAttachment PDF metadata cannot override an underlying JPEG File", async () => {
     const file = new File([JPEG_BYTES], "PassaportoPaolo_small.jpg", { type: "image/jpeg" });
-    const part = await composerAttachmentToFilePart(attachmentFor(file, {
+    const part = await requireFilePart(attachmentFor(file, {
       name: "PassaportoPaolo_small.pdf",
       mimeType: "application/pdf",
       kind: "file",
@@ -112,13 +119,11 @@ describe("composer attachment file parts", () => {
       filename: "scan.pdf",
       mime: "application/pdf",
       kind: "file",
-      readable: true,
     });
     expect(resolveAttachmentFileMetadata(new File([JPEG_BYTES], "scan.png", { type: "" }))).toMatchObject({
       filename: "scan.png",
       mime: "image/png",
       kind: "image",
-      readable: true,
     });
   });
 
@@ -131,24 +136,21 @@ describe("composer attachment file parts", () => {
       filename: "PlanningMemo.docx",
       mime: DOCX_MIME,
       kind: "file",
-      readable: true,
     });
     expect(resolveAttachmentFileMetadata(pptx)).toMatchObject({
       filename: "RoadshowDeck.pptx",
       mime: PPTX_MIME,
       kind: "file",
-      readable: true,
     });
     expect(resolveAttachmentFileMetadata(xlsx)).toMatchObject({
       filename: "RevenueWorkbook.xlsx",
       mime: XLSX_MIME,
       kind: "file",
-      readable: true,
     });
 
-    const docxPart = await composerAttachmentToFilePart(attachmentFor(docx));
-    const pptxPart = await composerAttachmentToFilePart(attachmentFor(pptx));
-    const xlsxPart = await composerAttachmentToFilePart(attachmentFor(xlsx));
+    const docxPart = await requireFilePart(attachmentFor(docx));
+    const pptxPart = await requireFilePart(attachmentFor(pptx));
+    const xlsxPart = await requireFilePart(attachmentFor(xlsx));
 
     expect(docxPart.filename).toBe("PlanningMemo.docx");
     expect(docxPart.mime).toBe(DOCX_MIME);
@@ -175,24 +177,21 @@ describe("composer attachment file parts", () => {
       filename: "QuarterlyReport.DOCX",
       mime: DOCX_MIME,
       kind: "file",
-      readable: true,
     });
     expect(resolveAttachmentFileMetadata(pptx)).toMatchObject({
       filename: "LaunchPlan.PPTX",
       mime: PPTX_MIME,
       kind: "file",
-      readable: true,
     });
     expect(resolveAttachmentFileMetadata(xlsx)).toMatchObject({
       filename: "BudgetModel.XLSX",
       mime: XLSX_MIME,
       kind: "file",
-      readable: true,
     });
 
-    const docxPart = await composerAttachmentToFilePart(attachmentFor(docx));
-    const pptxPart = await composerAttachmentToFilePart(attachmentFor(pptx));
-    const xlsxPart = await composerAttachmentToFilePart(attachmentFor(xlsx));
+    const docxPart = await requireFilePart(attachmentFor(docx));
+    const pptxPart = await requireFilePart(attachmentFor(pptx));
+    const xlsxPart = await requireFilePart(attachmentFor(xlsx));
 
     expect(docxPart.filename).toBe("QuarterlyReport.DOCX");
     expect(docxPart.mime).toBe(DOCX_MIME);
@@ -215,44 +214,62 @@ describe("composer attachment file parts", () => {
     const pptxWithoutExtension = new File([PPTX_BYTES], "RoadshowDeck", { type: PPTX_MIME });
     const xlsxWithoutExtension = new File([XLSX_BYTES], "RevenueWorkbook", { type: XLSX_MIME });
 
-    expect((await composerAttachmentToFilePart(attachmentFor(docxNamedBin))).filename).toBe("PlanningMemo.docx");
-    expect((await composerAttachmentToFilePart(attachmentFor(pptxWithoutExtension))).filename).toBe("RoadshowDeck.pptx");
-    expect((await composerAttachmentToFilePart(attachmentFor(xlsxWithoutExtension))).filename).toBe("RevenueWorkbook.xlsx");
+    expect((await requireFilePart(attachmentFor(docxNamedBin))).filename).toBe("PlanningMemo.docx");
+    expect((await requireFilePart(attachmentFor(pptxWithoutExtension))).filename).toBe("RoadshowDeck.pptx");
+    expect((await requireFilePart(attachmentFor(xlsxWithoutExtension))).filename).toBe("RevenueWorkbook.xlsx");
   });
 
-  test("rejects unsupported binary attachments instead of broadly treating generic bytes as text", () => {
-    expect(resolveAttachmentFileMetadata(new File([PPTX_BYTES], "board.key", { type: "application/octet-stream" }))).toMatchObject({
-      filename: "board.key",
-      mime: "application/octet-stream",
-      kind: "file",
-      readable: false,
-    });
-    expect(resolveAttachmentFileMetadata(new File([PPTX_BYTES], "board.key", { type: "application/x-iwork-keynote-sffkey" }))).toMatchObject({
-      filename: "board.key",
-      mime: "application/x-iwork-keynote-sffkey",
-      kind: "file",
-      readable: false,
-    });
+  test("routes model-facing mimes: providers only accept image/*, PDF, and text/plain file parts", () => {
+    // Text-like content is re-mimed to text/plain so opencode inlines it (the @file mechanism).
+    expect(modelFacingAttachmentMime("text/xml")).toBe("text/plain");
+    expect(modelFacingAttachmentMime("text/csv")).toBe("text/plain");
+    expect(modelFacingAttachmentMime("application/json")).toBe("text/plain");
+    expect(modelFacingAttachmentMime("application/xml")).toBe("text/plain");
+    expect(modelFacingAttachmentMime("application/javascript")).toBe("text/plain");
+    expect(modelFacingAttachmentMime("application/ld+json")).toBe("text/plain");
+    expect(modelFacingAttachmentMime("image/svg+xml")).toBe("text/plain");
+    expect(modelFacingAttachmentMime("text/plain; charset=utf-8")).toBe("text/plain");
+    // Provider-native formats pass through (Office is rewritten server-side by the plugin).
+    expect(modelFacingAttachmentMime("image/png")).toBe("image/png");
+    expect(modelFacingAttachmentMime("application/pdf")).toBe("application/pdf");
+    expect(modelFacingAttachmentMime(DOCX_MIME)).toBe(DOCX_MIME);
+    // Binary/unknown formats get no model-facing file part; tools use the workspace path.
+    expect(modelFacingAttachmentMime("application/octet-stream")).toBeNull();
+    expect(modelFacingAttachmentMime("application/zip")).toBeNull();
+    expect(modelFacingAttachmentMime("audio/mpeg")).toBeNull();
+    expect(modelFacingAttachmentMime("application/x-iwork-keynote-sffkey")).toBeNull();
+  });
+
+  test("accepts unsupported binary attachments without producing a model-facing file part", async () => {
     expect(resolveAttachmentFileMetadata(new File([PPTX_BYTES], "archive.zip", { type: "" }))).toMatchObject({
       filename: "archive.zip",
       mime: "application/octet-stream",
       kind: "file",
-      readable: false,
     });
-    expect(resolveAttachmentFileMetadata(new File([XLSX_BYTES], "legacy.xls", { type: "" }))).toMatchObject({
-      filename: "legacy.xls",
-      mime: "application/octet-stream",
-      kind: "file",
-      readable: false,
-    });
+    const binary = new File([PPTX_BYTES], "board.key", { type: "application/x-iwork-keynote-sffkey" });
+    expect(await composerAttachmentToFilePart(attachmentFor(binary))).toBeNull();
+  });
+
+  test("text-like attachments are sent as text/plain file parts with original filenames", async () => {
+    const xml = new File(["<agenda><item>Kickoff</item></agenda>"], "agenda.xml", { type: "text/xml" });
+    const part = await requireFilePart(attachmentFor(xml));
+
+    expect(part.filename).toBe("agenda.xml");
+    expect(part.mime).toBe("text/plain");
+    expect(part.url.startsWith("data:text/plain;base64,")).toBe(true);
+
+    const csv = new File(["a,b\n1,2\n"], "rows.csv", { type: "" });
+    expect((await requireFilePart(attachmentFor(csv))).mime).toBe("text/plain");
+    const json = new File(["{}"], "config.json", { type: "application/json" });
+    expect((await requireFilePart(attachmentFor(json))).mime).toBe("text/plain");
   });
 
   test("known MIME and filename extension conflicts normalize outbound filename extension", async () => {
     const imageNamedPdf = new File([JPEG_BYTES], "PassaportoPaolo_small.pdf", { type: "image/jpeg" });
     const pdfNamedPng = new File([JPEG_BYTES], "scan.png", { type: "application/pdf" });
 
-    expect((await composerAttachmentToFilePart(attachmentFor(imageNamedPdf))).filename).toBe("PassaportoPaolo_small.jpg");
-    expect((await composerAttachmentToFilePart(attachmentFor(pdfNamedPng))).filename).toBe("scan.pdf");
+    expect((await requireFilePart(attachmentFor(imageNamedPdf))).filename).toBe("PassaportoPaolo_small.jpg");
+    expect((await requireFilePart(attachmentFor(pdfNamedPng))).filename).toBe("scan.pdf");
   });
 
   test("sanitizes desktop-style filenames without leaking local path segments", () => {
@@ -335,6 +352,51 @@ describe("composer attachment file parts", () => {
       filename: "shot.png",
       mime: "image/png",
     });
+  });
+
+  test("workspace text-like attachments become text/plain file parts pointing at the workspace copy", async () => {
+    const { endpoint, calls } = uploadRecorder("server-workspace-42");
+    const file = new File(["<a/>"], "sitemap.xml", { type: "text/xml" });
+
+    const parts = await composerAttachmentsToWorkspaceFileParts({
+      attachments: [attachmentFor(file)],
+      endpoint,
+      sessionId: "ses_xml",
+      workspaceRoot: "/workspaces/Worker Root",
+      createId: () => "nonce-xml",
+    });
+
+    expect(calls).toHaveLength(1);
+    expect(filePartUrl(parts, 1)).toBe("file:///workspaces/Worker%20Root/.opencode/openwork/inbox/chat-attachments/ses_xml/nonce-xml-sitemap.xml");
+    expect(parts[1]).toMatchObject({
+      type: "file",
+      filename: "sitemap.xml",
+      mime: "text/plain",
+    });
+  });
+
+  test("workspace binary attachments upload for tool access but emit no model-facing file part", async () => {
+    const { endpoint, calls } = uploadRecorder("server-workspace-42");
+    const file = new File([PPTX_BYTES], "recording.zip", { type: "application/zip" });
+
+    const parts = await composerAttachmentsToWorkspaceFileParts({
+      attachments: [attachmentFor(file)],
+      endpoint,
+      sessionId: "ses_bin",
+      workspaceRoot: "/workspaces/Worker Root",
+      createId: () => "nonce-bin",
+    });
+
+    expect(calls).toEqual([{
+      workspaceId: "server-workspace-42",
+      path: "chat-attachments/ses_bin/nonce-bin-recording.zip",
+      filename: "recording.zip",
+      bytes: Array.from(PPTX_BYTES),
+    }]);
+    expect(parts).toHaveLength(1);
+    expect(textPart(parts)).toMatchObject({ type: "text", synthetic: true });
+    expect(textPartText(parts)).toContain(".opencode/openwork/inbox/chat-attachments/ses_bin/nonce-bin-recording.zip");
+    expect(textPartText(parts)).toContain("Read/Bash/MCP/Docling");
   });
 
   test("uploads duplicate filenames to distinct non-overwriting paths", async () => {

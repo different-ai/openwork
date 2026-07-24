@@ -77,7 +77,7 @@ export default {
   "common.submit": "Отправить",
   "common.unknown": "Неизвестно",
   "composer.agent_label": "Агент",
-  "composer.any_file_type_supported": "Поддерживаются: PDF, изображения, текст, Word, PowerPoint и Excel.",
+  "composer.any_file_type_supported": "Поддерживаются файлы любого типа.",
   "composer.attach_files": "Прикрепить файлы",
   "composer.attachments_unavailable": "Вложения недоступны.",
   "composer.behavior_label": "Поведение",
