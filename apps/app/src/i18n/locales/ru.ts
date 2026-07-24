@@ -777,6 +777,7 @@ export default {
   "workspace_list.reveal_explorer": "Показать в Explorer",
   "workspace_list.reveal_finder": "Показать в Finder",
   "workspace_list.session_actions": "Действия сеанса",
+  "workspace_list.title": "Рабочие пространства",
   "workspace_list.share": "Поделиться...",
   "workspace_list.show_child_sessions": "Показать дочерние сеансы",
   "workspace_list.show_more": "Показать еще {count}",

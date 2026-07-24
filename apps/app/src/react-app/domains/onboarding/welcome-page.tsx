@@ -1,7 +1,9 @@
 /** @jsxImportSource react */
+import { useEffect } from "react";
 import { Dithering } from "@paper-design/shaders-react";
 
 import { t } from "../../../i18n";
+import { useBootState } from "../../shell/boot-state";
 import { resolveExtensionIconSrc } from "@/react-app/design-system/extension-icon-src";
 import {
   Page,
@@ -47,6 +49,14 @@ export function WelcomePage({
 }: WelcomePageProps) {
   const { config: shellConfig } = useShellConfig();
   const appName = shellConfig.appName;
+  const { markRouteReady } = useBootState();
+
+  // The boot splash overlay stays mounted (and swallows clicks) until the
+  // first route marks itself ready. Welcome is a terminal route, so mark it
+  // immediately.
+  useEffect(() => {
+    markRouteReady();
+  }, [markRouteReady]);
 
   return (
     <Page className="min-h-screen">

@@ -45,7 +45,6 @@ import { useBrandLogoUrl } from "../../cloud/brand-theme";
 
 import {
   Sidebar,
-  SidebarFooter,
   SidebarGroup,
   SidebarHeader,
   SidebarGroupContent,
@@ -1111,6 +1110,20 @@ export function AppSidebar(props: AppSidebarProps) {
             {pinnedSessions.length > 0 ? (
               <GlobalPinnedSessions entries={pinnedSessions} />
             ) : null}
+            <div className="group/workspaces-header flex items-center px-3 pb-1 pt-2">
+              <span className="text-[11px] font-normal uppercase tracking-[0.04em] text-muted-foreground">
+                {t("workspace_list.title")}
+              </span>
+              <button
+                type="button"
+                className="ml-auto flex size-5 items-center justify-center rounded text-muted-foreground/60 transition-colors hover:bg-sidebar-accent hover:text-foreground"
+                onClick={props.onOpenCreateWorkspace}
+                aria-label={t("workspace_list.add_workspace")}
+                title={t("workspace_list.add_workspace")}
+              >
+                <Plus className="size-3.5" />
+              </button>
+            </div>
             <Reorder.Group
               as="div"
               axis="y"
@@ -1135,16 +1148,6 @@ export function AppSidebar(props: AppSidebarProps) {
           </m.div>
         </LazyMotion>
 
-        <SidebarFooter>
-          <SidebarMenu>
-            <SidebarMenuItem>
-              <SidebarMenuButton onClick={props.onOpenCreateWorkspace}>
-                <Plus className="size-4" />
-                {t("workspace_list.add_workspace")}
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-          </SidebarMenu>
-        </SidebarFooter>
         <SidebarRail
           className="before:pointer-events-none before:absolute before:inset-y-0 before:left-[calc(50%+1px)] before:right-0 before:content-[''] group-data-[state=expanded]:before:bg-sidebar"
           style={{ cursor: "col-resize" }}
@@ -1388,7 +1391,7 @@ function WorkspaceHeader({
         <WorkspaceIcon workspaceId={workspace.id} sizeClass="size-4" />
       )}
       <div
-        className="min-w-0 flex-1 cursor-grab touch-none transition-[padding] duration-75 active:cursor-grabbing group-hover/workspace-header:pr-16 group-has-[[data-workspace-actions]:focus-within]/workspace-header:pr-16 group-has-data-popup-open/workspace-header:pr-11 group-hover/workspace-header:group-has-data-popup-open/workspace-header:pr-16 pr-2"
+        className="min-w-0 flex-1 cursor-grab touch-none transition-[padding] duration-75 active:cursor-grabbing group-hover/workspace-header:pr-22 group-has-[[data-workspace-actions]:focus-within]/workspace-header:pr-22 group-has-data-popup-open/workspace-header:pr-11 group-hover/workspace-header:group-has-data-popup-open/workspace-header:pr-22 pr-2"
         onPointerDown={onTitlePointerDown}
       >
         <span className="block truncate">{workspaceLabel(workspace)}</span>
@@ -1521,10 +1524,24 @@ function WorkspaceSidebarGroup({
                   className="size-6 text-muted-foreground opacity-0 group-hover/workspace-header:opacity-100 group-focus-within/workspace-actions:opacity-100"
                   onClick={(e) => {
                     e.stopPropagation();
+                    ctx.onOpenCreateGroupModal?.(workspace.id);
+                  }}
+                  aria-label={t("session_management.new_group")}
+                  title={t("session_management.new_group")}
+                >
+                  <FolderPlus className="size-4" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-6 text-muted-foreground opacity-0 group-hover/workspace-header:opacity-100 group-focus-within/workspace-actions:opacity-100"
+                  onClick={(e) => {
+                    e.stopPropagation();
                     ctx.onCreateTaskInWorkspace(workspace.id);
                   }}
                   disabled={ctx.newTaskDisabled}
                   aria-label={t("session.new_task")}
+                  title={t("session.new_task")}
                 >
                   <Plus className="size-4" />
                 </Button>
@@ -1621,27 +1638,7 @@ function WorkspaceSidebarGroup({
                           className="text-muted-foreground text-xs"
                           onClick={() => showMoreSessions(workspace.id, activeRootCount)}
                         >
-                          <span className="flex min-w-0 items-center gap-1">
-                            <span className="truncate">{showMoreLabel}</span>
-                            <span aria-hidden className="shrink-0">⋅</span>
-                            <span
-                              role="button"
-                              tabIndex={0}
-                              className="shrink-0 hover:text-foreground"
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                ctx.onOpenCreateGroupModal?.(workspace.id);
-                              }}
-                              onKeyDown={(event) => {
-                                if (event.key !== "Enter" && event.key !== " ") return;
-                                event.preventDefault();
-                                event.stopPropagation();
-                                ctx.onOpenCreateGroupModal?.(workspace.id);
-                              }}
-                            >
-                              {t("session_management.create_group")}
-                            </span>
-                          </span>
+                          <span className="truncate">{showMoreLabel}</span>
                         </SidebarMenuSubButton>
                       </SidebarMenuSubItem>
                     ) : null}

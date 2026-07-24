@@ -28,7 +28,7 @@ export function ProviderSelectionStep({
       <PageBackground />
       <PageTitlebarRegion />
 
-      <div className="relative z-10 w-full max-w-md px-6">
+      <div className="relative z-10 mx-6 w-full max-w-md rounded-3xl border border-border bg-background px-8 py-10">
         <PageHeader className="mb-8 text-center">
           <PageTitle>Power your first task</PageTitle>
           <PageDescription>
