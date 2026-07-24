@@ -14,6 +14,8 @@ export type RemoteWorkspaceInput = {
 
 export type CreateWorkspaceOptions = {
   projectLabel?: string | null;
+  /** Saved as the first session's composer draft after the workspace is created. */
+  firstTaskPrompt?: string | null;
 };
 
 export type CreateWorkspaceProgress = {

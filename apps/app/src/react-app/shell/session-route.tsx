@@ -32,6 +32,8 @@ import {
 } from "@/app/lib/workspace-endpoint";
 import { buildOpenworkEnvRuntimeKey } from "@/app/lib/openwork-env-runtime";
 import {
+  getDesktopHomeDir,
+  joinDesktopPath,
   revealDesktopItemInDir,
   pickDirectory,
   resolveWorkspaceListSelectedId,
@@ -154,6 +156,7 @@ import {
   recordInspectorEvent,
 } from "../../app/lib/app-inspector";
 import { saveSessionDraft } from "@/react-app/domains/session/sync/draft-store";
+import { useComposerStateStore } from "@/react-app/domains/session/surface/composer-state-store";
 import { useControlAction, type OpenworkControlAction } from "./control/control-provider";
 import { useReactRenderWatchdog } from "./react-render-watchdog";
 
@@ -1926,6 +1929,13 @@ export function SessionRoute() {
         captureAnalyticsEvent("workspace_created", { workspace_type: "local" });
         if (session?.id) {
           captureAnalyticsEvent("task_created", { source: "workspace_created", workspace_type: "local" });
+          const firstTaskPrompt = options?.firstTaskPrompt?.trim();
+          if (firstTaskPrompt) {
+            saveSessionDraft(targetWorkspaceId, session.id, { text: firstTaskPrompt, mode: "prompt" });
+            // The composer reads its draft from the composer state store, not
+            // the persisted draft store — seed both so the prompt shows up.
+            useComposerStateStore.getState().setDraft(session.id, firstTaskPrompt);
+          }
           writeLastSessionFor(targetWorkspaceId, session.id);
           rememberPendingCreatedSession(targetWorkspaceId, session.id);
           setSessionsByWorkspaceId((current) => {
@@ -1946,6 +1956,31 @@ export function SessionRoute() {
       setCreateWorkspaceBusy(false);
     }
   }, [baseUrl, client, local, navigateToWorkspaceSession, refreshRouteState, rememberPendingCreatedSession, token]);
+
+  /**
+   * Chat-first onboarding: the empty-state composer creates a default chat
+   * workspace under the user's home folder instead of asking where to put
+   * it. Falls back to the create-workspace modal off desktop.
+   */
+  const handleChatFirstTask = useCallback((prompt: string) => {
+    void (async () => {
+      if (!isDesktopRuntime()) {
+        handleOpenCreateWorkspace();
+        return;
+      }
+      const home = await getDesktopHomeDir().catch(() => "");
+      if (!home) {
+        handleOpenCreateWorkspace();
+        return;
+      }
+      const folder = await joinDesktopPath(home, "OpenWork Chat").catch(() => "");
+      if (!folder) {
+        handleOpenCreateWorkspace();
+        return;
+      }
+      await handleCreateWorkspace("starter", folder, { firstTaskPrompt: prompt });
+    })();
+  }, [handleCreateWorkspace, handleOpenCreateWorkspace]);
 
   const createWorkspaceControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "workspace.create",
@@ -2073,6 +2108,8 @@ export function SessionRoute() {
       }}
       onOpenSettings={() => handleOpenSettings("/settings/general")}
       onOpenProviderAuth={() => sessionProviderAuthStore.openProviderAuthModal({ returnFocusTarget: "composer" })}
+      onChatFirstTask={handleChatFirstTask}
+      chatFirstBusy={createWorkspaceBusy}
       providerAuthModal={sessionProviderAuthSnapshot.providerAuthModalOpen ? {
         open: true,
         loading: false,
@@ -2214,6 +2251,9 @@ export function SessionRoute() {
                 void sessionProviderAuthStore.runCloudProviderSync("new_chat");
               }
               saveSessionDraft(workspaceId, session.id, { text: prompt, mode: "prompt" });
+              // The composer reads its draft from the composer state store,
+              // not the persisted draft store — seed both.
+              useComposerStateStore.getState().setDraft(session.id, prompt);
               writeActiveWorkspaceId(workspaceId || null);
               writeLastSessionFor(workspaceId, session.id);
               rememberPendingCreatedSession(workspaceId, session.id);

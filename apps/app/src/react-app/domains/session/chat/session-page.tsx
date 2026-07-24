@@ -52,6 +52,7 @@ import {
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
 import { ShareWorkspaceModal } from "../../workspace/share-workspace-modal";
+import { SessionEmptyHero } from "./session-empty-hero";
 import { StatusBar, type StatusBarProps } from "./status-bar";
 import { OwDotTicker } from "../../../shell/dot-ticker";
 import { NotificationBell } from "../../../shell/notification-center";
@@ -202,6 +203,9 @@ export type SessionPageProps = {
   statusBar?: Partial<StatusBarOverrides>;
   notFoundMessage?: string | null;
   onOpenProviderAuth?: () => void;
+  /** Chat-first: create a default workspace and start a task from the empty-state composer. */
+  onChatFirstTask?: (prompt: string) => void;
+  chatFirstBusy?: boolean;
   onRenameSession?: (sessionId: string, title: string) => Promise<void> | void;
   onDeleteSession?: (sessionId: string) => Promise<void> | void;
   onArchiveSession?: (sessionId: string, archived: boolean) => Promise<void> | void;
@@ -1241,20 +1245,14 @@ export function SessionPage(props: SessionPageProps) {
                       </div>
                     </div>
                   ) : showWorkspaceSetupEmptyState ? (
-                    <div className="space-y-6 px-6 text-center">
-                      <div className="mx-auto flex size-16 items-center justify-center rounded-3xl border border-dls-border bg-dls-hover">
-                        <Zap className="text-dls-secondary" />
-                      </div>
-                      <div className="space-y-2">
-                        <h3 className="text-xl font-medium">{t("session.create_or_connect_workspace")}</h3>
-                        <p className="mx-auto max-w-sm text-sm text-dls-secondary">
-                          {t("workspace.empty_state_body")}
-                        </p>
-                      </div>
-                      <div className="flex justify-center">
-                        <Button onClick={props.sidebar.onOpenCreateWorkspace}>{t("workspace.create_workspace")}</Button>
-                      </div>
-                    </div>
+                    // Chat-first: no workspace yet — the composer creates a
+                    // default chat workspace instead of asking where to put it.
+                    <SessionEmptyHero
+                      providerCount={providerCount}
+                      busy={props.chatFirstBusy}
+                      onRunTask={(prompt) => props.onChatFirstTask?.(prompt)}
+                      onOpenProviderAuth={props.onOpenProviderAuth}
+                    />
                   ) : showSelectedWorkspaceError ? (
                     <div className="px-6 py-16">
                       <div className="mx-auto max-w-lg rounded-2xl border border-red-7/35 bg-red-1/40 p-5 text-left shadow-[var(--dls-card-shadow)]">
@@ -1301,83 +1299,14 @@ export function SessionPage(props: SessionPageProps) {
                       {t("session.loading_detail")}
                     </div>
                   ) : (
-                    <div className="flex flex-1 items-center justify-center px-6 py-16">
-                      <div className="w-full max-w-md space-y-6">
-                        <div className="space-y-1 text-center">
-                          <h2 className="text-lg font-semibold text-dls-text">
-                            {providerCount === 0
-                              ? t("session.connect_model_to_start")
-                              : t("session.select_or_create_session")}
-                          </h2>
-                          <p className="text-xs text-dls-secondary">
-                            {providerCount === 0
-                              ? "Add an AI model provider so your tasks can run."
-                              : "Try one of these to get started:"}
-                          </p>
-                        </div>
-                        <div className="space-y-2">
-                          {providerCount === 0 ? (
-                            <button
-                              type="button"
-                              className="flex w-full items-start gap-3 rounded-xl border border-blue-7/50 bg-blue-2/40 p-3.5 text-left transition-colors hover:bg-blue-3/50"
-                              onClick={() => props.onOpenProviderAuth?.()}
-                            >
-                              <Zap className="mt-0.5 size-5 shrink-0 text-blue-10" />
-                              <div>
-                                <div className="text-[13px] font-medium text-dls-text">Connect a model provider</div>
-                                <div className="mt-0.5 text-[11px] text-dls-secondary">
-                                  Add an API key for Anthropic, OpenAI, Google, or other providers
-                                </div>
-                              </div>
-                            </button>
-                          ) : null}
-                          <button
-                            type="button"
-                            className="flex w-full items-start gap-3 rounded-xl border border-dls-border bg-dls-surface p-3.5 text-left transition-colors hover:bg-dls-hover"
-                            onClick={() => {
-                              props.sidebar.onCreateTaskWithPrompt?.(
-                                props.selectedWorkspaceId,
-                                "Create a sample CSV file with 20 rows of fake customer data (name, email, company, revenue). Then show me a summary of the data.",
-                              );
-                            }}
-                          >
-                            <img src="https://cdn.simpleicons.org/googlesheets" alt="" width={20} height={20} className="mt-0.5 shrink-0" />
-                            <div>
-                              <div className="text-[13px] font-medium text-dls-text">Edit a CSV</div>
-                              <div className="mt-0.5 text-[11px] text-dls-secondary">Create a sample spreadsheet with customer data</div>
-                            </div>
-                          </button>
-                          <button
-                            type="button"
-                            className="flex w-full items-start gap-3 rounded-xl border border-dls-border bg-dls-surface p-3.5 text-left transition-colors hover:bg-dls-hover"
-                            onClick={() => {
-                              props.sidebar.onCreateTaskWithPrompt?.(
-                                props.selectedWorkspaceId,
-                                "Open craigslist.org in the browser and search for couches for sale. Show me the top 5 results with prices.",
-                              );
-                            }}
-                          >
-                            <img src={resolveExtensionIconSrc("/openwork-mark.svg")} alt="" width={20} height={20} className="mt-0.5 shrink-0" />
-                            <div>
-                              <div className="text-[13px] font-medium text-dls-text">Browse the web</div>
-                              <div className="mt-0.5 text-[11px] text-dls-secondary">Search Craigslist for couches and list the results</div>
-                            </div>
-                          </button>
-                          <button
-                            type="button"
-                            className="flex w-full items-start gap-3 rounded-xl border border-dls-border bg-dls-surface p-3.5 text-left transition-colors hover:bg-dls-hover"
-                            onClick={() => {
-                              props.onOpenSettings?.();
-                            }}
-                          >
-                            <img src="https://cdn.simpleicons.org/hackthebox" alt="" width={20} height={20} className="mt-0.5 shrink-0" />
-                            <div>
-                              <div className="text-[13px] font-medium text-dls-text">Connect an extension</div>
-                              <div className="mt-0.5 text-[11px] text-dls-secondary">Add MCP servers, plugins, and integrations</div>
-                            </div>
-                          </button>
-                        </div>
-                      </div>
+                    <div className="flex flex-1 items-center justify-center py-16">
+                      <SessionEmptyHero
+                        providerCount={providerCount}
+                        onRunTask={(prompt) =>
+                          props.sidebar.onCreateTaskWithPrompt?.(props.selectedWorkspaceId, prompt)
+                        }
+                        onOpenProviderAuth={props.onOpenProviderAuth}
+                      />
                     </div>
                   )}
                 </div>
