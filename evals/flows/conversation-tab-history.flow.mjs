@@ -222,7 +222,8 @@ async function clickConversationTab(ctx, sessionId) {
   const clicked = await ctx.eval(`(() => {
     const tab = Array.from(document.querySelectorAll("[data-session-tab-id]"))
       .find((item) => item.getAttribute("data-session-tab-id") === ${JSON.stringify(sessionId)});
-    const button = tab?.querySelector("button");
+    // Sidebar rows are the vertical tabs: the row itself is clickable.
+    const button = tab && (tab.matches("button, a, [role='button']") ? tab : tab.querySelector("button, a"));
     if (!button) return false;
     button.scrollIntoView({ block: "nearest", inline: "center" });
     button.click();
@@ -256,12 +257,22 @@ async function waitForSession(ctx, sessionId) {
   );
 }
 
+// History entries record the split layout too, so a step may change the
+// split pane instead of the route. Track both to detect each move.
+const HISTORY_STATE_KEY = `(() => {
+  const route = window.__openworkControl?.snapshot?.().route ?? window.location.hash ?? "";
+  const match = new RegExp("(?:^|/)session/([^/?#]+)").exec(route);
+  const id = match ? decodeURIComponent(match[1]) : "";
+  const split = document.querySelectorAll('[data-session-tab-split-pill] [data-session-tab-id]')[1]?.getAttribute("data-session-tab-id") ?? "";
+  return id + "|" + split;
+})()`;
+
 async function clickUntilHistoryBoundary(ctx, direction) {
   for (let index = 0; index < 12; index += 1) {
     const stateBeforeClick = await readTabStripState(ctx);
     if (direction === "back" && stateBeforeClick.backDisabled) return stateBeforeClick;
     if (direction === "forward" && stateBeforeClick.forwardDisabled) return stateBeforeClick;
-    const beforeSessionId = stateBeforeClick.currentSessionId;
+    const beforeKey = await ctx.eval(HISTORY_STATE_KEY);
     const clicked = await ctx.eval(`(() => {
       const button = document.querySelector(${JSON.stringify(`[data-conversation-history-control="${direction}"]`)});
       if (!button || button.disabled) return false;
@@ -270,14 +281,8 @@ async function clickUntilHistoryBoundary(ctx, direction) {
     })()`);
     ctx.assert(clicked === true, `Could not click ${direction} while walking to the history boundary.`);
     await ctx.waitFor(
-      `(() => {
-        const route = window.__openworkControl?.snapshot?.().route ?? window.location.hash ?? "";
-        const match = new RegExp("(?:^|/)session/([^/?#]+)").exec(route);
-        const id = match ? decodeURIComponent(match[1]) : null;
-        const active = document.querySelector('[data-session-tab-active="true"]');
-        return id && id !== ${JSON.stringify(beforeSessionId)} && active?.getAttribute("data-session-tab-id") === id;
-      })()`,
-      { timeoutMs: 15_000, label: `${direction} history route change` },
+      `${HISTORY_STATE_KEY} !== ${JSON.stringify(beforeKey)}`,
+      { timeoutMs: 15_000, label: `${direction} history step` },
     );
   }
   return readTabStripState(ctx);

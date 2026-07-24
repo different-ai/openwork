@@ -2,7 +2,7 @@
 import type { CSSProperties } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePanelRef } from "react-resizable-panels";
-import { Cloud, Columns2, FileText, Globe, Mic2, Settings2, TextSearch, X, Zap } from "lucide-react";
+import { Cloud, FileText, Globe, Mic2, Settings2, TextSearch, Zap } from "lucide-react";
 
 import { resolveExtensionIconSrc } from "@/react-app/design-system/extension-icon-src";
 import { t } from "../../../../i18n";
@@ -22,13 +22,6 @@ import type {
 } from "../../../../app/types";
 import type { ShareWorkspaceModalProps } from "../../workspace/types";
 import { Button } from "@/components/ui/button";
-import {
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuSeparator,
-  ContextMenuTrigger,
-} from "@/components/ui/context-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   Dialog,
@@ -81,7 +74,6 @@ import {
   canNavigateSelectedConversationHistory,
   createConversationTabHistory,
   navigateConversationTabHistory,
-  removeConversationHistoryEntry,
   syncConversationTabHistory,
   type ConversationTabHistory,
   type ConversationHistoryDirection,
@@ -104,6 +96,7 @@ type PendingConversationHistoryNavigation = {
   fromWorkspaceId: string;
   fromSessionId: string | null;
   targetSessionId: string;
+  targetSplitSessionId: string | null;
 };
 
 type StatusBarOverrides = Pick<
@@ -375,7 +368,6 @@ export function SessionPage(props: SessionPageProps) {
   const focusedWorkbenchPane = useWorkbenchStore((state) => state.focusedPane);
   const syncWorkbench = useWorkbenchStore((state) => state.sync);
   const openWorkbenchTab = useWorkbenchStore((state) => state.openTab);
-  const closeWorkbenchTab = useWorkbenchStore((state) => state.closeTab);
   const setWorkbenchSplit = useWorkbenchStore((state) => state.setSplit);
   const focusWorkbenchPane = useWorkbenchStore((state) => state.focusPane);
   const sessionTabs = workbenchWorkspaceId === props.selectedWorkspaceId ? workbenchTabs : EMPTY_SESSION_TABS;
@@ -714,6 +706,16 @@ export function SessionPage(props: SessionPageProps) {
         pendingConversationHistoryNavigation.targetSessionId === props.selectedSessionId
       ) {
         setConversationHistory(pendingConversationHistoryNavigation.history);
+        // Restore the split layout recorded at this history step.
+        const targetSplit = pendingConversationHistoryNavigation.targetSplitSessionId;
+        if (targetSplit) {
+          openWorkbenchTab({
+            workspaceId: props.selectedWorkspaceId,
+            sessionId: targetSplit,
+            title: sessionTitleForId(props.sidebar.workspaceSessionGroups, targetSplit),
+          });
+        }
+        setWorkbenchSplit(targetSplit);
         setPendingConversationHistoryNavigation(null);
         return;
       }
@@ -730,8 +732,17 @@ export function SessionPage(props: SessionPageProps) {
       current,
       props.selectedWorkspaceId,
       props.selectedSessionId,
+      splitSessionId,
     ));
-  }, [pendingConversationHistoryNavigation, props.selectedSessionId, props.selectedWorkspaceId]);
+  }, [
+    openWorkbenchTab,
+    pendingConversationHistoryNavigation,
+    props.selectedSessionId,
+    props.selectedWorkspaceId,
+    props.sidebar.workspaceSessionGroups,
+    setWorkbenchSplit,
+    splitSessionId,
+  ]);
   useEffect(() => {
     if (!pendingConversationHistoryNavigation) return undefined;
     const id = window.setTimeout(() => {
@@ -895,20 +906,6 @@ export function SessionPage(props: SessionPageProps) {
   ]);
   useControlAction(focusWorkbenchSessionControlAction);
 
-  const closeSessionTab = useCallback((sessionId: string) => {
-    const nextTab = sessionTabs.find((tab) => tab.sessionId !== sessionId && tab.workspaceId === props.selectedWorkspaceId);
-    closeWorkbenchTab(sessionId);
-    setPendingConversationHistoryNavigation(null);
-    setConversationHistory((current) => removeConversationHistoryEntry(current, props.selectedWorkspaceId, sessionId));
-    if (sessionId !== props.selectedSessionId) return;
-
-    if (nextTab) {
-      props.sidebar.onOpenSession(nextTab.workspaceId, nextTab.sessionId);
-      return;
-    }
-    props.sidebar.onSelectWorkspace(props.selectedWorkspaceId);
-  }, [closeWorkbenchTab, props.selectedSessionId, props.selectedWorkspaceId, props.sidebar, sessionTabs]);
-
   const navigateConversationHistory = useCallback((direction: ConversationHistoryDirection) => {
     if (!canNavigateSelectedConversationHistory(
       conversationHistory,
@@ -917,14 +914,15 @@ export function SessionPage(props: SessionPageProps) {
       direction,
     )) return;
     const next = navigateConversationTabHistory(conversationHistory, direction);
-    if (!next.sessionId) return;
+    if (!next.entry) return;
     setPendingConversationHistoryNavigation({
       history: next.history,
       fromWorkspaceId: props.selectedWorkspaceId,
       fromSessionId: props.selectedSessionId,
-      targetSessionId: next.sessionId,
+      targetSessionId: next.entry.sessionId,
+      targetSplitSessionId: next.entry.splitSessionId,
     });
-    props.sidebar.onOpenSession(next.history.workspaceId, next.sessionId);
+    props.sidebar.onOpenSession(next.history.workspaceId, next.entry.sessionId);
   }, [conversationHistory, props.selectedSessionId, props.selectedWorkspaceId, props.sidebar]);
 
   useEffect(() => {
@@ -1167,147 +1165,6 @@ export function SessionPage(props: SessionPageProps) {
 
               {!showDelayedSessionLoadingState && canRenderReactSurface ? (
                 <div className="flex h-full min-h-0 flex-col">
-                  {sessionTabs.length > 0 ? (
-                    <div className="flex h-10 shrink-0 items-center gap-1 border-b border-border bg-background/80 px-2 mac:backdrop-blur-xl">
-                      <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
-                        {sessionTabs.map((tab) => {
-                          const active = tab.sessionId === props.selectedSessionId;
-                          const split = tab.sessionId === splitSessionId;
-                          const inSplitPair = canRenderSplitSurface && (active || split);
-
-                          // Arc-style joined pill: the split pair renders once,
-                          // as a single unit with one segment per pane.
-                          if (inSplitPair) {
-                            const pairTabs = sessionTabs.filter(
-                              (entry) => entry.sessionId === props.selectedSessionId || entry.sessionId === splitSessionId,
-                            );
-                            if (pairTabs[0]?.sessionId !== tab.sessionId) return null;
-                            return (
-                              <div
-                                key="workbench-split-pill"
-                                data-session-tab-split-pill
-                                className="flex shrink-0 items-stretch divide-x divide-border overflow-hidden rounded-lg border border-border"
-                              >
-                                {pairTabs.map((segment) => {
-                                  const segmentTitle = sessionTitleForId(props.sidebar.workspaceSessionGroups, segment.sessionId) || t("session.default_title");
-                                  const segmentActive = segment.sessionId === props.selectedSessionId;
-                                  const segmentPane = segmentActive ? "primary" : "secondary";
-                                  const segmentFocused = focusedWorkbenchPane === segmentPane;
-                                  return (
-                                    <ContextMenu key={segment.sessionId}>
-                                      <ContextMenuTrigger
-                                        render={
-                                          <div
-                                            data-session-tab-id={segment.sessionId}
-                                            data-session-tab-active={segmentActive ? "true" : undefined}
-                                            className={cn(
-                                              "group flex max-w-48 shrink-0 items-center gap-1 px-2 py-1 text-xs transition-colors",
-                                              segmentFocused
-                                                ? "bg-dls-surface text-dls-text"
-                                                : "text-dls-secondary hover:bg-dls-hover hover:text-dls-text",
-                                            )}
-                                          >
-                                            <button
-                                              type="button"
-                                              className="min-w-0 flex-1 truncate text-left"
-                                              onClick={() => focusWorkbenchPane(segmentPane)}
-                                              title={segmentTitle}
-                                            >
-                                              {segmentTitle}
-                                            </button>
-                                            <button
-                                              type="button"
-                                              className="rounded p-0.5 text-dls-secondary opacity-80 hover:bg-dls-hover hover:text-dls-text group-hover:opacity-100"
-                                              onClick={() => {
-                                                // Closing a segment dissolves the split and
-                                                // keeps the other session as the open tab.
-                                                if (segmentActive && splitSessionId) {
-                                                  openSessionTab(segment.workspaceId, splitSessionId);
-                                                } else {
-                                                  setWorkbenchSplit(null);
-                                                }
-                                              }}
-                                              title="Close split pane"
-                                              aria-label="Close split pane"
-                                            >
-                                              <X size={13} />
-                                            </button>
-                                          </div>
-                                        }
-                                      />
-                                      <ContextMenuContent className="w-56">
-                                        <ContextMenuItem onClick={() => setWorkbenchSplit(null)}>
-                                          <Columns2 size={14} />
-                                          Close Split View
-                                        </ContextMenuItem>
-                                        <ContextMenuSeparator />
-                                        <ContextMenuItem onClick={() => closeSessionTab(segment.sessionId)}>
-                                          <X size={14} />
-                                          Close Tab
-                                        </ContextMenuItem>
-                                      </ContextMenuContent>
-                                    </ContextMenu>
-                                  );
-                                })}
-                              </div>
-                            );
-                          }
-
-                          const title = sessionTitleForId(props.sidebar.workspaceSessionGroups, tab.sessionId) || t("session.default_title");
-                          return (
-                            <ContextMenu key={tab.sessionId}>
-                              <ContextMenuTrigger
-                                render={
-                                  <div
-                                    data-session-tab-id={tab.sessionId}
-                                    data-session-tab-active={active ? "true" : undefined}
-                                    className={cn(
-                                      "group flex max-w-56 shrink-0 items-center gap-1 rounded-lg border px-2 py-1 text-xs transition-colors",
-                                      active
-                                        ? "border-border bg-dls-surface text-dls-text"
-                                        : "border-transparent text-dls-secondary hover:bg-dls-hover hover:text-dls-text",
-                                    )}
-                                  >
-                                    <button
-                                      type="button"
-                                      className="min-w-0 flex-1 truncate text-left"
-                                      onClick={() => openSessionTab(tab.workspaceId, tab.sessionId)}
-                                      title={title}
-                                    >
-                                      {title}
-                                    </button>
-                                    <button
-                                      type="button"
-                                      className="rounded p-0.5 text-dls-secondary opacity-80 hover:bg-dls-hover hover:text-dls-text group-hover:opacity-100"
-                                      onClick={() => closeSessionTab(tab.sessionId)}
-                                      title="Close tab"
-                                      aria-label="Close tab"
-                                    >
-                                      <X size={13} />
-                                    </button>
-                                  </div>
-                                }
-                              />
-                              <ContextMenuContent className="w-64">
-                                <ContextMenuItem
-                                  disabled={active}
-                                  onClick={() => setWorkbenchSplit(tab.sessionId)}
-                                >
-                                  <Columns2 size={14} />
-                                  New Split View with Current Tab
-                                </ContextMenuItem>
-                                <ContextMenuSeparator />
-                                <ContextMenuItem onClick={() => closeSessionTab(tab.sessionId)}>
-                                  <X size={14} />
-                                  Close Tab
-                                </ContextMenuItem>
-                              </ContextMenuContent>
-                            </ContextMenu>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  ) : null}
                   <ResizablePanelGroup
                     key={canRenderSplitSurface ? "workbench-split" : "workbench-single"}
                     orientation="horizontal"

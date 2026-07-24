@@ -1,15 +1,37 @@
+/**
+ * Browser-like navigation history for the workbench. Each entry records the
+ * primary session plus the split-pane session (if any) so back/forward can
+ * restore the exact layout the user was looking at.
+ */
+export type ConversationHistoryEntry = {
+  sessionId: string;
+  splitSessionId: string | null;
+};
+
 export type ConversationTabHistory = {
   workspaceId: string;
-  entries: string[];
+  entries: ConversationHistoryEntry[];
   index: number;
 };
 
 export type ConversationHistoryDirection = "back" | "forward";
 
-export function createConversationTabHistory(workspaceId: string, sessionId: string | null): ConversationTabHistory {
+function sameEntry(
+  entry: ConversationHistoryEntry | undefined,
+  sessionId: string,
+  splitSessionId: string | null,
+) {
+  return entry?.sessionId === sessionId && (entry.splitSessionId ?? null) === splitSessionId;
+}
+
+export function createConversationTabHistory(
+  workspaceId: string,
+  sessionId: string | null,
+  splitSessionId: string | null = null,
+): ConversationTabHistory {
   return {
     workspaceId,
-    entries: sessionId ? [sessionId] : [],
+    entries: sessionId ? [{ sessionId, splitSessionId }] : [],
     index: sessionId ? 0 : -1,
   };
 }
@@ -18,9 +40,10 @@ export function syncConversationTabHistory(
   history: ConversationTabHistory,
   workspaceId: string,
   sessionId: string | null,
+  splitSessionId: string | null = null,
 ): ConversationTabHistory {
   if (history.workspaceId !== workspaceId) {
-    return createConversationTabHistory(workspaceId, sessionId);
+    return createConversationTabHistory(workspaceId, sessionId, splitSessionId);
   }
 
   if (!sessionId) {
@@ -28,15 +51,15 @@ export function syncConversationTabHistory(
     return createConversationTabHistory(workspaceId, null);
   }
 
-  if (history.entries[history.index] === sessionId) return history;
+  if (sameEntry(history.entries[history.index], sessionId, splitSessionId)) return history;
 
   const entriesBeforeForwardBranch = history.index >= 0
     ? history.entries.slice(0, history.index + 1)
     : [];
   const last = entriesBeforeForwardBranch[entriesBeforeForwardBranch.length - 1];
-  const entries = last === sessionId
+  const entries = sameEntry(last, sessionId, splitSessionId)
     ? entriesBeforeForwardBranch
-    : [...entriesBeforeForwardBranch, sessionId];
+    : [...entriesBeforeForwardBranch, { sessionId, splitSessionId }];
 
   return {
     workspaceId,
@@ -55,7 +78,7 @@ export function isConversationTabHistoryCurrent(
   workspaceId: string,
   sessionId: string | null,
 ) {
-  return history.workspaceId === workspaceId && history.entries[history.index] === sessionId;
+  return history.workspaceId === workspaceId && history.entries[history.index]?.sessionId === sessionId;
 }
 
 export function canNavigateSelectedConversationHistory(
@@ -73,13 +96,22 @@ export function removeConversationHistoryEntry(
   sessionId: string,
 ): ConversationTabHistory {
   if (history.workspaceId !== workspaceId) return history;
-  const removedIndex = history.entries.indexOf(sessionId);
-  if (removedIndex === -1) return history;
+  const removedIndex = history.entries.findIndex((entry) => entry.sessionId === sessionId);
+  const referencedAsSplit = history.entries.some((entry) => entry.splitSessionId === sessionId);
+  if (removedIndex === -1 && !referencedAsSplit) return history;
 
-  const entries = history.entries.filter((entry) => entry !== sessionId);
+  const kept = history.entries
+    .filter((entry) => entry.sessionId !== sessionId)
+    .map((entry) => entry.splitSessionId === sessionId ? { ...entry, splitSessionId: null } : entry);
+  const entries: ConversationHistoryEntry[] = [];
+  for (const entry of kept) {
+    const last = entries[entries.length - 1];
+    if (last && sameEntry(last, entry.sessionId, entry.splitSessionId)) continue;
+    entries.push(entry);
+  }
   if (entries.length === 0) return createConversationTabHistory(workspaceId, null);
 
-  const index = removedIndex <= history.index
+  const index = removedIndex !== -1 && removedIndex <= history.index
     ? Math.max(0, history.index - 1)
     : history.index;
 
@@ -93,14 +125,14 @@ export function removeConversationHistoryEntry(
 export function navigateConversationTabHistory(
   history: ConversationTabHistory,
   direction: ConversationHistoryDirection,
-): { history: ConversationTabHistory; sessionId: string | null } {
+): { history: ConversationTabHistory; entry: ConversationHistoryEntry | null } {
   if (!canNavigateConversationHistory(history, direction)) {
-    return { history, sessionId: null };
+    return { history, entry: null };
   }
 
   const index = direction === "back" ? history.index - 1 : history.index + 1;
   return {
     history: { ...history, index },
-    sessionId: history.entries[index] ?? null,
+    entry: history.entries[index] ?? null,
   };
 }

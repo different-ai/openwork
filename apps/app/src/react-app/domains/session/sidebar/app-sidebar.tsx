@@ -7,6 +7,7 @@ import {
   ArrowLeft,
   ArrowRight,
   ChevronRight,
+  Columns2,
   FolderPlus,
   MoreHorizontal,
   Pencil,
@@ -21,6 +22,7 @@ import {
   Settings,
   FolderOpen,
   Tag,
+  X,
 } from "lucide-react";
 import { LazyMotion, Reorder, domMax, m, useDragControls } from "motion/react";
 
@@ -126,6 +128,7 @@ import { cn } from "@/lib/utils";
 import { WorkspaceIcon } from "../../../design-system/workspace-icon";
 import { getSessionActivityStatusLabel, type SessionActivityStatus } from "../status/session-activity-store";
 import { SessionDotMatrixLoader } from "./session-dot-matrix-loader";
+import { useWorkbenchStore } from "../chat/workbench-store";
 
 /** Fixed left lane from Paper — activity/chevron slot; never shifts the title. */
 const LEFT_ACTIVITY_SLOT = "flex size-4 shrink-0 items-center justify-center";
@@ -224,6 +227,22 @@ function SessionMenuContent({ variant, sessionId, workspaceId, isPinned, isArchi
   const store = useSessionManagementStore;
   const assignedGroupId = assignments[sessionId] ?? null;
 
+  // Sidebar rows are the vertical tabs: any non-active session in the current
+  // workspace can be opened side-by-side with the active one.
+  const splitSessionId = useWorkbenchStore((state) => state.splitSessionId);
+  const isInSplit = Boolean(splitSessionId)
+    && (splitSessionId === sessionId || sessionId === ctx.selectedSessionId);
+  const canOpenInSplit = !isInSplit
+    && workspaceId === ctx.selectedWorkspaceId
+    && Boolean(ctx.selectedSessionId)
+    && sessionId !== ctx.selectedSessionId;
+  const openInSplitView = () => {
+    const workbench = useWorkbenchStore.getState();
+    workbench.openTab({ workspaceId, sessionId });
+    workbench.setSplit(sessionId);
+  };
+  const closeSplitView = () => useWorkbenchStore.getState().setSplit(null);
+
   if (variant === "dropdown") {
     return (
       <>
@@ -231,6 +250,18 @@ function SessionMenuContent({ variant, sessionId, workspaceId, isPinned, isArchi
           {isPinned ? <PinOff className="size-4" /> : <Pin className="size-4" />}
           {isPinned ? t("session_management.unpin_session") : t("session_management.pin_session")}
         </DropdownMenuItem>
+        {canOpenInSplit ? (
+          <DropdownMenuItem data-session-menu-open-split onClick={openInSplitView}>
+            <Columns2 className="size-4" />
+            {t("session_management.open_in_split_view")}
+          </DropdownMenuItem>
+        ) : null}
+        {isInSplit ? (
+          <DropdownMenuItem data-session-menu-close-split onClick={closeSplitView}>
+            <Columns2 className="size-4" />
+            {t("session_management.close_split_view")}
+          </DropdownMenuItem>
+        ) : null}
         {ctx.onOpenRenameSession ? (
           <DropdownMenuItem onClick={() => ctx.onOpenRenameSession?.(sessionId)}>
             <Pencil className="size-4" />
@@ -304,6 +335,18 @@ function SessionMenuContent({ variant, sessionId, workspaceId, isPinned, isArchi
         {isPinned ? <PinOff className="size-4" /> : <Pin className="size-4" />}
         {isPinned ? t("session_management.unpin_session") : t("session_management.pin_session")}
       </ContextMenuItem>
+      {canOpenInSplit ? (
+        <ContextMenuItem data-session-menu-open-split onClick={openInSplitView}>
+          <Columns2 className="size-4" />
+          {t("session_management.open_in_split_view")}
+        </ContextMenuItem>
+      ) : null}
+      {isInSplit ? (
+        <ContextMenuItem data-session-menu-close-split onClick={closeSplitView}>
+          <Columns2 className="size-4" />
+          {t("session_management.close_split_view")}
+        </ContextMenuItem>
+      ) : null}
       {ctx.onOpenRenameSession ? (
         <ContextMenuItem onClick={() => ctx.onOpenRenameSession?.(sessionId)}>
           <Pencil className="size-4" />
@@ -661,6 +704,102 @@ function RemoteConnectionIssueCard(props: {
   );
 }
 
+type SidebarSplitPillProps = {
+  workspaceSessionGroups: WorkspaceSessionGroup[];
+  selectedWorkspaceId: string;
+  selectedSessionId: string | null;
+  onOpenSession: (workspaceId: string, sessionId: string) => void;
+};
+
+/**
+ * Arc-style joined pill: while a split view is active the pair renders as a
+ * single unit at the top of the vertical tab list (the sidebar). Clicking a
+ * segment focuses its pane; closing a segment dissolves the split.
+ */
+function SidebarSplitPill({ workspaceSessionGroups, selectedWorkspaceId, selectedSessionId, onOpenSession }: SidebarSplitPillProps) {
+  const workbenchWorkspaceId = useWorkbenchStore((state) => state.workspaceId);
+  const splitSessionId = useWorkbenchStore((state) => state.splitSessionId);
+  const focusedPane = useWorkbenchStore((state) => state.focusedPane);
+
+  if (
+    !splitSessionId
+    || !selectedSessionId
+    || workbenchWorkspaceId !== selectedWorkspaceId
+    || splitSessionId === selectedSessionId
+  ) {
+    return null;
+  }
+
+  const titleFor = (sessionId: string) => {
+    for (const group of workspaceSessionGroups) {
+      const match = group.sessions.find((session) => session.id === sessionId);
+      if (match) return getDisplaySessionTitle(match.title);
+    }
+    return t("session.default_title");
+  };
+
+  const segments = [
+    { sessionId: selectedSessionId, pane: "primary" as const },
+    { sessionId: splitSessionId, pane: "secondary" as const },
+  ];
+
+  return (
+    <div className="px-2 pb-1">
+      <div className="mb-1 flex items-center gap-1 px-1 text-[10px] font-medium uppercase tracking-wide text-sidebar-foreground/50">
+        <Columns2 className="size-3" />
+        {t("session_management.split_view")}
+      </div>
+      <div
+        data-session-tab-split-pill
+        className="flex items-stretch divide-x divide-sidebar-border overflow-hidden rounded-[11px] border border-sidebar-border"
+      >
+        {segments.map(({ sessionId, pane }) => {
+          const title = titleFor(sessionId);
+          const focused = focusedPane === pane;
+          return (
+            <div
+              key={pane}
+              data-session-tab-id={sessionId}
+              className={cn(
+                "flex min-w-0 flex-1 items-center gap-1 px-2 py-1.5 text-xs transition-colors",
+                focused
+                  ? "bg-black/[0.07] text-sidebar-foreground dark:bg-white/[0.12]"
+                  : "text-sidebar-foreground/70 hover:bg-black/[0.05] dark:hover:bg-white/[0.09]",
+              )}
+            >
+              <button
+                type="button"
+                className="min-w-0 flex-1 truncate text-left"
+                title={title}
+                onClick={() => useWorkbenchStore.getState().focusPane(pane)}
+              >
+                {title}
+              </button>
+              <button
+                type="button"
+                className="shrink-0 rounded p-0.5 text-sidebar-foreground/50 hover:text-sidebar-foreground"
+                title={t("session_management.close_split_view")}
+                aria-label={t("session_management.close_split_view")}
+                onClick={() => {
+                  if (pane === "primary") {
+                    // Closing the primary segment promotes the split session
+                    // to primary, which dissolves the split.
+                    onOpenSession(selectedWorkspaceId, splitSessionId);
+                  } else {
+                    useWorkbenchStore.getState().setSplit(null);
+                  }
+                }}
+              >
+                <X className="size-3.5" />
+              </button>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export type AppSidebarProps = {
   workspaceSessionGroups: WorkspaceSessionGroup[];
   showInitialLoading?: boolean;
@@ -956,6 +1095,12 @@ export function AppSidebar(props: AppSidebarProps) {
             </SidebarMenu>
           </SidebarHeader>
         ) : null}
+        <SidebarSplitPill
+          workspaceSessionGroups={props.workspaceSessionGroups}
+          selectedWorkspaceId={props.selectedWorkspaceId}
+          selectedSessionId={props.selectedSessionId}
+          onOpenSession={props.onOpenSession}
+        />
         <LazyMotion features={domMax}>
           <m.div
             layoutScroll
@@ -2138,6 +2283,8 @@ function SessionMenuItem({
               <SidebarMenuSubButton
                 className={rowButtonClass}
                 isActive={isSelected}
+                data-session-tab-id={session.id}
+                data-session-tab-active={isSelected ? "true" : undefined}
                 onClick={openSession}
                 onPointerEnter={prefetchSession}
                 onFocus={prefetchSession}
@@ -2162,6 +2309,8 @@ function SessionMenuItem({
       <SessionContextMenu sessionId={session.id} workspaceId={workspaceId} isPinned={isPinned} isArchived={isArchived}>
         <SidebarMenuSubButton
           isActive={isSelected}
+          data-session-tab-id={session.id}
+          data-session-tab-active={isSelected ? "true" : undefined}
           onClick={openSession}
           onPointerEnter={prefetchSession}
           onFocus={prefetchSession}
