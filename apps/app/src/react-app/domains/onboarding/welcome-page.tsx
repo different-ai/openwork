@@ -1,10 +1,10 @@
 /** @jsxImportSource react */
-import { PaperGrainGradient } from "@openwork/ui/react";
+import { Dithering } from "@paper-design/shaders-react";
 
 import { t } from "../../../i18n";
+import { resolveExtensionIconSrc } from "@/react-app/design-system/extension-icon-src";
 import {
   Page,
-  PageBackground,
   PageTitlebarRegion,
 } from "@/components/page";
 import { Button } from "@/components/ui/button";
@@ -50,56 +50,58 @@ export function WelcomePage({
 
   return (
     <Page className="min-h-screen">
-      <PageBackground />
       <PageTitlebarRegion />
 
       <ScrollArea className="relative z-10">
         <ScrollAreaViewport>
           <div className="relative flex min-h-screen items-center justify-center px-6 py-16">
-            <div className="pointer-events-none absolute inset-0 overflow-hidden opacity-[0.35]">
-              <PaperGrainGradient
-                className="size-full bg-background"
-                speed={0}
-                scale={1.2}
-                rotation={0}
-                offsetX={0}
-                offsetY={0}
-                softness={0.6}
-                intensity={0.35}
-                noise={0.2}
-                shape="corners"
-                frame={37706.748}
-                colors={["#0E33D9", "#FF7E2E", "#FFE340", "#000000"]}
+            {/* Paper first-load spec: subtle black pixel-dither mosaic over a
+                near-white ground. `dark:invert` flips the pixels to white so
+                the texture survives dark mode. */}
+            <div className="pointer-events-none absolute inset-0 overflow-hidden opacity-[0.1] dark:invert">
+              <Dithering
+                className="size-full"
+                speed={0.01}
+                shape="warp"
+                type="2x2"
+                size={20.3}
+                scale={1.19}
+                frame={264559.21}
                 colorBack="#00000000"
+                colorFront="#000000"
               />
             </div>
 
-            <div className="relative z-10 w-full max-w-md rounded-2xl border border-border bg-background p-8 shadow-sm">
-              <div className="mb-8 flex items-center gap-2.5">
-                <span
-                  className="size-7 shrink-0 rounded-md bg-foreground"
+            <div className="relative z-10 w-full max-w-[720px] rounded-3xl border border-border bg-background px-8 pb-12 pt-10 sm:px-16 sm:pb-16 sm:pt-14">
+              <div className="flex items-center gap-2.5">
+                <img
+                  src={resolveExtensionIconSrc("/openwork-mark.svg")}
+                  alt=""
+                  width={26}
+                  height={26}
+                  className="shrink-0 dark:invert"
                   aria-hidden="true"
                 />
-                <span className="text-base font-semibold tracking-tight text-foreground">
+                <span className="text-[15px] font-semibold tracking-tight text-foreground">
                   {appName}
                 </span>
               </div>
 
-              <div className="mb-8 flex flex-col gap-2">
-                <h1 className="text-2xl font-semibold tracking-tight text-foreground">
+              <div className="mt-10 flex flex-col gap-2.5 sm:mt-14">
+                <h1 className="text-[30px] font-semibold leading-[38px] tracking-[-0.03em] text-foreground sm:text-[38px] sm:leading-[46px]">
                   {t("welcome.title")}
                 </h1>
-                <p className="text-sm leading-relaxed text-muted-foreground">
+                <p className="text-[15px] leading-[23px] text-muted-foreground">
                   {t("welcome.subtitle")}
                 </p>
               </div>
 
-              <div className="flex flex-col gap-3">
+              <div className="mt-11 flex flex-col gap-3">
                 {onTeamSignIn ? (
                   <Button
                     type="button"
                     size="lg"
-                    className="w-full"
+                    className="h-12 w-full text-[15px] font-semibold"
                     onClick={onTeamSignIn}
                     disabled={busy}
                     data-testid="welcome-team-signin"
@@ -111,8 +113,8 @@ export function WelcomePage({
                 <Button
                   type="button"
                   size="lg"
-                  variant={onTeamSignIn ? "ghost" : "default"}
-                  className="w-full"
+                  variant={onTeamSignIn ? "outline" : "default"}
+                  className="h-12 w-full text-[15px] font-medium"
                   onClick={onGetStarted}
                   disabled={busy}
                   data-testid="welcome-use-without-cloud"
