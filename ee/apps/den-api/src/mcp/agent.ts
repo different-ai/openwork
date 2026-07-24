@@ -390,17 +390,19 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
     const clientId = connectDiagnosticClientId(c.req.raw)
     const preflightResponse = await preflightMcpJsonRpcRequest(c.req.raw, requestId)
     if (preflightResponse) {
-      reportDenMcpDiagnostic({
-        organizationId: principal.organizationId,
-        clientId,
-        requestId,
-        method,
-        observedAt: new Date(startedAt).toISOString(),
-        durationMs: Date.now() - startedAt,
-        outcome: "failure",
-        httpStatus: preflightResponse.status,
-        errorCode: "mcp_preflight_failed",
-      })
+      if (clientId) {
+        reportDenMcpDiagnostic({
+          organizationId: principal.organizationId,
+          clientId,
+          requestId,
+          method,
+          observedAt: new Date(startedAt).toISOString(),
+          durationMs: Date.now() - startedAt,
+          outcome: "failure",
+          httpStatus: preflightResponse.status,
+          errorCode: "mcp_preflight_failed",
+        })
+      }
       return preflightResponse
     }
 
@@ -628,25 +630,27 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
       await server.connect(transport)
       response = await transport.handleRequest(c) ?? new Response(null, { status: 204 })
     } catch (error) {
-      reportDenMcpDiagnostic({
-        organizationId: principal.organizationId,
-        clientId,
-        requestId,
-        method,
-        observedAt: new Date(startedAt).toISOString(),
-        durationMs: Date.now() - startedAt,
-        outcome: "failure",
-        httpStatus: null,
-        errorCode: "mcp_transport_exception",
-      })
+      if (clientId) {
+        reportDenMcpDiagnostic({
+          organizationId: principal.organizationId,
+          clientId,
+          requestId,
+          method,
+          observedAt: new Date(startedAt).toISOString(),
+          durationMs: Date.now() - startedAt,
+          outcome: "failure",
+          httpStatus: null,
+          errorCode: "mcp_transport_exception",
+        })
+      }
       throw error
     }
-    if (
+    if (clientId && (
       response.status >= 400
       || method === "initialize"
       || method === "notifications/initialized"
       || method === "tools/list"
-    ) {
+    )) {
       reportDenMcpDiagnostic({
         organizationId: principal.organizationId,
         clientId,

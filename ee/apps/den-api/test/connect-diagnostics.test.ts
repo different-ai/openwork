@@ -86,7 +86,7 @@ describe("Den Connect incident forwarding", () => {
     expect(body).not.toContain(bearerToken)
   })
 
-  test("correlates Den lifecycle observations without accepting arbitrary client identity", () => {
+  test("correlates Den lifecycle observations only from an opted-in client header", () => {
     const initialize = denMcpDiagnosticIncident({
       organizationId,
       clientId,
@@ -111,6 +111,7 @@ describe("Den Connect incident forwarding", () => {
     expect(connectDiagnosticClientId(new Request("https://den.example/mcp/agent", {
       headers: { "x-openwork-connect-client": clientId },
     }))).toBe(clientId)
+    expect(connectDiagnosticClientId(new Request("https://den.example/mcp/agent"))).toBeNull()
     expect(connectDiagnosticClientId(new Request("https://den.example/mcp/agent", {
       headers: { "x-openwork-connect-client": "member@example.com" },
     }))).toBeNull()

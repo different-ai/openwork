@@ -84,7 +84,12 @@ export async function forwardConnectDiagnosticIncidents(input: {
   }
 }
 
-export function reportDenMcpDiagnostic(input: Omit<Parameters<typeof denMcpDiagnosticIncident>[0], "bearerToken">): void {
+type ReportDenMcpDiagnosticInput =
+  & Omit<Parameters<typeof denMcpDiagnosticIncident>[0], "bearerToken" | "clientId">
+  & { clientId: string }
+
+export function reportDenMcpDiagnostic(input: ReportDenMcpDiagnosticInput): void {
+  if (!input.clientId) return
   const configuration = diagnosticsConfiguration()
   if (!configuration) return
   const incident = denMcpDiagnosticIncident({ ...input, bearerToken: configuration.bearerToken })
