@@ -4,7 +4,7 @@ import type { PendingCloudPluginChange } from "../../../app/cloud/desktop-cloud-
 import { evaluateEnablement, type EnablementContext } from "../../../app/enablement";
 import type { EnablementResult } from "../../../app/extensions";
 import type { DenExternalMcpConnection, DenOrgMarketplaceResolved, DenOrgPlugin } from "../../../app/lib/den";
-import type { McpServerEntry } from "../../../app/types";
+import type { McpServerEntry, SkillCard } from "../../../app/types";
 import { connectionNeedsReconnect } from "../connections/native-provider-connections";
 
 export type ExtensionItemSource = "builtin" | "marketplace" | "org-connection" | "mcp-directory" | "skill";
@@ -53,6 +53,17 @@ export type ExtensionItemBuildInput = {
 };
 
 const MCP_IMPORT_PATH_PREFIX = "opencode.jsonc#mcp.";
+const OPENWORK_PROVIDED_SKILL_NAMES = new Set([
+  "workspace-guide",
+  "skill-creator",
+]);
+
+export function isOpenworkProvidedSkill(skill: Pick<SkillCard, "name" | "path">) {
+  const normalizedName = skill.name.trim().toLowerCase();
+  const normalizedPath = skill.path.replace(/\\/g, "/").toLowerCase();
+  return normalizedPath.includes("/.opencode/skills/") &&
+    OPENWORK_PROVIDED_SKILL_NAMES.has(normalizedName);
+}
 
 export function isToggleControlledExtension(entry: McpDirectoryInfo) {
   return entry.extensionManifest?.enablement?.some((condition) => condition.type === "toggle-enabled") === true;

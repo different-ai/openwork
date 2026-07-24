@@ -87,7 +87,6 @@ The cloud offering (see [Pricing](https://openworklabs.com/pricing)) adds manage
 - [Get started](https://openworklabs.com/docs/start-here/get-started)
 - [Self-host](https://openworklabs.com/docs/start-here/self-host)
 - [Add an MCP server](https://openworklabs.com/docs/start-here/connect-your-stack/add-an-mcp-server)
-- [Import a skill](https://openworklabs.com/docs/start-here/do-work-with-it/import-a-skill)
 - [Workflows](https://openworklabs.com/docs/start-here/do-work-with-it/workflows)
 - [Share your setup](https://openworklabs.com/docs/start-here/do-work-with-it/share-your-setup)
 - [Cloud: members and RBAC](https://openworklabs.com/docs/cloud/members-and-rbac)

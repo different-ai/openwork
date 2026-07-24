@@ -61,9 +61,9 @@ const CLIENT_INSTALLS: Record<ClientId, ClientInstall> = {
   cursor: {
     id: "cursor",
     label: "Cursor",
-    eyebrow: "Cursor Web/Agents HTTPS callback",
+    eyebrow: "Cursor Desktop and Web/Agents",
     copyText: CURSOR_SNIPPET,
-    helper: "Setup-only for Cursor Web/Agents with its HTTPS OAuth callback. Cursor Desktop OAuth uses cursor://anysphere.cursor-mcp/oauth/callback, which OpenWork's MCP profile intentionally rejects."
+    helper: "Setup-only for Cursor Desktop and Cursor Web/Agents. Cursor Desktop's OAuth callback cursor://anysphere.cursor-mcp/oauth/callback is accepted with PKCE S256 enforced."
   },
   codex: {
     id: "codex",

@@ -126,7 +126,10 @@ export function useModelPicker(input: UseModelPickerInput) {
           isFree: false,
           isConnected: true,
           isRecommended: isNew,
-          source: /^lpr_/i.test(provider.id) ? "cloud" as const : undefined,
+          source:
+            /^lpr_/i.test(provider.id) || provider.id.trim().toLowerCase() === "openwork"
+              ? ("cloud" as const)
+              : undefined,
         });
       }
     }

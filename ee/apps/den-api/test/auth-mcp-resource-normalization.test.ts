@@ -139,8 +139,8 @@ test("token rejects missing MCP OAuth resource for authorization-code grants", (
   runProbe({ endpoint: "token", grantType: "authorization_code", resources: [], expect: "invalid_target", expectNoStore: true })
 })
 
-test("token rejects missing MCP OAuth resource for refresh grants", () => {
-  runProbe({ endpoint: "token", grantType: "refresh_token", resources: [], expect: "invalid_target", expectNoStore: true })
+test("token defaults missing MCP OAuth resource for refresh grants to the singleton audience", () => {
+  runProbe({ endpoint: "token", grantType: "refresh_token", resources: [], expect: "normalized" })
 })
 
 test("token rejects missing MCP OAuth resource for client-credentials grants", () => {

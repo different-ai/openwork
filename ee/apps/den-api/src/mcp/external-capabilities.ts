@@ -189,7 +189,6 @@ export type ExternalConnectionStatus = {
     retry: "search_capabilities"
     url?: string
   }
-  diagnostic?: ExternalMcpDiagnostic
 }
 
 const ERROR_MESSAGE_LIMIT = 300
@@ -461,7 +460,6 @@ export function buildExternalConnectionStatus(input: {
             retry: "search_capabilities",
           },
         }),
-      ...(input.diagnostic ? { diagnostic: input.diagnostic } : {}),
     }
   }
 
@@ -506,7 +504,6 @@ export function buildExternalConnectionStatus(input: {
           retry: "search_capabilities",
         },
       }),
-    ...(input.diagnostic ? { diagnostic: input.diagnostic } : {}),
   }
 }
 
@@ -850,9 +847,9 @@ export type ExternalCapabilityExecuteResult =
         | "provider_error"
         | "invalid_capability_arguments"
       message: string
-      diagnostic?: ExternalMcpDiagnostic
-      actionOwner?: ExternalMcpDiagnostic["actionOwner"]
-      operatorAction?: string
+      referenceId?: string
+      retryable?: boolean
+      providerError?: ExternalMcpProviderError
       connectionStatus?: ExternalConnectionStatus
       capability?: string
       issues?: ExternalMcpArgumentIssue[]
@@ -864,6 +861,38 @@ export type ExternalCapabilityExecuteResult =
       }
       schemaGuidance?: ExternalMcpSchemaGuidance
     }
+
+export type ExternalMcpProviderError = {
+  jsonRpcCode?: number
+  message?: string
+  data?: string
+}
+
+function providerErrorFromDiagnostic(diagnostic: ExternalMcpDiagnostic): ExternalMcpProviderError | undefined {
+  if (
+    diagnostic.jsonRpcCode === undefined
+    && !diagnostic.providerErrorMessage
+    && !diagnostic.providerErrorData
+  ) return undefined
+  return {
+    ...(diagnostic.jsonRpcCode === undefined ? {} : { jsonRpcCode: diagnostic.jsonRpcCode }),
+    ...(diagnostic.providerErrorMessage ? { message: diagnostic.providerErrorMessage } : {}),
+    ...(diagnostic.providerErrorData ? { data: diagnostic.providerErrorData } : {}),
+  }
+}
+
+function diagnosticAgentMessage(diagnostic: ExternalMcpDiagnostic): string {
+  return `${diagnostic.message} ${diagnostic.operatorAction} Diagnostic reference: ${diagnostic.referenceId}.`
+}
+
+function diagnosticAgentFields(diagnostic: ExternalMcpDiagnostic) {
+  const providerError = providerErrorFromDiagnostic(diagnostic)
+  return {
+    referenceId: diagnostic.referenceId,
+    retryable: diagnostic.retryable,
+    ...(providerError ? { providerError } : {}),
+  }
+}
 
 function invalidCapabilityArguments(input: {
   capability: string
@@ -877,7 +906,7 @@ function invalidCapabilityArguments(input: {
     error: "invalid_capability_arguments",
     capability: input.capability,
     message: input.diagnostic
-      ? `The remote MCP rejected the capability arguments as invalid. Correct them using the latest argumentsSchema. Diagnostic reference: ${input.diagnostic.referenceId}.`
+      ? diagnosticAgentMessage(input.diagnostic)
       : "The capability arguments do not match the remote MCP tool's advertised argumentsSchema.",
     issues: input.issues ?? [{
       path: "/",
@@ -888,13 +917,7 @@ function invalidCapabilityArguments(input: {
     sameArgumentsRetryable: false,
     retry: { action: "correct_arguments", searchRequired: false },
     ...(input.schemaGuidance ? { schemaGuidance: input.schemaGuidance } : {}),
-    ...(input.diagnostic
-      ? {
-          diagnostic: input.diagnostic,
-          actionOwner: input.diagnostic.actionOwner,
-          operatorAction: input.diagnostic.operatorAction,
-        }
-      : {}),
+    ...(input.diagnostic ? diagnosticAgentFields(input.diagnostic) : {}),
   }
 }
 
@@ -1103,14 +1126,12 @@ export async function executeExternalCapability(input: {
         })
       }
       if (diagnostic.code === "MCP_PROVIDER_AUTH_REQUIRED") {
-        const resultMessage = `${diagnostic.message} ${diagnostic.operatorAction} Diagnostic reference: ${diagnostic.referenceId}.`
+        const resultMessage = diagnosticAgentMessage(diagnostic)
         return {
           ok: false,
           error: "needs_connection",
           message: resultMessage,
-          diagnostic,
-          actionOwner: diagnostic.actionOwner,
-          operatorAction: diagnostic.operatorAction,
+          ...diagnosticAgentFields(diagnostic),
           connectionStatus: providerAuthorizationConnectionStatus({
             connection,
             diagnostic,
@@ -1124,10 +1145,8 @@ export async function executeExternalCapability(input: {
         error: diagnostic.phase === "PROVIDER_EXECUTION" || diagnostic.phase === "PROVIDER_AUTHORIZATION"
           ? "provider_error"
           : "connection_failed",
-        message: `${diagnostic.message} ${diagnostic.operatorAction} Diagnostic reference: ${diagnostic.referenceId}.`,
-        diagnostic,
-        actionOwner: diagnostic.actionOwner,
-        operatorAction: diagnostic.operatorAction,
+        message: diagnosticAgentMessage(diagnostic),
+        ...diagnosticAgentFields(diagnostic),
         ...(schemaGuidance ? { schemaGuidance } : {}),
         ...(authErrorCode
           ? {

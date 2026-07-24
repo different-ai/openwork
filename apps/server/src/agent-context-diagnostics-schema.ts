@@ -165,6 +165,13 @@ const safeTextSchema = z.string()
     isAgentContextDiagnosticTextSafe,
     "diagnostic text cannot contain controls, credentials, URLs, or absolute paths",
   );
+const registrationFailureDetailSchema = z.object({
+  name: safeTextSchema.min(1).max(160),
+  status: z.enum(["connected", "disabled", "failed", "needs-auth", "needs-client-registration", "not-recorded"]),
+  source: z.enum(["transport_failure", "engine_status"]).nullable(),
+  recordAgeMs: z.number().int().nonnegative().nullable(),
+  engineReachableNow: z.boolean(),
+}).strict();
 const organizationConnectionNameSchema = z.string()
   .min(1)
   .max(160)
@@ -179,6 +186,7 @@ const safeDetailValueSchema = z.union([
   z.boolean(),
   z.null(),
   z.array(safeTextSchema).max(100),
+  z.array(registrationFailureDetailSchema).max(100),
 ]);
 const toolIdSchema = z.string().min(1).max(160).regex(/^[A-Za-z][A-Za-z0-9_.:-]*$/);
 

@@ -126,6 +126,9 @@ jobs:
       - name: Run desktop unit tests
         run: pnpm --filter @openwork/desktop test
 
+      - name: Run eval runner unit tests
+        run: pnpm test:eval-runner
+
       - name: Typecheck Electron main against the IPC contract
         run: pnpm --filter @openwork/desktop typecheck:electron
 

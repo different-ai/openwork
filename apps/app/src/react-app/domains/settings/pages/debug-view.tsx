@@ -15,7 +15,7 @@ import type {
   OpenworkServerCapabilities,
   OpenworkServerDiagnostics,
 } from "../../../../app/lib/openwork-server";
-import type { SandboxDebugProbeResult } from "../../../../app/lib/desktop";
+import type { NukeManifestPreview, SandboxDebugProbeResult } from "../../../../app/lib/desktop";
 import type {
   OpencodeConnectStatus,
   ReleaseChannel,
@@ -24,7 +24,18 @@ import type {
 import type { OpencodeExecutionSnapshot } from "../../../../app/lib/desktop-types";
 import { formatRelativeTime, isDesktopRuntime } from "../../../../app/utils";
 import { t } from "../../../../i18n";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import {
   AgentContextDiagnosticsSection,
   type AgentContextDiagnosticsSectionProps,
@@ -162,7 +173,16 @@ export type DebugViewProps = {
   opencodeDevModeEnabled: boolean;
   nukeConfigBusy: boolean;
   nukeConfigStatus: string | null;
-  onNukeOpenworkAndOpencodeConfig: () => void | Promise<void>;
+  nukePreviewBusy: boolean;
+  nukeDialogOpen: boolean;
+  nukeConfirmationText: string;
+  nukePreserveBootstrap: boolean;
+  nukeManifestPreview: NukeManifestPreview | null;
+  onOpenNukeDialog: () => void | Promise<void>;
+  onCloseNukeDialog: () => void;
+  onSetNukeConfirmationText: (value: string) => void;
+  onSetNukePreserveBootstrap: (value: boolean) => void | Promise<void>;
+  onConfirmNukeOpenworkAndOpencodeConfig: () => void | Promise<void>;
 };
 
 function formatActor(entry: OpenworkAuditEntry) {
@@ -452,8 +472,14 @@ export function DebugView(props: DebugViewProps) {
     : props.anyActiveRuns
       ? t("settings.sandbox_stop_runs_hint")
       : "";
+  const canConfirmNuke = props.nukeConfirmationText.trim().toUpperCase() === "NUKE"
+    && !props.nukeConfigBusy
+    && !props.nukePreviewBusy;
+  const nukeDeletePaths = props.nukeManifestPreview?.deletePaths ?? [];
+  const nukePartitions = props.nukeManifestPreview?.partitions.join(", ") || "default";
 
   return (
+    <>
     <section className="space-y-6 max-w-3xl w-full">
       {/* Section: Runtime overview */}
       <div className={cardClass}>
@@ -1224,12 +1250,14 @@ export function DebugView(props: DebugViewProps) {
             <button
               type="button"
               className={compactDangerActionClass}
-              onClick={() => void props.onNukeOpenworkAndOpencodeConfig()}
-              disabled={props.busy || props.nukeConfigBusy}
+              onClick={() => void props.onOpenNukeDialog()}
+              disabled={props.busy || props.nukeConfigBusy || props.nukePreviewBusy}
             >
               <CircleAlert size={14} />
               {props.nukeConfigBusy
                 ? t("settings.removing_local_state")
+                : props.nukePreviewBusy
+                  ? t("settings.nuke_previewing")
                 : t("settings.delete_local_config")}
             </button>
             <div className="text-[12px] text-dls-secondary">{t("settings.nuke_hint")}</div>
@@ -1239,5 +1267,107 @@ export function DebugView(props: DebugViewProps) {
         </div>
       ) : null}
     </section>
+    <AlertDialog
+      open={props.nukeDialogOpen}
+      onOpenChange={(open) => {
+        if (!open) props.onCloseNukeDialog();
+      }}
+    >
+      <AlertDialogContent className="grid max-h-[calc(100dvh-2rem)] w-full max-w-2xl grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden sm:max-w-2xl">
+        <AlertDialogHeader>
+          <AlertDialogTitle>{t("settings.nuke_dialog_title")}</AlertDialogTitle>
+          <AlertDialogDescription>{t("settings.nuke_dialog_desc")}</AlertDialogDescription>
+        </AlertDialogHeader>
+
+        <div className="space-y-4 overflow-y-auto pr-1 text-sm">
+          <div className="rounded-xl border border-red-7/30 bg-red-3/10 p-3">
+            <div className="mb-2 text-[12px] font-semibold uppercase tracking-wider text-red-11">
+              {t("settings.nuke_deleted_title")}
+            </div>
+            <div className="max-h-40 overflow-auto rounded-lg bg-dls-sidebar/40 p-2 font-mono text-[11px] text-dls-text">
+              {nukeDeletePaths.length ? (
+                <ul className="space-y-1">
+                  {nukeDeletePaths.map((targetPath) => (
+                    <li key={targetPath} className="break-all">{targetPath}</li>
+                  ))}
+                </ul>
+              ) : (
+                <div>{t("settings.nuke_deleted_empty")}</div>
+              )}
+            </div>
+            <div className="mt-2 text-[11px] text-dls-secondary">
+              {t("settings.nuke_partitions", {
+                partitions: nukePartitions,
+              })}
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-dls-border bg-dls-sidebar/30 p-3">
+            <div className="mb-2 text-[12px] font-semibold uppercase tracking-wider text-dls-secondary">
+              {t("settings.nuke_survives_title")}
+            </div>
+            <ul className="list-disc space-y-1 pl-5 text-[12px] text-dls-secondary">
+              {props.nukePreserveBootstrap ? (
+                <li>
+                  {t("settings.nuke_survives_bootstrap", {
+                    path: props.nukeManifestPreview?.bootstrapPath ?? t("settings.nuke_no_bootstrap_path"),
+                  })}
+                </li>
+              ) : null}
+              <li>{t("settings.nuke_survives_app")}</li>
+              <li>{t("settings.nuke_survives_workspaces")}</li>
+            </ul>
+          </div>
+
+          <div className="flex items-center justify-between gap-4 rounded-xl border border-dls-border bg-dls-surface p-3">
+            <div className="min-w-0">
+              <div className="text-[13px] font-medium text-dls-text">
+                {t("settings.nuke_bootstrap_toggle_label")}
+              </div>
+              <div className="mt-1 break-all text-[11px] text-dls-secondary">
+                {t("settings.nuke_bootstrap_toggle_desc", {
+                  path: props.nukeManifestPreview?.bootstrapPath ?? t("settings.nuke_no_bootstrap_path"),
+                })}
+              </div>
+            </div>
+            <Switch
+              checked={props.nukePreserveBootstrap}
+              disabled={props.nukeConfigBusy || props.nukePreviewBusy}
+              onCheckedChange={(checked) => void props.onSetNukePreserveBootstrap(checked)}
+              aria-label={t("settings.nuke_bootstrap_toggle_label")}
+            />
+          </div>
+
+          <label className="block">
+            <span className="mb-1.5 block text-[13px] font-medium text-dls-text">
+              {t("settings.nuke_confirmation_label")}
+            </span>
+            <input
+              type="text"
+              value={props.nukeConfirmationText}
+              placeholder={t("settings.nuke_confirmation_placeholder")}
+              onChange={(event) => props.onSetNukeConfirmationText(event.currentTarget.value)}
+              disabled={props.nukeConfigBusy || props.nukePreviewBusy}
+              className="w-full rounded-xl border border-dls-border bg-dls-surface px-4 py-3 text-[14px] text-dls-text placeholder:text-dls-secondary focus:outline-none focus:ring-2 focus:ring-[rgba(var(--dls-accent-rgb),0.12)] disabled:cursor-not-allowed disabled:opacity-60"
+            />
+            <span className="mt-1.5 block text-[11px] text-dls-secondary">
+              {t("settings.nuke_confirmation_hint")}
+            </span>
+          </label>
+        </div>
+
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={props.nukeConfigBusy}>{t("settings.nuke_cancel")}</AlertDialogCancel>
+          <AlertDialogAction
+            variant="destructive"
+            onClick={() => void props.onConfirmNukeOpenworkAndOpencodeConfig()}
+            disabled={!canConfirmNuke}
+          >
+            {props.nukeConfigBusy ? t("settings.removing_local_state") : t("settings.nuke_confirm_button")}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+    </>
   );
 }

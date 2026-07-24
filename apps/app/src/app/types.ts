@@ -292,31 +292,6 @@ export type SkillCard = {
   connectCapabilityName?: string;
 };
 
-export type HubSkillRepo = {
-  owner: string;
-  repo: string;
-  ref: string;
-};
-
-export type HubSkillCard = {
-  name: string;
-  description?: string;
-  trigger?: string;
-  source: HubSkillRepo & {
-    path: string;
-  };
-};
-
-/** OpenWork Cloud (Den) org skill surfaced in the Skills catalog. */
-export type DenOrgSkillCard = {
-  id: string;
-  title: string;
-  description: string | null;
-  skillText: string;
-  shared: "org" | "public" | null;
-  updatedAt: string | null;
-};
-
 export type PluginInstallStep = {
   title: string;
   description: string;

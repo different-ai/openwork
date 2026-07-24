@@ -1,5 +1,6 @@
 import { StreamableHTTPTransport } from "@hono/mcp"
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
+import { eq } from "@openwork-ee/den-db/drizzle"
 import { createDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { afterAll, beforeAll, expect, mock, test } from "bun:test"
 import { Hono } from "hono"
@@ -98,9 +99,32 @@ function requestIdFromPayload(payload: unknown): string | number | null {
 
 function startFakeMcpServer(name: string, tools: FakeTool[], requiredBearer?: string): FakeMcpServer {
   const app = new Hono()
+  app.get("/.well-known/oauth-protected-resource/mcp", (c) => {
+    const origin = new URL(c.req.url).origin
+    return c.json({
+      resource: `${origin}/mcp`,
+      authorization_servers: [origin],
+    })
+  })
+  app.get("/.well-known/oauth-authorization-server", (c) => {
+    const origin = new URL(c.req.url).origin
+    return c.json({
+      issuer: origin,
+      authorization_endpoint: `${origin}/authorize`,
+      token_endpoint: `${origin}/token`,
+      response_types_supported: ["code"],
+      grant_types_supported: ["authorization_code", "refresh_token"],
+      code_challenge_methods_supported: ["S256"],
+    })
+  })
   app.all("/mcp", async (c) => {
     if (requiredBearer && c.req.header("authorization") !== `Bearer ${requiredBearer}`) {
-      return c.json({ error: "invalid_token" }, 401)
+      const origin = new URL(c.req.url).origin
+      return c.json(
+        { error: "invalid_token" },
+        401,
+        { "www-authenticate": `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp"` },
+      )
     }
     const server = new McpServer({ name, version: "1.0.0" })
     for (const tool of tools) {
@@ -232,6 +256,41 @@ function startProviderAuthorizationRequiredMcpServer(foreignOrigin?: string): Fa
     connectUrl,
     stop: () => server.stop(true),
   }
+}
+
+function startProviderDeclaredUnknownCodeMcpServer(): FakeMcpServer {
+  const app = new Hono()
+  app.all("/mcp", async (c) => {
+    const payload: unknown = await c.req.raw.clone().json().catch(() => null)
+    const method = isRecord(payload) ? payload.method : undefined
+    if (method === "tools/call") {
+      return c.json({
+        jsonrpc: "2.0",
+        id: requestIdFromPayload(payload),
+        error: {
+          code: -32050,
+          message: "Quota exceeded for tenant alpha.",
+          data: {
+            provider: "billing",
+            reason: "quota_exceeded",
+          },
+        },
+      })
+    }
+
+    const mcpServer = new McpServer({ name: "provider-declared-error", version: "1.0.0" })
+    mcpServer.registerTool(
+      "export_billing_report",
+      { description: "Export a billing report", inputSchema: z.object({}) },
+      async () => ({ content: textContent("export ok") }),
+    )
+    const transport = new StreamableHTTPTransport()
+    await mcpServer.connect(transport)
+    const response = await transport.handleRequest(c)
+    return response ?? new Response(null, { status: 204 })
+  })
+  const server = Bun.serve({ port: 0, fetch: app.fetch })
+  return { url: `http://127.0.0.1:${server.port}/mcp`, stop: () => server.stop(true) }
 }
 
 function startMutableSchemaMcpServer(): MutableSchemaMcpServer {
@@ -711,16 +770,14 @@ test("dead-url execution returns a structured connection diagnostic instead of t
   if (result.ok) throw new Error("Dead MCP execution unexpectedly succeeded")
   expect(result).toMatchObject({
     error: "connection_failed",
-    actionOwner: "network_admin",
-    diagnostic: {
-      phase: "NETWORK_TCP",
-      category: "network_failure",
-      code: "MCP_ECONNREFUSED",
-      actionOwner: "network_admin",
-    },
+    retryable: false,
   })
+  expect(typeof result.referenceId).toBe("string")
+  expect("diagnostic" in result).toBe(false)
+  expect("actionOwner" in result).toBe(false)
+  expect("operatorAction" in result).toBe(false)
   expect(result.message).toContain("Diagnostic reference")
-  if (!result.ok) expect(result.operatorAction).toBe(result.diagnostic?.operatorAction)
+  expect(result.message).toContain("Verify provider allowlists, firewall rules, proxy requirements, and service availability from Den.")
 })
 
 test("shared invalid_grant recovery cannot reuse the cleared in-memory refresh token", async () => {
@@ -846,16 +903,52 @@ test("MCP tool isError is surfaced as a provider failure, not transport success"
   if (result.ok) throw new Error("Provider isError unexpectedly returned success")
   expect(result).toMatchObject({
     error: "provider_error",
-    diagnostic: {
-      phase: "PROVIDER_EXECUTION",
-      category: "provider_tool_error",
-      code: "MCP_PROVIDER_TOOL_ERROR",
-      highestPassed: "protocol_ready",
-      providerRequestId: "sn-request-provider-error-123",
-      httpStatus: 200,
-    },
+    retryable: false,
   })
+  expect(typeof result.referenceId).toBe("string")
+  expect("diagnostic" in result).toBe(false)
+  expect("actionOwner" in result).toBe(false)
+  expect("operatorAction" in result).toBe(false)
   expect(result.message).not.toContain("internal detail")
+})
+
+test("provider-declared unknown JSON-RPC errors expose provider words without internal diagnostics", async () => {
+  const providerDeclaredErrorServer = startProviderDeclaredUnknownCodeMcpServer()
+  try {
+    const seed = await seedOrganization("provider-declared-json-rpc")
+    const connection = await createGrantedConnection(seed, {
+      name: "Billing MCP",
+      authType: "none",
+      credentialMode: "shared",
+      url: providerDeclaredErrorServer.url,
+    })
+    const result = await executeExternalCapability({
+      organizationId: seed.organizationId,
+      member: { orgMembershipId: seed.memberId, teamIds: [] },
+      connectionId: connection.id,
+      toolName: "export_billing_report",
+      args: {},
+      redirectUriBase,
+    })
+
+    expect(result.ok).toBe(false)
+    if (result.ok) throw new Error("Provider-declared JSON-RPC error unexpectedly returned success")
+    expect(result.error).toBe("provider_error")
+    expect(typeof result.referenceId).toBe("string")
+    expect(result.retryable).toBe(false)
+    expect(result.providerError).toMatchObject({
+      jsonRpcCode: -32050,
+      message: "Quota exceeded for tenant alpha.",
+    })
+    expect(result.providerError?.data).toContain("quota_exceeded")
+    expect(result.message).toContain("Look up the provider-declared JSON-RPC error code with the provider")
+    expect(result.message).toContain(`Diagnostic reference: ${result.referenceId}.`)
+    expect("diagnostic" in result).toBe(false)
+    expect("actionOwner" in result).toBe(false)
+    expect("operatorAction" in result).toBe(false)
+  } finally {
+    providerDeclaredErrorServer.stop()
+  }
 })
 
 test("standard MCP SDK invalid-argument tool errors become a corrective execution result", async () => {
@@ -881,14 +974,16 @@ test("standard MCP SDK invalid-argument tool errors become a corrective executio
     error: "invalid_capability_arguments",
     sameArgumentsRetryable: false,
     retry: { action: "correct_arguments", searchRequired: false },
-    diagnostic: {
-      phase: "MCP_TOOL_EXECUTION",
-      category: "mcp_tool_input_invalid",
-      code: "MCP_PROVIDER_INVALID_PARAMS",
-      actionOwner: "openwork",
-      retryable: false,
-    },
+    retryable: false,
   })
+  if (result.ok) throw new Error("Invalid argument rejection unexpectedly returned success")
+  expect(typeof result.referenceId).toBe("string")
+  expect(result.message).toContain("Diagnostic reference")
+  expect(result.message).toContain("Correct the tool arguments")
+  expect("diagnostic" in result).toBe(false)
+  expect("actionOwner" in result).toBe(false)
+  expect("operatorAction" in result).toBe(false)
+  expect(result.providerError).toBeUndefined()
   expect(JSON.stringify(result)).not.toContain("sensitive provider detail")
 })
 
@@ -914,17 +1009,15 @@ test("structured provider denial keeps connection health separate and names the 
   if (result.ok) throw new Error("Provider policy denial unexpectedly returned success")
   expect(result).toMatchObject({
     error: "provider_error",
-    actionOwner: "provider_admin",
-    diagnostic: {
-      phase: "PROVIDER_AUTHORIZATION",
-      category: "provider_policy_denied",
-      code: "MCP_PROVIDER_HTTP_403",
-      highestPassed: "protocol_ready",
-      actionOwner: "provider_admin",
-      providerRequestId: "provider-operation-403",
-    },
+    retryable: false,
   })
+  expect(typeof result.referenceId).toBe("string")
   expect(result.message).toContain("Diagnostic reference")
+  expect(result.message).toContain("Grant the provider role, ACL, or application permission required for this operation.")
+  expect("diagnostic" in result).toBe(false)
+  expect("actionOwner" in result).toBe(false)
+  expect("operatorAction" in result).toBe(false)
+  expect(result.providerError).toBeUndefined()
   expect(JSON.stringify(result)).not.toContain("Sensitive provider policy detail")
   expect(JSON.stringify(result)).not.toContain("sensitive_acl_code")
 })
@@ -953,14 +1046,9 @@ test("downstream provider authorization links are relayed as needs_connection", 
     if (result.ok) throw new Error("Provider authorization requirement unexpectedly returned success")
     expect(result).toMatchObject({
       error: "needs_connection",
-      actionOwner: "member",
-      diagnostic: {
-        phase: "PROVIDER_AUTHORIZATION",
-        category: "provider_authorization_required",
-        code: "MCP_PROVIDER_AUTH_REQUIRED",
-        actionOwner: "member",
-        retryable: false,
-        connectUrl: providerAuthServer.connectUrl,
+      retryable: false,
+      providerError: {
+        jsonRpcCode: -32001,
       },
       connectionStatus: {
         layer: "downstream_provider",
@@ -975,6 +1063,16 @@ test("downstream provider authorization links are relayed as needs_connection", 
         },
       },
     })
+    expect(typeof result.referenceId).toBe("string")
+    expect(result.providerError?.message).toContain("Authorization required")
+    expect(result.providerError?.data).toContain(providerAuthServer.connectUrl)
+    expect(result.message).toContain("Connect your account for this provider using its sign-in link, then retry this capability.")
+    expect(result.message).toContain(`Diagnostic reference: ${result.referenceId}.`)
+    expect("diagnostic" in result).toBe(false)
+    expect("actionOwner" in result).toBe(false)
+    expect("operatorAction" in result).toBe(false)
+    if (!result.connectionStatus) throw new Error("Provider authorization result omitted connectionStatus")
+    expect("diagnostic" in result.connectionStatus).toBe(false)
     expect(result.message.toLowerCase()).not.toContain("latency")
     expect(result.message.toLowerCase()).not.toContain("timeout")
   } finally {
@@ -1006,8 +1104,9 @@ test("foreign-origin downstream authorization links are dropped but still surfac
     if (result.ok) throw new Error("Provider authorization requirement unexpectedly returned success")
     expect(result).toMatchObject({
       error: "needs_connection",
-      diagnostic: {
-        code: "MCP_PROVIDER_AUTH_REQUIRED",
+      retryable: false,
+      providerError: {
+        jsonRpcCode: -32001,
       },
       connectionStatus: {
         layer: "downstream_provider",
@@ -1015,8 +1114,13 @@ test("foreign-origin downstream authorization links are dropped but still surfac
         action: { type: "connect", surface: "openwork_your_connections" },
       },
     })
-    expect(result.diagnostic?.connectUrl).toBeUndefined()
-    expect(result.connectionStatus?.diagnostic?.connectUrl).toBeUndefined()
+    expect(typeof result.referenceId).toBe("string")
+    expect(result.providerError?.message).toContain("Authorization required")
+    expect("diagnostic" in result).toBe(false)
+    expect("actionOwner" in result).toBe(false)
+    expect("operatorAction" in result).toBe(false)
+    if (!result.connectionStatus) throw new Error("Foreign provider authorization result omitted connectionStatus")
+    expect("diagnostic" in result.connectionStatus).toBe(false)
     expect(result.connectionStatus?.action.url).toBeUndefined()
     expect(result.message.toLowerCase()).not.toContain("latency")
     expect(result.message.toLowerCase()).not.toContain("timeout")
@@ -1115,15 +1219,10 @@ test("JSON-RPC initialize errors are not mislabeled as OAuth refresh failures", 
         surface: "provider_admin_console",
         retry: "search_capabilities",
       },
-      diagnostic: {
-        phase: "MCP_INITIALIZE",
-        category: "mcp_protocol_failure",
-        code: "MCP_MCP_INITIALIZE",
-        highestPassed: "reachable",
-        jsonRpcCode: -32603,
-      },
     },
   })
+  if (!matches[0]?.connectionStatus) throw new Error("Connection status missing for JSON-RPC initialize error")
+  expect("diagnostic" in matches[0].connectionStatus).toBe(false)
   expect(matches[0]?.hint).toContain("Diagnostic reference")
   expect(matches[0]?.hint).not.toContain("Reconnect")
   if (process.env.OPENWORK_EVAL_VERBOSE === "1") {
@@ -1137,17 +1236,20 @@ test("repairing a connector credential makes its live tools discoverable on retr
   const seed = await seedOrganization("repair-and-retry")
   const connection = await createGrantedConnection(seed, {
     name: "Team Chat",
-    authType: "oauth",
+    authType: "apikey",
     credentialMode: "shared",
     url: authedSlackServer.url,
+    apiKey: "expired-token",
   })
-  await saveExternalMcpTokens({ connectionId: connection.id, accessToken: "expired-token" })
 
   const beforeRepair = await search(seed, "team chat")
   expect(beforeRepair[0]?.kind).toBe("connection_status")
   expect(beforeRepair[0]?.status).toBe("error")
 
-  await saveExternalMcpTokens({ connectionId: connection.id, accessToken: "valid-key" })
+  await db
+    .update(schema.ExternalMcpConnectionTable)
+    .set({ apiKey: "valid-key" })
+    .where(eq(schema.ExternalMcpConnectionTable.id, connection.id))
   const afterRepair = await search(seed, "team chat")
 
   expect(afterRepair.some((match) => match.kind === "connection_status")).toBe(false)

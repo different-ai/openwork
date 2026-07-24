@@ -1,13 +1,18 @@
 declare const describe: (name: string, fn: () => void) => void;
 declare const test: (name: string, fn: () => void) => void;
-declare const expect: (value: unknown) => { toBe: (expected: unknown) => void };
+declare const expect: (value: unknown) => {
+  toBe: (expected: unknown) => void;
+  toEqual: (expected: unknown) => void;
+};
 
 import type {
   DenOrgLlmProvider,
   DenOrgLlmProviderModel,
 } from "../../../../app/lib/den";
 import type { CloudImportedProvider } from "../../../../app/cloud/import-state";
+import type { DenOrgLlmProviderConnection } from "../../../../app/lib/den";
 import {
+  buildCloudProviderConfig,
   getCloudManagedProviderId,
   getProviderModelIds,
   isCloudProviderOutOfSync,
@@ -79,5 +84,50 @@ describe("isCloudProviderOutOfSync", () => {
     );
 
     expect(isCloudProviderOutOfSync(liveProvider, importedFrom(baselineProvider))).toBe(true);
+  });
+});
+
+describe("buildCloudProviderConfig", () => {
+  test("omits empty models for openwork so catalog models can remain", () => {
+    const provider: DenOrgLlmProviderConnection = {
+      id: "lpr_openwork",
+      source: "openwork",
+      providerId: "openwork",
+      name: "OpenWork Models",
+      providerConfig: {
+        npm: "@openrouter/ai-sdk-provider",
+        api: "https://inference.openworklabs.com/api/v1",
+        env: ["OPENWORK_API_KEY"],
+      },
+      hasApiKey: true,
+      models: [],
+      createdAt: "2024-01-01T00:00:00.000Z",
+      updatedAt: UPDATED_AT,
+      apiKey: "ow_inf_test",
+      apiKeys: null,
+    };
+
+    const config = buildCloudProviderConfig(provider);
+    expect(config.models).toBe(undefined);
+    expect(config.name).toBe("OpenWork Models");
+  });
+
+  test("keeps an empty models map for non-openwork cloud providers", () => {
+    const provider: DenOrgLlmProviderConnection = {
+      id: "lpr_custom",
+      source: "custom",
+      providerId: "openrouter",
+      name: "OpenRouter",
+      providerConfig: { env: ["OPENROUTER_API_KEY"] },
+      hasApiKey: true,
+      models: [],
+      createdAt: "2024-01-01T00:00:00.000Z",
+      updatedAt: UPDATED_AT,
+      apiKey: "sk-test",
+      apiKeys: null,
+    };
+
+    const config = buildCloudProviderConfig(provider);
+    expect(config.models).toEqual({});
   });
 });

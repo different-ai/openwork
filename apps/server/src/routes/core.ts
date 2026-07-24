@@ -7,6 +7,8 @@ import {
   googleWorkspaceStatusConnectExtra,
   writeConnectState,
 } from "../connect-state.js";
+import type { CloudMcpLiveStatusObserver } from "../cloud-mcp-health.js";
+import { readOpenWorkConnectSkillCatalog, renderOpenWorkConnectSkillInstruction } from "../connect-skill-catalog.js";
 import { EnvStoreReadError, InvalidEnvKeyError, isValidEnvKey, type EnvService } from "../env-file.js";
 import { ApiError } from "../errors.js";
 import {
@@ -55,6 +57,7 @@ interface RegisterCoreRoutesOptions {
   resolveWorkspace: (config: ServerConfig, id: string) => Promise<WorkspaceInfo>;
   resolveOpencodeDirectory: (workspace: WorkspaceInfo) => string | null;
   createWorkspaceOpencodeClient: (config: ServerConfig, workspace: WorkspaceInfo) => WorkspaceOpencodeClient;
+  refreshRegistrationFromLiveStatus?: CloudMcpLiveStatusObserver;
   serializeWorkspace: (workspace: ServerConfig["workspaces"][number]) => unknown;
   resolveToyUiEnabled: () => boolean;
   resolveDevLogPath: () => string | null;
@@ -112,6 +115,7 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
     resolveWorkspace,
     resolveOpencodeDirectory,
     createWorkspaceOpencodeClient,
+    refreshRegistrationFromLiveStatus,
     serializeWorkspace,
     resolveToyUiEnabled,
     resolveDevLogPath,
@@ -123,6 +127,7 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
   const connectSnapshotBaseOptions = {
     resolveOpencodeDirectory,
     createWorkspaceOpencodeClient,
+    refreshRegistrationFromLiveStatus,
     serverMetadata: { serverVersion, expectedOpencodeVersion: opencodeVersion },
   };
 
@@ -315,6 +320,17 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
       ok: true,
       schemaVersion: 1,
       ...(await getConnectSnapshot(config, { ...connectSnapshotBaseOptions, ...connectSnapshotOptionsFromQuery(ctx.url) })),
+    });
+  });
+
+  addRoute(routes, "GET", "/experimental/connect/skills", "client", async (_ctx) => {
+    // Connect skills are server/account-scoped (openwork-cloud on the host), not per-workspace.
+    const skills = await readOpenWorkConnectSkillCatalog(config);
+    return jsonResponse({
+      ok: true,
+      schemaVersion: 1,
+      skills,
+      instruction: renderOpenWorkConnectSkillInstruction(skills),
     });
   });
 

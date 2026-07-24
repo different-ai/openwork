@@ -29,8 +29,14 @@ import {
 } from "./computer-use.mjs";
 import { createUiControlServer } from "./ui-control-server.mjs";
 import { createApplicationMenu } from "./app-menu.mjs";
+import { applyBrandAppName } from "./brand-app-name.mjs";
 import { createBrowserPanel } from "./browser-panel.mjs";
 import { createWorkspaceStore } from "./workspace-store.mjs";
+import {
+  buildNukeManifest,
+  executeNukeFreshStart,
+  runPendingNukeCleanup,
+} from "./nuke.mjs";
 import {
   createConnectLinkReplayGuard,
   extractConnectExchange,
@@ -871,6 +877,7 @@ function envFlagEnabled(name) {
 const IDLE_ENGINE_INFO = Object.freeze({
   running: false,
   runtime: "direct",
+  managedByServer: false,
   baseUrl: null,
   projectDir: null,
   hostname: null,
@@ -1708,10 +1715,23 @@ const desktopCommandHandlers = {
       const config = await persistConnectLinkClaims(verified.claims);
       return { ok: true, config };
   },
+  "nukeOpenworkAndOpencodeConfigPreview": async (event, ...args) => {
+      return buildNukeManifest({
+        env: process.env,
+        homedir: os.homedir(),
+        platform: process.platform,
+        preserveBootstrap: args[0]?.preserveBootstrap !== false,
+        userDataPath: app.getPath("userData"),
+      });
+  },
   "nukeOpenworkAndOpencodeConfigAndExit": async (event, ...args) => {
-      await rm(app.getPath("userData"), { recursive: true, force: true });
-      app.exit(0);
-      return undefined;
+      return executeNukeFreshStart({
+        app,
+        session,
+        runtimeManager,
+        uiControlServer,
+        removeWindowsBrandShortcut,
+      }, { preserveBootstrap: args[0]?.preserveBootstrap !== false });
   },
   "orchestratorStartDetached": async (event, ...args) => {
       return runtimeManager.orchestratorStartDetached(args[0] ?? {});
@@ -1909,10 +1929,15 @@ const desktopCommandHandlers = {
       }
   },
   "__applyBrandAppName": async (event, ...args) => {
-      const requested = args[0] === null ? "" : String(args[0] ?? "").trim();
-      currentDisplayAppName = requested.slice(0, 64) || APP_NAME;
-    applicationMenu.setAppName(currentDisplayAppName);
-    mainWindow?.setTitle(currentDisplayAppName);
+    currentDisplayAppName = applyBrandAppName(args[0], {
+      fallbackName: APP_NAME,
+      platform: process.platform,
+      updateElectronAppName: process.platform === "darwin",
+      runtimeProcess: process,
+      app,
+      applicationMenu,
+      window: mainWindow,
+    });
     if (process.platform === "win32") {
       await registerWindowsDisplayShortcut();
     }
@@ -2277,6 +2302,9 @@ async function createMainWindow() {
   return mainWindow;
 }
 
+ipcMain.on("openwork:desktop-bootstrap-sync", (event) => {
+  event.returnValue = workspaceStore.readDesktopBootstrapConfigSync();
+});
 ipcMain.handle("openwork:desktop", handleDesktopInvoke);
 ipcMain.handle("openwork:shell:openExternal", async (_event, url) => {
   if (typeof url !== "string" || url.trim().length === 0) {
@@ -2385,11 +2413,24 @@ if (!app.requestSingleInstanceLock()) {
 
   app.whenReady().then(async () => {
     installMediaPermissionHandlers(session, () => mainWindow);
+    await runPendingNukeCleanup({
+      env: process.env,
+      homedir: os.homedir(),
+      platform: process.platform,
+      userDataPath: app.getPath("userData"),
+    }).catch((error) => {
+      console.warn("[nuke] pending cleanup failed", error);
+    });
     await workspaceStore.importBundledDesktopBootstrapConfigIfPreferred();
     const bootstrapConfig = await workspaceStore.getDesktopBootstrapConfig();
-    currentDisplayAppName = bootstrapConfig.brandAppName?.slice(0, 64) || APP_NAME;
-    app.setName(currentDisplayAppName);
-    applicationMenu.setAppName(currentDisplayAppName);
+    currentDisplayAppName = applyBrandAppName(bootstrapConfig.brandAppName, {
+      fallbackName: APP_NAME,
+      platform: process.platform,
+      updateElectronAppName: true,
+      runtimeProcess: process,
+      app,
+      applicationMenu,
+    });
     if (process.platform === "win32") {
       await registerWindowsDisplayShortcut();
     }

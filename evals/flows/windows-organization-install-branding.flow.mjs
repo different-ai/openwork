@@ -6,7 +6,7 @@ import {
 import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
 
 const vo = await loadVoiceoverParagraphs("windows-organization-install-branding");
-const BUNDLE_DIR = "C:\\Users\\Administrator\\Downloads\\BlueYonder";
+const BUNDLE_DIR = "C:\\Users\\Administrator\\Downloads\\Northwind";
 const INSTALLER = `${BUNDLE_DIR}\\openwork-win-x64-0.17.20.exe`;
 const START_MENU = "C:\\Users\\Administrator\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs";
 const CONFIG = "C:\\Users\\Administrator\\AppData\\Local\\openwork\\desktop-bootstrap.json";
@@ -87,8 +87,8 @@ export default {
         await ctx.prove("First launch imports the organization bootstrap before showing the branded window", {
           voiceover: vo[1],
           action: async () => {
-            await windowsExec(ctx, "install Blue Yonder", `
-$cmd = 'C:\\ow\\install-blue-yonder-proof.cmd'
+            await windowsExec(ctx, "install Northwind", `
+$cmd = 'C:\\ow\\install-northwind-proof.cmd'
 [IO.File]::WriteAllLines($cmd, @('@echo off', '${INSTALLER} /S'))
 schtasks /create /tn OWBrandProofInstall /tr $cmd /sc once /st 00:00 /ru Administrator /it /rl HIGHEST /f | Out-Null
 schtasks /run /tn OWBrandProofInstall | Out-Null
@@ -107,15 +107,15 @@ $config = Get-Content '${CONFIG}' -Raw | ConvertFrom-Json
 [pscustomobject]@{
   AppName = $config.brandAppName
   BaseUrl = $config.baseUrl
-  Shortcut = Test-Path '${START_MENU}\\Blue Yonder.lnk'
+  Shortcut = Test-Path '${START_MENU}\\Northwind.lnk'
   StaleShortcut = Test-Path '${START_MENU}\\OpenWork.lnk'
 } | ConvertTo-Json
 `);
-            ctx.assert(result.includes('"AppName":  "Blue Yonder"'), result);
-            ctx.assert(result.includes('"BaseUrl":  "https://onprem.blueyonder.test"'), result);
+            ctx.assert(result.includes('"AppName":  "Northwind"'), result);
+            ctx.assert(result.includes('"BaseUrl":  "https://onprem.northwind.test"'), result);
             ctx.assert(result.includes('"Shortcut":  true') && result.includes('"StaleShortcut":  false'), result);
           },
-          screenshot: { name: "blue-yonder-first-window", sandboxCapture: "computer-use" },
+          screenshot: { name: "northwind-first-window", sandboxCapture: "computer-use" },
         });
       },
     },
@@ -127,19 +127,19 @@ $config = Get-Content '${CONFIG}' -Raw | ConvertFrom-Json
           action: async () => {
             await daytonaComputerUsePress(sandboxId(ctx), "cmd");
             await new Promise((resolve) => setTimeout(resolve, 500));
-            await daytonaComputerUseType(sandboxId(ctx), "Blue Yonder");
+            await daytonaComputerUseType(sandboxId(ctx), "Northwind");
             await new Promise((resolve) => setTimeout(resolve, 1_500));
           },
           assert: async () => {
             const result = await windowsExec(ctx, "inspect branded shortcut", `
 $shell = New-Object -ComObject WScript.Shell
-$link = $shell.CreateShortcut('${START_MENU}\\Blue Yonder.lnk')
+$link = $shell.CreateShortcut('${START_MENU}\\Northwind.lnk')
 [pscustomobject]@{ Target = $link.TargetPath; TargetExists = Test-Path $link.TargetPath; Icon = $link.IconLocation } | ConvertTo-Json
 `);
             ctx.assert(result.includes('"TargetExists":  true'), result);
             ctx.assert(result.includes("brand-icon.ico"), result);
           },
-          screenshot: { name: "blue-yonder-windows-search", sandboxCapture: "computer-use" },
+          screenshot: { name: "northwind-windows-search", sandboxCapture: "computer-use" },
         });
       },
     },
@@ -151,11 +151,11 @@ $link = $shell.CreateShortcut('${START_MENU}\\Blue Yonder.lnk')
           action: async () => {
             await windowsExec(ctx, "prepare newer managed config", `
 $config = Get-Content '${CONFIG}' -Raw | ConvertFrom-Json
-$config.baseUrl = 'https://existing-onprem.blueyonder.test'
-$config.apiBaseUrl = 'https://api.existing-onprem.blueyonder.test'
+$config.baseUrl = 'https://existing-onprem.northwind.test'
+$config.apiBaseUrl = 'https://api.existing-onprem.northwind.test'
 $config.writtenAt = (Get-Date).ToUniversalTime().AddMinutes(5).ToString('o')
 [IO.File]::WriteAllText('${CONFIG}', ($config | ConvertTo-Json), (New-Object Text.UTF8Encoding($false)))
-Remove-Item '${START_MENU}\\Blue Yonder.lnk' -Force
+Remove-Item '${START_MENU}\\Northwind.lnk' -Force
 Get-Process OpenWork -ErrorAction SilentlyContinue | Stop-Process -Force
 `);
             await launchInstalledApp(ctx);
@@ -163,12 +163,12 @@ Get-Process OpenWork -ErrorAction SilentlyContinue | Stop-Process -Force
           assert: async () => {
             const result = await windowsExec(ctx, "inspect upgrade convergence", `
 $config = Get-Content '${CONFIG}' -Raw | ConvertFrom-Json
-[pscustomobject]@{ BaseUrl = $config.baseUrl; Shortcut = Test-Path '${START_MENU}\\Blue Yonder.lnk'; Stale = Test-Path '${START_MENU}\\OpenWork.lnk' } | ConvertTo-Json
+[pscustomobject]@{ BaseUrl = $config.baseUrl; Shortcut = Test-Path '${START_MENU}\\Northwind.lnk'; Stale = Test-Path '${START_MENU}\\OpenWork.lnk' } | ConvertTo-Json
 `);
-            ctx.assert(result.includes('"BaseUrl":  "https://existing-onprem.blueyonder.test"'), result);
+            ctx.assert(result.includes('"BaseUrl":  "https://existing-onprem.northwind.test"'), result);
             ctx.assert(result.includes('"Shortcut":  true') && result.includes('"Stale":  false'), result);
           },
-          screenshot: { name: "blue-yonder-after-upgrade", sandboxCapture: "computer-use" },
+          screenshot: { name: "northwind-after-upgrade", sandboxCapture: "computer-use" },
         });
       },
     },
@@ -178,9 +178,9 @@ $config = Get-Content '${CONFIG}' -Raw | ConvertFrom-Json
         await ctx.prove("Uninstall removes the managed organization shortcut without leaving stale OpenWork entries", {
           voiceover: vo[4],
           action: async () => {
-            await windowsExec(ctx, "uninstall Blue Yonder", `
+            await windowsExec(ctx, "uninstall Northwind", `
 Get-Process OpenWork -ErrorAction SilentlyContinue | Stop-Process -Force
-$cmd = 'C:\\ow\\uninstall-blue-yonder-proof.cmd'
+$cmd = 'C:\\ow\\uninstall-northwind-proof.cmd'
 [IO.File]::WriteAllLines($cmd, @('@echo off', '"C:\\Users\\Administrator\\AppData\\Local\\Programs\\@openworkdesktop\\Uninstall OpenWork.exe" /S'))
 schtasks /create /tn OWBrandProofUninstall /tr $cmd /sc once /st 00:00 /ru Administrator /it /rl HIGHEST /f | Out-Null
 schtasks /run /tn OWBrandProofUninstall | Out-Null
@@ -188,17 +188,17 @@ Start-Sleep -Seconds 15
 `);
             await daytonaComputerUsePress(sandboxId(ctx), "cmd");
             await new Promise((resolve) => setTimeout(resolve, 500));
-            await daytonaComputerUseType(sandboxId(ctx), "Blue Yonder");
+            await daytonaComputerUseType(sandboxId(ctx), "Northwind");
           },
           assert: async () => {
             const result = await windowsExec(ctx, "inspect uninstall cleanup", `
 [pscustomobject]@{
-  BlueYonder = Test-Path '${START_MENU}\\Blue Yonder.lnk'
+  Northwind = Test-Path '${START_MENU}\\Northwind.lnk'
   OpenWork = Test-Path '${START_MENU}\\OpenWork.lnk'
   Marker = Test-Path 'C:\\Users\\Administrator\\AppData\\Roaming\\com.differentai.openwork\\windows-brand-shortcut.txt'
 } | ConvertTo-Json
 `);
-            ctx.assert(result.includes('"BlueYonder":  false'), result);
+            ctx.assert(result.includes('"Northwind":  false'), result);
             ctx.assert(result.includes('"OpenWork":  false'), result);
             ctx.assert(result.includes('"Marker":  false'), result);
           },

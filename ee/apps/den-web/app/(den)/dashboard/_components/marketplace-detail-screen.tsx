@@ -1,12 +1,14 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useMemo, useRef, useState, useEffect } from "react";
-import { ArrowLeft, Check, ChevronDown, GitBranch, Github, Globe, Loader2, Plug, Plus, Puzzle, Users, X } from "lucide-react";
+import { ArrowLeft, Check, ChevronDown, GitBranch, Github, Globe, Loader2, MoreHorizontal, Pencil, Plug, Plus, Puzzle, Trash2, Users, X } from "lucide-react";
 import { PaperMeshGradient, StaticSeededGradient } from "@openwork/ui/react";
 import { buttonVariants, DenButton } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
 import { DenSelect } from "../../_components/ui/select";
+import { DenTextarea } from "../../_components/ui/textarea";
 import { type TabItem, UnderlineTabs } from "../../_components/ui/tabs";
 import {
   getGithubIntegrationSetupRoute,
@@ -23,10 +25,12 @@ import {
   type MarketplacePluginCloudReadinessState,
   type MarketplacePluginSummary,
   useConfigurePluginMcpConnection,
+  useDeleteMarketplace,
   useGrantMarketplaceAccess,
   useMarketplace,
   useMarketplaceAccess,
   useRevokeMarketplaceAccess,
+  useUpdateMarketplace,
 } from "./marketplace-data";
 import { IntegrationIcon } from "./integration-icon";
 import { McpCredentialInput } from "./mcp-credential-input";
@@ -78,11 +82,17 @@ function authTypeFromSelect(value: string): ExternalMcpAuthType {
 }
 
 export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: string }) {
+  const router = useRouter();
   const { orgContext, orgSlug } = useOrgDashboard();
   const { data, isLoading, error, refetch } = useMarketplace(marketplaceId);
   const { data: presets = [] } = useMcpConnectionPresets();
   const [setupTarget, setSetupTarget] = useState<PluginMcpSetupTarget | null>(null);
   const [activeTab, setActiveTab] = useState<MarketplaceDetailTab>("plugins");
+  const [actionsOpen, setActionsOpen] = useState(false);
+  const [editMarketplace, setEditMarketplace] = useState<{ name: string; description: string | null } | null>(null);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const actionsRef = useRef<HTMLDivElement | null>(null);
+  const deleteMarketplace = useDeleteMarketplace();
   const authorization = useMcpAccountAuthorization(() => {
     void refetch();
   });
@@ -101,6 +111,17 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
         .map((connection) => ({ plugin, connection })) ?? []
     )) ?? []
   ), [access.isAdmin, data]);
+
+  useEffect(() => {
+    if (!actionsOpen) return;
+    function handlePointerDown(event: MouseEvent) {
+      if (actionsRef.current && !event.composedPath().includes(actionsRef.current)) {
+        setActionsOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
+  }, [actionsOpen]);
 
   if (isLoading && !data) {
     return (
@@ -123,6 +144,16 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
   }
 
   const { marketplace, plugins, source } = data;
+  async function handleDeleteMarketplace() {
+    try {
+      await deleteMarketplace.mutateAsync(marketplace.id);
+      setDeleteOpen(false);
+      router.push(getMarketplacesRoute(orgSlug));
+      router.refresh();
+    } catch {
+      // The mutation error is rendered below the action.
+    }
+  }
   const tabs: readonly TabItem<MarketplaceDetailTab>[] = [
     { value: "plugins", label: "Plugins", icon: Puzzle },
     { value: "members", label: "Members", icon: Users },
@@ -139,6 +170,56 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
           <ArrowLeft className="h-4 w-4" />
           Back
         </Link>
+        {access.isAdmin && marketplace.canDelete ? (
+          <div ref={actionsRef} className="relative">
+            <button
+              type="button"
+              onClick={() => setActionsOpen((current) => !current)}
+              className="flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-500 transition hover:border-gray-300 hover:bg-gray-50 hover:text-gray-900"
+              aria-label={`More actions for ${marketplace.name}`}
+              aria-haspopup="menu"
+              aria-expanded={actionsOpen}
+              data-testid="marketplace-actions-trigger"
+            >
+              <MoreHorizontal className="h-4 w-4" aria-hidden />
+            </button>
+            {actionsOpen ? (
+              <div
+                role="menu"
+                aria-label={`Actions for ${marketplace.name}`}
+                className="absolute right-0 top-10 z-30 w-44 overflow-hidden rounded-2xl border border-gray-100 bg-white p-1.5 text-[13px] shadow-xl shadow-gray-900/10"
+              >
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setActionsOpen(false);
+                    setEditMarketplace({ name: marketplace.name, description: marketplace.description });
+                  }}
+                  className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-gray-600 transition hover:bg-gray-50 hover:text-gray-900"
+                >
+                  <Pencil className="h-3.5 w-3.5" aria-hidden />
+                  Edit
+                </button>
+                <div className="my-1 border-t border-gray-100" />
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setActionsOpen(false);
+                    deleteMarketplace.reset();
+                    setDeleteOpen(true);
+                  }}
+                  className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-red-600 transition hover:bg-red-50"
+                  data-testid="delete-marketplace-action"
+                >
+                  <Trash2 className="h-3.5 w-3.5" aria-hidden />
+                  Delete
+                </button>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </div>
 
       <article className="overflow-hidden rounded-2xl border border-gray-100 bg-white">
@@ -287,6 +368,185 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
         presets={presets}
         onClose={() => setSetupTarget(null)}
       />
+      {editMarketplace ? (
+        <EditMarketplaceDialog
+          marketplaceId={marketplace.id}
+          initialName={editMarketplace.name}
+          initialDescription={editMarketplace.description}
+          onClose={() => setEditMarketplace(null)}
+          onSaved={() => {
+            setEditMarketplace(null);
+            void refetch();
+          }}
+        />
+      ) : null}
+      <DeleteMarketplaceDialog
+        open={deleteOpen}
+        marketplaceName={marketplace.name}
+        busy={deleteMarketplace.isPending}
+        error={deleteMarketplace.error}
+        onClose={() => {
+          if (!deleteMarketplace.isPending) setDeleteOpen(false);
+        }}
+        onConfirm={() => void handleDeleteMarketplace()}
+      />
+    </div>
+  );
+}
+
+function EditMarketplaceDialog({
+  marketplaceId,
+  initialName,
+  initialDescription,
+  onClose,
+  onSaved,
+}: {
+  marketplaceId: string;
+  initialName: string;
+  initialDescription: string | null;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const updateMarketplace = useUpdateMarketplace();
+  const [name, setName] = useState(initialName);
+  const [description, setDescription] = useState(initialDescription ?? "");
+  const trimmedName = name.trim();
+  const trimmedDescription = description.trim();
+  const unchanged = trimmedName === initialName && trimmedDescription === (initialDescription ?? "");
+
+  async function handleSave() {
+    try {
+      await updateMarketplace.mutateAsync({
+        marketplaceId,
+        name: trimmedName,
+        description: trimmedDescription || null,
+      });
+      onSaved();
+    } catch {
+      // The mutation error is rendered in the dialog.
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-6"
+      onClick={updateMarketplace.isPending ? undefined : onClose}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="edit-marketplace-title"
+        className="w-full max-w-[440px] rounded-2xl border border-gray-100 bg-white p-6 shadow-[0_24px_60px_-24px_rgba(15,23,42,0.4)]"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <h2 id="edit-marketplace-title" className="text-[16px] font-semibold tracking-[-0.01em] text-gray-950">
+          Edit marketplace
+        </h2>
+        <p className="mt-1 text-[13px] leading-6 text-gray-500">
+          Update how this marketplace appears to your organization.
+        </p>
+
+        <label className="mt-4 block">
+          <span className="mb-1.5 block text-[12px] font-medium text-gray-700">Name</span>
+          <DenInput
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            disabled={updateMarketplace.isPending}
+            data-testid="marketplace-edit-name"
+            autoFocus
+          />
+        </label>
+        <label className="mt-3 block">
+          <span className="mb-1.5 block text-[12px] font-medium text-gray-700">Description (optional)</span>
+          <DenTextarea
+            value={description}
+            onChange={(event) => setDescription(event.target.value)}
+            disabled={updateMarketplace.isPending}
+            rows={3}
+            data-testid="marketplace-edit-description"
+          />
+        </label>
+
+        {updateMarketplace.error ? (
+          <p className="mt-3 text-[12.5px] text-red-600">
+            {updateMarketplace.error instanceof Error ? updateMarketplace.error.message : "Failed to update marketplace."}
+          </p>
+        ) : null}
+
+        <div className="mt-5 flex items-center justify-end gap-2">
+          <DenButton variant="secondary" onClick={onClose} disabled={updateMarketplace.isPending}>
+            Cancel
+          </DenButton>
+          <DenButton
+            loading={updateMarketplace.isPending}
+            disabled={!trimmedName || unchanged}
+            onClick={() => void handleSave()}
+            data-testid="marketplace-edit-save"
+          >
+            Save changes
+          </DenButton>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DeleteMarketplaceDialog({
+  open,
+  marketplaceName,
+  busy,
+  error,
+  onClose,
+  onConfirm,
+}: {
+  open: boolean;
+  marketplaceName: string;
+  busy: boolean;
+  error: unknown;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-6" onClick={busy ? undefined : onClose}>
+      <div
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="delete-marketplace-title"
+        aria-describedby="delete-marketplace-description"
+        className="w-full max-w-md rounded-[28px] border border-gray-200 bg-white p-6 shadow-[0_24px_80px_-32px_rgba(15,23,42,0.45)]"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-start gap-3">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-red-50 text-red-600">
+            <Trash2 className="h-5 w-5" aria-hidden />
+          </div>
+          <div className="min-w-0 flex-1">
+            <h2 id="delete-marketplace-title" className="text-[18px] font-semibold tracking-[-0.02em] text-gray-950">
+              Delete {marketplaceName}?
+            </h2>
+            <p id="delete-marketplace-description" className="mt-1 text-[13px] leading-6 text-gray-600">
+              This action cannot be undone.
+            </p>
+          </div>
+        </div>
+
+        {error ? (
+          <p className="mt-4 rounded-xl bg-red-50 px-3 py-2 text-[12.5px] text-red-600">
+            {error instanceof Error ? error.message : "Failed to delete marketplace."}
+          </p>
+        ) : null}
+
+        <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          <DenButton variant="secondary" onClick={onClose} disabled={busy}>
+            Cancel
+          </DenButton>
+          <DenButton variant="destructive" icon={Trash2} loading={busy} onClick={onConfirm} data-testid="confirm-delete-marketplace">
+            Delete marketplace
+          </DenButton>
+        </div>
+      </div>
     </div>
   );
 }

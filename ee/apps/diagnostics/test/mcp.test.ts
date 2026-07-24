@@ -5,8 +5,20 @@ import {
   EGRESS_DIAGNOSTIC_STEP_HEADER,
 } from "@openwork/types/den/egress-diagnostics"
 import { randomUUID } from "node:crypto"
+import { GET as completeMockAuthorization } from "../app/mcp/mock-auth/route"
+import { mcpAuthorizationSubject } from "../src/auth"
 import { clearWireHistory, listWireHistory, recordWireExchange } from "../src/history-store"
-import { handleMcpRequest } from "../src/mcp"
+import {
+  handleMcpRequest,
+  mockAuthorizationToolName,
+  resetMockAuthorizationToolName,
+} from "../src/mcp"
+import {
+  authorizeMockSubject,
+  mockAuthorizationLifetimeMs,
+  mockSubjectIsAuthorized,
+  resetMockAuthorization,
+} from "../src/mock-authorization"
 import { createDiagnosticRunSignature } from "../src/run-correlation"
 import { createWireExchange } from "../src/wire"
 import { createAccessToken, createSessionToken, verifyAccessToken, verifySessionToken } from "../src/session"
@@ -35,6 +47,36 @@ function mcpRequest(body: unknown, headers: Readonly<Record<string, string>> = {
     },
     method: "POST",
   })
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function mockAuthorizationSubject(): string {
+  const subject = mcpAuthorizationSubject(
+    mcpRequest({}),
+    "OpenWorkDiagnosticsToken!",
+    "local-diagnostics-signing-secret-change-me",
+  )
+  if (!subject) throw new Error("Expected a mock authorization subject")
+  return subject
+}
+
+async function initializeMcpSession(id: number): Promise<string> {
+  const body = { id, jsonrpc: "2.0", method: "initialize", params: { protocolVersion: "2025-11-25" } }
+  const initialized = await handleMcpRequest(mcpRequest(body), JSON.stringify(body))
+  const session = initialized.response.headers.get("mcp-session-id")
+  if (!session) throw new Error("Expected an MCP session")
+  return session
+}
+
+async function callMcpTool(id: number, session: string, name: string) {
+  const body = { id, jsonrpc: "2.0", method: "tools/call", params: { arguments: {}, name } }
+  return await handleMcpRequest(mcpRequest(body, {
+    "mcp-protocol-version": "2025-11-25",
+    "mcp-session-id": session,
+  }), JSON.stringify(body))
 }
 
 describe("OpenWork Diagnostics MCP endpoint", () => {
@@ -81,6 +123,54 @@ describe("OpenWork Diagnostics MCP endpoint", () => {
     }), JSON.stringify({ id: 3, jsonrpc: "2.0", method: "tools/call", params: { arguments: { query: "customer confidential content" } } }))
     expect(tool.response.status).toBe(200)
     expect(tool.body).not.toContain("customer confidential content")
+  })
+
+  test("returns a browser verification link, survives reconnect, resets, and expires after five minutes", async () => {
+    const subject = mockAuthorizationSubject()
+    await resetMockAuthorization(subject)
+
+    const firstSession = await initializeMcpSession(10)
+    const catalogBody = { id: 11, jsonrpc: "2.0", method: "tools/list", params: {} }
+    const catalog = await handleMcpRequest(mcpRequest(catalogBody, {
+      "mcp-protocol-version": "2025-11-25",
+      "mcp-session-id": firstSession,
+    }), JSON.stringify(catalogBody))
+    expect(catalog.body).toContain(mockAuthorizationToolName)
+    expect(catalog.body).toContain(resetMockAuthorizationToolName)
+
+    const required = await callMcpTool(12, firstSession, mockAuthorizationToolName)
+    const envelope: unknown = JSON.parse(required.body)
+    if (!isRecord(envelope) || !isRecord(envelope.error) || !isRecord(envelope.error.data)) {
+      throw new Error("Expected an authorization-required JSON-RPC error")
+    }
+    expect(envelope.error.code).toBe(-32001)
+    expect(envelope.error.data.provider).toBe("openwork-diagnostics")
+    const connectUrl = envelope.error.data.connect_url
+    expect(typeof connectUrl).toBe("string")
+    if (typeof connectUrl !== "string") throw new Error("Expected a mock authorization link")
+    expect(connectUrl).toStartWith("http://localhost:3010/mcp/mock-auth?challenge=")
+
+    const verified = await completeMockAuthorization(new Request(connectUrl))
+    expect(verified.status).toBe(200)
+    expect(await verified.text()).toContain("Return to OpenWork")
+
+    // A fresh MCP session models the reconnect/retry performed after the
+    // browser action. Authorization is bound to the synthetic bearer identity,
+    // not the disposable MCP session id.
+    const reconnectedSession = await initializeMcpSession(13)
+    const authorized = await callMcpTool(14, reconnectedSession, mockAuthorizationToolName)
+    expect(authorized.body).toContain('"authorized":true')
+
+    const reset = await callMcpTool(15, reconnectedSession, resetMockAuthorizationToolName)
+    expect(reset.body).toContain('"reset":true')
+    const requiredAgain = await callMcpTool(16, reconnectedSession, mockAuthorizationToolName)
+    expect(requiredAgain.body).toContain('"code":-32001')
+
+    const now = 1_000_000
+    await authorizeMockSubject(subject, now)
+    expect(await mockSubjectIsAuthorized(subject, now + mockAuthorizationLifetimeMs - 1)).toBe(true)
+    expect(await mockSubjectIsAuthorized(subject, now + mockAuthorizationLifetimeMs)).toBe(false)
+    await resetMockAuthorization(subject)
   })
 
   test("returns specific transport errors instead of a generic connection failure", async () => {

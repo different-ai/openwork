@@ -21,6 +21,7 @@ import { createRequestAccessLogMiddleware, createTelemetryErrorSanitizerMiddlewa
 import { registerAdminRoutes } from "./routes/admin/index.js"
 import { registerAuthRoutes } from "./routes/auth/index.js"
 import { registerBootstrapRoutes } from "./routes/bootstrap/index.js"
+import { registerDeprecatedSkillHubRoutes } from "./routes/deprecated-skill-hubs.js"
 import { registerDevRoutes } from "./routes/dev/index.js"
 import { registerMcpTokenRoutes } from "./routes/mcp/index.js"
 import { registerMemoryRoutes } from "./routes/memory/index.js"
@@ -170,6 +171,7 @@ app.get(
 registerAdminRoutes(app)
 registerAuthRoutes(app)
 registerBootstrapRoutes(app)
+registerDeprecatedSkillHubRoutes(app)
 registerDevRoutes(app)
 registerMeRoutes(app)
 registerMemoryRoutes(app)
@@ -224,8 +226,6 @@ app.get(
         { name: "Teams", description: "Organization team management routes." },
         { name: "Templates", description: "Organization shared template routes." },
         { name: "LLM Providers", description: "Organization LLM provider catalog, configuration, and access routes." },
-        { name: "Skills", description: "Organization skill authoring and sharing routes." },
-        { name: "Skill Hubs", description: "Organization skill hub management and access routes." },
         { name: "Workers", description: "Worker lifecycle, billing, and runtime routes." },
         { name: "Worker Runtime", description: "Worker runtime inspection and upgrade routes." },
         { name: "Worker Activity", description: "Worker heartbeat and activity reporting routes." },

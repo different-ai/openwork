@@ -181,7 +181,7 @@ test("anchors a packaged shortcut target to the active Windows user profile", ()
     packaged: true,
     execPath: "C:\\Windows\\System32\\config\\systemprofile\\AppData\\Local\\Programs\\@openworkdesktop\\OpenWork.exe",
     resourcesPath: "C:\\Windows\\System32\\config\\systemprofile\\AppData\\Local\\Programs\\@openworkdesktop\\resources",
-    shortcutPath: "C:\\Users\\Administrator\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\Blue Yonder.lnk",
+    shortcutPath: "C:\\Users\\Administrator\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\Northwind.lnk",
   }), "C:\\Users\\Administrator\\AppData\\Local\\Programs\\@openworkdesktop\\OpenWork.exe");
 });
 

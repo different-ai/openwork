@@ -8,17 +8,12 @@ import {
 import { Button } from "@/components/ui/button"
 import {
   attributeChatToolError,
-  reconnectActionFromChatToolResult,
   type ChatToolReconnectAction,
   type ChatToolReconnectProgress,
   type ChatToolReconnectResult,
   type ToolErrorAttribution,
 } from "@/components/tools/error-attribution"
-import {
-  chatMcpReconnectKey,
-  chatMcpReconnectPresentation,
-  useChatMcpReconnectStore,
-} from "@/components/tools/mcp-reconnect-state"
+import { useChatToolReconnect } from "@/components/tools/use-chat-tool-reconnect"
 import { getToolActivityLabel, isToolPartInFlight } from "@/lib/tool-activity"
 import { cn } from "@/lib/utils"
 import {
@@ -163,30 +158,8 @@ const Tool = ({
   const { state, input } = toolPart
   const inFlight = isToolPartInFlight(toolPart)
   const isError = state === "output-error"
-  const reconnectResult = isError && toolPart.errorText
-    ? toolPart.errorText
-    : state === "output-available" && "output" in toolPart
-      ? toolPart.output
-      : undefined
-  const reconnectAction = toolPart.type === "dynamic-tool" && reconnectResult !== undefined
-    ? reconnectActionFromChatToolResult(toolPart.toolName, reconnectResult)
-    : null
-  const reconnectKey = reconnectAction
-    ? chatMcpReconnectKey(toolPart.toolCallId, reconnectAction.connectionId)
-    : null
-  const reconnectState = useChatMcpReconnectStore((store) => (
-    reconnectKey ? store.records[reconnectKey]?.phase ?? "ready" : "ready"
-  ))
-  const reconnectError = useChatMcpReconnectStore((store) => (
-    reconnectKey ? store.records[reconnectKey]?.error ?? null : null
-  ))
-  const reconnectAuthorizeUrl = useChatMcpReconnectStore((store) => (
-    reconnectKey ? store.records[reconnectKey]?.authorizeUrl ?? null : null
-  ))
-  const setReconnectRecord = useChatMcpReconnectStore((store) => store.setRecord)
-  const reconnectPresentation = reconnectAction
-    ? chatMcpReconnectPresentation(reconnectAction, reconnectState)
-    : null
+  const { reconnectAction, reconnectState, reconnectError, reconnectPresentation, handleReconnect } =
+    useChatToolReconnect(toolPart, { onReconnect, onReopenAuthorization, onRetry })
   const errorAttribution = reconnectAction
     ? reconnectAttribution(reconnectAction, reconnectPresentation?.badgeLabel ?? "Reconnect required")
     : isError && toolPart.errorText
@@ -208,58 +181,6 @@ const Tool = ({
     : reconnectState === "authorization_opened"
       ? ExternalLink
       : RefreshCcw
-
-  const handleReconnect = async () => {
-    if (!reconnectAction || !reconnectKey || !onReconnect) return
-    if (reconnectState === "connected") {
-      await onRetry?.(reconnectAction)
-      return
-    }
-    if (reconnectState === "authorization_opened") {
-      if (!onReopenAuthorization) return
-      if (!reconnectAuthorizeUrl) {
-        setReconnectRecord(reconnectKey, {
-          phase: "failed",
-          error: `${reconnectAction.connectionName} sign-in is no longer pending. Try reconnecting again.`,
-          authorizeUrl: null,
-        })
-        return
-      }
-      try {
-        await onReopenAuthorization(reconnectAction, reconnectAuthorizeUrl)
-        setReconnectRecord(reconnectKey, {
-          phase: "authorization_opened",
-          error: null,
-          authorizeUrl: reconnectAuthorizeUrl,
-        })
-      } catch (error) {
-        setReconnectRecord(reconnectKey, {
-          phase: "failed",
-          error: error instanceof Error ? error.message : "Could not reopen sign-in.",
-          authorizeUrl: null,
-        })
-      }
-      return
-    }
-    if (reconnectState === "opening") return
-    setReconnectRecord(reconnectKey, { phase: "opening", error: null, authorizeUrl: null })
-    try {
-      const result = await onReconnect(reconnectAction, (progress) => {
-        setReconnectRecord(reconnectKey, {
-          phase: progress.phase,
-          error: null,
-          authorizeUrl: progress.phase === "authorization_opened" ? progress.authorizeUrl : null,
-        })
-      })
-      setReconnectRecord(reconnectKey, { phase: result, error: null, authorizeUrl: null })
-    } catch (error) {
-      setReconnectRecord(reconnectKey, {
-        phase: "failed",
-        error: error instanceof Error ? error.message : "Could not reconnect this account.",
-        authorizeUrl: null,
-      })
-    }
-  }
 
   const handleCopyResult = useCallback(async () => {
     if (resultText === null) return
@@ -340,25 +261,26 @@ const Tool = ({
             {reconnectPresentation?.buttonLabel}
           </Button>
         ) : null}
-        {resultText !== null ? (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-xs"
-            data-testid="tool-result-copy-action"
-            title={copied ? "Copied" : "Copy tool result"}
-            aria-label={copied ? "Tool result copied" : "Copy tool result"}
-            onClick={() => void handleCopyResult()}
-          >
-            {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
-          </Button>
-        ) : null}
       </div>
       {reconnectError ? (
         <p className="mt-1 text-xs text-destructive" role="alert">{reconnectError}</p>
       ) : null}
       <CollapsibleContent className="h-(--collapsible-panel-height) overflow-hidden text-sm transition-[height] duration-150 ease-out data-starting-style:h-0 data-ending-style:h-0 [&[hidden]:not([hidden='until-found'])]:hidden">
-        <div className="bg-muted mt-2 flex flex-col gap-2 rounded-lg p-2 text-xs">
+        <div className="bg-muted relative mt-2 flex flex-col gap-2 rounded-lg p-2 pr-10 text-xs">
+          {resultText !== null ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-xs"
+              className="absolute right-2 top-2"
+              data-testid="tool-result-copy-action"
+              title={copied ? "Copied" : "Copy tool result"}
+              aria-label={copied ? "Tool result copied" : "Copy tool result"}
+              onClick={() => void handleCopyResult()}
+            >
+              {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+            </Button>
+          ) : null}
           {hasInput ? (
             inputDiff !== null ? (
               <DiffLines diff={inputDiff} />

@@ -39,6 +39,8 @@ export type EmbeddedServerHandle = {
   config: ServerConfig;
   /** Redacted details for the managed OpenCode child process, when spawned. */
   managedOpencodeExecution: OpencodeExecutionSnapshot | null;
+  /** Liveness for the managed OpenCode child process, when spawned. */
+  managedOpencode: { pid: number | null; isAlive: () => boolean } | null;
   /** Stop the HTTP server and managed OpenCode (if any). */
   stop: () => Promise<void>;
 };
@@ -129,6 +131,9 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
     url: `http://${config.host === "0.0.0.0" ? "127.0.0.1" : config.host}:${server.port}`,
     config,
     managedOpencodeExecution: managedOpencode?.execution ?? null,
+    managedOpencode: managedOpencode
+      ? { pid: managedOpencode.pid ?? null, isAlive: managedOpencode.isAlive }
+      : null,
     async stop() {
       if (managedOpencodeIdentity) {
         clearTrustedOpencodeProcess(config, managedOpencodeIdentity);

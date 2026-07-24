@@ -70,14 +70,10 @@ export default {
               label: "control API",
             });
             await ctx.control("route.settings.general");
-            await ctx.waitFor("location.pathname.endsWith('/settings/general')", {
-              timeoutMs: 30_000,
-              label: "settings route",
-            });
+            await ctx.waitForRoute("/settings/general");
           },
           assert: async () => {
-            const pathname = await ctx.eval("location.pathname");
-            ctx.assert(pathname.endsWith("/settings/general"), `Expected settings pathname, got ${pathname}`);
+            await ctx.expectRoute("/settings/general");
             await ctx.expectText("Settings");
           },
           screenshot: {
@@ -98,11 +94,9 @@ export default {
               timeoutMs: 15_000,
               label: "command palette input",
             });
-            await new Promise((resolve) => setTimeout(resolve, 300));
           },
           assert: async () => {
-            const pathname = await ctx.eval("location.pathname");
-            ctx.assert(pathname.endsWith("/settings/general"), `Command palette left Settings for ${pathname}`);
+            await ctx.expectRoute("/settings/general");
             await ctx.expectText("Create new session");
             await ctx.expectText("Search sessions");
           },

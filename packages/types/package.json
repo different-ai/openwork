@@ -14,6 +14,21 @@
       "development": "./src/agent-context-diagnostics.ts",
       "default": "./src/agent-context-diagnostics.ts"
     },
+    "./openwork-affordance": {
+      "types": "./src/openwork-affordance.ts",
+      "development": "./src/openwork-affordance.ts",
+      "default": "./src/openwork-affordance.ts"
+    },
+    "./openwork-context": {
+      "types": "./src/openwork-context.ts",
+      "development": "./src/openwork-context.ts",
+      "default": "./src/openwork-context.ts"
+    },
+    "./openwork-provider": {
+      "types": "./src/openwork-provider.ts",
+      "development": "./src/openwork-provider.ts",
+      "default": "./src/openwork-provider.ts"
+    },
     "./den/desktop-app-restrictions": {
       "types": "./src/den/desktop-app-restrictions.ts",
       "development": "./src/den/desktop-app-restrictions.ts",
@@ -23,6 +38,11 @@
       "types": "./src/den/desktop-policies.ts",
       "development": "./src/den/desktop-policies.ts",
       "default": "./src/den/desktop-policies.ts"
+    },
+    "./den/connect-diagnostics": {
+      "types": "./src/den/connect-diagnostics.ts",
+      "development": "./src/den/connect-diagnostics.ts",
+      "default": "./src/den/connect-diagnostics.ts"
     },
     "./den/egress-diagnostics": {
       "types": "./src/den/egress-diagnostics.ts",

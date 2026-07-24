@@ -18,27 +18,7 @@ export const SIDE_PANEL_ITEMS = ["panel", "extensions", "voice"] as const;
 export type SidePanelItem = (typeof SIDE_PANEL_ITEMS)[number];
 export type SidePanelState = Record<string, SidePanelItem | null>;
 
-const LEGACY_UNIFIED_PANEL_ITEMS = ["browser", "artifacts"] as const;
-type LegacyUnifiedPanelItem = (typeof LEGACY_UNIFIED_PANEL_ITEMS)[number];
-
-function normalizeSidePanelItem(value: unknown): SidePanelItem | null {
-  if (value === null) {
-    return null;
-  }
-
-  if (isSidePanelItem(value)) {
-    return value;
-  }
-
-  if (LEGACY_UNIFIED_PANEL_ITEMS.includes(value as LegacyUnifiedPanelItem)) {
-    return "panel";
-  }
-
-  return null;
-}
-
 export type PersistedUiState = {
-  sidePanelState?: SidePanelState;
   applicationMenuVisible?: boolean;
   workspaceLeftSidebarWidth?: number;
   workspaceRightSidebarExpanded?: boolean;
@@ -47,6 +27,7 @@ export type PersistedUiState = {
 
 export type UiState = {
   sidebarOpen: boolean;
+  // Deliberately not persisted so each app load starts with only chat visible.
   sidePanelState: SidePanelState;
   applicationMenuVisible: boolean;
   workspaceLeftSidebarWidth: number;
@@ -112,31 +93,6 @@ function readLegacyWorkspaceLayoutState() {
   } satisfies Partial<PersistedUiState>;
 }
 
-function isSidePanelItem(value: unknown): value is SidePanelItem {
-  return SIDE_PANEL_ITEMS.includes(value as SidePanelItem);
-}
-
-function normalizeSidePanelState(value: unknown): SidePanelState {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return initialState.sidePanelState;
-  }
-
-  return Object.fromEntries(
-    Object.entries(value).flatMap(([sessionId, panel]) => {
-      if (typeof sessionId !== "string") {
-        return [];
-      }
-
-      const normalized = normalizeSidePanelItem(panel);
-      if (normalized === null && panel !== null) {
-        return [];
-      }
-
-      return [[sessionId, normalized] as const];
-    }),
-  );
-}
-
 function readSidebarCookieOpen(): boolean | null {
   if (globalThis.window === undefined) {
     return null;
@@ -178,12 +134,10 @@ function readPersistedUiState(): UiState {
     }
 
     const parsed: PersistedUiState = JSON.parse(raw);
-    const sidePanelState = normalizeSidePanelState(parsed.sidePanelState);
 
     return {
       ...initialState,
       sidebarOpen,
-      sidePanelState,
       applicationMenuVisible: parsed.applicationMenuVisible ?? initialState.applicationMenuVisible,
       workspaceLeftSidebarWidth: normalizeNumber(
         parsed.workspaceLeftSidebarWidth,
@@ -214,7 +168,6 @@ export function persistUiState(state: UiState): void {
     window.localStorage.setItem(
       PERSISTED_UI_STATE_KEY,
       JSON.stringify({
-        sidePanelState: state.sidePanelState,
         applicationMenuVisible: state.applicationMenuVisible,
         workspaceLeftSidebarWidth: state.workspaceLeftSidebarWidth,
         workspaceRightSidebarExpanded: state.workspaceRightSidebarExpanded,

@@ -24,10 +24,12 @@ export type UseOpenWorkModelsStartupPromoInput = {
   clientReady: boolean;
   workspaceId: string;
   providerConnectedIds: string[];
+  /** Org member already has OpenWork Models on Den — never upsell Subscribe. */
+  openWorkModelsEntitled?: boolean;
 };
 
 export function useOpenWorkModelsStartupPromo(input: UseOpenWorkModelsStartupPromoInput) {
-  const { clientReady, workspaceId, providerConnectedIds } = input;
+  const { clientReady, workspaceId, providerConnectedIds, openWorkModelsEntitled = false } = input;
   const navigate = useNavigate();
   const platform = usePlatform();
   const denAuth = useDenAuth();
@@ -54,7 +56,7 @@ export function useOpenWorkModelsStartupPromo(input: UseOpenWorkModelsStartupPro
       setOpen(false);
       return;
     }
-    if (!shellConfig.cloudSignin || promoHidden || hasOpenWorkModels) return;
+    if (!shellConfig.cloudSignin || promoHidden || hasOpenWorkModels || openWorkModelsEntitled) return;
     if (denAuth.status === "checking" || !clientReady || !workspaceId) return;
     if (wasOpenWorkModelsStartupPromoShown() || scheduledRef.current) return;
 
@@ -64,7 +66,7 @@ export function useOpenWorkModelsStartupPromo(input: UseOpenWorkModelsStartupPro
       setOpen(true);
     }, 900);
     return () => window.clearTimeout(timeout);
-  }, [clientReady, denAuth.status, hasOpenWorkModels, openWorkModelsPromoEligible, promoHidden, shellConfig.cloudSignin, workspaceId]);
+  }, [clientReady, denAuth.status, hasOpenWorkModels, openWorkModelsEntitled, openWorkModelsPromoEligible, promoHidden, shellConfig.cloudSignin, workspaceId]);
 
   const subscribe = useCallback(() => {
     setOpen(false);

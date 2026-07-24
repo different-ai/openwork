@@ -8,7 +8,6 @@ export default defineConfig({
     "schema/desktop-policies": "src/schema/desktop-policies.ts",
     "schema/inference": "src/schema/inference.ts",
     "schema/org": "src/schema/org.ts",
-    "schema/sharables/skills": "src/schema/sharables/skills.ts",
     "schema/subscriptions": "src/schema/subscriptions.ts",
     "schema/teams": "src/schema/teams.ts",
     "schema/telegram": "src/schema/telegram.ts",

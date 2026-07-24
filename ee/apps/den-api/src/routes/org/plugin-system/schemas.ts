@@ -813,7 +813,9 @@ export const marketplaceMutationResponseSchema = pluginArchMutationResponseSchem
 export const marketplaceResolvedResponseSchema = pluginArchMutationResponseSchema(
   "PluginArchMarketplaceResolvedResponse",
   z.object({
-    marketplace: marketplaceSchema,
+    marketplace: marketplaceSchema.extend({
+      canDelete: z.boolean(),
+    }),
     plugins: z.array(pluginSchema.extend({
       componentCounts: z.record(z.string(), z.number().int().nonnegative()).default({}),
       cloudReadiness: pluginCloudReadinessSchema.optional(),
@@ -888,8 +890,8 @@ export const githubPluginMcpImportResponseSchema = pluginArchMutationResponseSch
       url: z.string(),
     })),
     importedSkills: z.array(z.object({
+      configObjectId: configObjectIdSchema,
       name: z.string(),
-      skillId: denTypeIdSchema("skill"),
       sourcePath: z.string(),
     })),
     marketplaceId: marketplaceIdSchema.nullable(),

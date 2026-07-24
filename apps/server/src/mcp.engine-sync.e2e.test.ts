@@ -5,7 +5,9 @@ import { join } from "node:path";
 
 import {
   inspectEngineMcpRegistration,
+  inspectEngineMcpRegistrationDetails,
   registerTrustedOpencodeProcess,
+  refreshEngineMcpRegistrationFromLiveStatus,
   startServer,
   syncAllWorkspacesRuntimeMcpToEngine,
 } from "./server.js";
@@ -42,6 +44,7 @@ async function createWorkspaceRoot() {
 function startMockOpencode(options?: {
   failMcpNames?: string[];
   mcpStatusByName?: Record<string, unknown>;
+  liveMcpStatusByName?: () => Record<string, unknown>;
   mcpResponseForName?: (name: string) => Response | null;
   disposeResponse?: () => Response | null;
 }) {
@@ -69,6 +72,9 @@ function startMockOpencode(options?: {
           ? options?.mcpStatusByName?.[name]
           : "connected";
         return Response.json({ [name]: { status } });
+      }
+      if (url.pathname === "/mcp" && request.method === "GET") {
+        return Response.json(options?.liveMcpStatusByName?.() ?? {});
       }
       if (url.pathname.match(/^\/mcp\/[^/]+\/disconnect$/) && request.method === "POST") return Response.json({});
       return Response.json({ code: "not_found", message: "Not found" }, { status: 404 });
@@ -125,6 +131,19 @@ async function startOpenworkServer(
 
 function auth(token: string) {
   return { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+}
+
+async function waitForRegistration(
+  read: () => string,
+  expected: string,
+  timeoutMs = 1_000,
+): Promise<void> {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    if (read() === expected) return;
+    await Bun.sleep(10);
+  }
+  expect(read()).toBe(expected);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -256,6 +275,12 @@ describe("runtime MCP engine sync", () => {
       expect(inspectRegistration("connected", configs.get("connected")!)).toBe("connected");
       expect(inspectRegistration("disabled", configs.get("disabled")!)).toBe("disabled");
       expect(inspectRegistration("failed", configs.get("failed")!)).toBe("failed");
+      expect(inspectEngineMcpRegistrationDetails(
+        openwork.config,
+        openwork.config.workspaces[0]!,
+        "failed",
+        configs.get("failed")!,
+      ).source).toBe("engine_status");
       expect(inspectRegistration("auth", configs.get("auth")!)).toBe("needs-auth");
       expect(inspectRegistration(
         "client-registration",
@@ -263,6 +288,14 @@ describe("runtime MCP engine sync", () => {
       )).toBe("needs-client-registration");
       expect(inspectRegistration("invalid", configs.get("invalid")!)).toBe("not-recorded");
       expect(inspectRegistration("oversized", configs.get("oversized")!)).toBe("not-recorded");
+      expect(refreshEngineMcpRegistrationFromLiveStatus(
+        openwork.config,
+        openwork.config.workspaces[0]!,
+        "failed",
+        configs.get("failed")!,
+        "connected",
+      )).toBe(true);
+      expect(inspectRegistration("failed", configs.get("failed")!)).toBe("connected");
 
       const listResponse = await fetch(`${openwork.base}/workspace/ws_1/mcp`, {
         headers: auth(openwork.token),
@@ -284,6 +317,51 @@ describe("runtime MCP engine sync", () => {
     } finally {
       if (previousDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
       else process.env.OPENWORK_RUNTIME_DB = previousDb;
+    }
+  });
+
+  test("records transport-failure provenance and performs one deferred re-sync", async () => {
+    const workspaceRoot = await createWorkspaceRoot();
+    const previousDb = process.env.OPENWORK_RUNTIME_DB;
+    const previousDeferredDelay = process.env.OPENWORK_MCP_SYNC_DEFERRED_DELAY_MS;
+    process.env.OPENWORK_RUNTIME_DB = join(workspaceRoot, "runtime.sqlite");
+    process.env.OPENWORK_MCP_SYNC_DEFERRED_DELAY_MS = "50";
+    let posthogPosts = 0;
+    try {
+      const mock = startMockOpencode({
+        mcpResponseForName: (name) => {
+          if (name !== "posthog") return null;
+          posthogPosts += 1;
+          return posthogPosts <= 2
+            ? Response.json({ code: "temporarily_unavailable" }, { status: 503 })
+            : null;
+        },
+      });
+      const openwork = await startOpenworkServer(workspaceRoot, `http://127.0.0.1:${mock.server.port}`);
+      const workspace = openwork.config.workspaces[0]!;
+
+      const response = await fetch(`${openwork.base}/workspace/ws_1/mcp`, {
+        method: "POST",
+        headers: auth(openwork.token),
+        body: JSON.stringify({ name: "posthog", config: POSTHOG_CONFIG }),
+      });
+      expect(response.status).toBe(200);
+      expect(inspectEngineMcpRegistration(openwork.config, workspace, "posthog", POSTHOG_CONFIG)).toBe("failed");
+      expect(inspectEngineMcpRegistrationDetails(openwork.config, workspace, "posthog", POSTHOG_CONFIG).source)
+        .toBe("transport_failure");
+
+      await waitForRegistration(
+        () => inspectEngineMcpRegistration(openwork.config, workspace, "posthog", POSTHOG_CONFIG),
+        "connected",
+      );
+      expect(posthogPosts).toBe(3);
+      expect(inspectEngineMcpRegistrationDetails(openwork.config, workspace, "posthog", POSTHOG_CONFIG).source)
+        .toBe("engine_status");
+    } finally {
+      if (previousDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
+      else process.env.OPENWORK_RUNTIME_DB = previousDb;
+      if (previousDeferredDelay === undefined) delete process.env.OPENWORK_MCP_SYNC_DEFERRED_DELAY_MS;
+      else process.env.OPENWORK_MCP_SYNC_DEFERRED_DELAY_MS = previousDeferredDelay;
     }
   });
 

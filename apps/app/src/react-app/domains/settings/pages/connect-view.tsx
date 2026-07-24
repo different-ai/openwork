@@ -1,11 +1,16 @@
 /** @jsxImportSource react */
 import { useEffect, useMemo, useState } from "react";
-import { ArrowUpRight } from "lucide-react";
+import { ArrowUpRight, ChevronDown, ChevronRight } from "lucide-react";
 
 import type { DenExternalMcpConnection, DenOrgPlugin } from "@/app/lib/den";
 import { mintCloudControlMcpToken, readDenSettings } from "@/app/lib/den";
 import { openDesktopUrl } from "@/app/lib/desktop";
-import type { OpenworkCloudMcpHealth, OpenworkCloudMcpProviderModelContext, OpenworkServerClient } from "@/app/lib/openwork-server";
+import type {
+  OpenworkCloudMcpEngineRefresh,
+  OpenworkCloudMcpHealth,
+  OpenworkCloudMcpProviderModelContext,
+  OpenworkServerClient,
+} from "@/app/lib/openwork-server";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
@@ -47,9 +52,16 @@ import {
   OPENWORK_CLOUD_EXPECTED_TOOLS,
   clearCloudMcpDisabledIntent,
   cloudMcpDisplaySummary,
+  runOpenworkCloudMcpEngineRefresh,
   runOpenworkCloudMcpReconciler,
   type CloudMcpOperationContext,
 } from "../../connections/cloud-mcp-reconciler";
+import {
+  buildCloudMcpSupportBundle,
+  cloudMcpAdvancedRows,
+  cloudMcpEngineRefreshLines,
+  cloudMcpProbeTraceLines,
+} from "../../connections/cloud-mcp-diagnostics";
 import { readCloudMcpUserState } from "../../connections/cloud-mcp-user-state";
 
 export type ConnectViewState = "loading" | "signin" | "active" | "pitch";
@@ -152,8 +164,11 @@ function AgentAccessCard(props: {
 }) {
   const cloudSession = useCloudSession();
   const [health, setHealth] = useState<OpenworkCloudMcpHealth | null>(null);
-  const [busy, setBusy] = useState<"test" | "repair" | null>(null);
+  const [busy, setBusy] = useState<"test" | "repair" | "refresh" | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [copyStatus, setCopyStatus] = useState<string | null>(null);
+  const [lastEngineRefresh, setLastEngineRefresh] = useState<OpenworkCloudMcpEngineRefresh | null>(null);
   const context = buildCloudMcpContext(props);
   const userState = context ? readCloudMcpUserState(context) : null;
   const signedIn = cloudSession.isSignedIn && Boolean(cloudSession.authToken.trim());
@@ -176,18 +191,67 @@ function AgentAccessCard(props: {
     setBusy("test");
     setError(null);
     try {
+      // probe: verify the Cloud endpoint directly from the OpenWork server as
+      // well, so a failure can be attributed to the endpoint, the network
+      // path, or the engine — not just reported as the engine's cached state.
       const result = await runOpenworkCloudMcpReconciler({
         mode: "health",
         client: props.client,
         context: { ...context, trigger: "desktop-connect-test" },
         mintToken: mintCloudControlMcpToken,
         refreshMarginMs: CLOUD_MCP_REFRESH_MARGIN_MS,
+        probe: true,
       });
       updateHealth(result.health);
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Could not test agent access.");
     } finally {
       setBusy(null);
+    }
+  };
+
+  const refreshEngineConnection = async () => {
+    if (!props.client || !context) return;
+    setBusy("refresh");
+    setError(null);
+    try {
+      const result = await runOpenworkCloudMcpEngineRefresh({
+        client: props.client,
+        context: { ...context, trigger: "desktop-connect-engine-refresh" },
+      });
+      setLastEngineRefresh(result.refresh);
+      if (result.health) updateHealth(result.health);
+      if (result.status === "skipped") {
+        setError(
+          result.skippedReason === "unsupported"
+            ? "This OpenWork server does not support engine refresh yet. Update OpenWork, then retry."
+            : "Select a workspace before refreshing the engine connection.",
+        );
+      }
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "Could not refresh the engine connection.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const copyDiagnostics = async () => {
+    try {
+      await navigator.clipboard.writeText(buildCloudMcpSupportBundle({
+        health,
+        refresh: lastEngineRefresh,
+        context: context
+          ? {
+              workspaceId: context.workspaceId,
+              orgId: context.orgId,
+              denBaseUrl: context.denBaseUrl,
+              serverBaseUrl: context.serverBaseUrl,
+            }
+          : undefined,
+      }));
+      setCopyStatus("Copied sanitized diagnostic to the clipboard.");
+    } catch {
+      setCopyStatus("Could not copy the diagnostic.");
     }
   };
 
@@ -358,7 +422,104 @@ function AgentAccessCard(props: {
           {busy === "repair" ? "Repairing…" : "Repair and test"}
         </Button>
       </div>
+
+      <AgentAccessAdvanced
+        health={health}
+        engineRefresh={lastEngineRefresh}
+        open={advancedOpen}
+        onToggle={() => setAdvancedOpen((current) => !current)}
+        busyLabel={busy}
+        canRun={canRun}
+        copyStatus={copyStatus}
+        onRefreshEngine={() => void refreshEngineConnection()}
+        onCopy={() => void copyDiagnostics()}
+      />
     </SettingsInset>
+  );
+}
+
+function AgentAccessAdvanced(props: {
+  health: OpenworkCloudMcpHealth | null;
+  engineRefresh: OpenworkCloudMcpEngineRefresh | null;
+  open: boolean;
+  onToggle: () => void;
+  busyLabel: "test" | "repair" | "refresh" | null;
+  canRun: boolean;
+  copyStatus: string | null;
+  onRefreshEngine: () => void;
+  onCopy: () => void;
+}) {
+  const rows = cloudMcpAdvancedRows(props.health);
+  const traceLines = cloudMcpProbeTraceLines(props.health?.tools.direct.trace);
+  const refreshLines = cloudMcpEngineRefreshLines(props.engineRefresh);
+  return (
+    <div className="border-t border-dls-border pt-3" data-testid="agent-access-advanced">
+      <button
+        type="button"
+        className="flex items-center gap-1 text-xs font-medium text-dls-secondary transition-colors hover:text-dls-text"
+        aria-expanded={props.open}
+        onClick={props.onToggle}
+      >
+        {props.open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+        Advanced diagnostics
+      </button>
+      {props.open ? (
+        <div className="mt-3 space-y-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={!props.canRun || props.busyLabel !== null}
+              onClick={props.onRefreshEngine}
+            >
+              {props.busyLabel === "refresh" ? "Refreshing engine…" : "Refresh engine connection"}
+            </Button>
+            <Button variant="outline" size="sm" disabled={!props.health} onClick={props.onCopy}>
+              Copy sanitized diagnostic
+            </Button>
+          </div>
+          <div className="text-xs text-dls-secondary">
+            Refresh makes the agent engine drop its Cloud connection and reconnect from scratch — the engine never
+            retries a failed connection on its own. Diagnostics are redacted before copy.
+          </div>
+          {props.copyStatus ? <div className="text-xs text-dls-secondary">{props.copyStatus}</div> : null}
+          {rows.length ? (
+            <div className="grid gap-1.5" data-testid="agent-access-advanced-rows">
+              {rows.map((row) => (
+                <div key={row.label} className="grid gap-0.5 sm:grid-cols-[11rem_1fr] sm:gap-2">
+                  <div className="text-[11px] font-semibold uppercase tracking-wide text-dls-secondary">{row.label}</div>
+                  <div
+                    className={`break-words font-mono text-xs ${
+                      row.tone === "error" ? "text-red-11" : row.tone === "muted" ? "text-dls-secondary" : "text-dls-text"
+                    }`}
+                  >
+                    {row.value}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="text-xs text-dls-secondary">Run Test now to load diagnostics for this workspace.</div>
+          )}
+          {traceLines.length ? (
+            <div>
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-dls-secondary">Direct probe steps</div>
+              <div className="mt-1 space-y-0.5 font-mono text-xs text-dls-text">
+                {traceLines.map((line, index) => <div key={`${index}-${line}`}>{line}</div>)}
+              </div>
+            </div>
+          ) : null}
+          {refreshLines.length ? (
+            <div>
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-dls-secondary">Last engine refresh</div>
+              <div className="mt-1 space-y-0.5 font-mono text-xs text-dls-text">
+                {refreshLines.map((line, index) => <div key={`${index}-${line}`}>{line}</div>)}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
   );
 }
 

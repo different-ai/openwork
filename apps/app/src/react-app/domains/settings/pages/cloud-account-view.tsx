@@ -235,6 +235,7 @@ export function CloudAccountView({ developerMode, session }: CloudAccountViewPro
             orgsError={session.orgsError}
             sessionBusy={session.sessionBusy}
             onActiveOrgChange={session.onActiveOrgChange}
+            onOpenDashboard={session.onOpenControlPlane}
             onRefreshOrgs={session.onRefreshOrgs}
             onSignOut={session.onSignOut}
           />

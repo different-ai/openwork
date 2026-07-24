@@ -55,15 +55,18 @@ type DesktopAppRestrictionSyncContext = {
 export async function runDesktopAppRestrictionSyncEffects(
   input: DesktopAppRestrictionSyncContext,
 ) {
+  // Only force-disable OpenCode Zen when org policy blocks it. When Zen is
+  // allowed, do not force-enable — that would undo a user Disconnect that
+  // wrote `opencode` into runtime disabled_providers.
   const shouldDisableOpencodeProvider = input.checkRestriction({ restriction: "allowZenModel" });
 
   input.reconcileRestrictedModels?.();
 
-  if (input.ensureProjectProviderDisabledState) {
+  if (shouldDisableOpencodeProvider && input.ensureProjectProviderDisabledState) {
     try {
       await input.ensureProjectProviderDisabledState(
         DESKTOP_RESTRICTION_OPENCODE_PROVIDER_ID,
-        shouldDisableOpencodeProvider,
+        true,
       );
     } catch (error) {
       input.onError?.(

@@ -51,4 +51,15 @@ describe("Den auth landing contract", () => {
     expect(source).toContain("Enter your email and we'll send you to the right sign-in step.");
     expect(source).not.toContain("Continue to OpenWork.");
   });
+
+  test("signed-in desktop handoff shows account email and a pasteable link by default", () => {
+    const source = readFileSync(authPanelPath, "utf8");
+
+    expect(source).toContain('data-testid="desktop-signed-in-handoff"');
+    expect(source).toContain("Logged in as");
+    expect(source).toContain("showCopyLinkByDefault");
+    expect(source).toContain('data-testid="desktop-handoff-copy-link"');
+    expect(source).toContain("desktopAuthRequested && user && !authError");
+    expect(source).not.toContain("showAuthFeedback && authInfo && !authError");
+  });
 });

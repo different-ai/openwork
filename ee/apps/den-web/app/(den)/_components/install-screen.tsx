@@ -1,11 +1,16 @@
 "use client";
 
+import { DownloadPlatformGrid, type DownloadPlatformGroup, type DownloadPlatformOption } from "@openwork/ui/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { requestJson } from "../_lib/den-flow";
+import { LAST_DESKTOP_HANDOFF_GRANT_STORAGE_KEY, readLastDesktopHandoffGrant } from "../_lib/desktop-handoff";
 import { getInstallConfigErrorMessage } from "../_lib/install-errors";
 import { buildInstallDownloadHref, type InstallPlatform } from "../_lib/install-download";
 import { isMobileUserAgent } from "../_lib/platform";
+import { useDesktopHandoffStatus } from "../_lib/use-desktop-handoff-status";
+import { OnboardingShell } from "./onboarding-shell";
+import { OrganizationBrandIdentity } from "./organization-brand-identity";
 
 type InstallConfig = {
   appName: string;
@@ -14,17 +19,10 @@ type InstallConfig = {
   apiUrl: string;
   requireSignin: boolean;
   logoUrl: string | null;
+  iconUrl: string | null;
   connectUrl: string | null;
   connectExpiresAt: string | null;
 };
-
-const platformOptions: Array<{ value: InstallPlatform; label: string }> = [
-  { value: "mac-arm64", label: "Mac (Apple silicon)" },
-  { value: "mac-x64", label: "Mac (Intel)" },
-  { value: "win-x64", label: "Windows" },
-  { value: "linux-x64", label: "Linux (x64)" },
-  { value: "linux-arm64", label: "Linux (ARM64)" },
-];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -65,6 +63,7 @@ function parseInstallConfig(value: unknown): InstallConfig | null {
   const apiUrl = typeof value.apiUrl === "string" ? value.apiUrl.trim() : "";
   const requireSignin = value.requireSignin;
   const logoUrl = value.logoUrl;
+  const iconUrl = value.iconUrl ?? null;
   const connectUrl = value.connectUrl ?? null;
   const connectExpiresAt = value.connectExpiresAt ?? null;
 
@@ -72,6 +71,9 @@ function parseInstallConfig(value: unknown): InstallConfig | null {
     return null;
   }
   if (logoUrl !== null && (typeof logoUrl !== "string" || !isUrl(logoUrl))) {
+    return null;
+  }
+  if (iconUrl !== null && (typeof iconUrl !== "string" || !isUrl(iconUrl))) {
     return null;
   }
   if (connectUrl !== null && (typeof connectUrl !== "string" || !isConnectUrl(connectUrl))) {
@@ -88,6 +90,7 @@ function parseInstallConfig(value: unknown): InstallConfig | null {
     apiUrl,
     requireSignin,
     logoUrl,
+    iconUrl,
     connectUrl,
     connectExpiresAt,
   };
@@ -109,22 +112,6 @@ async function fetchInstallConfig(token: string) {
   return parsed;
 }
 
-function detectPlatform(): InstallPlatform {
-  if (typeof navigator === "undefined") {
-    return "mac-arm64";
-  }
-
-  const platform = navigator.platform.toLowerCase();
-  const userAgent = navigator.userAgent.toLowerCase();
-  if (platform.includes("win") || userAgent.includes("windows")) {
-    return "win-x64";
-  }
-  if (platform.includes("linux") || userAgent.includes("linux")) {
-    return userAgent.includes("aarch64") || userAgent.includes("arm64") ? "linux-arm64" : "linux-x64";
-  }
-  return "mac-arm64";
-}
-
 function installHref(config: InstallConfig, platform: InstallPlatform, token: string) {
   return buildInstallDownloadHref(config.apiUrl, platform, token);
 }
@@ -136,25 +123,35 @@ export function InstallScreen() {
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isMobile, setIsMobile] = useState<boolean | null>(null);
-  const [platform, setPlatform] = useState<InstallPlatform>("mac-arm64");
   const [copied, setCopied] = useState(false);
   const [downloadState, setDownloadState] = useState<"idle" | "preparing" | "started">("idle");
   const [downloadLabel, setDownloadLabel] = useState("");
   const [downloadHref, setDownloadHref] = useState("");
-  const [connecting, setConnecting] = useState(false);
-  const [connectError, setConnectError] = useState<string | null>(null);
-  const [connectRecoveryVisible, setConnectRecoveryVisible] = useState(false);
-  const [connectCopying, setConnectCopying] = useState(false);
-  const [connectCopied, setConnectCopied] = useState(false);
-  const [guideStep, setGuideStep] = useState<1 | 2 | 3>(() => {
-    const requestedStep = searchParams.get("step");
-    return requestedStep === "3" ? 3 : requestedStep === "2" ? 2 : 1;
-  });
+  const [currentLink, setCurrentLink] = useState("");
+  const [handoffGrant, setHandoffGrant] = useState<string | null>(null);
   const downloadStartedTimer = useRef<number | null>(null);
+  const handoffStatus = useDesktopHandoffStatus(handoffGrant);
 
   useEffect(() => {
     setIsMobile(isMobileUserAgent());
-    setPlatform(detectPlatform());
+    setCurrentLink(window.location.href);
+  }, []);
+
+  useEffect(() => {
+    function refreshLastHandoffGrant() {
+      setHandoffGrant(readLastDesktopHandoffGrant());
+    }
+
+    refreshLastHandoffGrant();
+
+    function handleStorage(event: StorageEvent) {
+      if (event.key === LAST_DESKTOP_HANDOFF_GRANT_STORAGE_KEY) {
+        refreshLastHandoffGrant();
+      }
+    }
+
+    window.addEventListener("storage", handleStorage);
+    return () => window.removeEventListener("storage", handleStorage);
   }, []);
 
   useEffect(() => {
@@ -199,10 +196,40 @@ export function InstallScreen() {
     }
   }, []);
 
-  const secondaryPlatforms = useMemo(() => platformOptions.filter((option) => option.value !== platform), [platform]);
+  const downloadGroups = useMemo<DownloadPlatformGroup[]>(() => {
+    if (!config) {
+      return [];
+    }
+
+    return [
+      {
+        os: "macos",
+        title: "macOS",
+        options: [
+          { href: installHref(config, "mac-arm64", token), label: "Apple Silicon (M1+)", arch: "arm64" },
+          { href: installHref(config, "mac-x64", token), label: "Intel", arch: "x64" },
+        ],
+      },
+      {
+        os: "windows",
+        title: "Windows",
+        options: [
+          { href: installHref(config, "win-x64", token), label: "x64 Installer", arch: "x64" },
+        ],
+      },
+      {
+        os: "linux",
+        title: "Linux",
+        options: [
+          { href: installHref(config, "linux-x64", token), label: "Setup script (x64)", arch: "x64" },
+          { href: installHref(config, "linux-arm64", token), label: "Setup script (ARM64)", arch: "arm64" },
+        ],
+      },
+    ];
+  }, [config, token]);
 
   async function copyCurrentLink() {
-    await navigator.clipboard.writeText(window.location.href);
+    await navigator.clipboard.writeText(currentLink || window.location.href);
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1800);
   }
@@ -220,109 +247,55 @@ export function InstallScreen() {
     }, 5000);
   }
 
-  function advanceGuide(nextStep: 2 | 3) {
-    setGuideStep(nextStep);
-    const url = new URL(window.location.href);
-    url.searchParams.set("step", String(nextStep));
-    window.history.replaceState(null, "", url);
-  }
-
-  function beginGuidedDownload() {
-    advanceGuide(2);
-  }
-
-  async function beginConnect() {
-    setConnecting(true);
-    setConnectError(null);
-    try {
-      // Mint immediately before opening the app. The default exchange link is
-      // intentionally short lived, while installing can take several minutes.
-      const freshConfig = await fetchInstallConfig(token);
-      if (!freshConfig.connectUrl) {
-        throw new Error("This deployment could not create a desktop connection link.");
-      }
-      setConfig(freshConfig);
-      advanceGuide(3);
-      window.location.href = freshConfig.connectUrl;
-    } catch (connectFailure) {
-      setConnectError(connectFailure instanceof Error
-        ? connectFailure.message
-        : "Could not create a fresh desktop connection. Try again.");
-    } finally {
-      setConnecting(false);
-    }
-  }
-
-  async function copyConnectionLink() {
-    setConnectCopying(true);
-    setConnectCopied(false);
-    setConnectError(null);
-    try {
-      if (!navigator.clipboard) {
-        throw new Error("Clipboard is not available in this browser.");
-      }
-      const freshConfig = await fetchInstallConfig(token);
-      if (!freshConfig.connectUrl) {
-        throw new Error("This deployment could not create a desktop connection link.");
-      }
-      setConfig(freshConfig);
-      await navigator.clipboard.writeText(freshConfig.connectUrl);
-      setConnectCopied(true);
-      window.setTimeout(() => setConnectCopied(false), 1800);
-    } catch (copyFailure) {
-      setConnectError(copyFailure instanceof Error
-        ? copyFailure.message
-        : "Could not copy a fresh desktop connection link. Try again.");
-    } finally {
-      setConnectCopying(false);
-    }
-  }
-
   if (busy) {
     return (
-      <section className="den-page grid min-h-dvh place-items-center py-4 lg:py-6" data-testid="install-page">
-        <div className="den-frame grid w-full max-w-[44rem] gap-4 p-6 md:p-8">
+      <OnboardingShell state="install-loading" width="wide">
+        <section className="grid gap-4 rounded-[1.75rem] border border-slate-200/80 bg-white p-6 md:p-8" data-testid="install-page">
           <p className="den-eyebrow">OpenWork Desktop</p>
           <h1 className="den-title-lg">Loading your install link.</h1>
           <p className="den-copy">Checking your team's OpenWork setup...</p>
-        </div>
-      </section>
+        </section>
+      </OnboardingShell>
     );
   }
 
   if (!config) {
     return (
-      <section className="den-page grid min-h-dvh place-items-center py-4 lg:py-6" data-testid="install-page">
-        <div className="den-frame grid w-full max-w-[44rem] gap-6 p-6 md:p-8">
+      <OnboardingShell state="install-error" width="wide">
+        <section className="grid gap-6 rounded-[1.75rem] border border-slate-200/80 bg-white p-6 md:p-8" data-testid="install-page">
           <div className="grid gap-2">
             <p className="den-eyebrow">OpenWork Desktop</p>
             <h1 className="den-title-lg">This install link can't be opened.</h1>
             <p className="den-copy">{error ?? "Ask your workspace admin for a fresh install link."}</p>
           </div>
-        </div>
-      </section>
+        </section>
+      </OnboardingShell>
     );
   }
 
-  const primaryHref = installHref(config, platform, token);
-  const primaryLabel = platformOptions.find((option) => option.value === platform)?.label ?? "your computer";
+  const showInstallTroubleshoot = handoffGrant !== null
+    && handoffStatus.status !== "consumed"
+    && (handoffStatus.timedOut || handoffStatus.status === "unknown");
 
   return (
-    <section className="den-page grid min-h-dvh place-items-center py-4 lg:py-6" data-testid="install-page">
-      <div className="den-frame grid w-full max-w-[44rem] gap-6 p-6 text-center md:p-8" data-testid="install-card">
-        <div className="grid justify-items-center gap-3">
-          <p className="den-eyebrow">{config.appName} Desktop</p>
-          {config.logoUrl ? (
-            // Organization logos may be served by private on-prem hosts that
-            // are intentionally absent from this deployment's image allowlist.
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={config.logoUrl} alt={`${config.clientName} wordmark`} className="max-h-16 max-w-64 object-contain object-center" />
-          ) : null}
-          <h1 className="den-title-xl">Download {config.appName} for {config.clientName}</h1>
-          <p className="den-copy">
-            Den will stay on this page while you install the standard {config.appName} app, connect it to {config.clientName}, and sign in.
-          </p>
-        </div>
+    <OnboardingShell state="install" width="full">
+      <section data-testid="install-page">
+        <div className="grid gap-6 rounded-[1.75rem] border border-slate-200/80 bg-white p-5 text-center sm:p-6 md:p-8" data-testid="install-card">
+          <div className="grid justify-items-center gap-3">
+            <h1 className="m-0 grid max-w-[22ch] gap-1 text-[2rem] font-semibold leading-[1.04] tracking-[-0.05em] text-slate-950 sm:text-[2.4rem]">
+              <span>Download OpenWork</span>
+              <span className="flex min-w-0 flex-wrap items-center justify-center gap-x-[0.18em] gap-y-1">
+                <span>for</span>
+                <OrganizationBrandIdentity
+                  organizationName={config.clientName}
+                  brand={{ appName: config.appName, logoUrl: config.logoUrl, iconUrl: config.iconUrl }}
+                />
+              </span>
+            </h1>
+            <p className="den-copy">
+              This page walks you through connecting this computer to {config.clientName}.
+            </p>
+          </div>
 
         {isMobile ? (
           <div className="den-frame-inset grid gap-3 rounded-[1.5rem] p-5" data-testid="install-mobile-note">
@@ -332,171 +305,95 @@ export function InstallScreen() {
               {copied ? "Copied" : "Copy install link"}
             </button>
           </div>
-        ) : config.connectUrl ? (
+        ) : (
           <ol className="grid gap-3 text-left" data-testid="install-guide">
             <li
-              className="den-frame-inset grid grid-cols-[2rem_1fr] gap-3 rounded-[1.25rem] p-4"
-              data-state={guideStep === 1 ? "active" : "complete"}
+              className="grid grid-cols-[2rem_minmax(0,1fr)] gap-3 rounded-[1.25rem] bg-slate-50 p-4 sm:p-5"
               data-testid="install-guide-step-download"
             >
               <span className="grid size-8 place-items-center rounded-full bg-[var(--dls-accent)] font-semibold text-white" aria-hidden="true">
-                {guideStep > 1 ? "✓" : "1"}
+                1
               </span>
               <div className="grid gap-3">
                 <div>
-                  <p className="m-0 font-semibold text-[var(--dls-text-primary)]">Download and install</p>
-                  <p className="den-copy">Run the normal signed installer. When installation finishes, return to this page.</p>
+                  <p className="m-0 font-semibold text-[var(--dls-text-primary)]">Download the OpenWork installer</p>
+                  <p className="den-copy">It&apos;s a small setup app. When the download finishes, open it and keep this page open.</p>
                 </div>
-                {guideStep === 1 ? (
-                  <div className="grid gap-3">
-                    <a
-                      className="den-button-primary w-full justify-center sm:w-fit"
-                      href={primaryHref}
-                      data-testid="install-download-primary"
-                      onClick={beginGuidedDownload}
-                    >
-                      Download for {primaryLabel}
-                    </a>
-                    <div className="flex flex-wrap gap-2">
-                      {secondaryPlatforms.map((option) => (
-                        <a
-                          key={option.value}
-                          className="den-button-secondary"
-                          href={installHref(config, option.value, token)}
-                          onClick={beginGuidedDownload}
-                        >
-                          {option.label}
-                        </a>
-                      ))}
-                      <button type="button" className="den-button-secondary" onClick={() => advanceGuide(2)} data-testid="install-skip-download">
-                        I already have {config.appName}
-                      </button>
+                <div className="grid gap-3">
+                  <DownloadPlatformGrid
+                    groups={downloadGroups}
+                    recommendedTestId="install-download-primary"
+                    onDownload={(option: DownloadPlatformOption) => beginDownload(option.label, option.href)}
+                  />
+                  {downloadState !== "idle" ? (
+                    <div className="den-frame-inset grid gap-2 rounded-[1.25rem] p-4" aria-live="polite" data-testid="install-download-status">
+                      {downloadState === "preparing" ? (
+                        <>
+                          <span className="size-5 animate-spin rounded-full border-2 border-[var(--dls-border-strong)] border-t-[var(--dls-accent)]" aria-hidden="true" />
+                          <p className="m-0 font-medium text-[var(--dls-text-primary)]">Preparing your {downloadLabel} download...</p>
+                          <p className="den-copy">The first download may take up to a minute. Your browser will begin downloading when it is ready.</p>
+                        </>
+                      ) : (
+                        <>
+                          <p className="m-0 font-medium text-[var(--dls-text-primary)]">Download started</p>
+                          <p className="den-copy">Your browser is preparing the file. If it does not appear, try the download again.</p>
+                          <a className="den-button-secondary w-fit" href={downloadHref} onClick={() => beginDownload(downloadLabel, downloadHref)}>
+                            Try again
+                          </a>
+                        </>
+                      )}
                     </div>
-                  </div>
-                ) : (
-                  <a className="w-fit text-sm font-medium text-[var(--dls-accent)] underline-offset-4 hover:underline" href={primaryHref}>
-                    Download again
-                  </a>
-                )}
+                  ) : null}
+                </div>
               </div>
             </li>
 
             <li
-              className="den-frame-inset grid grid-cols-[2rem_1fr] gap-3 rounded-[1.25rem] p-4"
-              data-state={guideStep === 2 ? "active" : guideStep > 2 ? "complete" : "pending"}
+              className="grid grid-cols-[2rem_minmax(0,1fr)] gap-3 rounded-[1.25rem] bg-slate-50 p-4 sm:p-5"
               data-testid="install-guide-step-open"
             >
               <span className="grid size-8 place-items-center rounded-full border border-[var(--dls-border-strong)] font-semibold text-[var(--dls-text-primary)]" aria-hidden="true">
-                {guideStep > 2 ? "✓" : "2"}
+                2
               </span>
               <div className="grid gap-3">
-                <div>
-                  <p className="m-0 font-semibold text-[var(--dls-text-primary)]">Open {config.appName}</p>
-                  <p className="den-copy">
-                    {guideStep === 1
-                      ? `Only continue once ${config.appName} is installed and running on this computer.`
-                      : `Open the app and confirm that you want to connect it to ${config.clientName}.`}
-                  </p>
-                </div>
-                {guideStep >= 2 ? (
-                  <div className="grid gap-2">
-                    <button
-                      type="button"
-                      className="den-button-primary w-full justify-center sm:w-fit"
-                      data-testid="install-connect-open"
-                      disabled={connecting}
-                      onClick={() => void beginConnect()}
-                    >
-                      {connecting ? "Preparing connection…" : `Open ${config.appName}`}
+                <p className="m-0 font-semibold text-[var(--dls-text-primary)]">Open the installer and paste this link:</p>
+                <div className="grid gap-2" data-testid="install-copy-link">
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <input className="den-input min-w-0 flex-1 text-xs" value={currentLink} readOnly onFocus={(event) => event.currentTarget.select()} />
+                    <button type="button" className="den-button-secondary sm:w-auto" onClick={() => void copyCurrentLink()}>
+                      {copied ? "Copied" : "Copy link"}
                     </button>
-                    <button
-                      type="button"
-                      className="w-fit text-sm text-[var(--dls-text-secondary)] underline-offset-4 hover:underline"
-                      data-testid="install-connect-recovery"
-                      onClick={() => setConnectRecoveryVisible(true)}
-                    >
-                      Didn&apos;t open?
-                    </button>
-                    {connectRecoveryVisible ? (
-                      <div className="den-frame-inset grid gap-3 rounded-[1rem] p-3">
-                        <p className="den-copy text-sm">
-                          Copy a fresh connection link and open it anywhere links work, like your browser&apos;s address bar. The same confirmation will appear.
-                        </p>
-                        <button
-                          type="button"
-                          className="den-button-secondary w-full justify-center sm:w-fit"
-                          data-testid="install-connect-copy"
-                          disabled={connectCopying}
-                          onClick={() => void copyConnectionLink()}
-                        >
-                          {connectCopying ? "Copying..." : connectCopied ? "Copied" : "Copy connection link"}
-                        </button>
-                      </div>
-                    ) : null}
-                    {connectError ? (
-                      <p className="m-0 text-sm text-red-600" role="alert" data-testid="install-connect-error">
-                        {connectError}
-                      </p>
-                    ) : null}
                   </div>
-                ) : null}
+                </div>
+                <p className="den-copy">The installer only continues with a valid link — that&apos;s what connects this computer to {config.clientName}.</p>
               </div>
             </li>
 
             <li
-              className="den-frame-inset grid grid-cols-[2rem_1fr] gap-3 rounded-[1.25rem] p-4"
-              data-state={guideStep === 3 ? "active" : "pending"}
+              className="grid grid-cols-[2rem_minmax(0,1fr)] gap-3 rounded-[1.25rem] bg-slate-50 p-4 sm:p-5"
               data-testid="install-guide-step-signin"
             >
               <span className="grid size-8 place-items-center rounded-full border border-[var(--dls-border-strong)] font-semibold text-[var(--dls-text-primary)]" aria-hidden="true">3</span>
-              <div>
-                <p className="m-0 font-semibold text-[var(--dls-text-primary)]">Sign in</p>
-                <p className="den-copy">
-                  {guideStep === 3
-                    ? `Continue in ${config.appName}, confirm ${config.clientName}, and complete the normal organization sign-in.`
-                    : `After the app connects, sign in to ${config.clientName}.`}
-                </p>
+              <div className="grid gap-3">
+                <p className="m-0 font-semibold text-[var(--dls-text-primary)]">Sign in — this page will confirm when you&apos;re connected.</p>
+                <div className="den-frame-inset grid gap-2 rounded-[1rem] p-3" aria-live="polite">
+                  {handoffStatus.status === "consumed" ? (
+                    <p className="m-0 text-sm font-medium text-emerald-700" data-testid="install-connected">✓ Connected — OpenWork is set up for {config.clientName}</p>
+                  ) : (
+                    <p className="m-0 text-sm text-[var(--dls-text-secondary)]">Waiting for sign-in…</p>
+                  )}
+                  {showInstallTroubleshoot ? (
+                    <p className="m-0 text-sm text-[var(--dls-text-secondary)]">
+                      Still not connected? If the app is not installed, start with step 1. If nothing opened, try the sign-in tab again.
+                    </p>
+                  ) : null}
+                </div>
               </div>
             </li>
           </ol>
-        ) : (
-          <div className="grid justify-items-center gap-4">
-            <div className="den-frame-inset grid gap-2 rounded-[1.25rem] p-4 text-left" role="status">
-              <p className="m-0 font-medium text-[var(--dls-text-primary)]">This deployment still uses bundled workspace setup.</p>
-              <p className="den-copy">Ask an administrator to configure signed desktop handoffs to use the guided standard-installer flow.</p>
-            </div>
-            <a className="den-button-primary w-full justify-center sm:w-auto" href={primaryHref} data-testid="install-download-primary" onClick={() => beginDownload(primaryLabel, primaryHref)}>
-              Download for {primaryLabel}
-            </a>
-            <div className="flex flex-wrap justify-center gap-2">
-              {secondaryPlatforms.map((option) => (
-                <a key={option.value} className="den-button-secondary" href={installHref(config, option.value, token)} onClick={() => beginDownload(option.label, installHref(config, option.value, token))}>
-                  {option.label}
-                </a>
-              ))}
-            </div>
-            {downloadState !== "idle" ? (
-              <div className="den-frame-inset grid w-full justify-items-center gap-2 rounded-[1.25rem] p-4" aria-live="polite" data-testid="install-download-status">
-                {downloadState === "preparing" ? (
-                  <>
-                    <span className="size-5 animate-spin rounded-full border-2 border-[var(--dls-border-strong)] border-t-[var(--dls-accent)]" aria-hidden="true" />
-                    <p className="m-0 font-medium text-[var(--dls-text-primary)]">Preparing your {downloadLabel} download...</p>
-                    <p className="den-copy">The first download may take up to a minute. Your browser will begin downloading when it is ready.</p>
-                  </>
-                ) : (
-                  <>
-                    <p className="m-0 font-medium text-[var(--dls-text-primary)]">Download started</p>
-                    <p className="den-copy">Your browser is preparing the file. If it does not appear, try the download again.</p>
-                    <a className="den-button-secondary" href={downloadHref} onClick={() => beginDownload(downloadLabel, downloadHref)}>
-                      Try again
-                    </a>
-                  </>
-                )}
-              </div>
-            ) : null}
-          </div>
         )}
-      </div>
-    </section>
+        </div>
+      </section>
+    </OnboardingShell>
   );
 }

@@ -546,7 +546,7 @@ describe("external MCP diagnostics", () => {
       error: {
         code: -32001,
         message: "Authorization required. Visit the connect portal.",
-        data: { connect_url: connectUrl, provider: "blueyonder" },
+        data: { connect_url: connectUrl, provider: "northwind" },
       },
     }
     const responseText = JSON.stringify(responseBody)

@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process"
 
 import { installerConfigSourceLabel, resolveInstallerConfig, resolveOptionalInstallerConfig } from "./config"
-import { runInstall } from "./install"
+import { runInstall, scheduleInstallerSelfCleanup } from "./install"
 import { startInstallerServer } from "./server"
 
 const rawArgs = Bun.argv.slice(2)
@@ -200,21 +200,24 @@ process.on("exit", () => uiServer.stop())
 const uiResolution = await resolveOptionalInstallerConfig()
 const installerWindowTitle = `${uiResolution?.config.appName ?? "OpenWork"} Installer`
 
-async function installIsRunning(): Promise<boolean> {
+async function currentInstallState(): Promise<string> {
   try {
     const response = await fetch(`${ready.url}api/status`, { headers: { "x-installer-token": ready.token } })
     const status: unknown = await response.json()
-    return typeof status === "object" && status !== null && "state" in status && status.state === "running"
+    return typeof status === "object" && status !== null && "state" in status && typeof status.state === "string" ? status.state : ""
   } catch {
-    return false
+    return ""
   }
 }
 
 async function exitWhenInstallSettles(): Promise<never> {
   // Window closed mid-install: let a running install finish before exiting.
-  while (await installIsRunning()) {
+  let state = await currentInstallState()
+  while (state === "running") {
     await new Promise((resolve) => setTimeout(resolve, 500))
+    state = await currentInstallState()
   }
+  if (state === "done") scheduleInstallerSelfCleanup()
   uiServer.stop()
   process.exit(0)
 }

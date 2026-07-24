@@ -1,9 +1,17 @@
 import { and, eq, gt, isNull } from "@openwork-ee/den-db/drizzle"
 import {
+  ConfigObjectAccessGrantTable,
+  ConfigObjectTable,
+  ConfigObjectVersionTable,
+  MarketplaceAccessGrantTable,
+  MarketplacePluginTable,
+  MarketplaceTable,
   MemberTable,
   OrganizationTable,
+  PluginAccessGrantTable,
+  PluginConfigObjectTable,
+  PluginTable,
   RateLimitTable,
-  SkillTable,
   WorkspaceBootstrapTable,
   WorkspaceClaimTable,
 } from "@openwork-ee/den-db/schema"
@@ -20,6 +28,11 @@ import { DEFAULT_ORGANIZATION_LIMITS } from "../../organization-limits.js"
 import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { seedDefaultOrganizationRoles, setSessionActiveOrganization } from "../../orgs.js"
 import type { AuthContextVariables } from "../../session.js"
+import {
+  DEFAULT_OPENWORK_MARKETPLACE_DESCRIPTION,
+  DEFAULT_OPENWORK_MARKETPLACE_LOGO_URL,
+  DEFAULT_OPENWORK_MARKETPLACE_NAME,
+} from "../org/plugin-system/default-marketplaces.js"
 
 const BOOTSTRAP_TTL_MS = 1000 * 60 * 60 * 24
 const BOOTSTRAP_RATE_LIMIT_WINDOW_MS = 1000 * 60 * 60
@@ -70,7 +83,7 @@ const bootstrapWorkspaceResponseSchema = z.object({
     expiresAt: z.string(),
   }),
   skill: z.object({
-    id: denTypeIdSchema("skill"),
+    id: denTypeIdSchema("configObject"),
     title: z.string(),
     output: z.literal(STARTER_SKILL_OUTPUT),
   }),
@@ -186,7 +199,9 @@ export function registerBootstrapRoutes<T extends { Variables: AuthContextVariab
         const organizationId = createDenTypeId("organization")
         const setupMemberId = createDenTypeId("member")
         const bootstrapId = createDenTypeId("workspaceBootstrap")
-        const skillId = createDenTypeId("skill")
+        const pluginId = createDenTypeId("plugin")
+        const configObjectId = createDenTypeId("configObject")
+        const marketplaceId = createDenTypeId("marketplace")
 
         await tx.insert(OrganizationTable).values({
           id: organizationId,
@@ -215,14 +230,133 @@ export function registerBootstrapRoutes<T extends { Variables: AuthContextVariab
           expiresAt,
         })
 
-        await tx.insert(SkillTable).values({
-          id: skillId,
+        await tx.insert(PluginTable).values({
+          id: pluginId,
           organizationId,
           createdByOrgMembershipId: setupMemberId,
+          name: metadata.title,
+          description: metadata.description,
+          status: "active",
+          deletedAt: null,
+        })
+
+        await tx.insert(PluginAccessGrantTable).values([
+          {
+            id: createDenTypeId("pluginAccessGrant"),
+            organizationId,
+            pluginId,
+            orgMembershipId: setupMemberId,
+            teamId: null,
+            orgWide: false,
+            role: "manager",
+            createdByOrgMembershipId: setupMemberId,
+          },
+          {
+            id: createDenTypeId("pluginAccessGrant"),
+            organizationId,
+            pluginId,
+            orgMembershipId: null,
+            teamId: null,
+            orgWide: true,
+            role: "viewer",
+            createdByOrgMembershipId: setupMemberId,
+          },
+        ])
+
+        await tx.insert(ConfigObjectTable).values({
+          id: configObjectId,
+          organizationId,
+          objectType: "skill",
+          sourceMode: "cloud",
           title: metadata.title,
           description: metadata.description,
-          skillText,
-          shared: "org",
+          searchText: [metadata.title, metadata.description, skillText].filter(Boolean).join("\n"),
+          currentFileName: null,
+          currentFileExtension: null,
+          currentRelativePath: null,
+          status: "active",
+          createdByOrgMembershipId: setupMemberId,
+          connectorInstanceId: null,
+          deletedAt: null,
+        })
+
+        await tx.insert(ConfigObjectVersionTable).values({
+          id: createDenTypeId("configObjectVersion"),
+          organizationId,
+          configObjectId,
+          normalizedPayloadJson: null,
+          rawSourceText: skillText,
+          schemaVersion: null,
+          createdVia: "cloud",
+          createdByOrgMembershipId: setupMemberId,
+          connectorSyncEventId: null,
+          sourceRevisionRef: null,
+          isDeletedVersion: false,
+        })
+
+        await tx.insert(ConfigObjectAccessGrantTable).values([
+          {
+            id: createDenTypeId("configObjectAccessGrant"),
+            organizationId,
+            configObjectId,
+            orgMembershipId: setupMemberId,
+            teamId: null,
+            orgWide: false,
+            role: "manager",
+            createdByOrgMembershipId: setupMemberId,
+          },
+          {
+            id: createDenTypeId("configObjectAccessGrant"),
+            organizationId,
+            configObjectId,
+            orgMembershipId: null,
+            teamId: null,
+            orgWide: true,
+            role: "viewer",
+            createdByOrgMembershipId: setupMemberId,
+          },
+        ])
+
+        await tx.insert(PluginConfigObjectTable).values({
+          id: createDenTypeId("pluginConfigObject"),
+          organizationId,
+          pluginId,
+          configObjectId,
+          membershipSource: "manual",
+          connectorMappingId: null,
+          createdByOrgMembershipId: setupMemberId,
+        })
+
+        await tx.insert(MarketplaceTable).values({
+          id: marketplaceId,
+          organizationId,
+          name: DEFAULT_OPENWORK_MARKETPLACE_NAME,
+          description: DEFAULT_OPENWORK_MARKETPLACE_DESCRIPTION,
+          logoUrl: DEFAULT_OPENWORK_MARKETPLACE_LOGO_URL,
+          status: "active",
+          createdByOrgMembershipId: setupMemberId,
+          deletedAt: null,
+        })
+
+        await tx.insert(MarketplaceAccessGrantTable).values({
+          id: createDenTypeId("marketplaceAccessGrant"),
+          organizationId,
+          marketplaceId,
+          orgMembershipId: null,
+          teamId: null,
+          orgWide: true,
+          role: "viewer",
+          createdByOrgMembershipId: setupMemberId,
+        })
+
+        await tx.insert(MarketplacePluginTable).values({
+          id: createDenTypeId("marketplacePlugin"),
+          organizationId,
+          marketplaceId,
+          pluginId,
+          membershipSource: "manual",
+          createdByOrgMembershipId: setupMemberId,
+          removedAt: null,
         })
 
         const claimLinks = []
@@ -251,7 +385,7 @@ export function registerBootstrapRoutes<T extends { Variables: AuthContextVariab
           organization: { id: organizationId, name: input.workspaceName, slug: organizationId, status: "provisional" as const },
           setup: { id: bootstrapId, expiresAt: expiresAt.toISOString() },
           setupMemberId,
-          skill: { id: skillId, title: metadata.title, output: STARTER_SKILL_OUTPUT },
+          skill: { id: configObjectId, title: metadata.title, output: STARTER_SKILL_OUTPUT },
           claimLinks,
         }
       })

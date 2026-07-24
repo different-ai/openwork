@@ -4,6 +4,7 @@ import { ImageUp, Palette, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { getRequestError, requestJson } from "../../_lib/den-flow";
 import {
+  getOrgAccessFlags,
   getManagedBrandAssetFromMetadata,
   parseOrganizationMetadata,
   type DenManagedBrandAsset,
@@ -157,7 +158,12 @@ export function BrandAppearanceScreen() {
   const [pageError, setPageError] = useState<string | null>(null);
   const [pageSuccess, setPageSuccess] = useState<string | null>(null);
 
-  const isOwner = orgContext?.currentMember.isOwner ?? false;
+  const access = getOrgAccessFlags(
+    orgContext?.currentMember.role ?? "member",
+    orgContext?.currentMember.isOwner ?? false,
+    orgContext?.roles,
+  );
+  const canManageBrandAppearance = access.canManageSettings;
   const metadata = parseOrganizationMetadata(orgContext?.organization.metadata ?? null);
   const currentLogoUrl = typeof metadata?.brandLogoUrl === "string" ? metadata.brandLogoUrl : null;
   const currentIconUrl = typeof metadata?.brandIconUrl === "string" ? metadata.brandIconUrl : null;
@@ -195,6 +201,7 @@ export function BrandAppearanceScreen() {
 
   async function handleAssetSelection(kind: BrandAssetKind, file: File | null) {
     setPageError(null);
+    if (!canManageBrandAppearance) return;
     if (!file) return;
     try {
       const draft = await createBrandAssetDraft(file, kind);
@@ -212,6 +219,7 @@ export function BrandAppearanceScreen() {
 
   function handleAssetClear(kind: BrandAssetKind) {
     setPageError(null);
+    if (!canManageBrandAppearance) return;
     if (kind === "logo") {
       setLogoDraft(null);
       setLogoClearPending(true);
@@ -225,6 +233,11 @@ export function BrandAppearanceScreen() {
     event.preventDefault();
     setPageError(null);
     setPageSuccess(null);
+
+    if (!canManageBrandAppearance) {
+      setPageError("Only workspace owners and super-admins can change brand appearance.");
+      return;
+    }
 
     try {
       if (logoDraft || iconDraft) {
@@ -280,13 +293,13 @@ export function BrandAppearanceScreen() {
                 <div className="grid gap-5">
                   <label className="grid gap-3">
                     <span className="text-[14px] font-medium text-gray-700">Application name</span>
-                    <DenInput type="text" value={appNameDraft} onChange={(event) => setAppNameDraft(event.target.value)} placeholder="OpenWork" maxLength={64} disabled={!isOwner} />
+                    <DenInput type="text" value={appNameDraft} onChange={(event) => setAppNameDraft(event.target.value)} placeholder="OpenWork" maxLength={64} disabled={!canManageBrandAppearance} />
                     <span className="text-[11px] text-gray-400">The signed application identity stays OpenWork.</span>
                   </label>
 
                   <label className="grid gap-3">
                     <span className="text-[14px] font-medium text-gray-700">Accent color</span>
-                    <select value={accentColorDraft} onChange={(event) => setAccentColorDraft(event.target.value)} disabled={!isOwner} className="h-11 rounded-xl border border-gray-200 bg-white px-4 text-[14px] text-gray-900 outline-none">
+                    <select value={accentColorDraft} onChange={(event) => setAccentColorDraft(event.target.value)} disabled={!canManageBrandAppearance} className="h-11 rounded-xl border border-gray-200 bg-white px-4 text-[14px] text-gray-900 outline-none">
                       <option value="">Default (OpenWork)</option>
                       {["blue", "violet", "purple", "indigo", "iris", "crimson", "red", "ruby", "pink", "plum", "orange", "tomato", "gold", "green", "grass", "jade", "teal", "cyan", "sky"].map((color) => (
                         <option key={color} value={color}>{color[0].toUpperCase() + color.slice(1)}</option>
@@ -308,14 +321,14 @@ export function BrandAppearanceScreen() {
               </div>
 
               <div className="grid min-w-0 gap-5 lg:grid-cols-2">
-                <BrandAssetUploadField kind="logo" title="Wordmark" description="Horizontal PNG or JPEG, 128×32 to 4096×4096, under 2 MB." currentUrl={currentLogoUrl} managedAsset={currentLogoAsset} draft={logoDraft} clearPending={logoClearPending} disabled={!isOwner || saveBusy} onSelect={(file) => void handleAssetSelection("logo", file)} onClear={() => handleAssetClear("logo")} />
-                <BrandAssetUploadField kind="icon" title="Square app icon" description="Square PNG or JPEG, 64×64 to 4096×4096, under 2 MB." currentUrl={currentIconUrl} managedAsset={currentIconAsset} draft={iconDraft} clearPending={iconClearPending} disabled={!isOwner || saveBusy} onSelect={(file) => void handleAssetSelection("icon", file)} onClear={() => handleAssetClear("icon")} />
+                <BrandAssetUploadField kind="logo" title="Wordmark" description="Horizontal PNG or JPEG, 128×32 to 4096×4096, under 2 MB." currentUrl={currentLogoUrl} managedAsset={currentLogoAsset} draft={logoDraft} clearPending={logoClearPending} disabled={!canManageBrandAppearance || saveBusy} onSelect={(file) => void handleAssetSelection("logo", file)} onClear={() => handleAssetClear("logo")} />
+                <BrandAssetUploadField kind="icon" title="Square app icon" description="Square PNG or JPEG, 64×64 to 4096×4096, under 2 MB." currentUrl={currentIconUrl} managedAsset={currentIconAsset} draft={iconDraft} clearPending={iconClearPending} disabled={!canManageBrandAppearance || saveBusy} onSelect={(file) => void handleAssetSelection("icon", file)} onClear={() => handleAssetClear("icon")} />
               </div>
             </DenCard>
 
             <div className="flex items-center justify-between gap-3">
-              <p className="text-[13px] text-gray-500">{!isOwner ? "Only workspace owners can change brand appearance." : null}</p>
-              {isOwner ? <DenButton type="submit" loading={saveBusy}>Save brand appearance</DenButton> : null}
+              <p className="text-[13px] text-gray-500">{!canManageBrandAppearance ? "Admins can view brand appearance. Owners and super-admins can change it." : null}</p>
+              <DenButton type="submit" loading={saveBusy} disabled={!canManageBrandAppearance}>Save brand appearance</DenButton>
             </div>
           </form>
         )}

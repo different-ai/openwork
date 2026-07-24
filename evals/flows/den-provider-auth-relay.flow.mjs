@@ -462,30 +462,39 @@ function assertForeignHostConnectUrl(ctx, connectUrl, connectionUrl) {
 }
 
 function assertProviderAuthEnvelope(ctx, envelope, expectedConnectUrl) {
-  const diagnostic = isRecord(own(envelope, "diagnostic")) ? own(envelope, "diagnostic") : null;
+  const providerError = isRecord(own(envelope, "providerError")) ? own(envelope, "providerError") : null;
   const connectionStatus = isRecord(own(envelope, "connectionStatus")) ? own(envelope, "connectionStatus") : null;
   const action = isRecord(own(connectionStatus, "action")) ? own(connectionStatus, "action") : null;
   witness(ctx, own(envelope, "error") === "needs_connection", "execute_capability error is needs_connection", envelope);
-  witness(ctx, own(diagnostic, "code") === "MCP_PROVIDER_AUTH_REQUIRED", "diagnostic.code is MCP_PROVIDER_AUTH_REQUIRED", diagnostic);
-  witness(ctx, own(diagnostic, "retryable") === false, "diagnostic.retryable is false", diagnostic);
-  witness(ctx, own(diagnostic, "connectUrl") === expectedConnectUrl, "diagnostic.connectUrl relays the gateway connect link", diagnostic);
+  witness(ctx, typeof own(envelope, "referenceId") === "string", "execute_capability exposes a diagnostic referenceId", envelope);
+  witness(ctx, own(envelope, "retryable") === false, "execute_capability retryable is false", envelope);
+  witness(ctx, own(providerError, "jsonRpcCode") === -32001, "providerError.jsonRpcCode carries the provider JSON-RPC code", providerError);
+  witness(ctx, String(own(providerError, "message") ?? "").includes("Authorization required"), "providerError.message carries the provider authorization wording", providerError);
+  witness(ctx, String(own(providerError, "data") ?? "").includes(expectedConnectUrl), "providerError.data includes the provider connect-link declaration", providerError);
   witness(ctx, own(connectionStatus, "layer") === "downstream_provider", "connectionStatus.layer is downstream_provider", connectionStatus);
   witness(ctx, own(connectionStatus, "state") === "needs_connection", "connectionStatus.state is needs_connection", connectionStatus);
   witness(ctx, own(action, "type") === "connect", "connectionStatus.action.type is connect", action);
   witness(ctx, own(action, "url") === expectedConnectUrl, "connectionStatus.action.url is exactly the gateway connect link", action);
+  witness(ctx, own(envelope, "diagnostic") === undefined, "execute_capability does not expose the internal diagnostic object", envelope);
+  witness(ctx, own(envelope, "actionOwner") === undefined, "execute_capability does not expose actionOwner", envelope);
+  witness(ctx, own(envelope, "operatorAction") === undefined, "execute_capability does not expose operatorAction", envelope);
+  witness(ctx, own(connectionStatus, "diagnostic") === undefined, "connectionStatus does not embed the internal diagnostic object", connectionStatus);
   witness(ctx, !TIMEOUT_WORDING.test(String(own(envelope, "message") ?? "")), "execute_capability message contains no latency or timeout wording", own(envelope, "message"));
 }
 
 function assertForeignLinkStrippedEnvelope(ctx, envelope) {
-  const diagnostic = isRecord(own(envelope, "diagnostic")) ? own(envelope, "diagnostic") : null;
+  const providerError = isRecord(own(envelope, "providerError")) ? own(envelope, "providerError") : null;
   const connectionStatus = isRecord(own(envelope, "connectionStatus")) ? own(envelope, "connectionStatus") : null;
   const action = isRecord(own(connectionStatus, "action")) ? own(connectionStatus, "action") : null;
   witness(ctx, own(envelope, "error") === "needs_connection", "foreign-host execute_capability error is still needs_connection", envelope);
-  witness(ctx, own(diagnostic, "code") === "MCP_PROVIDER_AUTH_REQUIRED", "foreign-host diagnostic.code is MCP_PROVIDER_AUTH_REQUIRED", diagnostic);
+  witness(ctx, typeof own(envelope, "referenceId") === "string", "foreign-host envelope exposes a diagnostic referenceId", envelope);
+  witness(ctx, own(envelope, "retryable") === false, "foreign-host envelope retryable is false", envelope);
+  witness(ctx, own(providerError, "jsonRpcCode") === -32001, "foreign-host providerError.jsonRpcCode carries the provider JSON-RPC code", providerError);
   witness(ctx, own(connectionStatus, "layer") === "downstream_provider", "foreign-host connectionStatus.layer is downstream_provider", connectionStatus);
   witness(ctx, own(connectionStatus, "state") === "needs_connection", "foreign-host connectionStatus.state is needs_connection", connectionStatus);
   witness(ctx, own(action, "type") === "connect", "foreign-host action still tells the member to connect", action);
-  witness(ctx, own(diagnostic, "connectUrl") === undefined, "foreign-host diagnostic.connectUrl is stripped", diagnostic);
+  witness(ctx, own(envelope, "diagnostic") === undefined, "foreign-host envelope does not expose the internal diagnostic object", envelope);
+  witness(ctx, own(connectionStatus, "diagnostic") === undefined, "foreign-host connectionStatus does not embed diagnostics", connectionStatus);
   witness(ctx, own(action, "url") === undefined, "foreign-host connectionStatus.action.url is stripped", action);
   witness(ctx, !TIMEOUT_WORDING.test(String(own(envelope, "message") ?? "")), "foreign-host message contains no latency or timeout wording", own(envelope, "message"));
 }

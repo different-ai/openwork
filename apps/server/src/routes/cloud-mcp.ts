@@ -3,9 +3,11 @@ import {
   OPENWORK_CLOUD_MCP_NAME,
   readOpenworkCloudMcpHealth,
   reconcileOpenworkCloudMcp,
+  refreshOpenworkCloudMcpEngine,
   type CloudMcpServerMetadata,
   type CloudMcpProviderModelContext,
   type CloudMcpRuntimeRegistrar,
+  type CloudMcpLiveStatusObserver,
 } from "../cloud-mcp-health.js";
 import { ApiError } from "../errors.js";
 import type { ServerConfig, TokenScope, WorkspaceInfo } from "../types.js";
@@ -26,6 +28,7 @@ export type RegisterCloudMcpRoutesOptions = {
   resolveOpencodeDirectory: (workspace: WorkspaceInfo) => string | null;
   createWorkspaceOpencodeClient: (config: ServerConfig, workspace: WorkspaceInfo) => WorkspaceOpencodeClient;
   registerRuntimeMcp: CloudMcpRuntimeRegistrar;
+  refreshRegistrationFromLiveStatus?: CloudMcpLiveStatusObserver;
   serverMetadata?: CloudMcpServerMetadata;
 };
 
@@ -86,6 +89,7 @@ export function registerCloudMcpRoutes(options: RegisterCloudMcpRoutesOptions): 
     resolveOpencodeDirectory,
     createWorkspaceOpencodeClient,
     registerRuntimeMcp,
+    refreshRegistrationFromLiveStatus,
     serverMetadata,
   } = options;
 
@@ -100,8 +104,46 @@ export function registerCloudMcpRoutes(options: RegisterCloudMcpRoutesOptions): 
       serverMetadata,
       probe: probeFromQuery(ctx.url),
       createWorkspaceOpencodeClient,
+      refreshRegistrationFromLiveStatus,
     });
     return jsonResponse(health);
+  });
+
+  addRoute(routes, "POST", "/workspace/:id/mcp/openwork-cloud/engine-refresh", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    assertExactWorkspace(ctx.params.id, workspace);
+    // The refresh needs no payload; an optional body may scope provider/model
+    // and name the trigger for the delivery ledger. An absent/empty body is
+    // fine, but malformed JSON stays a hard 400 — never silently ignored.
+    const raw = (await ctx.request.text()).trim();
+    let body: Record<string, unknown> = {};
+    if (raw) {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        throw new ApiError(400, "invalid_json", "Invalid JSON body");
+      }
+      if (!isRecord(parsed)) {
+        throw new ApiError(400, "invalid_payload", "JSON object body is required");
+      }
+      body = parsed;
+    }
+    assertStrictBody(body, workspace);
+    const result = await refreshOpenworkCloudMcpEngine({
+      config,
+      workspace,
+      directory: resolveOpencodeDirectory(workspace),
+      providerModel: providerModelFromBody(body),
+      serverMetadata,
+      createWorkspaceOpencodeClient,
+      registerRuntimeMcp,
+      refreshRegistrationFromLiveStatus,
+      trigger: typeof body.trigger === "string" ? body.trigger : undefined,
+    });
+    return jsonResponse(result);
   });
 
   addRoute(routes, "POST", "/workspace/:id/mcp/openwork-cloud/reconcile", "client", async (ctx) => {
@@ -123,6 +165,7 @@ export function registerCloudMcpRoutes(options: RegisterCloudMcpRoutesOptions): 
       serverMetadata,
       createWorkspaceOpencodeClient,
       registerRuntimeMcp,
+      refreshRegistrationFromLiveStatus,
     });
     return jsonResponse(health);
   });

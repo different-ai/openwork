@@ -10,6 +10,13 @@ import {
   type ReactNode,
 } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
+import type {
+  OpenworkAffordanceDescriptor,
+  OpenworkAffordanceEffects,
+  OpenworkAffordanceRequest,
+  OpenworkAffordanceResult,
+} from "@openwork/types/openwork-affordance";
+import type { OpenworkContextSnapshot } from "@openwork/types/openwork-context";
 
 export type OpenworkControlSideEffect = "none" | "navigation" | "mutation" | "external";
 
@@ -24,6 +31,8 @@ export type OpenworkControlActionMetadata = {
   id: string;
   label: string;
   description?: string;
+  kind: "query" | "command";
+  effects: OpenworkAffordanceEffects;
   sideEffect: OpenworkControlSideEffect;
   requiresConfirmation: boolean;
   requiresArgs: boolean;
@@ -60,6 +69,8 @@ export type OpenworkControlAction = {
   id: string;
   label: string;
   description?: string;
+  kind?: "query" | "command";
+  effects?: OpenworkAffordanceEffects;
   sideEffect?: OpenworkControlSideEffect;
   requiresConfirmation?: boolean;
   requiresArgs?: boolean;
@@ -96,6 +107,7 @@ type OpenworkControlContextValue = {
   actions: OpenworkControlActionMetadata[];
   registerAction: (actionId: string, actionRef: ControlActionRef) => () => void;
   executeAction: (actionId: string, args?: unknown) => Promise<OpenworkControlResult>;
+  publishContext: (context: OpenworkContextSnapshot) => void;
   snapshot: () => OpenworkControlSnapshot;
 };
 
@@ -104,6 +116,9 @@ type OpenworkControlAPI = {
   snapshot: () => OpenworkControlSnapshot;
   listActions: () => OpenworkControlActionMetadata[];
   execute: (actionId: string, args?: unknown) => Promise<OpenworkControlResult>;
+  context: () => OpenworkContextSnapshot;
+  query: (request: OpenworkAffordanceRequest) => Promise<OpenworkAffordanceResult>;
+  command: (request: OpenworkAffordanceRequest) => Promise<OpenworkAffordanceResult>;
   setEnabled: (enabled: boolean) => void;
   subscribe: (listener: (snapshot: OpenworkControlSnapshot) => void) => () => void;
 };
@@ -114,7 +129,7 @@ declare global {
   }
 }
 
-const CONTROL_API_VERSION = 1;
+const CONTROL_API_VERSION = 2;
 const OpenworkControlContext = createContext<OpenworkControlContextValue | null>(null);
 const SPOTLIGHT_TIMING_MS = Object.freeze({
   missingTarget: 80,
@@ -144,13 +159,29 @@ function isBrowser() {
   return typeof window !== "undefined" && typeof document !== "undefined";
 }
 
+function effectsForSideEffect(sideEffect: OpenworkControlSideEffect): OpenworkAffordanceEffects {
+  if (sideEffect === "navigation") {
+    return { data: "none", ui: "navigate", external: false };
+  }
+  if (sideEffect === "mutation") {
+    return { data: "write", ui: "none", external: false };
+  }
+  if (sideEffect === "external") {
+    return { data: "none", ui: "none", external: true };
+  }
+  return { data: "none", ui: "none", external: false };
+}
+
 function metadataForAction(registered: RegisteredAction, busyActionId: string | null): OpenworkControlActionMetadata {
   const action = registered.ref.current;
+  const sideEffect = action?.sideEffect ?? "none";
   return {
     id: registered.id,
     label: action?.label ?? registered.id,
     description: action?.description,
-    sideEffect: action?.sideEffect ?? "none",
+    kind: action?.kind ?? "command",
+    effects: action?.effects ?? effectsForSideEffect(sideEffect),
+    sideEffect,
     requiresConfirmation: action?.requiresConfirmation === true,
     requiresArgs: action?.requiresArgs === true,
     hasPreviewArgs: action?.previewArgs !== undefined,
@@ -158,6 +189,29 @@ function metadataForAction(registered: RegisteredAction, busyActionId: string | 
     args: action?.args,
     disabled: action?.disabled === true,
     busy: busyActionId === registered.id,
+  };
+}
+
+function affordanceForAction(action: OpenworkControlActionMetadata): OpenworkAffordanceDescriptor {
+  return {
+    id: action.id,
+    kind: action.kind,
+    title: action.label,
+    description: action.description ?? action.label,
+    provider: { id: "openwork-ui", kind: "builtin" },
+    arguments: (action.args ?? []).map((argument) => ({
+      name: argument.name,
+      type: argument.type ?? "unknown",
+      required: argument.required === true,
+      ...(argument.description ? { description: argument.description } : {}),
+    })),
+    effects: action.effects,
+    confirmation: action.requiresConfirmation ? "destructive" : "never",
+    availability: {
+      enabled: !action.disabled && !action.busy,
+      ...(action.disabled ? { reason: "This action is not available in the current app state." } : {}),
+    },
+    executor: { kind: "openwork" },
   };
 }
 
@@ -184,6 +238,8 @@ export function OpenworkControlProvider({ children }: { children: ReactNode }) {
   const location = useLocation();
   const actionsRef = useRef(new Map<string, RegisteredAction>());
   const listenersRef = useRef(new Set<(snapshot: OpenworkControlSnapshot) => void>());
+  const contextRef = useRef<OpenworkContextSnapshot | null>(null);
+  const contextRevisionRef = useRef(0);
   const nextOrderRef = useRef(1);
   const [version, setVersion] = useState(0);
   const [enabledState, setEnabledState] = useState(false);
@@ -191,6 +247,7 @@ export function OpenworkControlProvider({ children }: { children: ReactNode }) {
   const [narration, setNarration] = useState("Control mode is off.");
   const [spotlight, setSpotlight] = useState<SpotlightState>({ visible: false, phase: "target", rect: null });
   const busyActionIdRef = useRef<string | null>(null);
+  const busyActorRef = useRef<string | null>(null);
   const spotlightRunRef = useRef(0);
 
   const route = `${location.pathname}${location.search}${location.hash}`;
@@ -221,6 +278,65 @@ export function OpenworkControlProvider({ children }: { children: ReactNode }) {
     actions: listActionMetadata(),
   }), [busyActionId, enabled, listActionMetadata, narration, route, status]);
 
+  const publishContext = useCallback((context: OpenworkContextSnapshot) => {
+    if (contextRef.current === context) return;
+    contextRef.current = context;
+    contextRevisionRef.current += 1;
+  }, []);
+
+  const contextSnapshot = useCallback((): OpenworkContextSnapshot => {
+    const availableAffordances = listActionMetadata().map(affordanceForAction);
+    const published = contextRef.current;
+    const revision = contextRevisionRef.current;
+    if (published) {
+      return {
+        ...published,
+        revision,
+        capturedAt: new Date().toISOString(),
+        availableAffordances,
+        execution: {
+          ...published.execution,
+          busyCommandId: busyActionId,
+          busyActor: busyActorRef.current,
+        },
+      };
+    }
+    return {
+      schemaVersion: 1,
+      revision,
+      capturedAt: new Date().toISOString(),
+      screen: { kind: "other", route },
+      conversations: { tabs: [], layout: { kind: "empty" } },
+      chrome: {
+        sidebarOpen: true,
+        applicationMenuVisible: false,
+        rightSidebarExpanded: false,
+      },
+      execution: {
+        queries: "parallel",
+        commands: "serialized",
+        busyCommandId: busyActionId,
+        busyActor: busyActorRef.current,
+      },
+      sidePanel: {
+        open: false,
+        ownerSessionId: null,
+        kind: null,
+        tabs: [],
+        activeTabId: null,
+      },
+      resources: [{
+        ref: `screen:${route}`,
+        kind: "screen",
+        title: "OpenWork",
+        provider: { id: "openwork-ui", kind: "builtin" },
+        state: { kind: "other", route },
+      }],
+      availableAffordances,
+      contributions: [],
+    };
+  }, [busyActionId, listActionMetadata, route]);
+
   const registerAction = useCallback((actionId: string, actionRef: ControlActionRef) => {
     const token = Symbol(actionId);
     const previous = actionsRef.current.get(actionId);
@@ -230,12 +346,14 @@ export function OpenworkControlProvider({ children }: { children: ReactNode }) {
       token,
       ref: actionRef,
     });
+    contextRevisionRef.current += 1;
     setVersion((current) => current + 1);
 
     return () => {
       const current = actionsRef.current.get(actionId);
       if (current?.token === token) {
         actionsRef.current.delete(actionId);
+        contextRevisionRef.current += 1;
         setVersion((value) => value + 1);
       }
     };
@@ -278,7 +396,10 @@ export function OpenworkControlProvider({ children }: { children: ReactNode }) {
     const action = registered?.ref.current;
     if (!registered || !action) return { ok: false, actionId, error: `Unknown action: ${actionId}` };
     if (action.disabled) return { ok: false, actionId, error: `Action is disabled: ${action.label}` };
-    if (busyActionIdRef.current) return { ok: false, actionId, error: `Already acting: ${busyActionIdRef.current}` };
+    if (busyActionIdRef.current) {
+      const actor = busyActorRef.current ? ` for ${busyActorRef.current}` : "";
+      return { ok: false, actionId, error: `Already acting: ${busyActionIdRef.current}${actor}` };
+    }
 
     if (action.requiresConfirmation && isBrowser()) {
       const confirmed = window.confirm(`Allow Control Mode to ${action.label}?`);
@@ -288,6 +409,7 @@ export function OpenworkControlProvider({ children }: { children: ReactNode }) {
     const runId = spotlightRunRef.current + 1;
     spotlightRunRef.current = runId;
     busyActionIdRef.current = action.id;
+    contextRevisionRef.current += 1;
     setEnabled(true);
     setBusyActionId(action.id);
     setNarration(`Moving to ${action.label}…`);
@@ -320,9 +442,119 @@ export function OpenworkControlProvider({ children }: { children: ReactNode }) {
       return { ok: false, actionId, error: message };
     } finally {
       if (busyActionIdRef.current === action.id) busyActionIdRef.current = null;
+      contextRevisionRef.current += 1;
       setBusyActionId(null);
     }
   }, [playTargetChoreography, setEnabled]);
+
+  const queryAffordance = useCallback(async (
+    request: OpenworkAffordanceRequest,
+  ): Promise<OpenworkAffordanceResult> => {
+    const action = actionsRef.current.get(request.id)?.ref.current;
+    const revision = contextRevisionRef.current;
+    if (!action || action.kind !== "query") {
+      return {
+        ok: false,
+        id: request.id,
+        error: `Unknown query: ${request.id}`,
+        code: "unavailable",
+        revision,
+      };
+    }
+    if (action.disabled) {
+      return {
+        ok: false,
+        id: request.id,
+        error: `Query is disabled: ${action.label}`,
+        code: "unavailable",
+        revision,
+      };
+    }
+    try {
+      const effectiveArgs = request.args === undefined ? action.previewArgs : request.args;
+      const result = await action.execute(effectiveArgs, { setNarration: () => undefined });
+      const resultError = returnedActionError(result);
+      if (resultError) {
+        return {
+          ok: false,
+          id: request.id,
+          error: resultError,
+          code: "failed",
+          revision,
+        };
+      }
+      return {
+        ok: true,
+        id: request.id,
+        result,
+        revision,
+        effects: action.effects ?? { data: "read", ui: "none", external: false },
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        id: request.id,
+        error: describeError(error),
+        code: "failed",
+        revision,
+      };
+    }
+  }, []);
+
+  const executeCommand = useCallback(async (
+    request: OpenworkAffordanceRequest,
+  ): Promise<OpenworkAffordanceResult> => {
+    const action = actionsRef.current.get(request.id)?.ref.current;
+    const revision = contextRevisionRef.current;
+    if (!action || action.kind === "query") {
+      return {
+        ok: false,
+        id: request.id,
+        error: `Unknown command: ${request.id}`,
+        code: "unavailable",
+        revision,
+      };
+    }
+    if (busyActionIdRef.current) {
+      const actor = busyActorRef.current ? ` for ${busyActorRef.current}` : "";
+      return {
+        ok: false,
+        id: request.id,
+        error: `Already acting: ${busyActionIdRef.current}${actor}`,
+        code: "conflict",
+        revision,
+      };
+    }
+    if (request.expectedRevision !== undefined && request.expectedRevision !== revision) {
+      return {
+        ok: false,
+        id: request.id,
+        error: `OpenWork context changed from revision ${request.expectedRevision} to ${revision}.`,
+        code: "conflict",
+        revision,
+      };
+    }
+    busyActorRef.current = request.actor ?? null;
+    const result = await executeAction(request.id, request.args);
+    if (!busyActionIdRef.current) busyActorRef.current = null;
+    if (!result.ok) {
+      return {
+        ok: false,
+        id: request.id,
+        error: result.error,
+        code: result.error.startsWith("Already acting:") ? "conflict" : "failed",
+        revision: contextRevisionRef.current,
+      };
+    }
+    const sideEffect = action.sideEffect ?? "none";
+    return {
+      ok: true,
+      id: request.id,
+      result: result.result,
+      revision: contextRevisionRef.current,
+      effects: action.effects ?? effectsForSideEffect(sideEffect),
+    };
+  }, [executeAction]);
 
   const value = useMemo<OpenworkControlContextValue>(() => ({
     enabled,
@@ -333,8 +565,20 @@ export function OpenworkControlProvider({ children }: { children: ReactNode }) {
     actions,
     registerAction,
     executeAction,
+    publishContext,
     snapshot,
-  }), [actions, busyActionId, enabled, executeAction, narration, registerAction, route, setEnabled, snapshot]);
+  }), [
+    actions,
+    busyActionId,
+    enabled,
+    executeAction,
+    narration,
+    publishContext,
+    registerAction,
+    route,
+    setEnabled,
+    snapshot,
+  ]);
 
   useEffect(() => {
     if (!enabled) {
@@ -352,6 +596,9 @@ export function OpenworkControlProvider({ children }: { children: ReactNode }) {
       snapshot,
       listActions: () => snapshot().actions,
       execute: executeAction,
+      context: contextSnapshot,
+      query: queryAffordance,
+      command: executeCommand,
       setEnabled,
       subscribe(listener) {
         listenersRef.current.add(listener);
@@ -368,7 +615,7 @@ export function OpenworkControlProvider({ children }: { children: ReactNode }) {
         delete window.__openworkControl;
       }
     };
-  }, [executeAction, setEnabled, snapshot]);
+  }, [contextSnapshot, executeAction, executeCommand, queryAffordance, setEnabled, snapshot]);
 
   useEffect(() => {
     busyActionIdRef.current = busyActionId;
@@ -389,6 +636,15 @@ export function OpenworkControlProvider({ children }: { children: ReactNode }) {
 
 export function useOpenworkControl() {
   return use(OpenworkControlContext);
+}
+
+export function usePublishOpenworkContext(context: OpenworkContextSnapshot) {
+  const control = useOpenworkControl();
+  const publishContext = control?.publishContext;
+
+  useEffect(() => {
+    publishContext?.(context);
+  }, [context, publishContext]);
 }
 
 export function useControlAction(action: OpenworkControlAction | null | false | undefined) {
@@ -469,10 +725,10 @@ export function OpenworkRouteControlActions() {
     },
     {
       id: "route.settings.skills",
-      label: "Open skills settings",
-      description: "Navigate to skills settings.",
+      label: "Open extensions",
+      description: "Browse the skills and MCPs available to this agent.",
       sideEffect: "navigation",
-      execute: () => navigate("/settings/skills"),
+      execute: () => navigate("/settings/extensions/skills"),
     },
     {
       id: "route.settings.providers",
@@ -507,7 +763,7 @@ export function OpenworkRouteControlActions() {
           type: "string",
           required: true,
           description:
-            "Settings tab: general | ai | preferences | permissions | shell | extensions | skills | environment | advanced | appearance | updates | recovery | debug | cloud-account | cloud-providers | cloud-marketplaces",
+            "Settings tab: general | ai | preferences | permissions | shell | extensions | environment | advanced | appearance | updates | recovery | debug | cloud-account | cloud-providers",
         },
       ],
       previewArgs: { panel: "ai" },
@@ -542,12 +798,14 @@ export function OpenworkRouteControlActions() {
       id: "help.capabilities",
       label: "What can OpenWork do?",
       description: "List the main capabilities of OpenWork.",
+      kind: "query",
+      effects: { data: "read", ui: "none", external: false },
       sideEffect: "none",
       execute: () => ({
         capabilities: [
           { id: "browse", label: "Browse the web", description: "Control a browser to navigate, scrape, and automate web tasks." },
           { id: "providers", label: "AI model providers", description: "Connect Anthropic, OpenAI, Google, OpenRouter, Ollama, or other LLM providers." },
-          { id: "extensions", label: "MCP extensions", description: "Add MCP servers for Google Workspace, GitHub, databases, and more." },
+          { id: "extensions", label: "Extensions", description: "Browse the skills and MCPs available to your agent." },
           { id: "voice", label: "Voice mode", description: "Talk to OpenWork with real-time voice using OpenAI Realtime." },
           { id: "files", label: "File management", description: "Read, write, and organize files in your workspace." },
           { id: "code", label: "Write and run code", description: "Generate, edit, and execute code with full tool access." },
@@ -556,7 +814,7 @@ export function OpenworkRouteControlActions() {
           { id: "automations", label: "Automations", description: "Schedule recurring tasks and background agents." },
           { id: "sharing", label: "Share sessions", description: "Share workspace sessions with collaborators via OpenWork Cloud." },
         ],
-        hint: "Use settings.panel.open to configure any of these. For example: settings.panel.open({panel:'ai'}) for providers, settings.panel.open({panel:'extensions'}) for MCPs.",
+        hint: "Use settings.panel.open to configure any of these. For example: settings.panel.open({panel:'ai'}) for providers, settings.panel.open({panel:'extensions'}) for skills and MCPs.",
       }),
     },
   ], [navigate]);

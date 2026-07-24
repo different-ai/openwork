@@ -229,36 +229,6 @@ export const BUILT_IN_OPENWORK_EXTENSION_MANIFESTS: OpenWorkExtensionManifest[] 
   },
   {
     schemaVersion: 1,
-    id: "openai-image-gen",
-    name: "OpenAI Image Gen",
-    description: "Generate image artifacts with gpt-image-2.",
-    source: { format: "openwork-builtin", origin: "builtin", trusted: true },
-    icon: { src: "/ext-openai.svg" },
-    composer: { prompt: "Use the OpenAI Image Gen extension to " },
-    setup: {
-      instructions: "Add an OpenAI API key, then agents can generate image artifacts through OpenWork extension actions.",
-      primaryCta: "Enable image generation",
-      secondaryCta: "Generate test image",
-      requiredEnv: ["OPENAI_API_KEY"],
-      testActionRef: "openwork.imageGen.testGenerate",
-    },
-    resources: [
-      { type: "secret", id: "openai-api-key", envKey: "OPENAI_API_KEY", required: true },
-      { type: "local-service", id: "openai-image-generation-service", label: "OpenAI image generation", required: true },
-      { type: "tool", id: "openai-image-generate", label: "Image generation", required: true },
-    ],
-    contributions: [
-      { type: "settings-panel", ref: "openwork.imageGen.settings", location: "settings-detail" },
-      { type: "test-action", ref: "openwork.imageGen.testGenerate", label: "Generate test image" },
-      { type: "composer-prompt", prompt: "Use the OpenAI Image Gen extension to ", location: "composer" },
-    ],
-    enablement: [
-      { type: "env-set", ref: "OPENAI_API_KEY", label: "OpenAI API key" },
-    ],
-    lifecycle: { reload: ["config"], detection: ["env:OPENAI_API_KEY"] },
-  },
-  {
-    schemaVersion: 1,
     id: "openwork-voice",
     name: "Voice Mode",
     description: "Talk to OpenWork through a Realtime voice panel that drives the same semantic UI controls as OpenWork UI MCP.",

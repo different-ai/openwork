@@ -150,16 +150,15 @@ export function useSessionProviderAuth(input: UseSessionProviderAuthInput) {
 
   useEffect(() => {
     if (!opencodeClient || !selectedWorkspaceId) return;
+    // Org policy may force Zen off. Never force it back on — that races user Disconnect.
+    if (!checkDesktopRestriction({ restriction: "allowZenModel" })) return;
 
     void store
-      .ensureProjectProviderDisabledState(
-        "opencode",
-        checkDesktopRestriction({ restriction: "allowZenModel" }),
-      )
+      .ensureProjectProviderDisabledState("opencode", true)
       .catch((error) => {
         console.warn("[desktop-app-restrictions] failed to sync Zen restriction", error);
       });
-  }, [checkDesktopRestriction, disabledProviderIds, opencodeClient, selectedWorkspaceId, selectedWorkspaceRoot, store]);
+  }, [checkDesktopRestriction, opencodeClient, selectedWorkspaceId, selectedWorkspaceRoot, store]);
 
   useEffect(() => {
     store.syncFromOptions();

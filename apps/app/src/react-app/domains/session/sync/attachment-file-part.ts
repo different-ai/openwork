@@ -40,6 +40,7 @@ type UploadedChatAttachment = {
   bytes: number;
   workspacePath: string;
   url: string;
+  file: AttachmentFile;
 };
 
 const WORKSPACE_INBOX_ROOT = ".opencode/openwork/inbox";
@@ -223,15 +224,33 @@ function uploadErrorMessage(filename: string, error: unknown) {
   return `Failed to copy attachment "${filename}" into this worker workspace: ${detail}`;
 }
 
-function attachmentPathNote(uploaded: UploadedChatAttachment[]) {
-  return `\n\n${[
-    "Attached files were copied into this worker workspace for tool access:",
-    ...uploaded.map((item) => `- ${item.filename}: ${item.workspacePath} (${item.url})`),
-    "Use these paths with Read/Bash/MCP/Docling when a tool needs the file bytes.",
-  ].join("\n")}`;
+function attachmentPathNotePart(uploaded: UploadedChatAttachment[]): TextPartInput {
+  // Synthetic: model/tools still see workspace paths, but the chat UI renders
+  // file parts as compact badges instead of this wall of path text.
+  return {
+    type: "text",
+    synthetic: true,
+    text: [
+      "Attached files were copied into this worker workspace for tool access:",
+      ...uploaded.map((item) => `- ${item.filename}: ${item.workspacePath} (${item.url})`),
+      "Use these paths with Read/Bash/MCP/Docling when a tool needs the file bytes.",
+    ].join("\n"),
+  };
 }
 
-function uploadedAttachmentFilePart(item: UploadedChatAttachment): FilePartInput {
+async function uploadedAttachmentFilePart(item: UploadedChatAttachment): Promise<FilePartInput> {
+  // Images need a browser-displayable URL so the transcript can show the same
+  // expandable miniature preview as paste/composer attachments. Workspace
+  // `file://` paths stay in the synthetic note for tool access.
+  if (item.mime.startsWith("image/")) {
+    return {
+      type: "file",
+      url: await fileToDataUrl(item.file, item.mime),
+      filename: item.filename,
+      mime: item.mime,
+    };
+  }
+
   return {
     type: "file",
     url: item.url,
@@ -294,12 +313,13 @@ export async function composerAttachmentsToWorkspaceFileParts(input: {
       bytes: result.bytes,
       workspacePath,
       url: toFileUrl(absolutePath),
+      file: attachment.file,
     });
   }
 
   return [
-    { type: "text", text: attachmentPathNote(uploaded) },
-    ...uploaded.map(uploadedAttachmentFilePart),
+    attachmentPathNotePart(uploaded),
+    ...(await Promise.all(uploaded.map(uploadedAttachmentFilePart))),
   ];
 }
 

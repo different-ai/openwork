@@ -1,27 +1,20 @@
 /**
- * Portable extensions export: a user's installed skill and an
- * OpenWork-managed runtime MCP (which lives in the runtime DB, not in
- * workspace files) can be exported as one portable bundle — with secret
- * header values redacted — so the agent can package them into a
- * marketplace plugin.
+ * Portable extensions export: an installed skill and an OpenWork-managed
+ * runtime MCP can be exported through the authenticated server API as one
+ * portable bundle with secret header values redacted.
  *
  * The end user is the protagonist:
  *   1. User installs a skill; it is visible in Settings > Skills.
  *   2. User connects an MCP server that carries a secret Authorization
  *      header (the same programmatic path the app's connect flows use);
  *      it is visible in Settings > Extensions as a runtime-managed entry.
- *   3. The new export surface (POST /workspace/:id/extensions/export —
- *      exactly what the bundled openwork_extensions_export agent tool
- *      calls) returns both components; the SKILL.md content round-trips,
- *      the secret never appears, and headers.Authorization is <redacted>.
- *   4. (Agent frame, requires a usable model) The user asks the agent to
- *      export both by name with the openwork_extensions_export tool; the
- *      agent replies with the redacted header value in the transcript.
+ *   3. POST /workspace/:id/extensions/export returns both components; the
+ *      SKILL.md content round-trips, the secret never appears, and
+ *      headers.Authorization is <redacted>.
  *
  * REST calls use the app's own port/token from localStorage (pattern from
  * cloud-config-sync-latency.flow.mjs) and are only how we witness side
- * effects; the export endpoint itself is the experience under test since
- * it is the agent-facing surface.
+ * effects; the export endpoint itself is the experience under test.
  */
 
 const SKILL_NAME = "release-notes-eval";
@@ -31,17 +24,6 @@ const SKILL_CONTENT = `---\nname: ${SKILL_NAME}\ndescription: ${SKILL_DESCRIPTIO
 const MCP_NAME = "eval-export-mcp";
 const MCP_URL = "https://mcp.example.com/eval-export";
 const SECRET = "Bearer eval-export-secret-12345";
-
-// The reply must contain values the model can only learn from the tool
-// result (the exported MCP url and the redactedKeys entries) — neither is
-// present in this prompt, so a match proves the tool actually ran.
-const AGENT_MESSAGE = [
-  `Call the openwork_extensions_export tool with skills ["${SKILL_NAME}"] and mcps ["${MCP_NAME}"].`,
-  'From the tool result, take the exported MCP config "url" and the "redactedKeys" list.',
-  "Reply with exactly one line: EXPORT-RESULT <url> <redactedKeys entries joined with commas>.",
-  "Write the values verbatim without quotes or angle brackets. Do not run any other tools.",
-].join(" ");
-const AGENT_REPLY_RE = "EXPORT-RESULT\\s+https:\\/\\/mcp\\.example\\.com\\/eval-export\\s+headers\\.Authorization";
 
 // In-page OpenWork server access using the app's own connection details.
 const serverCallExpr = (pathTemplate, init) => `(async () => {
@@ -74,21 +56,6 @@ async function serverCall(ctx, pathTemplate, init, { tolerate = false } = {}) {
     ctx.assert(result?.ok, `Server call ${pathTemplate} failed: ${result?.status ?? "?"} ${JSON.stringify(result?.payload ?? {}).slice(0, 300)}`);
   }
   return result;
-}
-
-async function pasteComposer(ctx, text) {
-  return ctx.eval(
-    `(() => {
-      const editor = document.querySelector('[contenteditable="true"][data-lexical-editor="true"]')
-        || document.querySelector('[contenteditable="true"]');
-      if (!editor) return { ok: false, reason: 'composer not found' };
-      editor.focus();
-      const data = new DataTransfer();
-      data.setData('text/plain', ${JSON.stringify(text)});
-      editor.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: data }));
-      return { ok: true };
-    })()`,
-  );
 }
 
 export default {
@@ -223,59 +190,6 @@ export default {
               "Export reported missing components.",
             );
             ctx.log(`export ok: ${payload.components.length} components, redactedKeys=${JSON.stringify(mcp.redactedKeys)}`);
-          },
-        });
-      },
-    },
-    {
-      name: "Agent exports both via the openwork_extensions_export tool",
-      run: async (ctx) => {
-        await ctx.prove("Agent calls openwork_extensions_export and reports the redacted header", {
-          action: async () => {
-            // Leave settings; session actions register on the session surface.
-            await ctx.navigateHash("/");
-            await ctx.waitFor(
-              "window.__openworkControl.listActions().some((a) => a.id === 'session.create_task' && !a.disabled)",
-              { timeoutMs: 45_000, label: "session.create_task available" },
-            );
-            await ctx.control("session.create_task");
-            await ctx.waitFor(
-              `(() => {
-                const route = window.__openworkControl.snapshot().route || "";
-                return /ses_[A-Za-z0-9]+/.test(route);
-              })()`,
-              { timeoutMs: 30_000, label: "active session id in route" },
-            );
-            const pasted = await pasteComposer(ctx, AGENT_MESSAGE);
-            ctx.assert(pasted?.ok, `Composer not ready: ${pasted?.reason ?? "unknown"}`);
-            const ran = await ctx.eval(`(() => {
-              const byLabel = Array.from(document.querySelectorAll('button'))
-                .find((b) => /run task|send|run/i.test((b.textContent || "").trim()) && !b.disabled);
-              if (byLabel) { byLabel.click(); return "clicked"; }
-              const editor = document.querySelector('[contenteditable="true"]');
-              if (editor) {
-                editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-                return "enter";
-              }
-              return "none";
-            })()`);
-            ctx.assert(ran !== "none", "Could not submit the composer message.");
-          },
-          assert: async () => {
-            // The url + redacted key are only in the tool result, not the
-            // prompt — the model cannot produce this line without actually
-            // calling openwork_extensions_export.
-            await ctx.waitFor(
-              `Boolean(document.body.innerText.match(new RegExp(${JSON.stringify(AGENT_REPLY_RE)})))`,
-              { timeoutMs: 180_000, label: "agent EXPORT-RESULT reply" },
-            );
-            await ctx.expectNoText(SECRET);
-            await ctx.expectNoText("Something went wrong");
-          },
-          screenshot: {
-            name: "agent-export-proof",
-            requireText: ["EXPORT-RESULT", MCP_URL],
-            rejectText: [SECRET],
           },
         });
       },

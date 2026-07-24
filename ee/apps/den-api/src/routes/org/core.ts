@@ -17,7 +17,6 @@ import { denTypeIdSchema, enterprisePlanRequiredSchema, forbiddenSchema, invalid
 import { normalizeOrganizationCapabilities } from "../../organization-capabilities.js"
 import { validateInvitationAcceptVerification } from "../../organization-join-verification.js"
 import { normalizeOrganizationMetadata } from "../../organization-limits.js"
-import { isDesktopVersionOnlyOrganizationUpdate } from "../../organization-settings-permissions.js"
 import {
   acceptInvitationForUser,
   createOrganizationForUser,
@@ -30,7 +29,7 @@ import {
 } from "../../orgs.js"
 import { getRequiredUserEmail } from "../../user.js"
 import type { OrgRouteVariables } from "./shared.js"
-import { ensureOwner } from "./shared.js"
+import { ensureOrganizationSuperAdmin, orgAccessFailureStatus } from "./shared.js"
 
 const createOrganizationSchema = z.object({
   name: z.string().trim().min(2).max(120),
@@ -92,7 +91,27 @@ const organizationOwnerSchema = z.object({
   image: z.string().nullable().optional(),
 }).meta({ ref: "OrganizationOwner" })
 
-const invitationPreviewResponseSchema = z.object({}).passthrough().meta({ ref: "InvitationPreviewResponse" })
+const invitationPreviewResponseSchema = z.object({
+  invitation: z.object({
+    id: denTypeIdSchema("invitation"),
+    email: z.string().email(),
+    role: z.string(),
+    status: z.enum(["pending", "accepted", "canceled", "expired"]),
+    expiresAt: z.string().datetime(),
+    createdAt: z.string().datetime(),
+  }),
+  organization: z.object({
+    id: denTypeIdSchema("organization"),
+    name: z.string(),
+    slug: z.string(),
+    allowedEmailDomains: z.array(z.string()).nullable(),
+    branding: z.object({
+      appName: z.string(),
+      logoUrl: z.string().url().nullable(),
+      iconUrl: z.string().url().nullable(),
+    }),
+  }),
+}).meta({ ref: "InvitationPreviewResponse" })
 
 const invitationAcceptedResponseSchema = z.object({
   accepted: z.literal(true),
@@ -336,7 +355,7 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
     describeRoute({
       tags: ["Organizations"],
       summary: "Update organization",
-      description: "Updates organization fields. Workspace admins can change allowed desktop versions; all other fields remain owner-only. The slug is immutable to avoid breaking dashboard URLs.",
+      description: "Updates organization fields. Workspace owners and super-admins can change settings. The slug is immutable to avoid breaking dashboard URLs.",
       responses: {
         200: jsonResponse("Organization updated successfully.", organizationResponseSchema),
         400: jsonResponse("The organization update request body was invalid, contained malformed email domains, or contained an invalid brand icon URL.", updateOrganizationBadRequestSchema),
@@ -346,21 +365,14 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         404: jsonResponse("The organization could not be found.", notFoundSchema),
       },
     }),
-    orgRoleRoute(["admin"]),
+    orgRoleRoute(["super-admin"]),
     jsonValidator(updateOrganizationSchema),
     async (c) => {
       const payload = c.get("organizationContext")
       const input = c.req.valid("json")
-      if (payload.currentMember.isOwner) {
-        const permission = ensureOwner(c)
-        if (!permission.ok) {
-          return c.json(permission.response, 403)
-        }
-      } else if (!isDesktopVersionOnlyOrganizationUpdate(input)) {
-        return c.json({
-          error: "forbidden",
-          message: "Workspace admins can only change allowed desktop versions.",
-        }, 403)
+      const permission = ensureOrganizationSuperAdmin(c, "Only workspace owners and super-admins can update organization settings.")
+      if (!permission.ok) {
+        return c.json(permission.response, orgAccessFailureStatus(permission.response))
       }
 
       const normalizedDomains: { domains: string[] | null | undefined; invalidDomains: string[] } = input.allowedEmailDomains === undefined

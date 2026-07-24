@@ -53,7 +53,7 @@ export function SsoScreen() {
   );
 
   async function loadSsoConfig(isCurrent = () => true) {
-    if (!orgId || !access.canManageSso) {
+    if (!orgId || !access.canViewSettings) {
       if (isCurrent()) {
         setConnection(null);
       }
@@ -114,7 +114,7 @@ export function SsoScreen() {
     if (nextConnection.oidc) {
       setClientId(nextConnection.oidc.clientId ?? "");
       setScopes(nextConnection.oidc.scopes.length > 0 ? nextConnection.oidc.scopes.join(" ") : "openid email profile");
-      setSkipDiscovery(false);
+      setSkipDiscovery(nextConnection.oidc.skipDiscovery);
       setAuthorizationEndpoint(nextConnection.oidc.authorizationEndpoint ?? "");
       setTokenEndpoint(nextConnection.oidc.tokenEndpoint ?? "");
       setJwksEndpoint(nextConnection.oidc.jwksEndpoint ?? "");
@@ -133,7 +133,7 @@ export function SsoScreen() {
     return () => {
       active = false;
     };
-  }, [orgId, access.canManageSso]);
+  }, [orgId, access.canViewSettings]);
 
   useEffect(() => {
     if (!copiedValue) return;
@@ -154,6 +154,10 @@ export function SsoScreen() {
   async function handleSave() {
     if (!orgId) {
       setError("Organization not found.");
+      return;
+    }
+    if (!access.canManageSso) {
+      setError("Only workspace owners and super-admins can change SSO settings.");
       return;
     }
 
@@ -205,6 +209,11 @@ export function SsoScreen() {
   }
 
   async function handleDelete() {
+    if (!access.canManageSso) {
+      setError("Only workspace owners and super-admins can delete SSO settings.");
+      return;
+    }
+
     if (!orgId || !window.confirm("Delete this SSO connection?")) {
       return;
     }
@@ -231,6 +240,10 @@ export function SsoScreen() {
   }
 
   async function handleRequestDomainToken() {
+    if (!access.canManageSso) {
+      setError("Only workspace owners and super-admins can request SSO domain verification tokens.");
+      return;
+    }
     if (!orgId || !connection) return;
     setError(null);
     try {
@@ -259,6 +272,10 @@ export function SsoScreen() {
   }
 
   async function handleVerifyDomain() {
+    if (!access.canManageSso) {
+      setError("Only workspace owners and super-admins can verify SSO domains.");
+      return;
+    }
     if (!orgId || !connection) return;
     setError(null);
     try {
@@ -285,7 +302,8 @@ export function SsoScreen() {
     setEditing(false);
   }
 
-  const showConnectionForm = !connection || editing;
+  const formReadOnly = !access.canManageSso;
+  const showConnectionForm = access.canViewSettings && (!connection || editing || formReadOnly);
 
   if (!orgContext) {
     return (
@@ -295,47 +313,55 @@ export function SsoScreen() {
     );
   }
 
+  const ssoFormDisabled = formReadOnly || saving || !orgContext.entitlements.sso;
+
   return (
     <DashboardPageTemplate icon={Shield} badgeLabel="Admin" title="SSO" description="Configure one enterprise SSO connection per workspace and share the generated sign-in URL with your team." colors={["#F5F3FF", "#4C1D95", "#8B5CF6", "#DDD6FE"]}>
-      {!access.canManageSso ? (
-        <div className="rounded-[28px] border border-amber-200 bg-amber-50 px-6 py-5 text-[14px] text-amber-900">Only organization owners and admins can manage SSO.</div>
+      {!access.canViewSettings ? (
+        <div className="rounded-[28px] border border-amber-200 bg-amber-50 px-6 py-5 text-[14px] text-amber-900">Only workspace admins can view SSO.</div>
       ) : (
         <>
           {!orgContext.entitlements.sso ? <EnterprisePlanNotice feature="SSO" /> : null}
           {error ? <DenNotice message={error} className="mb-6" /> : null}
+          {!access.canManageSso ? (
+            <div className="mb-6 rounded-[24px] border border-amber-200 bg-amber-50 px-5 py-4 text-[14px] text-amber-800">
+              Read-only: owners and super-admins can create, edit, delete, or verify SSO connections.
+            </div>
+          ) : null}
 
           {showConnectionForm ? (
             <div className="mb-6 rounded-[30px] border border-gray-200 bg-white p-6 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.22)]">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex flex-wrap items-center gap-3">
-                  <DenButton variant={formMode === "saml" ? "primary" : "secondary"} onClick={() => setFormMode("saml")}>SAML</DenButton>
-                  <DenButton variant={formMode === "oidc" ? "primary" : "secondary"} onClick={() => setFormMode("oidc")}>OIDC</DenButton>
+                  <DenButton variant={formMode === "saml" ? "primary" : "secondary"} onClick={() => setFormMode("saml")} disabled={formReadOnly || saving}>SAML</DenButton>
+                  <DenButton variant={formMode === "oidc" ? "primary" : "secondary"} onClick={() => setFormMode("oidc")} disabled={formReadOnly || saving}>OIDC</DenButton>
                 </div>
-                {connection ? <DenButton variant="secondary" onClick={handleCancelEdit}>Cancel edit</DenButton> : null}
+                {connection && editing ? <DenButton variant="secondary" onClick={handleCancelEdit}>Cancel edit</DenButton> : null}
               </div>
 
               <div className="mt-6 grid gap-4 md:grid-cols-2">
                 <label className="block text-[14px] text-gray-700">
                   <span className="mb-2 block font-medium">{formMode === "saml" ? "IdP Issuer URL" : "Issuer URL"}</span>
-                  <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={issuer} onChange={(event) => setIssuer(event.target.value)} placeholder="https://idp.example.com" />
+                  <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={issuer} onChange={(event) => setIssuer(event.target.value)} placeholder="https://idp.example.com" disabled={ssoFormDisabled} />
                 </label>
                 <label className="block text-[14px] text-gray-700">
                   <span className="mb-2 block font-medium">Domain</span>
-                  <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={domain} onChange={(event) => setDomain(event.target.value)} placeholder="example.com" />
+                  <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={domain} onChange={(event) => setDomain(event.target.value)} placeholder="example.com" disabled={ssoFormDisabled} />
                 </label>
                 {formMode === "saml" ? (
                   <>
                     <label className="block text-[14px] text-gray-700 md:col-span-2">
                       <span className="mb-2 block font-medium">SAML Entry Point</span>
-                      <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={entryPoint} onChange={(event) => setEntryPoint(event.target.value)} placeholder="https://idp.example.com/sso" />
+                      <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={entryPoint} onChange={(event) => setEntryPoint(event.target.value)} placeholder="https://idp.example.com/sso" disabled={ssoFormDisabled} />
                     </label>
                     <label className="block text-[14px] text-gray-700 md:col-span-2">
                       <span className="mb-2 block font-medium">Audience URL</span>
-                      <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={audience} onChange={(event) => setAudience(event.target.value)} placeholder="Defaults to the OpenWork auth URL" />
+                      <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={audience} onChange={(event) => setAudience(event.target.value)} placeholder="Defaults to the OpenWork auth URL" disabled={ssoFormDisabled} />
                     </label>
                     <label className="block text-[14px] text-gray-700 md:col-span-2">
                       <span className="mb-2 block font-medium">IdP Certificate</span>
-                      <textarea className="min-h-[140px] w-full rounded-[18px] border border-gray-200 px-4 py-3" value={cert} onChange={(event) => setCert(event.target.value)} placeholder="-----BEGIN CERTIFICATE-----" />
+                      <textarea className="min-h-[140px] w-full rounded-[18px] border border-gray-200 px-4 py-3" value={cert} onChange={(event) => setCert(event.target.value)} placeholder="Certificate is not returned after save" disabled={ssoFormDisabled} />
+                      <span className="mt-1 block text-[12px] text-gray-500">Certificates are not returned after save; enter a replacement only when editing.</span>
                     </label>
                     <div className="rounded-[18px] border border-gray-200 px-4 py-3 text-[14px] leading-6 text-gray-600 md:col-span-2">
                       OpenWork always requires signed SAML assertions, timestamps, and SP-initiated responses for organization SAML connections.
@@ -345,45 +371,46 @@ export function SsoScreen() {
                   <>
                     <label className="block text-[14px] text-gray-700">
                       <span className="mb-2 block font-medium">Client ID</span>
-                      <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={clientId} onChange={(event) => setClientId(event.target.value)} />
+                      <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={clientId} onChange={(event) => setClientId(event.target.value)} disabled={ssoFormDisabled} />
                     </label>
                     <label className="block text-[14px] text-gray-700">
                       <span className="mb-2 block font-medium">Client Secret</span>
-                      <input type="password" className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={clientSecret} onChange={(event) => setClientSecret(event.target.value)} />
+                      <input type="password" className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={clientSecret} onChange={(event) => setClientSecret(event.target.value)} placeholder="Secret is not returned after save" disabled={ssoFormDisabled} />
+                      <span className="mt-1 block text-[12px] text-gray-500">Client secrets are never returned by Den.</span>
                     </label>
                     <label className="block text-[14px] text-gray-700 md:col-span-2">
                       <span className="mb-2 block font-medium">Scopes</span>
-                      <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={scopes} onChange={(event) => setScopes(event.target.value)} placeholder="openid email profile" />
+                      <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={scopes} onChange={(event) => setScopes(event.target.value)} placeholder="openid email profile" disabled={ssoFormDisabled} />
                     </label>
                     <label className="block text-[14px] text-gray-700 md:col-span-2">
                       <span className="mb-2 block font-medium">Token endpoint auth method</span>
-                      <select className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={tokenEndpointAuthentication} onChange={(event) => setTokenEndpointAuthentication(event.target.value === "client_secret_basic" || event.target.value === "client_secret_post" ? event.target.value : "")}>
+                      <select className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={tokenEndpointAuthentication} onChange={(event) => setTokenEndpointAuthentication(event.target.value === "client_secret_basic" || event.target.value === "client_secret_post" ? event.target.value : "")} disabled={ssoFormDisabled}>
                         <option value="">Use provider default</option>
                         <option value="client_secret_basic">client_secret_basic</option>
                         <option value="client_secret_post">client_secret_post</option>
                       </select>
                     </label>
                     <label className="flex items-center gap-3 rounded-[18px] border border-gray-200 px-4 py-3 text-[14px] text-gray-700 md:col-span-2">
-                      <input type="checkbox" checked={skipDiscovery} onChange={(event) => setSkipDiscovery(event.target.checked)} />
+                      <input type="checkbox" checked={skipDiscovery} onChange={(event) => setSkipDiscovery(event.target.checked)} disabled={ssoFormDisabled} />
                       Use manual OIDC endpoints instead of discovery
                     </label>
                     {skipDiscovery ? (
                       <>
                         <label className="block text-[14px] text-gray-700 md:col-span-2">
                           <span className="mb-2 block font-medium">Authorization endpoint</span>
-                          <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={authorizationEndpoint} onChange={(event) => setAuthorizationEndpoint(event.target.value)} placeholder="https://idp.example.com/oauth2/v1/authorize" />
+                          <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={authorizationEndpoint} onChange={(event) => setAuthorizationEndpoint(event.target.value)} placeholder="https://idp.example.com/oauth2/v1/authorize" disabled={ssoFormDisabled} />
                         </label>
                         <label className="block text-[14px] text-gray-700 md:col-span-2">
                           <span className="mb-2 block font-medium">Token endpoint</span>
-                          <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={tokenEndpoint} onChange={(event) => setTokenEndpoint(event.target.value)} placeholder="https://idp.example.com/oauth2/v1/token" />
+                          <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={tokenEndpoint} onChange={(event) => setTokenEndpoint(event.target.value)} placeholder="https://idp.example.com/oauth2/v1/token" disabled={ssoFormDisabled} />
                         </label>
                         <label className="block text-[14px] text-gray-700 md:col-span-2">
                           <span className="mb-2 block font-medium">JWKS endpoint</span>
-                          <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={jwksEndpoint} onChange={(event) => setJwksEndpoint(event.target.value)} placeholder="https://idp.example.com/oauth2/v1/keys" />
+                          <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={jwksEndpoint} onChange={(event) => setJwksEndpoint(event.target.value)} placeholder="https://idp.example.com/oauth2/v1/keys" disabled={ssoFormDisabled} />
                         </label>
                         <label className="block text-[14px] text-gray-700 md:col-span-2">
                           <span className="mb-2 block font-medium">UserInfo endpoint</span>
-                          <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={userInfoEndpoint} onChange={(event) => setUserInfoEndpoint(event.target.value)} placeholder="Optional" />
+                          <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={userInfoEndpoint} onChange={(event) => setUserInfoEndpoint(event.target.value)} placeholder="Optional" disabled={ssoFormDisabled} />
                         </label>
                       </>
                     ) : null}
@@ -392,8 +419,8 @@ export function SsoScreen() {
               </div>
 
               <div className="mt-6 flex flex-wrap gap-3">
-                <DenButton variant="primary" icon={RefreshCw} onClick={() => void handleSave()} disabled={saving || !orgContext.entitlements.sso}>{saving ? "Saving..." : "Save SSO connection"}</DenButton>
-                <DenButton variant="secondary" icon={Trash2} onClick={() => void handleDelete()} disabled={deleting || !connection}>{deleting ? "Deleting..." : "Delete connection"}</DenButton>
+                <DenButton variant="primary" icon={RefreshCw} onClick={() => void handleSave()} disabled={ssoFormDisabled}>{saving ? "Saving..." : "Save SSO connection"}</DenButton>
+                <DenButton variant="secondary" icon={Trash2} onClick={() => void handleDelete()} disabled={deleting || !connection || !access.canManageSso}>{deleting ? "Deleting..." : "Delete connection"}</DenButton>
               </div>
             </div>
           ) : null}
@@ -406,8 +433,8 @@ export function SsoScreen() {
               </div>
               {connection && !editing ? (
                 <div className="flex flex-wrap gap-3">
-                  <DenButton variant="secondary" onClick={() => setEditing(true)}>Edit connection</DenButton>
-                  <DenButton variant="secondary" icon={Trash2} onClick={() => void handleDelete()} disabled={deleting}>{deleting ? "Deleting..." : "Delete connection"}</DenButton>
+                  <DenButton variant="secondary" onClick={() => setEditing(true)} disabled={!access.canManageSso}>Edit connection</DenButton>
+                  <DenButton variant="secondary" icon={Trash2} onClick={() => void handleDelete()} disabled={deleting || !access.canManageSso}>{deleting ? "Deleting..." : "Delete connection"}</DenButton>
                 </div>
               ) : null}
             </div>
@@ -453,10 +480,10 @@ export function SsoScreen() {
                       Request a DNS TXT token, publish it for `{connection.domain}`, then verify the domain before using this connection in production.
                     </p>
                     <div className="mt-4 flex flex-wrap gap-3">
-                      <DenButton variant="secondary" icon={KeyRound} onClick={() => void handleRequestDomainToken()} disabled={requestingDomainToken}>
+                      <DenButton variant="secondary" icon={KeyRound} onClick={() => void handleRequestDomainToken()} disabled={requestingDomainToken || !access.canManageSso}>
                         {requestingDomainToken ? "Requesting..." : "Request token"}
                       </DenButton>
-                      <DenButton variant="secondary" icon={RefreshCw} onClick={() => void handleVerifyDomain()} disabled={verifyingDomain}>
+                      <DenButton variant="secondary" icon={RefreshCw} onClick={() => void handleVerifyDomain()} disabled={verifyingDomain || !access.canManageSso}>
                         {verifyingDomain ? "Verifying..." : "Verify domain"}
                       </DenButton>
                     </div>

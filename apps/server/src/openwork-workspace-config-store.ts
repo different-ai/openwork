@@ -1,9 +1,7 @@
-import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
 import { eq } from "drizzle-orm";
 import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { openRuntimeSqliteDatabase, runtimeDbPath } from "./runtime-db.js";
 import type { ServerConfig } from "./types.js";
-import { ensureDir } from "./utils.js";
 
 const openworkWorkspaceConfigs = sqliteTable("openwork_workspace_configs", {
   workspaceId: text("workspace_id").primaryKey(),
@@ -24,22 +22,12 @@ function normalizeOpenworkWorkspaceConfig(value: unknown): Record<string, unknow
   return isRecord(value) ? value : {};
 }
 
-function runtimeDbPath(config: ServerConfig): string {
-  const override = process.env.OPENWORK_RUNTIME_DB?.trim();
-  if (override) return resolve(override);
-  const configPath = config.configPath?.trim();
-  const configDir = configPath ? dirname(configPath) : join(homedir(), ".config", "openwork");
-  return join(configDir, "runtime.sqlite");
-}
-
 async function openDb(path: string): Promise<OpenworkWorkspaceConfigDb> {
-  await ensureDir(dirname(path));
-  if (typeof process.versions.bun === "string") {
-    const { Database } = await import("bun:sqlite");
-    const { drizzle } = await import("drizzle-orm/bun-sqlite");
-    const sqlite = new Database(path, { create: true });
+  const runtimeDb = await openRuntimeSqliteDatabase(path);
+  if (runtimeDb.kind === "bun") {
+    const sqlite = runtimeDb.sqlite;
     sqlite.run("CREATE TABLE IF NOT EXISTS openwork_workspace_configs (workspace_id TEXT PRIMARY KEY NOT NULL, config_json TEXT NOT NULL, updated_at INTEGER NOT NULL)");
-    const db = drizzle(sqlite);
+    const db = runtimeDb.db;
     return {
       get: (workspaceId) => db
         .select()
@@ -58,8 +46,7 @@ async function openDb(path: string): Promise<OpenworkWorkspaceConfigDb> {
       },
     };
   }
-  const { DatabaseSync } = await import("node:sqlite");
-  const sqlite = new DatabaseSync(path);
+  const sqlite = runtimeDb.sqlite;
   sqlite.exec("CREATE TABLE IF NOT EXISTS openwork_workspace_configs (workspace_id TEXT PRIMARY KEY NOT NULL, config_json TEXT NOT NULL, updated_at INTEGER NOT NULL)");
   const get = sqlite.prepare("SELECT config_json AS configJson FROM openwork_workspace_configs WHERE workspace_id = ?");
   const upsert = sqlite.prepare("INSERT INTO openwork_workspace_configs (workspace_id, config_json, updated_at) VALUES (?, ?, ?) ON CONFLICT(workspace_id) DO UPDATE SET config_json = excluded.config_json, updated_at = excluded.updated_at");

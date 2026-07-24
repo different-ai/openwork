@@ -4,6 +4,8 @@ import {
   resolveCloudMcpResourceUrl,
 } from "../../../app/lib/den";
 import type {
+  OpenworkCloudMcpEngineRefresh,
+  OpenworkCloudMcpEngineRefreshResult,
   OpenworkCloudMcpFailure,
   OpenworkCloudMcpHealth,
   OpenworkCloudMcpProviderModelContext,
@@ -34,11 +36,16 @@ export type CloudMcpClient = {
   getOpenworkCloudMcpHealth: (
     workspaceId: string,
     providerModel?: OpenworkCloudMcpProviderModelContext,
+    options?: { probe?: boolean },
   ) => Promise<OpenworkCloudMcpHealth>;
   reconcileOpenworkCloudMcp: (
     workspaceId: string,
     payload: OpenworkCloudMcpReconcilePayload,
   ) => Promise<OpenworkCloudMcpHealth>;
+  refreshOpenworkCloudMcpEngine?: (
+    workspaceId: string,
+    payload?: { provider?: string; model?: string; trigger?: string },
+  ) => Promise<OpenworkCloudMcpEngineRefreshResult>;
 };
 
 export type CloudMcpOperationContext = CloudMcpScope & {
@@ -83,6 +90,12 @@ type CloudMcpReconcilerInput = {
   refreshMarginMs: number;
   now?: number;
   configuredEnabled?: boolean | null;
+  /**
+   * Ask the OpenWork server to also verify the Cloud endpoint directly
+   * (initialize + tools/list outside the engine). Only meaningful for
+   * mode "health"; repair reconciles always probe on the server.
+   */
+  probe?: boolean;
 };
 
 type OpenCodeDisconnectClient = {
@@ -103,6 +116,20 @@ const APP_BUILD_SHA = String(import.meta.env.VITE_OPENWORK_BUILD_SHA ?? import.m
 
 function normalizeCode(code: string | null | undefined): string {
   return code?.trim().toLowerCase().replace(/[-.]/g, "_") ?? "";
+}
+
+function isProviderProjectionFailure(failure?: OpenworkCloudMcpFailure | null): boolean {
+  if (!failure) return false;
+  if (failure.stage === "provider_projection") return true;
+  const code = normalizeCode(failure.code);
+  if (
+    code === "provider_tool_projection_missing" ||
+    code === "provider_projection_missing" ||
+    code === "provider_projection_unavailable"
+  ) {
+    return true;
+  }
+  return code.includes("provider_projection") || code.includes("provider_tool_projection");
 }
 
 function normalizedContextScope(context: CloudMcpOperationContext): CloudMcpScope | null {
@@ -243,7 +270,11 @@ function writeUsableMarker(input: {
 }
 
 async function probeHealth(input: CloudMcpReconcilerInput, scope: CloudMcpScope, options?: { writeFreshnessMarker?: boolean }): Promise<CloudMcpOperationResult> {
-  const health = await input.client.getOpenworkCloudMcpHealth(scope.workspaceId, input.context.providerModel);
+  const health = await input.client.getOpenworkCloudMcpHealth(
+    scope.workspaceId,
+    input.context.providerModel,
+    input.probe ? { probe: true } : undefined,
+  );
   const marker = options?.writeFreshnessMarker ? readCloudMcpSyncMarker(scope) : null;
   const markerWritten = options?.writeFreshnessMarker === true
     ? writeUsableMarker({ health, scope, expiresAt: marker?.expiresAt ?? null })
@@ -334,6 +365,57 @@ export async function runOpenworkCloudMcpReconciler(input: CloudMcpReconcilerInp
   return task;
 }
 
+export type CloudMcpEngineRefreshRunResult = {
+  status: "refreshed" | "failed" | "skipped";
+  skippedReason?: "missing_workspace" | "unsupported";
+  health: OpenworkCloudMcpHealth | null;
+  refresh: OpenworkCloudMcpEngineRefresh | null;
+};
+
+const engineRefreshInFlight = new Map<string, Promise<CloudMcpEngineRefreshRunResult>>();
+
+/**
+ * Force the engine to drop its openwork-cloud MCP client and reconnect.
+ * OpenCode keeps a failed MCP failed forever (no automatic retry), so this is
+ * the explicit "try again from scratch" lever: engine disconnect, then
+ * re-registration from the persisted desired config, then a direct probe.
+ */
+export async function runOpenworkCloudMcpEngineRefresh(input: {
+  client: CloudMcpClient;
+  context: CloudMcpOperationContext;
+}): Promise<CloudMcpEngineRefreshRunResult> {
+  const scope = normalizedContextScope(input.context);
+  if (!scope?.workspaceId) {
+    return { status: "skipped", skippedReason: "missing_workspace", health: null, refresh: null };
+  }
+  const refreshEngine = input.client.refreshOpenworkCloudMcpEngine;
+  if (!refreshEngine) {
+    return { status: "skipped", skippedReason: "unsupported", health: null, refresh: null };
+  }
+  const scopeKey = getCloudMcpScopeKey(scope);
+  if (!scopeKey) {
+    return { status: "skipped", skippedReason: "missing_workspace", health: null, refresh: null };
+  }
+  const existing = engineRefreshInFlight.get(scopeKey);
+  if (existing) return existing;
+  const task = (async (): Promise<CloudMcpEngineRefreshRunResult> => {
+    const providerModel = input.context.providerModel;
+    const result = await refreshEngine(scope.workspaceId, {
+      ...(providerModel ? { provider: providerModel.provider, model: providerModel.model } : {}),
+      trigger: input.context.trigger ?? "desktop-engine-refresh",
+    });
+    return {
+      status: result.health.usable ? "refreshed" : "failed",
+      health: result.health,
+      refresh: result.refresh,
+    };
+  })().finally(() => {
+    engineRefreshInFlight.delete(scopeKey);
+  });
+  engineRefreshInFlight.set(scopeKey, task);
+  return task;
+}
+
 export function cloudMcpFailureStageLabel(input: {
   signedIn: boolean;
   orgSelected: boolean;
@@ -350,7 +432,7 @@ export function cloudMcpFailureStageLabel(input: {
   if (code.includes("auth") || code.includes("token") || code.includes("unauthorized")) return "Cloud authentication expired";
   if (code === "cloud_tools_missing") return "Cloud endpoint tools are missing";
   if (code === "cloud_status_missing" || code === "cloud_registration_failed") return "Cloud tools weren’t registered";
-  if (code.includes("provider_projection")) return "Current model can’t use Cloud tools";
+  if (isProviderProjectionFailure(input.health?.firstFailure)) return "Current model can’t use Cloud tools";
   if (code.includes("tool_ids") || code.includes("client_registration")) return "OpenWork components need updating";
   if (code === "extensions_plugin_missing") return "Agent instructions are out of date";
   if (code.includes("unreachable") || code.includes("connection") || code.includes("status_missing")) return "Cloud connection unavailable";
@@ -377,7 +459,7 @@ export function cloudMcpRecommendedAction(input: {
   if (code.includes("membership")) return "Ask an organization admin to grant access.";
   if (code.includes("scope")) return "Reconnect OpenWork Cloud with the required permissions.";
   if (code.includes("policy") || code.includes("forbidden") || code.includes("resource")) return "Check organization policy and resource access.";
-  if (code.includes("provider_projection")) return "Choose a model that can use OpenWork Cloud tools.";
+  if (isProviderProjectionFailure(input.health?.firstFailure)) return "Choose a model that can use OpenWork Cloud tools.";
   if (code.includes("tool_ids") || code.includes("client_registration")) return "Update OpenWork, then retry.";
   if (code === "extensions_plugin_missing") return "Reload the agent so OpenWork instructions are current.";
   if (code === "cloud_tools_missing") return "Reconnect OpenWork Cloud so the endpoint exposes search_capabilities and execute_capability.";

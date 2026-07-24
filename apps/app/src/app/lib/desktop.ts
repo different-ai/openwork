@@ -22,6 +22,10 @@ export type {
   ExecResult,
   LocalSkillCard,
   LocalSkillContent,
+  NukeManifestPreview,
+  NukeOptions,
+  NukeReceipt,
+  NukeReceiptError,
   OpencodeConfigFile,
   UpdaterEnvironment,
   CacheResetResult,
@@ -30,11 +34,15 @@ export type {
 import type {
   BrandIconApplyResult,
   BrandIconState,
+  DesktopBootstrapConfig,
   DesktopCommandArgs,
   DesktopCommandInvokers,
   DesktopCommandName,
   DesktopCommandResult,
   EvalRelaunchResult,
+  NukeManifestPreview,
+  NukeOptions,
+  NukeReceipt,
   WorkspaceList,
 } from "./desktop-types";
 import type { BrowserPanelTab } from "./desktop-types";
@@ -97,6 +105,10 @@ declare global {
       };
       dev?: {
         evalRelaunch?: () => Promise<EvalRelaunchResult>;
+      };
+      nuke?: {
+        preview?: (options?: NukeOptions) => Promise<NukeManifestPreview>;
+        execute?: (options?: NukeOptions) => Promise<NukeReceipt>;
       };
       updater?: {
         getChannel?: () => Promise<{
@@ -161,6 +173,7 @@ declare global {
         onExit?: (callback: (payload: { terminalId: string; exitCode: number | null; signal?: number }) => void) => () => void;
       };
       meta?: {
+        desktopBootstrap?: DesktopBootstrapConfig | null;
         initialDeepLinks?: string[];
         platform?: "darwin" | "linux" | "windows";
         version?: string;
@@ -458,6 +471,11 @@ export async function subscribeDesktopDeepLinks(
   };
 }
 
+export function readInitialDesktopBootstrapConfig(): DesktopBootstrapConfig | null | undefined {
+  if (typeof window === "undefined") return undefined;
+  return window.__OPENWORK_ELECTRON__?.meta?.desktopBootstrap;
+}
+
 // ---------------------------------------------------------------------------
 // Re-export bridge methods as named functions (preserves existing import API)
 // ---------------------------------------------------------------------------
@@ -489,6 +507,7 @@ const {
   setDesktopBootstrapConfig,
   connectLinkVerify,
   connectLinkAccept,
+  nukeOpenworkAndOpencodeConfigPreview,
   nukeOpenworkAndOpencodeConfigAndExit,
   orchestratorStartDetached,
   sandboxDoctor,
@@ -547,6 +566,7 @@ export {
   setDesktopBootstrapConfig,
   connectLinkVerify,
   connectLinkAccept,
+  nukeOpenworkAndOpencodeConfigPreview,
   nukeOpenworkAndOpencodeConfigAndExit,
   orchestratorStartDetached,
   sandboxDoctor,

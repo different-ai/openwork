@@ -20,7 +20,7 @@ import { updateOrganizationSettings } from "../../orgs.js"
 import type { ManagedBrandAssetMetadata } from "../../organization-limits.js"
 import { orgRoleRoute, publicRoute } from "../../middleware/index.js"
 import type { OrgRouteVariables } from "./shared.js"
-import { ensureOwner } from "./shared.js"
+import { ensureOrganizationSuperAdmin, orgAccessFailureStatus } from "./shared.js"
 
 const managedBrandAssetSchema = z.object({
   kind: z.enum(["logo", "icon"]),
@@ -161,11 +161,11 @@ export function registerOrgBrandAssetRoutes<T extends { Variables: OrgRouteVaria
         200: jsonResponse("Managed brand assets were saved.", uploadResponseSchema),
         400: jsonResponse("A supplied brand asset was invalid.", invalidAssetSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
-        403: jsonResponse("Only workspace owners can upload brand assets.", forbiddenSchema),
+        403: jsonResponse("Only workspace owners and super-admins can upload brand assets.", forbiddenSchema),
         413: jsonResponse("The upload exceeded the request size limit.", invalidAssetSchema),
       },
     }),
-    orgRoleRoute(["owner"]),
+    orgRoleRoute(["super-admin"]),
     bodyLimit({
       maxSize: BRAND_ASSET_REQUEST_MAX_BYTES,
       onError: (c) => c.json({
@@ -176,8 +176,8 @@ export function registerOrgBrandAssetRoutes<T extends { Variables: OrgRouteVaria
       }, 413),
     }),
     async (c) => {
-      const permission = ensureOwner(c)
-      if (!permission.ok) return c.json(permission.response, 403)
+      const permission = ensureOrganizationSuperAdmin(c, "Only workspace owners and super-admins can upload brand assets.")
+      if (!permission.ok) return c.json(permission.response, orgAccessFailureStatus(permission.response))
 
       const payload = c.get("organizationContext")
       const entitlement = checkEntitlement(payload.organization.metadata, "desktopPolicies")

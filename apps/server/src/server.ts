@@ -11,7 +11,6 @@ import { sanitizePortableOpencodeConfig } from "./portable-opencode.js";
 import { addMcp, listMcp, removeMcp, setMcpEnabled } from "./mcp.js";
 import { exportExtensions } from "./extensions-export.js";
 import { deleteSkill, listSkills, upsertSkill } from "./skills.js";
-import { installHubSkill, listHubSkills } from "./skill-hub.js";
 import { deleteCommand, listCommands, repairCommands, upsertCommand } from "./commands.js";
 import { ApiError, formatError } from "./errors.js";
 import { readJsoncFile, updateJsoncTopLevel, writeJsoncFile } from "./jsonc.js";
@@ -1226,13 +1225,6 @@ function buildCapabilities(config: ServerConfig): Capabilities {
     serverVersion: SERVER_VERSION,
     opencodeVersion: OPENCODE_VERSION,
     skills: { read: true, write: writeEnabled, source: "openwork" },
-    hub: {
-      skills: {
-        read: true,
-        install: writeEnabled,
-        repo: { owner: "different-ai", name: "openwork-hub", ref: "main" },
-      },
-    },
     plugins: { read: true, write: writeEnabled },
     mcp: { read: true, write: writeEnabled },
     commands: { read: true, write: writeEnabled },
@@ -1500,6 +1492,7 @@ function createRoutes(
     resolveWorkspace,
     resolveOpencodeDirectory,
     createWorkspaceOpencodeClient,
+    refreshRegistrationFromLiveStatus: refreshEngineMcpRegistrationFromLiveStatus,
     serializeWorkspace,
     resolveToyUiEnabled,
     resolveDevLogPath,
@@ -1547,6 +1540,7 @@ function createRoutes(
     resolveWorkspace,
     resolveOpencodeDirectory,
     createWorkspaceOpencodeClient,
+    refreshRegistrationFromLiveStatus: refreshEngineMcpRegistrationFromLiveStatus,
     registerRuntimeMcp: (routeConfig, workspace, onlyNames, options) =>
       syncRuntimeMcpToOpencodeEngine(
         routeConfig,
@@ -2309,69 +2303,11 @@ function createRoutes(
     return jsonResponse(result);
   });
 
-  addRoute(routes, "GET", "/hub/skills", "client", async (ctx) => {
-    const owner = ctx.url.searchParams.get("owner")?.trim();
-    const repo = ctx.url.searchParams.get("repo")?.trim();
-    const ref = ctx.url.searchParams.get("ref")?.trim();
-    const items = await listHubSkills({
-      owner: owner || "different-ai",
-      repo: repo || "openwork-hub",
-      ref: ref || "main",
-    });
-    return jsonResponse({ items });
-  });
-
   addRoute(routes, "GET", "/workspace/:id/skills", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const includeGlobal = ctx.url.searchParams.get("includeGlobal") === "true";
     const items = await listSkills(workspace.path, includeGlobal);
     return jsonResponse({ items });
-  });
-
-  addRoute(routes, "POST", "/workspace/:id/skills/hub/:name", "client", async (ctx) => {
-    ensureWritable(config);
-    requireClientScope(ctx, "collaborator");
-    const workspace = await resolveWorkspace(config, ctx.params.id);
-    const name = String(ctx.params.name ?? "").trim();
-    if (!name) {
-      throw new ApiError(400, "invalid_skill_name", "Skill name is required");
-    }
-    const body = await readJsonBody(ctx.request);
-    const overwrite = body?.overwrite === true;
-    const repoPayload = body?.repo && typeof body.repo === "object" ? (body.repo as Record<string, unknown>) : undefined;
-    const repo = repoPayload
-      ? {
-          owner: typeof repoPayload.owner === "string" ? repoPayload.owner : undefined,
-          repo: typeof repoPayload.repo === "string" ? repoPayload.repo : undefined,
-          ref: typeof repoPayload.ref === "string" ? repoPayload.ref : undefined,
-        }
-      : undefined;
-
-    await requireApproval(ctx, {
-      workspaceId: workspace.id,
-      action: "skills.install_hub",
-      summary: `Install hub skill ${name}`,
-      paths: [join(workspace.path, ".opencode", "skills", name)],
-    });
-
-    const result = await installHubSkill(workspace.path, { name, overwrite, repo });
-    await recordAudit(workspace.path, {
-      id: shortId(),
-      workspaceId: workspace.id,
-      actor: ctx.actor ?? { type: "remote" },
-      action: "skills.install_hub",
-      target: result.path,
-      summary: `Installed hub skill ${name}`,
-      timestamp: Date.now(),
-    });
-    emitReloadEvent(ctx.reloadEvents, workspace, "skills", {
-      type: "skill",
-      name,
-      action: result.action,
-      path: result.path,
-    });
-
-    return jsonResponse({ ok: true, ...result });
   });
 
   addRoute(routes, "GET", "/workspace/:id/skills/:name", "client", async (ctx) => {
@@ -3334,6 +3270,7 @@ async function reloadOpencodeEngine(
       directory,
       serverMetadata: { serverVersion: SERVER_VERSION, expectedOpencodeVersion: OPENCODE_VERSION },
       createWorkspaceOpencodeClient,
+      refreshRegistrationFromLiveStatus: refreshEngineMcpRegistrationFromLiveStatus,
       registerRuntimeMcp: (routeConfig, routeWorkspace, onlyNames, options) =>
         syncRuntimeMcpToOpencodeEngine(
           routeConfig,
@@ -3359,7 +3296,7 @@ async function syncRuntimeMcpToOpencodeEngine(
   config: ServerConfig,
   workspace: WorkspaceInfo,
   onlyNames?: string[],
-  options?: { throwOnFailure?: boolean },
+  options?: { throwOnFailure?: boolean; deferred?: boolean },
   serverState?: EngineMcpServerState | null,
 ): Promise<EngineMcpSyncResult> {
   const activeState = activeEngineMcpServerState(config, serverState);
@@ -3368,6 +3305,7 @@ async function syncRuntimeMcpToOpencodeEngine(
   const connectionIdentity = engineMcpConnectionIdentity(config, workspace);
   const registrationIdentity = engineMcpRegistrationIdentity(config, workspace);
   if (activeState) reconcileEngineMcpWorkspaceIdentity(activeState, workspace.id, connectionIdentity);
+  if (activeState && !options?.deferred) cancelDeferredEngineMcpSync(activeState, workspace.id);
   if (!baseUrl || !connectionIdentity) {
     return { status: "skipped", syncedNames: [], failures: [] };
   }
@@ -3430,6 +3368,15 @@ async function syncRuntimeMcpToOpencodeEngine(
   );
 
   if (failures.length > 0) {
+    if (activeState && !options?.deferred && hasRetryableMcpSyncFailure(failures)) {
+      scheduleDeferredEngineMcpSync({
+        config,
+        state: activeState,
+        workspace,
+        connectionIdentity,
+        onlyNames,
+      });
+    }
     const names = failures.map((failure) => failure.name).join(", ");
     createServerLogger(config).log("warn", `Engine MCP sync failed for workspace ${workspace.id}: ${names}`, {
       "workspace.id": workspace.id,
@@ -3479,6 +3426,7 @@ async function postMcpEntryWithRetry(
         return {
           name,
           status,
+          source: status ? "engine_status" : null,
           failure: null,
         };
       }
@@ -3489,7 +3437,7 @@ async function postMcpEntryWithRetry(
         registrationStatus: "failed",
         message: "OpenCode rejected the MCP registration request",
       };
-      if (response.status < 500) return { name, status: "failed", failure };
+      if (response.status < 500) return { name, status: "failed", source: "transport_failure", failure };
     } catch {
       failure = {
         name,
@@ -3501,6 +3449,7 @@ async function postMcpEntryWithRetry(
   return {
     name,
     status: "failed",
+    source: "transport_failure",
     failure: failure ?? {
       name,
       registrationStatus: "failed",
@@ -3517,11 +3466,26 @@ export type EngineMcpRegistrationStatus =
   | "failed"
   | "needs-auth"
   | "needs-client-registration";
+export type EngineMcpRegistrationSource = "transport_failure" | "engine_status";
+
+export type EngineMcpRegistrationInspection = {
+  status: EngineMcpRegistrationStatus | "not-recorded";
+  source: EngineMcpRegistrationSource | null;
+  recordAgeMs: number | null;
+};
 
 type EngineMcpRegistrationResult = {
   name: string;
   status: EngineMcpRegistrationStatus | null;
+  source: EngineMcpRegistrationSource | null;
   failure: EngineMcpSyncFailure | null;
+};
+
+type EngineMcpDeferredSync = {
+  timer: ReturnType<typeof setTimeout>;
+  connectionIdentity: string;
+  generation: number;
+  onlyNames?: string[];
 };
 
 async function parseEngineMcpRegistrationStatus(
@@ -3544,11 +3508,15 @@ async function parseEngineMcpRegistrationStatus(
   if (!isRecord(body) || !Object.hasOwn(body, name)) return null;
   const entry = body[name];
   if (!isRecord(entry)) return null;
-  switch (entry.status) {
+  return normalizeEngineMcpRegistrationStatus(entry.status);
+}
+
+function normalizeEngineMcpRegistrationStatus(status: unknown): EngineMcpRegistrationStatus | null {
+  switch (status) {
     case "connected":
     case "disabled":
     case "failed":
-      return entry.status;
+      return status;
     case "needs_auth":
       return "needs-auth";
     case "needs_client_registration":
@@ -3597,6 +3565,71 @@ function engineMcpSyncRetryDelayMs(): number {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : 750;
 }
 
+function engineMcpDeferredSyncDelayMs(): number {
+  const parsed = Number(process.env.OPENWORK_MCP_SYNC_DEFERRED_DELAY_MS ?? "12000");
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 12_000;
+}
+
+function hasRetryableMcpSyncFailure(failures: EngineMcpSyncFailure[]): boolean {
+  return failures.some((failure) => failure.status === undefined || failure.status >= 500);
+}
+
+function cancelDeferredEngineMcpSync(state: EngineMcpServerState, workspaceId: string): void {
+  const previous = state.deferredSyncByWorkspace.get(workspaceId);
+  if (!previous) return;
+  clearTimeout(previous.timer);
+  state.deferredSyncByWorkspace.delete(workspaceId);
+}
+
+function scheduleDeferredEngineMcpSync(input: {
+  config: ServerConfig;
+  state: EngineMcpServerState;
+  workspace: WorkspaceInfo;
+  connectionIdentity: string;
+  onlyNames?: string[];
+}): void {
+  cancelDeferredEngineMcpSync(input.state, input.workspace.id);
+  const generation = input.state.generation;
+  const onlyNames = input.onlyNames ? [...input.onlyNames] : undefined;
+  const timer = setTimeout(() => {
+    const state = activeEngineMcpServerState(input.config, input.state);
+    if (!state || state.generation !== generation) return;
+    const current = state.deferredSyncByWorkspace.get(input.workspace.id);
+    if (!current || current.generation !== generation) return;
+    state.deferredSyncByWorkspace.delete(input.workspace.id);
+    if (engineMcpConnectionIdentity(input.config, input.workspace) !== input.connectionIdentity) return;
+    if (state.syncStateByWorkspace.get(input.workspace.id)?.status === "ok") return;
+    createServerLogger(input.config).log(
+      "info",
+      `Running deferred engine MCP sync for workspace ${input.workspace.id}.`,
+      { "workspace.id": input.workspace.id },
+    );
+    void syncRuntimeMcpToOpencodeEngine(
+      input.config,
+      input.workspace,
+      current.onlyNames,
+      { throwOnFailure: false, deferred: true },
+      state,
+    ).catch((error) => {
+      createServerLogger(input.config).log(
+        "warn",
+        `Deferred engine MCP sync failed for workspace ${input.workspace.id}.`,
+        {
+          "workspace.id": input.workspace.id,
+          "mcp.failure.code": "deferred_runtime_mcp_sync_failed",
+          "mcp.failure.message": error instanceof Error ? error.message : String(error),
+        },
+      );
+    });
+  }, engineMcpDeferredSyncDelayMs());
+  input.state.deferredSyncByWorkspace.set(input.workspace.id, {
+    timer,
+    connectionIdentity: input.connectionIdentity,
+    generation,
+    ...(onlyNames ? { onlyNames } : {}),
+  });
+}
+
 export type EngineMcpSyncFailure = {
   name: string;
   status?: number;
@@ -3613,6 +3646,7 @@ export type EngineMcpSyncState = { status: "ok" | "failed"; at: number; failures
 type EngineMcpRegistrationRecord = {
   fingerprint: string;
   status: EngineMcpRegistrationStatus;
+  source: EngineMcpRegistrationSource;
   registrationIdentity: string;
   generation: number;
   recordedAt: number;
@@ -3630,6 +3664,7 @@ type EngineMcpServerState = {
   syncStateByWorkspace: Map<string, EngineMcpSyncState>;
   registrationByWorkspace: Map<string, Map<string, EngineMcpRegistrationRecord>>;
   engineIdentityByWorkspace: Map<string, string>;
+  deferredSyncByWorkspace: Map<string, EngineMcpDeferredSync>;
 };
 
 const ENGINE_MCP_REGISTRATION_MAX_AGE_MS = 15 * 60_000;
@@ -3654,9 +3689,11 @@ function normalizedOpencodeProcessEndpoint(baseUrl: string): string | null {
 }
 
 function clearEngineMcpServerEvidence(state: EngineMcpServerState): void {
+  for (const deferred of state.deferredSyncByWorkspace.values()) clearTimeout(deferred.timer);
   state.syncStateByWorkspace.clear();
   state.registrationByWorkspace.clear();
   state.engineIdentityByWorkspace.clear();
+  state.deferredSyncByWorkspace.clear();
 }
 
 /**
@@ -3710,6 +3747,7 @@ function beginEngineMcpServerState(config: ServerConfig): EngineMcpServerState {
     syncStateByWorkspace: new Map(),
     registrationByWorkspace: new Map(),
     engineIdentityByWorkspace: new Map(),
+    deferredSyncByWorkspace: new Map(),
   };
   engineMcpServerStateByConfig.set(config, state);
   return state;
@@ -3733,9 +3771,12 @@ function invalidateEngineMcpServerState(config: ServerConfig, state: EngineMcpSe
 }
 
 function invalidateEngineMcpWorkspace(state: EngineMcpServerState, workspaceId: string): void {
+  const deferred = state.deferredSyncByWorkspace.get(workspaceId);
+  if (deferred) clearTimeout(deferred.timer);
   state.syncStateByWorkspace.delete(workspaceId);
   state.registrationByWorkspace.delete(workspaceId);
   state.engineIdentityByWorkspace.delete(workspaceId);
+  state.deferredSyncByWorkspace.delete(workspaceId);
 }
 
 function reconcileEngineMcpWorkspaceIdentity(
@@ -3921,17 +3962,18 @@ function recordEngineMcpSyncResult(
   const registrations = result.replace
     ? new Map<string, EngineMcpRegistrationRecord>()
     : new Map(state.registrationByWorkspace.get(workspaceId) ?? []);
-  const statusByName = new Map(result.registrations?.map((registration) => [registration.name, registration.status]));
+  const registrationByName = new Map(result.registrations?.map((registration) => [registration.name, registration]));
   for (const [name, mcpConfig] of result.entries) {
     const fingerprint = mcpRegistrationFingerprint(mcpConfig);
-    const status = statusByName.get(name);
-    if (fingerprint === null || !status) {
+    const registration = registrationByName.get(name);
+    if (fingerprint === null || !registration?.status || !registration.source) {
       registrations.delete(name);
       continue;
     }
     registrations.set(name, {
       fingerprint,
-      status,
+      status: registration.status,
+      source: registration.source,
       registrationIdentity,
       generation: state.generation,
       recordedAt,
@@ -3959,20 +4001,20 @@ function inspectEngineMcpRegistrationInState(
   workspace: WorkspaceInfo,
   name: string,
   mcpConfig: Record<string, unknown>,
-): EngineMcpRegistrationStatus | "not-recorded" {
+): EngineMcpRegistrationInspection {
   const state = activeEngineMcpServerState(config, serverState);
-  if (!state) return "not-recorded";
+  if (!state) return notRecordedEngineMcpRegistration();
   const connectionIdentity = engineMcpConnectionIdentity(config, workspace);
   reconcileEngineMcpWorkspaceIdentity(state, workspace.id, connectionIdentity);
-  if (!connectionIdentity) return "not-recorded";
+  if (!connectionIdentity) return notRecordedEngineMcpRegistration();
   const registrationIdentity = engineMcpRegistrationIdentity(config, workspace);
   if (!registrationIdentity) {
     state.registrationByWorkspace.delete(workspace.id);
-    return "not-recorded";
+    return notRecordedEngineMcpRegistration();
   }
   const registrations = state.registrationByWorkspace.get(workspace.id);
   const registration = registrations?.get(name);
-  if (!registration) return "not-recorded";
+  if (!registration) return notRecordedEngineMcpRegistration();
   const currentFingerprint = mcpRegistrationFingerprint(mcpConfig);
   const ageMs = Date.now() - registration.recordedAt;
   if (
@@ -3985,9 +4027,13 @@ function inspectEngineMcpRegistrationInState(
     || registration.fingerprint !== currentFingerprint
   ) {
     registrations?.delete(name);
-    return "not-recorded";
+    return notRecordedEngineMcpRegistration();
   }
-  return registration.status;
+  return { status: registration.status, source: registration.source, recordAgeMs: Math.round(ageMs) };
+}
+
+function notRecordedEngineMcpRegistration(): EngineMcpRegistrationInspection {
+  return { status: "not-recorded", source: null, recordAgeMs: null };
 }
 
 export function inspectEngineMcpRegistration(
@@ -3996,9 +4042,55 @@ export function inspectEngineMcpRegistration(
   name: string,
   mcpConfig: Record<string, unknown>,
 ): EngineMcpRegistrationStatus | "not-recorded" {
+  return inspectEngineMcpRegistrationDetails(config, workspace, name, mcpConfig).status;
+}
+
+export function inspectEngineMcpRegistrationDetails(
+  config: ServerConfig,
+  workspace: WorkspaceInfo,
+  name: string,
+  mcpConfig: Record<string, unknown>,
+): EngineMcpRegistrationInspection {
   const state = activeEngineMcpServerState(config);
-  if (!state) return "not-recorded";
+  if (!state) return notRecordedEngineMcpRegistration();
   return inspectEngineMcpRegistrationInState(config, state, workspace, name, mcpConfig);
+}
+
+export function refreshEngineMcpRegistrationFromLiveStatus(
+  config: ServerConfig,
+  workspace: WorkspaceInfo,
+  name: string,
+  mcpConfig: Record<string, unknown>,
+  liveStatus: unknown,
+): boolean {
+  const status = normalizeEngineMcpRegistrationStatus(liveStatus);
+  if (!status) return false;
+  const state = activeEngineMcpServerState(config);
+  if (!state) return false;
+  const connectionIdentity = engineMcpConnectionIdentity(config, workspace);
+  reconcileEngineMcpWorkspaceIdentity(state, workspace.id, connectionIdentity);
+  if (!connectionIdentity) return false;
+  const registrationIdentity = engineMcpRegistrationIdentity(config, workspace);
+  if (!registrationIdentity) {
+    state.registrationByWorkspace.delete(workspace.id);
+    return false;
+  }
+  const fingerprint = mcpRegistrationFingerprint(mcpConfig);
+  if (fingerprint === null) {
+    state.registrationByWorkspace.get(workspace.id)?.delete(name);
+    return false;
+  }
+  const registrations = new Map(state.registrationByWorkspace.get(workspace.id) ?? []);
+  registrations.set(name, {
+    fingerprint,
+    status,
+    source: "engine_status",
+    registrationIdentity,
+    generation: state.generation,
+    recordedAt: Date.now(),
+  });
+  state.registrationByWorkspace.set(workspace.id, registrations);
+  return true;
 }
 
 function deleteEngineMcpRegistration(
@@ -4098,6 +4190,7 @@ export async function syncAllWorkspacesRuntimeMcpToEngine(config: ServerConfig):
         directory: resolveOpencodeDirectory(workspace),
         serverMetadata: { serverVersion: SERVER_VERSION, expectedOpencodeVersion: OPENCODE_VERSION },
         createWorkspaceOpencodeClient,
+        refreshRegistrationFromLiveStatus: refreshEngineMcpRegistrationFromLiveStatus,
         registerRuntimeMcp: (routeConfig, routeWorkspace, onlyNames, options) =>
           syncRuntimeMcpToOpencodeEngine(
             routeConfig,

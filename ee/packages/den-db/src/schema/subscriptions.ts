@@ -38,7 +38,6 @@ export const OrgSubscriptionTable = mysqlTable(
     ...timestamps,
   },
   (table) => [
-    index("org_subscriptions_organization_id").on(table.organization_id),
     index("org_subscriptions_customer_id").on(table.stripe_customer_id),
     uniqueIndex("org_subscriptions_subscription_id").on(table.stripe_subscription_id),
     uniqueIndex("org_subscriptions_org_type").on(table.organization_id, table.type),

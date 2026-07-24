@@ -1,7 +1,7 @@
 /** @jsxImportSource react */
 import { Button } from "@/components/ui/button";
 import type { ReactNode } from "react";
-import { ArrowRight, CheckCircle2, KeyRound, X } from "lucide-react";
+import { ArrowRight, CheckCircle2, KeyRound, RefreshCw, X } from "lucide-react";
 
 import { t } from "@/i18n";
 import { ProviderIcon } from "../../../design-system/provider-icon";
@@ -38,13 +38,16 @@ export type AiSettingsViewProps = {
   providerDisconnectError: string | null;
   onOpenProviderAuth: () => void | Promise<void>;
   onDisconnectProvider: (providerId: string) => void | Promise<void>;
-  canDisconnectProvider: (source?: ConnectedProvider["source"]) => boolean;
+  canDisconnectProvider: (provider: ConnectedProvider) => boolean;
   /** Set of local provider IDs that were imported from cloud. */
   cloudProviderIds?: Set<string>;
   showOpenWorkModelsSubscribe?: boolean;
   /** Subtle fallback row when OpenWork Models is not connected and the banner was dismissed. */
   showOpenWorkModelsConnect?: boolean;
+  /** Den entitlement is present but local engine has no selectable openwork models yet. */
+  showOpenWorkModelsSyncing?: boolean;
   onSubscribeOpenWorkModels?: () => void | Promise<void>;
+  onRefreshOpenWorkModels?: () => void | Promise<void>;
   onDismissOpenWorkModels?: () => void | Promise<void>;
   cloudProvidersView?: ReactNode;
 };
@@ -174,12 +177,12 @@ export function AiSettingsView(props: AiSettingsViewProps) {
                       props.busy ||
                       props.providerAuthBusy ||
                       props.disconnectingProviderId !== null ||
-                      !props.canDisconnectProvider(provider.source)
+                      !props.canDisconnectProvider(provider)
                     }
                   >
                     {props.disconnectingProviderId === provider.id
                       ? t("settings.disconnecting")
-                      : props.canDisconnectProvider(provider.source)
+                      : props.canDisconnectProvider(provider)
                         ? t("settings.disconnect")
                         : t("settings.managed_by_env")}
                   </Button>
@@ -212,6 +215,33 @@ export function AiSettingsView(props: AiSettingsViewProps) {
             >
               {t("ai_view.connect")}
               <ArrowRight className="ml-1.5 size-3.5" />
+            </Button>
+          </LayoutSectionItem>
+        ) : null}
+
+        {props.showOpenWorkModelsSyncing ? (
+          <LayoutSectionItem className="flex-row flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-6/50 bg-amber-2/20 px-4 py-3">
+            <div className="flex min-w-0 items-center gap-3">
+              <ProviderIcon providerId="openwork" size={20} className="text-amber-11" />
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="truncate text-sm font-medium text-dls-text">OpenWork Models</span>
+                  <span className="shrink-0 rounded-full border border-amber-6 bg-amber-3 px-2 py-0.5 text-[10px] font-medium text-amber-11">
+                    Included — finish syncing
+                  </span>
+                </div>
+                <div className="truncate text-xs text-muted-foreground">
+                  Your plan includes OpenWork Models, but they are not ready in this workspace yet.
+                </div>
+              </div>
+            </div>
+            <Button
+              variant="outline"
+              onClick={() => void props.onRefreshOpenWorkModels?.()}
+              disabled={props.busy || props.providerAuthBusy}
+            >
+              <RefreshCw className="mr-1.5 size-3.5" />
+              Refresh models
             </Button>
           </LayoutSectionItem>
         ) : null}

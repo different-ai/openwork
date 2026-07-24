@@ -1,9 +1,8 @@
-import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
 import { eq } from "drizzle-orm";
 import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { openRuntimeSqliteDatabase, runtimeDbPath } from "./runtime-db.js";
 import type { ServerConfig } from "./types.js";
-import { ensureDir, shortId } from "./utils.js";
+import { shortId } from "./utils.js";
 
 export type SessionGroupDefinition = {
   id: string;
@@ -96,22 +95,12 @@ export function normalizeSessionGroupState(value: unknown): SessionGroupState {
   return { groups, assignments };
 }
 
-function runtimeDbPath(config: ServerConfig): string {
-  const override = process.env.OPENWORK_RUNTIME_DB?.trim();
-  if (override) return resolve(override);
-  const configPath = config.configPath?.trim();
-  const configDir = configPath ? dirname(configPath) : join(homedir(), ".config", "openwork");
-  return join(configDir, "runtime.sqlite");
-}
-
 async function openSessionGroupDb(path: string): Promise<SessionGroupDb> {
-  await ensureDir(dirname(path));
-  if (typeof process.versions.bun === "string") {
-    const { Database } = await import("bun:sqlite");
-    const { drizzle } = await import("drizzle-orm/bun-sqlite");
-    const sqlite = new Database(path, { create: true });
+  const runtimeDb = await openRuntimeSqliteDatabase(path);
+  if (runtimeDb.kind === "bun") {
+    const sqlite = runtimeDb.sqlite;
     sqlite.run("CREATE TABLE IF NOT EXISTS session_group_states (workspace_id TEXT PRIMARY KEY NOT NULL, state_json TEXT NOT NULL, schema_version INTEGER NOT NULL DEFAULT 1, updated_at INTEGER NOT NULL)");
-    const db = drizzle(sqlite);
+    const db = runtimeDb.db;
     return {
       get: (workspaceId) => db
         .select()
@@ -131,8 +120,7 @@ async function openSessionGroupDb(path: string): Promise<SessionGroupDb> {
     };
   }
 
-  const { DatabaseSync } = await import("node:sqlite");
-  const sqlite = new DatabaseSync(path);
+  const sqlite = runtimeDb.sqlite;
   sqlite.exec("CREATE TABLE IF NOT EXISTS session_group_states (workspace_id TEXT PRIMARY KEY NOT NULL, state_json TEXT NOT NULL, schema_version INTEGER NOT NULL DEFAULT 1, updated_at INTEGER NOT NULL)");
   const get = sqlite.prepare("SELECT state_json AS stateJson, updated_at AS updatedAt FROM session_group_states WHERE workspace_id = ?");
   const upsert = sqlite.prepare("INSERT INTO session_group_states (workspace_id, state_json, schema_version, updated_at) VALUES (?, ?, 1, ?) ON CONFLICT(workspace_id) DO UPDATE SET state_json = excluded.state_json, schema_version = excluded.schema_version, updated_at = excluded.updated_at");

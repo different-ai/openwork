@@ -69,7 +69,7 @@ function chunk(delta: object, finishReason: string | null = null) {
 const enginePath = findEngine();
 const describeMaybe = enginePath ? describe : describe.skip;
 
-describeMaybe("authorization-required MCP tool errors", () => {
+describeMaybe("authorization-required MCP tool error pass-through", () => {
   let engine: ChildProcess;
   let mcp: ChildProcess;
   let llm: ReturnType<typeof Bun.serve>;
@@ -78,7 +78,6 @@ describeMaybe("authorization-required MCP tool errors", () => {
   let enginePort = 0;
   let mcpPort = 0;
   let modelSawAuthorizationError = false;
-  let modelSawAgentInstruction = false;
   let modelRequests: Array<{ hasToolError: boolean; toolNames: Array<string | undefined> }> = [];
   let engineLogs = "";
 
@@ -121,8 +120,6 @@ describeMaybe("authorization-required MCP tool errors", () => {
 
         const requestedTool = body.tools?.find((tool) => tool.function?.name?.endsWith(toolName));
         if (requestedTool?.function?.name) {
-          modelSawAgentInstruction = serialized.includes("JSON-RPC code -32001")
-            && serialized.includes("show data.connect_url as a Markdown link");
           return streamResponse([
             chunk({ role: "assistant" }),
             chunk({
@@ -273,7 +270,6 @@ describeMaybe("authorization-required MCP tool errors", () => {
       .find((part) => part.type === "tool" && part.state?.status === "error");
     expect(failedTool?.state?.error).toContain("Authorization required");
     expect(failedTool?.state?.error).toContain(connectUrl);
-    expect(modelSawAgentInstruction).toBe(true);
     expect(modelSawAuthorizationError).toBe(true);
   }, 60_000);
 });

@@ -14,7 +14,7 @@ export type DenCardSize = "comfortable" | "spacious";
 const sizeClasses: Record<DenCardSize, string> = {
   // Matches the original Members / API Keys inline card.
   comfortable: "rounded-[30px] p-6",
-  // Matches the editor-screen section card (LLM providers, skill hubs).
+  // Matches the editor-screen section card (LLM providers, plugin marketplaces).
   spacious: "rounded-[36px] p-8",
 };
 

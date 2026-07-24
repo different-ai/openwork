@@ -10,7 +10,7 @@ import { jsonValidator, orgRoleRoute, paramValidator } from "../../middleware/in
 import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, successSchema, unauthorizedSchema } from "../../openapi.js"
 import { appLogger } from "../../observability/logger.js"
 import { runPostOrganizationMemberChangeHooks } from "../../organization-member-hooks.js"
-import { resolveOrganizationPermissionRecord, validateAssignableOrganizationPermissionRecord } from "../../organization-access.js"
+import { validateInvitationRoleAssignment, type OrganizationRolePermission } from "../../organization-access.js"
 import { isEmailAllowedForOrganization, listAssignableRoles, removeOrganizationMember } from "../../orgs.js"
 import { getOrganizationSeatAddEligibility } from "../../stripe-billing.js"
 import { DenEmailSendError, sendEmail } from "../../utils/email/send-email.js"
@@ -58,6 +58,23 @@ type InvitationId = typeof InvitationTable.$inferSelect.id
 
 const orgInvitationParamsSchema = idParamSchema("invitationId", "invitation")
 
+export function validateInvitationRefreshRole(input: {
+  existingRole: string
+  availableRoles: ReadonlySet<string>
+  currentMember: {
+    isOwner: boolean
+    role: string
+  }
+  roles: readonly OrganizationRolePermission[]
+}) {
+  return validateInvitationRoleAssignment({
+    role: normalizeRoleName(input.existingRole),
+    availableRoles: input.availableRoles,
+    currentMember: input.currentMember,
+    roles: input.roles,
+  })
+}
+
 export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   app.post(
     "/v1/invitations",
@@ -71,7 +88,7 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
         400: jsonResponse("The invitation request body or path parameters were invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in to invite organization members.", unauthorizedSchema),
         402: jsonResponse("A seat subscription is required before inviting more members.", invitePaymentRequiredSchema),
-        403: jsonResponse("Only workspace owners and admins can create invitations, and invitees can only receive roles whose permissions the inviter already has.", forbiddenSchema),
+        403: jsonResponse("Only workspace owners and admins can create invitations. Admins can only invite members.", forbiddenSchema),
         404: jsonResponse("The organization could not be found.", notFoundSchema),
         409: jsonResponse("The email address is outside this workspace's allowed domains.", inviteEmailDomainNotAllowedSchema),
         502: jsonResponse("The invitation was saved but the email provider rejected or failed to deliver it. Retry by submitting the same email again.", invitationEmailFailedSchema),
@@ -105,21 +122,19 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
 
     const availableRoles = await listAssignableRoles(payload.organization.id)
     const role = normalizeRoleName(input.role)
-    if (!availableRoles.has(role)) {
-      return c.json({ error: "invalid_role", message: "Choose one of the existing organization roles." }, 400)
-    }
-
-    const assignableRole = validateAssignableOrganizationPermissionRecord({
-      permission: resolveOrganizationPermissionRecord(role, payload.roles),
-      roleValue: payload.currentMember.role,
+    const assignableRole = validateInvitationRoleAssignment({
+      role,
+      availableRoles,
+      currentMember: payload.currentMember,
       roles: payload.roles,
     })
     if (!assignableRole.ok) {
-      return c.json({
-        error: "forbidden",
-        message: "You can only invite members into roles with permissions you already have.",
-      }, 403)
+      if (assignableRole.error === "invalid_role") {
+        return c.json({ error: assignableRole.error, message: assignableRole.message }, 400)
+      }
+      return c.json({ error: assignableRole.error, message: assignableRole.message }, 403)
     }
+    const assignedRole = assignableRole.role
 
     const existingMembers = await db
       .select({ id: MemberTable.id })
@@ -148,6 +163,21 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
       )
       .limit(1)
 
+    if (existingInvitation[0]) {
+      const refreshRole = validateInvitationRefreshRole({
+        existingRole: existingInvitation[0].role,
+        availableRoles,
+        currentMember: payload.currentMember,
+        roles: payload.roles,
+      })
+      if (!refreshRole.ok) {
+        if (refreshRole.error === "invalid_role") {
+          return c.json({ error: refreshRole.error, message: refreshRole.message }, 400)
+        }
+        return c.json({ error: refreshRole.error, message: refreshRole.message }, 403)
+      }
+    }
+
     if (!existingInvitation[0]) {
       const seatEligibility = await getOrganizationSeatAddEligibility(payload.organization.id)
       if (!seatEligibility.allowed) {
@@ -171,7 +201,7 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
     if (existingInvitation[0]) {
       await db
         .update(InvitationTable)
-        .set({ role, inviterId: normalizeDenTypeId("user", user.id), orgMemberId: payload.currentMember.id, inviteToken, expiresAt })
+        .set({ role: assignedRole, inviterId: normalizeDenTypeId("user", user.id), orgMemberId: payload.currentMember.id, inviteToken, expiresAt })
         .where(eq(InvitationTable.id, existingInvitation[0].id))
 
       const invitedMemberRows = await db
@@ -183,7 +213,7 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
       if (invitedMemberRows[0]) {
         await db
           .update(MemberTable)
-          .set({ role, invitedByOrgMember: payload.currentMember.id })
+          .set({ role: assignedRole, invitedByOrgMember: payload.currentMember.id })
           .where(eq(MemberTable.id, invitedMemberRows[0].id))
         invitationOrgMemberId = invitedMemberRows[0].id
       } else {
@@ -194,7 +224,7 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
           userId: null,
           inviteId: existingInvitation[0].id,
           invitedByOrgMember: payload.currentMember.id,
-          role,
+          role: assignedRole,
           joinedAt: null,
         })
         createdOrgMemberId = memberId
@@ -205,7 +235,7 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
         id: invitationId,
         organizationId: payload.organization.id,
         email,
-        role,
+        role: assignedRole,
         status: "pending",
         inviterId: normalizeDenTypeId("user", user.id),
         orgMemberId: payload.currentMember.id,
@@ -220,7 +250,7 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
         userId: null,
         inviteId: invitationId,
         invitedByOrgMember: payload.currentMember.id,
-        role,
+        role: assignedRole,
         joinedAt: null,
       })
       createdOrgMemberId = memberId
@@ -241,7 +271,7 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
         invitationId,
         targetOrgMembershipId: invitationOrgMemberId,
         targetEmail: email,
-        role,
+        role: assignedRole,
         expiresAt: expiresAt.toISOString(),
       },
     })
@@ -255,7 +285,7 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
           invitedByName: user.name ?? user.email ?? "OpenWork",
           invitedByEmail: user.email ?? "",
           organizationName: payload.organization.name,
-          role,
+          role: assignedRole,
         },
       })
     } catch (error) {
@@ -287,7 +317,7 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
       throw error
     }
 
-    return c.json({ invitationId, email, role, expiresAt, inviteToken }, existingInvitation[0] ? 200 : 201)
+    return c.json({ invitationId, email, role: assignedRole, expiresAt, inviteToken }, existingInvitation[0] ? 200 : 201)
     },
   )
 

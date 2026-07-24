@@ -3,12 +3,13 @@ import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { getCloudWorkerBillingStatus } from "../../billing/polar.js"
 import { createInferenceCheckoutSession, createInferencePortalSession, createSeatCheckoutSession, getOrgBillingSummary, syncSeatCheckoutSession } from "../../stripe-billing.js"
-import { orgMemberRoute, orgRoleRoute } from "../../middleware/index.js"
+import { orgRoleRoute } from "../../middleware/index.js"
 import { forbiddenSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import { getRequiredUserEmail } from "../../user.js"
 import { env } from "../../env.js"
+import { ORGANIZATION_SUPER_ADMIN_ROLE, organizationRoleValueSatisfies } from "../../organization-role-hierarchy.js"
 import type { OrgRouteVariables } from "./shared.js"
-import { ensureOwner } from "./shared.js"
+import { ensureOrganizationAdmin, ensureOrganizationSuperAdmin, orgAccessFailureStatus } from "./shared.js"
 
 const stripeBillingResponseSchema = z.object({}).passthrough().meta({ ref: "OrgStripeBillingResponse" })
 const stripeCheckoutRequestSchema = z.object({ type: z.enum(["inference", "seat"]).optional() })
@@ -84,14 +85,19 @@ export function registerOrgBillingRoutes<T extends { Variables: OrgRouteVariable
         401: jsonResponse("The caller must be signed in to read billing settings.", unauthorizedSchema),
       },
     }),
-    orgMemberRoute(),
+    orgRoleRoute(["admin"]),
     async (c) => {
       const user = c.get("user")
       const payload = c.get("organizationContext")
       const email = getRequiredUserEmail(user)
+      const canManageBilling = organizationRoleValueSatisfies({
+        roleValue: payload.currentMember.role,
+        requiredRole: ORGANIZATION_SUPER_ADMIN_ROLE,
+        isOwner: payload.currentMember.isOwner,
+      })
       const billing = await getOrgBillingSummary({
         organizationId: payload.organization.id,
-        includePortalUrl: true,
+        includePortalUrl: canManageBilling,
         returnUrl: billingReturnUrl(c),
       })
       const polar = email
@@ -100,7 +106,7 @@ export function registerOrgBillingRoutes<T extends { Variables: OrgRouteVariable
             email,
             name: user.name ?? email,
           }, {
-            includePortalUrl: true,
+            includePortalUrl: canManageBilling,
             includeInvoices: false,
           }).catch(() => null)
         : null
@@ -118,14 +124,14 @@ export function registerOrgBillingRoutes<T extends { Variables: OrgRouteVariable
       responses: {
         200: jsonResponse("Stripe Checkout session created successfully.", stripeCheckoutResponseSchema),
         401: jsonResponse("The caller must be signed in to start billing.", unauthorizedSchema),
-        403: jsonResponse("Only workspace owners can start billing.", forbiddenSchema),
+        403: jsonResponse("Only workspace owners and admins can start billing.", forbiddenSchema),
       },
     }),
-    orgRoleRoute(["owner"]),
+    orgRoleRoute(["admin"]),
     async (c) => {
-      const permission = ensureOwner(c)
+      const permission = ensureOrganizationAdmin(c, "Only workspace owners and admins can start billing.")
       if (!permission.ok) {
-        return c.json(permission.response, 403)
+        return c.json(permission.response, orgAccessFailureStatus(permission.response))
       }
       const user = c.get("user")
       const email = getRequiredUserEmail(user)
@@ -161,14 +167,14 @@ export function registerOrgBillingRoutes<T extends { Variables: OrgRouteVariable
       responses: {
         200: jsonResponse("Stripe billing portal session created successfully.", stripePortalResponseSchema),
         401: jsonResponse("The caller must be signed in to manage billing.", unauthorizedSchema),
-        403: jsonResponse("Only workspace owners can manage billing.", forbiddenSchema),
+        403: jsonResponse("Only workspace owners and super-admins can manage billing.", forbiddenSchema),
       },
     }),
-    orgRoleRoute(["owner"]),
+    orgRoleRoute(["super-admin"]),
     async (c) => {
-      const permission = ensureOwner(c)
+      const permission = ensureOrganizationSuperAdmin(c, "Only workspace owners and super-admins can manage billing.")
       if (!permission.ok) {
-        return c.json(permission.response, 403)
+        return c.json(permission.response, orgAccessFailureStatus(permission.response))
       }
       const payload = c.get("organizationContext")
       const session = await createInferencePortalSession({
@@ -188,14 +194,14 @@ export function registerOrgBillingRoutes<T extends { Variables: OrgRouteVariable
       responses: {
         200: jsonResponse("Stripe Checkout session synced successfully.", stripeCheckoutSyncResponseSchema),
         401: jsonResponse("The caller must be signed in to sync billing.", unauthorizedSchema),
-        403: jsonResponse("Only workspace owners can sync billing.", forbiddenSchema),
+        403: jsonResponse("Only workspace owners and admins can sync billing.", forbiddenSchema),
       },
     }),
-    orgRoleRoute(["owner"]),
+    orgRoleRoute(["admin"]),
     async (c) => {
-      const permission = ensureOwner(c)
+      const permission = ensureOrganizationAdmin(c, "Only workspace owners and admins can sync billing.")
       if (!permission.ok) {
-        return c.json(permission.response, 403)
+        return c.json(permission.response, orgAccessFailureStatus(permission.response))
       }
       const body = await c.req.json().catch(() => ({}))
       const parsed = stripeCheckoutSyncRequestSchema.safeParse(body)

@@ -32,6 +32,7 @@ import {
 import { getModelsDevProvider, listModelsDevProviders } from "../../llm/models-dev.js"
 import type { MemberTeamsContext } from "../../middleware/member-teams.js"
 import { denTypeIdSchema, emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
+import { repairMemberInferenceAccessIfNeeded } from "../../inference.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { ensureOrganizationAdmin, idParamSchema, memberHasRole, orgAccessFailureStatus } from "./shared.js"
 
@@ -678,6 +679,21 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
       const query = c.req.valid("query")
       const payload = c.get("organizationContext")
       const memberTeams = c.get("memberTeams") ?? []
+
+      // Desktop entitlement is based on this list. If org inference is enabled
+      // but this member's OpenWork provider/key was deleted, re-provision before
+      // listing so Subscribe CTAs don't lie about an already-enabled org.
+      if (query.scope === "usable") {
+        try {
+          await repairMemberInferenceAccessIfNeeded({
+            organizationId: payload.organization.id,
+            memberId: payload.currentMember.id,
+          })
+        } catch {
+          // Keep listing other providers even if OpenWork re-provision fails.
+        }
+      }
+
       const providers = await loadLlmProviders({
         organizationId: payload.organization.id,
         currentMemberId: payload.currentMember.id,

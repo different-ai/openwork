@@ -112,17 +112,30 @@ function createEngineState() {
     opencodePassword: null,
     opencodeBinPath: null,
     opencodeBinSource: null,
+    managedByServer: false,
+    managedPid: null,
+    managedIsAlive: null,
     lastStdout: null,
     lastStderr: null,
     execution: null,
   };
 }
 
-function snapshotEngineState(state) {
+export function snapshotEngineState(state) {
   const child = state.childExited ? null : state.child;
+  let managedRunning = false;
+  if (state.managedByServer && typeof state.managedIsAlive === "function") {
+    try {
+      managedRunning = state.managedIsAlive() === true;
+    } catch {
+      managedRunning = false;
+    }
+  }
+  const childRunning = Boolean(child && child.exitCode === null && !child.killed);
   return {
-    running: Boolean(child && child.exitCode === null && !child.killed),
+    running: managedRunning || childRunning,
     runtime: state.runtime,
+    managedByServer: state.managedByServer === true,
     baseUrl: state.baseUrl,
     projectDir: state.projectDir,
     hostname: state.hostname,
@@ -131,7 +144,7 @@ function snapshotEngineState(state) {
     opencodePassword: state.opencodePassword,
     opencodeBinPath: state.opencodeBinPath,
     opencodeBinSource: state.opencodeBinSource,
-    pid: child?.pid ?? null,
+    pid: state.managedByServer ? state.managedPid ?? null : child?.pid ?? null,
     lastStdout: state.lastStdout,
     lastStderr: state.lastStderr,
     execution: state.execution,
@@ -1221,6 +1234,9 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     });
     inProcessServer = handle;
     openworkServerState.managedOpencodeExecution = handle.managedOpencodeExecution ?? null;
+    engineState.managedByServer = Boolean(handle.managedOpencode);
+    engineState.managedPid = handle.managedOpencode?.pid ?? null;
+    engineState.managedIsAlive = handle.managedOpencode?.isAlive ?? null;
 
     const boundPort = handle.port;
     const baseUrl = handle.url;
@@ -1368,6 +1384,9 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     engineState.opencodePassword = password;
     engineState.opencodeBinPath = opencodeBinary.path;
     engineState.opencodeBinSource = opencodeBinary.source;
+    engineState.managedByServer = false;
+    engineState.managedPid = null;
+    engineState.managedIsAlive = null;
 
     return snapshotEngineState(engineState);
   }
@@ -1410,6 +1429,9 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     engineState.opencodePassword = password;
     engineState.opencodeBinPath = opencodeBinary.path;
     engineState.opencodeBinSource = opencodeBinary.source;
+    engineState.managedByServer = false;
+    engineState.managedPid = null;
+    engineState.managedIsAlive = null;
 
     await waitForHttpOk(`${engineState.baseUrl}/health`, 10_000).catch(() => undefined);
     return snapshotEngineState(engineState);

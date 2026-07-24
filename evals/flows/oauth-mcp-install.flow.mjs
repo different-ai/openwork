@@ -1,7 +1,7 @@
 /**
  * Member side of the marketplace lifecycle — the "other side" proof.
  *
- * Rashmi (org member, SECOND isolated app instance) installs the plugin the
+ * Riley (org member, SECOND isolated app instance) installs the plugin the
  * owner published in oauth-mcp-publish.flow.mjs:
  *   1. Signs in to OpenWork Cloud via desktop handoff on App B.
  *   2. Finds "Laptop Refresh Policy" in the Extension Marketplace and
@@ -17,14 +17,14 @@
  *
  * Required env:
  * - OPENWORK_EVAL_DEN_API_URL  local Den API (e.g. http://127.0.0.1:8790)
- * Prereqs: member rashmi@acme.test / OpenWorkDemo123! exists in the org.
+ * Prereqs: member riley@acme.test / OpenWorkDemo123! exists in the org.
  */
 import { mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
 const SHARED = {
-  MEMBER_EMAIL: "rashmi@acme.test",
+  MEMBER_EMAIL: "riley@acme.test",
   PASSWORD: "OpenWorkDemo123!",
   SKILL_NAME: "laptop-refresh-policy",
   MCP_NAME: "acme-servicenow",
@@ -114,7 +114,7 @@ export default {
     {
       name: "App B boots; member signs in via desktop handoff",
       run: async (ctx) => {
-        await ctx.prove("Member (Rashmi) is signed in on her own app instance", {
+        await ctx.prove("Member (Riley) is signed in on her own app instance", {
           action: async () => {
             await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 90_000, label: "control API" });
             const status = await authStatus(ctx);
@@ -143,7 +143,7 @@ export default {
           assert: async () => {
             const status = await authStatus(ctx);
             ctx.assert(status?.status === "signed_in", "Not signed in after handoff exchange.");
-            ctx.assert(String(status?.user?.email ?? "").includes("rashmi@"), `Unexpected user: ${status?.user?.email}`);
+            ctx.assert(String(status?.user?.email ?? "").includes("riley@"), `Unexpected user: ${status?.user?.email}`);
           },
           screenshot: { name: "member-signed-in", rejectText: ["Something went wrong"] },
         });

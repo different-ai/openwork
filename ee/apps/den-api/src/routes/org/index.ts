@@ -7,6 +7,7 @@ import { registerOrgBrandAssetRoutes } from "./brand-assets.js"
 import { LEGACY_ORG_PROXY_HEADER } from "../../middleware/user-organizations.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { registerOrgCoreRoutes } from "./core.js"
+import { registerDeleteOrganizationRoutes } from "./delete-organization.js"
 import { registerOrgDesktopPolicyRoutes } from "./desktop-policies.js"
 import { registerOrgEgressDiagnosticRoutes } from "./egress-diagnostics.js"
 import { registerOrgInvitationRoutes } from "./invitations.js"
@@ -22,7 +23,6 @@ import { registerPluginArchRoutes } from "./plugin-system/routes.js"
 import { registerOrgRoleRoutes } from "./roles.js"
 import { registerOrgScimRoutes } from "./scim.js"
 import { registerOrgSsoRoutes } from "./sso.js"
-import { registerOrgSkillRoutes } from "./skills.js"
 import { registerOrgResourceRoutes } from "./resources.js"
 import { registerOrgTeamRoutes } from "./teams.js"
 import { registerTelegramOrgRoutes } from "./telegram.js"
@@ -55,6 +55,7 @@ function extractLegacyOrgProxyTarget(pathname: string) {
 
 export function registerOrgRoutes<T extends { Variables: OrgRouteVariables & RequestIdVariables }>(app: Hono<T>) {
   registerOrgCoreRoutes(app)
+  registerDeleteOrganizationRoutes(app)
   registerOrgApiKeyRoutes(app)
   registerOrgBillingRoutes(app)
   registerOrgBrandAssetRoutes(app)
@@ -74,7 +75,6 @@ export function registerOrgRoutes<T extends { Variables: OrgRouteVariables & Req
   registerPluginArchRoutes(app)
   registerOrgRoleRoutes(app)
   registerOrgResourceRoutes(app)
-  registerOrgSkillRoutes(app)
   registerOrgTeamRoutes(app)
   registerTelegramOrgRoutes(app)
 

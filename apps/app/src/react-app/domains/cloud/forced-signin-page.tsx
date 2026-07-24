@@ -35,7 +35,7 @@ export type ForcedSigninPageProps = {
  * string (>= 12 chars) or an `openwork://den-auth?grant=…` deep link.
  * Matches the Solid ForcedSigninPage exactly so flows stay fungible.
  */
-function parseManualAuthInput(value: string) {
+export function parseManualAuthInput(value: string) {
   const trimmed = value.trim();
   if (!trimmed) return null;
 
@@ -108,7 +108,7 @@ export function ForcedSigninPage({ developerMode }: ForcedSigninPageProps) {
   const openBrowserAuth = useCallback(
     (mode: "sign-in" | "sign-up") => {
       const url = buildDenAuthUrl(baseUrl, mode);
-      setSigninFallbackUrl(null);
+      setSigninFallbackUrl(url);
       setStatusMessage(
         mode === "sign-up"
           ? t("den.status_browser_signup")
@@ -118,7 +118,6 @@ export function ForcedSigninPage({ developerMode }: ForcedSigninPageProps) {
       void tryOpenBrowserAuthUrl(url).then((opened) => {
         if (opened) return;
         setStatusMessage(null);
-        setSigninFallbackUrl(url);
         setManualAuthOpen(true);
       });
     },

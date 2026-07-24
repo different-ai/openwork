@@ -209,6 +209,59 @@ async function ensureMemberInferenceAccess(input: { organizationId: OrgId; membe
   await ensureOpenWorkLlmProviderForMember({ ...input, inferenceKey: key })
 }
 
+async function memberHasOpenWorkInferenceAccess(input: { organizationId: OrgId; memberId: MemberId }) {
+  const [provider] = await db
+    .select({ id: LlmProviderTable.id })
+    .from(LlmProviderTable)
+    .where(and(
+      eq(LlmProviderTable.organizationId, input.organizationId),
+      eq(LlmProviderTable.createdByOrgMembershipId, input.memberId),
+      eq(LlmProviderTable.source, "openwork"),
+      eq(LlmProviderTable.providerId, OPENWORK_PROVIDER_ID),
+    ))
+    .limit(1)
+  const [key] = await db
+    .select({ id: InferenceKeyTable.id })
+    .from(InferenceKeyTable)
+    .where(and(
+      eq(InferenceKeyTable.organization_id, input.organizationId),
+      eq(InferenceKeyTable.org_membership_id, input.memberId),
+      eq(InferenceKeyTable.status, "active"),
+    ))
+    .limit(1)
+
+  return Boolean(provider && key)
+}
+
+/**
+ * Re-provision this member's OpenWork Models key + LLM provider when the org
+ * has inference enabled but the member row was deleted or never created.
+ * Safe to call from member-facing list endpoints (self-heal).
+ */
+export async function repairMemberInferenceAccessIfNeeded(input: {
+  organizationId: OrgId
+  memberId: MemberId
+}): Promise<boolean> {
+  const [organization] = await db
+    .select({ metadata: OrganizationTable.metadata })
+    .from(OrganizationTable)
+    .where(eq(OrganizationTable.id, input.organizationId))
+    .limit(1)
+
+  const inference = readInferenceMetadata(organization?.metadata ?? null)
+  if (!inference) {
+    return false
+  }
+
+  if (await memberHasOpenWorkInferenceAccess(input)) {
+    return false
+  }
+
+  await revokeMemberInferenceKeys(input.memberId)
+  await ensureMemberInferenceAccess(input)
+  return true
+}
+
 export async function syncInferenceForOrganizationMembers(input: { organizationId: OrgId }) {
   const [organization] = await db
     .select({ metadata: OrganizationTable.metadata })
@@ -225,30 +278,10 @@ export async function syncInferenceForOrganizationMembers(input: { organizationI
   await syncInferenceLimitPolicies({ organizationId: input.organizationId, tier: inference.tier, memberCount: members.length })
 
   for (const member of members) {
-    const [provider] = await db
-      .select({ id: LlmProviderTable.id })
-      .from(LlmProviderTable)
-      .where(and(
-        eq(LlmProviderTable.organizationId, input.organizationId),
-        eq(LlmProviderTable.createdByOrgMembershipId, member.id),
-        eq(LlmProviderTable.source, "openwork"),
-        eq(LlmProviderTable.providerId, OPENWORK_PROVIDER_ID),
-      ))
-      .limit(1)
-    const [key] = await db
-      .select({ id: InferenceKeyTable.id })
-      .from(InferenceKeyTable)
-      .where(and(
-        eq(InferenceKeyTable.organization_id, input.organizationId),
-        eq(InferenceKeyTable.org_membership_id, member.id),
-        eq(InferenceKeyTable.status, "active"),
-      ))
-      .limit(1)
-
-    if (!provider || !key) {
-      await revokeMemberInferenceKeys(member.id)
-      await ensureMemberInferenceAccess({ organizationId: input.organizationId, memberId: member.id })
-    }
+    await repairMemberInferenceAccessIfNeeded({
+      organizationId: input.organizationId,
+      memberId: member.id,
+    })
   }
 }
 
@@ -530,6 +563,21 @@ export async function getInferenceStatus(organizationId: OrgId) {
     .limit(1)
   const memberCount = await activeMemberCount(organizationId)
   const inference = readInferenceMetadata(organization?.metadata ?? null)
+  // Admin status reads are a natural repair point: org can show ENABLED in Den
+  // while individual members are missing keys/providers after manual deletes.
+  if (inference?.enabled === true) {
+    try {
+      const members = await listOrgMembers(organizationId)
+      for (const member of members) {
+        await repairMemberInferenceAccessIfNeeded({
+          organizationId,
+          memberId: member.id,
+        })
+      }
+    } catch {
+      // Status should still return even if upstream key provisioning fails.
+    }
+  }
   const buckets = inference?.enabled === true ? await getActiveUsageBuckets(organizationId) : []
   return {
     enabled: inference?.enabled === true,

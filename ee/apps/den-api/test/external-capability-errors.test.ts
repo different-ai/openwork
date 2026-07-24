@@ -7,6 +7,7 @@ function seedRequiredEnv() {
   process.env.BETTER_AUTH_SECRET = process.env.BETTER_AUTH_SECRET ?? "y".repeat(32)
   process.env.BETTER_AUTH_URL = process.env.BETTER_AUTH_URL ?? "http://127.0.0.1:8790"
   process.env.CORS_ORIGINS = process.env.CORS_ORIGINS ?? "http://127.0.0.1:8790"
+  process.env.DEN_ALLOW_PRIVATE_MCP_URLS = process.env.DEN_ALLOW_PRIVATE_MCP_URLS ?? "1"
 }
 
 seedRequiredEnv()
@@ -139,6 +140,7 @@ test("reauth-required overrides generic provider ownership from a refresh diagno
       surface: "openwork_your_connections",
     },
   })
+  expect("diagnostic" in status).toBe(false)
 })
 
 test("provider installation failures route to the provider admin console", () => {
@@ -179,6 +181,7 @@ test("structured diagnostics remain the single source of truth for fix ownership
       surface: "network_infrastructure",
     },
   })
+  expect("diagnostic" in status).toBe(false)
 })
 
 test("generic provider failures route to connector inspection instead of cloud reauthorization", () => {

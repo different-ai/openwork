@@ -9,10 +9,11 @@ import { db } from "../../db.js"
 import { jsonValidator, orgRoleRoute, paramValidator } from "../../middleware/index.js"
 import { emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, successSchema, unauthorizedSchema } from "../../openapi.js"
 import { validateAssignableOrganizationPermissionRecord } from "../../organization-access.js"
+import { isProtectedOrganizationRoleName } from "../../organization-role-hierarchy.js"
 import { revokeCredentialsForOrganizationRoleMembers } from "../../organization-role-credential-revocation.js"
 import { serializePermissionRecord } from "../../orgs.js"
 import type { OrgRouteVariables } from "./shared.js"
-import { createRoleId, ensureOwner, idParamSchema, normalizeRoleName, replaceRoleValue, splitRoles } from "./shared.js"
+import { createRoleId, ensureOrganizationSuperAdmin, idParamSchema, normalizeRoleName, orgAccessFailureStatus, replaceRoleValue, splitRoles } from "./shared.js"
 
 const permissionSchema = z.record(z.string(), z.array(z.string()))
 
@@ -40,16 +41,16 @@ export function registerOrgRoleRoutes<T extends { Variables: OrgRouteVariables }
         201: jsonResponse("Organization role created successfully.", successSchema),
         400: jsonResponse("The role creation request was invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in to create organization roles.", unauthorizedSchema),
-        403: jsonResponse("Only workspace owners can create custom roles.", forbiddenSchema),
+        403: jsonResponse("Only workspace owners and super-admins can create custom roles.", forbiddenSchema),
         404: jsonResponse("The organization could not be found.", notFoundSchema),
       },
     }),
-    orgRoleRoute(["owner"]),
+    orgRoleRoute(["super-admin"]),
     jsonValidator(createRoleSchema),
     async (c) => {
-    const permission = ensureOwner(c)
+    const permission = ensureOrganizationSuperAdmin(c, "Only workspace owners and super-admins can create custom roles.")
     if (!permission.ok) {
-      return c.json(permission.response, 403)
+      return c.json(permission.response, orgAccessFailureStatus(permission.response))
     }
 
     const payload = c.get("organizationContext")
@@ -65,8 +66,8 @@ export function registerOrgRoleRoutes<T extends { Variables: OrgRouteVariables }
     }
 
     const roleName = normalizeRoleName(input.roleName)
-    if (roleName === "owner") {
-      return c.json({ error: "invalid_role", message: "Owner is managed by the system." }, 400)
+    if (isProtectedOrganizationRoleName(roleName)) {
+      return c.json({ error: "invalid_role", message: "Built-in roles are managed by the system." }, 400)
     }
 
     const existingByName = await db
@@ -111,17 +112,17 @@ export function registerOrgRoleRoutes<T extends { Variables: OrgRouteVariables }
         200: jsonResponse("Organization role updated successfully.", successSchema),
         400: jsonResponse("The role update request was invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in to update organization roles.", unauthorizedSchema),
-        403: jsonResponse("Only workspace owners can update custom roles.", forbiddenSchema),
+        403: jsonResponse("Only workspace owners and super-admins can update custom roles.", forbiddenSchema),
         404: jsonResponse("The role or organization could not be found.", notFoundSchema),
       },
     }),
-    orgRoleRoute(["owner"]),
+    orgRoleRoute(["super-admin"]),
     paramValidator(orgRoleParamsSchema),
     jsonValidator(updateRoleSchema),
     async (c) => {
-    const permission = ensureOwner(c)
+    const permission = ensureOrganizationSuperAdmin(c, "Only workspace owners and super-admins can update custom roles.")
     if (!permission.ok) {
-      return c.json(permission.response, 403)
+      return c.json(permission.response, orgAccessFailureStatus(permission.response))
     }
 
     const payload = c.get("organizationContext")
@@ -147,8 +148,8 @@ export function registerOrgRoleRoutes<T extends { Variables: OrgRouteVariables }
     }
 
     const nextRoleName = input.roleName ? normalizeRoleName(input.roleName) : roleRow.role
-    if (nextRoleName === "owner") {
-      return c.json({ error: "invalid_role", message: "Owner is managed by the system." }, 400)
+    if (isProtectedOrganizationRoleName(roleRow.role) || isProtectedOrganizationRoleName(nextRoleName)) {
+      return c.json({ error: "invalid_role", message: "Built-in roles are managed by the system." }, 400)
     }
 
     if (nextRoleName !== roleRow.role) {
@@ -249,16 +250,16 @@ export function registerOrgRoleRoutes<T extends { Variables: OrgRouteVariables }
         204: emptyResponse("Organization role deleted successfully."),
         400: jsonResponse("The role deletion request was invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in to delete organization roles.", unauthorizedSchema),
-        403: jsonResponse("Only workspace owners can delete custom roles.", forbiddenSchema),
+        403: jsonResponse("Only workspace owners and super-admins can delete custom roles.", forbiddenSchema),
         404: jsonResponse("The role or organization could not be found.", notFoundSchema),
       },
     }),
-    orgRoleRoute(["owner"]),
+    orgRoleRoute(["super-admin"]),
     paramValidator(orgRoleParamsSchema),
     async (c) => {
-    const permission = ensureOwner(c)
+    const permission = ensureOrganizationSuperAdmin(c, "Only workspace owners and super-admins can delete custom roles.")
     if (!permission.ok) {
-      return c.json(permission.response, 403)
+      return c.json(permission.response, orgAccessFailureStatus(permission.response))
     }
 
     const payload = c.get("organizationContext")
@@ -279,6 +280,10 @@ export function registerOrgRoleRoutes<T extends { Variables: OrgRouteVariables }
     const roleRow = roleRows[0]
     if (!roleRow) {
       return c.json({ error: "role_not_found" }, 404)
+    }
+
+    if (isProtectedOrganizationRoleName(roleRow.role)) {
+      return c.json({ error: "invalid_role", message: "Built-in roles are managed by the system." }, 400)
     }
 
     const membersUsingRole = await db

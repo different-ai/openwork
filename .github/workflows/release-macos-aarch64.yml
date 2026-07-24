@@ -590,6 +590,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: node scripts/release/publish-electron-assets.mjs --manifests-only "${{ runner.temp }}/electron-dist" "$RELEASE_TAG"
 
+  publish-installers:
+    name: Build + Upload Installer Assets
+    needs: [resolve-release, verify-release]
+    uses: ./.github/workflows/release-generic-installer.yml
+    with:
+      release_tag: ${{ needs.resolve-release.outputs.release_tag }}
+      publish_mode: release
+      platforms: mac-arm64,mac-x64,win-x64
+      sign_windows: ${{ needs.resolve-release.outputs.sign_windows == 'true' }}
+    secrets: inherit
+
   release-orchestrator-sidecars:
     name: Build + Upload openwork-orchestrator Sidecars
     needs: [resolve-release, verify-release]
@@ -904,6 +915,7 @@ jobs:
       - verify-release
       - publish-electron
       - publish-electron-assets
+      - publish-installers
       - release-orchestrator-sidecars
       - publish-npm
       - publish-daytona-snapshot
@@ -913,6 +925,7 @@ jobs:
       needs.verify-release.result == 'success' &&
       (needs.publish-electron.result == 'success' || needs.publish-electron.result == 'skipped') &&
       (needs.publish-electron-assets.result == 'success' || needs.publish-electron-assets.result == 'skipped') &&
+      needs.publish-installers.result == 'success' &&
       (needs.release-orchestrator-sidecars.result == 'success' || needs.release-orchestrator-sidecars.result == 'skipped') &&
       (needs.publish-npm.result == 'success' || needs.publish-npm.result == 'skipped') &&
       (needs.publish-daytona-snapshot.result == 'success' || needs.publish-daytona-snapshot.result == 'skipped')

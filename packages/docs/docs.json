@@ -37,7 +37,6 @@
             "group": "Do work with it",
             "pages": [
               "start-here/do-work-with-it/control-the-browser",
-              "start-here/do-work-with-it/import-a-skill",
               "start-here/do-work-with-it/cross-chat-memory",
               "start-here/do-work-with-it/workflows",
               "start-here/do-work-with-it/share-your-setup"
@@ -84,8 +83,23 @@
           {
             "group": "Run in the cloud",
             "pages": [
-              "cloud/run-in-the-cloud/shared-workspace",
+              "cloud/run-in-the-cloud/shared-workspace"
+            ]
+          },
+          {
+            "group": "Model Context Protocol (MCP)",
+            "pages": [
               "cloud/run-in-the-cloud/cloud-mcp",
+              "model-context-protocol/opencode",
+              "model-context-protocol/claude-code",
+              "model-context-protocol/codex",
+              "model-context-protocol/claude-desktop",
+              "model-context-protocol/chatgpt",
+              "model-context-protocol/cursor",
+              "model-context-protocol/vs-code",
+              "model-context-protocol/windsurf",
+              "model-context-protocol/zed",
+              "model-context-protocol/gemini-cli",
               "cloud/run-in-the-cloud/connect-openwork-mcp-remote-machine"
             ]
           },
@@ -118,6 +132,10 @@
     {
       "source": "/",
       "destination": "/start-here/get-started"
+    },
+    {
+      "source": "/model-context-protocol",
+      "destination": "/cloud/run-in-the-cloud/cloud-mcp"
     },
     {
       "source": "/quickstart",

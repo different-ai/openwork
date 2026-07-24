@@ -21,9 +21,13 @@ type ConnectCapabilityClient = {
 };
 
 export type ConnectCapabilityInventory = {
-  skills: SkillCard[];
+  skills: ConnectSkillCard[];
   mcpServers: McpServerEntry[];
   mcpStatuses: McpStatusMap;
+};
+
+export type ConnectSkillCard = SkillCard & {
+  content?: string;
 };
 
 export const EMPTY_CONNECT_CAPABILITY_INVENTORY: ConnectCapabilityInventory = {
@@ -105,11 +109,12 @@ function toSkill(
   marketplace: DenOrgMarketplace,
   plugin: DenOrgPlugin,
   object: DenPluginConfigObject,
-): SkillCard {
+): ConnectSkillCard {
   return {
     name: object.title,
     path: `openwork-connect://${marketplace.id}/${plugin.id}/${object.id}`,
     description: object.description ?? undefined,
+    content: object.latestVersion?.rawSourceText ?? undefined,
     trigger: skillTrigger(object),
     origin: "openwork-connect",
     marketplaceName: marketplace.name,

@@ -2,10 +2,13 @@ declare const describe: (name: string, fn: () => void) => void;
 declare const test: (name: string, fn: () => void) => void;
 declare const expect: (value: unknown) => {
   toBe: (expected: unknown) => void;
+  toEqual: (expected: unknown) => void;
   not: { toBe: (expected: unknown) => void };
 };
 
 import {
+  bootstrapBrandingFromDesktopConfig,
+  bootstrapBrandingNeedsSync,
   hasWorkspaceBranding,
   workspaceBrandingFingerprint,
 } from "./workspace-branding-restart";
@@ -26,5 +29,37 @@ describe("workspace branding restart", () => {
 
     expect(first).toBe(repeated);
     expect(first).not.toBe(changed);
+  });
+
+  test("maps cleared desktop branding to null bootstrap fields", () => {
+    expect(bootstrapBrandingFromDesktopConfig({
+      brandAppName: "Acme",
+      brandLogoUrl: "https://example.com/logo.png",
+      brandIconUrl: "https://example.com/icon.png",
+    })).toEqual({
+      brandAppName: "Acme",
+      brandLogoUrl: "https://example.com/logo.png",
+      brandIconUrl: "https://example.com/icon.png",
+    });
+    expect(bootstrapBrandingFromDesktopConfig({})).toEqual({
+      brandAppName: null,
+      brandLogoUrl: null,
+      brandIconUrl: null,
+    });
+  });
+
+  test("detects when bootstrap still holds a cleared brand icon or wordmark", () => {
+    expect(bootstrapBrandingNeedsSync(
+      { brandIconUrl: "https://example.com/icon.png", brandLogoUrl: "https://example.com/logo.png" },
+      {},
+    )).toBe(true);
+    expect(bootstrapBrandingNeedsSync(
+      { brandIconUrl: "https://example.com/icon.png" },
+      { brandIconUrl: "https://example.com/icon.png" },
+    )).toBe(false);
+    expect(bootstrapBrandingNeedsSync(
+      {},
+      { brandLogoUrl: "https://example.com/logo.png" },
+    )).toBe(true);
   });
 });

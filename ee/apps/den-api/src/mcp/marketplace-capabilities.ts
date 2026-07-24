@@ -34,6 +34,38 @@ import type { CapabilityMatch } from "./search.js"
 
 const MARKETPLACE_CAPABILITY_PREFIX = "plugin:"
 const PROVENANCE_SUFFIX = "in your organization's library."
+const AGENT_SKILL_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
+
+export type RemoteSkillDescriptor = {
+  name: string
+  title: string
+  description: string
+  marketplaceName?: string
+  pluginName?: string
+  capability: string
+  location: string
+}
+
+export function normalizeRemoteSkillDescription(input: {
+  description: string | null
+  name: string
+  title: string
+}): string {
+  const description = input.description?.replace(/\s+/g, " ").trim()
+  return (description || input.title.trim() || input.name).slice(0, 1_024)
+}
+
+export function standardSkillName(title: string, stableId: string): string {
+  const suffix = stableId.replace(/^skill_/, "").slice(-8).toLowerCase()
+  const base = title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .replace(/-{2,}/g, "-")
+  const bounded = base.slice(0, Math.max(1, 64 - suffix.length - 1)).replace(/-+$/g, "")
+  const name = `${bounded || "skill"}-${suffix}`
+  return AGENT_SKILL_NAME_PATTERN.test(name) ? name : `skill-${suffix}`
+}
 
 type OrganizationId = DenTypeId<"organization">
 type PluginId = DenTypeId<"plugin">
@@ -476,6 +508,49 @@ async function filterVisibleRows(input: {
     if (grantRole(input.member, pluginGrants.get(row.plugin.id) ?? [])) return true
     return Boolean(grantRole(input.member, marketplaceGrants.get(row.marketplace.id) ?? []))
   })
+}
+
+export async function listAccessibleMarketplaceSkillDescriptors(input: {
+  enabled?: boolean
+  member: McpMemberIdentity | null
+  organizationId: string
+}): Promise<RemoteSkillDescriptor[]> {
+  if (input.enabled === false || !input.member) return []
+
+  const organizationId = normalizeDenTypeId("organization", input.organizationId)
+  const memberRow = await getActiveMember(organizationId, input.member)
+  if (!memberRow) return []
+
+  const rows = await filterVisibleRows({
+    organizationId,
+    member: input.member,
+    memberRow,
+    rows: (await listActiveMarketplaceRows(organizationId))
+      .filter((row) => row.configObject.objectType === "skill"),
+  })
+  const descriptors = new Map<string, RemoteSkillDescriptor>()
+  for (const row of rows) {
+    const capability = buildMarketplaceCapabilityName(row.plugin.id, row.configObject.id)
+    if (descriptors.has(capability)) continue
+    const uniqueSuffix = `${row.plugin.id.slice(-4)}${row.configObject.id.slice(-4)}`
+    const name = standardSkillName(row.configObject.title, uniqueSuffix)
+    descriptors.set(capability, {
+      name,
+      title: row.configObject.title,
+      description: normalizeRemoteSkillDescription({
+        description: row.configObject.description,
+        name,
+        title: row.configObject.title,
+      }),
+      marketplaceName: row.marketplace.name,
+      pluginName: row.plugin.name,
+      capability,
+      location: `skill://${name}/SKILL.md`,
+    })
+  }
+
+  return [...descriptors.values()]
+    .sort((a, b) => a.name.localeCompare(b.name) || a.capability.localeCompare(b.capability))
 }
 
 async function latestVersion(configObjectId: ConfigObjectId, organizationId: OrganizationId) {

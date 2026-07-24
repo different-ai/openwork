@@ -35,17 +35,17 @@ const TYPE_ID_PREFIXES = {
   orgSubscription: "osub",
 };
 const RUN_TAG = `${Date.now().toString(36)}-${randomBytes(2).toString("hex")}`;
-const RASHMI_EMAIL = `rashmi+${RUN_TAG}@acme.test`;
-const RASHMI_JIT_EMAIL = `rashmi+jit-${RUN_TAG}@acme.test`;
-const RASHMI_PASSWORD = `OpenWork-${RUN_TAG}!`;
+const RILEY_EMAIL = `riley+${RUN_TAG}@acme.test`;
+const RILEY_JIT_EMAIL = `riley+jit-${RUN_TAG}@acme.test`;
+const RILEY_PASSWORD = `OpenWork-${RUN_TAG}!`;
 
 const state = {
   organization: null,
   adminMemberId: null,
   orgMode: null,
   adminBrowserSignedIn: false,
-  rashmiToken: null,
-  rashmiUserId: null,
+  rileyToken: null,
+  rileyUserId: null,
   reconcileEmail: null,
   reconcileUserId: null,
 };
@@ -468,7 +468,7 @@ async function inviteAsAdmin(ctx, email) {
 async function signUpEmail(ctx, email, name) {
   const result = await denAuthFetch("/api/auth/sign-up/email", {
     method: "POST",
-    body: JSON.stringify({ email, name, password: RASHMI_PASSWORD }),
+    body: JSON.stringify({ email, name, password: RILEY_PASSWORD }),
   });
   witness(ctx, result.response.ok, `Sign-up succeeds for ${email}`, redactAuthResult(result));
   return result;
@@ -477,7 +477,7 @@ async function signUpEmail(ctx, email, name) {
 async function signInEmail(ctx, email) {
   const result = await denAuthFetch("/api/auth/sign-in/email", {
     method: "POST",
-    body: JSON.stringify({ email, password: RASHMI_PASSWORD }),
+    body: JSON.stringify({ email, password: RILEY_PASSWORD }),
   });
   witness(ctx, result.response.ok && typeof result.body?.token === "string", `Sign-in returns a session token for ${email}`, redactAuthResult(result));
   return result;
@@ -536,7 +536,7 @@ export default {
   requiredEnv: ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_TOKEN", "OPENWORK_EVAL_DEN_WEB_URL", "OPENWORK_EVAL_WEB_CDP_ADMIN"],
   steps: [
     {
-      name: "Frame 1 — The admin invites Rashmi as an admin",
+      name: "Frame 1 — The admin invites Riley as an admin",
       run: async (ctx) => {
         await withClient(ctx, ADMIN_CDP_URL, async () => {
         await ctx.prove("The admin invite creates one pending admin invitation and one invited placeholder", {
@@ -544,23 +544,23 @@ export default {
           assert: async () => {
             await loadOrg(ctx);
             const cleanupOutput = cleanupPriorEvalArtifacts();
-            const invite = await inviteAsAdmin(ctx, RASHMI_EMAIL);
+            const invite = await inviteAsAdmin(ctx, RILEY_EMAIL);
             const org = await loadOrg(ctx);
-            assertPendingInviteAndGhost(ctx, org, RASHMI_EMAIL);
+            assertPendingInviteAndGhost(ctx, org, RILEY_EMAIL);
             ctx.output("invite-response-and-org-listing", JSON.stringify({
               runTag: RUN_TAG,
-              email: RASHMI_EMAIL,
+              email: RILEY_EMAIL,
               cleanup: cleanupOutput || "removed prior eval-only seat rows if present",
               inviteResponse: { status: invite.result.response.status, body: invite.result.body },
               seatSetupApplied: Boolean(invite.seatSql),
-              org: summarizeOrg(org, [RASHMI_EMAIL]),
+              org: summarizeOrg(org, [RILEY_EMAIL]),
             }, null, 2));
             await openMembersPage(ctx);
-            await assertPendingInviteUi(ctx, RASHMI_EMAIL);
+            await assertPendingInviteUi(ctx, RILEY_EMAIL);
           },
           screenshot: {
-            name: "rashmi-pending-admin-invite",
-            requireText: [RASHMI_EMAIL, "Pending", "Admin"],
+            name: "riley-pending-admin-invite",
+            requireText: [RILEY_EMAIL, "Pending", "Admin"],
             rejectText: ["Something went wrong"],
           },
         });
@@ -568,40 +568,40 @@ export default {
       },
     },
     {
-      name: "Frame 2 — Rashmi signs up and the stack's org mode decides the first-sign-in boundary",
+      name: "Frame 2 — Riley signs up and the stack's org mode decides the first-sign-in boundary",
       run: async (ctx) => {
-        await ctx.prove("Rashmi's first sign-in either stays outside the org or adopts the invite in single-org mode", {
+        await ctx.prove("Riley's first sign-in either stays outside the org or adopts the invite in single-org mode", {
           voiceover: vo[1],
           action: async () => {
-            state.rashmiSignUp = await signUpEmail(ctx, RASHMI_EMAIL, "Rashmi Shah");
-            const signedIn = await signInEmail(ctx, RASHMI_EMAIL);
-            state.rashmiToken = signedIn.body.token;
-            const me = await loadMe(ctx, state.rashmiToken, "Rashmi");
-            state.rashmiUserId = me.user.id;
+            state.rileySignUp = await signUpEmail(ctx, RILEY_EMAIL, "Riley Shah");
+            const signedIn = await signInEmail(ctx, RILEY_EMAIL);
+            state.rileyToken = signedIn.body.token;
+            const me = await loadMe(ctx, state.rileyToken, "Riley");
+            state.rileyUserId = me.user.id;
           },
           assert: async () => {
             const org = await loadOrg(ctx);
-            const active = activeMembersForEmail(org, RASHMI_EMAIL);
-            const invitations = invitationsForEmail(org, RASHMI_EMAIL);
-            const ghosts = invitedGhostsForEmail(org, RASHMI_EMAIL);
+            const active = activeMembersForEmail(org, RILEY_EMAIL);
+            const invitations = invitationsForEmail(org, RILEY_EMAIL);
+            const ghosts = invitedGhostsForEmail(org, RILEY_EMAIL);
             if (active.length === 1 && invitations[0]?.status === "accepted") {
               state.orgMode = "single_org";
-              assertReconciled(ctx, org, RASHMI_EMAIL);
+              assertReconciled(ctx, org, RILEY_EMAIL);
             } else {
               state.orgMode = "multi_org";
-              witness(ctx, active.length === 0, "Rashmi is not yet an active member of the invited organization", active.map(compactMember));
-              witness(ctx, invitations[0]?.status === "pending", "Rashmi's invitation is still pending", invitations.map(compactInvitation));
-              witness(ctx, ghosts.length === 1, "Rashmi's invited placeholder still exists", ghosts.map(compactMember));
+              witness(ctx, active.length === 0, "Riley is not yet an active member of the invited organization", active.map(compactMember));
+              witness(ctx, invitations[0]?.status === "pending", "Riley's invitation is still pending", invitations.map(compactInvitation));
+              witness(ctx, ghosts.length === 1, "Riley's invited placeholder still exists", ghosts.map(compactMember));
             }
-            ctx.output("rashmi-first-signin-and-org-mode", JSON.stringify({
+            ctx.output("riley-first-signin-and-org-mode", JSON.stringify({
               runTag: RUN_TAG,
               inferredOrgMode: state.orgMode,
               auth: {
-                signUp: redactAuthResult(state.rashmiSignUp),
-                signInToken: state.rashmiToken ? "<present>" : null,
-                userId: state.rashmiUserId,
+                signUp: redactAuthResult(state.rileySignUp),
+                signInToken: state.rileyToken ? "<present>" : null,
+                userId: state.rileyUserId,
               },
-              org: summarizeOrg(org, [RASHMI_EMAIL]),
+              org: summarizeOrg(org, [RILEY_EMAIL]),
             }, null, 2));
           },
         });
@@ -615,18 +615,18 @@ export default {
           voiceover: vo[2],
           action: async () => {
             if (state.orgMode === "single_org") {
-              state.reconcileEmail = RASHMI_JIT_EMAIL;
+              state.reconcileEmail = RILEY_JIT_EMAIL;
               const invite = await inviteAsAdmin(ctx, state.reconcileEmail);
-              const signUp = await signUpEmail(ctx, state.reconcileEmail, "Rashmi JIT");
+              const signUp = await signUpEmail(ctx, state.reconcileEmail, "Riley JIT");
               state.reconcileUserId = userIdForEmail(ctx, state.reconcileEmail);
               state.jitSetup = { invite, signUp };
             } else {
-              state.reconcileEmail = RASHMI_EMAIL;
-              state.reconcileUserId = state.rashmiUserId;
+              state.reconcileEmail = RILEY_EMAIL;
+              state.reconcileUserId = state.rileyUserId;
             }
             const orgId = state.organization?.id;
             witness(ctx, typeof orgId === "string", "Raw member insert has an organization id", state.organization);
-            witness(ctx, typeof state.reconcileUserId === "string" && state.reconcileUserId.startsWith("usr_"), "Raw member insert has a Rashmi user id", state.reconcileUserId);
+            witness(ctx, typeof state.reconcileUserId === "string" && state.reconcileUserId.startsWith("usr_"), "Raw member insert has a Riley user id", state.reconcileUserId);
             state.rawInsert = insertRawJitMember(ctx, {
               email: state.reconcileEmail,
               organizationId: orgId,
@@ -658,7 +658,7 @@ export default {
             await assertDuplicateUi(ctx, state.reconcileEmail);
           },
           screenshot: {
-            name: "rashmi-duplicate-raw-member-and-pending-invite",
+            name: "riley-duplicate-raw-member-and-pending-invite",
             requireText: ["Member", "Pending", "INVITED", "Admin"],
             rejectText: ["Something went wrong"],
           },
@@ -667,7 +667,7 @@ export default {
       },
     },
     {
-      name: "Frame 4 — Rashmi signs in again and the app reconciles",
+      name: "Frame 4 — Riley signs in again and the app reconciles",
       run: async (ctx) => {
         await withClient(ctx, ADMIN_CDP_URL, async () => {
         await ctx.prove("The next sign-in merges the active member with the invite and deletes the invited ghost", {
@@ -675,7 +675,7 @@ export default {
           action: async () => {
             const signedIn = await signInEmail(ctx, state.reconcileEmail);
             state.reconciledToken = signedIn.body.token;
-            state.reconciledMe = await loadMe(ctx, state.reconciledToken, "Reconciled Rashmi");
+            state.reconciledMe = await loadMe(ctx, state.reconciledToken, "Reconciled Riley");
             await openMembersPage(ctx);
           },
           assert: async () => {
@@ -694,7 +694,7 @@ export default {
             await assertReconciledUi(ctx, state.reconcileEmail);
           },
           screenshot: {
-            name: "rashmi-reconciled-single-admin-row",
+            name: "riley-reconciled-single-admin-row",
             requireText: ["Admin"],
             rejectText: ["Something went wrong"],
           },

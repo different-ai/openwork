@@ -78,7 +78,7 @@ function StepResult({ step }: { step: EgressDiagnosticStep }) {
   );
 }
 
-export function EgressDiagnosticsCard({ canRun }: { canRun: boolean }) {
+export function EgressDiagnosticsCard({ canView, canManage }: { canView: boolean; canManage: boolean }) {
   const [available, setAvailable] = useState(false);
   const [targetOrigin, setTargetOrigin] = useState<string | null>(null);
   const [missingConfiguration, setMissingConfiguration] = useState<string[]>([]);
@@ -92,12 +92,13 @@ export function EgressDiagnosticsCard({ canRun }: { canRun: boolean }) {
   const [editingBearerToken, setEditingBearerToken] = useState(false);
 
   useEffect(() => {
-    if (!canRun) {
+    if (!canView) {
       setLoading(false);
       return;
     }
     let cancelled = false;
     async function loadConfiguration() {
+      setLoading(true);
       try {
         const { response, payload } = await requestJson("/v1/diagnostics/egress", { method: "GET" }, 12_000);
         if (!response.ok) {
@@ -119,7 +120,7 @@ export function EgressDiagnosticsCard({ canRun }: { canRun: boolean }) {
     }
     void loadConfiguration();
     return () => { cancelled = true; };
-  }, [canRun]);
+  }, [canView]);
 
   useEffect(() => {
     if (!copied) return;
@@ -128,6 +129,11 @@ export function EgressDiagnosticsCard({ canRun }: { canRun: boolean }) {
   }, [copied]);
 
   async function runDiagnostic() {
+    if (!canManage) {
+      setError("Only workspace owners and super-admins can run this diagnostic.");
+      return;
+    }
+
     setRunning(true);
     setError(null);
     setResult(null);
@@ -147,6 +153,11 @@ export function EgressDiagnosticsCard({ canRun }: { canRun: boolean }) {
   }
 
   async function saveBearerToken() {
+    if (!canManage) {
+      setError("Only workspace owners and super-admins can change the diagnostic token.");
+      return;
+    }
+
     const bearerToken = bearerTokenDraft.trim();
     if (bearerToken.length < 24) {
       setError("Enter a diagnostic token with at least 24 characters.");
@@ -191,7 +202,7 @@ export function EgressDiagnosticsCard({ canRun }: { canRun: boolean }) {
           type="button"
           icon={Activity}
           loading={running}
-          disabled={!canRun || loading || !available}
+          disabled={!canManage || loading || !available}
           onClick={() => void runDiagnostic()}
         >
           Run egress diagnostic
@@ -203,17 +214,17 @@ export function EgressDiagnosticsCard({ canRun }: { canRun: boolean }) {
         <p className="mt-1">The browser cannot change this target and the test never sends organization data or customer/provider credentials.</p>
       </div>
 
-      {!canRun ? <p className="text-[13px] text-gray-500">Only workspace owners and admins can run this diagnostic.</p> : null}
+      {canView && !canManage ? <p className="text-[13px] text-gray-500">Read-only: admins can view diagnostics. Owners and super-admins can run checks or change the token.</p> : null}
       {loading ? <p className="text-[13px] text-gray-500" role="status">Loading diagnostic configuration...</p> : null}
-      {!loading && canRun && available && !editingBearerToken ? (
+      {!loading && canView && available && !editingBearerToken ? (
         <div className="flex items-center justify-between gap-3 rounded-[22px] border border-gray-200 bg-gray-50 px-4 py-3 text-[13px] text-gray-600">
           <p>Diagnostic token configured in Den.</p>
-          <DenButton type="button" size="sm" variant="secondary" onClick={() => setEditingBearerToken(true)}>
+          <DenButton type="button" size="sm" variant="secondary" onClick={() => setEditingBearerToken(true)} disabled={!canManage}>
             Change token
           </DenButton>
         </div>
       ) : null}
-      {!loading && canRun && (!available || editingBearerToken) ? (
+      {!loading && canView && (!available || editingBearerToken) ? (
         <div className="rounded-[22px] border border-amber-200 bg-amber-50 px-4 py-4 text-[13px] text-amber-800" role="status">
           <p className="font-medium">{available ? "Replace the diagnostic token." : "Add a diagnostic token to run this test."}</p>
           <p className="mt-1">Den encrypts the token for this organization and never shows it again.</p>
@@ -227,9 +238,10 @@ export function EgressDiagnosticsCard({ canRun }: { canRun: boolean }) {
                 placeholder="Paste the synthetic diagnostic token"
                 type="password"
                 value={bearerTokenDraft}
+                disabled={!canManage}
               />
             </label>
-            <DenButton type="button" loading={savingBearerToken} onClick={() => void saveBearerToken()}>
+            <DenButton type="button" loading={savingBearerToken} onClick={() => void saveBearerToken()} disabled={!canManage}>
               Save token
             </DenButton>
             {available ? (

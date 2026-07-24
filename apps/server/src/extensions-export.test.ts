@@ -207,48 +207,11 @@ describe("POST /workspace/:id/extensions/export", () => {
   });
 });
 
-describe("openwork_extensions_export plugin tool", () => {
-  test("exports end to end through the bundled plugin tool", async () => {
-    await withWorkspace(async ({ root, config }) => {
-      await writeSkill(root);
-      await addMcp(config, WORKSPACE_ID, "linear", {
-        type: "remote",
-        url: "https://mcp.linear.app/sse",
-        headers: { Authorization: "Bearer secret" },
-        enabled: true,
-      });
+describe("bundled agent tool surface", () => {
+  test("keeps portable export out of every chat", async () => {
+    const { OpenWorkExtensionsPreview } = await import("./opencode-plugins/openwork-extensions-preview.js");
+    const plugin = await OpenWorkExtensionsPreview();
 
-      const server = await startServer(config) as Served;
-      const previousUrl = process.env.OPENWORK_SERVER_URL;
-      const previousToken = process.env.OPENWORK_SERVER_TOKEN;
-      process.env.OPENWORK_SERVER_URL = `http://127.0.0.1:${server.port}`;
-      process.env.OPENWORK_SERVER_TOKEN = config.token;
-      try {
-        const { OpenWorkExtensionsPreview } = await import("./opencode-plugins/openwork-extensions-preview.js");
-        const plugin = await OpenWorkExtensionsPreview();
-        const output = await plugin.tool.openwork_extensions_export.execute(
-          { skills: ["release-notes"], mcps: ["linear", "not-installed"] },
-          { directory: root },
-        );
-        expect(output).not.toContain("Bearer secret");
-        const parsed = JSON.parse(output) as {
-          ok: boolean;
-          workspaceId: string;
-          components: Array<ExportedSkill | ExportedMcp>;
-          missing: { skills: string[]; mcps: string[] };
-        };
-        expect(parsed.ok).toBe(true);
-        expect(parsed.workspaceId).toBe(WORKSPACE_ID);
-        expect(findSkill(parsed.components, "release-notes")?.content).toBe(SKILL_CONTENT);
-        expect(findMcp(parsed.components, "linear")?.config.headers).toEqual({ Authorization: "<redacted>" });
-        expect(parsed.missing).toEqual({ skills: [], mcps: ["not-installed"] });
-      } finally {
-        if (previousUrl === undefined) delete process.env.OPENWORK_SERVER_URL;
-        else process.env.OPENWORK_SERVER_URL = previousUrl;
-        if (previousToken === undefined) delete process.env.OPENWORK_SERVER_TOKEN;
-        else process.env.OPENWORK_SERVER_TOKEN = previousToken;
-        await server.stop(true);
-      }
-    });
+    expect(Object.keys(plugin.tool)).not.toContain("openwork_extensions_export");
   });
 });

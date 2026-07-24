@@ -259,6 +259,32 @@ describe("den-api telemetry sanitization", () => {
     expect(sanitized.stack).not.toContain("user:pass")
   })
 
+  test("preserves safe database diagnostics without exposing query parameters", () => {
+    const cause = Object.assign(
+      new Error("Duplicate entry 'oauth-secret-value' for key 'marketplace_plugin_marketplace_plugin'"),
+      { code: "ER_DUP_ENTRY", errno: 1062, sqlState: "23000" },
+    )
+    const error = new Error(
+      "Failed query: insert into `marketplace_plugin` values (?, ?)\nparams: oauth-secret-value,plugin-secret",
+      { cause },
+    )
+    error.stack = `${error.message}\n    at store.ts:1:1`
+
+    const sanitized = sanitizeExceptionForTelemetry(error)
+
+    expect(sanitized.message).toContain("params: [redacted]")
+    expect(sanitized.message).not.toContain("oauth-secret-value")
+    expect(sanitized.stack).not.toContain("oauth-secret-value")
+    expect(sanitized.cause).toBeInstanceOf(Error)
+    expect(sanitized.cause).toMatchObject({
+      message: "Underlying error (ER_DUP_ENTRY, errno 1062, SQLSTATE 23000)",
+      code: "ER_DUP_ENTRY",
+      errno: 1062,
+      sqlState: "23000",
+    })
+    expect((sanitized.cause as Error).stack).toBeUndefined()
+  })
+
   test("rethrows sanitized request errors before provider middleware observes them", async () => {
     const observedErrors: unknown[] = []
     const app = new Hono()

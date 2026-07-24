@@ -56,26 +56,30 @@ jobs:
     needs: [prepare, publish-generic-installer]
     runs-on: macos-14
     steps:
-      - name: Prove anonymous download, archive integrity, and macOS trust
+      - name: Prove anonymous download, DMG integrity, and macOS trust
         env:
           RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
         shell: bash
         run: |
           set -euo pipefail
-          asset="openwork-installer-mac-arm64.zip"
+          asset="OpenWork-Installer-mac-arm64.dmg"
           url="https://github.com/$GITHUB_REPOSITORY/releases/download/$RELEASE_TAG/$asset"
 
           curl --fail --location --retry 5 --silent --show-error \
             --output "$RUNNER_TEMP/$asset" "$url"
           test "$(stat -f %z "$RUNNER_TEMP/$asset")" -gt 1000000
-          unzip -t "$RUNNER_TEMP/$asset"
-          unzip -q "$RUNNER_TEMP/$asset" -d "$RUNNER_TEMP/installer"
+          hdiutil verify "$RUNNER_TEMP/$asset"
+          mount_dir="$RUNNER_TEMP/installer"
+          mkdir -p "$mount_dir"
+          hdiutil attach "$RUNNER_TEMP/$asset" -mountpoint "$mount_dir" -nobrowse -readonly
+          trap 'hdiutil detach "$mount_dir" || true' EXIT
 
-          app="$RUNNER_TEMP/installer/OpenWork Installer.app"
+          app="$mount_dir/OpenWork Installer.app"
           test -d "$app"
-          test ! -e "$RUNNER_TEMP/installer/openwork-installer.json"
+          test ! -e "$mount_dir/openwork-installer.json"
           codesign --verify --deep --strict --verbose=2 "$app"
           spctl --assess --type execute --verbose=2 "$app"
+          xcrun stapler validate "$RUNNER_TEMP/$asset"
           xcrun stapler validate "$app"
 
           {
@@ -86,7 +90,7 @@ jobs:
             echo "- Ephemeral tag: \`$RELEASE_TAG\`"
             echo "- Bytes: \`$(stat -f %z "$RUNNER_TEMP/$asset")\`"
             echo "- SHA-256: \`$(shasum -a 256 "$RUNNER_TEMP/$asset" | awk '{print $1}')\`"
-            echo "- Anonymous full download, zip integrity, code signature, Gatekeeper, and notarization: passed"
+            echo "- Anonymous full download, DMG integrity, code signature, Gatekeeper, and notarization: passed"
           } >> "$GITHUB_STEP_SUMMARY"
 
   cleanup:

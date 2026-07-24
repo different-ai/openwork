@@ -91,7 +91,8 @@ assert.ok(docsInstaller.includes(chatGptSettingsMatch[1]), "Docs installer is us
 assert.ok(!landingConfig.includes("CURSOR_DEEPLINK") && !docsInstaller.includes("CURSOR_DEEPLINK"), "Cursor desktop install deeplinks must not be exposed");
 assert.ok(!landingConfig.includes("cursor.com/en/install-mcp") && !docsInstaller.includes("cursor.com/en/install-mcp"), "Cursor add-to-desktop install links must not be exposed");
 assert.ok(!landingConfig.includes("~/.cursor/mcp.json") && !docsInstaller.includes("~/.cursor/mcp.json") && !cloudDocs.includes("~/.cursor/mcp.json"), "Cursor desktop mcp.json must not be shown as a working path");
-assert.ok(cloudDocs.includes("cursor://anysphere.cursor-mcp/oauth/callback"), "Cloud MCP docs must explain why Cursor Desktop OAuth is not currently supported");
+assert.ok(cloudDocs.includes("cursor://anysphere.cursor-mcp/oauth/callback"), "Cloud MCP docs must name the Cursor Desktop OAuth callback");
+assert.ok(cloudDocs.includes("exact allowlist with PKCE S256 enforced") || cloudDocs.includes("exact private-use allowlist with PKCE S256 enforced"), "Cloud MCP docs must explain how Cursor Desktop's private-use callback is accepted");
 assert.ok(cloudDocs.includes("Settings > MCP servers"), "Cloud MCP docs must use current ChatGPT Settings > MCP servers wording");
 
 for (const name of sharedValueNames) {
@@ -127,8 +128,8 @@ assert.ok(cloudDocs.includes("https://app.openworklabs.com/api/auth"), "Cloud MC
 assert.ok(cloudDocs.includes("RFC9728"), "Cloud MCP docs are missing RFC9728 discovery guidance");
 assert.ok(cloudDocs.includes("PKCE") && cloudDocs.includes("S256"), "Cloud MCP docs are missing PKCE S256 guidance");
 assert.ok(cloudDocs.includes("OAuth authorize and token requests must include exactly one"), "Cloud MCP docs are missing exact resource guidance");
-assert.ok(cloudDocs.includes("JWTs signed and validated with EdDSA") && cloudDocs.includes("issuer is exactly") && cloudDocs.includes("audience is exactly") && cloudDocs.includes("15 minutes"), "Cloud MCP docs are missing JWT access token contract guidance");
-assert.ok(cloudDocs.includes("Refresh tokens are opaque rotating grants") && cloudDocs.includes("30-day inactivity window"), "Cloud MCP docs are missing refresh grant lifetime guidance");
+assert.ok(cloudDocs.includes("JWTs signed and validated with EdDSA") && cloudDocs.includes("issuer is exactly") && cloudDocs.includes("audience is exactly") && cloudDocs.includes("45 minutes"), "Cloud MCP docs are missing JWT access token contract guidance");
+assert.ok(cloudDocs.includes("Refresh tokens are opaque rotating grants") && cloudDocs.includes("30-day inactivity window") && cloudDocs.includes("30-second rotation overlap") && cloudDocs.includes("a replay during the overlap can issue another successor"), "Cloud MCP docs are missing refresh grant lifetime and overlap guidance");
 assert.ok(cloudDocs.includes("invalid_grant"), "Cloud MCP docs are missing invalid_grant reconnect guidance");
 assert.ok(cloudDocs.includes("Retry-After"), "Cloud MCP docs are missing 429 Retry-After guidance");
 assert.ok(cloudDocs.includes("X-Request-Id") && cloudDocs.includes("referenceId") && cloudDocs.includes("reference_id"), "Cloud MCP docs are missing support reference guidance");

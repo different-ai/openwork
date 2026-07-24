@@ -61,3 +61,55 @@ export function installConfigUrlFor(host: string, token: string) {
   const url = new URL(`/v1/install-config?token=${encodeURIComponent(token)}`, `${protocol}://${normalizedHost}`)
   return url.toString()
 }
+
+function configUrlFromInstallLink(input: URL) {
+  const token = input.searchParams.get("token")?.trim() ?? ""
+  if (!TOKEN_PATTERN.test(token)) {
+    return null
+  }
+  if (input.protocol !== "https:" && !(input.protocol === "http:" && usesLocalHttp(input.host))) {
+    return null
+  }
+
+  const pathname = input.pathname.replace(/\/+$/, "")
+  if (pathname === "/v1/install-config") {
+    return { url: input.toString(), token, host: input.host }
+  }
+  if (pathname === "/install") {
+    const url = new URL(`/api/den/v1/install-config?token=${encodeURIComponent(token)}`, input.origin)
+    return { url: url.toString(), token, host: input.host }
+  }
+
+  return null
+}
+
+export function parseInstallLinkInput(input: string): { url: string; host: string; token: string } | null {
+  const trimmed = input.trim()
+  if (!trimmed) {
+    return null
+  }
+
+  try {
+    const parsed = configUrlFromInstallLink(new URL(trimmed))
+    if (parsed) {
+      return parsed
+    }
+  } catch {
+    // Fall through to the simple "host token" form.
+  }
+
+  const parts = trimmed.split(/\s+/)
+  if (parts.length !== 2 || !TOKEN_PATTERN.test(parts[1])) {
+    return null
+  }
+
+  const hostInput = parts[0]
+  try {
+    const url = hostInput.startsWith("http://") || hostInput.startsWith("https://")
+      ? new URL(hostInput)
+      : new URL(`https://${hostInput}`)
+    return { url: installConfigUrlFor(url.host, parts[1]), host: url.host, token: parts[1] }
+  } catch {
+    return null
+  }
+}

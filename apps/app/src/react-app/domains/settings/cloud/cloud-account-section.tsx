@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { Building2, Check, LogOut, Loader2 } from "lucide-react";
+import { ArrowUpRight, Building2, Check, LogOut, Loader2 } from "lucide-react";
 
 import type { DenOrgSummary } from "../../../../app/lib/den";
 import { Button } from "@/components/ui/button";
@@ -21,6 +21,7 @@ export interface CloudAccountSectionProps {
   orgsError: string | null;
   sessionBusy: boolean;
   onActiveOrgChange: (orgId: string) => void | Promise<void>;
+  onOpenDashboard: () => void;
   onRefreshOrgs: () => void | Promise<void>;
   onSignOut: () => void | Promise<void>;
 }
@@ -34,6 +35,7 @@ export function CloudAccountSection({
   orgsError,
   sessionBusy,
   onActiveOrgChange,
+  onOpenDashboard,
   onRefreshOrgs,
   onSignOut,
 }: CloudAccountSectionProps) {
@@ -44,7 +46,7 @@ export function CloudAccountSection({
   return (
     <section className="flex flex-col gap-y-6">
       {/* User identity */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-3">
         <div className="min-w-0 flex items-center gap-3">
           <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-dls-hover text-sm font-semibold text-dls-text">
             {(user?.name ?? user?.email ?? "?").charAt(0).toUpperCase()}
@@ -58,16 +60,26 @@ export function CloudAccountSection({
             ) : null}
           </div>
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          className="shrink-0"
-          onClick={() => void onSignOut()}
-          disabled={controlsDisabled}
-        >
-          <LogOut className="size-3.5" />
-          {authBusy ? t("den.signing_out") : t("den.sign_out")}
-        </Button>
+        <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onOpenDashboard}
+            disabled={controlsDisabled}
+          >
+            {t("den.open_dashboard")}
+            <ArrowUpRight className="size-3.5" />
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void onSignOut()}
+            disabled={controlsDisabled}
+          >
+            <LogOut className="size-3.5" />
+            {authBusy ? t("den.signing_out") : t("den.sign_out")}
+          </Button>
+        </div>
       </div>
 
       {/* Org picker (stepper-style) or connected org display */}

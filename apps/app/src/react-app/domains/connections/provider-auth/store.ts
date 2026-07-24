@@ -71,6 +71,7 @@ import {
 import { dispatchNewProviders } from "../../../../app/lib/provider-events";
 import { updateManagedDisabledProviders } from "../managed-engine-config";
 import {
+  DESKTOP_RESTRICTION_OPENCODE_PROVIDER_ID,
   isDesktopProviderBlocked,
   type DesktopAppRestrictionChecker,
 } from "../../../../app/cloud/desktop-app-restrictions";
@@ -635,6 +636,37 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       return false;
     }
 
+    // Prefer runtime OPENCODE_CONFIG injection (server SQLite) so OpenCode Zen
+    // and other built-in/env-backed providers can be disabled without editing
+    // the user's opencode.jsonc. Fall back to project config only when the
+    // managed runtime endpoint is unavailable.
+    const c = options.client();
+    const openworkSnapshot = options.openworkServer.getSnapshot();
+    const workspaceId = options.runtimeWorkspaceId();
+    const workspaceType = options.selectedWorkspaceDisplay().workspaceType;
+    const canUseManagedRuntime = Boolean(
+      openworkSnapshot.openworkServerClient && workspaceId?.trim() && workspaceType === "local",
+    );
+
+    if (canUseManagedRuntime || c) {
+      const result = await updateManagedDisabledProviders({
+        opencodeClient: c,
+        openworkClient: openworkSnapshot.openworkServerClient,
+        workspaceId,
+        workspaceType,
+        disabledProviders: nextDisabled,
+        removeFallbackKeyWhenEmpty: true,
+        markReloadRequired: () => options.markOpencodeConfigReloadRequired(),
+      });
+      options.setDisabledProviders(result.disabledProviders);
+      if (!result.managedRuntime) {
+        options.markOpencodeConfigReloadRequired();
+      }
+      refreshSnapshot();
+      emitChange();
+      return true;
+    }
+
     const updatedConfig = await updateProjectConfigFile(
       (raw) => formatConfigWithProviderDisabledState(raw, resolvedProviderId, disabled),
       (config) => {
@@ -649,7 +681,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     );
 
     if (!updatedConfig) {
-      throw new Error("Could not update opencode.jsonc for this workspace.");
+      throw new Error("Could not update disabled providers for this workspace.");
     }
 
     options.setDisabledProviders(nextDisabled);
@@ -1279,6 +1311,9 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     };
 
     try {
+      if (resolved.toLowerCase() === DESKTOP_RESTRICTION_OPENCODE_PROVIDER_ID) {
+        await ensureProjectProviderDisabledState(resolved, false);
+      }
       const trimmedCode = code?.trim();
       const result = await c.provider.oauth.callback({
         providerID: resolved,
@@ -1327,7 +1362,11 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     }
     assertProviderAllowedByDesktopPolicy(providerId);
 
+    setStateField("providerAuthBusy", true);
     try {
+      if (providerId.trim().toLowerCase() === DESKTOP_RESTRICTION_OPENCODE_PROVIDER_ID) {
+        await ensureProjectProviderDisabledState(providerId, false);
+      }
       await c.auth.set({ providerID: providerId, auth: { type: "api", key: trimmed } });
       await refreshProviders({ dispose: true });
       return `${t("status.connected")} ${providerId}`;
@@ -1335,6 +1374,8 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       const message = describeProviderError(error, t("providers.save_api_key_failed"));
       setStateField("providerAuthError", message);
       throw error instanceof Error ? error : new Error(message);
+    } finally {
+      setStateField("providerAuthBusy", false);
     }
   }
 
@@ -1682,6 +1723,20 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     }
 
     try {
+      // OpenCode Zen is built-in / env-backed. Credential removal alone leaves
+      // it connected — disable it via runtime OPENCODE_CONFIG injection.
+      if (resolved.toLowerCase() === DESKTOP_RESTRICTION_OPENCODE_PROVIDER_ID) {
+        try {
+          await removeProviderAuthCredentials(resolved);
+        } catch {
+          // Zen may have no stored credentials; disable still applies.
+        }
+        await ensureProjectProviderDisabledState(resolved, true);
+        await refreshProviders({ dispose: true });
+        removeProviderFromState(resolved);
+        return `${t("providers.disconnected_prefix")} ${resolved}`;
+      }
+
       await removeProviderAuthCredentials(resolved);
       const updated = await refreshProviders({ dispose: true });
       if (Array.isArray(updated?.connected) && updated.connected.includes(resolved)) {

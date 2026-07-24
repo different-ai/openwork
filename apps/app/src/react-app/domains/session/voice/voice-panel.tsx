@@ -722,6 +722,7 @@ export function VoicePanel(props: VoicePanelProps) {
     id: "voice.toggle_mute",
     label: micMuted ? "Unmute Voice Mode" : "Mute Voice Mode",
     description: "Toggle the microphone track without closing the Realtime session.",
+    effects: { data: "none", ui: "none", external: true },
     sideEffect: "none",
     disabled: !connected,
     targetRef: panelRef,
@@ -771,6 +772,8 @@ export function VoicePanel(props: VoicePanelProps) {
     id: "voice.status",
     label: "Read Voice Mode status",
     description: "Return the Voice Mode runtime state for tests and agents.",
+    kind: "query",
+    effects: { data: "read", ui: "none", external: false },
     sideEffect: "none",
     execute: () => ({ status, statusText, connected, micMuted, micDiagnostics, realtimeDiagnostics, latestUserTranscript, assistantPreview }),
   }), [assistantPreview, connected, latestUserTranscript, micDiagnostics, micMuted, realtimeDiagnostics, status, statusText]);

@@ -11,6 +11,7 @@ const VERSION = "0.1.0"
 // with the openwork-orchestrator npm package, which also installs an "openwork"
 // binary onto the user's PATH.
 const COMMAND_NAME = "openwork-bootstrap"
+const DEFAULT_OPENWORK_MARKETPLACE_NAME = "OpenWork Marketplace"
 const executableBasename = () => (process.platform === "win32" ? `${COMMAND_NAME}.cmd` : COMMAND_NAME)
 const here = dirname(fileURLToPath(import.meta.url))
 const selfPath = fileURLToPath(import.meta.url)
@@ -567,6 +568,55 @@ function skillText(name, output) {
   return `---\nname: ${name}\ndescription: Starter skill created by openwork bootstrap.\nopenworkBootstrapTrigger: bootstrap.verify\nopenworkBootstrapOutput: ${JSON.stringify(output)}\n---\n\n# ${name}\n\nWhen triggered with \`bootstrap.verify\`, output exactly:\n\n\`${output}\`\n\nUse this skill to confirm OpenWork cloud onboarding can create and trigger a deterministic skill.`
 }
 
+async function createCloudSkillPlugin(baseUrl, auth, input) {
+  const marketplaces = await request(baseUrl, "/v1/marketplaces", {
+    method: "GET",
+    headers: auth,
+  })
+  if (marketplaces.status !== 200 || !Array.isArray(marketplaces.body?.items)) {
+    throw new Error(`marketplace_list_failed: ${marketplaces.status} ${JSON.stringify(marketplaces.body)}`)
+  }
+  const marketplace = marketplaces.body.items.find((item) => item?.name === DEFAULT_OPENWORK_MARKETPLACE_NAME) || marketplaces.body.items[0]
+  if (!marketplace?.id) {
+    throw new Error("marketplace_missing: no marketplace available for skill plugin")
+  }
+
+  const plugin = await request(baseUrl, "/v1/plugins", {
+    method: "POST",
+    headers: auth,
+    body: JSON.stringify({
+      name: input.name,
+      components: [{ type: "skill", input: { rawSourceText: input.rawSourceText } }],
+      orgWide: true,
+      marketplaceId: marketplace.id,
+    }),
+  })
+  if (plugin.status !== 201 || !plugin.body?.item?.id) {
+    throw new Error(`plugin_create_failed: ${plugin.status} ${JSON.stringify(plugin.body)}`)
+  }
+
+  const memberships = await request(baseUrl, `/v1/plugins/${encodeURIComponent(plugin.body.item.id)}/config-objects`, {
+    method: "GET",
+    headers: auth,
+  })
+  if (memberships.status !== 200 || !Array.isArray(memberships.body?.items)) {
+    throw new Error(`plugin_components_failed: ${memberships.status} ${JSON.stringify(memberships.body)}`)
+  }
+  const skillMembership = memberships.body.items.find((item) => item?.configObject?.objectType === "skill")
+  const configObject = skillMembership?.configObject
+  if (!configObject?.id) {
+    throw new Error(`skill_component_missing: ${JSON.stringify(memberships.body)}`)
+  }
+
+  return {
+    id: configObject.id,
+    title: configObject.title || input.name,
+    skillText: input.rawSourceText,
+    pluginId: plugin.body.item.id,
+    marketplaceId: marketplace.id,
+  }
+}
+
 function readFrontmatterValue(text, key) {
   const match = text.match(/^---\n([\s\S]*?)\n---/)
   if (!match) return null
@@ -780,16 +830,13 @@ async function runCloudOnboard(args) {
     throw new Error(`invite_failed: ${invite.status} ${JSON.stringify(invite.body)}`)
   }
 
-  const skill = await request(baseUrl, "/v1/skills", {
-    method: "POST",
-    headers: auth,
-    body: JSON.stringify({ skillText: skillText(skillName, skillOutput), shared: "org" }),
+  const rawSourceText = skillText(skillName, skillOutput)
+  const skill = await createCloudSkillPlugin(baseUrl, auth, {
+    name: skillName,
+    rawSourceText,
   })
-  if (skill.status !== 201 || !skill.body?.skill?.id) {
-    throw new Error(`skill_create_failed: ${skill.status} ${JSON.stringify(skill.body)}`)
-  }
 
-  const skillRun = runBootstrapSkill(skill.body.skill, { trigger: "bootstrap.verify" })
+  const skillRun = runBootstrapSkill(skill, { trigger: "bootstrap.verify" })
   if (!skillRun.triggered || skillRun.output !== skillOutput) {
     throw new Error(`skill_trigger_failed: ${JSON.stringify(skillRun)}`)
   }
@@ -804,7 +851,7 @@ async function runCloudOnboard(args) {
       skillsDir,
       handoff,
       organization: org.body.organization,
-      skill: skill.body.skill,
+      skill,
     })
   }
 
@@ -814,7 +861,7 @@ async function runCloudOnboard(args) {
     user: { id: owner.user.id, email: owner.user.email, emailVerified: owner.user.emailVerified },
     organization: org.body.organization,
     invitation: invite.body,
-    skill: skill.body.skill,
+    skill,
     skillRun,
     desktop,
   }, json)

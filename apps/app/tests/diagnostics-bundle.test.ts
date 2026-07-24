@@ -66,6 +66,7 @@ describe("diagnostics bundle", () => {
     input.engineInfo = {
       running: true,
       runtime: "direct",
+      managedByServer: true,
       baseUrl: "http://127.0.0.1:4097",
       projectDir: "/tmp/openwork",
       hostname: "127.0.0.1",

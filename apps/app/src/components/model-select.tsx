@@ -199,6 +199,8 @@ interface ModelSelectProps {
   onOpenChange: (open: boolean) => void;
   onChange: (model: ModelRef) => void;
   disabled?: boolean;
+  /** Den/import includes OpenWork Models — never show Subscribe while true. */
+  openWorkModelsEntitled?: boolean;
 }
 
 export function ModelSelect({
@@ -207,6 +209,7 @@ export function ModelSelect({
   onOpenChange,
   onChange,
   disabled = false,
+  openWorkModelsEntitled = false,
 }: ModelSelectProps) {
   const [search, setSearch] = React.useState("");
   const [promoHidden, setPromoHidden] = React.useState(isOpenWorkModelsPromoHidden);
@@ -251,9 +254,18 @@ export function ModelSelect({
     }),
   );
 
+  const openWorkModelsAvailable = React.useMemo(
+    () => hasOpenWorkModelsProvider(modelOptions.map((option) => option.providerID)),
+    [modelOptions],
+  );
+  const showOpenWorkModelsSyncing = openWorkModelsEntitled && !openWorkModelsAvailable;
   const showOpenWorkModelsPromo = React.useMemo(
-    () => openWorkModelsPromoEligible && !promoHidden && !hasOpenWorkModelsProvider(modelOptions.map((option) => option.providerID)),
-    [modelOptions, openWorkModelsPromoEligible, promoHidden],
+    () =>
+      openWorkModelsPromoEligible &&
+      !promoHidden &&
+      !openWorkModelsAvailable &&
+      !openWorkModelsEntitled,
+    [openWorkModelsAvailable, openWorkModelsEntitled, openWorkModelsPromoEligible, promoHidden],
   );
 
   const groups = React.useMemo(() => {
@@ -330,6 +342,24 @@ export function ModelSelect({
             />
           </CommandHeader>
           <CommandEmpty>{t("model_select.no_models")}</CommandEmpty>
+          {showOpenWorkModelsSyncing ? (
+            <div className="mx-1 mb-1 flex items-center gap-2 rounded-md border border-amber-6/60 bg-amber-2/40 px-2 py-1.5">
+              <ProviderIcon
+                providerId={OPENWORK_MODELS_PROVIDER_ID}
+                providerName={OPENWORK_MODELS_PROVIDER_NAME}
+                className="size-3.5 shrink-0 text-amber-11"
+                size={14}
+              />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-xs font-medium text-foreground">
+                  {OPENWORK_MODELS_PROVIDER_NAME}
+                </span>
+                <span className="block truncate text-[11px] text-muted-foreground">
+                  Included — syncing into this workspace…
+                </span>
+              </span>
+            </div>
+          ) : null}
           <CommandList>
             {(group: ModelSelectGroup) => (
               <CommandGroup

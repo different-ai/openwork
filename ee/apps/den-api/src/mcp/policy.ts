@@ -9,8 +9,6 @@ const SAFE_INCLUDED_TAGS = new Set([
   "Teams",
   "Templates",
   "LLM Providers",
-  "Skills",
-  "Skill Hubs",
   "Workers",
   "Worker Runtime",
   "Worker Activity",
@@ -19,6 +17,7 @@ const SAFE_INCLUDED_TAGS = new Set([
   "Plugins",
   "Marketplaces",
   "Connectors",
+  "Desktop Policies",
   "GitHub",
   "Capability Sources",
 ])

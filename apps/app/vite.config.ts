@@ -64,10 +64,6 @@ const buildAppVersion =
   readPackageVersion(desktopPackagePath) ||
   readPackageVersion(appPackagePath) ||
   "0.0.0";
-const buildReleaseVersion = firstNonEmpty([
-  process.env.VITE_OPENWORK_RELEASE_VERSION,
-  process.env.RELEASE_TAG,
-]);
 const buildSha = firstNonEmpty([
   process.env.VITE_OPENWORK_BUILD_SHA,
   process.env.OPENWORK_GIT_SHA,
@@ -113,7 +109,6 @@ export default defineConfig({
       ]),
     ),
     "import.meta.env.VITE_OPENWORK_APP_VERSION": JSON.stringify(buildAppVersion),
-    "import.meta.env.VITE_OPENWORK_RELEASE_VERSION": JSON.stringify(buildReleaseVersion ?? ""),
     "import.meta.env.VITE_OPENWORK_BUILD_SHA": JSON.stringify(shortBuildSha),
   },
   plugins: [

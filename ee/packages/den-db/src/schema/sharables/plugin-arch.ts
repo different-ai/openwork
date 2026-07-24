@@ -86,7 +86,6 @@ export const ConfigObjectVersionTable = mysqlTable(
   },
   (table) => [
     index("config_object_version_organization_id").on(table.organizationId),
-    index("config_object_version_config_object_id").on(table.configObjectId),
     index("config_object_version_created_by_org_membership_id").on(table.createdByOrgMembershipId),
     index("config_object_version_connector_sync_event_id").on(table.connectorSyncEventId),
     index("config_object_version_source_revision_ref").on(table.sourceRevisionRef),
@@ -151,7 +150,6 @@ export const MarketplacePluginTable = mysqlTable(
   },
   (table) => [
     index("marketplace_plugin_organization_id").on(table.organizationId),
-    index("marketplace_plugin_marketplace_id").on(table.marketplaceId),
     index("marketplace_plugin_plugin_id").on(table.pluginId),
     uniqueIndex("marketplace_plugin_marketplace_plugin").on(table.marketplaceId, table.pluginId),
   ],
@@ -173,7 +171,6 @@ export const MarketplaceAccessGrantTable = mysqlTable(
   },
   (table) => [
     index("marketplace_access_grant_organization_id").on(table.organizationId),
-    index("marketplace_access_grant_marketplace_id").on(table.marketplaceId),
     index("marketplace_access_grant_org_membership_id").on(table.orgMembershipId),
     index("marketplace_access_grant_team_id").on(table.teamId),
     index("marketplace_access_grant_org_wide").on(table.orgWide),
@@ -197,7 +194,6 @@ export const PluginConfigObjectTable = mysqlTable(
   },
   (table) => [
     index("plugin_config_object_organization_id").on(table.organizationId),
-    index("plugin_config_object_plugin_id").on(table.pluginId),
     index("plugin_config_object_config_object_id").on(table.configObjectId),
     index("plugin_config_object_connector_mapping_id").on(table.connectorMappingId),
     uniqueIndex("plugin_config_object_plugin_config_object").on(table.pluginId, table.configObjectId),
@@ -220,7 +216,6 @@ export const ConfigObjectAccessGrantTable = mysqlTable(
   },
   (table) => [
     index("config_object_access_grant_organization_id").on(table.organizationId),
-    index("config_object_access_grant_config_object_id").on(table.configObjectId),
     index("config_object_access_grant_org_membership_id").on(table.orgMembershipId),
     index("config_object_access_grant_team_id").on(table.teamId),
     index("config_object_access_grant_org_wide").on(table.orgWide),
@@ -245,7 +240,6 @@ export const PluginAccessGrantTable = mysqlTable(
   },
   (table) => [
     index("plugin_access_grant_organization_id").on(table.organizationId),
-    index("plugin_access_grant_plugin_id").on(table.pluginId),
     index("plugin_access_grant_org_membership_id").on(table.orgMembershipId),
     index("plugin_access_grant_team_id").on(table.teamId),
     index("plugin_access_grant_org_wide").on(table.orgWide),
@@ -270,9 +264,9 @@ export const ConnectorAccountTable = mysqlTable(
     updatedAt: timestamp("updated_at", { fsp: 3 }).notNull().default(sql`CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)`),
   },
   (table) => [
-    index("connector_account_organization_id").on(table.organizationId),
     index("connector_account_created_by_org_membership_id").on(table.createdByOrgMembershipId),
     index("connector_account_connector_type").on(table.connectorType),
+    index("idx_connector_account_on_remote_id").on(table.remoteId),
     index("connector_account_status").on(table.status),
     uniqueIndex("connector_account_org_type_remote_id").on(table.organizationId, table.connectorType, table.remoteId),
   ],
@@ -297,7 +291,6 @@ export const ConnectorInstanceTable = mysqlTable(
     updatedAt: timestamp("updated_at", { fsp: 3 }).notNull().default(sql`CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)`),
   },
   (table) => [
-    index("connector_instance_organization_id").on(table.organizationId),
     index("connector_instance_connector_account_id").on(table.connectorAccountId),
     index("connector_instance_created_by_org_membership_id").on(table.createdByOrgMembershipId),
     index("connector_instance_connector_type").on(table.connectorType),
@@ -322,7 +315,6 @@ export const ConnectorInstanceAccessGrantTable = mysqlTable(
   },
   (table) => [
     index("connector_instance_access_grant_organization_id").on(table.organizationId),
-    index("connector_instance_access_grant_instance_id").on(table.connectorInstanceId),
     index("connector_instance_access_grant_org_membership_id").on(table.orgMembershipId),
     index("connector_instance_access_grant_team_id").on(table.teamId),
     index("connector_instance_access_grant_org_wide").on(table.orgWide),
@@ -347,7 +339,6 @@ export const ConnectorTargetTable = mysqlTable(
   },
   (table) => [
     index("connector_target_organization_id").on(table.organizationId),
-    index("connector_target_connector_instance_id").on(table.connectorInstanceId),
     index("connector_target_connector_type").on(table.connectorType),
     index("connector_target_target_kind").on(table.targetKind),
     uniqueIndex("connector_target_instance_remote_id").on(table.connectorInstanceId, table.remoteId),
@@ -375,7 +366,6 @@ export const ConnectorMappingTable = mysqlTable(
   (table) => [
     index("connector_mapping_organization_id").on(table.organizationId),
     index("connector_mapping_connector_instance_id").on(table.connectorInstanceId),
-    index("connector_mapping_connector_target_id").on(table.connectorTargetId),
     index("connector_mapping_object_type").on(table.objectType),
     index("connector_mapping_plugin_id").on(table.pluginId),
     uniqueIndex("connector_mapping_target_selector_object_type").on(table.connectorTargetId, table.selector, table.objectType),
@@ -431,7 +421,6 @@ export const ConnectorSourceBindingTable = mysqlTable(
   },
   (table) => [
     index("connector_source_binding_organization_id").on(table.organizationId),
-    index("connector_source_binding_config_object_id").on(table.configObjectId),
     index("connector_source_binding_connector_instance_id").on(table.connectorInstanceId),
     index("connector_source_binding_connector_target_id").on(table.connectorTargetId),
     index("connector_source_binding_connector_mapping_id").on(table.connectorMappingId),

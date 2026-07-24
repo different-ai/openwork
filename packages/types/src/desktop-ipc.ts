@@ -36,6 +36,7 @@ export type OpencodeExecutionSnapshot = {
 export type EngineInfo = {
   running: boolean;
   runtime: "direct";
+  managedByServer: boolean;
   baseUrl: string | null;
   projectDir: string | null;
   hostname: string | null;
@@ -160,6 +161,7 @@ export type DesktopBootstrapConfig = {
   brandLogoUrl?: string | null;
   brandIconUrl?: string | null;
   writtenAt?: string | null;
+  fromFile?: boolean;
   claimLinks?: Array<{
     id: string;
     role: string;
@@ -289,6 +291,32 @@ export type CacheResetResult = {
   removed: string[];
   missing: string[];
   errors: string[];
+};
+
+export type NukeManifestPreview = {
+  deletePaths: string[];
+  bootstrapPath: string;
+  preserveBootstrapPath: string | null;
+  partitions: string[];
+};
+
+export type NukeOptions = {
+  preserveBootstrap: boolean;
+};
+
+export type NukeReceiptError = {
+  path: string;
+  message: string;
+  code?: string;
+};
+
+export type NukeReceipt = {
+  deleted: string[];
+  pendingRetry: string[];
+  errors: NukeReceiptError[];
+  preservedBootstrap: boolean;
+  relaunchMode: "cleanup_worker" | "direct";
+  workerScheduled: boolean;
 };
 
 export type DesktopFetchInit = {
@@ -456,7 +484,8 @@ export type DesktopCommandMap = {
     args: [rawUrl: string];
     result: { ok: true; config: DesktopBootstrapConfig } | ConnectLinkVerifyFailure;
   };
-  nukeOpenworkAndOpencodeConfigAndExit: { args: []; result: unknown };
+  nukeOpenworkAndOpencodeConfigPreview: { args: [options?: NukeOptions]; result: NukeManifestPreview };
+  nukeOpenworkAndOpencodeConfigAndExit: { args: [options?: NukeOptions]; result: NukeReceipt };
 
   // Sandbox
   sandboxDoctor: { args: []; result: SandboxDoctorResult };

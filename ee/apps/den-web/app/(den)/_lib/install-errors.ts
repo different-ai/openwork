@@ -1,6 +1,6 @@
 import { getErrorMessage } from "./den-flow";
 
-const EXPIRED_INSTALL_LINK_MESSAGE = "This install link is expired or no longer available. Ask your organization admin for a fresh link.";
+const EXPIRED_INSTALL_LINK_MESSAGE = "This install link has expired or was replaced. Ask your workspace admin for a fresh one from the Members page.";
 
 export function getInstallConfigErrorMessage(payload: unknown, status: number) {
   if (status === 404) {

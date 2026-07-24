@@ -8,7 +8,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuShortc
 import { OPENWORK_EXTENSION_CATALOG, type McpDirectoryInfo } from "@/app/constants";
 import type { CloudImportedPlugin, CloudImportedPluginFile } from "@/app/cloud/import-state";
 import type { ComposerAttachment, McpServerEntry, McpStatusMap, ModelRef, SkillCard, SlashCommandOption } from "@/app/types";
-import { formatBytes, isMacPlatform } from "@/app/utils";
+import { isMacPlatform } from "@/app/utils";
 import { t } from "@/i18n";
 import { isOpenWorkExtensionEnabled, isOpenWorkExtensionHidden, OPENWORK_EXTENSION_STATE_CHANGED } from "@/react-app/domains/settings/extension-state";
 import { useDesktopRestriction } from "@/react-app/domains/cloud/desktop-config-provider";
@@ -61,6 +61,7 @@ type ComposerProps = {
   onQueue: () => void | Promise<void>;
   onStop: () => void | Promise<void>;
   busy: boolean;
+  steering: boolean;
   submissionPreparing: boolean;
   queuedCount: number;
   disabled: boolean;
@@ -68,6 +69,7 @@ type ComposerProps = {
   statusLabel: string;
   modelPickerOpen: boolean;
   selectedModel: ModelRef;
+  openWorkModelsEntitled?: boolean;
   onModelPickerOpenChange: (open: boolean) => void;
   onModelChange: (model: ModelRef) => void;
   attachments: ComposerAttachment[];
@@ -359,6 +361,12 @@ export function ReactSessionComposer(props: ComposerProps) {
   useEffect(() => {
     if (!props.busy) disarmEscape();
   }, [props.busy, disarmEscape]);
+
+  useEffect(() => {
+    if (props.steering && props.modelPickerOpen) {
+      props.onModelPickerOpenChange(false);
+    }
+  }, [props.modelPickerOpen, props.onModelPickerOpenChange, props.steering]);
 
   // Input history recall (#2012): ArrowUp on an empty composer recalls the
   // previous sent prompt; repeated ArrowUp/ArrowDown walk the history.
@@ -1218,38 +1226,6 @@ export function ReactSessionComposer(props: ComposerProps) {
           {renderMentionMenu()}
           {renderSlashMenu()}
 
-          {props.attachments.length > 0 ? (
-            <div className="mx-5 mt-5 flex flex-wrap gap-2 md:mx-6">
-              {props.attachments.map((attachment) => (
-                <div key={attachment.id} className="flex items-center gap-2 rounded-2xl border border-gray-6 bg-gray-2 px-3 py-2 text-xs text-gray-10">
-                  {isImageAttachment(attachment) && attachment.previewUrl ? (
-                    <div className="h-10 w-10 overflow-hidden rounded-xl border border-gray-6 bg-gray-1">
-                      <img src={attachment.previewUrl} alt={attachment.name} decoding="async" className="h-full w-full object-cover" />
-                    </div>
-                  ) : (
-                    <FileText size={14} className="text-gray-9" />
-                  )}
-                  <div className="max-w-[160px] min-w-0">
-                    <div className="truncate text-[12px] font-medium text-gray-11">{attachment.name}</div>
-                    <div className="flex items-center gap-1.5 text-[11px] text-gray-10">
-                      <span>{isImageAttachment(attachment) ? t("composer.image_kind") : t("composer.file_kind")}</span>
-                      <span>·</span>
-                      <span>{formatBytes(attachment.size)}</span>
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    className="ml-1 inline-flex h-5 w-5 items-center justify-center rounded-full text-gray-10 transition-colors hover:bg-gray-3 hover:text-gray-12"
-                    onClick={() => props.onRemoveAttachment(attachment.id)}
-                    title={t("action.remove")}
-                  >
-                    <X size={12} />
-                  </button>
-                </div>
-              ))}
-            </div>
-          ) : null}
-
           {/*
             The pasted-text chip used to render twice — once inline inside
             the Lexical editor (via ComposerPastedTextNode) and again as a
@@ -1274,11 +1250,18 @@ export function ReactSessionComposer(props: ComposerProps) {
               value={props.draft}
               mentions={props.mentions}
               pastedText={pastedTextTokens}
+              attachments={props.attachments.map((attachment) => ({
+                id: attachment.id,
+                name: attachment.name,
+                kind: isImageAttachment(attachment) ? "image" : "file",
+                previewUrl: attachment.previewUrl,
+              }))}
               disabled={props.disabled}
               placeholder={t("composer.placeholder")}
               onChange={props.onDraftChange}
               onSubmit={handleEditorSubmit}
               onExpandPastedText={handleExpandPastedText}
+              onRemoveAttachment={props.onRemoveAttachment}
               onPasteText={props.onPasteText}
               onPaste={(event) => {
                 // Paste policy:
@@ -1721,8 +1704,11 @@ export function ReactSessionComposer(props: ComposerProps) {
                   open={props.modelPickerOpen}
                   value={props.selectedModel}
                   onOpenChange={props.onModelPickerOpenChange}
-                  onChange={props.onModelChange}
-                  disabled={props.busy}
+                  onChange={(model) => {
+                    if (!props.steering) props.onModelChange(model);
+                  }}
+                  disabled={props.steering}
+                  openWorkModelsEntitled={props.openWorkModelsEntitled}
                 />
                 {props.modelUnavailable ? (
                   <span className="text-xs font-medium text-red-10">Model no longer available</span>
@@ -1732,8 +1718,10 @@ export function ReactSessionComposer(props: ComposerProps) {
                   value={props.modelVariant}
                   label={props.modelVariantLabel}
                   options={props.modelBehaviorOptions}
-                  onChange={props.onModelVariantChange}
-                  disabled={props.busy}
+                  onChange={(value) => {
+                    if (!props.steering) props.onModelVariantChange(value);
+                  }}
+                  disabled={props.steering}
                 />
               </div>
 

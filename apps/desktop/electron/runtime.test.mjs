@@ -12,6 +12,7 @@ import {
   resolveOpenworkServerConfigPath,
   seedWorkspacePathsForEmbeddedServer,
   selectStickyOpenworkPortWorkspace,
+  snapshotEngineState,
 } from "./runtime.mjs";
 
 describe("prioritizeWorkspacePaths", () => {
@@ -141,5 +142,32 @@ describe("resolveOpenworkServerConfigPath", () => {
       resolveOpenworkServerConfigPath({ XDG_CONFIG_HOME: "/tmp/xdg" }),
       "/tmp/xdg/openwork/server.json",
     );
+  });
+});
+
+describe("snapshotEngineState", () => {
+  it("reports server-managed OpenCode liveness and pid without a child handle", () => {
+    const snapshot = snapshotEngineState({
+      child: null,
+      childExited: false,
+      runtime: "direct",
+      projectDir: "/workspace/current",
+      hostname: "127.0.0.1",
+      port: 4097,
+      baseUrl: "http://127.0.0.1:4097",
+      opencodeUsername: null,
+      opencodePassword: null,
+      opencodeBinPath: null,
+      opencodeBinSource: null,
+      managedByServer: true,
+      managedPid: 12345,
+      managedIsAlive: () => true,
+      lastStdout: null,
+      lastStderr: null,
+      execution: null,
+    });
+    assert.equal(snapshot.running, true);
+    assert.equal(snapshot.managedByServer, true);
+    assert.equal(snapshot.pid, 12345);
   });
 });

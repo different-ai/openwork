@@ -4,8 +4,14 @@ import { env } from "../env.js"
 
 export type ConfiguredInstallerArtifact = {
   filePath: string
+  fileName?: string
   size: number
 }
+
+export const DEFAULT_INSTALLER_RELEASE_REPO = "different-ai/openwork"
+// First GitHub release tag on different-ai/openwork that carries the OpenWork-Installer-* assets;
+// earlier tags have no installer assets so redirects to them 404.
+export const FIRST_GENERIC_INSTALLER_RELEASE = "0.17.37"
 
 export function installerReleaseAssetUrl(
   fileName: string,
@@ -14,6 +20,16 @@ export function installerReleaseAssetUrl(
   const releaseRepo = options.releaseRepo ?? env.installerReleaseRepo
   const releaseTag = options.releaseTag ?? env.installerReleaseTag
   return `https://github.com/${releaseRepo}/releases/download/${encodeURIComponent(releaseTag)}/${encodeURIComponent(fileName)}`
+}
+
+export function installerLatestReleaseAssetUrl(
+  fileName: string,
+  options: { releaseRepo?: string } = {},
+) {
+  const releaseRepo = options.releaseRepo ?? env.installerReleaseRepo
+  // GitHub latest only flips when publish-release un-drafts, which is gated on installer assets,
+  // so this URL cannot 404 during a release window.
+  return `https://github.com/${releaseRepo}/releases/latest/download/${encodeURIComponent(fileName)}`
 }
 
 export function desktopReleaseAssetName(platform: string, releaseTag: string) {
@@ -33,6 +49,19 @@ export function desktopReleaseAssetName(platform: string, releaseTag: string) {
   return null
 }
 
+export function genericInstallerArtifactName(platform: string) {
+  if (platform === "mac-arm64") {
+    return "OpenWork-Installer-mac-arm64.dmg"
+  }
+  if (platform === "mac-x64") {
+    return "OpenWork-Installer-mac-x64.dmg"
+  }
+  if (platform === "win-x64") {
+    return "OpenWork-Installer-win-x64.exe"
+  }
+  return null
+}
+
 /**
  * Resolves only an explicitly provisioned standard installer. The normal
  * internet-connected path redirects the browser to GitHub instead, so Den
@@ -47,8 +76,11 @@ export async function resolveConfiguredInstallerArtifact(
   const filePath = path.join(env.installerArtifactsDir, fileName)
   try {
     const artifact = await stat(filePath)
-    return artifact.isFile() ? { filePath, size: artifact.size } : null
+    if (artifact.isFile()) {
+      return { filePath, fileName, size: artifact.size }
+    }
   } catch {
-    return null
+    // Missing or inaccessible artifacts are treated as unmounted.
   }
+  return null
 }

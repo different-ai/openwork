@@ -40,15 +40,24 @@ import { insertStyledPastedText } from "./pasted-text-insertion";
 
 type PastedTextToken = { label: string; lines: number; text: string };
 
+export type ComposerAttachmentToken = {
+  id: string;
+  name: string;
+  kind: "image" | "file";
+  previewUrl?: string;
+};
+
 type EditorProps = {
   value: string;
   mentions: Record<string, ComposerMentionKind>;
   pastedText?: PastedTextToken[];
+  attachments?: ComposerAttachmentToken[];
   disabled: boolean;
   placeholder: string;
   onChange: (value: string) => void;
   onSubmit: (options: { queue: boolean }) => void | Promise<void>;
   onExpandPastedText?: (label: string) => void;
+  onRemoveAttachment?: (id: string) => void;
   onPaste?: React.ClipboardEventHandler<HTMLDivElement>;
   onPasteText?: (text: string) => void;
   onDrop?: React.DragEventHandler<HTMLDivElement>;
@@ -437,7 +446,185 @@ function $createComposerPastedTextNode(label: string, lines: number) {
   return $applyNodeReplacement(new ComposerPastedTextNode(label, lines));
 }
 
-type ComposerInlineTokenNode = ComposerMentionNode | ComposerSlashCommandNode | ComposerSkillNode | ComposerPastedTextNode;
+function createAttachmentChipDom(attachment: ComposerAttachmentToken) {
+  const dom = document.createElement("span");
+  dom.className = "relative mx-0.5 inline-flex h-10 max-w-[140px] shrink-0 items-center align-middle";
+  dom.contentEditable = "false";
+  dom.setAttribute("spellcheck", "false");
+  dom.title = attachment.name;
+
+  if (attachment.kind === "image" && attachment.previewUrl) {
+    const img = document.createElement("img");
+    img.src = attachment.previewUrl;
+    img.alt = attachment.name;
+    img.decoding = "async";
+    img.className = "h-10 w-10 rounded-xl border border-border/70 object-cover";
+    dom.append(img);
+  } else {
+    const chip = document.createElement("span");
+    chip.className = "inline-flex h-10 max-w-[140px] items-center gap-1.5 rounded-xl border border-border/70 bg-muted/40 px-2";
+    const label = document.createElement("span");
+    label.className = "truncate text-[11px] font-medium text-foreground";
+    label.textContent = attachment.name;
+    chip.append(label);
+    dom.append(chip);
+  }
+
+  const remove = document.createElement("button");
+  remove.type = "button";
+  remove.className = "absolute -right-1.5 -top-1.5 inline-flex h-5 w-5 items-center justify-center rounded-full border border-border bg-background text-xs leading-none text-muted-foreground shadow-sm transition-colors hover:bg-muted hover:text-foreground";
+  remove.title = "Remove";
+  remove.setAttribute("aria-label", `Remove ${attachment.name}`);
+  remove.dataset.attachmentRemoveId = attachment.id;
+  remove.textContent = "×";
+  dom.append(remove);
+  return dom;
+}
+
+function updateAttachmentChipDom(dom: HTMLElement, attachment: ComposerAttachmentToken) {
+  dom.title = attachment.name;
+  const remove = dom.querySelector("button[data-attachment-remove-id]");
+  if (remove instanceof HTMLButtonElement) {
+    remove.dataset.attachmentRemoveId = attachment.id;
+    remove.setAttribute("aria-label", `Remove ${attachment.name}`);
+  }
+  const img = dom.querySelector("img");
+  if (img instanceof HTMLImageElement && attachment.previewUrl) {
+    img.src = attachment.previewUrl;
+    img.alt = attachment.name;
+  }
+  const label = dom.querySelector("span.truncate");
+  if (label) label.textContent = attachment.name;
+}
+
+type SerializedComposerAttachmentNode = Spread<
+  {
+    attachmentId: string;
+    attachmentName: string;
+    attachmentKind: "image" | "file";
+    attachmentPreviewUrl?: string;
+    type: "composer-attachment";
+    version: 1;
+  },
+  SerializedTextNode
+>;
+
+class ComposerAttachmentNode extends TextNode {
+  __attachmentId: string;
+  __attachmentName: string;
+  __attachmentKind: "image" | "file";
+  __attachmentPreviewUrl?: string;
+
+  static override getType() {
+    return "composer-attachment";
+  }
+
+  static override clone(node: ComposerAttachmentNode) {
+    return new ComposerAttachmentNode(
+      {
+        id: node.__attachmentId,
+        name: node.__attachmentName,
+        kind: node.__attachmentKind,
+        previewUrl: node.__attachmentPreviewUrl,
+      },
+      node.__key,
+    );
+  }
+
+  static override importJSON(serializedNode: SerializedComposerAttachmentNode) {
+    return $createComposerAttachmentNode({
+      id: serializedNode.attachmentId,
+      name: serializedNode.attachmentName,
+      kind: serializedNode.attachmentKind,
+      previewUrl: serializedNode.attachmentPreviewUrl,
+    });
+  }
+
+  constructor(attachment: ComposerAttachmentToken, key?: NodeKey) {
+    super(`[attachment ${attachment.id}]`, key);
+    this.__attachmentId = attachment.id;
+    this.__attachmentName = attachment.name;
+    this.__attachmentKind = attachment.kind;
+    this.__attachmentPreviewUrl = attachment.previewUrl;
+  }
+
+  getAttachmentId() {
+    return this.__attachmentId;
+  }
+
+  override exportJSON(): SerializedComposerAttachmentNode {
+    return {
+      ...super.exportJSON(),
+      attachmentId: this.__attachmentId,
+      attachmentName: this.__attachmentName,
+      attachmentKind: this.__attachmentKind,
+      attachmentPreviewUrl: this.__attachmentPreviewUrl,
+      type: "composer-attachment",
+      version: 1,
+    };
+  }
+
+  override createDOM(_config: EditorConfig) {
+    return createAttachmentChipDom({
+      id: this.__attachmentId,
+      name: this.__attachmentName,
+      kind: this.__attachmentKind,
+      previewUrl: this.__attachmentPreviewUrl,
+    });
+  }
+
+  override updateDOM(prevNode: ComposerAttachmentNode, dom: HTMLElement) {
+    if (
+      prevNode.__attachmentId !== this.__attachmentId
+      || prevNode.__attachmentName !== this.__attachmentName
+      || prevNode.__attachmentKind !== this.__attachmentKind
+      || prevNode.__attachmentPreviewUrl !== this.__attachmentPreviewUrl
+    ) {
+      updateAttachmentChipDom(dom, {
+        id: this.__attachmentId,
+        name: this.__attachmentName,
+        kind: this.__attachmentKind,
+        previewUrl: this.__attachmentPreviewUrl,
+      });
+    }
+    return false;
+  }
+
+  override canInsertTextBefore(): false {
+    return false;
+  }
+
+  override canInsertTextAfter(): false {
+    return false;
+  }
+
+  override isTextEntity(): true {
+    return true;
+  }
+
+  override isToken(): true {
+    return true;
+  }
+}
+
+function $createComposerAttachmentNode(attachment: ComposerAttachmentToken) {
+  return $applyNodeReplacement(new ComposerAttachmentNode(attachment));
+}
+
+type ComposerInlineTokenNode =
+  | ComposerMentionNode
+  | ComposerSlashCommandNode
+  | ComposerSkillNode
+  | ComposerPastedTextNode
+  | ComposerAttachmentNode;
+
+function isComposerInlineTokenNode(node: unknown): node is ComposerInlineTokenNode {
+  return node instanceof ComposerMentionNode
+    || node instanceof ComposerSlashCommandNode
+    || node instanceof ComposerSkillNode
+    || node instanceof ComposerPastedTextNode
+    || node instanceof ComposerAttachmentNode;
+}
 
 function setSelectionAfterNode(node: TextNode) {
   const parent = node.getParent();
@@ -486,7 +673,12 @@ function appendSegmentWithNewlines(
   return current;
 }
 
-function setPrompt(value: string, mentions: Record<string, ComposerMentionKind>, pastedText?: PastedTextToken[]) {
+function setPrompt(
+  value: string,
+  mentions: Record<string, ComposerMentionKind>,
+  pastedText?: PastedTextToken[],
+  attachments?: ComposerAttachmentToken[],
+) {
   const root = $getRoot();
   root.clear();
   let paragraph = $createParagraphNode();
@@ -499,10 +691,19 @@ function setPrompt(value: string, mentions: Record<string, ComposerMentionKind>,
     value = slashMatch[2] ?? "";
   }
 
-  const segments = value.split(/(\[pasted text [^\]]+\]|\[skill [^\]]+\]|@[^\s@]+)/);
+  const segments = value.split(/(\[attachment [^\]]+\]|\[pasted text [^\]]+\]|\[skill [^\]]+\]|@[^\s@]+)/);
   const pastedTextByLabel = new Map((pastedText ?? []).map((item) => [item.label, item]));
+  const attachmentsById = new Map((attachments ?? []).map((item) => [item.id, item]));
   for (const segment of segments) {
     if (!segment) continue;
+    const attachmentMatch = segment.match(/^\[attachment (.+)\]$/);
+    if (attachmentMatch?.[1]) {
+      const target = attachmentsById.get(attachmentMatch[1]);
+      if (target) {
+        paragraph.append($createComposerAttachmentNode(target));
+        continue;
+      }
+    }
     const pasteMatch = segment.match(/^\[pasted text (.+)\]$/);
     if (pasteMatch?.[1]) {
       const target = pastedTextByLabel.get(pasteMatch[1]);
@@ -565,7 +766,13 @@ function serializePromptFromRoot(): string {
     .join("\n");
 }
 
-function SyncPlugin(props: { value: string; mentions: Record<string, ComposerMentionKind>; pastedText?: PastedTextToken[]; disabled: boolean }) {
+function SyncPlugin(props: {
+  value: string;
+  mentions: Record<string, ComposerMentionKind>;
+  pastedText?: PastedTextToken[];
+  attachments?: ComposerAttachmentToken[];
+  disabled: boolean;
+}) {
   const [editor] = useLexicalComposerContext();
   const valueRef = useRef(props.value);
 
@@ -597,7 +804,7 @@ function SyncPlugin(props: { value: string; mentions: Record<string, ComposerMen
       // Double-check inside the update in case another queued update
       // changed the state between the read above and this callback.
       if (!forceRebuild && serializePromptFromRoot() === props.value) return;
-      setPrompt(props.value, props.mentions, props.pastedText);
+      setPrompt(props.value, props.mentions, props.pastedText, props.attachments);
       // $getRoot().selectEnd() doesn't work when the last node is a
       // token (chip) — Lexical can't position a cursor inside a token,
       // so the selection collapses to position 0. Use element-level
@@ -611,7 +818,7 @@ function SyncPlugin(props: { value: string; mentions: Record<string, ComposerMen
         $getRoot().selectEnd();
       }
     });
-  }, [editor, props.mentions, props.pastedText, props.value]);
+  }, [editor, props.attachments, props.mentions, props.pastedText, props.value]);
 
   return null;
 }
@@ -791,10 +998,10 @@ function MentionChipNavigationPlugin() {
           }
         }
 
-        // --- Mention / pasted-text chips: atomic delete (same as before) ---
+        // --- Mention / pasted-text / attachment chips: atomic delete ---
         if ($isTextNode(anchorNode) && selection.anchor.offset === 0) {
           const previous = anchorNode.getPreviousSibling();
-          if (previous instanceof ComposerMentionNode || previous instanceof ComposerSkillNode || previous instanceof ComposerPastedTextNode) {
+          if (isComposerInlineTokenNode(previous) && !(previous instanceof ComposerSlashCommandNode)) {
             previous.remove();
             return true;
           }
@@ -802,7 +1009,7 @@ function MentionChipNavigationPlugin() {
 
         if ($isElementNode(anchorNode)) {
           const previous = anchorNode.getChildAtIndex(selection.anchor.offset - 1);
-          if (previous instanceof ComposerSlashCommandNode || previous instanceof ComposerMentionNode || previous instanceof ComposerSkillNode || previous instanceof ComposerPastedTextNode) {
+          if (isComposerInlineTokenNode(previous)) {
             previous.remove();
             return true;
           }
@@ -822,7 +1029,7 @@ function MentionChipNavigationPlugin() {
 
         if ($isTextNode(anchorNode) && selection.anchor.offset === 0) {
           const previous = anchorNode.getPreviousSibling();
-          if (previous instanceof ComposerMentionNode || previous instanceof ComposerSlashCommandNode || previous instanceof ComposerSkillNode || previous instanceof ComposerPastedTextNode) {
+          if (isComposerInlineTokenNode(previous)) {
             setSelectionBeforeNode(previous);
             return true;
           }
@@ -840,14 +1047,14 @@ function MentionChipNavigationPlugin() {
         if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
         const anchorNode = selection.anchor.getNode();
 
-        if (anchorNode instanceof ComposerMentionNode || anchorNode instanceof ComposerSlashCommandNode || anchorNode instanceof ComposerSkillNode || anchorNode instanceof ComposerPastedTextNode) {
+        if (isComposerInlineTokenNode(anchorNode)) {
           setSelectionAfterNode(anchorNode);
           return true;
         }
 
         if ($isElementNode(anchorNode)) {
           const current = anchorNode.getChildAtIndex(selection.anchor.offset);
-          if (current instanceof ComposerMentionNode || current instanceof ComposerSlashCommandNode || current instanceof ComposerSkillNode || current instanceof ComposerPastedTextNode) {
+          if (isComposerInlineTokenNode(current)) {
             setSelectionAfterNode(current);
             return true;
           }
@@ -881,6 +1088,48 @@ function ImperativeHandlePlugin(props: { editorRef: ForwardedRef<LexicalPromptEd
   return null;
 }
 
+function attachmentRemoveButton(target: EventTarget | null) {
+  if (!(target instanceof Element)) return null;
+  const button = target.closest("button[data-attachment-remove-id]");
+  return button instanceof HTMLButtonElement ? button : null;
+}
+
+function AttachmentRemovePlugin(props: { onRemoveAttachment?: (id: string) => void }) {
+  const [editor] = useLexicalComposerContext();
+  const onRemoveAttachmentRef = useRef(props.onRemoveAttachment);
+
+  useEffect(() => {
+    onRemoveAttachmentRef.current = props.onRemoveAttachment;
+  }, [props.onRemoveAttachment]);
+
+  useEffect(() => {
+    const handleMouseDown = (event: MouseEvent) => {
+      if (!attachmentRemoveButton(event.target)) return;
+      event.preventDefault();
+      event.stopPropagation();
+    };
+
+    const handleClick = (event: MouseEvent) => {
+      const button = attachmentRemoveButton(event.target);
+      if (!button) return;
+      const id = button.dataset.attachmentRemoveId;
+      if (!id) return;
+      event.preventDefault();
+      event.stopPropagation();
+      onRemoveAttachmentRef.current?.(id);
+    };
+
+    return editor.registerRootListener((rootElement, previousRootElement) => {
+      previousRootElement?.removeEventListener("mousedown", handleMouseDown, true);
+      previousRootElement?.removeEventListener("click", handleClick, true);
+      rootElement?.addEventListener("mousedown", handleMouseDown, true);
+      rootElement?.addEventListener("click", handleClick, true);
+    });
+  }, [editor]);
+
+  return null;
+}
+
 export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorProps>(function LexicalPromptEditor(props, ref) {
   const valueRef = useRef(props.value);
   const onChangeRef = useRef(props.onChange);
@@ -900,9 +1149,9 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
         throw error;
       },
         editable: !props.disabled,
-        nodes: [ComposerMentionNode, ComposerSlashCommandNode, ComposerSkillNode, ComposerPastedTextNode],
+        nodes: [ComposerMentionNode, ComposerSlashCommandNode, ComposerSkillNode, ComposerPastedTextNode, ComposerAttachmentNode],
         editorState: () => {
-          setPrompt(props.value, props.mentions, props.pastedText);
+          setPrompt(props.value, props.mentions, props.pastedText, props.attachments);
         },
       }),
     [],
@@ -950,10 +1199,17 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
         />
         <OnChangePlugin onChange={syncPromptFromEditorState} />
         <HistoryPlugin />
-        <SyncPlugin value={props.value} mentions={props.mentions} pastedText={props.pastedText} disabled={props.disabled} />
+        <SyncPlugin
+          value={props.value}
+          mentions={props.mentions}
+          pastedText={props.pastedText}
+          attachments={props.attachments}
+          disabled={props.disabled}
+        />
         <SubmitPlugin onSubmit={props.onSubmit} disabled={props.disabled} />
         <PasteChipPlugin onPasteText={props.onPasteText} />
         <PastedTextExpandPlugin pastedText={props.pastedText} onExpandPastedText={props.onExpandPastedText} />
+        <AttachmentRemovePlugin onRemoveAttachment={props.onRemoveAttachment} />
         <MentionChipNavigationPlugin />
         <ImperativeHandlePlugin editorRef={ref} />
       </div>

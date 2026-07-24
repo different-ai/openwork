@@ -67,10 +67,14 @@ function uploadRecorder(workspaceId: string) {
   return { endpoint, calls };
 }
 
-function textPartText(parts: Awaited<ReturnType<typeof composerAttachmentsToWorkspaceFileParts>>) {
+function textPart(parts: Awaited<ReturnType<typeof composerAttachmentsToWorkspaceFileParts>>) {
   const part = parts[0];
   if (!part || part.type !== "text") throw new Error("Expected first attachment part to be a text note");
-  return part.text;
+  return part;
+}
+
+function textPartText(parts: Awaited<ReturnType<typeof composerAttachmentsToWorkspaceFileParts>>) {
+  return textPart(parts).text;
 }
 
 function filePartUrl(parts: Awaited<ReturnType<typeof composerAttachmentsToWorkspaceFileParts>>, index: number) {
@@ -288,7 +292,11 @@ describe("composer attachment file parts", () => {
       filename: "image-only scan.pdf",
       bytes: Array.from(PDF_BYTES),
     }]);
-    expect(textPartText(parts).startsWith("\n\nAttached files were copied")).toBe(true);
+    expect(textPart(parts)).toMatchObject({
+      type: "text",
+      synthetic: true,
+    });
+    expect(textPartText(parts).startsWith("Attached files were copied")).toBe(true);
     expect(textPartText(parts)).toContain(".opencode/openwork/inbox/chat-attachments/ses_abc/nonce-a-image-only scan.pdf");
     expect(textPartText(parts)).toContain("Read/Bash/MCP/Docling");
     expect(filePartUrl(parts, 1)).toBe("file:///workspaces/Worker%20Root/.opencode/openwork/inbox/chat-attachments/ses_abc/nonce-a-image-only%20scan.pdf");
@@ -296,6 +304,36 @@ describe("composer attachment file parts", () => {
       type: "file",
       filename: "image-only scan.pdf",
       mime: "application/pdf",
+    });
+  });
+
+  test("workspace image attachments use displayable data URLs while keeping a synthetic path note for tools", async () => {
+    const { endpoint, calls } = uploadRecorder("server-workspace-42");
+    const file = new File([JPEG_BYTES], "shot.png", { type: "image/png" });
+
+    const parts = await composerAttachmentsToWorkspaceFileParts({
+      attachments: [attachmentFor(file)],
+      endpoint,
+      sessionId: "ses_img",
+      workspaceRoot: "/workspaces/Worker Root",
+      createId: () => "nonce-img",
+    });
+
+    expect(calls).toEqual([{
+      workspaceId: "server-workspace-42",
+      path: "chat-attachments/ses_img/nonce-img-shot.png",
+      filename: "shot.png",
+      bytes: Array.from(JPEG_BYTES),
+    }]);
+    expect(textPart(parts)).toMatchObject({ type: "text", synthetic: true });
+    expect(textPartText(parts)).toContain(".opencode/openwork/inbox/chat-attachments/ses_img/nonce-img-shot.png");
+    expect(textPartText(parts)).toContain("file:///workspaces/Worker%20Root/.opencode/openwork/inbox/chat-attachments/ses_img/nonce-img-shot.png");
+    expect(filePartUrl(parts, 1).startsWith("data:image/png;base64,")).toBe(true);
+    expect(Array.from(decodedDataUrlBytes(filePartUrl(parts, 1)))).toEqual(Array.from(JPEG_BYTES));
+    expect(parts[1]).toMatchObject({
+      type: "file",
+      filename: "shot.png",
+      mime: "image/png",
     });
   });
 

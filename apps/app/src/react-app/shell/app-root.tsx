@@ -33,6 +33,7 @@ import {
   useControlAction,
   type OpenworkControlAction,
 } from "./control/control-provider";
+import { OpenworkContextPublisher } from "./openwork-context-publisher";
 import { SessionRoute } from "./session-route";
 import { SettingsRoute } from "./settings-route";
 import { ShellConfigProvider } from "./shell-config";
@@ -217,6 +218,8 @@ function DenAuthControlActions() {
     id: "auth.status",
     label: "Get auth status",
     description: "Return the current cloud sign-in status and user.",
+    kind: "query",
+    effects: { data: "read", ui: "none", external: false },
     sideEffect: "none",
     execute: () => ({
       status: denAuth.status,
@@ -325,6 +328,7 @@ export function AppRoot() {
         <AppMenuProvider>
         <OpenworkControlProvider>
           <OpenworkRouteControlActions />
+          <OpenworkContextPublisher />
           <DenAuthControlActions />
           <BrandThemeControlActions />
           <DenSigninGate>

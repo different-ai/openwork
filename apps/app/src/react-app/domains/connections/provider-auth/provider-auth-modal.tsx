@@ -22,6 +22,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { toast } from "@/components/ui/sonner";
 import { openDesktopUrl } from "@/app/lib/desktop";
 import { isDesktopRuntime } from "@/app/utils";
 import { compareProviders } from "@/app/utils/providers";
@@ -559,6 +560,9 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     setLocalError(null);
     try {
       await props.onSubmitApiKey(selectedEntry.id, trimmed);
+      toast.success(`${selectedEntry.name} connected`, {
+        description: "API key saved locally by OpenCode.",
+      });
       // Close the modal after a successful save
       props.onClose();
     } catch (error) {
@@ -902,7 +906,14 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                       onClick={handleApiSubmit}
                       disabled={actionDisabled || !apiKeyInput.trim()}
                     >
-                      {props.submitting ? t("provider_auth.saving_key") : t("provider_auth.save_key")}
+                      {props.submitting ? (
+                        <>
+                          <Loader2 className="size-4 animate-spin" />
+                          t("provider_auth.saving_key")
+                        </>
+                      ) : (
+                        t("provider_auth.save_key")
+                      )}
                     </Button>
                   </div>
                 </div>

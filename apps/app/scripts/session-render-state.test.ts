@@ -340,6 +340,13 @@ describe("describeOpencodeSessionError", () => {
       },
     })).toBe("Invalid JSON\nRetries: 3");
   });
+
+  it("maps OpenAI ChatGPT token refresh 401 to reconnect guidance", () => {
+    expect(describeOpencodeSessionError(new Error("Token refresh failed: 401"))).toBe(
+      "OpenAI couldn’t renew the ChatGPT sign-in for this worker. Retry once. If it happens again, reconnect OpenAI under Connect providers → OpenAI → ChatGPT Pro/Plus.",
+    );
+    expect(describeOpencodeSessionError("Token refresh failed: 403")).toBe("Token refresh failed: 403");
+  });
 });
 
 describe("applyRevertCursor", () => {

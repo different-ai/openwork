@@ -26,6 +26,7 @@ import {
 import type { InspectAgentDiagnosticsEngine } from "./agent-context-engine-inspection.js";
 import type { ConnectSnapshot } from "./connect-state.js";
 import { buildOpenworkRuntimeConfigObjectFromSnapshot } from "./openwork-runtime-config.js";
+import { runtimeDbPath } from "./runtime-db.js";
 import {
   inspectEngineMcpRegistration,
   registerTrustedOpencodeProcess,
@@ -33,7 +34,6 @@ import {
   syncAllWorkspacesRuntimeMcpToEngine,
 } from "./server.js";
 import {
-  runtimeDbPath,
   writeRuntimeOpencodeConfig,
   type RuntimeOpencodeConfig,
 } from "./runtime-opencode-config-store.js";
@@ -1160,6 +1160,64 @@ describe("agent context diagnostics analyzer", () => {
       status: "failed",
       code: "registration_needs_auth",
       details: { requestPerformed: false },
+    });
+    expect(fetchCalls).toEqual([]);
+  });
+
+  test("downgrades stale failed registration evidence when the engine is reachable", async () => {
+    const fixture = await createFixture();
+    const fetchCalls: CatalogFetchCall[] = [];
+    const report = await runAgentContextDiagnostics({
+      config: fixture.config,
+      workspace: fixture.workspace,
+      request: emptyObservedRequest,
+      inspectRegistration: () => ({
+        status: "failed",
+        source: "transport_failure",
+        recordAgeMs: 61_000,
+      }),
+      dependencies: {
+        fetchImpl: catalogFetch(["search_capabilities", "execute_capability"], fetchCalls),
+        inspectEffectiveEngine: effectiveEngineInspection(),
+      },
+    });
+
+    const check = checkById(report, "engine-mcp-sync");
+    expect(check).toMatchObject({
+      status: "warning",
+      code: "mcp_registration_stale_failure",
+      details: { engineReachableNow: true, failedCount: 3 },
+    });
+    expect(check.details.failedRegistrations).toEqual([
+      { name: "openwork-cloud", status: "failed", source: "transport_failure", recordAgeMs: 61_000, engineReachableNow: true },
+      { name: "non-cloud-canary", status: "failed", source: "transport_failure", recordAgeMs: 61_000, engineReachableNow: true },
+      { name: "[redacted-sensitive-label]", status: "failed", source: "transport_failure", recordAgeMs: 61_000, engineReachableNow: true },
+    ]);
+    expect(fetchCalls).toEqual([]);
+  });
+
+  test("keeps fresh failed registration evidence as a failed check", async () => {
+    const fixture = await createFixture();
+    const fetchCalls: CatalogFetchCall[] = [];
+    const report = await runAgentContextDiagnostics({
+      config: fixture.config,
+      workspace: fixture.workspace,
+      request: emptyObservedRequest,
+      inspectRegistration: () => ({
+        status: "failed",
+        source: "engine_status",
+        recordAgeMs: 1_000,
+      }),
+      dependencies: {
+        fetchImpl: catalogFetch(["search_capabilities", "execute_capability"], fetchCalls),
+        inspectEffectiveEngine: effectiveEngineInspection(),
+      },
+    });
+
+    expect(checkById(report, "engine-mcp-sync")).toMatchObject({
+      status: "failed",
+      code: "mcp_registration_not_connected",
+      details: { engineReachableNow: true, failedCount: 3 },
     });
     expect(fetchCalls).toEqual([]);
   });

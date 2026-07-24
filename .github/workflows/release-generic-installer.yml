@@ -1,21 +1,14 @@
-name: Legacy Generic Installer (manual)
+name: Release Installer Assets
 
-# Legacy recovery workflow for the GENERIC (unbranded) OpenWork installer.
-# Organization downloads now bundle the standard desktop installer with
-# desktop-bootstrap.json, so normal releases do not invoke this workflow.
-# The committed
-# apps/installer build-config placeholder stays empty, so the binary carries
-# no deployment values and resolves its config at run time (sidecar stamped by
-# den-api, filename tag, or pasted install link; see #2480) — and publishes it
-# as PUBLIC release assets. den-api serves org-stamped downloads straight from
-# these published assets, so production deployments need no local artifact
-# directory.
+# Reusable publisher for the GENERIC (unbranded) OpenWork installer. App
+# releases call this workflow so the committed apps/installer build-config
+# placeholder stays empty and the binary resolves its config at run time (pasted
+# install link, filename tag, or sidecar stamped by den-api).
 #
-# Asset names are a contract with den-api's artifactFileName()
-# (ee/apps/den-api/src/routes/org/install-links.ts):
-#   openwork-installer-mac-arm64.zip   (.app at the zip root, signed+notarized)
-#   openwork-installer-mac-x64.zip     (.app at the zip root, signed+notarized)
-#   openwork-installer-win-x64.exe
+# Asset names are a contract with den-api's genericInstallerArtifactName():
+#   OpenWork-Installer-mac-arm64.dmg   (signed+notarized)
+#   OpenWork-Installer-mac-x64.dmg     (signed+notarized)
+#   OpenWork-Installer-win-x64.exe
 
 on:
   workflow_call:
@@ -39,51 +32,16 @@ on:
         required: false
         type: boolean
         default: false
-  workflow_dispatch:
-    inputs:
-      release_tag:
-        description: "Existing release tag to attach the installer assets to (required for publish_mode=release; e.g. v0.17.9)"
-        required: false
-        type: string
-      publish_mode:
-        description: "Publish to a GitHub release or keep as workflow artifacts"
-        required: false
-        type: choice
-        default: "release"
-        options:
-          - "release"
-          - "artifact"
-      platforms:
-        description: "Platforms to build and publish"
-        required: false
-        type: choice
-        default: "mac-arm64,mac-x64,win-x64"
-        options:
-          - "mac-arm64,mac-x64,win-x64"
-          - "mac-arm64,mac-x64"
-          - "mac-arm64"
-          - "mac-x64"
-          - "win-x64"
-      sign_windows:
-        description: "Sign the Windows installer via SignPath"
-        required: false
-        type: boolean
-        default: false
 permissions:
   contents: write
 
 concurrency:
-  group: release-generic-installer-${{ github.event_name == 'release' && github.event.release.tag_name || inputs.release_tag || github.run_id }}
+  group: release-installer-${{ inputs.release_tag || github.run_id }}
   cancel-in-progress: false
 
 jobs:
   resolve:
     name: Resolve release + platforms
-    # Auto-attach only to published app releases (vX.Y.Z); skip prereleases
-    # and secondary releases like openwork-orchestrator-v*. Reusable workflows
-    # retain their caller's event name (normally "push" here), so every
-    # non-release invocation is an explicit dispatch/call and must run.
-    if: github.event_name != 'release' || (github.event.release.prerelease == false && startsWith(github.event.release.tag_name, 'v'))
     runs-on: ubuntu-latest
     outputs:
       release_tag: ${{ steps.resolve.outputs.release_tag }}
@@ -96,26 +54,17 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          EVENT_NAME: ${{ github.event_name }}
           INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
           INPUT_PUBLISH_MODE: ${{ inputs.publish_mode }}
           INPUT_PLATFORMS: ${{ inputs.platforms }}
           INPUT_SIGN_WINDOWS: ${{ inputs.sign_windows }}
-          RELEASE_EVENT_TAG: ${{ github.event.release.tag_name }}
         run: |
           set -euo pipefail
 
-          if [ "$EVENT_NAME" = "release" ]; then
-            RELEASE_TAG="$RELEASE_EVENT_TAG"
-            PUBLISH_MODE="release"
-            PLATFORMS="mac-arm64,mac-x64,win-x64"
-            SIGN_WINDOWS="false"
-          else
-            RELEASE_TAG="$INPUT_RELEASE_TAG"
-            PUBLISH_MODE="${INPUT_PUBLISH_MODE:-release}"
-            PLATFORMS="${INPUT_PLATFORMS:-mac-arm64,mac-x64,win-x64}"
-            SIGN_WINDOWS="${INPUT_SIGN_WINDOWS:-false}"
-          fi
+          RELEASE_TAG="$INPUT_RELEASE_TAG"
+          PUBLISH_MODE="${INPUT_PUBLISH_MODE:-release}"
+          PLATFORMS="${INPUT_PLATFORMS:-mac-arm64,mac-x64,win-x64}"
+          SIGN_WINDOWS="${INPUT_SIGN_WINDOWS:-false}"
 
           if [ "$PUBLISH_MODE" = "release" ]; then
             if [ -z "$RELEASE_TAG" ]; then
@@ -129,9 +78,9 @@ jobs:
           fi
 
           ALL='[
-            {"platform_id":"mac-arm64","runner":"macos-14","os_type":"macos","bun_target":"bun-darwin-arm64","asset":"openwork-installer-mac-arm64.zip"},
-            {"platform_id":"mac-x64","runner":"macos-14","os_type":"macos","bun_target":"bun-darwin-x64","asset":"openwork-installer-mac-x64.zip"},
-            {"platform_id":"win-x64","runner":"windows-2022","os_type":"windows","bun_target":"bun-windows-x64","asset":"openwork-installer-win-x64.exe"}
+            {"platform_id":"mac-arm64","runner":"macos-14","os_type":"macos","bun_target":"bun-darwin-arm64","asset":"OpenWork-Installer-mac-arm64.dmg"},
+            {"platform_id":"mac-x64","runner":"macos-14","os_type":"macos","bun_target":"bun-darwin-x64","asset":"OpenWork-Installer-mac-x64.dmg"},
+            {"platform_id":"win-x64","runner":"windows-2022","os_type":"windows","bun_target":"bun-windows-x64","asset":"OpenWork-Installer-win-x64.exe"}
           ]'
           MATRIX=$(jq -cn --arg csv "$PLATFORMS" --argjson all "$ALL" \
             '$all | map(select(.platform_id as $id | ($csv | split(",") | map(gsub("\\s";"")) | index($id)) != null))')
@@ -168,6 +117,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -179,7 +131,7 @@ jobs:
         run: |
           bun -e '
             const config = await import("./apps/installer/src/generated/build-config.ts")
-            const values = [config.BUILD_CLIENT_NAME, config.BUILD_WEB_URL, config.BUILD_API_URL, config.BUILD_LOGO_URL]
+            const values = [config.BUILD_APP_NAME, config.BUILD_CLIENT_NAME, config.BUILD_WEB_URL, config.BUILD_API_URL, config.BUILD_LOGO_URL]
             if (values.some((value) => value !== "") || config.BUILD_REQUIRE_SIGNIN !== false) {
               console.error("build-config.ts is not the empty generic placeholder; refusing to publish a client-configured build publicly.")
               process.exit(1)
@@ -239,14 +191,14 @@ jobs:
             *) echo "Generic installer did not ask for an install link" >&2; exit 1 ;;
           esac
 
-      # --- macOS: wrap in a .app bundle, sign, notarize, staple, zip --------
+      # --- macOS: wrap in a .app bundle, sign, notarize, staple, DMG --------
       - name: Bundle macOS app
         if: matrix.os_type == 'macos'
         shell: bash
         run: |
           set -euo pipefail
           cd apps/installer
-          APP="dist/OpenWork Installer.app"
+          APP="dist/Install OpenWork.app"
           rm -rf "$APP"
           mkdir -p "$APP/Contents/MacOS"
           cp dist/openwork-installer "$APP/Contents/MacOS/openwork-installer"
@@ -255,8 +207,8 @@ jobs:
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
           <dict>
-            <key>CFBundleName</key><string>OpenWork Installer</string>
-            <key>CFBundleDisplayName</key><string>OpenWork Installer</string>
+            <key>CFBundleName</key><string>Install OpenWork</string>
+            <key>CFBundleDisplayName</key><string>Install OpenWork</string>
             <key>CFBundleIdentifier</key><string>com.differentai.openwork.installer</string>
             <key>CFBundleExecutable</key><string>openwork-installer</string>
             <key>CFBundlePackageType</key><string>APPL</string>
@@ -268,7 +220,7 @@ jobs:
           </plist>
           PLIST
 
-      - name: Sign and notarize macOS app
+      - name: Sign, notarize, and package macOS DMG
         if: matrix.os_type == 'macos'
         shell: bash
         env:
@@ -279,6 +231,16 @@ jobs:
           APPLE_NOTARY_API_ISSUER_ID: ${{ secrets.APPLE_NOTARY_API_ISSUER_ID }}
         run: |
           set -euo pipefail
+          staple_with_retry() {
+            local target="$1"
+            for attempt in 1 2 3 4 5; do
+              if xcrun stapler staple "$target"; then break; fi
+              if [ "$attempt" -eq 5 ]; then echo "stapler staple failed after 5 attempts" >&2; exit 1; fi
+              echo "stapler staple failed (attempt $attempt/5); retrying in $((attempt * 30))s..."
+              sleep $((attempt * 30))
+            done
+          }
+
           missing=()
           for name in \
             APPLE_CODESIGN_CERT_P12_BASE64 \
@@ -294,7 +256,7 @@ jobs:
           fi
 
           cd apps/installer
-          APP="dist/OpenWork Installer.app"
+          APP="dist/Install OpenWork.app"
 
           KEYCHAIN="$RUNNER_TEMP/installer.keychain-db"
           KEYCHAIN_PASSWORD=$(openssl rand -hex 16)
@@ -341,16 +303,21 @@ jobs:
             --key-id "$APPLE_NOTARY_API_KEY_ID" \
             --issuer "$APPLE_NOTARY_API_ISSUER_ID" \
             --wait
-          xcrun stapler staple "$APP"
+          staple_with_retry "$APP"
 
-      - name: Package macOS asset (.app at the zip root)
-        if: matrix.os_type == 'macos'
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd apps/installer
           mkdir -p "$RUNNER_TEMP/out"
-          ditto -c -k --keepParent "dist/OpenWork Installer.app" "$RUNNER_TEMP/out/${{ matrix.asset }}"
+          DMG="$RUNNER_TEMP/out/${{ matrix.asset }}"
+          node scripts/package-mac-dmg.mjs --input "$APP" --output "$DMG"
+          hdiutil verify "$DMG"
+          codesign --force --timestamp --sign "$IDENTITY" "$DMG"
+          codesign --verify --verbose "$DMG"
+          xcrun notarytool submit "$DMG" \
+            --key "$NOTARY_KEY_PATH" \
+            --key-id "$APPLE_NOTARY_API_KEY_ID" \
+            --issuer "$APPLE_NOTARY_API_ISSUER_ID" \
+            --wait
+          staple_with_retry "$DMG"
+          xcrun stapler validate "$DMG"
 
       # --- Windows: optional SignPath signing --------------------------------
       - name: Stage unsigned Windows installer for SignPath

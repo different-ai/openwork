@@ -1,11 +1,12 @@
 ---
-title: "OpenWork Connect MCP"
-description: "Use your OpenWork organization, skills, and connected tools from OpenCode, Codex, ChatGPT Desktop, Cursor Web/Agents, Claude Code, VS Code, or any MCP client"
+title: "Model Context Protocol (MCP)"
+sidebarTitle: "Overview"
+description: "The OpenWork MCP server is a hosted endpoint that lets your AI agent use OpenWork from Claude Code, Codex, Claude Desktop, Cursor, VS Code, or any MCP client."
 ---
 
 import { OpenWorkConnectInstaller } from "/snippets/openwork-connect-installer.jsx";
 
-OpenWork Connect lets an external MCP client use the OpenWork capabilities your organization has made available to you. The public hosted endpoint is:
+The OpenWork Connect MCP server lets your AI agent use the OpenWork capabilities your organization has made available to you. The public hosted endpoint is:
 
 ```text
 https://api.openworklabs.com/mcp/agent
@@ -22,6 +23,23 @@ Your client opens a browser, you sign in to OpenWork, choose the organization to
 
 <OpenWorkConnectInstaller />
 
+## Set up your client
+
+Step-by-step guides for every client:
+
+<CardGroup cols={3}>
+  <Card title="OpenCode" href="/model-context-protocol/opencode" />
+  <Card title="Claude Code" href="/model-context-protocol/claude-code" />
+  <Card title="Codex" href="/model-context-protocol/codex" />
+  <Card title="Claude Desktop" href="/model-context-protocol/claude-desktop" />
+  <Card title="ChatGPT" href="/model-context-protocol/chatgpt" />
+  <Card title="Cursor" href="/model-context-protocol/cursor" />
+  <Card title="VS Code" href="/model-context-protocol/vs-code" />
+  <Card title="Windsurf" href="/model-context-protocol/windsurf" />
+  <Card title="Zed" href="/model-context-protocol/zed" />
+  <Card title="Gemini CLI" href="/model-context-protocol/gemini-cli" />
+</CardGroup>
+
 ## In the OpenWork desktop app
 
 If you use the OpenWork desktop app, there is no MCP endpoint to configure.
@@ -31,15 +49,19 @@ active organization and refreshes that first-party access automatically. Use
 
 ## Client support status
 
-| Client | Status | Notes |
-| --- | --- | --- |
-| OpenCode | Verified | Native remote MCP OAuth passed end-to-end implementation testing. |
-| Codex | Setup only | Add/login/reconnect steps are below; native remote MCP OAuth must be rerun on this exact branch before Codex is marked verified. |
-| Cursor | Setup only | Cursor Web/Agents can use an HTTPS OAuth callback. Cursor Desktop OAuth requires `cursor://anysphere.cursor-mcp/oauth/callback`, which OpenWork's MCP profile intentionally rejects, so Cursor Desktop OAuth is not currently supported. |
-| ChatGPT Desktop | Setup only | Setup guide only; use ChatGPT `Settings > MCP servers`. Native proof is not complete. |
-| Claude Code | Setup only | Setup guide only; native proof is not complete. |
-| VS Code | Setup only | Setup guide only; native proof is not complete. |
-| Any client | Setup only | Use only with clients that support remote Streamable HTTP MCP servers and OAuth. |
+| Client | Status | Notes | Guide |
+| --- | --- | --- | --- |
+| OpenCode | Verified | Native remote MCP OAuth passed end-to-end implementation testing. | [OpenWork MCP for OpenCode](/model-context-protocol/opencode) |
+| Codex | Setup only | Add/login/reconnect steps are below; native remote MCP OAuth must be rerun on this exact branch before Codex is marked verified. | [OpenWork MCP for Codex](/model-context-protocol/codex) |
+| Cursor | Setup only | Cursor Web/Agents use an HTTPS OAuth callback. Cursor Desktop OAuth uses `cursor://anysphere.cursor-mcp/oauth/callback`, which OpenWork accepts through an exact private-use allowlist with PKCE S256 enforced. Native proof is not complete. | [OpenWork MCP for Cursor](/model-context-protocol/cursor) |
+| ChatGPT Desktop | Setup only | Setup guide only; use ChatGPT `Settings > MCP servers`. Native proof is not complete. | [OpenWork MCP for ChatGPT](/model-context-protocol/chatgpt) |
+| Claude Code | Setup only | Setup guide only; native proof is not complete. | [OpenWork MCP for Claude Code](/model-context-protocol/claude-code) |
+| Claude Desktop | Setup only | Setup guide only; native proof is not complete. | [OpenWork MCP for Claude Desktop](/model-context-protocol/claude-desktop) |
+| VS Code | Setup only | Setup guide only; native proof is not complete. | [OpenWork MCP for VS Code](/model-context-protocol/vs-code) |
+| Windsurf | Setup only | Setup guide only via mcp-remote; native proof is not complete. | [OpenWork MCP for Windsurf](/model-context-protocol/windsurf) |
+| Zed | Setup only | Setup guide only via mcp-remote; native proof is not complete. | [OpenWork MCP for Zed](/model-context-protocol/zed) |
+| Gemini CLI | Setup only | Setup guide only; native proof is not complete. | [OpenWork MCP for Gemini CLI](/model-context-protocol/gemini-cli) |
+| Any client | Setup only | Use only with clients that support remote Streamable HTTP MCP servers and OAuth. | — |
 
 ## OpenCode setup
 
@@ -74,6 +96,8 @@ opencode mcp logout openwork
 opencode mcp auth openwork
 ```
 
+Full guide: [OpenWork MCP for OpenCode](/model-context-protocol/opencode).
+
 ## Codex setup
 
 Codex is setup-only for this PR until its native OAuth flow is rerun on this exact branch.
@@ -92,15 +116,19 @@ codex mcp logout openwork
 codex mcp login openwork
 ```
 
-## Cursor Web/Agents setup-only guide
+Full guide: [OpenWork MCP for Codex](/model-context-protocol/codex).
 
-Use this guide only for Cursor Web/Agents flows that provide an HTTPS OAuth callback. Paste the OpenWork Connect endpoint where Cursor Web/Agents asks for the remote MCP server URL:
+## Cursor setup-only guide
+
+Paste the OpenWork Connect endpoint where Cursor asks for the remote MCP server URL, then start OAuth from Cursor's connection prompt:
 
 ```text
 https://api.openworklabs.com/mcp/agent
 ```
 
-Cursor Desktop OAuth is not currently supported. The official desktop OAuth callback is `cursor://anysphere.cursor-mcp/oauth/callback`, and OpenWork's MCP profile intentionally rejects private-use callback schemes for public OAuth clients.
+Cursor Web/Agents use an HTTPS OAuth callback. Cursor Desktop OAuth uses the private-use callback `cursor://anysphere.cursor-mcp/oauth/callback`, which OpenWork accepts through an exact allowlist with PKCE S256 enforced, so intercepted authorization codes cannot be redeemed without the code verifier.
+
+Full guide: [OpenWork MCP for Cursor](/model-context-protocol/cursor).
 
 ## ChatGPT setup-only guide
 
@@ -109,6 +137,8 @@ Open ChatGPT `Settings > MCP servers` ([open settings](https://chatgpt.com/#sett
 ```text
 https://api.openworklabs.com/mcp/agent
 ```
+
+Full guide: [OpenWork MCP for ChatGPT](/model-context-protocol/chatgpt).
 
 ## Organization selection
 
@@ -144,16 +174,16 @@ OpenWork Connect is a remote Streamable HTTP MCP server with OAuth:
 - OAuth authorize and token requests must include exactly one `resource` value: `https://api.openworklabs.com/mcp/agent`.
 - Clients that need registration use dynamic client registration as a fallback during discovery.
 - PKCE is required for public/dynamic clients, and only the `S256` code challenge method is supported.
-- Redirect URIs must be HTTPS callbacks or HTTP loopback callbacks such as `http://127.0.0.1:<port>/callback`. Private-use callback schemes are not accepted for public OAuth clients.
+- Redirect URIs must be HTTPS callbacks or HTTP loopback callbacks such as `http://127.0.0.1:<port>/callback`. Private-use callback schemes are not accepted for public OAuth clients, except exact allowlisted callbacks for known native clients — currently Cursor Desktop's `cursor://anysphere.cursor-mcp/oauth/callback` — with PKCE S256 enforced.
 
 ## Token lifetime and refresh
 
 Clients normally refresh automatically. The values matter when diagnosing reconnects:
 
-- Public OAuth access tokens are JWTs signed and validated with EdDSA. The issuer is exactly `https://app.openworklabs.com/api/auth`, the audience is exactly `https://api.openworklabs.com/mcp/agent`, and access tokens expire after 15 minutes.
-- Refresh tokens are opaque rotating grants with a 30-day inactivity window.
-- Each refresh revokes the previous refresh grant.
-- If an old refresh grant is replayed, used concurrently, expired, or revoked, the client may receive `invalid_grant`. Reconnect by logging out of the MCP entry and authenticating again.
+- Public OAuth access tokens are JWTs signed and validated with EdDSA. The issuer is exactly `https://app.openworklabs.com/api/auth`, the audience is exactly `https://api.openworklabs.com/mcp/agent`, and access tokens expire after 45 minutes.
+- Refresh tokens are opaque rotating grants with a 30-day inactivity window and a 30-second rotation overlap for near-simultaneous refreshes.
+- Each refresh revokes the previous refresh grant; because OpenWork stores only token hashes, a replay during the overlap can issue another successor instead of returning prior plaintext.
+- Successor grants remain normal rotating grants. If an old refresh grant is replayed after the overlap, expired, or revoked, the client may receive `invalid_grant` and the client/user refresh-token family is revoked. Reconnect by logging out of the MCP entry and authenticating again.
 - Access is rechecked against the active OpenWork session and organization membership, so removing a member or revoking the session cuts off MCP access.
 
 ## What the server exposes
@@ -171,7 +201,7 @@ Availability is governed by organization membership, role, policy, and exposure 
 
 - **401 missing or invalid token**: run the client's auth/login command again. Confirm the client points to `https://api.openworklabs.com/mcp/agent`.
 - **403 membership or scope error**: confirm you selected the right organization and still have membership and required permissions there.
-- **`invalid_grant`**: the refresh grant was expired, revoked, replayed, or used concurrently. Run logout, then auth/login again.
+- **`invalid_grant`**: the refresh grant was expired, revoked, or replayed after the 30-second rotation overlap. Run logout, then auth/login again.
 - **429 rate limit**: wait for the response's `Retry-After` value before retrying.
 - **Support requests**: include the response `X-Request-Id` header plus any JSON body MCP `referenceId` or OAuth `reference_id` field so OpenWork support can find the server-side trace.
 

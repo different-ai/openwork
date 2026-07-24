@@ -1,10 +1,10 @@
-import { homedir } from "node:os";
 import { existsSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
 import { eq } from "drizzle-orm";
 import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { openRuntimeSqliteDatabase, runtimeDbPath } from "./runtime-db.js";
 import type { ServerConfig } from "./types.js";
-import { ensureDir } from "./utils.js";
+
+export { runtimeDbPath, runtimeStorageDir } from "./runtime-db.js";
 
 export type RuntimeOpencodeConfig = {
   default_agent?: string;
@@ -61,19 +61,6 @@ function parseRuntimeOpencodeConfig(configJson: string): RuntimeOpencodeConfig {
   }
 }
 
-export function runtimeDbPath(config: ServerConfig): string {
-  const override = process.env.OPENWORK_RUNTIME_DB?.trim();
-  if (override) return resolve(override);
-  const configPath = config.configPath?.trim();
-  const configDir = configPath ? dirname(configPath) : join(homedir(), ".config", "openwork");
-  return join(configDir, "runtime.sqlite");
-}
-
-/** Directory holding runtime state (the SQLite DB and derived files). */
-export function runtimeStorageDir(config: ServerConfig): string {
-  return dirname(runtimeDbPath(config));
-}
-
 export type RuntimeOpencodeConfigWriteListener = (config: ServerConfig, workspaceId: string) => void;
 
 const writeListeners = new Set<RuntimeOpencodeConfigWriteListener>();
@@ -89,13 +76,11 @@ export function onRuntimeOpencodeConfigWrite(listener: RuntimeOpencodeConfigWrit
 }
 
 async function openRuntimeDb(path: string): Promise<RuntimeOpencodeDb> {
-  await ensureDir(dirname(path));
-  if (typeof process.versions.bun === "string") {
-    const { Database } = await import("bun:sqlite");
-    const { drizzle } = await import("drizzle-orm/bun-sqlite");
-    const sqlite = new Database(path, { create: true });
+  const runtimeDb = await openRuntimeSqliteDatabase(path);
+  if (runtimeDb.kind === "bun") {
+    const sqlite = runtimeDb.sqlite;
     sqlite.run("CREATE TABLE IF NOT EXISTS runtime_opencode_configs (workspace_id TEXT PRIMARY KEY NOT NULL, config_json TEXT NOT NULL, updated_at INTEGER NOT NULL)");
-    const db = drizzle(sqlite);
+    const db = runtimeDb.db;
     return {
       get: (workspaceId) => db
         .select()
@@ -114,8 +99,7 @@ async function openRuntimeDb(path: string): Promise<RuntimeOpencodeDb> {
       },
     };
   }
-  const { DatabaseSync } = await import("node:sqlite");
-  const sqlite = new DatabaseSync(path);
+  const sqlite = runtimeDb.sqlite;
   sqlite.exec("CREATE TABLE IF NOT EXISTS runtime_opencode_configs (workspace_id TEXT PRIMARY KEY NOT NULL, config_json TEXT NOT NULL, updated_at INTEGER NOT NULL)");
   const get = sqlite.prepare("SELECT config_json AS configJson FROM runtime_opencode_configs WHERE workspace_id = ?");
   const upsert = sqlite.prepare("INSERT INTO runtime_opencode_configs (workspace_id, config_json, updated_at) VALUES (?, ?, ?) ON CONFLICT(workspace_id) DO UPDATE SET config_json = excluded.config_json, updated_at = excluded.updated_at");
@@ -154,6 +138,15 @@ export function runtimeDisabledProviderList(config: RuntimeOpencodeConfig): stri
 
 export function runtimeMcpMap(config: RuntimeOpencodeConfig): Record<string, Record<string, unknown>> {
   return isRecord(config.mcp) ? config.mcp as Record<string, Record<string, unknown>> : {};
+}
+
+/** Narrow server-owned read port for consumers that need one runtime MCP endpoint. */
+export async function readRuntimeMcpConfig(
+  config: ServerConfig,
+  workspaceId: string,
+  name: string,
+): Promise<Record<string, unknown> | null> {
+  return runtimeMcpMap(await readRuntimeOpencodeConfig(config, workspaceId))[name] ?? null;
 }
 
 export function runtimeExternalDirectory(config: RuntimeOpencodeConfig): Record<string, unknown> {

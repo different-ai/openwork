@@ -1,5 +1,6 @@
 import { isReasoningUIPart, isToolUIPart, type DynamicToolUIPart, type FileUIPart, type ToolUIPart, type UIMessage } from "ai"
 import type { ThreadStatus } from "@/lib/messages"
+import { isAggregatableToolPart } from "@/lib/tool-aggregate"
 
 const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 const PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
@@ -142,6 +143,37 @@ type AssistantRenderGroup =
   | { kind: "reasoning"; text: string; isStreaming: boolean }
   | { kind: "file"; part: FileUIPart }
   | { kind: "tool"; part: ToolUIPart | DynamicToolUIPart }
+  | { kind: "tool-aggregate"; parts: (ToolUIPart | DynamicToolUIPart)[] }
+
+/**
+ * Steps often arrive as one assistant message per tool call. When a
+ * message contains nothing but aggregatable tool parts (plus step
+ * markers / hidden reasoning), return those parts so consecutive
+ * messages can merge into one aggregate line. Prose breaks the run.
+ */
+export function getAggregateOnlyParts(
+  message: UIMessage,
+  showThinking: boolean
+): (ToolUIPart | DynamicToolUIPart)[] | null {
+  const tools: (ToolUIPart | DynamicToolUIPart)[] = []
+  for (const part of message.parts) {
+    if (part.type === "step-start") continue
+    if (isReasoningUIPart(part)) {
+      if (showThinking && part.text.trim()) return null
+      continue
+    }
+    if (part.type === "text") {
+      if (part.text.trim()) return null
+      continue
+    }
+    if (isToolUIPart(part) && isAggregatableToolPart(part)) {
+      tools.push(part)
+      continue
+    }
+    return null
+  }
+  return tools.length > 0 ? tools : null
+}
 
 export function getAssistantRenderGroups(
   parts: UIMessage["parts"],
@@ -171,7 +203,10 @@ export function getAssistantRenderGroups(
 
     const previous = groups.at(-1)
     if (previous?.kind === "reasoning") {
-      previous.text += part.text
+      // Each reasoning part is its own section (often opening with a bold
+      // "**Title**"); joining without a break glues that title onto the
+      // previous paragraph's last sentence.
+      previous.text += previous.text && part.text.trim() ? `\n\n${part.text}` : part.text
       previous.isStreaming = previous.isStreaming || part.state === "streaming"
       return
     }
@@ -202,6 +237,17 @@ export function getAssistantRenderGroups(
     }
 
     if (isToolUIPart(part)) {
+      // Paper aggregation rule: consecutive command/edit/read/search calls
+      // collapse into one aggregate group; any other part breaks the run.
+      if (isAggregatableToolPart(part)) {
+        const previous = groups.at(-1)
+        if (previous?.kind === "tool-aggregate") {
+          previous.parts.push(part)
+        } else {
+          groups.push({ kind: "tool-aggregate", parts: [part] })
+        }
+        continue
+      }
       groups.push({ kind: "tool", part })
     }
   }

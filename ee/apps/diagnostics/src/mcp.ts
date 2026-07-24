@@ -1,10 +1,18 @@
+import { EGRESS_DIAGNOSTIC_RUN_HEADER } from "@openwork/types/den/egress-diagnostics"
 import { diagnosticsConfig, validateProductionConfig } from "./config"
-import { mcpBearerAuthorized } from "./auth"
+import { mcpAuthorizationSubject } from "./auth"
+import {
+  createMockAuthorizationUrl,
+  mockSubjectIsAuthorized,
+  resetMockAuthorization,
+} from "./mock-authorization"
 import { emptyResponse as empty, jsonResponse as json, type HandledResponse } from "./recorded-route"
 import { createSessionToken, verifySessionToken } from "./session"
 
 const supportedVersions = ["2025-11-25", "2025-06-18", "2025-03-26"] as const
 export const maximumRequestBytes = 64 * 1024
+export const mockAuthorizationToolName = "diagnostics_authorization_check"
+export const resetMockAuthorizationToolName = "diagnostics_reset_authorization"
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -51,6 +59,37 @@ function toolDefinition(profile: ReturnType<typeof diagnosticsConfig>["profile"]
   }
 }
 
+function mockAuthorizationToolDefinition(): Record<string, unknown> {
+  return {
+    description: "Exercises an authorization-required MCP tool response. Before browser verification, it returns JSON-RPC -32001 with data.connect_url. Verification lasts five minutes.",
+    inputSchema: { additionalProperties: false, properties: {}, type: "object" },
+    name: mockAuthorizationToolName,
+    title: "Diagnostics authorization check",
+  }
+}
+
+function resetMockAuthorizationToolDefinition(): Record<string, unknown> {
+  return {
+    description: "Immediately clears the five-minute mock authorization so the authorization-link flow can be tested again.",
+    inputSchema: { additionalProperties: false, properties: {}, type: "object" },
+    name: resetMockAuthorizationToolName,
+    title: "Reset diagnostics authorization",
+  }
+}
+
+function toolName(message: Record<string, unknown>): string | null {
+  const params = isRecord(message.params) ? message.params : null
+  return params && typeof params.name === "string" ? params.name : null
+}
+
+function syntheticToolResult(profile: ReturnType<typeof diagnosticsConfig>["profile"]): unknown {
+  return {
+    content: [{ text: "The Diagnostics endpoint received and safely handled the synthetic tool request.", type: "text" }],
+    isError: false,
+    structuredContent: { connected: true, profile },
+  }
+}
+
 function validateSession(request: Request, signingSecret: string): boolean {
   const token = request.headers.get("mcp-session-id") ?? ""
   return Boolean(token) && verifySessionToken(token, signingSecret)
@@ -67,7 +106,8 @@ export async function handleMcpRequest(request: Request, rawBody: string): Promi
       : json(404, { error: "mcp_session_not_found" })
   }
   if (request.method !== "POST") return empty(405, { allow: "POST, DELETE" })
-  if (!mcpBearerAuthorized(request, config.bearerToken, config.signingSecret)) {
+  const authorizationSubject = mcpAuthorizationSubject(request, config.bearerToken, config.signingSecret)
+  if (!authorizationSubject) {
     return json(401, { error: "unauthorized" }, {
       "www-authenticate": `Bearer resource_metadata="${config.publicOrigin}/.well-known/oauth-protected-resource/mcp", scope="diagnostics:connectivity"`,
     })
@@ -113,13 +153,63 @@ export async function handleMcpRequest(request: Request, rawBody: string): Promi
   if (value.method === "notifications/initialized") return empty(202)
   if (id === null) return empty(202)
   if (value.method === "ping") return json(200, rpcResult(id, {}))
-  if (value.method === "tools/list") return json(200, rpcResult(id, { tools: [toolDefinition(config.profile)] }))
-  if (value.method === "tools/call") {
+  if (value.method === "tools/list") {
+    // The existing private-cloud egress conformance probe intentionally pins a
+    // one-tool catalog. Keep that signed diagnostic run stable while regular
+    // MCP clients receive the interactive authorization fixtures.
+    const tools = request.headers.has(EGRESS_DIAGNOSTIC_RUN_HEADER)
+      ? [toolDefinition(config.profile)]
+      : [
+          toolDefinition(config.profile),
+          mockAuthorizationToolDefinition(),
+          resetMockAuthorizationToolDefinition(),
+        ]
     return json(200, rpcResult(id, {
-      content: [{ text: "The Diagnostics endpoint received and safely handled the synthetic tool request.", type: "text" }],
-      isError: false,
-      structuredContent: { connected: true, profile: config.profile },
+      tools,
     }))
+  }
+  if (value.method === "tools/call") {
+    const requestedTool = toolName(value)
+    if (!requestedTool) return json(200, rpcError(id, -32602, "Tool name is required"))
+    if (requestedTool === resetMockAuthorizationToolName) {
+      try {
+        await resetMockAuthorization(authorizationSubject)
+      } catch {
+        return json(200, rpcError(id, -32603, "Mock authorization state is unavailable"))
+      }
+      return json(200, rpcResult(id, {
+        content: [{ text: "Mock authorization was reset. The next diagnostics authorization check will require the browser verification link again.", type: "text" }],
+        isError: false,
+        structuredContent: { authorized: false, reset: true },
+      }))
+    }
+    if (requestedTool === mockAuthorizationToolName) {
+      let authorized: boolean
+      try {
+        authorized = await mockSubjectIsAuthorized(authorizationSubject)
+      } catch {
+        return json(200, rpcError(id, -32603, "Mock authorization state is unavailable"))
+      }
+      if (!authorized) {
+        const connectUrl = createMockAuthorizationUrl({
+          publicOrigin: config.publicOrigin,
+          signingSecret: config.signingSecret,
+          subject: authorizationSubject,
+        })
+        return json(200, rpcError(id, -32001, "Authorization required. Open the mock verification link, authorize this diagnostics tool for five minutes, then retry.", {
+          connect_url: connectUrl,
+          provider: "openwork-diagnostics",
+        }))
+      }
+      return json(200, rpcResult(id, {
+        content: [{ text: "Mock authorization is active. The diagnostics authorization-required flow completed successfully.", type: "text" }],
+        isError: false,
+        structuredContent: { authorized: true, expiresAutomatically: true, lifetimeSeconds: 300 },
+      }))
+    }
+    const profileTool = toolDefinition(config.profile)
+    if (requestedTool === profileTool.name) return json(200, rpcResult(id, syntheticToolResult(config.profile)))
+    return json(200, rpcError(id, -32602, `Unknown tool: ${requestedTool}`))
   }
   return json(200, rpcError(id, -32601, "Method not found"))
 }

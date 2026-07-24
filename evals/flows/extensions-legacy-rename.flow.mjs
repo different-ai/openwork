@@ -41,7 +41,7 @@ export default {
       run: async (ctx) => {
         await ctx.prove("OpenWork Connect stays last in Cloud settings even when Memory is enabled", {
           voiceover: vo[1],
-          claim: "The Cloud settings group shows OpenWork Connect with the alpha badge after Memory, and OpenWork Connect is the final item in the full settings sidebar.",
+          claim: "The Cloud settings group shows OpenWork Connect with the beta badge after Memory, and OpenWork Connect is the final item in the full settings sidebar.",
           action: async () => {
             await waitForSettingsShell(ctx);
             await ctx.clickText("OpenWork Connect", { selector: "button", timeoutMs: 30_000 });
@@ -63,13 +63,13 @@ export default {
             ctx.assert(cloudLabels[cloudLabels.length - 1] === "OpenWork Connect", `OpenWork Connect was not last in Cloud: ${JSON.stringify(cloudLabels)}.`);
             ctx.assert(allLabels[allLabels.length - 1] === "OpenWork Connect", `OpenWork Connect was not last in the sidebar: ${JSON.stringify(allLabels)}.`);
             ctx.assert(
-              Boolean(connect?.badges.some((badge) => badge.toLowerCase() === "alpha")),
-              `OpenWork Connect was missing the alpha badge: ${JSON.stringify(connect)}.`,
+              Boolean(connect?.badges.some((badge) => badge.toLowerCase() === "beta")),
+              `OpenWork Connect was missing the beta badge: ${JSON.stringify(connect)}.`,
             );
           },
           screenshot: {
             name: "settings-sidebar-openwork-connect-last",
-            requireText: ["Cloud", "Memory", "OpenWork Connect", "ALPHA"],
+            requireText: ["Cloud", "Memory", "OpenWork Connect", "BETA"],
             rejectText: ["Something went wrong"],
             hashIncludes: "/settings/connect",
           },

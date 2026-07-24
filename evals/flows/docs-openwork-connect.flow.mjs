@@ -107,16 +107,16 @@ export default {
                 hasDcrFallback: bodyText.includes("dynamic client registration as a fallback"),
                 hasPkceS256: bodyText.includes("PKCE") && bodyText.includes("S256"),
                 hasRedirectRules: bodyText.includes("HTTPS callbacks or HTTP loopback callbacks"),
-                hasTokenLifetime: bodyText.includes("JWTs signed and validated with EdDSA") && bodyText.includes("issuer is exactly") && bodyText.includes("audience is exactly") && bodyText.includes("15 minutes") && bodyText.includes("30-day inactivity window"),
+                hasTokenLifetime: bodyText.includes("JWTs signed and validated with EdDSA") && bodyText.includes("issuer is exactly") && bodyText.includes("audience is exactly") && bodyText.includes("45 minutes") && bodyText.includes("30-day inactivity window") && bodyText.includes("30-second rotation overlap"),
                 hasRefreshTokenContract: bodyText.includes("Refresh tokens are opaque rotating grants"),
-                hasRefreshReplayGuidance: bodyText.includes("invalid_grant") && bodyText.includes("replayed") && bodyText.includes("used concurrently"),
+                hasRefreshReplayGuidance: bodyText.includes("invalid_grant") && bodyText.includes("replayed after the overlap"),
                 hasRateLimitGuidance: bodyText.includes("429 rate limit") && bodyText.includes("Retry-After"),
                 hasSupportReference: bodyText.includes("X-Request-Id") && bodyText.includes("referenceId") && bodyText.includes("reference_id"),
                 hasAgentTools: bodyText.includes("search_capabilities") && bodyText.includes("execute_capability"),
                 hasScopedAccessCopy: bodyText.includes("organization membership, role, policy, and exposure allowlists"),
                 hasNoOpaqueAccessTokenClaim: !bodyText.includes("opaque bearer tokens") && !bodyText.includes("Access tokens are opaque"),
                 hasNoJwksClaim: !/\\bJWKS\\b/.test(bodyText),
-                hasCursorDesktopUnsupported: bodyText.includes("cursor://anysphere.cursor-mcp/oauth/callback") && bodyText.includes("Cursor Desktop OAuth is not currently supported"),
+                hasCursorDesktopCallbackPolicy: bodyText.includes("cursor://anysphere.cursor-mcp/oauth/callback") && bodyText.includes("PKCE S256 enforced"),
                 hasChatGptSettings: bodyText.includes("Settings > MCP servers"),
                 hasNoCimdClaim: !bodyText.includes("CIMD"),
               };
@@ -153,7 +153,7 @@ export default {
                 && actual.hasScopedAccessCopy === true
                 && actual.hasNoOpaqueAccessTokenClaim === true
                 && actual.hasNoJwksClaim === true
-                && actual.hasCursorDesktopUnsupported === true
+                && actual.hasCursorDesktopCallbackPolicy === true
                 && actual.hasChatGptSettings === true
                 && actual.hasNoCimdClaim === true,
               actual,

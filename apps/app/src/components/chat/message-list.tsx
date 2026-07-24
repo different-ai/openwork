@@ -31,6 +31,7 @@ import { ReadFileTool, WriteFileTool } from "@/components/tools/file"
 import { GlobTool } from "@/components/tools/glob"
 import { GrepTool } from "@/components/tools/grep"
 import { LspTool } from "@/components/tools/lsp"
+import { OpenWorkSessionCreateTool } from "@/components/tools/openwork-session-create"
 import { QuestionTool } from "@/components/tools/question"
 import { SkillTool } from "@/components/tools/skill"
 import { TodoWriteTool } from "@/components/tools/todowrite"
@@ -52,6 +53,7 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu"
+import { ImageAttachmentBadge } from "@/components/chat/image-attachment-badge"
 import { Image } from "@/components/ui/image"
 import {
   Message,
@@ -60,6 +62,10 @@ import {
   MessageContent,
 } from "@/components/ui/message"
 import { Tool } from "@/components/ui/tool"
+import { CapabilityCallLine } from "@/components/chat/capability-call-line"
+import { ReasoningBlock } from "@/components/chat/reasoning-block"
+import { SubagentRunLine } from "@/components/chat/subagent-run-line"
+import { ToolAggregateGroup } from "@/components/chat/tool-aggregate-group"
 import {
   isApplyPatchToolPart,
   isBashToolPart,
@@ -71,6 +77,7 @@ import {
   isQuestionToolPart,
   isReadToolPart,
   isSkillToolPart,
+  isTaskToolPart,
   isTodoWriteToolPart,
   isWebFetchToolPart,
   isWebSearchToolPart,
@@ -81,9 +88,11 @@ import {
   collectToolParts,
   getActiveToolLabel,
 } from "@/lib/tool-activity"
+import { faviconUrlForHref } from "@/lib/favicon"
 import { cn } from "@/lib/utils"
 import { t } from "@/i18n"
-import { groupMessages, isMessageGroup, getLastTextPart, getAssistantRenderGroups, getFileTitle, getMediaBadge, getMessageCreated, formatMessageTimestamp, type UIMessageWithIndex, getMessagesText, getSafeFileDownloadUrl } from "./utils"
+import { groupMessages, isMessageGroup, getLastTextPart, getAggregateOnlyParts, getAssistantRenderGroups, getFileTitle, getMediaBadge, getMessageCreated, formatMessageTimestamp, type UIMessageWithIndex, getMessagesText, getSafeFileDownloadUrl } from "./utils"
+import type { AnyToolPart } from "@/lib/tool-aggregate"
 
 const SEARCH_HIGHLIGHT_MARK_CLASS = "rounded px-0.5 bg-amber-4/70 text-current"
 
@@ -195,6 +204,27 @@ const ToolMessageInner = ({ part }: ToolMessageProps) => {
     return <EnvVarRequestTool part={part} />
   }
 
+  if (part.type === "dynamic-tool" && part.toolName === "openwork_session_create") {
+    return <OpenWorkSessionCreateTool part={part} />
+  }
+
+  if (isTaskToolPart(part)) {
+    return <SubagentRunLine part={part} />
+  }
+
+  // Failed calls use the same sentence line with the "failures are
+  // instructions" treatment (inline Reconnect/Retry).
+  if (part.type === "dynamic-tool") {
+    return (
+      <CapabilityCallLine
+        part={part}
+        onReconnect={onMcpReconnect}
+        onReopenAuthorization={onMcpReopenAuthorization}
+        onRetry={onMcpRetry}
+      />
+    )
+  }
+
   return (
     <Tool
       toolPart={part}
@@ -222,11 +252,10 @@ interface FileMessageProps {
   tone: "user" | "assistant"
 }
 
-// TODO: Add tone to the file message
-function FileMessage({ part }: FileMessageProps) {
+function FileMessage({ part, tone }: FileMessageProps) {
   const title = getFileTitle(part)
   const badge = getMediaBadge(part)
-  const isImage = part.mediaType.startsWith("image/") && part.url
+  const isImage = part.mediaType.startsWith("image/") && Boolean(part.url)
   const downloadUrl = getSafeFileDownloadUrl(part)
 
   const handleDownload = React.useCallback(() => {
@@ -240,6 +269,10 @@ function FileMessage({ part }: FileMessageProps) {
     anchor.remove()
   }, [downloadUrl, title])
 
+  if (isImage && tone === "user") {
+    return <ImageAttachmentBadge src={part.url} alt={title} />
+  }
+
   if (isImage) {
     return (
       <Image
@@ -247,20 +280,23 @@ function FileMessage({ part }: FileMessageProps) {
         alt={title}
         loading="lazy"
         decoding="async"
+        previewMaxWidth={280}
+        previewMaxHeight={160}
+        className="rounded-xl border border-border/70"
       />
     )
   }
 
   return (
-    <div className="flex h-auto w-fit min-w-0 max-w-full shrink items-center justify-start gap-2 rounded-xl border border-border ps-2 pe-2 py-1 text-left text-sm font-medium whitespace-normal">
+    <div className="flex h-auto w-fit min-w-0 max-w-full shrink items-center justify-start gap-2 rounded-xl border border-border/70 bg-background/40 ps-2 pe-2 py-1 text-left text-sm font-medium whitespace-normal">
       <div className="flex min-w-0 items-center gap-2 pe-2">
         <DescriptiveButtonIcon>
-          <FileIcon className="size-6 shrink-0" />
+          <FileIcon className="size-5 shrink-0" />
         </DescriptiveButtonIcon>
         <DescriptiveButtonContent className="gap-0">
-          <DescriptiveButtonTitle>{title}</DescriptiveButtonTitle>
+          <DescriptiveButtonTitle className="truncate text-xs">{title}</DescriptiveButtonTitle>
           {badge ? (
-            <DescriptiveButtonDescription className="text-xs">
+            <DescriptiveButtonDescription className="text-[10px]">
               {badge}
             </DescriptiveButtonDescription>
           ) : null}
@@ -360,20 +396,26 @@ const AssistantMessage = React.memo(
 
             if (group.kind === "reasoning") {
               return (
-                <MessageContent
+                <ReasoningBlock
                   key={`reasoning-${index}`}
-                  className="text-muted-foreground prose w-full min-w-0 flex-1 rounded-lg bg-transparent p-0"
-                  markdown
-                >
-                  {group.text}
-                </MessageContent>
+                  text={group.text}
+                  isStreaming={group.isStreaming}
+                />
               )
             }
 
             if (group.kind === "file") {
               return (
-                <div key={`file-${index}`} className="w-full">
+                <div key={`file-${index}`} className="w-fit max-w-full">
                   <FileMessage part={group.part} tone="assistant" />
+                </div>
+              )
+            }
+
+            if (group.kind === "tool-aggregate") {
+              return (
+                <div key={`tool-aggregate-${index}`} className="w-full">
+                  <ToolAggregateGroup parts={group.parts} />
                 </div>
               )
             }
@@ -442,15 +484,67 @@ function renderPlainTextWithSearchHighlights(text: string, highlightQuery: strin
   return nodes
 }
 
+// Bare URL, excluding trailing punctuation that usually ends a sentence.
+const PLAIN_URL_RE = /https?:\/\/[^\s<>"')\]]+[^\s<>"')\].,;:!?]/g
+
+/** User bubbles are plain text, so bare https:// URLs need explicit anchors. */
+function renderPlainTextWithLinks(text: string, highlightQuery: string | undefined, keyPrefix: string) {
+  const nodes: React.ReactNode[] = []
+  let cursor = 0
+  for (const match of text.matchAll(PLAIN_URL_RE)) {
+    const start = match.index
+    const url = match[0]
+    if (start > cursor) {
+      nodes.push(
+        <React.Fragment key={`${keyPrefix}:pre:${cursor}`}>
+          {renderPlainTextWithSearchHighlights(text.slice(cursor, start), highlightQuery, `${keyPrefix}:pre:${cursor}`)}
+        </React.Fragment>
+      )
+    }
+    const favicon = faviconUrlForHref(url)
+    nodes.push(
+      <a
+        key={`${keyPrefix}:url:${start}`}
+        href={url}
+        target="_blank"
+        rel="noreferrer noopener"
+        className="text-indigo-10 transition-colors hover:text-indigo-8 break-all"
+      >
+        {favicon ? (
+          <img
+            src={favicon}
+            alt=""
+            aria-hidden="true"
+            loading="lazy"
+            decoding="async"
+            className="me-1 inline-block size-3.5 rounded-[3px] align-[-2px]"
+          />
+        ) : null}
+        {url}
+      </a>
+    )
+    cursor = start + url.length
+  }
+  if (nodes.length === 0) return renderPlainTextWithSearchHighlights(text, highlightQuery, keyPrefix)
+  if (cursor < text.length) {
+    nodes.push(
+      <React.Fragment key={`${keyPrefix}:post:${cursor}`}>
+        {renderPlainTextWithSearchHighlights(text.slice(cursor), highlightQuery, `${keyPrefix}:post:${cursor}`)}
+      </React.Fragment>
+    )
+  }
+  return nodes
+}
+
 function renderUserTextWithSkillChips(text: string, highlightQuery: string | undefined) {
-  if (!USER_SKILL_TOKEN_RE.test(text)) return renderPlainTextWithSearchHighlights(text, highlightQuery, "text")
+  if (!USER_SKILL_TOKEN_RE.test(text)) return renderPlainTextWithLinks(text, highlightQuery, "text")
   let offset = 0
   return text.split(USER_SKILL_TOKEN_RE).map((segment) => {
     const key = `${offset}:${segment}`
     offset += segment.length
     const skillMatch = segment.match(/^(?:Load )?\[skill ([^\]]+)\](?: and follow its instructions\.)?$/)
     if (skillMatch?.[1]) return <UserSkillChip key={key} name={skillMatch[1]} />
-    return <React.Fragment key={key}>{renderPlainTextWithSearchHighlights(segment, highlightQuery, key)}</React.Fragment>
+    return <React.Fragment key={key}>{renderPlainTextWithLinks(segment, highlightQuery, key)}</React.Fragment>
   })
 }
 
@@ -458,6 +552,11 @@ const UserMessage = React.memo(
   ({ message, isStreaming }: UserMessageProps) => {
     const { onRevertToUserMessage, onForkAtMessage, onEditUserMessage, highlightQuery } = useMessageList()
     const messageText = React.useMemo(() => getMessagesText([message]), [message])
+    const inlineParts = React.useMemo(
+      () => message.parts.filter((part) => (part.type === "text" && Boolean(part.text)) || isFileUIPart(part)),
+      [message.parts],
+    )
+    const hasContent = inlineParts.length > 0
 
     return (
       <Message
@@ -467,17 +566,38 @@ const UserMessage = React.memo(
       >
         <ContextMenu>
           <ContextMenuTrigger
+            // Override Trigger's select-none so user bubbles stay copyable.
+            className="!select-text"
             render={
-              <div className="group flex w-full flex-col items-end gap-1">
-                {message.parts.filter(isFileUIPart).map((part, index) => (
-                  <FileMessage key={`${part.url}-${index}`} part={part} tone="user" />
-                ))}
-                {message.parts.some((part) => part.type === "text" && part.text) ? (
+              <div
+                className="group flex w-full flex-col items-end gap-1 !select-text"
+                style={{ userSelect: "text" }}
+              >
+                {hasContent ? (
                   <MessageContent
-                    layoutId={message.id}
-                    className="bg-muted text-foreground max-w-[85%] rounded-3xl px-5 py-2.5 whitespace-pre-wrap sm:max-w-[75%]"
+                    className="bg-muted text-foreground max-w-[85%] rounded-3xl px-4 py-2.5 leading-6 sm:max-w-[75%] !select-text not-prose"
+                    style={{ userSelect: "text" }}
                   >
-                    {renderUserTextWithSkillChips(message.parts.map((part) => (part.type === "text" ? part.text : "")).join(""), highlightQuery)}
+                    {inlineParts.map((part, index) => {
+                      if (part.type === "text") {
+                        return (
+                          <span key={`text-${index}`} className="whitespace-pre-wrap">
+                            {renderUserTextWithSkillChips(part.text, highlightQuery)}
+                          </span>
+                        )
+                      }
+                      if (isFileUIPart(part)) {
+                        return (
+                          <span
+                            key={`file-${part.url}-${index}`}
+                            className="mx-1 inline-flex align-middle not-prose"
+                          >
+                            <FileMessage part={part} tone="user" />
+                          </span>
+                        )
+                      }
+                      return null
+                    })}
                   </MessageContent>
                 ) : null}
                 {!isStreaming && (
@@ -711,10 +831,6 @@ function getRenderableMessage(message: UIMessage) {
   return parts.length > 0 ? { ...message, parts } : null;
 }
 
-function MessageArtifacts(props: { message: UIMessage }) {
-  return <ArtifactList messages={[props.message]} includeTargetFallbacks={false} />;
-}
-
 interface AssistantMessageGroupProps {
   items: UIMessageWithIndex[]
   messages: UIMessage[]
@@ -726,7 +842,7 @@ function MessageGroup({
   messages,
   isStreaming,
 }: AssistantMessageGroupProps) {
-  const { onRevertToUserMessage, onForkAtMessage } = useMessageList()
+  const { onRevertToUserMessage, onForkAtMessage, showThinking } = useMessageList()
   const lastItem = items[items.length - 1]
   // Branch/revert must target a real server-side message id. Synthetic
   // client-side messages (e.g. session errors) don't exist on the server and
@@ -771,19 +887,57 @@ function MessageGroup({
           isStreaming={isLastMessage && isStreaming}
           isLastStep={groupIndex === items.length - 1}
         />
-        <MessageArtifacts message={item.message} />
       </div>
     )
+  }
+
+  // Consecutive step messages that contain nothing but command/edit/read/
+  // search tool calls merge into one aggregate line (Paper "Recurring
+  // actions"); any prose, reasoning, or other tool breaks the run.
+  const renderItems = (slice: UIMessageWithIndex[], offset: number) => {
+    const nodes: React.ReactNode[] = []
+    let run: { parts: AnyToolPart[]; key: string } | null = null
+    const flush = () => {
+      if (!run) return
+      nodes.push(
+        <div key={`aggregate-${run.key}`}>
+          <Message className="mx-auto flex w-full max-w-3xl flex-col items-start gap-2 px-2 md:px-10">
+            <ToolAggregateGroup parts={run.parts} className="w-full" />
+          </Message>
+        </div>
+      )
+      run = null
+    }
+    slice.forEach((item, sliceIndex) => {
+      const aggregateParts =
+        item.message.role === "assistant" && !isSessionErrorMessage(item.message)
+          ? getAggregateOnlyParts(item.message, showThinking)
+          : null
+      if (aggregateParts) {
+        if (!run) run = { parts: [], key: item.message.id }
+        run.parts.push(...aggregateParts)
+        return
+      }
+      flush()
+      nodes.push(renderItem(item, offset + sliceIndex))
+    })
+    flush()
+    return nodes
   }
 
   return (
       <div className="flex flex-col gap-2 group/message-group">
       {stepItems.length > 0 ? (
         <div ref={stepsRef} className="max-h-[520px] overflow-y-auto">
-          {stepItems.map((item, groupIndex) => renderItem(item, groupIndex))}
+          {renderItems(stepItems, 0)}
         </div>
       ) : null}
-      {proseItems.map((item, groupIndex) => renderItem(item, stepItems.length + groupIndex))}
+      {renderItems(proseItems, stepItems.length)}
+      {/* Paper artifact strip: one FILES row per turn, at the end. */}
+      <ArtifactList
+        messages={items.map((item) => item.message)}
+        includeTargetFallbacks={false}
+      />
       {lastTextMessage && !isStreaming && (
         <div className="mx-auto flex w-full max-w-3xl flex-wrap items-center gap-2 px-2 opacity-0 transition-opacity duration-150 group-hover/message-group:opacity-100 md:px-8">
           <MessageActions className="flex gap-0">
@@ -864,7 +1018,7 @@ export function MessageList({ messages, status, retryStatus }: MessageListProps)
               isStreaming={isLastMessage && isStreaming}
               isLastStep={isLastStep}
             />
-            <MessageArtifacts message={item.message} />
+            <ArtifactList messages={[item.message]} includeTargetFallbacks={false} />
           </div>
         )
       })}

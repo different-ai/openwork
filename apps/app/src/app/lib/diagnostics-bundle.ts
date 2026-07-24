@@ -84,6 +84,7 @@ function pickEngineInfo(info: EngineInfo | null) {
   return {
     running: info.running,
     runtime: info.runtime,
+    managedByServer: info.managedByServer,
     baseUrl: info.baseUrl,
     projectDir: info.projectDir,
     hostname: info.hostname,

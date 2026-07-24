@@ -1,5 +1,4 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { eq } from "drizzle-orm";
 import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
@@ -7,7 +6,7 @@ import type { ServerConfig } from "./types.js";
 import { ApiError } from "./errors.js";
 import { parseFrontmatter, buildFrontmatter } from "./frontmatter.js";
 import { addMcp, removeMcp } from "./mcp.js";
-import { ensureDir } from "./utils.js";
+import { openRuntimeSqliteDatabase, runtimeDbPath } from "./runtime-db.js";
 
 const OPENCODE_SKILL_NAME_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 const OPENCODE_MCP_NAME_RE = /^[A-Za-z0-9_][A-Za-z0-9_-]*$/;
@@ -486,22 +485,12 @@ function readCloudImports(config: Record<string, unknown>): WorkspaceCloudImport
   };
 }
 
-function runtimeDbPath(config: ServerConfig): string {
-  const override = process.env.OPENWORK_RUNTIME_DB?.trim();
-  if (override) return resolve(override);
-  const configPath = config.configPath?.trim();
-  const configDir = configPath ? dirname(configPath) : resolve(homedir(), ".config", "openwork");
-  return resolve(configDir, "runtime.sqlite");
-}
-
 async function openCloudPluginDb(path: string): Promise<CloudPluginDb> {
-  await ensureDir(dirname(path));
-  if (typeof process.versions.bun === "string") {
-    const { Database } = await import("bun:sqlite");
-    const { drizzle } = await import("drizzle-orm/bun-sqlite");
-    const sqlite = new Database(path, { create: true });
+  const runtimeDb = await openRuntimeSqliteDatabase(path);
+  if (runtimeDb.kind === "bun") {
+    const sqlite = runtimeDb.sqlite;
     sqlite.run("CREATE TABLE IF NOT EXISTS cloud_plugin_install_configs (workspace_id TEXT PRIMARY KEY NOT NULL, config_json TEXT NOT NULL, updated_at INTEGER NOT NULL)");
-    const db = drizzle(sqlite);
+    const db = runtimeDb.db;
     return {
       get: (workspaceId) => db
         .select()
@@ -520,8 +509,7 @@ async function openCloudPluginDb(path: string): Promise<CloudPluginDb> {
       },
     };
   }
-  const { DatabaseSync } = await import("node:sqlite");
-  const sqlite = new DatabaseSync(path);
+  const sqlite = runtimeDb.sqlite;
   sqlite.exec("CREATE TABLE IF NOT EXISTS cloud_plugin_install_configs (workspace_id TEXT PRIMARY KEY NOT NULL, config_json TEXT NOT NULL, updated_at INTEGER NOT NULL)");
   const get = sqlite.prepare("SELECT config_json AS configJson FROM cloud_plugin_install_configs WHERE workspace_id = ?");
   const upsert = sqlite.prepare("INSERT INTO cloud_plugin_install_configs (workspace_id, config_json, updated_at) VALUES (?, ?, ?) ON CONFLICT(workspace_id) DO UPDATE SET config_json = excluded.config_json, updated_at = excluded.updated_at");

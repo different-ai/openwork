@@ -1180,7 +1180,7 @@ describe("marketplace cloud readiness payload", () => {
     expect(await listUsableConnectionIds({ org, memberId: member.memberId, teamIds: [team.teamId] })).toContain(connectionId)
   })
 
-  test("marketplace lifecycle archives only that marketplace's sourced MCP audience and restores it", async () => {
+  test("marketplace lifecycle archives or deletes only that marketplace's sourced MCP audience", async () => {
     const org = await seedOrg({ marketplaceGrant: "none" })
     const archivedMarketplaceTeam = await addTeam({ org, name: "Archived Marketplace Team" })
     const otherMarketplaceTeam = await addTeam({ org, name: "Other Marketplace Team" })
@@ -1305,6 +1305,38 @@ describe("marketplace cloud readiness payload", () => {
     await store.setMarketplaceLifecycle({ action: "restore", context: org.context, marketplaceId: org.marketplaceId })
     expect(await sourceGrantCount(bindingId)).toBe(4)
     expect(await listUsableConnectionIds({ org, memberId: archivedMarketplaceMember.memberId, teamIds: [archivedMarketplaceTeam.teamId] })).toContain(connectionId)
+
+    const deleted = await store.setMarketplaceLifecycle({ action: "delete", context: org.context, marketplaceId: org.marketplaceId })
+    expect(deleted.status).toBe("deleted")
+    expect(deleted.deletedAt).not.toBeNull()
+    expect(await db.select().from(MarketplaceTable).where(eq(MarketplaceTable.id, org.marketplaceId))).toHaveLength(0)
+    expect(await db.select().from(MarketplacePluginTable).where(eq(MarketplacePluginTable.marketplaceId, org.marketplaceId))).toHaveLength(0)
+    expect(await db.select().from(MarketplaceAccessGrantTable).where(eq(MarketplaceAccessGrantTable.marketplaceId, org.marketplaceId))).toHaveLength(0)
+    expect(await db.select().from(PluginTable).where(eq(PluginTable.id, plugin.pluginId))).toHaveLength(1)
+    expect(await sourceGrantCount(bindingId)).toBe(3)
+    expect(await listUsableConnectionIds({ org, memberId: archivedMarketplaceMember.memberId, teamIds: [archivedMarketplaceTeam.teamId] })).not.toContain(connectionId)
+  })
+
+  test("marketplace lifecycle refuses to delete a managed marketplace", async () => {
+    const org = await seedOrg()
+    await seedPlugin({ org, name: "Built-in Plugin" })
+    await db
+      .update(MarketplacePluginTable)
+      .set({ membershipSource: "system" })
+      .where(eq(MarketplacePluginTable.marketplaceId, org.marketplaceId))
+
+    await expect(store.setMarketplaceLifecycle({
+      action: "delete",
+      context: org.context,
+      marketplaceId: org.marketplaceId,
+    })).rejects.toMatchObject({
+      error: "managed_marketplace_cannot_be_deleted",
+      status: 409,
+    })
+
+    const [marketplace] = await db.select().from(MarketplaceTable).where(eq(MarketplaceTable.id, org.marketplaceId))
+    expect(marketplace?.status).toBe("active")
+    expect(marketplace?.deletedAt).toBeNull()
   })
 
   test("plugin lifecycle archives sourced MCP access without deleting bindings and restores it", async () => {

@@ -49,7 +49,7 @@ describe("ensureWorkspaceFiles", () => {
     const pluginPath = openworkExtensionsPreviewPluginPath();
     const plugin = await readFile(pluginPath, "utf8");
     expect(pluginPath).toContain(join("opencode-plugins", "openwork-extensions-preview.ts"));
-    expect(plugin).toContain("openwork_extension_call");
+    expect(plugin).toContain("openwork_execute");
   });
 
   test("uses external resources plugin path in packaged Electron", () => {

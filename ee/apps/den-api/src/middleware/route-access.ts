@@ -1,4 +1,5 @@
 import type { MiddlewareHandler } from "hono"
+import { organizationRoleValueSatisfies } from "../organization-role-hierarchy.js"
 import type { AuthContextVariables } from "../session.js"
 import { requireAdminMiddleware } from "./admin.js"
 import { requireUserMiddleware } from "./current-user.js"
@@ -32,17 +33,11 @@ export function verifyOrgRole(input: { roles: readonly string[]; userContext: Or
   if (input.roles.includes("member")) {
     return true
   }
-
-  if (input.userContext.isOwner) {
-    return true
-  }
-
-  const assignedRoles = input.userContext.role
-    .split(",")
-    .map((role) => role.trim())
-    .filter(Boolean)
-
-  return input.roles.some((role) => assignedRoles.includes(role))
+  return input.roles.some((role) => organizationRoleValueSatisfies({
+    roleValue: input.userContext.role,
+    requiredRole: role,
+    isOwner: input.userContext.isOwner,
+  }))
 }
 
 export const publicRoute: MiddlewareHandler = async (_c, next) => {

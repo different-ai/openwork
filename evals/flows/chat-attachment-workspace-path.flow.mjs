@@ -178,14 +178,16 @@ export default {
             await ctx.control("composer.send");
           },
           assert: async () => {
-            await ctx.waitForText(".opencode/openwork/inbox/chat-attachments/", { timeoutMs: 30_000 });
+            // Path note is synthetic (hidden from chat UI); the file badge stays visible
+            // and the transcript still exposes the worker file:// inbox URL for tools.
+            await ctx.waitForText(FILENAME, { timeoutMs: 30_000 });
             const transcript = await ctx.control("session.read_transcript", { count: 5 });
             const text = transcriptText(transcript);
             assertEvidence(ctx, text.includes(".opencode/openwork/inbox/chat-attachments/"), "Transcript contains the workspace inbox path", text);
             assertEvidence(ctx, !text.includes("data:application/pdf"), "Transcript does not expose the PDF as a data URL fallback", text);
             ctx.output("submitted user turn", text);
           },
-          screenshot: { name: "worker-path-in-turn", requireText: [".opencode/openwork/inbox/chat-attachments/", FILENAME] },
+          screenshot: { name: "worker-path-in-turn", requireText: [FILENAME] },
         });
       },
     },
@@ -207,7 +209,7 @@ export default {
             assertEvidence(ctx, !text.toLowerCase().includes("ocr complete"), "The prompt does not claim OpenWork performed native OCR", text);
             ctx.output("Docling-ready path", filePath);
           },
-          screenshot: { name: "docling-ready-path", requireText: [FILENAME, "chat-attachments"] },
+          screenshot: { name: "docling-ready-path", requireText: [FILENAME] },
         });
       },
     },

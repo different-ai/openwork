@@ -56,7 +56,6 @@ export const OrgOAuthClientTable = mysqlTable(
       .default(sql`CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)`),
   },
   (table) => [
-    index("org_oauth_client_organization_id").on(table.organizationId),
     uniqueIndex("org_oauth_client_org_provider").on(
       table.organizationId,
       table.providerId,
@@ -100,7 +99,6 @@ export const ConnectedAccountTable = mysqlTable(
   },
   (table) => [
     index("connected_account_organization_id").on(table.organizationId),
-    index("connected_account_org_membership_id").on(table.orgMembershipId),
     uniqueIndex("connected_account_member_provider").on(
       table.orgMembershipId,
       table.providerId,
@@ -287,7 +285,6 @@ export const PluginMcpRequirementBindingTable = mysqlTable(
     updatedAt: timestamp("updated_at", { fsp: 3 }).notNull().default(sql`CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)`),
   },
   (table) => [
-    index("plugin_mcp_req_binding_organization_id").on(table.organizationId),
     index("plugin_mcp_req_binding_plugin_id").on(table.pluginId),
     index("plugin_mcp_req_binding_config_object_id").on(table.configObjectId),
     index("plugin_mcp_req_binding_connection_id").on(table.externalMcpConnectionId),

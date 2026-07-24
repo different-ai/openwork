@@ -1,6 +1,6 @@
 export default {
   id: "signin-browser-open-fallback",
-  title: "Cloud sign-in surfaces browser open failure with copy-link fallback",
+  title: "Cloud sign-in keeps the exact URL visible as a fallback",
   kind: "user-facing",
   requiredEnv: ["OPENWORK_SIMULATE_OPEN_EXTERNAL_FAILURE"],
   steps: [
@@ -32,25 +32,47 @@ export default {
           await ctx.clickText("Sign out");
           await ctx.expectText("Sign in", { timeoutMs: 15_000 });
         }
+        await ctx.waitFor(
+          "window.__openworkControl.execute('auth.status').then((result) => result.result?.status === 'signed_out').catch(() => false)",
+          { timeoutMs: 15_000, label: "stable signed-out state" },
+        );
       },
     },
     {
-      name: "Browser open failure shows fallback",
+      name: "Sign in keeps the exact URL visible",
       run: async (ctx) => {
-        await ctx.clickText("Sign in");
-        await ctx.expectText("We couldn't open your browser automatically.", { timeoutMs: 10_000 });
+        await ctx.eval(`(() => {
+          const button = [...document.querySelectorAll("button")].find(
+            (entry) => entry.textContent?.trim() === "Sign in" && !entry.disabled,
+          );
+          button?.setAttribute("data-eval-cloud-signin", "true");
+          return Boolean(button);
+        })()`);
+        await ctx.trustedClick('[data-eval-cloud-signin="true"]');
+        await ctx.expectText("Copy the sign-in link and open it in any browser", { timeoutMs: 10_000 });
         await ctx.expectText("Copy sign-in link");
         await ctx.expectText("Sign-in link or one-time code");
+        const signInUrl = await ctx.eval(`(() => {
+          const link = [...document.querySelectorAll("a")].find((entry) =>
+            entry.href.includes("desktopAuth=1") && entry.href.includes("mode=sign-in")
+          );
+          return link?.href ?? "";
+        })()`);
+        ctx.assert(
+          typeof signInUrl === "string" && signInUrl.includes("desktopScheme=openwork"),
+          "The complete desktop sign-in URL should be visible as a clickable link.",
+        );
         await ctx.screenshot("browser-open-fallback", {
-          claim: "When the system browser cannot be opened, Cloud sign-in shows a copy-link fallback and keeps paste-code auth reachable.",
+          claim: "After Sign in is clicked, the exact Cloud URL stays visible and clickable even when the automatic browser launch fails.",
           voiceover:
-            "I click Sign in, but this machine refuses to open a browser. Instead of pretending everything worked, OpenWork tells me right away and offers to copy the sign-in link — and the paste-code box is already open for when I come back.",
+            "I click Sign in, and OpenWork keeps the exact Cloud URL directly below the button. Even when this machine cannot launch a browser, I can open or copy the link and finish signing in.",
           requireText: [
-            "We couldn't open your browser automatically.",
+            "Copy the sign-in link and open it in any browser",
+            "desktopAuth=1",
             "Copy sign-in link",
             "Sign-in link or one-time code",
           ],
-          rejectText: ["Finish signing in"],
+          rejectText: ["We couldn't open your browser automatically."],
           hashIncludes: "/settings/cloud-account",
         });
       },
@@ -84,10 +106,12 @@ export default {
           voiceover:
             "One click copies the real sign-in link, so I can open it in any browser I like, sign in there, and paste the code back here to finish.",
           requireText: [
-            "We couldn't open your browser automatically.",
+            "Copy the sign-in link and open it in any browser",
+            "desktopAuth=1",
+            "Copied",
             "Sign-in link or one-time code",
           ],
-          rejectText: ["Finish signing in"],
+          rejectText: ["We couldn't open your browser automatically."],
           hashIncludes: "/settings/cloud-account",
         });
       },

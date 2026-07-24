@@ -21,7 +21,9 @@ import {
   DenApiError,
   ensureDenActiveOrganization,
   normalizeDenDesktopConfig,
+  readDenBootstrapConfig,
   readDenSettings,
+  setDenBootstrapConfig,
   type DenDesktopConfig,
 } from "../../../app/lib/den";
 import { applyBrandAppName, applyBrandIcon } from "../../../app/lib/desktop";
@@ -30,8 +32,13 @@ import {
   denSessionUpdatedEvent,
   denSettingsChangedEvent,
 } from "../../../app/lib/den-session-events";
+import { isDesktopRuntime } from "../../../app/lib/runtime-env";
 import { resolveOpenworkConnection } from "../../shell/openwork-connection";
 import { useDenAuth } from "./den-auth-provider";
+import {
+  bootstrapBrandingFromDesktopConfig,
+  bootstrapBrandingNeedsSync,
+} from "./workspace-branding-restart";
 
 export type DesktopConfigStore = {
   config: DenDesktopConfig;
@@ -71,6 +78,10 @@ type DesktopConfigAction = {
   nextValue: DenDesktopConfig[DesktopConfigItem];
   previousValue: DenDesktopConfig[DesktopConfigItem];
 };
+
+function isBootstrapBrandingActionItem(item: DesktopConfigItem): boolean {
+  return item === "brandAppName" || item === "brandLogoUrl" || item === "brandIconUrl";
+}
 
 function getDesktopConfigCacheKey(): string {
   const settings = readDenSettings();
@@ -195,6 +206,27 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
       const appName = typeof brandAppNameAction.nextValue === "string" ? brandAppNameAction.nextValue : null;
       document.title = appName ?? "OpenWork";
       void applyBrandAppName(appName).catch(() => null);
+    }
+
+    // Keep desktop-bootstrap.json aligned so a cleared wordmark/icon cannot
+    // resurrect from the install/connect snapshot on the next relaunch.
+    const shouldSyncBootstrapBranding = actions.some((action) =>
+      isBootstrapBrandingActionItem(action.item),
+    );
+    if (shouldSyncBootstrapBranding && isDesktopRuntime()) {
+      const bootstrap = readDenBootstrapConfig();
+      if (bootstrapBrandingNeedsSync(bootstrap, normalizedConfig)) {
+        const branding = bootstrapBrandingFromDesktopConfig(normalizedConfig);
+        void setDenBootstrapConfig(
+          {
+            ...bootstrap,
+            brandAppName: branding.brandAppName,
+            brandLogoUrl: branding.brandLogoUrl,
+            brandIconUrl: branding.brandIconUrl,
+          },
+          { dispatchSettingsChanged: false },
+        ).catch(() => undefined);
+      }
     }
 
     currentDesktopConfigRef.current = normalizedConfig;

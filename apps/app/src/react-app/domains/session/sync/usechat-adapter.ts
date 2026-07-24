@@ -54,9 +54,22 @@ function withAttachmentRecoveryHint(text: string) {
   return `${text}\nAn attached file in this conversation uses a format the model can't read. Revert the conversation to before the attachment was sent, or start a new session.`;
 }
 
+/**
+ * OpenCode Codex/ChatGPT OAuth refresh failures surface as a raw engine string.
+ * Narrowly rewrite the 401 case so users reconnect OpenAI — not OpenWork Cloud.
+ */
+function withOpenAiTokenRefreshHint(text: string) {
+  if (!/Token refresh failed:\s*401/i.test(text)) return text;
+  return "OpenAI couldn’t renew the ChatGPT sign-in for this worker. Retry once. If it happens again, reconnect OpenAI under Connect providers → OpenAI → ChatGPT Pro/Plus.";
+}
+
+function withSessionErrorHints(text: string) {
+  return withOpenAiTokenRefreshHint(withAttachmentRecoveryHint(text));
+}
+
 export function describeOpencodeSessionError(error: unknown, fallback = "Session failed") {
-  if (error instanceof Error) return withAttachmentRecoveryHint(error.message || fallback);
-  if (typeof error === "string") return withAttachmentRecoveryHint(error.trim() || fallback);
+  if (error instanceof Error) return withSessionErrorHints(error.message || fallback);
+  if (typeof error === "string") return withSessionErrorHints(error.trim() || fallback);
   if (!error || typeof error !== "object") return fallback;
 
   const data = recordValue(error, "data");
@@ -77,7 +90,7 @@ export function describeOpencodeSessionError(error: unknown, fallback = "Session
   if (code) lines.push(`Code: ${code}`);
   if (retries !== null) lines.push(`Retries: ${retries}`);
   if (responseBody && responseBody !== message) lines.push(`Response: ${responseBody}`);
-  if (lines.some((line) => line !== fallback)) return withAttachmentRecoveryHint(lines.join("\n"));
+  if (lines.some((line) => line !== fallback)) return withSessionErrorHints(lines.join("\n"));
 
   const serialized = safeStringify(error);
   return serialized && serialized !== "{}" ? serialized : fallback;

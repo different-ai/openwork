@@ -70,6 +70,19 @@ describe("openwork runtime config file", () => {
     expect(mcp.posthog?.enabled).toBe(true);
     expect(parsed.default_agent).toBe("openwork");
     expect(Array.isArray(parsed.plugin)).toBe(true);
+    expect(parsed.agent).toMatchObject({
+      openwork: {
+        permission: {
+          skill: {
+            "customize-opencode": "deny",
+            "get-started": "deny",
+            "command-creator": "deny",
+            "agent-creator": "deny",
+            "plugin-creator": "deny",
+          },
+        },
+      },
+    });
   });
 
   test("openwork prompt has a static search-first Memory Bank section, distinct from ## Memory", async () => {
@@ -90,20 +103,6 @@ describe("openwork runtime config file", () => {
     expect(prompt).not.toContain("memory_search");
     // No-secrets guidance is the only v0 plaintext-at-rest mitigation.
     expect(prompt).toMatch(/secret|credential|API key|token|PII/i);
-  });
-
-  test("openwork prompt tells the agent to relay recoverable authorization links", async () => {
-    const { config } = await setup();
-    await writeOpenworkRuntimeConfigFile(config, "ws_1");
-
-    const parsed = await readConfigFile(config);
-    const agent = parsed.agent as Record<string, { prompt?: string }>;
-    const prompt = agent.openwork?.prompt ?? "";
-
-    expect(prompt).toContain("JSON-RPC code -32001");
-    expect(prompt).toContain("data.connect_url");
-    expect(prompt).toContain("show data.connect_url as a Markdown link");
-    expect(prompt).toContain("Do not open the link yourself");
   });
 
   test("keepOpenworkRuntimeConfigFileFresh rewrites the file on runtime-DB writes", async () => {

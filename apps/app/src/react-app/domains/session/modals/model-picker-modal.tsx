@@ -6,7 +6,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { ArrowRight, Check, ChevronDown, ChevronRight, Search, Sparkles, Star, X } from "lucide-react";
+import { ArrowRight, Check, ChevronDown, ChevronRight, RefreshCw, Search, Sparkles, Star, X } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
 import {
@@ -58,6 +58,9 @@ export type ModelPickerModalProps = {
   onToggleProvider?: (providerId: string, enabled: boolean) => void;
   onOpenSettings: () => void;
   onClose: (options?: { restorePromptFocus?: boolean }) => void;
+  /** Den entitlement present; used to avoid a false Subscribe CTA while models sync. */
+  openWorkModelsEntitled?: boolean;
+  onRefreshOpenWorkModels?: () => void | Promise<void>;
 };
 
 type ProviderGroup = {
@@ -165,12 +168,26 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
     }
   }, [props.query, providerGroups]);
 
-  // Expand current provider on open
+  // Expand current + OpenWork groups once they appear (options often load async).
+  const autoExpandedRef = useRef<Set<string>>(new Set());
   useEffect(() => {
-    if (!props.open) return;
-    const current = providerGroups.find((g) => g.hasCurrent);
-    if (current) setExpandedProviders(new Set([current.id]));
-  }, [props.open]);
+    if (!props.open) {
+      autoExpandedRef.current = new Set();
+      return;
+    }
+    const toExpand: string[] = [];
+    const current = providerGroups.find((group) => group.hasCurrent);
+    if (current && !autoExpandedRef.current.has(current.id)) toExpand.push(current.id);
+    const openwork = providerGroups.find((group) => group.id === OPENWORK_MODELS_PROVIDER_ID);
+    if (openwork && !autoExpandedRef.current.has(openwork.id)) toExpand.push(openwork.id);
+    if (toExpand.length === 0) return;
+    for (const id of toExpand) autoExpandedRef.current.add(id);
+    setExpandedProviders((prev) => {
+      const next = new Set(prev);
+      for (const id of toExpand) next.add(id);
+      return next;
+    });
+  }, [props.open, providerGroups]);
 
   const toggleProvider = useCallback((id: string) => {
     setExpandedProviders((prev) => {
@@ -180,9 +197,18 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
     });
   }, []);
 
+  const openWorkModelsAvailable = useMemo(
+    () => hasOpenWorkModelsProvider(props.options.map((option) => option.providerID)),
+    [props.options],
+  );
+  const showOpenWorkModelsSyncing = Boolean(props.openWorkModelsEntitled) && !openWorkModelsAvailable;
   const showOpenWorkModelsPromo = useMemo(
-    () => openWorkModelsPromoEligible && !promoHidden && !hasOpenWorkModelsProvider(props.options.map((option) => option.providerID)),
-    [openWorkModelsPromoEligible, promoHidden, props.options],
+    () =>
+      openWorkModelsPromoEligible &&
+      !promoHidden &&
+      !openWorkModelsAvailable &&
+      !props.openWorkModelsEntitled,
+    [openWorkModelsPromoEligible, openWorkModelsAvailable, promoHidden, props.openWorkModelsEntitled],
   );
 
   const openOpenWorkModels = useCallback(() => {
@@ -243,6 +269,31 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
               onChange={(e) => props.setQuery(e.target.value)}
             />
           </div>
+
+          {showOpenWorkModelsSyncing ? (
+            <div className="mb-3 flex shrink-0 items-center overflow-hidden rounded-2xl border border-amber-6/60 bg-amber-2/40">
+              <div className="flex min-w-0 flex-1 items-center gap-3 px-3 py-2.5">
+                <ProviderIcon providerId={OPENWORK_MODELS_PROVIDER_ID} providerName={OPENWORK_MODELS_PROVIDER_NAME} size={18} className="shrink-0 text-amber-11" />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5 text-[13px] font-medium text-dls-text">
+                    <span>{OPENWORK_MODELS_PROVIDER_NAME}</span>
+                  </div>
+                  <div className="truncate text-[11px] text-dls-secondary">
+                    Included on your plan — finish syncing to choose a model.
+                  </div>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="shrink-0"
+                  onClick={() => void props.onRefreshOpenWorkModels?.()}
+                >
+                  <RefreshCw className="mr-1 size-3" />
+                  Refresh
+                </Button>
+              </div>
+            </div>
+          ) : null}
 
           {showOpenWorkModelsPromo ? (
             <div className="mb-3 flex shrink-0 items-center overflow-hidden rounded-2xl border border-blue-6/60 bg-blue-2/60 shadow-[0_12px_30px_-20px_rgba(var(--dls-accent-rgb),0.45)]">

@@ -1055,12 +1055,19 @@ test("Google Workspace capability tools are discoverable and keep readable names
   }
 
   const catalog = buildMcpCatalog(document)
-  expect(searchCapabilities(catalog, "calendar events list", 10)[0]?.name).toBe("getCapabilitiesGoogleWorkspaceCalendarEvents")
+  const calendarMatch = searchCapabilities(catalog, "calendar events list", 10)[0]
+  expect(calendarMatch?.name).toBe("getCapabilitiesGoogleWorkspaceCalendarEvents")
+  expect(calendarMatch?.queryParams).toEqual(["timeMin", "timeMax", "maxResults"])
   expect(searchCapabilities(catalog, "add meet link existing event", 10)[0]?.name).toBe("patchCapabilitiesGoogleWorkspaceCalendarEvent")
-  expect(searchCapabilities(catalog, "drive files", 10)[0]?.name).toBe("getCapabilitiesGoogleWorkspaceDriveFiles")
+  const driveMatch = searchCapabilities(catalog, "drive files", 10)[0]
+  expect(driveMatch?.name).toBe("getCapabilitiesGoogleWorkspaceDriveFiles")
+  expect(driveMatch?.queryParams).toEqual(["query", "maxResults"])
   expect(searchCapabilities(catalog, "drive upload", 10)[0]?.name).toBe("postCapabilitiesGoogleWorkspaceDriveFiles")
   expect(searchCapabilities(catalog, "share drive file", 10)[0]?.name).toBe("postCapabilitiesGoogleWorkspaceDriveFileShare")
-  expect(searchCapabilities(catalog, "gmail search read messages", 10)[0]?.name).toBe("getCapabilitiesGoogleWorkspaceGmailMessages")
+  const gmailMatch = searchCapabilities(catalog, "gmail search read messages", 10)[0]
+  expect(gmailMatch?.name).toBe("getCapabilitiesGoogleWorkspaceGmailMessages")
+  expect(gmailMatch?.queryParams).toEqual(["q", "maxResults"])
+  expect(searchCapabilities(catalog, "outlook mail messages", 20).find((match) => match.name === "getCapabilitiesMicrosoft365MailMessages")?.queryParams).toEqual(["search", "maxResults"])
   const draftMatch = searchCapabilities(catalog, "gmail draft workspace attachment", 10)[0]
   expect(draftMatch?.name).toBe("postCapabilitiesGoogleWorkspaceGmailDrafts")
   expect(draftMatch?.summary).toContain("attachments: [{ filename, mimeType, dataBase64 }]")

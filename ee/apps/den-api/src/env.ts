@@ -461,6 +461,7 @@ export const env = {
   // Standard desktop release assets: the release tag to download from,
   // defaulting to the pinned app release this den-api build shipped with.
   installerReleaseTag: optionalString(parsed.OPENWORK_INSTALLER_RELEASE_TAG) ?? `v${denApiAppVersion.latestAppVersion}`,
+  installerReleaseTagExplicit: optionalString(parsed.OPENWORK_INSTALLER_RELEASE_TAG) !== undefined,
   installerReleaseRepo: optionalString(parsed.OPENWORK_INSTALLER_RELEASE_REPO) ?? "different-ai/openwork",
   installerCacheDir: optionalString(parsed.OPENWORK_INSTALLER_CACHE_DIR) ?? path.join(os.tmpdir(), "openwork-desktop-artifacts"),
   // Native-provider endpoint overrides for evals/self-host testing. Unset in

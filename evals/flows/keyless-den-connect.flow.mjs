@@ -218,14 +218,14 @@ export default {
             })()`);
             witness(ctx, Boolean(state.installToken), "The page came from a real organization install token", "token redacted");
             witness(ctx, state.organizationName === "Acme Robotics", "The guide identifies the exact organization", state.organizationName);
-            await ctx.expectText("Download and install");
-            await ctx.expectText(`Open ${BRANDED_APP_NAME}`);
+            await ctx.expectText("Download the OpenWork installer");
+            await ctx.expectText("Open the installer and paste this link:");
             await ctx.expectText("Sign in");
             await ctx.expectNoText("OpenWork Enterprise");
           },
           screenshot: {
             name: "keyless-three-step-guide",
-            requireText: ["Download and install", `Open ${BRANDED_APP_NAME}`, "Sign in", "Acme Robotics"],
+            requireText: ["Download the OpenWork installer", "Open the installer and paste this link:", "Sign in", "Acme Robotics"],
             rejectText: ["OpenWork Enterprise"],
           },
         }));
@@ -260,11 +260,11 @@ export default {
           witness(ctx, (await ctx.eval("document.querySelector('[data-testid=install-guide-step-download]')?.dataset.state")) === "complete", "The page advances immediately instead of showing a server preparation wait", "complete");
           await ctx.expectNoText("Preparing your");
           await ctx.expectNoText("ZIP");
-          await ctx.expectText("When installation finishes, return to this page.");
+          await ctx.expectText("When the download finishes, open it and keep this page open.");
         },
         screenshot: {
           name: "standard-installer-no-wait",
-          requireText: ["Download again", `Open ${BRANDED_APP_NAME}`, "return to this page"],
+          requireText: ["Download the OpenWork installer", "Open the installer and paste this link:", "keep this page open"],
           rejectText: ["Preparing your", "ZIP"],
         },
       })),
@@ -417,14 +417,14 @@ export default {
               ].join("\n"));
             },
             assert: async () => {
-              await ctx.expectText("Download and install");
-              await ctx.expectText(`Open ${BRANDED_APP_NAME}`);
+              await ctx.expectText("Download the OpenWork installer");
+              await ctx.expectText("Open the installer and paste this link:");
               await ctx.expectNoText("custom installer");
               await ctx.expectNoText("OpenWork Enterprise");
             },
             screenshot: {
               name: "same-installer-future-signed-mode",
-              requireText: ["Download and install", `Open ${BRANDED_APP_NAME}`, "Run the normal signed installer"],
+              requireText: ["Download the OpenWork installer", "Open the installer and paste this link:", "The installer only continues with a valid link"],
               rejectText: ["custom installer", "OpenWork Enterprise"],
             },
           }));

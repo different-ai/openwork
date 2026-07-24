@@ -23,7 +23,6 @@ export const DesktopPolicyTable = mysqlTable(
     deletedAt: timestamp("deleted_at", { fsp: 3 }),
   },
   (table) => [
-    index("desktop_policy_organization_id").on(table.organizationId),
     index("desktop_policy_created_by_member_id").on(table.createdByOrgMemberId),
     index("desktop_policy_is_enabled").on(table.isEnabled),
     index("desktop_policy_priority").on(table.priority),
@@ -44,7 +43,6 @@ export const DesktopPolicyMemberTable = mysqlTable(
   },
   (table) => [
     index("desktop_policy_member_organization_id").on(table.organizationId),
-    index("desktop_policy_member_policy_id").on(table.desktopPolicyId),
     index("desktop_policy_member_org_member_id").on(table.orgMemberId),
     index("desktop_policy_member_team_id").on(table.teamId),
     uniqueIndex("desktop_policy_member_policy_org_member").on(table.desktopPolicyId, table.orgMemberId),

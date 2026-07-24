@@ -57,6 +57,11 @@ import {
 } from "../_lib/den-flow";
 import { EMPTY_RUNTIME_CONFIG, getRuntimeConfig, type DenWebRuntimeConfig } from "../_lib/runtime-config";
 import {
+  getDesktopHandoffGrant,
+  getDesktopHandoffOpenworkUrl,
+  rememberDesktopHandoffGrant,
+} from "../_lib/desktop-handoff";
+import {
   PENDING_ORG_INVITATION_STORAGE_KEY,
   PENDING_ORG_SELECTION_STORAGE_KEY,
   PENDING_WORKSPACE_CLAIM_STORAGE_KEY,
@@ -1001,13 +1006,13 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
         return;
       }
 
-      const openworkPayload = payload as { openworkUrl?: unknown } | null;
-      const openworkUrl = typeof openworkPayload?.openworkUrl === "string" ? openworkPayload.openworkUrl.trim() : "";
+      const openworkUrl = getDesktopHandoffOpenworkUrl(payload) ?? "";
       if (!openworkUrl) {
         setAuthError("Desktop handoff succeeded, but no OpenWork redirect URL was returned.");
         return;
       }
 
+      rememberDesktopHandoffGrant(getDesktopHandoffGrant(payload, openworkUrl));
       setDesktopRedirectUrl(openworkUrl);
       window.location.assign(openworkUrl);
     } catch (error) {
