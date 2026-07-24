@@ -175,9 +175,15 @@ export function WorkspaceFavicon({
 }: {
   metadata: string | null | undefined;
 }) {
+  const orgContextLoading = metadata === undefined;
   const iconUrl = getManagedBrandIconUrl(metadata ?? null);
 
   useEffect(() => {
+    if (orgContextLoading) {
+      // Keep the server-rendered favicon until the org context is known.
+      return;
+    }
+
     let favicon = document.head.querySelector<HTMLLinkElement>('link[rel="icon"]');
     if (!favicon) {
       favicon = document.createElement("link");
@@ -211,7 +217,7 @@ export function WorkspaceFavicon({
         favicon.setAttribute("type", previousType);
       }
     };
-  }, [iconUrl]);
+  }, [orgContextLoading, iconUrl]);
 
   return null;
 }
