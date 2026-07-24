@@ -18,6 +18,7 @@ const appName = "Install OpenWork.app"
 const executableName = "openwork-installer"
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const backgroundAssetDir = path.join(packageRoot, "assets", "dmg-background")
+const iconAssetPath = path.join(packageRoot, "assets", "icon.icns")
 
 function fail(message) {
   console.error(`[package-mac-dmg] ${message}`)
@@ -54,6 +55,7 @@ function writeInfoPlist(appPath) {
   <key>CFBundleDisplayName</key><string>Install OpenWork</string>
   <key>CFBundleIdentifier</key><string>com.differentai.openwork.installer</string>
   <key>CFBundleExecutable</key><string>${executableName}</string>
+  <key>CFBundleIconFile</key><string>icon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>1.0.0</string>
   <key>CFBundleVersion</key><string>1</string>
@@ -62,6 +64,15 @@ function writeInfoPlist(appPath) {
 </dict>
 </plist>
 `)
+}
+
+function copyAppIcon(appPath) {
+  if (!existsSync(iconAssetPath)) return
+  const resourcesDir = path.join(appPath, "Contents", "Resources")
+  const iconPath = path.join(resourcesDir, "icon.icns")
+  if (existsSync(iconPath)) return
+  mkdirSync(resourcesDir, { recursive: true })
+  cpSync(iconAssetPath, iconPath)
 }
 
 function stageInput(inputPath, stagedAppPath) {
@@ -73,6 +84,7 @@ function stageInput(inputPath, stagedAppPath) {
     const stagedBinary = path.join(stagedAppPath, "Contents", "MacOS", executableName)
     if (!existsSync(stagedBinary)) fail(`App bundle is missing Contents/MacOS/${executableName}`)
     if (!existsSync(path.join(stagedAppPath, "Contents", "Info.plist"))) writeInfoPlist(stagedAppPath)
+    copyAppIcon(stagedAppPath)
     return
   }
 
@@ -82,6 +94,7 @@ function stageInput(inputPath, stagedAppPath) {
   cpSync(inputPath, path.join(macOsDir, executableName))
   chmodSync(path.join(macOsDir, executableName), 0o755)
   writeInfoPlist(stagedAppPath)
+  copyAppIcon(stagedAppPath)
 }
 
 function stageDmgBackground(stagingRoot) {

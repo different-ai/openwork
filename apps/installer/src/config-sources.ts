@@ -1,6 +1,7 @@
 import { installConfigSchema, installConfigUrlFor, type InstallConfig } from "@openwork/install-config"
 import { BUILD_API_URL, BUILD_APP_NAME, BUILD_CLIENT_NAME, BUILD_LOGO_URL, BUILD_REQUIRE_SIGNIN, BUILD_WEB_URL } from "./generated/build-config"
 import type { InstallerConfig } from "./config"
+import { fetchWithSystemCa } from "./system-ca"
 
 export type InstallerConfigSource = "env" | "build" | "install-link"
 
@@ -13,7 +14,7 @@ export type InstallLinkConfigResult =
   | { status: "resolved"; config: InstallerConfig }
   | { status: "invalid-input" }
   | { status: "not-found" }
-  | { status: "unreachable" }
+  | { status: "unreachable"; reason: "tls" | "network" }
   | { status: "unresolved" }
 
 type ConfigSourceOptions = {
@@ -187,7 +188,7 @@ function configFromResult(result: InstallLinkConfigResult): InstallerConfig | nu
 }
 
 async function fetchInstallConfig(configUrl: string, options?: ConfigSourceOptions): Promise<InstallLinkConfigResult> {
-  const fetcher = options?.fetcher ?? fetch
+  const fetcher = options?.fetcher ?? fetchWithSystemCa
   const response = await fetcher(configUrl, {
     headers: { accept: "application/json" },
     signal: AbortSignal.timeout(10_000),
@@ -207,6 +208,17 @@ async function fetchInstallConfig(configUrl: string, options?: ConfigSourceOptio
   return config ? { status: "resolved", config } : { status: "unresolved" }
 }
 
+function isTlsError(error: unknown): boolean {
+  const tlsErrorPattern = /certificat|CERT_|TLS|SSL|handshake|self signed|self-signed|unable to verify|UNABLE_TO_VERIFY|DEPTH_ZERO/i
+  if (error instanceof Error) {
+    if (tlsErrorPattern.test(error.message)) return true
+    const cause = error.cause
+    if (cause instanceof Error) return tlsErrorPattern.test(cause.message)
+    return typeof cause === "string" && tlsErrorPattern.test(cause)
+  }
+  return typeof error === "string" && tlsErrorPattern.test(error)
+}
+
 export async function installLinkConfig(input: string, options: ConfigSourceOptions = {}): Promise<InstallerConfig | null> {
   return configFromResult(await resolveInstallLinkConfig(input, options))
 }
@@ -218,8 +230,8 @@ export async function resolveInstallLinkConfig(input: string, options: ConfigSou
   }
   try {
     return await fetchInstallConfig(parsed.url, options)
-  } catch {
-    return { status: "unreachable" }
+  } catch (error) {
+    return { status: "unreachable", reason: isTlsError(error) ? "tls" : "network" }
   }
 }
 

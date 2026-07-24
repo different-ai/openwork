@@ -164,7 +164,9 @@ jobs:
         shell: bash
         run: |
           cd apps/installer
-          bun build --compile --minify --target=${{ matrix.bun_target }} \
+          extra_args=()
+          if [ "${{ matrix.os_type }}" = "windows" ]; then extra_args+=(--windows-icon=assets/icon.ico); fi
+          bun build --compile --minify --target=${{ matrix.bun_target }} "${extra_args[@]}" \
             src/index.ts src/server-worker.ts \
             --outfile "dist/openwork-installer"
 
@@ -200,8 +202,9 @@ jobs:
           cd apps/installer
           APP="dist/Install OpenWork.app"
           rm -rf "$APP"
-          mkdir -p "$APP/Contents/MacOS"
+          mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
           cp dist/openwork-installer "$APP/Contents/MacOS/openwork-installer"
+          cp assets/icon.icns "$APP/Contents/Resources/icon.icns"
           cat > "$APP/Contents/Info.plist" <<'PLIST'
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -211,6 +214,7 @@ jobs:
             <key>CFBundleDisplayName</key><string>Install OpenWork</string>
             <key>CFBundleIdentifier</key><string>com.differentai.openwork.installer</string>
             <key>CFBundleExecutable</key><string>openwork-installer</string>
+            <key>CFBundleIconFile</key><string>icon</string>
             <key>CFBundlePackageType</key><string>APPL</string>
             <key>CFBundleShortVersionString</key><string>1.0.0</string>
             <key>CFBundleVersion</key><string>1</string>

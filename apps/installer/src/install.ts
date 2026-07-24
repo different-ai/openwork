@@ -6,6 +6,7 @@ import path from "node:path"
 import { desktopBootstrapPath, legacyDesktopBootstrapPath } from "./bootstrap-path"
 import type { InstallerConfig } from "./config"
 import { releaseAssetFor, type ReleaseAsset } from "./release-asset"
+import { fetchWithSystemCa } from "./system-ca"
 
 export type InstallStep = "write-config" | "check-version" | "download" | "install"
 
@@ -146,7 +147,7 @@ export function writeBootstrapConfig(
 
 /** Ask the deployment's Den API which desktop version it supports. */
 export async function fetchLatestSupportedVersion(apiUrl: string): Promise<string> {
-  const response = await fetch(`${apiUrl}/v1/app-version`, {
+  const response = await fetchWithSystemCa(`${apiUrl}/v1/app-version`, {
     headers: { accept: "application/json" },
     signal: AbortSignal.timeout(15_000),
   })
@@ -162,7 +163,7 @@ export async function fetchLatestSupportedVersion(apiUrl: string): Promise<strin
 }
 
 async function downloadAsset(asset: ReleaseAsset, targetPath: string, opts: InstallOptions): Promise<void> {
-  const response = await fetch(asset.url, { redirect: "follow" })
+  const response = await fetchWithSystemCa(asset.url, { redirect: "follow" })
   if (!response.ok || !response.body) {
     throw new Error(`Download failed (${response.status} ${response.statusText}): ${asset.url}`)
   }
@@ -343,7 +344,7 @@ export async function runInstall(config: InstallerConfig, opts: InstallOptions =
     update({ version, message: `Deployment supports OpenWork ${version}.` }, opts.onStatus)
 
     if (opts.dryRun) {
-      const head = await fetch(asset.url, { method: "HEAD", redirect: "follow" })
+      const head = await fetchWithSystemCa(asset.url, { method: "HEAD", redirect: "follow" })
       if (!head.ok) throw new Error(`Release asset missing (${head.status}): ${asset.url}`)
       update(
         { state: "done", step: null, message: `Dry run ok: ${asset.fileName} available; config written to ${bootstrapPath}.` },

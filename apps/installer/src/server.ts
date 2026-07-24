@@ -1,7 +1,8 @@
 import { randomBytes } from "node:crypto"
 
-import { installerConfigSourceLabel, resolveInstallLinkConfig, type InstallerConfigResolution } from "./config"
+import { installerConfigSourceLabel, parseInstallLinkInput, resolveInstallLinkConfig, type InstallerConfigResolution } from "./config"
 import { installStatus, launchInstalledApp, runInstall } from "./install"
+import { loadSystemCaCertificates } from "./system-ca"
 import { renderInstallerHtml } from "./ui-html"
 
 export type InstallerServer = {
@@ -27,9 +28,18 @@ function installLinkFromPayload(value: unknown) {
   return typeof installLink === "string" ? installLink.trim() : ""
 }
 
+function tlsUntrustedMessage(installLink: string): string {
+  const host = parseInstallLinkInput(installLink)?.host
+  const certificateTarget = host ? `the certificate for ${host}` : "the workspace certificate"
+  return `Reached your workspace, but the secure connection isn't trusted on this computer yet. This usually means your company inspects secure traffic. Try again — if it keeps failing, ask IT to check ${certificateTarget}.`
+}
+
 export function startInstallerServer(initialResolution: InstallerConfigResolution | null, onExit: () => void): InstallerServer {
   const token = randomBytes(16).toString("hex")
   let resolution = initialResolution
+  // Warm the OS trust-store CA cache now so the first resolve-link fetch does
+  // not spend its 10s abort budget waiting on PowerShell/security exports.
+  void loadSystemCaCertificates()
 
   const server = Bun.serve({
     hostname: "127.0.0.1",
@@ -63,6 +73,9 @@ export function startInstallerServer(initialResolution: InstallerConfigResolutio
               return Response.json({ error: "install_link_invalid", message: "That doesn't look like an install link. On your team's install page, copy the link shown in step 2 — it ends with ?token=..." }, { status: 400 })
             }
             if (result.status === "unreachable") {
+              if (result.reason === "tls") {
+                return Response.json({ error: "install_link_tls_untrusted", message: tlsUntrustedMessage(installLink) }, { status: 400 })
+              }
               return Response.json({ error: "install_link_unreachable", message: "Could not reach your workspace. Check your internet or VPN connection and try again." }, { status: 400 })
             }
             return Response.json({ error: "install_link_invalid", message: "Install link could not be resolved." }, { status: 400 })

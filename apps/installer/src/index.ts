@@ -3,6 +3,7 @@ import { spawn } from "node:child_process"
 import { installerConfigSourceLabel, resolveInstallerConfig, resolveOptionalInstallerConfig } from "./config"
 import { runInstall, scheduleInstallerSelfCleanup } from "./install"
 import { startInstallerServer } from "./server"
+import { loadSystemCaCertificates } from "./system-ca"
 
 const rawArgs = Bun.argv.slice(2)
 const args = new Set(rawArgs)
@@ -164,6 +165,8 @@ async function startWorkerInstallerServer(): Promise<ReadyServer> {
 }
 
 if (headless) {
+  // Fill the OS trust-store CA cache before any fetch starts its abort timer.
+  await loadSystemCaCertificates()
   const resolution = await resolveInstallerConfig({ installLink: argValue("--install-link") }).catch((error): never => {
     console.error(`[openwork-installer] ${error instanceof Error ? error.message : String(error)}`)
     process.exit(2)
@@ -248,6 +251,11 @@ try {
     const handle = webview.unsafeHandle
     if (handle) lib.symbols.webview_terminate(handle)
   })
+  webview.bind("openworkInstallerPageReady", () => {
+    webview.title = installerWindowTitle
+  })
+  // The cocoa backend creates the NSWindow inside run(), so pre-run titles are dropped on macOS.
+  webview.init("document.addEventListener('DOMContentLoaded', () => { if (window.openworkInstallerPageReady) window.openworkInstallerPageReady(); });")
   if (Number.isFinite(smokeExitMs) && smokeExitMs > 0) {
     // Automated smoke: drive the exact production exit path (page JS -> bound
     // FFI callback) without a human click.

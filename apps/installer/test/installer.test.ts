@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test"
+import { Buffer } from "node:buffer"
+import { execFileSync } from "node:child_process"
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
@@ -15,10 +17,73 @@ import {
   dmgWindowBounds,
 } from "../scripts/dmg-layout.mjs"
 import { desktopBootstrapPath, legacyDesktopBootstrapPath } from "../src/bootstrap-path"
-import { buildConstantsConfig, parseInstallLinkInput, resolveInstallerConfig } from "../src/config"
+import { buildConstantsConfig, parseInstallLinkInput, resolveInstallLinkConfig, resolveInstallerConfig } from "../src/config"
 import { removableInstallerBundlePath, windowsInstalledExePath, writeBootstrapConfig } from "../src/install"
 import { releaseAssetFor } from "../src/release-asset"
 import { startInstallerServer } from "../src/server"
+import { createSystemCaFetch, parseDarwinSecurityCertificates, parseWindowsPowerShellCertificates } from "../src/system-ca"
+
+type SelfSignedCertificate = {
+  cert: string
+  key: string
+  cleanup: () => void
+}
+
+function createSelfSignedCertificate(): SelfSignedCertificate {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "openwork-installer-tls-"))
+  const certPath = path.join(dir, "cert.pem")
+  const keyPath = path.join(dir, "key.pem")
+  execFileSync("openssl", [
+    "req",
+    "-x509",
+    "-newkey",
+    "rsa:2048",
+    "-nodes",
+    "-sha256",
+    "-days",
+    "1",
+    "-keyout",
+    keyPath,
+    "-out",
+    certPath,
+    "-subj",
+    "/CN=localhost",
+    "-addext",
+    "subjectAltName=DNS:localhost,IP:127.0.0.1",
+  ], { stdio: "ignore" })
+  return {
+    cert: readFileSync(certPath, "utf8"),
+    key: readFileSync(keyPath, "utf8"),
+    cleanup: () => rmSync(dir, { recursive: true, force: true }),
+  }
+}
+
+function startTlsInstallConfigServer(certificate: SelfSignedCertificate) {
+  return Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    tls: { cert: certificate.cert, key: certificate.key },
+    fetch: () => Response.json({
+      clientName: "TLS Corp",
+      webUrl: "https://tls.example.com/",
+      apiUrl: "https://tls-api.example.com/",
+      requireSignin: true,
+      logoUrl: null,
+    }),
+  })
+}
+
+function windowsPowerShellCertBlock(base64: string): string {
+  return `-----OPENWORK-CERTIFICATE-----\n${base64}\n-----END-OPENWORK-CERTIFICATE-----`
+}
+
+function pemForBase64(base64: string): string {
+  const lines: string[] = []
+  for (let index = 0; index < base64.length; index += 64) {
+    lines.push(base64.slice(index, index + 64))
+  }
+  return `-----BEGIN CERTIFICATE-----\n${lines.join("\n")}\n-----END CERTIFICATE-----`
+}
 
 describe("mac DMG layout helpers", () => {
   test("builds the approved Finder window and icon layout", () => {
@@ -288,6 +353,88 @@ describe("install link helpers", () => {
   })
 })
 
+describe("system CA fetch", () => {
+  test("classifies a default self-signed HTTPS install config as a TLS trust failure", async () => {
+    const certificate = createSelfSignedCertificate()
+    const configServer = startTlsInstallConfigServer(certificate)
+    try {
+      const result = await resolveInstallLinkConfig(`https://127.0.0.1:${configServer.port}/install?token=abcDEF12`)
+
+      expect(result).toEqual({ status: "unreachable", reason: "tls" })
+    } finally {
+      configServer.stop(true)
+      certificate.cleanup()
+    }
+  })
+
+  test("resolves a self-signed HTTPS install config when the system CA loader supplies its certificate", async () => {
+    const certificate = createSelfSignedCertificate()
+    const configServer = startTlsInstallConfigServer(certificate)
+    try {
+      const result = await resolveInstallLinkConfig(`https://127.0.0.1:${configServer.port}/install?token=abcDEF12`, {
+        fetcher: createSystemCaFetch(async () => [certificate.cert]),
+      })
+
+      expect(result).toEqual({
+        status: "resolved",
+        config: {
+          appName: "OpenWork",
+          clientName: "TLS Corp",
+          webUrl: "https://tls.example.com",
+          apiUrl: "https://tls-api.example.com",
+          requireSignin: true,
+          logoUrl: null,
+        },
+      })
+    } finally {
+      configServer.stop(true)
+      certificate.cleanup()
+    }
+  })
+
+  test("parses darwin security PEM output", () => {
+    const first = "-----BEGIN CERTIFICATE-----\nfirst\n-----END CERTIFICATE-----"
+    const second = "-----BEGIN CERTIFICATE-----\nsecond\n-----END CERTIFICATE-----"
+
+    expect(parseDarwinSecurityCertificates(`noise\n${first}\nmore noise\n${second}\n`)).toEqual([first, second])
+  })
+
+  test("parses and dedupes windows PowerShell certificate output", () => {
+    const first = Buffer.from("first certificate with enough bytes to require PEM wrapping across more than one output line").toString("base64")
+    const second = Buffer.from("second certificate").toString("base64")
+    const output = [
+      windowsPowerShellCertBlock(first),
+      "noise",
+      windowsPowerShellCertBlock(second),
+      windowsPowerShellCertBlock(first),
+    ].join("\n")
+
+    expect(parseWindowsPowerShellCertificates(output)).toEqual([pemForBase64(first), pemForBase64(second)])
+  })
+
+  test("ignores garbage certificate command output", () => {
+    expect(parseDarwinSecurityCertificates("not certificate output")).toEqual([])
+    expect(parseWindowsPowerShellCertificates("not certificate output")).toEqual([])
+  })
+
+  test("passes through without TLS options when no system CAs are available", async () => {
+    const server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: () => new Response("ok"),
+    })
+    try {
+      const fetcher = createSystemCaFetch(async () => [])
+      const response = await fetcher(`http://127.0.0.1:${server.port}/`)
+
+      expect(response.status).toBe(200)
+      expect(await response.text()).toBe("ok")
+    } finally {
+      server.stop(true)
+    }
+  })
+})
+
 describe("resolve-link API", () => {
   test("explains pasted GitHub artifact URLs are not install links", async () => {
     const installerServer = startInstallerServer(null, () => undefined)
@@ -331,6 +478,29 @@ describe("resolve-link API", () => {
       })
     } finally {
       installerServer.stop()
+    }
+  })
+
+  test("explains TLS trust failures separately from network reachability", async () => {
+    const certificate = createSelfSignedCertificate()
+    const configServer = startTlsInstallConfigServer(certificate)
+    const installerServer = startInstallerServer(null, () => undefined)
+    try {
+      const response = await fetch(`${installerServer.url}api/resolve-link`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-installer-token": installerServer.token },
+        body: JSON.stringify({ installLink: `https://127.0.0.1:${configServer.port}/install?token=abcDEF12` }),
+      })
+
+      expect(response.status).toBe(400)
+      expect(await response.json()).toEqual({
+        error: "install_link_tls_untrusted",
+        message: `Reached your workspace, but the secure connection isn't trusted on this computer yet. This usually means your company inspects secure traffic. Try again — if it keeps failing, ask IT to check the certificate for 127.0.0.1:${configServer.port}.`,
+      })
+    } finally {
+      installerServer.stop()
+      configServer.stop(true)
+      certificate.cleanup()
     }
   })
 
