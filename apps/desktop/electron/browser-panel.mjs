@@ -93,7 +93,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
     if (url.startsWith("file://") || url.startsWith("data:")) return true;
     try {
       const target = new URL(url);
-      if (target.hostname === "127.0.0.1" || target.hostname === "localhost") return true;
+      if (target.hostname === "127.0.0.1" || target.hostname === "localhost" || target.hostname === "[::1]") return true;
       const currentUrl = window()?.webContents.getURL();
       if (!currentUrl || currentUrl === "about:blank") return true;
       const current = new URL(currentUrl);

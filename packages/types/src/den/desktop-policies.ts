@@ -240,6 +240,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
+/** JSON columns arrive as strings on engines like MariaDB (JSON = LONGTEXT alias). */
+function coerceJsonRecord(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+}
+
 export function normalizeOnboardingPrompts(value: unknown): string[] | undefined {
   const parsed = onboardingPromptsSchema.safeParse(value);
   return parsed.success ? parsed.data : undefined;
@@ -262,7 +272,8 @@ export function normalizeOnboardingPromptDescriptions(
 export function normalizeOnboardingPromptConfig(
   value: unknown,
 ): OnboardingPromptConfig | undefined {
-  const raw = isRecord(value) ? value : null;
+  const coerced = coerceJsonRecord(value);
+  const raw = isRecord(coerced) ? coerced : null;
   const onboardingPrompts = normalizeOnboardingPrompts(raw?.onboardingPrompts);
   if (onboardingPrompts === undefined) return undefined;
 
@@ -282,7 +293,7 @@ export function normalizeOnboardingPromptConfig(
 export function normalizeDesktopPolicyValue(
   value: unknown,
 ): DesktopPolicyValue {
-  const parsed = desktopPolicyValueSchema.safeParse(value);
+  const parsed = desktopPolicyValueSchema.safeParse(coerceJsonRecord(value));
   if (parsed.success) {
     return Object.fromEntries(
       desktopPolicyKeys.flatMap((key) =>
@@ -311,8 +322,9 @@ export function normalizeDefaultDesktopPolicyValue(
 export function normalizeDesktopPolicyDocument(
   value: unknown,
 ): DesktopPolicyDocument {
-  const policy = normalizeDesktopPolicyValue(value);
-  const onboardingPromptConfig = normalizeOnboardingPromptConfig(value);
+  const coerced = coerceJsonRecord(value);
+  const policy = normalizeDesktopPolicyValue(coerced);
+  const onboardingPromptConfig = normalizeOnboardingPromptConfig(coerced);
 
   return {
     ...policy,
@@ -323,8 +335,9 @@ export function normalizeDesktopPolicyDocument(
 export function normalizeDesktopPolicyDocumentWrite(
   value: unknown,
 ): DesktopPolicyDocumentWrite {
-  const policy = normalizeDesktopPolicyValue(value);
-  const raw = isRecord(value) ? value : null;
+  const coerced = coerceJsonRecord(value);
+  const policy = normalizeDesktopPolicyValue(coerced);
+  const raw = isRecord(coerced) ? coerced : null;
   const rawPrompts = raw?.onboardingPrompts;
   const rawDescriptions = raw?.onboardingPromptDescriptions;
   const onboardingPrompts = normalizeOnboardingPrompts(rawPrompts);
@@ -395,8 +408,9 @@ export function resolveDesktopPolicyDocumentWrite(input: {
 export function normalizeDefaultDesktopPolicyDocument(
   value: unknown,
 ): DefaultDesktopPolicyDocument {
-  const policy = normalizeDefaultDesktopPolicyValue(value);
-  const onboardingPromptConfig = normalizeOnboardingPromptConfig(value);
+  const coerced = coerceJsonRecord(value);
+  const policy = normalizeDefaultDesktopPolicyValue(coerced);
+  const onboardingPromptConfig = normalizeOnboardingPromptConfig(coerced);
 
   return {
     ...policy,
@@ -414,8 +428,8 @@ export function allDesktopPolicies(
 
 export function calculateEffectiveDesktopPolicy(input: {
   orgPolicyCount: number;
-  defaultPolicy?: DesktopPolicyValue | null;
-  assignedPolicies: DesktopPolicyValue[];
+  defaultPolicy?: unknown;
+  assignedPolicies: unknown[];
 }): Required<DesktopPolicyValue> {
   if (input.orgPolicyCount === 0) {
     return allDesktopPolicies(true);

@@ -584,7 +584,7 @@ export function registerOrgInstallLinkRoutes<T extends { Variables: OrgRouteVari
       }
 
       if (resolved.installerReleaseTag === null) {
-        // Follow GitHub's latest published release so draft-release windows cannot 404.
+        // Follow GitHub latest published release so draft-release windows cannot 404.
         return c.redirect(installerLatestReleaseAssetUrl(genericFileName), 302)
       }
 

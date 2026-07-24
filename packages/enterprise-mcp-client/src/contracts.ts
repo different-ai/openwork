@@ -168,15 +168,24 @@ export type EnterpriseMcpOperationPhase =
   | "tool-execution"
   | "shutdown"
 
-export type EnterpriseMcpDiagnosticEvent = {
-  kind: "request" | "operation"
-  connectionId: string
-  operationPhase: EnterpriseMcpOperationPhase
-  requestPhase: EnterpriseMcpRequestPhase | null
-  outcome: "started" | "succeeded" | "failed"
-  durationMs?: number
-  httpStatus?: number
-}
+export type EnterpriseMcpDiagnosticEvent =
+  | {
+    kind: "request" | "operation"
+    connectionId: string
+    operationPhase: EnterpriseMcpOperationPhase
+    requestPhase: EnterpriseMcpRequestPhase | null
+    outcome: "started" | "succeeded" | "failed"
+    durationMs?: number
+    httpStatus?: number
+  }
+  | {
+    kind: "credential-invalidation"
+    connectionId: string
+    operationPhase: EnterpriseMcpOperationPhase
+    requestPhase: EnterpriseMcpRequestPhase
+    httpStatus?: number
+    invalidToken: boolean
+  }
 
 export type EnterpriseMcpDiagnosticSink = (event: EnterpriseMcpDiagnosticEvent) => void
 

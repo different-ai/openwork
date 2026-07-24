@@ -42,6 +42,7 @@ type OrgDashboardContextValue = {
   createOrganization: (name: string) => Promise<void>;
   updateOrganizationName: (name: string) => Promise<void>;
   updateOrganizationSettings: (input: { name?: string; allowedEmailDomains?: string[] | null; allowedDesktopVersions?: string[] | null; requireSso?: boolean; brandAppName?: string | null; brandLogoUrl?: string | null; brandIconUrl?: string | null; brandAccentColor?: string | null }) => Promise<void>;
+  deleteOrganization: () => Promise<void>;
   switchOrganization: (slug: string) => void;
   inviteMember: (input: { email: string; role: string }) => Promise<void>;
   startSeatCheckout: () => Promise<void>;
@@ -130,6 +131,12 @@ export function OrgDashboardProvider({
   function ensureCanManageSettings() {
     if (!getCurrentAccess().canManageSettings) {
       throw new Error("Only workspace owners and super-admins can change settings.");
+    }
+  }
+
+  function ensureCanDeleteOrganization() {
+    if (!getCurrentAccess().canDeleteOrganization) {
+      throw new Error("Only the workspace owner can delete this organization.");
     }
   }
 
@@ -567,6 +574,23 @@ export function OrgDashboardProvider({
     }
   }
 
+  async function deleteOrganization() {
+    ensureCanDeleteOrganization();
+
+    await runReauthableAction("delete-organization", async () => {
+      ensureActiveOrganizationSelected();
+      const { response, payload } = await requestJson(
+        "/v1/org",
+        { method: "DELETE" },
+        12000,
+      );
+
+      if (!response.ok) {
+        throw getRequestError(payload, response, `Failed to delete organization (${response.status}).`);
+      }
+    });
+  }
+
   async function inviteMember(input: { email: string; role: string }) {
     const access = getCurrentAccess();
     if (!access.canInviteMembers) {
@@ -899,6 +923,7 @@ export function OrgDashboardProvider({
     createOrganization,
     updateOrganizationName,
     updateOrganizationSettings,
+    deleteOrganization,
     switchOrganization,
     inviteMember,
     startSeatCheckout,

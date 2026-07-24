@@ -168,14 +168,25 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
       || phase === "endpoint-request"
   }
 
-  async function invalidateTerminallyRejectedCredential(session: Session): Promise<void> {
-    if (!session.oauthProvider) return
+  async function invalidateTerminallyRejectedCredential(
+    session: Session,
+    input: { connectionId: string; operationPhase: EnterpriseMcpOperationPhase },
+  ): Promise<void> {
+    if (!session.oauthProvider || input.operationPhase !== "tool-execution") return
     const failure = session.observer.lastRequestFailure()
     if (!failure || !isMcpResourceRequest(failure.requestPhase)) return
-    const rejected = failure.httpStatus === 401
+    const rejected = (failure.httpStatus === 401 && failure.invalidToken)
       || (failure.httpStatus === 403 && (failure.bearerChallenge || failure.insufficientScope))
     if (!rejected) return
     await session.oauthProvider.invalidateCredentials("tokens")
+    emitDiagnostic({
+      kind: "credential-invalidation",
+      connectionId: input.connectionId,
+      operationPhase: input.operationPhase,
+      requestPhase: failure.requestPhase,
+      httpStatus: failure.httpStatus,
+      invalidToken: failure.invalidToken,
+    })
   }
 
   function createSession(input: {
@@ -352,7 +363,10 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
             }
           }
         } catch (error) {
-          await invalidateTerminallyRejectedCredential(session)
+          await invalidateTerminallyRejectedCredential(session, {
+            connectionId: input.connection.id,
+            operationPhase: input.operationPhase,
+          })
           throw error
         }
       },

@@ -5,6 +5,13 @@ endpoint. An enterprise can allowlist one stable host, point a client at
 `/mcp`, and use the authenticated dashboard to prove that requests arrived and
 inspect the safely redacted request/response sequence.
 
+The authenticated **Connections** dashboard also keeps a seven-day rolling
+record of metadata-only OpenWork Connect incidents. It correlates what a
+desktop maintenance probe observed with the initialize, initialized, and
+tools/list lifecycle requests that reached Den. Operators can filter by raw
+organization ID or desktop client UUID; the portal hashes those lookup values
+in memory and stores only keyed pseudonyms.
+
 It also supports a controlled Den egress diagnostic for private-cloud and
 Kubernetes deployments. A workspace owner or admin starts the run in **Org
 settings**. The requests originate in the Den process, so they exercise the
@@ -88,7 +95,7 @@ Set these production environment variables:
 | `DIAGNOSTICS_ADMIN_USERNAME` | Dashboard sign-in username. |
 | `DIAGNOSTICS_ADMIN_PASSWORD` | Dashboard sign-in password, at least 24 characters. |
 | `DIAGNOSTICS_SIGNING_SECRET` | Signs the one-hour dashboard cookie, short-lived synthetic OAuth access tokens, and stateless MCP session IDs; at least 32 characters. |
-| `DIAGNOSTICS_MCP_BEARER_TOKEN` | Synthetic diagnostic token shared with the test Den or client, at least 24 characters. Never use a provider/customer credential. |
+| `DIAGNOSTICS_MCP_BEARER_TOKEN` | Synthetic diagnostic and Connect-intake token shared with Den, at least 24 characters. It also keys organization/client pseudonyms; never use a provider/customer credential. |
 | `DIAGNOSTICS_PROFILE` | `generic`, `microsoft`, or `servicenow`. |
 | `NEXT_PUBLIC_DIAGNOSTICS_ORIGIN` | Fixed production origin, normally `https://diagnostic.openworklabs.com`. Preview deployments use Vercel's deployment-specific `VERCEL_URL` instead. |
 | `DEBUG_PROXY_ACCESS_KEY` | URL-safe random value (16+ characters) required for the Connect debug proxy UI and traffic. It becomes a path segment in generated desktop-compatible URLs. |
@@ -111,7 +118,7 @@ https://diagnostic.openworklabs.com/mcp
 ```
 
 Before enabling public DNS, add Vercel Firewall rate-limit rules for `/mcp`,
-`/diagnostics/*`, `/oauth/token`, and `/.well-known/*` (for example, 120
+`/diagnostics/*`, `/api/connections/incidents`, `/oauth/token`, and `/.well-known/*` (for example, 120
 requests per minute per source). Add a tighter rule for
 `/api/dashboard-session` (for example, 10 attempts per minute per source) to
 slow password guessing. This preserves enough room for a complete run while
@@ -230,6 +237,33 @@ the signature itself is never displayed. Each exchange includes:
   session IDs, unknown strings, and tool-argument values redacted.
 
 Raw bodies are never stored. Redis contains only the already-redacted exchange.
+
+The Connections dashboard separately retains at most 10,000 incident
+observations for seven days. Desktop reports contain only:
+
+- timestamp, phase, outcome, browser online state, and stable random
+  attempt/event identifiers;
+- allowlisted DNS/TCP/TLS error class, HTTP status, retryability, duration, and
+  consecutive-failure count;
+- app, OpenWork server, engine, and platform versions;
+- an optional server request identifier for correlation.
+
+Den replaces the authenticated organization ID and the desktop's random
+per-install client UUID with purpose-separated HMAC-SHA-256 pseudonyms before
+forwarding. The central service never receives email, member identity, prompts,
+messages, tokens, cookies, URLs, tool names, tool arguments, request bodies, or
+response bodies. A desktop retains only undelivered metadata reports for 24
+hours, capped at 500, and clears the queue and random client ID when **Share
+desktop Connect diagnostics** is disabled in Settings → Preferences → Privacy.
+When Agent access is degraded, Settings → Connect → Advanced diagnostics shows
+that random client UUID so a support engineer can paste it into the portal;
+the value is not a member identifier.
+
+`POST /api/connections/incidents` is not dashboard-cookie authenticated because
+it is a machine intake. It requires the Den-owned bearer, rejects unknown
+fields and batches larger than 50, and is suitable for a separate firewall
+rate limit. `GET /api/connections/incidents` and `/connections` remain protected
+by the diagnostics administrator session.
 
 ## Private-cloud diagnostic story
 

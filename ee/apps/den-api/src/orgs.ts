@@ -1746,23 +1746,25 @@ export async function removeOrganizationMember(input: {
       return validation
     }
 
+    const member = memberRow.member
+
     await tx
       .delete(ConnectedAccountTable)
       .where(and(
         eq(ConnectedAccountTable.organizationId, input.organizationId),
-        eq(ConnectedAccountTable.orgMembershipId, memberRow.member.id),
+        eq(ConnectedAccountTable.orgMembershipId, member.id),
       ))
 
     await tx
       .delete(TeamMemberTable)
-      .where(eq(TeamMemberTable.orgMembershipId, memberRow.member.id))
+      .where(eq(TeamMemberTable.orgMembershipId, member.id))
 
     await tx
       .update(MemberTable)
       .set({ removedAt: new Date(), removedByOrgMember: input.removedByOrgMemberId ?? null, userId: null })
-      .where(and(eq(MemberTable.id, memberRow.member.id), eq(MemberTable.organizationId, input.organizationId), isNull(MemberTable.removedAt)))
+      .where(and(eq(MemberTable.id, member.id), eq(MemberTable.organizationId, input.organizationId), isNull(MemberTable.removedAt)))
 
-    return { ok: true, member: memberRow.member }
+    return { ok: true, member }
   })
 
   if (!removed.ok) {

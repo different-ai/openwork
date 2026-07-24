@@ -77,6 +77,7 @@ export type EnterpriseMcpRequestObserver = {
     httpStatus?: number
     bearerChallenge: boolean
     insufficientScope: boolean
+    invalidToken: boolean
   } | null
 }
 
@@ -122,6 +123,7 @@ export function createEnterpriseMcpRequestObserver(input: {
             httpStatus: response.status,
             bearerChallenge: challenge.includes("bearer"),
             insufficientScope: challenge.includes("insufficient_scope"),
+            invalidToken: challenge.includes("invalid_token"),
           }
         } else if (isMcpRequestPhase(requestPhase)) {
           // A successful retry proves that a preceding challenge was
@@ -145,6 +147,7 @@ export function createEnterpriseMcpRequestObserver(input: {
           requestPhase,
           bearerChallenge: false,
           insufficientScope: false,
+          invalidToken: false,
         }
         input.diagnosticSink?.({
           kind: "request",

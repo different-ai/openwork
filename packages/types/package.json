@@ -39,6 +39,11 @@
       "development": "./src/den/desktop-policies.ts",
       "default": "./src/den/desktop-policies.ts"
     },
+    "./den/connect-diagnostics": {
+      "types": "./src/den/connect-diagnostics.ts",
+      "development": "./src/den/connect-diagnostics.ts",
+      "default": "./src/den/connect-diagnostics.ts"
+    },
     "./den/egress-diagnostics": {
       "types": "./src/den/egress-diagnostics.ts",
       "development": "./src/den/egress-diagnostics.ts",

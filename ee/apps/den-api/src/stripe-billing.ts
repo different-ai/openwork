@@ -227,6 +227,37 @@ async function findOrgSubscriptionByStripeId(stripeSubscriptionId: string) {
     .then((rows) => rows[0] ?? null)
 }
 
+export async function cancelOrganizationSubscriptions(input: { organizationId: OrgId }) {
+  if (!env.stripe.secretKey) {
+    return
+  }
+
+  const rows = await db
+    .select({
+      id: OrgSubscriptionTable.id,
+      stripeSubscriptionId: OrgSubscriptionTable.stripe_subscription_id,
+    })
+    .from(OrgSubscriptionTable)
+    .where(eq(OrgSubscriptionTable.organization_id, input.organizationId))
+
+  for (const row of rows) {
+    if (!row.stripeSubscriptionId) {
+      continue
+    }
+
+    try {
+      await stripe().subscriptions.cancel(row.stripeSubscriptionId)
+    } catch (error) {
+      logger.warn("failed to cancel Stripe subscription during organization deletion", {
+        organization_id: input.organizationId,
+        org_subscription_id: row.id,
+        stripe_subscription_id: row.stripeSubscriptionId,
+        error,
+      })
+    }
+  }
+}
+
 async function findInferenceSubscriptionByStripeId(stripeSubscriptionId: string) {
   const row = await findOrgSubscriptionByStripeId(stripeSubscriptionId)
   return row?.type === INFERENCE_SUBSCRIPTION_TYPE ? row : null

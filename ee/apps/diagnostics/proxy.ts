@@ -24,7 +24,12 @@ export function proxy(request: NextRequest): NextResponse {
     target.pathname = `${browserRoute}${pathname}`
     return NextResponse.rewrite(target)
   }
-  if (pathname !== "/" && !pathname.startsWith("/api/history")) return NextResponse.next()
+  const dashboardProtected = pathname === "/"
+    || pathname === "/connections"
+    || pathname.startsWith("/api/history")
+    || pathname.startsWith("/api/connections/identity")
+    || (pathname.startsWith("/api/connections/incidents") && request.method === "GET")
+  if (!dashboardProtected) return NextResponse.next()
   const expected = diagnosticsConfig()
   const session = request.cookies.get(DASHBOARD_SESSION_COOKIE)?.value
   if (!session || !verifyDashboardSession(session, expected)) {

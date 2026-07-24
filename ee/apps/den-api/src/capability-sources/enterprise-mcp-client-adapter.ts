@@ -98,6 +98,17 @@ function diagnosticSink(tracker: ExternalMcpDiagnosticTracker) {
     // still available to package consumers, but must not overwrite that richer
     // Den evidence after a response settles.
     if (event.kind === "request") return
+    if (event.kind === "credential-invalidation") {
+      console.error("external_mcp_credential_invalidated", {
+        referenceId: tracker.referenceId,
+        connectionId: event.connectionId,
+        operationPhase: event.operationPhase,
+        requestPhase: event.requestPhase,
+        httpStatus: event.httpStatus,
+        invalidToken: event.invalidToken,
+      })
+      return
+    }
     const phase = diagnosticPhase(event)
     if (event.outcome === "started") {
       tracker.begin(phase)

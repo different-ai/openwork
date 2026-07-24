@@ -110,6 +110,7 @@ export type DenOrgAccessFlags = {
   canManageScim: boolean;
   canManageSso: boolean;
   canTransferOwnership: boolean;
+  canDeleteOrganization: boolean;
   canStartSeatCheckout: boolean;
 };
 
@@ -468,6 +469,7 @@ export function getOrgAccessFlags(roleValue: string, isOwner: boolean, _roleDefi
     canManageScim: canManageSettings,
     canManageSso: canManageSettings,
     canTransferOwnership: resolvedIsOwner,
+    canDeleteOrganization: resolvedIsOwner,
     canStartSeatCheckout: isAdmin,
   };
 }

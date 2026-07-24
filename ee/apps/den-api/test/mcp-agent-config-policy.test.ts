@@ -17,6 +17,7 @@ let isAgentApiKeyConnection: typeof import("../src/routes/org/mcp-connections.js
 let isAgentOAuthClientConnection: typeof import("../src/routes/org/mcp-connections.js")["isAgentOAuthClientConnection"]
 let isAgentPluginMcpSecretSetup: typeof import("../src/routes/org/plugin-system/routes.js")["isAgentPluginMcpSecretSetup"]
 let buildMcpCatalog: typeof import("../src/mcp/catalog.js")["buildMcpCatalog"]
+let requiredScopeForMethod: typeof import("../src/mcp/policy.js")["requiredScopeForMethod"]
 let searchCapabilities: typeof import("../src/mcp/search.js")["searchCapabilities"]
 let searchCapabilitySourceFilter: typeof import("../src/mcp/search.js")["searchCapabilitySourceFilter"]
 let document: OpenApiDocument
@@ -39,7 +40,9 @@ function allowed(operationId: string) {
 
 beforeAll(async () => {
   seedRequiredEnv()
-  isMcpOperationAllowed = (await import("../src/mcp/policy.js")).isMcpOperationAllowed
+  const policy = await import("../src/mcp/policy.js")
+  isMcpOperationAllowed = policy.isMcpOperationAllowed
+  requiredScopeForMethod = policy.requiredScopeForMethod
   buildMcpCatalog = (await import("../src/mcp/catalog.js")).buildMcpCatalog
   searchCapabilities = (await import("../src/mcp/search.js")).searchCapabilities
   searchCapabilitySourceFilter = (await import("../src/mcp/search.js")).searchCapabilitySourceFilter
@@ -223,5 +226,48 @@ describe("agent-configurable org connections policy", () => {
     expect(isAgentPluginMcpSecretSetup({ oauthClient: { clientId: "client" }, sessionId: "normal_session" })).toBe(false)
     expect(isAgentPluginMcpSecretSetup({ apiKey: " ", sessionId: "mcp_internal" })).toBe(false)
     expect(isAgentPluginMcpSecretSetup({ sessionId: "mcp_internal" })).toBe(false)
+  })
+})
+
+describe("desktop policies capabilities", () => {
+  test("allows desktop policy CRUD operations", () => {
+    expect(allowed("getV1DesktopPolicies")).toBe(true)
+    expect(allowed("postV1DesktopPolicies")).toBe(true)
+    expect(allowed("patchV1DesktopPoliciesByDesktopPolicyId")).toBe(true)
+    expect(allowed("deleteV1DesktopPoliciesByDesktopPolicyId")).toBe(true)
+  })
+
+  test("catalog maps desktop policy operation IDs to shortened tool names", () => {
+    const catalog = buildMcpCatalog(document)
+    const byOperationId = new Map(catalog.map((operation) => [operation.operation.operationId, operation]))
+
+    expect(byOperationId.get("getV1DesktopPolicies")?.name).toBe("getDesktopPolicies")
+    expect(byOperationId.get("postV1DesktopPolicies")?.name).toBe("postDesktopPolicies")
+    expect(byOperationId.get("patchV1DesktopPoliciesByDesktopPolicyId")?.name).toBe("patchDesktopPolicies")
+    expect(byOperationId.get("deleteV1DesktopPoliciesByDesktopPolicyId")?.name).toBe("deleteDesktopPolicies")
+  })
+
+  test("desktop policy tools use read/write MCP scopes", () => {
+    expect(requiredScopeForMethod(findOperation("getV1DesktopPolicies").method)).toBe("mcp:read")
+    expect(requiredScopeForMethod(findOperation("postV1DesktopPolicies").method)).toBe("mcp:write")
+    expect(requiredScopeForMethod(findOperation("patchV1DesktopPoliciesByDesktopPolicyId").method)).toBe("mcp:write")
+    expect(requiredScopeForMethod(findOperation("deleteV1DesktopPoliciesByDesktopPolicyId").method)).toBe("mcp:write")
+  })
+
+  test("search discovers desktop policy list and update tools", () => {
+    const catalog = buildMcpCatalog(document)
+    const matches = searchCapabilities(catalog, "desktop policy", 20)
+
+    expect(matches).toContainEqual(expect.objectContaining({
+      name: "getDesktopPolicies",
+      method: "GET",
+      path: "/v1/desktop-policies",
+    }))
+    expect(matches).toContainEqual(expect.objectContaining({
+      name: "patchDesktopPolicies",
+      method: "PATCH",
+      path: "/v1/desktop-policies/{desktopPolicyId}",
+      pathParams: ["desktopPolicyId"],
+    }))
   })
 })

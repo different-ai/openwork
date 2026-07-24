@@ -17,6 +17,7 @@ const SAFE_INCLUDED_TAGS = new Set([
   "Plugins",
   "Marketplaces",
   "Connectors",
+  "Desktop Policies",
   "GitHub",
   "Capability Sources",
 ])

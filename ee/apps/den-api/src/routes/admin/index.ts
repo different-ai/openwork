@@ -21,6 +21,7 @@ import {
   WorkerTable,
   AdminAllowlistTable,
 } from "@openwork-ee/den-db/schema"
+import { isDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
@@ -292,7 +293,7 @@ function isOrganizationId(value: string): value is OrganizationId {
 }
 
 function isUserId(value: string): value is UserId {
-  return value.startsWith("user_")
+  return isDenTypeId("user", value)
 }
 
 async function mapWithConcurrency<T, R>(items: T[], limit: number, mapper: (item: T) => Promise<R>): Promise<R[]> {
