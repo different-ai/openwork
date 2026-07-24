@@ -7,6 +7,7 @@ const workspaceId = "workspace-1";
 function resetStore() {
   useSessionManagementStore.setState({
     pinnedIds: [],
+    unreadIds: [],
     orderByWorkspace: {},
     groupsByWorkspace: {
       [workspaceId]: {
@@ -54,5 +55,38 @@ describe("session group management", () => {
     expect(useSessionManagementStore.getState().groupsByWorkspace[workspaceId]?.assignments).toEqual({
       "session-3": "group-b",
     });
+  });
+});
+
+describe("unread session markers", () => {
+  beforeEach(resetStore);
+
+  test("starts with no unread sessions after reset", () => {
+    expect(useSessionManagementStore.getState().unreadIds).toEqual([]);
+  });
+
+  test("markUnread is idempotent", () => {
+    const { markUnread } = useSessionManagementStore.getState();
+    markUnread("session-1");
+    markUnread("session-1");
+
+    expect(useSessionManagementStore.getState().unreadIds).toEqual(["session-1"]);
+  });
+
+  test("clearUnread removes only the requested session", () => {
+    const { markUnread, clearUnread } = useSessionManagementStore.getState();
+    markUnread("session-1");
+    markUnread("session-2");
+    clearUnread("session-1");
+
+    expect(useSessionManagementStore.getState().unreadIds).toEqual(["session-2"]);
+  });
+
+  test("clearUnread is a no-op for sessions that are not unread", () => {
+    const { markUnread, clearUnread } = useSessionManagementStore.getState();
+    markUnread("session-1");
+    clearUnread("session-2");
+
+    expect(useSessionManagementStore.getState().unreadIds).toEqual(["session-1"]);
   });
 });
