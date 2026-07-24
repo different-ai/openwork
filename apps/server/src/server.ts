@@ -1280,9 +1280,12 @@ function resolveInboxMaxBytes(): number {
   const raw = (process.env.OPENWORK_INBOX_MAX_BYTES ?? "").trim();
   const parsed = raw ? Number(raw) : NaN;
   if (Number.isFinite(parsed) && parsed > 0) {
-    return Math.min(Math.trunc(parsed), 250_000_000);
+    return Math.trunc(parsed);
   }
-  return 50_000_000;
+  // Generous default: the composer no longer caps attachment sizes, so large
+  // uploads should be bounded here (memory: formData buffers the body) and by
+  // downstream provider/tool limits rather than an arbitrary small cap.
+  return 250_000_000;
 }
 
 function resolveToyUiEnabled(): boolean {

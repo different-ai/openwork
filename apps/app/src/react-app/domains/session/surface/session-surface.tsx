@@ -1228,19 +1228,13 @@ export function SessionSurface(props: SessionSurfaceProps) {
       toast.warning(props.attachmentsDisabledReason ?? "Attachments are unavailable.");
       return;
     }
-    const oversized = files.filter((file) => file.size > 25 * 1024 * 1024);
-    const sized = files.filter((file) => file.size <= 25 * 1024 * 1024);
-    if (oversized.length) {
-      toast.warning(
-        oversized.length === 1 ? `${oversized[0]?.name ?? "File"} is too large` : `${oversized.length} files are too large`,
-        { description: "Files over 25 MB were skipped." },
-      );
-    }
-    // Any file type is accepted: model-readable formats become file parts,
-    // everything else is copied into the workspace so the model reads it
-    // with tools (see modelFacingAttachmentMime in attachment-file-part.ts).
-    if (!sized.length) return;
-    const next = sized.map((file) => {
+    // Any file type and size is accepted: model-readable formats become file
+    // parts, everything else is copied into the workspace so the model reads
+    // it with tools (see modelFacingAttachmentMime in attachment-file-part.ts).
+    // Oversized files are rejected by the upload endpoint or provider with
+    // their own errors instead of an opinionated composer cap.
+    if (!files.length) return;
+    const next = files.map((file) => {
       const metadata = resolveAttachmentFileMetadata(file);
       return {
         id: `att-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`,

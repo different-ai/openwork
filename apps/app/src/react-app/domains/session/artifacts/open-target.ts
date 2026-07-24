@@ -105,6 +105,23 @@ function textWithoutRedundantMarkdownLinkLabels(text: string) {
   });
 }
 
+/**
+ * Chat attachments are uploaded into the workspace inbox and referenced by
+ * `file://` URLs on message file parts. Decoding the URL here lets those
+ * attachments resolve as openable artifacts (regex path scanning cannot,
+ * because attachment filenames often contain spaces).
+ */
+export function filePathFromFileUrl(url: string): string | null {
+  if (!url.startsWith("file://")) return null;
+  try {
+    const pathname = decodeURIComponent(new URL(url).pathname);
+    if (!pathname) return null;
+    return /^\/[A-Za-z]:\//.test(pathname) ? pathname.slice(1) : pathname;
+  } catch {
+    return null;
+  }
+}
+
 function targetFromFile(path: string, confidence: number, reason: string): OpenTarget | null {
   const normalized = normalizePath(path).replace(/[.,;:]+$/, "");
   if (!normalized || normalized.length > 500 || !normalized.includes(".")) return null;
@@ -288,6 +305,15 @@ export function deriveOpenTargets(messages: UIMessage[], options: DeriveOpenTarg
         scanText(targets, part.text, message.role === "assistant" ? 65 : 40, "message", {
           includeFiles: options.includeFileMentions === true || (message.role === "assistant" && shouldScanAssistantFileMentions(part.text)),
         });
+        continue;
+      }
+
+      if (part.type === "file") {
+        const path = filePathFromFileUrl(part.url);
+        if (path) {
+          const target = targetFromFile(path, 95, "chat attachment");
+          addTarget(targets, target && part.filename ? { ...target, name: part.filename } : target);
+        }
         continue;
       }
 

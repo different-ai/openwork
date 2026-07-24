@@ -59,14 +59,17 @@ export function getMediaBadge(part: Pick<FileUIPart, "filename" | "mediaType">) 
   if (mime === PPTX_MIME) return "PPTX"
   if (mime === XLSX_MIME) return "XLSX"
 
+  // Prefer the filename extension: attachment mimes are transport details
+  // (e.g. everything text-like or binary travels as text/plain so providers
+  // accept it), while the extension reflects what the user actually attached.
   const fromExtension = extensionBadge(part.filename)
-  if (fromExtension === "DOCX" || fromExtension === "PPTX" || fromExtension === "XLSX") return fromExtension
+  if (fromExtension) return fromExtension
 
   if (mime && mime !== "application/octet-stream") {
     return mime.replace(/^application\//, "").replace(/^text\//, "").toUpperCase()
   }
 
-  return fromExtension
+  return null
 }
 
 export function getSafeFileDownloadUrl(part: Pick<FileUIPart, "url">) {

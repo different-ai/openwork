@@ -117,7 +117,6 @@ type ComposerProps = {
 
 const FLUSH_PROMPT_EVENT = "openwork:flushPromptDraft";
 const FOCUS_PROMPT_EVENT = "openwork:focusPrompt";
-const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
 const IMAGE_COMPRESS_MAX_PX = 2048;
 const IMAGE_COMPRESS_QUALITY = 0.82;
 const IMAGE_COMPRESS_TARGET_BYTES = 1_500_000;
@@ -1062,30 +1061,16 @@ export function ReactSessionComposer(props: ComposerProps) {
       return;
     }
 
+    // No client-side size cap: oversized files are rejected upstream (upload
+    // endpoint or provider) with their own errors instead of a composer rule.
     const accepted: File[] = [];
-    const oversize: string[] = [];
-
     for (const original of inputFiles) {
-      const processed = original.type.startsWith("image/") ? await compressImageFile(original) : original;
-      if (processed.size > MAX_ATTACHMENT_BYTES) {
-        oversize.push(processed.name || original.name);
-        continue;
-      }
-      accepted.push(processed);
+      accepted.push(original.type.startsWith("image/") ? await compressImageFile(original) : original);
     }
 
     if (accepted.length) {
       props.onAttachFiles(accepted);
     }
-
-    if (oversize.length) {
-      toast.warning(
-        oversize.length === 1
-          ? t("composer.file_exceeds_limit", { name: oversize[0] })
-          : `${oversize.length} files exceed the 8MB limit.`,
-      );
-    }
-
   };
 
   const activeMcpItems = mcpServers.map((entry) => ({

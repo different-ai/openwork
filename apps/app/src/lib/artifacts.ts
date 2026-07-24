@@ -8,7 +8,7 @@ import {
   isWriteToolPart,
 } from "@/lib/build-in-tools";
 import { useOpenTargets } from "@/lib/target-provider";
-import { isCollectibleArtifactTarget, isOpenableFileTarget, type OpenTarget, type OpenTargetPreview } from "@/react-app/domains/session/artifacts/open-target";
+import { filePathFromFileUrl, isCollectibleArtifactTarget, isOpenableFileTarget, type OpenTarget, type OpenTargetPreview } from "@/react-app/domains/session/artifacts/open-target";
 
 export type ArtifactType = "website" | "markdown" | "sheet" | "slides" | "document" | "image" | "video" | "audio" | "pdf" | "html" | "text" | "unknown";
 
@@ -245,6 +245,14 @@ function getArtifactPathsFromMessage(message: UIMessage) {
   for (const part of message.parts) {
     if (part.type === "text" && message.role === "assistant") {
       paths.push(...getArtifactPathsFromText(part.text));
+      continue;
+    }
+
+    if (part.type === "file") {
+      // Chat attachments carry workspace `file://` URLs; surface them as
+      // artifacts so users can click/preview what they attached.
+      const path = filePathFromFileUrl(part.url);
+      if (path) paths.push(path);
       continue;
     }
 

@@ -160,8 +160,10 @@ function isTextLikeAttachmentMime(mime: string) {
  *   content via the Read tool (the proven `@file` mention mechanism);
  * - images, PDFs, and Office mimes pass through (Office parts are rewritten
  *   to text by the OpenWorkOfficeAttachments plugin before the provider);
- * - everything else gets no model-facing file part (`null`): the synthetic
- *   workspace-path note gives the model tool access to the bytes instead.
+ * - everything else returns `null`: workspace (`file://`) attachments fall
+ *   back to a `text/plain` part that opencode mediates through the Read tool,
+ *   while data-URL attachments are dropped (inlining binary bytes as text is
+ *   garbage); the synthetic workspace-path note gives tools the bytes.
  */
 export function modelFacingAttachmentMime(mimeType: string): string | null {
   const mime = normalizedMime(mimeType);
@@ -264,9 +266,12 @@ function attachmentPathNotePart(uploaded: UploadedChatAttachment[]): TextPartInp
   };
 }
 
-async function uploadedAttachmentFilePart(item: UploadedChatAttachment): Promise<FilePartInput | null> {
-  const modelMime = modelFacingAttachmentMime(item.mime);
-  if (!modelMime) return null;
+async function uploadedAttachmentFilePart(item: UploadedChatAttachment): Promise<FilePartInput> {
+  // Binary/unknown mimes also get a `text/plain` file part: opencode expands
+  // text/plain `file://` parts through the Read tool (which fails gracefully
+  // with "Cannot read binary file") and never forwards them to the provider,
+  // so the transcript keeps an attachment badge without any provider risk.
+  const modelMime = modelFacingAttachmentMime(item.mime) ?? "text/plain";
 
   // Images need a browser-displayable URL so the transcript can show the same
   // expandable miniature preview as paste/composer attachments. Workspace
@@ -346,11 +351,10 @@ export async function composerAttachmentsToWorkspaceFileParts(input: {
     });
   }
 
-  const parts: Array<TextPartInput | FilePartInput> = [attachmentPathNotePart(uploaded)];
-  for (const filePart of await Promise.all(uploaded.map(uploadedAttachmentFilePart))) {
-    if (filePart) parts.push(filePart);
-  }
-  return parts;
+  return [
+    attachmentPathNotePart(uploaded),
+    ...(await Promise.all(uploaded.map(uploadedAttachmentFilePart))),
+  ];
 }
 
 export async function composerAttachmentToFilePart(attachment: ComposerAttachment): Promise<FilePartInput | null> {

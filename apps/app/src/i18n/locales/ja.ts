@@ -81,7 +81,6 @@ export default {
   "composer.behavior_label": "動作",
   "composer.configure": "設定",
   "composer.default_agent": "デフォルトエージェント",
-  "composer.file_exceeds_limit": "{name}は8MBの制限を超えています。",
   "composer.file_kind": "ファイル",
   "composer.image_kind": "画像",
   "composer.inserted_links_unsupported": "未対応ファイルのリンクを挿入しました。",

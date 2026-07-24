@@ -82,7 +82,6 @@ export default {
   "composer.behavior_label": "พฤติกรรม",
   "composer.configure": "ตั้งค่า",
   "composer.default_agent": "Agent เริ่มต้น",
-  "composer.file_exceeds_limit": "{name} เกินขีดจำกัด 8MB",
   "composer.file_kind": "ไฟล์",
   "composer.image_kind": "รูปภาพ",
   "composer.inserted_links_unsupported": "แทรกลิงก์สำหรับไฟล์ที่ไม่รองรับ",

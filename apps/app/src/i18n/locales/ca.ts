@@ -82,7 +82,6 @@ export default {
   "composer.behavior_label": "Comportament",
   "composer.configure": "Configura",
   "composer.default_agent": "Agent per defecte",
-  "composer.file_exceeds_limit": "{name} supera el límit de 8 MB.",
   "composer.file_kind": "Fitxer",
   "composer.image_kind": "Imatge",
   "composer.inserted_links_unsupported": "S'han inserit enllaços per a fitxers no compatibles.",

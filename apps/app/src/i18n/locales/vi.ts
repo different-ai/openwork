@@ -82,7 +82,6 @@ export default {
   "composer.behavior_label": "Hành vi",
   "composer.configure": "Cấu hình",
   "composer.default_agent": "Agent mặc định",
-  "composer.file_exceeds_limit": "{name} vượt quá giới hạn 8MB.",
   "composer.file_kind": "Tệp",
   "composer.image_kind": "Hình ảnh",
   "composer.inserted_links_unsupported": "Đã chèn liên kết cho các tệp không được hỗ trợ.",

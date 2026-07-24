@@ -82,7 +82,6 @@ export default {
   "composer.behavior_label": "Comportamiento",
   "composer.configure": "Configurar",
   "composer.default_agent": "Agente predeterminado",
-  "composer.file_exceeds_limit": "{name} supera el límite de 8 MB.",
   "composer.file_kind": "Archivo",
   "composer.image_kind": "Imagen",
   "composer.inserted_links_unsupported": "Enlaces insertados para archivos no compatibles.",
