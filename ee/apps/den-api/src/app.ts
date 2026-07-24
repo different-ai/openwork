@@ -23,6 +23,7 @@ import { registerAuthRoutes } from "./routes/auth/index.js"
 import { registerBootstrapRoutes } from "./routes/bootstrap/index.js"
 import { registerDeprecatedSkillHubRoutes } from "./routes/deprecated-skill-hubs.js"
 import { registerDevRoutes } from "./routes/dev/index.js"
+import { registerConnectDiagnosticRoutes } from "./routes/diagnostics/index.js"
 import { registerMcpTokenRoutes } from "./routes/mcp/index.js"
 import { registerMemoryRoutes } from "./routes/memory/index.js"
 import { registerMeRoutes } from "./routes/me/index.js"
@@ -173,6 +174,7 @@ registerAuthRoutes(app)
 registerBootstrapRoutes(app)
 registerDeprecatedSkillHubRoutes(app)
 registerDevRoutes(app)
+registerConnectDiagnosticRoutes(app)
 registerMeRoutes(app)
 registerMemoryRoutes(app)
 registerOrgRoutes(app)
