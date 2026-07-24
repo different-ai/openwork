@@ -16,12 +16,12 @@ export function isConnectDiagnosticsEnabled(): boolean {
   if (!localStorageAvailable()) return false;
   try {
     const raw = window.localStorage.getItem(LOCAL_PREFERENCES_KEY);
-    if (!raw) return true;
+    if (!raw) return false;
     const parsed = JSON.parse(raw) as unknown;
-    if (!parsed || typeof parsed !== "object") return true;
-    return (parsed as { connectionDiagnosticsEnabled?: unknown }).connectionDiagnosticsEnabled !== false;
+    if (!parsed || typeof parsed !== "object") return false;
+    return (parsed as { connectionDiagnosticsEnabled?: unknown }).connectionDiagnosticsEnabled === true;
   } catch {
-    return true;
+    return false;
   }
 }
 

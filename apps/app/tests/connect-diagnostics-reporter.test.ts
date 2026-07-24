@@ -7,6 +7,7 @@ import {
   CONNECT_DIAGNOSTIC_QUEUE_KEY,
   clearConnectDiagnosticLocalData,
   getConnectDiagnosticsClientId,
+  isConnectDiagnosticsEnabled,
 } from "../src/react-app/domains/connections/connect-diagnostics-preferences";
 import {
   connectDiagnosticsTesting,
@@ -50,6 +51,10 @@ function installBrowserRuntime() {
   });
 }
 
+function enableConnectDiagnostics() {
+  storage.set(LOCAL_PREFERENCES_KEY, JSON.stringify({ connectionDiagnosticsEnabled: true }));
+}
+
 describe("desktop Connect diagnostics reporter", () => {
   beforeEach(() => {
     storage.clear();
@@ -62,7 +67,60 @@ describe("desktop Connect diagnostics reporter", () => {
     Object.defineProperty(globalThis, "navigator", { configurable: true, value: originalNavigator });
   });
 
+  test("is disabled by default and creates no identifier, queue, header, or request", async () => {
+    const requests: Request[] = [];
+    globalThis.fetch = async (input, init) => {
+      requests.push(new Request(input, init));
+      return new Response(null, { status: 204 });
+    };
+
+    expect(isConnectDiagnosticsEnabled()).toBe(false);
+    expect(getConnectDiagnosticsClientId()).toBeNull();
+
+    recordConnectDiagnosticAttempt({
+      outcome: "failed",
+      health: null,
+      issue: {
+        code: "cloud_connection_failed",
+        stage: "transport_auth",
+        retryable: true,
+      },
+      maintenanceAttempt: 1,
+    }, settings);
+    await expect(flushConnectDiagnosticQueue(settings)).resolves.toBe(0);
+
+    const payload = buildOpenworkCloudMcpReconcilePayload({
+      context: {
+        denBaseUrl: settings.baseUrl,
+        serverBaseUrl: "http://127.0.0.1:8787",
+        orgId: settings.activeOrgId,
+        workspaceId: "workspace_1",
+        denAuthToken: settings.authToken,
+      },
+      token: {
+        token: "private-mcp-token",
+        expiresAt: "2026-07-31T10:00:00.000Z",
+        organizationId: settings.activeOrgId,
+        resource: "https://customer-den.example/mcp",
+        scopes: ["mcp:read", "mcp:write"],
+      },
+    });
+
+    expect(requests).toEqual([]);
+    expect(storage.has(CONNECT_DIAGNOSTIC_CLIENT_ID_KEY)).toBe(false);
+    expect(storage.has(CONNECT_DIAGNOSTIC_QUEUE_KEY)).toBe(false);
+    expect(storage.has(CONNECT_DIAGNOSTIC_FAILURE_STATE_KEY)).toBe(false);
+    expect(payload?.config.headers).toEqual({
+      Authorization: "Bearer private-mcp-token",
+    });
+
+    storage.set(LOCAL_PREFERENCES_KEY, "{invalid");
+    expect(isConnectDiagnosticsEnabled()).toBe(false);
+    expect(getConnectDiagnosticsClientId()).toBeNull();
+  });
+
   test("queues only allowlisted metadata, retains an offline report, then sends no raw customer identity", async () => {
+    enableConnectDiagnostics();
     globalThis.fetch = async () => new Response(null, { status: 503 });
 
     recordConnectDiagnosticAttempt({
@@ -120,6 +178,7 @@ describe("desktop Connect diagnostics reporter", () => {
   });
 
   test("reports recovery only after a failure and disabling erases local state", async () => {
+    enableConnectDiagnostics();
     globalThis.fetch = async () => new Response(null, { status: 503 });
 
     recordConnectDiagnosticAttempt({
@@ -171,6 +230,7 @@ describe("desktop Connect diagnostics reporter", () => {
   });
 
   test("replaces an arbitrary content-like failure code instead of retaining it", async () => {
+    enableConnectDiagnostics();
     globalThis.fetch = async () => new Response(null, { status: 503 });
     recordConnectDiagnosticAttempt({
       outcome: "failed",
@@ -189,6 +249,7 @@ describe("desktop Connect diagnostics reporter", () => {
   });
 
   test("adds the stable client correlation ID to the managed Cloud MCP config", () => {
+    enableConnectDiagnostics();
     const clientId = getConnectDiagnosticsClientId();
     const payload = buildOpenworkCloudMcpReconcilePayload({
       context: {
@@ -216,6 +277,7 @@ describe("desktop Connect diagnostics reporter", () => {
   });
 
   test("does not lose an event queued while an earlier batch is in flight", async () => {
+    enableConnectDiagnostics();
     let finishFirstRequest: ((response: Response) => void) | null = null;
     globalThis.fetch = async () => new Promise<Response>((resolve) => {
       finishFirstRequest = resolve;

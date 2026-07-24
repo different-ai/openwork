@@ -63,9 +63,10 @@ export type LocalPreferences = {
    */
   analyticsEnabled: boolean;
   /**
-   * Metadata-only OpenWork Connect incident diagnostics. The device keeps a
-   * bounded 24-hour retry queue; Den forwards pseudonymized events for seven
-   * days. No content, credentials, URLs, or member identity are included.
+   * Explicitly opt-in metadata-only OpenWork Connect incident diagnostics.
+   * When enabled, the device keeps a bounded 24-hour retry queue; Den forwards
+   * pseudonymized events for seven days. No content, credentials, URLs, or
+   * member identity are included.
    */
   connectionDiagnosticsEnabled: boolean;
   /**
@@ -98,7 +99,7 @@ const INITIAL_PREFS: LocalPreferences = {
   featureFlags: { microsandboxCreateSandbox: true, memory: false },
   hasCompletedOnboarding: false,
   analyticsEnabled: true,
-  connectionDiagnosticsEnabled: true,
+  connectionDiagnosticsEnabled: false,
   desktopNotifications: DEFAULT_DESKTOP_NOTIFICATION_PREFERENCE,
 };
 
