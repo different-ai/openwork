@@ -9,6 +9,7 @@ export default defineConfig({
     "openwork-provider": "src/openwork-provider.ts",
     "den/desktop-app-restrictions": "src/den/desktop-app-restrictions.ts",
     "den/desktop-policies": "src/den/desktop-policies.ts",
+    "den/connect-diagnostics": "src/den/connect-diagnostics.ts",
     "den/egress-diagnostics": "src/den/egress-diagnostics.ts",
     "den/inference": "src/den/inference.ts",
     "den/mcp-connection-action": "src/den/mcp-connection-action.ts",
