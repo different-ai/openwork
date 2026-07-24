@@ -1110,7 +1110,8 @@ export function AppSidebar(props: AppSidebarProps) {
             {pinnedSessions.length > 0 ? (
               <GlobalPinnedSessions entries={pinnedSessions} />
             ) : null}
-            <div className="group/workspaces-header flex items-center px-3 pb-1 pt-2">
+            {/* pl-11 (44px): the shared text lane session titles start in. */}
+            <div className="group/workspaces-header flex items-center pb-1 pl-11 pr-3 pt-2">
               <span className="text-[11px] font-normal uppercase tracking-[0.04em] text-muted-foreground">
                 {t("workspace_list.title")}
               </span>
@@ -1172,7 +1173,8 @@ function GlobalPinnedSessions({ entries }: { entries: GlobalPinnedSessionEntry[]
   return (
     <SidebarGroup data-global-pinned-sessions className="pb-1 pt-2">
       <SidebarGroupContent>
-        <div className="px-3 pb-1 text-[11px] font-normal uppercase tracking-[0.04em] text-muted-foreground">
+        {/* pl-9 (36px) + group p-2 = 44px: the shared text lane session titles start in. */}
+        <div className="pb-1 pl-9 pr-3 text-[11px] font-normal uppercase tracking-[0.04em] text-muted-foreground">
           {t("session_management.pinned")}
         </div>
         <SidebarMenu>
@@ -1209,7 +1211,7 @@ function GlobalArchivedSessions({ entries }: { entries: GlobalArchivedSessionEnt
             render={
               <button
                 type="button"
-                className="group/separator flex w-full cursor-pointer items-center gap-1.5 px-3 pb-1 pt-2.5 rounded transition-colors hover:bg-sidebar-accent/50"
+                className="group/separator flex w-full cursor-pointer items-center gap-3 px-3 pb-1 pt-2.5 rounded transition-colors hover:bg-sidebar-accent/50"
               >
                 <Archive className="size-3 shrink-0 text-muted-foreground" />
                 <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
@@ -1867,7 +1869,7 @@ function SessionGroupSeparator({ label, count, expanded, onToggle, group, groups
         event.preventDefault();
         onToggle();
       }}
-      className="group/separator flex w-full items-center gap-1.5 rounded px-2 pb-1 pt-2.5 text-left transition-colors first:pt-1 hover:bg-sidebar-accent/50"
+      className="group/separator flex w-full items-center gap-3.5 rounded px-2 pb-1 pt-2.5 text-left transition-colors first:pt-1 hover:bg-sidebar-accent/50"
       aria-expanded={expanded}
     >
       <ChevronRight className={cn("size-3.5 shrink-0 text-muted-foreground transition-transform duration-200", expanded && "rotate-90")} />
