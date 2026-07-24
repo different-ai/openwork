@@ -1,6 +1,7 @@
 /** @jsxImportSource react */
 import type { Ref } from "react";
 import { Globe } from "lucide-react";
+import { t } from "../../../i18n";
 
 import {
   iconTileClass,
@@ -64,7 +65,7 @@ export function RemoteWorkspaceFields({
 
       <div className="mt-5 grid gap-4">
         <label className="grid gap-2">
-          <span className={inputLabelClass}>Worker URL</span>
+          <span className={inputLabelClass}>{t("remote_fields.worker_url")}</span>
           <input
             ref={hostInputRef}
             type="url"
@@ -75,18 +76,18 @@ export function RemoteWorkspaceFields({
             className={inputClass}
           />
           <span className={inputHintClass}>
-            Paste the OpenWork worker URL you want to connect to.
+            {t("remote_fields.worker_url_hint")}
           </span>
         </label>
 
         <label className="grid gap-2">
-          <span className={inputLabelClass}>Access token</span>
+          <span className={inputLabelClass}>{t("remote_fields.access_token")}</span>
           <div className="flex items-center gap-2 rounded-xl border border-dls-border bg-dls-surface p-1.5">
             <input
               type={tokenVisible ? "text" : "password"}
               value={token}
               onChange={(event) => onTokenInput(event.currentTarget.value)}
-              placeholder="Optional"
+              placeholder={t("remote_fields.optional_placeholder")}
               disabled={submitting}
               className="min-w-0 flex-1 border-none bg-transparent px-2 py-1.5 text-[14px] text-dls-text outline-none placeholder:text-dls-secondary"
             />
@@ -96,41 +97,41 @@ export function RemoteWorkspaceFields({
               onClick={onToggleTokenVisible}
               disabled={submitting}
             >
-              {tokenVisible ? "Hide" : "Show"}
+              {tokenVisible ? t("common.hide") : t("common.show")}
             </button>
           </div>
           <span className={inputHintClass}>
-            Add a token only if the worker requires one.
+            {t("remote_fields.access_token_hint")}
           </span>
         </label>
 
         {showDirectory ? (
           <label className="grid gap-2">
-            <span className={inputLabelClass}>Remote directory</span>
+            <span className={inputLabelClass}>{t("remote_fields.remote_directory")}</span>
             <input
               type="text"
               value={directory ?? ""}
               onChange={(event) => onDirectoryInput?.(event.currentTarget.value)}
-              placeholder="Optional"
+              placeholder={t("remote_fields.optional_placeholder")}
               disabled={submitting}
               className={inputClass}
             />
             <span className={inputHintClass}>
-              Optionally target a directory within that remote worker.
+              {t("remote_fields.remote_directory_hint")}
             </span>
           </label>
         ) : null}
 
         <label className="grid gap-2">
           <span className={inputLabelClass}>
-            Display name{" "}
-            <span className="font-normal text-dls-secondary">(optional)</span>
+            {t("remote_fields.display_name")}{" "}
+            <span className="font-normal text-dls-secondary">{t("remote_fields.optional")}</span>
           </span>
           <input
             type="text"
             value={displayName}
             onChange={(event) => onDisplayNameInput(event.currentTarget.value)}
-            placeholder="Worker name"
+            placeholder={t("remote_fields.display_name")}
             disabled={submitting}
             className={inputClass}
           />

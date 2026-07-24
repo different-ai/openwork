@@ -90,6 +90,7 @@ import {
 } from "@/lib/tool-activity"
 import { faviconUrlForHref } from "@/lib/favicon"
 import { cn } from "@/lib/utils"
+import { t } from "@/i18n"
 import { groupMessages, isMessageGroup, getLastTextPart, getAggregateOnlyParts, getAssistantRenderGroups, getFileTitle, getMediaBadge, getMessageCreated, formatMessageTimestamp, type UIMessageWithIndex, getMessagesText, getSafeFileDownloadUrl } from "./utils"
 import type { AnyToolPart } from "@/lib/tool-aggregate"
 
@@ -344,11 +345,11 @@ function CopyMessageButton({ messages }: CopyMessageButtonProps) {
   }
 
   return (
-    <MessageAction tooltip={copied ? "Copied!" : "Copy"}>
+    <MessageAction tooltip={copied ? t("message.copied") : t("message.copy")}>
       <Button
         variant="ghost"
         size="icon"
-        aria-label="Copy message"
+        aria-label={t("message.copy_aria")}
         onClick={() => void onCopy()}
       >
         {copied ? <Check /> : <Copy />}
@@ -619,21 +620,21 @@ const UserMessage = React.memo(
                         </Button>
                       </MessageAction>
                     ) : null}
-                    <MessageAction tooltip="Branch in new chat">
+                    <MessageAction tooltip={t("message.branch")}>
                       <Button
                         variant="ghost"
                         size="icon"
-                        aria-label="Branch in new chat"
+                        aria-label={t("message.branch")}
                         onClick={() => onForkAtMessage(message.id)}
                       >
                         <Split className="rotate-90" />
                       </Button>
                     </MessageAction>
-                    <MessageAction tooltip="Revert">
+                    <MessageAction tooltip={t("message.revert")}>
                       <Button
                         variant="ghost"
                         size="icon"
-                        aria-label="Revert"
+                        aria-label={t("message.revert")}
                         onClick={() => onRevertToUserMessage(message.id)}
                       >
                         <Undo2 />
@@ -659,11 +660,11 @@ const UserMessage = React.memo(
             ) : null}
             <ContextMenuItem onClick={() => onForkAtMessage(message.id)}>
               <Split className="size-4 rotate-90" />
-              Branch in new chat
+              {t("message.branch")}
             </ContextMenuItem>
             <ContextMenuItem onClick={() => onRevertToUserMessage(message.id)}>
               <Undo2 className="size-4" />
-              Revert
+              {t("message.revert")}
             </ContextMenuItem>
           </ContextMenuContent>
         </ContextMenu>
@@ -943,21 +944,21 @@ function MessageGroup({
             <CopyMessageButton messages={renderableItems.map((item) => item.message)} />
             {lastRealItem ? (
               <>
-                <MessageAction tooltip="Branch in new chat">
+                <MessageAction tooltip={t("message.branch")}>
                   <Button
                     variant="ghost"
                     size="icon"
-                    aria-label="Branch in new chat"
+                    aria-label={t("message.branch")}
                     onClick={() => onForkAtMessage(lastRealItem.message.id)}
                   >
                     <Split className="rotate-90" />
                   </Button>
                 </MessageAction>
-                <MessageAction tooltip="Revert">
+                <MessageAction tooltip={t("message.revert")}>
                   <Button
                     variant="ghost"
                     size="icon"
-                    aria-label="Revert"
+                    aria-label={t("message.revert")}
                     onClick={() => onRevertToUserMessage(lastRealItem.message.id)}
                   >
                     <Undo2 />

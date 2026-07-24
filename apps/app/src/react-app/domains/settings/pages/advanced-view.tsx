@@ -106,14 +106,14 @@ export function AdvancedView(props: AdvancedViewProps) {
   })();
 
   const clientDetailLines = props.clientConnected
-    ? ["Chat and task creation can use the OpenCode engine for this workspace."]
+    ? [t("advanced.runtime_hint_chat")]
     : [
         "Chat and task creation may fail until OpenCode restarts.",
         "OpenWork server config sources below can still be inspected.",
       ];
 
   const openworkDetailLines = props.openworkServerStatus === "connected"
-    ? ["Runtime DB, workspace config, and migration diagnostics are available."]
+    ? [t("advanced.runtime_hint_db")]
     : ["Runtime config diagnostics need the OpenWork server connection."];
 
   const submitDebugDeepLink = async () => {

@@ -35,20 +35,20 @@ type SettingsCardDefinition = { tab: SettingsTab; icon: typeof Sparkles } & (
 );
 
 const workspaceCards: SettingsCardDefinition[] = [
-  { tab: "preferences", icon: Cog, title: "Preferences", desc: "Default model, reasoning, and compaction." },
-  { tab: "permissions", icon: FolderLock, title: "Permissions", desc: "Authorized folders and file access." },
+  { tab: "preferences", icon: Cog, titleKey: "general.card_preferences", descKey: "general.card_preferences_desc" },
+  { tab: "permissions", icon: FolderLock, titleKey: "general.card_permissions", descKey: "general.card_permissions_desc" },
   { tab: "extensions", icon: Puzzle, titleKey: "settings.tab_extensions", descKey: "settings.tab_description_extensions" },
-  { tab: "advanced", icon: Wrench, title: "Advanced", desc: "Runtime, engine, and developer options." },
+  { tab: "advanced", icon: Wrench, titleKey: "general.card_advanced", descKey: "general.card_advanced_desc" },
 ];
 
 const globalCards: SettingsCardDefinition[] = [
-  { tab: "ai", icon: Sparkles, title: "AI Providers", desc: "Connect services that provide AI models." },
-  { tab: "cloud-account", icon: Cloud, title: "Cloud", desc: "OpenWork Cloud account and organization." },
+  { tab: "ai", icon: Sparkles, titleKey: "general.card_ai_providers", descKey: "general.card_ai_providers_desc" },
+  { tab: "cloud-account", icon: Cloud, titleKey: "general.card_cloud", descKey: "general.card_cloud_desc" },
   { tab: "connect", icon: Cable, titleKey: "settings.tab_connect", descKey: "settings.tab_description_connect" },
-  { tab: "appearance", icon: Paintbrush, title: "Appearance", desc: "Theme, font size, and display." },
-  { tab: "environment", icon: Terminal, title: "Environment", desc: "Environment variables and paths." },
-  { tab: "updates", icon: RefreshCcw, title: "Updates", desc: "App version and update channel." },
-  { tab: "recovery", icon: ShieldCheck, title: "Recovery", desc: "Reset onboarding and clear data." },
+  { tab: "appearance", icon: Paintbrush, titleKey: "general.card_appearance", descKey: "general.card_appearance_desc" },
+  { tab: "environment", icon: Terminal, titleKey: "general.card_environment", descKey: "general.card_environment_desc" },
+  { tab: "updates", icon: RefreshCcw, titleKey: "general.card_updates", descKey: "general.card_updates_desc" },
+  { tab: "recovery", icon: ShieldCheck, titleKey: "general.card_recovery", descKey: "general.card_recovery_desc" },
 ];
 
 function cardTitle(card: SettingsCardDefinition) {
@@ -89,7 +89,7 @@ export function GeneralSettingsView(props: GeneralSettingsViewProps) {
       {/* Workspace settings */}
       <div className="space-y-3">
         <div className="text-[11px] font-semibold uppercase tracking-[0.15em] text-dls-secondary">
-          Workspace
+          {t("general.section_workspace")}
         </div>
         <div className="grid grid-cols-2 gap-2">
           {workspaceCards.map((card) => (
@@ -107,7 +107,7 @@ export function GeneralSettingsView(props: GeneralSettingsViewProps) {
       {/* Global settings */}
       <div className="space-y-3">
         <div className="text-[11px] font-semibold uppercase tracking-[0.15em] text-dls-secondary">
-          Global
+          {t("general.section_global")}
         </div>
         <div className="grid grid-cols-2 gap-2">
           {globalCards.map((card) => (
@@ -125,7 +125,7 @@ export function GeneralSettingsView(props: GeneralSettingsViewProps) {
       {/* Feedback */}
       <div className="space-y-3">
         <div className="text-[11px] font-semibold uppercase tracking-[0.15em] text-dls-secondary">
-          Help
+          {t("general.section_help")}
         </div>
         <div className="rounded-2xl border border-dls-border bg-dls-surface p-4">
           <div className="space-y-3">

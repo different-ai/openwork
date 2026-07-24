@@ -1,4 +1,5 @@
 import { memo, useCallback } from "react";
+import { t } from "@/i18n";
 
 import {
   selectSessionIsStickyBottom,
@@ -30,7 +31,7 @@ const JumpToStartButton = memo(function JumpToStartButton({
       className="rounded-full px-3 py-1.5 text-xs text-dls-text transition-colors hover:bg-dls-hover"
       onClick={handleClick}
     >
-      Jump to start
+      {t("scroll.jump_start")}
     </button>
   );
 });
@@ -52,7 +53,7 @@ const JumpToLatestButton = memo(function JumpToLatestButton({
       className="rounded-full px-3 py-1.5 text-xs text-dls-text transition-colors hover:bg-dls-hover"
       onClick={handleClick}
     >
-      Jump to latest
+      {t("scroll.jump_latest")}
     </button>
   );
 });
