@@ -4,6 +4,9 @@ import type { SidebarSessionItem } from "../src/app/types";
 import {
   buildSessionTreeState,
   flattenSessionRows,
+  isActiveWorkSessionStatus,
+  isNeedsAttentionSessionStatus,
+  isStreamingSessionStatus,
 } from "../src/react-app/domains/session/sidebar/utils";
 
 const sessions: SidebarSessionItem[] = [
@@ -11,6 +14,30 @@ const sessions: SidebarSessionItem[] = [
   { id: "session-a-child", title: "Pinned child", parentID: "session-a" },
   { id: "session-b", title: "Regular root" },
 ];
+
+const statusCases: Array<{
+  status: string | undefined;
+  active: boolean;
+  streaming: boolean;
+  needsAttention: boolean;
+}> = [
+  ...["running", "busy", "retry", "streaming", "thinking", "responding", "compacting"]
+    .map((status) => ({ status, active: true, streaming: true, needsAttention: false })),
+  { status: "waiting", active: false, streaming: true, needsAttention: true },
+  { status: "idle", active: false, streaming: false, needsAttention: false },
+  { status: "unknown", active: false, streaming: false, needsAttention: false },
+  { status: undefined, active: false, streaming: false, needsAttention: false },
+];
+
+describe("session sidebar statuses", () => {
+  for (const { status, active, streaming, needsAttention } of statusCases) {
+    test(`${status ?? "undefined"} maps to the expected sidebar indicators`, () => {
+      expect(isActiveWorkSessionStatus(status)).toBe(active);
+      expect(isStreamingSessionStatus(status)).toBe(streaming);
+      expect(isNeedsAttentionSessionStatus(status)).toBe(needsAttention);
+    });
+  }
+});
 
 describe("global session pinning", () => {
   test("selects a pinned root and its expanded descendants", () => {
