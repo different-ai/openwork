@@ -124,7 +124,6 @@ import {
   type SessionGroupDefinition,
 } from "./session-management-store";
 import { cn } from "@/lib/utils";
-import { WorkspaceIcon } from "../../../design-system/workspace-icon";
 import { getSessionActivityStatusLabel, type SessionActivityStatus } from "../status/session-activity-store";
 import { SessionDotMatrixLoader } from "./session-dot-matrix-loader";
 import { useWorkbenchStore } from "../chat/workbench-store";
@@ -1110,8 +1109,8 @@ export function AppSidebar(props: AppSidebarProps) {
             {pinnedSessions.length > 0 ? (
               <GlobalPinnedSessions entries={pinnedSessions} />
             ) : null}
-            {/* pl-11 (44px): the shared text lane session titles start in. */}
-            <div className="group/workspaces-header flex items-center pb-1 pl-11 pr-3 pt-2">
+            {/* pl-4 (16px): aligns with workspace titles now that the color dot is gone. */}
+            <div className="group/workspaces-header flex items-center pb-1 pl-4 pr-3 pt-2">
               <span className="text-[11px] font-normal uppercase tracking-[0.04em] text-muted-foreground">
                 {t("workspace_list.title")}
               </span>
@@ -1173,8 +1172,8 @@ function GlobalPinnedSessions({ entries }: { entries: GlobalPinnedSessionEntry[]
   return (
     <SidebarGroup data-global-pinned-sessions className="pb-1 pt-2">
       <SidebarGroupContent>
-        {/* pl-9 (36px) + group p-2 = 44px: the shared text lane session titles start in. */}
-        <div className="pb-1 pl-9 pr-3 text-[11px] font-normal uppercase tracking-[0.04em] text-muted-foreground">
+        {/* pl-2 (8px) + group p-2 = 16px: aligns with the WORKSPACES header lane. */}
+        <div className="pb-1 pl-2 pr-3 text-[11px] font-normal uppercase tracking-[0.04em] text-muted-foreground">
           {t("session_management.pinned")}
         </div>
         <SidebarMenu>
@@ -1389,9 +1388,7 @@ function WorkspaceHeader({
     >
       {isLoading ? (
         <SessionDotMatrixLoader label={t("workspace.loading_tasks")} />
-      ) : (
-        <WorkspaceIcon workspaceId={workspace.id} sizeClass="size-4" />
-      )}
+      ) : null}
       <div
         className="min-w-0 flex-1 cursor-grab touch-none transition-[padding] duration-75 active:cursor-grabbing group-hover/workspace-header:pr-22 group-has-[[data-workspace-actions]:focus-within]/workspace-header:pr-22 group-has-data-popup-open/workspace-header:pr-11 group-hover/workspace-header:group-has-data-popup-open/workspace-header:pr-22 pr-2"
         onPointerDown={onTitlePointerDown}

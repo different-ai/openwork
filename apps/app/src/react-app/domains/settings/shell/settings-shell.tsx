@@ -31,7 +31,6 @@ import {
   getWorkspaceSettingsTabs,
   isSettingsTabBeta,
 } from "./settings-page";
-import { WorkspaceIcon } from "../../../design-system/workspace-icon";
 import { useFeatureFlagsPreferences } from "../state/feature-flags-preferences";
 
 type SettingsPageFrameProps = Omit<React.ComponentProps<typeof SettingsPage>, "children">;
@@ -217,7 +216,6 @@ function WorkspaceMenu(props: Pick<SettingsShellProps, "selectedWorkspaceId" | "
       <DropdownMenuTrigger
         render={(
           <Button variant="ghost" size="sm" className="min-w-0 max-w-36 justify-start gap-2 text-dls-secondary">
-            <WorkspaceIcon workspaceId={props.selectedWorkspaceId} sizeClass="size-4" />
             <span className="truncate">{props.selectedWorkspaceName}</span>
             <ChevronDown className="ml-auto size-4 shrink-0" />
           </Button>
@@ -230,7 +228,6 @@ function WorkspaceMenu(props: Pick<SettingsShellProps, "selectedWorkspaceId" | "
             onClick={() => props.onSelectWorkspace(workspace.id)}
             disabled={workspace.id === props.selectedWorkspaceId}
           >
-            <WorkspaceIcon workspaceId={workspace.id} sizeClass="size-4" />
             <span className="truncate">{workspace.name}</span>
           </DropdownMenuItem>
         ))}
