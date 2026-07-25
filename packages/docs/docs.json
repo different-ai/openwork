@@ -39,7 +39,6 @@
               "start-here/do-work-with-it/control-the-browser",
               "start-here/do-work-with-it/cross-chat-memory",
               "start-here/do-work-with-it/what-uses-tokens",
-              "start-here/do-work-with-it/workflows",
               "start-here/do-work-with-it/skills-plugins-and-mcp",
               "start-here/do-work-with-it/create-a-skill-from-chat",
               "start-here/do-work-with-it/publish-and-copy-a-skill",
@@ -83,12 +82,6 @@
               "cloud/share-with-your-team/managed-llm-provider",
               "cloud/share-with-your-team/custom-llm-provider",
               "cloud/share-with-your-team/shared-mcp-connections"
-            ]
-          },
-          {
-            "group": "Run in the cloud",
-            "pages": [
-              "cloud/run-in-the-cloud/shared-workspace"
             ]
           },
           {
@@ -149,6 +142,14 @@
     {
       "source": "/introduction",
       "destination": "/cloud/get-started"
+    },
+    {
+      "source": "/cloud/run-in-the-cloud/shared-workspace",
+      "destination": "/cloud/get-started"
+    },
+    {
+      "source": "/start-here/do-work-with-it/workflows",
+      "destination": "/start-here/do-work-with-it/skills-plugins-and-mcp"
     },
     {
       "source": "/roadmap/roadmap",
