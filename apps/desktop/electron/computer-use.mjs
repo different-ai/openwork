@@ -37,6 +37,9 @@ function computerUseHelperAppPath() {
 }
 
 function getComputerUseMcpCommand() {
+  if (process.platform !== "darwin") {
+    return null;
+  }
   const helperExecutable = computerUseHelperExecutablePath();
   if (helperExecutable) return [helperExecutable, "mcp"];
 

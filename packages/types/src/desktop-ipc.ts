@@ -457,7 +457,7 @@ export type DesktopCommandMap = {
   };
   getUiControlBridgeInfo: { args: []; result: UiControlBridgeInfo | null };
   getOpenworkUiMcpCommand: { args: []; result: string[] };
-  getComputerUseMcpCommand: { args: []; result: string[] };
+  getComputerUseMcpCommand: { args: []; result: string[] | null };
   getOpenworkUiMcpEnvironment: { args: []; result: Record<string, string> };
 
   // Computer use
