@@ -16,6 +16,7 @@ import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { globalOpencodeConfigDir, workspaceOpencodeConfigCandidates } from "@openwork/paths";
 
 import { configureFakeMediaForTests, installMediaPermissionHandlers } from "./media-permissions.mjs";
 import { registerMigrationIpc } from "./migration.mjs";
@@ -1017,18 +1018,8 @@ function flushPendingDeepLinks() {
   mainWindow.webContents.send(NATIVE_DEEP_LINK_EVENT, urls);
 }
 
-function configHomePath() {
-  if (process.env.XDG_CONFIG_HOME?.trim()) {
-    return process.env.XDG_CONFIG_HOME.trim();
-  }
-  if (process.platform === "win32" && process.env.APPDATA?.trim()) {
-    return process.env.APPDATA.trim();
-  }
-  return path.join(os.homedir(), ".config");
-}
-
 function globalOpencodeRoot() {
-  return path.join(configHomePath(), "opencode");
+  return globalOpencodeConfigDir();
 }
 
 function execResult(ok, stdout = "", stderr = "", status = ok ? 0 : 1) {
@@ -1236,26 +1227,28 @@ function ensureRuntimeBootstrap() {
 }
 
 function resolveOpencodeConfigPath(scope, projectDir) {
-  let root;
   if (scope === "project") {
     if (!String(projectDir ?? "").trim()) {
       throw new Error("projectDir is required");
     }
-    root = projectDir;
+    return workspaceOpencodeConfigCandidates(projectDir);
   } else if (scope === "global") {
-    root = globalOpencodeRoot();
+    const root = globalOpencodeRoot();
+    return [path.join(root, "opencode.jsonc"), path.join(root, "opencode.json")];
   } else {
     throw new Error("scope must be 'project' or 'global'");
   }
+}
 
-  const jsoncPath = path.join(root, "opencode.jsonc");
-  const jsonPath = path.join(root, "opencode.json");
-  return { jsoncPath, jsonPath };
+async function selectOpencodeConfigPath(candidates) {
+  for (const candidate of candidates) {
+    if (await pathExists(candidate)) return candidate;
+  }
+  return candidates[0];
 }
 
 async function readOpencodeConfig(scope, projectDir) {
-  const { jsoncPath, jsonPath } = resolveOpencodeConfigPath(scope, projectDir);
-  const chosenPath = (await pathExists(jsoncPath)) ? jsoncPath : (await pathExists(jsonPath)) ? jsonPath : jsoncPath;
+  const chosenPath = await selectOpencodeConfigPath(resolveOpencodeConfigPath(scope, projectDir));
   const exists = await pathExists(chosenPath);
   return {
     path: chosenPath,
@@ -1265,8 +1258,7 @@ async function readOpencodeConfig(scope, projectDir) {
 }
 
 async function writeOpencodeConfig(scope, projectDir, content) {
-  const { jsoncPath, jsonPath } = resolveOpencodeConfigPath(scope, projectDir);
-  const targetPath = (await pathExists(jsoncPath)) ? jsoncPath : (await pathExists(jsonPath)) ? jsonPath : jsoncPath;
+  const targetPath = await selectOpencodeConfigPath(resolveOpencodeConfigPath(scope, projectDir));
   await mkdir(path.dirname(targetPath), { recursive: true });
   await writeFile(targetPath, content, "utf8");
   return execResult(true, `Wrote ${targetPath}`);

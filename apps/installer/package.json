@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@openwork/install-config": "workspace:*",
+    "@openwork/paths": "workspace:*",
     "webview-bun": "2.4.0"
   }
 }

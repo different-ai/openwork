@@ -1,8 +1,8 @@
-import { existsSync } from "node:fs";
 import { readFile, writeFile, rm, stat } from "node:fs/promises";
 import { homedir, hostname } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
+import { resolveGlobalOpencodeConfigPath } from "@openwork/paths";
 import type { ApprovalRequest, Capabilities, ServerConfig, WorkspaceInfo, Actor, ReloadReason, ReloadTrigger, TokenScope } from "./types.js";
 import { agentContextDiagnosticsRequestSchema } from "./agent-context-diagnostics-schema.js";
 import { ApprovalService } from "./approvals.js";
@@ -3051,15 +3051,8 @@ function normalizeOpencodeScope(value: string | null | undefined): "project" | "
   return value?.trim().toLowerCase() === "global" ? "global" : "project";
 }
 
-function resolveOpencodeConfigFilePath(scope: "project" | "global", workspaceRoot: string): string {
-  if (scope === "global") {
-    const base = join(homedir(), ".config", "opencode");
-    const jsoncPath = join(base, "opencode.jsonc");
-    const jsonPath = join(base, "opencode.json");
-    if (existsSync(jsoncPath)) return jsoncPath;
-    if (existsSync(jsonPath)) return jsonPath;
-    return jsoncPath;
-  }
+export function resolveOpencodeConfigFilePath(scope: "project" | "global", workspaceRoot: string): string {
+  if (scope === "global") return resolveGlobalOpencodeConfigPath();
   return opencodeConfigPath(workspaceRoot);
 }
 

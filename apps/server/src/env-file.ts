@@ -1,6 +1,7 @@
-import { homedir, platform } from "node:os";
+import { platform } from "node:os";
 import { chmod, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
+import { openworkEnvStorePath } from "@openwork/paths";
 
 import { ensureDir, exists } from "./utils.js";
 
@@ -50,19 +51,8 @@ function isInternalEnvKey(key: string): boolean {
   return RESERVED_PREFIXES.some((prefix) => key.startsWith(prefix));
 }
 
-// Deterministic, matches what the Rust/Node shells compute independently.
-// Do NOT key this off ServerConfig.configPath — the shell resolves the path
-// before the server config exists, and must agree with us byte-for-byte.
 export function resolveDefaultEnvStorePath(): string {
-  const override = (process.env.OPENWORK_ENV_STORE ?? "").trim();
-  if (override) return resolve(override);
-
-  if (platform() === "win32") {
-    const appData = (process.env.APPDATA ?? "").trim();
-    const root = appData || join(homedir(), "AppData", "Roaming");
-    return join(root, "openwork", "env.json");
-  }
-  return join(homedir(), ".config", "openwork", "env.json");
+  return openworkEnvStorePath();
 }
 
 function parseRecord(raw: unknown): EnvRecord | null {

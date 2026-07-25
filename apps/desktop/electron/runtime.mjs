@@ -8,6 +8,7 @@ import path from "node:path";
 import tls from "node:tls";
 import { fileURLToPath } from "node:url";
 import { pathToFileURL } from "node:url";
+import { openworkEnvStorePath, openworkServerConfigPath, resolveWorkspaceOpencodeConfigPath } from "@openwork/paths";
 
 const __runtimeDir = path.dirname(fileURLToPath(import.meta.url));
 
@@ -49,16 +50,7 @@ export function prioritizeWorkspacePaths(preferredPath, workspacePaths = []) {
 }
 
 export function resolveOpenworkServerConfigPath(env = process.env) {
-  const override = String(env.OPENWORK_SERVER_CONFIG ?? "").trim();
-  if (override) return path.resolve(override);
-  if (process.platform === "win32") {
-    const appData = String(env.APPDATA ?? "").trim();
-    const root = appData || path.join(os.homedir(), "AppData", "Roaming");
-    return path.join(root, "openwork", "server.json");
-  }
-  const xdgConfigHome = String(env.XDG_CONFIG_HOME ?? "").trim();
-  const root = xdgConfigHome || path.join(os.homedir(), ".config");
-  return path.join(root, "openwork", "server.json");
+  return openworkServerConfigPath({ env });
 }
 
 export function seedWorkspacePathsForEmbeddedServer(workspacePaths, serverConfigExists) {
@@ -470,18 +462,8 @@ async function fetchJson(url, options = {}, timeoutMs = 3000) {
   }
 }
 
-// Resolves ~/.config/openwork/env.json (or %APPDATA%\openwork\env.json on
-// Windows) — must agree byte-for-byte with apps/server/src/env-file.ts and
-// apps/orchestrator/src/cli.ts. Honor OPENWORK_ENV_STORE override.
 function resolveUserEnvFilePath() {
-  const override = String(process.env.OPENWORK_ENV_STORE ?? "").trim();
-  if (override) return path.resolve(override);
-  if (process.platform === "win32") {
-    const appData = String(process.env.APPDATA ?? "").trim();
-    const root = appData || path.join(os.homedir(), "AppData", "Roaming");
-    return path.join(root, "openwork", "env.json");
-  }
-  return path.join(os.homedir(), ".config", "openwork", "env.json");
+  return openworkEnvStorePath();
 }
 
 const USER_ENV_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -1126,12 +1108,11 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
   }
 
   async function ensureOpencodeConfig(projectDir) {
-    const jsoncPath = path.join(projectDir, "opencode.jsonc");
-    const jsonPath = path.join(projectDir, "opencode.json");
-    if ((await fileExists(jsoncPath)) || (await fileExists(jsonPath))) return;
-    await mkdir(projectDir, { recursive: true });
+    const configPath = resolveWorkspaceOpencodeConfigPath(projectDir);
+    if (await fileExists(configPath)) return;
+    await mkdir(path.dirname(configPath), { recursive: true });
     await writeFile(
-      jsoncPath,
+      configPath,
       `${JSON.stringify({ $schema: "https://opencode.ai/config.json" }, null, 2)}\n`,
       "utf8",
     );

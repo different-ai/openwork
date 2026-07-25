@@ -1,5 +1,5 @@
-import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
+import { openworkServerConfigPath } from "@openwork/paths";
 import type { ApprovalMode, ApprovalConfig, ServerConfig, WorkspaceConfig, LogFormat } from "./types.js";
 import { buildWorkspaceInfos } from "./workspaces.js";
 import { parseList, readJsonFile, shortId } from "./utils.js";
@@ -207,8 +207,7 @@ async function loadFileConfig(configPath: string): Promise<FileConfig> {
 }
 
 export async function resolveServerConfig(cli: CliArgs): Promise<ServerConfig> {
-  const envConfigPath = process.env.OPENWORK_SERVER_CONFIG;
-  const configPath = cli.configPath ?? envConfigPath ?? resolve(homedir(), ".config", "openwork", "server.json");
+  const configPath = cli.configPath ?? openworkServerConfigPath();
   const fileConfig = await loadFileConfig(configPath);
   const configDir = dirname(configPath);
 

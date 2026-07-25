@@ -1,7 +1,5 @@
-import { existsSync } from "node:fs";
-import { isAbsolute, join } from "node:path";
-import { homedir } from "node:os";
 import { minimatch } from "minimatch";
+import { resolveGlobalOpencodeConfigPath } from "@openwork/paths";
 import type { McpItem, ServerConfig } from "./types.js";
 import { sanitizeDiagnosticString } from "./diagnostic-sanitizer.js";
 import { readJsoncFile } from "./jsonc.js";
@@ -34,8 +32,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-const FORBIDDEN_CONFIG_ROOT_CHARS = /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/u;
-const MAX_CONFIG_ROOT_LENGTH = 4_096;
 const DIAGNOSTIC_STATIC_CONFIG_MAX_BYTES = 1024 * 1024;
 
 export function resolveGlobalOpenCodeConfigPath(input?: {
@@ -43,30 +39,14 @@ export function resolveGlobalOpenCodeConfigPath(input?: {
   xdgConfigHome?: string;
   homeDir?: string;
 }): string {
-  const configuredDirectory = input?.opencodeConfigDir ?? process.env.OPENCODE_CONFIG_DIR;
-  const safeConfiguredDirectory = typeof configuredDirectory === "string"
-    && configuredDirectory.length > 0
-    && configuredDirectory.length <= MAX_CONFIG_ROOT_LENGTH
-    && isAbsolute(configuredDirectory)
-    && !FORBIDDEN_CONFIG_ROOT_CHARS.test(configuredDirectory)
-    ? configuredDirectory
-    : null;
-  const configuredRoot = input?.xdgConfigHome ?? process.env.XDG_CONFIG_HOME;
-  const configRoot = typeof configuredRoot === "string"
-    && configuredRoot.length > 0
-    && configuredRoot.length <= MAX_CONFIG_ROOT_LENGTH
-    && isAbsolute(configuredRoot)
-    && !FORBIDDEN_CONFIG_ROOT_CHARS.test(configuredRoot)
-    ? configuredRoot
-    : join(input?.homeDir ?? homedir(), ".config");
-  // OpenCode accepts OPENCODE_CONFIG_DIR as the directory containing its
-  // opencode.json(c) files. It is not an XDG parent directory.
-  const base = safeConfiguredDirectory ?? join(configRoot, "opencode");
-  const jsonc = join(base, "opencode.jsonc");
-  const json = join(base, "opencode.json");
-  if (existsSync(jsonc)) return jsonc;
-  if (existsSync(json)) return json;
-  return jsonc; // fall back to jsonc (readJsoncFile handles missing files gracefully)
+  return resolveGlobalOpencodeConfigPath({
+    env: {
+      ...process.env,
+      ...(input?.opencodeConfigDir !== undefined ? { OPENCODE_CONFIG_DIR: input.opencodeConfigDir } : {}),
+      ...(input?.xdgConfigHome !== undefined ? { XDG_CONFIG_HOME: input.xdgConfigHome } : {}),
+    },
+    homeDir: input?.homeDir,
+  });
 }
 
 function getMcpConfig(config: Record<string, unknown>): Record<string, Record<string, unknown>> {

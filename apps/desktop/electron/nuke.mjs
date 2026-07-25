@@ -5,6 +5,15 @@ import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises"
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  desktopBootstrapPath as resolveDesktopBootstrapPath,
+  globalOpencodeConfigDir,
+  legacyDesktopBootstrapPath as resolveLegacyDesktopBootstrapPath,
+  openworkEnvStorePath,
+  openworkServerConfigPath as resolveOpenworkServerConfigPath,
+  opencodeCacheDirs as resolveOpencodeCacheDirs,
+  opencodeDataDirs as resolveOpencodeDataDirs,
+} from "@openwork/paths";
 
 const BROWSER_SESSION_PARTITION = "persist:openwork-browser";
 const NUKE_PARTITIONS = ["default", BROWSER_SESSION_PARTITION];
@@ -102,25 +111,12 @@ function desktopConfigHome(env, homedir, platform, paths) {
   return paths.join(homedir, ".config");
 }
 
-function appDataHome(env, homedir, platform, paths) {
-  const appData = envValue(env, "APPDATA");
-  return appData || paths.join(homedir, "AppData", "Roaming");
-}
-
 function openworkServerConfigPath(env, homedir, platform, paths) {
-  const override = envValue(env, "OPENWORK_SERVER_CONFIG");
-  if (override) return paths.resolve(override);
-  if (platform === "win32") return paths.join(appDataHome(env, homedir, platform, paths), "openwork", "server.json");
-  const xdgConfigHome = envValue(env, "XDG_CONFIG_HOME");
-  const root = xdgConfigHome || paths.join(homedir, ".config");
-  return paths.join(root, "openwork", "server.json");
+  return resolveOpenworkServerConfigPath({ env, homeDir: homedir, platform });
 }
 
 function envStorePath(env, homedir, platform, paths) {
-  const override = envValue(env, "OPENWORK_ENV_STORE");
-  if (override) return paths.resolve(override);
-  if (platform === "win32") return paths.join(appDataHome(env, homedir, platform, paths), "openwork", "env.json");
-  return paths.join(homedir, ".config", "openwork", "env.json");
+  return openworkEnvStorePath({ env, homeDir: homedir, platform });
 }
 
 function tokenStorePath(env, serverConfigPath, homedir, paths) {
@@ -138,48 +134,23 @@ function runtimeDbPath(env, serverConfigPath, homedir, paths) {
 }
 
 function desktopBootstrapPath(env, homedir, platform, paths, userDataPath) {
-  const override = envValue(env, "OPENWORK_DESKTOP_BOOTSTRAP_PATH");
-  if (override) return override;
-  if (isTruthyDevMode(env)) {
-    return paths.join(userDataPath, "openwork-dev-data", "home", ".config", "openwork", "desktop-bootstrap.json");
-  }
-  return paths.join(desktopConfigHome(env, homedir, platform, paths), "openwork", "desktop-bootstrap.json");
+  return resolveDesktopBootstrapPath({ env, homeDir: homedir, platform, userDataDir: userDataPath });
 }
 
-function legacyDesktopBootstrapPath(homedir, paths) {
-  return paths.join(homedir, ".config", "openwork", "desktop-bootstrap.json");
-}
-
-function globalOpencodeConfigHome(env, homedir, platform, paths) {
-  const xdgConfigHome = envValue(env, "XDG_CONFIG_HOME");
-  if (xdgConfigHome) return xdgConfigHome;
-  if (platform === "win32") return appDataHome(env, homedir, platform, paths);
-  return paths.join(homedir, ".config");
+function legacyDesktopBootstrapPath(homedir, platform) {
+  return resolveLegacyDesktopBootstrapPath({ env: {}, homeDir: homedir, platform });
 }
 
 function opencodeDataDirs(env, homedir, platform, paths) {
-  const dirs = [];
-  const xdgDataHome = envValue(env, "XDG_DATA_HOME");
-  if (xdgDataHome) dirs.push(paths.join(xdgDataHome, "opencode"));
-  dirs.push(paths.join(homedir, ".local", "share", "opencode"));
-  if (platform === "darwin") dirs.push(paths.join(homedir, "Library", "Application Support", "opencode"));
-  if (platform === "win32") dirs.push(paths.join(appDataHome(env, homedir, platform, paths), "opencode"));
-  return dirs;
+  return resolveOpencodeDataDirs({ env, homeDir: homedir, platform });
 }
 
 function opencodeConfigDirs(env, homedir, platform, paths) {
-  const dirs = [paths.join(globalOpencodeConfigHome(env, homedir, platform, paths), "opencode")];
-  const opencodeConfigDir = envValue(env, "OPENCODE_CONFIG_DIR");
-  if (opencodeConfigDir) dirs.push(opencodeConfigDir);
-  return dirs;
+  return [globalOpencodeConfigDir({ env, homeDir: homedir, platform })];
 }
 
-function opencodeCacheDirs(env, homedir, paths) {
-  const dirs = [];
-  const xdgCacheHome = envValue(env, "XDG_CACHE_HOME");
-  if (xdgCacheHome) dirs.push(paths.join(xdgCacheHome, "opencode"));
-  dirs.push(paths.join(homedir, ".cache", "opencode"));
-  return dirs;
+function opencodeCacheDirs(env, homedir, platform) {
+  return resolveOpencodeCacheDirs({ env, homeDir: homedir, platform });
 }
 
 function orchestratorDataDir(env, homedir, paths) {
@@ -241,7 +212,7 @@ function resolveNukePlan(input) {
   const { env, homedir, platform, paths, userDataPath } = resolved;
   const bootstrapPath = desktopBootstrapPath(env, homedir, platform, paths, userDataPath);
   const preserveBootstrapPath = input.preserveBootstrap === false ? null : bootstrapPath;
-  const legacyBootstrapPath = legacyDesktopBootstrapPath(homedir, paths);
+  const legacyBootstrapPath = legacyDesktopBootstrapPath(homedir, platform);
   const serverConfig = openworkServerConfigPath(env, homedir, platform, paths);
   const runtimeDb = runtimeDbPath(env, serverConfig, homedir, paths);
   const envStore = envStorePath(env, homedir, platform, paths);
@@ -262,7 +233,7 @@ function resolveNukePlan(input) {
     ...dataDirs,
     ...opencodeDbOverridePaths(env, dataDirs, paths),
     ...opencodeConfigDirs(env, homedir, platform, paths),
-    ...opencodeCacheDirs(env, homedir, paths),
+    ...opencodeCacheDirs(env, homedir, platform),
     orchestratorDataDir(env, homedir, paths),
   ];
 
