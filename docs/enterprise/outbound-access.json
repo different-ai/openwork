@@ -208,12 +208,21 @@
       "override": "OPENWORK_GOOGLE_WORKSPACE_TOKEN_BROKER_URL for token exchange/refresh only"
     },
     {
+      "host": "release-assets.githubusercontent.com",
+      "kind": "redirect-target",
+      "components": ["desktop", "installer"],
+      "purpose": "Current GitHub release-asset download target reached after github.com redirects installer and updater downloads. Verified live against a real OpenWork release asset.",
+      "requirement": "required-in-practice",
+      "blockedEffect": "OpenWork downloads start from github.com and then fail partway through when the redirect target is blocked.",
+      "override": null
+    },
+    {
       "host": "objects.githubusercontent.com",
       "kind": "redirect-target",
       "components": ["desktop", "installer"],
-      "purpose": "GitHub release-asset download target reached after github.com redirects installer and updater downloads.",
+      "purpose": "Legacy GitHub release-asset download target. GitHub has migrated to release-assets.githubusercontent.com, but allow both so older clients and any staged rollback keep working.",
       "requirement": "required-in-practice",
-      "blockedEffect": "OpenWork downloads start from github.com and then fail partway through when the redirect target is blocked.",
+      "blockedEffect": "OpenWork downloads start from github.com and then fail partway through if GitHub serves this legacy redirect target and it is blocked.",
       "override": null
     },
     {

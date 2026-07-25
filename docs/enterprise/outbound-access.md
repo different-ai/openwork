@@ -10,6 +10,7 @@ For a practical hosted OpenWork desktop install, allow TCP 443 to:
 app.openworklabs.com:443
 api.openworklabs.com:443
 github.com:443
+release-assets.githubusercontent.com:443
 objects.githubusercontent.com:443
 registry.npmjs.org:443
 models.openworklabs.com:443
@@ -17,7 +18,7 @@ models.openworklabs.com:443
 
 Commonly missed entries:
 
-- `objects.githubusercontent.com` is where GitHub release-asset downloads redirect. If only `github.com` is allowed, the OpenWork installer/updater can start and then fail during the download.
+- GitHub release-asset downloads redirect away from `github.com` to a separate download host. If only `github.com` is allowed, the OpenWork installer/updater can start and then fail during the download. Allow both `release-assets.githubusercontent.com` (the host GitHub uses today, verified against a real OpenWork release asset) and `objects.githubusercontent.com` (the earlier host, kept for older clients and any staged rollback).
 - `registry.npmjs.org` is used by `npx -y openwork-ui-mcp` in packaged desktop builds. If it is blocked, the UI-control MCP is unavailable even though the desktop app still opens.
 
 ## Desktop client outbound access
@@ -29,7 +30,8 @@ Commonly missed entries:
 | `app.openworklabs.com` | Required for OpenWork Cloud | Hosted Cloud web origin. The desktop uses one base URL and derives Den API/MCP calls as `<baseUrl>/api/den/...`. | Cloud sign-in, org settings, marketplace, and remote workspace flows cannot load. |
 | `api.openworklabs.com` | Required for hosted install/OpenWork Connect | Hosted public API and OpenWork Connect MCP endpoint used by installer and external-client flows. | Hosted install checks or public OpenWork Connect fail. |
 | `github.com` | Required in practice | Installer/updater release URLs and GitHub links. | Install/update downloads cannot start. |
-| `objects.githubusercontent.com` | Required in practice | GitHub release-asset redirect target. | Downloads start from `github.com` and fail partway through. |
+| `release-assets.githubusercontent.com` | Required in practice | GitHub release-asset redirect target used today. | Downloads start from `github.com` and fail partway through. |
+| `objects.githubusercontent.com` | Required in practice | Earlier GitHub release-asset redirect target, allowed for older clients and staged rollback. | Downloads can fail partway through if GitHub serves this host. |
 | `registry.npmjs.org` | Required in practice | `npx` package resolution for `openwork-ui-mcp`. | UI-control MCP is unavailable. |
 | `models.openworklabs.com` | Required in practice | First-party model catalog mirror, overridable with `OPENCODE_MODELS_URL`. | Model catalog is unavailable or degraded. |
 
