@@ -44,12 +44,16 @@ jobs:
           # bun 1.3.9 on Windows can fail to create the parent-relative workspace
           # symlink (ENOENT); the copy fallback repairs exactly that case.
           (cd apps/installer && bun install) || true
-          if [ ! -e "apps/installer/node_modules/@openwork/install-config/package.json" ]; then
-            rm -rf "apps/installer/node_modules/@openwork/install-config"
-            mkdir -p "apps/installer/node_modules/@openwork"
-            cp -R "packages/install-config" "apps/installer/node_modules/@openwork/install-config"
-          fi
-          test -e "apps/installer/node_modules/@openwork/install-config/package.json"
+          # @openwork/paths ships raw ESM, so it needs no build step — but it hits
+          # the same Windows symlink failure as install-config.
+          for pkg in install-config paths; do
+            if [ ! -e "apps/installer/node_modules/@openwork/$pkg/package.json" ]; then
+              rm -rf "apps/installer/node_modules/@openwork/$pkg"
+              mkdir -p "apps/installer/node_modules/@openwork"
+              cp -R "packages/$pkg" "apps/installer/node_modules/@openwork/$pkg"
+            fi
+            test -e "apps/installer/node_modules/@openwork/$pkg/package.json"
+          done
 
       - name: Compile installer
         shell: bash
