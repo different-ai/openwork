@@ -55,8 +55,8 @@ Make fraimz whenever a change can alter behavior observable outside the
 process: filesystem, runtime DB, server endpoints, sessions, config,
 provisioning, cloud sync, network. **Also for changes you expect to be inert**
 (refactors, renames, dead-code removal): the job is then to prove the canonical
-core flow is unchanged — open the app → write a message → get a response →
-close → reopen with the session intact (`evals/flows/core-flow.flow.mjs`).
+core flow is unchanged — open the app → create a task → write a message →
+get a response (`evals/flows/core-flow.flow.mjs`).
 Pure docs/comments and types-only changes with no runtime path may skip — but
 say so explicitly.
 
