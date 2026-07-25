@@ -427,6 +427,7 @@ async function waitForHttpOk(url, timeoutMs) {
 
   while (Date.now() < deadline) {
     try {
+      // loopback-fetch: waitForHttpOk is only called with health URLs for 127.0.0.1-bound sidecars.
       const response = await fetch(url);
       if (response.ok) {
         return response;
@@ -445,6 +446,7 @@ async function fetchJson(url, options = {}, timeoutMs = 3000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
+    // loopback-fetch: fetchJson callers pass runtime-managed 127.0.0.1 server URLs.
     const response = await fetch(url, {
       ...options,
       signal: controller.signal,
@@ -639,6 +641,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     const baseUrl = state?.daemon?.baseUrl?.trim();
     if (!baseUrl) return false;
     try {
+      // loopback-fetch: orchestrator daemon state is written by the 127.0.0.1-bound sidecar launched below.
       await fetch(`${baseUrl.replace(/\/+$/, "")}/shutdown`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },

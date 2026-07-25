@@ -122,6 +122,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
 
   async function listCdpTargets() {
     if (!remoteDebugPort || remoteDebugPort <= 0) return [];
+    // loopback-fetch: CDP discovery targets Electron's local remote debugging port on 127.0.0.1.
     const response = await fetch(`${cdpBrowserUrl()}/json/list`, { signal: AbortSignal.timeout(1000) });
     if (!response.ok) throw new Error(`CDP target list failed: HTTP ${response.status}`);
     const targets = await response.json();

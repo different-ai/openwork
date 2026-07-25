@@ -212,6 +212,7 @@ const installerWindowTitle = `${uiResolution?.config.appName ?? "OpenWork"} Inst
 
 async function currentInstallState(): Promise<string> {
   try {
+    // loopback-fetch: ready.url comes from startInstallerServer, which binds 127.0.0.1 and returns http://127.0.0.1:<port>/.
     const response = await fetch(`${ready.url}api/status`, { headers: { "x-installer-token": ready.token } })
     const status: unknown = await response.json()
     return typeof status === "object" && status !== null && "state" in status && typeof status.state === "string" ? status.state : ""

@@ -5,25 +5,18 @@ description: "Turn a useful OpenWork chat into a reusable skill"
 
 Do the work once in chat before you turn it into instructions.
 
-## Turn a good chat into a skill
+## Turn a useful chat into a private skill
 
 1. Finish the task in chat and keep the thread open.
-2. Ask: `Turn what we just did into a reusable skill`. OpenWork uses the Cloud skill flow when it is available, or a local skill only when you ask for one.
-3. If the helper is available, start from `/skill-creator` in the composer.
+2. Ask in plain English: `Turn what we just did into a reusable skill for me`.
+3. OpenWork saves the skill in your OpenWork Cloud organization as a private plugin. It is not written into your workspace and it is not shared with your organization.
+4. Give the skill a clear name if OpenWork asks, then let it confirm what it saved.
+5. Use it later by name in chat, or describe the same kind of task and let OpenWork trigger it when it matches.
 
-<Frame>
-  ![Composer showing the skill-creator command entered](/images/skill-import-skill-creator-command.png)
-</Frame>
+## Change or share it only when you choose
 
-4. The agent writes a complete `SKILL.md`, then reads back or verifies the skill before saying it is ready.
-5. Use the new `/skill-name` from the composer, or describe a matching task and let the agent load it.
+1. To refine it, ask for the change in chat, such as `Make the skill ask before sending email`.
+2. To share it with teammates, publish it or grant access later by following [Publish and copy a skill](/start-here/do-work-with-it/publish-and-copy-a-skill).
+3. If you ask for a workspace-local skill instead, OpenWork should create only that local copy, not both.
 
-<Frame>
-  ![Composer skill menu highlighting a workspace guide skill](/images/skill-import-use-in-chat.png)
-</Frame>
-
-6. If OpenWork says reload is required, click `Reload now`, then refine the skill by asking for changes in chat.
-
-<Frame>
-  ![Reload required banner with Reload now and Later buttons](/images/skill-import-reload-required.png)
-</Frame>
+<Note>Creating the skill does not publish it. Sharing is a separate step you choose.</Note>

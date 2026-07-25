@@ -296,8 +296,11 @@ function selectDownloadFile(files, arch) {
 
 async function resolveCorrectArchitectureDownloadUrl(arch) {
   const manifestUrl = `${RELEASE_DOWNLOAD_BASE_URL}/${updaterManifestName(arch)}`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10_000);
   try {
-    const response = await fetch(manifestUrl, {
+    const response = await electronNet.fetch(manifestUrl, {
+      signal: controller.signal,
       headers: { Accept: "text/yaml, text/plain, */*" },
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -309,6 +312,8 @@ async function resolveCorrectArchitectureDownloadUrl(arch) {
   } catch (error) {
     console.warn("[architecture] failed to resolve latest download URL", error);
     return null;
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
