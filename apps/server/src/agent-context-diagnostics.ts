@@ -513,8 +513,8 @@ function cloudCatalogCheck(probe: CloudCatalogProbe): AgentContextDiagnosticChec
       action = "Reconnect OpenWork Cloud to restore its managed endpoint, then rerun diagnostics.";
       break;
     case "untrusted_endpoint":
-      message = "The managed OpenWork Cloud endpoint is outside the server's diagnostics trust policy.";
-      action = "Use the hosted OpenWork Cloud endpoint or have the server administrator explicitly trust the development origin.";
+      message = "The server did not send the credentialed cloud catalog request because the Cloud endpoint origin is not in the diagnostics trust list.";
+      action = "Set OPENWORK_AGENT_DIAGNOSTICS_TRUSTED_ORIGINS on the OpenWork desktop/server process to include the Cloud endpoint origin, then rerun diagnostics.";
       break;
     case "credential_missing":
     case "duplicate_authorization":

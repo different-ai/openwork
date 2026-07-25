@@ -45,6 +45,33 @@ service. Leaving the value empty preserves the default Node.js behavior.
 Existing deployments using `denApi.env.NODE_OPTIONS` can keep that setting when
 upgrading; it takes precedence over `config.denApiNodeOptions`.
 
+### Trust self-hosted Cloud catalog diagnostics
+
+Settings > Debug includes a cloud catalog diagnostic that runs a bounded
+`initialize` → `tools/list` check against the managed `openwork-cloud` MCP entry
+and verifies that Cloud exposes exactly `search_capabilities` and
+`execute_capability`. The request carries an organization MCP bearer token, so
+self-hosted Den origins are skipped unless the OpenWork desktop/server process
+explicitly trusts that origin for diagnostics.
+
+Set `OPENWORK_AGENT_DIAGNOSTICS_TRUSTED_ORIGINS` on the OpenWork desktop/server
+process to add your Den origin to the hosted defaults:
+
+```bash
+OPENWORK_AGENT_DIAGNOSTICS_TRUSTED_ORIGINS=https://openwork.example.com
+```
+
+The value is a comma-separated list of bare origins. Each entry must be only the
+scheme, host, and optional port: no path, query, fragment, username, or
+password. Entries must use `https:`; loopback origins may use `http:`. Invalid
+entries are ignored instead of failing open, and valid entries are added to the
+hosted defaults rather than replacing them.
+
+If you do not set this, the cloud catalog check reports that the endpoint is
+outside the diagnostics trust list and no credentialed request is made. The
+diagnostic probe is skipped rather than attempted and failed, and Cloud MCP
+itself is unaffected; this variable only enables the diagnostic probe.
+
 If you want self-hosted repository imports and sync from GitHub, configure the [GitHub connector for Helm](/start-here/github-connector-helm) after the core Den web and Den controller hosts are reachable.
 
 To keep organization names, wordmarks, and desktop icons entirely inside your deployment, follow [Brand an on-prem deployment](/start-here/on-prem-branding).
