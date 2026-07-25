@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { joinBaseUrl, readBaseUrlEnv } from "@openwork/types/url";
 
 import { denWebLogger } from "../../../observability/runtime-logger";
 
@@ -18,15 +19,6 @@ type ReadinessPayload = {
 
 const upstreamTimeoutMs = 2_000;
 
-function normalizeBaseUrl(value: string): string {
-  return value.trim().replace(/\/+$/, "");
-}
-
-function readBaseUrlEnv(name: string): string | null {
-  const value = process.env[name]?.trim();
-  return value ? normalizeBaseUrl(value) : null;
-}
-
 function json(payload: ReadinessPayload, status: number) {
   return NextResponse.json(payload, {
     status,
@@ -39,7 +31,7 @@ async function checkUpstream(apiBase: string): Promise<CheckStatus> {
   const timeout = setTimeout(() => controller.abort(), upstreamTimeoutMs);
 
   try {
-    const response = await fetch(`${apiBase}/ready`, {
+    const response = await fetch(joinBaseUrl(apiBase, "ready"), {
       cache: "no-store",
       signal: controller.signal,
     });
@@ -56,8 +48,8 @@ async function checkUpstream(apiBase: string): Promise<CheckStatus> {
 }
 
 export async function GET() {
-  const apiBase = readBaseUrlEnv("DEN_API_BASE");
-  const authOrigin = readBaseUrlEnv("DEN_AUTH_ORIGIN");
+  const apiBase = readBaseUrlEnv(process.env, "DEN_API_BASE");
+  const authOrigin = readBaseUrlEnv(process.env, "DEN_AUTH_ORIGIN");
   const missing: string[] = [];
   if (!apiBase) {
     missing.push("DEN_API_BASE");

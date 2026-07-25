@@ -13,14 +13,12 @@ import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 
 import { desktopFetch } from "../../app/lib/desktop";
 import { isWebDeployment } from "../../app/lib/openwork-deployment";
+import { normalizeOpenworkServerUrl } from "../../app/lib/openwork-server";
 import { isDesktopRuntime } from "../../app/utils";
 import { initialServerState, serverReducer } from "./server-provider-state";
 
 export function normalizeServerUrl(input: string): string | undefined {
-  const trimmed = input.trim();
-  if (!trimmed) return;
-  const withProtocol = /^https?:\/\//.test(trimmed) ? trimmed : `http://${trimmed}`;
-  return withProtocol.replace(/\/+$/, "");
+  return normalizeOpenworkServerUrl(input) ?? undefined;
 }
 
 export function serverDisplayName(url: string): string {

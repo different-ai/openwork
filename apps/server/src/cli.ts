@@ -14,6 +14,8 @@ import {
 import { ensureLocalWorkspaceFiles } from "./workspace-init.js";
 import { findManagedEngineWorkspace } from "./workspaces.js";
 import { keepOpenworkRuntimeConfigFileFresh, writeOpenworkRuntimeConfigFile } from "./openwork-runtime-config.js";
+import { sweepLegacyOpenCodeConfig } from "./legacy-config-sweep.js";
+import { resolveOpencodeModelsUrl } from "./opencode-models-url.js";
 import pkg from "../package.json" with { type: "json" };
 
 const args = parseCliArgs(process.argv.slice(2));
@@ -48,6 +50,8 @@ if (!config.opencodeBaseUrl && process.env.OPENWORK_MANAGE_OPENCODE === "1") {
     keepOpenworkRuntimeConfigFileFresh(config, workspace.id);
     const managedOpencodeCwd = process.env.OPENWORK_MANAGED_OPENCODE_CWD?.trim() || workspace.path;
     await mkdir(managedOpencodeCwd, { recursive: true });
+    await sweepLegacyOpenCodeConfig(config).catch(() => undefined);
+    const opencodeModelsUrl = await resolveOpencodeModelsUrl();
     managedOpencode = await createManagedOpencodeServer({
       bin: process.env.OPENWORK_OPENCODE_BIN,
       cwd: managedOpencodeCwd,
@@ -58,6 +62,7 @@ if (!config.opencodeBaseUrl && process.env.OPENWORK_MANAGE_OPENCODE === "1") {
         OPENWORK_SERVER_URL: serverUrl,
         OPENWORK_SERVER_TOKEN: config.token,
         OPENCODE_CONFIG: runtimeConfigPath,
+        OPENCODE_MODELS_URL: opencodeModelsUrl,
       },
     });
     config.opencodeBaseUrl = managedOpencode.url;

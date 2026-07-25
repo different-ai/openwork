@@ -5,6 +5,7 @@ import {
   type AgentContextDiagnosticsReport,
   type AgentContextDiagnosticsRequest,
 } from "@openwork/types/agent-context-diagnostics";
+import { normalizeBaseUrl } from "@openwork/types/url";
 import {
   AGENT_CONTEXT_DIAGNOSTICS_REQUEST_TIMEOUT_MS,
   requestAgentContextDiagnosticsPayload,
@@ -836,7 +837,7 @@ export function normalizeOpenworkServerUrl(input: string) {
   const trimmed = input.trim();
   if (!trimmed) return null;
   const withProtocol = /^https?:\/\//.test(trimmed) ? trimmed : `http://${trimmed}`;
-  return withProtocol.replace(/\/+$/, "");
+  return normalizeBaseUrl(withProtocol);
 }
 
 export function isLoopbackOpenworkServerUrl(input: string) {

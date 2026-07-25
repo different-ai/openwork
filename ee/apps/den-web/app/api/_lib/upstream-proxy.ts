@@ -1,4 +1,5 @@
 import { NextRequest } from "next/server";
+import { joinBaseUrl, readBaseUrlEnv } from "@openwork/types/url";
 
 import { denWebLogger } from "../../../observability/runtime-logger";
 
@@ -23,17 +24,8 @@ type ProxyOptions = {
   rewriteAuthLocationsToRequestOrigin?: boolean;
 };
 
-function normalizeBaseUrl(value: string): string {
-  return value.trim().replace(/\/+$/, "");
-}
-
-function readBaseUrlEnv(name: string): string | null {
-  const value = process.env[name]?.trim();
-  return value ? normalizeBaseUrl(value) : null;
-}
-
 function requestPublicOrigin(request: NextRequest): URL {
-  const configuredOrigin = readBaseUrlEnv("DEN_WEB_PUBLIC_ORIGIN");
+  const configuredOrigin = readBaseUrlEnv(process.env, "DEN_WEB_PUBLIC_ORIGIN");
   if (configuredOrigin) {
     try {
       return new URL(configuredOrigin);
@@ -73,7 +65,7 @@ function buildTargetUrl(
 ): string {
   const incoming = new URL(request.url);
   const prefixedPath = [normalizePathPrefix(upstreamPathPrefix), targetPath].filter(Boolean).join("/");
-  const upstream = new URL(prefixedPath ? `${base}/${prefixedPath}` : base);
+  const upstream = new URL(prefixedPath ? joinBaseUrl(base, prefixedPath) : base);
   upstream.search = incoming.search;
   return upstream.toString();
 }
@@ -198,7 +190,7 @@ export async function proxyUpstream(
   options: ProxyOptions,
 ): Promise<Response> {
   const startedAtMs = Date.now();
-  const apiBase = readBaseUrlEnv("DEN_API_BASE");
+  const apiBase = readBaseUrlEnv(process.env, "DEN_API_BASE");
   if (!apiBase) {
     denWebLogger.error("den-web upstream proxy misconfigured", {
       route_prefix: options.routePrefix,

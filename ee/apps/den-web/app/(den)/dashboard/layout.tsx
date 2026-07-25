@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { headers } from "next/headers";
+import { joinBaseUrl, readBaseUrlEnv } from "@openwork/types/url";
 
 import { getManagedBrandIconUrl, parseOrgListPayload } from "../_lib/den-org";
 import { OrgDashboardShell } from "./_components/org-dashboard-shell";
@@ -7,7 +8,7 @@ import { OrgDashboardProvider } from "./_providers/org-dashboard-provider";
 import { DashboardQueryClientProvider } from "./_providers/query-client-provider";
 
 async function getWorkspaceFaviconUrl(): Promise<string | null> {
-  const apiBase = process.env.DEN_API_BASE?.trim().replace(/\/+$/, "");
+  const apiBase = readBaseUrlEnv(process.env, "DEN_API_BASE");
   if (!apiBase) {
     return null;
   }
@@ -18,7 +19,7 @@ async function getWorkspaceFaviconUrl(): Promise<string | null> {
   }
 
   try {
-    const response = await fetch(`${apiBase}/v1/me/orgs`, {
+    const response = await fetch(joinBaseUrl(apiBase, "v1/me/orgs"), {
       headers: { cookie },
       cache: "no-store",
       signal: AbortSignal.timeout(3000),

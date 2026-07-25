@@ -78,6 +78,11 @@
       "types": "./src/connect-link.ts",
       "development": "./src/connect-link.ts",
       "default": "./src/connect-link.ts"
+    },
+    "./url": {
+      "types": "./src/url.ts",
+      "development": "./src/url.ts",
+      "default": "./src/url.ts"
     }
   },
   "files": [
