@@ -19,6 +19,14 @@
  */
 
 const MESSAGE = "Reply with exactly: core-flow ok";
+const REPLY = "core-flow ok";
+
+// The prompt itself contains the reply token, so asserting on whole-page text
+// is a tautology that the echoed user bubble satisfies on its own. Scope the
+// assertion to an assistant message so only a real response can pass.
+const ASSISTANT_REPLIED = `(() => Array
+  .from(document.querySelectorAll('[data-message-role="assistant"]'))
+  .some((el) => (el.textContent || "").includes(${JSON.stringify(REPLY)})))()`;
 
 async function pasteComposer(ctx, text) {
   return ctx.eval(
@@ -134,10 +142,14 @@ export default {
           assert: async () => {
             // The message we typed must appear in the transcript, and an
             // assistant response must stream in without an error state.
-            await ctx.waitForText("core-flow ok", { timeoutMs: 60_000 });
+            await ctx.waitForText(MESSAGE, { timeoutMs: 60_000 });
+            await ctx.waitFor(ASSISTANT_REPLIED, {
+              timeoutMs: 120_000,
+              label: "assistant reply in transcript",
+            });
             await ctx.expectNoText("Something went wrong");
           },
-          screenshot: { name: "task-response", requireText: ["core-flow ok"] },
+          screenshot: { name: "task-response", requireText: [REPLY] },
         });
       },
     },
@@ -175,9 +187,13 @@ export default {
             ctx.assert(listed, `Session ${before} was not listed after reopen (not persisted).`);
             // Open it explicitly and confirm its message history is retrievable.
             await ctx.control("session.open", { sessionId: before });
-            await ctx.waitForText("core-flow ok", { timeoutMs: 45_000 });
+            await ctx.waitForText(MESSAGE, { timeoutMs: 45_000 });
+            await ctx.waitFor(ASSISTANT_REPLIED, {
+              timeoutMs: 45_000,
+              label: "assistant reply restored after reopen",
+            });
           },
-          screenshot: { name: "reopened-session", requireText: ["core-flow ok"] },
+          screenshot: { name: "reopened-session", requireText: [REPLY] },
         });
       },
     },
