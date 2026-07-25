@@ -833,6 +833,41 @@ describe("agent context diagnostics analyzer", () => {
     });
   });
 
+  test("names the trusted-origins environment variable for untrusted cloud endpoints", async () => {
+    const runtime = diagnosticRuntimeConfig();
+    if (!runtime.mcp) throw new Error("Expected the diagnostics MCP fixture.");
+    runtime.mcp["openwork-cloud"] = {
+      ...cloudConfig(),
+      url: "https://den.customer.example/custom/mcp/agent",
+    };
+    const fixture = await createFixture({ runtime });
+    const fetchCalls: CatalogFetchCall[] = [];
+
+    const report = agentContextDiagnosticsReportSchema.parse(await runAgentContextDiagnostics({
+      config: fixture.config,
+      workspace: fixture.workspace,
+      request: emptyObservedRequest,
+      inspectRegistration: () => "connected",
+      dependencies: {
+        fetchImpl: catalogFetch(["search_capabilities", "execute_capability"], fetchCalls),
+        inspectEffectiveEngine: effectiveEngineInspection(runtime),
+      },
+    }));
+
+    const check = checkById(report, "cloud-tool-catalog");
+    expect(check).toMatchObject({
+      status: "failed",
+      evidenceKind: "derived",
+      code: "untrusted_endpoint",
+      owner: "openwork-server",
+      message: "The server did not send the credentialed cloud catalog request because the Cloud endpoint origin is not in the diagnostics trust list.",
+      details: { requestPerformed: false },
+    });
+    expect(check.action).toBe("Set OPENWORK_AGENT_DIAGNOSTICS_TRUSTED_ORIGINS on the OpenWork desktop/server process to include the Cloud endpoint origin, then rerun diagnostics.");
+    expect(check.action).toContain("OPENWORK_AGENT_DIAGNOSTICS_TRUSTED_ORIGINS");
+    expect(fetchCalls).toEqual([]);
+  });
+
   test("fails closed when the effective engine response is invalid or unavailable", async () => {
     const fixture = await createFixture();
     const fetchCalls: CatalogFetchCall[] = [];

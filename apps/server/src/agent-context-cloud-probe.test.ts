@@ -264,6 +264,26 @@ describe("OpenWork Cloud catalog probe", () => {
   });
 
   test("allows exact loopback and explicitly configured HTTPS origins only", async () => {
+    let blockedCalls = 0;
+    const blocked = await probeOpenworkCloudCatalog(input({
+      config: {
+        type: "remote",
+        enabled: true,
+        url: "https://den.customer.example/custom/mcp/agent",
+        headers: { Authorization: TOKEN },
+      },
+      requestId: "untrusted-self-hosted-request",
+      fetchImpl: async () => {
+        blockedCalls += 1;
+        return jsonResponse("untrusted-self-hosted-request");
+      },
+    }));
+    expect(blocked).toMatchObject({
+      performed: false,
+      code: "untrusted_endpoint",
+    });
+    expect(blockedCalls).toBe(0);
+
     const loopback = await probeOpenworkCloudCatalog(input({
       config: {
         type: "remote",
