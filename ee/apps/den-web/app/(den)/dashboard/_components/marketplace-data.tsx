@@ -238,9 +238,10 @@ export function useMarketplace(marketplaceId: string | null) {
   });
 }
 
-export function useMarketplacePluginCandidates() {
+export function useMarketplacePluginCandidates(enabled = true) {
   return useQuery({
     queryKey: marketplaceQueryKeys.pluginCandidates(),
+    enabled,
     queryFn: async (): Promise<MarketplacePluginCandidate[]> => {
       const { response, payload } = await requestJson(
         "/v1/plugins?status=active&limit=100",

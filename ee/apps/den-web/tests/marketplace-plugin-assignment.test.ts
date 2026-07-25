@@ -25,6 +25,7 @@ describe("marketplace plugin assignment", () => {
 
   test("shows admins eligible existing plugins and assignment copy", () => {
     expect(detail).toContain("access.isAdmin ? (");
+    expect(detail).toContain("useMarketplacePluginCandidates(access.isAdmin)");
     expect(detail).toContain("marketplace-plugin-assignment-controls");
     expect(detail).toContain("!assignedPluginIds.has(plugin.id)");
     expect(detail).toContain("Assign an existing plugin");
@@ -36,6 +37,8 @@ describe("marketplace plugin assignment", () => {
     expect(detail).toContain("useRemoveMarketplacePlugin");
     expect(detail).toContain("removePlugin.isPending && removePlugin.variables?.pluginId === plugin.id");
     expect(detail).toContain("Removes this plugin from the marketplace only.");
+    expect(detail).toContain("confirm-remove-marketplace-plugin");
+    expect(detail).toContain("The global plugin and its configuration will remain available.");
     expect(detail).toContain("Failed to remove plugin.");
     expect(detail).not.toContain("useDeletePlugin");
   });

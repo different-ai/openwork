@@ -95,19 +95,20 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
   const [editMarketplace, setEditMarketplace] = useState<{ name: string; description: string | null } | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [selectedPluginId, setSelectedPluginId] = useState("");
+  const [pluginToRemove, setPluginToRemove] = useState<Pick<MarketplacePluginSummary, "id" | "name"> | null>(null);
   const actionsRef = useRef<HTMLDivElement | null>(null);
   const deleteMarketplace = useDeleteMarketplace();
-  const pluginCandidates = useMarketplacePluginCandidates();
-  const assignPlugin = useAssignMarketplacePlugin();
-  const removePlugin = useRemoveMarketplacePlugin();
-  const authorization = useMcpAccountAuthorization(() => {
-    void refetch();
-  });
   const access = getOrgAccessFlags(
     orgContext?.currentMember.role ?? "member",
     orgContext?.currentMember.isOwner ?? false,
     orgContext?.roles ?? [],
   );
+  const pluginCandidates = useMarketplacePluginCandidates(access.isAdmin);
+  const assignPlugin = useAssignMarketplacePlugin();
+  const removePlugin = useRemoveMarketplacePlugin();
+  const authorization = useMcpAccountAuthorization(() => {
+    void refetch();
+  });
   const configurationTargets = useMemo(() => (
     data?.plugins.flatMap((plugin) => (
       plugin.cloudReadiness?.connections
@@ -161,6 +162,18 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
       setSelectedPluginId("");
     } catch {
       // The mutation error is rendered below the assignment controls.
+    }
+  }
+  async function handleRemovePlugin() {
+    if (!pluginToRemove) return;
+    try {
+      await removePlugin.mutateAsync({
+        marketplaceId: marketplace.id,
+        pluginId: pluginToRemove.id,
+      });
+      setPluginToRemove(null);
+    } catch {
+      // The mutation error is rendered in the confirmation dialog.
     }
   }
   async function handleDeleteMarketplace() {
@@ -385,8 +398,7 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
                       plugin={plugin}
                       canManage={access.isAdmin}
                       removing={removePlugin.isPending && removePlugin.variables?.pluginId === plugin.id}
-                      removeError={removePlugin.error && removePlugin.variables?.pluginId === plugin.id ? removePlugin.error : null}
-                      onRemove={() => removePlugin.mutate({ marketplaceId: marketplace.id, pluginId: plugin.id })}
+                      onRemove={() => setPluginToRemove({ id: plugin.id, name: plugin.name })}
                     />
                   ))}
                 </div>
@@ -444,6 +456,76 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
         }}
         onConfirm={() => void handleDeleteMarketplace()}
       />
+      <RemoveMarketplacePluginDialog
+        pluginName={pluginToRemove?.name ?? null}
+        marketplaceName={marketplace.name}
+        busy={removePlugin.isPending}
+        error={removePlugin.error}
+        onClose={() => {
+          if (!removePlugin.isPending) setPluginToRemove(null);
+        }}
+        onConfirm={() => void handleRemovePlugin()}
+      />
+    </div>
+  );
+}
+
+function RemoveMarketplacePluginDialog({
+  pluginName,
+  marketplaceName,
+  busy,
+  error,
+  onClose,
+  onConfirm,
+}: {
+  pluginName: string | null;
+  marketplaceName: string;
+  busy: boolean;
+  error: unknown;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  if (!pluginName) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-6" onClick={busy ? undefined : onClose}>
+      <div
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="remove-marketplace-plugin-title"
+        aria-describedby="remove-marketplace-plugin-description"
+        className="w-full max-w-md rounded-[28px] border border-gray-200 bg-white p-6 shadow-[0_24px_80px_-32px_rgba(15,23,42,0.45)]"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-start gap-3">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-50 text-amber-700">
+            <Puzzle className="h-5 w-5" aria-hidden />
+          </div>
+          <div className="min-w-0 flex-1">
+            <h2 id="remove-marketplace-plugin-title" className="text-[18px] font-semibold tracking-[-0.02em] text-gray-950">
+              Remove {pluginName}?
+            </h2>
+            <p id="remove-marketplace-plugin-description" className="mt-1 text-[13px] leading-6 text-gray-600">
+              This removes the plugin from {marketplaceName} only. The global plugin and its configuration will remain available.
+            </p>
+          </div>
+        </div>
+
+        {error ? (
+          <p className="mt-4 rounded-xl bg-red-50 px-3 py-2 text-[12.5px] text-red-600">
+            {error instanceof Error ? error.message : "Failed to remove plugin."}
+          </p>
+        ) : null}
+
+        <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          <DenButton variant="secondary" onClick={onClose} disabled={busy}>
+            Cancel
+          </DenButton>
+          <DenButton variant="destructive" loading={busy} onClick={onConfirm} data-testid="confirm-remove-marketplace-plugin">
+            Remove from marketplace
+          </DenButton>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1064,14 +1146,12 @@ function MarketplacePluginCard({
   plugin,
   canManage,
   removing,
-  removeError,
   onRemove,
 }: {
   orgSlug: string | null;
   plugin: MarketplacePluginSummary;
   canManage: boolean;
   removing: boolean;
-  removeError: unknown;
   onRemove: () => void;
 }) {
   const orderedCountEntries = Object.entries(plugin.componentCounts)
@@ -1138,7 +1218,6 @@ function MarketplacePluginCard({
                 Remove
               </DenButton>
               <p className="mt-1 text-[10.5px] text-gray-400">Removes this plugin from the marketplace only.</p>
-              {removeError ? <p className="mt-1 text-[11px] text-red-600">{removeError instanceof Error ? removeError.message : "Failed to remove plugin."}</p> : null}
             </div>
           ) : null}
         </div>
