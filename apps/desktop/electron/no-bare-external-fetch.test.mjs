@@ -51,6 +51,6 @@ test("desktop electron source does not use unmarked bare fetch", async () => {
   }
 
   if (offenders.length > 0) {
-    throw new Error(`Unmarked bare fetch is banned in apps/desktop/electron because bare fetch bypasses the OS certificate trust store and system proxy; use electronNet.fetch for external requests, or add // loopback-fetch: <reason> if the target is provably 127.0.0.1/localhost. Offenders:\n${offenders.join("\n")}`);
+    throw new Error(`Unmarked bare fetch is banned in apps/desktop/electron because bare fetch bypasses Chromium's certificate trust path and system proxy; use electronNet.fetch for external requests, or add // loopback-fetch: <reason> if the target is provably 127.0.0.1/localhost. Offenders:\n${offenders.join("\n")}`);
   }
 });
