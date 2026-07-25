@@ -206,7 +206,7 @@ only when bypassing native file pickers.
 
 | Control | Stable selector/search | Source file |
 |---|---|---|
-| Settings button | `button[aria-label="Settings"]` | `apps/app/src/react-app/domains/session/chat/status-bar.tsx` |
+| Settings | `[data-testid="account-status-menu"]`, then menu item text `Settings` | `apps/app/src/react-app/domains/session/sidebar/account-status-menu.tsx` |
 | Back to app | button text `Back to app` | `apps/app/src/react-app/domains/settings/shell/settings-shell.tsx` |
 | New task | `button[aria-label="New task"]` | `apps/app/src/react-app/domains/session/sidebar/app-sidebar.tsx` |
 | Run task | button text `Run task` | `apps/app/src/react-app/domains/session/surface/composer/composer.tsx` |
@@ -246,7 +246,7 @@ Reusable click helpers:
 Use this when the user provides a temporary key and asks to test real model
 sessions. Do not write the key into docs or repo files.
 
-1. Open Settings using `button[aria-label="Settings"]`.
+1. Open the sidebar account menu `[data-testid="account-status-menu"]`, then click `Settings`.
 2. Click `AI Providers`.
 3. Click `Connect provider`.
 4. Set `input[placeholder="Filter providers by name or ID"]` to `openai`.

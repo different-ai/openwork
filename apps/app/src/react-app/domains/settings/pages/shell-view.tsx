@@ -34,9 +34,9 @@ function ShellWireframe({ config }: { config: ShellConfig }) {
 
   return (
     <div className="mx-auto mb-2 w-full max-w-md">
-      <svg viewBox="0 0 400 260" className="w-full" aria-hidden="true">
+      <svg viewBox="0 0 400 232" className="w-full" aria-hidden="true">
         {/* Window frame */}
-        <rect x="0" y="0" width="400" height="260" rx="10" fill="var(--dls-surface)" stroke="var(--dls-border)" strokeWidth="1" />
+        <rect x="0" y="0" width="400" height="232" rx="10" fill="var(--dls-surface)" stroke="var(--dls-border)" strokeWidth="1" />
 
         {/* Title bar */}
         <rect x="0.5" y="0.5" width="399" height="30" rx="10" fill="var(--dls-hover)" />
@@ -51,8 +51,10 @@ function ShellWireframe({ config }: { config: ShellConfig }) {
 
         {/* Sidebar */}
         <g className="transition-all duration-300" style={{ opacity: config.sidebar ? 1 : 0.1 }}>
-          <rect x="0.5" y="31" width="100" height="195" fill="var(--dls-hover)" />
-          <line x1="101" y1="31" x2="101" y2="226" stroke="var(--dls-border)" strokeWidth="0.5" />
+          <rect x="0.5" y="31" width="100" height="200.5" fill="var(--dls-hover)" />
+          {/* Bottom-left corner */}
+          <rect x="0.5" y="221" width="100" height="10.5" rx="10" fill="var(--dls-hover)" />
+          <line x1="101" y1="31" x2="101" y2="231.5" stroke="var(--dls-border)" strokeWidth="0.5" />
 
           {/* Workspace header */}
           <circle cx="16" cy="44" r="5" fill="var(--dls-accent)" opacity="0.3" />
@@ -74,8 +76,23 @@ function ShellWireframe({ config }: { config: ShellConfig }) {
           {/* Add workspace */}
           {config.addWorkspace ? (
             <g>
-              <rect x="8" y="200" width="85" height="16" rx="8" fill="var(--dls-accent)" opacity="0.15" />
-              <text x="50" y="210" textAnchor="middle" fontSize="5.5" fontWeight="500" fill="var(--dls-accent)" opacity="0.6">Add workspace</text>
+              <rect x="8" y="150" width="85" height="16" rx="8" fill="var(--dls-accent)" opacity="0.15" />
+              <text x="50" y="160" textAnchor="middle" fontSize="5.5" fontWeight="500" fill="var(--dls-accent)" opacity="0.6">Add workspace</text>
+            </g>
+          ) : null}
+
+          {/* Account + status footer */}
+          <line x1="0" y1="188" x2="101" y2="188" stroke="var(--dls-border)" strokeWidth="0.5" />
+          <circle cx="15" cy="198" r="5" fill="var(--dls-accent)" opacity="0.25" />
+          <text x="25" y="197" fontSize="5.5" fontWeight="500" fill="var(--dls-text-primary)" opacity="0.6">Alex Rivera</text>
+          <text x="25" y="204" fontSize="4.5" fill="var(--dls-text-secondary)" opacity="0.35">alex@acme.com</text>
+          {config.statusBar ? (
+            <g>
+              <rect x="8" y="209" width="85" height="16" rx="4" fill="var(--dls-surface)" opacity="0.5" />
+              <circle cx="14" cy="214" r="1.75" fill="#28c840" opacity="0.6" />
+              <text x="19" y="216" fontSize="4.5" fill="var(--dls-text-secondary)" opacity="0.45">Ready for new tasks</text>
+              <circle cx="14" cy="221" r="1.75" fill="#28c840" opacity="0.6" />
+              <text x="19" y="223" fontSize="4.5" fill="var(--dls-text-secondary)" opacity="0.45">Connect: Ready</text>
             </g>
           ) : null}
         </g>
@@ -113,39 +130,6 @@ function ShellWireframe({ config }: { config: ShellConfig }) {
         {config.modelPicker ? (
           <text x={cx + 14} y="174" fontSize="4.5" fill="var(--dls-text-secondary)" opacity="0.3">big-pickle</text>
         ) : null}
-
-        {/* Status bar */}
-        <g className="transition-all duration-300" style={{ opacity: config.statusBar ? 1 : 0.08 }}>
-          <line x1="0" y1="226" x2="400" y2="226" stroke="var(--dls-border)" strokeWidth="0.5" />
-          <rect x="0.5" y="226" width="399" height="33.5" rx="0" fill="var(--dls-hover)" />
-          {/* Bottom corners */}
-          <rect x="0.5" y="250" width="399" height="10" rx="10" fill="var(--dls-hover)" />
-
-          {/* Status dot + label */}
-          <circle cx="14" cy="242" r="2.5" fill="#28c840" opacity="0.5" />
-          <text x="22" y="245" fontSize="5.5" fontWeight="500" fill="var(--dls-text-primary)" opacity="0.5">Ready</text>
-
-          {/* Cloud sign-in */}
-          {config.cloudSignin ? (
-            <g>
-              <rect x="280" y="236" width="32" height="12" rx="6" fill="var(--dls-accent)" opacity="0.2" />
-              <text x="296" y="244" textAnchor="middle" fontSize="4.5" fontWeight="500" fill="var(--dls-accent)" opacity="0.5">Sign in</text>
-            </g>
-          ) : null}
-
-          {/* Docs */}
-          {config.docsButton ? (
-            <text x="326" y="244" fontSize="5" fill="var(--dls-text-secondary)" opacity="0.35">Docs</text>
-          ) : null}
-
-          {/* Feedback */}
-          {config.feedbackButton ? (
-            <text x="350" y="244" fontSize="5" fill="var(--dls-text-secondary)" opacity="0.35">Feedback</text>
-          ) : null}
-
-          {/* Settings gear */}
-          <text x="388" y="245" textAnchor="middle" fontSize="7" fill="var(--dls-text-secondary)" opacity="0.3">{"\u2699"}</text>
-        </g>
 
         {/* Browser panel */}
         <g className="transition-all duration-300" style={{ opacity: config.browser ? 1 : 0 }}>
@@ -315,35 +299,32 @@ export function ShellCustomizationView() {
         />
 
         <ToggleRow
-          label="Display status bar"
-          description="Quick access to status, settings, and actions along the bottom edge."
+          label="Display live status"
+          description="Show connection and OpenWork Connect health in the account menu at the bottom of the sidebar."
           checked={config.statusBar}
           onChange={(v) => update({ statusBar: v })}
-          warning="When hidden, the only way to access settings is via Cmd+K."
         />
 
-        {config.statusBar ? (
-          <div className="ml-6 flex flex-col gap-3 border border-dls-border px-4 py-4 rounded-2xl -mr-4">
-            <ToggleRow
-              label="Display documentation link"
-              description="Show a link to your documentation."
-              checked={config.docsButton}
-              onChange={(value) => update({ docsButton: value })}
-            />
-            <ToggleRow
-              label="Display feedback button"
-              description="Show a button for submitting feedback."
-              checked={config.feedbackButton}
-              onChange={(value) => update({ feedbackButton: value })}
-            />
-            <ToggleRow
-              label="Display cloud sign-in"
-              description="Show a sign-in prompt for users who aren't logged in."
-              checked={config.cloudSignin}
-              onChange={(value) => update({ cloudSignin: value })}
-            />
-          </div>
-        ) : null}
+        <div className="ml-6 flex flex-col gap-3 border border-dls-border px-4 py-4 rounded-2xl -mr-4">
+          <ToggleRow
+            label="Display documentation link"
+            description="Show a link to your documentation in the account menu."
+            checked={config.docsButton}
+            onChange={(value) => update({ docsButton: value })}
+          />
+          <ToggleRow
+            label="Display feedback button"
+            description="Show an entry for submitting feedback in the account menu."
+            checked={config.feedbackButton}
+            onChange={(value) => update({ feedbackButton: value })}
+          />
+          <ToggleRow
+            label="Display cloud sign-in"
+            description="Show a sign-in prompt for users who aren't logged in."
+            checked={config.cloudSignin}
+            onChange={(value) => update({ cloudSignin: value })}
+          />
+        </div>
 
         <ToggleRow
           label="Display notifications"

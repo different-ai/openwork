@@ -8,13 +8,13 @@ import { createContext, useCallback, use, useMemo, useState, type ReactNode } fr
 export type ShellConfig = {
   /** Display name shown in the title bar, sidebar, and welcome page. */
   appName: string;
-  /** Show the bottom status bar (connection status, docs, feedback). */
+  /** Show live connection status inside the sidebar account menu. */
   statusBar: boolean;
   /** Show the left sidebar with workspace/session list. */
   sidebar: boolean;
-  /** Show the Docs button in the status bar. */
+  /** Show the Docs entry in the account menu. */
   docsButton: boolean;
-  /** Show the Feedback button in the status bar. */
+  /** Show the Feedback entry in the account menu. */
   feedbackButton: boolean;
   /** Show the Cloud sign-in button when not signed in. */
   cloudSignin: boolean;

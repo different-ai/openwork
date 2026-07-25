@@ -257,9 +257,6 @@ function PreparedWorkspacePage({ prepared }: { prepared: PreparedBootstrapSummar
             <CheckCircle2 className="size-3.5" />
             Setup complete — OpenWork is ready
           </div>
-          <div className="mx-auto flex size-14 items-center justify-center rounded-2xl border border-dls-border bg-dls-hover">
-            <BuildingOffice2Icon className="size-7 text-foreground" />
-          </div>
           <PageTitle>{prepared.orgName}</PageTitle>
         </PageHeader>
 
@@ -392,9 +389,6 @@ export function OrgOnboardingPage() {
         <PageTitlebarRegion />
         <PageContainer>
           <PageHeader>
-            <div className="mx-auto flex size-14 items-center justify-center rounded-2xl border border-dls-border bg-dls-hover">
-              <BuildingOffice2Icon className="size-7 text-foreground" />
-            </div>
             <PageTitle>Your organization</PageTitle>
           </PageHeader>
           <PageContent>
@@ -415,9 +409,6 @@ export function OrgOnboardingPage() {
         <PageTitlebarRegion />
         <PageContainer>
           <PageHeader>
-            <div className="mx-auto flex size-14 items-center justify-center rounded-2xl border border-dls-border bg-dls-hover">
-              <BuildingOffice2Icon className="size-7 text-foreground" />
-            </div>
             <PageTitle>Choose your organization</PageTitle>
             <Alert variant="destructive">
               <CircleAlert />
@@ -596,9 +587,6 @@ export function ResourceSelectionPage() {
         <PageTitlebarRegion />
         <PageContainer>
           <PageHeader>
-            <div className="mx-auto flex size-14 items-center justify-center rounded-2xl border border-dls-border bg-dls-hover">
-              <BuildingOffice2Icon className="size-7 text-foreground" />
-            </div>
             <PageTitle>Preparing workspace identity</PageTitle>
             <PageDescription>
               Applying {orgName || "your workspace"}&apos;s branding and checking for an application update.
@@ -622,9 +610,6 @@ export function ResourceSelectionPage() {
         <PageTitlebarRegion />
         <PageContainer>
           <PageHeader>
-            <div className="mx-auto flex size-14 items-center justify-center rounded-2xl border border-dls-border bg-dls-hover">
-              <BuildingOffice2Icon className="size-7 text-foreground" />
-            </div>
             <PageTitle>Workspace identity is ready</PageTitle>
             <PageDescription>
               Restart OpenWork once to finish applying {orgName || "your workspace"}&apos;s name and app icon everywhere.
@@ -683,9 +668,6 @@ export function ResourceSelectionPage() {
               Setup complete — OpenWork prepared this workspace
             </div>
           ) : null}
-          <div className="mx-auto flex size-14 items-center justify-center rounded-2xl border border-dls-border bg-dls-hover">
-            <BuildingOffice2Icon className="size-7 text-foreground" />
-          </div>
           <PageTitle>
             {orgName || "Your organization"}
           </PageTitle>
@@ -1000,9 +982,6 @@ function OrganizationSelectionPage({
       <PageTitlebarRegion />
       <PageContainer>
         <PageHeader>
-          <div className="mx-auto flex size-14 items-center justify-center rounded-2xl border border-dls-border bg-dls-hover">
-            <BuildingOffice2Icon className="size-7 text-foreground" />
-          </div>
           <PageTitle>Choose your organization</PageTitle>
           {error ? (
             <Alert variant="destructive">

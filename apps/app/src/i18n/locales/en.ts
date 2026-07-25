@@ -4,6 +4,10 @@
  */
 
 export default {
+  "account.mcp_connected_one": "{count} MCP server",
+  "account.mcp_connected_other": "{count} MCP servers",
+  "account.providers_connected_one": "{count} model provider",
+  "account.providers_connected_other": "{count} model providers",
   "app.compact_command_desc": "Summarize this session to reduce context size.",
   "app.error_audit_load": "Failed to load audit log.",
   "app.error_auth_failed": "Authentication failed",
@@ -1284,7 +1288,7 @@ export default {
   "settings.nuke_survives_app": "The installed OpenWork app and protocol registration stay installed.",
   "settings.nuke_survives_bootstrap": "Bootstrap / organization server: {path}",
   "settings.nuke_survives_title": "Will survive",
-  "settings.nuke_survives_workspaces": "Workspace folders and each workspace's .opencode folder are not touched.",
+  "settings.nuke_survives_workspaces": "Workspace folders and your files inside them are not touched, but each workspace's OpenWork state (.opencode/openwork) is removed.",
   "settings.off": "Off",
   "settings.on": "On",
   "settings.open_deeplink_action": "Opening...",

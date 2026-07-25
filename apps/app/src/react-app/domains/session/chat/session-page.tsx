@@ -54,7 +54,7 @@ import {
 import { ShareWorkspaceModal } from "../../workspace/share-workspace-modal";
 import { SessionEmptyHero } from "./session-empty-hero";
 import type { NewTaskComposerContext } from "./new-task-composer";
-import { StatusBar, type StatusBarProps } from "./status-bar";
+import type { SessionCloudMcpMaintenanceState } from "../../connections/use-session-mcp-maintenance";
 import { OwDotTicker } from "../../../shell/dot-ticker";
 import { NotificationBell } from "../../../shell/notification-center";
 import { useReactRenderWatchdog } from "../../../shell/react-render-watchdog";
@@ -101,15 +101,14 @@ type PendingConversationHistoryNavigation = {
   targetSplitSessionId: string | null;
 };
 
-type StatusBarOverrides = Pick<
-  StatusBarProps,
-  | "loading"
-  | "showSettingsButton"
-  | "settingsOpen"
-  | "reloadBusy"
-  | "reloadError"
-  | "openWorkConnectState"
->;
+/** Live status the route feeds into the sidebar footer account menu. */
+type StatusBarOverrides = {
+  loading: boolean;
+  showSettingsButton: boolean;
+  reloadBusy: boolean;
+  reloadError: string | null;
+  openWorkConnectState: SessionCloudMcpMaintenanceState;
+};
 
 export type SessionPageHistoryControls = {
   canUndo: boolean;
@@ -1051,6 +1050,20 @@ export function SessionPage(props: SessionPageProps) {
           onReorderWorkspaces={props.sidebar.onReorderWorkspaces}
           onStartResize={startLeftSidebarResize}
           onOpenAccountSettings={props.onOpenSettings}
+          status={{
+            clientConnected: props.clientConnected,
+            openworkServerStatus: props.openworkServerStatus,
+            developerMode: props.developerMode,
+            showConnectionStatus: Boolean(props.selectedWorkspaceId),
+            providerConnectedIds: props.providerConnectedIds,
+            mcpConnectedCount: props.mcpConnectedCount,
+            loading: props.statusBar?.loading ?? false,
+            showSettingsButton: props.statusBar?.showSettingsButton,
+            reloadBusy: props.statusBar?.reloadBusy,
+            reloadError: props.statusBar?.reloadError,
+            openWorkConnectState: props.statusBar?.openWorkConnectState,
+            onSendFeedback: props.onSendFeedback,
+          }}
         />
         <SidebarInset className="min-h-0 overflow-hidden bg-sidebar mac:bg-transparent mac:[&_header]:transition-[padding-left] mac:[&_header]:duration-200 mac:[&_header]:ease-linear mac:peer-data-[state=collapsed]:[&_header]:pl-28 mac:max-md:[&_header]:pl-28">
           <div className="flex min-h-0 flex-1 py-2 pl-2">
@@ -1380,24 +1393,6 @@ export function SessionPage(props: SessionPageProps) {
             ) : null}
           </ResizablePanelGroup>
 
-          {shellConfig.statusBar ? (
-            <StatusBar
-              clientConnected={props.clientConnected}
-              openworkServerStatus={props.openworkServerStatus}
-              developerMode={props.developerMode}
-              showConnectionStatus={Boolean(props.selectedWorkspaceId)}
-              settingsOpen={props.statusBar?.settingsOpen ?? false}
-              onSendFeedback={props.onSendFeedback}
-              onOpenSettings={props.onOpenSettings}
-              providerConnectedIds={props.providerConnectedIds}
-              mcpConnectedCount={props.mcpConnectedCount}
-              loading={props.statusBar?.loading ?? false}
-              showSettingsButton={props.statusBar?.showSettingsButton}
-              reloadBusy={props.statusBar?.reloadBusy}
-              reloadError={props.statusBar?.reloadError}
-              openWorkConnectState={props.statusBar?.openWorkConnectState}
-            />
-          ) : null}
               </main>
             </ResizablePanel>
               {sidePanelOpen ? (

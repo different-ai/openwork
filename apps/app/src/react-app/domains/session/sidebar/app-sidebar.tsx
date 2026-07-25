@@ -21,9 +21,7 @@ import {
   RotateCcw,
   Settings,
   FolderOpen,
-  LogOut,
   Tag,
-  UserRound,
   X,
 } from "lucide-react";
 import { LazyMotion, Reorder, domMax, m, useDragControls } from "motion/react";
@@ -103,9 +101,7 @@ import {
 } from "@/components/ui/select";
 
 import { SidebarContext, useSidebarContext } from "./app-sidebar-provider";
-import { useDenAuth } from "../../cloud/den-auth-provider";
-import { buildDenAuthUrl, clearDenSession, createDenClient, readDenBootstrapConfig, readDenSettings } from "../../../../app/lib/den";
-import { usePlatform } from "../../../kernel/platform";
+import { AccountStatusMenu, type AccountStatusMenuProps } from "./account-status-menu";
 import type { SidebarContextValue } from "./app-sidebar-provider";
 import {
   MAX_SESSIONS_PREVIEW,
@@ -842,6 +838,8 @@ export type AppSidebarProps = {
   onReorderWorkspaces?: (workspaceIds: string[]) => void;
   onStartResize?: React.PointerEventHandler<HTMLButtonElement>;
   onOpenAccountSettings?: () => void;
+  /** Live app status, shown inside the footer account menu. */
+  status: Omit<AccountStatusMenuProps, "onOpenAccountSettings">;
 };
 
 function useSessionTree(
@@ -856,92 +854,6 @@ function useSessionTree(
 
 function isSessionActivityStatus(status: string | undefined): status is SessionActivityStatus {
   return status === "idle" || status === "thinking" || status === "responding" || status === "error" || status === "compacting" || status === "waiting";
-}
-
-function accountInitials(name: string | null, email: string) {
-  const source = name?.trim() || email;
-  const parts = source.split(/[\s@._-]+/).filter(Boolean);
-  if (parts.length === 0) return "?";
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[1][0]).toUpperCase();
-}
-
-function SidebarAccountChip(props: { onOpenAccountSettings?: () => void }) {
-  const denAuth = useDenAuth();
-  const platform = usePlatform();
-
-  if (denAuth.status === "checking") return null;
-
-  const user = denAuth.user;
-  const signedIn = denAuth.isSignedIn && user !== null;
-
-  const openSignIn = () => {
-    platform.openLink(buildDenAuthUrl(readDenBootstrapConfig().baseUrl, "sign-up"));
-  };
-
-  const logOut = () => {
-    const settings = readDenSettings();
-    if (settings.authToken) {
-      void createDenClient({ baseUrl: settings.baseUrl, token: settings.authToken })
-        .signOut()
-        .catch(() => undefined);
-    }
-    clearDenSession();
-    void denAuth.refresh();
-  };
-
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger
-        render={
-          <button
-            type="button"
-            className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-sidebar-accent"
-            title={signedIn ? user.email : undefined}
-          >
-            {signedIn ? (
-              <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/15 text-[10px] font-semibold text-primary">
-                {accountInitials(user.name, user.email)}
-              </span>
-            ) : (
-              <span className="flex size-6 shrink-0 items-center justify-center rounded-full border border-dashed border-border text-muted-foreground">
-                <UserRound size={13} />
-              </span>
-            )}
-            <span className="min-w-0 flex-1">
-              <span className="block truncate text-[12px] font-medium text-sidebar-foreground">
-                {signedIn ? user.name?.trim() || user.email : "Sign in"}
-              </span>
-              <span className="block truncate text-[10.5px] leading-tight text-muted-foreground">
-                {signedIn ? (user.name ? user.email : "OpenWork Cloud") : "Sync with OpenWork Cloud"}
-              </span>
-            </span>
-            <MoreHorizontal size={14} className="shrink-0 text-muted-foreground" />
-          </button>
-        }
-      />
-      <DropdownMenuContent side="top" align="start" className="w-56">
-        {signedIn ? (
-          <div className="px-2 py-1.5 text-[11px] text-muted-foreground">{user.email}</div>
-        ) : null}
-        <DropdownMenuItem onClick={props.onOpenAccountSettings}>
-          <Settings className="size-3.5" />
-          Settings
-        </DropdownMenuItem>
-        {signedIn ? (
-          <DropdownMenuItem onClick={logOut}>
-            <LogOut className="size-3.5" />
-            Log out
-          </DropdownMenuItem>
-        ) : (
-          <DropdownMenuItem onClick={openSignIn}>
-            <UserRound className="size-3.5" />
-            Sign in
-          </DropdownMenuItem>
-        )}
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
 }
 
 export function AppSidebar(props: AppSidebarProps) {
@@ -1242,7 +1154,7 @@ export function AppSidebar(props: AppSidebarProps) {
         </LazyMotion>
 
         <SidebarFooter className="border-t border-sidebar-border/60 p-1.5">
-          <SidebarAccountChip onOpenAccountSettings={props.onOpenAccountSettings} />
+          <AccountStatusMenu {...props.status} onOpenAccountSettings={props.onOpenAccountSettings} />
         </SidebarFooter>
 
         <SidebarRail
