@@ -47,15 +47,6 @@
             ]
           },
           {
-            "group": "Self-host",
-            "pages": [
-              "start-here/self-host",
-              "start-here/private-network-deployment",
-              "start-here/on-prem-branding",
-              "start-here/github-connector-helm"
-            ]
-          },
-          {
             "group": "Troubleshooting",
             "pages": [
               "start-here/troubleshooting/diagnostic-prompts"
@@ -66,6 +57,40 @@
             "pages": [
               "start-here/missing-docs",
               "start-here/missing-languages"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Self-host",
+        "pages": [
+          {
+            "group": "Overview",
+            "pages": [
+              "start-here/self-host"
+            ]
+          },
+          {
+            "group": "Plan your network",
+            "pages": [
+              "start-here/private-network-deployment",
+              "start-here/air-gapped-deployment",
+              "start-here/outbound-network-access",
+              "start-here/certificate-trust-and-proxies"
+            ]
+          },
+          {
+            "group": "Install and operate",
+            "pages": [
+              "start-here/installer-delivery",
+              "start-here/on-prem-branding",
+              "start-here/github-connector-helm"
+            ]
+          },
+          {
+            "group": "Troubleshoot",
+            "pages": [
+              "start-here/network-diagnostics"
             ]
           }
         ]

@@ -5,6 +5,10 @@ endpoint. An enterprise can allowlist one stable host, point a client at
 `/mcp`, and use the authenticated dashboard to prove that requests arrived and
 inspect the safely redacted request/response sequence.
 
+For customer-facing setup and interpretation guidance, see the published
+[Network diagnostics](../../../packages/docs/start-here/network-diagnostics.mdx)
+page.
+
 The authenticated **Connections** dashboard also keeps a seven-day rolling
 record of metadata-only OpenWork Connect incidents. It correlates what a
 desktop maintenance probe observed with the initialize, initialized, and

@@ -56,6 +56,8 @@ config:
 
 secret:
   values:
+    # Transitional/smoke TLS only: sslaccept=accept encrypts without certificate verification.
+    # For production verification, use customCa plus sslmode=verify-full or verify-ca.
     databaseUrl: "mysql://openwork:REPLACE_ME@mysql.example.internal:3306/openwork_den?sslaccept=accept"
     betterAuthSecret: "REPLACE_WITH_AT_LEAST_32_CHARACTERS"
     denDbEncryptionKey: "REPLACE_WITH_AT_LEAST_32_CHARACTERS"
@@ -127,6 +129,13 @@ Provider-specific starter guides:
 install an ingress controller. Use it only when the cluster already has a
 compatible provider ingress controller.
 
+Published self-host planning pages:
+
+- [Private network deployment](../../../packages/docs/start-here/private-network-deployment.mdx)
+- [Air-gapped deployment](../../../packages/docs/start-here/air-gapped-deployment.mdx)
+- [Installer delivery](../../../packages/docs/start-here/installer-delivery.mdx)
+- [Certificate trust and proxies](../../../packages/docs/start-here/certificate-trust-and-proxies.mdx)
+
 ## Secrets
 
 The chart can create an Opaque Secret from `secret.values`, or consume an existing Secret:
@@ -146,6 +155,11 @@ The existing Secret must contain the keys listed under `secret.keys`, especially
 Set `DAYTONA_API_KEY` when `config.provisioner.mode` is `daytona`. Set `POLAR_ACCESS_TOKEN` when Polar feature gating is enabled. Set `OPENROUTER_MANAGEMENT_API_KEY` when enabling OpenWork Models management.
 
 ## Custom CA certificates
+
+For higher-level planning across desktop, sidecar, Den, and MySQL trust
+surfaces, see the published
+[Certificate trust and proxies](../../../packages/docs/start-here/certificate-trust-and-proxies.mdx)
+page. This section remains the authoritative chart values reference.
 
 Use `customCa` when OpenWork must trust a private certificate authority for
 strict TLS verification, such as a MySQL endpoint signed by an internal or cloud
@@ -638,7 +652,12 @@ origins, and database URLs are refreshed.
 
 ## Isolated Networks
 
-The chart disables external password breach screening by default so isolated self-hosted installs do not depend on the Have I Been Pwned Pwned Passwords range API. If your deployment has approved egress and you want password creation and reset to reject known-compromised passwords through that service, enable it:
+Use the published [Air-gapped deployment](../../../packages/docs/start-here/air-gapped-deployment.mdx)
+and [Outbound network access](../../../packages/docs/start-here/outbound-network-access.mdx)
+pages for customer-facing isolation and allowlist planning. The values below are
+the chart-level controls.
+
+The chart disables external password breach screening by default so isolated self-hosted installs do not depend on the Have I Been Pwned Pwned Passwords range API. If your deployment has approved outbound access and you want password creation and reset to reject known-compromised passwords through that service, enable it:
 
 ```yaml
 config:
@@ -708,7 +727,9 @@ The migration Job creates the `install_link` and `desktop_connect_grant` tables
 automatically when `migrations.enabled=true`. Hosted deployments that enable
 install-link gating must opt organizations in through `/admin`; self-hosted
 deployments default to enabled. See the
-[operator guide](../../../docs/org-install-links.md).
+[operator guide](../../../docs/org-install-links.md) and the published
+[Installer delivery](../../../packages/docs/start-here/installer-delivery.mdx)
+page.
 
 Optional installer artifact values:
 

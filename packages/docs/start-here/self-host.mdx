@@ -26,55 +26,22 @@ helm upgrade --install openwork-ee oci://ghcr.io/different-ai/charts/openwork-ee
   -f values.prod.yaml
 ```
 
-The chart pulls the matching GHCR images for `openwork-den-api`, `openwork-den-web`, and optional `openwork-inference`.
+The chart pulls the matching GHCR images for `openwork-den-api`, `openwork-den-web`, and optional `openwork-inference` unless you mirror them into an internal registry.
 
-### Configure Den API Node.js options
+## Plan the network
 
-Use `config.denApiNodeOptions` when `den-api` needs Node.js startup flags, such
-as using the OpenSSL CA store or increasing the old-space heap limit:
+Use the dedicated Self-host planning pages instead of copying hostname, certificate, proxy, and diagnostics details into this overview:
 
-```yaml
-config:
-  denApiNodeOptions: "--use-openssl-ca --max-old-space-size=4096"
-```
-
-The chart stores this value in its ConfigMap as `DEN_API_NODE_OPTIONS` and
-passes it to the `den-api` container as `NODE_OPTIONS` before Node starts. It
-does not change the Node.js options for Den web or the optional inference
-service. Leaving the value empty preserves the default Node.js behavior.
-Existing deployments using `denApi.env.NODE_OPTIONS` can keep that setting when
-upgrading; it takes precedence over `config.denApiNodeOptions`.
-
-### Trust self-hosted Cloud catalog diagnostics
-
-Settings > Debug includes a cloud catalog diagnostic that runs a bounded
-`initialize` → `tools/list` check against the managed `openwork-cloud` MCP entry
-and verifies that Cloud exposes exactly `search_capabilities` and
-`execute_capability`. The request carries an organization MCP bearer token, so
-self-hosted Den origins are skipped unless the OpenWork desktop/server process
-explicitly trusts that origin for diagnostics.
-
-Set `OPENWORK_AGENT_DIAGNOSTICS_TRUSTED_ORIGINS` on the OpenWork desktop/server
-process to add your Den origin to the hosted defaults:
-
-```bash
-OPENWORK_AGENT_DIAGNOSTICS_TRUSTED_ORIGINS=https://openwork.example.com
-```
-
-The value is a comma-separated list of bare origins. Each entry must be only the
-scheme, host, and optional port: no path, query, fragment, username, or
-password. Entries must use `https:`; loopback origins may use `http:`. Invalid
-entries are ignored instead of failing open, and valid entries are added to the
-hosted defaults rather than replacing them.
-
-If you do not set this, the cloud catalog check reports that the endpoint is
-outside the diagnostics trust list and no credentialed request is made. The
-diagnostic probe is skipped rather than attempted and failed, and Cloud MCP
-itself is unaffected; this variable only enables the diagnostic probe.
+- [Private network deployment](/start-here/private-network-deployment): the common topology where laptops have internet plus VPN access and Den stays private.
+- [Air-gapped deployment](/start-here/air-gapped-deployment): definitions and the checklist for full isolation.
+- [Outbound network access](/start-here/outbound-network-access): the canonical customer IT destination inventory and "what breaks when blocked" guidance.
+- [Certificate trust and proxies](/start-here/certificate-trust-and-proxies): desktop, sidecar, Den, and MySQL trust surfaces.
+- [Installer delivery](/start-here/installer-delivery): GitHub redirect, mounted artifacts, and MDM bootstrap choices.
+- [Network diagnostics](/start-here/network-diagnostics): Windows doctor, Cloud catalog diagnostic trust, and Den outbound checks.
 
 If you want self-hosted repository imports and sync from GitHub, configure the [GitHub connector for Helm](/start-here/github-connector-helm) after the core Den web and Den controller hosts are reachable.
 
-To keep organization names, wordmarks, and desktop icons entirely inside your deployment, follow [Brand an on-prem deployment](/start-here/on-prem-branding).
+To keep organization names, wordmarks, and desktop icons inside your deployment, follow [Brand an on-prem deployment](/start-here/on-prem-branding).
 
 ## How we deploy hosted workers
 
@@ -102,7 +69,7 @@ For containerized services, start from the [Docker packaging](https://github.com
 For production, configure encryption explicitly:
 
 - Enable encryption at rest for the MySQL-compatible database, database backups, object storage, worker volumes, and logs that may contain operational metadata.
-- Require TLS for application-to-database traffic. PlanetScale connections require TLS. For standard MySQL, include a certificate-verifying SSL mode in `DATABASE_URL`, such as `?sslmode=require`, `?sslmode=verify-ca`, or `?sslmode=verify-full`.
+- Require TLS for application-to-database traffic. `sslmode=require` encrypts the connection but is not certificate identity verification. For standard MySQL with certificate verification, use `sslmode=verify-ca`, `sslmode=verify-full`, or a strict equivalent such as `sslaccept=strict`, and provide the CA bundle through the database platform or Helm `customCa`.
 - Keep the local Docker MySQL URL (`mysql://root:password@127.0.0.1:3306/openwork_den`) for development only; it is not a production security posture.
 - Set a unique `DEN_DB_ENCRYPTION_KEY` of at least 32 characters. OpenWork uses it to encrypt selected sensitive database columns, but it does not replace infrastructure-level encryption at rest.
 
@@ -114,51 +81,39 @@ Den uses Better Auth. It runs in your deployment, uses your database, and is con
 
 SSO (SAML/OIDC) is in the current rollout and is designed to run against your own identity provider. When enabled, callback URLs and trusted origins should point at your self-hosted Den web/controller hosts.
 
-For isolated Kubernetes deployments without external egress, the Helm chart disables the external breached-password lookup by default:
-
-```yaml
-config:
-  auth:
-    passwordBreachScreeningEnabled: "false"
-```
-
-This avoids calls to the Have I Been Pwned Pwned Passwords range API during password creation and reset. Email/password sign-in lockout remains local. If your deployment has approved egress, set the value to `"true"` to restore known-compromised password rejection through the external range API.
+For isolated Kubernetes deployments without approved outbound access to the Have I Been Pwned Pwned Passwords range API, the Helm chart disables external breached-password lookup by default. Email/password sign-in lockout remains local. If your deployment approves that external lookup, enable it in Helm. See [Air-gapped deployment](/start-here/air-gapped-deployment) for the broader isolation checklist.
 
 If you do not deploy Den, worker access is token-based with `OPENWORK_TOKEN` and `OPENWORK_HOST_TOKEN`.
 
-## Minimal Working Stack
+## Minimal working stack
 
-#### OpenWork Cloud and the Desktop App
+### OpenWork Cloud and the desktop app
 
-OpenWork cloud is composed of two services:
+OpenWork cloud-style self-hosting is composed of three main pieces:
 
-- NextJS frontend
-- NodeJS backend (Hono) with MySQL DB
+- Next.js frontend
+- Node.js backend (Hono) with MySQL DB
 - Electron/React desktop app
 
-The desktop app should be pointed at the Den web URL only. It derives API and
-MCP traffic through the Den web proxy:
+The desktop app should be pointed at the Den web URL when you use the single-origin topology. It derives API and MCP traffic through the Den web proxy:
 
 - API: `<baseUrl>/api/den/v1/...`
 - MCP: `<baseUrl>/api/den/mcp/...`
 
-For self-hosted deployments, configure `baseUrl` to the public Den web origin
-and make sure that web app's `/api/den` route can reach your Den API backend.
-After sign-in, normal desktop API and MCP traffic does not use a separate API
-origin.
+For self-hosted deployments, configure `baseUrl` to the public Den web origin and make sure that web app's `/api/den` route can reach your Den API backend. After sign-in, normal desktop API and MCP traffic does not use a separate API origin in that topology.
 
-These three alone cover most feature but do not include:
+These three pieces cover most features, but do not include:
 
 - Remote code execution through sandboxes
-- Analytic
-- Telemetry (upcoming) via open telemetry
-- Email management: inviting users, etc.
+- Analytics
+- Telemetry through OpenTelemetry
+- Transactional email for invitations and lifecycle messages
 
 ## Optional vendors
 
 OpenWork does not require many third-party services for the core runtime. These are optional or deployment-specific:
 
-- We use Render: our current hosted service and worker deployment path.
+- Render: our current hosted service and worker deployment path.
 - Daytona: optional sandbox provider for cloud workers.
 - Vercel: optional Den web hosting and worker DNS automation.
 - PostHog: optional analytics for public web surfaces. You can point it at self-hosted PostHog with `NEXT_PUBLIC_POSTHOG_HOST`, or remove/clear the key in your self-hosted web build if you do not want analytics.
