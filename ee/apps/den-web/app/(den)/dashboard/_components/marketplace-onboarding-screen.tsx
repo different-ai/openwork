@@ -13,6 +13,7 @@ import {
 import { requestJson } from "../../_lib/den-flow";
 import { buttonVariants, DenButton } from "../../_components/ui/button";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
+import { useDenFlow } from "../../_providers/den-flow-provider";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { LlmProviderLogos } from "./llm-provider-logos";
 import { OrganizationDownloadCard } from "./organization-download-card";
@@ -116,12 +117,16 @@ function ModelOption({
 
 export function MarketplaceOnboardingScreen() {
   const { activeOrg, orgSlug } = useOrgDashboard();
+  const { runtimeConfig, runtimeConfigLoaded } = useDenFlow();
   const { data: modelsEnabled = false } = useInferenceEnabled();
   const [appInstalled, setAppInstalled] = useLocalStorageFlag(APP_INSTALLED_KEY);
   const [copied, setCopied] = useState(false);
 
   const orgName = activeOrg?.name ?? "your team";
   const allDone = appInstalled && modelsEnabled;
+  // OpenWork Models are a hosted OpenWork Cloud offering; self-hosted
+  // (single-org) deployments bring their own provider key instead.
+  const showOpenWorkModels = runtimeConfigLoaded && runtimeConfig.orgMode === "multi_org";
 
   async function copyMcpEndpoint() {
     try {
@@ -166,16 +171,18 @@ export function MarketplaceOnboardingScreen() {
           <StepHeading step={2} title="Turn on a model" done={modelsEnabled} />
           {modelsEnabled ? null : (
             <div className="flex flex-col gap-4 md:flex-row">
-              <ModelOption
-                recommended
-                icon={<Zap className="h-4 w-4 text-blue-600" aria-hidden="true" />}
-                title="OpenWork Models"
-                body="Frontier and open models, already wired up. No API keys, no billing to configure."
-              >
-                <Link href={getInferenceRoute(orgSlug)} className={buttonVariants({ className: "w-full" })}>
-                  Use OpenWork Models
-                </Link>
-              </ModelOption>
+              {showOpenWorkModels ? (
+                <ModelOption
+                  recommended
+                  icon={<Zap className="h-4 w-4 text-blue-600" aria-hidden="true" />}
+                  title="OpenWork Models"
+                  body="Frontier and open models, already wired up. No API keys, no billing to configure."
+                >
+                  <Link href={getInferenceRoute(orgSlug)} className={buttonVariants({ className: "w-full" })}>
+                    Use OpenWork Models
+                  </Link>
+                </ModelOption>
+              ) : null}
 
               <ModelOption
                 icon={<KeyRound className="h-4 w-4 text-gray-500" aria-hidden="true" />}
@@ -185,7 +192,10 @@ export function MarketplaceOnboardingScreen() {
                 <LlmProviderLogos />
                 <Link
                   href={getCustomLlmProvidersRoute(orgSlug)}
-                  className={buttonVariants({ variant: "secondary", className: "w-full" })}
+                  className={buttonVariants({
+                    variant: showOpenWorkModels ? "secondary" : "primary",
+                    className: "w-full",
+                  })}
                 >
                   Add your own key
                 </Link>
