@@ -648,6 +648,28 @@ config:
 
 Local sign-in lockout protections stay enabled either way.
 
+Den API also protects External MCP connection URLs with an SSRF guard. On a
+hosted multi-tenant deployment, someone who can add an MCP connection could
+otherwise make Den fetch localhost, private-network services, or cloud metadata
+addresses from Den's network position.
+
+If a legitimate internal MCP server is blocked in an isolated private-network
+deployment, the diagnostic code is `MCP_URL_BLOCKED` and the operator-facing
+message is: "Use a public HTTPS MCP URL or change the deployment's
+private-network policy through security review."
+
+To allow private-address MCP servers for Den API, enable:
+
+```yaml
+config:
+  public:
+    allowPrivateMcpUrls: "1"
+```
+
+This disables SSRF protection for external MCP connection URLs. Enable it only
+on a deployment where Den's network position and the set of people who can add
+MCP connections are both trusted.
+
 ## Migrations
 
 The migration Job runs as a Helm `pre-install,pre-upgrade` hook by default:
