@@ -57,7 +57,10 @@ flag.
 
 Set `BETTER_AUTH_URL` to the externally reachable Den web origin, for example
 `https://openwork.example.com`. Set `DEN_API_PUBLIC_URL` to the externally
-reachable Den API origin. The desktop must be able to reach both origins.
+reachable Den API base; in a single-origin setup, use the Den web proxy path,
+such as `https://openwork.example.com/api/den`, so desktops reach only the Den
+web origin. If you publish a separate Den API origin, the install-link exchange
+and external MCP clients must be able to reach it.
 
 Invitation acceptance links use the first non-wildcard entry of
 `DEN_BETTER_AUTH_TRUSTED_ORIGINS`, falling back to `BETTER_AUTH_URL`. In a

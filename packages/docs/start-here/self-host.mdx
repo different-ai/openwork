@@ -144,7 +144,8 @@ MCP traffic through the Den web proxy:
 
 For self-hosted deployments, configure `baseUrl` to the public Den web origin
 and make sure that web app's `/api/den` route can reach your Den API backend.
-The desktop app no longer needs, reads, or writes a separate API URL.
+After sign-in, normal desktop API and MCP traffic does not use a separate API
+origin.
 
 These three alone cover most feature but do not include:
 
