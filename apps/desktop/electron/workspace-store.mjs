@@ -10,6 +10,24 @@ import path from "node:path";
 import { openworkWorkspaceDisplayName, selectOpenworkWorkspaceForConnection } from "./remote-workspace.mjs";
 import { exportWorkspaceConfig, importWorkspaceConfig } from "./workspace-archive.mjs";
 
+/**
+ * Strip the Windows Extended-Length Path prefix (\\?\ or //?/) from a
+ * path string before passing it to Node.js path APIs or fs calls.
+ * Node's path module does not recognise \\?\ as a special prefix, so
+ * leaving it in place causes path.dirname / path.resolve to produce
+ * garbage like '\?' which then reaches mkdir and throws ENOENT.
+ */
+function stripWindowsVerbatimPrefix(p) {
+  if (process.platform !== "win32" || typeof p !== "string") return p;
+  // \\?\UNC\server\share  ->  \\server\share
+  if (p.slice(0, 8).toUpperCase() === "\\\\?\\UNC\\") return `\\\\${p.slice(8)}`;
+  // \\?\C:\path  ->  C:\path
+  if (p.slice(0, 4) === "\\\\\?\\") return p.slice(4);
+  // //?/ device path variant
+  if (p.slice(0, 4) === "//?/") return p.slice(4);
+  return p;
+}
+
 const EMPTY_WORKSPACE_LIST = Object.freeze({
   selectedId: "",
   watchedId: null,
@@ -223,15 +241,15 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
     const handoffInput = input?.handoff;
     const handoff = handoffInput && typeof handoffInput === "object"
       ? {
-          grant: typeof handoffInput.grant === "string" ? handoffInput.grant.trim() : "",
-          denBaseUrl: typeof handoffInput.denBaseUrl === "string" ? handoffInput.denBaseUrl.trim() : "",
-          orgId: typeof handoffInput.orgId === "string" ? handoffInput.orgId.trim() : "",
-          orgName: typeof handoffInput.orgName === "string" ? handoffInput.orgName.trim() : "",
-          orgSlug: typeof handoffInput.orgSlug === "string" ? handoffInput.orgSlug.trim() : "",
-          skillId: typeof handoffInput.skillId === "string" ? handoffInput.skillId.trim() : "",
-          skillTitle: typeof handoffInput.skillTitle === "string" ? handoffInput.skillTitle.trim() : "",
-          createdAt: typeof handoffInput.createdAt === "string" ? handoffInput.createdAt.trim() : "",
-        }
+        grant: typeof handoffInput.grant === "string" ? handoffInput.grant.trim() : "",
+        denBaseUrl: typeof handoffInput.denBaseUrl === "string" ? handoffInput.denBaseUrl.trim() : "",
+        orgId: typeof handoffInput.orgId === "string" ? handoffInput.orgId.trim() : "",
+        orgName: typeof handoffInput.orgName === "string" ? handoffInput.orgName.trim() : "",
+        orgSlug: typeof handoffInput.orgSlug === "string" ? handoffInput.orgSlug.trim() : "",
+        skillId: typeof handoffInput.skillId === "string" ? handoffInput.skillId.trim() : "",
+        skillTitle: typeof handoffInput.skillTitle === "string" ? handoffInput.skillTitle.trim() : "",
+        createdAt: typeof handoffInput.createdAt === "string" ? handoffInput.createdAt.trim() : "",
+      }
       : null;
     const normalizedHandoff = handoff?.grant && handoff.denBaseUrl && handoff.orgId && handoff.orgName && handoff.skillId && handoff.skillTitle
       ? handoff
@@ -239,15 +257,15 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
     const preparedInput = input?.prepared;
     const prepared = preparedInput && typeof preparedInput === "object"
       ? {
-          orgId: typeof preparedInput.orgId === "string" ? preparedInput.orgId.trim() : "",
-          orgName: typeof preparedInput.orgName === "string" ? preparedInput.orgName.trim() : "",
-          orgSlug: typeof preparedInput.orgSlug === "string" ? preparedInput.orgSlug.trim() : "",
-          skillId: typeof preparedInput.skillId === "string" ? preparedInput.skillId.trim() : "",
-          skillTitle: typeof preparedInput.skillTitle === "string" ? preparedInput.skillTitle.trim() : "",
-          skillsDir: typeof preparedInput.skillsDir === "string" ? preparedInput.skillsDir.trim() : "",
-          skillPath: typeof preparedInput.skillPath === "string" ? preparedInput.skillPath.trim() : "",
-          preparedAt: typeof preparedInput.preparedAt === "string" ? preparedInput.preparedAt.trim() : "",
-        }
+        orgId: typeof preparedInput.orgId === "string" ? preparedInput.orgId.trim() : "",
+        orgName: typeof preparedInput.orgName === "string" ? preparedInput.orgName.trim() : "",
+        orgSlug: typeof preparedInput.orgSlug === "string" ? preparedInput.orgSlug.trim() : "",
+        skillId: typeof preparedInput.skillId === "string" ? preparedInput.skillId.trim() : "",
+        skillTitle: typeof preparedInput.skillTitle === "string" ? preparedInput.skillTitle.trim() : "",
+        skillsDir: typeof preparedInput.skillsDir === "string" ? preparedInput.skillsDir.trim() : "",
+        skillPath: typeof preparedInput.skillPath === "string" ? preparedInput.skillPath.trim() : "",
+        preparedAt: typeof preparedInput.preparedAt === "string" ? preparedInput.preparedAt.trim() : "",
+      }
       : null;
     const normalizedPrepared = prepared?.orgId && prepared.orgName && prepared.skillId && prepared.skillTitle && prepared.skillPath
       ? prepared
@@ -566,10 +584,10 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
       version: 1,
       workspace: workspacePath
         ? {
-            name: path.basename(workspacePath) || "Workspace",
-            createdAt: Date.now(),
-            preset: preset || null,
-          }
+          name: path.basename(workspacePath) || "Workspace",
+          createdAt: Date.now(),
+          preset: preset || null,
+        }
         : null,
       authorizedRoots: workspacePath ? [workspacePath] : [],
       reload: null,
@@ -579,11 +597,15 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
   async function normalizeLocalWorkspacePath(rawPath) {
     const trimmed = String(rawPath ?? "").trim();
     if (!trimmed) return "";
-    const expanded = trimmed === "~"
+    // Strip Windows extended-length path prefix (\\?\) before any path
+    // operations — Node's path module does not handle it and produces
+    // garbage like '\?' when the prefix survives into path.resolve().
+    const stripped = stripWindowsVerbatimPrefix(trimmed);
+    const expanded = stripped === "~"
       ? os.homedir()
-      : trimmed.startsWith("~/") || trimmed.startsWith("~\\")
-        ? path.join(os.homedir(), trimmed.slice(2))
-        : trimmed;
+      : stripped.startsWith("~/") || stripped.startsWith("~\\")
+        ? path.join(os.homedir(), stripped.slice(2))
+        : stripped;
     const resolved = path.resolve(expanded);
     return realpath(resolved).catch(() => resolved);
   }
