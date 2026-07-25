@@ -50,6 +50,7 @@ import {
 } from "./connect-link-branding.mjs";
 import { resolveConnectLinkPublicKeys } from "./connect-link-keys.mjs";
 import { openExternalUrl } from "./open-external.mjs";
+import { revealItemInDir } from "./reveal-item-in-dir.mjs";
 import { fetchAgentContextDiagnosticsResponse } from "./agent-context-diagnostics-fetch.mjs";
 import {
   applyWindowsTaskbarIcon,
@@ -1900,19 +1901,12 @@ const desktopCommandHandlers = {
   },
   "__revealItemInDir": async (event, ...args) => {
       const target = String(args[0] ?? "").trim();
-      if (!target) return "Path is required.";
-      if (existsSync(target)) {
-        shell.showItemInFolder(target);
-        return undefined;
-      }
-      // The exact file may not exist yet (or path is slightly off); fall back to
-      // opening the containing directory so the user still lands in the right place.
-      const parent = path.dirname(target);
-      if (parent && parent !== target && existsSync(parent)) {
-        const error = await shell.openPath(parent);
-        return error && error.trim() ? error : undefined;
-      }
-      return `Could not find "${target}" on disk.`;
+      return revealItemInDir(target, {
+        existsSync,
+        openPath: (nextTarget) => shell.openPath(nextTarget),
+        platform: process.platform,
+        showItemInFolder: (nextTarget) => shell.showItemInFolder(nextTarget),
+      });
   },
   "__getFileIcon": async (event, ...args) => {
       const target = String(args[0] ?? "").trim();

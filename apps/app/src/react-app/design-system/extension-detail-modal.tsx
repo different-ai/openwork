@@ -67,6 +67,8 @@ export type ExtensionDetailModalProps = {
   path?: string;
   /** Skill trigger phrase (e.g. "when user asks to create an agent"). */
   trigger?: string;
+  /** Localized reveal/open action label. */
+  revealLabel?: string;
   /** Reveal the file in Finder/Explorer. */
   onReveal?: () => void;
   /** Skill content preview (first ~500 chars of the SKILL.md). */
@@ -203,6 +205,7 @@ export function ExtensionDetailModal({
   path,
   trigger,
   contentPreview,
+  revealLabel,
   onReveal,
   onConnect,
   connectLabel = "Connect",
@@ -362,7 +365,7 @@ export function ExtensionDetailModal({
                     </div>
                   ) : null}
 
-                  {path && onReveal ? (
+                  {path && onReveal && revealLabel ? (
                     <div className="flex items-center justify-between text-sm">
                       <span className="text-muted-foreground">Location</span>
                       <Button
@@ -370,7 +373,7 @@ export function ExtensionDetailModal({
                         size="xs"
                         onClick={onReveal}
                       >
-                        Reveal in Finder
+                        {revealLabel}
                         <ExternalLink data-icon="inline-end" />
                       </Button>
                     </div>

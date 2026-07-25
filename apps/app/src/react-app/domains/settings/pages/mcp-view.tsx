@@ -48,6 +48,7 @@ import type { McpServerEntry, McpStatusMap } from "../../../../app/types";
 import { formatRelativeTime, isDesktopRuntime, isWindowsPlatform } from "../../../../app/utils";
 import { t } from "../../../../i18n";
 import { Button } from "@/components/ui/button";
+import { toast } from "@/components/ui/sonner";
 import { ConfirmModal } from "../../../design-system/modals/confirm-modal";
 import { AddMcpModal } from "../../connections/modals/add-mcp-modal";
 import { ClaudePluginImportModal } from "../../connections/modals/claude-plugin-import-modal";
@@ -517,6 +518,21 @@ export function McpView(props: McpViewProps) {
     }
   };
 
+  const revealSkill = async (skillPath: string) => {
+    try {
+      if (isWindowsPlatform()) {
+        await openDesktopPath(skillPath);
+      } else {
+        await revealDesktopItemInDir(skillPath);
+      }
+    } catch (error) {
+      // why: the skill detail modal is open over the page, and `configError` only
+      // renders inside the Advanced settings panel — a toast is the only surface
+      // the user can actually see from here.
+      toast.error(error instanceof Error ? error.message : t("skills.reveal_failed"));
+    }
+  };
+
   return (
     <section className="space-y-8 max-w-3xl w-full animate-in fade-in duration-300">
       {showHeader ? (
@@ -831,10 +847,11 @@ export function McpView(props: McpViewProps) {
             connectedLabel={detailSkill.origin === "openwork-connect" ? "Available through OpenWork Connect" : undefined}
             hidden={hidden}
             path={detailSkill.origin === "openwork-connect" ? undefined : detailSkill.path}
+            revealLabel={revealLabel}
             trigger={detailSkill.trigger}
             contentPreview={detailSkillContent ?? undefined}
             onReveal={detailSkill.path && detailSkill.origin !== "openwork-connect" ? () => {
-              void revealDesktopItemInDir(detailSkill.path);
+              void revealSkill(detailSkill.path);
             } : undefined}
             onUninstall={props.uninstallSkill && detailSkill.origin !== "openwork-connect" ? () => {
               props.uninstallSkill?.(detailSkill.name);
