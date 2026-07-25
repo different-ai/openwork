@@ -129,6 +129,29 @@ test("buildNukeManifest includes default macOS state roots and preserves bootstr
   assert.ok(!manifest.deletePaths.includes("/Users/alice/project/.opencode"));
 });
 
+test("buildNukeManifest wipes session state, server audit data, and workspace registries", () => {
+  const home = "/Users/alice";
+  const userDataPath = "/Users/alice/Library/Application Support/com.differentai.openwork";
+  const manifest = buildNukeManifest({
+    env: {},
+    homedir: home,
+    platform: "darwin",
+    userDataPath,
+    workspacePaths: ["/Users/alice/project", "/Users/alice/other"],
+  });
+
+  assert.ok(manifest.deletePaths.includes("/Users/alice/.local/state/opencode"));
+  assert.ok(manifest.deletePaths.includes("/Users/alice/.openwork/openwork-server"));
+  assert.ok(manifest.deletePaths.includes(`${userDataPath}/openwork-workspaces.json`));
+  assert.ok(manifest.deletePaths.includes(`${userDataPath}/openwork-server-tokens.json`));
+  assert.ok(manifest.deletePaths.includes(`${userDataPath}/openwork-server-state.json`));
+  assert.ok(manifest.deletePaths.includes("/Users/alice/project/.opencode/openwork"));
+  assert.ok(manifest.deletePaths.includes("/Users/alice/project/.opencode/openwork.json"));
+  assert.ok(manifest.deletePaths.includes("/Users/alice/other/.opencode/openwork"));
+  assert.ok(!manifest.deletePaths.includes("/Users/alice/project/.opencode"));
+  assert.ok(!manifest.deletePaths.includes("/Users/alice/project"));
+});
+
 test("buildNukeManifest can include the bootstrap file in the wipe", () => {
   const bootstrapPath = "/Users/alice/.config/openwork/desktop-bootstrap.json";
   const manifest = buildNukeManifest({

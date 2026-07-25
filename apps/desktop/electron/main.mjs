@@ -1722,6 +1722,7 @@ const desktopCommandHandlers = {
         platform: process.platform,
         preserveBootstrap: args[0]?.preserveBootstrap !== false,
         userDataPath: app.getPath("userData"),
+        workspacePaths: await workspaceStore.listLocalWorkspacePaths(),
       });
   },
   "nukeOpenworkAndOpencodeConfigAndExit": async (event, ...args) => {
@@ -1731,7 +1732,16 @@ const desktopCommandHandlers = {
         runtimeManager,
         uiControlServer,
         removeWindowsBrandShortcut,
-      }, { preserveBootstrap: args[0]?.preserveBootstrap !== false });
+      }, {
+        preserveBootstrap: args[0]?.preserveBootstrap !== false,
+        input: {
+          env: process.env,
+          homedir: os.homedir(),
+          platform: process.platform,
+          userDataPath: app.getPath("userData"),
+          workspacePaths: await workspaceStore.listLocalWorkspacePaths(),
+        },
+      });
   },
   "orchestratorStartDetached": async (event, ...args) => {
       return runtimeManager.orchestratorStartDetached(args[0] ?? {});

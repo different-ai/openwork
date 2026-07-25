@@ -18,6 +18,14 @@ const OPENWORK_CONFIG_FILENAMES = [
   "runtime-opencode-config.json",
   "tokens.json",
   "env.json",
+  "connect-state.json",
+  "legacy-sweep-state.json",
+];
+const USERDATA_WORKSPACE_FILENAMES = [
+  "openwork-workspaces.json",
+  "workspace-state.json",
+  "openwork-server-tokens.json",
+  "openwork-server-state.json",
 ];
 const SHIP_IT_CACHE_DOMAIN = "com.differentai.openwork.ShipIt";
 const NUKE_WORKER_FILENAME = "nuke-worker.mjs";
@@ -182,10 +190,40 @@ function opencodeCacheDirs(env, homedir, paths) {
   return dirs;
 }
 
+function opencodeStateDirs(env, homedir, platform, paths) {
+  const dirs = [];
+  const xdgStateHome = envValue(env, "XDG_STATE_HOME");
+  if (xdgStateHome) dirs.push(paths.join(xdgStateHome, "opencode"));
+  dirs.push(paths.join(homedir, ".local", "state", "opencode"));
+  if (platform === "win32") {
+    const localAppData = envValue(env, "LOCALAPPDATA");
+    dirs.push(paths.join(localAppData || paths.join(homedir, "AppData", "Local"), "opencode"));
+  }
+  return dirs;
+}
+
 function orchestratorDataDir(env, homedir, paths) {
   const override = envValue(env, "OPENWORK_DATA_DIR");
   if (override) return override;
   return paths.join(homedir, ".openwork", "openwork-orchestrator");
+}
+
+function serverDataDir(env, homedir, paths) {
+  const override = envValue(env, "OPENWORK_DATA_DIR");
+  if (override) return override;
+  return paths.join(homedir, ".openwork", "openwork-server");
+}
+
+/** Workspace-local state OpenWork owns; the rest of the workspace folder is the user's. */
+function workspaceOpenworkStatePaths(workspacePaths, paths) {
+  const output = [];
+  for (const workspacePath of workspacePaths) {
+    const value = String(workspacePath ?? "").trim();
+    if (!value) continue;
+    const opencodeDir = paths.join(paths.resolve(value), ".opencode");
+    output.push(paths.join(opencodeDir, "openwork"), paths.join(opencodeDir, "openwork.json"));
+  }
+  return output;
 }
 
 function opencodeDbOverridePaths(env, dataDirs, paths) {
@@ -263,7 +301,14 @@ function resolveNukePlan(input) {
     ...opencodeDbOverridePaths(env, dataDirs, paths),
     ...opencodeConfigDirs(env, homedir, platform, paths),
     ...opencodeCacheDirs(env, homedir, paths),
+    ...opencodeStateDirs(env, homedir, platform, paths),
     orchestratorDataDir(env, homedir, paths),
+    serverDataDir(env, homedir, paths),
+    ...USERDATA_WORKSPACE_FILENAMES.map((filename) => paths.join(userDataPath, filename)),
+    ...workspaceOpenworkStatePaths(
+      Array.isArray(input.workspacePaths) ? input.workspacePaths : [],
+      paths,
+    ),
   ];
 
   const openworkConfigRoots = [
@@ -316,6 +361,9 @@ export function buildNukeWorkerNukeInput(input) {
     platform: normalizePlatform(input.platform),
     preserveBootstrap: input.preserveBootstrap !== false,
     userDataPath: String(input.userDataPath ?? ""),
+    workspacePaths: (Array.isArray(input.workspacePaths) ? input.workspacePaths : [])
+      .map((entry) => String(entry ?? "").trim())
+      .filter(Boolean),
   };
 }
 

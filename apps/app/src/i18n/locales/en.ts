@@ -1284,7 +1284,7 @@ export default {
   "settings.nuke_survives_app": "The installed OpenWork app and protocol registration stay installed.",
   "settings.nuke_survives_bootstrap": "Bootstrap / organization server: {path}",
   "settings.nuke_survives_title": "Will survive",
-  "settings.nuke_survives_workspaces": "Workspace folders and each workspace's .opencode folder are not touched.",
+  "settings.nuke_survives_workspaces": "Workspace folders and your files inside them are not touched, but each workspace's OpenWork state (.opencode/openwork) is removed.",
   "settings.off": "Off",
   "settings.on": "On",
   "settings.open_deeplink_action": "Opening...",
