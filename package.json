@@ -67,7 +67,8 @@
     "release:prepare": "node scripts/release/prepare.mjs",
     "release:prepare:dry": "node scripts/release/prepare.mjs --dry-run",
     "release:ship": "node scripts/release/ship.mjs",
-    "release:ship:watch": "node scripts/release/ship.mjs --watch"
+    "release:ship:watch": "node scripts/release/ship.mjs --watch",
+    "bench:cold-start": "node scripts/bench-cold-start.mjs"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

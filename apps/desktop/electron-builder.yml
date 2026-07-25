@@ -23,6 +23,8 @@ extraResources:
     to: opencode-plugins
     filter:
       - "*.js"
+  - from: ../../node_modules/.pnpm/ws@8.19.0/node_modules/ws
+    to: node_modules/ws
   - from: ../../packages/docs
     to: openwork-docs
     filter:

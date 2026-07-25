@@ -8,6 +8,7 @@ import path from "node:path";
 import tls from "node:tls";
 import { fileURLToPath } from "node:url";
 import { pathToFileURL } from "node:url";
+import { traceMark, traceSpan, traceWrap } from "./startup-trace.mjs";
 import { openworkEnvStorePath, openworkServerConfigPath, resolveWorkspaceOpencodeConfigPath } from "@openwork/paths";
 
 const __runtimeDir = path.dirname(fileURLToPath(import.meta.url));
@@ -384,13 +385,18 @@ function extraPathEntries() {
 }
 
 function enrichedPath(sidecarDirs, currentPath) {
-  const entries = [
-    ...sidecarDirs.filter(isDirectory),
-    ...extraPathEntries(),
-    ...String(currentPath ?? "").split(path.delimiter).filter(Boolean),
-  ];
-  const deduped = entries.filter((entry, index) => entries.indexOf(entry) === index);
-  return deduped.length > 0 ? deduped.join(path.delimiter) : null;
+  const end = traceSpan("runtime.enrichedPath", { cached: false });
+  try {
+    const entries = [
+      ...sidecarDirs.filter(isDirectory),
+      ...extraPathEntries(),
+      ...String(currentPath ?? "").split(path.delimiter).filter(Boolean),
+    ];
+    const deduped = entries.filter((entry, index) => entries.indexOf(entry) === index);
+    return deduped.length > 0 ? deduped.join(path.delimiter) : null;
+  } finally {
+    end();
+  }
 }
 
 async function portAvailable(host, port) {
@@ -1143,6 +1149,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
   let inProcessServer = null;
 
   async function startOpenworkServer(options) {
+    return traceWrap("runtime.startOpenworkServer", async () => {
     const currentPort = openworkServerState.port;
     // Stop any previously running in-process server
     if (inProcessServer) {
@@ -1153,7 +1160,15 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
 
     const host = options.remoteAccessEnabled ? "0.0.0.0" : "127.0.0.1";
 
-    const managedOpencode = options.manageOpencode ? resolveOpencodeBinary(options.opencodeBinPath) : null;
+    let managedOpencode = null;
+    if (options.manageOpencode) {
+      const endResolveBinary = traceSpan("runtime.resolveBinary");
+      try {
+        managedOpencode = resolveOpencodeBinary(options.opencodeBinPath);
+      } finally {
+        endResolveBinary();
+      }
+    }
     openworkServerState.managedOpencodeBinPath = managedOpencode?.path ?? null;
     openworkServerState.managedOpencodeBinSource = managedOpencode?.source ?? null;
     if (options.manageOpencode) {
@@ -1162,7 +1177,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     }
 
     // Inject user env vars so the server and managed OpenCode inherit them.
-    const serverEnv = await buildChildEnv({});
+    const serverEnv = await traceWrap("runtime.buildChildEnv", () => buildChildEnv({}));
     Object.assign(process.env, serverEnv);
 
     // Once the embedded server has a persisted registry, it is the source of
@@ -1176,8 +1191,8 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
       existsSync(serverConfigPath),
     );
     const activeWorkspace = selectStickyOpenworkPortWorkspace(requestedWorkspacePaths, workspacePaths);
-    const portSelection = await resolveOpenworkPort(host, activeWorkspace, currentPort);
-    const tokens = await loadOrCreateWorkspaceTokens(activeWorkspace);
+    const portSelection = await traceWrap("runtime.resolvePort", () => resolveOpenworkPort(host, activeWorkspace, currentPort));
+    const tokens = await traceWrap("runtime.tokens", () => loadOrCreateWorkspaceTokens(activeWorkspace));
 
     // One call: resolve config, spawn managed OpenCode, start HTTP server.
     // Dev must prefer apps/server/dist; build output also stages a packaged
@@ -1194,11 +1209,11 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     if (!embeddedPath) {
       throw new Error(`Cannot find OpenWork embedded server bundle. Checked: ${candidates.join(", ")}`);
     }
-    const { startEmbeddedServer } = await import(embeddedServerImportUrl(embeddedPath));
+    const { startEmbeddedServer } = await traceWrap("runtime.importEmbedded", () => import(embeddedServerImportUrl(embeddedPath)));
     // startEmbeddedServer falls back to an OS-assigned port if `port` races
     // into EADDRINUSE (see apps/server/src/serve-node.ts), so the bound port
     // below is authoritative.
-    const handle = await startEmbeddedServer({
+    const handle = await traceWrap("runtime.startEmbedded", () => startEmbeddedServer({
       host,
       port: portSelection.port,
       corsOrigins: ["*"],
@@ -1212,7 +1227,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
       manageOpencode: options.manageOpencode === true,
       opencodeBin: managedOpencode?.path ?? undefined,
       opencodeCwd: managedOpencodeWorkdir(),
-    });
+    }));
     inProcessServer = handle;
     openworkServerState.managedOpencodeExecution = handle.managedOpencodeExecution ?? null;
     engineState.managedByServer = Boolean(handle.managedOpencode);
@@ -1240,23 +1255,23 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     let ownerToken = tokens.ownerToken?.trim() || null;
     if (ownerToken) {
       try {
-        workspaceList = await fetchJson(`${baseUrl}/workspaces`, {
+        workspaceList = await traceWrap("runtime.fetchWorkspaces", () => fetchJson(`${baseUrl}/workspaces`, {
           headers: { Authorization: `Bearer ${ownerToken}` },
-        }, 5000);
+        }, 5000), { call: 1 });
       } catch {
         ownerToken = null;
       }
     }
-    ownerToken ||= await issueOwnerToken(baseUrl, tokens.hostToken);
+    ownerToken ||= await traceWrap("runtime.issueOwnerToken", () => issueOwnerToken(baseUrl, tokens.hostToken));
     openworkServerState.ownerToken = ownerToken;
     if (ownerToken) {
       await persistWorkspaceOwnerToken(activeWorkspace, ownerToken);
     }
     if (ownerToken) {
       try {
-        const list = workspaceList ?? await fetchJson(`${baseUrl}/workspaces`, {
+        const list = workspaceList ?? await traceWrap("runtime.fetchWorkspaces", () => fetchJson(`${baseUrl}/workspaces`, {
           headers: { Authorization: `Bearer ${ownerToken}` },
-        }, 5000);
+        }, 5000), { call: 2 });
         const first = Array.isArray(list?.items) ? list.items[0] : undefined;
         const opencode = first?.opencode;
         if (opencode?.baseUrl) {
@@ -1278,7 +1293,9 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     if (!portSelection.preferredPort || boundPort === portSelection.preferredPort) {
       await persistPreferredOpenworkPort(activeWorkspace, boundPort);
     }
+    traceMark("runtime.serverReady", { baseUrl });
     return snapshotOpenworkServerState(openworkServerState);
+    });
   }
 
   async function resolveOrchestratorBaseUrl() {
@@ -1464,6 +1481,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
   }
 
   async function engineStart(projectDir, options = {}) {
+    return traceWrap("runtime.engineStart", async () => {
     const safeProjectDir = String(projectDir ?? "").trim();
     if (!safeProjectDir) {
       throw new Error("projectDir is required");
@@ -1491,8 +1509,8 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     }
 
     await mkdir(safeProjectDir, { recursive: true });
-    await ensureOpencodeConfig(safeProjectDir);
-    await prepareFreshRuntime();
+    await traceWrap("runtime.ensureOpencodeConfig", () => ensureOpencodeConfig(safeProjectDir));
+    await traceWrap("runtime.prepareFreshRuntime", () => prepareFreshRuntime(), { source: "engineStart" });
 
     const workspacePaths = [safeProjectDir, ...((options.workspacePaths ?? []).filter(Boolean))].filter(
       (value, index, list) => list.indexOf(value) === index,
@@ -1520,6 +1538,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
       lifecycleState = "error";
       throw error;
     }
+    });
   }
 
   async function engineStop() {

@@ -824,7 +824,6 @@ export function createConnectionsStore(options: {
 
         setStateField("mcpStatuses", status as McpStatusMap);
       }
-      options.markReloadRequired?.("mcp", { type: "mcp", name: slug, action });
       await refreshMcpServers();
 
       // OAuth is auto-detected: open the sign-in modal when the directory
@@ -1059,7 +1058,6 @@ export function createConnectionsStore(options: {
         const context = await resolveCloudMcpOperationContext(null);
         if (context) recordCloudMcpDisabledIntent(context, "removed");
       }
-      options.markReloadRequired?.("mcp", { type: "mcp", name, action: "removed" });
       await refreshMcpServers();
       if (snapshot.selectedMcp === name) {
         setStateField("selectedMcp", null);
@@ -1113,8 +1111,8 @@ export function createConnectionsStore(options: {
 
   // Server-only path. Local fallback would rewrite opencode.jsonc whole and
   // clobber inline comments — settings-route.tsx already gates the prop so
-  // this never gets called when the server is unavailable. Reload UX comes
-  // from the existing reload-required popup; no extra banner here.
+  // this never gets called when the server is unavailable. Status polling below
+  // converges the UI; the server emits a reload only if hot-sync fails.
   async function setMcpEnabled(name: string, enabled: boolean) {
     try {
       const { openworkClient, openworkWorkspaceId, canUseOpenworkServer } =
@@ -1134,7 +1132,6 @@ export function createConnectionsStore(options: {
           recordCloudMcpDisabledIntent(context, "disabled");
         }
       }
-      options.markReloadRequired?.("mcp", { type: "mcp", name, action: "updated" });
       await refreshMcpServers();
     } catch (error) {
       setStateField(

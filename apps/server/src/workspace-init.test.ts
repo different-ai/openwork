@@ -8,7 +8,7 @@ import {
   ensureWorkspaceFiles,
   ensureLocalWorkspaceFiles,
 } from "./workspace-init.js";
-import { openworkExtensionsPreviewPluginPath, openworkPluginPath } from "./openwork-extensions-plugin-path.js";
+import { openworkChromeDevtoolsPluginPath, openworkExtensionsPreviewPluginPath, openworkPluginPath } from "./openwork-extensions-plugin-path.js";
 
 async function withWorkspace(fn: (root: string) => Promise<void>) {
   const root = await mkdtemp(join(tmpdir(), "openwork-workspace-init-"));
@@ -71,6 +71,20 @@ describe("ensureWorkspaceFiles", () => {
         delete process.resourcesPath;
       }
     }
+  });
+
+  test("falls back to the chrome devtools package specifier when the bundled plugin is missing", async () => {
+    await withWorkspace(async (root) => {
+      const here = join(root, "server", "src");
+      const pluginDir = join(here, "opencode-plugins");
+      const pluginPath = join(pluginDir, "opencode-chrome-devtools.ts");
+      await mkdir(pluginDir, { recursive: true });
+      await writeFile(pluginPath, "export default async () => ({ tool: {} });\n", "utf8");
+
+      expect(openworkChromeDevtoolsPluginPath(here)).toBe(pluginPath);
+      await rm(pluginPath, { force: true });
+      expect(openworkChromeDevtoolsPluginPath(here)).toBe("opencode-chrome-devtools");
+    });
   });
 
   test("does not create workspace extension preview plugin", async () => {

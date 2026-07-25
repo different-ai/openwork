@@ -16,6 +16,7 @@ import { mkdir, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import {
+  openworkChromeDevtoolsPluginPath,
   openworkExtensionsPreviewPluginPath,
   openworkCapabilitiesKnowledgePluginPath,
   openworkAnthropicAdaptiveThinkingPluginPath,
@@ -119,7 +120,7 @@ export function buildOpenworkRuntimeConfigObjectFromSnapshot(
       },
     },
     plugin: [
-      "opencode-chrome-devtools",
+      openworkChromeDevtoolsPluginPath(),
       openworkExtensionsPreviewPluginPath(),
       openworkCapabilitiesKnowledgePluginPath(),
       openworkOfficeAttachmentsPluginPath(),

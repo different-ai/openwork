@@ -51,6 +51,7 @@ import {
 import { resolveConnectLinkPublicKeys } from "./connect-link-keys.mjs";
 import { openExternalUrl } from "./open-external.mjs";
 import { fetchAgentContextDiagnosticsResponse } from "./agent-context-diagnostics-fetch.mjs";
+import { traceMark, traceSpan, traceWrap } from "./startup-trace.mjs";
 import {
   applyWindowsTaskbarIcon,
   windowsBrandAppUserModelId,
@@ -290,8 +291,9 @@ function selectDownloadFile(files, arch) {
 async function resolveCorrectArchitectureDownloadUrl(arch) {
   const manifestUrl = `${RELEASE_DOWNLOAD_BASE_URL}/${updaterManifestName(arch)}`;
   try {
-    const response = await fetch(manifestUrl, {
+    const response = await electronNet.fetch(manifestUrl, {
       headers: { Accept: "text/yaml, text/plain, */*" },
+      signal: AbortSignal.timeout(5000),
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const selected = selectDownloadFile(parseUpdaterManifestFiles(await response.text()), arch);
@@ -838,9 +840,16 @@ const explicitCdpPort = Number.parseInt(
   process.env.OPENWORK_ELECTRON_REMOTE_DEBUG_PORT?.trim() ?? "",
   10,
 );
-const remoteDebugPort = Number.isFinite(explicitCdpPort) && explicitCdpPort > 0
-  ? explicitCdpPort
-  : await findFreeCdpPort([9223, 9224, 9225, 9226, 9227]);
+const hasExplicitCdpPort = Number.isFinite(explicitCdpPort) && explicitCdpPort > 0;
+let remoteDebugPort = 0;
+const endCdpPortProbe = traceSpan("cdp.port.probe", { explicit: hasExplicitCdpPort });
+try {
+  remoteDebugPort = hasExplicitCdpPort
+    ? explicitCdpPort
+    : await findFreeCdpPort([9223, 9224, 9225, 9226, 9227]);
+} finally {
+  endCdpPortProbe({ port: remoteDebugPort });
+}
 if (remoteDebugPort > 0) {
   app.commandLine.appendSwitch("remote-debugging-port", String(remoteDebugPort));
   app.commandLine.appendSwitch("remote-debugging-address", "127.0.0.1");
@@ -1208,6 +1217,7 @@ async function bootRuntimeForSelectedWorkspace() {
       watchedId: String(fallback.id ?? ""),
     }).catch(() => undefined);
   }
+
   await runtimeManager.orchestratorWorkspaceActivate({
     workspacePath: bootWorkspaceRoot,
     name: bootWorkspace.name ?? bootWorkspace.displayName ?? null,
@@ -2237,6 +2247,7 @@ async function createMainWindow() {
   mainWindow.setTitle(currentDisplayAppName);
 
   mainWindow.once("ready-to-show", () => {
+    traceMark("window.readyToShow");
     mainWindow?.setTitle(currentDisplayAppName);
     if (process.platform === "win32") mainWindow?.setSkipTaskbar(false);
     mainWindow?.show();
@@ -2419,17 +2430,18 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.whenReady().then(async () => {
+    traceMark("app.whenReady");
     installMediaPermissionHandlers(session, () => mainWindow);
-    await runPendingNukeCleanup({
+    await traceWrap("boot.nukeCleanup", () => runPendingNukeCleanup({
       env: process.env,
       homedir: os.homedir(),
       platform: process.platform,
       userDataPath: app.getPath("userData"),
     }).catch((error) => {
       console.warn("[nuke] pending cleanup failed", error);
-    });
-    await workspaceStore.importBundledDesktopBootstrapConfigIfPreferred();
-    const bootstrapConfig = await workspaceStore.getDesktopBootstrapConfig();
+    }));
+    await traceWrap("boot.bootstrapImport", () => workspaceStore.importBundledDesktopBootstrapConfigIfPreferred());
+    const bootstrapConfig = await traceWrap("boot.bootstrapRead", () => workspaceStore.getDesktopBootstrapConfig());
     currentDisplayAppName = applyBrandAppName(bootstrapConfig.brandAppName, {
       fallbackName: APP_NAME,
       platform: process.platform,
@@ -2439,30 +2451,30 @@ if (!app.requestSingleInstanceLock()) {
       applicationMenu,
     });
     if (process.platform === "win32") {
-      await registerWindowsDisplayShortcut();
+      await traceWrap("boot.winShortcut", () => registerWindowsDisplayShortcut());
     }
     if (process.platform !== "linux") {
-      await applyDesktopBootstrapBrandIcon(bootstrapConfig, applyBrandIconUrl);
+      await traceWrap("boot.brandIcon", () => applyDesktopBootstrapBrandIcon(bootstrapConfig, applyBrandIconUrl), { platform: process.platform, phase: "pre-window" });
     }
     applicationMenu.install();
-    await runtimeManager.prepareFreshRuntime().catch(() => undefined);
+    await traceWrap("boot.prepareFreshRuntime", () => runtimeManager.prepareFreshRuntime().catch(() => undefined), { source: "whenReady" });
 
     // Use Tauri's existing workspace state file as canonical so rollback and
     // Electron see the same workspace list. Import the short-lived
     // Electron-only filename only when the shared file is missing.
-    await workspaceStore.migrateLegacyElectronWorkspaceStateIfNeeded();
-    await uiControlServer.start().catch((error) => {
+    await traceWrap("boot.workspaceMigrate", () => workspaceStore.migrateLegacyElectronWorkspaceStateIfNeeded());
+    await traceWrap("boot.uiControlStart", () => uiControlServer.start().catch((error) => {
       console.warn("[ui-control] failed to start", error);
-    });
-    runtimeBootstrapPromise = bootRuntimeForSelectedWorkspace().catch((error) => ({
+    }));
+    runtimeBootstrapPromise = traceWrap("runtime.bootWorkspace", () => bootRuntimeForSelectedWorkspace()).catch((error) => ({
       ok: false,
       error: error instanceof Error ? error.message : String(error),
     }));
 
     queueDeepLinks(forwardedDeepLinks(process.argv));
-    const win = await createMainWindow();
+    const win = await traceWrap("boot.createWindow", () => createMainWindow());
     if (process.platform === "linux") {
-      await applyDesktopBootstrapBrandIcon(bootstrapConfig, applyBrandIconUrl);
+      await traceWrap("boot.brandIcon", () => applyDesktopBootstrapBrandIcon(bootstrapConfig, applyBrandIconUrl), { platform: process.platform, phase: "post-window" });
     }
     win.webContents.on("did-finish-load", () => {
       flushPendingDeepLinks();

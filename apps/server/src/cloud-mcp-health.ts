@@ -8,6 +8,7 @@ import { diagnoseMcpToolDenies, type McpToolDeny } from "./mcp.js";
 import { sanitizeDiagnosticString, sanitizeDiagnosticValue } from "./diagnostic-sanitizer.js";
 import { readRuntimeOpencodeConfig, runtimeMcpMap, writeRuntimeOpencodeConfig } from "./runtime-opencode-config-store.js";
 import { externalFetch } from "./server-fetch.js";
+import { traceSpan } from "./startup-trace.js";
 import type { ServerConfig, WorkspaceInfo } from "./types.js";
 import { validateMcpConfig } from "./validators.js";
 
@@ -2152,7 +2153,11 @@ async function pollConnected(input: {
   refreshRegistrationFromLiveStatus?: CloudMcpLiveStatusObserver;
 }): Promise<CloudMcpFailure | null> {
   let lastFailure: CloudMcpFailure | null = null;
-  for (const delay of POLL_DELAYS_MS) {
+  for (let attempt = 0; attempt < POLL_DELAYS_MS.length; attempt += 1) {
+    const delay = POLL_DELAYS_MS[attempt];
+    let connected = false;
+    const endPoll = traceSpan("mcp.cloudPoll", { attempt, delayMs: delay });
+    try {
     await wait(delay);
     const statusResult = await readMcpStatus(input.opencode, input.directory);
     if (statusResult.failure) {
@@ -2169,10 +2174,14 @@ async function pollConnected(input: {
         cloudStatus.status,
       );
     }
-    if (cloudStatus?.status === "connected") return null;
+    connected = cloudStatus?.status === "connected";
+    if (connected) return null;
     lastFailure = statusFailure(cloudStatus);
     if (cloudStatus?.status === "disabled" || cloudStatus?.status === "needs_auth" || cloudStatus?.status === "needs_client_registration" || cloudStatus?.status === "failed") {
       return lastFailure;
+    }
+    } finally {
+      endPoll({ connected });
     }
   }
   return lastFailure;

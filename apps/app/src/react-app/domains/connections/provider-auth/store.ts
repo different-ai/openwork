@@ -183,6 +183,41 @@ type MutableState = {
 
 export type ProviderAuthStore = ReturnType<typeof createProviderAuthStore>;
 
+type ProviderConnectionRefreshResult = Pick<ProviderListResponse, "connected"> | null | undefined;
+
+export async function waitForProviderConnection(input: {
+  providerId: string;
+  refreshProviders: () => Promise<ProviderConnectionRefreshResult>;
+  reloadAfterConnected: () => Promise<void>;
+  timeoutMs?: number;
+  pollMs?: number;
+  now?: () => number;
+  sleep?: (ms: number) => Promise<void>;
+}): Promise<boolean> {
+  const timeoutMs = input.timeoutMs ?? 15000;
+  const pollMs = input.pollMs ?? 2000;
+  const now = input.now ?? (() => Date.now());
+  const sleep = input.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  const startedAt = now();
+  while (now() - startedAt < timeoutMs) {
+    let updated: ProviderConnectionRefreshResult = null;
+    try {
+      updated = await input.refreshProviders();
+    } catch {
+      // ignore and retry
+      await sleep(pollMs);
+      continue;
+    }
+    const connected = new Set(updated?.connected ?? []);
+    if (connected.has(input.providerId)) {
+      await input.reloadAfterConnected();
+      return true;
+    }
+    await sleep(pollMs);
+  }
+  return false;
+}
+
 export function createProviderAuthStore(options: CreateProviderAuthStoreOptions) {
   const listeners = new Set<() => void>();
 
@@ -1195,6 +1230,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       // changes are picked up instead of silently dropping (toggles "turn
       // off").
       let reloaded = false;
+      let canUseRawDisposeFallback = true;
       try {
         const openworkSnapshot = options.openworkServer.getSnapshot();
         const openworkClient = openworkSnapshot.openworkServerClient;
@@ -1204,6 +1240,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
             (await options.ensureRuntimeWorkspaceId?.())?.trim() ||
             "";
           if (workspaceId) {
+            canUseRawDisposeFallback = false;
             try {
               await openworkClient.reloadEngine(workspaceId);
             } catch (error) {
@@ -1217,11 +1254,11 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
             reloaded = true;
           }
         }
-      } catch {
-        // fall back to a direct engine dispose below
+      } catch (error) {
+        if (!canUseRawDisposeFallback) throw error;
       }
 
-      if (!reloaded) {
+      if (!reloaded && canUseRawDisposeFallback) {
         try {
           unwrap(await c.instance.dispose());
         } catch {
@@ -1288,22 +1325,14 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       throw new Error(t("providers.oauth_method_required"));
     }
 
-    const waitForProviderConnection = async (timeoutMs = 15000, pollMs = 2000) => {
-      const startedAt = Date.now();
-      while (Date.now() - startedAt < timeoutMs) {
-        try {
-          const updated = await refreshProviders({ dispose: true });
-          const connected = new Set(updated?.connected ?? []);
-          if (connected.has(resolved)) {
-            return true;
-          }
-        } catch {
-          // ignore and retry
-        }
-        await new Promise((resolve) => setTimeout(resolve, pollMs));
-      }
-      return false;
+    let reloadedAfterConnection = false;
+    const reloadAfterProviderConnected = async () => {
+      if (reloadedAfterConnection) return;
+      reloadedAfterConnection = true;
+      await refreshProviders({ dispose: true });
     };
+
+    const connectedResponse = () => ({ connected: true, message: `${t("status.connected")} ${resolved}` });
 
     const isPendingOauthError = (error: unknown) => {
       const text = error instanceof Error ? error.message : String(error ?? "");
@@ -1321,25 +1350,35 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         code: trimmedCode || undefined,
       });
       assertNoClientError(result);
-      const updated = await refreshProviders({ dispose: true });
+      const updated = await refreshProviders({ force: true });
       const connectedNow = Array.isArray(updated?.connected) && updated.connected.includes(resolved);
       if (connectedNow) {
-        return { connected: true, message: `${t("status.connected")} ${resolved}` };
+        await reloadAfterProviderConnected();
+        return connectedResponse();
       }
-      const connected = await waitForProviderConnection();
+      const connected = await waitForProviderConnection({
+        providerId: resolved,
+        refreshProviders: () => refreshProviders({ force: true }),
+        reloadAfterConnected: reloadAfterProviderConnected,
+      });
       if (connected) {
-        return { connected: true, message: `${t("status.connected")} ${resolved}` };
+        return connectedResponse();
       }
       return { connected: false, pending: true };
     } catch (error) {
       if (isPendingOauthError(error)) {
-        const updated = await refreshProviders({ dispose: true });
+        const updated = await refreshProviders({ force: true });
         if (Array.isArray(updated?.connected) && updated.connected.includes(resolved)) {
-          return { connected: true, message: `${t("status.connected")} ${resolved}` };
+          await reloadAfterProviderConnected();
+          return connectedResponse();
         }
-        const connected = await waitForProviderConnection();
+        const connected = await waitForProviderConnection({
+          providerId: resolved,
+          refreshProviders: () => refreshProviders({ force: true }),
+          reloadAfterConnected: reloadAfterProviderConnected,
+        });
         if (connected) {
-          return { connected: true, message: `${t("status.connected")} ${resolved}` };
+          return connectedResponse();
         }
         return { connected: false, pending: true };
       }

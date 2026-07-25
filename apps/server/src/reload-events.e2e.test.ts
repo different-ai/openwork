@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -22,7 +22,23 @@ async function createWorkspaceRoot() {
   return root;
 }
 
-async function startOpenworkServer(workspaceRoot: string) {
+function startMockOpencode() {
+  const requests: string[] = [];
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch(request) {
+      const url = new URL(request.url);
+      requests.push(url.pathname);
+      if (url.pathname === "/instance/dispose") return Response.json({ disposed: true });
+      return Response.json({ ok: true });
+    },
+  });
+  stops.push(() => server.stop(true));
+  return { baseUrl: `http://127.0.0.1:${server.port}`, requests };
+}
+
+async function startOpenworkServer(workspaceRoot: string, opencodeBaseUrl?: string) {
   const config: ServerConfig = {
     host: "127.0.0.1",
     port: 0,
@@ -30,7 +46,14 @@ async function startOpenworkServer(workspaceRoot: string) {
     hostToken: "owt_host_token",
     approval: { mode: "auto", timeoutMs: 1000 },
     corsOrigins: ["*"],
-    workspaces: [{ id: "ws_1", name: "Workspace", path: workspaceRoot, preset: "starter", workspaceType: "local" }],
+    workspaces: [{
+      id: "ws_1",
+      name: "Workspace",
+      path: workspaceRoot,
+      preset: "starter",
+      workspaceType: "local",
+      ...(opencodeBaseUrl ? { baseUrl: opencodeBaseUrl } : {}),
+    }],
     authorizedRoots: [workspaceRoot],
     readOnly: false,
     startedAt: Date.now(),
@@ -109,5 +132,25 @@ describe("reload event API", () => {
     const items = await waitForEvents(base, token);
     expect(items).toHaveLength(1);
     expect(items[0]).toMatchObject({ reason: "config", trigger: { name: "opencode.jsonc" } });
+  });
+
+  test("records command repair reload events without disposing the engine", async () => {
+    const root = await createWorkspaceRoot();
+    const commandDir = join(root, ".opencode", "commands");
+    await mkdir(commandDir, { recursive: true });
+    await writeFile(join(commandDir, "legacy.md"), "---\nname: legacy\nmodel: null\n---\nRun the legacy command\n", "utf8");
+    const opencode = startMockOpencode();
+    const { base, token } = await startOpenworkServer(root, opencode.baseUrl);
+
+    const configResponse = await fetch(`${base}/workspace/ws_1/config`, { headers: auth(token) });
+    expect(configResponse.status).toBe(200);
+    await sleep(50);
+
+    expect(opencode.requests.filter((path) => path === "/instance/dispose")).toEqual([]);
+    const content = await readFile(join(commandDir, "legacy.md"), "utf8");
+    expect(content).not.toContain("model:");
+    const events = await readEvents(base, token);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ reason: "commands", trigger: { type: "command", action: "updated" } });
   });
 });

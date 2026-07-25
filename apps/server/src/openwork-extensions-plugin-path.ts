@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -30,3 +31,7 @@ export const openworkCapabilitiesKnowledgePluginPath = () => openworkPluginPath(
 export const openworkAnthropicAdaptiveThinkingPluginPath = () => openworkPluginPath("openwork-anthropic-adaptive-thinking");
 export const openworkAnthropicToolSchemaPluginPath = () => openworkPluginPath("openwork-anthropic-tool-schema");
 export const openworkOfficeAttachmentsPluginPath = () => openworkPluginPath("openwork-office-attachments");
+export function openworkChromeDevtoolsPluginPath(here?: string): string {
+  const pluginPath = openworkPluginPath("opencode-chrome-devtools", here);
+  return existsSync(pluginPath) ? pluginPath : "opencode-chrome-devtools";
+}

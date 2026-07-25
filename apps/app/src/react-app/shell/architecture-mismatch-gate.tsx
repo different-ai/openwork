@@ -29,6 +29,8 @@ type ArchitectureGateAction =
   | { type: "checked" }
   | { type: "resolved"; info: ArchitectureInfo };
 
+const ARCHITECTURE_GATE_MAX_WAIT_MS = 6000;
+
 function architectureGateReducer(
   state: ArchitectureGateState,
   action: ArchitectureGateAction,
@@ -63,12 +65,18 @@ export function ArchitectureMismatchGate({ children }: ArchitectureMismatchGateP
       return;
     }
 
+    const timeout = window.setTimeout(() => {
+      if (!cancelled) dispatch({ type: "checked" });
+    }, ARCHITECTURE_GATE_MAX_WAIT_MS);
+
     void bridge()
       .then((nextInfo) => {
+        window.clearTimeout(timeout);
         if (cancelled) return;
         dispatch({ type: "resolved", info: nextInfo });
       })
       .catch((error) => {
+        window.clearTimeout(timeout);
         if (cancelled) return;
         console.warn("[architecture-gate] failed to resolve runtime architecture", error);
         dispatch({ type: "checked" });
@@ -76,6 +84,7 @@ export function ArchitectureMismatchGate({ children }: ArchitectureMismatchGateP
 
     return () => {
       cancelled = true;
+      window.clearTimeout(timeout);
     };
   }, []);
 

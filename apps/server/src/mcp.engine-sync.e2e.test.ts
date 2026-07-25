@@ -12,7 +12,7 @@ import {
   syncAllWorkspacesRuntimeMcpToEngine,
 } from "./server.js";
 import { readRuntimeOpencodeConfig, writeRuntimeOpencodeConfig } from "./runtime-opencode-config-store.js";
-import type { ServerConfig } from "./types.js";
+import type { ReloadEvent, ServerConfig } from "./types.js";
 
 type Served = { port: number; stop: (closeActiveConnections?: boolean) => void | Promise<void> };
 
@@ -46,6 +46,7 @@ function startMockOpencode(options?: {
   mcpStatusByName?: Record<string, unknown>;
   liveMcpStatusByName?: () => Record<string, unknown>;
   mcpResponseForName?: (name: string) => Response | null;
+  disconnectResponse?: (name: string) => Response | null;
   disposeResponse?: () => Response | null;
 }) {
   const requests: EngineRequest[] = [];
@@ -76,7 +77,11 @@ function startMockOpencode(options?: {
       if (url.pathname === "/mcp" && request.method === "GET") {
         return Response.json(options?.liveMcpStatusByName?.() ?? {});
       }
-      if (url.pathname.match(/^\/mcp\/[^/]+\/disconnect$/) && request.method === "POST") return Response.json({});
+      const disconnectMatch = url.pathname.match(/^\/mcp\/([^/]+)\/disconnect$/);
+      if (disconnectMatch && request.method === "POST") {
+        const name = decodeURIComponent(disconnectMatch[1] ?? "");
+        return options?.disconnectResponse?.(name) ?? Response.json({});
+      }
       return Response.json({ code: "not_found", message: "Not found" }, { status: 404 });
     },
   }) as Served;
@@ -155,6 +160,20 @@ function requireRecord(value: unknown, label: string): Record<string, unknown> {
   throw new Error(`${label} was not an object`);
 }
 
+function isReloadEvent(value: unknown): value is ReloadEvent {
+  return isRecord(value) && typeof value.reason === "string" && typeof value.workspaceId === "string";
+}
+
+async function readReloadEvents(openwork: { base: string; token: string }): Promise<ReloadEvent[]> {
+  const response = await fetch(`${openwork.base}/workspace/ws_1/events`, { headers: auth(openwork.token) });
+  expect(response.status).toBe(200);
+  const body: unknown = await response.json();
+  if (!isRecord(body) || !Array.isArray(body.items) || !body.items.every(isReloadEvent)) {
+    throw new Error("Reload events response was invalid");
+  }
+  return body.items;
+}
+
 const POSTHOG_CONFIG = {
   type: "remote",
   url: "https://mcp.posthog.com/mcp",
@@ -186,6 +205,89 @@ describe("runtime MCP engine sync", () => {
       if (previousDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
       else process.env.OPENWORK_RUNTIME_DB = previousDb;
     }
+  });
+
+  test("MCP add, remove, and toggle skip reload events when surgical engine sync succeeds", async () => {
+    const workspaceRoot = await createWorkspaceRoot();
+    const previousDb = process.env.OPENWORK_RUNTIME_DB;
+    process.env.OPENWORK_RUNTIME_DB = join(workspaceRoot, "runtime.sqlite");
+    try {
+      const mock = startMockOpencode();
+      const openwork = await startOpenworkServer(workspaceRoot, `http://127.0.0.1:${mock.server.port}`);
+
+      const addResponse = await fetch(`${openwork.base}/workspace/ws_1/mcp`, {
+        method: "POST",
+        headers: auth(openwork.token),
+        body: JSON.stringify({ name: "posthog", config: POSTHOG_CONFIG }),
+      });
+      expect(addResponse.status).toBe(200);
+
+      const toggleResponse = await fetch(`${openwork.base}/workspace/ws_1/mcp/posthog/enabled`, {
+        method: "POST",
+        headers: auth(openwork.token),
+        body: JSON.stringify({ enabled: false }),
+      });
+      expect(toggleResponse.status).toBe(200);
+
+      const removeResponse = await fetch(`${openwork.base}/workspace/ws_1/mcp/posthog`, {
+        method: "DELETE",
+        headers: auth(openwork.token),
+      });
+      expect(removeResponse.status).toBe(200);
+
+      expect((await readReloadEvents(openwork)).filter((event) => event.reason === "mcp")).toEqual([]);
+    } finally {
+      if (previousDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
+      else process.env.OPENWORK_RUNTIME_DB = previousDb;
+    }
+  });
+
+  test("MCP add, remove, and toggle emit reload events when surgical engine sync fails", async () => {
+    async function expectFailedSyncReloadEvent(action: "add" | "remove" | "toggle") {
+      const workspaceRoot = await createWorkspaceRoot();
+      const previousDb = process.env.OPENWORK_RUNTIME_DB;
+      process.env.OPENWORK_RUNTIME_DB = join(workspaceRoot, `runtime-${action}.sqlite`);
+      try {
+        const mock = startMockOpencode(
+          action === "remove"
+            ? { disconnectResponse: () => Response.json({ code: "disconnect_failed" }, { status: 500 }) }
+            : { failMcpNames: ["posthog"] },
+        );
+        const openwork = await startOpenworkServer(workspaceRoot, `http://127.0.0.1:${mock.server.port}`);
+        if (action !== "add") {
+          await writeRuntimeOpencodeConfig(openwork.config, "ws_1", (current) => ({ ...current, mcp: { posthog: POSTHOG_CONFIG } }));
+        }
+
+        const response = action === "add"
+          ? await fetch(`${openwork.base}/workspace/ws_1/mcp`, {
+              method: "POST",
+              headers: auth(openwork.token),
+              body: JSON.stringify({ name: "posthog", config: POSTHOG_CONFIG }),
+            })
+          : action === "toggle"
+            ? await fetch(`${openwork.base}/workspace/ws_1/mcp/posthog/enabled`, {
+                method: "POST",
+                headers: auth(openwork.token),
+                body: JSON.stringify({ enabled: false }),
+              })
+            : await fetch(`${openwork.base}/workspace/ws_1/mcp/posthog`, {
+                method: "DELETE",
+                headers: auth(openwork.token),
+              });
+        expect(response.status).toBe(200);
+
+        const events = (await readReloadEvents(openwork)).filter((event) => event.reason === "mcp");
+        expect(events).toHaveLength(1);
+        expect(events[0]).toMatchObject({ reason: "mcp", trigger: { type: "mcp", name: "posthog" } });
+      } finally {
+        if (previousDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
+        else process.env.OPENWORK_RUNTIME_DB = previousDb;
+      }
+    }
+
+    await expectFailedSyncReloadEvent("add");
+    await expectFailedSyncReloadEvent("toggle");
+    await expectFailedSyncReloadEvent("remove");
   });
 
   test("hot-syncs an external engine without treating its response as trusted registration evidence", async () => {

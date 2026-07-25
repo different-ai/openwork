@@ -25,6 +25,7 @@ allowBuilds:
   electron: true
   electron-winstaller: true
   esbuild: true
+  msgpackr-extract: false
   msw: false
   node-pty: true
   protobufjs: true

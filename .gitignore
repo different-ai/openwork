@@ -1,4 +1,5 @@
 .turbo/
+.bench/
 node_modules/
 apps/desktop/dist-electron/
 apps/desktop/dist-electron-demo-a/
