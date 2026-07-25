@@ -1,8 +1,7 @@
-import { eq } from "drizzle-orm";
-import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
-import { openRuntimeSqliteDatabase, runtimeDbPath } from "./runtime-db.js";
+import { runtimeDbPath } from "./runtime-db.js";
 import type { ServerConfig } from "./types.js";
 import { shortId } from "./utils.js";
+import { createWorkspaceKvStore, isRecord } from "./workspace-kv-store.js";
 
 export type SessionGroupDefinition = {
   id: string;
@@ -29,26 +28,10 @@ export type SessionGroupEvent = {
 
 const EMPTY_SESSION_GROUP_STATE: SessionGroupState = { groups: [], assignments: {} };
 
-const sessionGroupStates = sqliteTable("session_group_states", {
-  workspaceId: text("workspace_id").primaryKey(),
-  stateJson: text("state_json").notNull(),
-  schemaVersion: integer("schema_version").notNull(),
-  updatedAt: integer("updated_at").notNull(),
-});
-
-type SessionGroupDb = {
-  get: (workspaceId: string) => { stateJson: string; updatedAt: number } | undefined;
-  upsert: (value: { workspaceId: string; stateJson: string; updatedAt: number }) => void;
-};
-
 type SessionGroupEventState = {
   seq: number;
   events: SessionGroupEvent[];
 };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 function normalizeGroupId(value: unknown): string {
   if (typeof value !== "string") return "";
@@ -95,71 +78,31 @@ export function normalizeSessionGroupState(value: unknown): SessionGroupState {
   return { groups, assignments };
 }
 
-async function openSessionGroupDb(path: string): Promise<SessionGroupDb> {
-  const runtimeDb = await openRuntimeSqliteDatabase(path);
-  if (runtimeDb.kind === "bun") {
-    const sqlite = runtimeDb.sqlite;
-    sqlite.run("CREATE TABLE IF NOT EXISTS session_group_states (workspace_id TEXT PRIMARY KEY NOT NULL, state_json TEXT NOT NULL, schema_version INTEGER NOT NULL DEFAULT 1, updated_at INTEGER NOT NULL)");
-    const db = runtimeDb.db;
-    return {
-      get: (workspaceId) => db
-        .select()
-        .from(sessionGroupStates)
-        .where(eq(sessionGroupStates.workspaceId, workspaceId))
-        .get(),
-      upsert: ({ workspaceId, stateJson, updatedAt }) => {
-        db
-          .insert(sessionGroupStates)
-          .values({ workspaceId, stateJson, schemaVersion: 1, updatedAt })
-          .onConflictDoUpdate({
-            target: sessionGroupStates.workspaceId,
-            set: { stateJson, schemaVersion: 1, updatedAt },
-          })
-          .run();
-      },
-    };
-  }
-
-  const sqlite = runtimeDb.sqlite;
-  sqlite.exec("CREATE TABLE IF NOT EXISTS session_group_states (workspace_id TEXT PRIMARY KEY NOT NULL, state_json TEXT NOT NULL, schema_version INTEGER NOT NULL DEFAULT 1, updated_at INTEGER NOT NULL)");
-  const get = sqlite.prepare("SELECT state_json AS stateJson, updated_at AS updatedAt FROM session_group_states WHERE workspace_id = ?");
-  const upsert = sqlite.prepare("INSERT INTO session_group_states (workspace_id, state_json, schema_version, updated_at) VALUES (?, ?, 1, ?) ON CONFLICT(workspace_id) DO UPDATE SET state_json = excluded.state_json, schema_version = excluded.schema_version, updated_at = excluded.updated_at");
-  return {
-    get: (workspaceId) => {
-      const row = get.get(workspaceId);
-      if (!isRecord(row) || typeof row.stateJson !== "string" || typeof row.updatedAt !== "number") return undefined;
-      return { stateJson: row.stateJson, updatedAt: row.updatedAt };
-    },
-    upsert: ({ workspaceId, stateJson, updatedAt }) => {
-      upsert.run(workspaceId, stateJson, updatedAt);
-    },
-  };
-}
-
-const dbByPath = new Map<string, Promise<SessionGroupDb>>();
 const updateQueueByWorkspace = new Map<string, Promise<void>>();
 
-async function sessionGroupDb(config: ServerConfig): Promise<SessionGroupDb> {
-  const path = runtimeDbPath(config);
-  const existing = dbByPath.get(path);
-  if (existing) return existing;
-  const db = openSessionGroupDb(path);
-  dbByPath.set(path, db);
-  return db;
+function parseSessionGroupState(stateJson: string): SessionGroupState {
+  try {
+    return normalizeSessionGroupState(JSON.parse(stateJson));
+  } catch {
+    return EMPTY_SESSION_GROUP_STATE;
+  }
 }
+
+const sessionGroupStateStore = createWorkspaceKvStore<SessionGroupState>({
+  tableName: "session_group_states",
+  valueColumn: "state_json",
+  extraColumns: { schemaVersion: { name: "schema_version", definition: "INTEGER NOT NULL DEFAULT 1", value: 1 } },
+  parse: parseSessionGroupState,
+  serialize: (value) => JSON.stringify(value),
+});
 
 export async function readSessionGroupState(
   config: ServerConfig,
   workspaceId: string,
 ): Promise<{ state: SessionGroupState; updatedAt: number | null }> {
-  const db = await sessionGroupDb(config);
-  const row = db.get(workspaceId);
-  if (!row) return { state: EMPTY_SESSION_GROUP_STATE, updatedAt: null };
-  try {
-    return { state: normalizeSessionGroupState(JSON.parse(row.stateJson)), updatedAt: row.updatedAt };
-  } catch {
-    return { state: EMPTY_SESSION_GROUP_STATE, updatedAt: row.updatedAt };
-  }
+  const row = await sessionGroupStateStore.getRow(config, workspaceId);
+  if (!row || row.updatedAt === null) return { state: EMPTY_SESSION_GROUP_STATE, updatedAt: null };
+  return { state: row.value, updatedAt: row.updatedAt };
 }
 
 export async function writeSessionGroupState(
@@ -167,10 +110,9 @@ export async function writeSessionGroupState(
   workspaceId: string,
   state: SessionGroupState,
 ): Promise<{ state: SessionGroupState; updatedAt: number }> {
-  const db = await sessionGroupDb(config);
   const next = normalizeSessionGroupState(state);
   const updatedAt = Date.now();
-  db.upsert({ workspaceId, stateJson: JSON.stringify(next), updatedAt });
+  await sessionGroupStateStore.set(config, workspaceId, next, updatedAt);
   return { state: next, updatedAt };
 }
 

@@ -1,12 +1,10 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
-import { eq } from "drizzle-orm";
-import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 import type { ServerConfig } from "./types.js";
 import { ApiError } from "./errors.js";
 import { parseFrontmatter, buildFrontmatter } from "./frontmatter.js";
 import { addMcp, removeMcp } from "./mcp.js";
-import { openRuntimeSqliteDatabase, runtimeDbPath } from "./runtime-db.js";
+import { createWorkspaceKvStore, isRecord } from "./workspace-kv-store.js";
 
 const OPENCODE_SKILL_NAME_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 const OPENCODE_MCP_NAME_RE = /^[A-Za-z0-9_][A-Za-z0-9_-]*$/;
@@ -76,21 +74,6 @@ type WorkspaceCloudImports = {
   marketplaces: Record<string, { marketplaceId: string; name: string; updatedAt: string | null; pluginIds: string[]; importedAt: number | null }>;
   plugins: Record<string, CloudImportedPlugin>;
 };
-
-const cloudPluginInstallConfigs = sqliteTable("cloud_plugin_install_configs", {
-  workspaceId: text("workspace_id").primaryKey(),
-  configJson: text("config_json").notNull(),
-  updatedAt: integer("updated_at").notNull(),
-});
-
-type CloudPluginDb = {
-  get: (workspaceId: string) => { configJson: string } | undefined;
-  upsert: (value: { workspaceId: string; configJson: string; updatedAt: number }) => void;
-};
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
 
 function readString(value: unknown): string | null {
   return typeof value === "string" ? value.trim() || null : null;
@@ -485,66 +468,23 @@ function readCloudImports(config: Record<string, unknown>): WorkspaceCloudImport
   };
 }
 
-async function openCloudPluginDb(path: string): Promise<CloudPluginDb> {
-  const runtimeDb = await openRuntimeSqliteDatabase(path);
-  if (runtimeDb.kind === "bun") {
-    const sqlite = runtimeDb.sqlite;
-    sqlite.run("CREATE TABLE IF NOT EXISTS cloud_plugin_install_configs (workspace_id TEXT PRIMARY KEY NOT NULL, config_json TEXT NOT NULL, updated_at INTEGER NOT NULL)");
-    const db = runtimeDb.db;
-    return {
-      get: (workspaceId) => db
-        .select()
-        .from(cloudPluginInstallConfigs)
-        .where(eq(cloudPluginInstallConfigs.workspaceId, workspaceId))
-        .get(),
-      upsert: ({ workspaceId, configJson, updatedAt }) => {
-        db
-          .insert(cloudPluginInstallConfigs)
-          .values({ workspaceId, configJson, updatedAt })
-          .onConflictDoUpdate({
-            target: cloudPluginInstallConfigs.workspaceId,
-            set: { configJson, updatedAt },
-          })
-          .run();
-      },
-    };
-  }
-  const sqlite = runtimeDb.sqlite;
-  sqlite.exec("CREATE TABLE IF NOT EXISTS cloud_plugin_install_configs (workspace_id TEXT PRIMARY KEY NOT NULL, config_json TEXT NOT NULL, updated_at INTEGER NOT NULL)");
-  const get = sqlite.prepare("SELECT config_json AS configJson FROM cloud_plugin_install_configs WHERE workspace_id = ?");
-  const upsert = sqlite.prepare("INSERT INTO cloud_plugin_install_configs (workspace_id, config_json, updated_at) VALUES (?, ?, ?) ON CONFLICT(workspace_id) DO UPDATE SET config_json = excluded.config_json, updated_at = excluded.updated_at");
-  return {
-    get: (workspaceId) => {
-      const row = get.get(workspaceId);
-      if (!isRecord(row) || typeof row.configJson !== "string") return undefined;
-      return { configJson: row.configJson };
-    },
-    upsert: ({ workspaceId, configJson, updatedAt }) => {
-      upsert.run(workspaceId, configJson, updatedAt);
-    },
-  };
-}
-
-const dbByPath = new Map<string, Promise<CloudPluginDb>>();
-
-async function cloudPluginDb(config: ServerConfig): Promise<CloudPluginDb> {
-  const path = runtimeDbPath(config);
-  const existing = dbByPath.get(path);
-  if (existing) return existing;
-  const db = openCloudPluginDb(path);
-  dbByPath.set(path, db);
-  return db;
-}
-
-export async function readInstalledCloudPlugins(config: ServerConfig, workspaceId: string): Promise<WorkspaceCloudImports> {
-  const db = await cloudPluginDb(config);
-  const row = db.get(workspaceId);
-  if (!row) return readCloudImports({});
+function parseInstalledCloudPlugins(configJson: string): WorkspaceCloudImports {
   try {
-    return readCloudImports({ cloudImports: JSON.parse(row.configJson) });
+    return readCloudImports({ cloudImports: JSON.parse(configJson) });
   } catch {
     return readCloudImports({});
   }
+}
+
+const cloudPluginInstallStore = createWorkspaceKvStore<WorkspaceCloudImports>({
+  tableName: "cloud_plugin_install_configs",
+  valueColumn: "config_json",
+  parse: parseInstalledCloudPlugins,
+  serialize: (value) => JSON.stringify(value),
+});
+
+export async function readInstalledCloudPlugins(config: ServerConfig, workspaceId: string): Promise<WorkspaceCloudImports> {
+  return await cloudPluginInstallStore.get(config, workspaceId) ?? readCloudImports({});
 }
 
 async function writeInstalledCloudPlugins(
@@ -552,9 +492,8 @@ async function writeInstalledCloudPlugins(
   workspaceId: string,
   updater: (current: WorkspaceCloudImports) => WorkspaceCloudImports,
 ): Promise<WorkspaceCloudImports> {
-  const db = await cloudPluginDb(config);
   const next = updater(await readInstalledCloudPlugins(config, workspaceId));
-  db.upsert({ workspaceId, configJson: JSON.stringify(next), updatedAt: Date.now() });
+  await cloudPluginInstallStore.set(config, workspaceId, next);
   return next;
 }
 

@@ -1,8 +1,7 @@
 import { existsSync } from "node:fs";
-import { eq } from "drizzle-orm";
-import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
-import { openRuntimeSqliteDatabase, runtimeDbPath } from "./runtime-db.js";
+import { runtimeDbPath } from "./runtime-db.js";
 import type { ServerConfig } from "./types.js";
+import { createWorkspaceKvStore, isRecord } from "./workspace-kv-store.js";
 
 export { runtimeDbPath, runtimeStorageDir } from "./runtime-db.js";
 
@@ -16,21 +15,6 @@ export type RuntimeOpencodeConfig = {
   };
   provider?: Record<string, unknown>;
 };
-
-const runtimeOpencodeConfigs = sqliteTable("runtime_opencode_configs", {
-  workspaceId: text("workspace_id").primaryKey(),
-  configJson: text("config_json").notNull(),
-  updatedAt: integer("updated_at").notNull(),
-});
-
-type RuntimeOpencodeDb = {
-  get: (workspaceId: string) => { configJson: string } | undefined;
-  upsert: (value: { workspaceId: string; configJson: string; updatedAt: number }) => void;
-};
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 function normalizeRuntimeOpencodeConfig(value: unknown): RuntimeOpencodeConfig {
   if (!isRecord(value)) return {};
@@ -61,6 +45,13 @@ function parseRuntimeOpencodeConfig(configJson: string): RuntimeOpencodeConfig {
   }
 }
 
+const runtimeOpencodeConfigStore = createWorkspaceKvStore<RuntimeOpencodeConfig>({
+  tableName: "runtime_opencode_configs",
+  valueColumn: "config_json",
+  parse: parseRuntimeOpencodeConfig,
+  serialize: (value) => JSON.stringify(value),
+});
+
 export type RuntimeOpencodeConfigWriteListener = (config: ServerConfig, workspaceId: string) => void;
 
 const writeListeners = new Set<RuntimeOpencodeConfigWriteListener>();
@@ -73,57 +64,6 @@ const writeListeners = new Set<RuntimeOpencodeConfigWriteListener>();
 export function onRuntimeOpencodeConfigWrite(listener: RuntimeOpencodeConfigWriteListener): () => void {
   writeListeners.add(listener);
   return () => writeListeners.delete(listener);
-}
-
-async function openRuntimeDb(path: string): Promise<RuntimeOpencodeDb> {
-  const runtimeDb = await openRuntimeSqliteDatabase(path);
-  if (runtimeDb.kind === "bun") {
-    const sqlite = runtimeDb.sqlite;
-    sqlite.run("CREATE TABLE IF NOT EXISTS runtime_opencode_configs (workspace_id TEXT PRIMARY KEY NOT NULL, config_json TEXT NOT NULL, updated_at INTEGER NOT NULL)");
-    const db = runtimeDb.db;
-    return {
-      get: (workspaceId) => db
-        .select()
-        .from(runtimeOpencodeConfigs)
-        .where(eq(runtimeOpencodeConfigs.workspaceId, workspaceId))
-        .get(),
-      upsert: ({ workspaceId, configJson, updatedAt }) => {
-        db
-          .insert(runtimeOpencodeConfigs)
-          .values({ workspaceId, configJson, updatedAt })
-          .onConflictDoUpdate({
-            target: runtimeOpencodeConfigs.workspaceId,
-            set: { configJson, updatedAt },
-          })
-          .run();
-      },
-    };
-  }
-  const sqlite = runtimeDb.sqlite;
-  sqlite.exec("CREATE TABLE IF NOT EXISTS runtime_opencode_configs (workspace_id TEXT PRIMARY KEY NOT NULL, config_json TEXT NOT NULL, updated_at INTEGER NOT NULL)");
-  const get = sqlite.prepare("SELECT config_json AS configJson FROM runtime_opencode_configs WHERE workspace_id = ?");
-  const upsert = sqlite.prepare("INSERT INTO runtime_opencode_configs (workspace_id, config_json, updated_at) VALUES (?, ?, ?) ON CONFLICT(workspace_id) DO UPDATE SET config_json = excluded.config_json, updated_at = excluded.updated_at");
-  return {
-    get: (workspaceId) => {
-      const row = get.get(workspaceId);
-      if (!isRecord(row) || typeof row.configJson !== "string") return undefined;
-      return { configJson: row.configJson };
-    },
-    upsert: ({ workspaceId, configJson, updatedAt }) => {
-      upsert.run(workspaceId, configJson, updatedAt);
-    },
-  };
-}
-
-const dbByPath = new Map<string, Promise<RuntimeOpencodeDb>>();
-
-async function runtimeDb(config: ServerConfig): Promise<RuntimeOpencodeDb> {
-  const path = runtimeDbPath(config);
-  const existing = dbByPath.get(path);
-  if (existing) return existing;
-  const db = openRuntimeDb(path);
-  dbByPath.set(path, db);
-  return db;
 }
 
 export function runtimePluginList(config: RuntimeOpencodeConfig): string[] {
@@ -177,10 +117,7 @@ export function mergeRuntimeProviderUpdate(
 }
 
 export async function readRuntimeOpencodeConfig(config: ServerConfig, workspaceId: string): Promise<RuntimeOpencodeConfig> {
-  const db = await runtimeDb(config);
-  const row = db.get(workspaceId);
-  if (!row) return {};
-  return parseRuntimeOpencodeConfig(row.configJson);
+  return await runtimeOpencodeConfigStore.get(config, workspaceId) ?? {};
 }
 
 export type RuntimeOpencodeConfigInspection = {
@@ -347,16 +284,15 @@ export async function writeRuntimeOpencodeConfig(
   workspaceId: string,
   updater: (current: RuntimeOpencodeConfig) => RuntimeOpencodeConfig,
 ): Promise<{ config: RuntimeOpencodeConfig; changed: boolean }> {
-  const db = await runtimeDb(config);
-  const row = db.get(workspaceId);
-  const current = row ? parseRuntimeOpencodeConfig(row.configJson) : {};
+  const row = await runtimeOpencodeConfigStore.getRow(config, workspaceId);
+  const current = row ? row.value : {};
   const next = normalizeRuntimeOpencodeConfig(updater(current));
   const now = Date.now();
-  const configJson = JSON.stringify(next);
-  if (row?.configJson === configJson) {
+  const configJson = runtimeOpencodeConfigStore.serialize(next);
+  if (row?.valueJson === configJson) {
     return { config: next, changed: false };
   }
-  db.upsert({ workspaceId, configJson, updatedAt: now });
+  await runtimeOpencodeConfigStore.setSerialized(config, workspaceId, configJson, now);
   for (const listener of writeListeners) listener(config, workspaceId);
   return { config: next, changed: true };
 }
