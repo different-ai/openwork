@@ -28,6 +28,16 @@ const rpcRequestSchema = z.object({
   id: z.union([z.string(), z.number()]).optional(),
   method: z.string(),
 }).passthrough()
+const rpcProgressRequestSchema = rpcRequestSchema.extend({
+  params: z.object({
+    _meta: z.object({
+      progressToken: z.union([z.string(), z.number()]).optional(),
+    }).passthrough().optional(),
+  }).passthrough().optional(),
+})
+const textToolResultSchema = z.object({
+  content: z.array(z.object({ type: z.literal("text"), text: z.string() })),
+}).passthrough()
 
 type MockMcpOptions = {
   toolError?: boolean
@@ -256,6 +266,102 @@ async function startOAuthMcpServer(options: {
   }
 }
 
+async function startProgressMcpServer(options: {
+  resultDelayMs: number
+  progressIntervalMs: number
+}) {
+  let origin = ""
+  const server = createServer(async (request, response) => {
+    try {
+      const url = new URL(request.url ?? "/", origin)
+      if (url.pathname !== "/mcp") {
+        sendJson(response, 404, { error: "not_found" })
+        return
+      }
+      const body = await requestBody(request)
+      if (!body) {
+        response.writeHead(202)
+        response.end()
+        return
+      }
+      const parsed: unknown = JSON.parse(body)
+      const rpc = rpcProgressRequestSchema.parse(parsed)
+      if (rpc.method === "notifications/initialized") {
+        response.writeHead(202)
+        response.end()
+        return
+      }
+      if (rpc.method === "initialize") {
+        sendJson(response, 200, {
+          jsonrpc: "2.0",
+          id: rpc.id,
+          result: {
+            protocolVersion: "2025-06-18",
+            capabilities: { tools: {} },
+            serverInfo: { name: "progress-enterprise-mcp-test", version: "1.0.0" },
+          },
+        })
+        return
+      }
+      if (rpc.method !== "tools/call") {
+        sendJson(response, 404, { error: "not_found" })
+        return
+      }
+
+      response.writeHead(200, {
+        "content-type": "text/event-stream",
+        "cache-control": "no-cache",
+      })
+      const progressToken = rpc.params?._meta?.progressToken
+      let progress = 0
+      const writeMessage = (message: unknown) => {
+        response.write(`event: message\ndata: ${JSON.stringify(message)}\n\n`)
+      }
+      const progressTimer = setInterval(() => {
+        if (progressToken === undefined) return
+        progress += 1
+        writeMessage({
+          jsonrpc: "2.0",
+          method: "notifications/progress",
+          params: { progressToken, progress },
+        })
+      }, options.progressIntervalMs)
+      const resultTimer = setTimeout(() => {
+        clearInterval(progressTimer)
+        writeMessage({
+          jsonrpc: "2.0",
+          id: rpc.id,
+          result: { content: [{ type: "text", text: "streamed result" }] },
+        })
+        response.end()
+      }, options.resultDelayMs)
+      response.on("close", () => {
+        clearInterval(progressTimer)
+        clearTimeout(resultTimer)
+      })
+    } catch (error) {
+      sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
+    }
+  })
+
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject)
+    server.listen(0, "127.0.0.1", resolve)
+  })
+  const address = server.address()
+  if (!address || typeof address === "string") {
+    server.close()
+    throw new Error("Progress MCP test server did not bind to a TCP port.")
+  }
+  origin = `http://127.0.0.1:${address.port}`
+  return {
+    origin,
+    close: () => new Promise<void>((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve())
+    }),
+  }
+}
+
 function noAuthConnection(): EnterpriseMcpConnection {
   return {
     id: "connection-1",
@@ -413,6 +519,62 @@ describe("enterprise MCP client", () => {
       assert.ok(Date.now() - startedAt < 500)
     } finally {
       clearTimeout(timer)
+    }
+  })
+
+  it("honors an injected lifecycle longer than the per-request timeout while progress streams", async () => {
+    const server = await startProgressMcpServer({ resultDelayMs: 70, progressIntervalMs: 10 })
+    try {
+      const client = createEnterpriseMcpClient({
+        fetch,
+        operationTimeoutMs: 25,
+        lifecycle: { expiresAt: Date.now() + 120, signal: new AbortController().signal },
+      })
+      const result = await client.callTool({
+        connection: {
+          id: "progress-connection",
+          serverUrl: `${server.origin}/mcp`,
+          authorization: { type: "none" },
+        },
+        redirectUri: "https://den.example.test/callback",
+        toolName: "lookup-record",
+        arguments: {},
+      })
+      const parsedResult = textToolResultSchema.parse(result)
+      assert.equal(parsedResult.content[0]?.text, "streamed result")
+    } finally {
+      await server.close()
+    }
+  })
+
+  it("still stops a progressing provider at the injected absolute lifecycle", async () => {
+    const server = await startProgressMcpServer({ resultDelayMs: 160, progressIntervalMs: 10 })
+    try {
+      const client = createEnterpriseMcpClient({
+        fetch,
+        operationTimeoutMs: 25,
+        lifecycle: { expiresAt: Date.now() + 80, signal: new AbortController().signal },
+      })
+      const startedAt = Date.now()
+      await assert.rejects(
+        client.callTool({
+          connection: {
+            id: "progress-deadline-connection",
+            serverUrl: `${server.origin}/mcp`,
+            authorization: { type: "none" },
+          },
+          redirectUri: "https://den.example.test/callback",
+          toolName: "lookup-record",
+          arguments: {},
+        }),
+        (error: unknown) => error instanceof EnterpriseMcpClientError
+          && error.operationPhase === "tool-execution",
+      )
+      const elapsedMs = Date.now() - startedAt
+      assert.ok(elapsedMs >= 60, `expected lifecycle timeout to outlast per-request timeout, got ${elapsedMs}ms`)
+      assert.ok(elapsedMs < 500, `expected lifecycle timeout before the provider result, got ${elapsedMs}ms`)
+    } finally {
+      await server.close()
     }
   })
 

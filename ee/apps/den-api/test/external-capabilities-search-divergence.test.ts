@@ -1,5 +1,7 @@
 import { StreamableHTTPTransport } from "@hono/mcp"
+import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
+import type { RequestOptions } from "@modelcontextprotocol/sdk/shared/protocol.js"
 import { eq } from "@openwork-ee/den-db/drizzle"
 import { createDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { afterAll, beforeAll, expect, mock, test } from "bun:test"
@@ -542,6 +544,73 @@ test("control-healthy: Connections list and search_capabilities both see Slack t
   }
   if (process.env.OPENWORK_EVAL_VERBOSE === "1") {
     console.log("E2E_HEALTHY_DISCOVERY", JSON.stringify({ connectionName: "Slack", toolCount: matches.length, status: "available" }))
+  }
+})
+
+test("execute_capability shares one external MCP lifecycle budget across schema discovery and tool call", async () => {
+  if (!slackServer) throw new Error("Slack MCP server was not started")
+  const { EXTERNAL_MCP_TOOL_LIFECYCLE_TIMEOUT_MS } = await import("../src/capability-sources/external-mcp-client.js")
+  const seed = await seedOrganization("execute-shared-lifecycle")
+  const connection = await createGrantedConnection(seed, {
+    name: "Slack",
+    authType: "none",
+    credentialMode: "shared",
+    url: slackServer.url,
+  })
+  const listOptions: RequestOptions[] = []
+  const callOptions: RequestOptions[] = []
+  const originalListTools = Client.prototype.listTools
+  const originalCallTool = Client.prototype.callTool
+  type ListToolsMethod = Client["listTools"]
+  type CallToolMethod = Client["callTool"]
+  function observingListTools(
+    this: Client,
+    params: Parameters<ListToolsMethod>[0],
+    options: Parameters<ListToolsMethod>[1],
+  ): ReturnType<ListToolsMethod> {
+    if (options) listOptions.push(options)
+    return originalListTools.call(this, params, options).then(async (result) => {
+      await Bun.sleep(20)
+      return result
+    })
+  }
+  function observingCallTool(
+    this: Client,
+    params: Parameters<CallToolMethod>[0],
+    resultSchema: Parameters<CallToolMethod>[1],
+    options: Parameters<CallToolMethod>[2],
+  ): ReturnType<CallToolMethod> {
+    if (options) callOptions.push(options)
+    return originalCallTool.call(this, params, resultSchema, options)
+  }
+  Client.prototype.listTools = observingListTools
+  Client.prototype.callTool = observingCallTool
+
+  try {
+    const result = await executeExternalCapability({
+      organizationId: seed.organizationId,
+      member: { orgMembershipId: seed.memberId, teamIds: [] },
+      connectionId: connection.id,
+      toolName: "slack-send-message",
+      args: { text: "shared lifecycle" },
+      redirectUriBase,
+    })
+
+    expect(result).toMatchObject({ ok: true })
+    expect(listOptions).toHaveLength(1)
+    expect(callOptions).toHaveLength(1)
+    const discovery = listOptions[0]
+    const call = callOptions[0]
+    if (!discovery?.maxTotalTimeout || !call?.maxTotalTimeout) {
+      throw new Error("Expected both SDK requests to receive maxTotalTimeout.")
+    }
+    expect(discovery.maxTotalTimeout).toBeGreaterThanOrEqual(EXTERNAL_MCP_TOOL_LIFECYCLE_TIMEOUT_MS - 1_000)
+    expect(discovery.maxTotalTimeout).toBeLessThanOrEqual(EXTERNAL_MCP_TOOL_LIFECYCLE_TIMEOUT_MS)
+    expect(call.maxTotalTimeout).toBeGreaterThanOrEqual(EXTERNAL_MCP_TOOL_LIFECYCLE_TIMEOUT_MS - 1_000)
+    expect(call.maxTotalTimeout).toBeLessThan(discovery.maxTotalTimeout)
+  } finally {
+    Client.prototype.listTools = originalListTools
+    Client.prototype.callTool = originalCallTool
   }
 })
 

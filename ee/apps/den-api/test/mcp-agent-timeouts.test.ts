@@ -59,7 +59,8 @@ beforeAll(async () => {
 })
 
 test("executeCapabilityWithBudget returns a structured timeout result", async () => {
-  expect(agentModule.EXECUTE_CAPABILITY_TIMEOUT_MS).toBeGreaterThan(150_000)
+  const { EXTERNAL_MCP_TOOL_LIFECYCLE_TIMEOUT_MS } = await import("../src/capability-sources/external-mcp-client.js")
+  expect(agentModule.EXECUTE_CAPABILITY_TIMEOUT_MS).toBeGreaterThan(EXTERNAL_MCP_TOOL_LIFECYCLE_TIMEOUT_MS)
 
   const result = await agentModule.executeCapabilityWithBudget({
     capability: "gmail_search",

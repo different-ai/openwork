@@ -146,6 +146,7 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
     clientName,
     clientVersion,
   } = parsedOptions
+  const explicitOperationTimeoutMs = options.operationTimeoutMs
   const clock: EnterpriseMcpClock = options.clock ?? { now: () => Date.now() }
   const configuredFetch: EnterpriseMcpFetch = options.fetch
 
@@ -206,7 +207,12 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
       : undefined
     const controller = new AbortController()
     const configuredExpiresAt = options.lifecycle?.expiresAt ?? (clock.now() + operationTimeoutMs)
-    const remaining = Math.max(1, Math.min(operationTimeoutMs, configuredExpiresAt - clock.now()))
+    const remaining = Math.max(1, configuredExpiresAt - clock.now())
+    const maxRequestTimeoutMs = remaining > 1 ? remaining - 1 : remaining
+    const requestTimeoutMs = Math.max(1, Math.min(
+      options.lifecycle ? explicitOperationTimeoutMs ?? maxRequestTimeoutMs : operationTimeoutMs,
+      maxRequestTimeoutMs,
+    ))
     const timeout = setTimeout(() => {
       controller.abort(new EnterpriseMcpLifecycleDeadlineError(input.operationPhase))
     }, remaining)
@@ -250,9 +256,10 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
     const client = new Client({ name: clientName, version: clientVersion }, { capabilities: {} })
     const requestOptions: RequestOptions = {
       signal: requestSignal,
-      timeout: remaining,
+      timeout: requestTimeoutMs,
       maxTotalTimeout: remaining,
-      resetTimeoutOnProgress: false,
+      resetTimeoutOnProgress: true,
+      onprogress: () => undefined,
     }
     return {
       client,
@@ -511,10 +518,7 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
       const authorizationId = configurationValue(() => authorizationIdSchema.parse(input.authorizationId))
       if (input.connection.authorization.type !== "oauth") return
       const controller = new AbortController()
-      const expiresAt = Math.min(
-        options.lifecycle?.expiresAt ?? (clock.now() + operationTimeoutMs),
-        clock.now() + operationTimeoutMs,
-      )
+      const expiresAt = options.lifecycle?.expiresAt ?? (clock.now() + operationTimeoutMs)
       await input.connection.authorization.persistence.authorizations.invalidate({
         context: {
           connectionId: input.connection.id,

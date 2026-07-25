@@ -11,8 +11,12 @@ import {
 import { env } from "../env.js"
 import { createGuardedFetch, createRealmSafeFetch } from "./url-guard.js"
 import type { ExternalMcpConnectionRow } from "./external-mcp-connections.js"
-import type { ExternalMcpMemberContext, ExternalMcpConnectResult } from "./external-mcp-client.js"
-import type { ExternalMcpLifecycleDeadline } from "./external-mcp-client.js"
+import {
+  EXTERNAL_MCP_TOOL_CALL_TIMEOUT_MS,
+  type ExternalMcpLifecycleDeadline,
+  type ExternalMcpMemberContext,
+  type ExternalMcpConnectResult,
+} from "./external-mcp-client.js"
 import { DenEnterpriseMcpOAuthPersistence } from "./enterprise-mcp-oauth-persistence.js"
 import { externalMcpClientMetadataUrl } from "./external-mcp-oauth-contract.js"
 import {
@@ -186,6 +190,7 @@ function createOperationClient(input: {
   connection: ExternalMcpConnectionRow
   diagnosticReferenceId?: string
   lifecycleDeadline?: ExternalMcpLifecycleDeadline
+  operationTimeoutMs?: number
   toolCallInspector?: ExternalMcpToolCallInspector
 }): { client: EnterpriseMcpClient; tracker: ExternalMcpDiagnosticTracker } {
   const tracker = new ExternalMcpDiagnosticTracker(input.diagnosticReferenceId ?? randomUUID(), {
@@ -205,6 +210,7 @@ function createOperationClient(input: {
     client: createEnterpriseMcpClient({
       fetch: observedFetch,
       diagnosticSink: diagnosticSink(tracker),
+      ...(input.operationTimeoutMs ? { operationTimeoutMs: input.operationTimeoutMs } : {}),
       ...(input.lifecycleDeadline ? {
         lifecycle: {
           expiresAt: input.lifecycleDeadline.expiresAt,
@@ -219,6 +225,7 @@ async function runEnterpriseMcpOperation<T>(input: {
   connection: ExternalMcpConnectionRow
   diagnosticReferenceId?: string
   lifecycleDeadline?: ExternalMcpLifecycleDeadline
+  operationTimeoutMs?: number
   toolCallInspector?: ExternalMcpToolCallInspector
   operation: (client: EnterpriseMcpClient) => Promise<T>
 }): Promise<T> {
@@ -311,6 +318,7 @@ type ExternalMcpToolCallInput = {
   args: Record<string, unknown>
   member?: ExternalMcpMemberContext
   diagnosticReferenceId?: string
+  lifecycleDeadline?: ExternalMcpLifecycleDeadline
 }
 
 function runExternalMcpToolCall(
@@ -320,6 +328,8 @@ function runExternalMcpToolCall(
   return runEnterpriseMcpOperation({
     connection: input.connection,
     diagnosticReferenceId: input.diagnosticReferenceId,
+    lifecycleDeadline: input.lifecycleDeadline,
+    operationTimeoutMs: EXTERNAL_MCP_TOOL_CALL_TIMEOUT_MS,
     toolCallInspector,
     operation: (client) => client.callTool({
       connection: toEnterpriseConnection(input.connection, input.member),
