@@ -22,6 +22,12 @@ export const marketplaceQueryKeys = {
   detail: (id: string) => [...marketplaceQueryKeys.all, "detail", id] as const,
   resolved: (id: string) => [...marketplaceQueryKeys.all, "resolved", id] as const,
   access: (id: string) => [...marketplaceQueryKeys.all, "access", id] as const,
+  pluginCandidates: () => [...marketplaceQueryKeys.all, "plugin-candidates"] as const,
+};
+
+export type MarketplacePluginCandidate = {
+  id: string;
+  name: string;
 };
 
 export type MarketplaceAccessRole = "viewer" | "editor" | "manager";
@@ -228,6 +234,80 @@ export function useMarketplace(marketplaceId: string | null) {
       }
 
       return parseMarketplaceResolvedPayload(payload);
+    },
+  });
+}
+
+export function useMarketplacePluginCandidates() {
+  return useQuery({
+    queryKey: marketplaceQueryKeys.pluginCandidates(),
+    queryFn: async (): Promise<MarketplacePluginCandidate[]> => {
+      const { response, payload } = await requestJson(
+        "/v1/plugins?status=active&limit=100",
+        { method: "GET" },
+        15000,
+      );
+      if (!response.ok) {
+        throw new Error(getErrorMessage(payload, `Failed to load plugins (${response.status}).`));
+      }
+
+      const items = isRecord(payload) && Array.isArray(payload.items) ? payload.items : [];
+      return items.flatMap((entry) => {
+        if (!isRecord(entry)) return [];
+        const id = asString(entry.id);
+        const name = asString(entry.name);
+        return id && name ? [{ id, name }] : [];
+      });
+    },
+  });
+}
+
+export function useAssignMarketplacePlugin() {
+  const queryClient = useQueryClient();
+  const { runReauthableAction } = useOrgDashboard();
+
+  return useMutation({
+    mutationFn: async (input: { marketplaceId: string; pluginId: string }) => {
+      await runReauthableAction("assign-marketplace-plugin", async () => {
+        const { response, payload } = await requestJson(
+          `/v1/marketplaces/${encodeURIComponent(input.marketplaceId)}/plugins`,
+          { method: "POST", body: JSON.stringify({ pluginId: input.pluginId }) },
+          15000,
+        );
+        if (!response.ok) {
+          throw getRequestError(payload, response, `Failed to assign plugin (${response.status}).`);
+        }
+      });
+      return input.marketplaceId;
+    },
+    onSuccess: (marketplaceId) => {
+      queryClient.invalidateQueries({ queryKey: marketplaceQueryKeys.resolved(marketplaceId) });
+      queryClient.invalidateQueries({ queryKey: marketplaceQueryKeys.list() });
+    },
+  });
+}
+
+export function useRemoveMarketplacePlugin() {
+  const queryClient = useQueryClient();
+  const { runReauthableAction } = useOrgDashboard();
+
+  return useMutation({
+    mutationFn: async (input: { marketplaceId: string; pluginId: string }) => {
+      await runReauthableAction("remove-marketplace-plugin", async () => {
+        const { response, payload } = await requestJson(
+          `/v1/marketplaces/${encodeURIComponent(input.marketplaceId)}/plugins/${encodeURIComponent(input.pluginId)}`,
+          { method: "DELETE" },
+          15000,
+        );
+        if (response.status !== 204 && !response.ok) {
+          throw getRequestError(payload, response, `Failed to remove plugin (${response.status}).`);
+        }
+      });
+      return input.marketplaceId;
+    },
+    onSuccess: (marketplaceId) => {
+      queryClient.invalidateQueries({ queryKey: marketplaceQueryKeys.resolved(marketplaceId) });
+      queryClient.invalidateQueries({ queryKey: marketplaceQueryKeys.list() });
     },
   });
 }

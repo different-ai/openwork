@@ -24,11 +24,14 @@ import {
   type MarketplacePluginCloudReadinessConnection,
   type MarketplacePluginCloudReadinessState,
   type MarketplacePluginSummary,
+  useAssignMarketplacePlugin,
   useConfigurePluginMcpConnection,
   useDeleteMarketplace,
   useGrantMarketplaceAccess,
   useMarketplace,
   useMarketplaceAccess,
+  useMarketplacePluginCandidates,
+  useRemoveMarketplacePlugin,
   useRevokeMarketplaceAccess,
   useUpdateMarketplace,
 } from "./marketplace-data";
@@ -91,8 +94,12 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
   const [actionsOpen, setActionsOpen] = useState(false);
   const [editMarketplace, setEditMarketplace] = useState<{ name: string; description: string | null } | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [selectedPluginId, setSelectedPluginId] = useState("");
   const actionsRef = useRef<HTMLDivElement | null>(null);
   const deleteMarketplace = useDeleteMarketplace();
+  const pluginCandidates = useMarketplacePluginCandidates();
+  const assignPlugin = useAssignMarketplacePlugin();
+  const removePlugin = useRemoveMarketplacePlugin();
   const authorization = useMcpAccountAuthorization(() => {
     void refetch();
   });
@@ -144,6 +151,18 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
   }
 
   const { marketplace, plugins, source } = data;
+  const assignedPluginIds = new Set(plugins.map((plugin) => plugin.id));
+  const eligiblePlugins = (pluginCandidates.data ?? []).filter((plugin) => !assignedPluginIds.has(plugin.id));
+
+  async function handleAssignPlugin() {
+    if (!selectedPluginId) return;
+    try {
+      await assignPlugin.mutateAsync({ marketplaceId: marketplace.id, pluginId: selectedPluginId });
+      setSelectedPluginId("");
+    } catch {
+      // The mutation error is rendered below the assignment controls.
+    }
+  }
   async function handleDeleteMarketplace() {
     try {
       await deleteMarketplace.mutateAsync(marketplace.id);
@@ -310,16 +329,43 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
                     {plugins.length} plugin{plugins.length === 1 ? "" : "s"}
                   </p>
                   {access.isAdmin ? (
-                    <Link
-                      href={`${getNewPluginRoute(orgSlug)}?marketplaceId=${encodeURIComponent(marketplace.id)}`}
-                      className={buttonVariants({ variant: "primary", size: "sm" })}
-                    >
+                    <Link href={`${getNewPluginRoute(orgSlug)}?marketplaceId=${encodeURIComponent(marketplace.id)}`} className={buttonVariants({ variant: "secondary", size: "sm" })}>
                       <Plus className="h-4 w-4" aria-hidden />
                       Add a plugin
                     </Link>
                   ) : null}
                 </div>
               </div>
+
+              {access.isAdmin ? (
+                <div className="mb-3 rounded-2xl border border-gray-100 bg-white p-4" data-testid="marketplace-plugin-assignment-controls">
+                  <p className="text-[13px] font-semibold text-gray-900">Assign an existing plugin</p>
+                  <p className="mt-0.5 text-[12px] text-gray-500">Choose an active plugin that is not already in this marketplace.</p>
+                  <div className="mt-3 flex gap-2">
+                    <DenSelect
+                      aria-label="Eligible plugin"
+                      value={selectedPluginId}
+                      onChange={(event) => setSelectedPluginId(event.target.value)}
+                      disabled={pluginCandidates.isLoading || assignPlugin.isPending || eligiblePlugins.length === 0}
+                    >
+                      <option value="">{eligiblePlugins.length === 0 ? "No eligible plugins" : "Select a plugin"}</option>
+                      {eligiblePlugins.map((plugin) => <option key={plugin.id} value={plugin.id}>{plugin.name}</option>)}
+                    </DenSelect>
+                    <DenButton
+                      onClick={() => void handleAssignPlugin()}
+                      disabled={!selectedPluginId || assignPlugin.isPending}
+                      loading={assignPlugin.isPending}
+                      data-testid="assign-marketplace-plugin"
+                    >
+                      Assign plugin
+                    </DenButton>
+                  </div>
+                  {pluginCandidates.error ? <p className="mt-2 text-[12px] text-red-600">Failed to load eligible plugins.</p> : null}
+                  {assignPlugin.error ? (
+                    <p className="mt-2 text-[12px] text-red-600">{assignPlugin.error instanceof Error ? assignPlugin.error.message : "Failed to assign plugin."}</p>
+                  ) : null}
+                </div>
+              ) : null}
 
               {plugins.length === 0 ? (
                 <div className="rounded-2xl border border-dashed border-gray-200 bg-white px-5 py-10 text-center">
@@ -333,7 +379,15 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
               ) : (
                 <div className="grid items-start gap-3 md:grid-cols-2">
                   {plugins.map((plugin) => (
-                    <MarketplacePluginCard key={plugin.id} orgSlug={orgSlug} plugin={plugin} />
+                    <MarketplacePluginCard
+                      key={plugin.id}
+                      orgSlug={orgSlug}
+                      plugin={plugin}
+                      canManage={access.isAdmin}
+                      removing={removePlugin.isPending && removePlugin.variables?.pluginId === plugin.id}
+                      removeError={removePlugin.error && removePlugin.variables?.pluginId === plugin.id ? removePlugin.error : null}
+                      onRemove={() => removePlugin.mutate({ marketplaceId: marketplace.id, pluginId: plugin.id })}
+                    />
                   ))}
                 </div>
               )}
@@ -1008,9 +1062,17 @@ function MarketplaceConfigureSection({
 function MarketplacePluginCard({
   orgSlug,
   plugin,
+  canManage,
+  removing,
+  removeError,
+  onRemove,
 }: {
   orgSlug: string | null;
   plugin: MarketplacePluginSummary;
+  canManage: boolean;
+  removing: boolean;
+  removeError: unknown;
+  onRemove: () => void;
 }) {
   const orderedCountEntries = Object.entries(plugin.componentCounts)
     .filter(([, count]) => count > 0)
@@ -1068,6 +1130,15 @@ function MarketplacePluginCard({
               <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ${plugin.cloudReadiness.state === "ready" ? "bg-emerald-50 text-emerald-700" : "bg-gray-50 text-gray-600"}`}>
                 {cloudReadinessLabel(plugin.cloudReadiness.state)}
               </span>
+            </div>
+          ) : null}
+          {canManage ? (
+            <div className="mt-3 border-t border-gray-50 pt-3">
+              <DenButton variant="secondary" size="sm" loading={removing} disabled={removing} onClick={onRemove} data-testid={`remove-marketplace-plugin-${plugin.id}`}>
+                Remove
+              </DenButton>
+              <p className="mt-1 text-[10.5px] text-gray-400">Removes this plugin from the marketplace only.</p>
+              {removeError ? <p className="mt-1 text-[11px] text-red-600">{removeError instanceof Error ? removeError.message : "Failed to remove plugin."}</p> : null}
             </div>
           ) : null}
         </div>
