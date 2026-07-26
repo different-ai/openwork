@@ -247,6 +247,20 @@ export function nativeMysqlServerArgs(
   return args;
 }
 
+export function nativeMysqlSocketArgs(
+  authenticated: boolean,
+): string[] {
+  const url = new URL(DEN_DATABASE_URL);
+  const args = [
+    "--protocol=socket",
+    `--socket=${MYSQL_SOCKET}`,
+    `-u${decodeURIComponent(url.username || "root")}`,
+  ];
+  const password = decodeURIComponent(url.password);
+  if (authenticated && password) args.push(`-p${password}`);
+  return args;
+}
+
 async function ensureNativeMysql(log: (message: string) => void): Promise<void> {
   if (await nativeMysqlHealthy()) {
     await writePidState("mysql.backend", "native");
@@ -284,31 +298,33 @@ async function ensureNativeMysql(log: (message: string) => void): Promise<void> 
   await writePidState("mysql.pid", pid);
   await writePidState("mysql.backend", "native");
 
-  let socketReady = false;
+  let socketArgs: string[] | null = null;
   for (let attempt = 0; attempt < 60; attempt += 1) {
-    try {
-      await run(socketClient, [
-        "--protocol=socket",
-        `--socket=${MYSQL_SOCKET}`,
-        "-uroot",
-        "-N",
-        "-e",
-        "SELECT 1",
-      ]);
-      socketReady = true;
-      break;
-    } catch {
-      await sleep(500);
+    for (const authenticated of [false, true]) {
+      const candidateArgs = nativeMysqlSocketArgs(authenticated);
+      try {
+        await run(socketClient, [
+          ...candidateArgs,
+          "-N",
+          "-e",
+          "SELECT 1",
+        ]);
+        socketArgs = candidateArgs;
+        break;
+      } catch {
+        // A fresh data directory accepts passwordless root while a resumed
+        // directory requires the password configured below.
+      }
     }
+    if (socketArgs) break;
+    await sleep(500);
   }
-  if (!socketReady) {
+  if (!socketArgs) {
     throw new Error("Native MariaDB did not become ready within 30s.");
   }
 
   await run(socketClient, [
-    "--protocol=socket",
-    `--socket=${MYSQL_SOCKET}`,
-    "-uroot",
+    ...socketArgs,
     "-e",
     [
       "ALTER USER 'root'@'localhost' IDENTIFIED BY 'password'",
