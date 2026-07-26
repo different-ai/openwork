@@ -14,7 +14,7 @@ import { z } from "zod";
  * - Connecting MCP extensions, including OpenWork Cloud MCP
  * - Using OpenWork Cloud
  * - Finding OpenWork docs before falling back to code
- * - Voice mode, browser, skills, automations
+ * - Voice mode, browser, and skills
  */
 
 const OPENWORK_CAPABILITIES_KNOWLEDGE = `You are running inside OpenWork, a desktop app for agentic work.
@@ -91,7 +91,7 @@ Here is what you can help users with:
 
 ## Skills
 - Specialized instruction packs for specific workflows.
-- Manageable via Settings > Skills.
+- Manageable via Settings > Extensions.
 - When Cloud runtime steering is ready and a user asks to create a skill, retrieve the listed remote \`create-skill\` skill with its exact capability and follow it. Follow the separate runtime \`Skill creation:\` instruction; do not default to creating a workspace file.
 
 ## Creating Plugins

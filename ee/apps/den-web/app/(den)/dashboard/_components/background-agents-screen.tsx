@@ -383,7 +383,7 @@ export function BackgroundAgentsScreen() {
       icon={Bot}
       badgeLabel="Alpha"
       title="Background Tasks"
-      description="Run selected workflows in the background without asking each teammate to run them locally. Coming soon."
+      description="View existing cloud workspaces, copy connection credentials, and open ready workspaces in OpenWork."
       colors={["#E9FFE0", "#3E9A1D", "#B3F750", "#51F0A3"]}
     >
       <div className="mb-10 rounded-2xl border border-amber-100 bg-amber-50 px-4 py-3 text-[13px] leading-6 text-amber-800">

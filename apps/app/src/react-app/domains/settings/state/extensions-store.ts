@@ -11,7 +11,6 @@ import type {
   SkillCard,
 } from "../../../../app/types";
 import { addOpencodeCacheHint, isDesktopRuntime, normalizeDirectoryPath } from "../../../../app/utils";
-import skillCreatorTemplate from "../../../../app/data/skill-creator.md?raw";
 import {
   isPluginInstalled,
   loadPluginsFromConfig as loadPluginsFromConfigHelpers,
@@ -19,19 +18,12 @@ import {
   stripPluginVersion,
 } from "../../../../app/utils/plugins";
 import {
-  importSkill,
-  installSkillTemplate,
-  joinDesktopPath,
   listLocalSkills,
-  openDesktopPath,
-  pickDirectory,
   readLocalSkill,
   readOpencodeConfig,
-  revealDesktopItemInDir,
   uninstallSkill as uninstallSkillCommand,
   workspaceOpenworkRead,
   workspaceOpenworkWrite,
-  writeLocalSkill,
   writeOpencodeConfig,
   type OpencodeConfigFile,
 } from "../../../../app/lib/desktop";
@@ -1905,174 +1897,6 @@ export function createExtensionsStore(options: {
     }
   }
 
-  async function importLocalSkill() {
-    const isLocalWorkspace = options.workspaceType() === "local";
-    if (!isDesktopRuntime()) {
-      options.setError(t("skills.desktop_required"));
-      return;
-    }
-    if (!isLocalWorkspace) {
-      options.setError("Local workers are required to import skills.");
-      return;
-    }
-    const targetDir = options.projectDir().trim();
-    if (!targetDir) {
-      options.setError(t("skills.pick_project_first"));
-      return;
-    }
-
-    options.setBusy(true);
-    options.setError(null);
-    setStateField("skillsStatus", null);
-    try {
-      const selection = await pickDirectory({ title: t("skills.select_skill_folder") });
-      const sourceDir = typeof selection === "string" ? selection : Array.isArray(selection) ? selection[0] : null;
-      if (!sourceDir) return;
-      const inferredName = sourceDir.split(/[\\/]/).filter(Boolean).pop();
-      const result = (await importSkill(targetDir, sourceDir, { overwrite: false })) as { ok: boolean; stderr?: string; stdout?: string; status?: number };
-      if (!result.ok) {
-        setStateField("skillsStatus", result.stderr || result.stdout || t("skills.import_failed").replace("{status}", String(result.status)));
-      } else {
-        setStateField("skillsStatus", result.stdout || t("skills.imported"));
-        options.markReloadRequired?.("skills", { type: "skill", name: inferredName, action: "added" });
-      }
-      await refreshSkills({ force: true });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : t("skills.unknown_error");
-      options.setError(addOpencodeCacheHint(message));
-    } finally {
-      options.setBusy(false);
-    }
-  }
-
-  async function installSkillCreator(): Promise<{ ok: boolean; message: string }> {
-    const isRemoteWorkspace = options.workspaceType() === "remote";
-    const isLocalWorkspace = options.workspaceType() === "local";
-    const { openworkSnapshot, openworkClient, openworkWorkspaceId, hasOpenworkTarget } =
-      await resolveWorkspaceServerTarget();
-    const canUseOpenworkServer =
-      hasOpenworkTarget &&
-      openworkSnapshot.openworkServerCapabilities?.skills?.write !== false;
-
-    if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
-      options.setBusy(true);
-      options.setError(null);
-      setStateField("skillsStatus", t("skills.installing_skill_creator"));
-      try {
-        await openworkClient.upsertSkill(openworkWorkspaceId, { name: "skill-creator", content: skillCreatorTemplate });
-        const message = t("skills.skill_creator_installed");
-        setStateField("skillsStatus", message);
-        options.markReloadRequired?.("skills", { type: "skill", name: "skill-creator", action: "added" });
-        await refreshSkills({ force: true });
-        return { ok: true, message };
-      } catch (error) {
-        const raw = error instanceof Error ? error.message : t("skills.unknown_error");
-        const message = addOpencodeCacheHint(raw);
-        setStateField("skillsStatus", message);
-        options.setError(message);
-        return { ok: false, message };
-      } finally {
-        options.setBusy(false);
-      }
-    }
-
-    if (hasOpenworkTarget) {
-      const message = "OpenWork server cannot write skills for this workspace.";
-      setStateField("skillsStatus", message);
-      return { ok: false, message };
-    }
-
-    if (isRemoteWorkspace) {
-      const message = "OpenWork server unavailable. Connect to install skills.";
-      setStateField("skillsStatus", message);
-      return { ok: false, message };
-    }
-    if (!isDesktopRuntime()) {
-      const message = t("skills.desktop_required");
-      setStateField("skillsStatus", message);
-      return { ok: false, message };
-    }
-    if (!isLocalWorkspace) {
-      const message = "Local workers are required to install skills.";
-      options.setError(message);
-      setStateField("skillsStatus", message);
-      return { ok: false, message };
-    }
-
-    const targetDir = options.selectedWorkspaceRoot().trim();
-    if (!targetDir) {
-      const message = t("skills.pick_workspace_first");
-      setStateField("skillsStatus", message);
-      return { ok: false, message };
-    }
-
-    options.setBusy(true);
-    options.setError(null);
-    setStateField("skillsStatus", t("skills.installing_skill_creator"));
-    try {
-      const result = (await installSkillTemplate(targetDir, "skill-creator", skillCreatorTemplate, { overwrite: false })) as { ok: boolean; stderr: string; stdout: string };
-      if (!result.ok && /already exists/i.test(result.stderr)) {
-        const message = t("skills.skill_creator_already_installed");
-        setStateField("skillsStatus", message);
-        await refreshSkills({ force: true });
-        return { ok: true, message };
-      }
-      if (!result.ok) {
-        const message = result.stderr || result.stdout || t("skills.install_failed");
-        setStateField("skillsStatus", message);
-        await refreshSkills({ force: true });
-        return { ok: false, message };
-      }
-      const message = result.stdout || t("skills.skill_creator_installed");
-      setStateField("skillsStatus", message);
-      options.markReloadRequired?.("skills", { type: "skill", name: "skill-creator", action: "added" });
-      await refreshSkills({ force: true });
-      return { ok: true, message };
-    } catch (error) {
-      const raw = error instanceof Error ? error.message : t("skills.unknown_error");
-      const message = addOpencodeCacheHint(raw);
-      setStateField("skillsStatus", message);
-      options.setError(message);
-      return { ok: false, message };
-    } finally {
-      options.setBusy(false);
-    }
-  }
-
-  async function revealSkillsFolder() {
-    if (!isDesktopRuntime()) {
-      setStateField("skillsStatus", t("skills.desktop_required"));
-      return;
-    }
-    const root = options.selectedWorkspaceRoot().trim();
-    if (!root) {
-      setStateField("skillsStatus", t("skills.pick_workspace_first"));
-      return;
-    }
-
-    try {
-      const [opencodeSkills, claudeSkills, legacySkills] = await Promise.all([
-        joinDesktopPath(root, ".opencode", "skills"),
-        joinDesktopPath(root, ".claude", "skills"),
-        joinDesktopPath(root, ".opencode", "skill"),
-      ]);
-      const tryOpen = async (target: string) => {
-        try {
-          await openDesktopPath(target);
-          return true;
-        } catch {
-          return false;
-        }
-      };
-      if (await tryOpen(opencodeSkills)) return;
-      if (await tryOpen(claudeSkills)) return;
-      if (await tryOpen(legacySkills)) return;
-      await revealDesktopItemInDir(opencodeSkills);
-    } catch (error) {
-      setStateField("skillsStatus", error instanceof Error ? error.message : t("skills.reveal_failed"));
-    }
-  }
-
   async function uninstallSkill(name: string) {
     const trimmed = name.trim();
     if (!trimmed) return;
@@ -2147,83 +1971,6 @@ export function createExtensionsStore(options: {
     } catch (error) {
       setStateField("skillsStatus", error instanceof Error ? error.message : t("skills.failed_to_load"));
       return null;
-    }
-  }
-
-  async function saveSkill(input: { name: string; content: string; description?: string }) {
-    const trimmed = input.name.trim();
-    if (!trimmed) return;
-    const root = options.selectedWorkspaceRoot().trim();
-    const isRemoteWorkspace = options.workspaceType() === "remote";
-    const isLocalWorkspace = options.workspaceType() === "local";
-    const { openworkSnapshot, openworkClient, openworkWorkspaceId, hasOpenworkTarget } =
-      await resolveWorkspaceServerTarget();
-    const canUseOpenworkServer =
-      hasOpenworkTarget &&
-      openworkSnapshot.openworkServerCapabilities?.skills?.write !== false;
-
-    if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
-      options.setBusy(true);
-      options.setError(null);
-      setStateField("skillsStatus", null);
-      try {
-        await openworkClient.upsertSkill(openworkWorkspaceId, {
-          name: trimmed,
-          content: input.content,
-          description: input.description,
-        });
-        options.markReloadRequired?.("skills", { type: "skill", name: trimmed, action: "updated" });
-        await refreshSkills({ force: true });
-        setStateField("skillsStatus", "Saved.");
-      } catch (error) {
-        const message = error instanceof Error ? error.message : t("skills.unknown_error");
-        options.setError(addOpencodeCacheHint(message));
-      } finally {
-        options.setBusy(false);
-      }
-      return;
-    }
-
-    if (hasOpenworkTarget) {
-      setStateField("skillsStatus", "OpenWork server cannot write skills for this workspace.");
-      return;
-    }
-
-    if (!root) {
-      setStateField("skillsStatus", t("skills.pick_workspace_first"));
-      return;
-    }
-
-    if (isRemoteWorkspace) {
-      setStateField("skillsStatus", "OpenWork server unavailable. Connect to edit skills.");
-      return;
-    }
-    if (!isDesktopRuntime()) {
-      setStateField("skillsStatus", t("skills.desktop_required"));
-      return;
-    }
-    if (!isLocalWorkspace) {
-      setStateField("skillsStatus", "Local workers are required to edit skills.");
-      return;
-    }
-
-    options.setBusy(true);
-    options.setError(null);
-    setStateField("skillsStatus", null);
-    try {
-      const result = (await writeLocalSkill(root, trimmed, input.content)) as { ok: boolean; stderr?: string; stdout?: string };
-      if (!result.ok) {
-        setStateField("skillsStatus", result.stderr || result.stdout || t("skills.unknown_error"));
-      } else {
-        setStateField("skillsStatus", result.stdout || "Saved.");
-        options.markReloadRequired?.("skills", { type: "skill", name: trimmed, action: "updated" });
-      }
-      await refreshSkills({ force: true });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : t("skills.unknown_error");
-      options.setError(addOpencodeCacheHint(message));
-    } finally {
-      options.setBusy(false);
     }
   }
 
@@ -2346,16 +2093,12 @@ export function createExtensionsStore(options: {
     refreshPlugins,
     addPlugin,
     removePlugin,
-    importLocalSkill,
-    installSkillCreator,
     importCloudOrgPlugin,
     removeCloudOrgPlugin,
     previewClaudePlugin,
     installClaudePlugin,
-    revealSkillsFolder,
     uninstallSkill,
     readSkill,
-    saveSkill,
     abortRefreshes,
     ensureSkillsFresh,
     ensurePluginsFresh,

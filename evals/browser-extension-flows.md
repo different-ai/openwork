@@ -12,7 +12,6 @@ Run these before shipping changes that touch:
 - `apps/app/src/react-app/domains/settings/browser-extension-config.tsx`
 - `apps/app/src/react-app/domains/settings/extension-state.ts`
 - `apps/app/src/react-app/domains/settings/pages/extensions-view.tsx`
-- `apps/app/src/react-app/domains/settings/pages/cloud-marketplaces-view.tsx`
 - `apps/app/src/react-app/domains/session/surface/composer/composer.tsx`
 - `apps/app/src/react-app/domains/session/settings/extensions-pane-slot.tsx`
 - `apps/desktop/electron/main.mjs` (CDP port, browser panel)

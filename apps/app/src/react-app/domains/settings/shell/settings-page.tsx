@@ -16,8 +16,6 @@ import {
   RefreshCcw,
   ShieldCheck,
   SlidersHorizontal,
-  Sparkles,
-  Store,
   Terminal,
   UserCircle,
   Wrench,
@@ -75,12 +73,8 @@ export function getSettingsTabIcon(tab: SettingsTab) {
       return UserCircle;
     case "connect":
       return Cable;
-    case "cloud-marketplaces":
-      return Store;
     case "cloud-providers":
       return CloudCog;
-    case "skills":
-      return Sparkles;
     case "memory":
       return BrainCircuit;
     case "extensions":
@@ -116,12 +110,8 @@ export function getSettingsTabLabel(tab: SettingsTab) {
       return t("settings.tab_cloud_account");
     case "connect":
       return t("settings.tab_connect");
-    case "cloud-marketplaces":
-      return t("settings.tab_cloud_marketplaces");
     case "cloud-providers":
       return t("settings.tab_cloud_providers");
-    case "skills":
-      return t("settings.tab_skills");
     case "memory":
       return t("memory.tab_label");
     case "extensions":
@@ -159,12 +149,8 @@ export function getSettingsTabDescription(tab: SettingsTab) {
       return t("settings.tab_description_cloud_account");
     case "connect":
       return t("settings.tab_description_connect");
-    case "cloud-marketplaces":
-      return t("settings.tab_description_cloud_marketplaces");
     case "cloud-providers":
       return t("settings.tab_description_cloud_providers");
-    case "skills":
-      return t("settings.tab_description_skills");
     case "memory":
       return t("memory.tab_description");
     case "extensions":
