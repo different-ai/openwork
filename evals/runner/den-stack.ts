@@ -231,6 +231,22 @@ async function nativeMysqlHealthy(): Promise<boolean> {
   }
 }
 
+export function nativeMysqlServerArgs(
+  runAsRoot = process.getuid?.() === 0,
+): string[] {
+  const args = [
+    `--datadir=${MYSQL_STATE_DIR}`,
+    `--socket=${MYSQL_SOCKET}`,
+    "--port=3306",
+    "--bind-address=127.0.0.1",
+    "--skip-networking=0",
+    `--pid-file=${join(MYSQL_STATE_DIR, "mysql.pid")}`,
+    `--log-error=${join(MYSQL_STATE_DIR, "mysql.error.log")}`,
+  ];
+  if (runAsRoot) args.push("--user=root");
+  return args;
+}
+
 async function ensureNativeMysql(log: (message: string) => void): Promise<void> {
   if (await nativeMysqlHealthy()) {
     await writePidState("mysql.backend", "native");
@@ -262,15 +278,7 @@ async function ensureNativeMysql(log: (message: string) => void): Promise<void> 
   log("Starting native MariaDB...");
   const pid = spawnDetached(
     server,
-    [
-      `--datadir=${MYSQL_STATE_DIR}`,
-      `--socket=${MYSQL_SOCKET}`,
-      "--port=3306",
-      "--bind-address=127.0.0.1",
-      "--skip-networking=0",
-      `--pid-file=${join(MYSQL_STATE_DIR, "mysql.pid")}`,
-      `--log-error=${join(MYSQL_STATE_DIR, "mysql.error.log")}`,
-    ],
+    nativeMysqlServerArgs(),
     { logName: "mysql", env: {} },
   );
   await writePidState("mysql.pid", pid);

@@ -59,7 +59,7 @@
     "evals": "node evals/runner/run.mjs --mode automation",
     "fraimz": "node evals/runner/run.mjs --mode demo",
     "evals:typecheck": "tsc -p evals",
-    "evals:test": "node --test evals/runner/context.test.ts",
+    "evals:test": "node --test evals/runner/*.test.ts",
     "test:orchestrator": "pnpm --filter openwork-orchestrator test:router",
     "bump:patch": "pnpm --filter @openwork/app bump:patch",
     "bump:minor": "pnpm --filter @openwork/app bump:minor",
