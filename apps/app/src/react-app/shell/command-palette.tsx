@@ -9,6 +9,8 @@ import {
 import type { Agent } from "@opencode-ai/sdk/v2/client";
 
 import { t } from "@/i18n";
+import { useDesktopRestriction } from "@/react-app/domains/cloud/desktop-config-provider";
+import { getDesktopPolicyUserNotice } from "@/react-app/domains/cloud/desktop-policy-gates";
 import {
   Command,
   CommandDialog,
@@ -33,6 +35,7 @@ export type PaletteItem = {
   meta?: string;
   icon?: ReactNode;
   searchText?: string;
+  disabled?: boolean;
   action: () => void;
 };
 
@@ -120,6 +123,10 @@ export type CommandPaletteProps = {
 export function CommandPalette(props: CommandPaletteProps) {
   const [mode, setMode] = useState<PaletteMode>("root");
   const [agents, setAgents] = useState<Agent[]>([]);
+  const controlSettingsDisabled = useDesktopRestriction("allowControlSettings");
+  const settingsDisabledReason = controlSettingsDisabled
+    ? getDesktopPolicyUserNotice("allowControlSettings")
+    : null;
 
   useEffect(() => {
     if (!props.open) {
@@ -155,6 +162,7 @@ export function CommandPalette(props: CommandPaletteProps) {
   const accessibleTargetCount = props.accessibleTargets?.length ?? 0;
   const sessionGroupCount = props.sessionGroups?.length ?? 0;
   const canMoveCurrentSessionToGroup = Boolean(props.currentSessionForGroupMove && props.onMoveCurrentSessionToGroup);
+  const settingsCommandDisabled = settingsDisabledReason !== null;
 
   const rootItems = useMemo<PaletteItem[]>(() => [
     {
@@ -236,8 +244,9 @@ export function CommandPalette(props: CommandPaletteProps) {
     {
       id: "open-settings",
       title: t("settings.tab_general"),
-      detail: t("settings.tab_description_general"),
+      detail: settingsDisabledReason ?? t("settings.tab_description_general"),
       meta: t("session.cmd_settings_meta"),
+      disabled: settingsCommandDisabled,
       action: () => {
         props.onClose();
         props.onOpenSettings();
@@ -268,8 +277,9 @@ export function CommandPalette(props: CommandPaletteProps) {
     {
       id: "settings-extensions",
       title: t("settings.tab_extensions"),
-      detail: t("settings.tab_description_extensions"),
+      detail: settingsDisabledReason ?? t("settings.tab_description_extensions"),
       meta: t("session.cmd_settings_meta"),
+      disabled: settingsCommandDisabled,
       action: () => {
         props.onClose();
         props.onOpenSettings("/settings/extensions");
@@ -278,8 +288,9 @@ export function CommandPalette(props: CommandPaletteProps) {
     {
       id: "settings-appearance",
       title: t("settings.tab_appearance"),
-      detail: t("settings.tab_description_appearance"),
+      detail: settingsDisabledReason ?? t("settings.tab_description_appearance"),
       meta: t("session.cmd_settings_meta"),
+      disabled: settingsCommandDisabled,
       action: () => {
         props.onClose();
         props.onOpenSettings("/settings/appearance");
@@ -298,14 +309,15 @@ export function CommandPalette(props: CommandPaletteProps) {
     {
       id: "settings-updates",
       title: t("settings.tab_updates"),
-      detail: t("settings.tab_description_updates"),
+      detail: settingsDisabledReason ?? t("settings.tab_description_updates"),
       meta: t("session.cmd_settings_meta"),
+      disabled: settingsCommandDisabled,
       action: () => {
         props.onClose();
         props.onOpenSettings("/settings/updates");
       },
     },
-  ], [accessibleTargetCount, canMoveCurrentSessionToGroup, props, sessionGroupCount]);
+  ], [accessibleTargetCount, canMoveCurrentSessionToGroup, props, sessionGroupCount, settingsCommandDisabled, settingsDisabledReason]);
 
   const sessionItems = useMemo<PaletteItem[]>(
     () =>
@@ -486,7 +498,8 @@ export function CommandPalette(props: CommandPaletteProps) {
                 <CommandItem
                   key={item.id}
                   value={item.id}
-                  onClick={item.action}
+                  disabled={item.disabled}
+                  onClick={item.disabled ? undefined : item.action}
                 >
                   {item.icon ? <span className="mr-2 shrink-0">{item.icon}</span> : null}
                   <div className="min-w-0 flex-1">

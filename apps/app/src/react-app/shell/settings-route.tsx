@@ -130,6 +130,11 @@ import {
 } from "@/app/lib/desktop";
 import { isDesktopProviderBlocked } from "@/app/cloud/desktop-app-restrictions";
 import { useCheckDesktopRestriction, useDesktopConfig } from "@/react-app/domains/cloud/desktop-config-provider";
+import { DesktopPolicyBlockedPage } from "@/react-app/domains/cloud/desktop-policy-blocked-page";
+import {
+  getDesktopRestrictionDisabledReason,
+  isControlSettingsTabAllowed,
+} from "@/react-app/domains/cloud/desktop-policy-gates";
 import { useRestrictionNotice } from "@/react-app/domains/cloud/restriction-notice-provider";
 import { useCloudProviderAutoSync } from "@/react-app/domains/cloud/use-cloud-provider-auto-sync";
 import {
@@ -1767,6 +1772,10 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     };
   }, [computerUsePermissions, connectionsSnapshot, extensionStateVersion, providerConnectedIds, userEnvKeys]);
   const builtInExtensionsDisabled = checkDesktopRestriction({ restriction: "allowBuiltInExtensions" });
+  const manageExtensionsDisabledReason = getDesktopRestrictionDisabledReason({
+    checkRestriction: checkDesktopRestriction,
+    restriction: "allowManageExtensions",
+  });
   const restartExtensionLocalServer = useCallback(async () => {
     if (!isDesktopRuntime()) return false;
     try {
@@ -2283,6 +2292,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             accessHint={pluginsAccessHint}
             suggestedPlugins={SUGGESTED_PLUGINS}
             extensions={extensionsStore}
+            manageExtensionsDisabledReason={manageExtensionsDisabledReason}
             mcpConnectedAppsCount={mcpConnectedAppsCount}
             initialSection={route.extensionsSection}
             setSectionRoute={(section) => {
@@ -2316,7 +2326,9 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                 quickConnect={extensionItems.quickConnectEntries}
                 enablementContext={enablementContext}
                 builtInExtensionsDisabled={builtInExtensionsDisabled}
+                manageExtensionsDisabledReason={manageExtensionsDisabledReason}
                 connectMcp={(entry) => {
+                  if (manageExtensionsDisabledReason) return;
                   void connectionsStore.connectMcp(entry);
                 }}
                 configSlotForEntry={extensionController.configSlotForEntry}
@@ -2326,6 +2338,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                 }}
                 logoutMcpAuth={(name) => connectionsStore.logoutMcpAuth(name)}
                 removeMcp={(name) => {
+                  if (manageExtensionsDisabledReason) return;
                   void connectionsStore.removeMcp(name);
                 }}
                 setMcpEnabled={
@@ -2350,8 +2363,14 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                 availableConnectMcpStatuses={connectCapabilities.mcpStatuses}
                 installedPlugins={extensionItems.installedCloudPlugins}
                 installedOrgMcpItems={installedOrgMcpConnectionItems}
-                uninstallSkill={(name) => { void extensionsStore.uninstallSkill(name); }}
-                removeCloudPlugin={(pluginId) => { void extensionsStore.removeCloudOrgPlugin(pluginId); }}
+                uninstallSkill={(name) => {
+                  if (manageExtensionsDisabledReason) return;
+                  void extensionsStore.uninstallSkill(name);
+                }}
+                removeCloudPlugin={(pluginId) => {
+                  if (manageExtensionsDisabledReason) return;
+                  void extensionsStore.removeCloudOrgPlugin(pluginId);
+                }}
                 orgMcpDisconnectingId={orgMcpConnections.disconnectingId}
                 disconnectOrgMcp={(connectionId) => { void orgMcpConnections.disconnect(connectionId); }}
                 readSkill={(name) => extensionsStore.readSkill(name)}
@@ -2717,6 +2736,26 @@ export function SettingsRoute() {
 }
 
 export function SettingsSurface(props: SettingsSurfaceProps) {
+  const location = useLocation();
+  const checkDesktopRestriction = useCheckDesktopRestriction();
+  const route = props.embedded
+    ? parseSettingsPath(`/settings/${props.initialPath ?? "general"}`)
+    : parseSettingsPath(location.pathname);
+  const controlSettingsDisabledReason = getDesktopRestrictionDisabledReason({
+    checkRestriction: checkDesktopRestriction,
+    restriction: "allowControlSettings",
+  });
+
+  if (controlSettingsDisabledReason && !isControlSettingsTabAllowed(route.tab)) {
+    return (
+      <DesktopPolicyBlockedPage
+        notice={controlSettingsDisabledReason}
+        compact={props.embedded}
+        onClose={props.onClose}
+      />
+    );
+  }
+
   return (
     <CloudSessionProvider>
       <SettingsRouteContent {...props} />

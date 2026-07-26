@@ -23,6 +23,8 @@ import { cn } from "@/lib/utils";
 import { t } from "@/i18n";
 import { usePlatform } from "../../../kernel/platform";
 import { useDenAuth } from "../../cloud/den-auth-provider";
+import { useDesktopRestriction } from "../../cloud/desktop-config-provider";
+import { getDesktopPolicyUserNotice } from "../../cloud/desktop-policy-gates";
 import { useControlAction, type OpenworkControlAction } from "../../../shell/control/control-provider";
 import { useShellConfig } from "../../../shell/shell-config";
 import type { OpenworkServerStatus } from "../../../../app/lib/openwork-server";
@@ -173,6 +175,10 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
   const platform = usePlatform();
   const navigate = useNavigate();
   const { config: shellConfig } = useShellConfig();
+  const controlSettingsDisabled = useDesktopRestriction("allowControlSettings");
+  const settingsDisabledReason = controlSettingsDisabled
+    ? getDesktopPolicyUserNotice("allowControlSettings")
+    : null;
   const triggerRef = useRef<HTMLButtonElement>(null);
   const [initializing, setInitializing] = useState(
     () => Date.now() - BOOT_STARTED_AT < INITIALIZING_MS,
@@ -220,10 +226,10 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
     label: "Open settings from the account menu",
     description: "Use the account menu in the sidebar footer.",
     sideEffect: "navigation",
-    disabled: props.showSettingsButton === false || !openSettings,
+    disabled: props.showSettingsButton === false || !openSettings || settingsDisabledReason !== null,
     targetRef: triggerRef,
     execute: () => openSettings?.(),
-  }), [openSettings, props.showSettingsButton]);
+  }), [openSettings, props.showSettingsButton, settingsDisabledReason]);
   useControlAction(settingsControlAction);
 
   const user = denAuth.user;
@@ -387,10 +393,21 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
         {connectNeedsAttention || promoVisible ? <DropdownMenuSeparator /> : null}
 
         {props.showSettingsButton !== false ? (
-          <DropdownMenuItem onClick={openSettings}>
-            <Settings className="size-3.5" />
-            {t("status.settings")}
-          </DropdownMenuItem>
+          <>
+            <DropdownMenuItem
+              disabled={settingsDisabledReason !== null}
+              onClick={settingsDisabledReason ? undefined : openSettings}
+              title={settingsDisabledReason ?? undefined}
+            >
+              <Settings className="size-3.5" />
+              {t("status.settings")}
+            </DropdownMenuItem>
+            {settingsDisabledReason ? (
+              <div className="px-3 pb-2 text-[11px] leading-4 text-muted-foreground">
+                {settingsDisabledReason}
+              </div>
+            ) : null}
+          </>
         ) : null}
         {shellConfig.docsButton ? (
           <DropdownMenuItem onClick={openDocs}>

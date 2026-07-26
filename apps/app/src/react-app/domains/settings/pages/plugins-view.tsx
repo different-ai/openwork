@@ -54,12 +54,14 @@ export type PluginsViewProps = {
   canEditPlugins: boolean;
   canUseGlobalScope: boolean;
   accessHint?: string | null;
+  manageExtensionsDisabledReason?: string | null;
   suggestedPlugins: SuggestedPlugin[];
 };
 
 export function PluginsView(props: PluginsViewProps) {
   const { extensions } = props;
   const scope = extensions.pluginScope;
+  const manageDisabledReason = props.manageExtensionsDisabledReason ?? null;
   return (
     <section className="space-y-6 max-w-3xl w-full">
       <div className="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-4">
@@ -111,6 +113,11 @@ export function PluginsView(props: PluginsViewProps) {
           </div>
           {props.accessHint ? (
             <div className="text-gray-9">{props.accessHint}</div>
+          ) : null}
+          {manageDisabledReason ? (
+            <div className="rounded-lg border border-amber-6 bg-amber-2 px-3 py-2 text-amber-11">
+              {manageDisabledReason}
+            </div>
           ) : null}
         </div>
 
@@ -168,10 +175,12 @@ export function PluginsView(props: PluginsViewProps) {
                         disabled={
                           props.busy ||
                           isInstalled ||
+                          manageDisabledReason !== null ||
                           !props.canEditPlugins ||
                           (scope === "project" &&
                             !props.selectedWorkspaceRoot.trim())
                         }
+                        title={manageDisabledReason ?? undefined}
                       >
                         {isInstalled ? t("plugins.added") : t("plugins.add")}
                       </Button>
@@ -269,7 +278,8 @@ export function PluginsView(props: PluginsViewProps) {
                       variant="destructive"
                       size="xs"
                       onClick={() => extensions.removePlugin(plugin.name)}
-                      disabled={props.busy || !props.canEditPlugins}
+                      disabled={props.busy || manageDisabledReason !== null || !props.canEditPlugins}
+                      title={manageDisabledReason ?? undefined}
                     >
                       {t("plugins.remove")}
                     </Button>
@@ -288,9 +298,11 @@ export function PluginsView(props: PluginsViewProps) {
                 placeholder="opencode-wakatime"
                 value={extensions.pluginInput()}
                 onChange={(event) =>
-                  extensions.setPluginInput(event.currentTarget.value)
+                  manageDisabledReason ? undefined : extensions.setPluginInput(event.currentTarget.value)
                 }
                 hint={t("plugins.add_hint")}
+                disabled={manageDisabledReason !== null}
+                title={manageDisabledReason ?? undefined}
               />
             </div>
             <Button
@@ -298,8 +310,10 @@ export function PluginsView(props: PluginsViewProps) {
               disabled={
                 props.busy ||
                 !extensions.pluginInput().trim() ||
+                manageDisabledReason !== null ||
                 !props.canEditPlugins
               }
+              title={manageDisabledReason ?? undefined}
               className="md:mt-6"
             >
               {t("plugins.add")}

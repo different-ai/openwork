@@ -130,6 +130,8 @@ export type McpViewProps = {
   enablementContext?: import("../../../../app/enablement").EnablementContext;
   /** Organization policy restriction for OpenWork-provided built-in extensions. */
   builtInExtensionsDisabled?: boolean;
+  /** Organization policy restriction for local extension install/remove/toggle actions. */
+  manageExtensionsDisabledReason?: string | null;
   /** Preview a Claude Code plugin bundle from a GitHub URL ("Will install" disclosure). */
   previewClaudePlugin?: (url: string) => Promise<OpenworkClaudePluginPreview>;
   /** Install a Claude Code plugin bundle from a GitHub URL. */
@@ -308,6 +310,8 @@ export function McpView(props: McpViewProps) {
   const configRequestId = useRef(0);
 
   const quickConnectList = props.quickConnect;
+  const manageExtensionsDisabledReason = props.manageExtensionsDisabledReason ?? null;
+
   const setInventoryFilter = (nextFilter: ExtensionInventoryFilter) => {
     setFilter(nextFilter);
     props.onFilterChange?.(nextFilter);
@@ -555,11 +559,24 @@ export function McpView(props: McpViewProps) {
         </div>
       ) : null}
 
+      {manageExtensionsDisabledReason ? (
+        <div className="rounded-xl border border-amber-6 bg-amber-2 px-4 py-3 text-xs text-amber-11">
+          {manageExtensionsDisabledReason}
+        </div>
+      ) : null}
+
       <McpCustomAppCard
-        onOpen={() => setAddMcpModalOpen(true)}
+        disabledReason={manageExtensionsDisabledReason}
+        onOpen={() => {
+          if (manageExtensionsDisabledReason) return;
+          setAddMcpModalOpen(true);
+        }}
         onOpenGithubImport={
           props.previewClaudePlugin && props.installClaudePlugin
-            ? () => setClaudeImportOpen(true)
+            ? () => {
+                if (manageExtensionsDisabledReason) return;
+                setClaudeImportOpen(true);
+              }
             : undefined
         }
       />
@@ -659,6 +676,8 @@ export function McpView(props: McpViewProps) {
         disabledReasonForEntry={(entry) =>
           props.builtInExtensionsDisabled && isBuiltInOpenWorkExtension(entry)
             ? builtInExtensionDisabledReason
+            : !isQuickConnectConfigured(entry)
+              ? manageExtensionsDisabledReason
             : null
         }
         isConfigured={(entry) => {
@@ -713,6 +732,7 @@ export function McpView(props: McpViewProps) {
         }}
         onToggleEnabled={props.setMcpEnabled}
         onToggleBusy={setTogglingMcp}
+        manageExtensionsDisabledReason={manageExtensionsDisabledReason}
       />
 
       <ConfirmModal
@@ -744,6 +764,11 @@ export function McpView(props: McpViewProps) {
           setRemoveTarget(null);
         }}
         onConfirm={() => {
+          if (manageExtensionsDisabledReason) {
+            setRemoveOpen(false);
+            setRemoveTarget(null);
+            return;
+          }
           if (removeTarget) props.removeMcp(removeTarget);
           setRemoveOpen(false);
           setRemoveTarget(null);
@@ -764,16 +789,19 @@ export function McpView(props: McpViewProps) {
       />
 
       <AddMcpModal
-        open={addMcpModalOpen}
+        open={addMcpModalOpen && !manageExtensionsDisabledReason}
         onClose={() => setAddMcpModalOpen(false)}
-        onAdd={(entry) => props.connectMcp(entry)}
+        onAdd={(entry) => {
+          if (manageExtensionsDisabledReason) return;
+          props.connectMcp(entry);
+        }}
         busy={props.busy}
         isRemoteWorkspace={props.isRemoteWorkspace}
       />
 
       {props.previewClaudePlugin && props.installClaudePlugin ? (
         <ClaudePluginImportModal
-          open={claudeImportOpen}
+          open={claudeImportOpen && !manageExtensionsDisabledReason}
           onClose={() => setClaudeImportOpen(false)}
           onPreview={props.previewClaudePlugin}
           onInstall={props.installClaudePlugin}
@@ -784,16 +812,17 @@ export function McpView(props: McpViewProps) {
         const extensionConfigSlot = props.configSlotForEntry?.(detailEntry) ?? null;
         const hasConfigSlot = extensionConfigSlot !== null;
         const hidden = isOpenWorkExtensionHidden(detailEntry);
-        const disabledReason = props.builtInExtensionsDisabled && isBuiltInOpenWorkExtension(detailEntry)
+        const builtInDisabledReason = props.builtInExtensionsDisabled && isBuiltInOpenWorkExtension(detailEntry)
           ? builtInExtensionDisabledReason
           : null;
-        const isConnected = disabledReason
+        const isConnected = builtInDisabledReason
           ? false
           : isToggleOnlyExtension(detailEntry)
           ? isOpenWorkExtensionEnabled(detailEntry)
           : detailEntry.kind === "extension" && !isMcpBackedExtension(detailEntry)
           ? props.isExtensionConnected?.(detailEntry) ?? false
           : isQuickConnectConfigured(detailEntry);
+        const disabledReason = builtInDisabledReason ?? manageExtensionsDisabledReason;
         const isGoogleWorkspace = detailEntry.id === "google-workspace";
         return (
           <ExtensionDetailModal
@@ -832,8 +861,8 @@ export function McpView(props: McpViewProps) {
               props.removeMcp(slug);
               setDetailEntry(null);
             } : undefined}
-            onHide={() => setOpenWorkExtensionHidden(detailEntry, true)}
-            onShow={() => setOpenWorkExtensionHidden(detailEntry, false)}
+            onHide={manageExtensionsDisabledReason ? undefined : () => setOpenWorkExtensionHidden(detailEntry, true)}
+            onShow={manageExtensionsDisabledReason ? undefined : () => setOpenWorkExtensionHidden(detailEntry, false)}
           />
         );
       })() : null}
@@ -850,18 +879,19 @@ export function McpView(props: McpViewProps) {
             connected={true}
             connectedLabel={detailSkill.origin === "openwork-connect" ? "Available through OpenWork Connect" : undefined}
             hidden={hidden}
+            disabledReason={detailSkill.origin === "openwork-connect" ? null : manageExtensionsDisabledReason}
             path={detailSkill.origin === "openwork-connect" ? undefined : detailSkill.path}
             trigger={detailSkill.trigger}
             contentPreview={detailSkillContent ?? undefined}
             onReveal={detailSkill.path && detailSkill.origin !== "openwork-connect" ? () => {
               void revealDesktopItemInDir(detailSkill.path);
             } : undefined}
-            onUninstall={props.uninstallSkill && detailSkill.origin !== "openwork-connect" ? () => {
+            onUninstall={props.uninstallSkill && detailSkill.origin !== "openwork-connect" && !manageExtensionsDisabledReason ? () => {
               props.uninstallSkill?.(detailSkill.name);
               setDetailSkill(null);
             } : undefined}
-            onHide={() => setOpenWorkExtensionHidden(getSkillHiddenId(detailSkill), true)}
-            onShow={() => setOpenWorkExtensionHidden(getSkillHiddenId(detailSkill), false)}
+            onHide={manageExtensionsDisabledReason ? undefined : () => setOpenWorkExtensionHidden(getSkillHiddenId(detailSkill), true)}
+            onShow={manageExtensionsDisabledReason ? undefined : () => setOpenWorkExtensionHidden(getSkillHiddenId(detailSkill), false)}
           />
         );
       })() : null}
@@ -899,12 +929,13 @@ export function McpView(props: McpViewProps) {
             kind="extension"
             connected={true}
             hidden={hidden}
-            onUninstall={props.removeCloudPlugin ? () => {
+            disabledReason={manageExtensionsDisabledReason}
+            onUninstall={props.removeCloudPlugin && !manageExtensionsDisabledReason ? () => {
               void props.removeCloudPlugin?.(detailPlugin.pluginId);
               setDetailPlugin(null);
             } : undefined}
-            onHide={() => setOpenWorkExtensionHidden(`plugin:${detailPlugin.pluginId}`, true)}
-            onShow={() => setOpenWorkExtensionHidden(`plugin:${detailPlugin.pluginId}`, false)}
+            onHide={manageExtensionsDisabledReason ? undefined : () => setOpenWorkExtensionHidden(`plugin:${detailPlugin.pluginId}`, true)}
+            onShow={manageExtensionsDisabledReason ? undefined : () => setOpenWorkExtensionHidden(`plugin:${detailPlugin.pluginId}`, false)}
           />
         );
       })() : null}
@@ -957,7 +988,12 @@ function McpViewHeader(props: { connectedCount: number }) {
   );
 }
 
-function McpCustomAppCard(props: { onOpen: () => void; onOpenGithubImport?: () => void }) {
+function McpCustomAppCard(props: {
+  onOpen: () => void;
+  onOpenGithubImport?: () => void;
+  disabledReason?: string | null;
+}) {
+  const disabled = props.disabledReason !== null && props.disabledReason !== undefined;
   return (
     <div className="rounded-2xl border border-blue-6/30 bg-[linear-gradient(180deg,rgba(59,130,246,0.08),rgba(59,130,246,0.03))] p-5 sm:px-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -967,17 +1003,31 @@ function McpCustomAppCard(props: { onOpen: () => void; onOpenGithubImport?: () =
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {props.onOpenGithubImport ? (
-            <Button variant="outline" onClick={props.onOpenGithubImport}>
+            <Button
+              variant="outline"
+              disabled={disabled}
+              onClick={props.onOpenGithubImport}
+              title={props.disabledReason ?? undefined}
+            >
               <Download size={14} />
               From GitHub
             </Button>
           ) : null}
-          <Button onClick={props.onOpen}>
+          <Button
+            disabled={disabled}
+            onClick={props.onOpen}
+            title={props.disabledReason ?? undefined}
+          >
             <Plus size={14} />
             {t("mcp.add_modal_title")}
           </Button>
         </div>
       </div>
+      {props.disabledReason ? (
+        <div className="mt-3 text-xs font-medium text-amber-11">
+          {props.disabledReason}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -1173,6 +1223,7 @@ function McpConfiguredServersSection(props: {
   onRemove: (name: string) => void;
   onToggleEnabled?: (name: string, enabled: boolean) => Promise<void> | void;
   onToggleBusy: (value: SetStateAction<string | null>) => void;
+  manageExtensionsDisabledReason: string | null;
 }) {
   return (
     <div className="space-y-4">
@@ -1208,6 +1259,7 @@ function McpConfiguredServersSection(props: {
               onRemove={props.onRemove}
               onToggleEnabled={props.onToggleEnabled}
               onToggleBusy={props.onToggleBusy}
+              manageExtensionsDisabledReason={props.manageExtensionsDisabledReason}
             />
           ))}
         </div>
@@ -1244,6 +1296,7 @@ function McpConfiguredServerRow(props: {
   onRemove: (name: string) => void;
   onToggleEnabled?: (name: string, enabled: boolean) => Promise<void> | void;
   onToggleBusy: (value: SetStateAction<string | null>) => void;
+  manageExtensionsDisabledReason: string | null;
 }) {
   const Icon = serviceIcon(props.entry.name);
   return (
@@ -1272,6 +1325,7 @@ function McpConfiguredServerRow(props: {
 }
 
 function McpConfiguredServerDetails(props: Parameters<typeof McpConfiguredServerRow>[0]) {
+  const manageDisabled = props.manageExtensionsDisabledReason !== null;
   return (
     <div className="animate-in fade-in slide-in-from-top-1 space-y-3 border-t border-blue-6/20 px-4 py-3 duration-200">
       <div className="flex items-center gap-4 text-xs">
@@ -1305,10 +1359,11 @@ function McpConfiguredServerDetails(props: Parameters<typeof McpConfiguredServer
           <Button
             variant="outline"
             size="sm"
-            disabled={props.busy || props.togglingMcp === props.entry.name}
+            disabled={props.busy || manageDisabled || props.togglingMcp === props.entry.name}
+            title={props.manageExtensionsDisabledReason ?? undefined}
             onClick={(event) => {
               event.stopPropagation();
-              if (props.togglingMcp) return;
+              if (props.togglingMcp || manageDisabled) return;
               const next = props.entry.config.enabled !== false ? false : true;
               props.onToggleBusy(props.entry.name);
               void Promise.resolve(props.onToggleEnabled?.(props.entry.name, next)).finally(() => props.onToggleBusy(null));
@@ -1321,14 +1376,22 @@ function McpConfiguredServerDetails(props: Parameters<typeof McpConfiguredServer
         <Button
           variant="destructive"
           size="sm"
+          disabled={manageDisabled}
+          title={props.manageExtensionsDisabledReason ?? undefined}
           onClick={(event) => {
             event.stopPropagation();
+            if (manageDisabled) return;
             props.onRemove(props.entry.name);
           }}
         >
           {t("mcp.remove_app")}
         </Button>
       </div>
+      {props.manageExtensionsDisabledReason ? (
+        <div className="text-[11px] font-medium text-amber-11">
+          {props.manageExtensionsDisabledReason}
+        </div>
+      ) : null}
     </div>
   );
 }

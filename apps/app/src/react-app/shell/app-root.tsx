@@ -19,6 +19,12 @@ import { evalRelaunchDesktopApp } from "../../app/lib/desktop";
 import { Button } from "../../components/ui/button";
 import { t } from "../../i18n";
 import { useDenAuth } from "../domains/cloud/den-auth-provider";
+import { DesktopPolicyBlockedPage } from "../domains/cloud/desktop-policy-blocked-page";
+import {
+  getDesktopPolicyUserNotice,
+  isControlSettingsTabAllowed,
+} from "../domains/cloud/desktop-policy-gates";
+import { useDesktopRestriction } from "../domains/cloud/desktop-config-provider";
 import { ForcedSigninPage } from "../domains/cloud/forced-signin-page";
 import { OrgOnboardingPage } from "../domains/cloud/org-onboarding-page";
 import { NewProvidersListener } from "./new-providers-listener";
@@ -35,12 +41,16 @@ import {
 } from "./control/control-provider";
 import { OpenworkContextPublisher } from "./openwork-context-publisher";
 import { SessionRoute } from "./session-route";
-import { SettingsRoute } from "./settings-route";
+import { parseSettingsPath, SettingsRoute } from "./settings-route";
 import { ShellConfigProvider } from "./shell-config";
 import { WelcomeRoute } from "./welcome-route";
 
 
 type DenSigninGateProps = {
+  children: ReactNode;
+};
+
+type RouteGateProps = {
   children: ReactNode;
 };
 
@@ -177,6 +187,22 @@ function DenSigninGate({ children }: DenSigninGateProps) {
       ) : null}
       {children}
     </>
+  );
+}
+
+function SettingsPolicyGate({ children }: RouteGateProps) {
+  const location = useLocation();
+  const controlSettingsDisabled = useDesktopRestriction("allowControlSettings");
+  const route = parseSettingsPath(location.pathname);
+
+  if (!controlSettingsDisabled || isControlSettingsTabAllowed(route.tab)) {
+    return <>{children}</>;
+  }
+
+  return (
+    <DesktopPolicyBlockedPage
+      notice={getDesktopPolicyUserNotice("allowControlSettings")}
+    />
   );
 }
 
@@ -394,7 +420,9 @@ export function AppRoot() {
                 path="/workspace/:workspaceId/settings/*"
                 element={
                   <DevProfiler id="SettingsRoute">
-                    <SettingsRoute />
+                    <SettingsPolicyGate>
+                      <SettingsRoute />
+                    </SettingsPolicyGate>
                   </DevProfiler>
                 }
               />
@@ -402,7 +430,9 @@ export function AppRoot() {
                 path="/settings/*"
                 element={
                   <DevProfiler id="SettingsRoute">
-                    <SettingsRoute />
+                    <SettingsPolicyGate>
+                      <SettingsRoute />
+                    </SettingsPolicyGate>
                   </DevProfiler>
                 }
               />

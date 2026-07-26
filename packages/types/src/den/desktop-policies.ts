@@ -155,6 +155,14 @@ export const desktopPolicyKeys = desktopPolicyDefinitions.map(
   (definition) => definition.id,
 ) as DesktopPolicyKey[];
 
+export function getDesktopPolicyDefinition(id: DesktopPolicyKey): DesktopPolicyDefinition {
+  for (const definition of desktopPolicyDefinitions) {
+    if (definition.id === id) return definition;
+  }
+
+  throw new Error(`Unknown desktop policy: ${id}`);
+}
+
 export const desktopPolicyDefaults = Object.fromEntries(
   desktopPolicyDefinitions.map((definition) => [
     definition.id,
