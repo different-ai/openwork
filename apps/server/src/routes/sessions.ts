@@ -1,4 +1,5 @@
 import type { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
+import type { CodexRuntimeService } from "../codex-opencode-adapter.js";
 import { ApiError } from "../errors.js";
 import { buildSession, buildSessionList, buildSessionMessages, buildSessionSnapshot } from "../session-read-model.js";
 import {
@@ -38,6 +39,7 @@ interface RegisterSessionRoutesOptions {
   resolveWorkspaceWithoutBootstrap: (config: ServerConfig, id: string) => Promise<WorkspaceInfo>;
   createWorkspaceOpencodeClient: (config: ServerConfig, workspace: WorkspaceInfo) => WorkspaceOpencodeClient;
   unwrapOpencodeResult: UnwrapOpencodeResult;
+  codexRuntime: CodexRuntimeService;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -59,6 +61,7 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     resolveWorkspaceWithoutBootstrap,
     createWorkspaceOpencodeClient,
     unwrapOpencodeResult,
+    codexRuntime,
   } = options;
   const sessionGroupEvents = new SessionGroupEventStore();
 
@@ -82,6 +85,9 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     input: { roots?: boolean; start?: number; search?: string; limit?: number },
   ) {
     try {
+      if (await codexRuntime.isSelected(workspace.id)) {
+        return buildSessionList(await codexRuntime.adapterFor(workspace).listSessions(input));
+      }
       const opencode = createWorkspaceOpencodeClient(config, workspace);
       return buildSessionList(
         unwrapOpencodeResult(
@@ -103,6 +109,14 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     workspace: WorkspaceInfo,
     input: { title: string; prompt?: string },
   ) {
+    if (await codexRuntime.isSelected(workspace.id)) {
+      const adapter = codexRuntime.adapterFor(workspace);
+      const session = buildSession(await adapter.createSession({ title: input.title }));
+      if (input.prompt) {
+        await adapter.startTurn(session.id, { parts: [{ type: "text", text: input.prompt }] });
+      }
+      return { item: session, started: Boolean(input.prompt) };
+    }
     const opencode = createWorkspaceOpencodeClient(config, workspace);
     const session = buildSession(
       unwrapOpencodeResult(
@@ -130,6 +144,9 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
 
   async function readWorkspaceSession(workspace: WorkspaceInfo, sessionId: string) {
     try {
+      if (await codexRuntime.isSelected(workspace.id)) {
+        return buildSession(await codexRuntime.adapterFor(workspace).getSession(sessionId));
+      }
       const opencode = createWorkspaceOpencodeClient(config, workspace);
       return buildSession(
         unwrapOpencodeResult(
@@ -148,6 +165,9 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     input: { limit?: number },
   ) {
     try {
+      if (await codexRuntime.isSelected(workspace.id)) {
+        return buildSessionMessages(await codexRuntime.adapterFor(workspace).getMessages(sessionId));
+      }
       const opencode = createWorkspaceOpencodeClient(config, workspace);
       return buildSessionMessages(
         unwrapOpencodeResult(
@@ -166,6 +186,15 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     input: { limit?: number },
   ) {
     try {
+      if (await codexRuntime.isSelected(workspace.id)) {
+        const adapter = codexRuntime.adapterFor(workspace);
+        const [session, messages, statuses] = await Promise.all([
+          adapter.getSession(sessionId),
+          adapter.getMessages(sessionId),
+          adapter.getStatus(),
+        ]);
+        return buildSessionSnapshot({ session, messages, todos: [], statuses });
+      }
       const opencode = createWorkspaceOpencodeClient(config, workspace);
       const [session, messages, todos, statuses] = await Promise.all([
         opencode.session
@@ -415,11 +444,15 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
       throw new ApiError(400, "invalid_payload", "sessionId is required");
     }
 
-    const opencode = createWorkspaceOpencodeClient(config, workspace);
-    unwrapOpencodeResult(
-      await opencode.session.delete({ sessionID: sessionId }),
-      `/session/${encodeURIComponent(sessionId)}`,
-    );
+    if (await codexRuntime.isSelected(workspace.id)) {
+      await codexRuntime.adapterFor(workspace).deleteSession(sessionId);
+    } else {
+      const opencode = createWorkspaceOpencodeClient(config, workspace);
+      unwrapOpencodeResult(
+        await opencode.session.delete({ sessionID: sessionId }),
+        `/session/${encodeURIComponent(sessionId)}`,
+      );
+    }
 
     return jsonResponse({ ok: true });
   });

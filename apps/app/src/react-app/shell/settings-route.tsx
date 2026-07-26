@@ -68,6 +68,7 @@ import { createProviderAuthStore, useProviderAuthStoreSnapshot } from "@/react-a
 import ProviderAuthModal from "@/react-app/domains/connections/provider-auth/provider-auth-modal";
 import ConnectionsModals from "@/react-app/domains/connections/modals";
 import { AiSettingsView } from "@/react-app/domains/settings/pages/ai-view";
+import { CodexRuntimeSection } from "@/react-app/domains/settings/codex-runtime-section";
 // Side-effect imports: register extension config components into the registry.
 import "@/react-app/domains/settings/ollama-config";
 import "@/react-app/domains/settings/computer-use-config";
@@ -2232,6 +2233,42 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             onSubscribeOpenWorkModels={subscribeToOpenWorkModels}
             onRefreshOpenWorkModels={refreshOpenWorkModels}
             onDismissOpenWorkModels={dismissOpenWorkModelsPromo}
+            agentRuntimeView={
+              <CodexRuntimeSection
+                client={selectedWorkspaceEndpoint?.client ?? openworkClient}
+                workspaceId={runtimeWorkspaceId}
+                remote={isRemoteWorkspace}
+                onOpenExternal={(url) => platform.openLink(url)}
+                onRuntimeChanged={async (runtimeStatus) => {
+                  if (runtimeStatus.runtime === "codex" && runtimeStatus.defaultModel) {
+                    local.setPrefs((previous) => ({
+                      ...previous,
+                      defaultModel: {
+                        providerID: "codex",
+                        modelID: runtimeStatus.defaultModel ?? "",
+                      },
+                      modelVariant: null,
+                    }));
+                  } else if (
+                    runtimeStatus.runtime === "opencode" &&
+                    local.prefs.defaultModel?.providerID === "codex"
+                  ) {
+                    const provider = providers.find((item) => providerConnectedIdSet.has(item.id));
+                    const modelID = provider
+                      ? providerDefaults[provider.id] || Object.keys(provider.models ?? {})[0] || ""
+                      : "";
+                    local.setPrefs((previous) => ({
+                      ...previous,
+                      defaultModel: provider && modelID
+                        ? { providerID: provider.id, modelID }
+                        : null,
+                      modelVariant: null,
+                    }));
+                  }
+                  await providerAuthStore.refreshProviders({ force: true });
+                }}
+              />
+            }
             cloudProvidersView={
               <CloudProvidersView
                 embedded

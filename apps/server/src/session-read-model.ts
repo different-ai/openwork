@@ -1,14 +1,4 @@
 import { z } from "zod";
-import type {
-  SessionGetResponse,
-  SessionListResponse,
-  // The v1 `/session/{id}/message` route returns a bare message array; the
-  // `SessionMessagesResponse` name now belongs to the paginated v2 envelope.
-  SessionMessagesResponse2 as SessionMessagesArrayResponse,
-  SessionStatusResponse,
-  SessionTodoResponse,
-} from "@opencode-ai/sdk/v2/client";
-
 import { ApiError } from "./errors.js";
 
 const sessionTimeSchema = z
@@ -107,31 +97,31 @@ function parseOrThrow<T>(schema: z.ZodType<T>, value: unknown, label: string): T
   });
 }
 
-export function buildSessionList(value: SessionListResponse): SessionInfoReadModel[] {
+export function buildSessionList(value: unknown): SessionInfoReadModel[] {
   return parseOrThrow(sessionListSchema, value, "session list");
 }
 
-export function buildSession(value: SessionGetResponse): SessionInfoReadModel {
+export function buildSession(value: unknown): SessionInfoReadModel {
   return parseOrThrow(sessionInfoSchema, value, "session");
 }
 
-export function buildSessionMessages(value: SessionMessagesArrayResponse): SessionMessageReadModel[] {
+export function buildSessionMessages(value: unknown): SessionMessageReadModel[] {
   return parseOrThrow(sessionMessagesSchema, value, "session messages");
 }
 
-export function buildSessionTodos(value: SessionTodoResponse): SessionTodoReadModel[] {
+export function buildSessionTodos(value: unknown): SessionTodoReadModel[] {
   return parseOrThrow(sessionTodosSchema, value, "session todos");
 }
 
-export function buildSessionStatuses(value: SessionStatusResponse): Record<string, SessionStatusReadModel> {
+export function buildSessionStatuses(value: unknown): Record<string, SessionStatusReadModel> {
   return parseOrThrow(sessionStatusesSchema, value, "session statuses");
 }
 
 export function buildSessionSnapshot(input: {
-  session: SessionGetResponse;
-  messages: SessionMessagesArrayResponse;
-  todos: SessionTodoResponse;
-  statuses: SessionStatusResponse;
+  session: unknown;
+  messages: unknown;
+  todos: unknown;
+  statuses: unknown;
 }): SessionSnapshotReadModel {
   const session = buildSession(input.session);
   const messages = buildSessionMessages(input.messages);

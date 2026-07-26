@@ -965,7 +965,7 @@ export function SessionRoute() {
     todos,
   } = useSessionInteractions({
     client: opencodeClient,
-    workspaceId: selectedWorkspaceId,
+    workspaceId: selectedWorkspaceEndpoint?.workspaceId ?? selectedWorkspaceId,
     sessionId: selectedSessionId,
     workspaceRoot: selectedWorkspaceRoot,
   });

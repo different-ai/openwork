@@ -53,6 +53,7 @@ export type AiSettingsViewProps = {
   onRefreshOpenWorkModels?: () => void | Promise<void>;
   onDismissOpenWorkModels?: () => void | Promise<void>;
   cloudProvidersView?: ReactNode;
+  agentRuntimeView?: ReactNode;
 };
 
 function providerSourceLabel(source?: ConnectedProvider["source"]) {
@@ -84,6 +85,7 @@ export function AiSettingsView(props: AiSettingsViewProps) {
 
   return (
     <LayoutStack>
+      {props.agentRuntimeView}
       {/* ---- Providers ---- */}
       <LayoutSection>
         <LayoutSectionHeader>

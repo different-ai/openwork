@@ -90,6 +90,37 @@ export type OpenworkRuntimeSnapshot = {
   services: OpenworkRuntimeServiceSnapshot[];
 };
 
+export type OpenworkAgentRuntime = "opencode" | "codex";
+
+export type OpenworkAgentRuntimeStatus = {
+  runtime: OpenworkAgentRuntime;
+  available: boolean;
+  experimental: true;
+  version: string | null;
+  error: string | null;
+  process: {
+    running: boolean;
+    healthy: boolean;
+    transport: "stdio";
+    placement: "remote-worker";
+    publicPort: false;
+    platform: string | null;
+  };
+  account: {
+    connected: boolean;
+    type: "chatgpt" | "apiKey" | "amazonBedrock" | null;
+    email: string | null;
+    planType: string | null;
+  };
+  defaultModel: string | null;
+};
+
+export type OpenworkCodexDeviceLogin = {
+  loginId: string;
+  verificationUrl: string;
+  userCode: string;
+};
+
 export type OpenworkServerSettings = {
   urlOverride?: string;
   portOverride?: number;
@@ -1641,6 +1672,42 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         baseUrl,
         `/workspace/${encodeURIComponent(workspaceId)}/runtime-config`,
         { token, hostToken, timeoutMs: timeouts.config },
+      ),
+    getAgentRuntime: (workspaceId: string) =>
+      requestJson<OpenworkAgentRuntimeStatus>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/agent-runtime`,
+        { token, hostToken, timeoutMs: timeouts.status },
+      ),
+    setAgentRuntime: (workspaceId: string, runtime: OpenworkAgentRuntime) =>
+      requestJson<OpenworkAgentRuntimeStatus>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/agent-runtime`,
+        {
+          token,
+          hostToken,
+          method: "PUT",
+          body: { runtime },
+          timeoutMs: 30_000,
+        },
+      ),
+    startCodexDeviceLogin: (workspaceId: string) =>
+      requestJson<OpenworkCodexDeviceLogin>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/agent-runtime/codex/login`,
+        { token, hostToken, method: "POST", timeoutMs: 30_000 },
+      ),
+    cancelCodexDeviceLogin: (workspaceId: string, loginId: string) =>
+      requestJson<{ ok: true }>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/agent-runtime/codex/login/cancel`,
+        { token, hostToken, method: "POST", body: { loginId }, timeoutMs: timeouts.config },
+      ),
+    logoutCodex: (workspaceId: string) =>
+      requestJson<OpenworkAgentRuntimeStatus>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/agent-runtime/codex/logout`,
+        { token, hostToken, method: "POST", timeoutMs: timeouts.config },
       ),
     patchConfig: (workspaceId: string, payload: { opencode?: Record<string, unknown>; openwork?: Record<string, unknown> }) =>
       requestJson<{ updatedAt?: number | null }>(baseUrl, `/workspace/${workspaceId}/config`, {

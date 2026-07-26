@@ -65,6 +65,9 @@ import { addRoute, matchRoute, type AuthMode, type RequestContext, type Route } 
 import { registerSessionRoutes } from "./routes/sessions.js";
 import { registerWorkspaceRoutes } from "./routes/workspaces.js";
 import { registerCloudMcpRoutes } from "./routes/cloud-mcp.js";
+import { registerAgentRuntimeRoutes } from "./routes/agent-runtime.js";
+import { CodexAppServerManager } from "./codex-app-server.js";
+import { CodexRuntimeService } from "./codex-opencode-adapter.js";
 import {
   markOpenworkCloudMcpStale,
   reconcilePersistedOpenworkCloudMcp,
@@ -707,7 +710,7 @@ function logRequest(input: {
   response: Response;
   durationMs: number;
   authMode: AuthMode;
-  proxyService?: "opencode";
+  proxyService?: "opencode" | "codex";
   proxyBaseUrl?: string;
   error?: string;
 }) {
@@ -811,6 +814,10 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
     watcherHandle = startReloadWatchers({ config, reloadEvents, logger });
   };
   const engineMcpServerState = beginEngineMcpServerState(config);
+  const codexRuntime = new CodexRuntimeService(
+    config,
+    new CodexAppServerManager(config, SERVER_VERSION),
+  );
   const routes = createRoutes(
     config,
     approvals,
@@ -818,6 +825,7 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
     env,
     restartReloadWatchers,
     engineMcpServerState,
+    codexRuntime,
   );
 
   const serverOptions: {
@@ -831,7 +839,7 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
       const url = new URL(request.url);
       const startedAt = Date.now();
       let authMode: AuthMode = "none";
-      let proxyService: "opencode" | undefined;
+      let proxyService: "opencode" | "codex" | undefined;
       let proxyBaseUrl: string | undefined;
       let errorMessage: string | undefined;
 
@@ -858,9 +866,16 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
           const actor = await requireClient(request, config, tokens);
           assertOpencodeProxyAllowed(actor, request.method, mount.restPath);
           const workspace = await resolveWorkspace(config, mount.workspaceId);
-          proxyService = "opencode";
+          proxyService = await codexRuntime.isSelected(workspace.id) ? "codex" : "opencode";
           proxyBaseUrl = workspace.baseUrl?.trim() || undefined;
-          const response = await proxyOpencodeRequest({ config, request, url, workspace, proxyPath: mount.restPath });
+          const response = await proxyOpencodeRequest({
+            config,
+            request,
+            url,
+            workspace,
+            proxyPath: mount.restPath,
+            codexRuntime,
+          });
           return finalize(response);
         } catch (error) {
           const apiError = error instanceof ApiError
@@ -908,8 +923,15 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
         try {
           const actor = await requireClient(request, config, tokens);
           assertOpencodeProxyAllowed(actor, request.method, url.pathname);
-          proxyService = "opencode";
-          const response = await proxyOpencodeRequest({ config, request, url, workspace: config.workspaces[0] });
+          const workspace = config.workspaces[0];
+          proxyService = workspace && await codexRuntime.isSelected(workspace.id) ? "codex" : "opencode";
+          const response = await proxyOpencodeRequest({
+            config,
+            request,
+            url,
+            workspace,
+            codexRuntime,
+          });
           return finalize(response);
         } catch (error) {
           const apiError = error instanceof ApiError
@@ -995,6 +1017,7 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
       invalidateEngineMcpServerState(config, engineMcpServerState);
       watcherHandle.close();
       reloadBaselineRefreshers.delete(config);
+      await codexRuntime.stop();
       await server.stop();
     },
   };
@@ -1068,14 +1091,25 @@ async function proxyOpencodeRequest(input: {
   url: URL;
   workspace?: WorkspaceInfo;
   proxyPath?: string;
+  codexRuntime: CodexRuntimeService;
 }) {
   const workspace = input.workspace;
+  const proxyPath = input.proxyPath ?? input.url.pathname;
+  if (workspace) {
+    const codexResponse = await input.codexRuntime.handleProxy({
+      workspace,
+      request: input.request,
+      proxyPath,
+      url: input.url,
+    });
+    if (codexResponse) return codexResponse;
+  }
+
   const baseUrl = workspace ? resolveWorkspaceOpencodeConnection(input.config, workspace).baseUrl?.trim() ?? "" : "";
   if (!baseUrl) {
     throw new ApiError(400, "opencode_unconfigured", "OpenCode base URL is missing for this workspace");
   }
 
-  const proxyPath = input.proxyPath ?? input.url.pathname;
   const targetUrl = buildOpencodeProxyUrl(baseUrl, proxyPath, input.url.search);
   const headers = new Headers(input.request.headers);
   headers.delete("authorization");
@@ -1479,6 +1513,7 @@ function createRoutes(
   env: EnvService,
   onWorkspacesChanged: () => void,
   engineMcpServerState: EngineMcpServerState,
+  codexRuntime: CodexRuntimeService,
 ): Route[] {
   const routes: Route[] = [];
   registerCoreRoutes({
@@ -1534,6 +1569,18 @@ function createRoutes(
     resolveWorkspaceWithoutBootstrap,
     createWorkspaceOpencodeClient,
     unwrapOpencodeResult,
+    codexRuntime,
+  });
+
+  registerAgentRuntimeRoutes({
+    routes,
+    config,
+    codexRuntime,
+    jsonResponse,
+    readJsonBody,
+    ensureWritable,
+    requireClientScope,
+    resolveWorkspace,
   });
 
   registerCloudMcpRoutes({
