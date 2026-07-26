@@ -226,17 +226,6 @@ function normalizeMarketplaceIds(input: { configObjectId: string; pluginId: stri
   }
 }
 
-function roleIncludes(roleValue: string, role: string): boolean {
-  return roleValue
-    .split(",")
-    .map((entry) => entry.trim())
-    .includes(role)
-}
-
-function isOrgAdmin(member: MemberRow): boolean {
-  return roleIncludes(member.role, "owner") || roleIncludes(member.role, "admin")
-}
-
 function unique<T>(values: T[]): T[] {
   return [...new Set(values)]
 }
@@ -481,12 +470,9 @@ async function listMarketplaceGrants(organizationId: OrganizationId, marketplace
 
 async function filterVisibleRows(input: {
   member: McpMemberIdentity
-  memberRow: MemberRow
   organizationId: OrganizationId
   rows: MarketplaceCapabilityRow[]
 }): Promise<MarketplaceCapabilityRow[]> {
-  if (isOrgAdmin(input.memberRow)) return input.rows
-
   const configObjectGrantRows = await listConfigObjectGrants(
     input.organizationId,
     unique(input.rows.map((row) => row.configObject.id)),
@@ -504,6 +490,10 @@ async function filterVisibleRows(input: {
   const marketplaceGrants = groupGrants(marketplaceGrantRows)
 
   return input.rows.filter((row) => {
+    // Administrative visibility in Den must not silently publish every
+    // capability to that administrator's personal desktop catalog. Desktop
+    // discovery follows the same explicit member, team, and org-wide grants
+    // for every role so admins can curate what OpenWork exposes to them.
     if (grantRole(input.member, configObjectGrants.get(row.configObject.id) ?? [])) return true
     if (grantRole(input.member, pluginGrants.get(row.plugin.id) ?? [])) return true
     return Boolean(grantRole(input.member, marketplaceGrants.get(row.marketplace.id) ?? []))
@@ -524,7 +514,6 @@ export async function listAccessibleMarketplaceSkillDescriptors(input: {
   const rows = await filterVisibleRows({
     organizationId,
     member: input.member,
-    memberRow,
     rows: (await listActiveMarketplaceRows(organizationId))
       .filter((row) => row.configObject.objectType === "skill"),
   })
@@ -1207,7 +1196,6 @@ export async function searchMarketplaceCapabilities(input: {
   const rows = await filterVisibleRows({
     organizationId,
     member: input.member,
-    memberRow,
     rows: await listActiveMarketplaceRows(organizationId),
   })
   const requirementStatusesByPluginId = await marketplacePluginMcpRequirementStatuses({
@@ -1295,7 +1283,7 @@ export async function executeMarketplaceCapability(input: {
   if (!memberRow) {
     return { ok: false, error: "forbidden", message: "No active org membership for this token." }
   }
-  const visibleRows = await filterVisibleRows({ organizationId, member: input.member, memberRow, rows })
+  const visibleRows = await filterVisibleRows({ organizationId, member: input.member, rows })
   const row = visibleRows[0]
   if (!row) {
     return { ok: false, error: "forbidden", message: "You have not been granted access to this marketplace plugin capability." }
