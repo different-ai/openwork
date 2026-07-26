@@ -1,5 +1,5 @@
-import { SkillEditorScreen } from "../../../_components/skill-editor-screen";
+import { redirect } from "next/navigation";
 
 export default function NewSkillPage() {
-  return <SkillEditorScreen />;
+  redirect("/dashboard/plugins");
 }

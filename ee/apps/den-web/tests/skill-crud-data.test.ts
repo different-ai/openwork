@@ -18,7 +18,7 @@ describe("Den skill data", () => {
       "openwork verify-handoff",
       "```",
     ].join("\n");
-    const payload = createSkillPayload({
+    const payload = createSkillPayload("plugin-1", {
       name: "incident-handoff",
       description: "Prepare a careful incident handoff.",
       body,
@@ -32,7 +32,7 @@ describe("Den skill data", () => {
       latestVersion: { rawSourceText: payload.input.rawSourceText },
     });
 
-    expect(payload).toMatchObject({ type: "skill", sourceMode: "cloud" });
+    expect(payload).toMatchObject({ type: "skill", sourceMode: "cloud", pluginIds: ["plugin-1"] });
     expect(skill?.name).toBe("incident-handoff");
     expect(skill?.description).toBe("Prepare a careful incident handoff.");
     expect(skill?.body).toBe(body);

@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import {
   Cable,
-  FileText,
   Plus,
   Puzzle,
   Search,
@@ -28,11 +27,10 @@ import {
   usePlugins,
 } from "./plugin-data";
 
-type PluginView = "plugins" | "skills" | "agents" | "commands" | "hooks" | "mcps";
+type PluginView = "plugins" | "agents" | "commands" | "hooks" | "mcps";
 
 const PLUGIN_TABS = [
   { value: "plugins" as const, label: "Plugins", icon: Puzzle },
-  { value: "skills" as const, label: "Skills", icon: FileText },
   { value: "agents" as const, label: "Agents", icon: Users },
   { value: "commands" as const, label: "Commands", icon: Terminal },
   { value: "hooks" as const, label: "Hooks", icon: Webhook },
@@ -62,14 +60,6 @@ export function PluginsScreen() {
       );
     });
   }, [normalizedQuery, plugins]);
-
-  const allSkills = useMemo(
-    () =>
-      plugins.flatMap((plugin) =>
-        plugin.skills.map((skill) => ({ ...skill, pluginId: plugin.id, pluginName: plugin.name })),
-      ),
-    [plugins],
-  );
 
   const allHooks = useMemo(
     () =>
@@ -102,16 +92,6 @@ export function PluginsScreen() {
       ),
     [plugins],
   );
-
-  const filteredSkills = useMemo(() => {
-    if (!normalizedQuery) return allSkills;
-    return allSkills.filter(
-      (skill) =>
-        skill.name.toLowerCase().includes(normalizedQuery) ||
-        skill.description.toLowerCase().includes(normalizedQuery) ||
-        skill.pluginName.toLowerCase().includes(normalizedQuery),
-    );
-  }, [normalizedQuery, allSkills]);
 
   const filteredHooks = useMemo(() => {
     if (!normalizedQuery) return allHooks;
@@ -156,9 +136,7 @@ export function PluginsScreen() {
   const searchPlaceholder =
     activeView === "plugins"
       ? "Search plugins..."
-      : activeView === "skills"
-        ? "Search skills..."
-        : activeView === "agents"
+      : activeView === "agents"
           ? "Search agents..."
           : activeView === "commands"
             ? "Search commands..."
@@ -212,7 +190,7 @@ export function PluginsScreen() {
             description={
               plugins.length === 0
                 ? "Imported plugins and connected integration plugins will show up here when they are available."
-                : "Try a different search term or browse the skills, hooks, or MCPs tabs."
+                : "Try a different search term or browse the hooks or MCPs tabs."
             }
           />
         ) : (
@@ -268,21 +246,6 @@ export function PluginsScreen() {
             ))}
           </div>
         )
-      ) : activeView === "skills" ? (
-        <PrimitiveList
-          icon={FileText}
-          emptyLabel="No skills in this catalog yet."
-          emptyDescriptionEmpty="Once plugins contribute skills, they will show up here."
-          emptyDescriptionFiltered="No skills match that search."
-          unfilteredCount={allSkills.length}
-          rows={filteredSkills.map((skill) => ({
-            id: skill.id,
-            title: skill.name,
-            description: skill.description,
-            pluginName: skill.pluginName,
-            href: getPluginRoute(orgSlug, skill.pluginId),
-          }))}
-        />
       ) : activeView === "agents" ? (
         <PrimitiveList
           icon={Users}

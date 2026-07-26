@@ -1,5 +1,5 @@
-import { SkillsScreen } from "../../_components/skills-screen";
+import { redirect } from "next/navigation";
 
 export default function SkillsPage() {
-  return <SkillsScreen />;
+  redirect("/dashboard/plugins");
 }

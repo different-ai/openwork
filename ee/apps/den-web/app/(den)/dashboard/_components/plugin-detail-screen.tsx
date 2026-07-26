@@ -1,10 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowLeft, FileText, Puzzle, Server, Store, Terminal, Users, Webhook } from "lucide-react";
+import { ArrowLeft, FileText, Plus, Puzzle, Server, Store, Terminal, Users, Webhook } from "lucide-react";
 import { PaperMeshGradient } from "@openwork/ui/react";
 
-import { getPluginsRoute } from "../../_lib/den-org";
+import { getNewPluginSkillRoute, getPluginSkillRoute, getPluginsRoute } from "../../_lib/den-org";
+import { buttonVariants } from "../../_components/ui/button";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import {
   type DenPlugin,
@@ -43,7 +44,6 @@ export function PluginDetailScreen({ pluginId }: { pluginId: string }) {
 
   const marketplaces = plugin.marketplaces ?? [];
   const missingLabels: string[] = [];
-  if (plugin.skills.length === 0) missingLabels.push("skills");
   if (plugin.agents.length === 0) missingLabels.push("agents");
   if (plugin.commands.length === 0) missingLabels.push("commands");
   if (plugin.hooks.length === 0) missingLabels.push("hooks");
@@ -111,7 +111,7 @@ export function PluginDetailScreen({ pluginId }: { pluginId: string }) {
       </article>
 
       <div className="mt-6 space-y-6">
-        <PrimitiveSection icon={FileText} label="Skills" items={plugin.skills} render={renderSkillRow} />
+        <SkillsSection orgSlug={orgSlug} plugin={plugin} />
         <PrimitiveSection icon={Users} label="Agents" items={plugin.agents} render={renderAgentRow} />
         <PrimitiveSection icon={Terminal} label="Commands" items={plugin.commands} render={renderCommandRow} />
         <PrimitiveSection icon={Webhook} label="Hooks" items={plugin.hooks} render={renderHookRow} />
@@ -166,17 +166,49 @@ function PrimitiveSection<T>({
   );
 }
 
-function renderSkillRow(skill: PluginSkill) {
+function SkillsSection({ orgSlug, plugin }: { orgSlug: string | null; plugin: DenPlugin }) {
   return (
-    <div
-      key={skill.id}
-      className="rounded-xl border border-gray-100 bg-white px-4 py-3 transition hover:border-gray-200"
+    <section>
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div>
+          <h2 className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">
+            <FileText className="h-3.5 w-3.5" />
+            Skills
+          </h2>
+          <p className="mt-1 text-[12px] text-gray-400">Reusable instructions included in this plugin.</p>
+        </div>
+        <Link href={getNewPluginSkillRoute(orgSlug, plugin.id)} className={buttonVariants({ size: "sm" })}>
+          <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+          Add skill
+        </Link>
+      </div>
+      {plugin.skills.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-gray-200 bg-white px-5 py-8 text-center">
+          <p className="text-[14px] font-medium text-gray-900">No skills in this plugin yet.</p>
+          <p className="mt-1 text-[12.5px] text-gray-500">Add reusable guidance without leaving this plugin.</p>
+        </div>
+      ) : (
+        <div className="grid gap-2">
+          {plugin.skills.map((skill) => (
+            <SkillRow key={skill.id} orgSlug={orgSlug} pluginId={plugin.id} skill={skill} />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function SkillRow({ orgSlug, pluginId, skill }: { orgSlug: string | null; pluginId: string; skill: PluginSkill }) {
+  return (
+    <Link
+      href={getPluginSkillRoute(orgSlug, pluginId, skill.id)}
+      className="block rounded-xl border border-gray-100 bg-white px-4 py-3 transition hover:border-gray-200"
     >
       <p className="truncate text-[14px] font-semibold tracking-[-0.01em] text-gray-900">{skill.name}</p>
       {skill.description ? (
         <p className="mt-0.5 line-clamp-2 text-[12.5px] leading-[1.55] text-gray-500">{skill.description}</p>
       ) : null}
-    </div>
+    </Link>
   );
 }
 

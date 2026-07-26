@@ -5,15 +5,15 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { ArrowLeft, FileText, Pencil, Trash2, X } from "lucide-react";
 import { DenButton, buttonVariants } from "../../_components/ui/button";
-import { getEditSkillRoute, getSkillsRoute } from "../../_lib/den-org";
+import { getEditPluginSkillRoute, getPluginRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { useDeleteSkill, useSkill } from "./skill-data";
 
-export function SkillDetailScreen({ skillId }: { skillId: string }) {
+export function SkillDetailScreen({ pluginId, skillId }: { pluginId: string; skillId: string }) {
   const router = useRouter();
   const { orgSlug } = useOrgDashboard();
-  const { data: skill, isLoading, error } = useSkill(skillId);
-  const deleteSkill = useDeleteSkill();
+  const { data: skill, isLoading, error } = useSkill(pluginId, skillId);
+  const deleteSkill = useDeleteSkill(pluginId);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   if (isLoading && !skill) {
@@ -27,12 +27,12 @@ export function SkillDetailScreen({ skillId }: { skillId: string }) {
   return (
     <div className="mx-auto max-w-[900px] px-6 py-8 md:px-8">
       <div className="mb-6 flex items-center justify-between gap-4">
-        <Link href={getSkillsRoute(orgSlug)} className="inline-flex items-center gap-1.5 text-[13px] text-gray-500 hover:text-gray-900">
+        <Link href={getPluginRoute(orgSlug, pluginId)} className="inline-flex items-center gap-1.5 text-[13px] text-gray-500 hover:text-gray-900">
           <ArrowLeft className="h-4 w-4" aria-hidden="true" />
-          Back to skills
+          Back to plugin
         </Link>
         <div className="flex items-center gap-2">
-          <Link href={getEditSkillRoute(orgSlug, skill.id)} className={buttonVariants({ variant: "secondary", size: "sm" })}>
+          <Link href={getEditPluginSkillRoute(orgSlug, pluginId, skill.id)} className={buttonVariants({ variant: "secondary", size: "sm" })}>
             <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
             Edit
           </Link>
@@ -65,7 +65,7 @@ export function SkillDetailScreen({ skillId }: { skillId: string }) {
             <div className="flex items-start justify-between gap-4">
               <div>
                 <h2 id="delete-skill-title" className="text-[18px] font-semibold text-gray-950">Delete “{skill.name}”?</h2>
-                <p className="mt-2 text-[13px] leading-5 text-gray-500">This removes the skill from this workspace. Its version history is retained by Den.</p>
+                <p className="mt-2 text-[13px] leading-5 text-gray-500">This removes the skill from its owning plugin. Its version history is retained by Den.</p>
               </div>
               <button type="button" onClick={() => setConfirmingDelete(false)} aria-label="Close delete confirmation" className="rounded-lg p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700">
                 <X className="h-4 w-4" aria-hidden="true" />
@@ -79,7 +79,7 @@ export function SkillDetailScreen({ skillId }: { skillId: string }) {
               <DenButton
                 variant="destructive"
                 loading={deleteSkill.isPending}
-                onClick={() => deleteSkill.mutate(skill.id, { onSuccess: () => router.push(getSkillsRoute(orgSlug)) })}
+                onClick={() => deleteSkill.mutate(skill.id, { onSuccess: () => router.push(getPluginRoute(orgSlug, pluginId)) })}
               >
                 Delete “{skill.name}”
               </DenButton>

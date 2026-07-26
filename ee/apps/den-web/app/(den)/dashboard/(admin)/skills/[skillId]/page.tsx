@@ -1,10 +1,5 @@
-import { SkillDetailScreen } from "../../../_components/skill-detail-screen";
+import { redirect } from "next/navigation";
 
-export default async function SkillDetailPage({
-  params,
-}: {
-  params: Promise<{ skillId: string }>;
-}) {
-  const { skillId } = await params;
-  return <SkillDetailScreen skillId={skillId} />;
+export default function SkillDetailPage() {
+  redirect("/dashboard/plugins");
 }

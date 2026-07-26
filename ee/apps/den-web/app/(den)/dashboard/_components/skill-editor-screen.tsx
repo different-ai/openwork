@@ -7,18 +7,18 @@ import { ArrowLeft, FileText } from "lucide-react";
 import { DenButton } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
 import { DenTextarea } from "../../_components/ui/textarea";
-import { getSkillRoute, getSkillsRoute } from "../../_lib/den-org";
+import { getPluginRoute, getPluginSkillRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { useCreateSkill, useSkill, useUpdateSkill } from "./skill-data";
 
 const SKILL_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
-export function SkillEditorScreen({ skillId }: { skillId?: string }) {
+export function SkillEditorScreen({ pluginId, skillId }: { pluginId: string; skillId?: string }) {
   const router = useRouter();
   const { orgSlug } = useOrgDashboard();
-  const skillQuery = useSkill(skillId ?? "");
-  const createSkill = useCreateSkill();
-  const updateSkill = useUpdateSkill();
+  const skillQuery = useSkill(pluginId, skillId ?? "");
+  const createSkill = useCreateSkill(pluginId);
+  const updateSkill = useUpdateSkill(pluginId);
   const [loadedSkillId, setLoadedSkillId] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -57,7 +57,7 @@ export function SkillEditorScreen({ skillId }: { skillId?: string }) {
       const saved = skillId
         ? await updateSkill.mutateAsync({ skillId, draft })
         : await createSkill.mutateAsync(draft);
-      router.push(getSkillRoute(orgSlug, saved.id));
+      router.push(getPluginSkillRoute(orgSlug, pluginId, saved.id));
     } catch {
       // React Query exposes the request error in the form below.
     }
@@ -80,11 +80,11 @@ export function SkillEditorScreen({ skillId }: { skillId?: string }) {
   return (
     <div className="mx-auto max-w-[820px] px-6 py-8 md:px-8">
       <Link
-        href={isEditing && skillId ? getSkillRoute(orgSlug, skillId) : getSkillsRoute(orgSlug)}
+        href={isEditing && skillId ? getPluginSkillRoute(orgSlug, pluginId, skillId) : getPluginRoute(orgSlug, pluginId)}
         className="inline-flex items-center gap-1.5 text-[13px] text-gray-500 transition hover:text-gray-900"
       >
         <ArrowLeft className="h-4 w-4" aria-hidden="true" />
-        Back to {isEditing ? "skill" : "skills"}
+        Back to {isEditing ? "skill" : "plugin"}
       </Link>
 
       <div className="mt-6 rounded-2xl border border-gray-100 bg-white p-6 md:p-8">
@@ -138,7 +138,7 @@ export function SkillEditorScreen({ skillId }: { skillId?: string }) {
           ) : null}
 
           <div className="flex justify-end gap-3 pt-2">
-            <Link href={getSkillsRoute(orgSlug)} className="inline-flex h-10 items-center rounded-lg px-4 text-[13px] font-medium text-gray-600 hover:bg-gray-50">
+            <Link href={getPluginRoute(orgSlug, pluginId)} className="inline-flex h-10 items-center rounded-lg px-4 text-[13px] font-medium text-gray-600 hover:bg-gray-50">
               Cancel
             </Link>
             <DenButton type="submit" loading={mutation.isPending}>

@@ -47,7 +47,6 @@ import {
   getPluginsRoute,
   getSsoRoute,
   getScimRoute,
-  getSkillsRoute,
 } from "../../_lib/den-org";
 import { useOrgListWindow } from "../../_lib/use-org-list-window";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
@@ -271,9 +270,6 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
   if (pathname.startsWith(getPluginsRoute(orgSlug))) {
     return "Plugins";
   }
-  if (pathname.startsWith(getSkillsRoute(orgSlug))) {
-    return "Skills";
-  }
   if (pathname.startsWith(getMarketplacesRoute(orgSlug))) {
     return "Marketplace";
   }
@@ -375,7 +371,6 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
           { href: getMarketplacesRoute(activeOrg.slug), label: "Marketplace" },
           { href: getIntegrationsRoute(activeOrg.slug), label: "Sources" },
           { href: getPluginsRoute(activeOrg.slug), label: "Plugins" },
-          { href: getSkillsRoute(activeOrg.slug), label: "Skills" },
           { href: getMcpConnectionsRoute(activeOrg.slug), label: "Connectors", badge: "Beta" },
         ],
       }

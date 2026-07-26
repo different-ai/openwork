@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { composeSkillMarkdown, parseSkillMarkdown } from "@openwork-ee/utils";
 import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
+import { pluginQueryKeys } from "./plugin-data";
 
 export type DenSkill = {
   id: string;
@@ -22,8 +23,7 @@ export type SkillDraft = {
 
 export const skillQueryKeys = {
   all: ["skills"],
-  list: (organizationId: string) => ["skills", organizationId, "list"],
-  detail: (organizationId: string, skillId: string) => ["skills", organizationId, "detail", skillId],
+  detail: (organizationId: string, pluginId: string, skillId: string) => ["skills", organizationId, pluginId, "detail", skillId],
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -38,10 +38,11 @@ export function skillSourceFromDraft(draft: SkillDraft): string {
   return composeSkillMarkdown(draft.name, draft.description, draft.body);
 }
 
-export function createSkillPayload(draft: SkillDraft) {
+export function createSkillPayload(pluginId: string, draft: SkillDraft) {
   return {
     type: "skill",
     sourceMode: "cloud",
+    pluginIds: [pluginId],
     input: { rawSourceText: skillSourceFromDraft(draft) },
   };
 }
@@ -74,48 +75,32 @@ function parseSkillResponse(payload: unknown): DenSkill | null {
   return isRecord(payload) ? parseSkillPayload(payload.item) : null;
 }
 
-export function useSkills() {
+export function useSkill(pluginId: string, skillId: string) {
   const { orgId } = useOrgDashboard();
   const organizationId = orgId ?? "none";
 
   return useQuery({
-    enabled: Boolean(orgId),
-    queryKey: skillQueryKeys.list(organizationId),
-    queryFn: async (): Promise<DenSkill[]> => {
-      const { response, payload } = await requestJson(
-        "/v1/config-objects?type=skill&status=active&limit=100",
-        { method: "GET" },
-        15000,
-      );
-      if (!response.ok) {
-        throw new Error(getErrorMessage(payload, `Failed to load skills (${response.status}).`));
-      }
-      if (!isRecord(payload) || !Array.isArray(payload.items)) {
-        throw new Error("Skill list response was incomplete.");
-      }
-      return payload.items.flatMap((entry) => {
-        const skill = parseSkillPayload(entry);
-        return skill ? [skill] : [];
-      });
-    },
-  });
-}
-
-export function useSkill(skillId: string) {
-  const { orgId } = useOrgDashboard();
-  const organizationId = orgId ?? "none";
-
-  return useQuery({
-    enabled: Boolean(orgId && skillId),
-    queryKey: skillQueryKeys.detail(organizationId, skillId),
+    enabled: Boolean(orgId && pluginId && skillId),
+    queryKey: skillQueryKeys.detail(organizationId, pluginId, skillId),
     queryFn: async (): Promise<DenSkill> => {
-      const { response, payload } = await requestJson(
-        `/v1/config-objects/${encodeURIComponent(skillId)}`,
-        { method: "GET" },
-        15000,
-      );
+      const encodedSkillId = encodeURIComponent(skillId);
+      const [{ response, payload }, membershipResult] = await Promise.all([
+        requestJson(`/v1/config-objects/${encodedSkillId}`, { method: "GET" }, 15000),
+        requestJson(`/v1/config-objects/${encodedSkillId}/plugins`, { method: "GET" }, 15000),
+      ]);
       if (!response.ok) {
         throw new Error(getErrorMessage(payload, `Failed to load skill (${response.status}).`));
+      }
+      if (!membershipResult.response.ok) {
+        throw new Error(getErrorMessage(membershipResult.payload, `Failed to verify skill plugin (${membershipResult.response.status}).`));
+      }
+      const belongsToPlugin = isRecord(membershipResult.payload)
+        && Array.isArray(membershipResult.payload.items)
+        && membershipResult.payload.items.some((entry) => (
+          isRecord(entry) && entry.pluginId === pluginId && entry.removedAt === null
+        ));
+      if (!belongsToPlugin) {
+        throw new Error("That skill is not part of this plugin.");
       }
       const skill = parseSkillResponse(payload);
       if (!skill) {
@@ -126,7 +111,7 @@ export function useSkill(skillId: string) {
   });
 }
 
-export function useCreateSkill() {
+export function useCreateSkill(pluginId: string) {
   const queryClient = useQueryClient();
 
   return useMutation({
@@ -135,7 +120,7 @@ export function useCreateSkill() {
         "/v1/config-objects",
         {
           method: "POST",
-          body: JSON.stringify(createSkillPayload(draft)),
+          body: JSON.stringify(createSkillPayload(pluginId, draft)),
         },
         15000,
       );
@@ -149,12 +134,15 @@ export function useCreateSkill() {
       return skill;
     },
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: skillQueryKeys.all });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: skillQueryKeys.all }),
+        queryClient.invalidateQueries({ queryKey: pluginQueryKeys.detail(pluginId) }),
+      ]);
     },
   });
 }
 
-export function useUpdateSkill() {
+export function useUpdateSkill(pluginId: string) {
   const queryClient = useQueryClient();
 
   return useMutation({
@@ -180,12 +168,15 @@ export function useUpdateSkill() {
       return skill;
     },
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: skillQueryKeys.all });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: skillQueryKeys.all }),
+        queryClient.invalidateQueries({ queryKey: pluginQueryKeys.detail(pluginId) }),
+      ]);
     },
   });
 }
 
-export function useDeleteSkill() {
+export function useDeleteSkill(pluginId: string) {
   const queryClient = useQueryClient();
 
   return useMutation({
@@ -203,6 +194,7 @@ export function useDeleteSkill() {
     onSuccess: async () => {
       await queryClient.cancelQueries({ queryKey: skillQueryKeys.all });
       queryClient.removeQueries({ queryKey: skillQueryKeys.all });
+      await queryClient.invalidateQueries({ queryKey: pluginQueryKeys.detail(pluginId) });
     },
   });
 }

@@ -1,10 +1,5 @@
-import { SkillEditorScreen } from "../../../../_components/skill-editor-screen";
+import { redirect } from "next/navigation";
 
-export default async function EditSkillPage({
-  params,
-}: {
-  params: Promise<{ skillId: string }>;
-}) {
-  const { skillId } = await params;
-  return <SkillEditorScreen skillId={skillId} />;
+export default function EditSkillPage() {
+  redirect("/dashboard/plugins");
 }
