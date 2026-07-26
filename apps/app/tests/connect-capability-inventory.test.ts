@@ -74,7 +74,7 @@ describe("assigned OpenWork Connect capability inventory", () => {
                 updatedAt: null,
                 latestVersion: {
                   id: "version_skill",
-                  rawSourceText: "# Escalate ticket",
+                  rawSourceText: "---\ntrigger: When a ticket needs escalation\n---\n# Escalate ticket",
                   normalizedPayloadJson: null,
                   sourceRevisionRef: null,
                   createdAt: null,
@@ -119,7 +119,7 @@ describe("assigned OpenWork Connect capability inventory", () => {
     expect(inventory.skills).toEqual([
       expect.objectContaining({
         name: "Escalate ticket",
-        trigger: "escalate-ticket",
+        trigger: "When a ticket needs escalation",
         origin: "openwork-connect",
         marketplaceName: "Team tools",
         pluginName: "Support kit",
@@ -218,7 +218,7 @@ describe("assigned OpenWork Connect capability inventory", () => {
     expect(inventory.mcpServers).toEqual([]);
   });
 
-  test("derives the trigger from Windows-style skill paths and omits it when the path is not a SKILL.md", async () => {
+  test("does not derive the trigger from skill paths when markdown has no trigger", async () => {
     const marketplace = {
       id: "marketplace_1",
       name: "Team tools",
@@ -241,7 +241,13 @@ describe("assigned OpenWork Connect capability inventory", () => {
         currentRelativePath,
         status: "active" as const,
         updatedAt: null,
-        latestVersion: null,
+        latestVersion: {
+          id: `version_${id}`,
+          rawSourceText: `# ${title}`,
+          normalizedPayloadJson: null,
+          sourceRevisionRef: null,
+          createdAt: null,
+        },
       },
     });
 
@@ -274,7 +280,7 @@ describe("assigned OpenWork Connect capability inventory", () => {
     });
 
     const byName = Object.fromEntries(inventory.skills.map((skill) => [skill.name, skill]));
-    expect(byName["Windows skill"]?.trigger).toBe("escalate-ticket");
+    expect(byName["Windows skill"]?.trigger).toBeUndefined();
     expect(byName["Loose skill"]?.trigger).toBeUndefined();
   });
 });

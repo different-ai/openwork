@@ -1,3 +1,4 @@
+import { extractSkillTriggerFromMarkdown } from "@openwork/types/skill-markdown";
 import type {
   DenOrgMarketplace,
   DenOrgMarketplaceResolved,
@@ -54,8 +55,8 @@ function marketplaceCapabilityName(pluginId: string, configObjectId: string) {
 }
 
 function skillTrigger(object: DenPluginConfigObject) {
-  const path = object.currentRelativePath?.replaceAll("\\", "/");
-  return path?.match(/(?:^|\/)skills?\/([^/]+)\/SKILL\.md$/i)?.[1];
+  const source = object.latestVersion?.rawSourceText;
+  return source ? extractSkillTriggerFromMarkdown(source) : undefined;
 }
 
 function remoteMcpSpecs(object: DenPluginConfigObject): RemoteMcpSpec[] {

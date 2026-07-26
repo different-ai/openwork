@@ -23,7 +23,65 @@ async function findWorkspaceRoots(workspaceRoot: string): Promise<string[]> {
   return roots;
 }
 
-const extractTriggerFromBody = (body: string) => {
+type FrontmatterTrigger = {
+  found: boolean;
+  value: string | undefined;
+};
+
+function splitSkillFrontmatter(content: string): { frontmatter: string | undefined; body: string } {
+  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/);
+  if (!match) {
+    return { frontmatter: undefined, body: content };
+  }
+
+  return {
+    frontmatter: match[1] ?? "",
+    body: content.slice(match[0].length),
+  };
+}
+
+function readScalarFrontmatterValue(value: string): string | undefined {
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.startsWith("|") || trimmed.startsWith(">")) return undefined;
+
+  const quote = trimmed[0];
+  if (quote === "'" || quote === "\"") {
+    return trimmed.length > 1 && trimmed.endsWith(quote)
+      ? trimmed.slice(1, -1).trim() || undefined
+      : undefined;
+  }
+
+  return trimmed;
+}
+
+function readFrontmatterTrigger(frontmatter: string): FrontmatterTrigger {
+  let triggerFound = false;
+  let triggerValue: string | undefined;
+  let whenFound = false;
+  let whenValue: string | undefined;
+
+  for (const line of frontmatter.split(/\r?\n/)) {
+    if (line !== line.trimStart()) continue;
+
+    const match = /^(trigger|when)\s*:\s*(.*)$/.exec(line);
+    if (!match) continue;
+
+    const value = readScalarFrontmatterValue(match[2] ?? "");
+    if (match[1] === "trigger") {
+      triggerFound = true;
+      triggerValue = value;
+    } else {
+      whenFound = true;
+      whenValue = value;
+    }
+  }
+
+  if (triggerFound) return { found: true, value: triggerValue };
+  if (whenFound) return { found: true, value: whenValue };
+  return { found: false, value: undefined };
+}
+
+function extractTriggerFromBody(body: string) {
   const lines = body.split(/\r?\n/);
   let inWhenSection = false;
 
@@ -48,7 +106,23 @@ const extractTriggerFromBody = (body: string) => {
   }
 
   return "";
-};
+}
+
+// Keep this paired with packages/types/src/skill-markdown.ts for org skill previews.
+function extractSkillTrigger(data: Record<string, unknown>, body: string, frontmatter: string | undefined): string | undefined {
+  if (frontmatter !== undefined) {
+    const trigger = readFrontmatterTrigger(frontmatter);
+    if (trigger.found) return trigger.value;
+  }
+
+  const trigger = typeof data.trigger === "string"
+    ? data.trigger
+    : typeof data.when === "string"
+      ? data.when
+      : extractTriggerFromBody(body);
+  const trimmed = trigger.trim();
+  return trimmed ? trimmed : undefined;
+}
 
 async function parseSkillEntry(
   skillPath: string,
@@ -57,14 +131,10 @@ async function parseSkillEntry(
 ): Promise<SkillItem | null> {
   const content = await readFile(skillPath, "utf8");
   const { data, body } = parseFrontmatter(content);
+  const { frontmatter } = splitSkillFrontmatter(content);
   const name = typeof data.name === "string" ? data.name : entryName;
   const description = typeof data.description === "string" ? data.description : "";
-  const trigger =
-    typeof data.trigger === "string"
-      ? data.trigger
-      : typeof data.when === "string"
-        ? data.when
-        : extractTriggerFromBody(body);
+  const trigger = extractSkillTrigger(data, body, frontmatter);
   try {
     validateSkillName(name);
     validateDescription(description);
@@ -77,7 +147,7 @@ async function parseSkillEntry(
     description,
     path: skillPath,
     scope,
-    trigger: trigger.trim() || undefined,
+    trigger,
   };
 }
 

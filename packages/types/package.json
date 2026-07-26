@@ -29,6 +29,11 @@
       "development": "./src/openwork-provider.ts",
       "default": "./src/openwork-provider.ts"
     },
+    "./skill-markdown": {
+      "types": "./src/skill-markdown.ts",
+      "development": "./src/skill-markdown.ts",
+      "default": "./src/skill-markdown.ts"
+    },
     "./den/desktop-app-restrictions": {
       "types": "./src/den/desktop-app-restrictions.ts",
       "development": "./src/den/desktop-app-restrictions.ts",

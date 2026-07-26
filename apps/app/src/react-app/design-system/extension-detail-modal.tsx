@@ -217,6 +217,7 @@ export function ExtensionDetailModal({
 }: ExtensionDetailModalProps) {
   "use memo";
   const resolvedIconSrc = resolveExtensionIconUrl({ iconSrc, iconSlug, serviceUrl: url });
+  const triggerText = trigger?.trim();
 
   return (
     <Dialog
@@ -426,14 +427,14 @@ export function ExtensionDetailModal({
             {/* Skill-specific: trigger + content preview */}
             {kind === "ui-control" ? <UiControlConnectionDetails launchCommand={launchCommand} environment={environment} /> : null}
 
-            {kind === "skill" && trigger ? (
+            {kind === "skill" && triggerText ? (
               <Card variant="outline" size="sm">
                 <CardHeader>
                   <CardTitle>Trigger</CardTitle>
                 </CardHeader>
                 <CardContent>
                   <div className="text-sm leading-relaxed text-card-foreground">
-                    {trigger}
+                    {triggerText}
                   </div>
                 </CardContent>
               </Card>
@@ -459,7 +460,7 @@ export function ExtensionDetailModal({
             })() : null}
 
             {/* What this enables (generic, for non-skills or skills without preview) */}
-            {showEnablementCard && ((kind !== "skill" && kind !== "ui-control") || (!trigger && !contentPreview && kind !== "ui-control")) ? (
+            {showEnablementCard && ((kind !== "skill" && kind !== "ui-control") || (!triggerText && !contentPreview && kind !== "ui-control")) ? (
               <Card variant="outline" size="sm">
                 <CardHeader>
                   <CardTitle>What this enables</CardTitle>

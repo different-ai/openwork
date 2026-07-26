@@ -24,6 +24,7 @@ import { ModelSelect } from "@/components/model-select";
 import { LexicalPromptEditor, type LexicalPromptEditorHandle } from "./editor";
 import { listRunningAppsForMention } from "./app-mentions";
 import type { ComposerMentionKind } from "./mention-encoding";
+import { skillOriginBadgeLabel } from "./capability-origin";
 import {
   connectSkillSlashCommandOptions,
   getSlashCommandQuery,
@@ -259,6 +260,10 @@ function mcpStatusBadgeClass(status: McpServerStatus) {
     default:
       return "bg-red-3 text-red-11";
   }
+}
+
+function isActionableMcpStatus(status: McpServerStatus) {
+  return status === "needs_auth" || status === "needs_client_registration" || status === "failed" || status === "disconnected";
 }
 
 function isLocalCapability(origin: SkillCard["origin"] | McpServerEntry["origin"]) {
@@ -1514,11 +1519,9 @@ export function ReactSessionComposer(props: ComposerProps) {
                                         <div className="min-w-0 flex-1 truncate text-xs font-semibold text-gray-11">
                                           /{skillMenuSlashCommandName(skill)}
                                         </div>
-                                        {isLocalCapability(skill.origin) ? (
-                                          <span className="shrink-0 rounded-full bg-gray-3 px-2 py-0.5 text-[10px] font-medium text-gray-11">
-                                            {t("composer.source_local")}
-                                          </span>
-                                        ) : null}
+                                        <span className="inline-block max-w-[7rem] shrink-0 truncate rounded-full bg-gray-3 px-2 py-0.5 text-[10px] font-medium text-gray-11">
+                                          {skillOriginBadgeLabel(skill)}
+                                        </span>
                                       </div>
                                       {skill.description ? <div className="truncate text-xs text-gray-10">{skill.description}</div> : null}
                                       {skill.origin === "openwork-connect" ? (
@@ -1539,35 +1542,57 @@ export function ReactSessionComposer(props: ComposerProps) {
                           {toolMenuSection === "mcps" ? (
                             activeMcpItems.length > 0 ? (
                               <div className="grid gap-1">
-                                {activeMcpItems.map(({ entry, status }) => (
-                                  <div key={entry.id ?? entry.name} className="flex items-start gap-3 rounded-[16px] px-3 py-2.5 text-gray-11">
-                                    <Plug size={14} className="mt-0.5 shrink-0 text-gray-9" />
-                                    <div className="min-w-0 flex-1">
-                                      <div className="flex items-center justify-between gap-3">
-                                        <div className="truncate text-xs font-semibold text-gray-11">{entry.name}</div>
-                                        <div className="flex shrink-0 items-center gap-1">
-                                          {isLocalCapability(entry.origin) ? (
-                                            <span className="rounded-full bg-gray-3 px-2 py-0.5 text-[10px] font-medium text-gray-11">
-                                              {t("composer.source_local")}
+                                {activeMcpItems.map(({ entry, status }) => {
+                                  const statusLabel = formatMcpStatusLabel(status);
+                                  const content = (
+                                    <>
+                                      <Plug size={14} className="mt-0.5 shrink-0 text-gray-9" />
+                                      <div className="min-w-0 flex-1">
+                                        <div className="flex items-center justify-between gap-3">
+                                          <div className="truncate text-xs font-semibold text-gray-11">{entry.name}</div>
+                                          <div className="flex shrink-0 items-center gap-1">
+                                            {isLocalCapability(entry.origin) ? (
+                                              <span className="rounded-full bg-gray-3 px-2 py-0.5 text-[10px] font-medium text-gray-11">
+                                                {t("composer.source_local")}
+                                              </span>
+                                            ) : null}
+                                            <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${mcpStatusBadgeClass(status)}`}>
+                                              {statusLabel}
                                             </span>
-                                          ) : null}
-                                          <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${mcpStatusBadgeClass(status)}`}>
-                                            {formatMcpStatusLabel(status)}
-                                          </span>
+                                          </div>
+                                        </div>
+                                        <div className="truncate text-xs text-gray-10">
+                                          {entry.origin === "openwork-connect"
+                                            ? [entry.marketplaceName, entry.pluginName].filter(Boolean).join(" · ")
+                                              || entry.config.url
+                                              || "Remote MCP"
+                                            : entry.config.type === "remote"
+                                              ? entry.config.url ?? entry.config.command?.join(" ") ?? "Remote MCP"
+                                              : entry.config.command?.join(" ") ?? "Local MCP"}
                                         </div>
                                       </div>
-                                      <div className="truncate text-xs text-gray-10">
-                                        {entry.origin === "openwork-connect"
-                                          ? [entry.marketplaceName, entry.pluginName].filter(Boolean).join(" · ")
-                                            || entry.config.url
-                                            || "Remote MCP"
-                                          : entry.config.type === "remote"
-                                            ? entry.config.url ?? entry.config.command?.join(" ") ?? "Remote MCP"
-                                            : entry.config.command?.join(" ") ?? "Local MCP"}
-                                      </div>
+                                    </>
+                                  );
+
+                                  return isActionableMcpStatus(status) ? (
+                                    <button
+                                      key={entry.id ?? entry.name}
+                                      type="button"
+                                      className="flex w-full items-start gap-3 rounded-[16px] px-3 py-2.5 text-left text-gray-11 transition-colors hover:bg-gray-2/70"
+                                      aria-label={t("composer.mcp_settings_action", { name: entry.name, status: statusLabel })}
+                                      onClick={() => {
+                                        setToolMenuOpen(false);
+                                        openToolMenuSettings();
+                                      }}
+                                    >
+                                      {content}
+                                    </button>
+                                  ) : (
+                                    <div key={entry.id ?? entry.name} className="flex items-start gap-3 rounded-[16px] px-3 py-2.5 text-gray-11">
+                                      {content}
                                     </div>
-                                  </div>
-                                ))}
+                                  );
+                                })}
                               </div>
                             ) : (
                               <div className="px-3 py-2 text-xs text-gray-10">
