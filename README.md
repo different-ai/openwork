@@ -31,6 +31,8 @@ Install OpenWork on my computer, set up my first workspace, and open it ready to
 2. Creates your workspace
 3. Opens it ready to run
 
+The agent-first path installs to a user-local location without administrator privileges and creates a provisional workspace without requiring an account first. Inspect downloaded scripts instead of piping remote code directly into a shell, and keep tokens and claim links private. Claim the workspace in the app when you are ready to attach your identity and invite teammates. If you already belong to an OpenWork organization, sign in and select it instead of creating another workspace.
+
 ## Use OpenWork from any agent
 
 The OpenWork MCP brings your assigned skills, plugins, MCP connections, Google Workspace, and Microsoft 365 capabilities into any compatible agent.
