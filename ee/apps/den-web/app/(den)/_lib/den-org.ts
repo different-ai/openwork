@@ -595,6 +595,22 @@ export function getPluginsRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/plugins`;
 }
 
+export function getSkillsRoute(orgSlug?: string | null): string {
+  return `${getOrgDashboardRoute(orgSlug)}/skills`;
+}
+
+export function getSkillRoute(orgSlug: string | null | undefined, skillId: string): string {
+  return `${getSkillsRoute(orgSlug)}/${encodeURIComponent(skillId)}`;
+}
+
+export function getNewSkillRoute(orgSlug?: string | null): string {
+  return `${getSkillsRoute(orgSlug)}/new`;
+}
+
+export function getEditSkillRoute(orgSlug: string | null | undefined, skillId: string): string {
+  return `${getSkillRoute(orgSlug, skillId)}/edit`;
+}
+
 export function getPluginRoute(orgSlug: string | null | undefined, pluginId: string): string {
   return `${getPluginsRoute(orgSlug)}/${encodeURIComponent(pluginId)}`;
 }
