@@ -6,6 +6,7 @@ const dashboardComponents = join(import.meta.dir, "../app/(den)/dashboard/_compo
 const editor = readFileSync(join(dashboardComponents, "skill-editor-screen.tsx"), "utf8");
 const detail = readFileSync(join(dashboardComponents, "skill-detail-screen.tsx"), "utf8");
 const data = readFileSync(join(dashboardComponents, "skill-data.tsx"), "utf8");
+const pluginData = readFileSync(join(dashboardComponents, "plugin-data.tsx"), "utf8");
 const pluginDetail = readFileSync(join(dashboardComponents, "plugin-detail-screen.tsx"), "utf8");
 const pluginsScreen = readFileSync(join(dashboardComponents, "plugins-screen.tsx"), "utf8");
 const dashboardShell = readFileSync(join(dashboardComponents, "org-dashboard-shell.tsx"), "utf8");
@@ -46,6 +47,19 @@ describe("Den plugin skill CRUD UI contract", () => {
     expect(data).toContain("/delete`");
     expect(data).toContain("organizationId");
     expect(data).toContain("pluginQueryKeys.detail(pluginId)");
+  });
+
+  test("lets administrators edit and safely archive the owning plugin", () => {
+    expect(pluginDetail).toContain('data-testid="plugin-actions-trigger"');
+    expect(pluginDetail).toContain("Edit plugin");
+    expect(pluginDetail).toContain('data-testid="plugin-edit-save"');
+    expect(pluginDetail).toContain("Archive “{pluginName}”?");
+    expect(pluginDetail).toContain("without deleting its historical skills");
+    expect(pluginDetail).toContain('data-testid="archive-plugin-confirm"');
+    expect(pluginData).toContain('runReauthableAction("update-plugin"');
+    expect(pluginData).toContain('method: "PATCH"');
+    expect(pluginData).toContain('runReauthableAction("archive-plugin"');
+    expect(pluginData).toContain("/archive`");
   });
 
   test("removes the standalone Skills navigation and catalog surface", () => {
