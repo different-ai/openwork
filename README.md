@@ -10,7 +10,16 @@ The desktop app is there when you want a dedicated workspace, but it is not requ
 
 <img width="1481" height="842" alt="OpenWork desktop app" src="https://github.com/user-attachments/assets/66a8dd9b-5260-488c-957d-e54331e78c1c" />
 
-## Install with your AI agent
+## Install and set up OpenWork
+
+The desktop app is the quickest way to get started:
+
+1. [Download OpenWork](https://openworklabs.com/download) for macOS, Windows, or Linux.
+2. Install and open the app.
+3. Create a workspace and connect an LLM provider when prompted.
+4. Start a task in your new workspace. Sign in only if you want to connect managed services or share with a team.
+
+### Install with your AI agent
 
 Already use an AI agent? Copy this prompt and paste it into Claude Code, Cursor, Codex, ChatGPT, or any agent that can run commands on your computer.
 
@@ -83,7 +92,26 @@ OpenWork Den is the control plane for managing OpenWork across a team or organiz
 
 ## Local development
 
-For one checkout, keep using `pnpm dev`; with no extra environment variables it reuses the existing shared dev profile.
+### Prerequisites
+
+- [Git](https://git-scm.com/)
+- [Node.js 24](https://nodejs.org/) (the version pinned in `.nvmrc`)
+- [pnpm 11.4.0](https://pnpm.io/installation) (the version pinned in `package.json`)
+
+### Run the desktop app from source
+
+```bash
+git clone https://github.com/different-ai/openwork.git
+cd openwork
+corepack enable
+corepack install
+pnpm install --frozen-lockfile
+pnpm dev
+```
+
+No environment variables are required for the default local setup. `pnpm dev` starts the Vite UI and Electron desktop app and reuses the shared development profile. Press `Ctrl+C` to stop both processes.
+
+### Run more than one checkout
 
 To run multiple git worktrees at once, use:
 
