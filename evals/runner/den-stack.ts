@@ -498,13 +498,22 @@ async function ensureDenWeb(log: (message: string) => void): Promise<void> {
   throw new Error(`den-web did not become healthy at ${DEN_WEB_ORIGIN} within 90s.`);
 }
 
+export function denSeedNodeArgs(): string[] {
+  return [
+    "--conditions=development",
+    "--import",
+    "tsx",
+    "scripts/seed-demo-org.ts",
+  ];
+}
+
 async function ensureSeed(log: (message: string) => void): Promise<void> {
   if (await signInDemoOwner()) {
     log(`Demo org present (${DEMO_EMAIL})`);
     return;
   }
   log("Seeding demo org (Acme Robotics)...");
-  await run("pnpm", ["exec", "tsx", "scripts/seed-demo-org.ts"], {
+  await run(process.execPath, denSeedNodeArgs(), {
     cwd: join(REPO_ROOT, "ee", "apps", "den-api"),
     env: { ...process.env, ...DEN_ENV },
   });

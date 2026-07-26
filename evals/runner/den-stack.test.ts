@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  denSeedNodeArgs,
   nativeMysqlServerArgs,
   nativeMysqlSocketArgs,
 } from "./den-stack.ts";
@@ -13,4 +14,13 @@ test("native MariaDB explicitly permits root-owned Daytona runtimes", () => {
 test("native MariaDB supports fresh and resumed socket authentication", () => {
   assert(!nativeMysqlSocketArgs(false).some((arg) => arg.startsWith("-p")));
   assert(nativeMysqlSocketArgs(true).includes("-ppassword"));
+});
+
+test("demo-org seed resolves development exports without package builds", () => {
+  assert.deepEqual(denSeedNodeArgs(), [
+    "--conditions=development",
+    "--import",
+    "tsx",
+    "scripts/seed-demo-org.ts",
+  ]);
 });
