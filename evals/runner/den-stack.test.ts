@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  denEvalEnvironment,
   denSeedNodeArgs,
   nativeMysqlServerArgs,
   nativeMysqlSocketArgs,
@@ -23,4 +24,11 @@ test("demo-org seed resolves development exports without package builds", () => 
     "tsx",
     "scripts/seed-demo-org.ts",
   ]);
+});
+
+test("Den evaluator explicitly permits the isolated demo signup", () => {
+  assert.equal(
+    denEvalEnvironment().DEN_SINGLE_ORG_ALLOW_PUBLIC_SIGNUP,
+    "true",
+  );
 });

@@ -48,22 +48,27 @@ if (!/^[A-Za-z0-9_]+$/.test(DEN_DATABASE_NAME)) {
   throw new Error(`Unsupported Den database name: ${DEN_DATABASE_NAME}`);
 }
 
-const DEN_ENV = {
-  OPENWORK_DEV_MODE: "1",
-  PORT: String(DEN_API_INTERNAL_PORT),
-  DATABASE_URL: DEN_DATABASE_URL,
-  DEN_DB_ENCRYPTION_KEY: "local-dev-db-encryption-key-please-change-1234567890",
-  BETTER_AUTH_SECRET: "local-dev-secret-not-for-production-use!!",
-  BETTER_AUTH_URL: DEN_WEB_ORIGIN,
-  DEN_API_PUBLIC_URL: DEN_API_URL,
-  DEN_BETTER_AUTH_TRUSTED_ORIGINS: DEN_TRUSTED_ORIGINS,
-  CORS_ORIGINS: DEN_TRUSTED_ORIGINS,
-  PROVISIONER_MODE: "stub",
-  STRIPE_SECRET_KEY: process.env.STRIPE_SECRET_KEY ?? "sk_test_openwork_eval",
-  STRIPE_INFERENCE_PRICE_ID: process.env.STRIPE_INFERENCE_PRICE_ID ?? "price_openwork_models_eval",
-  STRIPE_WEBHOOK_SECRET: process.env.STRIPE_WEBHOOK_SECRET ?? "whsec_openwork_eval",
-  INFERENCE_PROXY_BASE_URL: process.env.INFERENCE_PROXY_BASE_URL ?? "http://127.0.0.1:8791",
-};
+export function denEvalEnvironment(): NodeJS.ProcessEnv {
+  return {
+    OPENWORK_DEV_MODE: "1",
+    DEN_SINGLE_ORG_ALLOW_PUBLIC_SIGNUP: "true",
+    PORT: String(DEN_API_INTERNAL_PORT),
+    DATABASE_URL: DEN_DATABASE_URL,
+    DEN_DB_ENCRYPTION_KEY: "local-dev-db-encryption-key-please-change-1234567890",
+    BETTER_AUTH_SECRET: "local-dev-secret-not-for-production-use!!",
+    BETTER_AUTH_URL: DEN_WEB_ORIGIN,
+    DEN_API_PUBLIC_URL: DEN_API_URL,
+    DEN_BETTER_AUTH_TRUSTED_ORIGINS: DEN_TRUSTED_ORIGINS,
+    CORS_ORIGINS: DEN_TRUSTED_ORIGINS,
+    PROVISIONER_MODE: "stub",
+    STRIPE_SECRET_KEY: process.env.STRIPE_SECRET_KEY ?? "sk_test_openwork_eval",
+    STRIPE_INFERENCE_PRICE_ID: process.env.STRIPE_INFERENCE_PRICE_ID ?? "price_openwork_models_eval",
+    STRIPE_WEBHOOK_SECRET: process.env.STRIPE_WEBHOOK_SECRET ?? "whsec_openwork_eval",
+    INFERENCE_PROXY_BASE_URL: process.env.INFERENCE_PROXY_BASE_URL ?? "http://127.0.0.1:8791",
+  };
+}
+
+const DEN_ENV = denEvalEnvironment();
 
 const sleep = (ms: number) => new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
 
