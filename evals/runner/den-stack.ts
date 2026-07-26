@@ -38,7 +38,15 @@ const MYSQL_STATE_DIR = join(STATE_DIR, "mysql");
 const MYSQL_SOCKET = join(MYSQL_STATE_DIR, "mysql.sock");
 const COMPOSE_ARGS = ["compose", "-p", "openwork-den-local", "-f", "packaging/docker/docker-compose.web-local.yml"];
 const DEN_WEB_ORIGIN = (process.env.OPENWORK_EVAL_DEN_WEB_URL ?? "http://localhost:3005").replace(/\/+$/, "");
-const DEN_TRUSTED_ORIGINS = `${DEN_BASE_URL},${DEN_WEB_ORIGIN},http://localhost:5173,http://127.0.0.1:5173`;
+const DEN_WEB_PORT = new URL(DEN_WEB_ORIGIN).port || "3005";
+const DEN_TRUSTED_ORIGINS = [
+  DEN_BASE_URL,
+  DEN_WEB_ORIGIN,
+  `http://localhost:${DEN_WEB_PORT}`,
+  `http://127.0.0.1:${DEN_WEB_PORT}`,
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
+].filter((origin, index, origins) => origins.indexOf(origin) === index).join(",");
 
 // Override with OPENWORK_EVAL_DATABASE_URL to isolate a run from the shared
 // dev database (e.g. a dedicated schema on the same MySQL container).

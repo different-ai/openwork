@@ -43,6 +43,14 @@ test("Den evaluator explicitly permits the isolated demo signup", () => {
   );
 });
 
+test("Den evaluator trusts both loopback spellings used by the proof browser", () => {
+  const trustedOrigins = denEvalEnvironment()
+    .DEN_BETTER_AUTH_TRUSTED_ORIGINS?.split(",");
+
+  assert(trustedOrigins?.includes("http://localhost:3005"));
+  assert(trustedOrigins?.includes("http://127.0.0.1:3005"));
+});
+
 test("Den Web startup discards generated output from a reusable image", async () => {
   const denWebRoot = await mkdtemp(join(tmpdir(), "openwork-den-web-"));
   const staleManifest = join(denWebRoot, ".next", "server", "app-paths-manifest.json");
