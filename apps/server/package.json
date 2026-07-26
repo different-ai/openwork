@@ -13,6 +13,7 @@
     "build": "tsc -p tsconfig.json && bun build src/opencode-plugins/openwork-extensions-preview.ts src/opencode-plugins/openwork-capabilities-knowledge.ts src/opencode-plugins/openwork-office-attachments.ts src/opencode-plugins/openwork-anthropic-adaptive-thinking.ts src/opencode-plugins/openwork-anthropic-tool-schema.ts --outdir dist/opencode-plugins --target node --format esm",
     "build:bin": "bun build --compile src/cli.ts --outfile dist/bin/openwork-server",
     "build:bin:all": "bun ./script/build.ts --outdir dist/bin --target bun-darwin-arm64 --target bun-darwin-x64 --target bun-linux-x64 --target bun-linux-arm64 --target bun-windows-x64 --target bun-windows-arm64",
+    "publish:npm": "pnpm build:bin && node scripts/publish-npm.mjs",
     "start": "bun dist/cli.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "prepublishOnly": "pnpm build:bin"
@@ -46,7 +47,6 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@openwork/paths": "workspace:*",
     "@opencode-ai/sdk": "^1.17.11",
     "better-sqlite3": "^11.10.0",
     "drizzle-orm": "^0.45.1",
@@ -56,6 +56,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@openwork/paths": "workspace:*",
     "@openwork/types": "workspace:*",
     "@types/better-sqlite3": "^7.6.13",
     "@types/minimatch": "^5.1.2",
