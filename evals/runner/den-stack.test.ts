@@ -1,6 +1,16 @@
 import assert from "node:assert/strict";
+import {
+  access,
+  mkdir,
+  mkdtemp,
+  rm,
+  writeFile,
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import {
+  clearDenWebBuildCache,
   denEvalEnvironment,
   denSeedNodeArgs,
   nativeMysqlServerArgs,
@@ -31,4 +41,20 @@ test("Den evaluator explicitly permits the isolated demo signup", () => {
     denEvalEnvironment().DEN_SINGLE_ORG_ALLOW_PUBLIC_SIGNUP,
     "true",
   );
+});
+
+test("Den Web startup discards generated output from a reusable image", async () => {
+  const denWebRoot = await mkdtemp(join(tmpdir(), "openwork-den-web-"));
+  const staleManifest = join(denWebRoot, ".next", "server", "app-paths-manifest.json");
+
+  try {
+    await mkdir(join(denWebRoot, ".next", "server"), { recursive: true });
+    await writeFile(staleManifest, "{}");
+
+    await clearDenWebBuildCache(denWebRoot);
+
+    await assert.rejects(access(staleManifest));
+  } finally {
+    await rm(denWebRoot, { recursive: true, force: true });
+  }
 });

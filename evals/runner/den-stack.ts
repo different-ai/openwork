@@ -474,6 +474,12 @@ async function ensureDenApi(log: (message: string) => void): Promise<void> {
   throw new Error("den proxy did not expose /api/den/health within 30s.");
 }
 
+export async function clearDenWebBuildCache(
+  denWebRoot = join(REPO_ROOT, "ee", "apps", "den-web"),
+): Promise<void> {
+  await rm(join(denWebRoot, ".next"), { recursive: true, force: true });
+}
+
 async function ensureDenWeb(log: (message: string) => void): Promise<void> {
   if (await httpOk(`${DEN_WEB_ORIGIN}/api/den/health`)) {
     log(`den-web already healthy at ${DEN_WEB_ORIGIN}`);
@@ -482,6 +488,10 @@ async function ensureDenWeb(log: (message: string) => void): Promise<void> {
 
   const webUrl = new URL(DEN_WEB_ORIGIN);
   const denWebPort = webUrl.port || "3005";
+  // Reusable Daytona images may retain a generated Next.js route manifest
+  // from an older checkout. Dependencies remain cached, but generated app
+  // output must match the exact candidate being proved.
+  await clearDenWebBuildCache();
   log(`Starting den-web on :${denWebPort}...`);
   const pid = spawnDetached("pnpm", ["dev:den:web"], {
     logName: "den-web",
