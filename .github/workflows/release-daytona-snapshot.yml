@@ -93,6 +93,8 @@ jobs:
 
       - name: Install Daytona CLI
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
 
@@ -118,7 +120,7 @@ jobs:
           install_dir="$HOME/.local/bin"
           mkdir -p "$install_dir"
 
-          release_json="$(curl -fsSL https://api.github.com/repos/daytonaio/daytona/releases/latest)"
+          release_json="$(gh api repos/daytonaio/daytona/releases/latest)"
           asset_url="$(python3 -c 'import json, sys; data = json.load(sys.stdin); name = sys.argv[1]; print(next(asset["browser_download_url"] for asset in data["assets"] if asset["name"] == name))' "$asset_name" <<<"$release_json")"
 
           curl -fL "$asset_url" -o "$install_dir/daytona"

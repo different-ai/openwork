@@ -918,7 +918,7 @@ jobs:
       always() &&
       needs.resolve-release.result == 'success' &&
       needs.publish-electron.result == 'success' &&
-      (needs.publish-release.result == 'success' || needs.publish-release.result == 'skipped')
+      needs.publish-release.result == 'success'
     runs-on: blacksmith-4vcpu-ubuntu-2404
     permissions:
       contents: write
