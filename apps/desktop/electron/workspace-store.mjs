@@ -155,6 +155,10 @@ export function createWorkspaceStore({
   }
 
   function legacyDesktopBootstrapPath() {
+    // An explicit bootstrap path defines an isolated installation boundary.
+    // Never let a legacy global config cross that boundary: it may contain a
+    // completed activation from another distribution or deployment.
+    if (process.env.OPENWORK_DESKTOP_BOOTSTRAP_PATH?.trim()) return null;
     const primary = desktopBootstrapPath();
     if (primary === DEFAULT_DESKTOP_BOOTSTRAP_PATH && LEGACY_DESKTOP_BOOTSTRAP_PATH !== primary) {
       return LEGACY_DESKTOP_BOOTSTRAP_PATH;

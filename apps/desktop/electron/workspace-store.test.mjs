@@ -353,6 +353,26 @@ test("desktop bootstrap migrates a newer legacy writtenAt to canonical", async (
   });
 });
 
+test("explicit desktop bootstrap path never inherits legacy activation state", async () => {
+  await withIsolatedBootstrapStore(async ({ store, legacyPath, root }) => {
+    const explicitPath = path.join(root, "isolated", "desktop-bootstrap.json");
+    process.env.OPENWORK_DESKTOP_BOOTSTRAP_PATH = explicitPath;
+    await writeBootstrapConfig(legacyPath, {
+      baseUrl: "https://app.openworklabs.com",
+      requireSignin: true,
+      enterpriseActivation: {
+        activatedAt: "2026-07-27T13:30:23.342Z",
+        denBaseUrl: "https://app.openworklabs.com/api/den",
+      },
+    });
+
+    const config = await store.getDesktopBootstrapConfig();
+    assert.equal(config.fromFile, false);
+    assert.equal(config.enterpriseActivation, undefined);
+    await assert.rejects(readFile(explicitPath, "utf8"));
+  });
+});
+
 test("desktop bootstrap prefers an older legacy organization config over a newer canonical hosted default", async () => {
   await withIsolatedBootstrapStore(async ({ store, canonicalPath, legacyPath }) => {
     await writeBootstrapConfig(canonicalPath, {
