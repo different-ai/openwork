@@ -180,4 +180,11 @@ describe("ensureLocalWorkspaceFiles", () => {
       ensureLocalWorkspaceFiles([{ path: "", preset: "starter", workspaceType: "local" }]),
     ).resolves.toBeUndefined();
   });
+
+  test("does not throw when a local workspace path is invalid or on a missing drive", async () => {
+    // e.g. path on Windows like Z:\some\path where Z: drive does not exist, or invalid chars
+    await expect(
+      ensureLocalWorkspaceFiles([{ path: "Z:\\missing-drive-workspace-test", preset: "starter", workspaceType: "local" }]),
+    ).resolves.toBeUndefined();
+  });
 });
