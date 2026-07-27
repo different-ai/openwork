@@ -27,6 +27,7 @@ import {
   probeOpenworkCloudCatalog,
   type CloudCatalogProbe,
 } from "./agent-context-cloud-probe.js";
+import { readActivatedEnterpriseDenOrigin } from "./enterprise-den-origin.js";
 import {
   inspectConnectSnapshot,
   type ConnectSnapshot,
@@ -102,6 +103,8 @@ type DiagnosticDependencies = {
   uuid?: () => string;
   inspectEffectiveEngine?: InspectAgentDiagnosticsEngine;
   signal?: AbortSignal;
+  /** Test seam for the administrator-provisioned enterprise activation read. */
+  readActivatedEnterpriseOrigin?: (signal?: AbortSignal) => Promise<string | null>;
 };
 
 type EffectiveToolPolicyAssessment = {
@@ -458,6 +461,8 @@ function cloudCatalogCheck(probe: CloudCatalogProbe): AgentContextDiagnosticChec
       referenceId: probe.referenceId,
       proxyConfigured: probe.proxyConfigured,
       extraCaConfigured: probe.extraCaConfigured,
+      trustSource: probe.trustSource,
+      enterpriseActivationPresent: probe.enterpriseActivationPresent,
       probeSteps: probe.steps,
     },
   };
@@ -518,8 +523,12 @@ function cloudCatalogCheck(probe: CloudCatalogProbe): AgentContextDiagnosticChec
     case "untrusted_endpoint":
       status = "warning";
       evidenceKind = "unavailable";
-      message = "The runtime endpoint probe was not performed because the configured origin is not in the diagnostics trust list; no request was sent, so this is a trust-configuration state, not a network, TLS, or MCP failure.";
-      action = "Have an administrator set OPENWORK_AGENT_DIAGNOSTICS_TRUSTED_ORIGINS on the OpenWork desktop/server process to the exact Cloud or on-prem Den endpoint origin, then rerun diagnostics.";
+      message = probe.enterpriseActivationPresent
+        ? "The runtime endpoint probe was not performed: this installation is enterprise activated, but against a different control-plane origin than the configured OpenWork Cloud MCP. No request was sent, so this is a configuration mismatch, not a network, TLS, or MCP failure."
+        : "The runtime endpoint probe was not performed because the configured origin is not in the diagnostics trust list; no request was sent, so this is a trust-configuration state, not a network, TLS, or MCP failure.";
+      action = probe.enterpriseActivationPresent
+        ? "Reconcile the enterprise activation origin with the configured OpenWork Cloud MCP origin, or have an administrator add the exact endpoint origin to OPENWORK_AGENT_DIAGNOSTICS_TRUSTED_ORIGINS, then rerun diagnostics."
+        : "Activate this installation against your on-prem Den, or have an administrator set OPENWORK_AGENT_DIAGNOSTICS_TRUSTED_ORIGINS on the OpenWork desktop/server process to the exact endpoint origin, then rerun diagnostics.";
       break;
     case "credential_missing":
     case "duplicate_authorization":
@@ -626,7 +635,7 @@ function cloudCatalogCheck(probe: CloudCatalogProbe): AgentContextDiagnosticChec
 }
 
 function cloudDifferentialCheck(probe: CloudCatalogProbe, engineReachableNow: boolean): AgentContextDiagnosticCheck {
-  const verdict = differentialCloudVerdict(probe);
+  const verdict = differentialCloudVerdict(probe, engineReachableNow);
   const common = {
     id: "cloud-endpoint-differential" as const,
     code: verdict,
@@ -1162,6 +1171,15 @@ export async function runAgentContextDiagnostics(input: {
     return "unspecified";
   };
   const engineReachableNow = engineInspectionStatus === "observed" || engineInspectionStatus === "invalid";
+  // Local workspaces only: the activation record describes this installation,
+  // so it must never authorize egress on behalf of a remote workspace shell.
+  const activatedEnterpriseOrigin = input.workspace.workspaceType === "local"
+    ? await (input.dependencies?.readActivatedEnterpriseOrigin
+      ?? ((signal?: AbortSignal) => readActivatedEnterpriseDenOrigin({ signal })))(
+        input.dependencies?.signal,
+      ).catch(() => null)
+    : null;
+  input.dependencies?.signal?.throwIfAborted();
   const cloudRegistration = runtimeCloudItem && runtimeCloudConfig
     ? registrationForItem(runtimeCloudItem)
     : null;
@@ -1182,6 +1200,7 @@ export async function runAgentContextDiagnostics(input: {
       source: cloudRegistration?.source ?? null,
       recordAgeMs: cloudRegistration?.recordAgeMs ?? null,
     },
+    activatedEnterpriseOrigin,
     requestId: runId,
     fetchImpl,
     now,

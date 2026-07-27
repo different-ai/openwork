@@ -883,7 +883,84 @@ describe("agent context diagnostics analyzer", () => {
       status: "skipped",
       code: "runtime_probe_not_performed",
     });
+    expect(check.details.trustSource).toBe("untrusted");
+    expect(check.details.enterpriseActivationPresent).toBe(false);
     expect(fetchCalls).toEqual([]);
+  });
+
+  test("probes an on-prem endpoint this installation is activated against", async () => {
+    const runtime = diagnosticRuntimeConfig();
+    if (!runtime.mcp) throw new Error("Expected the diagnostics MCP fixture.");
+    runtime.mcp["openwork-cloud"] = {
+      ...cloudConfig(),
+      url: "https://den.customer.example/custom/mcp/agent",
+    };
+    const fixture = await createFixture({ runtime });
+    const fetchCalls: CatalogFetchCall[] = [];
+
+    const report = agentContextDiagnosticsReportSchema.parse(await runAgentContextDiagnostics({
+      config: fixture.config,
+      workspace: fixture.workspace,
+      request: emptyObservedRequest,
+      // The engine reports this managed entry as failed; the independent
+      // probe must still run and separate endpoint from engine.
+      inspectRegistration: () => ({ status: "failed", source: "engine_status", recordAgeMs: 16_000 }),
+      dependencies: {
+        fetchImpl: catalogFetch(["search_capabilities", "execute_capability"], fetchCalls),
+        inspectEffectiveEngine: effectiveEngineInspection(runtime),
+        readActivatedEnterpriseOrigin: async () => "https://den.customer.example",
+      },
+    }));
+
+    expect(checkById(report, "cloud-tool-catalog")).toMatchObject({
+      status: "passed",
+      code: "cloud_catalog_exact_match",
+      details: {
+        requestPerformed: true,
+        trustSource: "enterprise-activation",
+        enterpriseActivationPresent: true,
+      },
+    });
+    expect(checkById(report, "cloud-endpoint-differential")).toMatchObject({
+      status: "failed",
+      code: "runtime_connected_engine_failed",
+      owner: "opencode-engine",
+    });
+    expect(fetchCalls).toHaveLength(4);
+    expect(JSON.stringify(report)).not.toContain("den.customer.example");
+  });
+
+  test("distinguishes an activation origin that does not match the configured cloud MCP", async () => {
+    const runtime = diagnosticRuntimeConfig();
+    if (!runtime.mcp) throw new Error("Expected the diagnostics MCP fixture.");
+    runtime.mcp["openwork-cloud"] = {
+      ...cloudConfig(),
+      url: "https://den.customer.example/custom/mcp/agent",
+    };
+    const fixture = await createFixture({ runtime });
+    const fetchCalls: CatalogFetchCall[] = [];
+
+    const report = agentContextDiagnosticsReportSchema.parse(await runAgentContextDiagnostics({
+      config: fixture.config,
+      workspace: fixture.workspace,
+      request: emptyObservedRequest,
+      inspectRegistration: () => "connected",
+      dependencies: {
+        fetchImpl: catalogFetch(["search_capabilities", "execute_capability"], fetchCalls),
+        inspectEffectiveEngine: effectiveEngineInspection(runtime),
+        readActivatedEnterpriseOrigin: async () => "https://den.other.example",
+      },
+    }));
+
+    const check = checkById(report, "cloud-tool-catalog");
+    expect(check).toMatchObject({
+      status: "warning",
+      code: "untrusted_endpoint",
+      details: { requestPerformed: false, trustSource: "untrusted", enterpriseActivationPresent: true },
+    });
+    expect(check.message).toContain("mismatch");
+    expect(fetchCalls).toEqual([]);
+    expect(JSON.stringify(report)).not.toContain("den.other.example");
   });
 
   test("fails closed when the effective engine response is invalid or unavailable", async () => {

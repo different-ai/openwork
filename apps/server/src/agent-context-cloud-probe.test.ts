@@ -186,6 +186,8 @@ describe("OpenWork Cloud catalog probe", () => {
       status: "observed",
       stage: "complete",
       code: "catalog_observed",
+      trustSource: "builtin-cloud",
+      enterpriseActivationPresent: false,
       networkCode: null,
       retryable: false,
       runtimeFamily: "bun",
@@ -968,6 +970,8 @@ describe("OpenWork Cloud catalog probe", () => {
       retryable: false,
       runtimeFamily: "bun",
       transport: "test-seam",
+      trustSource: "builtin-cloud",
+      enterpriseActivationPresent: false,
       httpStatus: 200,
       durationMs: 1,
       toolsListPerformed: true,
@@ -986,18 +990,91 @@ describe("OpenWork Cloud catalog probe", () => {
       engineEvidenceAgeMs: 1_000,
       ...overrides,
     });
-    expect(differentialCloudVerdict(base({}))).toBe("runtime_and_engine_connected");
-    expect(differentialCloudVerdict(base({ engineRegistrationStatus: "failed" })))
+    expect(differentialCloudVerdict(base({}), true)).toBe("runtime_and_engine_connected");
+    expect(differentialCloudVerdict(base({ engineRegistrationStatus: "failed" }), true))
       .toBe("runtime_connected_engine_failed");
-    expect(differentialCloudVerdict(base({ status: "failed", code: "tls_error" })))
+    expect(differentialCloudVerdict(base({ status: "failed", code: "tls_error" }), true))
       .toBe("runtime_failed_engine_connected");
-    expect(differentialCloudVerdict(base({ status: "failed", code: "tls_error", engineRegistrationStatus: "failed" })))
+    expect(differentialCloudVerdict(base({ status: "failed", code: "tls_error", engineRegistrationStatus: "failed" }), true))
       .toBe("runtime_and_engine_failed");
-    expect(differentialCloudVerdict(base({ performed: false, status: "not-performed", code: "untrusted_endpoint" })))
+    expect(differentialCloudVerdict(base({ performed: false, status: "not-performed", code: "untrusted_endpoint" }), true))
       .toBe("runtime_probe_not_performed");
-    expect(differentialCloudVerdict(base({ engineRegistrationStatus: "not-recorded" })))
+    expect(differentialCloudVerdict(base({ engineRegistrationStatus: "not-recorded" }), true))
       .toBe("engine_evidence_stale_or_unavailable");
-    expect(differentialCloudVerdict(base({ engineEvidenceAgeMs: 120_000 })))
+    // Aged connected evidence is the engine's standing state and stays
+    // trusted; only an aged failure a reachable engine could have refreshed
+    // is downgraded to stale.
+    expect(differentialCloudVerdict(base({ engineEvidenceAgeMs: 120_000 }), true))
+      .toBe("runtime_and_engine_connected");
+    expect(differentialCloudVerdict(base({ engineRegistrationStatus: "failed", engineEvidenceAgeMs: 120_000 }), true))
       .toBe("engine_evidence_stale_or_unavailable");
+    expect(differentialCloudVerdict(base({ engineRegistrationStatus: "failed", engineEvidenceAgeMs: 120_000 }), false))
+      .toBe("runtime_connected_engine_failed");
+  });
+
+  test("trusts the activated enterprise origin and reports the trust source", async () => {
+    const enterpriseEndpoint = "https://den.customer.example/custom/mcp/agent";
+    const enterpriseConfig = {
+      type: "remote",
+      enabled: true,
+      url: enterpriseEndpoint,
+      headers: { Authorization: TOKEN },
+    };
+
+    let calls = 0;
+    const activated = await probeOpenworkCloudCatalog(input({
+      requestId: "enterprise-activated",
+      config: enterpriseConfig,
+      activatedEnterpriseOrigin: "https://den.customer.example",
+      fetchImpl: async () => {
+        calls += 1;
+        return jsonResponse("enterprise-activated");
+      },
+    }));
+    expect(calls).toBe(1);
+    expect(activated).toMatchObject({
+      performed: true,
+      status: "observed",
+      trustSource: "enterprise-activation",
+      enterpriseActivationPresent: true,
+    });
+    expect(JSON.stringify(activated)).not.toContain("den.customer.example");
+
+    // Activated against a different control plane than the configured MCP:
+    // the mismatch must stay fail-closed but remain distinguishable.
+    let mismatchCalls = 0;
+    const mismatch = await probeOpenworkCloudCatalog(input({
+      requestId: "enterprise-mismatch",
+      config: enterpriseConfig,
+      activatedEnterpriseOrigin: "https://den.other.example",
+      fetchImpl: async () => {
+        mismatchCalls += 1;
+        return jsonResponse("enterprise-mismatch");
+      },
+    }));
+    expect(mismatchCalls).toBe(0);
+    expect(mismatch).toMatchObject({
+      performed: false,
+      code: "untrusted_endpoint",
+      trustSource: "untrusted",
+      enterpriseActivationPresent: true,
+    });
+
+    let unactivatedCalls = 0;
+    const unactivated = await probeOpenworkCloudCatalog(input({
+      requestId: "enterprise-absent",
+      config: enterpriseConfig,
+      fetchImpl: async () => {
+        unactivatedCalls += 1;
+        return jsonResponse("enterprise-absent");
+      },
+    }));
+    expect(unactivatedCalls).toBe(0);
+    expect(unactivated).toMatchObject({
+      performed: false,
+      code: "untrusted_endpoint",
+      trustSource: "untrusted",
+      enterpriseActivationPresent: false,
+    });
   });
 });

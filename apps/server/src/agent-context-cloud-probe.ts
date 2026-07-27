@@ -131,8 +131,26 @@ export type CloudRuntimeEngineDifferential =
   | "runtime_probe_not_performed"
   | "engine_evidence_stale_or_unavailable";
 
+/**
+ * Which allowlist entry authorized the credentialed request, or why none did.
+ * Reported instead of the origin itself so an administrator can distinguish
+ * "this install is not enterprise activated" from "it is activated, but
+ * against a different origin than the configured Cloud MCP" — a real
+ * misconfiguration — without the report ever carrying a hostname.
+ */
+export type CloudEndpointTrustSource =
+  | "builtin-cloud"
+  | "loopback"
+  | "administrator-env"
+  | "enterprise-activation"
+  | "untrusted"
+  /** The endpoint was absent or structurally invalid, so trust never applied. */
+  | "not-evaluated";
+
 export type CloudCatalogProbe = {
   performed: boolean;
+  trustSource: CloudEndpointTrustSource;
+  enterpriseActivationPresent: boolean;
   status: CloudCatalogProbeStatus;
   stage: CloudCatalogProbeStage;
   code: CloudCatalogProbeCode;
@@ -180,6 +198,13 @@ export type ProbeOpenworkCloudCatalogInput = {
   signal?: AbortSignal;
   /** Test seam for proxy and extra-CA presence detection. */
   env?: Record<string, string | undefined>;
+  /**
+   * Exact origin of the enterprise/on-prem Den control plane this install is
+   * activated against, resolved by the caller from administrator-provisioned
+   * desktop activation state. Null when the install is not enterprise
+   * activated; never a renderer- or request-supplied value.
+   */
+  activatedEnterpriseOrigin?: string | null;
 };
 
 type PreparedProbe = {
@@ -223,10 +248,28 @@ type ProbeBaseFacts = {
   transport: RuntimeDiagnosticTransport;
   proxyConfigured: boolean;
   extraCaConfigured: boolean;
+  trustSource: CloudEndpointTrustSource;
+  enterpriseActivationPresent: boolean;
   engineRegistrationStatus: CloudEngineRegistrationStatus;
   engineEvidenceSource: "transport_failure" | "engine_status" | null;
   engineEvidenceAgeMs: number | null;
 };
+
+/** Classifies which allowlist entry authorized this exact endpoint origin. */
+function resolveTrustSource(
+  endpoint: URL,
+  activatedEnterpriseOrigin?: string | null,
+): CloudEndpointTrustSource {
+  if (isLoopbackHostname(endpoint.hostname)) return "loopback";
+  if (DEFAULT_TRUSTED_ORIGINS.has(endpoint.origin)) return "builtin-cloud";
+  if (activatedEnterpriseOrigin && endpoint.origin === activatedEnterpriseOrigin) {
+    return "enterprise-activation";
+  }
+  if (configuredTrustedOrigins(activatedEnterpriseOrigin).has(endpoint.origin)) {
+    return "administrator-env";
+  }
+  return "untrusted";
+}
 
 const activeProbes = new Set<Promise<CloudCatalogProbe>>();
 
@@ -258,8 +301,12 @@ function isLoopbackHostname(hostname: string): boolean {
  * administrator setting; the desktop bootstrap's Den activation state is not
  * visible to this server process, so it can never widen this list implicitly.
  */
-function configuredTrustedOrigins(): Set<string> {
+function configuredTrustedOrigins(activatedEnterpriseOrigin?: string | null): Set<string> {
   const origins = new Set(DEFAULT_TRUSTED_ORIGINS);
+  // The activated enterprise/on-prem control-plane origin is administrator
+  // provisioned (written only after a signed activation claim verifies), so
+  // it joins the allowlist as an exact origin without an explicit override.
+  if (activatedEnterpriseOrigin) origins.add(activatedEnterpriseOrigin);
   const configured = process.env.OPENWORK_AGENT_DIAGNOSTICS_TRUSTED_ORIGINS ?? "";
   for (const entry of configured.split(",")) {
     const raw = entry.trim().replace(/\/+$/u, "");
@@ -324,7 +371,10 @@ function prepare(input: ProbeOpenworkCloudCatalogInput): PreparedProbe | CloudCa
   if (input.config.enabled !== true) return "cloud_mcp_disabled";
   const endpoint = safeCatalogEndpoint(input.config.url);
   if (!endpoint) return "invalid_endpoint";
-  if (!isLoopbackHostname(endpoint.hostname) && !configuredTrustedOrigins().has(endpoint.origin)) {
+  if (
+    !isLoopbackHostname(endpoint.hostname)
+    && !configuredTrustedOrigins(input.activatedEnterpriseOrigin).has(endpoint.origin)
+  ) {
     return "untrusted_endpoint";
   }
   const authorization = authorizationHeader(input.config);
@@ -906,14 +956,26 @@ async function performProbe(
  * registration evidence for the same managed entry, so a report can implicate
  * the correct runtime boundary instead of collapsing both into one failure.
  */
-export function differentialCloudVerdict(probe: CloudCatalogProbe): CloudRuntimeEngineDifferential {
+export function differentialCloudVerdict(
+  probe: CloudCatalogProbe,
+  engineReachableNow: boolean,
+): CloudRuntimeEngineDifferential {
   if (!probe.performed) return "runtime_probe_not_performed";
   if (probe.engineRegistrationStatus === "not-recorded") return "engine_evidence_stale_or_unavailable";
-  if (probe.engineEvidenceAgeMs !== null && probe.engineEvidenceAgeMs > STALE_ENGINE_EVIDENCE_MS) {
+  const engineConnected = probe.engineRegistrationStatus === "connected";
+  // A connected record is the engine's standing state and ages naturally
+  // between syncs, so it stays trustworthy. Only a failure record the
+  // reachable engine could already have refreshed is downgraded, mirroring
+  // the mcp_registration_stale_failure rule on the sync check.
+  if (
+    !engineConnected
+    && engineReachableNow
+    && probe.engineEvidenceAgeMs !== null
+    && probe.engineEvidenceAgeMs > STALE_ENGINE_EVIDENCE_MS
+  ) {
     return "engine_evidence_stale_or_unavailable";
   }
   const runtimeConnected = probe.status === "observed";
-  const engineConnected = probe.engineRegistrationStatus === "connected";
   if (runtimeConnected && engineConnected) return "runtime_and_engine_connected";
   if (runtimeConnected) return "runtime_connected_engine_failed";
   if (engineConnected) return "runtime_failed_engine_connected";
@@ -938,11 +1000,16 @@ export async function probeOpenworkCloudCatalog(
   const transportInfo = input.fetchImpl
     ? { runtimeFamily: runtimeDiagnosticTransportInfo().runtimeFamily, transport: "test-seam" as const }
     : runtimeDiagnosticTransportInfo();
+  const endpointForTrust = isRecord(input.config) ? safeCatalogEndpoint(input.config.url) : null;
   const base: ProbeBaseFacts = {
     runtimeFamily: transportInfo.runtimeFamily,
     transport: transportInfo.transport,
     proxyConfigured: proxyEnvConfigured(env),
     extraCaConfigured: extraCaEnvConfigured(env),
+    trustSource: endpointForTrust
+      ? resolveTrustSource(endpointForTrust, input.activatedEnterpriseOrigin)
+      : "not-evaluated",
+    enterpriseActivationPresent: Boolean(input.activatedEnterpriseOrigin),
     engineRegistrationStatus: input.engineRegistration.status,
     engineEvidenceSource: input.engineRegistration.source,
     engineEvidenceAgeMs: input.engineRegistration.recordAgeMs,
