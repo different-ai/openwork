@@ -5,9 +5,11 @@ export function enterpriseActivationRequired(
   distribution: DesktopDistributionInfo,
   bootstrap: Pick<DenBootstrapConfig, "requireActivation" | "enterpriseActivation">,
 ) {
-  const requireActivation = typeof bootstrap.requireActivation === "boolean"
-    ? bootstrap.requireActivation
-    : distribution.requireActivation;
+  const requireActivation = distribution.flavor === "enterprise"
+    ? distribution.requireActivation
+    : (typeof bootstrap.requireActivation === "boolean"
+        ? bootstrap.requireActivation
+        : distribution.requireActivation);
   return requireActivation
     && !(
       bootstrap.enterpriseActivation?.activatedAt
