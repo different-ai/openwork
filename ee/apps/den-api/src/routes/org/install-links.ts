@@ -26,10 +26,8 @@ import { denTypeIdSchema, emptyResponse, forbiddenSchema, invalidRequestSchema, 
 import { organizationCapabilityKeySchema } from "../../organization-capabilities.js"
 import { normalizeOrganizationMetadata } from "../../organization-limits.js"
 import {
-  DEFAULT_INSTALLER_RELEASE_REPO,
-  FIRST_GENERIC_INSTALLER_RELEASE,
+  desktopReleaseAssetName,
   genericInstallerArtifactName,
-  installerLatestReleaseAssetUrl,
   installerReleaseAssetUrl,
   resolveConfiguredInstallerArtifact,
 } from "../../utils/installer-artifacts.js"
@@ -217,29 +215,15 @@ function maxAllowedDesktopVersion(versions: string[]) {
   return maxVersion
 }
 
-function clampInstallerReleaseTag(releaseTag: string) {
-  const comparison = compareVersions(releaseTag, FIRST_GENERIC_INSTALLER_RELEASE)
-  if (env.installerReleaseRepo === DEFAULT_INSTALLER_RELEASE_REPO && comparison !== null && comparison < 0) {
-    // The generic installer is version-agnostic: it installs /v1/app-version,
-    // so allowedDesktopVersions still governs app updates. This only selects
-    // an installer binary release that actually has OpenWork-Installer-* assets.
-    return `v${FIRST_GENERIC_INSTALLER_RELEASE}`
-  }
-  return releaseTag
-}
-
-function installerReleaseTagForMetadata(metadataInput: unknown) {
+function desktopReleaseTagForMetadata(metadataInput: unknown) {
   const metadata = normalizeOrganizationMetadata(organizationMetadataInput(metadataInput)).metadata
   const allowedVersions = metadata.allowedDesktopVersions
   if (!allowedVersions?.length) {
-    if (env.installerReleaseRepo === DEFAULT_INSTALLER_RELEASE_REPO && !env.installerReleaseTagExplicit) {
-      return null
-    }
-    return clampInstallerReleaseTag(env.installerReleaseTag)
+    return env.installerReleaseTag
   }
 
   const maxVersion = maxAllowedDesktopVersion(allowedVersions)
-  return clampInstallerReleaseTag(maxVersion ? `v${maxVersion}` : env.installerReleaseTag)
+  return maxVersion ? `v${maxVersion}` : env.installerReleaseTag
 }
 
 async function resolveInstallConfigForToken(token: string, request: Request) {
@@ -266,7 +250,7 @@ async function resolveInstallConfigForToken(token: string, request: Request) {
     config: buildInstallConfig({ organization: row.organization, request }),
     installLinkId: row.installLink.id,
     organizationSlug: row.organization.slug,
-    installerReleaseTag: installerReleaseTagForMetadata(row.organization.metadata),
+    desktopReleaseTag: desktopReleaseTagForMetadata(row.organization.metadata),
   }
 }
 
@@ -561,11 +545,11 @@ export function registerOrgInstallLinkRoutes<T extends { Variables: OrgRouteVari
     "/v1/install/:platform",
     describeRoute({
       tags: ["Organizations"],
-      summary: "Download OpenWork installer",
-      description: "Always serves the OpenWork installer for the requested platform. By default Den redirects to the public release asset; unrestricted official-repo organizations follow the latest published release. Operators can optionally mount installer artifacts for an air-gapped mirror.",
+      summary: "Download OpenWork desktop",
+      description: "Redirects cloud downloads to the standard OpenWork desktop app for the requested platform and organization-approved version. Operators can still mount installer artifacts for an air-gapped mirror.",
       responses: {
-        200: textResponse("Installer artifact returned successfully."),
-        302: emptyResponse("Den redirected the browser to the public OpenWork installer release asset."),
+        200: textResponse("Mounted installer artifact returned successfully."),
+        302: emptyResponse("Den redirected the browser to the standard OpenWork desktop release asset."),
         400: jsonResponse("The install-link token or platform was invalid.", invalidRequestSchema),
         404: jsonResponse("The install link was missing, expired, or revoked.", installLinkNotFoundSchema),
         429: jsonResponse("Too many installer download attempts.", rateLimitedSchema),
@@ -618,16 +602,12 @@ export function registerOrgInstallLinkRoutes<T extends { Variables: OrgRouteVari
         }
       }
 
-      if (!genericFileName) {
-        return c.json({ error: "invalid_request", details: [{ message: "Unsupported installer platform." }] }, 400)
+      const fileName = desktopReleaseAssetName(platform, resolved.desktopReleaseTag)
+      if (!fileName) {
+        return c.json({ error: "invalid_request", details: [{ message: "Unsupported desktop platform." }] }, 400)
       }
 
-      if (resolved.installerReleaseTag === null) {
-        // Follow GitHub latest published release so draft-release windows cannot 404.
-        return c.redirect(installerLatestReleaseAssetUrl(genericFileName), 302)
-      }
-
-      return c.redirect(installerReleaseAssetUrl(genericFileName, { releaseTag: resolved.installerReleaseTag }), 302)
+      return c.redirect(installerReleaseAssetUrl(fileName, { releaseTag: resolved.desktopReleaseTag }), 302)
     },
   )
 }
