@@ -92,6 +92,11 @@ const rateLimitedSchema = z.object({
 }).meta({ ref: "RateLimitedError" })
 
 type InstallPlatform = z.infer<typeof installPlatformSchema>
+type ManagedDesktopDistribution = "cloud" | "enterprise"
+
+function managedDesktopDistribution(): ManagedDesktopDistribution {
+  return env.orgMode === "multi_org" ? "cloud" : "enterprise"
+}
 
 export type InstallExperienceDependencies = {
   resolveDirectUrl: (platform: InstallPlatform, releaseTag: string) => string
@@ -382,7 +387,7 @@ export function registerOrgInstallLinkRoutes<T extends { Variables: OrgRouteVari
         activationUrl: exchangeHandoff.activationUrl,
         activationExpiresAt: exchangeHandoff.connectExpiresAt,
         desktopVersion: resolved.installerReleaseTag.replace(/^v/i, ""),
-        distribution: "enterprise",
+        distribution: managedDesktopDistribution(),
       })
     },
   )
@@ -472,56 +477,13 @@ export function registerOrgInstallLinkRoutes<T extends { Variables: OrgRouteVari
   }
 
   app.get(
-    "/v1/install/cloud/:platform",
-    describeRoute({
-      tags: ["Organizations"],
-      summary: "Download OpenWork Cloud desktop",
-      description: "Redirects Cloud downloads to the sign-in-required OpenWork Cloud desktop app for the requested platform and organization-approved version.",
-      responses: {
-        302: emptyResponse("Den redirected the browser to the signed OpenWork Cloud release asset."),
-        400: jsonResponse("The install-link token or platform was invalid.", invalidRequestSchema),
-        404: jsonResponse("The install link was missing, expired, or revoked.", installLinkNotFoundSchema),
-        429: jsonResponse("Too many installer download attempts.", rateLimitedSchema),
-      },
-    }),
-    publicRoute,
-    queryValidator(installLinkQuerySchema),
-    async (c) => {
-      const platformResult = installPlatformParamSchema.safeParse({ platform: c.req.param("platform") })
-      if (!platformResult.success) {
-        return c.json({ error: "invalid_request", details: platformResult.error.issues }, 400)
-      }
-
-      const retryAfter = await enforceRateLimit(c.req.raw.headers, "install:cloud-artifact", INSTALL_ARTIFACT_RATE_LIMIT_MAX, INSTALL_LINK_RATE_LIMIT_WINDOW_MS)
-      if (retryAfter !== null) {
-        c.header("Retry-After", String(retryAfter))
-        return c.json({ error: "rate_limited", message: "Too many installer download attempts. Try again later." }, 429)
-      }
-
-      const input = c.req.valid("query")
-      const resolved = await resolveInstallConfigForToken(input.token, c.req.raw)
-      if (!resolved) {
-        return c.json({ error: "install_link_not_found" }, 404)
-      }
-
-      const platform = platformResult.data.platform
-      const fileName = cloudDesktopReleaseAssetName(platform, resolved.installerReleaseTag)
-      if (!fileName) {
-        return c.json({ error: "invalid_request", details: [{ message: "Unsupported desktop platform." }] }, 400)
-      }
-
-      return c.redirect(installer.resolveCloudDirectUrl(platform, resolved.installerReleaseTag), 302)
-    },
-  )
-
-  app.get(
     "/v1/install/:platform",
     describeRoute({
       tags: ["Organizations"],
-      summary: "Download OpenWork desktop",
-      description: "Redirects cloud downloads to the OpenWork Enterprise desktop app for the requested platform and organization-approved version.",
+      summary: "Download managed OpenWork desktop",
+      description: "Redirects hosted Cloud deployments to the sign-in-required Cloud app and private single-org deployments to the activation-required Enterprise app.",
       responses: {
-        302: emptyResponse("Den redirected the browser to the signed OpenWork Enterprise release asset."),
+        302: emptyResponse("Den redirected the browser to the signed desktop asset for this deployment."),
         400: jsonResponse("The install-link token or platform was invalid.", invalidRequestSchema),
         404: jsonResponse("The install link was missing, expired, or revoked.", installLinkNotFoundSchema),
         429: jsonResponse("Too many installer download attempts.", rateLimitedSchema),
@@ -548,12 +510,18 @@ export function registerOrgInstallLinkRoutes<T extends { Variables: OrgRouteVari
       }
 
       const platform = platformResult.data.platform
-      const fileName = enterpriseDesktopReleaseAssetName(platform, resolved.installerReleaseTag)
+      const distribution = managedDesktopDistribution()
+      const fileName = distribution === "cloud"
+        ? cloudDesktopReleaseAssetName(platform, resolved.installerReleaseTag)
+        : enterpriseDesktopReleaseAssetName(platform, resolved.installerReleaseTag)
       if (!fileName) {
         return c.json({ error: "invalid_request", details: [{ message: "Unsupported desktop platform." }] }, 400)
       }
 
-      return c.redirect(installer.resolveDirectUrl(platform, resolved.installerReleaseTag), 302)
+      const directUrl = distribution === "cloud"
+        ? installer.resolveCloudDirectUrl(platform, resolved.installerReleaseTag)
+        : installer.resolveDirectUrl(platform, resolved.installerReleaseTag)
+      return c.redirect(directUrl, 302)
     },
   )
 }

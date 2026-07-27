@@ -21,7 +21,7 @@ export const installExperienceConfigSchema = installConfigSchema.extend({
   activationUrl: z.string().trim().url(),
   activationExpiresAt: z.string().datetime(),
   desktopVersion: z.string().trim().min(1),
-  distribution: z.literal("enterprise"),
+  distribution: z.enum(["cloud", "enterprise"]),
 }).meta({ ref: "InstallExperienceConfig" })
 
 export type InstallExperienceConfig = z.infer<typeof installExperienceConfigSchema>

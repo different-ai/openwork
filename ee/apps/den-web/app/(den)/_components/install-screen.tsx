@@ -11,7 +11,7 @@ import {
   rememberDesktopHandoffGrant,
 } from "../_lib/desktop-handoff";
 import { getInstallConfigErrorMessage } from "../_lib/install-errors";
-import { buildCloudInstallDownloadHref, buildInstallDownloadHref, installerFileName, type InstallPlatform } from "../_lib/install-download";
+import { buildInstallDownloadHref, type InstallPlatform, installerFileName } from "../_lib/install-download";
 import { isMobileUserAgent } from "../_lib/platform";
 import { useDesktopHandoffStatus } from "../_lib/use-desktop-handoff-status";
 import { OnboardingShell } from "./onboarding-shell";
@@ -30,7 +30,7 @@ type InstallConfig = {
   activationUrl: string;
   activationExpiresAt: string;
   desktopVersion: string;
-  distribution: "enterprise";
+  distribution: "cloud" | "enterprise";
 };
 
 const RETURN_TO_OPENWORK_URL = "openwork://open";
@@ -152,7 +152,7 @@ function parseInstallConfig(value: unknown): InstallConfig | null {
     !isUrl(activationUrl)
     || Number.isNaN(Date.parse(activationExpiresAt))
     || !desktopVersion
-    || distribution !== "enterprise"
+    || (distribution !== "cloud" && distribution !== "enterprise")
   ) {
     return null;
   }
@@ -192,10 +192,6 @@ async function fetchInstallConfig(token: string) {
 
 function installHref(config: InstallConfig, platform: InstallPlatform, token: string) {
   return buildInstallDownloadHref(config.apiUrl, platform, token);
-}
-
-function cloudInstallHref(config: InstallConfig, platform: InstallPlatform, token: string) {
-  return buildCloudInstallDownloadHref(config.apiUrl, platform, token);
 }
 
 type StepState = "complete" | "active" | "pending";
@@ -393,38 +389,6 @@ export function InstallScreen() {
     ];
   }, [config, token]);
 
-  const cloudDownloadGroups = useMemo<DownloadPlatformGroup[]>(() => {
-    if (!config) {
-      return [];
-    }
-
-    return [
-      {
-        os: "macos",
-        title: "macOS",
-        options: [
-          { href: cloudInstallHref(config, "mac-arm64", token), label: "Apple Silicon (M1+)", arch: "arm64" },
-          { href: cloudInstallHref(config, "mac-x64", token), label: "Intel", arch: "x64" },
-        ],
-      },
-      {
-        os: "windows",
-        title: "Windows",
-        options: [
-          { href: cloudInstallHref(config, "win-x64", token), label: "x64 app", arch: "x64" },
-        ],
-      },
-      {
-        os: "linux",
-        title: "Linux",
-        options: [
-          { href: cloudInstallHref(config, "linux-x64", token), label: "AppImage (x64)", arch: "x64" },
-          { href: cloudInstallHref(config, "linux-arm64", token), label: "AppImage (ARM64)", arch: "arm64" },
-        ],
-      },
-    ];
-  }, [config, token]);
-
   const platformByHref = useMemo<Record<string, InstallPlatform>>(() => {
     if (!config) {
       return {};
@@ -580,6 +544,50 @@ export function InstallScreen() {
     );
   }
 
+  if (config.distribution === "cloud") {
+    return (
+      <OnboardingShell state="install" width="full">
+        <section data-testid="install-page">
+          <div className="grid gap-6 rounded-[1.75rem] border border-[#e7eaef] bg-[#fcfcfd] p-5 text-center sm:p-6 md:p-8" data-testid="install-card">
+            <div className="grid justify-items-center gap-3">
+              <span className="grid size-12 place-items-center rounded-2xl bg-blue-50 text-blue-700" aria-hidden="true">
+                <Cloud className="size-6" />
+              </span>
+              <h1 className="m-0 text-[2rem] font-semibold leading-[1.04] tracking-[-0.05em] text-slate-950 sm:text-[2.4rem]">
+                Download OpenWork Cloud
+              </h1>
+              <p className="den-copy max-w-2xl">This managed Cloud edition connects to OpenWork Cloud and requires account sign-in. It never asks for an enterprise activation code.</p>
+            </div>
+
+            {isMobile ? (
+              <div className="den-frame-inset grid gap-3 rounded-[1.5rem] p-5 text-left" data-testid="install-mobile-note">
+                <p className="m-0 text-base font-medium text-[var(--dls-text-primary)]">OpenWork Cloud runs on your computer.</p>
+                <p className="den-copy">Open this link on your Mac, Windows, or Linux machine.</p>
+                <button type="button" className="den-button-secondary w-full sm:w-auto" onClick={() => void copyCurrentLink()}>
+                  {copied ? "Copied" : "Copy install link"}
+                </button>
+              </div>
+            ) : (
+              <div className="grid gap-5 text-left">
+                <DownloadPlatformGrid
+                  groups={downloadGroups}
+                  recommendedTestId="install-cloud-download-primary"
+                />
+                <div className="grid gap-3 rounded-[1.25rem] border border-blue-200 bg-blue-50/70 p-5">
+                  <p className="m-0 font-semibold text-slate-950">Install, open, and sign in</p>
+                  <p className="m-0 text-sm leading-6 text-slate-600">The Cloud installer opens OpenWork at the hosted sign-in screen. Sign in with your OpenWork Cloud account to finish setup—there is no activation step.</p>
+                  <a className="den-button-secondary w-fit" href={RETURN_TO_OPENWORK_URL}>
+                    I already installed OpenWork Cloud
+                  </a>
+                </div>
+              </div>
+            )}
+          </div>
+        </section>
+      </OnboardingShell>
+    );
+  }
+
   const installerFile = installerFileName(
     downloadPlatform ?? detectedInstallPlatform(detected),
     config.desktopVersion,
@@ -602,22 +610,6 @@ export function InstallScreen() {
               </span>
             </h1>
             <p className="den-copy">Complete one step at a time. Select any step to expand or review.</p>
-          </div>
-
-          <div className="grid gap-4 rounded-[1.5rem] border border-blue-200 bg-blue-50/70 p-5 text-left" data-testid="install-cloud-option">
-            <div className="flex min-w-0 items-start gap-3">
-              <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-white text-blue-700 shadow-sm" aria-hidden="true">
-                <Cloud className="size-5" />
-              </span>
-              <span className="grid gap-1">
-                <span className="text-base font-semibold text-slate-950">Install OpenWork Cloud</span>
-                <span className="text-sm leading-6 text-slate-600">This Cloud edition connects to OpenWork Cloud and requires account sign-in. It never asks for enterprise activation.</span>
-              </span>
-            </div>
-            <DownloadPlatformGrid
-              groups={cloudDownloadGroups}
-              recommendedTestId="install-cloud-download-primary"
-            />
           </div>
 
         {isMobile ? (

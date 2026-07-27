@@ -131,11 +131,12 @@ export const getGithubData = async () => {
 
   // The public website and Den intentionally expose different builds from the
   // same release. Exclude both the retired helper installer and the parallel
-  // enterprise flavor here so loose per-architecture matching never swaps the
-  // public download for an organization-gated artifact.
+  // Cloud and enterprise flavors here so loose per-architecture matching never
+  // swaps the public download for a managed distribution.
   const isNonPublicDesktopAsset = (asset: ReleaseAsset) => {
     const name = String(asset?.name || "").toLowerCase();
     return name.startsWith("openwork-installer-")
+      || name.startsWith("openwork-cloud-")
       || name.startsWith("openwork-enterprise-");
   };
   const publicAssets = (list: ReleaseAsset[] | undefined) =>

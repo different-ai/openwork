@@ -10,6 +10,7 @@ function read(...segments: string[]) {
 
 const screen = read("dashboard", "_components", "marketplace-onboarding-screen.tsx");
 const page = read("dashboard", "(admin)", "onboarding", "page.tsx");
+const publicInstallers = read("_lib", "public-installers.ts");
 
 describe("Marketplace onboarding page", () => {
   test("reuses the landing download card and den choice cards", () => {
@@ -18,6 +19,8 @@ describe("Marketplace onboarding page", () => {
     expect(screen).toContain("DenSectionHeader");
     expect(screen).toContain("DenBadge");
     expect(page).toContain("getPublicInstallers");
+    expect(publicInstallers).toContain('name.startsWith("openwork-cloud-")');
+    expect(publicInstallers).toContain('name.startsWith("openwork-enterprise-")');
   });
 
   test("offers OpenWork Models and Bring your Own Keys as the model path", () => {

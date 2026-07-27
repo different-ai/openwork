@@ -26,12 +26,3 @@ export function buildInstallDownloadHref(apiUrl: string, platform: InstallPlatfo
   url.hash = "";
   return url.toString();
 }
-
-export function buildCloudInstallDownloadHref(apiUrl: string, platform: InstallPlatform, token: string) {
-  const url = new URL(apiUrl);
-  const basePath = url.pathname.replace(/\/+$/, "");
-  url.pathname = `${basePath}/v1/install/cloud/${platform}`;
-  url.search = `?token=${encodeURIComponent(token)}`;
-  url.hash = "";
-  return url.toString();
-}

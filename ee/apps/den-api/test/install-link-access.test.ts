@@ -158,6 +158,7 @@ beforeEach(() => {
   envModule.env.installerReleaseRepo = "different-ai/openwork"
   envModule.env.installerReleaseTag = "v9.9.9"
   envModule.env.installerReleaseTagExplicit = true
+  envModule.env.orgMode = "single_org"
   insertedRows.length = 0
   revokedRows.length = 0
   role = "member"
@@ -339,7 +340,8 @@ test("zero-config downloads redirect the browser to the enterprise desktop relea
 })
 
 test("Cloud downloads resolve the matching version without forwarding the install token", async () => {
-  const response = await createApp().request("http://den.local/v1/install/cloud/win-x64?token=opaque-token", {
+  envModule.env.orgMode = "multi_org"
+  const response = await createApp().request("http://den.local/v1/install/win-x64?token=opaque-token", {
     redirect: "manual",
   })
 
@@ -553,6 +555,17 @@ test("zero-config install config mints a short-lived exchange without storing th
   })
   expect(grant).not.toHaveProperty("code")
   expect(JSON.stringify(grant)).not.toContain(code)
+})
+
+test("hosted multi-org install config selects Cloud without enterprise activation", async () => {
+  envModule.env.orgMode = "multi_org"
+  const response = await createApp().request("http://127.0.0.1:8790/v1/install-config?token=opaque-token")
+
+  expect(response.status).toBe(200)
+  const body = await response.json()
+  expect(body.requireSignin).toBe(true)
+  expect(body.desktopVersion).toBe("9.9.9")
+  expect(body.distribution).toBe("cloud")
 })
 
 test("keyless preview is read-only and exchange consumes the grant once", async () => {

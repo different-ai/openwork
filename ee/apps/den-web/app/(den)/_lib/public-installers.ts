@@ -16,11 +16,13 @@ type Release = {
 };
 
 // The same release carries the retired helper installers and the parallel
-// enterprise flavor. Both match the loose per-architecture keywords below and
-// can sort ahead of the public asset, so exclude them here exactly as the
-// landing page does — this card must only ever offer the public app.
+// Cloud and enterprise flavors. All can match the loose per-architecture
+// keywords below and sort ahead of the public asset, so exclude them here
+// exactly as the landing page does.
 function isNonPublicDesktopAsset(name: string) {
-  return name.startsWith("openwork-installer-") || name.startsWith("openwork-enterprise-");
+  return name.startsWith("openwork-installer-")
+    || name.startsWith("openwork-cloud-")
+    || name.startsWith("openwork-enterprise-");
 }
 
 function selectAsset(assets: ReleaseAsset[], extensions: string[], keywords: string[]) {
