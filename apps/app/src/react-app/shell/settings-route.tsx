@@ -78,7 +78,6 @@ import { useSettingsExtensionController } from "@/react-app/domains/settings/set
 import { buildExtensionItems } from "@/react-app/domains/settings/extension-items";
 import { isOpenWorkExtensionEnabled, OPENWORK_EXTENSION_STATE_CHANGED } from "@/react-app/domains/settings/extension-state";
 import { PreferencesView } from "@/react-app/domains/settings/pages/preferences-view";
-import { ShellCustomizationView } from "@/react-app/domains/settings/pages/shell-view";
 import { GeneralSettingsView } from "@/react-app/domains/settings/pages/general-view";
 import { AuthorizedFoldersPanel } from "@/react-app/domains/settings/panels/authorized-folders-panel";
 import { SettingsStack } from "@/react-app/domains/settings/settings-section";
@@ -289,7 +288,6 @@ export function parseSettingsPath(pathname: string): {
     case "ai":
     case "preferences":
     case "permissions":
-    case "shell":
     case "advanced":
     case "appearance":
     case "environment":
@@ -2270,8 +2268,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             onToggleMemory={toggleMemory}
           />
         );
-      case "shell":
-        return <ShellCustomizationView />;
       case "extensions":
         return (
           <ExtensionsView

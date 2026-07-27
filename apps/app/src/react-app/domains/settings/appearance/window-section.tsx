@@ -2,6 +2,7 @@
 import { Switch } from "@/components/ui/switch";
 import { t } from "@/i18n";
 import type { AppearanceViewProps } from "../pages/appearance-view";
+import { useUiStateStore } from "../../../shell/ui-state-store";
 import {
   LayoutSection,
   LayoutSectionDescription,
@@ -18,6 +19,9 @@ interface WindowSectionProps
   extends Pick<AppearanceViewProps, "busy" | "hideTitlebar" | "toggleHideTitlebar"> {}
 
 export function WindowSection(props: WindowSectionProps) {
+  const applicationMenuVisible = useUiStateStore((state) => state.applicationMenuVisible);
+  const setApplicationMenuVisible = useUiStateStore((state) => state.setApplicationMenuVisible);
+
   return (
     <LayoutSection>
       <LayoutSectionHeader>
@@ -34,6 +38,21 @@ export function WindowSection(props: WindowSectionProps) {
               checked={props.hideTitlebar}
               disabled={props.busy}
               onCheckedChange={props.toggleHideTitlebar}
+            />
+          </LayoutSectionItemHeaderActions>
+        </LayoutSectionItemHeader>
+      </LayoutSectionItem>
+
+      <LayoutSectionItem className="hidden windows:flex linux:flex">
+        <LayoutSectionItemHeader>
+          <LayoutSectionItemTitle>Display menu bar</LayoutSectionItemTitle>
+          <LayoutSectionItemDescription>Show the native desktop menu bar.</LayoutSectionItemDescription>
+          <LayoutSectionItemHeaderActions>
+            <Switch
+              aria-label="Display menu bar"
+              checked={applicationMenuVisible}
+              disabled={props.busy}
+              onCheckedChange={setApplicationMenuVisible}
             />
           </LayoutSectionItemHeaderActions>
         </LayoutSectionItemHeader>
