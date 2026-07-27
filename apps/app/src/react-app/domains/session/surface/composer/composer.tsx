@@ -1301,8 +1301,9 @@ export function ReactSessionComposer(props: ComposerProps) {
                 // Plain text paste display is owned by PasteChipPlugin inside
                 // the Lexical editor: text collapses when it would exceed the
                 // editor's current width and maximum height, unless the whole
-                // string is a standalone HTTP(S) URL. Expanded pasted text gets
-                // the gray pasted-content styling. Do NOT duplicate that here.
+                // string is a standalone HTTP(S) URL. Text that fits, or is
+                // expanded from a chip, renders like normal text. Do NOT
+                // duplicate that here.
 
                 if (
                   text.trim() &&

@@ -36,8 +36,8 @@ import {
 import type { InitialConfigType } from "@lexical/react/LexicalComposer.js";
 import { decodeComposerMentionValue, encodeComposerMentionValue, type ComposerMentionKind } from "./mention-encoding";
 import { parseConnectSkillToken } from "./connect-skill-token";
-import { PASTED_TEXT_INLINE_STYLE, shouldCollapsePastedText, splitPastedText } from "./pasted-text";
-import { insertStyledPastedText } from "./pasted-text-insertion";
+import { shouldCollapsePastedText, splitPastedText } from "./pasted-text";
+import { insertPastedText } from "./pasted-text-insertion";
 
 type PastedTextToken = { label: string; lines: number; text: string };
 
@@ -877,10 +877,7 @@ function appendPastedTextMeasurement(element: HTMLElement, text: string) {
     } else if (segment.kind === "tab") {
       paragraph.append(document.createTextNode("\t"));
     } else {
-      const span = document.createElement("span");
-      span.style.cssText = PASTED_TEXT_INLINE_STYLE;
-      span.textContent = segment.text;
-      paragraph.append(span);
+      paragraph.append(document.createTextNode(segment.text));
     }
   }
   element.append(paragraph);
@@ -939,7 +936,7 @@ function PasteChipPlugin(props: { onPasteText?: (text: string) => void }) {
           return true;
         }
         event.preventDefault();
-        return insertStyledPastedText(text);
+        return insertPastedText(text);
       },
       COMMAND_PRIORITY_CRITICAL,
     );
@@ -958,12 +955,12 @@ function replacePastedTextChip(label: string, text: string, button: HTMLButtonEl
   const nearest = $getNearestNodeFromDOMNode(button);
   if (nearest instanceof ComposerPastedTextNode && nearest.getPastedLabel() === label) {
     nearest.select(0, nearest.getTextContentSize());
-    return insertStyledPastedText(text);
+    return insertPastedText(text);
   }
   for (const node of $nodesOfType(ComposerPastedTextNode)) {
     if (node.getPastedLabel() !== label) continue;
     node.select(0, node.getTextContentSize());
-    return insertStyledPastedText(text);
+    return insertPastedText(text);
   }
   return false;
 }

@@ -66,15 +66,16 @@ async function pasteComposer(ctx, text) {
   return result;
 }
 
-function styledTextExpression(text) {
+function plainTextExpression(text) {
   return `(() => {
     const editor = document.querySelector(${JSON.stringify(EDITOR_SELECTOR)});
     if (!editor) return false;
-    return Array.from(editor.querySelectorAll("span")).some((element) => {
+    const hasHighlight = Array.from(editor.querySelectorAll("span")).some((element) => {
       if (!(element.textContent || "").includes(${JSON.stringify(text)})) return false;
       const background = getComputedStyle(element).backgroundColor;
       return Boolean(background && background !== "transparent" && background !== "rgba(0, 0, 0, 0)");
     });
+    return editor.innerText.includes(${JSON.stringify(text)}) && !hasHighlight;
   })()`;
 }
 
@@ -84,7 +85,7 @@ async function composerInfo(ctx, text = "") {
       const editor = document.querySelector(${JSON.stringify(EDITOR_SELECTOR)});
       if (!editor) return { ok: false, reason: "composer not found" };
       const button = editor.querySelector("button[data-pasted-expand-label]");
-      const styledMatches = Array.from(editor.querySelectorAll("span")).filter((element) => {
+      const highlightedMatches = Array.from(editor.querySelectorAll("span")).filter((element) => {
         if (${JSON.stringify(text)} && !(element.textContent || "").includes(${JSON.stringify(text)})) return false;
         const background = getComputedStyle(element).backgroundColor;
         return Boolean(background && background !== "transparent" && background !== "rgba(0, 0, 0, 0)");
@@ -98,8 +99,8 @@ async function composerInfo(ctx, text = "") {
         chipCount: editor.querySelectorAll("button[data-pasted-expand-label]").length,
         expandTitle: button ? button.title : "",
         expandAriaLabel: button ? button.getAttribute("aria-label") || "" : "",
-        hasStyledTarget: styledMatches.length > 0,
-        styledMatches,
+        hasHighlightedTarget: highlightedMatches.length > 0,
+        highlightedMatches,
       };
     })()`,
   );
@@ -167,9 +168,9 @@ export default {
       },
     },
     {
-      name: "Expanded chip text is gray and editable",
+      name: "Expanded chip text is plain and editable",
       run: async (ctx) => {
-        await ctx.prove("Expanding the chip restores the pasted text inline with gray pasted-content styling", {
+        await ctx.prove("Expanding the chip restores the pasted text as normal editable text without highlighting", {
           voiceover: vo[2],
           action: async () => {
             await ctx.trustedClick(EXPAND_BUTTON_SELECTOR);
@@ -180,22 +181,22 @@ export default {
               })()`,
               { label: "expanded pasted text without chip" },
             );
-            await ctx.waitFor(styledTextExpression(LONG_PASTE), { label: "gray styling on expanded paste" });
+            await ctx.waitFor(plainTextExpression(LONG_PASTE), { label: "normal styling on expanded paste" });
           },
           assert: async () => {
             const info = await composerInfo(ctx, LONG_PASTE);
             ctx.assert(info.chipCount === 0, `Expanded paste still had ${info.chipCount} chip(s).`);
             ctx.assert(info.text.includes(LONG_PASTE), "Expanded pasted text was not visible in the composer.");
-            ctx.assert(info.hasStyledTarget === true, `Expanded paste did not have gray styling: ${JSON.stringify(info.styledMatches)}.`);
+            ctx.assert(info.hasHighlightedTarget === false, `Expanded paste was still highlighted: ${JSON.stringify(info.highlightedMatches)}.`);
           },
-          screenshot: { name: "expanded-chip-gray", requireText: [LONG_PASTE] },
+          screenshot: { name: "expanded-chip-plain", requireText: [LONG_PASTE] },
         });
       },
     },
     {
-      name: "Fitting paste stays expanded and gray",
+      name: "Fitting paste stays expanded and plain",
       run: async (ctx) => {
-        await ctx.prove("Text that fits without scrolling stays expanded while showing pasted-content styling", {
+        await ctx.prove("Text that fits without scrolling stays expanded and looks like normal typed text", {
           voiceover: vo[3],
           action: async () => {
             await createFreshTask(ctx);
@@ -207,15 +208,15 @@ export default {
               })()`,
               { label: "fitting paste expanded" },
             );
-            await ctx.waitFor(styledTextExpression(FITTING_PASTE), { label: "gray styling on fitting paste" });
+            await ctx.waitFor(plainTextExpression(FITTING_PASTE), { label: "normal styling on fitting paste" });
           },
           assert: async () => {
             const info = await composerInfo(ctx, FITTING_PASTE);
             ctx.assert(info.chipCount === 0, `Fitting paste incorrectly created ${info.chipCount} chip(s).`);
             ctx.assert(info.text.includes(FITTING_PASTE), "Fitting pasted text was not visible.");
-            ctx.assert(info.hasStyledTarget === true, `Fitting paste did not have gray styling: ${JSON.stringify(info.styledMatches)}.`);
+            ctx.assert(info.hasHighlightedTarget === false, `Fitting paste was highlighted: ${JSON.stringify(info.highlightedMatches)}.`);
           },
-          screenshot: { name: "fitting-paste-gray", requireText: [FITTING_PASTE] },
+          screenshot: { name: "fitting-paste-plain", requireText: [FITTING_PASTE] },
         });
       },
     },
