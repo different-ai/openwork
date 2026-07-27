@@ -185,11 +185,17 @@ async function applyElectronUpdaterFeed(app, updater, targetVersion = null, mani
   // Moving from alpha back to stable can be a semver downgrade; still show
   // the latest stable so users can return to the stable channel deliberately.
   updater.allowDowngrade = state.channel === "stable" && !targetVersion;
-  updater.channel = manifestChannel === "enterprise"
-    ? "enterprise"
-    : state.channel === "alpha" ? "alpha" : "latest";
+  // Select the manifest through the generic provider's own `channel` option
+  // rather than AppUpdater#channel: that setter is a no-op unless the instance
+  // was constructed with a channel, which would silently leave an enterprise
+  // build reading latest*.yml — i.e. updating itself into the public artifact.
+  // Public builds pass no channel and keep the provider's `latest` default.
   if (updater?.setFeedURL) {
-    updater.setFeedURL({ provider: "generic", url: state.feedUrl });
+    updater.setFeedURL({
+      provider: "generic",
+      url: state.feedUrl,
+      ...(manifestChannel === "enterprise" ? { channel: "enterprise" } : {}),
+    });
   }
   return state;
 }

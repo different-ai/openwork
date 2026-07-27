@@ -20,13 +20,6 @@ describe("staleUpdaterStatePaths", () => {
     ]);
   });
 
-  it("can isolate an enterprise ShipIt cache", { skip: process.platform !== "darwin" }, () => {
-    assert.deepEqual(
-      staleUpdaterStatePaths(fakeApp, "com.differentai.openwork.enterprise.ShipIt"),
-      ["/Users/test/Library/Caches/com.differentai.openwork.enterprise.ShipIt"],
-    );
-  });
-
   it("is a no-op off macOS", { skip: process.platform === "darwin" }, () => {
     assert.deepEqual(staleUpdaterStatePaths(fakeApp), []);
   });

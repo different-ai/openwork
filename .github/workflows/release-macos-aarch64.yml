@@ -599,6 +599,33 @@ jobs:
           set -euo pipefail
           echo "::warning::Publishing unsigned Windows installer because SIGN_WINDOWS is not enabled."
 
+      # electron-builder documents `channel` on the generic publish provider,
+      # not the GitHub one, so an enterprise build may still emit latest*.yml.
+      # Normalize here so the enterprise feed name is deterministic regardless
+      # of which behavior the pinned electron-builder version has, and so the
+      # public latest*.yml can never receive enterprise artifact URLs.
+      - name: Normalize enterprise updater manifests
+        if: matrix.asset_prefix == 'openwork-enterprise'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd apps/desktop/dist-electron
+          shopt -s nullglob
+          for manifest in latest*.yml; do
+            target="enterprise${manifest#latest}"
+            if [ -e "$target" ]; then
+              rm -f "$manifest"
+            else
+              mv "$manifest" "$target"
+            fi
+          done
+          manifests=(enterprise*.yml)
+          if [ ${#manifests[@]} -eq 0 ]; then
+            echo "Enterprise build produced no updater manifest." >&2
+            exit 1
+          fi
+          printf '%s\n' "${manifests[@]}"
+
       - name: Upload Electron release assets
         env:
           GH_TOKEN: ${{ github.token }}

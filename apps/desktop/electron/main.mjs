@@ -897,7 +897,6 @@ const DEFAULT_LOCAL_BASE_URL = "http://127.0.0.1:4096";
 const FORCE_DESKTOP_REQUIRE_SIGNIN =
   DESKTOP_DISTRIBUTION.requireSignin || envFlagEnabled("OPENWORK_FORCE_SIGNIN");
 const DEFAULT_DESKTOP_REQUIRE_SIGNIN = FORCE_DESKTOP_REQUIRE_SIGNIN;
-const DEFAULT_DESKTOP_REQUIRE_ACTIVATION = DESKTOP_DISTRIBUTION.requireActivation;
 
 function envFlagEnabled(name) {
   const value = process.env[name]?.trim().toLowerCase();
@@ -965,7 +964,6 @@ const workspaceStore = createWorkspaceStore({
   defaultDenBaseUrl: DEFAULT_DEN_BASE_URL,
   defaultRequireSignin: DEFAULT_DESKTOP_REQUIRE_SIGNIN,
   forceRequireSignin: FORCE_DESKTOP_REQUIRE_SIGNIN,
-  defaultRequireActivation: DEFAULT_DESKTOP_REQUIRE_ACTIVATION,
 });
 
 const connectLinkReplayGuard = createConnectLinkReplayGuard({
@@ -1705,11 +1703,23 @@ const desktopCommandHandlers = {
   },
   "setDesktopBootstrapConfig": async (event, ...args) => {
       const previous = workspaceStore.readDesktopBootstrapConfigSync();
-      const next = await workspaceStore.setDesktopBootstrapConfig(args[0] ?? {});
+      // A locked installation must never be able to unlock itself by writing
+      // policy through the bridge. The activation requirement is cleared only
+      // by an administrator editing desktop-bootstrap.json on disk (which this
+      // process reads, never writes) or by a completed Den activation.
+      const requested = args[0] ?? {};
+      const guarded = desktopActivationRequired(DESKTOP_DISTRIBUTION, previous)
+          && requested?.requireActivation === false
+        ? { ...requested, requireActivation: true }
+        : requested;
+      const next = await workspaceStore.setDesktopBootstrapConfig(guarded);
       if (
         desktopActivationRequired(DESKTOP_DISTRIBUTION, previous)
         && !desktopActivationRequired(DESKTOP_DISTRIBUTION, next)
       ) {
+        await uiControlServer.start().catch((error) => {
+          console.warn("[ui-control] failed to start", error);
+        });
         await runtimeManager.prepareFreshRuntime();
       }
       return next;
@@ -2389,7 +2399,7 @@ ipcMain.handle("openwork:system:askMicrophoneAccess", async () => {
 
 // ── Terminal IPC ────────────────────────────────────────────────────────
 ipcMain.handle("openwork:terminal:create", async (event, options = {}) => {
-  assertEnterpriseActivation();
+  assertDesktopActivation();
   const cwd = await resolveTerminalCwd(options?.cwd);
   const cols = Number.isFinite(options?.cols) ? Math.max(20, Math.floor(options.cols)) : 80;
   const rows = Number.isFinite(options?.rows) ? Math.max(5, Math.floor(options.rows)) : 24;
@@ -2445,8 +2455,10 @@ const { ensureAutoUpdater } = registerUpdaterIpc({
   app,
   ipcMain,
   getMainWindow: () => mainWindow,
+  // Both flavors intentionally share one application identifier, so they also
+  // share Squirrel's ShipIt domain. Keep the shared default rather than
+  // implying an isolation the bundle identifier cannot provide.
   manifestChannel: DESKTOP_DISTRIBUTION.flavor === "enterprise" ? "enterprise" : "latest",
-  shipItDefaultsDomain: `${DESKTOP_DISTRIBUTION.appIdentifier}.ShipIt`,
 });
 
 if (!app.requestSingleInstanceLock()) {
@@ -2531,9 +2543,14 @@ or use: pnpm dev:worktree`);
     // Electron see the same workspace list. Import the short-lived
     // Electron-only filename only when the shared file is missing.
     await workspaceStore.migrateLegacyElectronWorkspaceStateIfNeeded();
-    await uiControlServer.start().catch((error) => {
-      console.warn("[ui-control] failed to start", error);
-    });
+    // The UI-control bridge evaluates arbitrary JavaScript in the renderer, so
+    // it stays down until the installation is activated. Otherwise it is a
+    // local bypass of the pre-activation restriction.
+    if (!desktopActivationRequired(DESKTOP_DISTRIBUTION, bootstrapConfig)) {
+      await uiControlServer.start().catch((error) => {
+        console.warn("[ui-control] failed to start", error);
+      });
+    }
     if (!desktopActivationRequired(DESKTOP_DISTRIBUTION, bootstrapConfig)) {
       runtimeBootstrapPromise = bootRuntimeForSelectedWorkspace().catch((error) => ({
         ok: false,

@@ -139,7 +139,6 @@ export function createWorkspaceStore({
   defaultDenBaseUrl,
   defaultRequireSignin,
   forceRequireSignin,
-  defaultRequireActivation = false,
 }) {
   function desktopBootstrapPath() {
     if (process.env.OPENWORK_DESKTOP_BOOTSTRAP_PATH?.trim()) {
@@ -273,16 +272,18 @@ export function createWorkspaceStore({
     const normalizedEnterpriseActivation = enterpriseActivation?.activatedAt && enterpriseActivation.denBaseUrl
       ? enterpriseActivation
       : null;
-    const requireActivation = typeof input?.requireActivation === "boolean"
-      ? input.requireActivation
-      : defaultRequireActivation;
-
     return {
       baseUrl,
       ...(apiBaseUrl ? { apiBaseUrl } : {}),
       requireSignin: forceRequireSignin || input?.requireSignin === true,
-      ...(requireActivation || typeof input?.requireActivation === "boolean"
-        ? { requireActivation }
+      // Only an explicit policy is carried. The artifact default is never
+      // materialized here: desktop-bootstrap.json is shared by both flavors
+      // (one application identifier, one user-data directory), so persisting
+      // the enterprise default would gate the public artifact on the same
+      // machine. Consumers fall back to their own build default when the key
+      // is absent, which is exactly the documented precedence.
+      ...(typeof input?.requireActivation === "boolean"
+        ? { requireActivation: input.requireActivation }
         : {}),
       ...(brandAppName ? { brandAppName } : {}),
       ...(brandLogoUrl ? { brandLogoUrl } : {}),
@@ -498,7 +499,6 @@ export function createWorkspaceStore({
     return {
       baseUrl: defaultDenBaseUrl,
       requireSignin: defaultRequireSignin,
-      ...(defaultRequireActivation ? { requireActivation: true } : {}),
       fromFile: false,
     };
   }
@@ -522,7 +522,6 @@ export function createWorkspaceStore({
     return {
       baseUrl: defaultDenBaseUrl,
       requireSignin: defaultRequireSignin,
-      ...(defaultRequireActivation ? { requireActivation: true } : {}),
       fromFile: false,
     };
   }

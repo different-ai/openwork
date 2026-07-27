@@ -183,7 +183,10 @@ export default {
 
             witness(ctx, genericWorkflow.includes("workflow_call:"), "The generic installer workflow is reusable by the release workflow");
             witness(ctx, genericWorkflow.includes("inputs.release_tag"), "A reusable call publishes against the caller's release tag");
-            witness(ctx, releaseWorkflow.includes("publish-installers:"), "The stable release workflow calls the generic installer workflow");
+            // The stable release no longer builds the retired OpenWork-Installer-*
+            // helper artifacts; Den links directly to the signed enterprise app.
+            witness(ctx, !releaseWorkflow.includes("publish-installers:"), "The stable release workflow no longer publishes the retired helper installers");
+            witness(ctx, releaseWorkflow.includes("openwork-enterprise"), "The stable release workflow publishes the enterprise desktop artifacts");
             witness(ctx, releaseWorkflow.includes("--draft $PRERELEASE_FLAG"), "Every newly created release begins as a draft");
             witness(ctx, genericWorkflow.includes(MAC_ARM_ASSET), "Stable publication builds the ARM64 generic asset", MAC_ARM_ASSET);
             witness(ctx, genericWorkflow.includes(MAC_X64_ASSET), "Stable publication builds the x64 generic asset", MAC_X64_ASSET);
@@ -194,7 +197,7 @@ export default {
             witness(ctx, e2eWorkflow.includes('branches:\n      - "installer-release-e2e/**"'), "A collision-proof push caller exercises the reusable workflow end to end");
             witness(ctx, e2eWorkflow.includes("--cleanup-tag --yes"), "The isolated E2E release and tag are always cleaned up");
             witness(ctx, resolver.includes("releases/latest/download"), "The resolver can address an unpinned release by its latest asset URL");
-            witness(ctx, downloadRoute.includes("installerLatestReleaseAssetUrl"), "The download route redirects to the latest asset when no release is pinned");
+            witness(ctx, downloadRoute.includes("enterpriseDesktopReleaseAssetName"), "The download route selects the enterprise desktop artifact");
             witness(ctx, downloadRoute.includes("installerReleaseAssetUrl"), "The download route honours an organization's pinned installer release");
 
             const tests = run("pnpm", [

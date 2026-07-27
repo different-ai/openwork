@@ -503,7 +503,6 @@ test("enterprise activation is preserved, required activation is overrideable, a
     const store = createStore({
       defaultRequireSignin: true,
       forceRequireSignin: true,
-      defaultRequireActivation: true,
     });
     await store.setDesktopBootstrapConfig({
       baseUrl: "https://app.openworklabs.com",
@@ -525,6 +524,22 @@ test("enterprise activation is preserved, required activation is overrideable, a
     const persisted = JSON.parse(await readFile(canonicalPath, "utf8"));
     assert.equal(persisted.requireSignin, true);
     assert.equal(persisted.requireActivation, false);
+  });
+});
+
+// Both flavors share one application identifier, so they share this file. An
+// omitted policy must stay omitted: writing the enterprise build default here
+// would gate the public artifact on the same machine.
+test("an omitted requireActivation is never materialized into the shared bootstrap file", async () => {
+  await withIsolatedBootstrapStore(async ({ store, canonicalPath }) => {
+    await store.setDesktopBootstrapConfig({
+      baseUrl: "https://app.openworklabs.com",
+      requireSignin: true,
+    });
+
+    const persisted = JSON.parse(await readFile(canonicalPath, "utf8"));
+    assert.equal("requireActivation" in persisted, false);
+    assert.equal("requireActivation" in await store.getDesktopBootstrapConfig(), false);
   });
 });
 

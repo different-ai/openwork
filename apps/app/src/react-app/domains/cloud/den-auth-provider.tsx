@@ -119,7 +119,11 @@ function pendingServerSwitchForDeepLink(input: {
   isEnterpriseActivation: boolean;
 }): PendingServerSwitch | null {
   const bootstrap = readDenBootstrapConfig();
-  if (bootstrap.source !== "file") return null;
+  // An enterprise activation permanently binds the installation to the issuing
+  // Den, so confirm a control-plane change even when no bootstrap file
+  // provisioned one. Otherwise any openwork://den-auth link can repoint the
+  // control plane and activate the app in a single unattended step.
+  if (bootstrap.source !== "file" && !input.isEnterpriseActivation) return null;
 
   const currentApiBaseUrl = resolveDenBaseUrls(bootstrap).apiBaseUrl;
   const newApiBaseUrl = resolveDenBaseUrls(input.denBaseUrl).apiBaseUrl;
