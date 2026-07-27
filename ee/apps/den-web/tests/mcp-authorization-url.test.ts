@@ -36,7 +36,10 @@ describe("mcpAuthorizationPendingDocument", () => {
     expect(document).toContain("OpenWork Connect")
     expect(document).toContain('role="status"')
     expect(document).toContain('aria-live="polite"')
-    expect(document).toContain("prefers-reduced-motion: reduce")
+    expect(document).toContain("Opening provider sign-in")
+    expect(document).toContain("background: #f8fbff")
+    expect(document).not.toContain("@keyframes")
+    expect(document).not.toContain("progress")
   })
 })
 
