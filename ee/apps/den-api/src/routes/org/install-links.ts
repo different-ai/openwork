@@ -98,6 +98,7 @@ type InstallPlatform = z.infer<typeof installPlatformSchema>
 
 export type InstallExperienceDependencies = {
   resolveConfiguredArtifact: typeof resolveConfiguredInstallerArtifact
+  resolveDirectUrl: (platform: InstallPlatform, releaseTag: string) => string
   mintConnectGrant: typeof mintDesktopConnectGrant
   previewConnectGrant: typeof previewDesktopConnectGrant
   inspectConnectGrant: typeof inspectDesktopConnectGrant
@@ -106,6 +107,10 @@ export type InstallExperienceDependencies = {
 
 const defaultInstallerDependencies: InstallExperienceDependencies = {
   resolveConfiguredArtifact: resolveConfiguredInstallerArtifact,
+  resolveDirectUrl: (platform, releaseTag) => {
+    const fileName = desktopReleaseAssetName(platform, releaseTag)
+    return fileName ? installerReleaseAssetUrl(fileName, { releaseTag }) : OPENWORK_DOWNLOAD_URL
+  },
   mintConnectGrant: mintDesktopConnectGrant,
   previewConnectGrant: previewDesktopConnectGrant,
   inspectConnectGrant: inspectDesktopConnectGrant,
@@ -215,7 +220,7 @@ function maxAllowedDesktopVersion(versions: string[]) {
   return maxVersion
 }
 
-function desktopReleaseTagForMetadata(metadataInput: unknown) {
+function installerReleaseTagForMetadata(metadataInput: unknown) {
   const metadata = normalizeOrganizationMetadata(organizationMetadataInput(metadataInput)).metadata
   const allowedVersions = metadata.allowedDesktopVersions
   if (!allowedVersions?.length) {
@@ -250,7 +255,7 @@ async function resolveInstallConfigForToken(token: string, request: Request) {
     config: buildInstallConfig({ organization: row.organization, request }),
     installLinkId: row.installLink.id,
     organizationSlug: row.organization.slug,
-    desktopReleaseTag: desktopReleaseTagForMetadata(row.organization.metadata),
+    installerReleaseTag: installerReleaseTagForMetadata(row.organization.metadata),
   }
 }
 
@@ -602,12 +607,12 @@ export function registerOrgInstallLinkRoutes<T extends { Variables: OrgRouteVari
         }
       }
 
-      const fileName = desktopReleaseAssetName(platform, resolved.desktopReleaseTag)
+      const fileName = desktopReleaseAssetName(platform, resolved.installerReleaseTag)
       if (!fileName) {
         return c.json({ error: "invalid_request", details: [{ message: "Unsupported desktop platform." }] }, 400)
       }
 
-      return c.redirect(installerReleaseAssetUrl(fileName, { releaseTag: resolved.desktopReleaseTag }), 302)
+      return c.redirect(installer.resolveDirectUrl(platform, resolved.installerReleaseTag), 302)
     },
   )
 }
