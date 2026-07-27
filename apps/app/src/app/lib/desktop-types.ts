@@ -11,6 +11,7 @@ export type {
   BrandIconState,
   CacheResetResult,
   DesktopBootstrapConfig,
+  DesktopDistributionInfo,
   DesktopCommandArgs,
   DesktopCommandInvokers,
   DesktopCommandMap,

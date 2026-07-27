@@ -111,6 +111,11 @@ export type DenBootstrapPrepared = DenBootstrapOrgSkill & {
   preparedAt: string;
 };
 
+export type DenEnterpriseActivation = {
+  activatedAt: string;
+  denBaseUrl: string;
+};
+
 export type DenBootstrapConfig = DenBaseUrls & {
   source: DenBootstrapSource;
   requireSignin: boolean;
@@ -126,6 +131,7 @@ export type DenBootstrapConfig = DenBaseUrls & {
   }> | null;
   handoff?: DenBootstrapHandoff | null;
   prepared?: DenBootstrapPrepared | null;
+  enterpriseActivation?: DenEnterpriseActivation | null;
 };
 
 export type DenDesktopConfig = SharedDesktopConfig;
@@ -614,6 +620,7 @@ function resolveDenBootstrapConfig(
     claimLinks?: DenBootstrapConfig["claimLinks"];
     handoff?: DenBootstrapHandoff | null;
     prepared?: DenBootstrapPrepared | null;
+    enterpriseActivation?: DenEnterpriseActivation | null;
   },
 ): DenBootstrapConfig {
   return {
@@ -626,6 +633,7 @@ function resolveDenBootstrapConfig(
     ...(input.claimLinks ? { claimLinks: input.claimLinks } : {}),
     ...(input.handoff ? { handoff: input.handoff } : {}),
     ...(input.prepared ? { prepared: input.prepared } : {}),
+    ...(input.enterpriseActivation ? { enterpriseActivation: input.enterpriseActivation } : {}),
   };
 }
 
@@ -645,6 +653,7 @@ function getPendingBootstrapConfig(next: DenSettings): DenBootstrapConfig | null
     claimLinks: previous.claimLinks,
     handoff: previous.handoff,
     prepared: previous.prepared,
+    enterpriseActivation: previous.enterpriseActivation,
   });
 }
 
@@ -741,7 +750,11 @@ export async function setDenBootstrapConfig(
   next: ShellDesktopBootstrapConfig,
   options?: { dispatchSettingsChanged?: boolean },
 ): Promise<DenBootstrapConfig> {
-  const normalized = resolveDenBootstrapConfig(next);
+  const previous = readDenBootstrapConfig();
+  const normalized = resolveDenBootstrapConfig({
+    ...next,
+    enterpriseActivation: next.enterpriseActivation ?? previous.enterpriseActivation,
+  });
 
   if (isDesktopRuntime()) {
     const persisted = await setDesktopBootstrapConfigInShell({
@@ -752,6 +765,7 @@ export async function setDenBootstrapConfig(
       ...(normalized.brandIconUrl ? { brandIconUrl: normalized.brandIconUrl } : {}),
       ...(normalized.handoff ? { handoff: normalized.handoff } : {}),
       ...(normalized.prepared ? { prepared: normalized.prepared } : {}),
+      ...(normalized.enterpriseActivation ? { enterpriseActivation: normalized.enterpriseActivation } : {}),
     });
     
     applyDesktopBootstrapConfig(resolveDenBootstrapConfig({ ...persisted, source: "file" }));

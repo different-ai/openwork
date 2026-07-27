@@ -20,6 +20,7 @@ import { Button } from "../../components/ui/button";
 import { t } from "../../i18n";
 import { useDenAuth } from "../domains/cloud/den-auth-provider";
 import { ForcedSigninPage } from "../domains/cloud/forced-signin-page";
+import { EnterpriseActivationGate } from "../domains/cloud/enterprise-activation-gate";
 import { OrgOnboardingPage } from "../domains/cloud/org-onboarding-page";
 import { NewProvidersListener } from "./new-providers-listener";
 import { useDesktopFontZoomBehavior } from "./font-zoom";
@@ -331,6 +332,7 @@ export function AppRoot() {
           <OpenworkContextPublisher />
           <DenAuthControlActions />
           <BrandThemeControlActions />
+          <EnterpriseActivationGate>
           <DenSigninGate>
             <Routes>
               <Route
@@ -412,6 +414,7 @@ export function AppRoot() {
               <Route path="*" element={<Navigate to="/session" replace />} />
             </Routes>
           </DenSigninGate>
+          </EnterpriseActivationGate>
         </OpenworkControlProvider>
         </AppMenuProvider>
         </ShellConfigProvider>

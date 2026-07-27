@@ -16,6 +16,7 @@ import { ServerProvider } from "@/react-app/kernel/server-provider";
 import { ArchitectureMismatchGate } from "./architecture-mismatch-gate";
 import { BootStateProvider } from "./boot-state";
 import { DesktopRuntimeBoot } from "./desktop-runtime-boot";
+import { useEnterpriseActivationRequired } from "@/react-app/domains/cloud/enterprise-activation-gate";
 import { startDebugLogger, stopDebugLogger } from "./debug-logger";
 import { resolveOpenworkConnection } from "./openwork-connection";
 import { ReloadCoordinatorProvider } from "./reload-coordinator";
@@ -46,6 +47,30 @@ type AppProvidersProps = {
   children: ReactNode;
 };
 
+function EnterpriseAwareAppProviders({ children }: AppProvidersProps) {
+  const activationRequired = useEnterpriseActivationRequired();
+  if (activationRequired) {
+    return children;
+  }
+  return (
+    <>
+      <DesktopRuntimeBoot />
+      <ConnectLinkProvider>
+        <DesktopConfigProvider>
+          <BrandThemeProvider>
+            <RestrictionNoticeProvider>
+              <LocalProvider>
+                <ReloadCoordinatorProvider>{children}</ReloadCoordinatorProvider>
+                <Toaster />
+              </LocalProvider>
+            </RestrictionNoticeProvider>
+          </BrandThemeProvider>
+        </DesktopConfigProvider>
+      </ConnectLinkProvider>
+    </>
+  );
+}
+
 export function AppProviders({ children }: AppProvidersProps) {
   hydrateOpenworkServerSettingsFromEnv();
 
@@ -66,20 +91,8 @@ export function AppProviders({ children }: AppProvidersProps) {
     <BootStateProvider>
       <ServerProvider defaultUrl={defaultUrl}>
         <ArchitectureMismatchGate>
-          <DesktopRuntimeBoot />
           <DenAuthProvider>
-            <ConnectLinkProvider>
-              <DesktopConfigProvider>
-                <BrandThemeProvider>
-                <RestrictionNoticeProvider>
-                  <LocalProvider>
-                    <ReloadCoordinatorProvider>{children}</ReloadCoordinatorProvider>
-                    <Toaster />
-                  </LocalProvider>
-                </RestrictionNoticeProvider>
-                </BrandThemeProvider>
-              </DesktopConfigProvider>
-            </ConnectLinkProvider>
+            <EnterpriseAwareAppProviders>{children}</EnterpriseAwareAppProviders>
           </DenAuthProvider>
         </ArchitectureMismatchGate>
       </ServerProvider>

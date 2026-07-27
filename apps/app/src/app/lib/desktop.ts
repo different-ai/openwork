@@ -11,6 +11,7 @@ export type {
   OpencodeCommandDraft,
   WorkspaceOpenworkConfig,
   AppBuildInfo,
+  DesktopDistributionInfo,
   BrandIconApplyResult,
   BrandIconState,
   DesktopBootstrapConfig,
@@ -35,6 +36,7 @@ import type {
   BrandIconApplyResult,
   BrandIconState,
   DesktopBootstrapConfig,
+  DesktopDistributionInfo,
   DesktopCommandArgs,
   DesktopCommandInvokers,
   DesktopCommandName,
@@ -174,6 +176,7 @@ declare global {
       };
       meta?: {
         desktopBootstrap?: DesktopBootstrapConfig | null;
+        distribution?: DesktopDistributionInfo;
         initialDeepLinks?: string[];
         platform?: "darwin" | "linux" | "windows";
         version?: string;
@@ -474,6 +477,19 @@ export async function subscribeDesktopDeepLinks(
 export function readInitialDesktopBootstrapConfig(): DesktopBootstrapConfig | null | undefined {
   if (typeof window === "undefined") return undefined;
   return window.__OPENWORK_ELECTRON__?.meta?.desktopBootstrap;
+}
+
+export function readDesktopDistributionInfo(): DesktopDistributionInfo {
+  const distribution = typeof window === "undefined"
+    ? undefined
+    : window.__OPENWORK_ELECTRON__?.meta?.distribution;
+  return distribution ?? {
+    flavor: "public",
+    appName: "OpenWork",
+    appIdentifier: "com.differentai.openwork",
+    protocolScheme: "openwork",
+    requireSignin: false,
+  };
 }
 
 // ---------------------------------------------------------------------------

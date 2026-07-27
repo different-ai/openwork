@@ -253,6 +253,20 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
     const brandAppName = typeof input?.brandAppName === "string" ? input.brandAppName.trim().slice(0, 64) : "";
     const brandLogoUrl = typeof input?.brandLogoUrl === "string" ? input.brandLogoUrl.trim() : "";
     const brandIconUrl = typeof input?.brandIconUrl === "string" ? input.brandIconUrl.trim() : "";
+    const enterpriseActivationInput = input?.enterpriseActivation;
+    const enterpriseActivation = enterpriseActivationInput && typeof enterpriseActivationInput === "object"
+      ? {
+          activatedAt: typeof enterpriseActivationInput.activatedAt === "string"
+            ? enterpriseActivationInput.activatedAt.trim()
+            : "",
+          denBaseUrl: typeof enterpriseActivationInput.denBaseUrl === "string"
+            ? enterpriseActivationInput.denBaseUrl.trim()
+            : "",
+        }
+      : null;
+    const normalizedEnterpriseActivation = enterpriseActivation?.activatedAt && enterpriseActivation.denBaseUrl
+      ? enterpriseActivation
+      : null;
 
     return {
       baseUrl,
@@ -265,6 +279,7 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
       ...(claimLinks.length > 0 ? { claimLinks } : {}),
       ...(normalizedHandoff ? { handoff: normalizedHandoff } : {}),
       ...(normalizedPrepared ? { prepared: normalizedPrepared } : {}),
+      ...(normalizedEnterpriseActivation ? { enterpriseActivation: normalizedEnterpriseActivation } : {}),
     };
   }
 

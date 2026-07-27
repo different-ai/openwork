@@ -34,11 +34,12 @@ async function withIsolatedBootstrapStore(callback) {
 
   try {
     const module = await import(`./workspace-store.mjs?bootstrap-test=${Date.now()}-${Math.random()}`);
-    const createStore = () => module.createWorkspaceStore({
+    const createStore = (overrides = {}) => module.createWorkspaceStore({
       app: { getPath: (name) => name === "userData" ? path.join(root, "userData") : root },
       defaultDenBaseUrl: "https://default.example.com",
       defaultRequireSignin: false,
       forceRequireSignin: false,
+      ...overrides,
     });
     const store = createStore();
     return await callback({
@@ -494,6 +495,32 @@ test("desktop bootstrap writes include a fresh writtenAt stamp", async () => {
     const persisted = JSON.parse(await readFile(canonicalPath, "utf8"));
     assert.equal(persisted.baseUrl, "https://canonical.example.com");
     assert.equal(Number.isFinite(Date.parse(persisted.writtenAt)), true);
+  });
+});
+
+test("enterprise activation is preserved and forced sign-in cannot be disabled", async () => {
+  await withIsolatedBootstrapStore(async ({ createStore, canonicalPath }) => {
+    const store = createStore({
+      defaultRequireSignin: true,
+      forceRequireSignin: true,
+    });
+    await store.setDesktopBootstrapConfig({
+      baseUrl: "https://app.openworklabs.com",
+      requireSignin: false,
+      enterpriseActivation: {
+        activatedAt: "2026-07-27T12:00:00.000Z",
+        denBaseUrl: "https://app.openworklabs.com",
+      },
+    });
+
+    const config = await store.getDesktopBootstrapConfig();
+    assert.equal(config.requireSignin, true);
+    assert.deepEqual(config.enterpriseActivation, {
+      activatedAt: "2026-07-27T12:00:00.000Z",
+      denBaseUrl: "https://app.openworklabs.com",
+    });
+    const persisted = JSON.parse(await readFile(canonicalPath, "utf8"));
+    assert.equal(persisted.requireSignin, true);
   });
 });
 

@@ -1,0 +1,73 @@
+import assert from "node:assert/strict";
+import { describe, it } from "node:test";
+
+import {
+  enterpriseActivationComplete,
+  enterprisePreactivationCommandAllowed,
+  resolveDesktopDistribution,
+} from "./desktop-distribution.mjs";
+
+describe("resolveDesktopDistribution", () => {
+  it("uses immutable package metadata for packaged enterprise builds", () => {
+    const distribution = resolveDesktopDistribution({
+      isPackaged: true,
+      packageFlavor: "enterprise",
+      environmentFlavor: "public",
+    });
+
+    assert.deepEqual(distribution, {
+      flavor: "enterprise",
+      appName: "OpenWork Enterprise",
+      appIdentifier: "com.differentai.openwork.enterprise",
+      protocolScheme: "openwork-enterprise",
+      requireSignin: true,
+    });
+  });
+
+  it("does not let an environment variable turn a packaged public build into enterprise", () => {
+    assert.equal(
+      resolveDesktopDistribution({
+        isPackaged: true,
+        packageFlavor: "public",
+        environmentFlavor: "enterprise",
+      }).flavor,
+      "public",
+    );
+  });
+
+  it("allows development runs to exercise the enterprise flavor", () => {
+    assert.equal(
+      resolveDesktopDistribution({
+        isPackaged: false,
+        packageFlavor: "public",
+        environmentFlavor: "enterprise",
+      }).flavor,
+      "enterprise",
+    );
+  });
+});
+
+describe("enterpriseActivationComplete", () => {
+  it("requires a persisted activation timestamp and Den URL", () => {
+    assert.equal(enterpriseActivationComplete(null), false);
+    assert.equal(enterpriseActivationComplete({ enterpriseActivation: {} }), false);
+    assert.equal(enterpriseActivationComplete({
+      enterpriseActivation: {
+        activatedAt: "2026-07-27T10:00:00.000Z",
+        denBaseUrl: "https://app.openworklabs.com",
+      },
+    }), true);
+  });
+});
+
+describe("enterprisePreactivationCommandAllowed", () => {
+  it("allows only bootstrap, build metadata, and the Den exchange fetch bridge", () => {
+    assert.equal(enterprisePreactivationCommandAllowed("__fetch"), true);
+    assert.equal(enterprisePreactivationCommandAllowed("getDesktopBootstrapConfig"), true);
+    assert.equal(enterprisePreactivationCommandAllowed("setDesktopBootstrapConfig"), true);
+    assert.equal(enterprisePreactivationCommandAllowed("appBuildInfo"), true);
+    assert.equal(enterprisePreactivationCommandAllowed("engineInfo"), false);
+    assert.equal(enterprisePreactivationCommandAllowed("runtimeBootstrap"), false);
+    assert.equal(enterprisePreactivationCommandAllowed("terminalCreate"), false);
+  });
+});

@@ -138,11 +138,12 @@ jobs:
           if [ -n "$RELEASE_BODY_INPUT" ]; then
             RELEASE_BODY="$RELEASE_BODY_INPUT"
           else
-            printf -v RELEASE_BODY '%s\n\nOpenWork %s desktop release.\n\n%s\n%s' \
+            printf -v RELEASE_BODY '%s\n\nOpenWork %s desktop release.\n\n%s\n%s\n%s' \
               "## What's new" \
               "$TAG" \
-              "- Download the attached installer for your platform." \
-              "- Electron builds use the attached latest-mac.yml updater feed."
+              "- Public artifacts use the openwork-* naming convention." \
+              "- Enterprise artifacts use openwork-enterprise-* and install beside the public app." \
+              "- Public and enterprise Electron builds use separate updater manifests on this release."
           fi
 
           draft="${INPUT_DRAFT:-}"
@@ -290,31 +291,97 @@ jobs:
           - platform: macos-14
             os_type: macos
             artifact: electron-macos-arm64
+            builder_config: electron-builder.yml
+            asset_prefix: openwork
+            manifest_pattern: latest*.yml
             electron_args: "--mac --arm64"
             target_triple: aarch64-apple-darwin
           - platform: macos-14
             os_type: macos
             artifact: electron-macos-x64
+            builder_config: electron-builder.yml
+            asset_prefix: openwork
+            manifest_pattern: latest*.yml
             electron_args: "--mac --x64"
             target_triple: x86_64-apple-darwin
           - platform: ubuntu-22.04
             os_type: linux
             artifact: electron-linux-x64
+            builder_config: electron-builder.yml
+            asset_prefix: openwork
+            manifest_pattern: latest*.yml
             electron_args: "--linux --x64"
             target_triple: x86_64-unknown-linux-gnu
           - platform: ubuntu-22.04-arm
             os_type: linux
             artifact: electron-linux-arm64
+            builder_config: electron-builder.yml
+            asset_prefix: openwork
+            manifest_pattern: latest*.yml
             electron_args: "--linux --arm64"
             target_triple: aarch64-unknown-linux-gnu
           - platform: windows-2022
             os_type: windows
             artifact: electron-windows-x64
+            builder_config: electron-builder.yml
+            asset_prefix: openwork
+            manifest_pattern: latest*.yml
             electron_args: "--win --x64"
             target_triple: x86_64-pc-windows-msvc
           - platform: windows-11-arm
             os_type: windows
             artifact: electron-windows-arm64
+            builder_config: electron-builder.yml
+            asset_prefix: openwork
+            manifest_pattern: latest*.yml
+            electron_args: "--win --arm64"
+            target_triple: aarch64-pc-windows-msvc
+          - platform: macos-14
+            os_type: macos
+            artifact: electron-enterprise-macos-arm64
+            builder_config: electron-builder.enterprise.yml
+            asset_prefix: openwork-enterprise
+            manifest_pattern: enterprise*.yml
+            electron_args: "--mac --arm64"
+            target_triple: aarch64-apple-darwin
+          - platform: macos-14
+            os_type: macos
+            artifact: electron-enterprise-macos-x64
+            builder_config: electron-builder.enterprise.yml
+            asset_prefix: openwork-enterprise
+            manifest_pattern: enterprise*.yml
+            electron_args: "--mac --x64"
+            target_triple: x86_64-apple-darwin
+          - platform: ubuntu-22.04
+            os_type: linux
+            artifact: electron-enterprise-linux-x64
+            builder_config: electron-builder.enterprise.yml
+            asset_prefix: openwork-enterprise
+            manifest_pattern: enterprise*.yml
+            electron_args: "--linux --x64"
+            target_triple: x86_64-unknown-linux-gnu
+          - platform: ubuntu-22.04-arm
+            os_type: linux
+            artifact: electron-enterprise-linux-arm64
+            builder_config: electron-builder.enterprise.yml
+            asset_prefix: openwork-enterprise
+            manifest_pattern: enterprise*.yml
+            electron_args: "--linux --arm64"
+            target_triple: aarch64-unknown-linux-gnu
+          - platform: windows-2022
+            os_type: windows
+            artifact: electron-enterprise-windows-x64
+            builder_config: electron-builder.enterprise.yml
+            asset_prefix: openwork-enterprise
+            manifest_pattern: enterprise*.yml
+            electron_args: "--win --x64"
+            target_triple: x86_64-pc-windows-msvc
+          - platform: windows-11-arm
+            os_type: windows
+            artifact: electron-enterprise-windows-arm64
+            builder_config: electron-builder.enterprise.yml
+            asset_prefix: openwork-enterprise
+            manifest_pattern: enterprise*.yml
             electron_args: "--win --arm64"
             target_triple: aarch64-pc-windows-msvc
 
@@ -422,7 +489,7 @@ jobs:
         run: |
           set -euo pipefail
           pnpm --dir apps/desktop exec electron-builder \
-            --config electron-builder.yml \
+            --config ${{ matrix.builder_config }} \
             ${{ matrix.electron_args }} \
             --publish never
 
@@ -431,7 +498,7 @@ jobs:
         run: |
           set -euo pipefail
           pnpm --dir apps/desktop exec electron-builder \
-            --config electron-builder.yml \
+            --config ${{ matrix.builder_config }} \
             ${{ matrix.electron_args }} \
             --publish never
 
@@ -441,7 +508,7 @@ jobs:
         run: |
           set -euo pipefail
           pnpm --dir apps/desktop exec electron-builder \
-            --config electron-builder.yml \
+            --config ${{ matrix.builder_config }} \
             ${{ matrix.electron_args }} \
             --publish never
 
@@ -477,7 +544,7 @@ jobs:
 
           mkdir -p "$RUNNER_TEMP/signpath-unsigned"
           shopt -s nullglob
-          installers=(apps/desktop/dist-electron/openwork-win-*.exe)
+          installers=(apps/desktop/dist-electron/${{ matrix.asset_prefix }}-win-*.exe)
           if [ "${#installers[@]}" -ne 1 ]; then
             printf 'Expected exactly one unsigned Windows installer, found %s.\n' "${#installers[@]}" >&2
             printf '%s\n' "${installers[@]}" >&2
@@ -539,7 +606,7 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          assets=(apps/desktop/dist-electron/openwork-*)
+          assets=(apps/desktop/dist-electron/${{ matrix.asset_prefix }}-*)
           if [ ${#assets[@]} -eq 0 ]; then
             echo "No Electron release assets found in apps/desktop/dist-electron" >&2
             exit 1
@@ -550,7 +617,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: apps/desktop/dist-electron/latest*.yml
+          path: apps/desktop/dist-electron/${{ matrix.manifest_pattern }}
           if-no-files-found: error
 
   publish-electron-assets:
@@ -589,17 +656,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: node scripts/release/publish-electron-assets.mjs --manifests-only "${{ runner.temp }}/electron-dist" "$RELEASE_TAG"
-
-  publish-installers:
-    name: Build + Upload Installer Assets
-    needs: [resolve-release, verify-release]
-    uses: ./.github/workflows/release-generic-installer.yml
-    with:
-      release_tag: ${{ needs.resolve-release.outputs.release_tag }}
-      publish_mode: release
-      platforms: mac-arm64,mac-x64,win-x64
-      sign_windows: ${{ needs.resolve-release.outputs.sign_windows == 'true' }}
-    secrets: inherit
 
   release-orchestrator-sidecars:
     name: Build + Upload openwork-orchestrator Sidecars
@@ -888,7 +944,6 @@ jobs:
       - verify-release
       - publish-electron
       - publish-electron-assets
-      - publish-installers
       - release-orchestrator-sidecars
       - publish-npm
       - publish-daytona-snapshot
@@ -898,7 +953,6 @@ jobs:
       needs.verify-release.result == 'success' &&
       (needs.publish-electron.result == 'success' || needs.publish-electron.result == 'skipped') &&
       (needs.publish-electron-assets.result == 'success' || needs.publish-electron-assets.result == 'skipped') &&
-      needs.publish-installers.result == 'success' &&
       (needs.release-orchestrator-sidecars.result == 'success' || needs.release-orchestrator-sidecars.result == 'skipped') &&
       (needs.publish-npm.result == 'success' || needs.publish-npm.result == 'skipped') &&
       (needs.publish-daytona-snapshot.result == 'success' || needs.publish-daytona-snapshot.result == 'skipped')

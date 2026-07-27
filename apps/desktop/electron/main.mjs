@@ -53,6 +53,11 @@ import { openExternalUrl } from "./open-external.mjs";
 import { resolveAppIdentifier, resolveUserDataPath } from "./dev-profile.mjs";
 import { fetchAgentContextDiagnosticsResponse } from "./agent-context-diagnostics-fetch.mjs";
 import {
+  enterpriseActivationComplete,
+  enterprisePreactivationCommandAllowed,
+  resolveDesktopDistribution,
+} from "./desktop-distribution.mjs";
+import {
   applyWindowsTaskbarIcon,
   windowsBrandAppUserModelId,
   windowsBrandShortcutDetails,
@@ -66,6 +71,7 @@ import {
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const APP_ROOT = path.resolve(__dirname, "../../..");
 const require = createRequire(import.meta.url);
+const desktopPackageMetadata = require("../package.json");
 // Electron 35 eagerly resolves every export in a named ESM import, including
 // safeStorage. Loading through CommonJS keeps safeStorage lazy so isolated demo
 // profiles do not show macOS's native keychain dialog before our switches run.
@@ -84,13 +90,18 @@ const {
 } = require("electron");
 const pty = require(["node", "pty"].join("-"));
 const NATIVE_DEEP_LINK_EVENT = "openwork:deep-link-native";
-const TAURI_APP_IDENTIFIER = "com.differentai.openwork";
-const DEV_APP_IDENTIFIER = "com.differentai.openwork.dev";
-const DESKTOP_PROTOCOL_SCHEME = "openwork";
 const isDevMode = process.env.OPENWORK_DEV_MODE === "1";
+const DESKTOP_DISTRIBUTION = resolveDesktopDistribution({
+  isPackaged: app.isPackaged,
+  packageFlavor: Reflect.get(desktopPackageMetadata, "openworkDistribution"),
+  environmentFlavor: process.env.OPENWORK_DESKTOP_DISTRIBUTION,
+});
+const TAURI_APP_IDENTIFIER = DESKTOP_DISTRIBUTION.appIdentifier;
+const DEV_APP_IDENTIFIER = `${DESKTOP_DISTRIBUTION.appIdentifier}.dev`;
+const DESKTOP_PROTOCOL_SCHEME = DESKTOP_DISTRIBUTION.protocolScheme;
 const APP_NAME =
-  process.env.OPENWORK_ELECTRON_APP_NAME?.trim() ||
-  (isDevMode ? "OpenWork - Dev" : "OpenWork");
+  (!app.isPackaged ? process.env.OPENWORK_ELECTRON_APP_NAME?.trim() : "") ||
+  (isDevMode ? `${DESKTOP_DISTRIBUTION.appName} - Dev` : DESKTOP_DISTRIBUTION.appName);
 let currentDisplayAppName = APP_NAME;
 const BASE_APP_IDENTIFIER = isDevMode ? DEV_APP_IDENTIFIER : TAURI_APP_IDENTIFIER;
 const APP_IDENTIFIER = resolveAppIdentifier({
@@ -883,7 +894,8 @@ if (extraLaunchArgs) {
 configureFakeMediaForTests(app, envFlagEnabled("OPENWORK_ELECTRON_FAKE_MEDIA"));
 const DEFAULT_DEN_BASE_URL = "https://app.openworklabs.com";
 const DEFAULT_LOCAL_BASE_URL = "http://127.0.0.1:4096";
-const FORCE_DESKTOP_REQUIRE_SIGNIN = envFlagEnabled("OPENWORK_FORCE_SIGNIN");
+const FORCE_DESKTOP_REQUIRE_SIGNIN =
+  DESKTOP_DISTRIBUTION.requireSignin || envFlagEnabled("OPENWORK_FORCE_SIGNIN");
 const DEFAULT_DESKTOP_REQUIRE_SIGNIN = FORCE_DESKTOP_REQUIRE_SIGNIN;
 
 function envFlagEnabled(name) {
@@ -1012,8 +1024,8 @@ function forwardedDeepLinks(argv) {
     .map((entry) => entry.trim())
     .filter(
       (entry) =>
-        entry.startsWith("openwork://") ||
-        entry.startsWith("openwork-dev://") ||
+        entry.startsWith(`${DESKTOP_PROTOCOL_SCHEME}://`) ||
+        (!app.isPackaged && entry.startsWith("openwork-dev://")) ||
         entry.startsWith("https://") ||
         entry.startsWith("http://"),
     );
@@ -1690,7 +1702,16 @@ const desktopCommandHandlers = {
       return workspaceStore.clearDesktopBootstrapConfig();
   },
   "setDesktopBootstrapConfig": async (event, ...args) => {
-      return workspaceStore.setDesktopBootstrapConfig(args[0] ?? {});
+      const previous = workspaceStore.readDesktopBootstrapConfigSync();
+      const next = await workspaceStore.setDesktopBootstrapConfig(args[0] ?? {});
+      if (
+        DESKTOP_DISTRIBUTION.flavor === "enterprise"
+        && !enterpriseActivationComplete(previous)
+        && enterpriseActivationComplete(next)
+      ) {
+        await runtimeManager.prepareFreshRuntime();
+      }
+      return next;
   },
   "connectLinkVerify": async (event, ...args) => {
       // Read-only check — parses + verifies the deep link, writes nothing.
@@ -1947,7 +1968,9 @@ const desktopCommandHandlers = {
       }
   },
   "__applyBrandAppName": async (event, ...args) => {
-    currentDisplayAppName = applyBrandAppName(args[0], {
+    currentDisplayAppName = applyBrandAppName(
+      DESKTOP_DISTRIBUTION.flavor === "enterprise" ? null : args[0],
+      {
       fallbackName: APP_NAME,
       platform: process.platform,
       updateElectronAppName: process.platform === "darwin",
@@ -1955,7 +1978,8 @@ const desktopCommandHandlers = {
       app,
       applicationMenu,
       window: mainWindow,
-    });
+      },
+    );
     if (process.platform === "win32") {
       await registerWindowsDisplayShortcut();
     }
@@ -2175,7 +2199,19 @@ function desktopErrorMessageWithCauses(error) {
   }
 }
 
+function assertEnterpriseActivation() {
+  if (
+    DESKTOP_DISTRIBUTION.flavor === "enterprise"
+    && !enterpriseActivationComplete(workspaceStore.readDesktopBootstrapConfigSync())
+  ) {
+    throw new Error("OpenWork Enterprise must be activated from your Den portal before this command is available.");
+  }
+}
+
 async function handleDesktopInvoke(event, command, ...args) {
+  if (!enterprisePreactivationCommandAllowed(command)) {
+    assertEnterpriseActivation();
+  }
   const handler = desktopCommandHandlers[command];
   if (!handler) {
     throw new Error(`Electron desktop bridge method is not implemented yet: ${command}`);
@@ -2323,6 +2359,9 @@ async function createMainWindow() {
 ipcMain.on("openwork:desktop-bootstrap-sync", (event) => {
   event.returnValue = workspaceStore.readDesktopBootstrapConfigSync();
 });
+ipcMain.on("openwork:desktop-distribution-sync", (event) => {
+  event.returnValue = DESKTOP_DISTRIBUTION;
+});
 ipcMain.handle("openwork:desktop", handleDesktopInvoke);
 ipcMain.handle("openwork:shell:openExternal", async (_event, url) => {
   if (typeof url !== "string" || url.trim().length === 0) {
@@ -2349,6 +2388,7 @@ ipcMain.handle("openwork:system:askMicrophoneAccess", async () => {
 
 // ── Terminal IPC ────────────────────────────────────────────────────────
 ipcMain.handle("openwork:terminal:create", async (event, options = {}) => {
+  assertEnterpriseActivation();
   const cwd = await resolveTerminalCwd(options?.cwd);
   const cols = Number.isFinite(options?.cols) ? Math.max(20, Math.floor(options.cols)) : 80;
   const rows = Number.isFinite(options?.rows) ? Math.max(5, Math.floor(options.rows)) : 24;
@@ -2400,7 +2440,13 @@ ipcMain.handle("openwork:terminal:kill", (event, terminalId) => {
 browserPanel.registerIpc(ipcMain);
 
 registerMigrationIpc({ app, ipcMain });
-const { ensureAutoUpdater } = registerUpdaterIpc({ app, ipcMain, getMainWindow: () => mainWindow });
+const { ensureAutoUpdater } = registerUpdaterIpc({
+  app,
+  ipcMain,
+  getMainWindow: () => mainWindow,
+  manifestChannel: DESKTOP_DISTRIBUTION.flavor === "enterprise" ? "enterprise" : "latest",
+  shipItDefaultsDomain: `${DESKTOP_DISTRIBUTION.appIdentifier}.ShipIt`,
+});
 
 if (!app.requestSingleInstanceLock()) {
   if (isDevMode && !app.isPackaged) {
@@ -2456,14 +2502,19 @@ or use: pnpm dev:worktree`);
     });
     await workspaceStore.importBundledDesktopBootstrapConfigIfPreferred();
     const bootstrapConfig = await workspaceStore.getDesktopBootstrapConfig();
-    currentDisplayAppName = applyBrandAppName(bootstrapConfig.brandAppName, {
+    currentDisplayAppName = applyBrandAppName(
+      DESKTOP_DISTRIBUTION.flavor === "enterprise"
+        ? null
+        : bootstrapConfig.brandAppName,
+      {
       fallbackName: APP_NAME,
       platform: process.platform,
       updateElectronAppName: true,
       runtimeProcess: process,
       app,
       applicationMenu,
-    });
+      },
+    );
     if (process.platform === "win32") {
       await registerWindowsDisplayShortcut();
     }
@@ -2471,7 +2522,12 @@ or use: pnpm dev:worktree`);
       await applyDesktopBootstrapBrandIcon(bootstrapConfig, applyBrandIconUrl);
     }
     applicationMenu.install();
-    await runtimeManager.prepareFreshRuntime().catch(() => undefined);
+    if (
+      DESKTOP_DISTRIBUTION.flavor !== "enterprise"
+      || enterpriseActivationComplete(bootstrapConfig)
+    ) {
+      await runtimeManager.prepareFreshRuntime().catch(() => undefined);
+    }
 
     // Use Tauri's existing workspace state file as canonical so rollback and
     // Electron see the same workspace list. Import the short-lived
@@ -2480,10 +2536,15 @@ or use: pnpm dev:worktree`);
     await uiControlServer.start().catch((error) => {
       console.warn("[ui-control] failed to start", error);
     });
-    runtimeBootstrapPromise = bootRuntimeForSelectedWorkspace().catch((error) => ({
-      ok: false,
-      error: error instanceof Error ? error.message : String(error),
-    }));
+    if (
+      DESKTOP_DISTRIBUTION.flavor !== "enterprise"
+      || enterpriseActivationComplete(bootstrapConfig)
+    ) {
+      runtimeBootstrapPromise = bootRuntimeForSelectedWorkspace().catch((error) => ({
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      }));
+    }
 
     queueDeepLinks(forwardedDeepLinks(process.argv));
     const win = await createMainWindow();

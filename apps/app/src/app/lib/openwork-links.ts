@@ -12,6 +12,7 @@ export type RemoteWorkspaceDefaults = {
 export type DenAuthDeepLink = {
   grant: string;
   denBaseUrl: string;
+  isEnterpriseActivation: boolean;
 };
 
 export type ConnectDeepLink = {
@@ -22,7 +23,11 @@ export type ConnectDeepLink = {
 
 function isSupportedDeepLinkProtocol(protocol: string): boolean {
   const normalized = protocol.toLowerCase();
-  return normalized === "openwork:" || normalized === "openwork-dev:" || normalized === "https:" || normalized === "http:";
+  return normalized === "openwork:"
+    || normalized === "openwork-dev:"
+    || normalized === "openwork-enterprise:"
+    || normalized === "https:"
+    || normalized === "http:";
 }
 
 export function parseRemoteConnectDeepLink(rawUrl: string): RemoteWorkspaceDefaults | null {
@@ -135,7 +140,11 @@ export function parseDenAuthDeepLink(rawUrl: string): DenAuthDeepLink | null {
     return null;
   }
 
-  return { grant, denBaseUrl };
+  return {
+    grant,
+    denBaseUrl,
+    isEnterpriseActivation: protocol === "openwork-enterprise:",
+  };
 }
 
 export function parseConnectDeepLink(rawUrl: string): ConnectDeepLink | null {

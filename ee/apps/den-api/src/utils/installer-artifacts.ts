@@ -12,6 +12,10 @@ export const DEFAULT_INSTALLER_RELEASE_REPO = "different-ai/openwork"
 // First GitHub release tag on different-ai/openwork that carries the OpenWork-Installer-* assets;
 // earlier tags have no installer assets so redirects to them 404.
 export const FIRST_GENERIC_INSTALLER_RELEASE = "0.17.37"
+// Enterprise artifacts are introduced by this release line. Organization
+// policies pinned below it must not be redirected to an asset that never
+// existed.
+export const FIRST_ENTERPRISE_DESKTOP_RELEASE = "0.18.4"
 
 export function installerReleaseAssetUrl(
   fileName: string,
@@ -47,6 +51,11 @@ export function desktopReleaseAssetName(platform: string, releaseTag: string) {
     return `openwork-linux-arm64-${version}.AppImage`
   }
   return null
+}
+
+export function enterpriseDesktopReleaseAssetName(platform: string, releaseTag: string) {
+  const publicName = desktopReleaseAssetName(platform, releaseTag)
+  return publicName?.replace(/^openwork-/, "openwork-enterprise-") ?? null
 }
 
 export function genericInstallerArtifactName(platform: string) {

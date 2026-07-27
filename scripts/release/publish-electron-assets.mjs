@@ -35,7 +35,7 @@ function walk(dir) {
 }
 
 function isUpdaterManifest(path) {
-  return /^latest.*\.ya?ml$/.test(basename(path));
+  return /^(?:latest|enterprise).*\.ya?ml$/.test(basename(path));
 }
 
 function isReleaseAsset(path) {
@@ -163,25 +163,33 @@ function mergeManifests(name, paths) {
 }
 
 function validateManifest(name, manifest) {
+  const feedName = name.replace(/^enterprise(?=\.|-)/, "latest");
   const urls = manifest.files.map((file) => String(file.url || ""));
-  if (name === "latest-mac.yml") {
+  const expectedPrefix = name.startsWith("enterprise") ? "openwork-enterprise-" : "openwork-";
+  if (
+    urls.some((url) => !url.startsWith(expectedPrefix))
+    || (!name.startsWith("enterprise") && urls.some((url) => url.startsWith("openwork-enterprise-")))
+  ) {
+    throw new Error(`${name} contains an artifact from a different desktop distribution.`);
+  }
+  if (feedName === "latest-mac.yml") {
     for (const arch of ["mac-arm64", "mac-x64"]) {
       if (!urls.some((url) => url.includes(arch))) {
         throw new Error(`${name} is missing ${arch} artifacts.`);
       }
     }
   }
-  if (name === "latest.yml") {
+  if (feedName === "latest.yml") {
     for (const arch of ["win-arm64", "win-x64"]) {
       if (!urls.some((url) => url.includes(arch))) {
         throw new Error(`${name} is missing ${arch} artifacts.`);
       }
     }
   }
-  if (name === "latest-linux.yml" && urls.some((url) => url.includes("arm64"))) {
+  if (feedName === "latest-linux.yml" && urls.some((url) => url.includes("arm64"))) {
     throw new Error(`${name} should remain the Linux x64 feed; arm64 belongs in latest-linux-arm64.yml.`);
   }
-  if (name === "latest-linux-arm64.yml" && !urls.some((url) => url.includes("arm64"))) {
+  if (feedName === "latest-linux-arm64.yml" && !urls.some((url) => url.includes("arm64"))) {
     throw new Error(`${name} is missing Linux arm64 artifacts.`);
   }
 }
