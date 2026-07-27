@@ -1,7 +1,7 @@
 "use client";
 
 import { detectPlatform, DownloadPlatformGrid, type DetectedPlatform, type DownloadPlatformGroup, type DownloadPlatformOption } from "@openwork/ui/react";
-import { ChevronDown, Download, ShieldCheck } from "lucide-react";
+import { ChevronDown, Cloud, Download, ShieldCheck } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useSearchParams } from "next/navigation";
 import { requestJson } from "../_lib/den-flow";
@@ -11,7 +11,7 @@ import {
   rememberDesktopHandoffGrant,
 } from "../_lib/desktop-handoff";
 import { getInstallConfigErrorMessage } from "../_lib/install-errors";
-import { buildInstallDownloadHref, installerFileName, type InstallPlatform } from "../_lib/install-download";
+import { buildInstallCloudHref, buildInstallDownloadHref, installerFileName, type InstallPlatform } from "../_lib/install-download";
 import { isMobileUserAgent } from "../_lib/platform";
 import { useDesktopHandoffStatus } from "../_lib/use-desktop-handoff-status";
 import { OnboardingShell } from "./onboarding-shell";
@@ -566,6 +566,25 @@ export function InstallScreen() {
               </span>
             </h1>
             <p className="den-copy">Complete one step at a time. Select any step to expand or review.</p>
+          </div>
+
+          <div className="flex flex-col items-start gap-4 rounded-[1.5rem] border border-blue-200 bg-blue-50/70 p-5 text-left sm:flex-row sm:items-center sm:justify-between" data-testid="install-cloud-option">
+            <div className="flex min-w-0 items-start gap-3">
+              <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-white text-blue-700 shadow-sm" aria-hidden="true">
+                <Cloud className="size-5" />
+              </span>
+              <span className="grid gap-1">
+                <span className="text-base font-semibold text-slate-950">Prefer to work in your browser?</span>
+                <span className="text-sm leading-6 text-slate-600">Open the full OpenWork Cloud experience. Nothing to install.</span>
+              </span>
+            </div>
+            <a
+              className="den-button-secondary w-full shrink-0 sm:w-auto"
+              data-testid="install-cloud-open"
+              href={buildInstallCloudHref(config.webUrl)}
+            >
+              Open OpenWork Cloud
+            </a>
           </div>
 
         {isMobile ? (

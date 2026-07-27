@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { buildInstallDownloadHref, installerFileName } from "../app/(den)/_lib/install-download";
+import { buildInstallCloudHref, buildInstallDownloadHref, installerFileName } from "../app/(den)/_lib/install-download";
 
 test("organization installer downloads preserve a prefixed public API path", () => {
   expect(buildInstallDownloadHref(
@@ -27,4 +27,10 @@ test("organization installer downloads still support a root API origin", () => {
     "mac-arm64",
     "opaque-token",
   )).toBe("https://api.openwork.example.test/v1/install/mac-arm64?token=opaque-token");
+});
+
+test("cloud install choices preserve a private Den web path without hardcoding its host", () => {
+  expect(buildInstallCloudHref(
+    "https://private-cloud.example.test/den/?source=install#download",
+  )).toBe("https://private-cloud.example.test/den/dashboard/cloud");
 });

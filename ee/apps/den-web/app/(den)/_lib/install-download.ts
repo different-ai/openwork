@@ -22,3 +22,12 @@ export function buildInstallDownloadHref(apiUrl: string, platform: InstallPlatfo
   url.hash = "";
   return url.toString();
 }
+
+export function buildInstallCloudHref(webUrl: string) {
+  const url = new URL(webUrl);
+  const basePath = url.pathname.replace(/\/+$/, "");
+  url.pathname = `${basePath}/dashboard/cloud`;
+  url.search = "";
+  url.hash = "";
+  return url.toString();
+}
