@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto"
 import { and, asc, eq, isNull } from "@openwork-ee/den-db/drizzle"
 import { WorkerTable, WorkerTokenTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
@@ -21,6 +22,7 @@ type CloudRouteOptions = {
   orgMode?: DenOrgMode
   provisionerMode?: "stub" | "render" | "daytona"
   daytonaApiKey?: string
+  gatewayKey?: string
   continueProvisioning?: typeof continueCloudProvisioning
   refreshSignedPreview?: typeof refreshDaytonaSignedPreview
   cloudWorkerStore?: CloudWorkerStore
@@ -39,9 +41,17 @@ type CloudSandboxInspection = { state: string | null } | null
 type OrgId = typeof WorkerTable.$inferSelect.org_id
 type UserId = NonNullable<typeof WorkerTable.$inferSelect.created_by_user_id>
 type WorkerId = typeof WorkerTable.$inferSelect.id
+type CloudRouteUser = {
+  id: UserId
+  name?: string | null
+  email?: string | null
+}
 type CloudInstanceResponse = {
   status: "provisioning" | "waking" | "ready" | "failed"
   url: string | null
+}
+type CloudGatewayInstanceResponse = CloudInstanceResponse & {
+  clientToken: string | null
 }
 type CloudWorkerStore = {
   getCloudWorker: (input: { orgId: OrgId; userId: UserId }) => Promise<CloudWorker | null>
@@ -75,6 +85,12 @@ const cloudInstanceResponseSchema = z.object({
   url: z.string().url().nullable(),
 }).meta({ ref: "CloudInstanceResponse" })
 
+const cloudGatewayInstanceResponseSchema = z.object({
+  status: z.enum(["provisioning", "waking", "ready", "failed"]),
+  url: z.string().url().nullable(),
+  clientToken: z.string().nullable(),
+}).meta({ ref: "CloudGatewayInstanceResponse" })
+
 function cloudNotFound() {
   return { error: "cloud_not_found" }
 }
@@ -84,6 +100,7 @@ const cloudWorkerNameMaxLength = 255
 const failedHealCooldownMs = 60_000
 const signedPreviewProbeTimeoutMs = 2_500
 const signedPreviewHealthCacheMs = 15_000
+const gatewayKeyHeader = "X-OpenWork-Gateway-Key"
 const ensureCloudWorkerInFlight = new Map<string, Promise<CloudWorker>>()
 const failedHealAttempts = new Map<WorkerId, number>()
 const signedPreviewHealthCache = new Map<WorkerId, { url: string; healthyUntilMs: number }>()
@@ -140,7 +157,7 @@ function emailLocalPart(email: string | null | undefined) {
   return trimmed.split("@")[0]?.trim() || trimmed
 }
 
-function displayNameForCloudWorker(payload: NonNullable<OrgRouteVariables["organizationContext"]>, user: NonNullable<OrgRouteVariables["user"]>) {
+function displayNameForCloudWorker(payload: NonNullable<OrgRouteVariables["organizationContext"]>, user: CloudRouteUser) {
   const member = payload.members.find((entry) => entry.userId === payload.currentMember.userId) ?? null
   const memberName = member?.user.name.trim()
   if (memberName) {
@@ -155,7 +172,7 @@ function displayNameForCloudWorker(payload: NonNullable<OrgRouteVariables["organ
   return emailLocalPart(member?.user.email) ?? emailLocalPart(user.email) ?? "member"
 }
 
-function cloudWorkerName(payload: NonNullable<OrgRouteVariables["organizationContext"]>, user: NonNullable<OrgRouteVariables["user"]>) {
+function cloudWorkerName(payload: NonNullable<OrgRouteVariables["organizationContext"]>, user: CloudRouteUser) {
   return truncateForWorkerName(`${CLOUD_INSTANCE_NAME} — ${displayNameForCloudWorker(payload, user)}`)
 }
 
@@ -271,6 +288,62 @@ const databaseCloudWorkerStore: CloudWorkerStore = {
 function hasDaytonaProvisioner(options: CloudRouteOptions) {
   const apiKey = options.daytonaApiKey !== undefined ? options.daytonaApiKey : env.daytona.apiKey
   return (options.provisionerMode ?? env.provisionerMode) === "daytona" && Boolean(apiKey?.trim())
+}
+
+function cloudAvailable(payload: NonNullable<OrgRouteVariables["organizationContext"]>, options: CloudRouteOptions) {
+  return organizationCloudEnabled(payload.organization.metadata, { orgMode: options.orgMode ?? env.orgMode }) && hasDaytonaProvisioner(options)
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null
+}
+
+function hasCloudUserId(user: unknown): user is CloudRouteUser {
+  if (!isRecord(user)) {
+    return false
+  }
+
+  if (typeof user.id !== "string" || !user.id.trim()) {
+    return false
+  }
+
+  if (user.name !== undefined && user.name !== null && typeof user.name !== "string") {
+    return false
+  }
+
+  if (user.email !== undefined && user.email !== null && typeof user.email !== "string") {
+    return false
+  }
+
+  return true
+}
+
+const textEncoder = new TextEncoder()
+
+function timingSafeStringEqual(left: string, right: string) {
+  const leftBytes = textEncoder.encode(left)
+  const rightBytes = textEncoder.encode(right)
+  if (leftBytes.byteLength === rightBytes.byteLength) {
+    return timingSafeEqual(leftBytes, rightBytes)
+  }
+
+  const byteLength = Math.max(leftBytes.byteLength, rightBytes.byteLength)
+  const paddedLeft = new Uint8Array(byteLength)
+  const paddedRight = new Uint8Array(byteLength)
+  paddedLeft.set(leftBytes)
+  paddedRight.set(rightBytes)
+  timingSafeEqual(paddedLeft, paddedRight)
+  return false
+}
+
+function gatewaySecretMatches(requestSecret: string | undefined, configuredSecret: string | undefined) {
+  const expected = configuredSecret?.trim()
+  const candidate = requestSecret?.trim()
+  if (!expected || !candidate) {
+    return false
+  }
+
+  return timingSafeStringEqual(candidate, expected)
 }
 
 async function getCloudWorker(orgId: OrgId, userId: UserId, store: CloudWorkerStore) {
@@ -540,6 +613,69 @@ async function resolveCloudInstance(input: {
   return recoverUnhealthyCloudSandbox(input)
 }
 
+async function resolveCloudInstanceForMember(input: {
+  payload: NonNullable<OrgRouteVariables["organizationContext"]>
+  user: CloudRouteUser
+  continueProvisioning: typeof continueCloudProvisioning
+  refreshSignedPreview: typeof refreshDaytonaSignedPreview
+  store: CloudWorkerStore
+  ensureWorker: EnsureCloudWorker
+  getSandboxRecord: GetSandboxRecord
+  inspectSandbox: InspectSandbox
+  probeSignedPreview: ProbeSignedPreview
+  startWake: (workerId: CloudWorker["id"]) => void
+  now: () => number
+}) {
+  const worker = await input.ensureWorker({
+    orgId: input.payload.organization.id,
+    createdByUserId: input.user.id,
+    name: cloudWorkerName(input.payload, input.user),
+    continueProvisioning: input.continueProvisioning,
+    store: input.store,
+  })
+  const instance = await resolveCloudInstance({
+    worker,
+    continueProvisioning: input.continueProvisioning,
+    refreshSignedPreview: input.refreshSignedPreview,
+    getSandboxRecord: input.getSandboxRecord,
+    inspectSandbox: input.inspectSandbox,
+    probeSignedPreview: input.probeSignedPreview,
+    startWake: input.startWake,
+    store: input.store,
+    now: input.now,
+  })
+
+  return { worker, instance }
+}
+
+async function resolveCloudInstanceForGateway(input: {
+  payload: NonNullable<OrgRouteVariables["organizationContext"]>
+  user: CloudRouteUser
+  continueProvisioning: typeof continueCloudProvisioning
+  refreshSignedPreview: typeof refreshDaytonaSignedPreview
+  store: CloudWorkerStore
+  ensureWorker: EnsureCloudWorker
+  getSandboxRecord: GetSandboxRecord
+  inspectSandbox: InspectSandbox
+  probeSignedPreview: ProbeSignedPreview
+  startWake: (workerId: CloudWorker["id"]) => void
+  now: () => number
+}): Promise<CloudGatewayInstanceResponse> {
+  const resolved = await resolveCloudInstanceForMember(input)
+  if (resolved.instance.status !== "ready") {
+    return { status: resolved.instance.status, url: null, clientToken: null }
+  }
+
+  const tokens = await input.store.getActiveTokens(resolved.worker.id)
+  const clientToken = tokenByScope(tokens, "client")
+  if (!resolved.instance.url || !clientToken) {
+    logger.error("cloud gateway ready instance missing client token", { worker_id: resolved.worker.id })
+    return { status: "failed", url: null, clientToken: null }
+  }
+
+  return { status: "ready", url: resolved.instance.url, clientToken }
+}
+
 export function registerCloudRoutes<T extends { Variables: OrgRouteVariables }>(
   app: Hono<T>,
   options: CloudRouteOptions = {},
@@ -554,6 +690,7 @@ export function registerCloudRoutes<T extends { Variables: OrgRouteVariables }>(
   const signedPreviewProbe = options.probeSignedPreview ?? probeSignedPreview
   const wakeCloudWorker = options.wakeCloudWorker ?? defaultWakeCloudWorker
   const now = options.now ?? Date.now
+  const gatewayKey = options.gatewayKey !== undefined ? options.gatewayKey : env.gatewayKey
   const wakingWorkers = new Set<CloudWorker["id"]>()
 
   function startWake(workerId: CloudWorker["id"]) {
@@ -584,35 +721,75 @@ export function registerCloudRoutes<T extends { Variables: OrgRouteVariables }>(
     orgMemberRouteMiddleware,
     async (c) => {
       const payload = c.get("organizationContext")
-      if (!organizationCloudEnabled(payload.organization.metadata, { orgMode: options.orgMode ?? env.orgMode })) {
-        return c.json(cloudNotFound(), 404)
-      }
-
-      if (!hasDaytonaProvisioner(options)) {
+      if (!cloudAvailable(payload, options)) {
         return c.json(cloudNotFound(), 404)
       }
 
       const user = c.get("user")
-      if (!user?.id) {
+      if (!hasCloudUserId(user)) {
         return c.json({ error: "unauthorized" }, 401)
       }
 
-      const worker = await ensureWorker({
-        orgId: payload.organization.id,
-        createdByUserId: user.id,
-        name: cloudWorkerName(payload, user),
-        continueProvisioning,
-        store,
-      })
-      const instance = await resolveCloudInstance({
-        worker,
+      const resolved = await resolveCloudInstanceForMember({
+        payload,
+        user,
         continueProvisioning,
         refreshSignedPreview,
+        store,
+        ensureWorker,
         getSandboxRecord,
         inspectSandbox,
         probeSignedPreview: signedPreviewProbe,
         startWake,
+        now,
+      })
+
+      return c.json(resolved.instance)
+    },
+  )
+
+  app.get(
+    "/v1/cloud/gateway/resolve",
+    describeRoute({
+      tags: ["Cloud"],
+      summary: "Resolve the caller's Cloud instance for the browser gateway",
+      description: "Starts or wakes the caller's own OpenWork Cloud browser instance when needed and returns the collaborator token only to the trusted gateway.",
+      responses: {
+        200: jsonResponse("Cloud instance status returned successfully for the gateway.", cloudGatewayInstanceResponseSchema),
+        401: jsonResponse("The caller must be signed in to open Cloud.", unauthorizedSchema),
+        404: jsonResponse("Cloud is not available for this organization or gateway.", notFoundSchema),
+      },
+    }),
+    async (c, next) => {
+      if (!gatewaySecretMatches(c.req.header(gatewayKeyHeader), gatewayKey)) {
+        return c.json(cloudNotFound(), 404)
+      }
+
+      await next()
+    },
+    orgMemberRouteMiddleware,
+    async (c) => {
+      const payload = c.get("organizationContext")
+      if (!cloudAvailable(payload, options)) {
+        return c.json(cloudNotFound(), 404)
+      }
+
+      const user = c.get("user")
+      if (!hasCloudUserId(user)) {
+        return c.json({ error: "unauthorized" }, 401)
+      }
+
+      const instance = await resolveCloudInstanceForGateway({
+        payload,
+        user,
+        continueProvisioning,
+        refreshSignedPreview,
         store,
+        ensureWorker,
+        getSandboxRecord,
+        inspectSandbox,
+        probeSignedPreview: signedPreviewProbe,
+        startWake,
         now,
       })
 
