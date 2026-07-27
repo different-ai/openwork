@@ -62,9 +62,11 @@ export function enterpriseActivationComplete(config) {
 }
 
 export function desktopActivationRequired(distribution, config) {
-  const requireActivation = typeof config?.requireActivation === "boolean"
-    ? config.requireActivation
-    : distribution.requireActivation;
+  const requireActivation = distribution.flavor === "enterprise"
+    ? distribution.requireActivation
+    : (typeof config?.requireActivation === "boolean"
+        ? config.requireActivation
+        : distribution.requireActivation);
   return requireActivation && !enterpriseActivationComplete(config);
 }
 

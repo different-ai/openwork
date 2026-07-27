@@ -77,11 +77,27 @@ describe("desktopActivationRequired", () => {
     assert.equal(desktopActivationRequired(PUBLIC_DESKTOP_DISTRIBUTION, {}), false);
   });
 
-  it("allows desktop-bootstrap.json to override either distribution default", () => {
+  it("keeps the Enterprise artifact authoritative over bootstrap opt-out", () => {
     assert.equal(desktopActivationRequired(
       ENTERPRISE_DESKTOP_DISTRIBUTION,
       { requireActivation: false },
+    ), true);
+  });
+
+  it("accepts completed activation from the Enterprise bootstrap file", () => {
+    assert.equal(desktopActivationRequired(
+      ENTERPRISE_DESKTOP_DISTRIBUTION,
+      {
+        requireActivation: false,
+        enterpriseActivation: {
+          activatedAt: "2026-07-27T10:00:00.000Z",
+          denBaseUrl: "https://enterprise.example.com",
+        },
+      },
     ), false);
+  });
+
+  it("allows desktop-bootstrap.json to enable activation for other distributions", () => {
     assert.equal(desktopActivationRequired(
       PUBLIC_DESKTOP_DISTRIBUTION,
       { requireActivation: true },

@@ -373,6 +373,22 @@ test("explicit desktop bootstrap path never inherits legacy activation state", a
   });
 });
 
+test("explicit desktop bootstrap path still reads its configured bootstrap", async () => {
+  await withIsolatedBootstrapStore(async ({ store, root }) => {
+    const explicitPath = path.join(root, "isolated", "desktop-bootstrap.json");
+    process.env.OPENWORK_DESKTOP_BOOTSTRAP_PATH = explicitPath;
+    await writeBootstrapConfig(explicitPath, {
+      baseUrl: "https://enterprise.example.com",
+      requireSignin: true,
+    });
+
+    const config = await store.getDesktopBootstrapConfig();
+    assert.equal(config.fromFile, true);
+    assert.equal(config.baseUrl, "https://enterprise.example.com");
+    assert.equal("requireActivation" in config, false);
+  });
+});
+
 test("desktop bootstrap prefers an older legacy organization config over a newer canonical hosted default", async () => {
   await withIsolatedBootstrapStore(async ({ store, canonicalPath, legacyPath }) => {
     await writeBootstrapConfig(canonicalPath, {
