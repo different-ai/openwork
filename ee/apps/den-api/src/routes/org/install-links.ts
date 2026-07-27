@@ -24,9 +24,7 @@ import { denTypeIdSchema, emptyResponse, forbiddenSchema, invalidRequestSchema, 
 import { organizationCapabilityKeySchema } from "../../organization-capabilities.js"
 import { normalizeOrganizationMetadata } from "../../organization-limits.js"
 import {
-  DEFAULT_INSTALLER_RELEASE_REPO,
   enterpriseDesktopReleaseAssetName,
-  FIRST_ENTERPRISE_DESKTOP_RELEASE,
   installerReleaseAssetUrl,
 } from "../../utils/installer-artifacts.js"
 import { checkRateLimit, enforceRateLimit } from "../../utils/rate-limit.js"
@@ -224,14 +222,7 @@ function installerReleaseTagForMetadata(metadataInput: unknown) {
   }
 
   const maxVersion = maxAllowedDesktopVersion(allowedVersions)
-  if (!maxVersion) {
-    return env.installerReleaseTag
-  }
-  if (env.installerReleaseRepo !== DEFAULT_INSTALLER_RELEASE_REPO) {
-    return `v${maxVersion}`
-  }
-  const enterpriseFloor = compareVersions(maxVersion, FIRST_ENTERPRISE_DESKTOP_RELEASE)
-  return `v${enterpriseFloor !== null && enterpriseFloor < 0 ? FIRST_ENTERPRISE_DESKTOP_RELEASE : maxVersion}`
+  return maxVersion ? `v${maxVersion}` : env.installerReleaseTag
 }
 
 async function resolveInstallConfigForToken(token: string, request: Request) {

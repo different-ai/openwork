@@ -4,11 +4,11 @@ const FLOW_ID = "den-download-link-match-allowed-versions";
 const DEN_API_URL = cleanBaseUrl(process.env.OPENWORK_EVAL_DEN_API_URL);
 const DEN_TOKEN = process.env.OPENWORK_EVAL_DEN_TOKEN?.trim() || "";
 const MEMBER_TOKEN = process.env.OPENWORK_EVAL_MEMBER_DEN_TOKEN?.trim() || DEN_TOKEN;
-const ALLOWED_VERSIONS = ["0.18.4", "0.18.5"];
-const SELECTED_VERSION = "0.18.5";
-const DISALLOWED_VERSION = "0.18.6";
+const ALLOWED_VERSIONS = ["0.17.37", "0.17.38"];
+const SELECTED_VERSION = "0.17.38";
+const DISALLOWED_VERSION = "0.17.39";
 const LEGACY_ALLOWED_VERSIONS = ["0.17.26", "0.17.27"];
-const FIRST_ENTERPRISE_DESKTOP_VERSION = "0.18.4";
+const LEGACY_SELECTED_VERSION = "0.17.27";
 
 // Narration is loaded from the approved script (evals/voiceovers/den-download-link-match-allowed-versions.md).
 // The runner fails this flow if the narration drifts from that script.
@@ -148,7 +148,7 @@ export default {
     {
       name: "Frame 1 — Admin restricts desktop versions",
       run: async (ctx) => {
-        await ctx.prove("An admin saves a policy allowing 0.18.4 and 0.18.5 while 0.18.6 remains disallowed", {
+        await ctx.prove("An admin saves a policy allowing 0.17.37 and 0.17.38 while 0.17.39 remains disallowed", {
           voiceover: vo[0],
           action: async () => {
             const organization = await setAllowedDesktopVersions(ctx, ALLOWED_VERSIONS);
@@ -158,7 +158,7 @@ export default {
             const current = await denApiFetch("/v1/org");
             const versions = readOrganizationMetadata(current.body?.organization).allowedDesktopVersions;
             witness(ctx, Array.isArray(versions), "The saved organization metadata exposes allowedDesktopVersions", current.body);
-            witness(ctx, versions.includes("0.18.4") && versions.includes(SELECTED_VERSION), "The saved policy includes the two allowed versions", versions);
+            witness(ctx, versions.includes("0.17.37") && versions.includes(SELECTED_VERSION), "The saved policy includes the two allowed versions", versions);
             witness(ctx, !versions.includes(DISALLOWED_VERSION), "The saved policy excludes the disallowed latest version", versions);
           },
         });
@@ -185,23 +185,23 @@ export default {
     {
       name: "Frame 3 — Download selects the highest allowed version",
       run: async (ctx) => {
-        await ctx.prove("Clicking download returns OpenWork Enterprise 0.18.5 instead of the disallowed 0.18.6 release", {
+        await ctx.prove("Clicking download returns OpenWork Enterprise 0.17.38 instead of the disallowed 0.17.39 release", {
           voiceover: vo[2],
           action: async () => {
             state.restrictedDownload = await fetchInstallerDownload(state.memberInstallToken);
           },
           assert: async () => {
             witness(ctx, [200, 302].includes(state.restrictedDownload.status), "The installer endpoint returns a download or redirect", state.restrictedDownload);
-            witness(ctx, downloadMentionsVersion(state.restrictedDownload, SELECTED_VERSION), "The selected direct URL or artifact filename contains 0.18.5", state.restrictedDownload);
-            witness(ctx, !downloadMentionsVersion(state.restrictedDownload, DISALLOWED_VERSION), "The selected download does not contain disallowed 0.18.6", state.restrictedDownload);
+            witness(ctx, downloadMentionsVersion(state.restrictedDownload, SELECTED_VERSION), "The selected direct URL or artifact filename contains 0.17.38", state.restrictedDownload);
+            witness(ctx, !downloadMentionsVersion(state.restrictedDownload, DISALLOWED_VERSION), "The selected download does not contain disallowed 0.17.39", state.restrictedDownload);
           },
         });
       },
     },
     {
-      name: "Frame 4 — Legacy pins use the first enterprise desktop release",
+      name: "Frame 4 — Legacy pins keep their own release tag",
       run: async (ctx) => {
-        await ctx.prove("Legacy desktop-version pins download the first release that carries enterprise app artifacts", {
+        await ctx.prove("Legacy desktop-version pins download the exact version the organization allows", {
           voiceover: vo[3],
           action: async () => {
             await setAllowedDesktopVersions(ctx, LEGACY_ALLOWED_VERSIONS);
@@ -210,8 +210,8 @@ export default {
           },
           assert: async () => {
             witness(ctx, state.legacyDownload.status === 302, "The legacy-pinned download redirects to the app artifact", state.legacyDownload);
-            witness(ctx, downloadMentionsVersion(state.legacyDownload, FIRST_ENTERPRISE_DESKTOP_VERSION), "The legacy-pinned download uses the first release with enterprise app artifacts", state.legacyDownload);
-            witness(ctx, !downloadMentionsVersion(state.legacyDownload, "0.17.27"), "The legacy-pinned download does not point at the missing v0.17.27 installer asset", state.legacyDownload);
+            witness(ctx, downloadMentionsVersion(state.legacyDownload, LEGACY_SELECTED_VERSION), "The legacy-pinned download uses the highest allowed legacy version", state.legacyDownload);
+            witness(ctx, state.legacyDownload.location?.includes("/openwork-enterprise-win-x64-"), "The legacy-pinned download still selects the enterprise app artifact", state.legacyDownload);
           },
         });
       },

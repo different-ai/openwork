@@ -353,7 +353,7 @@ test("unordered organization allowed desktop versions select the maximum direct 
   expect(response.headers.get("location")).not.toContain("opaque-token")
 })
 
-test("older allowed desktop versions use the first release with enterprise artifacts", async () => {
+test("older allowed desktop versions keep their matching release tag", async () => {
   organizationMetadata = {
     ...defaultOrganizationMetadata(),
     allowedDesktopVersions: ["0.17.26", "0.17.25", "0.17.27"],
@@ -364,7 +364,7 @@ test("older allowed desktop versions use the first release with enterprise artif
   })
 
   expect(response.status).toBe(302)
-  expect(response.headers.get("location")).toBe("https://github.com/different-ai/openwork/releases/download/v0.18.4/openwork-enterprise-win-x64-0.18.4.exe")
+  expect(response.headers.get("location")).toBe("https://github.com/different-ai/openwork/releases/download/v0.17.27/openwork-enterprise-win-x64-0.17.27.exe")
   expect(response.headers.get("location")).not.toContain("opaque-token")
 })
 
@@ -452,7 +452,7 @@ test("install token organization policy applies to member and admin downloads", 
   }
 })
 
-test("explicit configured desktop release tags are not clamped to the enterprise floor", async () => {
+test("explicit configured desktop release tags are used verbatim", async () => {
   envModule.env.installerReleaseTagExplicit = true
   envModule.env.installerReleaseTag = "v0.17.27"
   organizationMetadata = {
