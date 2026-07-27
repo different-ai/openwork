@@ -1,3 +1,5 @@
+import { loopbackFetch } from "./server-fetch.js";
+
 const LOCAL_MODELS_URL = "http://localhost:8791/models";
 const PRODUCTION_MODELS_URL = "https://models.openworklabs.com/";
 
@@ -15,7 +17,7 @@ export async function resolveOpencodeModelsUrl(
   if (env.OPENWORK_DEV_MODE !== "1") return PRODUCTION_MODELS_URL;
 
   try {
-    const response = await (options.fetchModels ?? fetch)(`${LOCAL_MODELS_URL}/api.json`, {
+    const response = await (options.fetchModels ?? loopbackFetch)(`${LOCAL_MODELS_URL}/api.json`, {
       signal: AbortSignal.timeout(1_000),
     });
     if (response.ok) return LOCAL_MODELS_URL;

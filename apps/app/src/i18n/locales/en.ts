@@ -139,6 +139,7 @@ export default {
   "connect.diagnostics_check_agent_prompt_markers_effective": "Effective agent context markers",
   "connect.diagnostics_check_agent_resolution": "OpenWork agent configuration intent",
   "connect.diagnostics_check_agent_resolution_effective": "Effective OpenWork agent resolution",
+  "connect.diagnostics_check_cloud_endpoint_differential": "Runtime probe vs engine verdict",
   "connect.diagnostics_check_cloud_tool_catalog": "OpenWork Cloud tool catalog",
   "connect.diagnostics_check_connect_steering_scope": "Connect steering scope",
   "connect.diagnostics_check_engine_agent": "Effective engine agent (not queried)",

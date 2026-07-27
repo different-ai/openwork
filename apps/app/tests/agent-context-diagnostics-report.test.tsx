@@ -138,6 +138,7 @@ function healthyReport(): AgentContextDiagnosticsReport {
     safety: {
       diagnosticsWorkspaceRuntimeConfigurationReadOnly: true,
       cloudCatalogToolsListPerformed: false,
+      cloudSessionCleanupRequested: false,
       directNonCloudMcpFetchPerformed: false,
       directMcpToolCallPerformed: false,
       directProviderOperationPerformed: false,
@@ -362,11 +363,14 @@ describe("AgentContextDiagnosticsReportView", () => {
     };
     expect(agentContextDiagnosticsReportSchema.safeParse(toolsWithoutProbe).success).toBe(false);
 
-    const cloudProbeWithoutEffectivePolicy = {
+    // Engine registration state and tool policy no longer gate the probe;
+    // handshake evidence only requires the retained runtime cloud entry.
+    const cloudProbeWithoutRetainedEntry = {
       ...healthyReport(),
       safety: { ...healthyReport().safety, cloudCatalogToolsListPerformed: true },
+      mcps: healthyReport().mcps.filter((mcp) => mcp.name !== "openwork-cloud"),
     };
-    expect(agentContextDiagnosticsReportSchema.safeParse(cloudProbeWithoutEffectivePolicy).success).toBe(false);
+    expect(agentContextDiagnosticsReportSchema.safeParse(cloudProbeWithoutRetainedEntry).success).toBe(false);
 
     const effectiveEvidenceWithoutEngineRead = {
       ...healthyReport(),

@@ -561,9 +561,15 @@ describe("agent context diagnostics analyzer", () => {
       status: "warning",
       code: "per_request_connect_context_not_observed",
     });
+    expect(checkById(report, "cloud-endpoint-differential")).toMatchObject({
+      status: "passed",
+      evidenceKind: "derived",
+      code: "runtime_and_engine_connected",
+    });
     expect(report.safety).toMatchObject({
       diagnosticsWorkspaceRuntimeConfigurationReadOnly: true,
       cloudCatalogToolsListPerformed: true,
+      cloudSessionCleanupRequested: true,
       directNonCloudMcpFetchPerformed: false,
       directMcpToolCallPerformed: false,
       directProviderOperationPerformed: false,
@@ -579,10 +585,10 @@ describe("agent context diagnostics analyzer", () => {
         !(mcp.source === "config.remote" && mcp.name === "openwork-cloud"),
       ),
     }).success).toBe(false);
-    expect(fetchCalls).toHaveLength(3);
-    expect(fetchCalls.map((call) => call.url)).toEqual([CLOUD_ENDPOINT, CLOUD_ENDPOINT, CLOUD_ENDPOINT]);
-    expect(fetchCalls.map((call) => call.method)).toEqual(["POST", "POST", "POST"]);
-    expect(fetchCalls.map((call) => call.body.method)).toEqual([
+    expect(fetchCalls).toHaveLength(4);
+    expect(fetchCalls.map((call) => call.url)).toEqual([CLOUD_ENDPOINT, CLOUD_ENDPOINT, CLOUD_ENDPOINT, CLOUD_ENDPOINT]);
+    expect(fetchCalls.map((call) => call.method)).toEqual(["POST", "POST", "POST", "DELETE"]);
+    expect(fetchCalls.slice(0, 3).map((call) => call.body.method)).toEqual([
       "initialize",
       "notifications/initialized",
       "tools/list",
@@ -591,6 +597,7 @@ describe("agent context diagnostics analyzer", () => {
     expect(fetchCalls[0]?.headers.get("accept")).toBe("application/json, text/event-stream");
     expect(fetchCalls[0]?.headers.has("mcp-session-id")).toBe(false);
     expect(fetchCalls[2]?.headers.get("mcp-session-id")).toBe("diagnostics-test-session");
+    expect(fetchCalls[3]?.headers.get("mcp-session-id")).toBe("diagnostics-test-session");
     expect(engine.requests).toEqual([]);
 
     const serialized = JSON.stringify(report);
@@ -614,7 +621,7 @@ describe("agent context diagnostics analyzer", () => {
     expect(serialized).not.toMatch(/[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/u);
   });
 
-  test("does not egress or label tools allowed without an effective engine inspection", async () => {
+  test("probes the endpoint without an effective engine inspection while tool policy stays its own dimension", async () => {
     const fixture = await createFixture();
     const fetchCalls: CatalogFetchCall[] = [];
 
@@ -643,14 +650,16 @@ describe("agent context diagnostics analyzer", () => {
         ]),
       },
     });
+    // An unavailable tool policy is a separate diagnostic dimension; it must
+    // never be reported as endpoint unavailability.
     expect(checkById(report, "cloud-tool-catalog")).toMatchObject({
-      status: "warning",
-      evidenceKind: "unavailable",
-      code: "cloud_tool_policy_unavailable",
-      details: { requestPerformed: false },
+      status: "passed",
+      evidenceKind: "observed",
+      code: "cloud_catalog_exact_match",
+      details: { requestPerformed: true },
     });
-    expect(report.safety.cloudCatalogToolsListPerformed).toBe(false);
-    expect(fetchCalls).toEqual([]);
+    expect(report.safety.cloudCatalogToolsListPerformed).toBe(true);
+    expect(fetchCalls).toHaveLength(4);
   });
 
   test("retains the probed runtime cloud MCP when the combined inventory is truncated", async () => {
@@ -694,10 +703,10 @@ describe("agent context diagnostics analyzer", () => {
       status: "passed",
       code: "cloud_catalog_exact_match",
     });
-    expect(fetchCalls).toHaveLength(3);
+    expect(fetchCalls).toHaveLength(4);
   });
 
-  test("honors a whole-resource deny from the effective engine agent before cloud egress", async () => {
+  test("keeps a whole-resource deny in the policy dimension while the endpoint probe still runs", async () => {
     const fixture = await createFixture();
     const fetchCalls: CatalogFetchCall[] = [];
 
@@ -725,9 +734,12 @@ describe("agent context diagnostics analyzer", () => {
       evidenceKind: "observed",
       code: "required_connect_tools_denied_by_effective_policy",
     });
+    // The policy deny stays a policy failure; the endpoint itself is probed
+    // and reported on its own dimension.
     expect(checkById(report, "cloud-tool-catalog")).toMatchObject({
-      code: "cloud_tool_policy_denied",
-      details: { requestPerformed: false },
+      status: "passed",
+      code: "cloud_catalog_exact_match",
+      details: { requestPerformed: true },
     });
     expect(report.mcps.find(
       (mcp) => mcp.name === "openwork-cloud" && mcp.source === "engine.config",
@@ -735,7 +747,7 @@ describe("agent context diagnostics analyzer", () => {
       source: "engine.config",
       disabledByTools: true,
     });
-    expect(fetchCalls).toEqual([]);
+    expect(fetchCalls).toHaveLength(4);
   });
 
   test("reports an effective ask rule as approval required while keeping the visible tool probe eligible", async () => {
@@ -774,7 +786,7 @@ describe("agent context diagnostics analyzer", () => {
       code: "cloud_catalog_exact_match",
       details: { requestPerformed: true },
     });
-    expect(fetchCalls).toHaveLength(3);
+    expect(fetchCalls).toHaveLength(4);
   });
 
   test("distinguishes a missing Connect state default from a corrupt state file", async () => {
@@ -856,15 +868,21 @@ describe("agent context diagnostics analyzer", () => {
 
     const check = checkById(report, "cloud-tool-catalog");
     expect(check).toMatchObject({
-      status: "failed",
-      evidenceKind: "derived",
+      status: "warning",
+      evidenceKind: "unavailable",
       code: "untrusted_endpoint",
       owner: "openwork-server",
-      message: "The server did not send the credentialed cloud catalog request because the Cloud endpoint origin is not in the diagnostics trust list.",
-      details: { requestPerformed: false },
+      details: { requestPerformed: false, handshakePerformed: false, stage: "eligibility" },
     });
-    expect(check.action).toBe("Set OPENWORK_AGENT_DIAGNOSTICS_TRUSTED_ORIGINS on the OpenWork desktop/server process to include the Cloud endpoint origin, then rerun diagnostics.");
+    // An untrusted origin means no request occurred; the report must describe
+    // a trust-configuration state, never a network, TLS, or MCP failure.
+    expect(check.message).toContain("not performed");
+    expect(check.message).toContain("trust");
     expect(check.action).toContain("OPENWORK_AGENT_DIAGNOSTICS_TRUSTED_ORIGINS");
+    expect(checkById(report, "cloud-endpoint-differential")).toMatchObject({
+      status: "skipped",
+      code: "runtime_probe_not_performed",
+    });
     expect(fetchCalls).toEqual([]);
   });
 
@@ -900,14 +918,15 @@ describe("agent context diagnostics analyzer", () => {
         evidenceKind: "unavailable",
       });
       expect(checkById(report, "cloud-tool-catalog")).toMatchObject({
-        code: "cloud_tool_policy_unavailable",
-        details: { requestPerformed: false },
+        status: "passed",
+        code: "cloud_catalog_exact_match",
+        details: { requestPerformed: true },
       });
       expect(report.safety.engineApiReadPerformed).toBe(true);
       expect(JSON.stringify(report)).not.toContain("RAW_ENGINE_ERROR_CANARY");
     }
 
-    expect(fetchCalls).toEqual([]);
+    expect(fetchCalls).toHaveLength(8);
   });
 
   test("fails closed when the effective engine does not resolve the OpenWork agent", async () => {
@@ -931,10 +950,11 @@ describe("agent context diagnostics analyzer", () => {
       details: { policyUnavailableReasons: ["effective_openwork_agent_missing"] },
     });
     expect(checkById(report, "cloud-tool-catalog")).toMatchObject({
-      code: "cloud_tool_policy_unavailable",
-      details: { requestPerformed: false },
+      status: "passed",
+      code: "cloud_catalog_exact_match",
+      details: { requestPerformed: true },
     });
-    expect(fetchCalls).toEqual([]);
+    expect(fetchCalls).toHaveLength(4);
   });
 
   test("rejects hidden and subagent-only OpenWork defaults before cloud egress", async () => {
@@ -969,10 +989,11 @@ describe("agent context diagnostics analyzer", () => {
         code: "effective_connect_tool_policy_unavailable",
       });
       expect(checkById(report, "cloud-tool-catalog")).toMatchObject({
-        code: "cloud_tool_policy_unavailable",
-        details: { requestPerformed: false },
+        status: "passed",
+        code: "cloud_catalog_exact_match",
+        details: { requestPerformed: true },
       });
-      expect(fetchCalls).toEqual([]);
+      expect(fetchCalls).toHaveLength(4);
     }
   });
 
@@ -1101,14 +1122,22 @@ describe("agent context diagnostics analyzer", () => {
     expect(report.firstFailedCheck).toBe("cloud-tool-catalog");
     expect(checkById(report, "cloud-tool-catalog")).toMatchObject({
       status: "failed",
-      code: "invalid_catalog",
+      code: "required_tools_missing",
       details: {
         expectedToolIds: ["search_capabilities", "execute_capability"],
         observedToolIds: [],
         requestPerformed: true,
+        stage: "catalog_validation",
+        totalToolCount: 1,
+        requiredToolsPresent: false,
+        retryable: false,
       },
     });
-    expect(fetchCalls).toHaveLength(3);
+    expect(checkById(report, "cloud-endpoint-differential")).toMatchObject({
+      status: "warning",
+      code: "runtime_failed_engine_connected",
+    });
+    expect(fetchCalls).toHaveLength(4);
   });
 
   test("reports a corrupt runtime database as failed and unavailable without egress", async () => {
@@ -1145,7 +1174,7 @@ describe("agent context diagnostics analyzer", () => {
     expect(JSON.stringify(report)).not.toContain("CANARY_DB_SECRET");
   });
 
-  test("does not probe when the current cloud registration fingerprint is not recorded", async () => {
+  test("probes despite an unrecorded registration and reports stale-or-missing engine evidence", async () => {
     const fixture = await createFixture();
     const fetchCalls: CatalogFetchCall[] = [];
 
@@ -1164,15 +1193,20 @@ describe("agent context diagnostics analyzer", () => {
     expect(report.firstFailedCheck).toBeNull();
     expect(checkById(report, "engine-mcp-sync")).toMatchObject({ status: "warning", code: "mcp_registration_not_recorded" });
     expect(checkById(report, "cloud-tool-catalog")).toMatchObject({
-      status: "warning",
-      code: "registration_not_recorded",
-      details: { requestPerformed: false },
+      status: "passed",
+      code: "cloud_catalog_exact_match",
+      details: { requestPerformed: true },
     });
-    expect(report.safety.cloudCatalogToolsListPerformed).toBe(false);
-    expect(fetchCalls).toEqual([]);
+    expect(checkById(report, "cloud-endpoint-differential")).toMatchObject({
+      status: "warning",
+      code: "engine_evidence_stale_or_unavailable",
+      details: { engineRegistrationStatus: "not-recorded" },
+    });
+    expect(report.safety.cloudCatalogToolsListPerformed).toBe(true);
+    expect(fetchCalls).toHaveLength(4);
   });
 
-  test("reports an engine needs-auth registration as failed injection evidence without egress", async () => {
+  test("separates a reachable endpoint from an engine needs-auth registration", async () => {
     const fixture = await createFixture();
     const fetchCalls: CatalogFetchCall[] = [];
     const report = await runAgentContextDiagnostics({
@@ -1192,11 +1226,17 @@ describe("agent context diagnostics analyzer", () => {
       details: { needsAuthCount: 3, connectedCount: 0 },
     });
     expect(checkById(report, "cloud-tool-catalog")).toMatchObject({
-      status: "failed",
-      code: "registration_needs_auth",
-      details: { requestPerformed: false },
+      status: "passed",
+      code: "cloud_catalog_exact_match",
+      details: { requestPerformed: true },
     });
-    expect(fetchCalls).toEqual([]);
+    expect(checkById(report, "cloud-endpoint-differential")).toMatchObject({
+      status: "failed",
+      code: "runtime_connected_engine_failed",
+      owner: "opencode-engine",
+      details: { engineRegistrationStatus: "needs-auth" },
+    });
+    expect(fetchCalls).toHaveLength(4);
   });
 
   test("downgrades stale failed registration evidence when the engine is reachable", async () => {
@@ -1228,7 +1268,12 @@ describe("agent context diagnostics analyzer", () => {
       { name: "non-cloud-canary", status: "failed", source: "transport_failure", recordAgeMs: 61_000, engineReachableNow: true },
       { name: "[redacted-sensitive-label]", status: "failed", source: "transport_failure", recordAgeMs: 61_000, engineReachableNow: true },
     ]);
-    expect(fetchCalls).toEqual([]);
+    expect(checkById(report, "cloud-endpoint-differential")).toMatchObject({
+      status: "warning",
+      code: "engine_evidence_stale_or_unavailable",
+      details: { engineEvidenceAgeMs: 61_000 },
+    });
+    expect(fetchCalls).toHaveLength(4);
   });
 
   test("keeps fresh failed registration evidence as a failed check", async () => {
@@ -1254,7 +1299,12 @@ describe("agent context diagnostics analyzer", () => {
       code: "mcp_registration_not_connected",
       details: { engineReachableNow: true, failedCount: 3 },
     });
-    expect(fetchCalls).toEqual([]);
+    expect(checkById(report, "cloud-endpoint-differential")).toMatchObject({
+      status: "failed",
+      code: "runtime_connected_engine_failed",
+      details: { engineRegistrationStatus: "failed", engineEvidenceSource: "engine_status", engineEvidenceAgeMs: 1_000 },
+    });
+    expect(fetchCalls).toHaveLength(4);
   });
 
   test("reports a missing credential without putting authorization-shaped text in the report", async () => {
@@ -1326,15 +1376,15 @@ describe("agent context diagnostics analyzer", () => {
       },
     });
     expect(checkById(report, "cloud-tool-catalog")).toMatchObject({
-      status: "failed",
-      code: "cloud_tool_policy_denied",
-      details: { requestPerformed: false },
+      status: "passed",
+      code: "cloud_catalog_exact_match",
+      details: { requestPerformed: true },
     });
     expect(report.mcps.find((mcp) => (
       mcp.name === "openwork-cloud" && mcp.source === "config.remote"
     ))?.disabledByTools).toBe(true);
-    expect(report.safety.cloudCatalogToolsListPerformed).toBe(false);
-    expect(fetchCalls).toEqual([]);
+    expect(report.safety.cloudCatalogToolsListPerformed).toBe(true);
+    expect(fetchCalls).toHaveLength(4);
   });
 
   test("fails closed when a static OpenCode tool policy layer is invalid", async () => {
@@ -1372,13 +1422,12 @@ describe("agent context diagnostics analyzer", () => {
       details: { projectLayerStatus: "invalid" },
     });
     expect(checkById(report, "cloud-tool-catalog")).toMatchObject({
-      status: "warning",
-      evidenceKind: "unavailable",
-      code: "cloud_tool_policy_unavailable",
-      details: { requestPerformed: false },
+      status: "passed",
+      code: "cloud_catalog_exact_match",
+      details: { requestPerformed: true },
     });
-    expect(report.safety.cloudCatalogToolsListPerformed).toBe(false);
-    expect(fetchCalls).toEqual([]);
+    expect(report.safety.cloudCatalogToolsListPerformed).toBe(true);
+    expect(fetchCalls).toHaveLength(4);
   });
 
   test("never reads a same-id local runtime row or performs egress for a remote workspace shell", async () => {
@@ -1462,7 +1511,7 @@ describe("agent context diagnostics analyzer", () => {
     releaseProbe();
     const [firstReport, secondReport] = await Promise.all([first, second]);
 
-    expect(fetchCalls).toHaveLength(6);
+    expect(fetchCalls).toHaveLength(8);
     expect(firstReport.organizationConnections.map((connection) => connection.id)).toEqual(["org.first"]);
     expect(secondReport.organizationConnections.map((connection) => connection.id)).toEqual(["org.second"]);
     expect(firstReport.organizationConnections[0]?.name).toBe("First organization");
@@ -1609,13 +1658,14 @@ describe("agent context diagnostics route", () => {
     });
     expect(report.safety.engineApiReadPerformed).toBe(true);
     expect(report.safety.cloudCatalogToolsListPerformed).toBe(true);
-    expect(catalogCalls).toHaveLength(3);
-    expect(catalogCalls.map((call) => call.body.method)).toEqual([
+    expect(catalogCalls).toHaveLength(4);
+    expect(catalogCalls.slice(0, 3).map((call) => call.body.method)).toEqual([
       "initialize",
       "notifications/initialized",
       "tools/list",
     ]);
-    expect(downstreamFetches.filter((url) => url === CLOUD_ENDPOINT)).toHaveLength(3);
+    expect(catalogCalls[3]?.method).toBe("DELETE");
+    expect(downstreamFetches.filter((url) => url === CLOUD_ENDPOINT)).toHaveLength(4);
     expect(engine.requests
       .slice(engineRequestCountBeforeDiagnostics)
       .filter((request) => request.method === "GET")

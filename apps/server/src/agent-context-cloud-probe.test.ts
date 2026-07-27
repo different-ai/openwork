@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
 
 import {
+  differentialCloudVerdict,
   probeOpenworkCloudCatalog,
+  type CloudCatalogProbe,
   type CloudCatalogProbeCode,
   type CloudCatalogProbeFetch,
   type ProbeOpenworkCloudCatalogInput,
@@ -26,10 +28,9 @@ function input(overrides: Partial<ProbeOpenworkCloudCatalogInput> = {}): ProbeOp
         "x-must-not-forward": "private-value",
       },
     },
-    toolPolicyStatus: "available",
-    toolPolicyProvenance: "authoritative-effective-engine",
-    registrationStatus: "connected",
+    engineRegistration: { status: "connected", source: "engine_status", recordAgeMs: 1_000 },
     requestId: "11111111-1111-4111-8111-111111111111",
+    env: {},
     ...values,
     ...(fetchImpl ? { fetchImpl: withCompletedHandshake(fetchImpl) } : {}),
   };
@@ -93,6 +94,7 @@ function initializeResponse(extraHeaders: Record<string, string> = {}): Response
 
 function withCompletedHandshake(toolsListFetch: CloudCatalogProbeFetch): CloudCatalogProbeFetch {
   return async (url, init) => {
+    if (init?.method === "DELETE") return new Response(null, { status: 204 });
     const body = requestPayload(init);
     if (body.method === "initialize") return initializeResponse();
     if (body.method === "notifications/initialized") return new Response(null, { status: 202 });
@@ -114,28 +116,37 @@ afterEach(() => {
 });
 
 describe("OpenWork Cloud catalog probe", () => {
-  test("performs initialize, initialized notification, and bounded tools/list with allowlisted headers", async () => {
+  test("performs initialize, initialized notification, bounded tools/list, and session cleanup with allowlisted headers", async () => {
     let calls = 0;
+    let deleteCalls = 0;
     let sharedSignal: AbortSignal | null = null;
     const fetchImpl: CloudCatalogProbeFetch = async (url, init) => {
       calls += 1;
       expect(url).toBe(ENDPOINT);
-      expect(init?.method).toBe("POST");
       expect(init?.redirect).toBe("manual");
       expect(init?.signal).toBeInstanceOf(AbortSignal);
       if (sharedSignal === null) sharedSignal = init?.signal ?? null;
       expect(init?.signal).toBe(sharedSignal);
       const headers = new Headers(init?.headers);
+      expect(headers.get("accept")).toBe("application/json, text/event-stream");
+      expect(headers.get("authorization")).toBe(TOKEN);
+      expect(headers.has("x-must-not-forward")).toBe(false);
+      expect(headers.has("x-initialize-secret")).toBe(false);
+      if (init?.method === "DELETE") {
+        deleteCalls += 1;
+        expect(init.body).toBeUndefined();
+        expect([...headers.keys()].sort()).toEqual(["accept", "authorization", "mcp-protocol-version", "mcp-session-id"]);
+        expect(headers.get("mcp-session-id")).toBe(SESSION_ID);
+        expect(headers.get("mcp-protocol-version")).toBe(PROTOCOL_VERSION);
+        return new Response(null, { status: 204 });
+      }
+      expect(init?.method).toBe("POST");
       const body = requestPayload(init);
       const isInitialize = body.method === "initialize";
       expect([...headers.keys()].sort()).toEqual(isInitialize
         ? ["accept", "authorization", "content-type"]
         : ["accept", "authorization", "content-type", "mcp-protocol-version", "mcp-session-id"]);
-      expect(headers.get("accept")).toBe("application/json, text/event-stream");
-      expect(headers.get("authorization")).toBe(TOKEN);
       expect(headers.get("content-type")).toBe("application/json");
-      expect(headers.has("x-must-not-forward")).toBe(false);
-      expect(headers.has("x-initialize-secret")).toBe(false);
       if (isInitialize) {
         expect(body).toEqual({
           jsonrpc: "2.0",
@@ -167,13 +178,36 @@ describe("OpenWork Cloud catalog probe", () => {
     const probeInput = input();
     probeInput.fetchImpl = fetchImpl;
     const observed = await probeOpenworkCloudCatalog(probeInput);
-    expect(calls).toBe(3);
+    expect(calls).toBe(4);
+    expect(deleteCalls).toBe(1);
     expect(observed).toEqual({
       performed: true,
       toolsListPerformed: true,
       status: "observed",
+      stage: "complete",
       code: "catalog_observed",
+      networkCode: null,
+      retryable: false,
+      runtimeFamily: "bun",
+      transport: "test-seam",
       toolIds: ["search_capabilities", "execute_capability"],
+      totalToolCount: 2,
+      requiredToolsPresent: true,
+      sessionEstablished: true,
+      cleanupAttempted: true,
+      cleanupSucceeded: true,
+      referenceId: null,
+      proxyConfigured: false,
+      extraCaConfigured: false,
+      steps: [
+        expect.stringContaining("initialize ok 200"),
+        expect.stringContaining("initialized_notification ok 202"),
+        expect.stringContaining("tools_list ok 200"),
+        expect.stringContaining("session_cleanup ok"),
+      ],
+      engineRegistrationStatus: "connected",
+      engineEvidenceSource: "engine_status",
+      engineEvidenceAgeMs: 1_000,
       durationMs: expect.any(Number),
       httpStatus: 200,
     });
@@ -193,24 +227,42 @@ describe("OpenWork Cloud catalog probe", () => {
     expect(observed.toolIds).toEqual(["search_capabilities", "execute_capability"]);
   });
 
-  test("requires the exact catalog and never reflects an unexpected tool ID", async () => {
+  test("requires both expected tools and never reflects a provider-controlled tool ID", async () => {
     const reflectedCredential = "ow_mcp_at_dGhpcy1jYW5hcnktbXVzdC1uZXZlci1iZS1yZXR1cm5lZA";
-    const cases = [
-      ["missing-tool", ["search_capabilities"]],
+    const missing = await probeOpenworkCloudCatalog(input({
+      requestId: "missing-tool",
+      fetchImpl: async () => jsonResponse("missing-tool", ["search_capabilities"]),
+    }));
+    expect(missing).toMatchObject({
+      performed: true,
+      status: "failed",
+      stage: "catalog_validation",
+      code: "required_tools_missing",
+      retryable: false,
+      toolIds: [],
+      totalToolCount: 1,
+      requiredToolsPresent: false,
+      httpStatus: 200,
+    });
+
+    // Additional provider tools are forward-compatible; only the expected
+    // allowlisted IDs and the aggregate count may be exported.
+    const futureCases = [
       ["unexpected-tool", ["search_capabilities", "execute_capability", "provider_extra"]],
       ["reflected-tool", ["search_capabilities", "execute_capability", reflectedCredential]],
     ] as const;
-    for (const [requestId, toolIds] of cases) {
+    for (const [requestId, toolIds] of futureCases) {
       const observed = await probeOpenworkCloudCatalog(input({
         requestId,
         fetchImpl: async () => jsonResponse(requestId, [...toolIds]),
       }));
       expect(observed).toMatchObject({
         performed: true,
-        status: "failed",
-        code: "invalid_catalog",
-        toolIds: [],
-        httpStatus: 200,
+        status: "observed",
+        code: "catalog_observed",
+        toolIds: ["search_capabilities", "execute_capability"],
+        totalToolCount: 3,
+        requiredToolsPresent: true,
       });
       expect(JSON.stringify(observed)).not.toContain(reflectedCredential);
       expect(JSON.stringify(observed)).not.toContain("provider_extra");
@@ -227,7 +279,7 @@ describe("OpenWork Cloud catalog probe", () => {
     });
   });
 
-  test("blocks remote workspaces, unavailable state, stale registration, and unsafe endpoints before fetch", async () => {
+  test("blocks remote workspaces, unavailable state, and unsafe endpoints before fetch", async () => {
     let calls = 0;
     const fetchImpl: CloudCatalogProbeFetch = async () => {
       calls += 1;
@@ -236,18 +288,9 @@ describe("OpenWork Cloud catalog probe", () => {
     const cases: Array<[Partial<ProbeOpenworkCloudCatalogInput>, CloudCatalogProbeCode]> = [
       [{ workspaceType: "remote" }, "remote_workspace_unavailable"],
       [{ runtimeConfigAvailable: false }, "runtime_config_unavailable"],
-      [{ registrationStatus: "failed" }, "registration_failed"],
-      [{ registrationStatus: "disabled" }, "registration_disabled"],
-      [{ registrationStatus: "needs-auth" }, "registration_needs_auth"],
-      [{ registrationStatus: "needs-client-registration" }, "registration_needs_client_registration"],
-      [{ registrationStatus: "not-recorded" }, "registration_not_recorded"],
       [{ config: null }, "cloud_mcp_missing"],
       [{ config: { type: "local", enabled: true } }, "cloud_mcp_not_remote"],
       [{ config: { type: "remote", enabled: false, url: ENDPOINT } }, "cloud_mcp_disabled"],
-      [{ toolPolicyStatus: "unavailable" }, "cloud_tool_policy_unavailable"],
-      [{ toolPolicyStatus: "denied" }, "cloud_tool_policy_denied"],
-      [{ toolPolicyProvenance: "passive-static-subset" }, "cloud_tool_policy_unavailable"],
-      [{ toolPolicyProvenance: "unavailable" }, "cloud_tool_policy_unavailable"],
       [{ config: { type: "remote", enabled: true, url: "https://app.openworklabs.com/api/den/mcp/agent?token=secret", headers: { Authorization: TOKEN } } }, "invalid_endpoint"],
       [{ config: { type: "remote", enabled: true, url: "https://app.openworklabs.com/api/den/mcp/agent/", headers: { Authorization: TOKEN } } }, "invalid_endpoint"],
       [{ config: { type: "remote", enabled: true, url: "https://app.openworklabs.com/api/den/mcp/agent/status", headers: { Authorization: TOKEN } } }, "invalid_endpoint"],
@@ -258,9 +301,36 @@ describe("OpenWork Cloud catalog probe", () => {
     for (const [overrides, code] of cases) {
       const blocked = await probeOpenworkCloudCatalog(input({ ...overrides, fetchImpl }));
       expect(blocked.performed).toBe(false);
+      expect(blocked.status).toBe("not-performed");
+      expect(blocked.stage).toBe("eligibility");
       expect(blocked.code).toBe(code);
+      expect(blocked.steps).toEqual([`eligibility ${code}`]);
     }
     expect(calls).toBe(0);
+  });
+
+  test("runs the probe despite failed, stale, or missing engine registration evidence", async () => {
+    const statuses = ["failed", "disabled", "needs-auth", "needs-client-registration", "not-recorded"] as const;
+    for (const status of statuses) {
+      let calls = 0;
+      const observed = await probeOpenworkCloudCatalog(input({
+        requestId: `despite-${status}`,
+        engineRegistration: { status, source: "engine_status", recordAgeMs: 2_000 },
+        fetchImpl: async () => {
+          calls += 1;
+          return jsonResponse(`despite-${status}`);
+        },
+      }));
+      expect(calls).toBe(1);
+      expect(observed).toMatchObject({
+        performed: true,
+        status: "observed",
+        code: "catalog_observed",
+        engineRegistrationStatus: status,
+        engineEvidenceSource: "engine_status",
+        engineEvidenceAgeMs: 2_000,
+      });
+    }
   });
 
   test("allows exact loopback and explicitly configured HTTPS origins only", async () => {
@@ -574,20 +644,22 @@ describe("OpenWork Cloud catalog probe", () => {
   });
 
   test("rejects JSON-RPC errors, wrong IDs, pagination, duplicate tools, and unsafe names", async () => {
-    const cases: Array<[string, unknown, CloudCatalogProbeCode]> = [
-      ["wrong-id", payload("different-id"), "invalid_response"],
-      ["rpc-error", { jsonrpc: "2.0", id: "rpc-error", error: { code: -1, message: "Bearer private" } }, "jsonrpc_error"],
-      ["pagination", { ...payload("pagination"), result: { tools: [], nextCursor: "secret-cursor" } }, "pagination_unsupported"],
-      ["duplicate", payload("duplicate", ["search_capabilities", "search_capabilities"]), "invalid_catalog"],
-      ["unsafe", payload("unsafe", ["search_capabilities\r\nspoof"]), "invalid_catalog"],
+    const cases: Array<[string, unknown, CloudCatalogProbeCode, CloudCatalogProbe["stage"]]> = [
+      ["wrong-id", payload("different-id"), "request_id_mismatch", "tools_list_protocol"],
+      ["rpc-error", { jsonrpc: "2.0", id: "rpc-error", error: { code: -1, message: "Bearer private" } }, "jsonrpc_error", "tools_list_protocol"],
+      ["pagination", { ...payload("pagination"), result: { tools: [], nextCursor: "secret-cursor" } }, "pagination_unsupported", "catalog_validation"],
+      ["duplicate", payload("duplicate", ["search_capabilities", "search_capabilities"]), "invalid_catalog", "catalog_validation"],
+      ["unsafe", payload("unsafe", ["search_capabilities\r\nspoof"]), "invalid_catalog", "catalog_validation"],
     ];
-    for (const [requestId, body, code] of cases) {
+    for (const [requestId, body, code, stage] of cases) {
       const observed = await probeOpenworkCloudCatalog(input({
         workspaceId: `ws_${requestId}`,
         requestId,
         fetchImpl: async () => new Response(JSON.stringify(body), { headers: { "content-type": "application/json" } }),
       }));
       expect(observed.code).toBe(code);
+      expect(observed.stage).toBe(stage);
+      expect(observed.retryable).toBe(false);
       expect(JSON.stringify(observed)).not.toContain("private");
       expect(JSON.stringify(observed)).not.toContain("secret-cursor");
     }
@@ -661,24 +733,271 @@ describe("OpenWork Cloud catalog probe", () => {
     expect(serialized).not.toContain("/Users/private");
   });
 
-  test("classifies allowlisted network causes without exposing raw errors", async () => {
-    const cases = [
-      ["ENOTFOUND", "dns_error"],
-      ["ECONNREFUSED", "connection_refused"],
-      ["ECONNRESET", "connection_reset"],
-      ["ERR_TLS_CERT_ALTNAME_INVALID", "tls_error"],
-      ["ERR_PROXY_AUTH_FAILED", "proxy_error"],
-    ] as const;
-    for (const [causeCode, expectedCode] of cases) {
+  test("classifies allowlisted network causes with stage and retryability, never raw errors", async () => {
+    const cases: Array<[string, CloudCatalogProbeCode, CloudCatalogProbe["networkCode"], CloudCatalogProbe["stage"], boolean]> = [
+      ["ENOTFOUND", "dns_error", "ENOTFOUND", "dns", false],
+      ["EAI_AGAIN", "dns_error", "EAI_AGAIN", "dns", true],
+      ["ECONNREFUSED", "connection_refused", "ECONNREFUSED", "connect", false],
+      ["ECONNRESET", "connection_reset", "ECONNRESET", "connect", true],
+      ["ETIMEDOUT", "timeout", "ETIMEDOUT", "connect", true],
+      ["UND_ERR_CONNECT_TIMEOUT", "timeout", "UND_ERR_CONNECT_TIMEOUT", "connect", true],
+      ["CERT_HAS_EXPIRED", "tls_error", "CERT_HAS_EXPIRED", "tls", false],
+      ["SELF_SIGNED_CERT_IN_CHAIN", "tls_error", "SELF_SIGNED_CERT_IN_CHAIN", "tls", false],
+      ["DEPTH_ZERO_SELF_SIGNED_CERT", "tls_error", "DEPTH_ZERO_SELF_SIGNED_CERT", "tls", false],
+      ["UNABLE_TO_VERIFY_LEAF_SIGNATURE", "tls_error", "UNABLE_TO_VERIFY_LEAF_SIGNATURE", "tls", false],
+      ["ERR_TLS_CERT_ALTNAME_INVALID", "tls_error", "ERR_TLS_CERT_ALTNAME_INVALID", "tls", false],
+      ["ERR_PROXY_AUTH_FAILED", "proxy_error", "PROXY_ERROR", "proxy", false],
+      ["EUNKNOWNISH", "network_error", "UNKNOWN_NETWORK_ERROR", "tools_list_request", false],
+    ];
+    for (const [causeCode, expectedCode, expectedNetworkCode, expectedStage, expectedRetryable] of cases) {
       const failed = await probeOpenworkCloudCatalog(input({
-        requestId: `network-${expectedCode}`,
+        requestId: `network-${causeCode}`,
         fetchImpl: async () => {
           throw new Error("RAW_NETWORK_SECRET", { cause: { code: causeCode } });
         },
       }));
-      expect(failed).toMatchObject({ performed: true, status: "failed", code: expectedCode });
+      expect(failed).toMatchObject({
+        performed: true,
+        status: "failed",
+        code: expectedCode,
+        networkCode: expectedNetworkCode,
+        stage: expectedStage,
+        retryable: expectedRetryable,
+      });
       expect(JSON.stringify(failed)).not.toContain("RAW_NETWORK_SECRET");
-      expect(JSON.stringify(failed)).not.toContain(causeCode);
     }
+  });
+
+  test("classifies HTTP statuses with deterministic retryability", async () => {
+    const cases: Array<[number, CloudCatalogProbeCode, boolean]> = [
+      [401, "unauthorized", false],
+      [403, "forbidden", false],
+      [404, "mcp_route_not_found", false],
+      [429, "rate_limited", true],
+      [502, "gateway_unavailable", true],
+      [503, "gateway_unavailable", true],
+      [504, "gateway_unavailable", true],
+      [500, "http_error", false],
+    ];
+    for (const [status, expectedCode, expectedRetryable] of cases) {
+      const failed = await probeOpenworkCloudCatalog(input({
+        requestId: `http-${status}`,
+        fetchImpl: async () => new Response(null, { status }),
+      }));
+      expect(failed).toMatchObject({
+        performed: true,
+        status: "failed",
+        stage: "tools_list_http",
+        code: expectedCode,
+        httpStatus: status,
+        retryable: expectedRetryable,
+        networkCode: null,
+      });
+    }
+  });
+
+  test("attributes initialize-phase failures to initialize stages", async () => {
+    const initFails: CloudCatalogProbeFetch = async () => new Response(null, { status: 401 });
+    const probeInput = input();
+    probeInput.fetchImpl = initFails;
+    const failed = await probeOpenworkCloudCatalog(probeInput);
+    expect(failed).toMatchObject({
+      performed: true,
+      status: "failed",
+      stage: "initialize_http",
+      code: "unauthorized",
+      httpStatus: 401,
+      toolsListPerformed: false,
+      sessionEstablished: false,
+      cleanupAttempted: false,
+      cleanupSucceeded: null,
+    });
+    expect(failed.steps).toEqual([expect.stringContaining("initialize failed unauthorized")]);
+  });
+
+  test("rejects an unsupported negotiated protocol version", async () => {
+    const fetchImpl: CloudCatalogProbeFetch = async (_url, init) => {
+      const body = requestPayload(init);
+      if (body.method !== "initialize") throw new Error("Unexpected JSON-RPC method");
+      return new Response(JSON.stringify({
+        jsonrpc: "2.0",
+        id: "openwork-agent-diagnostics-initialize",
+        result: { capabilities: {}, protocolVersion: "2024-11-05", serverInfo: { name: "old", version: "0.1.0" } },
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    };
+    const probeInput = input();
+    probeInput.fetchImpl = fetchImpl;
+    const failed = await probeOpenworkCloudCatalog(probeInput);
+    expect(failed).toMatchObject({
+      performed: true,
+      status: "failed",
+      stage: "initialize_protocol",
+      code: "unsupported_protocol_version",
+      retryable: false,
+      toolsListPerformed: false,
+    });
+  });
+
+  test("splits invalid UTF-8, invalid JSON, and malformed envelopes into distinct codes", async () => {
+    const utf8 = await probeOpenworkCloudCatalog(input({
+      requestId: "bad-utf8",
+      fetchImpl: async () => new Response(new Uint8Array([0xff, 0xfe, 0xfd]), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    }));
+    expect(utf8).toMatchObject({ code: "invalid_utf8", stage: "tools_list_protocol" });
+
+    const json = await probeOpenworkCloudCatalog(input({
+      requestId: "bad-json",
+      fetchImpl: async () => new Response("{not json", { status: 200, headers: { "content-type": "application/json" } }),
+    }));
+    expect(json).toMatchObject({ code: "invalid_json", stage: "tools_list_protocol" });
+
+    const envelope = await probeOpenworkCloudCatalog(input({
+      requestId: "bad-envelope",
+      fetchImpl: async () => new Response(JSON.stringify({ jsonrpc: "1.0", id: "bad-envelope", result: {} }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    }));
+    expect(envelope).toMatchObject({ code: "invalid_jsonrpc_envelope", stage: "tools_list_protocol" });
+  });
+
+  test("keeps availability observed when only session cleanup fails and reports it", async () => {
+    let deleteCalls = 0;
+    const fetchImpl: CloudCatalogProbeFetch = async (url, init) => {
+      if (init?.method === "DELETE") {
+        deleteCalls += 1;
+        return new Response(null, { status: 500 });
+      }
+      const body = requestPayload(init);
+      if (body.method === "initialize") return initializeResponse();
+      if (body.method === "notifications/initialized") return new Response(null, { status: 202 });
+      return jsonResponse("cleanup-fails");
+    };
+    const probeInput = input({ requestId: "cleanup-fails" });
+    probeInput.fetchImpl = fetchImpl;
+    const observed = await probeOpenworkCloudCatalog(probeInput);
+    expect(deleteCalls).toBe(1);
+    expect(observed).toMatchObject({
+      status: "observed",
+      code: "catalog_observed",
+      sessionEstablished: true,
+      cleanupAttempted: true,
+      cleanupSucceeded: false,
+    });
+  });
+
+  test("skips cleanup when the server never returned a session ID", async () => {
+    let deleteCalls = 0;
+    const fetchImpl: CloudCatalogProbeFetch = async (_url, init) => {
+      if (init?.method === "DELETE") {
+        deleteCalls += 1;
+        return new Response(null, { status: 204 });
+      }
+      const body = requestPayload(init);
+      if (body.method === "initialize") {
+        return new Response(JSON.stringify({
+          jsonrpc: "2.0",
+          id: "openwork-agent-diagnostics-initialize",
+          result: { capabilities: {}, protocolVersion: PROTOCOL_VERSION, serverInfo: { name: "t", version: "1" } },
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (body.method === "notifications/initialized") return new Response(null, { status: 202 });
+      return jsonResponse("no-session");
+    };
+    const probeInput = input({ requestId: "no-session" });
+    probeInput.fetchImpl = fetchImpl;
+    const observed = await probeOpenworkCloudCatalog(probeInput);
+    expect(deleteCalls).toBe(0);
+    expect(observed).toMatchObject({
+      status: "observed",
+      sessionEstablished: false,
+      cleanupAttempted: false,
+      cleanupSucceeded: null,
+    });
+  });
+
+  test("exports a reference ID only from a strictly validated safe header", async () => {
+    const safe = await probeOpenworkCloudCatalog(input({
+      requestId: "with-reference",
+      fetchImpl: async () => {
+        const response = jsonResponse("with-reference");
+        response.headers.set("x-request-id", "req-1234.abc:z");
+        return response;
+      },
+    }));
+    expect(safe.referenceId).toBe("req-1234.abc:z");
+
+    const unsafe = await probeOpenworkCloudCatalog(input({
+      requestId: "with-unsafe-reference",
+      fetchImpl: async () => {
+        const response = jsonResponse("with-unsafe-reference");
+        response.headers.set("x-request-id", "spaced value with secrets");
+        return response;
+      },
+    }));
+    expect(unsafe.referenceId).toBeNull();
+    expect(JSON.stringify(unsafe)).not.toContain("spaced value");
+  });
+
+  test("reports boolean-only proxy and extra-CA posture from the environment seam", async () => {
+    const configured = await probeOpenworkCloudCatalog(input({
+      requestId: "env-posture",
+      env: {
+        HTTPS_PROXY: "http://proxy.corp.example:8080",
+        NODE_EXTRA_CA_CERTS: "/etc/ssl/corp-root.pem",
+      },
+      fetchImpl: async () => jsonResponse("env-posture"),
+    }));
+    expect(configured.proxyConfigured).toBe(true);
+    expect(configured.extraCaConfigured).toBe(true);
+    const serialized = JSON.stringify(configured);
+    expect(serialized).not.toContain("proxy.corp.example");
+    expect(serialized).not.toContain("corp-root");
+  });
+
+  test("derives the differential verdict from probe and engine evidence", () => {
+    const base = (overrides: Partial<CloudCatalogProbe>): CloudCatalogProbe => ({
+      performed: true,
+      status: "observed",
+      stage: "complete",
+      code: "catalog_observed",
+      networkCode: null,
+      retryable: false,
+      runtimeFamily: "bun",
+      transport: "test-seam",
+      httpStatus: 200,
+      durationMs: 1,
+      toolsListPerformed: true,
+      sessionEstablished: true,
+      cleanupAttempted: true,
+      cleanupSucceeded: true,
+      toolIds: ["search_capabilities", "execute_capability"],
+      totalToolCount: 2,
+      requiredToolsPresent: true,
+      referenceId: null,
+      proxyConfigured: false,
+      extraCaConfigured: false,
+      steps: [],
+      engineRegistrationStatus: "connected",
+      engineEvidenceSource: "engine_status",
+      engineEvidenceAgeMs: 1_000,
+      ...overrides,
+    });
+    expect(differentialCloudVerdict(base({}))).toBe("runtime_and_engine_connected");
+    expect(differentialCloudVerdict(base({ engineRegistrationStatus: "failed" })))
+      .toBe("runtime_connected_engine_failed");
+    expect(differentialCloudVerdict(base({ status: "failed", code: "tls_error" })))
+      .toBe("runtime_failed_engine_connected");
+    expect(differentialCloudVerdict(base({ status: "failed", code: "tls_error", engineRegistrationStatus: "failed" })))
+      .toBe("runtime_and_engine_failed");
+    expect(differentialCloudVerdict(base({ performed: false, status: "not-performed", code: "untrusted_endpoint" })))
+      .toBe("runtime_probe_not_performed");
+    expect(differentialCloudVerdict(base({ engineRegistrationStatus: "not-recorded" })))
+      .toBe("engine_evidence_stale_or_unavailable");
+    expect(differentialCloudVerdict(base({ engineEvidenceAgeMs: 120_000 })))
+      .toBe("engine_evidence_stale_or_unavailable");
   });
 });

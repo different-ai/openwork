@@ -17,6 +17,7 @@ export const AGENT_CONTEXT_DIAGNOSTIC_CHECK_IDS = [
   "engine-mcp-sync",
   "engine-mcp-status",
   "cloud-tool-catalog",
+  "cloud-endpoint-differential",
   "organization-connections",
   "report-safety",
 ] as const
@@ -412,6 +413,7 @@ export const agentContextDiagnosticsReportSchema = z.object({
   safety: z.object({
     diagnosticsWorkspaceRuntimeConfigurationReadOnly: z.literal(true),
     cloudCatalogToolsListPerformed: z.boolean(),
+    cloudSessionCleanupRequested: z.boolean(),
     directNonCloudMcpFetchPerformed: z.literal(false),
     directMcpToolCallPerformed: z.literal(false),
     directProviderOperationPerformed: z.literal(false),
@@ -518,7 +520,6 @@ export const agentContextDiagnosticsReportSchema = z.object({
 
   const engineConfigCheck = value.checks.find((check) => check.id === "engine-config")
   const engineAgentCheck = value.checks.find((check) => check.id === "engine-agent")
-  const toolPolicyCheck = value.checks.find((check) => check.id === "agent-connect-tool-permissions")
   if (value.agent.evidenceSource === "effective-engine") {
     if (!value.safety.engineApiReadPerformed) {
       context.addIssue({
@@ -557,25 +558,21 @@ export const agentContextDiagnosticsReportSchema = z.object({
     })
   }
 
-  if (value.safety.cloudCatalogToolsListPerformed) {
+  // Engine registration state and agent tool policy are deliberately not
+  // preconditions here: the independent runtime probe exists to diagnose
+  // engine-side failures, and it never calls a tool. Retained runtime
+  // evidence must still prove which managed entry was probed.
+  if (value.safety.cloudCatalogToolsListPerformed || value.safety.cloudSessionCleanupRequested) {
     const runtimeCloudMcp = value.mcps.find((mcp) =>
       mcp.source === "config.remote"
       && mcp.name === "openwork-cloud"
-      && mcp.path === "/mcp/agent"
-      && mcp.syncStatus === "connected",
+      && mcp.path === "/mcp/agent",
     )
     if (!runtimeCloudMcp) {
       context.addIssue({
         code: "custom",
-        message: "cloud tools/list requires retained connected runtime OpenWork Cloud evidence",
+        message: "cloud handshake evidence requires the retained runtime OpenWork Cloud entry",
         path: ["mcps"],
-      })
-    }
-    if (value.agent.evidenceSource !== "effective-engine" || toolPolicyCheck?.status !== "passed") {
-      context.addIssue({
-        code: "custom",
-        message: "cloud tools/list requires observed effective agent policy that does not deny the candidate tool IDs",
-        path: ["safety", "cloudCatalogToolsListPerformed"],
       })
     }
   }

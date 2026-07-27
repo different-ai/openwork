@@ -102,6 +102,7 @@ const CHECK_LABEL_KEYS: Record<AgentContextDiagnosticCheckId, string> = {
   "engine-mcp-sync": "connect.diagnostics_check_engine_mcp_sync",
   "engine-mcp-status": "connect.diagnostics_check_engine_mcp_status",
   "cloud-tool-catalog": "connect.diagnostics_check_cloud_tool_catalog",
+  "cloud-endpoint-differential": "connect.diagnostics_check_cloud_endpoint_differential",
   "organization-connections": "connect.diagnostics_check_organization_connections",
   "report-safety": "connect.diagnostics_check_report_safety",
 };
