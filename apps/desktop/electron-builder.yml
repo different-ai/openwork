@@ -16,6 +16,7 @@ files:
   - server/**/*
   - "!server/dist/opencode-plugins/**"
   - package.json
+  - resources/icons/**/*
 extraResources:
   - from: ../app/dist
     to: app-dist
