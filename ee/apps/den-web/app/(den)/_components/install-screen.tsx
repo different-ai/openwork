@@ -1,7 +1,7 @@
 "use client";
 
 import { detectPlatform, DownloadPlatformGrid, type DetectedPlatform, type DownloadPlatformGroup, type DownloadPlatformOption } from "@openwork/ui/react";
-import { ChevronDown, Cloud, Download, ShieldCheck } from "lucide-react";
+import { ChevronDown, Download, ShieldCheck } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useSearchParams } from "next/navigation";
 import { requestJson } from "../_lib/den-flow";
@@ -550,13 +550,10 @@ export function InstallScreen() {
         <section data-testid="install-page">
           <div className="grid gap-6 rounded-[1.75rem] border border-[#e7eaef] bg-[#fcfcfd] p-5 text-center sm:p-6 md:p-8" data-testid="install-card">
             <div className="grid justify-items-center gap-3">
-              <span className="grid size-12 place-items-center rounded-2xl bg-blue-50 text-blue-700" aria-hidden="true">
-                <Cloud className="size-6" />
-              </span>
               <h1 className="m-0 text-[2rem] font-semibold leading-[1.04] tracking-[-0.05em] text-slate-950 sm:text-[2.4rem]">
-                Download OpenWork Cloud
+                Download OpenWork
               </h1>
-              <p className="den-copy max-w-2xl">This managed Cloud edition connects to OpenWork Cloud and requires account sign-in. It never asks for an enterprise activation code.</p>
+              <p className="den-copy max-w-2xl">Choose the version for your computer, install it, and open OpenWork.</p>
             </div>
 
             {isMobile ? (
@@ -573,13 +570,9 @@ export function InstallScreen() {
                   groups={downloadGroups}
                   recommendedTestId="install-cloud-download-primary"
                 />
-                <div className="grid gap-3 rounded-[1.25rem] border border-blue-200 bg-blue-50/70 p-5">
-                  <p className="m-0 font-semibold text-slate-950">Install, open, and sign in</p>
-                  <p className="m-0 text-sm leading-6 text-slate-600">The Cloud installer opens OpenWork at the hosted sign-in screen. Sign in with your OpenWork Cloud account to finish setup—there is no activation step.</p>
-                  <a className="den-button-secondary w-fit" href={RETURN_TO_OPENWORK_URL}>
-                    I already installed OpenWork Cloud
-                  </a>
-                </div>
+                <a className="den-button-secondary w-fit" href={RETURN_TO_OPENWORK_URL}>
+                  I already installed OpenWork
+                </a>
               </div>
             )}
           </div>
