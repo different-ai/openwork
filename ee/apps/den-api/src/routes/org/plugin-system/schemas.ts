@@ -54,6 +54,7 @@ export const connectorSourceBindingIdSchema = denTypeIdSchema("connectorSourceBi
 export const connectorSourceTombstoneIdSchema = denTypeIdSchema("connectorSourceTombstone")
 export const memberIdSchema = denTypeIdSchema("member")
 export const teamIdSchema = denTypeIdSchema("team")
+export const teamAccessPolicyIdSchema = denTypeIdSchema("teamAccessPolicy")
 
 export const configObjectTypeSchema = z.enum(configObjectTypeValues)
 export const configObjectSourceModeSchema = z.enum(configObjectSourceModeValues)
@@ -1106,3 +1107,25 @@ export const githubValidateTargetResponseSchema = pluginArchMutationResponseSche
     repositoryAccessible: z.boolean(),
   }),
 )
+
+// Team Access Policies
+
+export const teamAccessPolicySchema = z.object({
+  id: teamAccessPolicyIdSchema,
+  organizationId: denTypeIdSchema("organization"),
+  teamId: teamIdSchema,
+  pluginId: pluginIdSchema,
+  role: accessRoleSchema,
+  createdByOrgMembershipId: memberIdSchema,
+  createdAt: z.string().datetime({ offset: true }),
+  updatedAt: z.string().datetime({ offset: true }),
+  removedAt: nullableTimestampSchema,
+}).meta({ ref: "TeamAccessPolicy" })
+
+export const teamAccessPolicyCreateSchema = z.object({
+  pluginId: pluginIdSchema,
+  role: accessRoleSchema,
+})
+
+export const teamAccessPolicyListResponseSchema = pluginArchListResponseSchema("TeamAccessPolicyListResponse", teamAccessPolicySchema)
+export const teamAccessPolicyMutationResponseSchema = pluginArchMutationResponseSchema("TeamAccessPolicyMutationResponse", teamAccessPolicySchema)

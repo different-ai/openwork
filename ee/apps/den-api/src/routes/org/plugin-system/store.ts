@@ -22,6 +22,8 @@ import {
   PluginConfigObjectTable,
   PluginMcpRequirementBindingTable,
   PluginTable,
+  TeamAccessPolicyTable,
+  TeamMemberTable,
   TeamTable,
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
@@ -1342,6 +1344,7 @@ async function upsertGrant(input: ResourceTarget & {
       orgMembershipId: input.value.orgMembershipId ?? null,
       orgWide: input.value.orgWide ?? false,
       role: input.value.role,
+      source: "manual" as const,
       teamId: input.value.teamId ?? null,
     }
     await db.insert(ConfigObjectAccessGrantTable).values(row)
@@ -1386,6 +1389,7 @@ async function upsertGrant(input: ResourceTarget & {
       orgMembershipId: input.value.orgMembershipId ?? null,
       orgWide: input.value.orgWide ?? false,
       role: input.value.role,
+      source: "manual" as const,
       teamId: input.value.teamId ?? null,
     }
     await db.insert(MarketplaceAccessGrantTable).values(row)
@@ -1430,6 +1434,7 @@ async function upsertGrant(input: ResourceTarget & {
       orgWide: input.value.orgWide ?? false,
       pluginId: input.resourceId,
       role: input.value.role,
+      source: "manual" as const,
       teamId: input.value.teamId ?? null,
     }
     await db.insert(PluginAccessGrantTable).values(row)
@@ -1652,6 +1657,7 @@ export async function createConfigObject(input: {
         orgMembershipId: createdByOrgMembershipId,
       orgWide: false,
       role: "manager",
+      source: "manual",
       teamId: null,
     })
 
@@ -1990,6 +1996,7 @@ export async function createPlugin(input: { context: PluginArchActorContext; des
       orgWide: false,
       pluginId: row.id,
       role: "manager",
+      source: "manual",
       teamId: null,
     })
   })
@@ -2333,6 +2340,7 @@ async function ensureOrgWideMarketplaceAccess(input: {
     orgMembershipId: null,
     orgWide: true,
     role: input.role,
+    source: "manual",
     teamId: null,
   })
 }
@@ -2367,6 +2375,7 @@ async function ensureOrgWidePluginAccess(input: {
     orgWide: true,
     pluginId: input.pluginId,
     role: input.role,
+    source: "manual",
     teamId: null,
   })
 }
@@ -5409,6 +5418,7 @@ async function materializeGithubImportedObject(input: {
         orgMembershipId: createdByOrgMembershipId,
         orgWide: false,
         role: "manager",
+        source: "manual",
         teamId: null,
       })
 
@@ -6288,4 +6298,232 @@ export async function enqueueGithubWebhookSync(input: {
   return queuedIds.length > 0
     ? { accepted: true as const, queued: true as const, syncEventIds: queuedIds }
     : { accepted: false as const, reason: "event ignored" }
+}
+
+// ---------------------------------------------------------------------------
+// Team Access Policies
+// ---------------------------------------------------------------------------
+
+export type TeamAccessPolicyRow = typeof TeamAccessPolicyTable.$inferSelect
+
+function serializeTeamAccessPolicy(row: TeamAccessPolicyRow) {
+  return {
+    id: row.id,
+    organizationId: row.organizationId,
+    teamId: row.teamId,
+    pluginId: row.pluginId,
+    role: row.role,
+    createdByOrgMembershipId: row.createdByOrgMembershipId,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+    removedAt: row.removedAt ? row.removedAt.toISOString() : null,
+  }
+}
+
+export async function listTeamAccessPolicies(input: {
+  context: PluginArchActorContext
+  teamId: string
+}) {
+  const organizationId = input.context.organizationContext.organization.id
+  const teamId = normalizeDenTypeId("team", input.teamId)
+
+  const team = await db.select().from(TeamTable).where(and(eq(TeamTable.id, teamId), eq(TeamTable.organizationId, organizationId))).limit(1)
+  if (!team[0]) {
+    throw new PluginArchRouteFailure(404, "team_not_found", "Team not found.")
+  }
+
+  const rows = await db.select().from(TeamAccessPolicyTable).where(and(eq(TeamAccessPolicyTable.teamId, teamId), isNull(TeamAccessPolicyTable.removedAt))).orderBy(desc(TeamAccessPolicyTable.createdAt))
+  return { items: rows.map(serializeTeamAccessPolicy), nextCursor: null }
+}
+
+export async function createTeamAccessPolicy(input: {
+  context: PluginArchActorContext
+  teamId: string
+  pluginId: string
+  role: "viewer" | "editor" | "manager"
+}) {
+  const organizationId = input.context.organizationContext.organization.id
+  const currentMemberId = input.context.organizationContext.currentMember.id
+  const teamId = normalizeDenTypeId("team", input.teamId)
+  const pluginId = normalizeDenTypeId("plugin", input.pluginId)
+
+  const team = await db.select().from(TeamTable).where(and(eq(TeamTable.id, teamId), eq(TeamTable.organizationId, organizationId))).limit(1)
+  if (!team[0]) {
+    throw new PluginArchRouteFailure(404, "team_not_found", "Team not found.")
+  }
+
+  const plugin = await db.select().from(PluginTable).where(and(eq(PluginTable.id, pluginId), eq(PluginTable.organizationId, organizationId))).limit(1)
+  if (!plugin[0]) {
+    throw new PluginArchRouteFailure(404, "plugin_not_found", "Plugin not found.")
+  }
+
+  const now = new Date()
+  const policyId = createDenTypeId("teamAccessPolicy")
+
+  await db.transaction(async (tx) => {
+    // Upsert the policy (update if exists for same team+plugin)
+    const existing = await tx.select().from(TeamAccessPolicyTable).where(and(eq(TeamAccessPolicyTable.teamId, teamId), eq(TeamAccessPolicyTable.pluginId, pluginId))).limit(1)
+
+    if (existing[0]) {
+      await tx.update(TeamAccessPolicyTable).set({ role: input.role, updatedAt: now, removedAt: null }).where(eq(TeamAccessPolicyTable.id, existing[0].id))
+    } else {
+      await tx.insert(TeamAccessPolicyTable).values({
+        id: policyId,
+        organizationId,
+        teamId,
+        pluginId,
+        role: input.role,
+        createdByOrgMembershipId: currentMemberId,
+        createdAt: now,
+        updatedAt: now,
+      })
+    }
+
+    // Auto-grant to all existing team members
+    const members = await tx.select().from(TeamMemberTable).where(eq(TeamMemberTable.teamId, teamId))
+    const effectivePolicyId = existing[0]?.id ?? policyId
+
+    for (const member of members) {
+      await upsertPolicyDerivedGrant(tx, {
+        organizationId,
+        pluginId,
+        orgMembershipId: member.orgMembershipId,
+        role: input.role,
+        policyId: effectivePolicyId,
+        createdByOrgMembershipId: currentMemberId,
+      })
+    }
+  })
+
+  return listTeamAccessPolicies({ context: input.context, teamId: input.teamId })
+}
+
+export async function deleteTeamAccessPolicy(input: {
+  context: PluginArchActorContext
+  teamId: string
+  policyId: string
+}) {
+  const organizationId = input.context.organizationContext.organization.id
+  const teamId = normalizeDenTypeId("team", input.teamId)
+  const policyId = normalizeDenTypeId("teamAccessPolicy", input.policyId)
+
+  const team = await db.select().from(TeamTable).where(and(eq(TeamTable.id, teamId), eq(TeamTable.organizationId, organizationId))).limit(1)
+  if (!team[0]) {
+    throw new PluginArchRouteFailure(404, "team_not_found", "Team not found.")
+  }
+
+  const policy = await db.select().from(TeamAccessPolicyTable).where(and(eq(TeamAccessPolicyTable.id, policyId), eq(TeamAccessPolicyTable.teamId, teamId))).limit(1)
+  if (!policy[0]) {
+    throw new PluginArchRouteFailure(404, "policy_not_found", "Team access policy not found.")
+  }
+
+  await db.transaction(async (tx) => {
+    // Soft-delete the policy
+    await tx.update(TeamAccessPolicyTable).set({ removedAt: new Date() }).where(eq(TeamAccessPolicyTable.id, policyId))
+
+    // Revoke all policy-derived grants for this team+plugin
+    await tx.update(PluginAccessGrantTable).set({ removedAt: new Date() }).where(and(
+      eq(PluginAccessGrantTable.pluginId, policy[0].pluginId),
+      eq(PluginAccessGrantTable.teamId, teamId),
+      eq(PluginAccessGrantTable.source, "policy"),
+    ))
+  })
+
+  return listTeamAccessPolicies({ context: input.context, teamId: input.teamId })
+}
+
+async function upsertPolicyDerivedGrant(
+  tx: DbTransaction,
+  input: {
+    organizationId: string
+    pluginId: string
+    orgMembershipId: string
+    role: "viewer" | "editor" | "manager"
+    policyId: string
+    createdByOrgMembershipId: string
+  },
+) {
+  const pluginId = normalizeDenTypeId("plugin", input.pluginId)
+  const orgMembershipId = normalizeDenTypeId("member", input.orgMembershipId)
+
+  const existing = await tx
+    .select()
+    .from(PluginAccessGrantTable)
+    .where(and(
+      eq(PluginAccessGrantTable.pluginId, pluginId),
+      eq(PluginAccessGrantTable.orgMembershipId, orgMembershipId),
+    ))
+    .limit(1)
+
+  if (existing[0]) {
+    // If existing grant is policy-derived, update it
+    if (existing[0].source === "policy") {
+      await tx.update(PluginAccessGrantTable).set({ role: input.role, removedAt: null }).where(eq(PluginAccessGrantTable.id, existing[0].id))
+    }
+    // If existing grant is manual, don't overwrite — highest role wins via resolvePluginArchResourceRole
+    return
+  }
+
+  await tx.insert(PluginAccessGrantTable).values({
+    id: createDenTypeId("pluginAccessGrant"),
+    organizationId: normalizeDenTypeId("organization", input.organizationId),
+    pluginId,
+    orgMembershipId,
+    teamId: null,
+    orgWide: false,
+    role: input.role,
+    source: "policy",
+    createdByOrgMembershipId: normalizeDenTypeId("member", input.createdByOrgMembershipId),
+  })
+}
+
+export async function applyPoliciesForMember(input: {
+  organizationId: string
+  teamId: string
+  memberId: string
+  actorMemberId: string
+}) {
+  const teamId = normalizeDenTypeId("team", input.teamId)
+
+  const policies = await db.select().from(TeamAccessPolicyTable).where(and(
+    eq(TeamAccessPolicyTable.teamId, teamId),
+    isNull(TeamAccessPolicyTable.removedAt),
+  ))
+
+  await db.transaction(async (tx) => {
+    for (const policy of policies) {
+      await upsertPolicyDerivedGrant(tx, {
+        organizationId: input.organizationId,
+        pluginId: policy.pluginId,
+        orgMembershipId: input.memberId,
+        role: policy.role,
+        policyId: policy.id,
+        createdByOrgMembershipId: input.actorMemberId,
+      })
+    }
+  })
+}
+
+export async function revokePoliciesForMember(input: {
+  organizationId: string
+  teamId: string
+  memberId: string
+}) {
+  const teamId = normalizeDenTypeId("team", input.teamId)
+  const memberId = normalizeDenTypeId("member", input.memberId)
+
+  const policies = await db.select().from(TeamAccessPolicyTable).where(and(
+    eq(TeamAccessPolicyTable.teamId, teamId),
+    isNull(TeamAccessPolicyTable.removedAt),
+  ))
+
+  if (policies.length === 0) return
+
+  const pluginIds = policies.map((p) => p.pluginId)
+
+  await db.update(PluginAccessGrantTable).set({ removedAt: new Date() }).where(and(
+    eq(PluginAccessGrantTable.orgMembershipId, memberId),
+    eq(PluginAccessGrantTable.source, "policy"),
+    inArray(PluginAccessGrantTable.pluginId, pluginIds),
+  ))
 }

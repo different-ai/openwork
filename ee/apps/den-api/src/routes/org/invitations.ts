@@ -1,5 +1,5 @@
 import { and, eq, gt, isNull } from "@openwork-ee/den-db/drizzle"
-import { AuthUserTable, InvitationTable, MemberTable } from "@openwork-ee/den-db/schema"
+import { AuthUserTable, InvitationTable, MemberTable, TeamTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
@@ -20,6 +20,7 @@ import { buildInvitationLink, createInvitationId, createInvitationToken, ensureI
 const inviteMemberSchema = z.object({
   email: z.string().email(),
   role: z.string().trim().min(1).max(64),
+  teamId: z.string().trim().min(1).max(255).optional(),
 })
 const logger = appLogger.child({ component: "invitations" })
 
@@ -231,12 +232,22 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
         invitationOrgMemberId = memberId
       }
     } else {
+      let teamId: typeof InvitationTable.$inferSelect.teamId = null
+      if (input.teamId) {
+        const team = await db.select({ id: TeamTable.id }).from(TeamTable).where(and(eq(TeamTable.id, normalizeDenTypeId("team", input.teamId)), eq(TeamTable.organizationId, payload.organization.id))).limit(1)
+        if (!team[0]) {
+          return c.json({ error: "team_not_found", message: "The specified team was not found in this organization." }, 404)
+        }
+        teamId = team[0].id
+      }
+
       await db.insert(InvitationTable).values({
         id: invitationId,
         organizationId: payload.organization.id,
         email,
         role: assignedRole,
         status: "pending",
+        teamId,
         inviterId: normalizeDenTypeId("user", user.id),
         orgMemberId: payload.currentMember.id,
         inviteToken,

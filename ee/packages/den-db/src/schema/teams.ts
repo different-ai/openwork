@@ -1,5 +1,6 @@
 import { relations, sql } from "drizzle-orm"
-import { index, mysqlTable, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core"
+import { index, mysqlEnum, mysqlTable, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core"
+import { accessRoleValues } from "./sharables/plugin-arch"
 import { denTypeIdColumn } from "../columns"
 import { MemberTable, OrganizationTable } from "./org"
 
@@ -30,6 +31,27 @@ export const TeamMemberTable = mysqlTable(
   (table) => [
     index("team_member_org_membership_id").on(table.orgMembershipId),
     uniqueIndex("team_member_team_org_membership").on(table.teamId, table.orgMembershipId),
+  ],
+)
+
+export const TeamAccessPolicyTable = mysqlTable(
+  "team_access_policy",
+  {
+    id: denTypeIdColumn("teamAccessPolicy", "id").notNull().primaryKey(),
+    organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
+    teamId: denTypeIdColumn("team", "team_id").notNull(),
+    pluginId: denTypeIdColumn("plugin", "plugin_id").notNull(),
+    role: mysqlEnum("role", accessRoleValues).notNull(),
+    createdByOrgMembershipId: denTypeIdColumn("member", "created_by_org_membership_id").notNull(),
+    createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { fsp: 3 }).notNull().default(sql`CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)`),
+    removedAt: timestamp("removed_at", { fsp: 3 }),
+  },
+  (table) => [
+    index("team_access_policy_organization_id").on(table.organizationId),
+    index("team_access_policy_team_id").on(table.teamId),
+    index("team_access_policy_plugin_id").on(table.pluginId),
+    uniqueIndex("team_access_policy_team_plugin").on(table.teamId, table.pluginId),
   ],
 )
 

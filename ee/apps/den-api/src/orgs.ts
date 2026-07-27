@@ -25,6 +25,7 @@ import {
   type MemberLifecycleValidation,
 } from "./organization-member-guards.js"
 import { runPostOrganizationMemberChangeHooks } from "./organization-member-hooks.js"
+import { applyPoliciesForMember } from "./routes/org/plugin-system/store.js"
 import { getScimManagedTeamIds } from "./scim-groups.js"
 import {
   DEFAULT_ORGANIZATION_LIMITS,
@@ -711,6 +712,14 @@ async function acceptInvitation(invitation: InvitationRow, userId: UserId, optio
           id: createDenTypeId("teamMember"),
           teamId: invitation.teamId,
           orgMembershipId: member.id,
+        })
+
+        // Auto-grant plugin access based on team policies
+        await applyPoliciesForMember({
+          organizationId: invitation.organizationId,
+          teamId: invitation.teamId,
+          memberId: member.id,
+          actorMemberId: member.id,
         })
       }
     }
