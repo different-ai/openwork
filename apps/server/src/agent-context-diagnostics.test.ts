@@ -927,6 +927,15 @@ describe("agent context diagnostics analyzer", () => {
       owner: "opencode-engine",
     });
     expect(fetchCalls).toHaveLength(4);
+    // The handshake must reach the operator's own Den deployment. Trusting an
+    // origin never redirects the probe to OpenWork-hosted Cloud.
+    expect(fetchCalls.map((call) => call.url)).toEqual([
+      "https://den.customer.example/custom/mcp/agent",
+      "https://den.customer.example/custom/mcp/agent",
+      "https://den.customer.example/custom/mcp/agent",
+      "https://den.customer.example/custom/mcp/agent",
+    ]);
+    expect(fetchCalls.some((call) => call.url.includes("openworklabs.com"))).toBe(false);
     expect(JSON.stringify(report)).not.toContain("den.customer.example");
   });
 

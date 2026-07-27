@@ -1021,17 +1021,31 @@ describe("OpenWork Cloud catalog probe", () => {
       headers: { Authorization: TOKEN },
     };
 
-    let calls = 0;
-    const activated = await probeOpenworkCloudCatalog(input({
+    // Every request must go to the operator's own configured Den endpoint.
+    // The built-in origins are a membership allowlist, never a destination,
+    // so an on-prem probe must never contact OpenWork-hosted Cloud.
+    const requestedUrls: string[] = [];
+    const activatedInput = input({
       requestId: "enterprise-activated",
       config: enterpriseConfig,
       activatedEnterpriseOrigin: "https://den.customer.example",
-      fetchImpl: async () => {
-        calls += 1;
-        return jsonResponse("enterprise-activated");
-      },
-    }));
-    expect(calls).toBe(1);
+    });
+    activatedInput.fetchImpl = async (url, init) => {
+      requestedUrls.push(String(url));
+      if (init?.method === "DELETE") return new Response(null, { status: 204 });
+      const body = requestPayload(init);
+      if (body.method === "initialize") return initializeResponse();
+      if (body.method === "notifications/initialized") return new Response(null, { status: 202 });
+      return jsonResponse("enterprise-activated");
+    };
+    const activated = await probeOpenworkCloudCatalog(activatedInput);
+    expect(requestedUrls).toEqual([
+      enterpriseEndpoint,
+      enterpriseEndpoint,
+      enterpriseEndpoint,
+      enterpriseEndpoint,
+    ]);
+    expect(requestedUrls.some((url) => url.includes("openworklabs.com"))).toBe(false);
     expect(activated).toMatchObject({
       performed: true,
       status: "observed",
