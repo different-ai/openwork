@@ -72,24 +72,24 @@ export function mcpAuthorizationPendingDocument(): string {
     <title>Connecting — OpenWork</title>
     <style>
 ${authorizationDocumentStyles}
-      .loading-card { padding: clamp(34px, 7vw, 76px); text-align: center; }
+      .connect-card { padding: clamp(34px, 7vw, 76px); text-align: center; }
       .brand { margin-bottom: 20px; }
       .status-row { max-width: 720px; margin: 42px auto 0; display: flex; align-items: center; gap: 16px; padding: 22px 24px; text-align: left; border: 1px solid #e1e4e8; border-radius: 18px; background: #fff; }
       .status-number { flex: 0 0 auto; width: 34px; height: 34px; display: grid; place-items: center; border: 1.5px solid #101828; border-radius: 50%; color: #101828; background: #fff; font-size: 13px; font-weight: 700; }
       .status-copy { min-width: 0; display: grid; gap: 3px; }
       .status-copy strong { color: #101828; font-size: 17px; line-height: 1.35; }
       .status-copy small { color: #667085; font-size: 14px; line-height: 1.5; }
-      @media (max-width: 560px) { .loading-card { padding: 32px 22px; } .status-row { margin-top: 30px; padding: 18px; } }
+      @media (max-width: 560px) { .connect-card { padding: 32px 22px; } .status-row { margin-top: 30px; padding: 18px; } }
     </style>
   </head>
   <body>
-    <main class="card loading-card" role="status" aria-live="polite">
+    <main class="card connect-card" role="status" aria-live="polite">
       <div class="brand"><span class="brand-mark">OW</span>OpenWork Connect</div>
-      <h1>Preparing your connection</h1>
-      <p>OpenWork is securely checking the provider and preparing your sign-in.</p>
+      <h1>Connect your account</h1>
+      <p>OpenWork is preparing the secure provider sign-in.</p>
       <div class="status-row">
         <span class="status-number" aria-hidden="true">1</span>
-        <span class="status-copy"><strong>Opening provider sign-in</strong><small>Keep this window open to continue.</small></span>
+        <span class="status-copy"><strong>Continue to your provider</strong><small>Keep this window open while we redirect you.</small></span>
       </div>
     </main>
   </body>
@@ -218,7 +218,7 @@ export function showMcpAuthorizationError(
 
 export function openMcpAuthorizationWindow(): Window {
   const popupName = `openwork-mcp-authorization-${crypto.randomUUID()}`
-  const popup = window.open("", popupName, "popup,width=600,height=760")
+  const popup = window.open("", popupName, "popup,width=960,height=720")
   if (!popup) {
     throw new Error("OpenWork could not open the sign-in window. Allow popups for OpenWork, then try again.")
   }
