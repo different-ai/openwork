@@ -46,6 +46,7 @@ import { decodeComposerMentionValue, encodeComposerMentionValue, type ComposerMe
 import { desktopBridge, openDesktopUrl } from "@/app/lib/desktop";
 import { parseSlashCommandInvocation } from "./composer/slash-command";
 import { connectSkillPrompt, parseConnectSkillToken } from "./composer/connect-skill-token";
+import { createPastedTextChip, resolvePastedTextPlaceholders } from "./composer/pasted-text";
 import { DevProfiler } from "@/react-app/shell/dev-profiler";
 import { PaperGrainGradient } from "@openwork/ui/react";
 import { useShellConfig } from "@/react-app/shell/shell-config";
@@ -1001,10 +1002,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     });
     // Expand paste placeholders in resolvedText so the model receives
     // the actual pasted content instead of "[pasted text <label>]".
-    let resolved = text;
-    for (const part of pasteParts) {
-      resolved = resolved.replace(`[pasted text ${part.label}]`, part.text);
-    }
+    let resolved = resolvePastedTextPlaceholders(text, pasteParts);
     resolved = resolved.replace(/\[attachment [^\]]+\]/g, "");
     resolved = resolved.replace(/\[connect-skill [^\]]+\]/g, (match) => {
       const token = parseConnectSkillToken(match);
@@ -1326,10 +1324,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
   };
 
   const handlePasteText = (text: string) => {
-    const id = `paste-${Math.random().toString(36).slice(2)}`;
-    const label = `${id.slice(-4)} · ${text.split(/\r?\n/).length} lines`;
-    setComposerPasteParts(props.sessionId, [...pasteParts, { id, label, text, lines: text.split(/\r?\n/).length }]);
-    setComposerDraft(props.sessionId, `${draft}[pasted text ${label}]`);
+    const pasted = createPastedTextChip(text);
+    setComposerPasteParts(props.sessionId, [...pasteParts, pasted]);
+    setComposerDraft(props.sessionId, `${draft}[pasted text ${pasted.label}]`);
   };
 
   const handleExpandPastedText = (id: string) => {

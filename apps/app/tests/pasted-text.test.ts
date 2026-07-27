@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
+  createPastedTextChip,
+  resolvePastedTextPlaceholders,
   shouldCollapsePastedText,
 } from "../src/react-app/domains/session/surface/composer/pasted-text";
 
@@ -21,5 +23,15 @@ describe("pasted text collapse policy", () => {
     const longUrl = "https://example.com/long-url";
     expect(shouldCollapsePastedText(`${longUrl} `, true)).toBeTrue();
     expect(shouldCollapsePastedText(`Read ${longUrl}`, true)).toBeTrue();
+  });
+
+  test("creates a reusable chip and resolves it before submission", () => {
+    const pasted = createPastedTextChip("first\nsecond");
+    expect(pasted.id).toStartWith("paste-");
+    expect(pasted.label).toEndWith("· 2 lines");
+    expect(pasted.lines).toBe(2);
+    expect(
+      resolvePastedTextPlaceholders(`Before [pasted text ${pasted.label}] after`, [pasted]),
+    ).toBe("Before first\nsecond after");
   });
 });

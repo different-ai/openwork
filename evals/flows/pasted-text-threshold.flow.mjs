@@ -35,6 +35,29 @@ async function waitForComposer(ctx) {
   });
 }
 
+async function openEmptyComposer(ctx) {
+  const target = await ctx.eval(
+    `(() => {
+      const route = window.__openworkControl.snapshot().route || "";
+      const match = route.match(/^\\/workspace\\/([^/]+)/);
+      if (!match) return { ok: false, reason: "workspace route not found", route };
+      const targetRoute = "/workspace/" + match[1] + "/session";
+      if (route !== targetRoute) window.location.hash = "#" + targetRoute;
+      return { ok: true, targetRoute };
+    })()`,
+  );
+  ctx.assert(target?.ok === true, `Could not open the empty-state composer: ${target?.reason ?? "unknown"}`);
+  await ctx.waitFor(
+    `window.__openworkControl.snapshot().route === ${JSON.stringify(target.targetRoute)}`,
+    { label: "empty workspace session route" },
+  );
+  await waitForComposer(ctx);
+  await ctx.waitFor(
+    `document.body.innerText.includes("What do you need done?")`,
+    { label: "empty-state composer heading" },
+  );
+}
+
 async function createFreshTask(ctx) {
   const previousRoute = await ctx.eval("window.__openworkControl.snapshot().route || ''");
   await ctx.control("session.create_task");
@@ -118,10 +141,59 @@ export default {
   },
   steps: [
     {
+      name: "Empty-state composer collapses long paste",
+      run: async (ctx) => {
+        await ctx.prove("The centered new-task composer collapses text that exceeds its visible capacity", {
+          voiceover: vo[0],
+          action: async () => {
+            await openEmptyComposer(ctx);
+            await pasteComposer(ctx, LONG_PASTE);
+            await ctx.waitFor(`Boolean(document.querySelector(${JSON.stringify(EXPAND_BUTTON_SELECTOR)}))`, {
+              label: "empty-state pasted-text chip",
+            });
+          },
+          assert: async () => {
+            const info = await composerInfo(ctx);
+            ctx.assert(info.ok === true, info.reason ?? "Composer was not found.");
+            ctx.assert(info.chipCount === 1, `Expected one empty-state pasted-text chip, got ${info.chipCount}.`);
+            ctx.assert(info.text.includes("Pasted · 1 line"), `Chip label was not visible: ${JSON.stringify(info.text)}`);
+            ctx.assert(!info.text.includes(LONG_PASTE), "Empty-state pasted text was expanded instead of collapsed.");
+          },
+          screenshot: { name: "empty-state-long-paste-chip", requireText: ["What do you need done?", "Pasted · 1 line", "Expand"] },
+        });
+      },
+    },
+    {
+      name: "Empty-state chip expands to plain text",
+      run: async (ctx) => {
+        await ctx.prove("Expanding an empty-state paste chip restores normal editable text without highlighting", {
+          voiceover: vo[1],
+          action: async () => {
+            await ctx.trustedClick(EXPAND_BUTTON_SELECTOR);
+            await ctx.waitFor(
+              `(() => {
+                const editor = document.querySelector(${JSON.stringify(EDITOR_SELECTOR)});
+                return Boolean(editor && editor.innerText.includes(${JSON.stringify(LONG_PASTE)}) && !editor.querySelector("button[data-pasted-expand-label]"));
+              })()`,
+              { label: "expanded empty-state pasted text" },
+            );
+            await ctx.waitFor(plainTextExpression(LONG_PASTE), { label: "normal styling on expanded empty-state paste" });
+          },
+          assert: async () => {
+            const info = await composerInfo(ctx, LONG_PASTE);
+            ctx.assert(info.chipCount === 0, `Expanded empty-state paste still had ${info.chipCount} chip(s).`);
+            ctx.assert(info.text.includes(LONG_PASTE), "Expanded empty-state pasted text was not visible.");
+            ctx.assert(info.hasHighlightedTarget === false, `Expanded empty-state paste was highlighted: ${JSON.stringify(info.highlightedMatches)}.`);
+          },
+          screenshot: { name: "empty-state-expanded-paste-plain", requireText: ["What do you need done?", LONG_PASTE] },
+        });
+      },
+    },
+    {
       name: "Long paste collapses into a chip",
       run: async (ctx) => {
         await ctx.prove("Text that exceeds the composer's visible capacity is collapsed into one inline pasted-text chip", {
-          voiceover: vo[0],
+          voiceover: vo[2],
           action: async () => {
             await createFreshTask(ctx);
             await pasteComposer(ctx, LONG_PASTE);
@@ -144,7 +216,7 @@ export default {
       name: "Chip hover says Expand",
       run: async (ctx) => {
         await ctx.prove("Hovering the pasted-text chip expansion control exposes the exact title Expand", {
-          voiceover: vo[1],
+          voiceover: vo[3],
           action: async () => {
             const point = await ctx.waitFor(
               `(() => {
@@ -171,7 +243,7 @@ export default {
       name: "Expanded chip text is plain and editable",
       run: async (ctx) => {
         await ctx.prove("Expanding the chip restores the pasted text as normal editable text without highlighting", {
-          voiceover: vo[2],
+          voiceover: vo[4],
           action: async () => {
             await ctx.trustedClick(EXPAND_BUTTON_SELECTOR);
             await ctx.waitFor(
@@ -197,7 +269,7 @@ export default {
       name: "Fitting paste stays expanded and plain",
       run: async (ctx) => {
         await ctx.prove("Text that fits without scrolling stays expanded and looks like normal typed text", {
-          voiceover: vo[3],
+          voiceover: vo[5],
           action: async () => {
             await createFreshTask(ctx);
             await pasteComposer(ctx, FITTING_PASTE);
@@ -224,7 +296,7 @@ export default {
       name: "Standalone URL never chips",
       run: async (ctx) => {
         await ctx.prove("A standalone HTTP URL with no whitespace remains an expanded link-like paste instead of a chip", {
-          voiceover: vo[4],
+          voiceover: vo[6],
           action: async () => {
             await createFreshTask(ctx);
             await pasteComposer(ctx, URL_PASTE);

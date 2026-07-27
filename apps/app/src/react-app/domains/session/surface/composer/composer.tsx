@@ -32,20 +32,13 @@ import {
   type ComposerSlashCommandOption,
 } from "./slash-command";
 import { encodeConnectSkillToken } from "./connect-skill-token";
-import { FILE_URL_RE, HTTP_URL_RE } from "./pasted-text";
+import { FILE_URL_RE, HTTP_URL_RE, type PastedTextChip } from "./pasted-text";
 
 type MentionItem = {
   id: string;
   kind: ComposerMentionKind;
   value: string;
   label: string;
-};
-
-type PastedTextChip = {
-  id: string;
-  label: string;
-  text: string;
-  lines: number;
 };
 
 type ToolMenuSettingsSection = "commands" | "skills" | "mcps" | "plugins";

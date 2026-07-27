@@ -9,6 +9,11 @@ import { t } from "@/i18n";
 import { ReactSessionComposer } from "@/react-app/domains/session/surface/composer/composer";
 import { encodeComposerMentionValue, type ComposerMentionKind } from "@/react-app/domains/session/surface/composer/mention-encoding";
 import {
+  createPastedTextChip,
+  resolvePastedTextPlaceholders,
+  type PastedTextChip,
+} from "@/react-app/domains/session/surface/composer/pasted-text";
+import {
   EMPTY_CONNECT_CAPABILITY_INVENTORY,
   listAssignedConnectCapabilities,
   type ConnectCapabilityInventory,
@@ -50,7 +55,7 @@ export type NewTaskComposerProps = {
   draft: string;
   onDraftChange: (value: string) => void;
   /** Called with a non-empty draft; the caller creates the session (and workspace if needed). */
-  onRunTask: () => void;
+  onRunTask: (resolvedDraft: string) => void;
   /** Disable submission while a default workspace is being prepared. */
   busy: boolean;
   context: NewTaskComposerContext | null;
@@ -75,6 +80,7 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
   const [mcpServers, setMcpServers] = useState<McpServerEntry[]>([]);
   const [mcpStatuses, setMcpStatuses] = useState<McpStatusMap>({});
   const [mcpStatus, setMcpStatus] = useState<string | null>(null);
+  const [pastedText, setPastedText] = useState<PastedTextChip[]>([]);
   const connectInventoryCacheRef = useRef<{ scope: string; promise: Promise<ConnectCapabilityInventory> } | null>(null);
   const context = props.context;
   const workspaceId = context?.workspaceId ?? null;
@@ -160,10 +166,28 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
     setMentions((previous) => ({ ...previous, [value]: kind }));
   };
 
-  // No paste-chip store exists before the session does, so large pastes are
-  // inlined into the draft instead of becoming expandable chips.
   const handlePasteText = (text: string) => {
-    props.onDraftChange(props.draft ? `${props.draft}\n${text}` : text);
+    const pasted = createPastedTextChip(text);
+    setPastedText((current) => [...current, pasted]);
+    props.onDraftChange(`${props.draft}[pasted text ${pasted.label}]`);
+  };
+
+  const handleExpandPastedText = (id: string) => {
+    const pasted = pastedText.find((item) => item.id === id);
+    if (!pasted) return;
+    props.onDraftChange(props.draft.replace(`[pasted text ${pasted.label}]`, pasted.text));
+    setPastedText((current) => current.filter((item) => item.id !== id));
+  };
+
+  const handleRemovePastedText = (id: string) => {
+    const pasted = pastedText.find((item) => item.id === id);
+    if (!pasted) return;
+    props.onDraftChange(props.draft.replace(`[pasted text ${pasted.label}]`, ""));
+    setPastedText((current) => current.filter((item) => item.id !== id));
+  };
+
+  const handleRunTask = () => {
+    props.onRunTask(resolvePastedTextPlaceholders(props.draft, pastedText));
   };
 
   const handleUnsupportedFileLinks = (links: string[]) => {
@@ -176,7 +200,7 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
       draft={props.draft}
       mentions={mentions}
       onDraftChange={props.onDraftChange}
-      onSend={props.onRunTask}
+      onSend={handleRunTask}
       onSteer={noop}
       onQueue={noop}
       onStop={noop}
@@ -220,9 +244,9 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
       onInsertMention={handleInsertMention}
       onPasteText={handlePasteText}
       onUnsupportedFileLinks={handleUnsupportedFileLinks}
-      pastedText={[]}
-      onExpandPastedText={noop}
-      onRemovePastedText={noop}
+      pastedText={pastedText}
+      onExpandPastedText={handleExpandPastedText}
+      onRemovePastedText={handleRemovePastedText}
       isRemoteWorkspace={context?.isRemoteWorkspace ?? false}
       isSandboxWorkspace={context?.isSandboxWorkspace ?? false}
       onUploadInboxFiles={null}
