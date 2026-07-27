@@ -21,10 +21,10 @@ describe("Electron distribution configs", () => {
     assert.equal(config.artifactName, "openwork-${os}-${arch}-${version}.${ext}");
   });
 
-  it("defines a co-installable enterprise flavor on the same release provider", async () => {
+  it("defines an enterprise flavor with the standard app identity and release provider", async () => {
     const config = await readConfig("electron-builder.enterprise.yml");
     assert.equal(config.extends, "./electron-builder.base.yml");
-    assert.equal(config.appId, "com.differentai.openwork.enterprise");
+    assert.equal(config.appId, "com.differentai.openwork");
     assert.equal(config.productName, "OpenWork Enterprise");
     assert.equal(config.extraMetadata.openworkDistribution, "enterprise");
     assert.equal(config.protocols[0].schemes[0], "openwork");

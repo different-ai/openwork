@@ -142,7 +142,7 @@ jobs:
               "## What's new" \
               "$TAG" \
               "- Public artifacts use the openwork-* naming convention." \
-              "- Enterprise artifacts use openwork-enterprise-* and install beside the public app." \
+              "- Enterprise artifacts use openwork-enterprise-* while retaining the standard OpenWork app identity." \
               "- Public and enterprise Electron builds use separate updater manifests on this release."
           fi
 

@@ -3,9 +3,12 @@ import type { DesktopDistributionInfo } from "./desktop";
 
 export function enterpriseActivationRequired(
   distribution: DesktopDistributionInfo,
-  bootstrap: Pick<DenBootstrapConfig, "enterpriseActivation">,
+  bootstrap: Pick<DenBootstrapConfig, "requireActivation" | "enterpriseActivation">,
 ) {
-  return distribution.flavor === "enterprise"
+  const requireActivation = typeof bootstrap.requireActivation === "boolean"
+    ? bootstrap.requireActivation
+    : distribution.requireActivation;
+  return requireActivation
     && !(
       bootstrap.enterpriseActivation?.activatedAt
       && bootstrap.enterpriseActivation?.denBaseUrl

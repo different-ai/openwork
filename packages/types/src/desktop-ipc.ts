@@ -150,6 +150,7 @@ export type DesktopDistributionInfo = {
   appIdentifier: string;
   protocolScheme: string;
   requireSignin: boolean;
+  requireActivation: boolean;
 };
 
 /** Org + first-skill identity shared by the handoff and prepared records. */
@@ -165,6 +166,7 @@ export type DesktopBootstrapConfig = {
   baseUrl: string;
   apiBaseUrl?: string | null;
   requireSignin: boolean;
+  requireActivation?: boolean;
   brandAppName?: string | null;
   brandLogoUrl?: string | null;
   brandIconUrl?: string | null;

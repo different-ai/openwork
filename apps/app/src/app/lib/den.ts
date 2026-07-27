@@ -119,6 +119,7 @@ export type DenEnterpriseActivation = {
 export type DenBootstrapConfig = DenBaseUrls & {
   source: DenBootstrapSource;
   requireSignin: boolean;
+  requireActivation?: boolean;
   brandAppName?: string | null;
   brandLogoUrl?: string | null;
   brandIconUrl?: string | null;
@@ -612,6 +613,7 @@ function resolveDenBootstrapConfig(
     baseUrl: string;
     apiBaseUrl?: string | null;
     requireSignin?: boolean | null;
+    requireActivation?: boolean | null;
     brandAppName?: string | null;
     brandLogoUrl?: string | null;
     brandIconUrl?: string | null;
@@ -627,6 +629,9 @@ function resolveDenBootstrapConfig(
     ...resolveDenBaseUrls(input),
     source: input.source === "file" || input.fromFile === true ? "file" : "default",
     requireSignin: input.requireSignin === true,
+    ...(typeof input.requireActivation === "boolean"
+      ? { requireActivation: input.requireActivation }
+      : {}),
     ...(input.brandAppName?.trim() ? { brandAppName: input.brandAppName.trim().slice(0, 64) } : {}),
     ...(input.brandLogoUrl?.trim() ? { brandLogoUrl: input.brandLogoUrl.trim() } : {}),
     ...(input.brandIconUrl?.trim() ? { brandIconUrl: input.brandIconUrl.trim() } : {}),
@@ -646,6 +651,7 @@ function getPendingBootstrapConfig(next: DenSettings): DenBootstrapConfig | null
   return resolveDenBootstrapConfig({
     baseUrl: next.baseUrl ?? previous.baseUrl,
     requireSignin: previous.requireSignin,
+    requireActivation: previous.requireActivation,
     brandAppName: previous.brandAppName,
     brandLogoUrl: previous.brandLogoUrl,
     brandIconUrl: previous.brandIconUrl,
@@ -760,6 +766,9 @@ export async function setDenBootstrapConfig(
     const persisted = await setDesktopBootstrapConfigInShell({
       baseUrl: normalized.baseUrl,
       requireSignin: normalized.requireSignin,
+      ...(typeof normalized.requireActivation === "boolean"
+        ? { requireActivation: normalized.requireActivation }
+        : {}),
       ...(normalized.brandAppName ? { brandAppName: normalized.brandAppName } : {}),
       ...(normalized.brandLogoUrl ? { brandLogoUrl: normalized.brandLogoUrl } : {}),
       ...(normalized.brandIconUrl ? { brandIconUrl: normalized.brandIconUrl } : {}),
@@ -920,6 +929,7 @@ export function writeDenSettings(next: DenSettings, options?: { persistBootstrap
       void setDenBootstrapConfig({
         baseUrl: pendingBootstrap.baseUrl,
         requireSignin: currentBootstrap.requireSignin,
+        requireActivation: currentBootstrap.requireActivation,
         brandAppName: currentBootstrap.brandAppName,
         brandLogoUrl: currentBootstrap.brandLogoUrl,
         brandIconUrl: currentBootstrap.brandIconUrl,

@@ -53,7 +53,7 @@ import { openExternalUrl } from "./open-external.mjs";
 import { resolveAppIdentifier, resolveUserDataPath } from "./dev-profile.mjs";
 import { fetchAgentContextDiagnosticsResponse } from "./agent-context-diagnostics-fetch.mjs";
 import {
-  enterpriseActivationComplete,
+  desktopActivationRequired,
   enterprisePreactivationCommandAllowed,
   resolveDesktopDistribution,
 } from "./desktop-distribution.mjs";
@@ -897,6 +897,7 @@ const DEFAULT_LOCAL_BASE_URL = "http://127.0.0.1:4096";
 const FORCE_DESKTOP_REQUIRE_SIGNIN =
   DESKTOP_DISTRIBUTION.requireSignin || envFlagEnabled("OPENWORK_FORCE_SIGNIN");
 const DEFAULT_DESKTOP_REQUIRE_SIGNIN = FORCE_DESKTOP_REQUIRE_SIGNIN;
+const DEFAULT_DESKTOP_REQUIRE_ACTIVATION = DESKTOP_DISTRIBUTION.requireActivation;
 
 function envFlagEnabled(name) {
   const value = process.env[name]?.trim().toLowerCase();
@@ -964,6 +965,7 @@ const workspaceStore = createWorkspaceStore({
   defaultDenBaseUrl: DEFAULT_DEN_BASE_URL,
   defaultRequireSignin: DEFAULT_DESKTOP_REQUIRE_SIGNIN,
   forceRequireSignin: FORCE_DESKTOP_REQUIRE_SIGNIN,
+  defaultRequireActivation: DEFAULT_DESKTOP_REQUIRE_ACTIVATION,
 });
 
 const connectLinkReplayGuard = createConnectLinkReplayGuard({
@@ -1705,9 +1707,8 @@ const desktopCommandHandlers = {
       const previous = workspaceStore.readDesktopBootstrapConfigSync();
       const next = await workspaceStore.setDesktopBootstrapConfig(args[0] ?? {});
       if (
-        DESKTOP_DISTRIBUTION.flavor === "enterprise"
-        && !enterpriseActivationComplete(previous)
-        && enterpriseActivationComplete(next)
+        desktopActivationRequired(DESKTOP_DISTRIBUTION, previous)
+        && !desktopActivationRequired(DESKTOP_DISTRIBUTION, next)
       ) {
         await runtimeManager.prepareFreshRuntime();
       }
@@ -2199,18 +2200,18 @@ function desktopErrorMessageWithCauses(error) {
   }
 }
 
-function assertEnterpriseActivation() {
-  if (
-    DESKTOP_DISTRIBUTION.flavor === "enterprise"
-    && !enterpriseActivationComplete(workspaceStore.readDesktopBootstrapConfigSync())
-  ) {
-    throw new Error("OpenWork Enterprise must be activated from your Den portal before this command is available.");
+function assertDesktopActivation() {
+  if (desktopActivationRequired(
+    DESKTOP_DISTRIBUTION,
+    workspaceStore.readDesktopBootstrapConfigSync(),
+  )) {
+    throw new Error("OpenWork must be activated from your Den portal before this command is available.");
   }
 }
 
 async function handleDesktopInvoke(event, command, ...args) {
   if (!enterprisePreactivationCommandAllowed(command)) {
-    assertEnterpriseActivation();
+    assertDesktopActivation();
   }
   const handler = desktopCommandHandlers[command];
   if (!handler) {
@@ -2522,10 +2523,7 @@ or use: pnpm dev:worktree`);
       await applyDesktopBootstrapBrandIcon(bootstrapConfig, applyBrandIconUrl);
     }
     applicationMenu.install();
-    if (
-      DESKTOP_DISTRIBUTION.flavor !== "enterprise"
-      || enterpriseActivationComplete(bootstrapConfig)
-    ) {
+    if (!desktopActivationRequired(DESKTOP_DISTRIBUTION, bootstrapConfig)) {
       await runtimeManager.prepareFreshRuntime().catch(() => undefined);
     }
 
@@ -2536,10 +2534,7 @@ or use: pnpm dev:worktree`);
     await uiControlServer.start().catch((error) => {
       console.warn("[ui-control] failed to start", error);
     });
-    if (
-      DESKTOP_DISTRIBUTION.flavor !== "enterprise"
-      || enterpriseActivationComplete(bootstrapConfig)
-    ) {
+    if (!desktopActivationRequired(DESKTOP_DISTRIBUTION, bootstrapConfig)) {
       runtimeBootstrapPromise = bootRuntimeForSelectedWorkspace().catch((error) => ({
         ok: false,
         error: error instanceof Error ? error.message : String(error),

@@ -4,14 +4,16 @@ export const PUBLIC_DESKTOP_DISTRIBUTION = Object.freeze({
   appIdentifier: "com.differentai.openwork",
   protocolScheme: "openwork",
   requireSignin: false,
+  requireActivation: false,
 });
 
 export const ENTERPRISE_DESKTOP_DISTRIBUTION = Object.freeze({
   flavor: "enterprise",
   appName: "OpenWork Enterprise",
-  appIdentifier: "com.differentai.openwork.enterprise",
+  appIdentifier: "com.differentai.openwork",
   protocolScheme: "openwork",
   requireSignin: true,
+  requireActivation: true,
 });
 
 function normalizeFlavor(value) {
@@ -47,6 +49,13 @@ export function enterpriseActivationComplete(config) {
     && typeof activation.denBaseUrl === "string"
     && activation.denBaseUrl.trim(),
   );
+}
+
+export function desktopActivationRequired(distribution, config) {
+  const requireActivation = typeof config?.requireActivation === "boolean"
+    ? config.requireActivation
+    : distribution.requireActivation;
+  return requireActivation && !enterpriseActivationComplete(config);
 }
 
 const ENTERPRISE_PREACTIVATION_COMMANDS = new Set([

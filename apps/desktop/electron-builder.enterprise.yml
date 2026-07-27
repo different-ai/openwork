@@ -1,5 +1,5 @@
 extends: ./electron-builder.base.yml
-appId: com.differentai.openwork.enterprise
+appId: com.differentai.openwork
 productName: OpenWork Enterprise
 extraMetadata:
   openworkDistribution: enterprise

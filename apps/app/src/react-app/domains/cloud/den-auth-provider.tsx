@@ -277,6 +277,7 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
     void setDenBootstrapConfig({
       baseUrl: denBaseUrl,
       requireSignin: bootstrap.requireSignin,
+      requireActivation: bootstrap.requireActivation,
       ...(bootstrap.brandAppName ? { brandAppName: bootstrap.brandAppName } : {}),
       ...(bootstrap.brandLogoUrl ? { brandLogoUrl: bootstrap.brandLogoUrl } : {}),
       ...(bootstrap.brandIconUrl ? { brandIconUrl: bootstrap.brandIconUrl } : {}),
@@ -353,6 +354,7 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
       await setDenBootstrapConfig({
         baseUrl: denBaseUrl,
         requireSignin: true,
+        requireActivation: bootstrap.requireActivation,
         ...(bootstrap.brandAppName ? { brandAppName: bootstrap.brandAppName } : {}),
         ...(bootstrap.brandLogoUrl ? { brandLogoUrl: bootstrap.brandLogoUrl } : {}),
         ...(bootstrap.brandIconUrl ? { brandIconUrl: bootstrap.brandIconUrl } : {}),

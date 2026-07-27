@@ -5,9 +5,11 @@ download page. Before activation it shows only the pixel-dither activation
 gate, rejects runtime commands, and does not start the local runtime.
 
 An authenticated Den user requests the standard one-time `openwork://` desktop
-handoff. The immutable enterprise build flag makes a successful handoff also
-activate the installation, sign the user into the issuing Den, permanently
-retain required sign-in for that distribution, and consume the handoff grant.
+handoff. The enterprise build defaults `requireActivation` to true, while an
+explicit boolean in `desktop-bootstrap.json` can override that policy. A
+successful handoff activates the installation, signs the user into the issuing
+Den, retains required sign-in for that distribution, and consumes the handoff
+grant.
 
 ## Expected outcome
 

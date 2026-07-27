@@ -254,6 +254,7 @@ function DenAuthControlActions() {
         await setDenBootstrapConfig({
           baseUrl: args.baseUrl.trim(),
           requireSignin: current.requireSignin,
+          requireActivation: current.requireActivation,
         });
         await denAuth.refresh();
         return { baseUrl: readDenBootstrapConfig().baseUrl };

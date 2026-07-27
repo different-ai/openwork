@@ -498,15 +498,17 @@ test("desktop bootstrap writes include a fresh writtenAt stamp", async () => {
   });
 });
 
-test("enterprise activation is preserved and forced sign-in cannot be disabled", async () => {
+test("enterprise activation is preserved, required activation is overrideable, and forced sign-in cannot be disabled", async () => {
   await withIsolatedBootstrapStore(async ({ createStore, canonicalPath }) => {
     const store = createStore({
       defaultRequireSignin: true,
       forceRequireSignin: true,
+      defaultRequireActivation: true,
     });
     await store.setDesktopBootstrapConfig({
       baseUrl: "https://app.openworklabs.com",
       requireSignin: false,
+      requireActivation: false,
       enterpriseActivation: {
         activatedAt: "2026-07-27T12:00:00.000Z",
         denBaseUrl: "https://app.openworklabs.com",
@@ -515,12 +517,14 @@ test("enterprise activation is preserved and forced sign-in cannot be disabled",
 
     const config = await store.getDesktopBootstrapConfig();
     assert.equal(config.requireSignin, true);
+    assert.equal(config.requireActivation, false);
     assert.deepEqual(config.enterpriseActivation, {
       activatedAt: "2026-07-27T12:00:00.000Z",
       denBaseUrl: "https://app.openworklabs.com",
     });
     const persisted = JSON.parse(await readFile(canonicalPath, "utf8"));
     assert.equal(persisted.requireSignin, true);
+    assert.equal(persisted.requireActivation, false);
   });
 });
 

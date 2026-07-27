@@ -9,14 +9,16 @@ const publicDistribution = {
   appIdentifier: "com.differentai.openwork",
   protocolScheme: "openwork",
   requireSignin: false,
+  requireActivation: false,
 };
 
 const enterpriseDistribution = {
   flavor: "enterprise" as const,
   appName: "OpenWork Enterprise",
-  appIdentifier: "com.differentai.openwork.enterprise",
+  appIdentifier: "com.differentai.openwork",
   protocolScheme: "openwork",
   requireSignin: true,
+  requireActivation: true,
 };
 
 describe("enterprise desktop activation", () => {
@@ -32,6 +34,15 @@ describe("enterprise desktop activation", () => {
         denBaseUrl: "https://app.openworklabs.com",
       },
     })).toBe(false);
+  });
+
+  test("lets desktop-bootstrap.json override either artifact default", () => {
+    expect(enterpriseActivationRequired(enterpriseDistribution, {
+      requireActivation: false,
+    })).toBe(false);
+    expect(enterpriseActivationRequired(publicDistribution, {
+      requireActivation: true,
+    })).toBe(true);
   });
 
   test("uses the standard Den auth deep-link shape", () => {

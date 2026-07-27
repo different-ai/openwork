@@ -134,7 +134,13 @@ function isHostedDesktopBootstrapConfig(config) {
   return baseUrlOrigin === HOSTED_DESKTOP_WEB_URL || baseUrlOrigin === HOSTED_DESKTOP_API_URL;
 }
 
-export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSignin, forceRequireSignin }) {
+export function createWorkspaceStore({
+  app,
+  defaultDenBaseUrl,
+  defaultRequireSignin,
+  forceRequireSignin,
+  defaultRequireActivation = false,
+}) {
   function desktopBootstrapPath() {
     if (process.env.OPENWORK_DESKTOP_BOOTSTRAP_PATH?.trim()) {
       return resolveDesktopBootstrapPath({ env: process.env, homeDir: os.homedir(), userDataDir: app.getPath("userData") });
@@ -267,11 +273,17 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
     const normalizedEnterpriseActivation = enterpriseActivation?.activatedAt && enterpriseActivation.denBaseUrl
       ? enterpriseActivation
       : null;
+    const requireActivation = typeof input?.requireActivation === "boolean"
+      ? input.requireActivation
+      : defaultRequireActivation;
 
     return {
       baseUrl,
       ...(apiBaseUrl ? { apiBaseUrl } : {}),
       requireSignin: forceRequireSignin || input?.requireSignin === true,
+      ...(requireActivation || typeof input?.requireActivation === "boolean"
+        ? { requireActivation }
+        : {}),
       ...(brandAppName ? { brandAppName } : {}),
       ...(brandLogoUrl ? { brandLogoUrl } : {}),
       ...(brandIconUrl ? { brandIconUrl } : {}),
@@ -486,6 +498,7 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
     return {
       baseUrl: defaultDenBaseUrl,
       requireSignin: defaultRequireSignin,
+      ...(defaultRequireActivation ? { requireActivation: true } : {}),
       fromFile: false,
     };
   }
@@ -509,6 +522,7 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
     return {
       baseUrl: defaultDenBaseUrl,
       requireSignin: defaultRequireSignin,
+      ...(defaultRequireActivation ? { requireActivation: true } : {}),
       fromFile: false,
     };
   }

@@ -489,6 +489,7 @@ export function readDesktopDistributionInfo(): DesktopDistributionInfo {
     appIdentifier: "com.differentai.openwork",
     protocolScheme: "openwork",
     requireSignin: false,
+    requireActivation: false,
   };
 }
 

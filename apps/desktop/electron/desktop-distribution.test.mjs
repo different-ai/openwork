@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
+  ENTERPRISE_DESKTOP_DISTRIBUTION,
+  PUBLIC_DESKTOP_DISTRIBUTION,
+  desktopActivationRequired,
   enterpriseActivationComplete,
   enterprisePreactivationCommandAllowed,
   resolveDesktopDistribution,
@@ -18,9 +21,10 @@ describe("resolveDesktopDistribution", () => {
     assert.deepEqual(distribution, {
       flavor: "enterprise",
       appName: "OpenWork Enterprise",
-      appIdentifier: "com.differentai.openwork.enterprise",
+      appIdentifier: "com.differentai.openwork",
       protocolScheme: "openwork",
       requireSignin: true,
+      requireActivation: true,
     });
   });
 
@@ -44,6 +48,24 @@ describe("resolveDesktopDistribution", () => {
       }).flavor,
       "enterprise",
     );
+  });
+});
+
+describe("desktopActivationRequired", () => {
+  it("uses the distribution default when bootstrap policy is absent", () => {
+    assert.equal(desktopActivationRequired(ENTERPRISE_DESKTOP_DISTRIBUTION, {}), true);
+    assert.equal(desktopActivationRequired(PUBLIC_DESKTOP_DISTRIBUTION, {}), false);
+  });
+
+  it("allows desktop-bootstrap.json to override either distribution default", () => {
+    assert.equal(desktopActivationRequired(
+      ENTERPRISE_DESKTOP_DISTRIBUTION,
+      { requireActivation: false },
+    ), false);
+    assert.equal(desktopActivationRequired(
+      PUBLIC_DESKTOP_DISTRIBUTION,
+      { requireActivation: true },
+    ), true);
   });
 });
 

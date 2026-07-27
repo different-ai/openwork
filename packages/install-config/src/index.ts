@@ -30,6 +30,7 @@ export const desktopBootstrapConfigSchema = z.object({
   baseUrl: z.string().trim().url(),
   apiBaseUrl: z.string().trim().url().optional(),
   requireSignin: z.boolean(),
+  requireActivation: z.boolean().optional(),
   brandAppName: z.string().trim().min(1).max(64).optional(),
   brandLogoUrl: z.string().trim().url().optional(),
   brandIconUrl: z.string().trim().url().optional(),
