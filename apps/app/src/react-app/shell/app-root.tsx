@@ -415,11 +415,11 @@ export function AppRoot() {
               <Route path="*" element={<Navigate to="/session" replace />} />
             </Routes>
           </DenSigninGate>
+          <LoadingOverlay />
           </EnterpriseActivationGate>
         </OpenworkControlProvider>
         </AppMenuProvider>
         </ShellConfigProvider>
-        <LoadingOverlay />
       </DevProfiler>
       {/*
         DevProfilerOverlay sits OUTSIDE the AppRoot <Profiler> zone on

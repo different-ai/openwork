@@ -1,16 +1,12 @@
 /** @jsxImportSource react */
-import { DitheredOnboardingShell } from "@openwork/ui/react";
-import { ExternalLink, KeyRound, ShieldCheck } from "lucide-react";
+import { Dithering } from "@paper-design/shaders-react";
 import { useSyncExternalStore, type ReactNode } from "react";
 
 import { readDenBootstrapConfig } from "@/app/lib/den";
 import { denSettingsChangedEvent } from "@/app/lib/den-session-events";
 import { enterpriseActivationRequired } from "@/app/lib/enterprise-activation";
-import {
-  openDesktopUrl,
-  readDesktopDistributionInfo,
-} from "@/app/lib/desktop";
-import { Button } from "@/components/ui/button";
+import { readDesktopDistributionInfo } from "@/app/lib/desktop";
+import { resolveExtensionIconSrc } from "@/react-app/design-system/extension-icon-src";
 
 function subscribeToBootstrap(onStoreChange: () => void) {
   if (typeof window === "undefined") return () => {};
@@ -28,70 +24,79 @@ export function useEnterpriseActivationRequired() {
 }
 
 function EnterpriseActivationPage() {
-  const bootstrap = readDenBootstrapConfig();
-  const portalUrl = bootstrap.baseUrl;
-
   return (
-    <DitheredOnboardingShell
-      state="enterprise-activation"
-      width="wide"
-      rootTestId="enterprise-activation-root"
-      backgroundTestId="enterprise-activation-background"
-      foregroundTestId="enterprise-activation-foreground"
+    <div
+      className="relative min-h-screen bg-background text-foreground"
+      data-state="enterprise-activation"
+      data-testid="enterprise-activation-root"
     >
-      <div className="absolute inset-x-0 top-0 h-10 mac:titlebar-drag" />
-      <section
-        className="grid gap-7 rounded-[1.75rem] border border-[#dce5f2] bg-white/95 p-6 shadow-[0_24px_80px_rgba(50,72,110,0.10)] sm:p-10"
-        data-testid="enterprise-activation-card"
+      <div
+        className="pointer-events-none absolute inset-0 z-0 overflow-hidden opacity-[0.1] dark:invert"
+        data-testid="enterprise-activation-background"
       >
-        <div className="grid gap-4">
-          <div className="grid size-12 place-items-center rounded-2xl border border-[#d6e2f3] bg-[#edf4ff] text-[#345f9d]">
-            <KeyRound className="size-5" aria-hidden="true" />
-          </div>
-          <div className="grid gap-2">
-            <p className="m-0 text-xs font-semibold uppercase tracking-[0.14em] text-[#5b76a0]">
+        <Dithering
+          className="size-full"
+          speed={0.01}
+          shape="warp"
+          type="2x2"
+          size={20.3}
+          scale={1.19}
+          frame={264559.21}
+          colorBack="#00000000"
+          colorFront="#000000"
+        />
+      </div>
+
+      <div className="absolute inset-x-0 top-0 z-20 h-10 mac:titlebar-drag" />
+
+      <div
+        className="relative z-10 flex min-h-screen items-center justify-center px-6 py-16"
+        data-testid="enterprise-activation-foreground"
+      >
+        <section
+          className="w-full max-w-[720px] rounded-3xl border border-border bg-background px-8 pb-12 pt-10 sm:px-16 sm:pb-16 sm:pt-14"
+          data-testid="enterprise-activation-card"
+        >
+          <div className="flex items-center gap-2.5">
+            <img
+              src={resolveExtensionIconSrc("/openwork-mark.svg")}
+              alt=""
+              width={26}
+              height={26}
+              className="max-h-[26px] shrink-0 object-contain object-left dark:invert"
+              aria-hidden="true"
+            />
+            <span className="text-[15px] font-semibold tracking-tight text-foreground">
               OpenWork Enterprise
-            </p>
-            <h1 className="m-0 max-w-[18ch] text-3xl font-semibold tracking-[-0.04em] text-[#101828] sm:text-4xl">
-              Activate this app from your Den portal.
+            </span>
+          </div>
+
+          <div className="mt-10 flex flex-col gap-2.5 sm:mt-14">
+            <h1 className="text-[30px] font-semibold leading-[38px] tracking-[-0.03em] text-foreground sm:text-[38px] sm:leading-[46px]">
+              Activate OpenWork Enterprise
             </h1>
-            <p className="m-0 max-w-2xl text-[15px] leading-6 text-[#586579]">
-              Return to the download page where you got OpenWork Enterprise and choose
-              <strong className="font-semibold text-[#26354d]"> Activate OpenWork Enterprise</strong>.
-              The portal will send a one-time link that activates this installation and signs you in.
+            <p className="text-[15px] leading-[23px] text-muted-foreground">
+              OpenWork Enterprise access is managed by your organization. Return to your organization&apos;s
+              OpenWork Enterprise download page and select <strong className="font-semibold text-foreground">Activate OpenWork Enterprise</strong>.
+              This app will unlock when it receives the one-time activation link.
             </p>
           </div>
-        </div>
 
-        <div className="grid gap-3 rounded-2xl border border-[#dce5f2] bg-[#f8fbff] p-4 sm:grid-cols-[auto_1fr] sm:items-center">
-          <span className="grid size-9 place-items-center rounded-xl bg-white text-[#4c6f9f] shadow-sm">
-            <ShieldCheck className="size-4" aria-hidden="true" />
-          </span>
-          <div className="grid gap-0.5">
-            <p className="m-0 text-sm font-semibold text-[#26354d]">Sign-in stays required</p>
-            <p className="m-0 text-xs leading-5 text-[#66758b]">
-              This enterprise build has no local or “use without cloud” mode. Activation links expire and can be used once.
+          <div className="mt-11 flex flex-col gap-3">
+            <div
+              className="rounded-xl border border-dls-border bg-dls-hover px-4 py-3 text-sm font-medium text-dls-text"
+              aria-live="polite"
+            >
+              Waiting for your organization&apos;s activation link…
+            </div>
+
+            <p className="text-xs leading-5 text-muted-foreground">
+              Access remains managed by your organization. Activation links expire and can be used once.
             </p>
           </div>
-        </div>
-
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-          <Button
-            type="button"
-            size="lg"
-            className="h-11 rounded-xl px-5"
-            onClick={() => void openDesktopUrl(portalUrl)}
-            data-testid="enterprise-activation-open-den"
-          >
-            Open Den portal
-            <ExternalLink className="ml-2 size-4" aria-hidden="true" />
-          </Button>
-          <p className="m-0 text-xs leading-5 text-[#66758b]" aria-live="polite">
-            Waiting for an activation link from Den…
-          </p>
-        </div>
-      </section>
-    </DitheredOnboardingShell>
+        </section>
+      </div>
+    </div>
   );
 }
 
