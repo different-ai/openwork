@@ -6,8 +6,8 @@ const vo = await loadVoiceoverParagraphs("pasted-text-threshold");
 
 const EDITOR_SELECTOR = '[contenteditable="true"][data-lexical-editor="true"], [contenteditable="true"]';
 const EXPAND_BUTTON_SELECTOR = 'button[data-pasted-expand-label]';
-const LONG_PASTE = "This pasted message is longer than fifty characters and should collapse into a chip.";
-const SHORT_PASTE = "1234567890".repeat(5);
+const LONG_PASTE = "This pasted message should fill the composer without being shown in full. ".repeat(100);
+const FITTING_PASTE = "This pasted message fits in the composer.";
 const URL_PASTE = "https://example.com/pasted-text-threshold/abcdefghijklmnopqrstuvwxyz";
 
 async function waitForReadySession(ctx) {
@@ -107,7 +107,7 @@ async function composerInfo(ctx, text = "") {
 
 export default {
   id: "pasted-text-threshold",
-  title: "Pasted text collapses only above 50 characters and expanded pastes stay visibly distinct",
+  title: "Pasted text collapses only when it would make the composer scroll",
   kind: "user-facing",
   precondition: async (ctx) => {
     const state = await waitForReadySession(ctx);
@@ -119,7 +119,7 @@ export default {
     {
       name: "Long paste collapses into a chip",
       run: async (ctx) => {
-        await ctx.prove("Text longer than 50 characters is collapsed into one inline pasted-text chip", {
+        await ctx.prove("Text that exceeds the composer's visible capacity is collapsed into one inline pasted-text chip", {
           voiceover: vo[0],
           action: async () => {
             await createFreshTask(ctx);
@@ -193,29 +193,29 @@ export default {
       },
     },
     {
-      name: "Fifty characters stays expanded and gray",
+      name: "Fitting paste stays expanded and gray",
       run: async (ctx) => {
-        await ctx.prove("Text of exactly 50 characters stays expanded while showing pasted-content styling", {
+        await ctx.prove("Text that fits without scrolling stays expanded while showing pasted-content styling", {
           voiceover: vo[3],
           action: async () => {
             await createFreshTask(ctx);
-            await pasteComposer(ctx, SHORT_PASTE);
+            await pasteComposer(ctx, FITTING_PASTE);
             await ctx.waitFor(
               `(() => {
                 const editor = document.querySelector(${JSON.stringify(EDITOR_SELECTOR)});
-                return Boolean(editor && editor.innerText.includes(${JSON.stringify(SHORT_PASTE)}) && !editor.querySelector("button[data-pasted-expand-label]"));
+                return Boolean(editor && editor.innerText.includes(${JSON.stringify(FITTING_PASTE)}) && !editor.querySelector("button[data-pasted-expand-label]"));
               })()`,
-              { label: "50-character paste expanded" },
+              { label: "fitting paste expanded" },
             );
-            await ctx.waitFor(styledTextExpression(SHORT_PASTE), { label: "gray styling on 50-character paste" });
+            await ctx.waitFor(styledTextExpression(FITTING_PASTE), { label: "gray styling on fitting paste" });
           },
           assert: async () => {
-            const info = await composerInfo(ctx, SHORT_PASTE);
-            ctx.assert(info.chipCount === 0, `50-character paste incorrectly created ${info.chipCount} chip(s).`);
-            ctx.assert(info.text.includes(SHORT_PASTE), "50-character pasted text was not visible.");
-            ctx.assert(info.hasStyledTarget === true, `50-character paste did not have gray styling: ${JSON.stringify(info.styledMatches)}.`);
+            const info = await composerInfo(ctx, FITTING_PASTE);
+            ctx.assert(info.chipCount === 0, `Fitting paste incorrectly created ${info.chipCount} chip(s).`);
+            ctx.assert(info.text.includes(FITTING_PASTE), "Fitting pasted text was not visible.");
+            ctx.assert(info.hasStyledTarget === true, `Fitting paste did not have gray styling: ${JSON.stringify(info.styledMatches)}.`);
           },
-          screenshot: { name: "short-paste-gray", requireText: [SHORT_PASTE] },
+          screenshot: { name: "fitting-paste-gray", requireText: [FITTING_PASTE] },
         });
       },
     },
