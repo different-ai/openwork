@@ -7,7 +7,7 @@ if (vo.length !== 2) {
   throw new Error(`Expected 2 voiceover frames for ${FLOW_ID}, found ${vo.length}.`);
 }
 
-const SWITCH_SELECTOR = '[role="switch"][aria-label="Keep bootstrap / organization server"]';
+const CHECKBOX_SELECTOR = '[role="checkbox"][aria-label="Also delete bootstrap / organization server"]';
 
 async function prepareDebugSettings(ctx) {
   await ctx.client.send("Emulation.setDeviceMetricsOverride", {
@@ -31,70 +31,70 @@ async function prepareDebugSettings(ctx) {
 }
 
 async function openNukeDialog(ctx) {
-  const alreadyOpen = await ctx.eval(`Boolean(document.querySelector(${JSON.stringify(SWITCH_SELECTOR)}))`);
+  const alreadyOpen = await ctx.eval(`Boolean(document.querySelector(${JSON.stringify(CHECKBOX_SELECTOR)}))`);
   if (!alreadyOpen) {
     await ctx.clickText("Nuke & fresh start");
   }
-  await ctx.waitFor(`Boolean(document.querySelector(${JSON.stringify(SWITCH_SELECTOR)}))`, {
+  await ctx.waitFor(`Boolean(document.querySelector(${JSON.stringify(CHECKBOX_SELECTOR)}))`, {
     timeoutMs: 30_000,
-    label: "bootstrap preservation switch",
+    label: "delete-bootstrap checkbox",
   });
 }
 
 async function nukePreviewState(ctx) {
   return ctx.eval(`(() => {
-    const switchEl = document.querySelector(${JSON.stringify(SWITCH_SELECTOR)});
+    const checkboxEl = document.querySelector(${JSON.stringify(CHECKBOX_SELECTOR)});
     const cardText = (heading) => {
       const label = [...document.querySelectorAll('div')]
         .find((element) => element.textContent.trim().toUpperCase() === heading);
       return label?.parentElement?.innerText ?? '';
     };
     return {
-      checked: switchEl?.getAttribute('aria-checked'),
+      checked: checkboxEl?.getAttribute('aria-checked'),
       deleteText: cardText('WILL DELETE'),
       surviveText: cardText('WILL SURVIVE'),
     };
   })()`);
 }
 
-function recordStateAssertions(ctx, state, preserveBootstrap) {
+function recordStateAssertions(ctx, state, deleteBootstrap) {
   const suffix = "desktop-bootstrap.json";
-  ctx.assert(state.checked === String(preserveBootstrap), `Bootstrap switch state was ${state.checked}.`);
+  ctx.assert(state.checked === String(deleteBootstrap), `Delete-bootstrap checkbox state was ${state.checked}.`);
   ctx.assert(
-    state.surviveText.includes(suffix) === preserveBootstrap,
-    `Will survive bootstrap visibility did not match preserve=${preserveBootstrap}.`,
+    state.surviveText.includes(suffix) === !deleteBootstrap,
+    `Will survive bootstrap visibility did not match delete=${deleteBootstrap}.`,
   );
   ctx.assert(
-    state.deleteText.includes(suffix) === !preserveBootstrap,
-    `Will delete bootstrap visibility did not match preserve=${preserveBootstrap}.`,
+    state.deleteText.includes(suffix) === deleteBootstrap,
+    `Will delete bootstrap visibility did not match delete=${deleteBootstrap}.`,
   );
   ctx.recordEvidence({
     type: "assertion",
     status: "passed",
-    assertion: preserveBootstrap
-      ? "desktop-bootstrap.json is listed under Will survive and omitted from Will delete"
-      : "desktop-bootstrap.json is listed under Will delete and omitted from Will survive",
+    assertion: deleteBootstrap
+      ? "desktop-bootstrap.json is listed under Will delete and omitted from Will survive"
+      : "desktop-bootstrap.json is listed under Will survive and omitted from Will delete",
     actual: state,
   });
 }
 
 export default {
   id: FLOW_ID,
-  title: "Nuke dialog toggles bootstrap preservation",
+  title: "Nuke dialog opts in to deleting bootstrap",
   kind: "user-facing",
   steps: [
     {
-      name: "The safe default keeps organization bootstrap",
+      name: "The unchecked default keeps organization bootstrap",
       run: async (ctx) => {
         await prepareDebugSettings(ctx);
-        await ctx.prove("The nuke dialog preserves desktop-bootstrap.json by default", {
+        await ctx.prove("The nuke dialog leaves desktop-bootstrap.json out of the delete plan by default", {
           voiceover: vo[0],
           action: async () => {
             await openNukeDialog(ctx);
           },
           assert: async () => {
-            recordStateAssertions(ctx, await nukePreviewState(ctx), true);
-            await ctx.expectText("Keep bootstrap / organization server");
+            recordStateAssertions(ctx, await nukePreviewState(ctx), false);
+            await ctx.expectText("Also delete bootstrap / organization server");
             await ctx.expectText("Type NUKE to confirm");
           },
           screenshot: {
@@ -102,7 +102,7 @@ export default {
             requireText: [
               "Nuke local state and start fresh?",
               "WILL SURVIVE",
-              "Keep bootstrap / organization server",
+              "Also delete bootstrap / organization server",
               "desktop-bootstrap.json",
               "Type NUKE to confirm",
             ],
@@ -111,24 +111,24 @@ export default {
       },
     },
     {
-      name: "Turning the switch off moves bootstrap into the delete plan",
+      name: "Checking the box moves bootstrap into the delete plan",
       run: async (ctx) => {
-        await ctx.prove("The user can include desktop-bootstrap.json in the local-state wipe", {
+        await ctx.prove("The user can opt desktop-bootstrap.json into the local-state wipe", {
           voiceover: vo[1],
           action: async () => {
             await ctx.eval(`(() => {
-              const switchEl = document.querySelector(${JSON.stringify(SWITCH_SELECTOR)});
-              if (!switchEl) throw new Error('bootstrap switch not found');
-              switchEl.click();
+              const checkboxEl = document.querySelector(${JSON.stringify(CHECKBOX_SELECTOR)});
+              if (!checkboxEl) throw new Error('delete-bootstrap checkbox not found');
+              checkboxEl.click();
               return true;
             })()`);
             await ctx.waitFor(
-              `document.querySelector(${JSON.stringify(SWITCH_SELECTOR)})?.getAttribute('aria-checked') === 'false'`,
-              { timeoutMs: 30_000, label: "bootstrap switch to turn off" },
+              `document.querySelector(${JSON.stringify(CHECKBOX_SELECTOR)})?.getAttribute('aria-checked') === 'true'`,
+              { timeoutMs: 30_000, label: "delete-bootstrap checkbox to turn on" },
             );
           },
           assert: async () => {
-            recordStateAssertions(ctx, await nukePreviewState(ctx), false);
+            recordStateAssertions(ctx, await nukePreviewState(ctx), true);
             await ctx.expectText("Type NUKE to confirm");
           },
           screenshot: {
@@ -136,7 +136,7 @@ export default {
             requireText: [
               "WILL DELETE",
               "WILL SURVIVE",
-              "Keep bootstrap / organization server",
+              "Also delete bootstrap / organization server",
               "desktop-bootstrap.json",
               "Type NUKE to confirm",
             ],

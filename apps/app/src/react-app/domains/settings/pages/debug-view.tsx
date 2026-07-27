@@ -35,7 +35,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
-import { Switch } from "@/components/ui/switch";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   AgentContextDiagnosticsSection,
   type AgentContextDiagnosticsSectionProps,
@@ -176,12 +176,12 @@ export type DebugViewProps = {
   nukePreviewBusy: boolean;
   nukeDialogOpen: boolean;
   nukeConfirmationText: string;
-  nukePreserveBootstrap: boolean;
+  nukeDeleteBootstrap: boolean;
   nukeManifestPreview: NukeManifestPreview | null;
   onOpenNukeDialog: () => void | Promise<void>;
   onCloseNukeDialog: () => void;
   onSetNukeConfirmationText: (value: string) => void;
-  onSetNukePreserveBootstrap: (value: boolean) => void | Promise<void>;
+  onSetNukeDeleteBootstrap: (value: boolean) => void | Promise<void>;
   onConfirmNukeOpenworkAndOpencodeConfig: () => void | Promise<void>;
 };
 
@@ -1307,36 +1307,37 @@ export function DebugView(props: DebugViewProps) {
               {t("settings.nuke_survives_title")}
             </div>
             <ul className="list-disc space-y-1 pl-5 text-[12px] text-dls-secondary">
-              {props.nukePreserveBootstrap ? (
+              {props.nukeDeleteBootstrap ? null : (
                 <li>
                   {t("settings.nuke_survives_bootstrap", {
                     path: props.nukeManifestPreview?.bootstrapPath ?? t("settings.nuke_no_bootstrap_path"),
                   })}
                 </li>
-              ) : null}
+              )}
               <li>{t("settings.nuke_survives_app")}</li>
               <li>{t("settings.nuke_survives_workspaces")}</li>
             </ul>
           </div>
 
-          <div className="flex items-center justify-between gap-4 rounded-xl border border-dls-border bg-dls-surface p-3">
-            <div className="min-w-0">
-              <div className="text-[13px] font-medium text-dls-text">
-                {t("settings.nuke_bootstrap_toggle_label")}
-              </div>
-              <div className="mt-1 break-all text-[11px] text-dls-secondary">
-                {t("settings.nuke_bootstrap_toggle_desc", {
+          <label className="flex items-start gap-2.5 rounded-xl border border-dls-border bg-dls-surface p-3">
+            <Checkbox
+              checked={props.nukeDeleteBootstrap}
+              disabled={props.nukeConfigBusy || props.nukePreviewBusy}
+              onCheckedChange={(checked) => void props.onSetNukeDeleteBootstrap(checked === true)}
+              aria-label={t("settings.nuke_bootstrap_delete_label")}
+              className="mt-0.5"
+            />
+            <span className="min-w-0">
+              <span className="block text-[13px] font-medium text-dls-text">
+                {t("settings.nuke_bootstrap_delete_label")}
+              </span>
+              <span className="mt-1 block break-all text-[11px] text-dls-secondary">
+                {t("settings.nuke_bootstrap_delete_desc", {
                   path: props.nukeManifestPreview?.bootstrapPath ?? t("settings.nuke_no_bootstrap_path"),
                 })}
-              </div>
-            </div>
-            <Switch
-              checked={props.nukePreserveBootstrap}
-              disabled={props.nukeConfigBusy || props.nukePreviewBusy}
-              onCheckedChange={(checked) => void props.onSetNukePreserveBootstrap(checked)}
-              aria-label={t("settings.nuke_bootstrap_toggle_label")}
-            />
-          </div>
+              </span>
+            </span>
+          </label>
 
           <label className="block">
             <span className="mb-1.5 block text-[13px] font-medium text-dls-text">

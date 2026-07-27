@@ -299,7 +299,9 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
   const [nukePreviewBusy, setNukePreviewBusy] = useState(false);
   const [nukeDialogOpen, setNukeDialogOpen] = useState(false);
   const [nukeConfirmationText, setNukeConfirmationText] = useState("");
-  const [nukePreserveBootstrap, setNukePreserveBootstrap] = useState(true);
+  // Opt-in: the bootstrap / organization server config is only wiped when the
+  // user explicitly asks for it. The IPC contract still speaks "preserve".
+  const [nukeDeleteBootstrap, setNukeDeleteBootstrap] = useState(false);
   const [nukeManifestPreview, setNukeManifestPreview] = useState<NukeManifestPreview | null>(null);
   const [engineSource, setEngineSourceState] = useState<"path" | "sidecar" | "custom">(readEngineSource);
   const [engineCustomBinPath, setEngineCustomBinPath] = useState<string>(() =>
@@ -973,7 +975,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       const preview = await nukeOpenworkAndOpencodeConfigPreview({ preserveBootstrap: true });
       setNukeManifestPreview(preview);
       setNukeConfirmationText("");
-      setNukePreserveBootstrap(true);
+      setNukeDeleteBootstrap(false);
       setNukeDialogOpen(true);
     } catch (error) {
       setNukeConfigStatus(error instanceof Error ? error.message : safeStringify(error));
@@ -982,16 +984,16 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
     }
   }, []);
 
-  const onSetNukePreserveBootstrap = useCallback(async (preserveBootstrap: boolean) => {
+  const onSetNukeDeleteBootstrap = useCallback(async (deleteBootstrap: boolean) => {
     if (nukeConfigBusy || nukePreviewBusy) return;
-    setNukePreserveBootstrap(preserveBootstrap);
+    setNukeDeleteBootstrap(deleteBootstrap);
     setNukePreviewBusy(true);
     setNukeConfigStatus(null);
     try {
-      const preview = await nukeOpenworkAndOpencodeConfigPreview({ preserveBootstrap });
+      const preview = await nukeOpenworkAndOpencodeConfigPreview({ preserveBootstrap: !deleteBootstrap });
       setNukeManifestPreview(preview);
     } catch (error) {
-      setNukePreserveBootstrap(!preserveBootstrap);
+      setNukeDeleteBootstrap(!deleteBootstrap);
       setNukeConfigStatus(error instanceof Error ? error.message : safeStringify(error));
     } finally {
       setNukePreviewBusy(false);
@@ -1009,7 +1011,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
     setNukeConfigStatus(null);
     try {
       await revokeDenSessionBeforeNuke();
-      await nukeOpenworkAndOpencodeConfigAndExit({ preserveBootstrap: nukePreserveBootstrap });
+      await nukeOpenworkAndOpencodeConfigAndExit({ preserveBootstrap: !nukeDeleteBootstrap });
     } catch (error) {
       setNukeConfigStatus(error instanceof Error ? error.message : safeStringify(error));
       setNukeConfigBusy(false);
@@ -1017,7 +1019,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
     } finally {
       setNukeDialogOpen(false);
     }
-  }, [nukeConfirmationText, nukePreserveBootstrap]);
+  }, [nukeConfirmationText, nukeDeleteBootstrap]);
 
   const [workspaceDebugEventsStatus, setWorkspaceDebugEventsStatus] = useState<string | null>(null);
   const onClearWorkspaceDebugEvents = useCallback(async () => {
@@ -1121,12 +1123,12 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       nukePreviewBusy,
       nukeDialogOpen,
       nukeConfirmationText,
-      nukePreserveBootstrap,
+      nukeDeleteBootstrap,
       nukeManifestPreview,
       onOpenNukeDialog,
       onCloseNukeDialog,
       onSetNukeConfirmationText: setNukeConfirmationText,
-      onSetNukePreserveBootstrap,
+      onSetNukeDeleteBootstrap,
       onConfirmNukeOpenworkAndOpencodeConfig,
     }),
     [
@@ -1152,13 +1154,13 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       nukeConfirmationText,
       nukeDialogOpen,
       nukeManifestPreview,
-      nukePreserveBootstrap,
+      nukeDeleteBootstrap,
       nukePreviewBusy,
       onClearDeveloperLog,
       onClearEngineCustomBinPath,
       onClearWorkspaceDebugEvents,
       onCloseNukeDialog,
-      onSetNukePreserveBootstrap,
+      onSetNukeDeleteBootstrap,
       onCopyDeveloperLog,
       onCopyRuntimeDebugReport,
       onExportDeveloperLog,
