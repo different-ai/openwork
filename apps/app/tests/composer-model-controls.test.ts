@@ -13,13 +13,14 @@ describe("composer model controls", () => {
   test("stay enabled during ordinary generation and disable during steering", () => {
     const composerSource = readFileSync(composerPath, "utf8");
     const modelSelectStart = composerSource.indexOf("<ModelSelect");
-    const behaviorSelectStart = composerSource.indexOf("<ModelBehaviorSelect");
-    const modelControls = [
-      composerSource.slice(modelSelectStart, composerSource.indexOf("/>", modelSelectStart) + 2),
-      composerSource.slice(behaviorSelectStart, composerSource.indexOf("/>", behaviorSelectStart) + 2),
-    ].join("\n");
+    const modelControls = composerSource.slice(
+      modelSelectStart,
+      composerSource.indexOf("/>", modelSelectStart) + 2,
+    );
 
-    expect(modelControls.match(/disabled=\{props\.steering\}/g)).toHaveLength(2);
+    expect(modelControls.match(/disabled=\{props\.steering\}/g)).toHaveLength(1);
+    expect(modelControls).toContain("behaviorValue={props.modelVariant}");
+    expect(modelControls).toContain("onBehaviorChange=");
     expect(modelControls).not.toContain("disabled={props.busy}");
   });
 

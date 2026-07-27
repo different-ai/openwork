@@ -181,18 +181,6 @@ html {
 
 body {
   margin: 0;
-  font-family:
-    -apple-system,
-    BlinkMacSystemFont,
-    system-ui,
-    ui-sans-serif,
-    "Segoe UI",
-    Roboto,
-    "Helvetica Neue",
-    Arial,
-    "Noto Sans",
-    "Apple Color Emoji",
-    "Segoe UI Emoji";
   font-size: 13px;
   line-height: 1.5;
   color: var(--dls-text-primary);

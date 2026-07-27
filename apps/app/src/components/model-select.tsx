@@ -6,11 +6,19 @@ import { useNavigate } from "react-router-dom";
 
 import type { ModelOption, ModelRef } from "@/app/types";
 import { ProviderIcon } from "@/react-app/design-system/provider-icon";
+import { Button } from "@/components/ui/button";
 import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Tooltip,
   TooltipContent,
@@ -183,6 +191,11 @@ interface ModelSelectProps {
   value: ModelRef;
   onOpenChange: (open: boolean) => void;
   onChange: (model: ModelRef) => void;
+  behaviorTitle: string;
+  behaviorLabel: string;
+  behaviorValue: string | null;
+  behaviorOptions?: { value: string | null; label: string }[];
+  onBehaviorChange: (value: string | null) => void;
   disabled?: boolean;
   /** When set, "All models" opens the full picker scoped to this session. */
   sessionId?: string;
@@ -195,11 +208,17 @@ export function ModelSelect({
   value,
   onOpenChange,
   onChange,
+  behaviorTitle,
+  behaviorLabel,
+  behaviorValue,
+  behaviorOptions,
+  onBehaviorChange,
   disabled = false,
   sessionId,
   openWorkModelsEntitled = false,
 }: ModelSelectProps) {
   const [search, setSearch] = React.useState("");
+  const [modelSubmenuOpen, setModelSubmenuOpen] = React.useState(false);
   const [promoHidden, setPromoHidden] = React.useState(isOpenWorkModelsPromoHidden);
   const searchInputRef = React.useRef<HTMLInputElement>(null);
   const modelOptions = useModelOptions(open);
@@ -228,12 +247,12 @@ export function ModelSelect({
   }, []);
 
   React.useEffect(() => {
-    if (!open) {
+    if (!modelSubmenuOpen) {
       return;
     }
 
     focusSearchInput();
-  }, [focusSearchInput, open]);
+  }, [focusSearchInput, modelSubmenuOpen]);
 
   const selectedOption = modelOptions?.find((option) =>
     isSameModel(value, {
@@ -262,6 +281,15 @@ export function ModelSelect({
       ? [openWorkModelsGroup(), ...providerGroups]
       : providerGroups;
   }, [modelOptions, showOpenWorkModelsPromo]);
+  const behaviorItems = React.useMemo(
+    () => (behaviorOptions ?? []).flatMap((option) =>
+      option.value ? [{ value: option.value, label: option.label }] : [],
+    ),
+    [behaviorOptions],
+  );
+  const selectedBehaviorValue = behaviorItems.some((option) => option.value === behaviorValue)
+    ? behaviorValue
+    : behaviorItems[0]?.value ?? null;
 
   const handleSelect = (option: ModelOption) => {
     onChange({ providerID: option.providerID, modelID: option.modelID });
@@ -286,169 +314,211 @@ export function ModelSelect({
   }, []);
 
   return (
-    <Popover
+    <DropdownMenu
       open={open}
       onOpenChange={(nextOpen) => {
         onOpenChange(nextOpen);
 
         if (!nextOpen) {
           setSearch("");
+          setModelSubmenuOpen(false);
         }
       }}
     >
       <Tooltip>
         <TooltipTrigger
           render={
-            <PopoverTrigger
-              type="button"
-              disabled={disabled}
-              aria-label="Change model"
-              aria-keyshortcuts="Meta+Alt+/"
-              className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm text-gray-10 transition-colors hover:bg-gray-3 hover:text-gray-12 disabled:pointer-events-none disabled:opacity-60"
+            <DropdownMenuTrigger
+              render={
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  disabled={disabled}
+                  aria-label="Model settings"
+                  aria-keyshortcuts="Meta+Alt+/"
+                  data-model-settings-trigger
+                />
+              }
             />
           }
         >
           <span className="max-w-48 truncate">
             {selectedOption?.title ?? value.modelID ?? "Select model"}
           </span>
-          <ChevronDown className="h-3 w-3" />
+          {behaviorItems.length > 0 ? (
+            <span className="text-muted-foreground">{behaviorLabel}</span>
+          ) : null}
+          <ChevronDown data-icon="inline-end" />
         </TooltipTrigger>
         <TooltipContent>
-          Change model
+          Model settings
         </TooltipContent>
       </Tooltip>
-      <PopoverContent
-        className="h-80 max-h-(--available-height) w-72 gap-0 overflow-hidden p-px **:data-[slot=scroll-area-viewport]:data-has-overflow-y:pe-0.5"
+      <DropdownMenuContent
+        side="top"
         align="start"
-        initialFocus={false}
+        sideOffset={8}
+        className="min-w-72"
+        data-model-settings-content
       >
-        <Command items={groups} value={search} onValueChange={setSearch}>
-          <CommandHeader>
-            <CommandInput
-              ref={searchInputRef}
-              placeholder="Search models..."
-            />
-          </CommandHeader>
-          <CommandEmpty>No models found.</CommandEmpty>
-          {showOpenWorkModelsSyncing ? (
-            <div className="mx-1 mb-1 flex items-center gap-2 rounded-md border border-amber-6/60 bg-amber-2/40 px-2 py-1.5">
-              <ProviderIcon
-                providerId={OPENWORK_MODELS_PROVIDER_ID}
-                providerName={OPENWORK_MODELS_PROVIDER_NAME}
-                className="size-3.5 shrink-0 text-amber-11"
-                size={14}
-              />
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-xs font-medium text-foreground">
-                  {OPENWORK_MODELS_PROVIDER_NAME}
-                </span>
-                <span className="block truncate text-[11px] text-muted-foreground">
-                  Included — syncing into this workspace…
-                </span>
+        <DropdownMenuGroup>
+          <DropdownMenuSub open={modelSubmenuOpen} onOpenChange={setModelSubmenuOpen}>
+            <DropdownMenuSubTrigger data-model-settings-model-trigger>
+              <span>Model</span>
+              <span className="ms-auto max-w-40 truncate text-muted-foreground">
+                {selectedOption?.title ?? value.modelID ?? "Select model"}
               </span>
-            </div>
-          ) : null}
-          <CommandList>
-            {(group: ModelSelectGroup) => (
-              <CommandGroup
-                key={group.value}
-                items={group.items}
-              >
-                <CommandGroupLabel className={group.promo ? "flex items-center gap-1.5 text-foreground" : undefined}>
-                  {group.promo ? <Sparkles className="size-3 text-blue-11" /> : null}
-                  {group.value}
-                </CommandGroupLabel>
-                <CommandCollection>
-                  {(item: ModelSelectItem) => {
-                    if (item.kind === "openwork") {
-                      return (
-                        <CommandItem
-                          className="gap-2 border border-blue-6/50 bg-blue-2/40 data-highlighted:bg-blue-3"
-                          key={item.id}
-                          value={`${OPENWORK_MODELS_PROVIDER_NAME} ${item.title} ${item.id} sign in subscribe`}
-                          onClick={handleOpenWorkModels}
-                        >
-                          <ProviderIcon
-                            providerId={OPENWORK_MODELS_PROVIDER_ID}
-                            providerName={OPENWORK_MODELS_PROVIDER_NAME}
-                            className="size-3.5 text-blue-11"
-                            size={14}
-                          />
-                          <span className="min-w-0 flex-1">
-                            <span className="block truncate text-foreground">
-                              {item.title}
-                            </span>
-                            <span className="block truncate text-xs text-muted-foreground">
-                              {item.subtitle} - {denAuth.isSignedIn ? "Subscribe to add this model" : "Sign in to unlock"}
-                            </span>
-                          </span>
-                          <span className="shrink-0 rounded-full border border-blue-6 bg-blue-3 px-1.5 py-0.5 text-[10px] font-medium text-blue-11">
-                            {denAuth.isSignedIn ? "Subscribe" : "Sign in"}
-                          </span>
-                          <ChevronRight className="size-3.5 text-blue-11" />
-                        </CommandItem>
-                      );
-                    }
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent
+              className="h-80 w-72 overflow-hidden p-px **:data-[slot=scroll-area-viewport]:data-has-overflow-y:pe-0.5"
+              data-model-settings-model-content
+            >
+              <Command items={groups} value={search} onValueChange={setSearch}>
+                <CommandHeader>
+                  <CommandInput
+                    ref={searchInputRef}
+                    placeholder="Search models..."
+                    onKeyDown={(event) => event.stopPropagation()}
+                  />
+                </CommandHeader>
+                <CommandEmpty>No models found.</CommandEmpty>
+                <CommandList>
+                  {(group: ModelSelectGroup) => (
+                    <CommandGroup
+                      key={group.value}
+                      items={group.items}
+                    >
+                      <CommandGroupLabel className={group.promo ? "flex items-center gap-1.5 text-foreground" : undefined}>
+                        {group.promo ? <Sparkles className="size-3 text-info-foreground" /> : null}
+                        {group.value}
+                      </CommandGroupLabel>
+                      <CommandCollection>
+                        {(item: ModelSelectItem) => {
+                          if (item.kind === "openwork") {
+                            return (
+                              <CommandItem
+                                className="gap-2 border border-info/30 bg-info-muted/40 data-highlighted:bg-info-muted"
+                                key={item.id}
+                                value={`${OPENWORK_MODELS_PROVIDER_NAME} ${item.title} ${item.id} sign in subscribe`}
+                                onClick={handleOpenWorkModels}
+                              >
+                                <ProviderIcon
+                                  providerId={OPENWORK_MODELS_PROVIDER_ID}
+                                  providerName={OPENWORK_MODELS_PROVIDER_NAME}
+                                  className="size-3.5 text-info-foreground"
+                                  size={14}
+                                />
+                                <span className="min-w-0 flex-1">
+                                  <span className="block truncate text-foreground">
+                                    {item.title}
+                                  </span>
+                                  <span className="block truncate text-xs text-muted-foreground">
+                                    {item.subtitle} - {denAuth.isSignedIn ? "Subscribe to add this model" : "Sign in to unlock"}
+                                  </span>
+                                </span>
+                                <span className="shrink-0 rounded-full border border-info/30 bg-info-muted px-1.5 py-0.5 text-[10px] font-medium text-info-foreground">
+                                  {denAuth.isSignedIn ? "Subscribe" : "Sign in"}
+                                </span>
+                                <ChevronRight className="size-3.5 text-info-foreground" />
+                              </CommandItem>
+                            );
+                          }
 
-                    const option = item.option;
-                    return (
-                      <CommandItem
-                        className="gap-2"
-                        key={item.id}
-                        value={`${option.providerID}:${option.modelID} ${option.title} ${option.description ?? ""}`}
-                        onClick={() => handleSelect(option)}
-                        data-checked={isSameModel(value, option)}
+                          const option = item.option;
+                          return (
+                            <CommandItem
+                              className="gap-2"
+                              key={item.id}
+                              value={`${option.providerID}:${option.modelID} ${option.title} ${option.description ?? ""}`}
+                              onClick={() => handleSelect(option)}
+                              data-checked={isSameModel(value, option)}
+                            >
+                              <ProviderIcon
+                                providerId={option.providerID}
+                                providerName={option.description}
+                                className="size-3.5 opacity-70"
+                                size={14}
+                              />
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate text-foreground">
+                                  {option.title}
+                                </span>
+                                <span className="block truncate text-xs text-muted-foreground">
+                                  {option.description ??
+                                    getProviderDisplayName(option.providerID)}
+                                </span>
+                              </span>
+                            </CommandItem>
+                          );
+                        }}
+                      </CommandCollection>
+                    </CommandGroup>
+                  )}
+                </CommandList>
+                <div className="border-t border-border px-2 py-1.5">
+                  <div className="flex items-center gap-1">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="xs"
+                      className="flex-1 justify-start"
+                      onClick={() => {
+                        onOpenChange(false);
+                        setSearch("");
+                        window.dispatchEvent(new CustomEvent(openModelPickerEvent));
+                      }}
+                    >
+                      <Settings2 data-icon="inline-start" />
+                      All models
+                    </Button>
+                    {showOpenWorkModelsPromo ? (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="xs"
+                        onClick={handleHideOpenWorkModels}
                       >
-                        <ProviderIcon
-                          providerId={option.providerID}
-                          providerName={option.description}
-                          className="size-3.5 opacity-70"
-                          size={14}
-                        />
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-foreground">
-                            {option.title}
-                          </span>
-                          <span className="block truncate text-xs text-muted-foreground">
-                            {option.description ??
-                              getProviderDisplayName(option.providerID)}
-                          </span>
-                        </span>
-                      </CommandItem>
-                    );
-                  }}
-                </CommandCollection>
-              </CommandGroup>
-            )}
-          </CommandList>
-          {/* Link to full model picker */}
-          <div className="border-t border-border px-2 py-1.5">
-            <div className="flex items-center gap-1">
-              <button
-                type="button"
-                className="flex flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
-                onClick={() => {
-                  onOpenChange(false);
-                  setSearch("");
-                  window.dispatchEvent(new CustomEvent(openModelPickerEvent, sessionId ? { detail: { sessionId } } : undefined));
-                }}
-              >
-                <Settings2 className="size-3.5" />
-                All models
-              </button>
-              {showOpenWorkModelsPromo ? (
-                <button
-                  type="button"
-                  className="shrink-0 rounded-md px-2 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
-                  onClick={handleHideOpenWorkModels}
-                >
-                  Hide
-                </button>
-              ) : null}
-            </div>
-          </div>
-        </Command>
-      </PopoverContent>
-    </Popover>
+                        Hide
+                      </Button>
+                    ) : null}
+                  </div>
+                </div>
+              </Command>
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
+          {behaviorItems.length > 0 ? (
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger data-model-settings-effort-trigger>
+                <span>{behaviorTitle}</span>
+                <span className="ms-auto text-muted-foreground">{behaviorLabel}</span>
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent data-model-settings-effort-content>
+                <DropdownMenuGroup>
+                  <DropdownMenuLabel>{behaviorTitle}</DropdownMenuLabel>
+                  <DropdownMenuRadioGroup
+                    value={selectedBehaviorValue}
+                    onValueChange={(nextValue) => {
+                      const option = behaviorItems.find((item) => item.value === nextValue);
+                      if (option) onBehaviorChange(option.value);
+                    }}
+                  >
+                    {behaviorItems.map((option) => (
+                      <DropdownMenuRadioItem
+                        key={option.value}
+                        value={option.value}
+                        data-model-settings-effort-option={option.value}
+                      >
+                        {option.label}
+                      </DropdownMenuRadioItem>
+                    ))}
+                  </DropdownMenuRadioGroup>
+                </DropdownMenuGroup>
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+          ) : null}
+        </DropdownMenuGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }

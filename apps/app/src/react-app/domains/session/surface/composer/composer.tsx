@@ -3,7 +3,15 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import type { Agent } from "@opencode-ai/sdk/v2/client";
 import { AppWindowMac, ArrowUp, Check, ChevronDown, ChevronRight, FileText, ListPlus, LoaderCircle, Paperclip, Plug, Settings, Square, Terminal, X, Zap } from "lucide-react";
 import fuzzysort from "fuzzysort";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Empty, EmptyDescription } from "@/components/ui/empty";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { ScrollArea, ScrollAreaViewport } from "@/components/ui/scroll-area";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Separator } from "@/components/ui/separator";
 import { toast } from "@/components/ui/sonner";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuShortcut, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import {
   OPENWORK_EXTENSION_CATALOG,
@@ -15,11 +23,11 @@ import type { CloudImportedPlugin, CloudImportedPluginFile } from "@/app/cloud/i
 import type { ComposerAttachment, McpServerEntry, McpStatusMap, ModelRef, SkillCard, SlashCommandOption } from "@/app/types";
 import { isMacPlatform } from "@/app/utils";
 import { t } from "@/i18n";
+import { cn } from "@/lib/utils";
 import { isOpenWorkExtensionEnabled, isOpenWorkExtensionHidden, OPENWORK_EXTENSION_STATE_CHANGED } from "@/react-app/domains/settings/extension-state";
 import { useDesktopRestriction } from "@/react-app/domains/cloud/desktop-config-provider";
 import { usePlatform } from "@/react-app/kernel/platform";
 import { resolveExtensionIconUrl } from "@/react-app/design-system/extension-icon-src";
-import { ModelBehaviorSelect } from "@/components/model-behavior-select";
 import { ModelSelect } from "@/components/model-select";
 import { LexicalPromptEditor, type LexicalPromptEditorHandle } from "./editor";
 import { listRunningAppsForMention } from "./app-mentions";
@@ -59,7 +67,7 @@ function isComposerExtensionAvailable(entry: McpDirectoryInfo) {
   return !entry.defaultEnabled || isOpenWorkExtensionEnabled(entry);
 }
 
-type ComposerProps = {
+export type ComposerProps = {
   draft: string;
   mentions: Record<string, ComposerMentionKind>;
   onDraftChange: (value: string) => void;
@@ -88,6 +96,7 @@ type ComposerProps = {
   onRemoveAttachment: (id: string) => void;
   attachmentsEnabled: boolean;
   attachmentsDisabledReason: string | null;
+  modelVariantTitle?: string;
   modelVariantLabel: string;
   modelVariant: string | null;
   modelBehaviorOptions?: { value: string | null; label: string }[];
@@ -118,6 +127,8 @@ type ComposerProps = {
   onRemovePastedText: (id: string) => void;
   isRemoteWorkspace: boolean;
   isSandboxWorkspace: boolean;
+  isStandaloneTask?: boolean;
+  onOpenProjectFolder?: () => void;
   onUploadInboxFiles?: ((files: File[]) => void | Promise<unknown>) | null;
   draftScopeKey?: string;
   compactTopSpacing?: boolean;
@@ -132,6 +143,7 @@ const IMAGE_COMPRESS_MAX_PX = 2048;
 const IMAGE_COMPRESS_QUALITY = 0.82;
 const IMAGE_COMPRESS_TARGET_BYTES = 1_500_000;
 const DEFAULT_AGENT_NAME = "openwork";
+const DEFAULT_AGENT_VALUE = "__openwork_default_agent__";
 
 function isNonDefaultAgent(agent: Agent) {
   return agent.name !== DEFAULT_AGENT_NAME;
@@ -160,6 +172,21 @@ function parseClipboardUriList(clipboard: DataTransfer) {
     links.push(normalized);
   }
   return links;
+}
+
+function dataTransferIncludesDirectory(dataTransfer: DataTransfer | null) {
+  return Array.from(dataTransfer?.items ?? []).some((item) => {
+    if (item.kind !== "file" || !("webkitGetAsEntry" in item)) return false;
+    const getEntry = item.webkitGetAsEntry;
+    if (typeof getEntry !== "function") return false;
+    const entry: unknown = getEntry.call(item);
+    return (
+      typeof entry === "object" &&
+      entry !== null &&
+      "isDirectory" in entry &&
+      entry.isDirectory === true
+    );
+  });
 }
 
 function isImageAttachment(attachment: ComposerAttachment) {
@@ -246,18 +273,18 @@ function toReactMcpStatus(name: string, entry: McpServerEntry, statuses: McpStat
   return "disconnected";
 }
 
-function mcpStatusBadgeClass(status: McpServerStatus) {
+function mcpStatusBadgeVariant(status: McpServerStatus) {
   switch (status) {
     case "connected":
-      return "bg-green-3 text-green-11";
+      return "success";
     case "needs_auth":
     case "needs_client_registration":
-      return "bg-amber-3 text-amber-11";
+      return "warning";
     case "disabled":
     case "disconnected":
-      return "bg-gray-3 text-gray-11";
+      return "secondary";
     default:
-      return "bg-red-3 text-red-11";
+      return "destructive";
   }
 }
 
@@ -294,12 +321,25 @@ function pluginSlashCommandName(file: CloudImportedPluginFile) {
   return null;
 }
 
+function isToolMenuSection(value: string): value is ToolMenuSection {
+  switch (value) {
+    case "agents":
+    case "commands":
+    case "skills":
+    case "mcps":
+    case "extensions":
+      return true;
+    default:
+      return value.startsWith("plugin:");
+  }
+}
+
 export function ReactSessionComposer(props: ComposerProps) {
   const platform = usePlatform();
   const builtInExtensionsDisabled = useDesktopRestriction("allowBuiltInExtensions");
   let fileInput: HTMLInputElement | undefined;
   const [agents, setAgents] = useState<Agent[]>([]);
-  const [agentMenuOpen, setAgentMenuOpen] = useState(false);
+  const [agentSelectOpen, setAgentSelectOpen] = useState(false);
   const [commands, setCommands] = useState<SlashCommandOption[]>([]);
   const [commandsLoading, setCommandsLoading] = useState(false);
   const [skillsLoading, setSkillsLoading] = useState(false);
@@ -337,12 +377,8 @@ export function ReactSessionComposer(props: ComposerProps) {
   const [mcpLoaded, setMcpLoaded] = useState(Boolean(props.mcpServers));
   const [pluginsLoaded, setPluginsLoaded] = useState(Boolean(props.importedPlugins));
   const [, setExtensionStateVersion] = useState(0);
-  const [agentMenuIndex, setAgentMenuIndex] = useState(0);
-  const agentItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const [dropzoneActive, setDropzoneActive] = useState(false);
-  const toolMenuRef = useRef<HTMLDivElement | null>(null);
   const editorRef = useRef<LexicalPromptEditorHandle | null>(null);
-  const agentMenuRef = useRef<HTMLDivElement | null>(null);
   // IME composition guard: while an IME composition is active, we must not
   // treat Enter as a submit. Three signals keep this reliable across WebKit,
   // Chrome, and Safari: event.isComposing, event.keyCode === 229, and the
@@ -424,6 +460,17 @@ export function ReactSessionComposer(props: ComposerProps) {
   const mentionQuery = mentionMatch?.[1] ?? "";
   const nonDefaultAgents = useMemo(() => agents.filter(isNonDefaultAgent), [agents]);
   const showAgentPicker = props.selectedAgent !== null || nonDefaultAgents.length > 0;
+  const agentSelectItems = useMemo(() => [
+    { value: DEFAULT_AGENT_VALUE, label: t("composer.default_agent") },
+    ...nonDefaultAgents.map((agent) => ({
+      value: agent.name,
+      label: agent.name.charAt(0).toUpperCase() + agent.name.slice(1),
+    })),
+  ], [nonDefaultAgents]);
+
+  useEffect(() => {
+    if (!showAgentPicker) setAgentSelectOpen(false);
+  }, [showAgentPicker]);
 
   useEffect(() => {
     setSlashOpen(slashOpenNext);
@@ -434,15 +481,6 @@ export function ReactSessionComposer(props: ComposerProps) {
     setMentionOpen(mentionOpenNext);
     setMenuIndex(0);
   }, [mentionOpenNext, mentionQuery]);
-
-  useEffect(() => {
-    if (!agentMenuOpen && !(toolMenuOpen && toolMenuSection === "agents")) return;
-    void props.listAgents().then(setAgents).catch(() => setAgents([]));
-  }, [agentMenuOpen, toolMenuOpen, toolMenuSection, props.listAgents]);
-
-  useEffect(() => {
-    if (!showAgentPicker) setAgentMenuOpen(false);
-  }, [showAgentPicker]);
 
   useEffect(() => {
     let cancelled = false;
@@ -485,15 +523,6 @@ export function ReactSessionComposer(props: ComposerProps) {
   useEffect(() => {
     listImportedPluginsRef.current = props.listImportedPlugins;
   }, [props.listImportedPlugins]);
-
-  useEffect(() => {
-    setAgentMenuIndex(0);
-  }, [agentMenuOpen]);
-
-  useEffect(() => {
-    const target = agentItemRefs.current[agentMenuIndex];
-    target?.scrollIntoView({ block: "nearest" });
-  }, [agentMenuIndex, agentMenuOpen]);
 
   useEffect(() => {
     commandsLoadVersionRef.current += 1;
@@ -619,34 +648,6 @@ export function ReactSessionComposer(props: ComposerProps) {
       cancelled = true;
     };
   }, [mentionOpen, mentionQuery, props.listAgents, props.recentFiles, props.searchFiles]);
-
-  useEffect(() => {
-    if (!toolMenuOpen) return;
-    const handlePointerDown = (event: MouseEvent) => {
-      const target = event.target;
-      if (!(target instanceof Node)) return;
-      if (toolMenuRef.current?.contains(target)) return;
-      setToolMenuOpen(false);
-    };
-    window.addEventListener("mousedown", handlePointerDown);
-    return () => {
-      window.removeEventListener("mousedown", handlePointerDown);
-    };
-  }, [toolMenuOpen]);
-
-  useEffect(() => {
-    if (!agentMenuOpen) return;
-    const handlePointerDown = (event: MouseEvent) => {
-      const target = event.target;
-      if (!(target instanceof Node)) return;
-      if (agentMenuRef.current?.contains(target)) return;
-      setAgentMenuOpen(false);
-    };
-    window.addEventListener("mousedown", handlePointerDown);
-    return () => {
-      window.removeEventListener("mousedown", handlePointerDown);
-    };
-  }, [agentMenuOpen]);
 
   useEffect(() => {
     if (!toolMenuOpen) return;
@@ -888,7 +889,6 @@ export function ReactSessionComposer(props: ComposerProps) {
 
   const applyAgentSelection = (name: string | null) => {
     props.onSelectAgent(name);
-    setAgentMenuOpen(false);
     setToolMenuOpen(false);
   };
 
@@ -963,7 +963,7 @@ export function ReactSessionComposer(props: ComposerProps) {
     // Escape-to-stop while the agent is busy. Only when no menu is open so
     // Escape can still close menus. First press arms a confirmation prompt
     // for 3s; a second Escape within that window stops the agent.
-    const anyMenuOpen = agentMenuOpen || toolMenuOpen || Boolean(activeMenu);
+    const anyMenuOpen = agentSelectOpen || toolMenuOpen || Boolean(activeMenu);
     if (event.key === "Escape" && props.busy && !anyMenuOpen) {
       event.preventDefault();
       if (escapeArmed) {
@@ -979,32 +979,6 @@ export function ReactSessionComposer(props: ComposerProps) {
       }
       return;
     }
-    if (agentMenuOpen) {
-      const total = nonDefaultAgents.length + 1;
-      if (event.key === "ArrowDown") {
-        event.preventDefault();
-        setAgentMenuIndex((current) => (current + 1) % total);
-        return;
-      }
-      if (event.key === "ArrowUp") {
-        event.preventDefault();
-        setAgentMenuIndex((current) => (current - 1 + total) % total);
-        return;
-      }
-      if (event.key === "Enter" || event.key === "Tab") {
-        event.preventDefault();
-        const selected = agentMenuIndex === 0 ? null : nonDefaultAgents[agentMenuIndex - 1]?.name ?? null;
-        props.onSelectAgent(selected);
-        setAgentMenuOpen(false);
-        return;
-      }
-      if (event.key === "Escape") {
-        event.preventDefault();
-        setAgentMenuOpen(false);
-        return;
-      }
-    }
-
     if (toolMenuOpen && event.key === "Escape") {
       event.preventDefault();
       setToolMenuOpen(false);
@@ -1016,7 +990,7 @@ export function ReactSessionComposer(props: ComposerProps) {
     if (
       (event.key === "ArrowUp" || event.key === "ArrowDown") &&
       !imeActive &&
-      !agentMenuOpen &&
+      !agentSelectOpen &&
       !toolMenuOpen &&
       (!activeMenu || !activeItems.length)
     ) {
@@ -1224,11 +1198,265 @@ export function ReactSessionComposer(props: ComposerProps) {
       }}
     >
       <div className={props.flush ? "" : "max-w-[800px] mx-auto"}>
+        <Collapsible
+          open={toolMenuOpen}
+          onOpenChange={(open) => {
+            if (open) {
+              setMentionOpen(false);
+              setMentionItems([]);
+              setSlashOpen(false);
+            }
+            setToolMenuOpen(open);
+          }}
+          className="w-full"
+        >
         {/* Main composer panel */}
         <div
+          data-slot="composer-panel"
           className={`relative overflow-visible rounded-[18px] border border-dls-border bg-dls-surface transition-all ${panelRoundedClass}`}
         >
           {props.topAccessory ? <div className="relative z-10">{props.topAccessory}</div> : null}
+
+            <CollapsibleContent
+              className="flex h-[min(420px,45vh)] flex-col overflow-hidden rounded-t-[var(--composer-radius)] bg-dls-hover/10 transition-[height] duration-150 ease-out data-starting-style:h-0 data-ending-style:h-0 [&[hidden]:not([hidden='until-found'])]:hidden"
+              data-composer-tools-content
+            >
+                    <Tabs
+                      orientation="vertical"
+                      value={toolMenuSection}
+                      onValueChange={(value) => {
+                        if (typeof value === "string" && isToolMenuSection(value)) {
+                          setToolMenuSection(value);
+                        }
+                      }}
+                      className="grid min-h-0 flex-1 grid-cols-[152px_minmax(0,1fr)] gap-0 sm:grid-cols-[176px_minmax(0,1fr)]"
+                    >
+                      <TabsList className="h-full w-full items-stretch justify-start rounded-none border-r bg-muted/30 p-2 group-data-vertical/tabs:h-full group-data-vertical/tabs:rounded-none">
+                          {([
+                            ["agents", t("composer.agents_label")],
+                            ["commands", t("dashboard.commands")],
+                            ["skills", t("dashboard.skills")],
+                            ["extensions", "Extensions"],
+                            ["mcps", t("composer.mcps_label")],
+                          ] as const).map(([section, label]) => (
+                            <TabsTrigger
+                              key={section}
+                              value={section}
+                              className="mb-1 h-auto flex-none justify-between py-2.5"
+                            >
+                              <span className="truncate">{label}</span>
+                              <ChevronRight className="text-muted-foreground" />
+                            </TabsTrigger>
+                          ))}
+                          {pluginSections.length > 0 ? <Separator className="my-2" /> : null}
+                          {pluginSections.map(({ section, plugin }) => (
+                            <TabsTrigger
+                              key={plugin.pluginId}
+                              value={section}
+                              className="mb-1 h-auto flex-none justify-between py-2.5"
+                            >
+                              <span className="truncate">{plugin.name}</span>
+                              <ChevronRight className="text-muted-foreground" />
+                            </TabsTrigger>
+                          ))}
+                      </TabsList>
+                      <div className="flex min-h-0 min-w-0 flex-col">
+                        <div className="flex justify-end p-2">
+                            <Button
+                              variant="outline"
+                              size="xs"
+                              onClick={() => {
+                                setToolMenuOpen(false);
+                                openToolMenuSettings();
+                              }}
+                            >
+                              <Settings data-icon="inline-start" />
+                              {t("composer.configure")}
+                            </Button>
+                        </div>
+                        <Separator />
+                        <ScrollArea className="min-h-0 flex-1">
+                          <ScrollAreaViewport className="p-2">
+                          <TabsContent value="agents">
+                            <div className="grid gap-1">
+                              <Button
+                                variant="ghost"
+                                className={cn("h-auto w-full justify-start px-3 py-2.5 text-left", props.selectedAgent === null && "bg-muted")}
+                                onClick={() => applyAgentSelection(null)}
+                              >
+                                <Zap data-icon="inline-start" className="text-muted-foreground" />
+                                <span className="min-w-0 flex-1 truncate">{t("composer.default_agent")}</span>
+                                {props.selectedAgent === null ? <Check data-icon="inline-end" className="text-muted-foreground" /> : null}
+                              </Button>
+                              {nonDefaultAgents.map((agent) => {
+                                const active = props.selectedAgent === agent.name;
+                                return (
+                                  <Button
+                                    key={agent.name}
+                                    variant="ghost"
+                                    className={cn("h-auto w-full justify-start px-3 py-2.5 text-left", active && "bg-muted")}
+                                    onClick={() => applyAgentSelection(agent.name)}
+                                  >
+                                    <Zap data-icon="inline-start" className="text-muted-foreground" />
+                                    <div className="min-w-0 flex-1">
+                                      <div className="truncate">{agent.name.charAt(0).toUpperCase() + agent.name.slice(1)}</div>
+                                      {agent.description ? <div className="truncate text-xs font-normal text-muted-foreground">{agent.description}</div> : null}
+                                    </div>
+                                    {active ? <Check data-icon="inline-end" className="text-muted-foreground" /> : null}
+                                  </Button>
+                                );
+                              })}
+                            </div>
+                          </TabsContent>
+                          <TabsContent value="commands">
+                          {
+                            toolCommandItems.length > 0 ? (
+                              <div className="grid gap-1">
+                                {toolCommandItems.map((command) => (
+                                  <Button
+                                    key={command.id}
+                                    variant="ghost"
+                                    className="h-auto w-full justify-start px-3 py-2.5 text-left"
+                                    onClick={() => applyCommandSelection(command)}
+                                  >
+                                    <Terminal data-icon="inline-start" className="text-muted-foreground" />
+                                    <div className="min-w-0">
+                                      <div className="truncate">/{command.name}</div>
+                                      {command.description ? <div className="truncate text-xs font-normal text-muted-foreground">{command.description}</div> : null}
+                                    </div>
+                                  </Button>
+                                ))}
+                              </div>
+                            ) : (
+                              <Empty variant="ghost" className="min-h-24 p-4">
+                                <EmptyDescription>{!commandsLoaded && commandsLoading ? t("composer.loading_commands") : t("composer.no_commands")}</EmptyDescription>
+                              </Empty>
+                            )
+                          }
+                          </TabsContent>
+                          <TabsContent value="skills">
+                          {
+                            (skills.length > 0 || toolSkillItems.length > 0) ? (
+                              <div className="grid gap-1">
+                                {[...toolSkillItems, ...skills.filter((skill) => !toolSkillItems.some((command) => command.name === skill.name)).map((skill) => ({ id: `skill:${skill.name}`, name: skill.name, description: skill.description, source: "skill" as const }))].map((command) => (
+                                  <Button
+                                    key={command.id}
+                                    variant="ghost"
+                                    className="h-auto w-full justify-start px-3 py-2.5 text-left"
+                                    onClick={() => applyCommandSelection(command)}
+                                  >
+                                    <Zap data-icon="inline-start" className="text-muted-foreground" />
+                                    <div className="min-w-0">
+                                      <div className="truncate">/{command.name}</div>
+                                      {command.description ? <div className="truncate text-xs font-normal text-muted-foreground">{command.description}</div> : null}
+                                    </div>
+                                  </Button>
+                                ))}
+                              </div>
+                            ) : (
+                              <Empty variant="ghost" className="min-h-24 p-4">
+                                <EmptyDescription>{(!skillsLoaded && skillsLoading) || (!commandsLoaded && commandsLoading) ? t("composer.loading_commands") : t("context_panel.no_skills")}</EmptyDescription>
+                              </Empty>
+                            )
+                          }
+                          </TabsContent>
+                          <TabsContent value="mcps">
+                          {
+                            activeMcpItems.length > 0 ? (
+                              <div className="grid gap-1">
+                                {activeMcpItems.map(({ entry, status }) => (
+                                  <div key={entry.name} className="flex items-start gap-3 rounded-2xl px-3 py-2.5">
+                                    <Plug className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                                    <div className="min-w-0 flex-1">
+                                      <div className="flex items-center justify-between gap-3">
+                                        <div className="truncate text-sm font-medium">{entry.name}</div>
+                                        <Badge variant={mcpStatusBadgeVariant(status)}>
+                                          {formatMcpStatusLabel(status)}
+                                        </Badge>
+                                      </div>
+                                      <div className="truncate text-xs text-muted-foreground">{entry.config.type === "remote" ? entry.config.url ?? entry.config.command?.join(" ") ?? "Remote MCP" : entry.config.command?.join(" ") ?? "Local MCP"}</div>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <Empty variant="ghost" className="min-h-24 p-4">
+                                <EmptyDescription>{!mcpLoaded && mcpLoading ? t("composer.loading_commands") : (mcpStatus ?? t("context_panel.no_mcp"))}</EmptyDescription>
+                              </Empty>
+                            )
+                          }
+                          </TabsContent>
+                          <TabsContent value="extensions">
+                          {
+                            composerExtensions.length > 0 ? (
+                              <div className="grid gap-1">
+                                {composerExtensions.map((entry) => (
+                                  <Button
+                                    key={entry.id ?? entry.serverName ?? entry.name}
+                                    variant="ghost"
+                                    className="h-auto w-full justify-start px-3 py-2.5 text-left"
+                                    onClick={() => applyExtensionSelection(entry)}
+                                  >
+                                    <div className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg border bg-background shadow-sm">
+                                      {extensionIcon(entry, 16)}
+                                    </div>
+                                    <div className="min-w-0 flex-1">
+                                      <div className="flex items-center justify-between gap-3">
+                                        <div className="truncate">{entry.name}</div>
+                                        {entry.defaultEnabled ? <Badge variant="success">Enabled</Badge> : null}
+                                      </div>
+                                      <div className="truncate text-xs font-normal text-muted-foreground">{entry.description}</div>
+                                    </div>
+                                  </Button>
+                                ))}
+                              </div>
+                            ) : (
+                              <Empty variant="ghost" className="min-h-24 p-4">
+                                <EmptyDescription>No extensions enabled. Open Extensions to enable them.</EmptyDescription>
+                              </Empty>
+                            )
+                          }
+                          </TabsContent>
+                          {pluginSections.map(({ section, plugin }) => (
+                            <TabsContent key={plugin.pluginId} value={section}>
+                            {plugin.files.length > 0 ? (
+                              <div className="grid gap-1">
+                                {plugin.files.map((file) => (
+                                  <Button
+                                    key={`${file.configObjectId}:${file.path}`}
+                                    variant="ghost"
+                                    className="h-auto w-full justify-start px-3 py-2.5 text-left"
+                                    onClick={() => applyPluginFileSelection(file)}
+                                  >
+                                    <FileText data-icon="inline-start" className="text-muted-foreground" />
+                                    <div className="min-w-0 flex-1">
+                                      <div className="flex items-center justify-between gap-3">
+                                        <div className="truncate">{file.title}</div>
+                                        <Badge variant="secondary">{formatPluginObjectType(file.objectType)}</Badge>
+                                      </div>
+                                    </div>
+                                  </Button>
+                                ))}
+                              </div>
+                            ) : (
+                              <Empty variant="ghost" className="min-h-24 p-4">
+                                <EmptyDescription>
+                                  {!pluginsLoaded && pluginsLoading ? t("composer.loading_commands") : "No plugin files imported yet."}
+                                </EmptyDescription>
+                              </Empty>
+                            )}
+                            </TabsContent>
+                          ))}
+                          </ScrollAreaViewport>
+                        </ScrollArea>
+                      </div>
+                    </Tabs>
+                    <div
+                      aria-hidden="true"
+                      data-slot="composer-tools-separator"
+                      className="h-2 shrink-0 border-t border-dls-border bg-dls-surface"
+                    />
+            </CollapsibleContent>
 
           {renderMentionMenu()}
           {renderSlashMenu()}
@@ -1250,7 +1478,7 @@ export function ReactSessionComposer(props: ComposerProps) {
             </div>
           ) : null}
 
-          <div className="px-4 pt-3 pb-2">
+            <div data-slot="composer-body" className="px-4 pt-3 pb-2">
             {/* Editor */}
             <LexicalPromptEditor
               ref={editorRef}
@@ -1334,10 +1562,30 @@ export function ReactSessionComposer(props: ComposerProps) {
                 setDropzoneActive(false);
               }}
               onDrop={(event) => {
+                const includesDirectory = dataTransferIncludesDirectory(event.dataTransfer);
                 const files = Array.from(event.dataTransfer?.files ?? []);
                 setDropzoneActive(false);
-                if (!files.length) return;
+                if (!files.length && !includesDirectory) return;
                 event.preventDefault();
+                if (includesDirectory) {
+                  toast.warning(
+                    props.isStandaloneTask
+                      ? "Folders are project context"
+                      : "This project already has folder context",
+                    {
+                      description: props.isStandaloneTask
+                        ? "Tasks can attach files, but folders belong to Projects."
+                        : "Attach individual files here, or open the folder as another project.",
+                      action: props.onOpenProjectFolder
+                        ? {
+                            label: "Open as project",
+                            onClick: props.onOpenProjectFolder,
+                          }
+                        : undefined,
+                    },
+                  );
+                  return;
+                }
                 void addAttachments(files);
               }}
             />
@@ -1372,340 +1620,66 @@ export function ReactSessionComposer(props: ComposerProps) {
                 >
                   <Paperclip size={16} />
                 </button>
-                <div
-                  ref={toolMenuRef}
-                  className="relative"
-                  onMouseDown={(event) => {
-                    const target = event.target;
-                    if (target instanceof Element && target.closest("button")) event.preventDefault();
-                  }}
-                >
-                  <button
-                    type="button"
-                    className={`inline-flex h-9 max-h-9 w-9 items-center justify-center rounded-md transition-colors ${toolMenuOpen ? "bg-gray-3 text-gray-12" : "text-gray-10 hover:bg-gray-3"}`}
-                    onClick={() => {
-                      setMentionOpen(false);
-                      setMentionItems([]);
-                      setSlashOpen(false);
-                      setToolMenuOpen((value) => !value);
-                    }}
-                    aria-expanded={toolMenuOpen}
-                    aria-haspopup="dialog"
-                    title={t("composer.tools_label")}
-                  >
-                    <Plug size={16} />
-                  </button>
-                  {toolMenuOpen ? (
-                    <div className="absolute bottom-full left-0 z-40 mb-3 w-[min(calc(100vw-2.5rem),34rem)] overflow-hidden rounded-[22px] border border-dls-border bg-dls-surface shadow-[var(--dls-shell-shadow)]">
-                      <div className="grid grid-cols-[152px_minmax(0,1fr)] sm:grid-cols-[176px_minmax(0,1fr)]">
-                        <div className="border-r border-dls-border bg-gray-2/30 p-2">
-                          {([
-                            ["agents", t("composer.agents_label")],
-                            ["commands", t("dashboard.commands")],
-                            ["skills", t("dashboard.skills")],
-                            ["extensions", "Extensions"],
-                            ["mcps", t("composer.mcps_label")],
-                          ] as const).map(([section, label]) => (
-                            <button
-                              key={section}
-                              type="button"
-                              className={`mb-1 flex w-full items-center justify-between rounded-[16px] px-3 py-2.5 text-left text-sm transition-colors ${toolMenuSection === section ? "bg-gray-3 text-gray-12" : "text-gray-11 hover:bg-gray-2"}`}
-                              onClick={() => setToolMenuSection(section)}
-                            >
-                              <span className="truncate">{label}</span>
-                              <ChevronRight size={14} className="shrink-0 text-gray-9" />
-                            </button>
-                          ))}
-                          {pluginSections.length > 0 ? <div className="my-2 border-t border-dls-border" /> : null}
-                          {pluginSections.map(({ section, plugin }) => (
-                            <button
-                              key={plugin.pluginId}
-                              type="button"
-                              className={`mb-1 flex w-full items-center justify-between rounded-[16px] px-3 py-2.5 text-left text-sm transition-colors ${toolMenuSection === section ? "bg-gray-3 text-gray-12" : "text-gray-11 hover:bg-gray-2"}`}
-                              onClick={() => setToolMenuSection(section)}
-                            >
-                              <span className="truncate">{plugin.name}</span>
-                              <ChevronRight size={14} className="shrink-0 text-gray-9" />
-                            </button>
-                          ))}
-                        </div>
-                        <div className="max-h-72 overflow-y-auto p-2">
-                          <div className="mb-2 flex justify-end border-b border-dls-border px-1 pb-2">
-                            <button
-                              type="button"
-                              className="inline-flex items-center gap-1.5 rounded-full border border-dls-border px-3 py-1.5 text-[12px] font-medium text-gray-11 transition-colors hover:bg-gray-2"
-                              onClick={() => {
-                                setToolMenuOpen(false);
-                                openToolMenuSettings();
-                              }}
-                            >
-                              <Settings size={12} />
-                              {t("composer.configure")}
-                            </button>
-                          </div>
-                          {toolMenuSection === "agents" ? (
-                            <div className="grid gap-1">
-                              <button
-                                type="button"
-                                className={`flex w-full items-start gap-3 rounded-[16px] px-3 py-2.5 text-left transition-colors hover:bg-gray-2/70 ${props.selectedAgent === null ? "bg-gray-2 text-gray-12" : "text-gray-11"}`}
-                                onClick={() => applyAgentSelection(null)}
-                              >
-                                <Zap size={14} className="mt-0.5 shrink-0 text-gray-9" />
-                                <div className="min-w-0 flex-1 truncate text-xs font-semibold">{t("composer.default_agent")}</div>
-                                {props.selectedAgent === null ? <Check size={14} className="mt-0.5 shrink-0 text-gray-10" /> : null}
-                              </button>
-                              {nonDefaultAgents.map((agent) => {
-                                const active = props.selectedAgent === agent.name;
-                                return (
-                                  <button
-                                    key={agent.name}
-                                    type="button"
-                                    className={`flex w-full items-start gap-3 rounded-[16px] px-3 py-2.5 text-left transition-colors hover:bg-gray-2/70 ${active ? "bg-gray-2 text-gray-12" : "text-gray-11"}`}
-                                    onClick={() => applyAgentSelection(agent.name)}
-                                  >
-                                    <Zap size={14} className="mt-0.5 shrink-0 text-gray-9" />
-                                    <div className="min-w-0 flex-1">
-                                      <div className="truncate text-xs font-semibold">{agent.name.charAt(0).toUpperCase() + agent.name.slice(1)}</div>
-                                      {agent.description ? <div className="truncate text-xs text-gray-10">{agent.description}</div> : null}
-                                    </div>
-                                    {active ? <Check size={14} className="mt-0.5 shrink-0 text-gray-10" /> : null}
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          ) : null}
-                          {toolMenuSection === "commands" ? (
-                            toolCommandItems.length > 0 ? (
-                              <div className="grid gap-1">
-                                {toolCommandItems.map((command) => (
-                                  <button
-                                    key={command.id}
-                                    type="button"
-                                    className="flex w-full items-start gap-3 rounded-[16px] px-3 py-2.5 text-left text-gray-11 transition-colors hover:bg-gray-2/70"
-                                    onClick={() => applyCommandSelection(command)}
-                                  >
-                                    <Terminal size={14} className="mt-0.5 shrink-0 text-gray-9" />
-                                    <div className="min-w-0">
-                                      <div className="truncate text-xs font-semibold text-gray-11">/{command.name}</div>
-                                      {command.description ? <div className="truncate text-xs text-gray-10">{command.description}</div> : null}
-                                    </div>
-                                  </button>
-                                ))}
-                              </div>
-                            ) : (
-                              <div className="px-3 py-2 text-xs text-gray-10">
-                                {!commandsLoaded && commandsLoading ? t("composer.loading_commands") : t("composer.no_commands")}
-                              </div>
-                            )
-                          ) : null}
-                          {toolMenuSection === "skills" ? (
-                            skillMenuItems.length > 0 ? (
-                              <div className="grid gap-1">
-                                {skillMenuItems.map((skill) => (
-                                  <button
-                                    key={`${skill.origin ?? "local"}:${skill.path || skill.name}`}
-                                    type="button"
-                                    className="flex min-w-0 w-full items-start gap-3 rounded-[16px] px-3 py-2.5 text-left text-gray-11 transition-colors hover:bg-gray-2/70"
-                                    onClick={() => applySkillSelection(skill)}
-                                  >
-                                    <Zap size={14} className="mt-0.5 shrink-0 text-gray-9" />
-                                    <div className="min-w-0 flex-1">
-                                      <div className="flex items-center justify-between gap-3">
-                                        <div className="min-w-0 flex-1 truncate text-xs font-semibold text-gray-11">
-                                          /{skillMenuSlashCommandName(skill)}
-                                        </div>
-                                        {isLocalCapability(skill.origin) ? (
-                                          <span className="shrink-0 rounded-full bg-gray-3 px-2 py-0.5 text-[10px] font-medium text-gray-11">
-                                            {t("composer.source_local")}
-                                          </span>
-                                        ) : null}
-                                      </div>
-                                      {skill.description ? <div className="truncate text-xs text-gray-10">{skill.description}</div> : null}
-                                      {skill.origin === "openwork-connect" ? (
-                                        <div className="truncate text-[10px] text-gray-9">
-                                          {[skill.marketplaceName, skill.pluginName].filter(Boolean).join(" · ")}
-                                        </div>
-                                      ) : null}
-                                    </div>
-                                  </button>
-                                ))}
-                              </div>
-                            ) : (
-                              <div className="px-3 py-2 text-xs text-gray-10">
-                                {(!skillsLoaded && skillsLoading) || (!commandsLoaded && commandsLoading) ? t("composer.loading_commands") : t("context_panel.no_skills")}
-                              </div>
-                            )
-                          ) : null}
-                          {toolMenuSection === "mcps" ? (
-                            activeMcpItems.length > 0 ? (
-                              <div className="grid gap-1">
-                                {activeMcpItems.map(({ entry, status }) => (
-                                  <div key={entry.id ?? entry.name} className="flex items-start gap-3 rounded-[16px] px-3 py-2.5 text-gray-11">
-                                    <Plug size={14} className="mt-0.5 shrink-0 text-gray-9" />
-                                    <div className="min-w-0 flex-1">
-                                      <div className="flex items-center justify-between gap-3">
-                                        <div className="truncate text-xs font-semibold text-gray-11">{entry.name}</div>
-                                        <div className="flex shrink-0 items-center gap-1">
-                                          {isLocalCapability(entry.origin) ? (
-                                            <span className="rounded-full bg-gray-3 px-2 py-0.5 text-[10px] font-medium text-gray-11">
-                                              {t("composer.source_local")}
-                                            </span>
-                                          ) : null}
-                                          <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${mcpStatusBadgeClass(status)}`}>
-                                            {formatMcpStatusLabel(status)}
-                                          </span>
-                                        </div>
-                                      </div>
-                                      <div className="truncate text-xs text-gray-10">
-                                        {entry.origin === "openwork-connect"
-                                          ? [entry.marketplaceName, entry.pluginName].filter(Boolean).join(" · ")
-                                            || entry.config.url
-                                            || "Remote MCP"
-                                          : entry.config.type === "remote"
-                                            ? entry.config.url ?? entry.config.command?.join(" ") ?? "Remote MCP"
-                                            : entry.config.command?.join(" ") ?? "Local MCP"}
-                                      </div>
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
-                            ) : (
-                              <div className="px-3 py-2 text-xs text-gray-10">
-                                {!mcpLoaded && mcpLoading ? t("composer.loading_commands") : (mcpStatus ?? t("context_panel.no_mcp"))}
-                              </div>
-                            )
-                          ) : null}
-                          {toolMenuSection === "extensions" ? (
-                            composerExtensions.length > 0 ? (
-                              <div className="grid gap-1">
-                                {composerExtensions.map((entry) => (
-                                  <button
-                                    key={entry.id ?? entry.serverName ?? entry.name}
-                                    type="button"
-                                    className="flex w-full items-start gap-3 rounded-[16px] px-3 py-2.5 text-left text-gray-11 transition-colors hover:bg-gray-2/70"
-                                    onClick={() => applyExtensionSelection(entry)}
-                                  >
-                                    <div className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg border border-dls-border bg-white shadow-sm">
-                                      {extensionIcon(entry, 16)}
-                                    </div>
-                                    <div className="min-w-0 flex-1">
-                                      <div className="flex items-center justify-between gap-3">
-                                        <div className="truncate text-xs font-semibold text-gray-11">{entry.name}</div>
-                                        {entry.defaultEnabled ? (
-                                          <span className="shrink-0 rounded-full bg-green-3 px-2 py-0.5 text-[10px] font-medium text-green-11">Enabled</span>
-                                        ) : null}
-                                      </div>
-                                      <div className="truncate text-xs text-gray-10">{entry.description}</div>
-                                    </div>
-                                  </button>
-                                ))}
-                              </div>
-                            ) : (
-                              <div className="px-3 py-2 text-xs text-gray-10">No extensions enabled. Open Extensions to enable them.</div>
-                            )
-                          ) : null}
-                          {activePlugin ? (
-                            activePlugin.files.length > 0 ? (
-                              <div className="grid gap-1">
-                                {activePlugin.files.map((file) => (
-                                  <button
-                                    key={`${file.configObjectId}:${file.path}`}
-                                    type="button"
-                                    className="flex w-full items-start gap-3 rounded-[16px] px-3 py-2.5 text-left text-gray-11 transition-colors hover:bg-gray-2/70"
-                                    onClick={() => applyPluginFileSelection(file)}
-                                  >
-                                    <FileText size={14} className="mt-0.5 shrink-0 text-gray-9" />
-                                    <div className="min-w-0 flex-1">
-                                      <div className="flex items-center justify-between gap-3">
-                                        <div className="truncate text-xs font-semibold text-gray-11">{file.title}</div>
-                                        <span className="shrink-0 rounded-full bg-gray-3 px-2 py-0.5 text-[10px] font-medium text-gray-11">
-                                          {formatPluginObjectType(file.objectType)}
-                                        </span>
-                                      </div>
-                                    </div>
-                                  </button>
-                                ))}
-                              </div>
-                            ) : (
-                              <div className="px-3 py-2 text-xs text-gray-10">No plugin files imported yet.</div>
-                            )
-                          ) : toolMenuSection.startsWith("plugin:") ? (
-                            <div className="px-3 py-2 text-xs text-gray-10">
-                              {!pluginsLoaded && pluginsLoading ? t("composer.loading_commands") : "Plugin files are unavailable."}
-                            </div>
-                          ) : null}
-                        </div>
-                      </div>
-                    </div>
-                  ) : null}
-                </div>
+                <CollapsibleTrigger
+                  render={
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="text-muted-foreground hover:bg-muted"
+                      title={t("composer.tools_label")}
+                      aria-label={t("composer.tools_label")}
+                      data-composer-tools-trigger
+                    >
+                      <Plug data-icon="inline-start" />
+                    </Button>
+                  }
+                />
 
                 {/* Agent picker (#2101/#1971). Shows the active agent and lets
                     the user switch without leaving the composer. The same
                     selection is reachable from the plug menu, the command
                     palette ("Switch agent"), and @agent mentions. */}
-                <div ref={agentMenuRef} className={showAgentPicker ? "relative" : "hidden"}>
-                  <button
-                    type="button"
-                    className="flex h-9 max-h-9 items-center gap-1 rounded-md px-1.5 text-[12px] font-medium text-gray-10 transition-colors hover:bg-gray-3 hover:text-gray-12"
-                    onClick={() => setAgentMenuOpen((value) => !value)}
+                {showAgentPicker ? (
+                  <Select
+                    open={agentSelectOpen}
+                    onOpenChange={setAgentSelectOpen}
+                    value={props.selectedAgent ?? DEFAULT_AGENT_VALUE}
+                    items={agentSelectItems}
+                    onValueChange={(value) => {
+                      if (value === null) return;
+                      applyAgentSelection(value === DEFAULT_AGENT_VALUE ? null : value);
+                    }}
                     disabled={props.busy}
-                    aria-expanded={agentMenuOpen}
-                    title={t("composer.agent_label")}
                   >
-                    <span className="max-w-[140px] truncate">{props.agentLabel}</span>
-                    <ChevronDown size={13} />
-                  </button>
-                  {agentMenuOpen ? (
-                    <div className="absolute left-0 bottom-full z-40 mb-2 w-64 overflow-hidden rounded-[18px] border border-dls-border bg-dls-surface shadow-[var(--dls-shell-shadow)]">
-                      <div className="border-b border-dls-border px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-gray-10">
-                        {t("composer.agent_label")}
-                      </div>
-                      <div
-                        role="presentation"
-                        className="max-h-64 space-y-1 overflow-y-auto p-2"
-                        onMouseDown={(event) => event.preventDefault()}
-                      >
-                        <button
-                          ref={(element) => {
-                            agentItemRefs.current[0] = element;
-                          }}
-                          type="button"
-                          className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-xs transition-colors ${!props.selectedAgent || agentMenuIndex === 0 ? "bg-gray-2 text-gray-12" : "text-gray-11 hover:bg-gray-2/70"}`}
-                          onMouseEnter={() => setAgentMenuIndex(0)}
-                          onMouseDown={(event) => {
-                            event.preventDefault();
-                            applyAgentSelection(null);
-                          }}
-                        >
-                          <span>{t("composer.default_agent")}</span>
-                          {!props.selectedAgent ? <Check size={14} className="text-gray-10" /> : null}
-                        </button>
-                        {nonDefaultAgents.map((agent, index) => {
-                          const active = props.selectedAgent === agent.name;
-                          return (
-                            <button
-                              key={agent.name}
-                              ref={(element) => {
-                                agentItemRefs.current[index + 1] = element;
-                              }}
-                              type="button"
-                              className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-xs transition-colors ${active || agentMenuIndex === index + 1 ? "bg-gray-2 text-gray-12" : "text-gray-11 hover:bg-gray-2/70"}`}
-                              onMouseEnter={() => setAgentMenuIndex(index + 1)}
-                              onMouseDown={(event) => {
-                                event.preventDefault();
-                                applyAgentSelection(agent.name);
-                              }}
-                            >
-                              <span className="truncate">{agent.name.charAt(0).toUpperCase() + agent.name.slice(1)}</span>
-                              {active ? <Check size={14} className="text-gray-10" /> : null}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  ) : null}
-                </div>
+                    <SelectTrigger
+                      size="sm"
+                      aria-label={t("composer.agent_label")}
+                      title={t("composer.agent_label")}
+                      className="max-w-44 border-0 bg-transparent px-2 shadow-none hover:bg-accent"
+                      data-composer-agent-trigger
+                    >
+                      <SelectValue>{props.agentLabel}</SelectValue>
+                    </SelectTrigger>
+                    <SelectContent
+                      side="top"
+                      sideOffset={8}
+                      align="start"
+                      className="w-64"
+                      data-composer-agent-content
+                    >
+                      <SelectGroup>
+                        <SelectLabel>{t("composer.agent_label")}</SelectLabel>
+                        <SelectItem value={DEFAULT_AGENT_VALUE}>{t("composer.default_agent")}</SelectItem>
+                        {nonDefaultAgents.map((agent) => (
+                          <SelectItem key={agent.name} value={agent.name}>
+                            {agent.name.charAt(0).toUpperCase() + agent.name.slice(1)}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                ) : null}
 
                 <ModelSelect
                   open={props.modelPickerOpen}
@@ -1713,6 +1687,13 @@ export function ReactSessionComposer(props: ComposerProps) {
                   onOpenChange={props.onModelPickerOpenChange}
                   onChange={(model) => {
                     if (!props.steering) props.onModelChange(model);
+                  }}
+                  behaviorTitle={props.modelVariantTitle ?? "Thinking"}
+                  behaviorLabel={props.modelVariantLabel}
+                  behaviorValue={props.modelVariant}
+                  behaviorOptions={props.modelBehaviorOptions}
+                  onBehaviorChange={(value) => {
+                    if (!props.steering) props.onModelVariantChange(value);
                   }}
                   disabled={props.steering}
                   sessionId={props.sessionId}
@@ -1733,15 +1714,6 @@ export function ReactSessionComposer(props: ComposerProps) {
                   </span>
                 ) : null}
 
-                <ModelBehaviorSelect
-                  value={props.modelVariant}
-                  label={props.modelVariantLabel}
-                  options={props.modelBehaviorOptions}
-                  onChange={(value) => {
-                    if (!props.steering) props.onModelVariantChange(value);
-                  }}
-                  disabled={props.steering}
-                />
               </div>
 
               {/*
@@ -1847,6 +1819,7 @@ export function ReactSessionComposer(props: ComposerProps) {
           </div>
         </div>
 
+        </Collapsible>
       </div>
     </div>
   );
