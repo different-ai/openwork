@@ -9,12 +9,10 @@ export type ConfiguredInstallerArtifact = {
 }
 
 export const DEFAULT_INSTALLER_RELEASE_REPO = "different-ai/openwork"
-// First GitHub release tag on different-ai/openwork that carries the OpenWork-Installer-* assets;
-// earlier tags have no installer assets so redirects to them 404.
-export const FIRST_GENERIC_INSTALLER_RELEASE = "0.17.37"
-// Enterprise artifacts are introduced by this release line. Organization
-// policies pinned below it must not be redirected to an asset that never
-// existed.
+// First GitHub release tag on different-ai/openwork that carries the
+// openwork-enterprise-* assets; earlier tags have no enterprise artifacts so
+// redirects to them 404. Same shape as the retired OpenWork-Installer-* floor
+// it replaces: one recorded release line, no GitHub lookup on the redirect path.
 export const FIRST_ENTERPRISE_DESKTOP_RELEASE = "0.18.4"
 
 export function installerReleaseAssetUrl(
