@@ -6,9 +6,9 @@ import {
   $isRangeSelection,
   type LexicalNode,
 } from "lexical";
-import { PASTED_TEXT_INLINE_STYLE, splitPastedText } from "./pasted-text";
+import { splitPastedText } from "./pasted-text";
 
-function createStyledPastedTextNodes(text: string) {
+function createPastedTextNodes(text: string) {
   const nodes: LexicalNode[] = [];
   for (const segment of splitPastedText(text)) {
     if (segment.kind === "line-break") {
@@ -17,7 +17,6 @@ function createStyledPastedTextNodes(text: string) {
       nodes.push($createTabNode());
     } else {
       const textNode = $createTextNode(segment.text);
-      textNode.setStyle(PASTED_TEXT_INLINE_STYLE);
       nodes.push(textNode);
     }
   }
@@ -25,10 +24,10 @@ function createStyledPastedTextNodes(text: string) {
   return nodes;
 }
 
-export function insertStyledPastedText(text: string) {
+export function insertPastedText(text: string) {
   const selection = $getSelection();
   if (!$isRangeSelection(selection)) return false;
-  selection.insertNodes(createStyledPastedTextNodes(text));
+  selection.insertNodes(createPastedTextNodes(text));
   const nextSelection = $getSelection();
   if ($isRangeSelection(nextSelection)) nextSelection.setStyle("");
   return true;
