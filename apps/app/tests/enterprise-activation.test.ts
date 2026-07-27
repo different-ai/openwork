@@ -20,6 +20,14 @@ const forcedSignInPageSource = readFileSync(
   new URL("../src/react-app/domains/cloud/forced-signin-page.tsx", import.meta.url),
   "utf8",
 );
+const providersSource = readFileSync(
+  new URL("../src/react-app/shell/providers.tsx", import.meta.url),
+  "utf8",
+);
+const connectConfirmDialogSource = readFileSync(
+  new URL("../src/react-app/domains/cloud/connect-confirm-dialog.tsx", import.meta.url),
+  "utf8",
+);
 
 const publicDistribution = {
   flavor: "public" as const,
@@ -96,6 +104,15 @@ describe("enterprise desktop activation", () => {
     expect(signInStart).toBeGreaterThan(activationStart);
     expect(signInEnd).toBeGreaterThan(signInStart);
     expect(activationEnd).toBeGreaterThan(signInEnd);
+  });
+
+  test("keeps the branded connect-link activation consumer mounted before activation", () => {
+    expect(providersSource).toContain(
+      "return <ConnectLinkProvider>{children}</ConnectLinkProvider>;",
+    );
+    expect(connectConfirmDialogSource).toContain(
+      "const trustedBrandUrl = transport ? claims?.brand.iconUrl ?? claims?.brand.logoUrl : null;",
+    );
   });
 
   test("matches the desktop login gate without guessing a Den portal URL", () => {

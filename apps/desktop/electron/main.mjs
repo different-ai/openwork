@@ -1005,11 +1005,28 @@ async function acceptConnectLink(rawUrl) {
 }
 
 async function persistConnectLinkClaims(claims) {
-  return persistConnectLinkBranding(claims, {
+  const previous = workspaceStore.readDesktopBootstrapConfigSync();
+  const config = await persistConnectLinkBranding(claims, {
     persistBootstrap: (config) => workspaceStore.setDesktopBootstrapConfig(config),
     applyBrandIconUrl: (iconUrl) => applyBrandIconUrl(iconUrl).catch((error) =>
       brandIconFailure("connect-apply-failed", error)),
+    enterpriseActivation: DESKTOP_DISTRIBUTION.flavor === "enterprise"
+      ? {
+          activatedAt: new Date().toISOString(),
+          denBaseUrl: claims.den.baseUrl,
+        }
+      : null,
   });
+  if (
+    desktopActivationRequired(DESKTOP_DISTRIBUTION, previous)
+    && !desktopActivationRequired(DESKTOP_DISTRIBUTION, config)
+  ) {
+    await uiControlServer.start().catch((error) => {
+      console.warn("[ui-control] failed to start", error);
+    });
+    await runtimeManager.prepareFreshRuntime();
+  }
+  return config;
 }
 
 function normalizePlatform(value) {

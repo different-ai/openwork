@@ -50,7 +50,7 @@ type AppProvidersProps = {
 function EnterpriseAwareAppProviders({ children }: AppProvidersProps) {
   const activationRequired = useEnterpriseActivationRequired();
   if (activationRequired) {
-    return children;
+    return <ConnectLinkProvider>{children}</ConnectLinkProvider>;
   }
   return (
     <>

@@ -119,8 +119,10 @@ describe("enterpriseActivationComplete", () => {
 });
 
 describe("enterprisePreactivationCommandAllowed", () => {
-  it("allows only bootstrap, build metadata, and the Den exchange fetch bridge", () => {
+  it("allows only activation, bootstrap, build metadata, and the Den exchange fetch bridge", () => {
     assert.equal(enterprisePreactivationCommandAllowed("__fetch"), true);
+    assert.equal(enterprisePreactivationCommandAllowed("connectLinkAccept"), true);
+    assert.equal(enterprisePreactivationCommandAllowed("connectLinkVerify"), true);
     assert.equal(enterprisePreactivationCommandAllowed("getDesktopBootstrapConfig"), true);
     assert.equal(enterprisePreactivationCommandAllowed("setDesktopBootstrapConfig"), true);
     assert.equal(enterprisePreactivationCommandAllowed("appBuildInfo"), true);
