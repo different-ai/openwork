@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowRight, Check, Copy, KeyRound, Rocket, Zap } from "lucide-react";
+import { ArrowRight, Check, Copy, KeyRound, Zap } from "lucide-react";
 import {
   getCustomLlmProvidersRoute,
   getInferenceRoute,
@@ -140,7 +140,7 @@ export function MarketplaceOnboardingScreen() {
 
   return (
     <DashboardPageTemplate
-      icon={Rocket}
+      size="compact"
       title={allDone ? `${orgName} is ready.` : `Set up ${orgName}`}
       description={
         allDone

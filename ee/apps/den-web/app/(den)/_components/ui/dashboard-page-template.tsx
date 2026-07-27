@@ -19,8 +19,8 @@ import { Dithering } from "@paper-design/shaders-react";
  */
 
 export type DashboardPageTemplateProps = {
-  /** Lucide (or any) icon component rendered inside the frosted glass icon box */
-  icon: ElementType<{
+  /** Lucide (or any) icon component rendered inside the frosted glass icon box. Omit to hide. */
+  icon?: ElementType<{
     size?: number;
     className?: string;
     strokeWidth?: number;
@@ -36,6 +36,8 @@ export type DashboardPageTemplateProps = {
    * Tip: vary hue across pages so each section feels distinct at a glance.
    */
   colors: [string, string, string, string];
+  /** `compact` shrinks the hero for setup/onboarding pages. */
+  size?: "default" | "compact";
   children?: React.ReactNode;
 };
 
@@ -45,12 +47,21 @@ export function DashboardPageTemplate({
   title,
   description,
   colors,
+  size = "default",
   children,
 }: DashboardPageTemplateProps) {
+  const compact = size === "compact";
+
   return (
-    <div className="mx-auto max-w-[860px] p-8">
+    <div className={`mx-auto max-w-[860px] ${compact ? "p-6 md:p-8" : "p-8"}`}>
       {/* ── Gradient hero card ── */}
-      <div className="relative mb-8 flex h-[200px] items-center overflow-hidden rounded-3xl border border-gray-100 px-10">
+      <div
+        className={`relative flex items-center overflow-hidden border border-gray-100 ${
+          compact
+            ? "mb-5 h-[88px] rounded-2xl px-6 sm:h-[96px] sm:px-8"
+            : "mb-8 h-[200px] rounded-3xl px-10"
+        }`}
+      >
         {/* Background layers: mesh gradient wrapped in a dithering texture */}
         <div className="absolute inset-0 z-0">
           <Dithering
@@ -82,25 +93,43 @@ export function DashboardPageTemplate({
         </div>
 
         {/* Icon — top right */}
-        <div className="absolute right-8 top-8 z-10 flex h-12 w-12 items-center justify-center rounded-xl border border-white/30 bg-white/20 backdrop-blur-md">
-          <Icon size={24} className="text-white" strokeWidth={1.5} />
-        </div>
+        {Icon ? (
+          <div
+            className={`absolute z-10 flex items-center justify-center rounded-xl border border-white/30 bg-white/20 backdrop-blur-md ${
+              compact
+                ? "right-5 top-1/2 h-9 w-9 -translate-y-1/2"
+                : "right-8 top-8 h-12 w-12"
+            }`}
+          >
+            <Icon size={compact ? 18 : 24} className="text-white" strokeWidth={1.5} />
+          </div>
+        ) : null}
 
-        {/* Badge (optional) + Title — bottom left */}
-        <div className="absolute bottom-8 left-10 z-10 flex flex-col items-start gap-2">
+        {/* Badge (optional) + Title */}
+        <div
+          className={`absolute z-10 flex flex-col items-start gap-2 ${
+            compact ? "left-6 top-1/2 -translate-y-1/2 sm:left-8" : "bottom-8 left-10"
+          }`}
+        >
           {badgeLabel ? (
             <span className="rounded-full border border-white/20 bg-white/20 px-2.5 py-1 text-[10px] uppercase tracking-[1px] text-white backdrop-blur-md">
               {badgeLabel}
             </span>
           ) : null}
-          <h1 className="text-[28px] font-medium tracking-[-0.5px] text-white">
+          <h1
+            className={`font-medium text-white ${
+              compact
+                ? "text-[20px] tracking-[-0.03em] sm:text-[22px]"
+                : "text-[28px] tracking-[-0.5px]"
+            }`}
+          >
             {title}
           </h1>
         </div>
       </div>
 
       {/* ── Description ── */}
-      <p className="mb-6 text-[14px] text-gray-500">{description}</p>
+      <p className={`text-[14px] text-gray-500 ${compact ? "mb-5" : "mb-6"}`}>{description}</p>
 
       {/* ── Page content ── */}
       {children}
