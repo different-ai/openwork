@@ -83,6 +83,7 @@
             "group": "Install and operate",
             "pages": [
               "start-here/installer-delivery",
+              "start-here/enterprise-onboarding-runbook",
               "start-here/on-prem-branding",
               "start-here/github-connector-helm"
             ]

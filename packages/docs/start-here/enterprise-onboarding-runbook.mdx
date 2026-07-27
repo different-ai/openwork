@@ -1,0 +1,58 @@
+---
+title: "Enterprise onboarding runbook"
+description: "Admin checklist for invite, SSO, install, activation, model access, and member-owned connections."
+---
+
+Use this runbook when onboarding a member to an enterprise or private-cloud OpenWork organization. Do the steps in order; most hard-to-debug failures come from completing a later step before the earlier identity or activation state exists.
+
+## 1. Invite the member
+
+In the organization dashboard, open **Members**, click **Add member**, enter the member's email address, choose their role, and send the invite.
+
+Invites are tied to the invited email address. If domain allowlists are enabled, the invited email must also match an allowed domain.
+
+## 2. Add the member to the SSO group before they open the invite
+
+If SSO is enforced or required for this rollout, assign the member to the identity-provider application or group before they click the invite link.
+
+If this is skipped, the member can reach the identity provider but cannot complete sign-in. In incident reports this often looked like an invite that was already used or a sign-in loop. Add the IdP assignment first, then resend the invite or issue a fresh install/connect link if the old one was consumed.
+
+## 3. Have the member install from the organization install page
+
+The member should open the organization install page, download the standard OpenWork installer, run it, then return to the page and click **Open OpenWork**.
+
+Make sure the member has local permission to install signed desktop software on that machine. If endpoint controls block user installs, use IT pre-approval or MDM deployment instead.
+
+## 4. Complete first-launch activation
+
+On first launch, enterprise builds show the organization activation gate. The member must return to the organization's download page and click **Activate OpenWork Enterprise** or **Open OpenWork** so the one-time link can complete.
+
+Successful activation writes an `enterpriseActivation` record with `activatedAt` and `denBaseUrl` into the desktop bootstrap file. Current diagnostics trust that activated Den origin for deep credentialed probes, so v0.18.7 and newer can inspect the org server without requiring a separate diagnostic-origin launch variable.
+
+Default bootstrap file paths are:
+
+| OS | Default `desktop-bootstrap.json` path |
+| --- | --- |
+| Windows | `%LOCALAPPDATA%\openwork\desktop-bootstrap.json`, or `%XDG_CONFIG_HOME%\openwork\desktop-bootstrap.json` when `XDG_CONFIG_HOME` is set |
+| macOS | `$XDG_CONFIG_HOME/openwork/desktop-bootstrap.json`, falling back to `~/.config/openwork/desktop-bootstrap.json` |
+| Linux | `$XDG_CONFIG_HOME/openwork/desktop-bootstrap.json`, falling back to `~/.config/openwork/desktop-bootstrap.json` |
+
+`OPENWORK_DESKTOP_BOOTSTRAP_PATH` can override the path when it is set before launch. Current builds also read the older `~/.config/openwork/desktop-bootstrap.json` location for compatibility and choose the newest valid file.
+
+## 5. Grant model access
+
+Create or update the organization's managed LLM provider, choose the models the org should expose, and grant the member or their team access.
+
+If this is skipped, the member may sign in successfully but see an empty model list or the message that the organization has not published any models for them yet.
+
+## 6. Confirm per-member connections
+
+For individual-account connections such as Salesforce, ServiceNow, Notion, Linear, or Slack, each member must open **Settings -> Connect** and connect their own provider account. Admin-created connection definitions do not sign in every member automatically.
+
+Organization policy still applies. Some connections are granted only to specific teams or people, and some provider-side app allowlists restrict who can authorize. A member who is not granted access can legitimately see the service as not connected for them or not available to connect.
+
+<Warning>
+Deleting `desktop-bootstrap.json`, or running a runtime reset that does not preserve the bootstrap file, removes the `enterpriseActivation` record. Deep diagnostics then become trust-gated and report `untrusted_endpoint` until the desktop is re-activated with a fresh install/connect link.
+
+After any network or certificate-trust fix, fully quit and restart OpenWork. The OpenCode engine does not retry a failed MCP connection by itself; restart or an explicit repair/reload is what re-drives the connection attempt.
+</Warning>

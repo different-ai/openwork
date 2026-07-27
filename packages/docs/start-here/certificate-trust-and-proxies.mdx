@@ -5,6 +5,29 @@ description: "Configure private CAs and outbound proxies for desktop, local runt
 
 OpenWork has several network trust surfaces. Installing a private root for one surface does not automatically configure all of the others.
 
+## Which network stack each component uses
+
+Desktop OpenWork runs the OpenWork server embedded in the Electron main process. That means desktop server egress can use Chromium networking, while the spawned OpenCode engine still has its own runtime TLS stack.
+
+| Component | Stack | Trust source | Repairs missing intermediates? |
+| --- | --- | --- | --- |
+| App UI (renderer) | Chromium renderer fetch | OS trust plus AIA fetching | Yes |
+| Desktop Den calls (`__fetch` via main) | Electron `net.fetch` | OS trust plus AIA fetching | Yes |
+| OpenWork server `externalFetch` in desktop | Electron `net.fetch` | OS trust plus AIA fetching | Yes |
+| OpenWork server standalone/hosted | Node `fetch` / undici | Node's bundled Mozilla roots plus `NODE_EXTRA_CA_CERTS` | No |
+| Diagnostics runtime probe | Deliberately raw runtime fetch: Node/undici in Electron or standalone Node, Bun fetch in Bun builds | Runtime bundled Mozilla roots plus `NODE_EXTRA_CA_CERTS` | No, by design, so it emulates engine-class clients |
+| OpenCode engine | Spawned OpenCode child running on Bun | Bun's bundled Mozilla roots plus `NODE_EXTRA_CA_CERTS` | No |
+
+## Incomplete certificate chains
+
+TLS servers must send the leaf certificate plus every intermediate certificate needed to reach a trusted root. Browsers and Chromium can often fetch a missing intermediate through the certificate's AIA URL, so a browser test can pass while strict runtimes fail.
+
+The strict-runtime symptom is usually `UNABLE_TO_VERIFY_LEAF_SIGNATURE` or `unable to verify the first certificate`. OpenWork's agent diagnostic includes `servedChainLength` for the configured Den origin so you can see whether the endpoint only served the leaf certificate.
+
+The durable fix is at the TLS terminator: serve the full chain, usually the `fullchain` file from your CA or ACME client. Restart or reload the terminator after replacing the served certificate bundle.
+
+As a temporary bridge only, append the exact issuing intermediate certificate to the PEM file referenced by `NODE_EXTRA_CA_CERTS`, then fully restart OpenWork. That file is additive for the embedded server and the OpenCode engine. Remove the bridge after the server sends the full chain; intermediates rotate, and stale client-side intermediates create another incident when the issuing CA changes.
+
 ## The four trust surfaces
 
 ### 1. Desktop app HTTPS
@@ -25,6 +48,20 @@ The desktop also starts the embedded OpenWork server plus local runtimes and sid
 - The Electron main process extends Node's default CA list with the same generated additions when the runtime supports it, so the embedded server's own outbound TLS diagnostics and probes use the same enterprise roots.
 - The generated bundle is for spawned Node-compatible runtimes. It does not configure Electron's Chromium trust store.
 - Do not assume every sidecar honors `HTTP_PROXY` or `HTTPS_PROXY` universally. Use proxy settings documented for the specific runtime or sidecar.
+
+#### `env.json` and launch environment
+
+The desktop reads the user environment store from these locations unless `OPENWORK_ENV_STORE` is set before launch:
+
+| OS | Default `env.json` path |
+| --- | --- |
+| Windows | `%APPDATA%\openwork\env.json`, falling back to `%USERPROFILE%\AppData\Roaming\openwork\env.json` |
+| macOS | `$XDG_CONFIG_HOME/openwork/env.json`, falling back to `~/.config/openwork/env.json` |
+| Linux | `$XDG_CONFIG_HOME/openwork/env.json`, falling back to `~/.config/openwork/env.json` |
+
+Keys beginning with `OPENWORK_` or `OPENCODE_` are stripped from this file before the desktop injects user variables into the embedded server and spawned children. For example, `OPENWORK_AGENT_DIAGNOSTICS_TRUSTED_ORIGINS` only works as a launch environment variable from your shell, MDM profile, service wrapper, or desktop launcher.
+
+`NODE_EXTRA_CA_CERTS` is allowed. If a user value is present in `env.json` or in the launch environment, it wins over OpenWork's generated `system-ca-bundle.pem`. The launch environment wins over `env.json`; the generated bundle is used only when no user value is already set.
 
 ### 3. Den containers and Helm
 
