@@ -17,7 +17,6 @@ import {
   mintDesktopConnectGrant,
   previewDesktopConnectGrant,
 } from "../../desktop-connect-grants.js"
-import { parseOrganizationPlan } from "../../entitlements.js"
 import { env } from "../../env.js"
 import { hashInstallLinkToken, mintOrganizationInstallLink } from "../../install-links.js"
 import { jsonValidator, orgRoleRoute, publicRoute, queryValidator } from "../../middleware/index.js"
@@ -95,10 +94,8 @@ const rateLimitedSchema = z.object({
 type InstallPlatform = z.infer<typeof installPlatformSchema>
 type ManagedDesktopDistribution = "cloud" | "enterprise"
 
-function managedDesktopDistribution(metadata: unknown): ManagedDesktopDistribution {
-  return env.orgMode === "multi_org" && parseOrganizationPlan(organizationMetadataInput(metadata)).tier !== "enterprise"
-    ? "cloud"
-    : "enterprise"
+function managedDesktopDistribution(): ManagedDesktopDistribution {
+  return "enterprise"
 }
 
 export type InstallExperienceDependencies = {
@@ -262,7 +259,6 @@ async function resolveInstallConfigForToken(token: string, request: Request) {
   return {
     config: buildInstallConfig({ organization: row.organization, request }),
     installLinkId: row.installLink.id,
-    organizationMetadata: row.organization.metadata,
     organizationSlug: row.organization.slug,
     installerReleaseTag: installerReleaseTagForMetadata(row.organization.metadata),
   }
@@ -391,7 +387,7 @@ export function registerOrgInstallLinkRoutes<T extends { Variables: OrgRouteVari
         activationUrl: exchangeHandoff.activationUrl,
         activationExpiresAt: exchangeHandoff.connectExpiresAt,
         desktopVersion: resolved.installerReleaseTag.replace(/^v/i, ""),
-        distribution: managedDesktopDistribution(resolved.organizationMetadata),
+        distribution: managedDesktopDistribution(),
       })
     },
   )
@@ -514,7 +510,7 @@ export function registerOrgInstallLinkRoutes<T extends { Variables: OrgRouteVari
       }
 
       const platform = platformResult.data.platform
-      const distribution = managedDesktopDistribution(resolved.organizationMetadata)
+      const distribution = managedDesktopDistribution()
       const fileName = distribution === "cloud"
         ? cloudDesktopReleaseAssetName(platform, resolved.installerReleaseTag)
         : enterpriseDesktopReleaseAssetName(platform, resolved.installerReleaseTag)
