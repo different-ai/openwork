@@ -607,6 +607,13 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
   function orchestratorDataDir() {
     const envDir = process.env.OPENWORK_DATA_DIR?.trim();
     if (envDir) return envDir;
+    // Dev mode must resolve to the same sandboxed home the child processes and
+    // nuke.mjs use, otherwise dev shuts down the production orchestrator daemon
+    // and deletes its auth file. app.getPath("home") ignores $HOME, so the
+    // sandbox root is rebuilt from userData here.
+    if (process.env.OPENWORK_DEV_MODE === "1") {
+      return path.join(userDataDir, "openwork-dev-data", "home", ".openwork", "openwork-orchestrator");
+    }
     return path.join(app.getPath("home"), ".openwork", "openwork-orchestrator");
   }
 

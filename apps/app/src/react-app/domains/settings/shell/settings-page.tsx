@@ -10,7 +10,6 @@ import {
   Cog,
   FolderLock,
   Info,
-  Layout,
   Paintbrush,
   Puzzle,
   RefreshCcw,
@@ -67,8 +66,6 @@ export function getSettingsTabIcon(tab: SettingsTab) {
       return Zap;
     case "preferences":
       return SlidersHorizontal;
-    case "shell":
-      return Layout;
     case "permissions":
       return FolderLock;
     case "cloud-account":
@@ -108,8 +105,6 @@ export function getSettingsTabLabel(tab: SettingsTab) {
       return "AI Providers";
     case "preferences":
       return "Preferences";
-    case "shell":
-      return "Customization";
     case "permissions":
       return "Permissions";
     case "cloud-account":
@@ -151,8 +146,6 @@ export function getSettingsTabDescription(tab: SettingsTab) {
       return "Connect services that provide AI models";
     case "preferences":
       return "Default model, reasoning, and compaction";
-    case "shell":
-      return "Branding, visibility, and shell controls";
     case "permissions":
       return "Authorized folders and file access";
     case "cloud-account":
@@ -196,7 +189,7 @@ export function getGlobalSettingsTabs(
   developerMode: boolean,
   capabilities: Pick<PlatformCapabilities, "autoUpdate" | "localRuntimeControl">,
 ): SettingsTab[] {
-  const tabs: SettingsTab[] = ["ai", "shell", "appearance", "environment"];
+  const tabs: SettingsTab[] = ["ai", "appearance", "environment"];
   if (capabilities.autoUpdate) tabs.push("updates");
   if (capabilities.localRuntimeControl) tabs.push("recovery");
   if (developerMode) tabs.push("debug");

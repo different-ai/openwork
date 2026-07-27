@@ -131,11 +131,12 @@ import { getSessionActivityStatusLabel, type SessionActivityStatus } from "../st
 import { SessionDotMatrixLoader } from "./session-dot-matrix-loader";
 import {
   SIDEBAR_ROW_LANE,
-  SIDEBAR_ROW_LANE_NESTED,
   SIDEBAR_SECTION_LABEL,
   SIDEBAR_SECTION_LANE,
   SidebarGlyphSlot,
+  sidebarRowPaddingInlineStart,
 } from "./sidebar-lanes";
+import { WorkspaceAvatarPicker } from "./workspace-avatar-picker";
 import { useWorkbenchStore } from "../chat/workbench-store";
 
 /** Paper Desktop: unread #2FBE54, needs-action #E8933A (14px artboard → ~8px app). */
@@ -1384,6 +1385,7 @@ function WorkspaceHeader({
   ...props
 }: WorkspaceHeaderProps) {
   const ctx = useSidebarContext();
+  const label = workspaceLabel(workspace);
 
   const handleSelectWorkspace = () => {
     void Promise.resolve(ctx.onSelectWorkspace(workspace.id));
@@ -1393,7 +1395,7 @@ function WorkspaceHeader({
     <SidebarMenuButton
       {...props}
       className={cn(
-        "group-hover/workspace-header:bg-sidebar-accent group-hover/workspace-header:text-sidebar-accent-foreground mac:group-hover/workspace-header:bg-black/5 dark:mac:group-hover/workspace-header:bg-white/10",
+        "gap-2 group-hover/workspace-header:bg-sidebar-accent group-hover/workspace-header:text-sidebar-accent-foreground mac:group-hover/workspace-header:bg-black/5 dark:mac:group-hover/workspace-header:bg-white/10",
         statusLabel && "h-10",
       )}
       onClick={(event) => {
@@ -1402,13 +1404,17 @@ function WorkspaceHeader({
       }}
     >
       <SidebarGlyphSlot>
-        {isLoading ? <SessionDotMatrixLoader label={t("workspace.loading_tasks")} /> : null}
+        {isLoading ? (
+          <SessionDotMatrixLoader label={t("workspace.loading_tasks")} />
+        ) : (
+          <WorkspaceAvatarPicker workspaceId={workspace.id} label={label} />
+        )}
       </SidebarGlyphSlot>
       <div
         className="min-w-0 flex-1 cursor-grab touch-none transition-[padding] duration-75 active:cursor-grabbing group-hover/workspace-header:pr-16 group-has-[[data-workspace-actions]:focus-within]/workspace-header:pr-16 group-has-data-popup-open/workspace-header:pr-11 group-hover/workspace-header:group-has-data-popup-open/workspace-header:pr-16 pr-2"
         onPointerDown={onTitlePointerDown}
       >
-        <span className="block ow-fade-truncate">{workspaceLabel(workspace)}</span>
+        <span className="block ow-fade-truncate">{label}</span>
         {statusLabel ? (
           <span className={cn("block text-xs", isError ? "text-destructive" : "text-muted-foreground")}>
             {statusLabel}
@@ -1870,7 +1876,8 @@ function SessionGroupSeparator({ label, count, expanded, onToggle, group, groups
         event.preventDefault();
         onToggle();
       }}
-      className={cn("group/separator flex w-full items-center gap-2 rounded pe-2 pb-1 pt-2.5 text-left transition-colors first:pt-1 hover:bg-sidebar-accent/50", SIDEBAR_ROW_LANE)}
+      className={cn("group/separator flex w-full items-center gap-2 rounded pe-2 pb-1 pt-2.5 text-left transition-colors first:pt-1 hover:bg-sidebar-accent/50")}
+      style={{ paddingInlineStart: sidebarRowPaddingInlineStart(0) }}
       aria-expanded={expanded}
     >
       <SidebarGlyphSlot>
@@ -2240,12 +2247,16 @@ function SessionMenuItem({
         ? `${displayTitle}, ${t("workspace_list.session_unread")}`
         : itemTitle;
 
+  const visualDepth = depth;
   const rowButtonClass = cn(
     // Soft pill @ 11px radius from Paper; overlay tint adapts to theme
     // (light: --ow-light-hover ≈ black/5, dark: #FFFFFF17 ≈ white/9).
+    // Nesting uses inline padding so each depth level steps 12px (not a binary nest).
     "relative rounded-[11px] transition-[padding,background-color] duration-75 pe-7 group-hover/menu-sub-item:pe-20 group-has-data-popup-open/menu-sub-item:pe-20 group-hover/menu-sub-item:bg-black/[0.05] dark:group-hover/menu-sub-item:bg-white/[0.09] data-active:bg-black/[0.07] dark:data-active:bg-white/[0.12] text-sidebar-foreground/80 data-active:text-sidebar-foreground",
-    depth > 0 ? SIDEBAR_ROW_LANE_NESTED : SIDEBAR_ROW_LANE,
   );
+  const rowButtonStyle = {
+    paddingInlineStart: sidebarRowPaddingInlineStart(visualDepth),
+  } as const;
 
   // Pinned/archived rows identify their workspace via the tooltip title
   // only — no workspace color dot in these sections.
@@ -2276,12 +2287,13 @@ function SessionMenuItem({
       onOpenChange={() => ctx.toggleSessionExpanded(session.id)}
       className="group/session-collapsible"
     >
-      <SidebarMenuSubItem {...dragProps} data-sidebar-session-id={session.id}>
+      <SidebarMenuSubItem {...dragProps} data-sidebar-session-id={session.id} data-sidebar-nest-depth={visualDepth}>
         <SessionContextMenu sessionId={session.id} workspaceId={workspaceId} isPinned={isPinned} isArchived={isArchived}>
           <CollapsibleTrigger
             render={
               <SidebarMenuSubButton
                 className={rowButtonClass}
+                style={rowButtonStyle}
                 isActive={isSelected}
                 data-session-tab-id={session.id}
                 data-session-tab-active={isSelected ? "true" : undefined}
@@ -2305,7 +2317,7 @@ function SessionMenuItem({
       </SidebarMenuSubItem>
     </Collapsible>
   ) : (
-    <SidebarMenuSubItem {...dragProps} data-sidebar-session-id={session.id}>
+    <SidebarMenuSubItem {...dragProps} data-sidebar-session-id={session.id} data-sidebar-nest-depth={visualDepth}>
       <SessionContextMenu sessionId={session.id} workspaceId={workspaceId} isPinned={isPinned} isArchived={isArchived}>
         <SidebarMenuSubButton
           isActive={isSelected}
@@ -2316,6 +2328,7 @@ function SessionMenuItem({
           onFocus={prefetchSession}
           aria-label={accessibleState}
           className={rowButtonClass}
+          style={rowButtonStyle}
         >
           {leading}
           <span className="min-w-0 flex-1 ow-fade-truncate" title={itemTitle}>{displayTitle}</span>

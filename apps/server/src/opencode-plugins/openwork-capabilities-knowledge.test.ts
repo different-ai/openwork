@@ -74,7 +74,7 @@ describe("OpenWork capabilities knowledge plugin", () => {
       path: "start-here/connect-your-stack/connect-services.mdx",
     });
 
-    expect(read).toContain("Settings` > `Connect");
+    expect(read).toContain("Settings` > `OpenWork Connect");
     expect(read).toContain("Needs your sign-in");
     expect(read).toContain("Ready to use");
     expect(read).toContain("advanced path for a custom or local server");

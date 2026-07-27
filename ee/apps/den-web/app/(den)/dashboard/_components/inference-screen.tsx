@@ -5,7 +5,11 @@ import { useRouter } from "next/navigation";
 import { Check, Sparkles } from "lucide-react";
 import { INFERENCE_MODEL_ALIASES } from "@openwork/types/den/inference";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
+import { DenBadge } from "../../_components/ui/badge";
 import { DenButton } from "../../_components/ui/button";
+import { DenCard } from "../../_components/ui/card";
+import { DenNotice } from "../../_components/ui/notice";
+import { DenSectionHeader } from "../../_components/ui/section-header";
 import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
 import { getBillingRoute, getCustomLlmProvidersRoute, getOrgAccessFlags } from "../../_lib/den-org";
 import { useDenFlow } from "../../_providers/den-flow-provider";
@@ -116,11 +120,12 @@ function UsageLimitsCard({ buckets }: { buckets: InferenceUsageBucket[] }) {
   if (ordered.length === 0) return null;
 
   return (
-    <section className="overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-[0_18px_45px_-35px_rgba(15,23,42,0.35)]">
+    <DenCard className="overflow-hidden p-0">
       <div className="border-b border-gray-100 px-6 py-4">
-        <p className="text-[13px] leading-5 text-gray-500">
-          Usage limits are shared across your organization and scale with the number of active members.
-        </p>
+        <DenSectionHeader
+          title="Usage limits"
+          description="Shared across your organization and scale with the number of active members."
+        />
       </div>
       <ul className="divide-y divide-gray-100">
         {ordered.map((bucket) => {
@@ -146,7 +151,7 @@ function UsageLimitsCard({ buckets }: { buckets: InferenceUsageBucket[] }) {
           );
         })}
       </ul>
-    </section>
+    </DenCard>
   );
 }
 
@@ -170,58 +175,53 @@ function ModelsValueProp(props: {
   onSubscribe: () => void;
 }) {
   return (
-    <section className="overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-[0_18px_45px_-35px_rgba(15,23,42,0.35)]">
-      <div className="grid gap-8 p-8 lg:grid-cols-[minmax(0,1fr)_320px]">
-        <div>
-          <h2 className="text-[24px] font-medium leading-8 tracking-[-0.4px] text-gray-950">
-            The best open-source models, ready for your whole team.
-          </h2>
-          <p className="mt-3 max-w-[560px] text-[14px] leading-6 text-gray-500">
-            OpenWork Models gives every member of your workspace instant access to a hand-picked
-            lineup of OSS frontier models — no provider accounts, no key juggling.
+    <DenCard className="grid gap-8 p-8 lg:grid-cols-[minmax(0,1fr)_280px]">
+      <div>
+        <DenSectionHeader
+          title="The best open-source models, ready for your whole team."
+          description="Every member gets instant access to a hand-picked lineup of OSS frontier models — no provider accounts, no key juggling."
+        />
+        <ul className="mt-6 grid gap-3">
+          {VALUE_POINTS.map((point) => (
+            <li key={point} className="flex items-start gap-3 text-[14px] leading-6 text-gray-700">
+              <Check className="mt-1 h-4 w-4 shrink-0 text-emerald-600" aria-hidden="true" />
+              <span>{point}</span>
+            </li>
+          ))}
+        </ul>
+        <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center">
+          <DenButton
+            type="button"
+            disabled={!props.canManage}
+            loading={props.subscribeBusy}
+            onClick={props.onSubscribe}
+          >
+            Subscribe with Stripe
+          </DenButton>
+          <p className="text-[13px] leading-5 text-gray-500">
+            $10/user/month · {props.memberCount > 0 ? `${props.memberCount} active member${props.memberCount === 1 ? "" : "s"}` : "billed per active member"} · cancel anytime
           </p>
-          <ul className="mt-6 grid gap-3">
-            {VALUE_POINTS.map((point) => (
-              <li key={point} className="flex items-start gap-3 text-[14px] leading-6 text-gray-700">
-                <Check className="mt-1 h-4 w-4 shrink-0 text-blue-600" aria-hidden="true" />
-                <span>{point}</span>
-              </li>
-            ))}
-          </ul>
-          <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center">
-            <DenButton
-              type="button"
-              disabled={!props.canManage}
-              loading={props.subscribeBusy}
-              onClick={props.onSubscribe}
-            >
-              Subscribe with Stripe
-            </DenButton>
-            <p className="text-[13px] leading-5 text-gray-500">
-              $10/user/month · {props.memberCount > 0 ? `${props.memberCount} active member${props.memberCount === 1 ? "" : "s"}` : "billed per active member"} · cancel anytime
-            </p>
-          </div>
-          {props.canManage ? null : (
-            <p className="mt-3 text-[13px] leading-5 text-amber-700">
-              Only workspace admins can subscribe. Ask an owner, super-admin, or admin to enable OpenWork Models for your team.
-            </p>
-          )}
         </div>
-        <div className="rounded-2xl border border-gray-100 bg-gray-50 p-5">
-          <p className="text-[12px] font-semibold uppercase tracking-[0.12em] text-gray-400">
-            Included models
+        {props.canManage ? null : (
+          <p className="mt-3 text-[13px] leading-5 text-amber-700">
+            Only workspace admins can subscribe. Ask an owner, super-admin, or admin to enable OpenWork Models for your team.
           </p>
-          <ul className="mt-3 divide-y divide-gray-100">
-            {MODEL_LINEUP.map((model) => (
-              <li key={model.id} className="py-2.5">
-                <p className="text-[14px] font-medium text-gray-900">{model.name}</p>
-                <p className="text-[12px] text-gray-500">{model.id}</p>
-              </li>
-            ))}
-          </ul>
-        </div>
+        )}
       </div>
-    </section>
+      <div className="rounded-[22px] border border-gray-100 bg-gray-50 p-5">
+        <p className="text-[12px] font-medium uppercase tracking-[0.08em] text-gray-500">
+          Included models
+        </p>
+        <ul className="mt-3 divide-y divide-gray-100">
+          {MODEL_LINEUP.map((model) => (
+            <li key={model.id} className="py-2.5">
+              <p className="text-[14px] font-medium text-gray-900">{model.name}</p>
+              <p className="text-[12px] text-gray-500">{model.id}</p>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </DenCard>
   );
 }
 
@@ -358,21 +358,19 @@ export function InferenceScreen() {
   const showValueProp = !loading && status !== null && !subscribed;
   const cardTitle = enabled ? "OpenWork Models enabled" : "Enable OpenWork Models";
   const actionLabel = enabled ? "Manage subscription" : "Enable";
+  const statusTone = loading ? "info" : enabled ? "success" : "neutral";
+  const statusLabel = loading ? "Checking" : enabled ? "Enabled" : "Disabled";
 
   return (
     <DashboardPageTemplate
       icon={Sparkles}
       badgeLabel="Beta"
       title="OpenWork Models"
-      description="Frontier intelligence, hand picked for your team's most ambitious work."
-      colors={["#0f172a", "#3155ff", "#22d3ee", "#f8fafc"]}
+      description="Frontier intelligence, hand picked for knowledge work. No API keys to manage."
+      colors={["#EEF2FF", "#1E3A8A", "#3B82F6", "#93C5FD"]}
     >
       <div className="grid gap-4">
-        {error ? (
-          <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-[13px] text-red-700">
-            {error}
-          </div>
-        ) : null}
+        {error ? <DenNotice message={error} tone="error" /> : null}
 
         {showValueProp ? (
           <ModelsValueProp
@@ -382,21 +380,26 @@ export function InferenceScreen() {
             onSubscribe={() => void startSubscribeCheckout()}
           />
         ) : (
-          <section className="rounded-3xl border border-gray-200 bg-white p-6 shadow-[0_18px_45px_-35px_rgba(15,23,42,0.35)]">
-            <div className="flex flex-col gap-5 md:flex-row md:items-start md:justify-between">
-              <div className="max-w-[560px]">
-                <div className="mb-3 inline-flex rounded-full border border-blue-100 bg-blue-50 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.12em] text-blue-700">
-                  {loading ? "Checking" : enabled ? "Enabled" : "Disabled"}
+          <DenCard>
+            <DenSectionHeader
+              title={cardTitle}
+              description="Turn models on for every member, or manage the Stripe subscription for this workspace."
+              action={
+                <div className="flex flex-wrap items-center gap-3">
+                  <DenBadge tone={statusTone}>{statusLabel}</DenBadge>
+                  <DenButton
+                    type="button"
+                    onClick={toggleEnabled}
+                    loading={saving || loading}
+                    disabled={!canManageModels}
+                    variant={enabled ? "secondary" : "primary"}
+                  >
+                    {actionLabel}
+                  </DenButton>
                 </div>
-                <h2 className="text-[20px] font-medium tracking-[-0.3px] text-gray-950">
-                  {cardTitle}
-                </h2>
-              </div>
-              <DenButton type="button" onClick={toggleEnabled} loading={saving || loading} disabled={!canManageModels} variant={enabled ? "secondary" : "primary"}>
-                {actionLabel}
-              </DenButton>
-            </div>
-          </section>
+              }
+            />
+          </DenCard>
         )}
 
         {enabled && status ? <UsageLimitsCard buckets={status.buckets} /> : null}

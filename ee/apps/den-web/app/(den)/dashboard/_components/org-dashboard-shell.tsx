@@ -253,7 +253,7 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
     return "Background Tasks";
   }
   if (pathname.startsWith(getCustomLlmProvidersRoute(orgSlug))) {
-    return "LLM Providers";
+    return "Bring your Own Keys";
   }
   if (pathname.startsWith(getDesktopPoliciesRoute(orgSlug))) {
     return "Desktop Policies";
@@ -390,7 +390,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
           ...(showOpenWorkModels
             ? [{ href: getInferenceRoute(activeOrg.slug), label: "OpenWork Models" }]
             : []),
-          { href: getCustomLlmProvidersRoute(activeOrg.slug), label: "LLM Providers" },
+          { href: getCustomLlmProvidersRoute(activeOrg.slug), label: "Bring your Own Keys" },
         ],
       }
     : null;

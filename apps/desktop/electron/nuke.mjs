@@ -40,6 +40,25 @@ const SHIP_IT_CACHE_DOMAIN = "com.differentai.openwork.ShipIt";
 const NUKE_WORKER_FILENAME = "nuke-worker.mjs";
 const NUKE_WORKER_DEADLINE_MS = 60_000;
 const NUKE_WORKER_PARENT_WAIT_MS = 30_000;
+// Env overrides that move a profile's storage off the default locations.
+// Stripping them yields the paths the default (production) profile owns.
+const PROFILE_SCOPED_ENV_KEYS = [
+  "OPENCODE_CONFIG_DIR",
+  "OPENCODE_DB",
+  "OPENWORK_DATA_DIR",
+  "OPENWORK_DESKTOP_BOOTSTRAP_PATH",
+  "OPENWORK_DEV_MODE",
+  "OPENWORK_ELECTRON_APP_IDENTIFIER",
+  "OPENWORK_ELECTRON_USERDATA",
+  "OPENWORK_ENV_STORE",
+  "OPENWORK_RUNTIME_DB",
+  "OPENWORK_SERVER_CONFIG",
+  "OPENWORK_TOKEN_STORE",
+  "XDG_CACHE_HOME",
+  "XDG_CONFIG_HOME",
+  "XDG_DATA_HOME",
+  "XDG_STATE_HOME",
+];
 const NUKE_WORKER_ENV_KEYS = [
   "APPDATA",
   "LOCALAPPDATA",
@@ -71,6 +90,17 @@ function envValue(env, key) {
 
 function isTruthyDevMode(env) {
   return envValue(env, "OPENWORK_DEV_MODE") === "1";
+}
+
+// A profile is "isolated" when it was launched with its own storage identity:
+// dev mode, an explicit userData directory, or a non-default app identifier.
+// Nuking such a profile must never reach into the default (production) profile.
+function isIsolatedProfile(env) {
+  return (
+    isTruthyDevMode(env) ||
+    envValue(env, "OPENWORK_ELECTRON_APP_IDENTIFIER") !== "" ||
+    envValue(env, "OPENWORK_ELECTRON_USERDATA") !== ""
+  );
 }
 
 function normalizePlatform(value) {
@@ -236,6 +266,26 @@ function uniquePaths(rawPaths, paths, platform) {
   return output;
 }
 
+// Paths the default profile owns. Resolved by replanning with every
+// profile-shaping env override stripped, so the two plans can never disagree
+// about which locations are shared with production.
+function defaultProfileDeletePaths(input) {
+  const env = { ...input.env };
+  for (const key of PROFILE_SCOPED_ENV_KEYS) delete env[key];
+  return resolveNukePlan({ ...input, env, scopeToProfile: false }).manifest.deletePaths;
+}
+
+function profileScopedDeletePaths(deletePaths, sharedPaths, profileRoot, paths, platform) {
+  return deletePaths.filter((targetPath) => {
+    if (sameOrInside(targetPath, profileRoot, paths, platform)) return true;
+    return !sharedPaths.some(
+      (sharedPath) =>
+        sameOrInside(targetPath, sharedPath, paths, platform) ||
+        sameOrInside(sharedPath, targetPath, paths, platform),
+    );
+  });
+}
+
 function addOpenworkConfigFiles(deletePaths, roots, paths) {
   for (const root of roots) {
     if (!root) continue;
@@ -299,17 +349,29 @@ function resolveNukePlan(input) {
   const filteredDeletePaths = deletePaths.filter(
     (targetPath) => !shouldSkipDeletePath(targetPath, preserveBootstrapPath, homedir, paths, platform),
   );
+  const scopeToProfile = input.scopeToProfile !== false && isIsolatedProfile(input.env ?? {});
+  const sharedPaths = scopeToProfile ? defaultProfileDeletePaths(input) : [];
+  const scopeDeletePaths = (candidates) =>
+    scopeToProfile
+      ? profileScopedDeletePaths(candidates, sharedPaths, userDataPath, paths, platform)
+      : candidates;
   const manifest = {
-    deletePaths: uniquePaths(filteredDeletePaths, paths, platform),
+    deletePaths: uniquePaths(scopeDeletePaths(filteredDeletePaths), paths, platform),
     bootstrapPath,
     preserveBootstrapPath: preserveBootstrapPath || null,
     partitions: [...NUKE_PARTITIONS],
   };
-  const pendingPath = paths.join(desktopConfigHome(env, homedir, platform, paths), "openwork", PENDING_NUKE_FILENAME);
+  // Isolated profiles keep the sentinel in their own userData so another
+  // profile's next launch can never pick up and replay their cleanup.
+  const pendingPath = scopeToProfile
+    ? paths.join(userDataPath, PENDING_NUKE_FILENAME)
+    : paths.join(desktopConfigHome(env, homedir, platform, paths), "openwork", PENDING_NUKE_FILENAME);
 
   return {
     manifest,
     pendingPath,
+    scopeToProfile,
+    scopeDeletePaths,
     preservePaths: uniquePaths([preserveBootstrapPath, paths.join(homedir, ".opencode", "bin")], paths, platform),
     legacyBootstrapPath: paths.resolve(legacyBootstrapPath) === paths.resolve(bootstrapPath) ? null : legacyBootstrapPath,
     platform,
@@ -669,11 +731,17 @@ async function bestEffort(errors, label, task, timeoutMs) {
   }
 }
 
-async function quiesceForNuke({ runtimeManager, uiControlServer, removeWindowsBrandShortcut }, errors) {
+async function quiesceForNuke({ runtimeManager, uiControlServer, removeWindowsBrandShortcut }, errors, options = {}) {
   await bestEffort(errors, "ui-control-server", () => uiControlServer.stop(), 3000);
   await bestEffort(errors, "runtime-dispose", () => runtimeManager.dispose(), 12_000);
   await bestEffort(errors, "packaged-sidecar-reaper", () => runtimeManager.prepareFreshRuntime(), 16_000);
-  await bestEffort(errors, "sandbox-docker-cleanup", () => runtimeManager.sandboxCleanupOpenworkContainers(), 24_000);
+  // Container cleanup matches on name prefix across the whole Docker host, so it
+  // cannot tell this profile's containers from another profile's. Only the
+  // default profile may run it; isolated profiles leave containers alone rather
+  // than force-removing production's.
+  if (!options.scopeToProfile) {
+    await bestEffort(errors, "sandbox-docker-cleanup", () => runtimeManager.sandboxCleanupOpenworkContainers(), 24_000);
+  }
   await bestEffort(errors, "windows-brand-shortcut", removeWindowsBrandShortcut, 5000);
 }
 
@@ -699,9 +767,13 @@ export async function runPendingNukeCleanup(input, options = {}) {
   }
   const pending = pendingFile.ok ? pendingFile.value : null;
   const plan = resolveNukePlan({ ...input, preserveBootstrap: pending?.preserveBootstrap !== false });
-  const paths = Array.isArray(pending?.paths)
-    ? pending.paths.filter((entry) => typeof entry === "string" && entry.trim()).map((entry) => entry.trim())
-    : [];
+  // Re-scope on replay: a sentinel written by a different profile (or an older
+  // build) must not be able to reach outside this profile's own storage.
+  const paths = plan.scopeDeletePaths(
+    Array.isArray(pending?.paths)
+      ? pending.paths.filter((entry) => typeof entry === "string" && entry.trim()).map((entry) => entry.trim())
+      : [],
+  );
   if (paths.length === 0) {
     await rm(plan.pendingPath, { force: true });
     return pendingCleanupResult({ ran: false });
@@ -733,7 +805,9 @@ export async function executeNukeFreshStart({ app, session, runtimeManager, uiCo
   const plan = resolveNukePlan(input);
   const phaseErrors = [];
 
-  await quiesceForNuke({ runtimeManager, uiControlServer, removeWindowsBrandShortcut }, phaseErrors);
+  await quiesceForNuke({ runtimeManager, uiControlServer, removeWindowsBrandShortcut }, phaseErrors, {
+    scopeToProfile: plan.scopeToProfile,
+  });
   await bestEffort(phaseErrors, "chromium-storage", () => clearChromiumStorage(session), 8000);
   const preservedBootstrap = await sanitizeDesktopBootstrapOnDisk(plan).catch((error) => {
     phaseErrors.push(receiptError(plan.manifest.preserveBootstrapPath ?? "desktop-bootstrap", error));

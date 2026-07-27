@@ -238,6 +238,54 @@ test("buildNukeManifest redirects HOME/XDG paths in dev mode", () => {
   assert.ok(!manifest.deletePaths.some((targetPath) => targetPath.startsWith("/Users/alice/")));
 });
 
+test("buildNukeManifest never reaches production state from a non-dev isolated profile", () => {
+  const userDataPath = "/Users/alice/Library/Application Support/com.differentai.openwork.dev.wt2";
+  const manifest = buildNukeManifest({
+    env: { OPENWORK_ELECTRON_APP_IDENTIFIER: "com.differentai.openwork.dev.wt2" },
+    homedir: "/Users/alice",
+    platform: "darwin",
+    userDataPath,
+  });
+
+  assert.ok(manifest.deletePaths.includes(userDataPath));
+  for (const productionPath of [
+    "/Users/alice/.config/openwork",
+    "/Users/alice/.config/openwork/tokens.json",
+    "/Users/alice/.config/openwork/runtime.sqlite",
+    "/Users/alice/.config/opencode",
+    "/Users/alice/.cache/opencode",
+    "/Users/alice/.local/share/opencode",
+    "/Users/alice/Library/Application Support/opencode",
+    "/Users/alice/.openwork/openwork-orchestrator",
+    "/Users/alice/Library/Caches/com.differentai.openwork.ShipIt",
+  ]) {
+    assert.ok(!manifest.deletePaths.includes(productionPath), `must not delete ${productionPath}`);
+  }
+});
+
+test("buildNukeManifest still wipes a dev profile's own orchestrator data dir", () => {
+  const manifest = buildNukeManifest({
+    env: { OPENWORK_DEV_MODE: "1", OPENWORK_DATA_DIR: "/Users/alice/.openwork/openwork-orchestrator-dev" },
+    homedir: "/Users/alice",
+    platform: "darwin",
+    userDataPath: "/tmp/openwork-dev-userdata",
+  });
+
+  assert.ok(manifest.deletePaths.includes("/Users/alice/.openwork/openwork-orchestrator-dev"));
+  assert.ok(!manifest.deletePaths.includes("/Users/alice/.openwork/openwork-orchestrator"));
+});
+
+test("buildNukeManifest ignores an inherited XDG_CONFIG_HOME pointing at production config", () => {
+  const manifest = buildNukeManifest({
+    env: { OPENWORK_DEV_MODE: "1", XDG_CONFIG_HOME: "/Users/alice/.config" },
+    homedir: "/Users/alice",
+    platform: "darwin",
+    userDataPath: "/tmp/openwork-dev-userdata",
+  });
+
+  assert.ok(!manifest.deletePaths.some((targetPath) => targetPath.startsWith("/Users/alice/")));
+});
+
 test("buildNukeManifest excludes paths that would remove ~/.opencode/bin", () => {
   const manifest = buildNukeManifest({
     env: { OPENCODE_CONFIG_DIR: "/Users/alice/.opencode" },
@@ -413,6 +461,35 @@ test("runPendingNukeCleanup rewrites only failed paths and removes them on the n
     assert.deepEqual(secondResult.errors, []);
     assert.ok(secondResult.deleted.includes(failedPath));
     assert.equal(await exists(failedPath), false);
+    assert.equal(await exists(pendingPath), false);
+  });
+});
+
+test("runPendingNukeCleanup refuses replayed paths outside an isolated profile", async () => {
+  await withTempDir(async (root) => {
+    const userDataPath = path.join(root, "userData");
+    const productionPath = path.join(root, "home", ".config", "openwork", "tokens.json");
+    const profilePath = path.join(userDataPath, "openwork-server-tokens.json");
+    await mkdir(path.dirname(productionPath), { recursive: true });
+    await mkdir(userDataPath, { recursive: true });
+    await writeFile(productionPath, "production secrets", "utf8");
+    await writeFile(profilePath, "profile secrets", "utf8");
+    // Sentinel shaped by an older build that did not scope paths to the profile.
+    const pendingPath = path.join(userDataPath, ".nuke-pending.json");
+    await writeFile(pendingPath, `${JSON.stringify({ paths: [productionPath, profilePath] })}\n`, "utf8");
+
+    const result = await runPendingNukeCleanup({
+      env: { OPENWORK_ELECTRON_APP_IDENTIFIER: "com.differentai.openwork.dev.wt2" },
+      homedir: path.join(root, "home"),
+      platform: process.platform === "win32" ? "win32" : "darwin",
+      userDataPath,
+    });
+
+    assert.equal(result.ran, true);
+    assert.ok(result.deleted.includes(profilePath));
+    assert.ok(!result.deleted.includes(productionPath));
+    assert.equal(await exists(productionPath), true);
+    assert.equal(await exists(profilePath), false);
     assert.equal(await exists(pendingPath), false);
   });
 });
@@ -613,6 +690,54 @@ test("nuke cleanup worker still removes payload and launches app when cleanup th
     assert.equal(launched, true);
     assert.equal(result.cleanup.errors[0].message, "cleanup failed");
     assert.equal(await exists(payloadPath), false);
+  });
+});
+
+test("executeNukeFreshStart skips host-wide container cleanup on an isolated profile", async () => {
+  await withTempDir(async (root) => {
+    const runtimeManager = fakeRuntimeManager();
+    let cleanedContainers = 0;
+    runtimeManager.sandboxCleanupOpenworkContainers = async () => {
+      cleanedContainers += 1;
+      return { candidates: [], removed: [], errors: [] };
+    };
+    const input = { ...pendingNukeInput(root), env: { OPENWORK_DEV_MODE: "1" } };
+    await mkdir(input.userDataPath, { recursive: true });
+
+    await executeNukeFreshStart({
+      app: fakeApp(input.userDataPath),
+      session: fakeSession(),
+      runtimeManager,
+      uiControlServer: fakeUiControlServer(),
+      removeWindowsBrandShortcut: async () => {},
+    }, { input });
+
+    assert.equal(cleanedContainers, 0);
+    await tinyDelay();
+  });
+});
+
+test("executeNukeFreshStart still cleans containers on the default profile", async () => {
+  await withTempDir(async (root) => {
+    const runtimeManager = fakeRuntimeManager();
+    let cleanedContainers = 0;
+    runtimeManager.sandboxCleanupOpenworkContainers = async () => {
+      cleanedContainers += 1;
+      return { candidates: [], removed: [], errors: [] };
+    };
+    const input = pendingNukeInput(root);
+    await mkdir(input.userDataPath, { recursive: true });
+
+    await executeNukeFreshStart({
+      app: fakeApp(input.userDataPath),
+      session: fakeSession(),
+      runtimeManager,
+      uiControlServer: fakeUiControlServer(),
+      removeWindowsBrandShortcut: async () => {},
+    }, { input });
+
+    assert.equal(cleanedContainers, 1);
+    await tinyDelay();
   });
 });
 

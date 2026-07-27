@@ -9,7 +9,7 @@
  */
 const GLYPH_LANE = 20;
 const LABEL_LANE = 44;
-const NEST_STEP = 12;
+const NEST_STEP = 16;
 
 const MEASURE_LANES = `(() => {
   const sidebar = document.querySelector('[data-slot="sidebar"]');
@@ -110,8 +110,11 @@ export default {
         ctx.assert(kinds.has("workspace"), "No workspace header row was measured.");
         ctx.assert(kinds.has("session"), "No session row was measured.");
 
-        const allowedGlyph = [GLYPH_LANE, GLYPH_LANE + NEST_STEP];
-        const allowedLabel = [GLYPH_LANE, LABEL_LANE, LABEL_LANE + NEST_STEP];
+        const maxNestSteps = 6;
+        const allowedGlyph = Array.from({ length: maxNestSteps + 1 }, (_, depth) => GLYPH_LANE + depth * NEST_STEP);
+        const allowedLabel = Array.from({ length: maxNestSteps + 1 }, (_, depth) => LABEL_LANE + depth * NEST_STEP);
+        // Section labels sit on the glyph lane (no nest).
+        allowedLabel.push(GLYPH_LANE);
         const offLane = rows.filter((row) => {
           const glyphOff = row.glyph !== null && !allowedGlyph.some((lane) => Math.abs(row.glyph - lane) <= 1);
           const labelOff = row.label !== null && !allowedLabel.some((lane) => Math.abs(row.label - lane) <= 1);
@@ -120,7 +123,7 @@ export default {
 
         await ctx.prove("Sidebar rows land on the two shared lanes", {
           claim:
-            "Section label, workspace titles, group labels, session titles, placeholders and the account name all sit on the 20px glyph lane or the 44px label lane (+12px per nesting step).",
+            "Section label, workspace titles, group labels, session titles, placeholders and the account name all sit on the 20px glyph lane or the 44px label lane (+16px per nesting depth).",
           assert: () => {
             ctx.assert(
               offLane.length === 0,
@@ -128,9 +131,10 @@ export default {
             );
             const titles = rows.filter((row) => row.kind === "workspace" || row.kind === "session");
             for (const row of titles) {
+              const onANestLane = allowedLabel.some((lane) => lane >= LABEL_LANE && Math.abs(row.label - lane) <= 1);
               ctx.assert(
-                Math.abs(row.label - LABEL_LANE) <= 1 || Math.abs(row.label - (LABEL_LANE + NEST_STEP)) <= 1,
-                `Title "${row.text}" starts at ${row.label}px instead of the ${LABEL_LANE}px label lane.`,
+                onANestLane,
+                `Title "${row.text}" starts at ${row.label}px instead of the ${LABEL_LANE}px label lane (+16px per depth).`,
               );
             }
           },
