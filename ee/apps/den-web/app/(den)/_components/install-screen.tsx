@@ -547,8 +547,6 @@ export function InstallScreen() {
   }
 
   if (config.distribution === "cloud") {
-    const cloudPlatform = detectedInstallPlatform(detected);
-
     return (
       <OnboardingShell state="install" width="full">
         <section data-testid="install-page">
@@ -570,21 +568,7 @@ export function InstallScreen() {
               </div>
             ) : (
               <div className="grid gap-5 text-left">
-                {cloudPlatform ? (
-                  <a
-                    className="den-button-primary w-full sm:w-fit"
-                    data-testid="install-cloud-download-primary"
-                    href={installHref(config, cloudPlatform, token)}
-                  >
-                    Download OpenWork
-                  </a>
-                ) : null}
-                <details className="grid gap-3">
-                  <summary className="w-fit cursor-pointer text-sm font-medium text-slate-600 hover:text-slate-950">
-                    Other platforms
-                  </summary>
-                  <DownloadPlatformGrid groups={downloadGroups} />
-                </details>
+                <DownloadPlatformGrid groups={downloadGroups} />
                 <a className="den-button-secondary w-fit" href={RETURN_TO_OPENWORK_URL}>
                   I already installed OpenWork
                 </a>
