@@ -15,6 +15,7 @@
     "build": "node ./scripts/electron-build.mjs",
     "build:electron": "node ./scripts/electron-build.mjs",
     "package:electron": "pnpm run build:electron && pnpm exec electron-builder --config electron-builder.yml",
+    "package:electron:cloud": "pnpm run build:electron && pnpm exec electron-builder --config electron-builder.cloud.yml",
     "package:electron:enterprise": "pnpm run build:electron && pnpm exec electron-builder --config electron-builder.enterprise.yml",
     "package:electron:dir": "pnpm run build:electron && pnpm exec electron-builder --config electron-builder.yml --dir",
     "electron": "pnpm exec electron ./electron/main.mjs",

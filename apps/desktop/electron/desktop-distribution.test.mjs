@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
+  CLOUD_DESKTOP_DISTRIBUTION,
   ENTERPRISE_DESKTOP_DISTRIBUTION,
   PUBLIC_DESKTOP_DISTRIBUTION,
   desktopActivationRequired,
@@ -11,6 +12,24 @@ import {
 } from "./desktop-distribution.mjs";
 
 describe("resolveDesktopDistribution", () => {
+  it("defines a Cloud build that requires sign-in without enterprise activation", () => {
+    assert.deepEqual(
+      resolveDesktopDistribution({
+        isPackaged: true,
+        packageFlavor: "cloud",
+        environmentFlavor: "enterprise",
+      }),
+      {
+        flavor: "cloud",
+        appName: "OpenWork Cloud",
+        appIdentifier: "com.differentai.openwork",
+        protocolScheme: "openwork",
+        requireSignin: true,
+        requireActivation: false,
+      },
+    );
+  });
+
   it("uses immutable package metadata for packaged enterprise builds", () => {
     const distribution = resolveDesktopDistribution({
       isPackaged: true,
@@ -54,6 +73,7 @@ describe("resolveDesktopDistribution", () => {
 describe("desktopActivationRequired", () => {
   it("uses the distribution default when bootstrap policy is absent", () => {
     assert.equal(desktopActivationRequired(ENTERPRISE_DESKTOP_DISTRIBUTION, {}), true);
+    assert.equal(desktopActivationRequired(CLOUD_DESKTOP_DISTRIBUTION, {}), false);
     assert.equal(desktopActivationRequired(PUBLIC_DESKTOP_DISTRIBUTION, {}), false);
   });
 

@@ -12,6 +12,7 @@ function seedRequiredEnv() {
 
 let installerReleaseAssetUrl: typeof import("../src/utils/installer-artifacts.js")["installerReleaseAssetUrl"]
 let desktopReleaseAssetName: typeof import("../src/utils/installer-artifacts.js")["desktopReleaseAssetName"]
+let cloudDesktopReleaseAssetName: typeof import("../src/utils/installer-artifacts.js")["cloudDesktopReleaseAssetName"]
 let enterpriseDesktopReleaseAssetName: typeof import("../src/utils/installer-artifacts.js")["enterpriseDesktopReleaseAssetName"]
 let genericInstallerArtifactName: typeof import("../src/utils/installer-artifacts.js")["genericInstallerArtifactName"]
 let resolveConfiguredInstallerArtifact: typeof import("../src/utils/installer-artifacts.js")["resolveConfiguredInstallerArtifact"]
@@ -22,6 +23,7 @@ beforeAll(async () => {
   envModule = await import("../src/env.js")
   ;({
     desktopReleaseAssetName,
+    cloudDesktopReleaseAssetName,
     enterpriseDesktopReleaseAssetName,
     genericInstallerArtifactName,
     installerReleaseAssetUrl,
@@ -52,6 +54,14 @@ test.each([
   ["linux-x64", "v9.9.9", "openwork-enterprise-linux-x86_64-9.9.9.AppImage"],
 ])("maps %s to the enterprise release artifact", (platform, releaseTag, expected) => {
   expect(enterpriseDesktopReleaseAssetName(platform, releaseTag)).toBe(expected)
+})
+
+test.each([
+  ["mac-arm64", "v9.9.9", "openwork-cloud-mac-arm64-9.9.9.dmg"],
+  ["win-x64", "v9.9.9", "openwork-cloud-win-x64-9.9.9.exe"],
+  ["linux-x64", "v9.9.9", "openwork-cloud-linux-x86_64-9.9.9.AppImage"],
+])("maps %s to the Cloud release artifact", (platform, releaseTag, expected) => {
+  expect(cloudDesktopReleaseAssetName(platform, releaseTag)).toBe(expected)
 })
 
 test.each([

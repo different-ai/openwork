@@ -51,6 +51,11 @@ export function enterpriseDesktopReleaseAssetName(platform: string, releaseTag: 
   return publicName?.replace(/^openwork-/, "openwork-enterprise-") ?? null
 }
 
+export function cloudDesktopReleaseAssetName(platform: string, releaseTag: string) {
+  const publicName = desktopReleaseAssetName(platform, releaseTag)
+  return publicName?.replace(/^openwork-/, "openwork-cloud-") ?? null
+}
+
 export function genericInstallerArtifactName(platform: string) {
   if (platform === "mac-arm64") {
     return "OpenWork-Installer-mac-arm64.dmg"

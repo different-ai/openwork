@@ -20,6 +20,7 @@ const installLinkId = createDenTypeId("installLink")
 const insertedRows: unknown[] = []
 const revokedRows: unknown[] = []
 const officialWindowsDesktopUrl = "https://github.com/different-ai/openwork/releases/download/v9.9.9/openwork-enterprise-win-x64-9.9.9.exe"
+const officialWindowsCloudDesktopUrl = "https://github.com/different-ai/openwork/releases/download/v9.9.9/openwork-cloud-win-x64-9.9.9.exe"
 const connectKeyPair = generateConnectLinkKeyPair()
 const connectKeyId = "owc-route-test"
 
@@ -334,6 +335,16 @@ test("zero-config downloads redirect the browser to the enterprise desktop relea
 
   expect(response.status).toBe(302)
   expect(response.headers.get("location")).toBe(officialWindowsDesktopUrl)
+  expect(response.headers.get("location")).not.toContain("opaque-token")
+})
+
+test("Cloud downloads resolve the matching version without forwarding the install token", async () => {
+  const response = await createApp().request("http://den.local/v1/install/cloud/win-x64?token=opaque-token", {
+    redirect: "manual",
+  })
+
+  expect(response.status).toBe(302)
+  expect(response.headers.get("location")).toBe(officialWindowsCloudDesktopUrl)
   expect(response.headers.get("location")).not.toContain("opaque-token")
 })
 

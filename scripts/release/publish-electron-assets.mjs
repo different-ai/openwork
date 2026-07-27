@@ -35,7 +35,7 @@ function walk(dir) {
 }
 
 function isUpdaterManifest(path) {
-  return /^(?:latest|enterprise).*\.ya?ml$/.test(basename(path));
+  return /^(?:latest|cloud|enterprise).*\.ya?ml$/.test(basename(path));
 }
 
 function isReleaseAsset(path) {
@@ -163,12 +163,17 @@ function mergeManifests(name, paths) {
 }
 
 function validateManifest(name, manifest) {
-  const feedName = name.replace(/^enterprise(?=\.|-)/, "latest");
+  const distribution = name.startsWith("cloud")
+    ? "cloud"
+    : name.startsWith("enterprise")
+      ? "enterprise"
+      : "public";
+  const feedName = name.replace(/^(?:cloud|enterprise)(?=\.|-)/, "latest");
   const urls = manifest.files.map((file) => String(file.url || ""));
-  const expectedPrefix = name.startsWith("enterprise") ? "openwork-enterprise-" : "openwork-";
+  const expectedPrefix = distribution === "public" ? "openwork-" : `openwork-${distribution}-`;
   if (
     urls.some((url) => !url.startsWith(expectedPrefix))
-    || (!name.startsWith("enterprise") && urls.some((url) => url.startsWith("openwork-enterprise-")))
+    || (distribution === "public" && urls.some((url) => /^openwork-(?:cloud|enterprise)-/.test(url)))
   ) {
     throw new Error(`${name} contains an artifact from a different desktop distribution.`);
   }

@@ -2455,10 +2455,12 @@ const { ensureAutoUpdater } = registerUpdaterIpc({
   app,
   ipcMain,
   getMainWindow: () => mainWindow,
-  // Both flavors intentionally share one application identifier, so they also
+  // All distributions intentionally share one application identifier, so they also
   // share Squirrel's ShipIt domain. Keep the shared default rather than
   // implying an isolation the bundle identifier cannot provide.
-  manifestChannel: DESKTOP_DISTRIBUTION.flavor === "enterprise" ? "enterprise" : "latest",
+  manifestChannel: DESKTOP_DISTRIBUTION.flavor === "public"
+    ? "latest"
+    : DESKTOP_DISTRIBUTION.flavor,
 });
 
 if (!app.requestSingleInstanceLock()) {

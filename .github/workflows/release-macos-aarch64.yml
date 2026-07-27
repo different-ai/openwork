@@ -138,12 +138,13 @@ jobs:
           if [ -n "$RELEASE_BODY_INPUT" ]; then
             RELEASE_BODY="$RELEASE_BODY_INPUT"
           else
-            printf -v RELEASE_BODY '%s\n\nOpenWork %s desktop release.\n\n%s\n%s\n%s' \
+            printf -v RELEASE_BODY '%s\n\nOpenWork %s desktop release.\n\n%s\n%s\n%s\n%s' \
               "## What's new" \
               "$TAG" \
               "- Public artifacts use the openwork-* naming convention." \
+              "- Cloud artifacts use openwork-cloud-* and require sign-in without enterprise activation." \
               "- Enterprise artifacts use openwork-enterprise-* while retaining the standard OpenWork app identity." \
-              "- Public and enterprise Electron builds use separate updater manifests on this release."
+              "- Public, Cloud, and enterprise Electron builds use separate updater manifests on this release."
           fi
 
           draft="${INPUT_DRAFT:-}"
@@ -334,6 +335,54 @@ jobs:
             builder_config: electron-builder.yml
             asset_prefix: openwork
             manifest_pattern: latest*.yml
+            electron_args: "--win --arm64"
+            target_triple: aarch64-pc-windows-msvc
+          - platform: macos-14
+            os_type: macos
+            artifact: electron-cloud-macos-arm64
+            builder_config: electron-builder.cloud.yml
+            asset_prefix: openwork-cloud
+            manifest_pattern: cloud*.yml
+            electron_args: "--mac --arm64"
+            target_triple: aarch64-apple-darwin
+          - platform: macos-14
+            os_type: macos
+            artifact: electron-cloud-macos-x64
+            builder_config: electron-builder.cloud.yml
+            asset_prefix: openwork-cloud
+            manifest_pattern: cloud*.yml
+            electron_args: "--mac --x64"
+            target_triple: x86_64-apple-darwin
+          - platform: ubuntu-22.04
+            os_type: linux
+            artifact: electron-cloud-linux-x64
+            builder_config: electron-builder.cloud.yml
+            asset_prefix: openwork-cloud
+            manifest_pattern: cloud*.yml
+            electron_args: "--linux --x64"
+            target_triple: x86_64-unknown-linux-gnu
+          - platform: ubuntu-22.04-arm
+            os_type: linux
+            artifact: electron-cloud-linux-arm64
+            builder_config: electron-builder.cloud.yml
+            asset_prefix: openwork-cloud
+            manifest_pattern: cloud*.yml
+            electron_args: "--linux --arm64"
+            target_triple: aarch64-unknown-linux-gnu
+          - platform: windows-2022
+            os_type: windows
+            artifact: electron-cloud-windows-x64
+            builder_config: electron-builder.cloud.yml
+            asset_prefix: openwork-cloud
+            manifest_pattern: cloud*.yml
+            electron_args: "--win --x64"
+            target_triple: x86_64-pc-windows-msvc
+          - platform: windows-11-arm
+            os_type: windows
+            artifact: electron-cloud-windows-arm64
+            builder_config: electron-builder.cloud.yml
+            asset_prefix: openwork-cloud
+            manifest_pattern: cloud*.yml
             electron_args: "--win --arm64"
             target_triple: aarch64-pc-windows-msvc
           - platform: macos-14
@@ -599,29 +648,28 @@ jobs:
           set -euo pipefail
           echo "::warning::Publishing unsigned Windows installer because SIGN_WINDOWS is not enabled."
 
-      # electron-builder documents `channel` on the generic publish provider,
-      # not the GitHub one, so an enterprise build may still emit latest*.yml.
-      # Normalize here so the enterprise feed name is deterministic regardless
-      # of which behavior the pinned electron-builder version has, and so the
-      # public latest*.yml can never receive enterprise artifact URLs.
-      - name: Normalize enterprise updater manifests
-        if: matrix.asset_prefix == 'openwork-enterprise'
+      # electron-builder may still emit latest*.yml for a custom distribution.
+      # Normalize each non-public feed so it cannot update into another flavor.
+      - name: Normalize custom distribution updater manifests
+        if: matrix.asset_prefix != 'openwork'
         shell: bash
         run: |
           set -euo pipefail
           cd apps/desktop/dist-electron
           shopt -s nullglob
+          channel="${{ matrix.asset_prefix }}"
+          channel="${channel#openwork-}"
           for manifest in latest*.yml; do
-            target="enterprise${manifest#latest}"
+            target="${channel}${manifest#latest}"
             if [ -e "$target" ]; then
               rm -f "$manifest"
             else
               mv "$manifest" "$target"
             fi
           done
-          manifests=(enterprise*.yml)
+          manifests=("${channel}"*.yml)
           if [ ${#manifests[@]} -eq 0 ]; then
-            echo "Enterprise build produced no updater manifest." >&2
+            echo "${channel} build produced no updater manifest." >&2
             exit 1
           fi
           printf '%s\n' "${manifests[@]}"
