@@ -27,7 +27,7 @@ describe("Electron distribution configs", () => {
     assert.equal(config.appId, "com.differentai.openwork.enterprise");
     assert.equal(config.productName, "OpenWork Enterprise");
     assert.equal(config.extraMetadata.openworkDistribution, "enterprise");
-    assert.equal(config.protocols[0].schemes[0], "openwork-enterprise");
+    assert.equal(config.protocols[0].schemes[0], "openwork");
     assert.equal(config.publish[0].provider, "github");
     assert.equal(config.publish[0].owner, "different-ai");
     assert.equal(config.publish[0].repo, "openwork");

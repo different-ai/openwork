@@ -183,7 +183,7 @@ describe("join organization invite clean layout contract", () => {
     expect(installSource).toContain("<span>Download OpenWork Enterprise</span>");
     expect(installSource).toContain("<span>for</span>");
     expect(installSource).toContain("AppImage (ARM64)");
-    expect(installSource).toContain('desktopScheme: "openwork-enterprise"');
+    expect(installSource).toContain('desktopScheme: "openwork"');
     expect(identitySource).toContain("failedLogoUrl");
     expect(identitySource).toContain("failedIconUrl");
   });

@@ -33,7 +33,7 @@ type InstallConfig = {
   distribution: "enterprise";
 };
 
-const RETURN_TO_OPENWORK_URL = "openwork-enterprise://open";
+const RETURN_TO_OPENWORK_URL = "openwork://open";
 const INSTALL_PLATFORMS: InstallPlatform[] = ["mac-arm64", "mac-x64", "win-x64", "linux-x64", "linux-arm64"];
 
 type InstallerOs = "macos" | "windows" | "linux";
@@ -437,7 +437,7 @@ export function InstallScreen() {
         "/v1/auth/desktop-handoff",
         {
           method: "POST",
-          body: JSON.stringify({ desktopScheme: "openwork-enterprise" }),
+          body: JSON.stringify({ desktopScheme: "openwork" }),
         },
         12000,
       );
@@ -481,7 +481,7 @@ export function InstallScreen() {
         "/v1/auth/desktop-handoff",
         {
           method: "POST",
-          body: JSON.stringify({ desktopScheme: "openwork-enterprise" }),
+          body: JSON.stringify({ desktopScheme: "openwork" }),
         },
         12000,
       );

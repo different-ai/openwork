@@ -6,7 +6,7 @@ extraMetadata:
 protocols:
   - name: OpenWork Enterprise
     schemes:
-      - openwork-enterprise
+      - openwork
 publish:
   - provider: github
     owner: different-ai

@@ -15,7 +15,7 @@ const enterpriseDistribution = {
   flavor: "enterprise" as const,
   appName: "OpenWork Enterprise",
   appIdentifier: "com.differentai.openwork.enterprise",
-  protocolScheme: "openwork-enterprise",
+  protocolScheme: "openwork",
   requireSignin: true,
 };
 
@@ -34,16 +34,12 @@ describe("enterprise desktop activation", () => {
     })).toBe(false);
   });
 
-  test("recognizes enterprise Den auth links as activation links", () => {
+  test("uses the standard Den auth deep-link shape", () => {
     expect(parseDenAuthDeepLink(
-      "openwork-enterprise://den-auth?grant=one-time-grant&denBaseUrl=https%3A%2F%2Fapp.openworklabs.com",
+      "openwork://den-auth?grant=one-time-grant&denBaseUrl=https%3A%2F%2Fapp.openworklabs.com",
     )).toEqual({
       grant: "one-time-grant",
       denBaseUrl: "https://app.openworklabs.com",
-      isEnterpriseActivation: true,
     });
-    expect(parseDenAuthDeepLink(
-      "openwork://den-auth?grant=ordinary-signin&denBaseUrl=https%3A%2F%2Fapp.openworklabs.com",
-    )?.isEnterpriseActivation).toBe(false);
   });
 });

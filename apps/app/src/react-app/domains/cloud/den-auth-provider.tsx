@@ -24,6 +24,7 @@ import {
   type DenUser,
 } from "../../../app/lib/den";
 import { exchangeHandoffAndSignIn } from "../../../app/lib/den-handoff";
+import { readDesktopDistributionInfo } from "../../../app/lib/desktop";
 import {
   denSessionUpdatedEvent,
   denSettingsChangedEvent,
@@ -374,7 +375,12 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
         if (!parsed || handledGrantsRef.current.has(parsed.grant)) continue;
         handledGrantsRef.current.add(parsed.grant);
 
-        const pending = pendingServerSwitchForDeepLink(parsed);
+        const isEnterpriseActivation =
+          readDesktopDistributionInfo().flavor === "enterprise";
+        const pending = pendingServerSwitchForDeepLink({
+          ...parsed,
+          isEnterpriseActivation,
+        });
         if (pending) {
           setPendingServerSwitch(pending);
           continue;
@@ -383,7 +389,7 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
         exchangeDeepLinkGrant(
           parsed.grant,
           parsed.denBaseUrl,
-          parsed.isEnterpriseActivation,
+          isEnterpriseActivation,
         );
       }
     };

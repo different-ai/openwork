@@ -10,7 +10,7 @@ export const ENTERPRISE_DESKTOP_DISTRIBUTION = Object.freeze({
   flavor: "enterprise",
   appName: "OpenWork Enterprise",
   appIdentifier: "com.differentai.openwork.enterprise",
-  protocolScheme: "openwork-enterprise",
+  protocolScheme: "openwork",
   requireSignin: true,
 });
 

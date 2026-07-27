@@ -4,10 +4,10 @@ The enterprise desktop app is installed directly from the organization's Den
 download page. Before activation it shows only the pixel-dither activation
 gate, rejects runtime commands, and does not start the local runtime.
 
-An authenticated Den user requests a one-time desktop handoff for the
-`openwork-enterprise` scheme. Opening that deep link activates the enterprise
-installation, signs the user into the issuing Den, permanently retains required
-sign-in for that distribution, and consumes the handoff grant.
+An authenticated Den user requests the standard one-time `openwork://` desktop
+handoff. The immutable enterprise build flag makes a successful handoff also
+activate the installation, sign the user into the issuing Den, permanently
+retain required sign-in for that distribution, and consume the handoff grant.
 
 ## Expected outcome
 

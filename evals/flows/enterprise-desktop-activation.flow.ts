@@ -98,14 +98,14 @@ export default defineFlow({
             authorization: `Bearer ${ctx.env.OPENWORK_EVAL_DEN_TOKEN?.trim() ?? ""}`,
             "content-type": "application/json",
           },
-          body: JSON.stringify({ desktopScheme: "openwork-enterprise" }),
+          body: JSON.stringify({ desktopScheme: "openwork" }),
         });
         const payload = await readJson(response);
         ctx.assert(response.ok, `Handoff create failed: ${response.status} ${payload.text.slice(0, 300)}`);
         const body = payload.body as HandoffCreateResponse;
         const openworkUrl = typeof body.openworkUrl === "string" ? body.openworkUrl : "";
         ctx.assert(openworkUrl.length > 0, "Den returned no enterprise deep link.");
-        ctx.assert(openworkUrl.startsWith("openwork-enterprise:"), "Den returned the wrong desktop scheme.");
+        ctx.assert(openworkUrl.startsWith("openwork:"), "Den returned the wrong desktop scheme.");
         const parsed = new URL(openworkUrl);
         state.grant = body.grant ?? parsed.searchParams.get("grant") ?? "";
         state.openworkUrl = openworkUrl;
