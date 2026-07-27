@@ -15,6 +15,14 @@ type Release = {
   assets?: ReleaseAsset[];
 };
 
+// The same release carries the retired helper installers and the parallel
+// enterprise flavor. Both match the loose per-architecture keywords below and
+// can sort ahead of the public asset, so exclude them here exactly as the
+// landing page does — this card must only ever offer the public app.
+function isNonPublicDesktopAsset(name: string) {
+  return name.startsWith("openwork-installer-") || name.startsWith("openwork-enterprise-");
+}
+
 function selectAsset(assets: ReleaseAsset[], extensions: string[], keywords: string[]) {
   const loweredExtensions = extensions.map((value) => value.toLowerCase());
   const loweredKeywords = keywords.map((value) => value.toLowerCase());
@@ -24,7 +32,7 @@ function selectAsset(assets: ReleaseAsset[], extensions: string[], keywords: str
       return (
         loweredExtensions.some((extension) => name.endsWith(extension)) &&
         loweredKeywords.every((keyword) => name.includes(keyword)) &&
-        !name.startsWith("openwork-installer-")
+        !isNonPublicDesktopAsset(name)
       );
     }) ?? null
   );
