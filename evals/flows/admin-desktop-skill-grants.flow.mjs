@@ -8,8 +8,20 @@ const ADMIN_EMAIL = process.env.OPENWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.t
 const ADMIN_PASSWORD = process.env.OPENWORK_EVAL_DEMO_PASSWORD?.trim() || "OpenWorkDemo123!";
 const WORKSPACE_PATH = process.env.OPENWORK_EVAL_WORKSPACE_PATH?.trim() || "/tmp/openwork-admin-desktop-skill-grants";
 const RUN_TAG = Date.now();
-const APPROVED_TITLE = `Approved Admin Playbook ${RUN_TAG}`;
-const DEN_ONLY_TITLE = `Den Only Admin Playbook ${RUN_TAG}`;
+const APPROVED_TITLE = `Admin Access Approved Skill ${RUN_TAG}`;
+const DEN_ONLY_TITLE = `Admin Access Den Only Skill ${RUN_TAG}`;
+const PLUGIN_GRANTED_TITLE = `Admin Access Plugin Granted Command ${RUN_TAG}`;
+const PLUGIN_DEN_ONLY_TITLE = `Admin Access Den Only Command ${RUN_TAG}`;
+const MCP_GRANTED_TITLE = `Admin Access Marketplace Granted MCP ${RUN_TAG}`;
+const MCP_DEN_ONLY_TITLE = `Admin Access Den Only MCP ${RUN_TAG}`;
+const ALL_MANAGED_TITLES = [
+  APPROVED_TITLE,
+  DEN_ONLY_TITLE,
+  PLUGIN_GRANTED_TITLE,
+  PLUGIN_DEN_ONLY_TITLE,
+  MCP_GRANTED_TITLE,
+  MCP_DEN_ONLY_TITLE,
+];
 const vo = await loadVoiceoverParagraphs(FLOW_ID);
 
 const state = {
@@ -18,22 +30,28 @@ const state = {
   memberId: null,
   approvedCapability: null,
   denOnlyCapability: null,
+  pluginGrantedCapability: null,
+  pluginDenOnlyCapability: null,
+  mcpGrantedCapability: null,
+  mcpDenOnlyCapability: null,
   denManagedTitles: [],
+  assignedConfigObjectIds: [],
   discoveredTitles: [],
   searchedCapabilityNames: [],
-  deniedPayload: null,
+  allowedPayloads: {},
+  deniedPayloads: {},
 };
 
 export default {
   id: FLOW_ID,
-  title: "Administrators receive only explicitly granted desktop Skills",
+  title: "Administrators receive only explicitly granted desktop Connect capabilities",
   kind: "user-facing",
   requiredEnv: ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_WEB_URL", "OPENWORK_EVAL_WORKSPACE_PATH"],
   steps: [
     {
       name: "Den administration remains complete",
       run: async (ctx) => {
-        await ctx.prove("The administrator can still manage both Skills in Den", {
+        await ctx.prove("The administrator can still manage every Skill, plugin capability, and MCP declaration in Den", {
           voiceover: vo[0],
           action: async () => {
             await prepareScenario(ctx);
@@ -42,18 +60,14 @@ export default {
             await ctx.waitForText(ADMIN_EMAIL, { timeoutMs: 30_000 });
           },
           assert: async () => {
-            witness(
-              ctx,
-              state.denManagedTitles.includes(APPROVED_TITLE),
-              "Den management lists the explicitly approved Skill",
-              state.denManagedTitles,
-            );
-            witness(
-              ctx,
-              state.denManagedTitles.includes(DEN_ONLY_TITLE),
-              "Den management also lists the unassigned Den-only Skill",
-              state.denManagedTitles,
-            );
+            for (const title of ALL_MANAGED_TITLES) {
+              witness(
+                ctx,
+                state.denManagedTitles.includes(title),
+                `Den management lists ${title}`,
+                state.denManagedTitles,
+              );
+            }
             await ctx.expectText(ADMIN_EMAIL);
             await ctx.expectText("OpenWork Cloud");
           },
@@ -68,7 +82,7 @@ export default {
     {
       name: "Desktop discovery and execution honor grants",
       run: async (ctx) => {
-        await ctx.prove("The administrator desktop exposes only the granted Skill and rejects the Den-only Skill", {
+        await ctx.prove("The administrator agent can discover, search, and execute only granted Skills, plugin capabilities, and MCP declarations", {
           voiceover: vo[1],
           action: async () => {
             await verifyAgentMcpBoundary(ctx);
@@ -89,6 +103,30 @@ export default {
               "The live desktop MCP Skill index excludes the unassigned Den-only Skill",
               state.discoveredTitles,
             );
+            for (const [label, capability] of [
+              ["Skill", state.approvedCapability],
+              ["plugin-granted command", state.pluginGrantedCapability],
+              ["marketplace-granted MCP declaration", state.mcpGrantedCapability],
+            ]) {
+              witness(
+                ctx,
+                state.assignedConfigObjectIds.includes(capabilityConfigObjectId(capability)),
+                `The desktop inventory endpoint returns the granted ${label}`,
+                state.assignedConfigObjectIds,
+              );
+            }
+            for (const [label, capability] of [
+              ["Skill", state.denOnlyCapability],
+              ["command", state.pluginDenOnlyCapability],
+              ["MCP declaration", state.mcpDenOnlyCapability],
+            ]) {
+              witness(
+                ctx,
+                !state.assignedConfigObjectIds.includes(capabilityConfigObjectId(capability)),
+                `The desktop inventory endpoint excludes the unassigned ${label}`,
+                state.assignedConfigObjectIds,
+              );
+            }
             witness(
               ctx,
               state.searchedCapabilityNames.includes(state.approvedCapability),
@@ -101,26 +139,79 @@ export default {
               "search_capabilities excludes the unassigned Den-only Skill",
               state.searchedCapabilityNames,
             );
-            witness(
-              ctx,
-              state.deniedPayload?.error === "forbidden",
-              "Direct execution of the unassigned Skill is rejected as forbidden",
-              state.deniedPayload,
-            );
-            ctx.output("Desktop Skill grant boundary", JSON.stringify({
+            for (const [label, capability] of [
+              ["plugin-granted command", state.pluginGrantedCapability],
+              ["marketplace-granted MCP declaration", state.mcpGrantedCapability],
+            ]) {
+              witness(
+                ctx,
+                state.searchedCapabilityNames.includes(capability),
+                `search_capabilities returns the ${label}`,
+                state.searchedCapabilityNames,
+              );
+            }
+            for (const [label, capability] of [
+              ["unassigned command", state.pluginDenOnlyCapability],
+              ["unassigned MCP declaration", state.mcpDenOnlyCapability],
+            ]) {
+              witness(
+                ctx,
+                !state.searchedCapabilityNames.includes(capability),
+                `search_capabilities excludes the ${label}`,
+                state.searchedCapabilityNames,
+              );
+            }
+            for (const [label, payload] of Object.entries(state.allowedPayloads)) {
+              witness(ctx, payload?.error === undefined, `Direct execution allows the granted ${label}`, payload);
+            }
+            for (const [label, payload] of Object.entries(state.deniedPayloads)) {
+              witness(ctx, payload?.error === "forbidden", `Direct execution rejects the unassigned ${label}`, payload);
+            }
+            ctx.output("Admin capability grant boundary", JSON.stringify({
               approvedSkill: APPROVED_TITLE,
               denOnlySkill: DEN_ONLY_TITLE,
+              pluginGrantedCommand: PLUGIN_GRANTED_TITLE,
+              denOnlyCommand: PLUGIN_DEN_ONLY_TITLE,
+              marketplaceGrantedMcp: MCP_GRANTED_TITLE,
+              denOnlyMcp: MCP_DEN_ONLY_TITLE,
               discoveredTitles: state.discoveredTitles,
               searchedCapabilityNames: state.searchedCapabilityNames,
-              directExecution: state.deniedPayload,
+              allowedExecution: state.allowedPayloads,
+              deniedExecution: state.deniedPayloads,
             }, null, 2));
             await ctx.expectText("Extensions");
             await ctx.expectText("Skills");
+            await ctx.expectText(APPROVED_TITLE);
+            await ctx.expectNoText(DEN_ONLY_TITLE);
           },
           screenshot: {
             name: "admin-desktop-cloud-connection",
-            requireText: ["Extensions", "Skills"],
-            rejectText: ["Something went wrong"],
+            requireText: ["Extensions", "Skills", APPROVED_TITLE],
+            rejectText: ["Something went wrong", DEN_ONLY_TITLE],
+            hashIncludes: "/settings/extensions",
+          },
+        });
+      },
+    },
+    {
+      name: "Desktop MCP context honors grants",
+      run: async (ctx) => {
+        await ctx.prove("The administrator desktop shows the granted MCP declaration without exposing the unassigned MCP", {
+          voiceover: vo[2],
+          action: async () => {
+            await ctx.control("settings.panel.open", { panel: "extensions" });
+            await ctx.waitForText("Extensions", { timeoutMs: 30_000 });
+            await ctx.clickText("MCP", { selector: "button", timeoutMs: 30_000 });
+            await ctx.waitForText(MCP_GRANTED_TITLE, { timeoutMs: 30_000 });
+          },
+          assert: async () => {
+            await ctx.expectText(MCP_GRANTED_TITLE);
+            await ctx.expectNoText(MCP_DEN_ONLY_TITLE);
+          },
+          screenshot: {
+            name: "admin-desktop-assigned-mcp-context",
+            requireText: ["Extensions", "MCP", MCP_GRANTED_TITLE],
+            rejectText: ["Something went wrong", MCP_DEN_ONLY_TITLE],
             hashIncludes: "/settings/extensions",
           },
         });
@@ -136,6 +227,10 @@ function cleanBaseUrl(value) {
 function witness(ctx, condition, assertion, actual) {
   ctx.recordEvidence({ type: "assertion", status: condition ? "passed" : "failed", assertion, actual });
   ctx.assert(condition, `${assertion}: ${JSON.stringify(actual)}`);
+}
+
+function capabilityConfigObjectId(capability) {
+  return capability?.split(":")[2] ?? "";
 }
 
 async function denFetch(pathname, options = {}) {
@@ -183,9 +278,9 @@ async function prepareScenario(ctx) {
   });
   ctx.assert(activated.response.ok, `Active organization update failed: ${activated.text.slice(0, 300)}`);
 
-  await seedSkillPair(ctx);
+  await seedCapabilityMatrix(ctx);
 
-  const managed = await denFetch(`/v1/plugins?limit=100&q=${encodeURIComponent(`Admin Playbook ${RUN_TAG}`)}`, {
+  const managed = await denFetch(`/v1/plugins?limit=100&q=${encodeURIComponent(String(RUN_TAG))}`, {
     headers: { authorization: `Bearer ${state.adminToken}` },
   });
   ctx.assert(managed.response.ok && Array.isArray(managed.body?.items), `Den plugin list failed: ${managed.text.slice(0, 300)}`);
@@ -193,19 +288,21 @@ async function prepareScenario(ctx) {
     Array.isArray(plugin.configObjects) ? plugin.configObjects.map((item) => item.title) : []
   );
   if (state.denManagedTitles.length === 0) {
-    state.denManagedTitles = [APPROVED_TITLE, DEN_ONLY_TITLE].filter((title) => managed.text.includes(title));
+    state.denManagedTitles = ALL_MANAGED_TITLES.filter((title) => managed.text.includes(title));
   }
 }
 
-async function seedSkillPair(ctx) {
+async function seedCapabilityMatrix(ctx) {
   const { createDenDb } = await import("../../ee/packages/den-db/dist/index.js");
   const {
     ConfigObjectAccessGrantTable,
     ConfigObjectTable,
     ConfigObjectVersionTable,
+    MarketplaceAccessGrantTable,
     MarketplacePluginTable,
     MarketplaceTable,
     MemberTable,
+    PluginAccessGrantTable,
     PluginConfigObjectTable,
     PluginTable,
   } = await import("../../ee/packages/den-db/dist/schema.js");
@@ -227,12 +324,21 @@ async function seedSkillPair(ctx) {
   ctx.assert(Boolean(administrator), "The demo organization has no active owner or administrator membership.");
   state.memberId = administrator.id;
 
-  const seedOne = async (title, granted) => {
+  const seedOne = async ({ grant, objectType, title }) => {
     const now = new Date();
     const marketplaceId = createDenTypeId("marketplace");
     const pluginId = createDenTypeId("plugin");
     const configObjectId = createDenTypeId("configObject");
     const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+    const isMcp = objectType === "mcp";
+    const normalizedPayloadJson = isMcp
+      ? { mcpServers: { proof: { url: `https://${slug}.example.test/remote` } } }
+      : null;
+    const rawSourceText = isMcp
+      ? JSON.stringify(normalizedPayloadJson)
+      : objectType === "command"
+        ? `Run ${title}.`
+        : `---\nname: ${slug}\ndescription: ${title}\n---\n\n# ${title}`;
     await database.insert(MarketplaceTable).values({
       id: marketplaceId,
       organizationId,
@@ -259,14 +365,14 @@ async function seedSkillPair(ctx) {
     await database.insert(ConfigObjectTable).values({
       id: configObjectId,
       organizationId,
-      objectType: "skill",
+      objectType,
       sourceMode: "cloud",
       title,
-      description: `Proof Skill ${title}`,
+      description: `Proof ${objectType} ${title}`,
       searchText: title,
-      currentFileName: `${slug}.md`,
-      currentFileExtension: ".md",
-      currentRelativePath: `skills/${slug}.md`,
+      currentFileName: `${slug}${isMcp ? ".json" : ".md"}`,
+      currentFileExtension: isMcp ? ".json" : ".md",
+      currentRelativePath: `${objectType}s/${slug}${objectType === "skill" ? "/SKILL.md" : isMcp ? ".json" : ".md"}`,
       status: "active",
       createdByOrgMembershipId: state.memberId,
       connectorInstanceId: null,
@@ -299,8 +405,8 @@ async function seedSkillPair(ctx) {
       id: createDenTypeId("configObjectVersion"),
       organizationId,
       configObjectId,
-      normalizedPayloadJson: null,
-      rawSourceText: `---\nname: ${slug}\ndescription: ${title}\n---\n\n# ${title}`,
+      normalizedPayloadJson,
+      rawSourceText,
       schemaVersion: null,
       createdVia: "cloud",
       createdByOrgMembershipId: state.memberId,
@@ -309,7 +415,7 @@ async function seedSkillPair(ctx) {
       isDeletedVersion: false,
       createdAt: now,
     });
-    if (granted) {
+    if (grant === "config_object") {
       await database.insert(ConfigObjectAccessGrantTable).values({
         id: createDenTypeId("configObjectAccessGrant"),
         organizationId,
@@ -323,11 +429,43 @@ async function seedSkillPair(ctx) {
         removedAt: null,
       });
     }
+    if (grant === "plugin") {
+      await database.insert(PluginAccessGrantTable).values({
+        id: createDenTypeId("pluginAccessGrant"),
+        organizationId,
+        pluginId,
+        orgMembershipId: state.memberId,
+        teamId: null,
+        orgWide: false,
+        role: "viewer",
+        createdByOrgMembershipId: state.memberId,
+        createdAt: now,
+        removedAt: null,
+      });
+    }
+    if (grant === "marketplace") {
+      await database.insert(MarketplaceAccessGrantTable).values({
+        id: createDenTypeId("marketplaceAccessGrant"),
+        organizationId,
+        marketplaceId,
+        orgMembershipId: state.memberId,
+        teamId: null,
+        orgWide: false,
+        role: "viewer",
+        createdByOrgMembershipId: state.memberId,
+        createdAt: now,
+        removedAt: null,
+      });
+    }
     return `plugin:${pluginId}:${configObjectId}`;
   };
 
-  state.approvedCapability = await seedOne(APPROVED_TITLE, true);
-  state.denOnlyCapability = await seedOne(DEN_ONLY_TITLE, false);
+  state.approvedCapability = await seedOne({ grant: "config_object", objectType: "skill", title: APPROVED_TITLE });
+  state.denOnlyCapability = await seedOne({ grant: "none", objectType: "skill", title: DEN_ONLY_TITLE });
+  state.pluginGrantedCapability = await seedOne({ grant: "plugin", objectType: "command", title: PLUGIN_GRANTED_TITLE });
+  state.pluginDenOnlyCapability = await seedOne({ grant: "none", objectType: "command", title: PLUGIN_DEN_ONLY_TITLE });
+  state.mcpGrantedCapability = await seedOne({ grant: "marketplace", objectType: "mcp", title: MCP_GRANTED_TITLE });
+  state.mcpDenOnlyCapability = await seedOne({ grant: "none", objectType: "mcp", title: MCP_DEN_ONLY_TITLE });
   await denDb.client.end();
 }
 
@@ -406,9 +544,18 @@ async function verifyAgentMcpBoundary(ctx) {
   const resources = await mcpCall(ctx, minted.body.token, "resources/list");
   state.discoveredTitles = (resources.resources ?? []).map((resource) => resource.title).filter(Boolean);
 
+  const assigned = await denFetch("/v1/resources/marketplace-capabilities", {
+    headers: { authorization: `Bearer ${state.adminToken}` },
+  });
+  ctx.assert(
+    assigned.response.ok && Array.isArray(assigned.body?.items),
+    `Assigned desktop capability inventory failed: ${assigned.response.status} ${assigned.text.slice(0, 300)}`,
+  );
+  state.assignedConfigObjectIds = assigned.body.items.map((item) => item.configObjectId).filter(Boolean);
+
   const searched = await mcpCall(ctx, minted.body.token, "tools/call", {
     name: "search_capabilities",
-    arguments: { query: `Admin Playbook ${RUN_TAG}`, type: "skills", limit: 20 },
+    arguments: { query: `Admin Access ${RUN_TAG}`, type: "marketplace", limit: 20 },
   });
   const searchedText = searched.content?.[0]?.text ?? "{}";
   let searchedPayload;
@@ -420,14 +567,30 @@ async function verifyAgentMcpBoundary(ctx) {
   ctx.assert(Array.isArray(searchedPayload?.matches), `Unexpected search_capabilities payload: ${searchedText.slice(0, 300)}`);
   state.searchedCapabilityNames = searchedPayload.matches.map((match) => match.name).filter(Boolean);
 
-  const denied = await mcpCall(ctx, minted.body.token, "tools/call", {
-    name: "execute_capability",
-    arguments: { name: state.denOnlyCapability },
-  });
-  const deniedText = denied.content?.[0]?.text ?? "{}";
-  try {
-    state.deniedPayload = JSON.parse(deniedText);
-  } catch {
-    state.deniedPayload = { raw: deniedText };
+  const execute = async (name) => {
+    const result = await mcpCall(ctx, minted.body.token, "tools/call", {
+      name: "execute_capability",
+      arguments: { name },
+    });
+    const text = result.content?.[0]?.text ?? "{}";
+    try {
+      return JSON.parse(text);
+    } catch {
+      return { raw: text };
+    }
+  };
+  for (const [label, capability] of [
+    ["Skill", state.approvedCapability],
+    ["plugin-granted command", state.pluginGrantedCapability],
+    ["marketplace-granted MCP declaration", state.mcpGrantedCapability],
+  ]) {
+    state.allowedPayloads[label] = await execute(capability);
+  }
+  for (const [label, capability] of [
+    ["Skill", state.denOnlyCapability],
+    ["command", state.pluginDenOnlyCapability],
+    ["MCP declaration", state.mcpDenOnlyCapability],
+  ]) {
+    state.deniedPayloads[label] = await execute(capability);
   }
 }

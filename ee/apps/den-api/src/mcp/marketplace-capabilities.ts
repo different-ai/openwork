@@ -46,6 +46,13 @@ export type RemoteSkillDescriptor = {
   location: string
 }
 
+export type AccessibleMarketplaceCapabilityReference = {
+  configObjectId: string
+  marketplaceId: string
+  objectType: MarketplaceCapabilityObjectType
+  pluginId: string
+}
+
 export function normalizeRemoteSkillDescription(input: {
   description: string | null
   name: string
@@ -498,6 +505,37 @@ async function filterVisibleRows(input: {
     if (grantRole(input.member, pluginGrants.get(row.plugin.id) ?? [])) return true
     return Boolean(grantRole(input.member, marketplaceGrants.get(row.marketplace.id) ?? []))
   })
+}
+
+export async function listAccessibleMarketplaceCapabilityReferences(input: {
+  enabled?: boolean
+  member: McpMemberIdentity | null
+  organizationId: string
+}): Promise<AccessibleMarketplaceCapabilityReference[]> {
+  if (input.enabled === false || !input.member) return []
+  const organizationId = normalizeDenTypeId("organization", input.organizationId)
+  if (!(await getActiveMember(organizationId, input.member))) return []
+
+  const rows = await filterVisibleRows({
+    organizationId,
+    member: input.member,
+    rows: await listActiveMarketplaceRows(organizationId),
+  })
+  const references = new Map<string, AccessibleMarketplaceCapabilityReference>()
+  for (const row of rows) {
+    const key = `${row.marketplace.id}:${row.plugin.id}:${row.configObject.id}`
+    references.set(key, {
+      configObjectId: row.configObject.id,
+      marketplaceId: row.marketplace.id,
+      objectType: row.configObject.objectType,
+      pluginId: row.plugin.id,
+    })
+  }
+  return [...references.values()].sort((left, right) =>
+    left.marketplaceId.localeCompare(right.marketplaceId)
+    || left.pluginId.localeCompare(right.pluginId)
+    || left.configObjectId.localeCompare(right.configObjectId)
+  )
 }
 
 export async function listAccessibleMarketplaceSkillDescriptors(input: {

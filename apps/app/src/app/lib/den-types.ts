@@ -115,6 +115,13 @@ export type DenOrgPluginResolved = {
   extension?: DenOrgExtensionProjection | null;
 };
 
+export type DenAssignedMarketplaceCapability = {
+  configObjectId: string;
+  marketplaceId: string;
+  objectType: DenPluginConfigObjectType;
+  pluginId: string;
+};
+
 export type DenResourceSnapshotConfigItem = {
   configItemId: string;
   lastUpdatedAt: string;
