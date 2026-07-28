@@ -513,7 +513,7 @@ describe("marketplace capabilities source", () => {
     expect(descriptors.some((descriptor) => descriptor.capability === unassigned.name)).toBe(false)
   })
 
-  test("admins only discover desktop skills explicitly assigned to them", async () => {
+  test("admins only discover and search desktop skills explicitly assigned to them", async () => {
     const admin = await seedMember({ role: "admin" })
     const assigned = await seedCapability({
       owner: admin,
@@ -537,6 +537,17 @@ describe("marketplace capabilities source", () => {
 
     expect(descriptors.some((descriptor) => descriptor.capability === assigned.name)).toBe(true)
     expect(descriptors.some((descriptor) => descriptor.capability === denOnly.name)).toBe(false)
+
+    const matches = await marketplaceCapabilities.searchMarketplaceCapabilities({
+      organizationId: admin.organizationId,
+      member: admin.member,
+      query: "admin playbook",
+      limit: 5,
+      enabled: true,
+    })
+
+    expect(matches.some((match) => match.name === assigned.name)).toBe(true)
+    expect(matches.some((match) => match.name === denOnly.name)).toBe(false)
   })
 
   test("search finds a published plugin skill and execute returns provenance-framed raw content", async () => {

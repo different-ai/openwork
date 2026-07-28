@@ -20,6 +20,7 @@ const state = {
   denOnlyCapability: null,
   denManagedTitles: [],
   discoveredTitles: [],
+  searchedCapabilityNames: [],
   deniedPayload: null,
 };
 
@@ -90,6 +91,18 @@ export default {
             );
             witness(
               ctx,
+              state.searchedCapabilityNames.includes(state.approvedCapability),
+              "search_capabilities returns the explicitly granted Skill",
+              state.searchedCapabilityNames,
+            );
+            witness(
+              ctx,
+              !state.searchedCapabilityNames.includes(state.denOnlyCapability),
+              "search_capabilities excludes the unassigned Den-only Skill",
+              state.searchedCapabilityNames,
+            );
+            witness(
+              ctx,
               state.deniedPayload?.error === "forbidden",
               "Direct execution of the unassigned Skill is rejected as forbidden",
               state.deniedPayload,
@@ -98,6 +111,7 @@ export default {
               approvedSkill: APPROVED_TITLE,
               denOnlySkill: DEN_ONLY_TITLE,
               discoveredTitles: state.discoveredTitles,
+              searchedCapabilityNames: state.searchedCapabilityNames,
               directExecution: state.deniedPayload,
             }, null, 2));
             await ctx.expectText("Extensions");
@@ -391,6 +405,20 @@ async function verifyAgentMcpBoundary(ctx) {
 
   const resources = await mcpCall(ctx, minted.body.token, "resources/list");
   state.discoveredTitles = (resources.resources ?? []).map((resource) => resource.title).filter(Boolean);
+
+  const searched = await mcpCall(ctx, minted.body.token, "tools/call", {
+    name: "search_capabilities",
+    arguments: { query: `Admin Playbook ${RUN_TAG}`, type: "skills", limit: 20 },
+  });
+  const searchedText = searched.content?.[0]?.text ?? "{}";
+  let searchedPayload;
+  try {
+    searchedPayload = JSON.parse(searchedText);
+  } catch {
+    searchedPayload = { raw: searchedText };
+  }
+  ctx.assert(Array.isArray(searchedPayload?.matches), `Unexpected search_capabilities payload: ${searchedText.slice(0, 300)}`);
+  state.searchedCapabilityNames = searchedPayload.matches.map((match) => match.name).filter(Boolean);
 
   const denied = await mcpCall(ctx, minted.body.token, "tools/call", {
     name: "execute_capability",
