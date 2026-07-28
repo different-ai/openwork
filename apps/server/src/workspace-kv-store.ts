@@ -241,3 +241,19 @@ export function workspaceKvStoreCacheStatsForTests(path: string): { connectionEn
     tableEntries: tableDbByPath.get(path)?.size ?? 0,
   };
 }
+
+export async function closeWorkspaceKvDbsForTests(): Promise<void> {
+  for (const [path, dbPromise] of dbByPath.entries()) {
+    try {
+      const db = await dbPromise;
+      db.close();
+    } catch {
+      // ignore
+    }
+  }
+  dbByPath.clear();
+  tableDbByPath.clear();
+  if (typeof Bun !== "undefined") {
+    Bun.gc(true);
+  }
+}
