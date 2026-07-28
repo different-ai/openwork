@@ -526,20 +526,30 @@ export function createLinuxDesktopIntegration({
       || status.state === "integrated"
       || status.state === "managed_externally"
       || status.ownership === "external"
-      || await shouldSkipPrompt()
     ) {
       return status;
     }
 
-    const repair = status.ownership === "openwork";
+    // The user already accepted this integration, so drift in the files OpenWork
+    // owns is maintenance rather than a new decision. A self-update lands under a
+    // new versioned filename and a moved AppImage changes its path; both stale the
+    // launcher. Repair silently instead of prompting after every release.
+    if (status.ownership === "openwork") {
+      const repaired = await install();
+      if (!repaired.ok) {
+        console.warn("[desktop-integration] silent repair failed", repaired.error);
+      }
+      return repaired.status;
+    }
+
+    if (await shouldSkipPrompt()) return status;
+
     const { response, checkboxChecked } = await dialog.showMessageBox(window, {
       type: "question",
-      title: repair ? "Repair OpenWork desktop integration?" : "Add OpenWork to your applications?",
-      message: repair
-        ? "OpenWork moved or its desktop integration is incomplete."
-        : "Add OpenWork to your application launcher and register browser sign-in callbacks?",
-      detail: `The launcher will use this AppImage in its current location:\n${appImagePath}\n\nIf you move it later, use Settings → Preferences → AppImage desktop integration to repair it.`,
-      buttons: ["Not now", repair ? "Repair" : "Integrate"],
+      title: "Add OpenWork to your applications?",
+      message: "Add OpenWork to your application launcher and register browser sign-in callbacks?",
+      detail: `The launcher will use this AppImage in its current location:\n${appImagePath}\n\nIf you move or update it later, OpenWork repairs the launcher automatically. You can change or remove this in Settings → Preferences → AppImage desktop integration.`,
+      buttons: ["Not now", "Integrate"],
       defaultId: 1,
       cancelId: 0,
       checkboxLabel: "Don’t ask again for this AppImage",

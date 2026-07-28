@@ -53,6 +53,17 @@ async function desktopStatus(ctx) {
   );
 }
 
+async function waitForIntegrationState(ctx, expected, timeoutMs = 45_000) {
+  const deadline = Date.now() + timeoutMs;
+  let last = null;
+  while (Date.now() < deadline) {
+    last = await desktopStatus(ctx);
+    if (last?.state === expected) return last;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  throw new Error(`Desktop integration stayed at "${last?.state}" instead of "${expected}".`);
+}
+
 async function scrollIntegrationIntoView(ctx) {
   await ctx.eval(`(() => {
     const heading = [...document.querySelectorAll("h3")]
@@ -180,9 +191,9 @@ export default {
       },
     },
     {
-      name: "A moved AppImage repairs and manager ownership stays singular",
+      name: "A moved AppImage self-heals and manager ownership stays singular",
       run: async (ctx) => {
-        await ctx.prove("A moved AppImage repairs its owned entry, then defers to a manager-owned launcher without duplication", {
+        await ctx.prove("A moved AppImage silently repairs its owned entry, then defers to a manager-owned launcher without duplication", {
           voiceover: vo[2],
           action: async () => {
             await closeApp(ctx);
@@ -192,9 +203,16 @@ export default {
             launchAppImage(MOVED_APPIMAGE);
             await ctx.reconnect({ timeoutMs: 90_000 });
             await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 45_000 });
+            // The launcher is stale after the move. OpenWork repairs the entry it
+            // already owns without asking again.
+            await waitForIntegrationState(ctx, "integrated");
+            const repaired = await readFile(path.join(DATA_HOME, "applications", DESKTOP_ID), "utf8");
+            record(
+              ctx,
+              repaired.includes(`Exec="${MOVED_APPIMAGE}" %U`),
+              "The moved AppImage is repaired without prompting again",
+            );
             await ctx.navigateHash("/settings/preferences");
-            await ctx.waitForText("Needs repair", { timeoutMs: 30_000 });
-            await ctx.clickText("Repair", { selector: "button" });
             await ctx.waitForText("Integrated", { timeoutMs: 30_000 });
 
             await ctx.clickText("Remove", { selector: "button" });

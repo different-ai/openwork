@@ -80,6 +80,40 @@ async function createHarness(options = {}) {
   };
 }
 
+// Simulates the next launch of the same install: same XDG dirs and state, but a
+// possibly different AppImage path and app version.
+function relaunchAt(harness, appImagePath, options = {}) {
+  let defaultHandler = options.defaultHandler ?? OPENWORK_DESKTOP_ID;
+  const dialogs = [];
+  const integration = createLinuxDesktopIntegration({
+    app: { isPackaged: true, getVersion: () => options.version ?? "0.18.7" },
+    dialog: {
+      async showMessageBox(_window, dialogOptions) {
+        dialogs.push(dialogOptions);
+        return { response: 0, checkboxChecked: false };
+      },
+    },
+    appName: "OpenWork",
+    distribution: "public",
+    env: {
+      APPIMAGE: appImagePath,
+      XDG_DATA_HOME: harness.dataHome,
+      XDG_CONFIG_HOME: harness.configHome,
+      XDG_DATA_DIRS: path.join(harness.root, "system-data"),
+    },
+    platform: "linux",
+    resourcesPath: path.join(harness.root, "resources"),
+    runCommand: async (command, args) => {
+      if (command === "xdg-mime" && args[0] === "query") {
+        return { ok: true, stdout: defaultHandler ? `${defaultHandler}\n` : "", stderr: "" };
+      }
+      if (command === "xdg-mime" && args[0] === "default") defaultHandler = args[1];
+      return { ok: true, stdout: "", stderr: "" };
+    },
+  });
+  return { dialogs, getDefaultHandler: () => defaultHandler, integration };
+}
+
 afterEach(async () => {
   await Promise.all(temporaryRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
@@ -159,6 +193,51 @@ describe("Linux AppImage desktop integration", () => {
       await readFile(moved.paths.desktopEntryPath, "utf8"),
       new RegExp(`^TryExec=${movedPath}$`, "m"),
     );
+  });
+
+  it("silently repairs an owned launcher after a self-update lands a new filename", async () => {
+    const harness = await createHarness();
+    assert.equal((await harness.integration.install()).ok, true);
+
+    // Linux artifacts carry the version in their filename, so electron-updater
+    // installs each release at a new path and stales the launcher.
+    const updatedPath = path.join(harness.root, "openwork-linux-x86_64-0.18.8.AppImage");
+    await rename(harness.appImagePath, updatedPath);
+    const relaunched = relaunchAt(harness, updatedPath, { version: "0.18.8" });
+    assert.equal((await relaunched.integration.getStatus()).state, "needs_repair");
+
+    const status = await relaunched.integration.maybePrompt({});
+    assert.equal(status.state, "integrated");
+    assert.equal(relaunched.dialogs.length, 0);
+    const entry = await readFile(relaunched.integration.paths.desktopEntryPath, "utf8");
+    assert.match(entry, new RegExp(`^TryExec=${updatedPath}$`, "m"));
+    assert.match(entry, /^X-OpenWork-Version=0\.18\.8$/m);
+  });
+
+  it("silently refreshes an owned launcher when only the version changed", async () => {
+    const harness = await createHarness();
+    assert.equal((await harness.integration.install()).ok, true);
+
+    const relaunched = relaunchAt(harness, harness.appImagePath, { version: "0.18.8" });
+    assert.deepEqual((await relaunched.integration.getStatus()).issues, ["version"]);
+
+    const status = await relaunched.integration.maybePrompt({});
+    assert.equal(status.state, "integrated");
+    assert.equal(relaunched.dialogs.length, 0);
+  });
+
+  it("keeps a failed silent repair quiet and leaves it to Settings", async () => {
+    const harness = await createHarness();
+    assert.equal((await harness.integration.install()).ok, true);
+
+    const movedPath = path.join(harness.root, "openwork-linux-x86_64-0.18.8.AppImage");
+    await rename(harness.appImagePath, movedPath);
+    const relaunched = relaunchAt(harness, movedPath, { version: "0.18.8" });
+    await rm(path.join(harness.root, "resources"), { recursive: true, force: true });
+
+    const status = await relaunched.integration.maybePrompt({});
+    assert.equal(status.state, "needs_repair");
+    assert.equal(relaunched.dialogs.length, 0);
   });
 
   it("does not prompt after a remembered Not now response", async () => {
