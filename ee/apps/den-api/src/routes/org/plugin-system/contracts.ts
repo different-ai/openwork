@@ -450,7 +450,7 @@ export const pluginArchEndpointContracts: Record<string, EndpointContract> = {
   },
   configurePluginMcpRequirement: {
     audience: "admin",
-    description: "Configure one declared remote MCP server from a plugin by deriving its URL and audience server-side.",
+    description: "Configure one declared remote MCP server or assign an existing organization MCP connection to a plugin.",
     method: "POST",
     path: pluginArchRoutePaths.pluginMcpConnections,
     request: { body: pluginMcpRequirementConfigureSchema, params: pluginParamsSchema },

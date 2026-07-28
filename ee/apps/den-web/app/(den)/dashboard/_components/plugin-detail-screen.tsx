@@ -3,12 +3,13 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { Archive, ArrowLeft, FileText, MoreHorizontal, Pencil, Plus, Puzzle, Server, Store, Terminal, Users, Webhook } from "lucide-react";
+import { Archive, ArrowLeft, FileText, MoreHorizontal, Pencil, Plus, Puzzle, Server, Store, Terminal, Trash2, Users, Webhook } from "lucide-react";
 import { PaperMeshGradient } from "@openwork/ui/react";
 
 import { getNewPluginSkillRoute, getOrgAccessFlags, getPluginSkillRoute, getPluginsRoute } from "../../_lib/den-org";
 import { buttonVariants, DenButton } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
+import { DenSelect } from "../../_components/ui/select";
 import { DenTextarea } from "../../_components/ui/textarea";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import {
@@ -19,10 +20,13 @@ import {
   type PluginAgent,
   type PluginCommand,
   formatPluginTimestamp,
+  useAttachPluginMcpConnection,
   useArchivePlugin,
   usePlugin,
+  useRemovePluginMcpConnection,
   useUpdatePlugin,
 } from "./plugin-data";
+import { useMcpConnections } from "./mcp-connections-data";
 
 export function PluginDetailScreen({ pluginId }: { pluginId: string }) {
   const router = useRouter();
@@ -75,7 +79,6 @@ export function PluginDetailScreen({ pluginId }: { pluginId: string }) {
   if (plugin.agents.length === 0) missingLabels.push("agents");
   if (plugin.commands.length === 0) missingLabels.push("commands");
   if (plugin.hooks.length === 0) missingLabels.push("hooks");
-  if (plugin.mcps.length === 0) missingLabels.push("MCP servers");
 
   async function handleArchivePlugin() {
     try {
@@ -204,7 +207,7 @@ export function PluginDetailScreen({ pluginId }: { pluginId: string }) {
         <PrimitiveSection icon={Users} label="Agents" items={plugin.agents} render={renderAgentRow} />
         <PrimitiveSection icon={Terminal} label="Commands" items={plugin.commands} render={renderCommandRow} />
         <PrimitiveSection icon={Webhook} label="Hooks" items={plugin.hooks} render={renderHookRow} />
-        <PrimitiveSection icon={Server} label="MCP Servers" items={plugin.mcps} render={renderMcpRow} />
+        <McpSection canManage={access.isAdmin} plugin={plugin} />
       </div>
 
       {missingLabels.length > 0 ? (
@@ -487,21 +490,182 @@ function renderHookRow(hook: PluginHook) {
   );
 }
 
-function renderMcpRow(mcp: PluginMcp) {
+function McpSection({ canManage, plugin }: { canManage: boolean; plugin: DenPlugin }) {
+  const [addOpen, setAddOpen] = useState(false);
+  const removeConnection = useRemovePluginMcpConnection();
+
+  async function handleRemove(mcp: PluginMcp) {
+    if (!mcp.configObjectId) return;
+    try {
+      await removeConnection.mutateAsync({ configObjectId: mcp.configObjectId, pluginId: plugin.id });
+    } catch {
+      // The mutation error is rendered below the list.
+    }
+  }
+
   return (
-    <div
-      key={mcp.id}
-      className="flex items-start justify-between gap-3 rounded-xl border border-gray-100 bg-white px-4 py-3 transition hover:border-gray-200"
-    >
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-[14px] font-semibold tracking-[-0.01em] text-gray-900">{mcp.name}</p>
-        {mcp.description ? (
-          <p className="mt-0.5 line-clamp-2 text-[12.5px] leading-[1.55] text-gray-500">{mcp.description}</p>
+    <section>
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div>
+          <h2 className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">
+            <Server className="h-3.5 w-3.5" />
+            MCP Servers
+          </h2>
+          <p className="mt-1 text-[12px] text-gray-400">Connections whose tools are available through this plugin.</p>
+        </div>
+        {canManage ? (
+          <DenButton size="sm" onClick={() => setAddOpen(true)} data-testid="plugin-add-mcp">
+            <Plus className="h-3.5 w-3.5" aria-hidden />
+            Add MCP
+          </DenButton>
         ) : null}
       </div>
-      <span className="shrink-0 rounded-full bg-gray-50 px-2 py-0.5 text-[11px] text-gray-500">
-        {mcp.transport === "stdio" ? "Desktop only" : "Remote"} · {mcp.toolCount} tool{mcp.toolCount === 1 ? "" : "s"}
-      </span>
+      {plugin.mcps.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-gray-200 bg-white px-5 py-8 text-center">
+          <p className="text-[14px] font-medium text-gray-900">No MCP servers in this plugin yet.</p>
+          <p className="mt-1 text-[12.5px] text-gray-500">Add an existing organization connection to give the plugin more tools.</p>
+        </div>
+      ) : (
+        <div className="grid gap-2">
+          {plugin.mcps.map((mcp) => (
+            <div
+              key={mcp.id}
+              className="flex items-start justify-between gap-3 rounded-xl border border-gray-100 bg-white px-4 py-3 transition hover:border-gray-200"
+            >
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-[14px] font-semibold tracking-[-0.01em] text-gray-900">{mcp.name}</p>
+                {mcp.description ? (
+                  <p className="mt-0.5 line-clamp-2 text-[12.5px] leading-[1.55] text-gray-500">{mcp.description}</p>
+                ) : null}
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <span className="rounded-full bg-gray-50 px-2 py-0.5 text-[11px] text-gray-500">
+                  {mcp.transport === "stdio" ? "Desktop only" : "Remote"} · {mcp.toolCount} tool{mcp.toolCount === 1 ? "" : "s"}
+                </span>
+                {canManage && mcp.configObjectId ? (
+                  <button
+                    type="button"
+                    className="flex h-7 w-7 items-center justify-center rounded-lg text-gray-400 transition hover:bg-red-50 hover:text-red-600"
+                    aria-label={`Remove ${mcp.name} from ${plugin.name}`}
+                    disabled={removeConnection.isPending}
+                    onClick={() => void handleRemove(mcp)}
+                    data-testid={`plugin-remove-mcp-${mcp.configObjectId}`}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" aria-hidden />
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      {removeConnection.error ? (
+        <p className="mt-2 text-[12.5px] text-red-600">
+          {removeConnection.error instanceof Error ? removeConnection.error.message : "Failed to remove MCP connection."}
+        </p>
+      ) : null}
+      {addOpen ? (
+        <AddMcpDialog
+          plugin={plugin}
+          onClose={() => setAddOpen(false)}
+          onAdded={() => setAddOpen(false)}
+        />
+      ) : null}
+    </section>
+  );
+}
+
+function AddMcpDialog({
+  plugin,
+  onClose,
+  onAdded,
+}: {
+  plugin: DenPlugin;
+  onClose: () => void;
+  onAdded: () => void;
+}) {
+  const { data: connections = [], isLoading, error } = useMcpConnections("manageable");
+  const attachConnection = useAttachPluginMcpConnection();
+  const assignedConnectionIds = new Set(plugin.mcps.flatMap((mcp) => mcp.externalMcpConnectionId ? [mcp.externalMcpConnectionId] : []));
+  const availableConnections = connections.filter((connection) => !assignedConnectionIds.has(connection.id));
+  const [connectionId, setConnectionId] = useState("");
+  const selectedConnectionId = connectionId || availableConnections[0]?.id || "";
+
+  async function handleAdd() {
+    if (!selectedConnectionId) return;
+    try {
+      await attachConnection.mutateAsync({ connectionId: selectedConnectionId, pluginId: plugin.id });
+      onAdded();
+    } catch {
+      // The mutation error is rendered in the dialog.
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-6" onClick={attachConnection.isPending ? undefined : onClose}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="add-plugin-mcp-title"
+        className="w-full max-w-[480px] rounded-2xl border border-gray-100 bg-white p-6 shadow-[0_24px_60px_-24px_rgba(15,23,42,0.4)]"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <h2 id="add-plugin-mcp-title" className="text-[16px] font-semibold tracking-[-0.01em] text-gray-950">
+          Add an MCP connection
+        </h2>
+        <p className="mt-1 text-[13px] leading-6 text-gray-500">
+          Choose an existing organization connection. Removing it later only detaches it from this plugin.
+        </p>
+        {isLoading ? (
+          <p className="mt-4 text-[13px] text-gray-500">Loading connections…</p>
+        ) : availableConnections.length > 0 ? (
+          <label className="mt-4 block">
+            <span className="mb-1.5 block text-[12px] font-medium text-gray-700">MCP connection</span>
+            <DenSelect
+              value={selectedConnectionId}
+              onChange={(event) => setConnectionId(event.target.value)}
+              disabled={attachConnection.isPending}
+              data-testid="plugin-mcp-connection-select"
+            >
+              {availableConnections.map((connection) => (
+                <option key={connection.id} value={connection.id}>
+                  {connection.name} — {connection.connected ? "Connected" : "Setup required"}
+                </option>
+              ))}
+            </DenSelect>
+            <p className="mt-2 truncate text-[11.5px] text-gray-400">
+              {availableConnections.find((connection) => connection.id === selectedConnectionId)?.url}
+            </p>
+          </label>
+        ) : (
+          <div className="mt-4 rounded-xl border border-dashed border-gray-200 bg-gray-50 px-4 py-5 text-center">
+            <p className="text-[13px] font-medium text-gray-800">No connections available to add.</p>
+            <p className="mt-1 text-[12px] text-gray-500">Create an organization MCP connection first, or every connection is already assigned.</p>
+          </div>
+        )}
+        {error || attachConnection.error ? (
+          <p className="mt-3 text-[12.5px] text-red-600">
+            {attachConnection.error instanceof Error
+              ? attachConnection.error.message
+              : error instanceof Error
+                ? error.message
+                : "Failed to load MCP connections."}
+          </p>
+        ) : null}
+        <div className="mt-5 flex items-center justify-end gap-2">
+          <DenButton variant="secondary" onClick={onClose} disabled={attachConnection.isPending}>
+            Cancel
+          </DenButton>
+          <DenButton
+            loading={attachConnection.isPending}
+            disabled={!selectedConnectionId || isLoading}
+            onClick={() => void handleAdd()}
+            data-testid="plugin-add-mcp-confirm"
+          >
+            Add MCP
+          </DenButton>
+        </div>
+      </div>
     </div>
   );
 }
