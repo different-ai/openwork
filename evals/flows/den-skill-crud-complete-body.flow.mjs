@@ -119,7 +119,7 @@ async function clickButton(ctx, label) {
 
 async function createOwningPlugin(ctx) {
   const created = await ctx.eval(`(async () => {
-    const response = await fetch("/v1/plugins", {
+    const response = await fetch("/api/den/v1/plugins", {
       method: "POST",
       credentials: "include",
       headers: { "content-type": "application/json" },
@@ -129,8 +129,13 @@ async function createOwningPlugin(ctx) {
       }),
     });
     const body = await response.json().catch(() => null);
-    return { ok: response.ok, status: response.status, id: body?.item?.id ?? "" };
-  })()`);
+    return {
+      ok: response.ok,
+      status: response.status,
+      id: body?.item?.id ?? "",
+      error: body?.error ?? null,
+    };
+  })()`, { awaitPromise: true });
   witness(
     ctx,
     created.ok && typeof created.id === "string" && created.id.length > 0,
@@ -179,6 +184,8 @@ export default {
                 });
               }
               await signInViaBrowser(ctx, ADMIN_EMAIL, ADMIN_PASSWORD);
+              await navigateTo(ctx, "/dashboard/plugins");
+              await ctx.waitForText("Plugins", { timeoutMs: 30_000 });
               await createOwningPlugin(ctx);
               await navigateTo(
                 ctx,
@@ -251,13 +258,17 @@ export default {
                 title: document.querySelector("h1")?.textContent?.trim() ?? "",
                 description: document.querySelector("header p")?.textContent?.trim() ?? "",
                 body: document.querySelector("article pre")?.textContent ?? "",
+                bodyBackgroundColor: document.querySelector("article pre")
+                  ? getComputedStyle(document.querySelector("article pre")).backgroundColor
+                  : "",
               }))()`);
               witness(
                 ctx,
                 detail.title === state.originalName &&
                   detail.description === state.originalDescription &&
-                  detail.body === state.originalBody,
-                "The detail page shows the exact complete stored skill",
+                  detail.body === state.originalBody &&
+                  detail.bodyBackgroundColor === "rgb(249, 250, 251)",
+                "The detail page shows the exact complete stored skill on a light surface",
                 detail,
               );
             },
@@ -386,7 +397,7 @@ export default {
             screenshot: screenshot(
               "skill-deleted-from-catalog",
               "The owning plugin no longer contains the deleted skill.",
-              [state.pluginName, "Skills", "Add skill"],
+              [state.pluginName, "No skills in this plugin yet.", "Add skill"],
               [state.editedName],
             ),
           },

@@ -56,7 +56,7 @@ export function SkillDetailScreen({ pluginId, skillId }: { pluginId: string; ski
 
       <article className="mt-5 rounded-2xl border border-gray-100 bg-white px-6 py-6 md:px-8">
         <h2 className="mb-4 text-[12px] font-semibold tracking-[0.14em] text-gray-400">Complete skill body</h2>
-        <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded-xl bg-gray-950 px-5 py-5 font-mono text-[13px] leading-6 text-gray-100">{skill.body}</pre>
+        <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded-xl border border-gray-200 bg-gray-50 px-5 py-5 font-mono text-[13px] leading-6 text-gray-800">{skill.body}</pre>
       </article>
 
       {confirmingDelete ? (

@@ -33,6 +33,8 @@ describe("Den plugin skill CRUD UI contract", () => {
     expect(detail).toContain("Complete skill body");
     expect(detail).not.toContain("font-semibold uppercase tracking-[0.14em]");
     expect(detail).toContain("<pre");
+    expect(detail).toContain("border-gray-200 bg-gray-50");
+    expect(detail).not.toContain("rounded-xl bg-gray-950");
     expect(detail).toContain("Delete “{skill.name}”?");
     expect(detail).toContain("Delete “{skill.name}”");
     expect(detail).toContain("getPluginRoute(orgSlug, pluginId)");
