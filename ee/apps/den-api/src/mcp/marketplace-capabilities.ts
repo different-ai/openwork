@@ -46,6 +46,13 @@ export type RemoteSkillDescriptor = {
   location: string
 }
 
+export type AccessibleMarketplaceCapabilityReference = {
+  configObjectId: string
+  marketplaceId: string
+  objectType: MarketplaceCapabilityObjectType
+  pluginId: string
+}
+
 export function normalizeRemoteSkillDescription(input: {
   description: string | null
   name: string
@@ -224,17 +231,6 @@ function normalizeMarketplaceIds(input: { configObjectId: string; pluginId: stri
   } catch {
     return null
   }
-}
-
-function roleIncludes(roleValue: string, role: string): boolean {
-  return roleValue
-    .split(",")
-    .map((entry) => entry.trim())
-    .includes(role)
-}
-
-function isOrgAdmin(member: MemberRow): boolean {
-  return roleIncludes(member.role, "owner") || roleIncludes(member.role, "admin")
 }
 
 function unique<T>(values: T[]): T[] {
@@ -481,12 +477,9 @@ async function listMarketplaceGrants(organizationId: OrganizationId, marketplace
 
 async function filterVisibleRows(input: {
   member: McpMemberIdentity
-  memberRow: MemberRow
   organizationId: OrganizationId
   rows: MarketplaceCapabilityRow[]
 }): Promise<MarketplaceCapabilityRow[]> {
-  if (isOrgAdmin(input.memberRow)) return input.rows
-
   const configObjectGrantRows = await listConfigObjectGrants(
     input.organizationId,
     unique(input.rows.map((row) => row.configObject.id)),
@@ -504,10 +497,45 @@ async function filterVisibleRows(input: {
   const marketplaceGrants = groupGrants(marketplaceGrantRows)
 
   return input.rows.filter((row) => {
+    // Administrative visibility in Den must not silently publish every
+    // capability to that administrator's personal desktop catalog. Desktop
+    // discovery follows the same explicit member, team, and org-wide grants
+    // for every role so admins can curate what OpenWork exposes to them.
     if (grantRole(input.member, configObjectGrants.get(row.configObject.id) ?? [])) return true
     if (grantRole(input.member, pluginGrants.get(row.plugin.id) ?? [])) return true
     return Boolean(grantRole(input.member, marketplaceGrants.get(row.marketplace.id) ?? []))
   })
+}
+
+export async function listAccessibleMarketplaceCapabilityReferences(input: {
+  enabled?: boolean
+  member: McpMemberIdentity | null
+  organizationId: string
+}): Promise<AccessibleMarketplaceCapabilityReference[]> {
+  if (input.enabled === false || !input.member) return []
+  const organizationId = normalizeDenTypeId("organization", input.organizationId)
+  if (!(await getActiveMember(organizationId, input.member))) return []
+
+  const rows = await filterVisibleRows({
+    organizationId,
+    member: input.member,
+    rows: await listActiveMarketplaceRows(organizationId),
+  })
+  const references = new Map<string, AccessibleMarketplaceCapabilityReference>()
+  for (const row of rows) {
+    const key = `${row.marketplace.id}:${row.plugin.id}:${row.configObject.id}`
+    references.set(key, {
+      configObjectId: row.configObject.id,
+      marketplaceId: row.marketplace.id,
+      objectType: row.configObject.objectType,
+      pluginId: row.plugin.id,
+    })
+  }
+  return [...references.values()].sort((left, right) =>
+    left.marketplaceId.localeCompare(right.marketplaceId)
+    || left.pluginId.localeCompare(right.pluginId)
+    || left.configObjectId.localeCompare(right.configObjectId)
+  )
 }
 
 export async function listAccessibleMarketplaceSkillDescriptors(input: {
@@ -524,7 +552,6 @@ export async function listAccessibleMarketplaceSkillDescriptors(input: {
   const rows = await filterVisibleRows({
     organizationId,
     member: input.member,
-    memberRow,
     rows: (await listActiveMarketplaceRows(organizationId))
       .filter((row) => row.configObject.objectType === "skill"),
   })
@@ -1207,7 +1234,6 @@ export async function searchMarketplaceCapabilities(input: {
   const rows = await filterVisibleRows({
     organizationId,
     member: input.member,
-    memberRow,
     rows: await listActiveMarketplaceRows(organizationId),
   })
   const requirementStatusesByPluginId = await marketplacePluginMcpRequirementStatuses({
@@ -1295,7 +1321,7 @@ export async function executeMarketplaceCapability(input: {
   if (!memberRow) {
     return { ok: false, error: "forbidden", message: "No active org membership for this token." }
   }
-  const visibleRows = await filterVisibleRows({ organizationId, member: input.member, memberRow, rows })
+  const visibleRows = await filterVisibleRows({ organizationId, member: input.member, rows })
   const row = visibleRows[0]
   if (!row) {
     return { ok: false, error: "forbidden", message: "You have not been granted access to this marketplace plugin capability." }

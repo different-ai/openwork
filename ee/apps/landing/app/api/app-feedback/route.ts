@@ -19,6 +19,7 @@ type FeedbackPayload = {
   message?: string;
   website?: string;
   startedAt?: number | string;
+  mode?: string;
   context?: FeedbackContext;
 };
 
@@ -107,6 +108,7 @@ export async function POST(request: Request) {
   const message = sanitizeValue(payload.message, 5000);
   const name = sanitizeValue(payload.name, 120);
   const email = sanitizeValue(payload.email, 240);
+  const mode = sanitizeValue(payload.mode, 40) === "contact" ? "contact" : "feedback";
 
   if (!name) {
     return jsonResponse(request,
@@ -137,6 +139,7 @@ export async function POST(request: Request) {
     name,
     email,
     message,
+    mode,
     source: context.source || "openwork-app",
     entrypoint: context.entrypoint || "unknown",
     deployment: context.deployment || "desktop",

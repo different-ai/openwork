@@ -1,4 +1,4 @@
-export const OPENWORK_FEEDBACK_PATH = "/feedback";
+export const OPENWORK_FEEDBACK_URL = "https://openworklabs.com/feedback";
 
 export function buildDenFeedbackUrl(options?: {
   pathname?: string;
@@ -19,5 +19,5 @@ export function buildDenFeedbackUrl(options?: {
     params.set("topic", options.topic);
   }
 
-  return `${OPENWORK_FEEDBACK_PATH}?${params.toString()}`;
+  return `${OPENWORK_FEEDBACK_URL}?${params.toString()}`;
 }

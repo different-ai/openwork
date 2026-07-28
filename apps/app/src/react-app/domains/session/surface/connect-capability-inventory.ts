@@ -1,4 +1,5 @@
 import type {
+  DenAssignedMarketplaceCapability,
   DenOrgMarketplace,
   DenOrgMarketplaceResolved,
   DenOrgPlugin,
@@ -9,6 +10,9 @@ import type {
 import type { McpServerEntry, McpStatus, McpStatusMap, SkillCard } from "@/app/types";
 
 export type ConnectCapabilityClient = {
+  listAssignedMarketplaceCapabilities: (
+    organizationId: string,
+  ) => Promise<DenAssignedMarketplaceCapability[]>;
   listOrgMarketplaces: (organizationId: string) => Promise<DenOrgMarketplace[]>;
   getOrgMarketplaceResolved: (
     organizationId: string,
@@ -151,8 +155,17 @@ export async function listAssignedConnectCapabilities(input: {
   client: ConnectCapabilityClient;
   organizationId: string;
 }): Promise<ConnectCapabilityInventory> {
+  const assigned = await input.client.listAssignedMarketplaceCapabilities(input.organizationId);
+  if (assigned.length === 0) return EMPTY_CONNECT_CAPABILITY_INVENTORY;
+
+  const assignedMarketplaceIds = new Set(assigned.map((item) => item.marketplaceId));
+  const assignedPluginKeys = new Set(assigned.map((item) => `${item.marketplaceId}:${item.pluginId}`));
+  const assignedCapabilityKeys = new Set(
+    assigned.map((item) => `${item.marketplaceId}:${item.pluginId}:${item.configObjectId}`),
+  );
   const marketplaces = (await input.client.listOrgMarketplaces(input.organizationId))
     .filter((marketplace) => marketplace.status === "active")
+    .filter((marketplace) => assignedMarketplaceIds.has(marketplace.id))
     .sort((left, right) => left.name.localeCompare(right.name));
   const resolvedMarketplaces = await Promise.all(
     marketplaces.map((marketplace) =>
@@ -163,7 +176,11 @@ export async function listAssignedConnectCapabilities(input: {
   const plugins = new Map<string, MarketplacePlugin>();
   for (const resolved of resolvedMarketplaces) {
     for (const plugin of resolved.plugins) {
-      if (plugin.status !== "active" || plugins.has(plugin.id)) continue;
+      if (
+        plugin.status !== "active"
+        || plugins.has(plugin.id)
+        || !assignedPluginKeys.has(`${resolved.marketplace.id}:${plugin.id}`)
+      ) continue;
       plugins.set(plugin.id, { marketplace: resolved.marketplace, plugin });
     }
   }
@@ -181,7 +198,11 @@ export async function listAssignedConnectCapabilities(input: {
   for (const { marketplace, resolved } of resolvedPlugins) {
     for (const membership of resolved.memberships) {
       const object = membership.configObject;
-      if (!object || object.status !== "active") continue;
+      if (
+        !object
+        || object.status !== "active"
+        || !assignedCapabilityKeys.has(`${marketplace.id}:${resolved.plugin.id}:${object.id}`)
+      ) continue;
       if (object.objectType === "skill") {
         skills.push(toSkill(marketplace, resolved.plugin, object));
       }

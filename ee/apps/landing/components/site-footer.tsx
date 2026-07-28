@@ -41,6 +41,9 @@ export function SiteFooter() {
           <Link href="/enterprise" className="transition-colors hover:text-gray-800">
             Enterprise
           </Link>
+          <Link href="/contact" className="transition-colors hover:text-gray-800">
+            Contact
+          </Link>
           <Link href="/trust" className="transition-colors hover:text-gray-800">
             Trust Center
           </Link>

@@ -347,6 +347,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
       !profilePromptDismissed &&
       user.name?.trim() === DEFAULT_AUTH_NAME,
   );
+  const showFeedbackLink = runtimeConfigLoaded && runtimeConfig.orgMode === "multi_org";
   const feedbackHref = buildDenFeedbackUrl({
     pathname,
     orgSlug: activeOrg?.slug,
@@ -749,15 +750,17 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
           </div>
 
           <div className="flex items-center gap-1">
-            <a
-              href={feedbackHref}
-              target="_blank"
-              rel="noreferrer"
-              className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] text-gray-500 transition-colors hover:bg-gray-50 hover:text-gray-700"
-            >
-              <MessageSquare className="h-4 w-4" />
-              <span className="hidden sm:inline">Feedback</span>
-            </a>
+            {showFeedbackLink ? (
+              <a
+                href={feedbackHref}
+                target="_blank"
+                rel="noreferrer"
+                className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] text-gray-500 transition-colors hover:bg-gray-50 hover:text-gray-700"
+              >
+                <MessageSquare className="h-4 w-4" />
+                <span className="hidden sm:inline">Feedback</span>
+              </a>
+            ) : null}
             <a
               href={OPENWORK_DOCS_URL}
               target="_blank"

@@ -65,6 +65,7 @@ export const DEN_INFERENCE_PATH = "/dashboard/inference";
 // the many existing den.ts importers keep working.
 export type * from "./den-types";
 import type {
+  DenAssignedMarketplaceCapability,
   DenOrgExtensionProjection,
   DenOrgMarketplace,
   DenOrgPlugin,
@@ -1812,6 +1813,28 @@ function getOrgPluginResolved(plugin: DenOrgPlugin, payload: unknown): DenOrgPlu
   return { plugin, memberships };
 }
 
+function getAssignedMarketplaceCapabilities(payload: unknown): DenAssignedMarketplaceCapability[] {
+  if (!isRecord(payload) || !Array.isArray(payload.items)) return [];
+  return payload.items.flatMap((item) => {
+    if (
+      !isRecord(item)
+      || typeof item.configObjectId !== "string"
+      || typeof item.marketplaceId !== "string"
+      || typeof item.objectType !== "string"
+      || typeof item.pluginId !== "string"
+    ) {
+      return [];
+    }
+    const objectType = parsePluginConfigObjectType(item.objectType);
+    return objectType ? [{
+      configObjectId: item.configObjectId,
+      marketplaceId: item.marketplaceId,
+      objectType,
+      pluginId: item.pluginId,
+    }] : [];
+  });
+}
+
 function getBillingPrice(value: unknown): DenBillingPrice | null {
   if (!isRecord(value)) {
     return null;
@@ -2271,6 +2294,15 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
         { method: "GET", token, organizationId: orgId },
       );
       return getOrgMarketplaces(payload);
+    },
+
+    async listAssignedMarketplaceCapabilities(orgId: string): Promise<DenAssignedMarketplaceCapability[]> {
+      const payload = await requestJson<unknown>(
+        baseUrls,
+        "/v1/resources/marketplace-capabilities",
+        { method: "GET", token, organizationId: orgId },
+      );
+      return getAssignedMarketplaceCapabilities(payload);
     },
 
     async getOrgMarketplaceResolved(orgId: string, marketplaceId: string): Promise<DenOrgMarketplaceResolved> {
