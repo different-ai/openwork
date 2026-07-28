@@ -26,6 +26,7 @@ export type ProvisionedInstance = {
   url: string
   status: "provisioning" | "healthy"
   region?: string
+  imageVersion?: string | null
 }
 
 type RenderService = {

@@ -24,6 +24,7 @@ function seedRequiredEnv() {
   process.env.BETTER_AUTH_URL = process.env.BETTER_AUTH_URL ?? "http://127.0.0.1:8790"
   process.env.CORS_ORIGINS = process.env.CORS_ORIGINS ?? "http://127.0.0.1:8790"
   process.env.PROVISIONER_MODE = "stub"
+  process.env.DAYTONA_SNAPSHOT = "openwork-0.18.8"
 }
 
 let routes: typeof import("../src/routes/cloud/index.js")
@@ -155,6 +156,7 @@ function makeCloudWorkerStore(input: {
   const deletedWorkerIds: StoredCloudWorker["id"][] = []
   const deletedTokenWorkerIds: StoredCloudWorker["id"][] = []
   let claimAttempts = 0
+  let recycleClaimAttempts = 0
   let healthyFailures = 0
   let provisioningFailures = 0
   const store: CloudWorkerStore = {
@@ -203,6 +205,16 @@ function makeCloudWorkerStore(input: {
       worker.status = "provisioning"
       return true
     },
+    async claimRecycleWorker(workerId) {
+      recycleClaimAttempts += 1
+      const worker = workers.find((entry) => entry.id === workerId)
+      if (!worker || (worker.status !== "healthy" && worker.status !== "stopped")) {
+        return false
+      }
+
+      worker.status = "provisioning"
+      return true
+    },
     async getActiveTokens(workerId) {
       return tokens.filter((entry) => entry.workerId === workerId)
     },
@@ -230,6 +242,9 @@ function makeCloudWorkerStore(input: {
     deletedTokenWorkerIds,
     get claimAttempts() {
       return claimAttempts
+    },
+    get recycleClaimAttempts() {
+      return recycleClaimAttempts
     },
     get healthyFailures() {
       return healthyFailures
@@ -466,6 +481,71 @@ describe("Cloud instance route lifecycle states", () => {
     expect(response.status).toBe(200)
     await expect(response.json()).resolves.toEqual({ status: "waking", url: null })
     expect(wakeExecutions).toBe(0)
+  })
+
+  test("claims and wakes a stale stopped sandbox without checkpoint probing on resolve", async () => {
+    const worker = { ...storedWorker({ status: "healthy" }), image_version: "openwork-0.18.7" }
+    const store = makeCloudWorkerStore({ initialWorkers: [worker] })
+    const app = new Hono<{ Variables: OrgRouteVariables }>()
+    let wakeCalls = 0
+    let probes = 0
+
+    routes.registerCloudRoutes(app, {
+      memberRoute: contextMiddleware(organizationContext(JSON.stringify({ capabilities: { cloud: true } }))),
+      orgMode: "multi_org",
+      provisionerMode: "daytona",
+      daytonaApiKey: "daytona-test-key",
+      ensureCloudWorker: async () => worker,
+      cloudWorkerStore: store.store,
+      getSandboxRecord: async () => fakeSandbox(),
+      inspectSandbox: async () => ({ state: "stopped" }),
+      probeSignedPreview: async () => {
+        probes += 1
+        return true
+      },
+      wakeCloudWorker: async () => {
+        wakeCalls += 1
+      },
+    })
+
+    const response = await app.request("http://den.local/v1/cloud/instance")
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toEqual({ status: "waking", url: null })
+    expect(store.recycleClaimAttempts).toBe(1)
+    expect(worker.status).toBe("provisioning")
+    expect(wakeCalls).toBe(1)
+    expect(probes).toBe(0)
+  })
+
+  test("does not inspect the sandbox for an up-to-date stopped worker wake", async () => {
+    const worker = { ...fakeWorker("stopped"), image_version: "openwork-0.18.8" }
+    const app = new Hono<{ Variables: OrgRouteVariables }>()
+    let wakeCalls = 0
+    let inspectCalls = 0
+
+    routes.registerCloudRoutes(app, {
+      memberRoute: contextMiddleware(organizationContext(JSON.stringify({ capabilities: { cloud: true } }))),
+      orgMode: "multi_org",
+      provisionerMode: "daytona",
+      daytonaApiKey: "daytona-test-key",
+      ensureCloudWorker: async () => worker,
+      getSandboxRecord: async () => fakeSandbox(),
+      inspectSandbox: async () => {
+        inspectCalls += 1
+        return { state: "stopped" }
+      },
+      wakeCloudWorker: async () => {
+        wakeCalls += 1
+      },
+    })
+
+    const response = await app.request("http://den.local/v1/cloud/instance")
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toEqual({ status: "waking", url: null })
+    expect(inspectCalls).toBe(0)
+    expect(wakeCalls).toBe(1)
   })
 
   test("keeps first provisioning without a sandbox row as provisioning", async () => {

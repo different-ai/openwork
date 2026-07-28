@@ -144,6 +144,8 @@ const EnvSchema = z.object({
   DAYTONA_DELETE_TIMEOUT_SECONDS: z.string().optional(),
   DAYTONA_STOP_TIMEOUT_SECONDS: z.string().optional(),
   DAYTONA_HEALTHCHECK_TIMEOUT_MS: z.string().optional(),
+  DEN_CKPT_INTERVAL_SECONDS: z.string().optional(),
+  DEN_CKPT_KEEP: z.string().optional(),
   INFERENCE_PROXY_BASE_URL: z.string().optional(),
   OPENROUTER_MANAGEMENT_API_KEY: z.string().optional(),
   OPENROUTER_WORKSPACE_ID: z.string().optional(),
@@ -621,6 +623,8 @@ export const env = {
     healthcheckTimeoutMs: Number(
       parsed.DAYTONA_HEALTHCHECK_TIMEOUT_MS ?? "300000",
     ),
+    checkpointIntervalSeconds: Number(parsed.DEN_CKPT_INTERVAL_SECONDS ?? "300"),
+    checkpointKeep: Number(parsed.DEN_CKPT_KEEP ?? "3"),
     pollIntervalMs: DEN_WORKER_POLL_INTERVAL_MS,
   },
 }

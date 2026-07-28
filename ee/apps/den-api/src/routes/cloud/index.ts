@@ -1,5 +1,5 @@
 import { timingSafeEqual } from "node:crypto"
-import { and, asc, eq, isNull } from "@openwork-ee/den-db/drizzle"
+import { and, asc, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
 import { WorkerTable, WorkerTokenTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono, MiddlewareHandler } from "hono"
@@ -34,7 +34,9 @@ type CloudRouteOptions = {
   now?: () => number
 }
 
-type CloudWorker = Pick<typeof WorkerTable.$inferSelect, "id" | "name" | "status">
+type CloudWorker = Pick<typeof WorkerTable.$inferSelect, "id" | "name" | "status"> & {
+  image_version?: typeof WorkerTable.$inferSelect.image_version
+}
 type WorkerToken = Pick<typeof WorkerTokenTable.$inferSelect, "scope" | "token">
 type CloudSandboxRecord = Pick<NonNullable<Awaited<ReturnType<typeof getDaytonaSandboxRecord>>>, "signed_preview_url" | "signed_preview_url_expires_at">
 type CloudSandboxInspection = { state: string | null } | null
@@ -59,6 +61,7 @@ type CloudWorkerStore = {
   insertWorkerTokens: (input: { workerId: WorkerId; hostToken: string; clientToken: string; activityToken: string }) => Promise<void>
   deleteCreateRaceLoser: (workerId: WorkerId) => Promise<void>
   claimFailedWorker: (workerId: WorkerId) => Promise<boolean>
+  claimRecycleWorker: (workerId: WorkerId) => Promise<boolean>
   getActiveTokens: (workerId: WorkerId) => Promise<WorkerToken[]>
   markProvisioningWorkerFailed: (workerId: WorkerId) => Promise<void>
   markHealthyWorkerFailed: (workerId: WorkerId) => Promise<void>
@@ -262,6 +265,14 @@ const databaseCloudWorkerStore: CloudWorkerStore = {
       .update(WorkerTable)
       .set({ status: "provisioning" })
       .where(and(eq(WorkerTable.id, workerId), eq(WorkerTable.status, "failed")))
+
+    return hasChangedRows(result)
+  },
+  async claimRecycleWorker(workerId) {
+    const result: unknown = await db
+      .update(WorkerTable)
+      .set({ status: "provisioning" })
+      .where(and(eq(WorkerTable.id, workerId), inArray(WorkerTable.status, ["healthy", "stopped"])))
 
     return hasChangedRows(result)
   },
@@ -540,6 +551,44 @@ async function refreshAndProbeSignedPreview(input: {
   }
 }
 
+function isStoppedSandboxState(state: string | null) {
+  return state?.toLowerCase() === "stopped"
+}
+
+function workerNeedsSnapshotRecycle(worker: CloudWorker) {
+  const snapshot = env.daytona.snapshot
+  return Boolean(snapshot && "image_version" in worker && worker.image_version !== snapshot)
+}
+
+async function startStaleStoppedRecycle(input: {
+  worker: CloudWorker
+  sandboxExists: boolean
+  inspectSandbox: InspectSandbox
+  startWake: (workerId: CloudWorker["id"]) => void
+  store: CloudWorkerStore
+}): Promise<boolean> {
+  if (!input.sandboxExists || !workerNeedsSnapshotRecycle(input.worker)) {
+    return false
+  }
+
+  let inspection: CloudSandboxInspection = null
+  try {
+    inspection = await input.inspectSandbox(input.worker.id)
+  } catch {
+    return false
+  }
+
+  if (!isStoppedSandboxState(inspection?.state ?? null)) {
+    return false
+  }
+
+  const claimed = await input.store.claimRecycleWorker(input.worker.id)
+  if (claimed) {
+    input.startWake(input.worker.id)
+  }
+  return true
+}
+
 async function recoverUnhealthyCloudSandbox(input: {
   worker: CloudWorker
   continueProvisioning: typeof continueCloudProvisioning
@@ -580,6 +629,17 @@ async function resolveCloudInstance(input: {
   }
 
   if (input.worker.status === "stopped") {
+    const sandbox = await input.getSandboxRecord(input.worker.id)
+    if (await startStaleStoppedRecycle({
+      worker: input.worker,
+      sandboxExists: Boolean(sandbox),
+      inspectSandbox: input.inspectSandbox,
+      startWake: input.startWake,
+      store: input.store,
+    })) {
+      return { status: "waking", url: null }
+    }
+
     input.startWake(input.worker.id)
     return { status: "waking", url: null }
   }
@@ -597,6 +657,16 @@ async function resolveCloudInstance(input: {
     }
 
     return { status: "provisioning", url: null }
+  }
+
+  if (await startStaleStoppedRecycle({
+    worker: input.worker,
+    sandboxExists: true,
+    inspectSandbox: input.inspectSandbox,
+    startWake: input.startWake,
+    store: input.store,
+  })) {
+    return { status: "waking", url: null }
   }
 
   if (sandbox.signed_preview_url_expires_at.getTime() > input.now()) {

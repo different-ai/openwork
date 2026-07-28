@@ -25,7 +25,7 @@ type CloudLifecycleStore = {
   getWorker: (workerId: WorkerId) => Promise<CloudWorker | null>
   getActiveTokens: (workerId: WorkerId) => Promise<WorkerToken[]>
   listIdleWorkers: (input: { idleBefore: Date; limit: number }) => Promise<CloudWorker[]>
-  updateWorkerStatus: (input: { workerId: WorkerId; status: WorkerStatus; onlyWhenStatus?: WorkerStatus }) => Promise<void>
+  updateWorkerStatus: (input: { workerId: WorkerId; status: WorkerStatus; imageVersion?: string | null; onlyWhenStatus?: WorkerStatus }) => Promise<void>
 }
 
 type WakeCloudWorkerOptions = {
@@ -94,9 +94,13 @@ const databaseCloudLifecycleStore: CloudLifecycleStore = {
       .limit(input.limit)
   },
   async updateWorkerStatus(input) {
+    const update = input.imageVersion === undefined
+      ? { status: input.status }
+      : { status: input.status, image_version: input.imageVersion }
+
     await db
       .update(WorkerTable)
-      .set({ status: input.status })
+      .set(update)
       .where(input.onlyWhenStatus
         ? and(eq(WorkerTable.id, input.workerId), eq(WorkerTable.status, input.onlyWhenStatus))
         : eq(WorkerTable.id, input.workerId))
@@ -168,7 +172,7 @@ async function runWakeCloudWorker(workerId: WorkerId, options: WakeCloudWorkerOp
       woken = await provisionWorker(wakeInput)
     }
 
-    await store.updateWorkerStatus({ workerId, status: woken.status, onlyWhenStatus: "provisioning" })
+    await store.updateWorkerStatus({ workerId, status: woken.status, imageVersion: woken.imageVersion, onlyWhenStatus: "provisioning" })
   } catch (error) {
     await safelyMarkWorkerFailed(store, workerId)
     logger.error("worker wake failed", { worker_id: workerId, error })

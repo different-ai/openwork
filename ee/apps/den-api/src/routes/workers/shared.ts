@@ -66,6 +66,7 @@ type CloudProvisioningStore = {
   updateWorkerStatus: (input: {
     workerId: WorkerId
     status: WorkerStatus
+    imageVersion?: string | null
     onlyWhenStatus?: WorkerStatus
     onlyWhenStatusIn?: WorkerStatus[]
   }) => Promise<void>
@@ -88,9 +89,13 @@ const databaseCloudProvisioningStore: CloudProvisioningStore = {
         ? eq(WorkerTable.status, input.onlyWhenStatus)
         : undefined
 
+    const update = input.imageVersion === undefined
+      ? { status: input.status }
+      : { status: input.status, image_version: input.imageVersion }
+
     await db
       .update(WorkerTable)
-      .set({ status: input.status })
+      .set(update)
       .where(statusPredicate
         ? and(eq(WorkerTable.id, input.workerId), statusPredicate)
         : eq(WorkerTable.id, input.workerId))
@@ -389,6 +394,7 @@ async function runCloudProvisioning(input: {
     await store.updateWorkerStatus({
       workerId: input.workerId,
       status: provisioned.status,
+      imageVersion: provisioned.imageVersion,
       onlyWhenStatusIn: provisioningSuccessWritableStatuses,
     })
 

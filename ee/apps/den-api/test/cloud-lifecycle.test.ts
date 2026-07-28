@@ -240,6 +240,32 @@ describe("cloud lifecycle wake", () => {
     expect(worker.status).toBe("healthy")
   })
 
+  test("writes the image version returned by a successful Daytona wake", async () => {
+    const worker = makeWorker({ status: "stopped" })
+    const { store, updates } = makeStore({
+      workers: [worker],
+      tokens: [
+        makeToken(worker.id, "host"),
+        makeToken(worker.id, "client"),
+        makeToken(worker.id, "activity"),
+      ],
+    })
+
+    await lifecycle.wakeCloudWorker(worker.id, {
+      store,
+      wakeWorker: async () => ({
+        provider: "daytona",
+        url: "https://cloud.example",
+        status: "healthy",
+        imageVersion: "openwork-0.18.8",
+      }),
+    })
+
+    expect(worker.status).toBe("healthy")
+    expect(updates[1]?.status).toBe("healthy")
+    expect(updates[1]?.imageVersion).toBe("openwork-0.18.8")
+  })
+
   test("marks the worker failed when an existing sandbox cannot be started", async () => {
     const worker = makeWorker({ status: "stopped" })
     const { store } = makeStore({
