@@ -202,6 +202,9 @@ export default {
             await ctx.control("settings.panel.open", { panel: "extensions" });
             await ctx.waitForText("Extensions", { timeoutMs: 30_000 });
             await ctx.clickText("MCP", { selector: "button", timeoutMs: 30_000 });
+            if (await ctx.hasText("Show hidden")) {
+              await ctx.clickText("Show hidden", { timeoutMs: 30_000 });
+            }
             await ctx.waitForText(MCP_GRANTED_TITLE, { timeoutMs: 30_000 });
           },
           assert: async () => {
