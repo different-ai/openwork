@@ -26,6 +26,10 @@ The desktop also starts the embedded OpenWork server plus local runtimes and sid
 - The generated bundle is for spawned Node-compatible runtimes. It does not configure Electron's Chromium trust store.
 - Do not assume every sidecar honors `HTTP_PROXY` or `HTTPS_PROXY` universally. Use proxy settings documented for the specific runtime or sidecar.
 
+#### Automatic chain repair for the activated organization server
+
+At startup, the desktop checks the activated organization server for a leaf-only TLS chain. If the leaf certificate points to a missing intermediate through AIA, OpenWork fetches that intermediate, verifies the leaf signature, and confirms the intermediate chains to bundled public roots before adding it to the generated `system-ca-bundle.pem`. It refuses private or corporate roots and any non-leaf-only TLS failure. Set `OPENWORK_DISABLE_CHAIN_REPAIR=1` to turn this resilience behavior off. The server should still be fixed to serve its full chain; diagnostics continue to report what the server actually sends.
+
 ### 3. Den containers and Helm
 
 For Kubernetes Den installs, use the Helm chart's `customCa` support when Den must trust a private CA for outbound TLS or strict database verification. The chart mounts the selected Secret or ConfigMap key at:
