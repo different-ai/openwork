@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { getErrorMessage, requestJson } from "../_lib/den-flow";
 import {
   PENDING_ORG_INVITATION_STORAGE_KEY,
@@ -162,6 +162,8 @@ export function JoinOrgScreen({ invitationId }: { invitationId: string }) {
   const [joinBusy, setJoinBusy] = useState(false);
   const [joinError, setJoinError] = useState<string | null>(null);
   const [joinedOrg, setJoinedOrg] = useState<JoinedOrg | null>(null);
+  const [unavailableAcceptedInviteId, setUnavailableAcceptedInviteId] = useState<string | null>(null);
+  const acceptedInviteResolutionKey = useRef<string | null>(null);
 
   const invitedEmailMatches = preview && user
     ? preview.invitation.email.trim().toLowerCase() === user.email.trim().toLowerCase()
@@ -237,18 +239,18 @@ export function JoinOrgScreen({ invitationId }: { invitationId: string }) {
     };
   }, [invitationId]);
 
-  function clearPendingInvitation() {
+  const clearPendingInvitation = useCallback(() => {
     if (typeof window !== "undefined") {
       window.sessionStorage.removeItem(PENDING_ORG_INVITATION_STORAGE_KEY);
     }
-  }
+  }, []);
 
   function handleNotNow() {
     clearPendingInvitation();
     router.replace("/");
   }
 
-  async function handleAcceptInvitation() {
+  const acceptInvitation = useCallback(async (options: { silentUnavailable?: boolean } = {}) => {
     if (!invitationId) {
       setJoinError("Missing invitation link.");
       return;
@@ -272,6 +274,13 @@ export function JoinOrgScreen({ invitationId }: { invitationId: string }) {
       );
 
       if (!response.ok) {
+        if (options.silentUnavailable && response.status === 404) {
+          setUnavailableAcceptedInviteId(invitationId);
+          return;
+        }
+        if (options.silentUnavailable) {
+          setUnavailableAcceptedInviteId(invitationId);
+        }
         setJoinError(getErrorMessage(payload, response.status === 404 ? "This invite could not be accepted." : `Could not join the organization (${response.status}).`));
         return;
       }
@@ -287,11 +296,34 @@ export function JoinOrgScreen({ invitationId }: { invitationId: string }) {
         brand: preview.organization.branding,
       });
     } catch (error) {
+      if (options.silentUnavailable) {
+        setUnavailableAcceptedInviteId(invitationId);
+      }
       setJoinError(error instanceof Error ? error.message : "Could not join the organization.");
     } finally {
       setJoinBusy(false);
     }
+  }, [clearPendingInvitation, invitationId, preview]);
+
+  function handleAcceptInvitation() {
+    void acceptInvitation();
   }
+
+  useEffect(() => {
+    if (
+      !sessionHydrated
+      || !user
+      || !preview
+      || preview.invitation.status !== "accepted"
+      || !invitedEmailMatches
+      || acceptedInviteResolutionKey.current === invitationId
+    ) {
+      return;
+    }
+
+    acceptedInviteResolutionKey.current = invitationId;
+    void acceptInvitation({ silentUnavailable: true });
+  }, [acceptInvitation, invitationId, invitedEmailMatches, preview, sessionHydrated, user]);
 
   async function handleSwitchAccount() {
     await signOut();
@@ -316,6 +348,16 @@ export function JoinOrgScreen({ invitationId }: { invitationId: string }) {
         onContinueInBrowser={() => router.replace(joinedOrg.slug ? getOrgDashboardRoute(joinedOrg.slug) : "/dashboard")}
       />
     );
+  }
+
+  if (
+    preview
+    && preview.invitation.status === "accepted"
+    && user
+    && invitedEmailMatches
+    && unavailableAcceptedInviteId !== invitationId
+  ) {
+    return <LoadingState />;
   }
 
   if (!preview) {
@@ -470,7 +512,7 @@ export function JoinOrgScreen({ invitationId }: { invitationId: string }) {
               <button
                 type="button"
                 className="den-button-primary w-full focus:outline-none focus:ring-4 focus:ring-slate-950/10 sm:w-auto"
-                onClick={() => void handleAcceptInvitation()}
+                onClick={handleAcceptInvitation}
                 disabled={!showAcceptAction || joinBusy}
               >
                 {joinBusy ? "Joining..." : `Join ${preview.organization.name}`}
