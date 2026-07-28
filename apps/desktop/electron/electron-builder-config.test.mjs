@@ -12,6 +12,21 @@ async function readConfig(name) {
 }
 
 describe("Electron distribution configs", () => {
+  it("uses a stable Linux desktop identity and ships integration icons", async () => {
+    const packageMetadata = JSON.parse(
+      await readFile(path.resolve(dirname, "..", "package.json"), "utf8"),
+    );
+    const config = await readConfig("electron-builder.base.yml");
+    assert.equal(packageMetadata.desktopName, "com.differentai.openwork");
+    assert.equal(config.linux.syncDesktopName, true);
+    assert.equal(config.linux.icon, "resources/icons/linux");
+    assert.deepEqual(config.linux.extraResources[0], {
+      from: "resources/icons/linux",
+      to: "icons/linux",
+      filter: ["*.png"],
+    });
+  });
+
   it("keeps the public artifact and protocol unchanged", async () => {
     const config = await readConfig("electron-builder.yml");
     assert.equal(config.extends, "./electron-builder.base.yml");

@@ -60,8 +60,13 @@ mac:
     - dmg
     - zip
 linux:
-  icon: resources/icons/icon.png
+  icon: resources/icons/linux
+  syncDesktopName: true
   extraResources:
+    - from: resources/icons/linux
+      to: icons/linux
+      filter:
+        - "*.png"
     - from: resources/sidecars
       to: sidecars
       filter:

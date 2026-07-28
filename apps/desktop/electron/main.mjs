@@ -53,6 +53,9 @@ import { openExternalUrl } from "./open-external.mjs";
 import { resolveAppIdentifier, resolveUserDataPath } from "./dev-profile.mjs";
 import { fetchAgentContextDiagnosticsResponse } from "./agent-context-diagnostics-fetch.mjs";
 import {
+  createLinuxDesktopIntegration,
+} from "./linux-desktop-integration.mjs";
+import {
   desktopActivationRequired,
   enterprisePreactivationCommandAllowed,
   resolveDesktopDistribution,
@@ -180,7 +183,11 @@ function killTerminalsForWebContents(webContentsId) {
 // OPENWORK_DEV_PROFILE in unpackaged dev; then the legacy identifier default.
 app.setName(APP_NAME);
 app.setAppUserModelId(APP_IDENTIFIER);
-if (app.isPackaged && process.env.OPENWORK_ELECTRON_DISABLE_PROTOCOL_REGISTRATION !== "1") {
+if (
+  app.isPackaged
+  && process.env.OPENWORK_ELECTRON_DISABLE_PROTOCOL_REGISTRATION !== "1"
+  && !(process.platform === "linux" && process.env.APPIMAGE)
+) {
   app.setAsDefaultProtocolClient(DESKTOP_PROTOCOL_SCHEME);
 }
 const userDataPath = resolveUserDataPath({
@@ -189,6 +196,12 @@ const userDataPath = resolveUserDataPath({
   userDataOverride: process.env.OPENWORK_ELECTRON_USERDATA,
 });
 app.setPath("userData", userDataPath);
+const linuxDesktopIntegration = createLinuxDesktopIntegration({
+  app,
+  dialog,
+  appName: APP_NAME,
+  distribution: DESKTOP_DISTRIBUTION.flavor,
+});
 
 // Resolve and cache the app icon (reused for BrowserWindow + mac dock).
 // Packaged builds ship icons via electron-builder config, but for `dev:electron`
@@ -207,6 +220,7 @@ function resolveAppIconPath() {
     path.resolve(__dirname, "../resources/icons/icon.png"),
     // Packaged: electron-builder copies extraResources but we fall back to this
     // if custom packaging ever exposes the icon here.
+    path.join(process.resourcesPath ?? "", "icons", "linux", "512x512.png"),
     path.join(process.resourcesPath ?? "", "icons", "icon.png"),
   ];
   for (const candidate of candidates) {
@@ -1655,6 +1669,15 @@ const desktopCommandHandlers = {
   "desktopNotificationShow": async (event, ...args) => {
       return showDesktopNotification(args[0] ?? {});
   },
+  "desktopIntegrationStatus": async (event, ...args) => {
+      return linuxDesktopIntegration.getStatus();
+  },
+  "desktopIntegrationInstall": async (event, ...args) => {
+      return linuxDesktopIntegration.install(args[0] ?? {});
+  },
+  "desktopIntegrationRemove": async (event, ...args) => {
+      return linuxDesktopIntegration.remove();
+  },
   "getUiControlBridgeInfo": async (event, ...args) => {
       try {
         const raw = await readFile(path.join(app.getPath("userData"), "openwork-ui-control.json"), "utf8");
@@ -2560,6 +2583,11 @@ or use: pnpm dev:worktree`);
     win.webContents.on("did-finish-load", () => {
       flushPendingDeepLinks();
     });
+    setTimeout(() => {
+      void linuxDesktopIntegration.maybePrompt(win).catch((error) => {
+        console.warn("[desktop-integration] prompt failed", error);
+      });
+    }, 500);
 
     // Initialize the packaged updater after the window is up so the user sees
     // a working app first. Renderer-owned checks pass the selected release
