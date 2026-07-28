@@ -4,8 +4,10 @@ import {
   signInApi,
   signInViaBrowser,
 } from "./lib/den-web.mjs";
+import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
 
 const FLOW_ID = "den-marketplace-plugin-assignments";
+const vo = await loadVoiceoverParagraphs(FLOW_ID);
 const ADMIN_EMAIL =
   process.env.OPENWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
 const ADMIN_PASSWORD =
@@ -161,6 +163,7 @@ export default {
         await ctx.prove(
           "An administrator can choose an active Plugin not yet assigned to the Marketplace",
           {
+            voiceover: vo[0],
             action: async () => {
               await navigateTo(
                 ctx,
@@ -214,6 +217,7 @@ export default {
         await ctx.prove(
           "Assigning creates the exact Marketplace relationship and removes the Plugin from eligibility",
           {
+            voiceover: vo[1],
             action: async () => {
               const selected = await ctx.eval(`(() => {
                 const option = [...document.querySelectorAll('[role="option"]')]
@@ -290,6 +294,7 @@ export default {
         await ctx.prove(
           "Removal is explicitly scoped to the Marketplace relationship",
           {
+            voiceover: vo[2],
             action: async () => {
               await ctx.eval(
                 `document.querySelector(${JSON.stringify(`[data-testid="remove-marketplace-plugin-${state.pluginId}"]`)})?.click()`,
@@ -339,6 +344,7 @@ export default {
         await ctx.prove(
           "Confirmed removal empties the Marketplace while leaving the Plugin active",
           {
+            voiceover: vo[3],
             action: async () => {
               await ctx.eval(
                 `document.querySelector('[data-testid="confirm-remove-marketplace-plugin"]')?.click()`,
