@@ -36,7 +36,6 @@ import {
 import {
   openWorkConnectAttentionTitle,
   resolveOpenWorkConnectStatus,
-  type OpenWorkConnectStatus,
 } from "../../connections/openwork-connect-status";
 import type { SessionCloudMcpMaintenanceState } from "../../connections/use-session-mcp-maintenance";
 import {
@@ -47,12 +46,15 @@ import {
   openWorkModelsPromoChangedEvent,
   useOpenWorkModelsPromoEligibility,
 } from "../../cloud/openwork-models-promo";
+import {
+  resolveAccountStatusLines,
+  type RuntimeStatus,
+  type StatusDotVariant,
+} from "./account-status-lines";
 
 const DOCS_URL = "https://openworklabs.com/docs";
 const BOOT_STARTED_AT = Date.now();
 const INITIALIZING_MS = 15_000;
-
-type StatusDotVariant = "connected" | "loading" | "partial" | "disconnected";
 
 function StatusDot({ variant }: { variant: StatusDotVariant }) {
   return (
@@ -72,12 +74,6 @@ function StatusDot({ variant }: { variant: StatusDotVariant }) {
     </span>
   );
 }
-
-type RuntimeStatus = {
-  variant: StatusDotVariant;
-  label: string;
-  detail: string | null;
-};
 
 type RuntimeStatusInput = {
   clientConnected: boolean;
@@ -117,12 +113,6 @@ function resolveRuntimeStatus(input: RuntimeStatusInput): RuntimeStatus {
     label: t("status.disconnected_label"),
     detail: t("status.disconnected_hint"),
   };
-}
-
-function connectDotVariant(status: OpenWorkConnectStatus): StatusDotVariant {
-  if (status.state === "ready") return "connected";
-  if (status.state === "checking") return "loading";
-  return "disconnected";
 }
 
 function accountInitials(name: string | null, email: string) {
@@ -253,7 +243,19 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
     props.openWorkConnectState,
   );
   const connectNeedsAttention = connectStatus?.state === "needs_attention";
-  const showStatus = shellConfig.statusBar && (runtimeStatus !== null || connectStatus !== null);
+  const statusLines = shellConfig.statusBar
+    ? resolveAccountStatusLines({
+      runtime: runtimeStatus,
+      connect: connectStatus,
+      developerMode: props.developerMode,
+    })
+    : [];
+  const showStatus = statusLines.length > 0 || (
+    shellConfig.statusBar && props.showConnectionStatus
+  );
+  const statusTitle = connectNeedsAttention && connectStatus
+    ? openWorkConnectAttentionTitle(connectStatus.description)
+    : statusLines.map((line) => line.label).join(" · ") || runtimeStatus?.label;
 
   const openSignIn = () => {
     platform.openLink(buildDenAuthUrl(readDenBootstrapConfig().baseUrl, "sign-up"));
@@ -283,11 +285,7 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
             /* ps-1.5 puts the 24px avatar 12px from the edge, so the name lands on the sidebar label lane. */
             className="flex w-full items-center gap-2 rounded-lg ps-1.5 pe-2 py-1.5 text-left transition-colors hover:bg-sidebar-accent"
             aria-label={signedIn ? `${user.email} — account and status` : "Account and status"}
-            title={connectNeedsAttention
-              ? openWorkConnectAttentionTitle(connectStatus.description)
-              : connectStatus
-                ? `${runtimeStatus ? `${runtimeStatus.label} · ` : ""}OpenWork Connect: ${connectStatus.label}`
-                : runtimeStatus?.label}
+            title={statusTitle}
           >
               {signedIn ? (
                 <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/15 text-[10px] font-semibold text-primary">
@@ -322,36 +320,25 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
 
         {showStatus ? (
           <div className="mx-1 mb-1 flex flex-col gap-2 rounded-lg bg-muted/50 p-2">
-            {runtimeStatus ? (
-              <div className="flex items-start gap-2">
+            {statusLines.map((line) => (
+              <div
+                key={line.testId ?? line.label}
+                data-testid={line.testId}
+                className="flex items-start gap-2"
+              >
                 <span className="mt-1">
-                  <StatusDot variant={runtimeStatus.variant} />
+                  <StatusDot variant={line.variant} />
                 </span>
                 <div className="min-w-0">
-                  <div className="text-[11.5px] font-medium text-foreground">{runtimeStatus.label}</div>
-                  {runtimeStatus.detail ? (
+                  <div className="text-[11.5px] font-medium text-foreground">{line.label}</div>
+                  {line.detail ? (
                     <div className="text-[10.5px] leading-tight text-muted-foreground">
-                      {runtimeStatus.detail}
+                      {line.detail}
                     </div>
                   ) : null}
                 </div>
               </div>
-            ) : null}
-            {connectStatus ? (
-              <div data-testid="openwork-connect-status" className="flex items-start gap-2">
-                <span className="mt-1">
-                  <StatusDot variant={connectDotVariant(connectStatus)} />
-                </span>
-                <div className="min-w-0">
-                  <div className="text-[11.5px] font-medium text-foreground">
-                    {`OpenWork Connect: ${connectStatus.label}`}
-                  </div>
-                  <div className="text-[10.5px] leading-tight text-muted-foreground">
-                    {connectStatus.description}
-                  </div>
-                </div>
-              </div>
-            ) : null}
+            ))}
             {props.showConnectionStatus ? (
               <div className="text-[10.5px] leading-tight text-muted-foreground">
                 {t("account.providers_connected", { count: props.providerConnectedIds.length })}

@@ -1740,6 +1740,7 @@ export default {
   "status.openwork_ready": "OpenWork Ready",
   "status.providers_connected_one": "{count} provider connected",
   "status.providers_connected_other": "{count} providers connected",
+  "status.ready": "Ready",
   "status.ready_for_tasks": "Ready for new tasks",
   "status.reloading_config": "Reloading OpenCode config",
   "status.running": "Running",
