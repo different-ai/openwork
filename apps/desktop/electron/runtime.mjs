@@ -24,9 +24,9 @@ const OPENWORK_SERVER_PORT_RANGE_END = 51_000;
 const MAX_BOOTSTRAP_BYTES = 256 * 1024;
 const MAX_CHAIN_REPAIR_BODY_BYTES = 64 * 1024;
 const MAX_CHAIN_REPAIR_ORIGINS = 3;
-const CHAIN_REPAIR_TOTAL_TIMEOUT_MS = 6000;
-const CHAIN_REPAIR_SOCKET_TIMEOUT_MS = 4000;
-const CHAIN_REPAIR_FETCH_TIMEOUT_MS = 4000;
+const CHAIN_REPAIR_TOTAL_TIMEOUT_MS = 20000;
+const CHAIN_REPAIR_SOCKET_TIMEOUT_MS = 8000;
+const CHAIN_REPAIR_FETCH_TIMEOUT_MS = 8000;
 /** @type {Map<string, X509Certificate | null>} */
 const chainRepairRootCache = new Map();
 
@@ -883,6 +883,11 @@ async function repairIncompleteChains(options) {
   const fetchImpl = chainRepair.fetchImpl ?? globalThis.fetch;
   const tlsModule = options.tlsModule ?? tls;
   const tlsConnectImpl = chainRepair.tlsConnectImpl ?? tls.connect;
+  const totalTimeoutValue = Number(env.OPENWORK_CHAIN_REPAIR_TIMEOUT_MS);
+  const totalTimeoutMs =
+    Number.isFinite(totalTimeoutValue) && totalTimeoutValue >= 1000 && totalTimeoutValue <= 120000
+      ? totalTimeoutValue
+      : CHAIN_REPAIR_TOTAL_TIMEOUT_MS;
   const rootsProvider = chainRepair.rootsProvider ?? (() => {
     if (typeof tlsModule?.getCACertificates !== "function") return [];
     const roots = tlsModule.getCACertificates("default");
@@ -955,7 +960,7 @@ async function repairIncompleteChains(options) {
 
   let timeoutId;
   const timeout = new Promise((resolve) => {
-    timeoutId = setTimeout(() => resolve({ pems: [], timedOut: true }), CHAIN_REPAIR_TOTAL_TIMEOUT_MS);
+    timeoutId = setTimeout(() => resolve({ pems: [], timedOut: true }), totalTimeoutMs);
     timeoutId.unref?.();
   });
   try {

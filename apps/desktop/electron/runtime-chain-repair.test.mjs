@@ -95,6 +95,22 @@ function authorizedSocket() {
   return socket;
 }
 
+function hangingSocket() {
+  const socket = {
+    destroy() {},
+    setTimeout() {
+      return socket;
+    },
+    once() {
+      return socket;
+    },
+    off() {
+      return socket;
+    },
+  };
+  return socket;
+}
+
 test("repairs a leaf-only TLS chain from an AIA intermediate", async () => {
   await withTlsServer({ cert: leafPem, key: leafKey }, async (port) => {
     const userDataDir = await mkdtemp(path.join(tmpdir(), "openwork-chain-repair-"));
@@ -244,6 +260,34 @@ test("user NODE_EXTRA_CA_CERTS disables repair", async () => {
   assert.equal(fetchCalled, false);
   assert.equal(probeCalled, false);
   assert.equal(logged, true);
+});
+
+test("chain repair total timeout can be shortened by env", async () => {
+  const userDataDir = await mkdtemp(path.join(tmpdir(), "openwork-chain-repair-"));
+  const logs = [];
+  const startTime = Date.now();
+
+  const env = await resolveSystemCaEnv({
+    tlsModule: { getCACertificates: () => [] },
+    userDataDir,
+    parentEnv: { OPENWORK_CHAIN_REPAIR_TIMEOUT_MS: "1500" },
+    logInfo(message) {
+      logs.push(String(message));
+    },
+    loadPlatformCertificates: async () => [],
+    chainRepair: {
+      origins: ["https://localhost:443"],
+      fetchImpl: async () => {
+        throw new Error("timed-out chain repair should not fetch");
+      },
+      tlsConnectImpl: hangingSocket,
+      rootsProvider: () => [rootPem],
+    },
+  });
+
+  assert.deepEqual(env, {});
+  assert.ok(Date.now() - startTime < 5000);
+  assert.ok(logs.some((line) => line.includes("chain repair skipped: timed out")));
 });
 
 test("activation bootstrap origin parsing is strict", async () => {

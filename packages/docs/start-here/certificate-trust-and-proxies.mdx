@@ -28,7 +28,7 @@ The desktop also starts the embedded OpenWork server plus local runtimes and sid
 
 #### Automatic chain repair for the activated organization server
 
-At startup, the desktop checks the activated organization server for a leaf-only TLS chain. If the leaf certificate points to a missing intermediate through AIA, OpenWork fetches that intermediate, verifies the leaf signature, and confirms the intermediate chains to bundled public roots before adding it to the generated `system-ca-bundle.pem`. It refuses private or corporate roots and any non-leaf-only TLS failure. Set `OPENWORK_DISABLE_CHAIN_REPAIR=1` to turn this resilience behavior off. The server should still be fixed to serve its full chain; diagnostics continue to report what the server actually sends.
+At startup, the desktop checks the activated organization server for a leaf-only TLS chain. If the leaf certificate points to a missing intermediate through AIA, OpenWork fetches that intermediate, verifies the leaf signature, and confirms the intermediate chains to bundled public roots before adding it to the generated `system-ca-bundle.pem`. It refuses private or corporate roots and any non-leaf-only TLS failure. The repair phase is bounded at 20 seconds by default and can be tuned with `OPENWORK_CHAIN_REPAIR_TIMEOUT_MS`. Set `OPENWORK_DISABLE_CHAIN_REPAIR=1` to turn this resilience behavior off. The server should still be fixed to serve its full chain; diagnostics continue to report what the server actually sends.
 
 ### 3. Den containers and Helm
 
