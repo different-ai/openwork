@@ -1,0 +1,57 @@
+# syntax=docker/dockerfile:1.7
+FROM node:22-bookworm-slim
+
+RUN corepack enable
+
+WORKDIR /app
+
+ARG DEN_GATEWAY_VERSION=dev
+ENV DEN_GATEWAY_VERSION=${DEN_GATEWAY_VERSION}
+ENV PORT=8788
+
+# The gateway serves the OpenWork web build itself, so the app and Den end up on
+# one origin. That is what removes the need for cross-origin patches, and it is
+# why the SPA is baked in here rather than served from a separate CDN origin.
+ENV DEN_GATEWAY_WEB_ROOT=/opt/openwork/web
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml /app/
+COPY patches /app/patches
+COPY packages/types/package.json /app/packages/types/package.json
+COPY packages/ui/package.json /app/packages/ui/package.json
+COPY packages/install-config/package.json /app/packages/install-config/package.json
+COPY ee/packages/utils/package.json /app/ee/packages/utils/package.json
+COPY ee/apps/den-gateway/package.json /app/ee/apps/den-gateway/package.json
+COPY apps/app/package.json /app/apps/app/package.json
+
+RUN pnpm install --frozen-lockfile --trust-lockfile
+
+COPY packages/types /app/packages/types
+COPY packages/ui /app/packages/ui
+COPY packages/install-config /app/packages/install-config
+COPY ee/packages/utils /app/ee/packages/utils
+COPY ee/apps/den-gateway /app/ee/apps/den-gateway
+COPY apps/app /app/apps/app
+
+RUN pnpm --dir /app/packages/types run build
+RUN pnpm --dir /app/packages/ui run build
+RUN pnpm --dir /app/packages/install-config run build
+RUN pnpm --dir /app/ee/packages/utils run build
+
+# build:web already sets VITE_OPENWORK_DEPLOYMENT=web and
+# VITE_DEN_REQUIRE_SIGNIN=1. VITE_DEN_BASE_URL is deliberately NOT baked: in
+# gateway mode the app resolves Den from window.location.origin at runtime via
+# the gateway marker, and a baked base URL would silently defeat that.
+RUN pnpm --dir /app/apps/app run build:web
+
+RUN pnpm --dir /app/ee/apps/den-gateway run build
+
+RUN mkdir -p /opt/openwork \
+  && cp -R /app/apps/app/dist /opt/openwork/web \
+  && test -f /opt/openwork/web/index.html \
+  && test -d /opt/openwork/web/assets
+
+EXPOSE 8788
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 CMD node -e "fetch('http://127.0.0.1:' + (process.env.PORT || '8788') + '/__gw/health').then((res) => process.exit(res.ok ? 0 : 1)).catch(() => process.exit(1))"
+
+CMD ["node", "/app/ee/apps/den-gateway/dist/server.js"]

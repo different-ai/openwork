@@ -6,8 +6,6 @@ The organization controls the visible product name and wordmark while OpenWork k
 
 2. The organization page now says “Download Acme Work for Example Corp” and displays the wordmark.
 
-3. The setup window identifies itself as Acme Work and clearly names the Example Corp workspace before installation.
+3. After sign-in, the desktop window, sidebar branding, and user-facing labels say Acme Work.
 
-4. After sign-in, the desktop window, sidebar branding, and user-facing labels say Acme Work.
-
-5. Updating the app preserves the organization branding without changing its underlying signed identity or update compatibility.
+4. Updating the app preserves the organization branding without changing its underlying signed identity or update compatibility.

@@ -531,8 +531,8 @@ export function getInferenceRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/inference`;
 }
 
-export function getCloudRoute(orgSlug?: string | null): string {
-  return `${getOrgDashboardRoute(orgSlug)}/cloud`;
+export function getWebRoute(orgSlug?: string | null): string {
+  return `${getOrgDashboardRoute(orgSlug)}/web`;
 }
 
 export function getLlmProvidersRoute(orgSlug?: string | null): string {
@@ -597,6 +597,18 @@ export function getPluginsRoute(orgSlug?: string | null): string {
 
 export function getPluginRoute(orgSlug: string | null | undefined, pluginId: string): string {
   return `${getPluginsRoute(orgSlug)}/${encodeURIComponent(pluginId)}`;
+}
+
+export function getPluginSkillRoute(orgSlug: string | null | undefined, pluginId: string, skillId: string): string {
+  return `${getPluginRoute(orgSlug, pluginId)}/skills/${encodeURIComponent(skillId)}`;
+}
+
+export function getNewPluginSkillRoute(orgSlug: string | null | undefined, pluginId: string): string {
+  return `${getPluginRoute(orgSlug, pluginId)}/skills/new`;
+}
+
+export function getEditPluginSkillRoute(orgSlug: string | null | undefined, pluginId: string, skillId: string): string {
+  return `${getPluginSkillRoute(orgSlug, pluginId, skillId)}/edit`;
 }
 
 export function getNewPluginRoute(orgSlug?: string | null): string {

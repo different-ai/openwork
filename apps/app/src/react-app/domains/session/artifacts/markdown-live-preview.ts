@@ -1,13 +1,16 @@
 import { ensureSyntaxTree, syntaxTree } from "@codemirror/language";
-import { type Extension, type Range, RangeSetBuilder } from "@codemirror/state";
+import { type EditorState, type Extension, Prec, type Range, RangeSetBuilder, StateField } from "@codemirror/state";
 import {
   Decoration,
   type DecorationSet,
   EditorView,
+  keymap,
   ViewPlugin,
   type ViewUpdate,
   WidgetType,
 } from "@codemirror/view";
+
+import { renderMarkdownHtml } from "@/components/markdown/markdown-primitive";
 
 /**
  * Obsidian-style "merged" markdown view for CodeMirror 6: the document stays
@@ -53,8 +56,8 @@ class BulletWidget extends WidgetType {
 
 const BULLET = Decoration.replace({ widget: new BulletWidget() });
 
-function selectionTouchesRange(view: EditorView, from: number, to: number) {
-  for (const range of view.state.selection.ranges) {
+function selectionTouches(state: EditorState, from: number, to: number) {
+  for (const range of state.selection.ranges) {
     if (range.from <= to && range.to >= from) {
       return true;
     }
@@ -64,7 +67,7 @@ function selectionTouchesRange(view: EditorView, from: number, to: number) {
 
 function lineHasSelection(view: EditorView, pos: number) {
   const line = view.state.doc.lineAt(pos);
-  return selectionTouchesRange(view, line.from, line.to);
+  return selectionTouches(view.state, line.from, line.to);
 }
 
 function buildDecorations(view: EditorView): DecorationSet {
@@ -81,6 +84,12 @@ function buildDecorations(view: EditorView): DecorationSet {
       to,
       enter: (node) => {
         const name = node.name;
+
+        if (name === "Table") {
+          // Tables are handled as one block by `tableField`, so their pipes and
+          // cell markup are never half-rendered alongside it.
+          return false;
+        }
 
         if (/^ATXHeading[1-6]$/.test(name)) {
           const level = Number(name.slice(-1)) - 1;
@@ -220,6 +229,124 @@ const livePreviewPlugin = ViewPlugin.fromClass(
   },
 );
 
+/**
+ * Source lines of a pipe table map to rendered rows: header, delimiter, then one
+ * line per body row. Returns how far the clicked row sits from the table start so
+ * a click lands the cursor on the row the user aimed at.
+ */
+function clickedRowOffset(target: EventTarget | null): number {
+  const row = target instanceof Element ? target.closest("tr") : null;
+  const body = row?.parentElement;
+  if (!row || !(body instanceof HTMLTableSectionElement) || body.tagName !== "TBODY") return 0;
+  return Array.from(body.rows).indexOf(row) + 2;
+}
+
+/**
+ * A GFM table rendered as one block. Pipe tables are unreadable as source once
+ * they have more than a couple of columns, so the whole table is replaced by the
+ * same HTML the rest of the app uses for markdown, and clicking it hands the
+ * source back for editing.
+ */
+class TableWidget extends WidgetType {
+  constructor(readonly source: string, readonly from: number) {
+    super();
+  }
+
+  eq(other: TableWidget) {
+    return other.source === this.source && other.from === this.from;
+  }
+
+  toDOM(view: EditorView) {
+    const wrapper = document.createElement("div");
+    wrapper.className = "cm-md-table";
+    // renderMarkdownHtml sanitizes its output.
+    wrapper.innerHTML = renderMarkdownHtml(this.source, "surface");
+    wrapper.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+      const doc = view.state.doc;
+      const lineNumber = doc.lineAt(this.from).number + clickedRowOffset(event.target);
+      view.dispatch({ selection: { anchor: doc.line(Math.min(lineNumber, doc.lines)).from } });
+      view.focus();
+    });
+    return wrapper;
+  }
+
+  ignoreEvent() {
+    return true;
+  }
+}
+
+/**
+ * Block decorations may not come from a view plugin, so table replacement lives
+ * in its own state field.
+ */
+function buildTableDecorations(state: EditorState): DecorationSet {
+  const builder = new RangeSetBuilder<Decoration>();
+  const tree = ensureSyntaxTree(state, state.doc.length, 200) ?? syntaxTree(state);
+
+  tree.iterate({
+    enter: (node) => {
+      if (node.name !== "Table") return;
+      // Selecting into a table returns it to editable markdown.
+      if (selectionTouches(state, node.from, node.to)) return false;
+
+      const source = state.doc.sliceString(node.from, node.to);
+      builder.add(
+        node.from,
+        node.to,
+        Decoration.replace({ widget: new TableWidget(source, node.from), block: true }),
+      );
+      return false;
+    },
+  });
+
+  return builder.finish();
+}
+
+const tableField = StateField.define<DecorationSet>({
+  create: (state) => buildTableDecorations(state),
+  update(value, transaction) {
+    if (
+      transaction.docChanged ||
+      transaction.selection ||
+      syntaxTree(transaction.startState) !== syntaxTree(transaction.state)
+    ) {
+      return buildTableDecorations(transaction.state);
+    }
+    return value;
+  },
+  provide: (field) => EditorView.decorations.from(field),
+});
+
+/**
+ * A rendered table has no text positions inside it, so vertical cursor motion
+ * steps straight over it. Arrowing into one puts the cursor on the nearest source
+ * line instead, which returns the table to editable markdown.
+ */
+function enterTable(view: EditorView, direction: 1 | -1): boolean {
+  const { state } = view;
+  const cursorLine = state.doc.lineAt(state.selection.main.head);
+  const probe = direction === 1 ? cursorLine.to + 1 : cursorLine.from - 1;
+  if (probe < 0 || probe > state.doc.length) return false;
+
+  let target: number | null = null;
+  state.field(tableField).between(probe, probe, (from, to) => {
+    target = direction === 1 ? from : state.doc.lineAt(to).from;
+    return false;
+  });
+  if (target === null) return false;
+
+  view.dispatch({ selection: { anchor: target }, scrollIntoView: true });
+  return true;
+}
+
+const tableKeymap = Prec.high(
+  keymap.of([
+    { key: "ArrowDown", run: (view) => enterTable(view, 1) },
+    { key: "ArrowUp", run: (view) => enterTable(view, -1) },
+  ]),
+);
+
 const livePreviewTheme = EditorView.baseTheme({
   ".cm-md-h1": { fontSize: "1.6em", fontWeight: "700", lineHeight: "1.3" },
   ".cm-md-h2": { fontSize: "1.4em", fontWeight: "700", lineHeight: "1.3" },
@@ -248,8 +375,13 @@ const livePreviewTheme = EditorView.baseTheme({
     fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
   },
   ".cm-md-bullet": { paddingRight: "0.4em", color: "hsl(var(--muted-foreground))" },
+  // `contain: inline-size` keeps a wide table from stretching the editor (which
+  // would stop every other paragraph from wrapping); the table scrolls in place.
+  ".cm-md-table": { cursor: "text", overflowX: "auto", contain: "inline-size" },
+  // Size columns to their content rather than squeezing words apart in a narrow panel.
+  ".cm-md-table table": { fontSize: "0.95em", width: "max-content", minWidth: "100%" },
 });
 
 export function markdownLivePreview(): Extension {
-  return [livePreviewPlugin, livePreviewTheme];
+  return [tableField, tableKeymap, livePreviewPlugin, livePreviewTheme];
 }

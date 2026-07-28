@@ -83,7 +83,10 @@ export function ForcedSigninPage({ developerMode }: ForcedSigninPageProps) {
   const initial = readDenSettings();
   const bootstrap = readDenBootstrapConfig();
   const appName = bootstrap.brandAppName?.trim() || "OpenWork";
-  const initialBaseUrl = initial.baseUrl || DEFAULT_DEN_BASE_URL;
+  const initialBaseUrl =
+    bootstrap.enterpriseActivation?.denBaseUrl ||
+    initial.baseUrl ||
+    DEFAULT_DEN_BASE_URL;
 
   const [baseUrl, setBaseUrl] = useState(initialBaseUrl);
   const [baseUrlDraft, setBaseUrlDraft] = useState(initialBaseUrl);

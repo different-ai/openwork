@@ -22,6 +22,7 @@ import {
   setDesktopBootstrapConfig as setDesktopBootstrapConfigInShell,
   type DesktopBootstrapConfig as ShellDesktopBootstrapConfig,
 } from "./desktop";
+import { getOpenworkGatewayOrigin } from "./gateway-runtime";
 import { isDesktopRuntime } from "./runtime-env";
 import type { ReloadReason } from "../types";
 import type {
@@ -111,9 +112,15 @@ export type DenBootstrapPrepared = DenBootstrapOrgSkill & {
   preparedAt: string;
 };
 
+export type DenEnterpriseActivation = {
+  activatedAt: string;
+  denBaseUrl: string;
+};
+
 export type DenBootstrapConfig = DenBaseUrls & {
   source: DenBootstrapSource;
   requireSignin: boolean;
+  requireActivation?: boolean;
   brandAppName?: string | null;
   brandLogoUrl?: string | null;
   brandIconUrl?: string | null;
@@ -126,6 +133,7 @@ export type DenBootstrapConfig = DenBaseUrls & {
   }> | null;
   handoff?: DenBootstrapHandoff | null;
   prepared?: DenBootstrapPrepared | null;
+  enterpriseActivation?: DenEnterpriseActivation | null;
 };
 
 export type DenDesktopConfig = SharedDesktopConfig;
@@ -304,6 +312,9 @@ let desktopBootstrapConfig: DenBootstrapConfig = {
   source: "default",
   requireSignin: BUILD_DEN_REQUIRE_SIGNIN,
 };
+let gatewayBootstrapConfig: DenBootstrapConfig | null = null;
+let gatewayBootstrapConfigOrigin: string | null = null;
+let gatewayBootstrapConfigSource: DenBootstrapConfig | null = null;
 
 export type DenAppVersionMetadata = {
   minAppVersion: string;
@@ -547,13 +558,31 @@ function ensureDenApiBasePath(input: string | null | undefined): string | null {
 export function resolveDenBaseUrls(input: { baseUrl?: string | null; apiBaseUrl?: string | null } | string | null | undefined): DenBaseUrls {
   const rawBaseUrl = typeof input === "string" ? input : input?.baseUrl;
   const normalizedBaseUrl = normalizeDenBaseUrl(rawBaseUrl);
-  const legacyApiBaseUrl = typeof input === "string" ? null : normalizeDenBaseUrl(input?.apiBaseUrl);
-  const seedUrl = stripDenApiBasePath(normalizedBaseUrl ?? legacyApiBaseUrl) ?? DEFAULT_DEN_BASE_URL;
+  const normalizedApiBaseUrl = typeof input === "string" ? null : normalizeDenBaseUrl(input?.apiBaseUrl);
+  const gatewayOrigin = getOpenworkGatewayOrigin();
+
+  if (gatewayOrigin) {
+    const normalizedGatewayOrigin = normalizeDenBaseUrl(gatewayOrigin) ?? gatewayOrigin;
+    const gatewayBaseUrl =
+      normalizedBaseUrl && denOriginComparisonKey(normalizedBaseUrl) !== denOriginComparisonKey(normalizedGatewayOrigin)
+        ? normalizedBaseUrl
+        : DEFAULT_DEN_BASE_URL;
+    const baseUrl = stripDenApiBasePath(gatewayBaseUrl) ?? DEFAULT_DEN_BASE_URL;
+
+    return {
+      baseUrl,
+      apiBaseUrl: ensureDenApiBasePath(normalizedGatewayOrigin) ?? normalizedGatewayOrigin,
+    };
+  }
+
+  const seedUrl = stripDenApiBasePath(normalizedBaseUrl ?? normalizedApiBaseUrl) ?? DEFAULT_DEN_BASE_URL;
   const baseUrl = stripDenApiBasePath(seedUrl) ?? DEFAULT_DEN_BASE_URL;
 
   return {
     baseUrl,
-    apiBaseUrl: ensureDenApiBasePath(baseUrl) ?? baseUrl,
+    apiBaseUrl: normalizedApiBaseUrl
+      ? ensureDenApiBasePath(normalizedApiBaseUrl) ?? normalizedApiBaseUrl
+      : ensureDenApiBasePath(baseUrl) ?? baseUrl,
   };
 }
 
@@ -606,6 +635,7 @@ function resolveDenBootstrapConfig(
     baseUrl: string;
     apiBaseUrl?: string | null;
     requireSignin?: boolean | null;
+    requireActivation?: boolean | null;
     brandAppName?: string | null;
     brandLogoUrl?: string | null;
     brandIconUrl?: string | null;
@@ -614,18 +644,23 @@ function resolveDenBootstrapConfig(
     claimLinks?: DenBootstrapConfig["claimLinks"];
     handoff?: DenBootstrapHandoff | null;
     prepared?: DenBootstrapPrepared | null;
+    enterpriseActivation?: DenEnterpriseActivation | null;
   },
 ): DenBootstrapConfig {
   return {
     ...resolveDenBaseUrls(input),
     source: input.source === "file" || input.fromFile === true ? "file" : "default",
     requireSignin: input.requireSignin === true,
+    ...(typeof input.requireActivation === "boolean"
+      ? { requireActivation: input.requireActivation }
+      : {}),
     ...(input.brandAppName?.trim() ? { brandAppName: input.brandAppName.trim().slice(0, 64) } : {}),
     ...(input.brandLogoUrl?.trim() ? { brandLogoUrl: input.brandLogoUrl.trim() } : {}),
     ...(input.brandIconUrl?.trim() ? { brandIconUrl: input.brandIconUrl.trim() } : {}),
     ...(input.claimLinks ? { claimLinks: input.claimLinks } : {}),
     ...(input.handoff ? { handoff: input.handoff } : {}),
     ...(input.prepared ? { prepared: input.prepared } : {}),
+    ...(input.enterpriseActivation ? { enterpriseActivation: input.enterpriseActivation } : {}),
   };
 }
 
@@ -638,6 +673,7 @@ function getPendingBootstrapConfig(next: DenSettings): DenBootstrapConfig | null
   return resolveDenBootstrapConfig({
     baseUrl: next.baseUrl ?? previous.baseUrl,
     requireSignin: previous.requireSignin,
+    requireActivation: previous.requireActivation,
     brandAppName: previous.brandAppName,
     brandLogoUrl: previous.brandLogoUrl,
     brandIconUrl: previous.brandIconUrl,
@@ -645,6 +681,7 @@ function getPendingBootstrapConfig(next: DenSettings): DenBootstrapConfig | null
     claimLinks: previous.claimLinks,
     handoff: previous.handoff,
     prepared: previous.prepared,
+    enterpriseActivation: previous.enterpriseActivation,
   });
 }
 
@@ -653,13 +690,37 @@ function applyDesktopBootstrapConfig(config: DenBootstrapConfig) {
 }
 
 export function readDenBootstrapConfig(): DenBootstrapConfig {
+  const gatewayOrigin = getOpenworkGatewayOrigin();
+  if (gatewayOrigin) {
+    if (
+      gatewayBootstrapConfig &&
+      gatewayBootstrapConfigOrigin === gatewayOrigin &&
+      gatewayBootstrapConfigSource === desktopBootstrapConfig
+    ) {
+      return gatewayBootstrapConfig;
+    }
+
+    gatewayBootstrapConfig = {
+      ...desktopBootstrapConfig,
+      ...resolveDenBaseUrls({
+        baseUrl: desktopBootstrapConfig.baseUrl,
+        apiBaseUrl: gatewayOrigin,
+      }),
+    };
+    gatewayBootstrapConfigOrigin = gatewayOrigin;
+    gatewayBootstrapConfigSource = desktopBootstrapConfig;
+    return gatewayBootstrapConfig;
+  }
+
   return desktopBootstrapConfig;
 }
 
 export async function initializeDenBootstrapConfig(): Promise<DenBootstrapConfig> {
   if (!isDesktopRuntime()) {
+    const gatewayOrigin = getOpenworkGatewayOrigin();
     desktopBootstrapConfig = resolveDenBootstrapConfig({
       baseUrl: BUILD_DEN_BASE_URL,
+      ...(gatewayOrigin ? { apiBaseUrl: gatewayOrigin } : {}),
       requireSignin: BUILD_DEN_REQUIRE_SIGNIN,
     });
     return desktopBootstrapConfig;
@@ -741,17 +802,25 @@ export async function setDenBootstrapConfig(
   next: ShellDesktopBootstrapConfig,
   options?: { dispatchSettingsChanged?: boolean },
 ): Promise<DenBootstrapConfig> {
-  const normalized = resolveDenBootstrapConfig(next);
+  const previous = readDenBootstrapConfig();
+  const normalized = resolveDenBootstrapConfig({
+    ...next,
+    enterpriseActivation: next.enterpriseActivation ?? previous.enterpriseActivation,
+  });
 
   if (isDesktopRuntime()) {
     const persisted = await setDesktopBootstrapConfigInShell({
       baseUrl: normalized.baseUrl,
       requireSignin: normalized.requireSignin,
+      ...(typeof normalized.requireActivation === "boolean"
+        ? { requireActivation: normalized.requireActivation }
+        : {}),
       ...(normalized.brandAppName ? { brandAppName: normalized.brandAppName } : {}),
       ...(normalized.brandLogoUrl ? { brandLogoUrl: normalized.brandLogoUrl } : {}),
       ...(normalized.brandIconUrl ? { brandIconUrl: normalized.brandIconUrl } : {}),
       ...(normalized.handoff ? { handoff: normalized.handoff } : {}),
       ...(normalized.prepared ? { prepared: normalized.prepared } : {}),
+      ...(normalized.enterpriseActivation ? { enterpriseActivation: normalized.enterpriseActivation } : {}),
     });
     
     applyDesktopBootstrapConfig(resolveDenBootstrapConfig({ ...persisted, source: "file" }));
@@ -796,11 +865,12 @@ export function readDenSettings(): DenSettings {
     };
   }
 
-  const baseUrls = resolveDenBaseUrls({
-    baseUrl: isDesktopRuntime()
-      ? readDenBootstrapConfig().baseUrl
-      : window.localStorage.getItem(STORAGE_BASE_URL) ?? readDenBootstrapConfig().baseUrl,
-  });
+  const bootstrapConfig = readDenBootstrapConfig();
+  const baseUrls = resolveDenBaseUrls(
+    isDesktopRuntime() || getOpenworkGatewayOrigin()
+      ? bootstrapConfig
+      : { baseUrl: window.localStorage.getItem(STORAGE_BASE_URL) ?? bootstrapConfig.baseUrl },
+  );
 
   return {
     ...baseUrls,
@@ -906,6 +976,7 @@ export function writeDenSettings(next: DenSettings, options?: { persistBootstrap
       void setDenBootstrapConfig({
         baseUrl: pendingBootstrap.baseUrl,
         requireSignin: currentBootstrap.requireSignin,
+        requireActivation: currentBootstrap.requireActivation,
         brandAppName: currentBootstrap.brandAppName,
         brandLogoUrl: currentBootstrap.brandLogoUrl,
         brandIconUrl: currentBootstrap.brandIconUrl,

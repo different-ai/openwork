@@ -21,7 +21,7 @@ function truthy(value: string | undefined): boolean {
   return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
 }
 
-function opencodeOrchestratorDataDirs(): string[] {
+function opencodeOpenworkDataDirs(): string[] {
   const root = process.env.OPENWORK_DATA_DIR?.trim();
   if (!root) return [];
 
@@ -45,7 +45,7 @@ function opencodeOrchestratorDataDirs(): string[] {
 }
 
 function opencodeDataDirs(): string[] {
-  const dirs = [...opencodeOrchestratorDataDirs(), ...defaultOpencodeDataDirs()];
+  const dirs = [...opencodeOpenworkDataDirs(), ...defaultOpencodeDataDirs()];
   return Array.from(new Set(dirs));
 }
 

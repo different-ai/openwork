@@ -66,7 +66,7 @@ headless — drive everything through `browser_eval` DOM queries instead.
 | Email-first sign-in | `/` | "Start using OpenWork" → EMAIL → **Next** |
 | Sign-up | `/` | "Create your account." → EMAIL/NAME/PASSWORD → **Sign up** |
 | Create org | `/organization` | "Name your team." → Organization name → **Continue** |
-| Onboarding checklist | `/dashboard/onboarding` | "Let's finish setting up {org}." |
+| Onboarding checklist | `/dashboard/onboarding` | "Set up {org}" → Step 1 of 2 install, Step 2 of 2 model |
 | Members / invites | `/dashboard/members` | **Add member** → Email + Role → **Send invite**; rows show INVITED/Pending |
 | Teams | `/dashboard/members` Teams tab | **Create Team** → name (placeholder "Core Engineering") + member card toggles → **Create team** |
 | Plugins list | `/dashboard/plugins` | **Create plugin** |

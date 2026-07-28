@@ -10,13 +10,12 @@ RUN apt-get update \
 
 COPY . .
 
-RUN pnpm install --frozen-lockfile --trust-lockfile --filter openwork-orchestrator... --filter openwork-server... \
-  && pnpm --filter openwork-orchestrator build:bin \
+RUN pnpm install --frozen-lockfile --trust-lockfile --filter openwork-server... \
+  && pnpm --filter openwork-server build \
   && pnpm --filter openwork-server build:bin
 
 FROM node:22-bookworm-slim
 
-ARG OPENWORK_ORCHESTRATOR_VERSION
 ARG OPENWORK_SERVER_VERSION
 ARG OPENCODE_VERSION
 ARG OPENCODE_DOWNLOAD_URL=
@@ -25,13 +24,12 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates curl tar unzip \
   && rm -rf /var/lib/apt/lists/*
 
-COPY --from=openwork-builder /src/apps/orchestrator/dist/bin/openwork /usr/local/bin/openwork
 COPY --from=openwork-builder /src/apps/server/dist/bin/openwork-server /usr/local/bin/openwork-server
+COPY --from=openwork-builder /src/apps/server/dist/opencode-plugins /opt/openwork/opencode-plugins
 COPY --from=openwork-builder /src/constants.json /usr/local/constants.json
 COPY packaging/docker/microsandbox-entrypoint.sh /usr/local/bin/microsandbox-entrypoint.sh
 
 RUN set -eux; \
-  test -n "$OPENWORK_ORCHESTRATOR_VERSION"; \
   test -n "$OPENWORK_SERVER_VERSION"; \
   test -n "$OPENCODE_VERSION"; \
   arch="$(dpkg --print-architecture)"; \
@@ -53,11 +51,16 @@ RUN set -eux; \
   chmod +x /usr/local/bin/microsandbox-entrypoint.sh; \
   rm -rf "$tmpdir"
 
-RUN test "$(openwork --version)" = "$OPENWORK_ORCHESTRATOR_VERSION" \
+RUN test -f /opt/openwork/opencode-plugins/openwork-extensions-preview.js \
+  && test -f /opt/openwork/opencode-plugins/openwork-capabilities-knowledge.js \
+  && test -f /opt/openwork/opencode-plugins/openwork-office-attachments.js \
+  && test -f /opt/openwork/opencode-plugins/openwork-anthropic-adaptive-thinking.js \
+  && test -f /opt/openwork/opencode-plugins/openwork-anthropic-tool-schema.js \
   && test "$(openwork-server --version)" = "$OPENWORK_SERVER_VERSION" \
   && opencode --version
 
-ENV OPENWORK_DATA_DIR=/data/openwork-orchestrator
+ENV OPENWORK_EXTENSIONS_PLUGIN_DIR=/opt/openwork/opencode-plugins
+ENV OPENWORK_DATA_DIR=/data/openwork-server
 ENV OPENWORK_SIDECAR_DIR=/data/sidecars
 ENV OPENWORK_WORKSPACE=/workspace
 

@@ -35,7 +35,8 @@ describe("OpenWork capabilities knowledge plugin", () => {
     expect(knowledge).not.toContain("create custom skills in `.opencode/skills/`");
     expect(knowledge).not.toContain("First call `openwork-cloud_search_capabilities`");
     expect(knowledge).not.toContain("then call `openwork-cloud_execute_capability`");
-    expect(knowledge).toContain("Settings > Connect");
+    expect(knowledge).toContain("Settings > Extensions");
+    expect(knowledge).toContain("Settings > Debug");
     expect(knowledge).toContain("custom or local MCP server");
     expect(knowledge).not.toContain("Access tokens are opaque");
     expect(knowledge).not.toContain("https://api.openworklabs.com/mcp`");
@@ -74,7 +75,7 @@ describe("OpenWork capabilities knowledge plugin", () => {
       path: "start-here/connect-your-stack/connect-services.mdx",
     });
 
-    expect(read).toContain("Settings` > `Connect");
+    expect(read).toContain("Settings` > `OpenWork Connect");
     expect(read).toContain("Needs your sign-in");
     expect(read).toContain("Ready to use");
     expect(read).toContain("advanced path for a custom or local server");

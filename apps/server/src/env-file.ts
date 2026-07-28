@@ -13,7 +13,7 @@ import { ensureDir, exists } from "./utils.js";
 
 const ENV_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
-// Keys reserved for internal wiring by the shell/orchestrator/server. This UI
+// Keys reserved for internal wiring by the desktop shell and server. This UI
 // is for service credentials, not OpenWork/OpenCode runtime knobs; users who
 // need OPENCODE_* process settings should set them from the launching shell.
 // We refuse writes to these and strip them when reading for injection, so a
@@ -225,9 +225,8 @@ export class EnvService {
     });
   }
 
-  // Used by the Electron + orchestrator shells at spawn time. Keep the
-  // loaders in apps/desktop/electron/runtime.mjs and apps/orchestrator/src/cli.ts
-  // byte-for-byte in sync on path resolution and reserved-keys policy.
+  // Used by the Electron shell at spawn time. Keep desktop runtime injection
+  // in sync on path resolution and reserved-keys policy.
   static async readForInjection(overridePath?: string): Promise<Record<string, string>> {
     const path = overridePath?.trim() ? resolve(overridePath.trim()) : resolveDefaultEnvStorePath();
     const store = await readStore(path, { tolerateInvalid: true });

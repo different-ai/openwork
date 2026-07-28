@@ -134,7 +134,12 @@ function isHostedDesktopBootstrapConfig(config) {
   return baseUrlOrigin === HOSTED_DESKTOP_WEB_URL || baseUrlOrigin === HOSTED_DESKTOP_API_URL;
 }
 
-export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSignin, forceRequireSignin }) {
+export function createWorkspaceStore({
+  app,
+  defaultDenBaseUrl,
+  defaultRequireSignin,
+  forceRequireSignin,
+}) {
   function desktopBootstrapPath() {
     if (process.env.OPENWORK_DESKTOP_BOOTSTRAP_PATH?.trim()) {
       return resolveDesktopBootstrapPath({ env: process.env, homeDir: os.homedir(), userDataDir: app.getPath("userData") });
@@ -150,6 +155,10 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
   }
 
   function legacyDesktopBootstrapPath() {
+    // An explicit bootstrap path defines an isolated installation boundary.
+    // Never let a legacy global config cross that boundary: it may contain a
+    // completed activation from another distribution or deployment.
+    if (process.env.OPENWORK_DESKTOP_BOOTSTRAP_PATH?.trim()) return null;
     const primary = desktopBootstrapPath();
     if (primary === DEFAULT_DESKTOP_BOOTSTRAP_PATH && LEGACY_DESKTOP_BOOTSTRAP_PATH !== primary) {
       return LEGACY_DESKTOP_BOOTSTRAP_PATH;
@@ -253,11 +262,33 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
     const brandAppName = typeof input?.brandAppName === "string" ? input.brandAppName.trim().slice(0, 64) : "";
     const brandLogoUrl = typeof input?.brandLogoUrl === "string" ? input.brandLogoUrl.trim() : "";
     const brandIconUrl = typeof input?.brandIconUrl === "string" ? input.brandIconUrl.trim() : "";
-
+    const enterpriseActivationInput = input?.enterpriseActivation;
+    const enterpriseActivation = enterpriseActivationInput && typeof enterpriseActivationInput === "object"
+      ? {
+          activatedAt: typeof enterpriseActivationInput.activatedAt === "string"
+            ? enterpriseActivationInput.activatedAt.trim()
+            : "",
+          denBaseUrl: typeof enterpriseActivationInput.denBaseUrl === "string"
+            ? enterpriseActivationInput.denBaseUrl.trim()
+            : "",
+        }
+      : null;
+    const normalizedEnterpriseActivation = enterpriseActivation?.activatedAt && enterpriseActivation.denBaseUrl
+      ? enterpriseActivation
+      : null;
     return {
       baseUrl,
       ...(apiBaseUrl ? { apiBaseUrl } : {}),
       requireSignin: forceRequireSignin || input?.requireSignin === true,
+      // Only an explicit policy is carried. The artifact default is never
+      // materialized here: desktop-bootstrap.json is shared by both flavors
+      // (one application identifier, one user-data directory), so persisting
+      // the enterprise default would gate the public artifact on the same
+      // machine. Consumers fall back to their own build default when the key
+      // is absent, which is exactly the documented precedence.
+      ...(typeof input?.requireActivation === "boolean"
+        ? { requireActivation: input.requireActivation }
+        : {}),
       ...(brandAppName ? { brandAppName } : {}),
       ...(brandLogoUrl ? { brandLogoUrl } : {}),
       ...(brandIconUrl ? { brandIconUrl } : {}),
@@ -265,6 +296,7 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
       ...(claimLinks.length > 0 ? { claimLinks } : {}),
       ...(normalizedHandoff ? { handoff: normalizedHandoff } : {}),
       ...(normalizedPrepared ? { prepared: normalizedPrepared } : {}),
+      ...(normalizedEnterpriseActivation ? { enterpriseActivation: normalizedEnterpriseActivation } : {}),
     };
   }
 

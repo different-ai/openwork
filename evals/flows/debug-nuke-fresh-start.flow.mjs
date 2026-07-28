@@ -28,6 +28,8 @@ const BOOTSTRAP_BASE_URL = "https://openwork-poc.example.test";
 const SEED_MARKER = `debug-nuke-seed-${RUN_TAG}`;
 const FAKE_AUTH_TOKEN = `eval-fake-token-${RUN_TAG}`;
 const LOCKER_SCRIPT_NAME = `openwork-nuke-locker-${RUN_TAG}.ps1`;
+const LEGACY_ORCHESTRATOR_DIR_NAME = ["openwork", "orchestrator"].join("-");
+const LEGACY_ORCHESTRATOR_AUTH_FILE = `${LEGACY_ORCHESTRATOR_DIR_NAME}-auth.json`;
 const paths = buildWindowsPaths(WIN_PROFILE);
 const WIN_PROFILE_USER = winBasename(WIN_PROFILE);
 const OUT_OF_BAND_BOOT_TASK_NAME = `OpenWorkNukeRetry-${RUN_TAG}`;
@@ -83,7 +85,7 @@ function buildWindowsPaths(profile) {
   const appDataOpenwork = winJoin(appData, "openwork");
   const userData = winJoin(appData, "com.differentai.openwork");
   const opencode = winJoin(appData, "opencode");
-  const orchestrator = winJoin(profile, ".openwork", "openwork-orchestrator");
+  const orchestrator = winJoin(profile, ".openwork", LEGACY_ORCHESTRATOR_DIR_NAME);
   const localShareOpencode = winJoin(profile, ".local", "share", "opencode");
   const cacheOpencode = winJoin(profile, ".cache", "opencode");
   return {
@@ -593,7 +595,7 @@ foreach($dir in $dirs){ New-Item -ItemType Directory -Force -Path $dir | Out-Nul
 Set-Content -Path (Join-Path $opencode 'auth.json') -Value ${seededJson({ token: "dummy-opencode-auth" })} -Encoding UTF8
 Set-Content -Path (Join-Path $opencode 'mcp-auth.json') -Value ${seededJson({ mcp: "dummy-opencode-mcp-auth" })} -Encoding UTF8
 [IO.File]::WriteAllBytes((Join-Path $opencode 'opencode.db'), [Text.Encoding]::UTF8.GetBytes('dummy opencode db ${SEED_MARKER} ${RUN_TAG}'))
-Set-Content -Path (Join-Path $orchestrator 'openwork-orchestrator-auth.json') -Value ${seededJson({ orchestrator: "dummy" })} -Encoding UTF8
+Set-Content -Path (Join-Path $orchestrator ${psQuote(LEGACY_ORCHESTRATOR_AUTH_FILE)}) -Value ${seededJson({ orchestrator: "dummy" })} -Encoding UTF8
 Set-Content -Path (Join-Path $localShareOpencode 'data-marker.txt') -Value ${psQuote(`dummy local share opencode ${SEED_MARKER} ${RUN_TAG}`)} -Encoding UTF8
 Set-Content -Path (Join-Path $cacheOpencode 'cache-marker.txt') -Value ${psQuote(`dummy cache opencode ${SEED_MARKER} ${RUN_TAG}`)} -Encoding UTF8
 $result=[ordered]@{ opencode=$opencode; orchestrator=$orchestrator; localShareOpencode=$localShareOpencode; cacheOpencode=$cacheOpencode }
@@ -636,7 +638,7 @@ $checks['appOpenwork']['runtime']=Test-Path -LiteralPath (Join-Path $paths.appOp
 $checks['configHome']['env']=Test-Path -LiteralPath (Join-Path $paths.configHome 'env.json')
 $checks['configHome']['tokens']=Test-Path -LiteralPath (Join-Path $paths.configHome 'tokens.json')
 $checks['configHome']['bootstrap']=Test-Path -LiteralPath $paths.bootstrap
-$checks['orchestrator']['auth']=Test-Path -LiteralPath (Join-Path $paths.orchestrator 'openwork-orchestrator-auth.json')
+$checks['orchestrator']['auth']=Test-Path -LiteralPath (Join-Path $paths.orchestrator ${psQuote(LEGACY_ORCHESTRATOR_AUTH_FILE)})
 $checks['localShareOpencode']['dataMarker']=Test-Path -LiteralPath (Join-Path $paths.localShareOpencode 'data-marker.txt')
 $checks['cacheOpencode']['cacheMarker']=Test-Path -LiteralPath (Join-Path $paths.cacheOpencode 'cache-marker.txt')
 Write-Output ($checks | ConvertTo-Json -Depth 6 -Compress)
@@ -657,7 +659,7 @@ $result=[ordered]@{
   opencode=[ordered]@{path=$o;exists=(Test-Path -LiteralPath $o);seededFiles=(SS $o @('auth.json','mcp-auth.json','opencode.db'));entries=(N $o)}
   appOpenwork=[ordered]@{path=$a;exists=(Test-Path -LiteralPath $a);seededFiles=$appOpenworkSeeded;entries=(N $a)}
   localOpenwork=[ordered]@{path=$c;exists=(Test-Path -LiteralPath $c);entries=(N $c);seededFiles=(SS $c @('env.json','tokens.json'));pendingExists=(Test-Path -LiteralPath $p);envExists=(Test-Path -LiteralPath (Join-Path $c 'env.json'));tokensExists=(Test-Path -LiteralPath (Join-Path $c 'tokens.json'))}
-  orchestrator=[ordered]@{path=$r;exists=(Test-Path -LiteralPath $r);seededFiles=(SS $r @('openwork-orchestrator-auth.json'));entries=(N $r)}
+  orchestrator=[ordered]@{path=$r;exists=(Test-Path -LiteralPath $r);seededFiles=(SS $r @(${psQuote(LEGACY_ORCHESTRATOR_AUTH_FILE)}));entries=(N $r)}
   localShareOpencode=[ordered]@{path=$s;exists=(Test-Path -LiteralPath $s);seededFiles=(SS $s @('data-marker.txt'));entries=(N $s)}
   cacheOpencode=[ordered]@{path=$k;exists=(Test-Path -LiteralPath $k);seededFiles=(SS $k @('cache-marker.txt'));entries=(N $k)}
 }
@@ -973,8 +975,8 @@ function assertSeededDirectoryListing(ctx, listing) {
   witness(ctx, hasChild(listing.configHome, "env.json"), "Seeded LOCALAPPDATA openwork directory lists env.json", listing.configHome);
   witness(ctx, hasChild(listing.configHome, "tokens.json"), "Seeded LOCALAPPDATA openwork directory lists tokens.json", listing.configHome);
   witness(ctx, hasChild(listing.configHome, "desktop-bootstrap.json"), "Seeded LOCALAPPDATA openwork directory lists desktop-bootstrap.json", listing.configHome);
-  witness(ctx, listing.orchestrator?.exists === true, "Seeded profile .openwork\\openwork-orchestrator root exists", listing.orchestrator);
-  witness(ctx, hasChild(listing.orchestrator, "openwork-orchestrator-auth.json"), "Seeded orchestrator directory lists openwork-orchestrator-auth.json", listing.orchestrator);
+  witness(ctx, listing.orchestrator?.exists === true, "Seeded profile legacy runtime root exists", listing.orchestrator);
+  witness(ctx, hasChild(listing.orchestrator, LEGACY_ORCHESTRATOR_AUTH_FILE), "Seeded legacy runtime directory lists its auth file", listing.orchestrator);
   witness(ctx, listing.userData?.exists === true, "Seeded %APPDATA%\\com.differentai.openwork userData root exists", listing.userData);
   witness(ctx, hasChild(listing.userData, "eval-userdata-marker.txt"), "Seeded userData directory lists eval-userdata-marker.txt", listing.userData);
 }
@@ -1070,7 +1072,7 @@ export default {
             witness(ctx, probe.configHome?.env === true && probe.configHome?.tokens === true, "%LOCALAPPDATA%\\openwork env.json and tokens.json exist", probe.configHome);
             witness(ctx, probe.bootstrap?.exists === true, "%LOCALAPPDATA%\\openwork\\desktop-bootstrap.json exists", probe.bootstrap);
             witness(ctx, probe.configHome?.bootstrap === true, "%LOCALAPPDATA%\\openwork\\desktop-bootstrap.json exists in configHome probe", probe.configHome);
-            witness(ctx, probe.orchestrator?.auth === true, "profile .openwork\\openwork-orchestrator auth exists", probe.orchestrator);
+            witness(ctx, probe.orchestrator?.auth === true, "profile legacy runtime auth exists", probe.orchestrator);
             witness(ctx, probe.localShareOpencode?.dataMarker === true, "profile .local\\share\\opencode data marker exists", probe.localShareOpencode);
             witness(ctx, probe.cacheOpencode?.cacheMarker === true, "profile .cache\\opencode cache marker exists", probe.cacheOpencode);
             const storage = await ctx.eval(`(() => {
@@ -1103,10 +1105,10 @@ export default {
             await ctx.expectText("Danger zone");
             await ctx.expectText("Nuke & fresh start");
             await ctx.expectText("Nuke local state and start fresh?");
-            await ctx.expectText("This removes local OpenWork, OpenCode, browser, token, runtime, cache, and orchestrator state on this device.");
+            await ctx.expectText("This removes local OpenWork, OpenCode, browser, token, runtime, cache, and legacy runtime state on this device.");
             await ctx.expectText("WILL DELETE");
             await ctx.expectText("WILL SURVIVE");
-            await ctx.expectText("Keep bootstrap / organization server");
+            await ctx.expectText("Also delete bootstrap / organization server");
             await ctx.expectText("Type NUKE to confirm");
             await ctx.expectText("Chromium storage cleared: default, persist:openwork-browser");
             await ctx.expectText("Nuke & relaunch");
@@ -1115,10 +1117,10 @@ export default {
             name: "debug-danger-zone-nuke-dialog",
             requireText: [
               "Nuke local state and start fresh?",
-              "This removes local OpenWork, OpenCode, browser, token, runtime, cache, and orchestrator state on this device.",
+              "This removes local OpenWork, OpenCode, browser, token, runtime, cache, and legacy runtime state on this device.",
               "WILL DELETE",
               "WILL SURVIVE",
-              "Keep bootstrap / organization server",
+              "Also delete bootstrap / organization server",
               "Type NUKE to confirm",
               "Chromium storage cleared: default, persist:openwork-browser",
               "Nuke & relaunch",

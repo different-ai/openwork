@@ -1,8 +1,4 @@
-import { execSync, spawn, type ChildProcess } from "node:child_process";
-import { rmSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { execSync } from "node:child_process";
 import { connect, listTargets, type CdpTarget } from "../runner/cdp.ts";
 import { defineFlow, type FlowContext } from "../runner/flow.ts";
 import { loadVoiceoverParagraphs } from "../runner/voiceover.ts";
@@ -26,9 +22,6 @@ interface ActivationFlowState {
   installLink: string;
   activationUrl: string;
   connectUrl: string;
-  installer: ChildProcess | null;
-  installerUrl: string;
-  installerConfigDir: string;
   webTargetId: string;
 }
 
@@ -43,9 +36,6 @@ const state: ActivationFlowState = {
   installLink: "",
   activationUrl: "",
   connectUrl: "",
-  installer: null,
-  installerUrl: "",
-  installerConfigDir: "",
   webTargetId: "",
 };
 
@@ -284,6 +274,21 @@ async function openInstallGuide(ctx: FlowContext): Promise<void> {
   state.installLink = requiredString(href, "install link");
 }
 
+function extractInstallToken(installLink: string): string {
+  const token = new URL(installLink).searchParams.get("token")?.trim() ?? "";
+  return requiredString(token, "install token");
+}
+
+async function loadActivationHandoff(ctx: FlowContext): Promise<void> {
+  if (state.activationUrl && state.connectUrl) return;
+  const token = extractInstallToken(state.installLink);
+  const config = await denApiFetch(`/v1/install-config?token=${encodeURIComponent(token)}`);
+  ctx.assert(config.response.ok && isRecord(config.body), `install config failed (${config.response.status})`);
+  if (!isRecord(config.body)) return;
+  state.activationUrl = requiredString(config.body.activationUrl, "activation URL");
+  state.connectUrl = requiredString(config.body.connectUrl, "OpenWork connect URL");
+}
+
 async function startDownloadWithoutFetchingAsset(ctx: FlowContext): Promise<void> {
   const recommendation = await ctx.eval(`(() => {
     const grid = document.querySelector('[data-testid="download-platform-grid"]');
@@ -315,7 +320,7 @@ async function startDownloadWithoutFetchingAsset(ctx: FlowContext): Promise<void
   });
 }
 
-async function showInstallerRecoveryLink(ctx: FlowContext): Promise<void> {
+async function showAlreadyInstalledRecoveryLink(ctx: FlowContext): Promise<void> {
   await ctx.waitFor("Boolean(document.querySelector('[data-testid=install-copy-link] input'))", {
     timeoutMs: BROWSER_TIMEOUT_MS,
     label: "organization install link",
@@ -326,98 +331,6 @@ async function showInstallerRecoveryLink(ctx: FlowContext): Promise<void> {
     return true;
   })()`);
   await ctx.waitForText("Paste this link into", { timeoutMs: BROWSER_TIMEOUT_MS });
-}
-
-function waitForInstallerUrl(child: ChildProcess, timeoutMs = 20_000): Promise<string> {
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    let output = "";
-    const timeout = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      reject(new Error(`Timed out waiting for installer URL. Output:\n${output}`));
-    }, timeoutMs);
-
-    const inspect = (chunk: Buffer | string) => {
-      output += chunk.toString();
-      const match = output.match(/(?:Installer UI:|UI ready at)\s+(http:\/\/[^\s]+)/);
-      if (!match || settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      resolve(match[1]);
-    };
-    child.stdout?.on("data", inspect);
-    child.stderr?.on("data", inspect);
-    child.once("exit", (code) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      reject(new Error(`Installer exited before printing its URL (code ${String(code)}).\n${output}`));
-    });
-  });
-}
-
-async function startInstaller(ctx: FlowContext): Promise<void> {
-  if (state.installer && state.installer.exitCode === null) return;
-  state.installerConfigDir = await mkdtemp(join(tmpdir(), "openwork-installer-eval-"));
-  const child = spawn("bun", ["run", "src/index.ts"], {
-    cwd: new URL("../../apps/installer", import.meta.url),
-    env: {
-      ...ctx.env,
-      OPENWORK_INSTALLER_UI: "manual",
-      OPENWORK_INSTALLER_DRY_RUN: "1",
-      OPENWORK_INSTALLER_DISABLE_BROWSER_OPEN: "1",
-      XDG_CONFIG_HOME: state.installerConfigDir,
-    },
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  state.installer = child;
-  state.installerUrl = await waitForInstallerUrl(child);
-}
-
-async function stopInstaller(): Promise<void> {
-  if (state.installer && state.installer.exitCode === null) {
-    state.installer.kill("SIGTERM");
-    await Promise.race([
-      new Promise<void>((resolve) => state.installer?.once("exit", () => resolve())),
-      wait(2_000),
-    ]);
-    if (state.installer.exitCode === null) state.installer.kill("SIGKILL");
-  }
-  state.installer = null;
-  if (state.installerConfigDir) {
-    await rm(state.installerConfigDir, { recursive: true, force: true });
-    state.installerConfigDir = "";
-  }
-}
-
-async function configureAndRunInstaller(ctx: FlowContext): Promise<void> {
-  await startInstaller(ctx);
-  await navigate(ctx, state.installerUrl);
-  await ctx.waitForText("Paste your install link", { timeoutMs: BROWSER_TIMEOUT_MS });
-  await ctx.fill("#install-link", state.installLink);
-  await ctx.trustedClick("#continue");
-  await ctx.waitForText(requiredString(ctx.env.OPENWORK_EVAL_ORG_NAME, "OPENWORK_EVAL_ORG_NAME"), {
-    timeoutMs: BROWSER_TIMEOUT_MS,
-  });
-  await ctx.trustedClick("#action");
-  await ctx.waitForText("Successfully Installed", { timeoutMs: 120_000 });
-}
-
-async function openInstallerActivationFallback(ctx: FlowContext): Promise<void> {
-  await ctx.trustedClick("#action");
-  await ctx.waitForText("Browser didn't open?", { timeoutMs: BROWSER_TIMEOUT_MS });
-  const activationUrl = await ctx.eval(`document.querySelector("#activation-link")?.value || ""`);
-  state.activationUrl = requiredString(activationUrl, "activation URL");
-}
-
-function connectUrlFromActivation(): string {
-  const { apiBaseUrl } = getDenStackUrls();
-  const code = new URL(state.activationUrl).searchParams.get("code");
-  const connectUrl = new URL("openwork://connect");
-  connectUrl.searchParams.set("code", requiredString(code, "activation code"));
-  connectUrl.searchParams.set("apiBaseUrl", apiBaseUrl);
-  return connectUrl.toString();
 }
 
 async function useDesktop(ctx: FlowContext): Promise<void> {
@@ -443,7 +356,6 @@ async function resetDesktopSession(ctx: FlowContext): Promise<void> {
 }
 
 async function deliverConnectLinkToDesktop(ctx: FlowContext): Promise<void> {
-  state.connectUrl = connectUrlFromActivation();
   await deliverDeepLinkToDesktop(ctx, state.connectUrl);
   await ctx.waitFor("Boolean(document.querySelector('[data-testid=connect-confirm-dialog]'))", {
     timeoutMs: 30_000,
@@ -562,31 +474,11 @@ async function assertInstallRecommendation(ctx: FlowContext): Promise<void> {
   await ctx.expectText("Continue on your computer");
 }
 
-async function assertInstallerContinuation(ctx: FlowContext): Promise<void> {
+async function assertAlreadyInstalledContinuation(ctx: FlowContext): Promise<void> {
   await ctx.expectText("Continue on your computer");
   await ctx.expectText("Open the file you just downloaded");
   await ctx.expectText("Already have");
   await ctx.expectText("Paste this link into");
-}
-
-async function assertInstallerApproval(ctx: FlowContext): Promise<void> {
-  await ctx.expectText(requiredString(ctx.env.OPENWORK_EVAL_ORG_NAME, "OPENWORK_EVAL_ORG_NAME"));
-  await ctx.expectText("Successfully Installed");
-  await ctx.expectText("Open this in your browser");
-}
-
-async function assertInstallerFallback(ctx: FlowContext): Promise<void> {
-  await ctx.expectText("Browser didn't open?");
-  await ctx.expectText("copy this one-time activation link");
-  await ctx.expectText("Try opening browser again");
-  ctx.assert(state.activationUrl.startsWith("http"), "installer must expose a browser activation URL");
-  await ctx.eval(`(() => {
-    const input = document.querySelector("#activation-link");
-    if (input instanceof HTMLInputElement) {
-      input.value = input.value.replace(/([?&]code=)[^&]+/, "$1[one-time-code]");
-    }
-    return true;
-  })()`);
 }
 
 async function assertDesktopConfirmation(ctx: FlowContext): Promise<void> {
@@ -672,12 +564,12 @@ const flow = defineFlow({
       name: "Frame 3",
       run: async (ctx) => {
         await withWeb(ctx, async () => {
-          await ctx.prove("Installer and already-installed paths", {
+          await ctx.prove("Already-installed recovery path", {
             voiceover: vo[2],
-            action: async () => showInstallerRecoveryLink(ctx),
-            assert: async () => assertInstallerContinuation(ctx),
+            action: async () => showAlreadyInstalledRecoveryLink(ctx),
+            assert: async () => assertAlreadyInstalledContinuation(ctx),
             screenshot: {
-              name: "installer-and-already-installed-paths",
+              name: "already-installed-recovery-path",
               requireText: ["Continue on your computer", "Open the file you just downloaded", "Paste this link into"],
             },
           });
@@ -687,42 +579,11 @@ const flow = defineFlow({
     {
       name: "Frame 4",
       run: async (ctx) => {
-        await withWeb(ctx, async () => {
-          await ctx.prove("Organization-aware installer", {
-            voiceover: vo[3],
-            action: async () => configureAndRunInstaller(ctx),
-            assert: async () => assertInstallerApproval(ctx),
-            screenshot: {
-              name: "organization-aware-installer",
-              requireText: ["Successfully Installed", "Open this in your browser"],
-            },
-          });
-        });
-      },
-    },
-    {
-      name: "Frame 5",
-      run: async (ctx) => {
-        await withWeb(ctx, async () => {
-          await ctx.prove("Installer-to-browser recovery", {
-            voiceover: vo[4],
-            action: async () => openInstallerActivationFallback(ctx),
-            assert: async () => assertInstallerFallback(ctx),
-            screenshot: {
-              name: "installer-to-browser-recovery",
-              requireText: ["Browser didn't open?", "Try opening browser again", "Copy link"],
-            },
-          });
-        });
-      },
-    },
-    {
-      name: "Frame 6",
-      run: async (ctx) => {
         await ctx.prove("Desktop connection confirmation", {
-          voiceover: vo[5],
+          voiceover: vo[3],
           action: async () => {
             await withWeb(ctx, async () => {
+              await loadActivationHandoff(ctx);
               await navigate(ctx, state.activationUrl);
               await ctx.waitForText("Open OpenWork", { timeoutMs: BROWSER_TIMEOUT_MS });
               await ctx.expectText(requiredString(ctx.env.OPENWORK_EVAL_ORG_NAME, "OPENWORK_EVAL_ORG_NAME"));
@@ -740,12 +601,12 @@ const flow = defineFlow({
       },
     },
     {
-      name: "Frame 7",
+      name: "Frame 5",
       run: async (ctx) => {
         await withWeb(ctx, async () => {
           const webClient = ctx.client;
           await ctx.prove("Connected browser status", {
-            voiceover: vo[6],
+            voiceover: vo[4],
             action: async () => {
               await useDesktop(ctx);
               await acceptDesktopConnection(ctx);
@@ -765,12 +626,12 @@ const flow = defineFlow({
       },
     },
     {
-      name: "Frame 8",
+      name: "Frame 6",
       run: async (ctx) => {
         try {
           await useDesktop(ctx);
           await ctx.prove("Signed-in branded desktop", {
-            voiceover: vo[7],
+            voiceover: vo[5],
             action: async () => signInInvitee(ctx),
             assert: async () => assertSignedInDesktop(ctx),
             screenshot: {
@@ -779,17 +640,11 @@ const flow = defineFlow({
             },
           });
         } finally {
-          await stopInstaller();
           await cleanupDesktopSession(ctx);
         }
       },
     },
   ],
-});
-
-process.once("exit", () => {
-  if (state.installer && state.installer.exitCode === null) state.installer.kill("SIGKILL");
-  if (state.installerConfigDir) rmSync(state.installerConfigDir, { recursive: true, force: true });
 });
 
 export default flow;

@@ -149,6 +149,15 @@ jobs:
               -e DB_MODE=mysql
               -e DATABASE_URL=mysql://smoke:smoke@127.0.0.1:3306/smoke
               -e DEN_DB_ENCRYPTION_KEY=ci-den-db-encryption-key-value-123456
+          # The gateway's own liveness lives at /__gw/health because /health is
+          # proxied through to the user's instance.
+          - image: openwork-den-gateway
+            dockerfile: packaging/docker/Dockerfile.den-gateway
+            port: 8788
+            health_path: /__gw/health
+            smoke_env: >-
+              -e DEN_API_BASE=http://127.0.0.1:9
+              -e DEN_GATEWAY_KEY=ci-den-gateway-key-value-123456
 
     steps:
       - name: Checkout
@@ -217,7 +226,10 @@ jobs:
           echo "den_web_upload=$den_web_upload" >> "$GITHUB_OUTPUT"
 
       - name: Build and optionally push without Sentry source-map upload
-        if: ${{ matrix.image == 'openwork-inference' || (matrix.image == 'openwork-den-api' && steps.sentry_sourcemaps.outputs.den_api_upload != 'true') || (matrix.image == 'openwork-den-web' && steps.sentry_sourcemaps.outputs.den_web_upload != 'true') }}
+        # Build every image except the ones whose Sentry-enabled step below owns
+        # them. Stated as an exclusion so a newly added matrix entry builds by
+        # default instead of silently skipping and failing the smoke step.
+        if: ${{ !((matrix.image == 'openwork-den-api' && steps.sentry_sourcemaps.outputs.den_api_upload == 'true') || (matrix.image == 'openwork-den-web' && steps.sentry_sourcemaps.outputs.den_web_upload == 'true')) }}
         uses: docker/build-push-action@v6
         with:
           context: .

@@ -11,14 +11,12 @@ export type {
   OpencodeCommandDraft,
   WorkspaceOpenworkConfig,
   AppBuildInfo,
+  DesktopDistributionInfo,
   BrandIconApplyResult,
   BrandIconState,
   DesktopBootstrapConfig,
   EvalRelaunchResult,
-  OrchestratorDetachedHost,
-  SandboxDoctorResult,
   OpenworkDockerCleanupResult,
-  SandboxDebugProbeResult,
   ExecResult,
   LocalSkillCard,
   LocalSkillContent,
@@ -35,6 +33,7 @@ import type {
   BrandIconApplyResult,
   BrandIconState,
   DesktopBootstrapConfig,
+  DesktopDistributionInfo,
   DesktopCommandArgs,
   DesktopCommandInvokers,
   DesktopCommandName,
@@ -174,6 +173,7 @@ declare global {
       };
       meta?: {
         desktopBootstrap?: DesktopBootstrapConfig | null;
+        distribution?: DesktopDistributionInfo;
         initialDeepLinks?: string[];
         platform?: "darwin" | "linux" | "windows";
         version?: string;
@@ -476,6 +476,20 @@ export function readInitialDesktopBootstrapConfig(): DesktopBootstrapConfig | nu
   return window.__OPENWORK_ELECTRON__?.meta?.desktopBootstrap;
 }
 
+export function readDesktopDistributionInfo(): DesktopDistributionInfo {
+  const distribution = typeof window === "undefined"
+    ? undefined
+    : window.__OPENWORK_ELECTRON__?.meta?.distribution;
+  return distribution ?? {
+    flavor: "public",
+    appName: "OpenWork",
+    appIdentifier: "com.differentai.openwork",
+    protocolScheme: "openwork",
+    requireSignin: false,
+    requireActivation: false,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Re-export bridge methods as named functions (preserves existing import API)
 // ---------------------------------------------------------------------------
@@ -509,11 +523,7 @@ const {
   connectLinkAccept,
   nukeOpenworkAndOpencodeConfigPreview,
   nukeOpenworkAndOpencodeConfigAndExit,
-  orchestratorStartDetached,
-  sandboxDoctor,
-  sandboxStop,
   sandboxCleanupOpenworkContainers,
-  sandboxDebugProbe,
   openworkServerInfo,
   openworkServerRestart,
   runtimeBootstrap,
@@ -568,11 +578,7 @@ export {
   connectLinkAccept,
   nukeOpenworkAndOpencodeConfigPreview,
   nukeOpenworkAndOpencodeConfigAndExit,
-  orchestratorStartDetached,
-  sandboxDoctor,
-  sandboxStop,
   sandboxCleanupOpenworkContainers,
-  sandboxDebugProbe,
   openworkServerInfo,
   openworkServerRestart,
   runtimeBootstrap,

@@ -83,7 +83,7 @@ describe("cloud super-admin role hierarchy", () => {
   test("exposes exact admin sidebar destinations for Extensions, Models, Members, Analytics, and Settings", () => {
     const shell = read("../app/(den)/dashboard/_components/org-dashboard-shell.tsx");
 
-    for (const label of ["Extensions", "Marketplace", "Sources", "Plugins", "Connectors", "Models", "OpenWork Models", "LLM Providers", "Members", "Analytics", "Settings"]) {
+    for (const label of ["Extensions", "Marketplace", "Sources", "Plugins", "Connectors", "Models", "OpenWork Models", "Bring your Own Keys", "Members", "Analytics", "Settings"]) {
       expect(shell).toContain(`label: "${label}"`);
     }
 

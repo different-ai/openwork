@@ -13,6 +13,8 @@ const ADMIN_PASSWORD =
 
 const unique = Date.now().toString(36);
 const state = {
+  pluginId: "",
+  pluginName: `skill-proof-plugin-${unique}`,
   skillId: "",
   originalName: `skill-proof-${unique}`,
   editedName: `skill-proof-${unique}-edited`,
@@ -115,6 +117,34 @@ async function clickButton(ctx, label) {
   witness(ctx, clicked, `The ${label} button is available`);
 }
 
+async function createOwningPlugin(ctx) {
+  const created = await ctx.eval(`(async () => {
+    const response = await fetch("/api/den/v1/plugins", {
+      method: "POST",
+      credentials: "include",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        name: ${JSON.stringify(state.pluginName)},
+        description: "Temporary plugin for the Skill CRUD proof."
+      }),
+    });
+    const body = await response.json().catch(() => null);
+    return {
+      ok: response.ok,
+      status: response.status,
+      id: body?.item?.id ?? "",
+      error: body?.error ?? null,
+    };
+  })()`, { awaitPromise: true });
+  witness(
+    ctx,
+    created.ok && typeof created.id === "string" && created.id.length > 0,
+    "The proof creates an owning plugin through the real Den API",
+    created,
+  );
+  state.pluginId = created.id;
+}
+
 function screenshot(name, claim, requireText, rejectText = []) {
   return {
     name,
@@ -131,7 +161,7 @@ function screenshot(name, claim, requireText, rejectText = []) {
 
 export default {
   id: FLOW_ID,
-  title: "Den creates, shows, edits, reloads, and deletes a complete skill",
+  title: "Den manages a complete skill inside its owning plugin",
   kind: "user-facing",
   preserveTheme: true,
   spec: `evals/voiceovers/${FLOW_ID}.md`,
@@ -154,7 +184,13 @@ export default {
                 });
               }
               await signInViaBrowser(ctx, ADMIN_EMAIL, ADMIN_PASSWORD);
-              await navigateTo(ctx, "/dashboard/skills/new");
+              await navigateTo(ctx, "/dashboard/plugins");
+              await ctx.waitForText("Plugins", { timeoutMs: 30_000 });
+              await createOwningPlugin(ctx);
+              await navigateTo(
+                ctx,
+                `/dashboard/plugins/${encodeURIComponent(state.pluginId)}/skills/new`,
+              );
               await ctx.waitForText("Create a skill", { timeoutMs: 30_000 });
               await setEditorValues(ctx, {
                 name: state.originalName,
@@ -196,7 +232,9 @@ export default {
             action: async () => {
               await clickButton(ctx, "Create skill");
               await ctx.waitFor(
-                "location.pathname.startsWith('/dashboard/skills/') && !location.pathname.endsWith('/new')",
+                `location.pathname.startsWith(${JSON.stringify(
+                  `/dashboard/plugins/${state.pluginId}/skills/`,
+                )}) && !location.pathname.endsWith('/new')`,
                 {
                   timeoutMs: 45_000,
                   label: "created skill detail route",
@@ -220,13 +258,17 @@ export default {
                 title: document.querySelector("h1")?.textContent?.trim() ?? "",
                 description: document.querySelector("header p")?.textContent?.trim() ?? "",
                 body: document.querySelector("article pre")?.textContent ?? "",
+                bodyBackgroundColor: document.querySelector("article pre")
+                  ? getComputedStyle(document.querySelector("article pre")).backgroundColor
+                  : "",
               }))()`);
               witness(
                 ctx,
                 detail.title === state.originalName &&
                   detail.description === state.originalDescription &&
-                  detail.body === state.originalBody,
-                "The detail page shows the exact complete stored skill",
+                  detail.body === state.originalBody &&
+                  detail.bodyBackgroundColor === "rgb(249, 250, 251)",
+                "The detail page shows the exact complete stored skill on a light surface",
                 detail,
               );
             },
@@ -254,7 +296,7 @@ export default {
             action: async () => {
               await navigateTo(
                 ctx,
-                `/dashboard/skills/${encodeURIComponent(state.skillId)}/edit`,
+                `/dashboard/plugins/${encodeURIComponent(state.pluginId)}/skills/${encodeURIComponent(state.skillId)}/edit`,
               );
               await ctx.waitForText(`Edit ${state.originalName}`, {
                 timeoutMs: 30_000,
@@ -267,7 +309,7 @@ export default {
               await clickButton(ctx, "Save changes");
               await ctx.waitFor(
                 `location.pathname === ${JSON.stringify(
-                  `/dashboard/skills/${state.skillId}`,
+                  `/dashboard/plugins/${state.pluginId}/skills/${state.skillId}`,
                 )}`,
                 { timeoutMs: 45_000, label: "updated skill detail route" },
               );
@@ -320,9 +362,11 @@ export default {
                 timeoutMs: 15_000,
               });
               await clickButton(ctx, `Delete “${state.editedName}”`);
-              await ctx.waitFor("location.pathname === '/dashboard/skills'", {
+              await ctx.waitFor(`location.pathname === ${JSON.stringify(
+                `/dashboard/plugins/${state.pluginId}`,
+              )}`, {
                 timeoutMs: 45_000,
-                label: "skills catalog after deletion",
+                label: "owning plugin after deletion",
               });
               await sleep(1_000);
             },
@@ -352,8 +396,8 @@ export default {
             },
             screenshot: screenshot(
               "skill-deleted-from-catalog",
-              "The Skills catalog no longer contains the deleted skill.",
-              ["Skills", "Create skill"],
+              "The owning plugin no longer contains the deleted skill.",
+              [state.pluginName, "No skills in this plugin yet.", "Add skill"],
               [state.editedName],
             ),
           },

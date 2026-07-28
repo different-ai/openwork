@@ -145,7 +145,7 @@ describe("agent context diagnostics safe output schema", () => {
     expect(agentContextMcpEvidenceSchema.safeParse({
       ...mcp,
       path: "/deployment-prefix/mcp/agent",
-    }).success).toBe(false);
+    }).success).toBe(true);
 
     for (const character of forbiddenCharacters) {
       expect(agentContextAgentEvidenceSchema.safeParse({

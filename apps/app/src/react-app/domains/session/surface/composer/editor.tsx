@@ -36,8 +36,8 @@ import {
 import type { InitialConfigType } from "@lexical/react/LexicalComposer.js";
 import { decodeComposerMentionValue, encodeComposerMentionValue, type ComposerMentionKind } from "./mention-encoding";
 import { parseConnectSkillToken } from "./connect-skill-token";
-import { shouldCollapsePastedText } from "./pasted-text";
-import { insertStyledPastedText } from "./pasted-text-insertion";
+import { shouldCollapsePastedText, splitPastedText } from "./pasted-text";
+import { insertPastedText } from "./pasted-text-insertion";
 
 type PastedTextToken = { label: string; lines: number; text: string };
 
@@ -869,6 +869,46 @@ function SubmitPlugin(props: { onSubmit: (options: { queue: boolean }) => void |
   return null;
 }
 
+function appendPastedTextMeasurement(element: HTMLElement, text: string) {
+  const paragraph = document.createElement("p");
+  for (const segment of splitPastedText(text)) {
+    if (segment.kind === "line-break") {
+      paragraph.append(document.createElement("br"));
+    } else if (segment.kind === "tab") {
+      paragraph.append(document.createTextNode("\t"));
+    } else {
+      paragraph.append(document.createTextNode(segment.text));
+    }
+  }
+  element.append(paragraph);
+}
+
+function pastedTextWouldOverflowEditor(text: string, editorElement: HTMLElement | null) {
+  if (!editorElement) return false;
+  const bounds = editorElement.getBoundingClientRect();
+  if (bounds.width <= 0) return false;
+
+  const measurement = editorElement.cloneNode(false);
+  if (!(measurement instanceof HTMLElement)) return false;
+  measurement.setAttribute("aria-hidden", "true");
+  measurement.style.position = "fixed";
+  measurement.style.left = "-10000px";
+  measurement.style.top = "0";
+  measurement.style.width = `${bounds.width}px`;
+  measurement.style.height = "auto";
+  measurement.style.minHeight = "0";
+  measurement.style.visibility = "hidden";
+  measurement.style.pointerEvents = "none";
+  appendPastedTextMeasurement(measurement, text);
+  document.body.append(measurement);
+
+  try {
+    return measurement.scrollHeight > measurement.clientHeight;
+  } finally {
+    measurement.remove();
+  }
+}
+
 function PasteChipPlugin(props: { onPasteText?: (text: string) => void }) {
   const [editor] = useLexicalComposerContext();
   const onPasteTextRef = useRef(props.onPasteText);
@@ -888,14 +928,15 @@ function PasteChipPlugin(props: { onPasteText?: (text: string) => void }) {
         if (event.clipboardData?.getData("text/uri-list").trim()) return false;
         const text = event.clipboardData?.getData("text/plain") ?? "";
         if (!text.trim()) return false;
-        if (shouldCollapsePastedText(text)) {
+        const wouldOverflowComposer = pastedTextWouldOverflowEditor(text, editor.getRootElement());
+        if (shouldCollapsePastedText(text, wouldOverflowComposer)) {
           if (!onPasteTextRef.current) return false;
           event.preventDefault();
           onPasteTextRef.current(text);
           return true;
         }
         event.preventDefault();
-        return insertStyledPastedText(text);
+        return insertPastedText(text);
       },
       COMMAND_PRIORITY_CRITICAL,
     );
@@ -914,12 +955,12 @@ function replacePastedTextChip(label: string, text: string, button: HTMLButtonEl
   const nearest = $getNearestNodeFromDOMNode(button);
   if (nearest instanceof ComposerPastedTextNode && nearest.getPastedLabel() === label) {
     nearest.select(0, nearest.getTextContentSize());
-    return insertStyledPastedText(text);
+    return insertPastedText(text);
   }
   for (const node of $nodesOfType(ComposerPastedTextNode)) {
     if (node.getPastedLabel() !== label) continue;
     node.select(0, node.getTextContentSize());
-    return insertStyledPastedText(text);
+    return insertPastedText(text);
   }
   return false;
 }

@@ -17,10 +17,16 @@ export async function applyDesktopBootstrapBrandIcon(config, applyBrandIconUrl) 
  *     config: Partial<import("@openwork/types/desktop-ipc").DesktopBootstrapConfig>
  *   ) => Promise<import("@openwork/types/desktop-ipc").DesktopBootstrapConfig>,
  *   applyBrandIconUrl: (iconUrl: string) => Promise<unknown>,
+ *   enterpriseActivation?: { activatedAt: string, denBaseUrl: string } | null,
  * }} dependencies
  */
 export async function persistConnectLinkBranding(claims, dependencies) {
-  const config = await dependencies.persistBootstrap(desktopBootstrapFromConnectClaims(claims));
+  const config = await dependencies.persistBootstrap({
+    ...desktopBootstrapFromConnectClaims(claims),
+    ...(dependencies.enterpriseActivation
+      ? { enterpriseActivation: dependencies.enterpriseActivation }
+      : {}),
+  });
   await applyDesktopBootstrapBrandIcon(config, dependencies.applyBrandIconUrl);
   return config;
 }

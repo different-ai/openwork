@@ -19,7 +19,12 @@ import { evalRelaunchDesktopApp } from "../../app/lib/desktop";
 import { Button } from "../../components/ui/button";
 import { t } from "../../i18n";
 import { useDenAuth } from "../domains/cloud/den-auth-provider";
+import {
+  clearCloudInventoryCache,
+  prefetchCloudInventory,
+} from "../domains/connections/cloud-inventory-cache";
 import { ForcedSigninPage } from "../domains/cloud/forced-signin-page";
+import { EnterpriseActivationGate } from "../domains/cloud/enterprise-activation-gate";
 import { OrgOnboardingPage } from "../domains/cloud/org-onboarding-page";
 import { NewProvidersListener } from "./new-providers-listener";
 import { useDesktopFontZoomBehavior } from "./font-zoom";
@@ -120,10 +125,9 @@ function DenSigninGate({ children }: DenSigninGateProps) {
     requireSignin,
   ]);
 
-  // After a fresh sign-in, navigate to the onboarding page so the
-  // user sees what their org provides.
-  // Poll for activeOrgId (set asynchronously by refreshOrgs) rather
-  // than using a fixed delay — handles both fast and slow org lookups.
+  // After a fresh sign-in, navigate to the onboarding page so the user sees
+  // their signed-in org state. Do not wait for an active org: first-run users
+  // may not belong to one yet, and must not remain on the signed-out welcome.
   useEffect(() => {
     const handler = (event: WindowEventMap[typeof denSessionUpdatedEvent]) => {
       if (event.detail?.status !== "success") return;
@@ -131,10 +135,11 @@ function DenSigninGate({ children }: DenSigninGateProps) {
       const check = () => {
         attempts++;
         const settings = readDenSettings();
-        if (settings.authToken?.trim() && settings.activeOrgId?.trim()) {
+        if (settings.authToken?.trim()) {
           navigate("/onboarding", { replace: true });
         } else if (attempts < 10) {
-          // Org not selected yet — retry (max ~5 seconds)
+          // Session persistence should already be done, but retry briefly in
+          // case another consumer is still applying the handoff result.
           setTimeout(check, 500);
         }
       };
@@ -253,6 +258,7 @@ function DenAuthControlActions() {
         await setDenBootstrapConfig({
           baseUrl: args.baseUrl.trim(),
           requireSignin: current.requireSignin,
+          requireActivation: current.requireActivation,
         });
         await denAuth.refresh();
         return { baseUrl: readDenBootstrapConfig().baseUrl };
@@ -321,6 +327,19 @@ export function AppRoot() {
     captureAnalyticsEvent("app_opened", {});
   }, []);
 
+  // Fetch what the organization shares with this member up front. Settings
+  // mounts cold every time the extensions panel opens, so without this the
+  // readiness groups wait on a Den round-trip the app could have done already.
+  useEffect(() => {
+    prefetchCloudInventory();
+    const handleSessionChanged = () => {
+      clearCloudInventoryCache();
+      prefetchCloudInventory();
+    };
+    window.addEventListener(denSettingsChangedEvent, handleSessionChanged);
+    return () => window.removeEventListener(denSettingsChangedEvent, handleSessionChanged);
+  }, []);
+
   return (
     <>
       <DevProfiler id="AppRoot">
@@ -331,6 +350,7 @@ export function AppRoot() {
           <OpenworkContextPublisher />
           <DenAuthControlActions />
           <BrandThemeControlActions />
+          <EnterpriseActivationGate>
           <DenSigninGate>
             <Routes>
               <Route
@@ -412,10 +432,11 @@ export function AppRoot() {
               <Route path="*" element={<Navigate to="/session" replace />} />
             </Routes>
           </DenSigninGate>
+          <LoadingOverlay />
+          </EnterpriseActivationGate>
         </OpenworkControlProvider>
         </AppMenuProvider>
         </ShellConfigProvider>
-        <LoadingOverlay />
       </DevProfiler>
       {/*
         DevProfilerOverlay sits OUTSIDE the AppRoot <Profiler> zone on

@@ -1383,6 +1383,56 @@ describe("marketplace cloud readiness payload", () => {
     expect(await sourceGrantCount(bindingId)).toBe(1)
   })
 
+  test("resolved plugins hide deleted config objects while preserving membership history for restore", async () => {
+    const org = await seedOrg()
+    const plugin = await seedPlugin({
+      org,
+      name: "Config Lifecycle Skill Plugin",
+      components: [{
+        objectType: "skill",
+        title: "incident-handoff",
+        rawSourceText: "---\nname: incident-handoff\ndescription: Prepare an incident handoff.\n---\nCapture impact and owners.",
+      }],
+    })
+    const configObjectId = plugin.configObjectIds[0]
+    if (!configObjectId) throw new Error("missing config object")
+
+    const beforeDelete = await store.listPluginMemberships({
+      context: org.context,
+      includeConfigObjects: true,
+      onlyActive: true,
+      pluginId: plugin.pluginId,
+    })
+    expect(beforeDelete.items).toHaveLength(1)
+
+    await store.setConfigObjectLifecycle({ action: "delete", configObjectId, context: org.context })
+
+    const afterDelete = await store.listPluginMemberships({
+      context: org.context,
+      includeConfigObjects: true,
+      onlyActive: true,
+      pluginId: plugin.pluginId,
+    })
+    const membershipHistory = await store.listPluginMemberships({
+      context: org.context,
+      includeConfigObjects: true,
+      onlyActive: false,
+      pluginId: plugin.pluginId,
+    })
+    expect(afterDelete.items).toHaveLength(0)
+    expect(membershipHistory.items).toHaveLength(1)
+
+    await store.setConfigObjectLifecycle({ action: "restore", configObjectId, context: org.context })
+
+    const afterRestore = await store.listPluginMemberships({
+      context: org.context,
+      includeConfigObjects: true,
+      onlyActive: true,
+      pluginId: plugin.pluginId,
+    })
+    expect(afterRestore.items).toHaveLength(1)
+  })
+
   test("connector mapping delete removes only exact mapping-owned bindings after pluginId reassignment", async () => {
     const org = await seedOrg()
     const oldPlugin = await seedPlugin({

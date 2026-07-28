@@ -139,7 +139,7 @@ test("resolves a keyless exchange through the exact HTTPS Den endpoint", async (
   });
 });
 
-test("persists accepted connect branding before applying its icon", async () => {
+test("persists accepted Enterprise activation and branding before applying its icon", async () => {
   const expectedClaims = claims({
     brand: {
       appName: "Acme Work",
@@ -147,6 +147,10 @@ test("persists accepted connect branding before applying its icon", async () => 
       iconUrl: "https://assets.acme.example.com/icon.png",
     },
   });
+  const enterpriseActivation = {
+    activatedAt: "2026-07-27T14:00:00.000Z",
+    denBaseUrl: expectedClaims.den.baseUrl,
+  };
   const calls = [];
   const config = await persistConnectLinkBranding(expectedClaims, {
     persistBootstrap: async (nextConfig) => {
@@ -162,9 +166,13 @@ test("persists accepted connect branding before applying its icon", async () => 
       calls.push({ type: "apply", iconUrl });
       return { ok: true };
     },
+    enterpriseActivation,
   });
 
   assert.deepEqual(calls.map((call) => call.type), ["persist", "apply"]);
+  assert.deepEqual(calls[0].config.enterpriseActivation, enterpriseActivation);
+  assert.equal(calls[0].config.brandAppName, "Acme Work");
+  assert.equal(calls[0].config.brandIconUrl, "https://assets.acme.example.com/icon.png");
   assert.equal(calls[1].iconUrl, expectedClaims.brand.iconUrl);
   assert.equal(config.writtenAt, "2026-07-15T12:00:00.000Z");
 });

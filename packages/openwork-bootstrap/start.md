@@ -7,9 +7,9 @@ identity first, create a first skill, prepare the desktop app with that
 workspace/skill, verify the running app opens to the setup-complete state, and
 offer to connect the OpenWork MCP to the agent the user is already using.
 
-> The bootstrap command is `openwork-bootstrap` (NOT `openwork`). The bare
-> `openwork` command belongs to the separate `openwork-orchestrator` package and
-> may already be on the user's PATH - do not use it for these steps.
+> The bootstrap command is `openwork-bootstrap`. Use that exact command for
+> these setup steps so the bootstrap flow stays distinct from other OpenWork
+> tooling a user may already have on their PATH.
 
 ## 1. Install CLI
 

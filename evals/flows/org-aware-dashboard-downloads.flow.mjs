@@ -4,7 +4,7 @@
  * Run this against a single-org Den sandbox configured as Acme Robotics with:
  * - alex@acme.test in DEN_SINGLE_ORG_OWNER_EMAILS and DEN_BOOTSTRAP_ADMIN_EMAILS
  * - installLinks enabled by this flow through the platform-admin API
- * - a generic win-x64 installer available through OPENWORK_INSTALLER_ARTIFACTS_DIR
+ * - a standard win-x64 desktop artifact available through OPENWORK_INSTALLER_ARTIFACTS_DIR
  *
  * Riley is created through ordinary sign-up and single-org membership
  * provisioning. No invitation or app-version endpoint participates in setup.
@@ -387,7 +387,7 @@ export default {
             const bytes = await response.arrayBuffer();
             const disposition = response.headers.get("content-disposition") ?? "";
             witness(ctx, response.ok, "Acme's server returns the Windows installer", { status: response.status, disposition, byteLength: bytes.byteLength });
-            witness(ctx, disposition.includes("OpenWork-Installer--"), "The Windows filename carries Acme's bootstrap tag", disposition);
+            witness(ctx, disposition.includes("openwork-win-x64-"), "The Windows filename is the standard desktop installer asset", disposition);
             witness(ctx, bytes.byteLength > 0, "The Windows installer response is non-empty", bytes.byteLength);
           },
           screenshot: {

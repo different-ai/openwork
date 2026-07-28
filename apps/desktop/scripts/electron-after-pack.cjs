@@ -6,9 +6,6 @@ const computerUseHelperAppName = "OpenWork Computer Use.app";
 
 const sidecarBases = [
   "opencode",
-  "openwork-server",
-  "openwork-orchestrator",
-  "chrome-devtools-mcp",
 ];
 
 function targetTriple(platformName, arch) {

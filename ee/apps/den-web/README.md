@@ -37,6 +37,8 @@ Frontend for `app.openworklabs.com`.
 - `DEN_WEB_OPENWORK_APP_CONNECT_URL` (runtime): Base URL for "Open in App" links.
   - Example: `https://openworklabs.com/app`
   - The web panel appends `/connect-remote` and injects worker URL/token params automatically.
+- `DEN_WEB_OPENWORK_WEB_URL` (runtime): URL opened by the dashboard Web tab.
+  - default: `https://web.openworklabs.com`
 - `DEN_WEB_OPENWORK_AUTH_CALLBACK_URL` (runtime): Canonical URL used for GitHub auth callback redirects.
   - this host must serve `/api/auth/*`; the included proxy route does that
 - `DEN_WEB_POSTHOG_KEY` (server/runtime): PostHog project key used for Den analytics.

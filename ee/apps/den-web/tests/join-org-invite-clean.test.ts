@@ -9,6 +9,9 @@ const joinOrgScreenPath = fileURLToPath(
 const onboardingShellPath = fileURLToPath(
   new URL("../app/(den)/_components/onboarding-shell.tsx", import.meta.url),
 );
+const sharedDitherShellPath = fileURLToPath(
+  new URL("../../../../packages/ui/src/react/dithered-onboarding-shell.tsx", import.meta.url),
+);
 const joinOrgSuccessPath = fileURLToPath(
   new URL("../app/(den)/_components/join-org-success.tsx", import.meta.url),
 );
@@ -24,7 +27,7 @@ function readJoinOrgScreenSource() {
 }
 
 function readOnboardingShellSource() {
-  return readFileSync(onboardingShellPath, "utf8");
+  return readFileSync(sharedDitherShellPath, "utf8");
 }
 
 describe("join organization invite clean layout contract", () => {
@@ -47,12 +50,12 @@ describe("join organization invite clean layout contract", () => {
     expect(source).toContain("min-h-dvh overflow-y-auto bg-[#f8fbff]");
     expect(source).toContain("pointer-events-none fixed inset-0 z-0 overflow-hidden bg-[#f8fbff] opacity-[0.09]");
     expect(source).toContain('aria-hidden="true"');
-    expect(source).toContain('data-testid="join-org-background"');
-    expect(source).toContain('data-testid="join-org-foreground"');
+    expect(source).toContain('backgroundTestId = "join-org-background"');
+    expect(source).toContain('foregroundTestId = "join-org-foreground"');
     expect(source).toContain("relative z-10");
     expect(source).toContain("useSyncExternalStore");
     expect(source).toContain('const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";');
-    expect(source).toContain("function getReducedMotionServerSnapshot()");
+    expect(source).toContain("() => true");
     expect(source).toContain("const shaderSpeed = reducedMotion ? 0 : 0.012;");
     expect(source).toContain("speed={shaderSpeed}");
     expect(source).toContain('data-shader-speed={shaderSpeed}');
@@ -61,11 +64,13 @@ describe("join organization invite clean layout contract", () => {
   test("removes stacked frames while keeping a compact centered hierarchy", () => {
     const source = readJoinOrgScreenSource();
     const shellSource = readOnboardingShellSource();
+    const denShellSource = readFileSync(onboardingShellPath, "utf8");
 
     expect(source).not.toContain("den-frame");
     expect(source).not.toContain("den-frame-inset");
     expect(shellSource).toContain('compact: "max-w-md"');
-    expect(shellSource).toContain('data-testid="join-org-root"');
+    expect(shellSource).toContain('rootTestId = "join-org-root"');
+    expect(denShellSource).toContain("<DitheredOnboardingShell");
     expect(source).toContain('data-testid="join-org-invitation-details"');
     expect(source).toContain('data-testid="join-org-actions"');
     expect(source).toContain('data-testid="join-org-auth"');
@@ -175,9 +180,15 @@ describe("join organization invite clean layout contract", () => {
     expect(successSource).toContain("<span>You&apos;re in, welcome to</span>");
     expect(successSource).toContain('className="whitespace-nowrap">&apos;s {brand.appName}</span>');
     expect(installSource).toContain("DownloadPlatformGrid");
-    expect(installSource).toContain("<span>Download OpenWork</span>");
+    expect(installSource).toContain("<span>Download OpenWork Enterprise</span>");
+    expect(installSource).toContain("Download OpenWork");
+    expect(installSource).not.toContain('data-testid="install-cloud-download-primary"');
+    expect(installSource).not.toContain("Other platforms");
+    expect(installSource).toContain('config.distribution === "cloud"');
+    expect(installSource).not.toContain("never asks for an enterprise activation code");
     expect(installSource).toContain("<span>for</span>");
-    expect(installSource).toContain("Setup script (ARM64)");
+    expect(installSource).toContain("AppImage (ARM64)");
+    expect(installSource).toContain('desktopScheme: "openwork"');
     expect(identitySource).toContain("failedLogoUrl");
     expect(identitySource).toContain("failedIconUrl");
   });

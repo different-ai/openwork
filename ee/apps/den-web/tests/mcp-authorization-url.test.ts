@@ -30,13 +30,17 @@ describe("mcpAuthorizationPendingDocument", () => {
   test("renders a concise accessible connection screen before provider redirect", () => {
     const document = mcpAuthorizationPendingDocument()
 
-    expect(document).toContain("Preparing your connection")
-    expect(document).toContain("securely checking the provider")
+    expect(document).toContain("Connect your account")
+    expect(document).toContain("preparing the secure provider sign-in")
     expect(document).toContain("Keep this window open")
     expect(document).toContain("OpenWork Connect")
     expect(document).toContain('role="status"')
     expect(document).toContain('aria-live="polite"')
-    expect(document).toContain("prefers-reduced-motion: reduce")
+    expect(document).toContain("Continue to your provider")
+    expect(document).toContain("background: #f8fbff")
+    expect(document).not.toContain("loading-card")
+    expect(document).not.toContain("@keyframes")
+    expect(document).not.toContain("progress")
   })
 })
 

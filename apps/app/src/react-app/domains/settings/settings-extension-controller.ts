@@ -5,7 +5,7 @@ import type { McpDirectoryInfo } from "../../../app/constants";
 import { evaluateEnablement, type EnablementContext } from "../../../app/enablement";
 import type { OpenworkServerClient } from "../../../app/lib/openwork-server";
 import type { McpServerEntry } from "../../../app/types";
-import { getExtensionConfigSlot, getExtensionConnected, type ExtensionConfigContext } from "./extension-registry";
+import { getExtensionConfigSlot, type ExtensionConfigContext } from "./extension-registry";
 import type { LocalProviderInstallInput } from "./openai-image-extension";
 
 type ProviderLike = {
@@ -20,8 +20,6 @@ type SettingsExtensionControllerInput = {
   mcpServers: McpServerEntry[];
   mcpConnectingName: string | null;
   onComputerUsePermissionsChange: (permissions: { accessibility: boolean; screenRecording: boolean }) => void;
-  googleWorkspaceConnected: boolean;
-  setGoogleWorkspaceConnected: (connected: boolean) => void;
   restartLocalServer?: () => Promise<boolean>;
   connectMcp: (entry: McpDirectoryInfo) => void | Promise<void>;
   refreshMcpServers: () => void | Promise<void>;
@@ -63,12 +61,6 @@ export function useSettingsExtensionController(input: SettingsExtensionControlle
     openworkServerClient: input.openworkServerClient,
     hostOpenworkServerClient: input.hostOpenworkServerClient,
     restartLocalServer: input.restartLocalServer,
-    extensionConnections: {
-      "google-workspace": input.googleWorkspaceConnected,
-    },
-    onExtensionConnectionChange: (extensionId, connected) => {
-      if (extensionId === "google-workspace") input.setGoogleWorkspaceConnected(connected);
-    },
     computerUse: {
       connected: input.mcpServers.some((server) => server.name === "computer-use"),
       connecting: input.mcpConnectingName === entry.name,
@@ -93,17 +85,9 @@ export function useSettingsExtensionController(input: SettingsExtensionControlle
   );
 
   const isConnected = useCallback((entry: McpDirectoryInfo) => {
-    if (entry.extensionManifest?.enablement) {
-      return evaluateEnablement(entry.extensionManifest.enablement, input.enablementContext).active;
-    }
-    const runtimeConnected = getExtensionConnected(entry, {
-      openworkServerClient: input.openworkServerClient,
-      extensionConnections: {
-        "google-workspace": input.googleWorkspaceConnected,
-      },
-    });
-    return runtimeConnected ?? false;
-  }, [input]);
+    const enablement = entry.extensionManifest?.enablement;
+    return enablement ? evaluateEnablement(enablement, input.enablementContext).active : false;
+  }, [input.enablementContext]);
 
   return {
     configContextForEntry,

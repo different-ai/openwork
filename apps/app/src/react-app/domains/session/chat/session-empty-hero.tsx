@@ -70,8 +70,8 @@ export function SessionEmptyHero(props: SessionEmptyHeroProps) {
     })
     : DEFAULT_SUGGESTIONS;
 
-  const submit = () => {
-    const trimmedPrompt = prompt.trim();
+  const submit = (resolvedPrompt: string) => {
+    const trimmedPrompt = resolvedPrompt.trim();
     if (!trimmedPrompt || props.busy) return;
     props.onRunTask(trimmedPrompt);
   };

@@ -589,16 +589,38 @@ export default defineFlow({
             await resolveSignedInOrg(ctx);
             await seedDenSession(ctx);
             await ctx.eval("location.reload()");
+            // While Den auth is still verifying, app-root re-renders the forced
+            // sign-in page, so wait for a POSITIVE settled surface: a negative
+            // wait passes on the empty DOM right after reload and then the
+            // capture lands on the "checking" flash. Which surface appears is
+            // profile-dependent (first-run welcome vs a configured workspace),
+            // so accept any of them.
+            await ctx.waitFor(
+              `["Use Without Cloud", "New session", "What do you need done?"].some((marker) => document.body.innerText.includes(marker))`,
+              { timeoutMs: 60_000, label: "app past the sign-in gate" },
+            );
           },
           assert: async () => {
-            await waitForOnboarding(ctx);
-            await ctx.waitForText("Choose your organization", { timeoutMs: 60_000 });
-            await ctx.waitForText(required(ctx, "OPENWORK_EVAL_ORG_NAME"), { timeoutMs: 30_000 });
+            // Assert the session is genuinely usable, not which post-sign-in
+            // screen the app picks: that depends on whether a workspace/server
+            // is already configured in this browser profile, which made this
+            // frame pass only on dirty profiles. Probed node-side because
+            // ctx.eval does not await promises.
+            const res = await fetch(`${denBase(ctx)}/v1/me`, {
+              headers: { Authorization: `Bearer ${state.denToken}` },
+            });
+            const body = await res.json().catch(() => null);
+            const email = body && body.user ? body.user.email : null;
+            witness(ctx, res.status === 200, "Den accepts the signed-in admin session", { status: res.status });
+            witness(ctx, email === required(ctx, "OPENWORK_EVAL_DEN_EMAIL"), "The session belongs to the signing-in admin", { email });
+            const seeded = await ctx.eval(`(() => localStorage.getItem("openwork.den.authToken") !== null)()`);
+            witness(ctx, seeded === true || seeded === "true", "The browser carries the Den session", { seeded });
+            const gated = await ctx.hasText("Paste sign-in code");
+            witness(ctx, gated === false, "The forced sign-in gate is no longer blocking the app", { gated });
           },
           screenshot: {
             name: "frame-2-signed-in",
-            claim: "The admin's Den session is seeded into the browser and the app reaches the organization onboarding screen.",
-            requireText: ["Choose your organization"],
+            claim: "The admin's Den session is seeded into the browser and Den accepts it; the forced sign-in gate is gone.",
             rejectText: ["Something went wrong"],
           },
         });

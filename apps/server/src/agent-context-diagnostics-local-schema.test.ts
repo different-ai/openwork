@@ -200,7 +200,7 @@ describe("agent context diagnostics server-local schema parity", () => {
           enabled: true,
           disabledByTools: false,
           origin: null,
-          path: "/nested/mcp/agent",
+          path: "/nested/mcp/agent/",
           hasHeaders: true,
           oauthMode: "disabled",
           syncStatus: "connected",

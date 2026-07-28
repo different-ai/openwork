@@ -5,10 +5,15 @@ import { ChevronDown, Download, ShieldCheck } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useSearchParams } from "next/navigation";
 import { requestJson } from "../_lib/den-flow";
+import {
+  getDesktopHandoffGrant,
+  getDesktopHandoffOpenworkUrl,
+  rememberDesktopHandoffGrant,
+} from "../_lib/desktop-handoff";
 import { getInstallConfigErrorMessage } from "../_lib/install-errors";
-import { buildInstallDownloadHref, installerFileName, type InstallPlatform } from "../_lib/install-download";
+import { buildInstallDownloadHref, type InstallPlatform, installerFileName } from "../_lib/install-download";
 import { isMobileUserAgent } from "../_lib/platform";
-import { InstallerPreview } from "./installer-preview";
+import { useDesktopHandoffStatus } from "../_lib/use-desktop-handoff-status";
 import { OnboardingShell } from "./onboarding-shell";
 import { OrganizationBrandIdentity } from "./organization-brand-identity";
 
@@ -24,9 +29,10 @@ type InstallConfig = {
   connectExpiresAt: string | null;
   activationUrl: string;
   activationExpiresAt: string;
+  desktopVersion: string;
+  distribution: "cloud" | "enterprise";
 };
 
-const CONNECT_CODE_PATTERN = /^[A-Za-z0-9_-]{24,128}$/;
 const RETURN_TO_OPENWORK_URL = "openwork://open";
 const INSTALL_PLATFORMS: InstallPlatform[] = ["mac-arm64", "mac-x64", "win-x64", "linux-x64", "linux-arm64"];
 
@@ -42,6 +48,8 @@ function detectedInstallPlatform(detected: DetectedPlatform | null): InstallPlat
   if (detected.os === "windows") return "win-x64";
   if (detected.os === "macos" && detected.arch === "arm64") return "mac-arm64";
   if (detected.os === "macos" && detected.arch === "x64") return "mac-x64";
+  if (detected.os === "linux" && detected.arch === "arm64") return "linux-arm64";
+  if (detected.os === "linux") return "linux-x64";
   return null;
 }
 
@@ -54,25 +62,23 @@ function installerOsFor(platform: InstallPlatform | null, detected: DetectedPlat
 }
 
 /** Copy for opening the downloaded installer, per operating system. */
-function openGuidance(os: InstallerOs | null, appName: string, fileName: string | null): OpenGuidance {
+function openGuidance(os: InstallerOs | null, fileName: string | null): OpenGuidance {
   const openFile = fileName
     ? `Double-click ${fileName} in Downloads.`
-    : `Open the ${appName} installer in your Downloads folder.`;
+    : "Open the OpenWork Enterprise download in your Downloads folder.";
 
   if (os === "macos") {
     return {
-      // The disk image holds only "Install OpenWork" — there is no Applications
-      // shortcut to drag onto. That app is the installer, and it installs the app.
-      actions: [openFile, `In the window that opens, double-click Install OpenWork, then choose Install.`],
+      actions: [openFile, "Drag OpenWork Enterprise to Applications, then open it."],
       trust: {
-        title: "macOS may ask before it opens the installer",
-        body: "If you see “unidentified developer”, choose Open. This is normal for a new app.",
+        title: "macOS confirms apps downloaded from the internet",
+        body: "Choose Open when macOS asks you to confirm the signed OpenWork Enterprise app.",
       },
     };
   }
   if (os === "windows") {
     return {
-      actions: [openFile, `Choose Install in the installer window.`],
+      actions: [openFile, "Complete the OpenWork Enterprise setup, then open the app."],
       trust: {
         title: "Windows may warn before it opens the installer",
         body: "If you see “Windows protected your PC”, choose More info, then Run anyway.",
@@ -82,8 +88,8 @@ function openGuidance(os: InstallerOs | null, appName: string, fileName: string 
   if (os === "linux") {
     return {
       actions: [
-        "Run the setup script from your Downloads folder in a terminal.",
-        `It prints where to get the ${appName} AppImage — download that, then open it.`,
+        "Make the downloaded AppImage executable.",
+        "Open the OpenWork Enterprise AppImage.",
       ],
       trust: null,
     };
@@ -110,38 +116,6 @@ function isUrl(value: string) {
   }
 }
 
-function isConnectUrl(value: string) {
-  try {
-    const url = new URL(value);
-    const route = (url.hostname || url.pathname.replace(/^\/+|\/+$/g, "")).toLowerCase();
-    if (url.protocol !== "openwork:" || route !== "connect") return false;
-    const token = url.searchParams.get("token")?.trim() ?? "";
-    const code = url.searchParams.get("code")?.trim() ?? "";
-    const apiBaseUrl = url.searchParams.get("apiBaseUrl")?.trim() ?? "";
-    return (Boolean(token) && !code && !apiBaseUrl)
-      || (!token && /^[A-Za-z0-9_-]{24,128}$/.test(code) && isUrl(apiBaseUrl));
-  } catch {
-    return false;
-  }
-}
-
-function activationCodeFromUrl(value: string) {
-  try {
-    const url = new URL(value);
-    const code = url.searchParams.get("code")?.trim() ?? "";
-    return CONNECT_CODE_PATTERN.test(code) ? code : null;
-  } catch {
-    return null;
-  }
-}
-
-function exchangeConnectUrl(code: string, apiBaseUrl: string) {
-  const url = new URL("openwork://connect");
-  url.searchParams.set("code", code);
-  url.searchParams.set("apiBaseUrl", apiBaseUrl);
-  return url.toString();
-}
-
 function parseInstallConfig(value: unknown): InstallConfig | null {
   if (!isRecord(value)) {
     return null;
@@ -158,6 +132,8 @@ function parseInstallConfig(value: unknown): InstallConfig | null {
   const connectExpiresAt = value.connectExpiresAt ?? null;
   const activationUrl = typeof value.activationUrl === "string" ? value.activationUrl.trim() : "";
   const activationExpiresAt = typeof value.activationExpiresAt === "string" ? value.activationExpiresAt : "";
+  const desktopVersion = typeof value.desktopVersion === "string" ? value.desktopVersion.trim() : "";
+  const distribution = value.distribution;
 
   if (!clientName || !isUrl(webUrl) || !isUrl(apiUrl) || typeof requireSignin !== "boolean") {
     return null;
@@ -168,13 +144,18 @@ function parseInstallConfig(value: unknown): InstallConfig | null {
   if (iconUrl !== null && (typeof iconUrl !== "string" || !isUrl(iconUrl))) {
     return null;
   }
-  if (connectUrl !== null && (typeof connectUrl !== "string" || !isConnectUrl(connectUrl))) {
+  if (connectUrl !== null && typeof connectUrl !== "string") {
     return null;
   }
   if (connectExpiresAt !== null && (typeof connectExpiresAt !== "string" || Number.isNaN(Date.parse(connectExpiresAt)))) {
     return null;
   }
-  if (!isUrl(activationUrl) || Number.isNaN(Date.parse(activationExpiresAt))) {
+  if (
+    !isUrl(activationUrl)
+    || Number.isNaN(Date.parse(activationExpiresAt))
+    || !desktopVersion
+    || (distribution !== "cloud" && distribution !== "enterprise")
+  ) {
     return null;
   }
 
@@ -190,6 +171,8 @@ function parseInstallConfig(value: unknown): InstallConfig | null {
     connectExpiresAt,
     activationUrl,
     activationExpiresAt,
+    desktopVersion,
+    distribution,
   };
 }
 
@@ -315,12 +298,12 @@ export function InstallScreen() {
   const [expandedStep, setExpandedStep] = useState<1 | 2 | 3>(initialStep);
   const [connecting, setConnecting] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
-  const [activationCode, setActivationCode] = useState<string | null>(null);
-  const [activationStatus, setActivationStatus] = useState<"idle" | "pending" | "connected" | "expired">("idle");
+  const [desktopGrant, setDesktopGrant] = useState<string | null>(null);
   const [connectLink, setConnectLink] = useState("");
   const [connectCopied, setConnectCopied] = useState(false);
   const [returnCopied, setReturnCopied] = useState(false);
   const downloadStartedTimer = useRef<number | null>(null);
+  const handoffStatus = useDesktopHandoffStatus(desktopGrant);
 
   useEffect(() => {
     setIsMobile(isMobileUserAgent());
@@ -370,45 +353,6 @@ export function InstallScreen() {
     };
   }, [token]);
 
-  useEffect(() => {
-    if (!activationCode) {
-      setActivationStatus("idle");
-      return;
-    }
-
-    let cancelled = false;
-    let timer: number | null = null;
-    setActivationStatus("pending");
-
-    async function poll() {
-      try {
-        const { response, payload } = await requestJson(
-          "/v1/install-connect/status",
-          { method: "POST", body: JSON.stringify({ code: activationCode }) },
-          12000,
-        );
-        if (cancelled) return;
-        if (response.status === 410) {
-          setActivationStatus("expired");
-          return;
-        }
-        if (response.ok && isRecord(payload) && payload.status === "connected") {
-          setActivationStatus("connected");
-          return;
-        }
-      } catch {
-        // Keep waiting through temporary network failures.
-      }
-      if (!cancelled) timer = window.setTimeout(() => void poll(), 2500);
-    }
-
-    void poll();
-    return () => {
-      cancelled = true;
-      if (timer !== null) window.clearTimeout(timer);
-    };
-  }, [activationCode]);
-
   useEffect(() => () => {
     if (downloadStartedTimer.current !== null) {
       window.clearTimeout(downloadStartedTimer.current);
@@ -433,15 +377,15 @@ export function InstallScreen() {
         os: "windows",
         title: "Windows",
         options: [
-          { href: installHref(config, "win-x64", token), label: "x64 Installer", arch: "x64" },
+          { href: installHref(config, "win-x64", token), label: "x64 app", arch: "x64" },
         ],
       },
       {
         os: "linux",
         title: "Linux",
         options: [
-          { href: installHref(config, "linux-x64", token), label: "Setup script (x64)", arch: "x64" },
-          { href: installHref(config, "linux-arm64", token), label: "Setup script (ARM64)", arch: "arm64" },
+          { href: installHref(config, "linux-x64", token), label: "AppImage (x64)", arch: "x64" },
+          { href: installHref(config, "linux-arm64", token), label: "AppImage (ARM64)", arch: "arm64" },
         ],
       },
     ];
@@ -491,12 +435,26 @@ export function InstallScreen() {
     setConnecting(true);
     setConnectError(null);
     try {
-      const freshConfig = await fetchInstallConfig(token);
-      const code = activationCodeFromUrl(freshConfig.activationUrl);
-      if (!code) throw new Error("This setup could not create a one-time activation link.");
-      const nextConnectLink = exchangeConnectUrl(code, freshConfig.apiUrl);
-      setConfig(freshConfig);
-      setActivationCode(code);
+      const { response, payload } = await requestJson(
+        "/v1/auth/desktop-handoff",
+        {
+          method: "POST",
+          body: JSON.stringify({ desktopScheme: "openwork" }),
+        },
+        12000,
+      );
+      if (!response.ok) {
+        throw new Error(response.status === 401
+          ? "Sign in to your Den portal before activating OpenWork Enterprise."
+          : `Could not create an activation link (${response.status}).`);
+      }
+      const nextConnectLink = getDesktopHandoffOpenworkUrl(payload);
+      const grant = getDesktopHandoffGrant(payload, nextConnectLink);
+      if (!nextConnectLink || !grant) {
+        throw new Error("Den did not return a valid OpenWork Enterprise activation link.");
+      }
+      rememberDesktopHandoffGrant(grant);
+      setDesktopGrant(grant);
       setConnectLink(nextConnectLink);
       advanceGuide(3);
       window.location.assign(nextConnectLink);
@@ -521,12 +479,26 @@ export function InstallScreen() {
     setConnecting(true);
     setConnectError(null);
     try {
-      const freshConfig = await fetchInstallConfig(token);
-      const code = activationCodeFromUrl(freshConfig.activationUrl);
-      if (!code) throw new Error("This setup could not create a one-time activation link.");
-      const nextConnectLink = exchangeConnectUrl(code, freshConfig.apiUrl);
-      setConfig(freshConfig);
-      setActivationCode(code);
+      const { response, payload } = await requestJson(
+        "/v1/auth/desktop-handoff",
+        {
+          method: "POST",
+          body: JSON.stringify({ desktopScheme: "openwork" }),
+        },
+        12000,
+      );
+      if (!response.ok) {
+        throw new Error(response.status === 401
+          ? "Sign in to your Den portal before creating an activation link."
+          : `Could not create an activation link (${response.status}).`);
+      }
+      const nextConnectLink = getDesktopHandoffOpenworkUrl(payload);
+      const grant = getDesktopHandoffGrant(payload, nextConnectLink);
+      if (!nextConnectLink || !grant) {
+        throw new Error("Den did not return a valid OpenWork Enterprise activation link.");
+      }
+      rememberDesktopHandoffGrant(grant);
+      setDesktopGrant(grant);
       setConnectLink(nextConnectLink);
       await navigator.clipboard.writeText(nextConnectLink);
       setConnectCopied(true);
@@ -574,8 +546,45 @@ export function InstallScreen() {
     );
   }
 
-  const installerFile = installerFileName(downloadPlatform ?? detectedInstallPlatform(detected));
-  const guidance = openGuidance(installerOsFor(downloadPlatform, detected), config.appName, installerFile);
+  if (config.distribution === "cloud") {
+    return (
+      <OnboardingShell state="install" width="full">
+        <section data-testid="install-page">
+          <div className="grid gap-6 rounded-[1.75rem] border border-[#e7eaef] bg-[#fcfcfd] p-5 text-center sm:p-6 md:p-8" data-testid="install-card">
+            <div className="grid justify-items-center gap-3">
+              <h1 className="m-0 text-[2rem] font-semibold leading-[1.04] tracking-[-0.05em] text-slate-950 sm:text-[2.4rem]">
+                Download OpenWork
+              </h1>
+              <p className="den-copy max-w-2xl">Choose the version for your computer, install it, and open OpenWork.</p>
+            </div>
+
+            {isMobile ? (
+              <div className="den-frame-inset grid gap-3 rounded-[1.5rem] p-5 text-left" data-testid="install-mobile-note">
+                <p className="m-0 text-base font-medium text-[var(--dls-text-primary)]">OpenWork Cloud runs on your computer.</p>
+                <p className="den-copy">Open this link on your Mac, Windows, or Linux machine.</p>
+                <button type="button" className="den-button-secondary w-full sm:w-auto" onClick={() => void copyCurrentLink()}>
+                  {copied ? "Copied" : "Copy install link"}
+                </button>
+              </div>
+            ) : (
+              <div className="grid gap-5 text-left">
+                <DownloadPlatformGrid groups={downloadGroups} />
+                <a className="den-button-secondary w-fit" href={RETURN_TO_OPENWORK_URL}>
+                  I already installed OpenWork
+                </a>
+              </div>
+            )}
+          </div>
+        </section>
+      </OnboardingShell>
+    );
+  }
+
+  const installerFile = installerFileName(
+    downloadPlatform ?? detectedInstallPlatform(detected),
+    config.desktopVersion,
+  );
+  const guidance = openGuidance(installerOsFor(downloadPlatform, detected), installerFile);
 
   return (
     <OnboardingShell state="install" width="full">
@@ -583,7 +592,7 @@ export function InstallScreen() {
         <div className="grid gap-6 rounded-[1.75rem] border border-[#e7eaef] bg-[#fcfcfd] p-5 text-center sm:p-6 md:p-8" data-testid="install-card">
           <div className="grid justify-items-center gap-3">
             <h1 className="m-0 grid max-w-[22ch] gap-1 text-[2rem] font-semibold leading-[1.04] tracking-[-0.05em] text-slate-950 sm:text-[2.4rem]">
-              <span>Download OpenWork</span>
+              <span>Download OpenWork Enterprise</span>
               <span className="flex min-w-0 flex-wrap items-center justify-center gap-x-[0.18em] gap-y-1">
                 <span>for</span>
                 <OrganizationBrandIdentity
@@ -608,8 +617,8 @@ export function InstallScreen() {
             <InstallStep
               index={1}
               state={guideStep > 1 ? "complete" : "active"}
-              title="Download the OpenWork installer"
-              description="It's a small setup app. When the download finishes, open it and keep this page open."
+              title="Download OpenWork Enterprise"
+              description="This is the signed desktop app itself. Den sends your browser directly to the matching GitHub release asset."
               expanded={expandedStep === 1}
               onExpand={() => setExpandedStep(1)}
               testId="install-guide-step-download"
@@ -625,7 +634,7 @@ export function InstallScreen() {
                     onClick={() => advanceGuide(2)}
                     data-testid="install-skip-download"
                   >
-                    I already have {config.appName}
+                    I already have OpenWork Enterprise
                   </button>
                   {downloadState !== "idle" ? (
                     <div className="den-frame-inset grid gap-2 rounded-[1.25rem] p-4" aria-live="polite" data-testid="install-download-status">
@@ -653,14 +662,13 @@ export function InstallScreen() {
               state={guideStep === 2 ? "active" : guideStep > 2 ? "complete" : "pending"}
               title="Continue on your computer"
               description={guideStep < 2
-                ? `Only continue once ${config.appName} is installed and running on this computer.`
-                : `Your download is done. Open the file on this computer — the installer takes it from there.`}
+                ? "Only continue once OpenWork Enterprise is installed and open on this computer."
+                : "Open the downloaded app. It will wait at the pixel-dither activation screen."}
               expanded={expandedStep === 2 && guideStep >= 2}
               onExpand={() => setExpandedStep(2)}
               testId="install-guide-step-open"
             >
-                  <div className="grid gap-5 lg:grid-cols-2">
-                    <div className="grid content-start gap-3 rounded-[14px] border border-[#e1e4e8] bg-white p-[18px]">
+                  <div className="grid content-start gap-3 rounded-[14px] border border-[#e1e4e8] bg-white p-[18px]">
                       <p className="m-0 text-xs font-semibold uppercase tracking-[0.04em] text-[#667085]">Next, on your computer</p>
                       <p className="m-0 text-base font-semibold text-[#101828]">Open the file you just downloaded</p>
 
@@ -702,19 +710,19 @@ export function InstallScreen() {
                           <span className="size-1.5 rounded-full bg-[#3e63dd]" />
                         </span>
                         <span className="grid gap-0.5">
-                          <span className="text-[13px] font-semibold leading-[17px] text-[#1f3d8f]">The installer continues from here</span>
-                          <span className="text-[13px] leading-[17px] text-[#3a4e80]">It installs {config.appName} and opens a sign-in page in your browser so you can approve this computer.</span>
+                          <span className="text-[13px] font-semibold leading-[17px] text-[#1f3d8f]">Activation happens from this Den page</span>
+                          <span className="text-[13px] leading-[17px] text-[#3a4e80]">OpenWork Enterprise stays locked until this signed-in portal sends it a one-time activation link.</span>
                         </span>
                       </div>
 
                       <div className="flex items-center gap-2.5 py-1">
                         <span className="h-px grow bg-[#e1e4e8]" />
-                        <span className="text-xs text-[#7a808a]">OR</span>
+                        <span className="text-xs text-[#7a808a]">THEN</span>
                         <span className="h-px grow bg-[#e1e4e8]" />
                       </div>
 
                       <div className="flex items-center justify-between gap-3">
-                        <p className="m-0 text-[13px] leading-[17px] text-[#344054]">Already have {config.appName} on this computer?</p>
+                        <p className="m-0 text-[13px] leading-[17px] text-[#344054]">When the enterprise app is open at its activation screen:</p>
                         <button
                           type="button"
                           className="grid h-9 shrink-0 place-items-center rounded-[9px] bg-[#101828] px-4 text-[13px] font-semibold text-white transition-colors hover:bg-black disabled:opacity-60"
@@ -722,7 +730,7 @@ export function InstallScreen() {
                           disabled={connecting}
                           onClick={() => void beginConnect()}
                         >
-                          {connecting ? "Preparing…" : `Open ${config.appName}`}
+                          {connecting ? "Preparing…" : "Activate OpenWork Enterprise"}
                         </button>
                       </div>
 
@@ -731,13 +739,7 @@ export function InstallScreen() {
                           <ChevronDown className="size-3 shrink-0 text-[#7a808a] transition-transform" aria-hidden="true" />
                           Nothing happening on your computer?
                         </summary>
-                        <p className="m-0 text-[13px] leading-[17px] text-[#60646c]">Paste this link into {config.appName} on your computer to connect it by hand.</p>
-                        <CopyLinkRow
-                          value={currentLink}
-                          copied={copied}
-                          onCopy={() => void copyCurrentLink()}
-                          testId="install-copy-link"
-                        />
+                        <p className="m-0 text-[13px] leading-[17px] text-[#60646c]">Create a fresh one-time activation link and copy it if your browser cannot open the app automatically.</p>
                         <button
                           type="button"
                           className="w-fit text-[11px] font-medium text-[#667085] underline-offset-4 hover:text-[#101828] hover:underline"
@@ -745,15 +747,9 @@ export function InstallScreen() {
                           disabled={connecting}
                           onClick={() => void prepareAndCopyConnectionLink()}
                         >
-                          {connectCopied ? "Copied a fresh connection link" : "Or copy a fresh connection link"}
+                          {connectCopied ? "Copied a fresh activation link" : "Copy a fresh activation link"}
                         </button>
                       </details>
-                    </div>
-                    <InstallerPreview
-                      appName={config.appName}
-                      iconUrl={config.iconUrl}
-                      activationLinkHint={`${config.webUrl.replace(/\/+$/, "")}/activate?token=…`}
-                    />
                   </div>
 
                   {connectError ? <p className="m-0 text-sm text-red-600" role="alert">{connectError}</p> : null}
@@ -762,8 +758,8 @@ export function InstallScreen() {
             <InstallStep
               index={3}
               state={guideStep === 3 ? "active" : "pending"}
-              title="Finish in your browser, then return to OpenWork"
-              description="Sign in and approve this computer. The browser will give you a button back to the desktop app."
+              title="Confirm activation"
+              description="Keep this page open while OpenWork Enterprise consumes the one-time link and signs you in."
               expanded={expandedStep === 3 && guideStep === 3}
               onExpand={() => setExpandedStep(3)}
               testId="install-guide-step-signin"
@@ -774,29 +770,29 @@ export function InstallScreen() {
                         className="grid h-11 shrink-0 place-items-center rounded-[11px] bg-[#101828] px-6 text-[13px] font-semibold text-white transition-colors hover:bg-black sm:w-[18rem]"
                         href={RETURN_TO_OPENWORK_URL}
                       >
-                        Return to OpenWork
+                        Return to OpenWork Enterprise
                       </a>
-                      {activationStatus === "connected" ? null : (
+                      {handoffStatus.status === "consumed" ? null : (
                         <p className="m-0 flex grow items-center gap-3 rounded-[11px] border border-[#e1e4e8] bg-white px-4 text-[13px] text-[#60646c]">
                           <span className="size-4 animate-spin rounded-full border-2 border-[#b0b7c3] border-t-[#101828]" aria-hidden="true" />
-                          Waiting for browser confirmation…
+                          Waiting for OpenWork Enterprise…
                         </p>
                       )}
                     </div>
 
-                    {activationStatus === "connected" ? (
+                    {handoffStatus.status === "consumed" ? (
                       <div className="flex items-start gap-3 rounded-[11px] border border-[#e7eaef] bg-[#fafbfc] px-3.5 py-3" data-testid="install-connected">
                         <span className="grid size-5 shrink-0 place-items-center rounded-full border-[1.5px] border-[#c9cfd7] bg-white text-[11px] font-bold text-[#30a46c]" aria-hidden="true">✓</span>
                         <span className="grid gap-0.5">
-                          <span className="text-[13px] font-semibold text-[#1c2024]">Connected to {config.clientName}</span>
-                          <span className="text-[11px] text-[#60646c]">Your organization setup and branding are ready in {config.appName}.</span>
+                          <span className="text-[13px] font-semibold text-[#1c2024]">OpenWork Enterprise is activated</span>
+                          <span className="text-[11px] text-[#60646c]">The app consumed the one-time link and signed you in to {config.clientName}.</span>
                         </span>
                       </div>
-                    ) : activationStatus === "expired" ? (
-                      <p className="m-0 text-sm text-amber-700">This one-time link expired. Return to step 2 and open {config.appName} again.</p>
+                    ) : handoffStatus.status === "unknown" ? (
+                      <p className="m-0 text-sm text-amber-700">This one-time link expired. Return to step 2 and create a fresh activation link.</p>
                     ) : null}
 
-                    {activationStatus === "connected" ? (
+                    {handoffStatus.status === "consumed" ? (
                       <CopyLinkRow value={RETURN_TO_OPENWORK_URL} copied={returnCopied} onCopy={() => void copyReturnLink()} />
                     ) : connectLink ? (
                       <div className="grid gap-2">

@@ -39,7 +39,7 @@ Publish flow:
 Health and smoke expectations:
 - Published service images include shallow Docker healthchecks for the HTTP process only.
 - Den API and inference probe `GET /health`; Den web probes `GET /api/health`.
-- The publish workflow loads each PR image locally and probes the same endpoint without cloud secrets. Production orchestrators should still add dependency-aware readiness checks where needed.
+- The publish workflow loads each PR image locally and probes the same endpoint without cloud secrets. Production deployments should still add dependency-aware readiness checks where needed.
 
 ### Demo org seed
 
@@ -301,7 +301,7 @@ pnpm dev:den:mysql:down
 
 ## Pre-baked Micro-Sandbox Image
 
-For micro-sandbox work, use the pre-baked image that compiles `openwork` and `openwork-server` from source and downloads the pinned `opencode` binary during `docker build`.
+For micro-sandbox work, use the pre-baked image that compiles `openwork-server` from source and downloads the pinned `opencode` binary during `docker build`.
 
 Build it from the repo root:
 
@@ -341,8 +341,8 @@ This is a minimal packaging template to run the OpenWork Host contract in a sing
 
 It runs:
 
-- `opencode serve` (engine) bound to `127.0.0.1:4096` inside the container
-- `openwork-server` published on `0.0.0.0:8787` via an explicit `--remote-access` launch path (the only published surface)
+- `openwork-server` published on `0.0.0.0:8787` (the only published surface)
+- Managed `opencode` launched internally by `openwork-server`
 
 ### Local run (compose)
 

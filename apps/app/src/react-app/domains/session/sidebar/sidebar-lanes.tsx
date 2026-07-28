@@ -1,6 +1,17 @@
 import * as React from "react";
 
 import { cn } from "@/lib/utils";
+import {
+  SIDEBAR_ROW_BASE_PAD_PX,
+  SIDEBAR_ROW_NEST_STEP_PX,
+  sidebarRowPaddingInlineStart,
+} from "./sidebar-lane-metrics";
+
+export {
+  SIDEBAR_ROW_BASE_PAD_PX,
+  SIDEBAR_ROW_NEST_STEP_PX,
+  sidebarRowPaddingInlineStart,
+};
 
 /**
  * Sidebar lane system — two vertical rails shared by every row in the sidebar.
@@ -13,7 +24,7 @@ import { cn } from "@/lib/utils";
  * 1. A row's first child is a `SidebarGlyphSlot`, rendered even when it has no
  *    glyph, so the title never shifts when an indicator appears.
  * 2. Section labels sit on the glyph lane, one step left of the titles below.
- * 3. Nesting steps right by 12px per depth level.
+ * 3. Nesting steps right by 16px per depth level.
  */
 
 /** Row padding that puts the glyph slot on the glyph lane. */

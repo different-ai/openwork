@@ -14,6 +14,7 @@ import { canDisconnectNativeProviderAccount } from "@/react-app/domains/connecti
 import { ExtensionCard } from "@/react-app/design-system/extension-card";
 import { ExtensionDetailModal } from "@/react-app/design-system/extension-detail-modal";
 import { resolveMarketplaceDeliveryAction } from "@/react-app/domains/settings/connect-delivery";
+import { taxonomyForDirectoryEntry } from "@/react-app/domains/settings/extension-taxonomy";
 import {
   isOrgMcpConnectionItem,
   isOrgMcpConnectionReady,
@@ -662,7 +663,7 @@ function MarketplaceCard(props: {
           iconSlug={row.entry.iconSlug}
           iconSrc={row.entry.iconSrc}
           url={entryUrl}
-          kind={row.entry.kind ?? "extension"}
+          taxonomy={taxonomyForDirectoryEntry(row.entry)}
           preview={row.entry.preview}
           connected={row.active}
           connectedLabel={row.entry.defaultEnabled ? "Ready" : "Active"}
@@ -686,7 +687,7 @@ function MarketplaceCard(props: {
         <ExtensionCard
           name={row.item.name}
           description={row.item.description ?? "Available from your organization."}
-          kind="mcp"
+          taxonomy="connection"
           url={row.connection.url}
           connected={ready}
           connectedLabel={orgMcpConnectionActionLabel(row.connection)}
@@ -725,7 +726,7 @@ function MarketplaceCard(props: {
         description={row.plugin.description || `Marketplace extension from ${row.marketplaceName}.`}
         iconSlug={manifest?.icon?.simpleIconSlug}
         iconSrc={manifest?.icon?.src}
-        kind="extension"
+        taxonomy="plugin"
         connected
         connectedLabel={cloudBuiltIn ? "Built-in" : deliveryLabel}
         connecting={actionBusy}
@@ -756,7 +757,8 @@ function BuiltInMarketplaceDetailModal(props: {
       iconSlug={entry.iconSlug}
       iconSrc={entry.iconSrc}
       url={typeof entry.url === "string" ? entry.url : undefined}
-      kind={entry.kind ?? "extension"}
+      taxonomy={taxonomyForDirectoryEntry(entry)}
+      uiControl={entry.kind === "ui-control"}
       connected={row.active}
       connectedLabel={entry.defaultEnabled ? "Ready" : "Active"}
       disconnectedLabel="Needs setup"
@@ -794,7 +796,7 @@ function OrgMcpConnectionDetailModal(props: {
       onClose={onClose}
       name={row.item.name}
       description={row.item.description ?? "Available from your organization."}
-      kind="mcp"
+      taxonomy="connection"
       connected={ready}
       connectedLabel={orgMcpConnectionActionLabel(row.connection)}
       beta
@@ -869,7 +871,7 @@ function MarketplacePackageDetailModal(props: {
       description={row.plugin.description || "No description provided."}
       iconSlug={manifest?.icon?.simpleIconSlug}
       iconSrc={manifest?.icon?.src}
-      kind="extension"
+      taxonomy="plugin"
       connected
       connectedLabel={cloudBuiltIn ? "Built-in" : deliveryLabel}
       connecting={actionBusy}

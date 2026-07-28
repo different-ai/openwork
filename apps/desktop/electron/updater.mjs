@@ -34,7 +34,8 @@ const ELECTRON_UPDATER_FEEDS = Object.freeze({
   alpha: "https://github.com/different-ai/openwork/releases/download/alpha-macos-latest",
 });
 
-function normalizeElectronUpdaterChannel(value) {
+function normalizeElectronUpdaterChannel(value, manifestChannel = "latest") {
+  if (manifestChannel !== "latest") return "stable";
   if (value === "alpha" && process.platform === "darwin") return "alpha";
   return "stable";
 }
@@ -43,18 +44,18 @@ function electronUpdaterChannelPath(app) {
   return path.join(app.getPath("userData"), ELECTRON_UPDATER_CHANNEL_FILENAME);
 }
 
-async function readElectronUpdaterChannel(app) {
+async function readElectronUpdaterChannel(app, manifestChannel = "latest") {
   try {
     const raw = await readFile(electronUpdaterChannelPath(app), "utf8");
     const parsed = JSON.parse(raw);
-    return normalizeElectronUpdaterChannel(parsed?.channel);
+    return normalizeElectronUpdaterChannel(parsed?.channel, manifestChannel);
   } catch {
     return "stable";
   }
 }
 
-async function writeElectronUpdaterChannel(app, channel) {
-  const normalized = normalizeElectronUpdaterChannel(channel);
+async function writeElectronUpdaterChannel(app, channel, manifestChannel = "latest") {
+  const normalized = normalizeElectronUpdaterChannel(channel, manifestChannel);
   const outputPath = electronUpdaterChannelPath(app);
   await mkdir(path.dirname(outputPath), { recursive: true });
   await writeFile(
@@ -65,8 +66,8 @@ async function writeElectronUpdaterChannel(app, channel) {
   return normalized;
 }
 
-function electronUpdaterFeedUrl(channel) {
-  return ELECTRON_UPDATER_FEEDS[normalizeElectronUpdaterChannel(channel)];
+function electronUpdaterFeedUrl(channel, manifestChannel = "latest") {
+  return ELECTRON_UPDATER_FEEDS[normalizeElectronUpdaterChannel(channel, manifestChannel)];
 }
 
 function normalizeStableTargetVersion(value) {
@@ -162,30 +163,39 @@ export function targetedStableUpdaterFeed(currentVersion, targetVersion) {
   return `https://github.com/different-ai/openwork/releases/download/v${normalizedTarget}`;
 }
 
-function updaterChannelState(app, channel, targetVersion = null) {
-  const normalized = normalizeElectronUpdaterChannel(channel);
+function updaterChannelState(app, channel, targetVersion = null, manifestChannel = "latest") {
+  const normalized = normalizeElectronUpdaterChannel(channel, manifestChannel);
   const currentVersion = resolveAppVersion(app);
   return {
     channel: normalized,
     feedUrl: targetVersion
       ? targetedStableUpdaterFeed(currentVersion, targetVersion)
-      : electronUpdaterFeedUrl(normalized),
+      : electronUpdaterFeedUrl(normalized, manifestChannel),
     currentVersion,
   };
 }
 
-async function applyElectronUpdaterFeed(app, updater, targetVersion = null) {
-  const channel = await readElectronUpdaterChannel(app);
+async function applyElectronUpdaterFeed(app, updater, targetVersion = null, manifestChannel = "latest") {
+  const channel = await readElectronUpdaterChannel(app, manifestChannel);
   if (targetVersion && channel !== "stable") {
     throw new Error("Version-specific update feeds are supported only on the stable channel.");
   }
-  const state = updaterChannelState(app, channel, targetVersion);
+  const state = updaterChannelState(app, channel, targetVersion, manifestChannel);
   updater.allowPrerelease = state.channel === "alpha";
   // Moving from alpha back to stable can be a semver downgrade; still show
   // the latest stable so users can return to the stable channel deliberately.
   updater.allowDowngrade = state.channel === "stable" && !targetVersion;
+  // Select the manifest through the generic provider's own `channel` option
+  // rather than AppUpdater#channel: that setter is a no-op unless the instance
+  // was constructed with a channel, which would silently leave a custom
+  // distribution reading latest*.yml and updating itself into the public app.
+  // Public builds pass no channel and keep the provider's `latest` default.
   if (updater?.setFeedURL) {
-    updater.setFeedURL({ provider: "generic", url: state.feedUrl });
+    updater.setFeedURL({
+      provider: "generic",
+      url: state.feedUrl,
+      ...(manifestChannel !== "latest" ? { channel: manifestChannel } : {}),
+    });
   }
   return state;
 }
@@ -214,24 +224,26 @@ const SHIP_IT_DEFAULTS_DOMAIN = "com.differentai.openwork.ShipIt";
 // while the on-disk renderer stays stale). Enabling DirectContentsWrite makes
 // ShipIt write file contents in place instead of moving whole bundles, which
 // avoids the ENOENT abort.
-async function enableSquirrelDirectContentsWrite() {
+async function enableSquirrelDirectContentsWrite(
+  shipItDefaultsDomain = SHIP_IT_DEFAULTS_DOMAIN,
+) {
   if (process.platform !== "darwin") return;
-  await runDefaults(["write", SHIP_IT_DEFAULTS_DOMAIN, "SquirrelMacEnableDirectContentsWrite", "-bool", "YES"]);
+  await runDefaults(["write", shipItDefaultsDomain, "SquirrelMacEnableDirectContentsWrite", "-bool", "YES"]);
 }
 
 // Path of the ShipIt cache that, when stuck, keeps aborting future installs.
 // Exported for tests.
-export function staleUpdaterStatePaths(app) {
+export function staleUpdaterStatePaths(app, shipItDefaultsDomain = SHIP_IT_DEFAULTS_DOMAIN) {
   if (process.platform !== "darwin") return [];
   const home = app.getPath("home");
-  return [path.join(home, "Library", "Caches", SHIP_IT_DEFAULTS_DOMAIN)];
+  return [path.join(home, "Library", "Caches", shipItDefaultsDomain)];
 }
 
 // Remove a previously-failed, half-applied update so the next attempt starts
 // from a clean slate. A stuck `ShipIt` state (after "Too many attempts to
 // install, aborting update") can otherwise keep aborting future installs.
-async function cleanStaleUpdaterState(app) {
-  for (const target of staleUpdaterStatePaths(app)) {
+async function cleanStaleUpdaterState(app, shipItDefaultsDomain) {
+  for (const target of staleUpdaterStatePaths(app, shipItDefaultsDomain)) {
     try {
       await rm(target, { recursive: true, force: true });
     } catch (error) {
@@ -246,7 +258,14 @@ export function preventPendingUpdaterInstall(updater) {
   if (updater) updater.autoInstallOnAppQuit = false;
 }
 
-export function registerUpdaterIpc({ app, ipcMain, getMainWindow }) {
+export function registerUpdaterIpc({
+  app,
+  ipcMain,
+  getMainWindow,
+  loadAutoUpdater = () => import("electron-updater"),
+  manifestChannel = "latest",
+  shipItDefaultsDomain = SHIP_IT_DEFAULTS_DOMAIN,
+}) {
   let autoUpdaterInstance = null;
   let autoUpdaterLoaded = false;
   let checkedUpdateVersion = null;
@@ -269,7 +288,7 @@ export function registerUpdaterIpc({ app, ipcMain, getMainWindow }) {
     if (autoUpdaterLoaded) return autoUpdaterInstance;
     autoUpdaterLoaded = true;
     try {
-      const mod = await import("electron-updater");
+      const mod = await loadAutoUpdater();
       autoUpdaterInstance = mod.autoUpdater ?? mod.default?.autoUpdater ?? null;
       if (autoUpdaterInstance) {
         autoUpdaterInstance.autoDownload = false;
@@ -282,9 +301,11 @@ export function registerUpdaterIpc({ app, ipcMain, getMainWindow }) {
         autoUpdaterInstance.disableDifferentialDownload = true;
         // Make Squirrel.Mac write contents in place rather than moving whole
         // bundles (see enableSquirrelDirectContentsWrite for why).
-        await enableSquirrelDirectContentsWrite();
+        await enableSquirrelDirectContentsWrite(shipItDefaultsDomain);
         autoUpdaterInstance.on("error", (err) => {
-          updateDownloaded = false;
+          // Do not invalidate a staged download on arbitrary updater errors.
+          // A later transient check failure does not delete the downloaded
+          // update; quitAndInstall reports a descriptive failure if it is gone.
           console.warn("[updater] error", err);
         });
         autoUpdaterInstance.on("update-downloaded", () => {
@@ -301,7 +322,7 @@ export function registerUpdaterIpc({ app, ipcMain, getMainWindow }) {
             delta: info.delta ?? 0,
           });
         });
-        await applyElectronUpdaterFeed(app, autoUpdaterInstance);
+        await applyElectronUpdaterFeed(app, autoUpdaterInstance, null, manifestChannel);
       }
     } catch (error) {
       console.warn("[updater] electron-updater not available", error);
@@ -311,12 +332,12 @@ export function registerUpdaterIpc({ app, ipcMain, getMainWindow }) {
   }
 
   ipcMain.handle("openwork:updater:getChannel", async () => {
-    const channel = await readElectronUpdaterChannel(app);
-    return updaterChannelState(app, channel);
+    const channel = await readElectronUpdaterChannel(app, manifestChannel);
+    return updaterChannelState(app, channel, null, manifestChannel);
   });
 
   ipcMain.handle("openwork:updater:setChannel", async (_event, rawChannel) => {
-    const channel = await writeElectronUpdaterChannel(app, rawChannel);
+    const channel = await writeElectronUpdaterChannel(app, rawChannel, manifestChannel);
     checkedUpdateVersion = null;
     checkedUpdateTargetVersion = null;
     updateDownloaded = false;
@@ -326,14 +347,14 @@ export function registerUpdaterIpc({ app, ipcMain, getMainWindow }) {
       // also prevents an Alpha build from installing automatically on quit
       // after an organization policy moves the desktop back to Stable.
       preventPendingUpdaterInstall(updater);
-      return applyElectronUpdaterFeed(app, updater);
+      return applyElectronUpdaterFeed(app, updater, null, manifestChannel);
     }
-    return updaterChannelState(app, channel);
+    return updaterChannelState(app, channel, null, manifestChannel);
   });
 
   ipcMain.handle("openwork:updater:check", async (_event, rawChannel, rawTargetVersion) => {
     if (rawChannel !== undefined) {
-      await writeElectronUpdaterChannel(app, rawChannel);
+      await writeElectronUpdaterChannel(app, rawChannel, manifestChannel);
     }
     const updater = await ensureAutoUpdater();
     try {
@@ -344,8 +365,13 @@ export function registerUpdaterIpc({ app, ipcMain, getMainWindow }) {
         throw new Error("Target update version must use the stable x.y.z format.");
       }
       const channelState = updater
-        ? await applyElectronUpdaterFeed(app, updater, targetVersion)
-        : updaterChannelState(app, await readElectronUpdaterChannel(app), targetVersion);
+        ? await applyElectronUpdaterFeed(app, updater, targetVersion, manifestChannel)
+        : updaterChannelState(
+            app,
+            await readElectronUpdaterChannel(app, manifestChannel),
+            targetVersion,
+            manifestChannel,
+          );
       if (!updater) return { available: false, reason: "unavailable", ...channelState };
 
       const result = await updater.checkForUpdates();
@@ -369,11 +395,16 @@ export function registerUpdaterIpc({ app, ipcMain, getMainWindow }) {
     } catch (error) {
       checkedUpdateVersion = null;
       checkedUpdateTargetVersion = null;
-      updateDownloaded = false;
+      // A transient failed check must not invalidate an already-downloaded update.
       return {
         available: false,
         reason: String(error?.message ?? error),
-        ...updaterChannelState(app, await readElectronUpdaterChannel(app)),
+        ...updaterChannelState(
+          app,
+          await readElectronUpdaterChannel(app, manifestChannel),
+          null,
+          manifestChannel,
+        ),
       };
     }
   });
@@ -382,7 +413,12 @@ export function registerUpdaterIpc({ app, ipcMain, getMainWindow }) {
     const updater = await ensureAutoUpdater();
     if (!updater) return { ok: false, reason: "unavailable" };
     try {
-      await applyElectronUpdaterFeed(app, updater, checkedUpdateTargetVersion);
+      await applyElectronUpdaterFeed(
+        app,
+        updater,
+        checkedUpdateTargetVersion,
+        manifestChannel,
+      );
       const currentVersion = resolveAppVersion(app);
       if (!checkedUpdateVersion || !isVersionNewer(checkedUpdateVersion, currentVersion)) {
         const result = await updater.checkForUpdates();
@@ -402,7 +438,7 @@ export function registerUpdaterIpc({ app, ipcMain, getMainWindow }) {
       }
       // Clear any stuck ShipIt state from a prior aborted install so this
       // download applies cleanly on quit.
-      await cleanStaleUpdaterState(app);
+      await cleanStaleUpdaterState(app, shipItDefaultsDomain);
       updater.autoInstallOnAppQuit = true;
       await updater.downloadUpdate();
       updateDownloaded = true;

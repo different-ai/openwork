@@ -1,7 +1,8 @@
 "use client";
 
-import { useQuery, type QueryClient } from "@tanstack/react-query";
-import { getErrorMessage, requestJson } from "../../_lib/den-flow";
+import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
+import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import {
   type ConnectedIntegration,
   integrationQueryKeys,
@@ -104,6 +105,7 @@ export type DenPlugin = {
   category: PluginCategory;
   installed: boolean;
   source: PluginSource;
+  status?: "active" | "archived";
   marketplaces?: PluginMarketplaceRef[];
   skills: PluginSkill[];
   hooks: PluginHook[];
@@ -323,14 +325,14 @@ const MOCK_PLUGINS: DenPlugin[] = [
     name: "OpenWork Release Kit",
     slug: "openwork-release-kit",
     description:
-      "Internal plugin that automates OpenWork release prep, orchestrator sidecar builds, and changelog generation. Shipped by OpenWork infra.",
+      "Internal plugin that automates OpenWork release prep, server package checks, and changelog generation. Shipped by OpenWork infra.",
     version: "2.3.1",
     author: "OpenWork",
     category: "workflows",
     installed: true,
     source: { type: "github", repo: "different-ai/openwork-plugins" },
     skills: [
-      { id: "sk_ow_release_prep", name: "Release Prep", description: "Bump versions across app/desktop/orchestrator in lockstep." },
+      { id: "sk_ow_release_prep", name: "Release Prep", description: "Bump versions across app, desktop, and openwork-server in lockstep." },
       { id: "sk_ow_changelog", name: "Changelog Drafter", description: "Generate markdown release notes from merged PRs." },
     ],
     hooks: [
@@ -619,6 +621,7 @@ async function fetchResolvedPlugin(id: string): Promise<DenPlugin | null> {
     source: marketplaces[0]
       ? { type: "marketplace", marketplace: marketplaces[0].name }
       : { type: "github", repo: "Connected repository" },
+    status: asString(pluginItem.status) === "archived" ? "archived" : "active",
     updatedAt: asString(pluginItem.updatedAt) ?? new Date().toISOString(),
     version: null,
   } satisfies DenPlugin;
@@ -650,5 +653,58 @@ export function usePlugin(id: string) {
     queryKey: pluginQueryKeys.detail(id),
     queryFn: async () => fetchResolvedPlugin(id),
     enabled: Boolean(id),
+  });
+}
+
+export function useUpdatePlugin() {
+  const queryClient = useQueryClient();
+  const { runReauthableAction } = useOrgDashboard();
+
+  return useMutation({
+    mutationFn: async (input: { pluginId: string; name: string; description: string | null }) => {
+      await runReauthableAction("update-plugin", async () => {
+        const { response, payload } = await requestJson(
+          `/v1/plugins/${encodeURIComponent(input.pluginId)}`,
+          {
+            method: "PATCH",
+            body: JSON.stringify({ name: input.name, description: input.description }),
+          },
+          15000,
+        );
+        if (!response.ok) {
+          throw getRequestError(payload, response, `Failed to update plugin (${response.status}).`);
+        }
+      });
+      return input.pluginId;
+    },
+    onSuccess: (pluginId) => {
+      queryClient.invalidateQueries({ queryKey: pluginQueryKeys.detail(pluginId) });
+      queryClient.invalidateQueries({ queryKey: pluginQueryKeys.list() });
+    },
+  });
+}
+
+export function useArchivePlugin() {
+  const queryClient = useQueryClient();
+  const { runReauthableAction } = useOrgDashboard();
+
+  return useMutation({
+    mutationFn: async (pluginId: string) => {
+      await runReauthableAction("archive-plugin", async () => {
+        const { response, payload } = await requestJson(
+          `/v1/plugins/${encodeURIComponent(pluginId)}/archive`,
+          { method: "POST" },
+          15000,
+        );
+        if (!response.ok) {
+          throw getRequestError(payload, response, `Failed to archive plugin (${response.status}).`);
+        }
+      });
+      return pluginId;
+    },
+    onSuccess: (pluginId) => {
+      queryClient.removeQueries({ queryKey: pluginQueryKeys.detail(pluginId) });
+      queryClient.invalidateQueries({ queryKey: pluginQueryKeys.list() });
+    },
   });
 }

@@ -64,6 +64,10 @@ const slug = (value: string) =>
     .replace(/-+/g, "-")
     .replace(/^-|-$/g, "")
 
+function shellQuote(value: string) {
+  return `'${value.replace(/'/g, `'"'"'`)}'`
+}
+
 const hostFromUrl = (value: string | null | undefined) => {
   if (!value) {
     return ""
@@ -250,17 +254,34 @@ async function provisionWorkerOnRender(
   const serviceName = slug(
     `${env.render.workerNamePrefix}-${input.name}-${input.workerId.slice(0, 8)}`,
   ).slice(0, 62)
-  const orchestratorPackage = env.render.workerOpenworkVersion?.trim()
-    ? `openwork-orchestrator@${env.render.workerOpenworkVersion.trim()}`
-    : "openwork-orchestrator"
+  const openworkServerPackage = env.render.workerOpenworkVersion?.trim()
+    ? `openwork-server@${env.render.workerOpenworkVersion.trim()}`
+    : "openwork-server"
   const buildCommand = [
-    `npm install -g ${orchestratorPackage}`,
+    `npm install -g ${shellQuote(openworkServerPackage)}`,
     "node ./scripts/install-opencode.mjs",
   ].join(" && ")
-  const startCommand = [
-    "mkdir -p /tmp/workspace",
-    "attempt=0; while [ $attempt -lt 3 ]; do attempt=$((attempt + 1)); openwork serve --workspace /tmp/workspace --remote-access --openwork-port ${PORT:-10000} --opencode-host 127.0.0.1 --opencode-port 4096 --connect-host 127.0.0.1 --cors '*' --approval manual --allow-external --opencode-source external --opencode-bin ./bin/opencode --verbose && exit 0; echo \"openwork serve failed (attempt $attempt); retrying in 3s\"; sleep 3; done; exit 1",
-  ].join(" && ")
+  const startScript = `
+set -u
+mkdir -p /tmp/workspace
+plugin_dir="$(npm root -g)/openwork-server/dist/opencode-plugins"
+if [ ! -d "$plugin_dir" ]; then
+  echo "openwork-server extension plugins missing at $plugin_dir" >&2
+  exit 1
+fi
+attempt=0
+while [ "$attempt" -lt 3 ]; do
+  attempt=$((attempt + 1))
+  if OPENWORK_MANAGE_OPENCODE=1 OPENWORK_OPENCODE_BIN=./bin/opencode OPENWORK_EXTENSIONS_PLUGIN_DIR="$plugin_dir" openwork-server --workspace /tmp/workspace --host 0.0.0.0 --port "\${PORT:-10000}" --cors '*' --approval manual --verbose; then
+    exit 0
+  fi
+  status=$?
+  echo "openwork-server failed (attempt $attempt, exit $status); retrying in 3s"
+  sleep 3
+done
+exit 1
+`.trim()
+  const startCommand = `sh -lc ${shellQuote(startScript)}`
 
   const payload = {
     type: "web_service",

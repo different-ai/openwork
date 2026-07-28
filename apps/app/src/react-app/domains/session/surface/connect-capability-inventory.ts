@@ -8,7 +8,7 @@ import type {
 } from "@/app/lib/den";
 import type { McpServerEntry, McpStatus, McpStatusMap, SkillCard } from "@/app/types";
 
-type ConnectCapabilityClient = {
+export type ConnectCapabilityClient = {
   listOrgMarketplaces: (organizationId: string) => Promise<DenOrgMarketplace[]>;
   getOrgMarketplaceResolved: (
     organizationId: string,

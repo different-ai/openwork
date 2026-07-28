@@ -7,8 +7,8 @@ import {
   BarChart3,
   ChevronDown,
   ChevronRight,
-  Cloud,
   FileText,
+  Globe,
   Home,
   LogOut,
   Menu,
@@ -30,7 +30,6 @@ import {
   getApiKeysRoute,
   getBrandAppearanceRoute,
   getBillingRoute,
-  getCloudRoute,
   getCustomLlmProvidersRoute,
   getDiagnosticsRoute,
   getDesktopPoliciesRoute,
@@ -47,6 +46,7 @@ import {
   getPluginsRoute,
   getSsoRoute,
   getScimRoute,
+  getWebRoute,
 } from "../../_lib/den-org";
 import { useOrgListWindow } from "../../_lib/use-org-list-window";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
@@ -253,7 +253,7 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
     return "Background Tasks";
   }
   if (pathname.startsWith(getCustomLlmProvidersRoute(orgSlug))) {
-    return "LLM Providers";
+    return "Bring your Own Keys";
   }
   if (pathname.startsWith(getDesktopPoliciesRoute(orgSlug))) {
     return "Desktop Policies";
@@ -264,8 +264,8 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
   if (pathname.startsWith(getInferenceRoute(orgSlug))) {
     return "OpenWork Models";
   }
-  if (pathname.startsWith(getCloudRoute(orgSlug))) {
-    return "Cloud";
+  if (pathname.startsWith(getWebRoute(orgSlug))) {
+    return "Web";
   }
   if (pathname.startsWith(getPluginsRoute(orgSlug))) {
     return "Plugins";
@@ -352,10 +352,11 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
     orgSlug: activeOrg?.slug,
   });
   const mcpConnectionsEnabled = orgContext?.capabilities.mcpConnections === true;
-  // Cloud is a hosted alpha. The org payload only reports `cloud` after the
-  // server rollout helper has verified the multi-org deployment gate, so the
-  // sidebar stays hidden by default until both config and org context load.
-  const showCloud = runtimeConfigLoaded && orgContext?.capabilities.cloud === true;
+  // Web access is backed by the existing hosted cloud capability. The org
+  // payload only reports `cloud` after the server rollout helper has verified
+  // the multi-org deployment gate, so the sidebar stays hidden by default until
+  // both config and org context load.
+  const showWeb = runtimeConfigLoaded && orgContext?.capabilities.cloud === true;
 
   // Top-level rows: Dashboard, optional Your Connections, Extensions, Models,
   // Members, Analytics, Settings. Everything tool-shaped groups under
@@ -390,7 +391,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
           ...(showOpenWorkModels
             ? [{ href: getInferenceRoute(activeOrg.slug), label: "OpenWork Models" }]
             : []),
-          { href: getCustomLlmProvidersRoute(activeOrg.slug), label: "LLM Providers" },
+          { href: getCustomLlmProvidersRoute(activeOrg.slug), label: "Bring your Own Keys" },
         ],
       }
     : null;
@@ -435,11 +436,11 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
           badge: "Beta",
         }]
       : []),
-    ...(showCloud
+    ...(showWeb
       ? [{
-          href: activeOrg ? getCloudRoute(activeOrg.slug) : "#",
-          label: "Cloud",
-          icon: Cloud,
+          href: activeOrg ? getWebRoute(activeOrg.slug) : "#",
+          label: "Web",
+          icon: Globe,
           badge: "Alpha",
         }]
       : []),

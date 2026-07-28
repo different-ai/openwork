@@ -2091,9 +2091,16 @@ export async function listPluginMemberships(input: { context: PluginArchActorCon
   }
 
   const configObjects = await db.select().from(ConfigObjectTable).where(inArray(ConfigObjectTable.id, memberships.map((membership) => membership.configObjectId)))
-  const latestVersions = await getLatestVersions(configObjects.map((row) => row.id))
-  const byId = new Map<string, ReturnType<typeof serializeConfigObject>>(configObjects.map((row) => [row.id, serializeConfigObject(row, latestVersions.get(row.id) ?? null)]))
-  return { items: memberships.map((membership) => serializeMembership(membership, byId.get(membership.configObjectId))), nextCursor: null }
+  const resolvedConfigObjects = input.onlyActive
+    ? configObjects.filter((row) => row.status === "active" && row.deletedAt === null)
+    : configObjects
+  const resolvedConfigObjectIds = new Set(resolvedConfigObjects.map((row) => row.id))
+  const resolvedMemberships = input.onlyActive
+    ? memberships.filter((membership) => resolvedConfigObjectIds.has(membership.configObjectId))
+    : memberships
+  const latestVersions = await getLatestVersions(resolvedConfigObjects.map((row) => row.id))
+  const byId = new Map<string, ReturnType<typeof serializeConfigObject>>(resolvedConfigObjects.map((row) => [row.id, serializeConfigObject(row, latestVersions.get(row.id) ?? null)]))
+  return { items: resolvedMemberships.map((membership) => serializeMembership(membership, byId.get(membership.configObjectId))), nextCursor: null }
 }
 
 export async function addPluginMembership(input: { configObjectId: ConfigObjectId; context: PluginArchActorContext; membershipSource?: PluginMembershipRow["membershipSource"]; pluginId: PluginId }) {

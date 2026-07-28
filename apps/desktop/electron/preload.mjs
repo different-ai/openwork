@@ -49,10 +49,13 @@ function installMenuOverlayDismissListeners() {
 }
 
 let desktopBootstrap = null;
+let desktopDistribution = null;
 try {
   desktopBootstrap = ipcRenderer.sendSync("openwork:desktop-bootstrap-sync");
+  desktopDistribution = ipcRenderer.sendSync("openwork:desktop-distribution-sync");
 } catch {
   desktopBootstrap = null;
+  desktopDistribution = null;
 }
 
 contextBridge.exposeInMainWorld("__OPENWORK_ELECTRON__", {
@@ -186,6 +189,7 @@ contextBridge.exposeInMainWorld("__OPENWORK_ELECTRON__", {
   },
   meta: {
     desktopBootstrap,
+    distribution: desktopDistribution,
     initialDeepLinks: [],
     platform: normalizePlatform(process.platform),
     version: process.versions.electron,

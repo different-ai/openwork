@@ -4,12 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import {
   CheckCircle2,
   ChevronRight,
-  Cpu,
-  Puzzle,
-  Sparkles,
-  Store,
   Users,
-  type LucideIcon,
 } from "lucide-react";
 import { getErrorMessage, requestJson } from "../../_lib/den-flow";
 import { formatRoleLabel } from "../../_lib/den-org";
@@ -68,46 +63,6 @@ function getErrorText(error: unknown) {
   return error instanceof Error ? error.message : "Something went wrong.";
 }
 
-function SummaryCard({
-  icon: Icon,
-  title,
-  value,
-  detail,
-  tone,
-}: {
-  icon: LucideIcon;
-  title: string;
-  value: string;
-  detail: string;
-  tone: "blue" | "emerald" | "violet" | "amber";
-}) {
-  const toneClass = {
-    blue: "bg-blue-50 text-blue-700",
-    emerald: "bg-emerald-50 text-emerald-700",
-    violet: "bg-violet-50 text-violet-700",
-    amber: "bg-amber-50 text-amber-700",
-  }[tone];
-
-  return (
-    <section
-      className="rounded-2xl border border-gray-100 bg-white px-4 py-3.5"
-      data-resource={title}
-      data-testid="member-resource-card"
-    >
-      <div className="flex items-start gap-3">
-        <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] ${toneClass}`}>
-          <Icon className="h-5 w-5" aria-hidden="true" />
-        </div>
-        <div className="min-w-0">
-          <p className="text-[13px] font-medium text-gray-500">{title}</p>
-          <p className="mt-0.5 text-[20px] font-semibold tracking-[-0.03em] text-gray-950">{value}</p>
-          <p className="mt-0.5 text-[12px] leading-5 text-gray-500">{detail}</p>
-        </div>
-      </div>
-    </section>
-  );
-}
-
 function ErrorNotice({ children }: { children: React.ReactNode }) {
   return (
     <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-[13px] leading-5 text-amber-800">
@@ -136,11 +91,6 @@ export function MemberDashboardScreen() {
   });
 
   const customProviders = llmProviders.filter((provider) => provider.source !== "openwork");
-  const openWorkProviders = llmProviders.filter((provider) => provider.source === "openwork");
-  const visiblePluginParts = plugins.reduce(
-    (count, plugin) => count + plugin.skills.length + plugin.hooks.length + plugin.mcps.length + plugin.agents.length + plugin.commands.length,
-    0,
-  );
 
   const currentMember = orgContext?.currentMember;
   const teamNames = orgContext?.currentMemberTeams.map((team) => team.name).sort((a, b) => a.localeCompare(b)) ?? [];
@@ -182,43 +132,6 @@ export function MemberDashboardScreen() {
           <OrganizationDownloadCard organizationId={activeOrg.id} organizationName={activeOrg.name} />
         </div>
       ) : null}
-
-      <section className="mt-5" aria-labelledby="member-resources-heading" data-testid="member-resource-overview">
-        <div className="mb-3">
-          <h2 id="member-resources-heading" className="text-[16px] font-semibold tracking-[-0.02em] text-gray-950">Available resources</h2>
-          <p className="mt-0.5 text-[13px] text-gray-500">Assigned directly to you, your teams, or everyone in the workspace.</p>
-        </div>
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-          <SummaryCard
-            icon={Sparkles}
-            title="OpenWork Models"
-            value={inferenceLabel}
-            detail={inference?.enabled ? `${openWorkProviders.length} model key group${openWorkProviders.length === 1 ? "" : "s"} visible to you.` : "Ask an admin to enable org-provided models."}
-            tone={inference?.enabled ? "emerald" : "amber"}
-          />
-          <SummaryCard
-            icon={Cpu}
-            title="Custom LLM Providers"
-            value={providersBusy ? "Loading" : `${customProviders.length}`}
-            detail="Provider credentials and models your role or teams can use."
-            tone="blue"
-          />
-          <SummaryCard
-            icon={Store}
-            title="Marketplaces"
-            value={marketplacesLoading ? "Loading" : `${marketplaces.length}`}
-            detail="Plugin collections assigned to you or everyone in your org."
-            tone="amber"
-          />
-          <SummaryCard
-            icon={Puzzle}
-            title="Plugins"
-            value={pluginsLoading ? "Loading" : `${plugins.length}`}
-            detail={`${visiblePluginParts} skill, hook, MCP, agent, or command parts available.`}
-            tone="violet"
-          />
-        </div>
-      </section>
 
       <div className="mt-5 grid gap-5 lg:grid-cols-[1fr_1fr]">
         <section className="rounded-2xl border border-gray-100 bg-white p-5">
