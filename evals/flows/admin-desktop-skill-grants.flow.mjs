@@ -194,17 +194,14 @@ export default {
       },
     },
     {
-      name: "Desktop MCP context honors grants",
+      name: "Desktop MCP connection context honors grants",
       run: async (ctx) => {
         await ctx.prove("The administrator desktop shows the granted MCP declaration without exposing the unassigned MCP", {
           voiceover: vo[2],
           action: async () => {
             await ctx.control("settings.panel.open", { panel: "extensions" });
             await ctx.waitForText("Extensions", { timeoutMs: 30_000 });
-            await ctx.clickText("MCP", { selector: "button", timeoutMs: 30_000 });
-            if (await ctx.hasText("Show hidden")) {
-              await ctx.clickText("Show hidden", { timeoutMs: 30_000 });
-            }
+            await ctx.clickText("Connections", { selector: "button", timeoutMs: 30_000 });
             await ctx.waitForText(MCP_GRANTED_TITLE, { timeoutMs: 30_000 });
           },
           assert: async () => {
@@ -213,7 +210,7 @@ export default {
           },
           screenshot: {
             name: "admin-desktop-assigned-mcp-context",
-            requireText: ["Extensions", "MCP", MCP_GRANTED_TITLE],
+            requireText: ["Extensions", "Connections", MCP_GRANTED_TITLE],
             rejectText: ["Something went wrong", MCP_DEN_ONLY_TITLE],
             hashIncludes: "/settings/extensions",
           },
