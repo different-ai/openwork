@@ -47,6 +47,7 @@ import {
   type WorkspaceList,
 } from "@/app/lib/desktop";
 import type {
+  ComposerAttachment,
   ComposerDraft,
   ComposerPart,
   ModelOption,
@@ -2163,10 +2164,16 @@ export function SessionRoute() {
           captureAnalyticsEvent("task_created", { source: "workspace_created", workspace_type: "local" });
           const firstTaskPrompt = options?.firstTaskPrompt?.trim();
           if (firstTaskPrompt) {
-            saveSessionDraft(targetWorkspaceId, session.id, { text: firstTaskPrompt, mode: "prompt" });
+            const firstTaskAttachments = options?.firstTaskAttachments ?? [];
+            // Attachment chips only survive in-memory (File objects), so the
+            // persisted fallback draft drops their tokens.
+            saveSessionDraft(targetWorkspaceId, session.id, { text: firstTaskPrompt.replace(/\[attachment [^\]]+\]/g, "").trim(), mode: "prompt" });
             // The composer reads its draft from the composer state store, not
             // the persisted draft store — seed both so the prompt shows up.
             useComposerStateStore.getState().setDraft(session.id, firstTaskPrompt);
+            if (firstTaskAttachments.length) {
+              useComposerStateStore.getState().setAttachments(session.id, firstTaskAttachments);
+            }
             // One-step run: the session surface sends the seeded draft itself.
             markComposerAutoSend(session.id);
           }
@@ -2196,7 +2203,7 @@ export function SessionRoute() {
    * workspace under the user's home folder instead of asking where to put
    * it. Falls back to the create-workspace modal off desktop.
    */
-  const handleChatFirstTask = useCallback((prompt: string) => {
+  const handleChatFirstTask = useCallback((prompt: string, attachments?: ComposerAttachment[]) => {
     void (async () => {
       if (!isDesktopRuntime()) {
         handleOpenCreateWorkspace();
@@ -2212,7 +2219,7 @@ export function SessionRoute() {
         handleOpenCreateWorkspace();
         return;
       }
-      await handleCreateWorkspace("starter", folder, { firstTaskPrompt: prompt });
+      await handleCreateWorkspace("starter", folder, { firstTaskPrompt: prompt, firstTaskAttachments: attachments ?? [] });
     })();
   }, [handleCreateWorkspace, handleOpenCreateWorkspace]);
 
@@ -2467,7 +2474,7 @@ export function SessionRoute() {
             }
           });
         },
-        onCreateTaskWithPrompt: (workspaceId, prompt) => {
+        onCreateTaskWithPrompt: (workspaceId, prompt, attachments) => {
           void (async () => {
             const workspace = workspaces.find((item) => item.id === workspaceId);
             if (!workspace) return;
@@ -2485,12 +2492,21 @@ export function SessionRoute() {
               if (workspaceId === selectedWorkspaceId) {
                 void sessionProviderAuthStore.runCloudProviderSync("new_chat");
               }
-              saveSessionDraft(workspaceId, session.id, { text: prompt, mode: "prompt" });
-              // The composer reads its draft from the composer state store,
-              // not the persisted draft store — seed both.
-              useComposerStateStore.getState().setDraft(session.id, prompt);
-              // One-step run: the session surface sends the seeded draft itself.
-              markComposerAutoSend(session.id);
+              const firstTaskPrompt = prompt.trim();
+              if (firstTaskPrompt) {
+                const firstTaskAttachments = attachments ?? [];
+                // Attachment chips only survive in-memory (File objects), so the
+                // persisted fallback draft drops their tokens.
+                saveSessionDraft(workspaceId, session.id, { text: firstTaskPrompt.replace(/\[attachment [^\]]+\]/g, "").trim(), mode: "prompt" });
+                // The composer reads its draft from the composer state store,
+                // not the persisted draft store — seed both.
+                useComposerStateStore.getState().setDraft(session.id, firstTaskPrompt);
+                if (firstTaskAttachments.length) {
+                  useComposerStateStore.getState().setAttachments(session.id, firstTaskAttachments);
+                }
+                // One-step run: the session surface sends the seeded draft itself.
+                markComposerAutoSend(session.id);
+              }
               writeActiveWorkspaceId(workspaceId || null);
               writeLastSessionFor(workspaceId, session.id);
               rememberPendingCreatedSession(workspaceId, session.id);

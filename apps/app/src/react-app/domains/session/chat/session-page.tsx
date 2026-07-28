@@ -13,6 +13,7 @@ import { getDisplaySessionTitle } from "../../../../app/lib/session-title";
 import type { BootPhase } from "../../../../app/lib/startup-boot";
 import { openDesktopPath, revealDesktopItemInDir, type WorkspaceInfo } from "../../../../app/lib/desktop";
 import type {
+  ComposerAttachment,
   PendingPermission,
   PendingQuestion,
   ProviderListItem,
@@ -133,7 +134,7 @@ export type SessionPageSidebarProps = {
   onOpenSession: (workspaceId: string, sessionId: string) => void;
   onPrefetchSession?: (workspaceId: string, sessionId: string) => void;
   onCreateTaskInWorkspace: (workspaceId: string, groupId?: string) => void;
-  onCreateTaskWithPrompt?: (workspaceId: string, prompt: string) => void;
+  onCreateTaskWithPrompt?: (workspaceId: string, prompt: string, attachments?: ComposerAttachment[]) => void;
   onOpenRenameWorkspace: (workspaceId: string) => void;
   onShareWorkspace: (workspaceId: string) => void;
   onRevealWorkspace: (workspaceId: string) => void;
@@ -204,7 +205,7 @@ export type SessionPageProps = {
   notFoundMessage?: string | null;
   onOpenProviderAuth?: () => void;
   /** Chat-first: create a default workspace and start a task from the empty-state composer. */
-  onChatFirstTask?: (prompt: string) => void;
+  onChatFirstTask?: (prompt: string, attachments?: ComposerAttachment[]) => void;
   chatFirstBusy?: boolean;
   /** Workspace-scoped wiring for the empty-state hero's full composer. */
   newTaskComposer?: NewTaskComposerContext | null;
@@ -1304,7 +1305,7 @@ export function SessionPage(props: SessionPageProps) {
                     <SessionEmptyHero
                       providerCount={providerCount}
                       busy={props.chatFirstBusy}
-                      onRunTask={(prompt) => props.onChatFirstTask?.(prompt)}
+                      onRunTask={(prompt, attachments) => props.onChatFirstTask?.(prompt, attachments)}
                       onOpenProviderAuth={props.onOpenProviderAuth}
                       composer={props.newTaskComposer}
                     />
@@ -1357,8 +1358,8 @@ export function SessionPage(props: SessionPageProps) {
                     <div className="flex flex-1 items-center justify-center py-16">
                       <SessionEmptyHero
                         providerCount={providerCount}
-                        onRunTask={(prompt) =>
-                          props.sidebar.onCreateTaskWithPrompt?.(props.selectedWorkspaceId, prompt)
+                        onRunTask={(prompt, attachments) =>
+                          props.sidebar.onCreateTaskWithPrompt?.(props.selectedWorkspaceId, prompt, attachments)
                         }
                         onOpenProviderAuth={props.onOpenProviderAuth}
                         composer={props.newTaskComposer}

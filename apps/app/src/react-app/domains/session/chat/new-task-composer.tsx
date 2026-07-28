@@ -4,7 +4,7 @@ import type { Agent } from "@opencode-ai/sdk/v2/client";
 
 import { createDenClient, readDenSettings } from "@/app/lib/den";
 import type { OpenworkServerClient } from "@/app/lib/openwork-server";
-import type { McpServerEntry, McpStatusMap, ModelRef, SkillCard, SlashCommandOption } from "@/app/types";
+import type { ComposerAttachment, McpServerEntry, McpStatusMap, ModelRef, SkillCard, SlashCommandOption } from "@/app/types";
 import { t } from "@/i18n";
 import { ReactSessionComposer } from "@/react-app/domains/session/surface/composer/composer";
 import { encodeComposerMentionValue, type ComposerMentionKind } from "@/react-app/domains/session/surface/composer/mention-encoding";
@@ -14,6 +14,7 @@ import {
   type PastedTextChip,
 } from "@/react-app/domains/session/surface/composer/pasted-text";
 import { loadSessionConnectCapabilities } from "@/react-app/domains/connections/cloud-inventory-cache";
+import { resolveAttachmentFileMetadata } from "@/react-app/domains/session/sync/attachment-file-part";
 
 /**
  * Workspace-scoped wiring for the new-task composer. Everything here is
@@ -50,8 +51,8 @@ export type NewTaskComposerContext = {
 export type NewTaskComposerProps = {
   draft: string;
   onDraftChange: (value: string) => void;
-  /** Called with a non-empty draft; the caller creates the session (and workspace if needed). */
-  onRunTask: (resolvedDraft: string) => void;
+  /** Called with a non-empty draft and in-memory attachments; the caller creates the session (and workspace if needed). */
+  onRunTask: (resolvedDraft: string, attachments: ComposerAttachment[]) => void;
   /** Disable submission while a default workspace is being prepared. */
   busy: boolean;
   context: NewTaskComposerContext | null;
@@ -67,11 +68,12 @@ const FALLBACK_MODEL: ModelRef = { providerID: "", modelID: "" };
  * The real session composer, reused for the "What do you need done?" empty
  * state. The draft (including skill/mention tokens) is seeded into the
  * created session's composer, so pills typed here survive the handoff.
- * Attachments stay disabled: they are uploaded per session, which does not
- * exist yet.
+ * Attachments are collected before the session exists and seeded into the
+ * created session, where the normal send path uploads them into the workspace.
  */
 export function NewTaskComposer(props: NewTaskComposerProps) {
   const [mentions, setMentions] = useState<Record<string, ComposerMentionKind>>({});
+  const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   const [skills, setSkills] = useState<SkillCard[]>([]);
   const [mcpServers, setMcpServers] = useState<McpServerEntry[]>([]);
   const [mcpStatuses, setMcpStatuses] = useState<McpStatusMap>({});
@@ -152,8 +154,50 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
     setPastedText((current) => current.filter((item) => item.id !== id));
   };
 
+  const handleDraftChange = (value: string) => {
+    props.onDraftChange(value);
+    const idsInDraft = new Set(
+      [...value.matchAll(/\[attachment ([^\]]+)\]/g)].map((match) => match[1]).filter((id): id is string => Boolean(id)),
+    );
+    setAttachments((current) => {
+      const retained = current.filter((attachment) => idsInDraft.has(attachment.id));
+      if (retained.length === current.length) return current;
+      for (const attachment of current) {
+        if (!idsInDraft.has(attachment.id)) revokeAttachmentPreview(attachment);
+      }
+      return retained;
+    });
+  };
+
+  const handleAttachFiles = (files: File[]) => {
+    if (!files.length) return;
+    const next: ComposerAttachment[] = files.map((file) => {
+      const metadata = resolveAttachmentFileMetadata(file);
+      return {
+        id: `att-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`,
+        name: file.name,
+        mimeType: metadata.mime,
+        size: file.size,
+        kind: metadata.kind,
+        file,
+        previewUrl: metadata.kind === "image" ? URL.createObjectURL(file) : undefined,
+      };
+    });
+    setAttachments((current) => [...current, ...next]);
+    props.onDraftChange(`${props.draft}${next.map((attachment) => `[attachment ${attachment.id}]`).join("")}`);
+  };
+
+  const handleRemoveAttachment = (id: string) => {
+    setAttachments((current) => {
+      const target = current.find((item) => item.id === id);
+      if (target) revokeAttachmentPreview(target);
+      return current.filter((item) => item.id !== id);
+    });
+    props.onDraftChange(props.draft.replaceAll(`[attachment ${id}]`, ""));
+  };
+
   const handleRunTask = () => {
-    props.onRunTask(resolvePastedTextPlaceholders(props.draft, pastedText));
+    props.onRunTask(resolvePastedTextPlaceholders(props.draft, pastedText), attachments);
   };
 
   const handleUnsupportedFileLinks = (links: string[]) => {
@@ -165,7 +209,7 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
     <ReactSessionComposer
       draft={props.draft}
       mentions={mentions}
-      onDraftChange={props.onDraftChange}
+      onDraftChange={handleDraftChange}
       onSend={handleRunTask}
       onSteer={noop}
       onQueue={noop}
@@ -184,11 +228,11 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
       onRefreshOrganizationModels={context?.onRefreshOrganizationModels}
       onModelPickerOpenChange={context?.onModelPickerOpenChange ?? noop}
       onModelChange={context?.onModelChange ?? noop}
-      attachments={[]}
-      onAttachFiles={noop}
-      onRemoveAttachment={noop}
-      attachmentsEnabled={false}
-      attachmentsDisabledReason="Attachments become available once the task starts."
+      attachments={attachments}
+      onAttachFiles={handleAttachFiles}
+      onRemoveAttachment={handleRemoveAttachment}
+      attachmentsEnabled
+      attachmentsDisabledReason={null}
       modelVariantLabel={context?.modelVariantLabel ?? ""}
       modelVariant={context?.modelVariant ?? null}
       modelBehaviorOptions={context?.modelBehaviorOptions}
@@ -221,4 +265,9 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
       draftScopeKey={`new-task:${workspaceId ?? "chat-first"}`}
     />
   );
+}
+
+function revokeAttachmentPreview(attachment: { previewUrl?: string | undefined }) {
+  if (!attachment.previewUrl) return;
+  URL.revokeObjectURL(attachment.previewUrl);
 }

@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { Zap } from "lucide-react";
 
+import type { ComposerAttachment } from "@/app/types";
 import { resolveOrganizationPromptCardContent } from "@/components/chat/task-suggestions";
 import { useCheckDesktopRestriction, useOrgRestrictions } from "@/react-app/domains/cloud/desktop-config-provider";
 import { NewTaskComposer, type NewTaskComposerContext } from "./new-task-composer";
@@ -39,8 +40,8 @@ export type SessionEmptyHeroProps = {
   providerCount: number;
   /** Disable submission while a default workspace is being prepared. */
   busy?: boolean;
-  /** Called with the task prompt; the caller creates the session (and workspace if needed). */
-  onRunTask: (prompt: string) => void;
+  /** Called with the task prompt and attachments; the caller creates the session (and workspace if needed). */
+  onRunTask: (prompt: string, attachments: ComposerAttachment[]) => void;
   onOpenProviderAuth?: () => void;
   /** Workspace-scoped wiring for the full composer (skills, agents, models). */
   composer?: NewTaskComposerContext | null;
@@ -70,10 +71,10 @@ export function SessionEmptyHero(props: SessionEmptyHeroProps) {
     })
     : DEFAULT_SUGGESTIONS;
 
-  const submit = (resolvedPrompt: string) => {
+  const submit = (resolvedPrompt: string, attachments: ComposerAttachment[]) => {
     const trimmedPrompt = resolvedPrompt.trim();
     if (!trimmedPrompt || props.busy) return;
-    props.onRunTask(trimmedPrompt);
+    props.onRunTask(trimmedPrompt, attachments);
   };
 
   const fillPrompt = (value: string) => {
