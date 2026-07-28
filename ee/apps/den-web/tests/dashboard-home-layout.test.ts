@@ -20,28 +20,29 @@ describe("dashboard home layouts", () => {
     expect(promotion).toContain("Download the app to unlock extensions");
   });
 
-  test("retains the organization download card on both dashboard experiences", () => {
+  test("retains the organization download card on the admin overview", () => {
     const overview = readDashboardComponent("dashboard-overview-screen.tsx");
-    const member = readDashboardComponent("member-dashboard-screen.tsx");
     const downloadCard = readDashboardComponent("organization-download-card.tsx");
 
     expect(overview).toContain("<OrganizationDownloadCard");
-    expect(member).toContain("<OrganizationDownloadCard");
     expect(downloadCard).toContain('data-testid="workspace-install-card"');
     expect(downloadCard).toContain('data-testid="workspace-install-open"');
   });
 
-  test("member dashboard lists usable resources without a summary strip of empty counts", () => {
+  test("member dashboard is a single download action, not a resource inventory", () => {
     const member = readDashboardComponent("member-dashboard-screen.tsx");
 
     expect(member).toContain('data-testid="member-dashboard"');
-    expect(member).not.toContain('data-testid="member-resource-overview"');
-    expect(member).not.toContain('data-testid="member-resource-card"');
-    expect(member).not.toContain("Available resources");
-    expect(member).toContain('useOrgLlmProviders(orgId, { scope: "usable" })');
-    expect(member).toContain("useMarketplaces()");
-    expect(member).toContain("usePlugins()");
-    expect(member).toContain('requestJson("/v1/inference"');
+    expect(member).toContain('data-testid="member-download-app"');
+    expect(member).toContain('data-testid="member-copy-install-link"');
+    // The install link is minted by the workspace's own den, so the same
+    // action works for OpenWork Cloud and self-hosted orgs.
+    expect(member).toContain("createOrganizationInstallLink");
+    expect(member).toContain('"openwork://open"');
+    expect(member).not.toContain("useOrgLlmProviders");
+    expect(member).not.toContain("useMarketplaces");
+    expect(member).not.toContain("usePlugins");
+    expect(member).not.toContain('requestJson("/v1/inference"');
     expect(member).not.toContain("Paper");
     expect(member).not.toContain('bg-[#07192C]');
   });
