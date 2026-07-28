@@ -8,6 +8,12 @@ const composerPath = fileURLToPath(
 const sessionSurfacePath = fileURLToPath(
   new URL("../src/react-app/domains/session/surface/session-surface.tsx", import.meta.url),
 );
+const sessionRoutePath = fileURLToPath(
+  new URL("../src/react-app/shell/session-route.tsx", import.meta.url),
+);
+const sessionProviderAuthPath = fileURLToPath(
+  new URL("../src/react-app/domains/connections/provider-auth/use-session-provider-auth.ts", import.meta.url),
+);
 
 describe("composer model controls", () => {
   test("stay enabled during ordinary generation and disable during steering", () => {
@@ -40,5 +46,15 @@ describe("composer model controls", () => {
     expect(composerSource).toContain("sm:max-w-80");
     expect(composerSource).toContain("min-w-0 truncate");
     expect(composerSource).toContain('t("models.retry_organization_models")');
+  });
+
+  test("updates the session cloud-provider snapshot after a manual retry", () => {
+    const sessionRouteSource = readFileSync(sessionRoutePath, "utf8");
+    const sessionProviderAuthSource = readFileSync(sessionProviderAuthPath, "utf8");
+
+    expect(sessionRouteSource).toContain('await refreshCloudProviderSync("manual");');
+    expect(sessionProviderAuthSource).toContain(
+      "setCompletedCloudProviderSync({ context: cloudProviderSyncContext, providerList });",
+    );
   });
 });

@@ -124,7 +124,6 @@ import {
 } from "@/react-app/domains/connections/provider-auth/provider-policy";
 import {
   isOrganizationModelsEmpty,
-  refreshOrganizationModels,
   shouldAutoOpenUnavailableModelPicker,
 } from "@/react-app/domains/connections/provider-auth/managed-models-recovery";
 import { useSessionProviderAuth } from "@/react-app/domains/connections/provider-auth/use-session-provider-auth";
@@ -764,6 +763,7 @@ export function SessionRoute() {
     snapshot: sessionProviderAuthSnapshot,
     cloudProviderSyncReady,
     cloudProviderList,
+    refreshCloudProviderSync,
   } = useSessionProviderAuth({
     opencodeClient,
     opencodeBaseUrl,
@@ -837,11 +837,8 @@ export function SessionRoute() {
     sessionProviderAuthSnapshot.importedCloudProviders,
   ]);
   const refreshOrganizationModelAccess = useCallback(async () => {
-    await refreshOrganizationModels({
-      runCloudProviderSync: sessionProviderAuthStore.runCloudProviderSync,
-      refreshProviders: () => sessionProviderAuthStore.refreshProviders({ force: true }),
-    });
-  }, [sessionProviderAuthStore]);
+    await refreshCloudProviderSync("manual");
+  }, [refreshCloudProviderSync]);
   const refreshOpenWorkModels = useCallback(async () => {
     await refreshOrganizationModelAccess();
   }, [refreshOrganizationModelAccess]);
