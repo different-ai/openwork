@@ -466,7 +466,7 @@ function SessionHoverQuickActions({
     <div
       data-session-hover-actions
       className={cn(
-        "absolute right-2.5 top-1/2 z-10 flex -translate-y-1/2 items-center gap-1.5 opacity-0 pointer-events-none transition-opacity group-hover/menu-sub-item:opacity-100 group-hover/menu-sub-item:pointer-events-auto group-has-data-popup-open/menu-sub-item:opacity-100 group-has-data-popup-open/menu-sub-item:pointer-events-auto",
+        "absolute right-2 top-1/2 z-10 flex -translate-y-1/2 items-center gap-0.5 opacity-0 pointer-events-none transition-opacity group-hover/menu-sub-item:opacity-100 group-hover/menu-sub-item:pointer-events-auto group-has-data-popup-open/menu-sub-item:opacity-100 group-has-data-popup-open/menu-sub-item:pointer-events-auto",
         className,
       )}
     >
@@ -1039,7 +1039,7 @@ export function AppSidebar(props: AppSidebarProps) {
         collapsible="offcanvas"
         className="border-e-0 group-data-[side=left]:border-e-0 mac:**:data-[sidebar=sidebar]:bg-transparent"
       >
-        <div className="hidden h-14 mac:block mac:titlebar-drag"/>
+        <div className="hidden h-12 mac:block mac:titlebar-drag"/>
         {brandLogoUrl ? (
           <div
             data-testid="brand-logo"
@@ -1085,7 +1085,7 @@ export function AppSidebar(props: AppSidebarProps) {
           </div>
         ) : null}
         {props.onOpenSessionSearch ? (
-          <SidebarHeader className="pb-2">
+          <SidebarHeader className="pb-0">
             <SidebarMenu>
               <SidebarMenuItem>
                 <SidebarMenuButton
@@ -1119,7 +1119,7 @@ export function AppSidebar(props: AppSidebarProps) {
             {pinnedSessions.length > 0 ? (
               <GlobalPinnedSessions entries={pinnedSessions} />
             ) : null}
-            <div className={cn("group/workspaces-header flex items-center pb-1 pr-3 pt-2", SIDEBAR_SECTION_LANE)}>
+            <div className={cn("group/workspaces-header flex items-center pb-1 pr-2 pt-1", SIDEBAR_SECTION_LANE)}>
               <span className={SIDEBAR_SECTION_LABEL}>
                 {t("workspace_list.title")}
               </span>
@@ -1182,7 +1182,7 @@ type GlobalPinnedSessionEntry = {
 
 function GlobalPinnedSessions({ entries }: { entries: GlobalPinnedSessionEntry[] }) {
   return (
-    <SidebarGroup data-global-pinned-sessions className="pb-1 pt-2">
+    <SidebarGroup data-global-pinned-sessions className="pb-1 pe-0 pt-2">
       <SidebarGroupContent>
         <div className={cn("flex items-center gap-2 pb-1 pr-3", SIDEBAR_ROW_LANE)}>
           <SidebarGlyphSlot>
@@ -1217,14 +1217,14 @@ function GlobalArchivedSessions({ entries }: { entries: GlobalArchivedSessionEnt
   const [expanded, setExpanded] = React.useState(false);
 
   return (
-    <SidebarGroup data-global-archived-sessions className="pb-1 pt-1">
+    <SidebarGroup data-global-archived-sessions className="pb-1 pe-0 pt-1">
       <SidebarGroupContent>
         <Collapsible open={expanded} onOpenChange={setExpanded} className="group/archived">
           <CollapsibleTrigger
             render={
               <button
                 type="button"
-                className={cn("group/separator flex w-full cursor-pointer items-center gap-2 pe-3 pb-1 pt-2.5 rounded transition-colors hover:bg-sidebar-accent/50", SIDEBAR_ROW_LANE)}
+                className={cn("group/separator flex w-full cursor-pointer items-center gap-2 pe-2 pb-1 pt-2.5 rounded transition-colors hover:bg-sidebar-accent/50", SIDEBAR_ROW_LANE)}
               >
                 <SidebarGlyphSlot>
                   <Archive className="size-3 text-muted-foreground" />
@@ -1411,7 +1411,7 @@ function WorkspaceHeader({
         )}
       </SidebarGlyphSlot>
       <div
-        className="min-w-0 flex-1 cursor-grab touch-none transition-[padding] duration-75 active:cursor-grabbing group-hover/workspace-header:pr-16 group-has-[[data-workspace-actions]:focus-within]/workspace-header:pr-16 group-has-data-popup-open/workspace-header:pr-11 group-hover/workspace-header:group-has-data-popup-open/workspace-header:pr-16 pr-2"
+        className="min-w-0 flex-1 cursor-grab touch-none transition-[padding] duration-75 active:cursor-grabbing group-hover/workspace-header:pr-14 group-has-[[data-workspace-actions]:focus-within]/workspace-header:pr-14 group-has-data-popup-open/workspace-header:pr-10 group-hover/workspace-header:group-has-data-popup-open/workspace-header:pr-14 pr-2"
         onPointerDown={onTitlePointerDown}
       >
         <span className="block ow-fade-truncate">{label}</span>
@@ -1520,7 +1520,7 @@ function WorkspaceSidebarGroup({
     : t("workspace_list.show_more_fallback");
 
   return (
-    <SidebarGroup className={className}>
+    <SidebarGroup className={cn(className, "pe-0")}>
       <SidebarGroupContent>
         <SidebarMenu>
           <Collapsible
@@ -1537,11 +1537,11 @@ function WorkspaceSidebarGroup({
                 isLoading={group.status === "loading" || isConnecting}
                 onTitlePointerDown={onWorkspaceTitlePointerDown}
               />
-              <div data-workspace-actions className="group/workspace-actions absolute right-9 top-1/2 flex -translate-y-1/2 items-center gap-1">
+              <div data-workspace-actions className="group/workspace-actions absolute right-8 top-1/2 flex -translate-y-1/2 items-center gap-0.5">
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="size-6 text-muted-foreground opacity-0 group-hover/workspace-header:opacity-100 group-focus-within/workspace-actions:opacity-100"
+                  className="size-5 text-muted-foreground opacity-0 group-hover/workspace-header:opacity-100 group-focus-within/workspace-actions:opacity-100"
                   onClick={(e) => {
                     e.stopPropagation();
                     ctx.onCreateTaskInWorkspace(workspace.id);
@@ -1556,13 +1556,13 @@ function WorkspaceSidebarGroup({
                   workspace={workspace}
                   isConnectionActionBusy={isConnectionActionBusy}
                   canRecover={canRecover}
-                  className="size-6 text-muted-foreground opacity-0 group-hover/workspace-header:opacity-100 group-focus-within/workspace-actions:opacity-100 data-popup-open:opacity-100"
+                  className="size-5 text-muted-foreground opacity-0 group-hover/workspace-header:opacity-100 group-focus-within/workspace-actions:opacity-100 data-popup-open:opacity-100"
                 />
               </div>
               <Button
                 variant="ghost"
                 size="icon"
-                className="absolute right-2 top-1/2 size-6 -translate-y-1/2 text-muted-foreground flex items-center justify-center group/expand-collapse-button"
+                className="absolute right-2 top-1/2 size-5 -translate-y-1/2 text-muted-foreground flex items-center justify-center group/expand-collapse-button"
                 aria-label={isExpanded ? t("sidebar.collapse") : t("sidebar.expand")}
                 aria-expanded={isExpanded}
                 onClick={(e) => {
@@ -2252,7 +2252,7 @@ function SessionMenuItem({
     // Soft pill @ 11px radius from Paper; overlay tint adapts to theme
     // (light: --ow-light-hover ≈ black/5, dark: #FFFFFF17 ≈ white/9).
     // Nesting uses inline padding so each depth level steps 12px (not a binary nest).
-    "relative rounded-[11px] transition-[padding,background-color] duration-75 pe-7 group-hover/menu-sub-item:pe-20 group-has-data-popup-open/menu-sub-item:pe-20 group-hover/menu-sub-item:bg-black/[0.05] dark:group-hover/menu-sub-item:bg-white/[0.09] data-active:bg-black/[0.07] dark:data-active:bg-white/[0.12] text-sidebar-foreground/80 data-active:text-sidebar-foreground",
+    "relative rounded-[11px] transition-[padding,background-color] duration-75 pe-7 group-hover/menu-sub-item:pe-18 group-has-data-popup-open/menu-sub-item:pe-18 group-hover/menu-sub-item:bg-black/[0.05] dark:group-hover/menu-sub-item:bg-white/[0.09] data-active:bg-black/[0.07] dark:data-active:bg-white/[0.12] text-sidebar-foreground/80 data-active:text-sidebar-foreground",
   );
   const rowButtonStyle = {
     paddingInlineStart: sidebarRowPaddingInlineStart(visualDepth),
