@@ -512,6 +512,21 @@ async function signDesktopIntoDen(ctx) {
     await ctx.fill('input[placeholder="/workspace/my-project"]', WORKSPACE_PATH);
     await ctx.clickText("Use this folder", { timeoutMs: 10_000 });
   }
+
+  const selectedWorkspace = await ctx.eval(
+    "Boolean((localStorage.getItem('openwork.react.activeWorkspace') ?? '').trim())",
+  );
+  if (!selectedWorkspace) {
+    await ctx.waitFor(
+      "window.__openworkControl?.listActions().some((action) => action.id === 'workspace.create' && !action.disabled)",
+      { timeoutMs: 60_000, label: "workspace.create action" },
+    );
+    await ctx.control("workspace.create", { path: WORKSPACE_PATH });
+    await ctx.waitFor(
+      "Boolean((localStorage.getItem('openwork.react.activeWorkspace') ?? '').trim())",
+      { timeoutMs: 60_000, label: "selected eval workspace" },
+    );
+  }
 }
 
 async function mcpCall(ctx, token, method, params = {}) {
