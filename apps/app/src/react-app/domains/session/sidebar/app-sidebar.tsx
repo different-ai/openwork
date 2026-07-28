@@ -1085,7 +1085,7 @@ export function AppSidebar(props: AppSidebarProps) {
           </div>
         ) : null}
         {props.onOpenSessionSearch ? (
-          <SidebarHeader className="pb-0">
+          <SidebarHeader className="pb-0 pe-0">
             <SidebarMenu>
               <SidebarMenuItem>
                 <SidebarMenuButton
@@ -1157,7 +1157,7 @@ export function AppSidebar(props: AppSidebarProps) {
           </m.div>
         </LazyMotion>
 
-        <SidebarFooter className="border-t border-sidebar-border/60 p-1.5">
+        <SidebarFooter className="border-t border-sidebar-border/60 p-1.5 pe-0">
           <AccountStatusMenu {...props.status} onOpenAccountSettings={props.onOpenAccountSettings} />
         </SidebarFooter>
 
