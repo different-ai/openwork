@@ -16,21 +16,14 @@
 #   reset           stop + wipe Vite dep cache + truncate log sink + start
 #   restart         alias for reset
 #
-# Variant (OPENWORK_DEV_VARIANT):
-#   electron   (default) pnpm --filter @openwork/desktop dev:electron
-#              Electron shell + CDP on 127.0.0.1:9823 for chrome-devtools MCP.
-#              Sidecars run from apps/desktop/src-tauri/sidecars/*.
-#   tauri      legacy: pnpm dev (Tauri dev webview, no CDP).
-#              Sidecars run from apps/desktop/src-tauri/target/debug/*.
+# Dev app: pnpm --filter @openwork/desktop dev:electron launches the Electron
+# shell with CDP on 127.0.0.1:9823 for chrome-devtools MCP.
 #
-# Teardown ordering (important, both variants):
+# Teardown ordering:
 #   1. pnpm dev / dev:electron supervisor  (parent supervisor)
-#   2. tauri dev                           (Rust dev runner, if still alive)
-#   3. Tauri webview       (target/debug/OpenWork-Dev)  <-- never /Applications/
-#   4. Electron main+helpers (node_modules/electron/...Electron.app)
-#   5. Vite                (node node_modules/.../vite)
-#   6. orchestrator + openwork-server + opencode
-#      (both target/debug/* and src-tauri/sidecars/* trees)
+#   2. Electron main+helpers (node_modules/electron/...Electron.app)
+#   3. Vite                (node node_modules/.../vite)
+#   4. opencode sidecars and openwork-server helpers
 #
 # Cache/ephemeral state wiped by `reset`:
 #   - Vite dep pre-bundle cache: apps/app/node_modules/.vite
@@ -61,16 +54,6 @@ PNPM_DEV_PID_FILE="${OPENWORK_PNPM_DEV_PID:-/tmp/openwork-test/pnpm-dev.pid}"
 WAIT_HEALTHY_SECS="${OPENWORK_WAIT_HEALTHY_SECS:-90}"
 ELECTRON_CDP_PORT="${OPENWORK_ELECTRON_REMOTE_DEBUG_PORT:-9823}"
 
-# Dev variant. 'electron' (default) launches pnpm dev:electron with CDP on
-# 127.0.0.1:9823 so chrome-devtools MCP can attach. 'tauri' preserves the
-# legacy pnpm dev (Tauri webview) for users still on that path.
-DEV_VARIANT="${OPENWORK_DEV_VARIANT:-electron}"
-case "$DEV_VARIANT" in electron|tauri) ;; *)
-  printf '[openwork-debug] unknown OPENWORK_DEV_VARIANT=%s (expected electron|tauri)\n' "$DEV_VARIANT" >&2
-  exit 2
-  ;;
-esac
-
 # ---------------------------------------------------------------------------
 # Helpers
 
@@ -78,8 +61,8 @@ log() { printf '[openwork-debug] %s\n' "$*"; }
 
 kill_by_pattern() {
   # Sends TERM then KILL to every process whose full command line matches the
-  # given regex. Used for targeted teardown of things like the Tauri dev
-  # webview (matched by its target/debug path, so prod OpenWork.app is safe).
+  # given regex. Patterns are scoped to this repo's dev processes so the
+  # production app is not targeted.
   local pattern="$1"
   local pids
   pids=$(pgrep -f "$pattern" || true)
@@ -112,7 +95,7 @@ kill_pid_file() {
 
 discover_openwork_server_port() {
   ps -Ao command \
-    | grep -E "(target/debug|apps/desktop/src-tauri/sidecars)/openwork-server" \
+    | grep -E "openwork-server" \
     | grep -v grep \
     | grep -oE '\-\-port [0-9]+' \
     | head -1 \
@@ -196,7 +179,7 @@ NODE
 
 snapshot() {
   echo "=== dev stack processes ==="
-  ps -Ao pid,ppid,command | awk '/target\/debug\/OpenWork-Dev|node_modules\/electron\/dist\/Electron\.app\/Contents\/MacOS\/Electron|apps\/desktop\/scripts\/electron-dev\.mjs|target\/debug\/openwork-server|target\/debug\/openwork-orchestrator|target\/debug\/opencode( |\/)|apps\/desktop\/src-tauri\/sidecars\/openwork-server|apps\/desktop\/src-tauri\/sidecars\/openwork-orchestrator|apps\/desktop\/src-tauri\/sidecars\/opencode( |\/)|vite|pnpm .*dev/ && !/awk/ && !/grep/' | sed -E 's#/Users/[^ ]*/#…/#g' | head -20
+  ps -Ao pid,ppid,command | awk '/node_modules\/electron\/dist\/Electron\.app\/Contents\/MacOS\/Electron|apps\/desktop\/scripts\/electron-dev\.mjs|apps\/desktop\/resources\/sidecars\/opencode( |\/)|openwork-server|vite|pnpm .*dev/ && !/awk/ && !/grep/' | sed -E 's#/Users/[^ ]*/#…/#g' | head -20
 
   echo
   echo "=== openwork-server ==="
@@ -211,26 +194,8 @@ snapshot() {
   fi
 
   echo
-  echo "=== opencode (via orchestrator) ==="
-  local oc_port
-  oc_port=$(ps -Ao command \
-    | grep -E "(target/debug|apps/desktop/src-tauri/sidecars)/openwork-orchestrator" \
-    | grep -v grep \
-    | grep -oE '\-\-opencode-port [0-9]+' \
-    | head -1 \
-    | awk '{print $2}' \
-    || true)
-  if [[ -z "$oc_port" ]]; then
-    echo "  (no opencode port)"
-  else
-    echo "  port=$oc_port"
-    curl -sS --max-time 2 "http://127.0.0.1:$oc_port/app" | head -c 200
-    echo
-  fi
-
-  echo
   echo "=== orphans (parent == 1) ==="
-  ps -Ao pid,ppid,command | awk '$2 == 1 && $3 ~ /openwork-server|openwork-orchestrator|opencode( |\/)/' | head
+  ps -Ao pid,ppid,command | awk '$2 == 1 && $3 ~ /openwork-server|opencode( |\/)/' | head
 
   echo
   echo "=== dev log sink ==="
@@ -258,7 +223,7 @@ tail_logs() {
 
 kill_orphans() {
   local pids
-  pids=$(ps -Ao pid,ppid,command | awk '$2 == 1 && $3 ~ /openwork-server|openwork-orchestrator|opencode( |\/)/ {print $1}')
+  pids=$(ps -Ao pid,ppid,command | awk '$2 == 1 && $3 ~ /openwork-server|opencode( |\/)/ {print $1}')
   if [[ -z "$pids" ]]; then
     log "no orphans"
     return 0
@@ -426,19 +391,10 @@ stop() {
   # existed). The cwd match keeps us from touching pnpm runs in other repos.
   kill_by_pattern "pnpm .*dev"
 
-  # 2. tauri dev (node bin). Tauri CLI supervises its own child processes.
-  kill_by_pattern "tauri(-cli)? +dev"
-  kill_by_pattern "@tauri-apps/cli"
-
-  # 2b. Electron variant supervisor (scripts/electron-dev.mjs). Idempotent if
-  #     the current variant is tauri; harmless if nothing matches.
+  # 2. Electron dev supervisor (scripts/electron-dev.mjs).
   kill_by_pattern "apps/desktop/scripts/electron-dev\.mjs"
 
-  # 3. Tauri dev webview — match full path so the installed /Applications/
-  #    prod bundle is never targeted.
-  kill_by_pattern "target/debug/OpenWork-Dev"
-
-  # 3b. Electron main (the helpers die with the main via mach-port rendezvous
+  # 3. Electron main (the helpers die with the main via mach-port rendezvous
   #     loss; we still pattern-match them below in case a crash left orphans).
   #     Scoped to this repo's node_modules/electron so /Applications/Slack,
   #     Cursor, VSCode, etc. are never touched.
@@ -449,17 +405,10 @@ stop() {
   kill_by_pattern "node_modules/\.bin/vite"
   kill_by_pattern "node_modules/vite/bin/vite\.js"
 
-  # 5. openwork-server / orchestrator / opencode for the
-  #    current dev build. These are the longest-lived children and the ones
-  #    most likely to orphan after an unclean shutdown.
-  #    Tauri dev runs them from target/debug/, Electron dev runs them from
-  #    src-tauri/sidecars/ — kill both trees, both are idempotent.
-  kill_by_pattern "target/debug/openwork-server"
-  kill_by_pattern "target/debug/openwork-orchestrator"
-  kill_by_pattern "target/debug/opencode"
-  kill_by_pattern "apps/desktop/src-tauri/sidecars/openwork-server"
-  kill_by_pattern "apps/desktop/src-tauri/sidecars/openwork-orchestrator"
-  kill_by_pattern "apps/desktop/src-tauri/sidecars/opencode( |/)"
+  # 5. Long-lived runtime helpers most likely to orphan after an unclean
+  #    shutdown.
+  kill_by_pattern "apps/desktop/resources/sidecars/opencode( |/)"
+  kill_by_pattern "openwork-server"
 
   # Safety net for stragglers we don't own directly.
   kill_orphans
@@ -484,20 +433,10 @@ start() {
 
   cd "$REPO_ROOT"
   local pid
-  case "$DEV_VARIANT" in
-    electron)
-      log "starting pnpm dev:electron (variant=electron, log sink: $DEV_LOG_FILE, CDP: 127.0.0.1:9823)"
-      env OPENWORK_DEV_LOG_FILE="$DEV_LOG_FILE" \
-        nohup pnpm --filter @openwork/desktop dev:electron >"$PNPM_DEV_LOG" 2>&1 &
-      pid=$!
-      ;;
-    tauri)
-      log "starting pnpm dev (variant=tauri, log sink: $DEV_LOG_FILE)"
-      env OPENWORK_DEV_LOG_FILE="$DEV_LOG_FILE" \
-        nohup pnpm dev >"$PNPM_DEV_LOG" 2>&1 &
-      pid=$!
-      ;;
-  esac
+  log "starting pnpm dev:electron (log sink: $DEV_LOG_FILE, CDP: 127.0.0.1:9823)"
+  env OPENWORK_DEV_LOG_FILE="$DEV_LOG_FILE" \
+    nohup pnpm --filter @openwork/desktop dev:electron >"$PNPM_DEV_LOG" 2>&1 &
+  pid=$!
   disown "$pid" 2>/dev/null || true
   echo "$pid" >"$PNPM_DEV_PID_FILE"
   log "pnpm dev pid=$pid"
@@ -530,7 +469,7 @@ reset() {
   rm -rf "$REPO_ROOT/apps/app/node_modules/.vite" 2>/dev/null || true
   # Root-level vite metadata cache if the workspace uses one.
   rm -rf "$REPO_ROOT/node_modules/.vite" 2>/dev/null || true
-  # Also clear any transformed-module cache the Tauri dev window might keep.
+  # Also clear any transformed-module cache the desktop dev window might keep.
   rm -rf "$REPO_ROOT/apps/desktop/node_modules/.vite" 2>/dev/null || true
 
   log "truncating dev log sink"
@@ -542,17 +481,9 @@ reset() {
   echo
   snapshot | sed -n '1,20p'
   echo
-  case "$DEV_VARIANT" in
-    electron)
-      log "reset complete (variant=electron) — Electron CDP should be up at"
-      log "http://127.0.0.1:9823; chrome-devtools MCP can attach there."
-      log "If the window looks stale, Cmd+Shift+R to drop its Vite module cache."
-      ;;
-    tauri)
-      log "reset complete — now reload the Tauri webview (Cmd+Shift+R) to drop"
-      log "its in-memory module cache and pick up the fresh Vite."
-      ;;
-  esac
+  log "reset complete — Electron CDP should be up at"
+  log "http://127.0.0.1:9823; chrome-devtools MCP can attach there."
+  log "If the window looks stale, Cmd+Shift+R to drop its Vite module cache."
 }
 
 reset_webview_state() {

@@ -2,9 +2,8 @@
 
 Cut an OpenWork release from `dev`. The "Release App" workflow
 (`.github/workflows/release-macos-aarch64.yml`, triggered by a `v*` tag push or
-dispatch) builds, signs, and publishes the app assets **and** the paste-gated
-installer assets on the same GitHub release. Verified end-to-end on v0.17.37
-and v0.17.38.
+dispatch) builds, signs, and publishes the standard desktop app assets on the
+GitHub release.
 
 ---
 
@@ -21,7 +20,7 @@ e.g. `release/vX.Y.Z`). Confirm dev CI is green.
 pnpm bump:patch     # or bump:minor / bump:major / bump:set -- X.Y.Z
 ```
 
-This updates `apps/app`, `apps/desktop`, `apps/orchestrator`, `apps/server`
+This updates `apps/app`, `apps/desktop`, `apps/server`
 package.json versions, `ee/apps/den-api/src/generated/desktop-versions.ts`
 (den-api's `PUBLISHED_DESKTOP_VERSIONS` — the install door redirects to
 `v<PUBLISHED_DESKTOP_VERSIONS[0]>`), and `pnpm-lock.yaml`. Revert incidental
@@ -77,28 +76,24 @@ gh workflow run "Release App" --repo different-ai/openwork -f tag=vX.Y.Z
 gh release view vX.Y.Z --repo different-ai/openwork --json assets --jq '.assets[].name'
 ```
 
-Expect the app assets (`openwork-<platform>-X.Y.Z.*`, `latest*.yml`) plus the
-installer assets:
+Expect the app assets (`openwork-<platform>-X.Y.Z.*`, `latest*.yml`), including:
 
-- `OpenWork-Installer-mac-arm64.dmg`
-- `OpenWork-Installer-mac-x64.dmg`
-- `OpenWork-Installer-win-x64.exe`
+- `openwork-mac-arm64-X.Y.Z.dmg`
+- `openwork-mac-x64-X.Y.Z.dmg`
+- `openwork-win-x64-X.Y.Z.exe`
 
 Spot-check a download URL resolves (302 to release-assets CDN):
 
 ```bash
-curl -sI "https://github.com/different-ai/openwork/releases/download/vX.Y.Z/OpenWork-Installer-mac-arm64.dmg" | head -2
+curl -sI "https://github.com/different-ai/openwork/releases/download/vX.Y.Z/openwork-mac-arm64-X.Y.Z.dmg" | head -2
 ```
 
 ---
 
 ## Notes
 
-- Installer fixes only reach users through a new release — the org install
+- Desktop installer fixes only reach users through a new release — the org install
   door (`/v1/install/:platform`) 302s to versioned assets.
 - den deployments built from source pick up the new pin via
   `PUBLISHED_DESKTOP_VERSIONS[0]` (den-api `src/version.ts`); no env vars
   required.
-- The installer job reuses the mac signing/notarization secrets and keeps the
-  placeholder build-config guard (a client-configured build can never publish
-  publicly).

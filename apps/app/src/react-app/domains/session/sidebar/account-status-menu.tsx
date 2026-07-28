@@ -364,7 +364,7 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
         ) : null}
 
         {connectNeedsAttention ? (
-          <DropdownMenuItem onClick={() => navigate("/settings/connect")}>
+          <DropdownMenuItem onClick={() => navigate("/settings/debug")}>
             <Stethoscope className="size-3.5" />
             Run diagnostics
           </DropdownMenuItem>

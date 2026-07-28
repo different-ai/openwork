@@ -4,9 +4,8 @@
 // openwork-bootstrap CLI (a single dependency-free Node file served from this
 // site) and installs it as the `openwork-bootstrap` command on the user's PATH.
 //
-// It is intentionally NOT named `openwork`, so it never collides with the
-// `openwork-orchestrator` npm package (which also installs an `openwork`
-// binary). It does not use npm or npx.
+// It is intentionally named `openwork-bootstrap` so setup guides can refer to a
+// specific bootstrap command. It does not use npm or npx.
 //
 // Usage (the docs tell users to download + inspect before running):
 //   curl -fsSLo /tmp/openwork-install.sh https://openworklabs.com/install.sh

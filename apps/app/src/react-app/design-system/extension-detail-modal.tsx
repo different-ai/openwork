@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { CheckCircle2, ExternalLink, Loader2 } from "lucide-react";
+import { CheckCircle2, ChevronLeft, ExternalLink, Loader2 } from "lucide-react";
 import {
   Card,
   CardContent,
@@ -24,7 +24,10 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
-import type { ExtensionKind } from "@/app/constants";
+import {
+  extensionTaxonomyLabel,
+  type ExtensionTaxonomy,
+} from "../domains/settings/extension-taxonomy";
 import { MarkdownBlock } from "../domains/session/surface/markdown";
 import { resolveExtensionIconUrl } from "./extension-icon-src";
 import { ExtensionMeshAvatar } from "./extension-mesh-avatar";
@@ -36,7 +39,9 @@ export type ExtensionDetailModalProps = {
   description: string;
   iconSlug?: string;
   iconSrc?: string;
-  kind?: ExtensionKind;
+  taxonomy?: ExtensionTaxonomy;
+  /** Show the local stdio wrapper setup used by the OpenWork UI MCP. */
+  uiControl?: boolean;
   connected?: boolean;
   connectedLabel?: string;
   disconnectedLabel?: string;
@@ -86,22 +91,18 @@ export type ExtensionDetailModalProps = {
   configSlot?: React.ReactNode;
   showEnablementCard?: boolean;
   size?: "default" | "wide";
+  /** Dialog overlay (default) or dedicated settings page shell. */
+  presentation?: "dialog" | "page";
+  /** Back-link label when presentation is "page". */
+  backLabel?: string;
 };
 
-const kindLabel: Record<ExtensionKind, string> = {
-  mcp: "MCP Server",
-  plugin: "Plugin",
-  skill: "Skill",
-  "ui-control": "UI Control",
-  extension: "OpenWork Extension",
-};
-
-const kindDesc: Record<ExtensionKind, string> = {
+const taxonomyDesc: Record<ExtensionTaxonomy, string> = {
+  app: "Runs on this device and gives your agent tools it can use here.",
+  connection: "An account your agent can act in, once it is signed in.",
   mcp: "Connects as a Model Context Protocol server, giving your agent access to external tools and data.",
-  plugin: "Extends OpenWork with additional capabilities managed by your organization.",
   skill: "A reusable workflow that your agent can execute on demand.",
-  "ui-control": "Lets another MCP client inspect and drive this OpenWork desktop UI through a local stdio wrapper.",
-  extension: "An OpenWork extension that adds tools, providers, or integrations to your workspace.",
+  plugin: "Extends OpenWork with additional capabilities managed by your organization.",
 };
 
 const uiControlClientConfig = `{
@@ -184,7 +185,8 @@ export function ExtensionDetailModal({
   description,
   iconSlug,
   iconSrc,
-  kind = "mcp",
+  taxonomy = "mcp",
+  uiControl = false,
   connected = false,
   connectedLabel,
   disconnectedLabel,
@@ -214,9 +216,363 @@ export function ExtensionDetailModal({
   configSlot,
   showEnablementCard = true,
   size = "default",
+  presentation = "dialog",
+  backLabel = "Extensions",
 }: ExtensionDetailModalProps) {
   "use memo";
   const resolvedIconSrc = resolveExtensionIconUrl({ iconSrc, iconSlug, serviceUrl: url });
+
+  if (!open) return null;
+
+  const header = (
+    <div className="flex min-w-0 items-start gap-4">
+      <div className="relative shrink-0">
+        <div
+          className={cn(
+            "flex size-12 items-center justify-center rounded-xl border",
+            connected ? "border-green-6 bg-green-2" : "border-dls-border bg-dls-hover",
+          )}
+        >
+          {resolvedIconSrc ? (
+            <div className="flex size-8 items-center justify-center rounded-md bg-white">
+              <img src={resolvedIconSrc} alt="" width={20} height={20} loading="lazy" style={{ display: "block" }} />
+            </div>
+          ) : (
+            <ExtensionMeshAvatar
+              name={name}
+              category={taxonomy}
+              className="size-9 rounded-lg shadow-inner"
+            />
+          )}
+        </div>
+        {connected ? (
+          <div className="absolute -bottom-0.5 -right-0.5 flex size-5 items-center justify-center rounded-full border-2 border-dls-surface bg-green-9">
+            <CheckCircle2 size={11} className="text-white" strokeWidth={3} />
+          </div>
+        ) : null}
+      </div>
+
+      <div className="min-w-0 flex flex-col gap-1 justify-center self-stretch">
+        {presentation === "page" ? (
+          <>
+            <h2 className="text-lg font-semibold leading-none tracking-tight text-foreground">{name}</h2>
+            <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+              <span>{extensionTaxonomyLabel(taxonomy)}</span>
+              {preview ? (
+                <span className="rounded-md bg-blue-3 px-1.5 py-0.5 text-[10px] font-medium text-blue-11">
+                  Preview
+                </span>
+              ) : null}
+              {beta ? (
+                <span className="rounded-md bg-amber-3 px-1.5 py-0.5 text-[10px] font-medium text-amber-11">
+                  Beta
+                </span>
+              ) : null}
+            </div>
+          </>
+        ) : (
+          <>
+            <DialogTitle>{name}</DialogTitle>
+            <DialogDescription className="flex flex-wrap items-center gap-2">
+              <span>{extensionTaxonomyLabel(taxonomy)}</span>
+              {preview ? (
+                <span className="rounded-md bg-blue-3 px-1.5 py-0.5 text-[10px] font-medium text-blue-11">
+                  Preview
+                </span>
+              ) : null}
+              {beta ? (
+                <span className="rounded-md bg-amber-3 px-1.5 py-0.5 text-[10px] font-medium text-amber-11">
+                  Beta
+                </span>
+              ) : null}
+            </DialogDescription>
+          </>
+        )}
+      </div>
+    </div>
+  );
+
+  const body = (
+    <div className="space-y-5 px-px">
+      <div className="text-sm leading-relaxed text-card-foreground">
+        {description}
+      </div>
+
+      {setupInstructions ? (
+        <Card variant="outline" size="sm">
+          <CardHeader>
+            <CardTitle>Setup</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-sm leading-relaxed text-muted-foreground">
+              {setupInstructions}
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {resourceLabels.length > 0 || contributionLabels.length > 0 ? (
+        <Card variant="outline" size="sm">
+          <CardHeader>
+            <CardTitle>Extension manifest</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-3 text-sm">
+              {resourceLabels.length > 0 ? (
+                <div>
+                  <div className="mb-1 text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Resources</div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {resourceLabels.map((label) => (
+                      <span key={label} className="rounded-full border border-border bg-muted px-2 py-0.5 text-xs text-muted-foreground">{label}</span>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+              {contributionLabels.length > 0 ? (
+                <div>
+                  <div className="mb-1 text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Contributions</div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {contributionLabels.map((label) => (
+                      <span key={label} className="rounded-full border border-border bg-muted px-2 py-0.5 text-xs text-muted-foreground">{label}</span>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
+
+      <Card variant="outline" size="sm">
+        <CardHeader>
+          <CardTitle>Details</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-2">
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-muted-foreground">Type</span>
+              <span className="font-medium text-card-foreground">{extensionTaxonomyLabel(taxonomy)}</span>
+            </div>
+
+            {url ? (
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">Endpoint</span>
+                <span className="flex items-center gap-1.5 truncate font-mono text-xs text-card-foreground">
+                  {url.replace(/^https?:\/\//, "").slice(0, 40)}
+                  <ExternalLink size={10} className="shrink-0 text-muted-foreground" />
+                </span>
+              </div>
+            ) : null}
+
+            {uiControl ? (
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">Launch</span>
+                <span className="max-w-[300px] truncate font-mono text-xs text-card-foreground">{(launchCommand ?? fallbackUiControlCommand).join(" ")}</span>
+              </div>
+            ) : null}
+
+            {path && onReveal ? (
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">Location</span>
+                <Button
+                  variant="link"
+                  size="xs"
+                  onClick={onReveal}
+                >
+                  Reveal in Finder
+                  <ExternalLink data-icon="inline-end" />
+                </Button>
+              </div>
+            ) : null}
+
+            {oauth ? (
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">Authentication</span>
+                <span className="font-medium text-card-foreground">OAuth required</span>
+              </div>
+            ) : null}
+
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-muted-foreground">Status</span>
+              <span className={cn("font-medium", connected ? "text-green-11" : "text-muted-foreground")}>
+                {connected
+                  ? connectedLabel ?? (taxonomy === "skill" || taxonomy === "plugin" ? "Installed" : "Connected")
+                  : connecting
+                    ? connectingLabel
+                    : disconnectedLabel ?? (taxonomy === "skill" || taxonomy === "plugin" ? "Not installed" : "Not connected")}
+              </span>
+            </div>
+
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-muted-foreground">Visibility</span>
+              <span className="font-medium text-card-foreground">{hidden ? "Hidden" : "Shown"}</span>
+            </div>
+
+            {preview ? (
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">Release stage</span>
+                <span className="font-medium text-blue-11">Preview</span>
+              </div>
+            ) : null}
+
+            {beta ? (
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">Release stage</span>
+                <span className="font-medium text-amber-11">Beta</span>
+              </div>
+            ) : null}
+
+            {disabledReason ? (
+              <div className="flex items-center justify-between gap-4 text-sm">
+                <span className="text-muted-foreground">Availability</span>
+                <span className="text-right font-medium text-amber-11">{disabledReason}</span>
+              </div>
+            ) : null}
+          </div>
+        </CardContent>
+      </Card>
+
+      {uiControl ? <UiControlConnectionDetails launchCommand={launchCommand} environment={environment} /> : null}
+
+      {taxonomy === "skill" && trigger ? (
+        <Card variant="outline" size="sm">
+          <CardHeader>
+            <CardTitle>Trigger</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-sm leading-relaxed text-card-foreground">
+              {trigger}
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {taxonomy === "skill" && contentPreview ? (() => {
+        const skillBody = stripSkillFrontmatter(contentPreview);
+
+        if (!skillBody) {
+          return null;
+        }
+
+        return (
+          <div className="flex flex-col gap-2">
+            <div className="text-sm font-medium text-card-foreground">
+              Skill content
+            </div>
+            <div className="max-h-[300px] overflow-y-auto rounded-xl border border-border bg-card p-4 text-sm leading-relaxed text-card-foreground">
+              <MarkdownBlock text={skillBody} />
+            </div>
+          </div>
+        );
+      })() : null}
+
+      {showEnablementCard && ((taxonomy !== "skill" && !uiControl) || (!trigger && !contentPreview && !uiControl)) ? (
+        <Card variant="outline" size="sm">
+          <CardHeader>
+            <CardTitle>What this enables</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-sm leading-relaxed text-muted-foreground">
+              {taxonomyDesc[taxonomy]}
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {configSlot}
+    </div>
+  );
+
+  const footerActions = (
+    <>
+      <div className="flex flex-wrap gap-2">
+        {hidden && onShow ? (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              onShow();
+              onClose();
+            }}
+          >
+            Show
+          </Button>
+        ) : !hidden && onHide ? (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              onHide();
+              onClose();
+            }}
+          >
+            Hide
+          </Button>
+        ) : null}
+      </div>
+      <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+        {presentation === "dialog" ? (
+          <DialogClose render={<Button variant="outline" />}>
+            Close
+          </DialogClose>
+        ) : (
+          <Button variant="outline" onClick={onClose}>
+            Close
+          </Button>
+        )}
+        {connected && onUninstall ? (
+          <Button
+            variant="destructive"
+            size="sm"
+            onClick={() => {
+              onUninstall();
+              onClose();
+            }}
+          >
+            {uninstallLabel ?? (taxonomy === "skill" ? "Uninstall" : "Disconnect")}
+          </Button>
+        ) : null}
+        {!connected && onConnect ? (
+          <Button
+            onClick={onConnect}
+            disabled={connecting}
+          >
+            {connecting ? (
+              <>
+                <Loader2 data-icon="inline-start" className="animate-spin" />
+                {connectingLabel}
+              </>
+            ) : (
+              connectLabel
+            )}
+          </Button>
+        ) : null}
+      </div>
+    </>
+  );
+
+  if (presentation === "page") {
+    return (
+      <div className="flex w-full max-w-3xl flex-col gap-6 animate-in fade-in duration-300">
+        <Button
+          variant="ghost"
+          size="sm"
+          className="-ml-2 w-fit gap-1 px-2 text-muted-foreground"
+          onClick={onClose}
+        >
+          <ChevronLeft size={16} />
+          {backLabel}
+        </Button>
+        {header}
+        <div className="min-h-0 flex-1">
+          {body}
+        </div>
+        <div className="flex shrink-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          {footerActions}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <Dialog
@@ -232,309 +588,17 @@ export function ExtensionDetailModal({
         )}
       >
         <DialogHeader>
-          <div className="flex min-w-0 items-start gap-4">
-            {/* Icon */}
-            <div className="relative shrink-0">
-              <div
-                className={cn(
-                  "flex size-12 items-center justify-center rounded-xl border",
-                  connected ? "border-green-6 bg-green-2" : "border-dls-border bg-dls-hover",
-                )}
-              >
-                {resolvedIconSrc ? (
-                  <div className="flex size-8 items-center justify-center rounded-md bg-white">
-                    <img src={resolvedIconSrc} alt="" width={20} height={20} loading="lazy" style={{ display: "block" }} />
-                  </div>
-                ) : (
-                  <ExtensionMeshAvatar
-                    name={name}
-                    category={kind}
-                    className="size-9 rounded-lg shadow-inner"
-                  />
-                )}
-              </div>
-              {connected ? (
-                <div className="absolute -bottom-0.5 -right-0.5 flex size-5 items-center justify-center rounded-full border-2 border-dls-surface bg-green-9">
-                  <CheckCircle2 size={11} className="text-white" strokeWidth={3} />
-                </div>
-              ) : null}
-            </div>
-
-            <div className="min-w-0 flex flex-col gap-1 justify-center self-stretch">
-              <DialogTitle>{name}</DialogTitle>
-              <DialogDescription className="flex flex-wrap items-center gap-2">
-                <span>{kindLabel[kind]}</span>
-                {preview ? (
-                  <span className="rounded-md bg-blue-3 px-1.5 py-0.5 text-[10px] font-medium text-blue-11">
-                    Preview
-                  </span>
-                ) : null}
-                {beta ? (
-                  <span className="rounded-md bg-amber-3 px-1.5 py-0.5 text-[10px] font-medium text-amber-11">
-                    Beta
-                  </span>
-                ) : null}
-              </DialogDescription>
-            </div>
-          </div>
+          {header}
         </DialogHeader>
 
-        {/* Body */}
         <ScrollArea className="flex min-h-0 flex-1 flex-col">
           <ScrollAreaViewport className="min-h-0 flex-1 h-auto!">
-            <div className="space-y-5 px-px">
-            {/* Description */}
-            <div className="text-sm leading-relaxed text-card-foreground">
-              {description}
-            </div>
-
-            {setupInstructions ? (
-              <Card variant="outline" size="sm">
-                <CardHeader>
-                  <CardTitle>Setup</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-sm leading-relaxed text-muted-foreground">
-                    {setupInstructions}
-                  </div>
-                </CardContent>
-              </Card>
-            ) : null}
-
-            {resourceLabels.length > 0 || contributionLabels.length > 0 ? (
-              <Card variant="outline" size="sm">
-                <CardHeader>
-                  <CardTitle>Extension manifest</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-3 text-sm">
-                    {resourceLabels.length > 0 ? (
-                      <div>
-                        <div className="mb-1 text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Resources</div>
-                        <div className="flex flex-wrap gap-1.5">
-                          {resourceLabels.map((label) => (
-                            <span key={label} className="rounded-full border border-border bg-muted px-2 py-0.5 text-xs text-muted-foreground">{label}</span>
-                          ))}
-                        </div>
-                      </div>
-                    ) : null}
-                    {contributionLabels.length > 0 ? (
-                      <div>
-                        <div className="mb-1 text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Contributions</div>
-                        <div className="flex flex-wrap gap-1.5">
-                          {contributionLabels.map((label) => (
-                            <span key={label} className="rounded-full border border-border bg-muted px-2 py-0.5 text-xs text-muted-foreground">{label}</span>
-                          ))}
-                        </div>
-                      </div>
-                    ) : null}
-                  </div>
-                </CardContent>
-              </Card>
-            ) : null}
-
-            {/* Details */}
-            <Card variant="outline" size="sm">
-              <CardHeader>
-                <CardTitle>Details</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-muted-foreground">Type</span>
-                    <span className="font-medium text-card-foreground">{kindLabel[kind]}</span>
-                  </div>
-
-                  {url ? (
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="text-muted-foreground">Endpoint</span>
-                      <span className="flex items-center gap-1.5 truncate font-mono text-xs text-card-foreground">
-                        {url.replace(/^https?:\/\//, "").slice(0, 40)}
-                        <ExternalLink size={10} className="shrink-0 text-muted-foreground" />
-                      </span>
-                    </div>
-                  ) : null}
-
-                  {kind === "ui-control" ? (
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="text-muted-foreground">Launch</span>
-                      <span className="max-w-[300px] truncate font-mono text-xs text-card-foreground">{(launchCommand ?? fallbackUiControlCommand).join(" ")}</span>
-                    </div>
-                  ) : null}
-
-                  {path && onReveal ? (
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="text-muted-foreground">Location</span>
-                      <Button
-                        variant="link"
-                        size="xs"
-                        onClick={onReveal}
-                      >
-                        Reveal in Finder
-                        <ExternalLink data-icon="inline-end" />
-                      </Button>
-                    </div>
-                  ) : null}
-
-                  {oauth ? (
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="text-muted-foreground">Authentication</span>
-                      <span className="font-medium text-card-foreground">OAuth required</span>
-                    </div>
-                  ) : null}
-
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-muted-foreground">Status</span>
-                    <span className={cn("font-medium", connected ? "text-green-11" : "text-muted-foreground")}>
-                      {connected
-                        ? connectedLabel ?? (kind === "skill" || kind === "plugin" ? "Installed" : "Connected")
-                        : connecting
-                          ? connectingLabel
-                          : disconnectedLabel ?? (kind === "skill" || kind === "plugin" ? "Not installed" : "Not connected")}
-                    </span>
-                  </div>
-
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-muted-foreground">Visibility</span>
-                    <span className="font-medium text-card-foreground">{hidden ? "Hidden" : "Shown"}</span>
-                  </div>
-
-                  {preview ? (
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="text-muted-foreground">Release stage</span>
-                      <span className="font-medium text-blue-11">Preview</span>
-                    </div>
-                  ) : null}
-
-                  {beta ? (
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="text-muted-foreground">Release stage</span>
-                      <span className="font-medium text-amber-11">Beta</span>
-                    </div>
-                  ) : null}
-
-                  {disabledReason ? (
-                    <div className="flex items-center justify-between gap-4 text-sm">
-                      <span className="text-muted-foreground">Availability</span>
-                      <span className="text-right font-medium text-amber-11">{disabledReason}</span>
-                    </div>
-                  ) : null}
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Skill-specific: trigger + content preview */}
-            {kind === "ui-control" ? <UiControlConnectionDetails launchCommand={launchCommand} environment={environment} /> : null}
-
-            {kind === "skill" && trigger ? (
-              <Card variant="outline" size="sm">
-                <CardHeader>
-                  <CardTitle>Trigger</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-sm leading-relaxed text-card-foreground">
-                    {trigger}
-                  </div>
-                </CardContent>
-              </Card>
-            ) : null}
-
-            {kind === "skill" && contentPreview ? (() => {
-              const body = stripSkillFrontmatter(contentPreview);
-
-              if (!body) {
-                return null;
-              }
-
-              return (
-                <div className="flex flex-col gap-2">
-                  <div className="text-sm font-medium text-card-foreground">
-                    Skill content
-                  </div>
-                  <div className="max-h-[300px] overflow-y-auto rounded-xl border border-border bg-card p-4 text-sm leading-relaxed text-card-foreground">
-                    <MarkdownBlock text={body} />
-                  </div>
-                </div>
-              );
-            })() : null}
-
-            {/* What this enables (generic, for non-skills or skills without preview) */}
-            {showEnablementCard && ((kind !== "skill" && kind !== "ui-control") || (!trigger && !contentPreview && kind !== "ui-control")) ? (
-              <Card variant="outline" size="sm">
-                <CardHeader>
-                  <CardTitle>What this enables</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-sm leading-relaxed text-muted-foreground">
-                    {kindDesc[kind]}
-                  </div>
-                </CardContent>
-              </Card>
-            ) : null}
-
-            {configSlot}
-            </div>
+            {body}
           </ScrollAreaViewport>
         </ScrollArea>
 
         <DialogFooter className="shrink-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex flex-wrap gap-2">
-            {hidden && onShow ? (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  onShow();
-                  onClose();
-                }}
-              >
-                Show
-              </Button>
-            ) : !hidden && onHide ? (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  onHide();
-                  onClose();
-                }}
-              >
-                Hide
-              </Button>
-            ) : null}
-          </div>
-          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-            <DialogClose render={<Button variant="outline" />}>
-              Close
-            </DialogClose>
-            {connected && onUninstall ? (
-              <Button
-                variant="destructive"
-                size="sm"
-                onClick={() => {
-                  onUninstall();
-                  onClose();
-                }}
-              >
-                {uninstallLabel ?? (kind === "skill" ? "Uninstall" : "Disconnect")}
-              </Button>
-            ) : null}
-            {!connected && onConnect ? (
-              <Button
-                onClick={onConnect}
-                disabled={connecting}
-              >
-                {connecting ? (
-                  <>
-                    <Loader2 data-icon="inline-start" className="animate-spin" />
-                    {connectingLabel}
-                  </>
-                ) : (
-                  connectLabel
-                )}
-              </Button>
-            ) : null}
-          </div>
+          {footerActions}
         </DialogFooter>
       </DialogContent>
     </Dialog>

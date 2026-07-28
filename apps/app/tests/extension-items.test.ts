@@ -6,6 +6,8 @@ import type { McpServerEntry } from "../src/app/types";
 import {
   buildExtensionItems,
   isOpenworkProvidedSkill,
+  resolveExtensionInventoryGroup,
+  type ExtensionItem,
 } from "../src/react-app/domains/settings/extension-items";
 
 const connectedBuiltIn: McpDirectoryInfo = {
@@ -100,9 +102,9 @@ describe("extension item projection", () => {
     }
   });
 
-  test("keeps unconnected built-ins out of My Extensions quick connect", () => {
+  test("lists built-ins that are not set up yet, but never uninstalled directory entries", () => {
     const result = buildExtensionItems({
-      quickConnect: [connectedBuiltIn, availableBuiltIn],
+      quickConnect: [connectedBuiltIn, availableBuiltIn, notionQuickConnect],
       mcpServers: [],
       installedSkills: [],
       importedCloudPlugins: {},
@@ -113,6 +115,7 @@ describe("extension item projection", () => {
 
     expect(result.installedMcpEntries.map((entry) => entry.name)).toEqual(["OpenWork Browser"]);
     expect(result.builtInItems.map((item) => item.name)).toEqual(["OpenWork Browser", "Computer Use"]);
+    expect(result.quickConnectEntries.map((entry) => entry.name)).toEqual(["OpenWork Browser", "Computer Use"]);
   });
 
   test("projects per-member org MCP grants as Marketplace items until connected", () => {
@@ -190,7 +193,7 @@ describe("extension item projection", () => {
     expect(result.installedMcpEntries.map((entry) => entry.name)).toEqual(["Notion"]);
   });
 
-  test("does not dedupe static Quick Connect for unfinished shared org MCPs", () => {
+  test("hides an unfinished shared org MCP instead of offering it as something to add", () => {
     const result = buildExtensionItems({
       quickConnect: [notionQuickConnect],
       mcpServers: [],
@@ -203,6 +206,43 @@ describe("extension item projection", () => {
     });
 
     expect(result.orgMcpConnectionItems).toEqual([]);
-    expect(result.quickConnectEntries.map((entry) => entry.name)).toEqual(["Notion"]);
+    expect(result.quickConnectEntries).toEqual([]);
+  });
+});
+
+describe("resolveExtensionInventoryGroup", () => {
+  const baseItem = (overrides: Partial<ExtensionItem> = {}): ExtensionItem => ({
+    id: "builtin:openwork-browser",
+    source: "builtin",
+    name: "OpenWork Browser",
+    description: null,
+    installState: "installed",
+    setupState: "ready",
+    active: true,
+    enablement: null,
+    resources: [],
+    ...overrides,
+  });
+
+  test("marks disabled items first", () => {
+    expect(resolveExtensionInventoryGroup(baseItem({ installState: "available" }), {
+      disabledReason: "Disabled by organization",
+    })).toBe("disabled");
+  });
+
+  test("maps available install state", () => {
+    expect(resolveExtensionInventoryGroup(baseItem({ installState: "available" }))).toBe("available");
+  });
+
+  test("maps installed local items to ready", () => {
+    expect(resolveExtensionInventoryGroup(baseItem())).toBe("ready");
+  });
+
+  test("maps org connection readiness", () => {
+    expect(resolveExtensionInventoryGroup(baseItem({
+      source: "org-connection",
+      installState: "available",
+      orgMcpConnection: orgMcpConnection({ connectedForMe: false }),
+    }))).toBe("needs_signin");
   });
 });

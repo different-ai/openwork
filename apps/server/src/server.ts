@@ -72,6 +72,7 @@ import {
 } from "./cloud-mcp-health.js";
 import { runAgentContextDiagnostics } from "./agent-context-diagnostics.js";
 import { createAgentDiagnosticsEngineFetch } from "./agent-context-engine-inspection.js";
+import { sanitizeDiagnosticString } from "./diagnostic-sanitizer.js";
 import {
   mergeOpencodeConfigs,
   mergeRuntimeProviderUpdate,
@@ -1012,7 +1013,7 @@ function buildOpencodeDirectoryHeader(directory: string) {
   return /[^\x00-\x7F]/.test(directory) ? encodeURIComponent(directory) : directory;
 }
 
-function createOpencodeDirectoryFetch(directory: string, fetchImpl: typeof fetch = fetch): typeof fetch {
+function createOpencodeDirectoryFetch(directory: string, fetchImpl: typeof fetch = globalThis.fetch): typeof fetch {
   return Object.assign(
     (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
       const request = input instanceof Request ? input : new Request(input, init);
@@ -1035,7 +1036,7 @@ export function createWorkspaceOpencodeClient(
 ) {
   const connection = resolveWorkspaceOpencodeConnection(config, workspace);
   const directory = resolveOpencodeDirectory(workspace);
-  const baseFetch = directory ? createOpencodeDirectoryFetch(directory) : fetch;
+  const baseFetch = directory ? createOpencodeDirectoryFetch(directory) : globalThis.fetch;
   const clientFetch = options?.boundedDiagnosticsReads
     ? createAgentDiagnosticsEngineFetch(baseFetch)
     : directory ? baseFetch : undefined;
@@ -3421,11 +3422,12 @@ async function postMcpEntryWithRetry(
         // actual state by polling GET /mcp. Parse the response only as optional
         // diagnostics evidence: an absent or malformed status must fail closed
         // to `not-recorded` without turning accepted delivery into a failure.
-        const status = await parseEngineMcpRegistrationStatus(response, name);
+        const registration = await parseEngineMcpRegistrationStatus(response, name);
         return {
           name,
-          status,
-          source: status ? "engine_status" : null,
+          status: registration.status,
+          source: registration.status ? "engine_status" : null,
+          errorSummary: registration.errorSummary,
           failure: null,
         };
       }
@@ -3436,7 +3438,7 @@ async function postMcpEntryWithRetry(
         registrationStatus: "failed",
         message: "OpenCode rejected the MCP registration request",
       };
-      if (response.status < 500) return { name, status: "failed", source: "transport_failure", failure };
+      if (response.status < 500) return { name, status: "failed", source: "transport_failure", errorSummary: null, failure };
     } catch {
       failure = {
         name,
@@ -3449,6 +3451,7 @@ async function postMcpEntryWithRetry(
     name,
     status: "failed",
     source: "transport_failure",
+    errorSummary: null,
     failure: failure ?? {
       name,
       registrationStatus: "failed",
@@ -3471,13 +3474,20 @@ export type EngineMcpRegistrationInspection = {
   status: EngineMcpRegistrationStatus | "not-recorded";
   source: EngineMcpRegistrationSource | null;
   recordAgeMs: number | null;
+  errorSummary: string | null;
 };
 
 type EngineMcpRegistrationResult = {
   name: string;
   status: EngineMcpRegistrationStatus | null;
   source: EngineMcpRegistrationSource | null;
+  errorSummary: string | null;
   failure: EngineMcpSyncFailure | null;
+};
+
+type ParsedEngineMcpRegistrationStatus = {
+  status: EngineMcpRegistrationStatus | null;
+  errorSummary: string | null;
 };
 
 type EngineMcpDeferredSync = {
@@ -3490,24 +3500,38 @@ type EngineMcpDeferredSync = {
 async function parseEngineMcpRegistrationStatus(
   response: Response,
   name: string,
-): Promise<EngineMcpRegistrationStatus | null> {
+): Promise<ParsedEngineMcpRegistrationStatus> {
   let text: string;
   try {
     text = await readBoundedEngineMcpRegistrationResponse(response);
   } catch {
-    return null;
+    return { status: null, errorSummary: null };
   }
 
   let body: unknown;
   try {
     body = JSON.parse(text) as unknown;
   } catch {
-    return null;
+    return { status: null, errorSummary: null };
   }
-  if (!isRecord(body) || !Object.hasOwn(body, name)) return null;
+  if (!isRecord(body) || !Object.hasOwn(body, name)) return { status: null, errorSummary: null };
   const entry = body[name];
-  if (!isRecord(entry)) return null;
-  return normalizeEngineMcpRegistrationStatus(entry.status);
+  if (!isRecord(entry)) return { status: null, errorSummary: null };
+  const status = normalizeEngineMcpRegistrationStatus(entry.status);
+  return {
+    status,
+    errorSummary: sanitizeEngineMcpRegistrationErrorSummary(entry.error, status),
+  };
+}
+
+function sanitizeEngineMcpRegistrationErrorSummary(
+  error: unknown,
+  status: EngineMcpRegistrationStatus | null,
+): string | null {
+  if (status !== "failed" && status !== "needs-client-registration") return null;
+  if (typeof error !== "string") return null;
+  const sanitized = sanitizeDiagnosticString(error).trim().slice(0, 400);
+  return sanitized || null;
 }
 
 function normalizeEngineMcpRegistrationStatus(status: unknown): EngineMcpRegistrationStatus | null {
@@ -3646,6 +3670,7 @@ type EngineMcpRegistrationRecord = {
   fingerprint: string;
   status: EngineMcpRegistrationStatus;
   source: EngineMcpRegistrationSource;
+  errorSummary: string | null;
   registrationIdentity: string;
   generation: number;
   recordedAt: number;
@@ -3973,6 +3998,7 @@ function recordEngineMcpSyncResult(
       fingerprint,
       status: registration.status,
       source: registration.source,
+      errorSummary: registration.errorSummary,
       registrationIdentity,
       generation: state.generation,
       recordedAt,
@@ -4028,11 +4054,16 @@ function inspectEngineMcpRegistrationInState(
     registrations?.delete(name);
     return notRecordedEngineMcpRegistration();
   }
-  return { status: registration.status, source: registration.source, recordAgeMs: Math.round(ageMs) };
+  return {
+    status: registration.status,
+    source: registration.source,
+    recordAgeMs: Math.round(ageMs),
+    errorSummary: registration.errorSummary,
+  };
 }
 
 function notRecordedEngineMcpRegistration(): EngineMcpRegistrationInspection {
-  return { status: "not-recorded", source: null, recordAgeMs: null };
+  return { status: "not-recorded", source: null, recordAgeMs: null, errorSummary: null };
 }
 
 export function inspectEngineMcpRegistration(
@@ -4061,6 +4092,7 @@ export function refreshEngineMcpRegistrationFromLiveStatus(
   name: string,
   mcpConfig: Record<string, unknown>,
   liveStatus: unknown,
+  liveError: unknown = null,
 ): boolean {
   const status = normalizeEngineMcpRegistrationStatus(liveStatus);
   if (!status) return false;
@@ -4084,6 +4116,7 @@ export function refreshEngineMcpRegistrationFromLiveStatus(
     fingerprint,
     status,
     source: "engine_status",
+    errorSummary: sanitizeEngineMcpRegistrationErrorSummary(liveError, status),
     registrationIdentity,
     generation: state.generation,
     recordedAt: Date.now(),

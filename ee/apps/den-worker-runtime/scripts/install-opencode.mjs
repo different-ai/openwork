@@ -7,7 +7,7 @@ import { basename, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const runtimeRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
-const repoRoot = resolve(runtimeRoot, "..", "..");
+const repoRoot = resolve(runtimeRoot, "..", "..", "..");
 const outputDir = resolve(runtimeRoot, "bin");
 const outputName = process.platform === "win32" ? "opencode.exe" : "opencode";
 const outputPath = join(outputDir, outputName);
@@ -29,31 +29,8 @@ function run(command, args, cwd) {
   return result;
 }
 
-function resolveOrchestratorPackageJson() {
-  const globalRoot = spawnSync("npm", ["root", "-g"], {
-    cwd: runtimeRoot,
-    encoding: "utf8",
-  });
-
-  if (globalRoot.status === 0) {
-    const candidate = resolve(globalRoot.stdout.trim(), "openwork-orchestrator", "package.json");
-    if (existsSync(candidate)) {
-      return candidate;
-    }
-  }
-
-  const repoCandidate = resolve(repoRoot, "packages", "orchestrator", "package.json");
-  if (existsSync(repoCandidate)) {
-    return repoCandidate;
-  }
-
-  throw new Error("Unable to locate openwork-orchestrator package.json");
-}
-
 function resolveOpencodeVersion() {
-  const orchestratorPackageJson = resolveOrchestratorPackageJson();
-  const orchestratorRoot = resolve(orchestratorPackageJson, "..");
-  const versionPath = resolve(orchestratorRoot, "constants.json");
+  const versionPath = resolve(repoRoot, "constants.json");
   if (!existsSync(versionPath)) {
     throw new Error(`Missing pinned constants file at ${versionPath}`);
   }

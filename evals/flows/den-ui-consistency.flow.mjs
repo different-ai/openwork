@@ -293,7 +293,7 @@ export default {
             await ensureSetup(ctx);
             await uiSignIn(ctx, ADMIN_EMAIL, ADMIN_PASSWORD);
             await navigateTo(ctx, "/dashboard");
-            await ctx.waitFor("Boolean(document.querySelector('[data-testid=\"organization-download-card\"]'))", {
+            await ctx.waitFor("Boolean(document.querySelector('[data-testid=\"workspace-install-card\"]'))", {
               timeoutMs: 30_000,
               label: "organization download card",
             });
@@ -301,7 +301,7 @@ export default {
           assert: async () => {
             await ctx.expectNoText("Download the app to unlock extensions");
             const actual = await ctx.eval(`(() => ({
-              downloadCard: Boolean(document.querySelector('[data-testid="organization-download-card"]')),
+              downloadCard: Boolean(document.querySelector('[data-testid="workspace-install-card"]')),
               downloadButton: Boolean(document.querySelector('[data-testid="organization-download-button"]')),
               promotion: document.body.innerText.includes('Download the app to unlock extensions'),
             }))()`);
@@ -381,16 +381,17 @@ export default {
               dashboard: Boolean(document.querySelector('[data-testid="member-dashboard"]')),
               overview: Boolean(document.querySelector('[data-testid="member-resource-overview"]')),
               cards: document.querySelectorAll('[data-testid="member-resource-card"]').length,
-              download: Boolean(document.querySelector('[data-testid="organization-download-card"]')),
+              availableResources: (document.body?.innerText ?? "").includes("Available resources"),
+              download: Boolean(document.querySelector('[data-testid="workspace-install-card"]')),
               adminCreatePlugin: [...document.querySelectorAll('button, a')].some((entry) => entry.textContent?.trim() === 'Create plugin'),
             }))()`);
-            witness(ctx, actual.dashboard && actual.overview && actual.cards >= 3, "Riley sees compact member-scoped resource cards", actual);
+            witness(ctx, actual.dashboard && !actual.overview && actual.cards === 0 && !actual.availableResources, "Riley's home lists providers and plugins without a summary strip of empty counts", actual);
             witness(ctx, actual.download && !actual.adminCreatePlugin, "The member retains the download action without admin creation controls", actual);
           },
           screenshot: {
             name: "compact-member-dashboard",
             requireText: ["Your workspace", "OpenWork Models", "Marketplaces", "Plugins"],
-            rejectText: ["Create plugin", "Something went wrong"],
+            rejectText: ["Available resources", "Create plugin", "Something went wrong"],
             hashIncludes: "/dashboard",
           },
         });

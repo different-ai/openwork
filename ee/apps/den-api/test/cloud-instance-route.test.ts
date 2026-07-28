@@ -302,6 +302,109 @@ describe("Cloud instance route gate", () => {
   })
 })
 
+describe("Cloud gateway resolve route", () => {
+  test("returns 404 when the gateway key is not configured", async () => {
+    const app = new Hono<{ Variables: OrgRouteVariables }>()
+    routes.registerCloudRoutes(app, {
+      memberRoute: contextMiddleware(organizationContext(JSON.stringify({ capabilities: { cloud: true } }))),
+      orgMode: "multi_org",
+      provisionerMode: "daytona",
+      daytonaApiKey: "daytona-test-key",
+      gatewayKey: "",
+    })
+
+    const response = await app.request("http://den.local/v1/cloud/gateway/resolve", {
+      headers: { "X-OpenWork-Gateway-Key": "gateway-secret" },
+    })
+
+    expect(response.status).toBe(404)
+    await expect(response.json()).resolves.toEqual({ error: "cloud_not_found" })
+  })
+
+  test("returns 404 when the gateway key is wrong", async () => {
+    const app = new Hono<{ Variables: OrgRouteVariables }>()
+    routes.registerCloudRoutes(app, {
+      memberRoute: contextMiddleware(organizationContext(JSON.stringify({ capabilities: { cloud: true } }))),
+      orgMode: "multi_org",
+      provisionerMode: "daytona",
+      daytonaApiKey: "daytona-test-key",
+      gatewayKey: "gateway-secret",
+    })
+
+    const response = await app.request("http://den.local/v1/cloud/gateway/resolve", {
+      headers: { "X-OpenWork-Gateway-Key": "bad-secret" },
+    })
+
+    expect(response.status).toBe(404)
+    await expect(response.json()).resolves.toEqual({ error: "cloud_not_found" })
+  })
+
+  test("returns 404 when the Cloud capability is off", async () => {
+    const app = new Hono<{ Variables: OrgRouteVariables }>()
+    routes.registerCloudRoutes(app, {
+      memberRoute: contextMiddleware(organizationContext(null)),
+      orgMode: "multi_org",
+      provisionerMode: "daytona",
+      daytonaApiKey: "daytona-test-key",
+      gatewayKey: "gateway-secret",
+    })
+
+    const response = await app.request("http://den.local/v1/cloud/gateway/resolve", {
+      headers: { "X-OpenWork-Gateway-Key": "gateway-secret" },
+    })
+
+    expect(response.status).toBe(404)
+    await expect(response.json()).resolves.toEqual({ error: "cloud_not_found" })
+  })
+
+  test("returns the client token only when the instance is ready", async () => {
+    const provisioningWorker = fakeWorker("provisioning")
+    const provisioningApp = new Hono<{ Variables: OrgRouteVariables }>()
+    routes.registerCloudRoutes(provisioningApp, {
+      memberRoute: contextMiddleware(organizationContext(JSON.stringify({ capabilities: { cloud: true } }))),
+      orgMode: "multi_org",
+      provisionerMode: "daytona",
+      daytonaApiKey: "daytona-test-key",
+      gatewayKey: "gateway-secret",
+      ensureCloudWorker: async () => provisioningWorker,
+      getSandboxRecord: async () => null,
+    })
+
+    const provisioning = await provisioningApp.request("http://den.local/v1/cloud/gateway/resolve", {
+      headers: { "X-OpenWork-Gateway-Key": "gateway-secret" },
+    })
+
+    expect(provisioning.status).toBe(200)
+    await expect(provisioning.json()).resolves.toEqual({ status: "provisioning", url: null, clientToken: null })
+
+    const readyWorker = fakeWorker("healthy")
+    const store = makeCloudWorkerStore({ tokens: [makeToken(readyWorker.id, "client")] })
+    const readyApp = new Hono<{ Variables: OrgRouteVariables }>()
+    routes.registerCloudRoutes(readyApp, {
+      memberRoute: contextMiddleware(organizationContext(JSON.stringify({ capabilities: { cloud: true } }))),
+      orgMode: "multi_org",
+      provisionerMode: "daytona",
+      daytonaApiKey: "daytona-test-key",
+      gatewayKey: "gateway-secret",
+      ensureCloudWorker: async () => readyWorker,
+      cloudWorkerStore: store.store,
+      getSandboxRecord: async () => fakeSandbox(),
+      probeSignedPreview: async () => true,
+    })
+
+    const ready = await readyApp.request("http://den.local/v1/cloud/gateway/resolve", {
+      headers: { "X-OpenWork-Gateway-Key": "gateway-secret" },
+    })
+
+    expect(ready.status).toBe(200)
+    await expect(ready.json()).resolves.toEqual({
+      status: "ready",
+      url: "https://preview.example.test",
+      clientToken: "client-token",
+    })
+  })
+})
+
 describe("Cloud instance route lifecycle states", () => {
   test("returns waking and starts one wake for concurrent stopped-worker requests", async () => {
     const worker = fakeWorker("stopped")
@@ -500,6 +603,49 @@ describe("Cloud instance per-user workers", () => {
 })
 
 describe("Cloud instance failed self-heal", () => {
+  test("adopts an existing stopped sandbox for a failed worker instead of provisioning a duplicate", async () => {
+    const worker = storedWorker({ status: "failed" })
+    const store = makeCloudWorkerStore({
+      initialWorkers: [worker],
+      tokens: [makeToken(worker.id, "host"), makeToken(worker.id, "client"), makeToken(worker.id, "activity")],
+    })
+    const app = new Hono<{ Variables: OrgRouteVariables }>()
+    let provisionCalls = 0
+    let wakeCalls = 0
+
+    routes.registerCloudRoutes(app, {
+      memberRoute: contextMiddleware(organizationContext(JSON.stringify({ capabilities: { cloud: true } }))),
+      orgMode: "multi_org",
+      provisionerMode: "daytona",
+      daytonaApiKey: "daytona-test-key",
+      ensureCloudWorker: async () => worker,
+      cloudWorkerStore: store.store,
+      getSandboxRecord: async () => fakeSandbox(),
+      inspectSandbox: async () => ({ state: "stopped" }),
+      probeSignedPreview: async () => true,
+      continueProvisioning: async () => {
+        provisionCalls += 1
+      },
+      wakeCloudWorker: async () => {
+        wakeCalls += 1
+        worker.status = "healthy"
+      },
+    })
+
+    const first = await app.request("http://den.local/v1/cloud/instance")
+    expect(first.status).toBe(200)
+    await expect(first.json()).resolves.toEqual({ status: "waking", url: null })
+    await flushMicrotasks()
+
+    expect(store.claimAttempts).toBe(1)
+    expect(provisionCalls).toBe(0)
+    expect(wakeCalls).toBe(1)
+    expect(worker.status).not.toBe("failed")
+
+    await expect(app.request("http://den.local/v1/cloud/instance").then((response) => response.json()))
+      .resolves.toEqual({ status: "ready", url: "https://preview.example.test" })
+  })
+
   test("claims a failed worker, kicks provisioning, then throttles another failed GET for 60 seconds", async () => {
     const worker = storedWorker({ status: "failed" })
     const store = makeCloudWorkerStore({

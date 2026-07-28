@@ -741,7 +741,7 @@ config:
 
 installerArtifacts:
   enabled: true
-  existingClaim: openwork-installer-artifacts
+  existingClaim: openwork-desktop-artifacts
   mountPath: /var/lib/openwork/installer-artifacts
 ```
 

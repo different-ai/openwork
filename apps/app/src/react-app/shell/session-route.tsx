@@ -1230,7 +1230,7 @@ export function SessionRoute() {
         });
       },
       cloudMcpSubmissionState,
-      onOpenConnect: () => navigate("/settings/connect"),
+      onOpenConnect: () => navigate("/settings/extensions"),
       onDraftChange: () => {
         // Draft persistence will be wired once the full React shell owns session state.
       },

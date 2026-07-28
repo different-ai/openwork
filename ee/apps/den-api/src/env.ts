@@ -50,6 +50,8 @@ const EnvSchema = z.object({
   DEN_ALLOW_PRIVATE_MCP_URLS: z.string().optional(),
   DEN_DIAGNOSTICS_ORIGIN: z.string().optional(),
   DEN_DIAGNOSTICS_BEARER_TOKEN: z.string().optional(),
+  DEN_GATEWAY_KEY: z.string().optional(),
+  DEN_GATEWAY_ORIGIN: z.string().optional(),
   DEN_GOOGLE_OAUTH_AUTHORIZE_URL: z.string().optional(),
   DEN_GOOGLE_OAUTH_TOKEN_URL: z.string().optional(),
   DEN_GOOGLE_API_BASE_URL: z.string().optional(),
@@ -277,6 +279,29 @@ function normalizeDiagnosticsOrigin(value: string | undefined, allowInsecureHttp
   return url.origin
 }
 
+function normalizeOptionalHttpsOrigin(envName: string, value: string | undefined) {
+  const configured = optionalString(value)
+  if (!configured) {
+    return undefined
+  }
+
+  let url: URL
+  try {
+    url = new URL(configured)
+  } catch {
+    throw new Error(`${envName} must be an absolute https origin.`)
+  }
+
+  if (url.protocol !== "https:") {
+    throw new Error(`${envName} must be an absolute https origin.`)
+  }
+  if (url.username || url.password || url.search || url.hash || (url.pathname !== "/" && url.pathname !== "")) {
+    throw new Error(`${envName} cannot contain credentials, a path, a query string, or a fragment.`)
+  }
+
+  return url.origin
+}
+
 function normalizeAbsoluteUrlCsv(envName: string, value: string | undefined) {
   const entries = splitCsv(value)
   const invalidEntries: string[] = []
@@ -405,6 +430,8 @@ export const env = {
     origin: diagnosticsOrigin,
     bearerToken: diagnosticsBearerToken,
   },
+  gatewayKey: optionalString(parsed.DEN_GATEWAY_KEY),
+  gatewayOrigin: normalizeOptionalHttpsOrigin("DEN_GATEWAY_ORIGIN", parsed.DEN_GATEWAY_ORIGIN),
   planGatingEnabled,
   installLinksGatingEnabled,
   connectLink,

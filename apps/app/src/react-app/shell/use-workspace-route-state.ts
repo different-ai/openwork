@@ -764,9 +764,9 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
     if (loading) return;
     if (workspaces.length > 0) return;
     if (local.prefs.hasCompletedOnboarding) return;
+    if (denAuth.status === "checking") return;
+    if (denAuth.isSignedIn) return;
     if (isDesktopRuntime()) {
-      if (denAuth.status === "checking") return;
-      if (denAuth.isSignedIn) return;
       if (readDenBootstrapConfig().source !== "default") return;
     }
     navigate("/welcome", { replace: true });

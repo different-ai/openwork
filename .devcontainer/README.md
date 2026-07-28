@@ -129,7 +129,7 @@ The Daytona toolbox is exposed to opencode through focused skills:
 3. Set overrides → Save
 4. In the **Electron app** (noVNC on port 6080):
    - Cloud → developer mode → base URL `http://localhost:3005`
-   - Sign in → Customization → see locked toggles
+   - Sign in → Settings → see the desktop policy banner
 
 ## Architecture
 

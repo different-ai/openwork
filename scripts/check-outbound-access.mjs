@@ -8,7 +8,6 @@ const docsPath = "docs/enterprise/outbound-access.md";
 
 const scanRoots = [
   "apps/desktop/electron",
-  "apps/installer/src",
   "apps/server/src",
   "apps/app/src",
   "packages/openwork-bootstrap/bin",

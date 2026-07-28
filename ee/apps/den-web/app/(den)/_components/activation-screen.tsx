@@ -85,7 +85,7 @@ export function ActivationScreen() {
 
   useEffect(() => {
     if (!CONNECT_CODE_PATTERN.test(code)) {
-      setState({ kind: "error", message: "This activation link is incomplete. Return to the installer and try again." });
+      setState({ kind: "error", message: "This activation link is incomplete. Return to the install page and try again." });
       return;
     }
 
@@ -155,7 +155,7 @@ export function ActivationScreen() {
 
   if (state.kind === "expired" || state.kind === "error") {
     const message = state.kind === "expired"
-      ? "This one-time activation link has expired. Return to the installer and choose Try opening browser again."
+      ? "This one-time activation link has expired. Return to the install page and open OpenWork again."
       : state.message;
     return (
       <OnboardingShell state="activation-error" width="wide">
@@ -164,7 +164,7 @@ export function ActivationScreen() {
           <h1 className="den-title-lg">This computer still needs approval.</h1>
           <p className="den-copy" role="alert">{message}</p>
           <button type="button" className="den-button-secondary w-fit" onClick={() => window.history.back()}>
-            Return to the installer
+            Return to the install page
           </button>
         </section>
       </OnboardingShell>

@@ -7,9 +7,8 @@ import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 
 const VERSION = "0.1.0"
-// The installed command name. Deliberately NOT "openwork" so it never collides
-// with the openwork-orchestrator npm package, which also installs an "openwork"
-// binary onto the user's PATH.
+// The installed command name. Keep it explicit so setup guides can distinguish
+// bootstrap actions from other OpenWork commands a user may already have.
 const COMMAND_NAME = "openwork-bootstrap"
 const DEFAULT_OPENWORK_MARKETPLACE_NAME = "OpenWork Marketplace"
 const executableBasename = () => (process.platform === "win32" ? `${COMMAND_NAME}.cmd` : COMMAND_NAME)

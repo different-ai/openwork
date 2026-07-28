@@ -5,10 +5,45 @@ import { Cpu } from "lucide-react";
 import { t } from "../../../../i18n";
 import { Button } from "@/components/ui/button";
 
+import type { ExtensionInventoryFilter } from "../extension-taxonomy";
 import { PluginsView, type PluginsExtensionsStore } from "./plugins-view";
 
-export type ExtensionsSection = "all" | "mcp" | "skills" | "plugins";
-export type ExtensionsInventoryFilter = "all" | "mcp" | "skill";
+export type ExtensionsSection = "all" | "apps" | "connections" | "mcps" | "skills" | "plugins";
+
+/** Sections are the URL spelling of the inventory filters. */
+function filterForSection(section: ExtensionsSection | undefined): ExtensionInventoryFilter {
+  switch (section) {
+    case "apps":
+      return "app";
+    case "connections":
+      return "connection";
+    case "mcps":
+      return "mcp";
+    case "skills":
+      return "skill";
+    case "plugins":
+      return "plugin";
+    default:
+      return "all";
+  }
+}
+
+function sectionForFilter(filter: ExtensionInventoryFilter): ExtensionsSection {
+  switch (filter) {
+    case "app":
+      return "apps";
+    case "connection":
+      return "connections";
+    case "mcp":
+      return "mcps";
+    case "skill":
+      return "skills";
+    case "plugin":
+      return "plugins";
+    case "all":
+      return "all";
+  }
+}
 
 type SuggestedPlugin = {
   name: string;
@@ -39,13 +74,17 @@ export type ExtensionsViewProps = {
   mcpConnectedAppsCount: number;
   /** The MCP view (quick-connect grid + configured servers). Skills are injected into it. */
   mcpView: (routing: {
-    initialFilter: ExtensionsInventoryFilter;
-    onFilterChange: (filter: ExtensionsInventoryFilter) => void;
+    initialFilter: ExtensionInventoryFilter;
+    onFilterChange: (filter: ExtensionInventoryFilter) => void;
+    detailId: string | null;
+    onDetailIdChange?: (id: string | null) => void;
   }) => ReactNode;
   onRefresh: () => void;
   initialSection?: ExtensionsSection;
   setSectionRoute?: (tab: ExtensionsSection) => void;
   showHeader?: boolean;
+  detailId?: string | null;
+  onDetailIdChange?: (id: string | null) => void;
 };
 
 export function ExtensionsView(props: ExtensionsViewProps) {
@@ -53,14 +92,21 @@ export function ExtensionsView(props: ExtensionsViewProps) {
     () => props.extensions.pluginList().length,
     [props.extensions],
   );
-  const initialFilter = props.initialSection === "mcp"
-    ? "mcp"
-    : props.initialSection === "skills"
-      ? "skill"
-      : "all";
-  const setFilterRoute = (filter: ExtensionsInventoryFilter) => {
-    props.setSectionRoute?.(filter === "skill" ? "skills" : filter);
+  const initialFilter = filterForSection(props.initialSection);
+  const setFilterRoute = (filter: ExtensionInventoryFilter) => {
+    props.setSectionRoute?.(sectionForFilter(filter));
   };
+  const detailId = props.detailId ?? null;
+  const mcpRouting = {
+    initialFilter,
+    onFilterChange: setFilterRoute,
+    detailId,
+    onDetailIdChange: props.onDetailIdChange,
+  };
+
+  if (detailId) {
+    return <>{props.mcpView(mcpRouting)}</>;
+  }
 
   return (
     <section className="space-y-6 max-w-3xl w-full animate-in fade-in duration-300">
@@ -84,7 +130,7 @@ export function ExtensionsView(props: ExtensionsViewProps) {
       </div>
 
       {/* Runtime extensions and organization-assigned capabilities share one inventory. */}
-      {props.mcpView({ initialFilter, onFilterChange: setFilterRoute })}
+      {props.mcpView(mcpRouting)}
 
       {/* OpenCode plugins -- advanced, collapsed */}
       {pluginCount > 0 ? (

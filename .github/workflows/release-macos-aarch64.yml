@@ -33,11 +33,6 @@ on:
         required: false
         type: boolean
         default: true
-      publish_sidecars:
-        description: "Build + upload openwork-orchestrator sidecar release assets"
-        required: false
-        type: boolean
-        default: true
       publish_npm:
         description: "Publish openwork-server to npm if its version changed"
         required: false
@@ -83,7 +78,6 @@ jobs:
       notarize: ${{ steps.resolve.outputs.notarize }}
       build_electron: ${{ steps.resolve.outputs.build_electron }}
       sign_windows: ${{ steps.resolve.outputs.sign_windows }}
-      publish_sidecars: ${{ steps.resolve.outputs.publish_sidecars }}
       publish_npm: ${{ steps.resolve.outputs.publish_npm }}
       publish_daytona_snapshot: ${{ steps.resolve.outputs.publish_daytona_snapshot }}
     steps:
@@ -99,10 +93,8 @@ jobs:
           INPUT_NOTARIZE: ${{ github.event.inputs.notarize }}
           INPUT_BUILD_ELECTRON: ${{ github.event.inputs.build_electron }}
           INPUT_SIGN_WINDOWS: ${{ github.event.inputs.sign_windows }}
-          INPUT_PUBLISH_SIDECARS: ${{ github.event.inputs.publish_sidecars }}
           INPUT_PUBLISH_NPM: ${{ github.event.inputs.publish_npm }}
           INPUT_PUBLISH_DAYTONA_SNAPSHOT: ${{ github.event.inputs.publish_daytona_snapshot }}
-          DEFAULT_PUBLISH_SIDECARS: ${{ vars.RELEASE_PUBLISH_SIDECARS }}
           DEFAULT_PUBLISH_NPM: ${{ vars.RELEASE_PUBLISH_NPM }}
           DEFAULT_PUBLISH_DAYTONA_SNAPSHOT: ${{ vars.RELEASE_PUBLISH_DAYTONA_SNAPSHOT }}
           DEFAULT_NOTARIZE: ${{ vars.MACOS_NOTARIZE }}
@@ -138,11 +130,13 @@ jobs:
           if [ -n "$RELEASE_BODY_INPUT" ]; then
             RELEASE_BODY="$RELEASE_BODY_INPUT"
           else
-            printf -v RELEASE_BODY '%s\n\nOpenWork %s desktop release.\n\n%s\n%s' \
+            printf -v RELEASE_BODY '%s\n\nOpenWork %s desktop release.\n\n%s\n%s\n%s\n%s' \
               "## What's new" \
               "$TAG" \
-              "- Download the attached installer for your platform." \
-              "- Electron builds use the attached latest-mac.yml updater feed."
+              "- Public artifacts use the openwork-* naming convention." \
+              "- Cloud artifacts use openwork-cloud-* and require sign-in without enterprise activation." \
+              "- Enterprise artifacts use openwork-enterprise-* while retaining the standard OpenWork app identity." \
+              "- Public, Cloud, and enterprise Electron builds use separate updater manifests on this release."
           fi
 
           draft="${INPUT_DRAFT:-}"
@@ -178,10 +172,6 @@ jobs:
             printf -v RELEASE_BODY '%s\n\n%s' "$RELEASE_BODY" "$WINDOWS_UNSIGNED_NOTE"
           fi
 
-          publish_sidecars="${INPUT_PUBLISH_SIDECARS:-}"
-          if [ -z "$publish_sidecars" ]; then
-            publish_sidecars="${DEFAULT_PUBLISH_SIDECARS:-true}"
-          fi
           publish_npm="${INPUT_PUBLISH_NPM:-}"
           if [ -z "$publish_npm" ]; then
             publish_npm="${DEFAULT_PUBLISH_NPM:-true}"
@@ -204,7 +194,6 @@ jobs:
           echo "notarize=$notarize" >> "$GITHUB_OUTPUT"
           echo "build_electron=$build_electron" >> "$GITHUB_OUTPUT"
           echo "sign_windows=$sign_windows" >> "$GITHUB_OUTPUT"
-          echo "publish_sidecars=$publish_sidecars" >> "$GITHUB_OUTPUT"
           echo "publish_npm=$publish_npm" >> "$GITHUB_OUTPUT"
           echo "publish_daytona_snapshot=$publish_daytona_snapshot" >> "$GITHUB_OUTPUT"
           {
@@ -290,31 +279,145 @@ jobs:
           - platform: macos-14
             os_type: macos
             artifact: electron-macos-arm64
+            builder_config: electron-builder.yml
+            asset_prefix: openwork
+            manifest_pattern: latest*.yml
             electron_args: "--mac --arm64"
             target_triple: aarch64-apple-darwin
           - platform: macos-14
             os_type: macos
             artifact: electron-macos-x64
+            builder_config: electron-builder.yml
+            asset_prefix: openwork
+            manifest_pattern: latest*.yml
             electron_args: "--mac --x64"
             target_triple: x86_64-apple-darwin
           - platform: ubuntu-22.04
             os_type: linux
             artifact: electron-linux-x64
+            builder_config: electron-builder.yml
+            asset_prefix: openwork
+            manifest_pattern: latest*.yml
             electron_args: "--linux --x64"
             target_triple: x86_64-unknown-linux-gnu
           - platform: ubuntu-22.04-arm
             os_type: linux
             artifact: electron-linux-arm64
+            builder_config: electron-builder.yml
+            asset_prefix: openwork
+            manifest_pattern: latest*.yml
             electron_args: "--linux --arm64"
             target_triple: aarch64-unknown-linux-gnu
           - platform: windows-2022
             os_type: windows
             artifact: electron-windows-x64
+            builder_config: electron-builder.yml
+            asset_prefix: openwork
+            manifest_pattern: latest*.yml
             electron_args: "--win --x64"
             target_triple: x86_64-pc-windows-msvc
           - platform: windows-11-arm
             os_type: windows
             artifact: electron-windows-arm64
+            builder_config: electron-builder.yml
+            asset_prefix: openwork
+            manifest_pattern: latest*.yml
+            electron_args: "--win --arm64"
+            target_triple: aarch64-pc-windows-msvc
+          - platform: macos-14
+            os_type: macos
+            artifact: electron-cloud-macos-arm64
+            builder_config: electron-builder.cloud.yml
+            asset_prefix: openwork-cloud
+            manifest_pattern: cloud*.yml
+            electron_args: "--mac --arm64"
+            target_triple: aarch64-apple-darwin
+          - platform: macos-14
+            os_type: macos
+            artifact: electron-cloud-macos-x64
+            builder_config: electron-builder.cloud.yml
+            asset_prefix: openwork-cloud
+            manifest_pattern: cloud*.yml
+            electron_args: "--mac --x64"
+            target_triple: x86_64-apple-darwin
+          - platform: ubuntu-22.04
+            os_type: linux
+            artifact: electron-cloud-linux-x64
+            builder_config: electron-builder.cloud.yml
+            asset_prefix: openwork-cloud
+            manifest_pattern: cloud*.yml
+            electron_args: "--linux --x64"
+            target_triple: x86_64-unknown-linux-gnu
+          - platform: ubuntu-22.04-arm
+            os_type: linux
+            artifact: electron-cloud-linux-arm64
+            builder_config: electron-builder.cloud.yml
+            asset_prefix: openwork-cloud
+            manifest_pattern: cloud*.yml
+            electron_args: "--linux --arm64"
+            target_triple: aarch64-unknown-linux-gnu
+          - platform: windows-2022
+            os_type: windows
+            artifact: electron-cloud-windows-x64
+            builder_config: electron-builder.cloud.yml
+            asset_prefix: openwork-cloud
+            manifest_pattern: cloud*.yml
+            electron_args: "--win --x64"
+            target_triple: x86_64-pc-windows-msvc
+          - platform: windows-11-arm
+            os_type: windows
+            artifact: electron-cloud-windows-arm64
+            builder_config: electron-builder.cloud.yml
+            asset_prefix: openwork-cloud
+            manifest_pattern: cloud*.yml
+            electron_args: "--win --arm64"
+            target_triple: aarch64-pc-windows-msvc
+          - platform: macos-14
+            os_type: macos
+            artifact: electron-enterprise-macos-arm64
+            builder_config: electron-builder.enterprise.yml
+            asset_prefix: openwork-enterprise
+            manifest_pattern: enterprise*.yml
+            electron_args: "--mac --arm64"
+            target_triple: aarch64-apple-darwin
+          - platform: macos-14
+            os_type: macos
+            artifact: electron-enterprise-macos-x64
+            builder_config: electron-builder.enterprise.yml
+            asset_prefix: openwork-enterprise
+            manifest_pattern: enterprise*.yml
+            electron_args: "--mac --x64"
+            target_triple: x86_64-apple-darwin
+          - platform: ubuntu-22.04
+            os_type: linux
+            artifact: electron-enterprise-linux-x64
+            builder_config: electron-builder.enterprise.yml
+            asset_prefix: openwork-enterprise
+            manifest_pattern: enterprise*.yml
+            electron_args: "--linux --x64"
+            target_triple: x86_64-unknown-linux-gnu
+          - platform: ubuntu-22.04-arm
+            os_type: linux
+            artifact: electron-enterprise-linux-arm64
+            builder_config: electron-builder.enterprise.yml
+            asset_prefix: openwork-enterprise
+            manifest_pattern: enterprise*.yml
+            electron_args: "--linux --arm64"
+            target_triple: aarch64-unknown-linux-gnu
+          - platform: windows-2022
+            os_type: windows
+            artifact: electron-enterprise-windows-x64
+            builder_config: electron-builder.enterprise.yml
+            asset_prefix: openwork-enterprise
+            manifest_pattern: enterprise*.yml
+            electron_args: "--win --x64"
+            target_triple: x86_64-pc-windows-msvc
+          - platform: windows-11-arm
+            os_type: windows
+            artifact: electron-enterprise-windows-arm64
+            builder_config: electron-builder.enterprise.yml
+            asset_prefix: openwork-enterprise
+            manifest_pattern: enterprise*.yml
             electron_args: "--win --arm64"
             target_triple: aarch64-pc-windows-msvc
 
@@ -343,7 +446,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          # Bun >= 1.3.10 is required to compile bun-windows-arm64 sidecars.
+          # Bun >= 1.3.10 is required by the server build and package-time helpers.
           bun-version: 1.3.10
 
       - name: Get pnpm store path
@@ -406,7 +509,7 @@ jobs:
       - name: Build Electron app
         shell: bash
         env:
-          # TARGET tells prepare-sidecar.mjs which architecture's sidecars
+          # TARGET tells prepare-sidecar.mjs which architecture's opencode binary
           # to download (critical for cross-arch builds like x64 on arm64 mac).
           TARGET: ${{ matrix.target_triple }}
         run: pnpm --filter @openwork/desktop build:electron
@@ -422,7 +525,7 @@ jobs:
         run: |
           set -euo pipefail
           pnpm --dir apps/desktop exec electron-builder \
-            --config electron-builder.yml \
+            --config ${{ matrix.builder_config }} \
             ${{ matrix.electron_args }} \
             --publish never
 
@@ -431,7 +534,7 @@ jobs:
         run: |
           set -euo pipefail
           pnpm --dir apps/desktop exec electron-builder \
-            --config electron-builder.yml \
+            --config ${{ matrix.builder_config }} \
             ${{ matrix.electron_args }} \
             --publish never
 
@@ -441,7 +544,7 @@ jobs:
         run: |
           set -euo pipefail
           pnpm --dir apps/desktop exec electron-builder \
-            --config electron-builder.yml \
+            --config ${{ matrix.builder_config }} \
             ${{ matrix.electron_args }} \
             --publish never
 
@@ -477,7 +580,7 @@ jobs:
 
           mkdir -p "$RUNNER_TEMP/signpath-unsigned"
           shopt -s nullglob
-          installers=(apps/desktop/dist-electron/openwork-win-*.exe)
+          installers=(apps/desktop/dist-electron/${{ matrix.asset_prefix }}-win-*.exe)
           if [ "${#installers[@]}" -ne 1 ]; then
             printf 'Expected exactly one unsigned Windows installer, found %s.\n' "${#installers[@]}" >&2
             printf '%s\n' "${installers[@]}" >&2
@@ -532,6 +635,32 @@ jobs:
           set -euo pipefail
           echo "::warning::Publishing unsigned Windows installer because SIGN_WINDOWS is not enabled."
 
+      # electron-builder may still emit latest*.yml for a custom distribution.
+      # Normalize each non-public feed so it cannot update into another flavor.
+      - name: Normalize custom distribution updater manifests
+        if: matrix.asset_prefix != 'openwork'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd apps/desktop/dist-electron
+          shopt -s nullglob
+          channel="${{ matrix.asset_prefix }}"
+          channel="${channel#openwork-}"
+          for manifest in latest*.yml; do
+            target="${channel}${manifest#latest}"
+            if [ -e "$target" ]; then
+              rm -f "$manifest"
+            else
+              mv "$manifest" "$target"
+            fi
+          done
+          manifests=("${channel}"*.yml)
+          if [ ${#manifests[@]} -eq 0 ]; then
+            echo "${channel} build produced no updater manifest." >&2
+            exit 1
+          fi
+          printf '%s\n' "${manifests[@]}"
+
       - name: Upload Electron release assets
         env:
           GH_TOKEN: ${{ github.token }}
@@ -539,7 +668,7 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          assets=(apps/desktop/dist-electron/openwork-*)
+          assets=(apps/desktop/dist-electron/${{ matrix.asset_prefix }}-*)
           if [ ${#assets[@]} -eq 0 ]; then
             echo "No Electron release assets found in apps/desktop/dist-electron" >&2
             exit 1
@@ -550,7 +679,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: apps/desktop/dist-electron/latest*.yml
+          path: apps/desktop/dist-electron/${{ matrix.manifest_pattern }}
           if-no-files-found: error
 
   publish-electron-assets:
@@ -590,132 +719,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: node scripts/release/publish-electron-assets.mjs --manifests-only "${{ runner.temp }}/electron-dist" "$RELEASE_TAG"
 
-  publish-installers:
-    name: Build + Upload Installer Assets
-    needs: [resolve-release, verify-release]
-    uses: ./.github/workflows/release-generic-installer.yml
-    with:
-      release_tag: ${{ needs.resolve-release.outputs.release_tag }}
-      publish_mode: release
-      platforms: mac-arm64,mac-x64,win-x64
-      sign_windows: ${{ needs.resolve-release.outputs.sign_windows == 'true' }}
-    secrets: inherit
-
-  release-orchestrator-sidecars:
-    name: Build + Upload openwork-orchestrator Sidecars
-    needs: [resolve-release, verify-release]
-    if: needs.resolve-release.outputs.publish_sidecars == 'true'
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    env:
-      RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ env.RELEASE_TAG }}
-          fetch-depth: 0
-
-      - name: Setup Node
-        uses: actions/setup-node@v6
-        with:
-          node-version: 24
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 11.4.0
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v1
-        with:
-          # Bun >= 1.3.10 is required to compile bun-windows-arm64 sidecars.
-          bun-version: "1.3.10"
-
-      - name: Get pnpm store path
-        id: pnpm-store
-        shell: bash
-        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
-
-      - name: Cache pnpm store
-        uses: actions/cache@v5
-        continue-on-error: true
-        with:
-          path: ${{ steps.pnpm-store.outputs.path }}
-          key: ubuntu-pnpm-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: |
-            ubuntu-pnpm-
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile --prefer-offline
-
-      - name: Resolve sidecar versions
-        id: sidecar-versions
-        shell: bash
-        run: |
-          node -e "const fs=require('fs'); const orchestrator=JSON.parse(fs.readFileSync('apps/orchestrator/package.json','utf8')); const server=JSON.parse(fs.readFileSync('apps/server/package.json','utf8')); console.log('orchestrator=' + orchestrator.version); console.log('server=' + server.version);" >> "$GITHUB_OUTPUT"
-
-      - name: Resolve SOURCE_DATE_EPOCH
-        id: source-date
-        shell: bash
-        run: |
-          epoch=$(git show -s --format=%ct "${RELEASE_TAG}")
-          echo "epoch=$epoch" >> "$GITHUB_OUTPUT"
-
-      - name: Check openwork-orchestrator release
-        id: orchestrator-release
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          tag="openwork-orchestrator-v${{ steps.sidecar-versions.outputs.orchestrator }}"
-          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Build orchestrator release artifacts
-        env:
-          SOURCE_DATE_EPOCH: ${{ steps.source-date.outputs.epoch }}
-        run: |
-          pnpm --filter openwork-orchestrator build:bin:all
-          pnpm --filter openwork-orchestrator build:sidecars
-
-      - name: Release review (strict)
-        env:
-          SOURCE_DATE_EPOCH: ${{ steps.source-date.outputs.epoch }}
-        run: node scripts/release/review.mjs --strict
-
-      - name: Create openwork-orchestrator release
-        if: steps.orchestrator-release.outputs.exists != 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          version="${{ steps.sidecar-versions.outputs.orchestrator }}"
-          tag="openwork-orchestrator-v${version}"
-          notes="Sidecar bundle for openwork-orchestrator v${version}.\n\nopenwork-server: ${{ steps.sidecar-versions.outputs.server }}"
-          gh release create "$tag" \
-            --repo "$GITHUB_REPOSITORY" \
-            --title "openwork-orchestrator v${version}" \
-            --notes "$notes" \
-            --latest=false
-
-      - name: Upload orchestrator release assets
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          tag="openwork-orchestrator-v${{ steps.sidecar-versions.outputs.orchestrator }}"
-          gh release upload "$tag" apps/orchestrator/dist/bin/* apps/orchestrator/dist/sidecars/* --repo "$GITHUB_REPOSITORY" --clobber
-
   publish-npm:
     name: Publish openwork-server
-    needs: [resolve-release, verify-release, release-orchestrator-sidecars]
+    needs: [resolve-release, verify-release]
     if: |
       always() &&
       needs.resolve-release.result == 'success' &&
       needs.verify-release.result == 'success' &&
-      (needs.release-orchestrator-sidecars.result == 'success' || needs.release-orchestrator-sidecars.result == 'skipped') &&
       needs.resolve-release.outputs.publish_npm == 'true'
     runs-on: blacksmith-4vcpu-ubuntu-2404
     env:
@@ -742,7 +752,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v1
         with:
-          # Bun >= 1.3.10 is required to compile bun-windows-arm64 sidecars.
+          # Bun builds the openwork-server executable before npm publish.
           bun-version: "1.3.10"
 
       - name: Get pnpm store path
@@ -835,7 +845,7 @@ jobs:
       always() &&
       needs.resolve-release.result == 'success' &&
       needs.publish-electron.result == 'success' &&
-      (needs.publish-release.result == 'success' || needs.publish-release.result == 'skipped')
+      needs.publish-release.result == 'success'
     runs-on: blacksmith-4vcpu-ubuntu-2404
     permissions:
       contents: write
@@ -888,8 +898,6 @@ jobs:
       - verify-release
       - publish-electron
       - publish-electron-assets
-      - publish-installers
-      - release-orchestrator-sidecars
       - publish-npm
       - publish-daytona-snapshot
     if: |
@@ -898,8 +906,6 @@ jobs:
       needs.verify-release.result == 'success' &&
       (needs.publish-electron.result == 'success' || needs.publish-electron.result == 'skipped') &&
       (needs.publish-electron-assets.result == 'success' || needs.publish-electron-assets.result == 'skipped') &&
-      needs.publish-installers.result == 'success' &&
-      (needs.release-orchestrator-sidecars.result == 'success' || needs.release-orchestrator-sidecars.result == 'skipped') &&
       (needs.publish-npm.result == 'success' || needs.publish-npm.result == 'skipped') &&
       (needs.publish-daytona-snapshot.result == 'success' || needs.publish-daytona-snapshot.result == 'skipped')
     runs-on: blacksmith-4vcpu-ubuntu-2404

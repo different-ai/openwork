@@ -32,20 +32,13 @@ import {
   type ComposerSlashCommandOption,
 } from "./slash-command";
 import { encodeConnectSkillToken } from "./connect-skill-token";
-import { FILE_URL_RE, HTTP_URL_RE } from "./pasted-text";
+import { FILE_URL_RE, HTTP_URL_RE, type PastedTextChip } from "./pasted-text";
 
 type MentionItem = {
   id: string;
   kind: ComposerMentionKind;
   value: string;
   label: string;
-};
-
-type PastedTextChip = {
-  id: string;
-  label: string;
-  text: string;
-  lines: number;
 };
 
 type ToolMenuSettingsSection = "commands" | "skills" | "mcps" | "plugins";
@@ -710,7 +703,7 @@ export function ReactSessionComposer(props: ComposerProps) {
         }
       };
     }
-    if (toolMenuSection === "mcps" && listMcp && !toolMenuLoadRef.current.mcps) {
+    if ((toolMenuSection === "extensions" || toolMenuSection === "mcps") && listMcp && !toolMenuLoadRef.current.mcps) {
       let cancelled = false;
       toolMenuLoadRef.current.mcps = true;
       setMcpLoading(true);
@@ -898,7 +891,7 @@ export function ReactSessionComposer(props: ComposerProps) {
   };
 
   const openToolMenuSettings = () => {
-    const section: ToolMenuSettingsSection = toolMenuSection === "commands" || toolMenuSection === "skills" || toolMenuSection === "mcps"
+    const section: ToolMenuSettingsSection = toolMenuSection === "commands" || toolMenuSection === "skills"
       ? toolMenuSection
       : "plugins";
     props.onOpenSettingsSection?.(section);
@@ -1299,9 +1292,11 @@ export function ReactSessionComposer(props: ComposerProps) {
                 const text = event.clipboardData?.getData("text/plain") ?? "";
 
                 // Plain text paste display is owned by PasteChipPlugin inside
-                // the Lexical editor: >50 chars collapse unless the whole
-                // string is a standalone HTTP(S) URL; expanded pasted text gets
-                // the gray pasted-content styling. Do NOT duplicate that here.
+                // the Lexical editor: text collapses when it would exceed the
+                // editor's current width and maximum height, unless the whole
+                // string is a standalone HTTP(S) URL. Text that fits, or is
+                // expanded from a chip, renders like normal text. Do NOT
+                // duplicate that here.
 
                 if (
                   text.trim() &&
@@ -1404,7 +1399,6 @@ export function ReactSessionComposer(props: ComposerProps) {
                             ["commands", t("dashboard.commands")],
                             ["skills", t("dashboard.skills")],
                             ["extensions", "Extensions"],
-                            ["mcps", t("composer.mcps_label")],
                           ] as const).map(([section, label]) => (
                             <button
                               key={section}
@@ -1536,73 +1530,74 @@ export function ReactSessionComposer(props: ComposerProps) {
                               </div>
                             )
                           ) : null}
-                          {toolMenuSection === "mcps" ? (
-                            activeMcpItems.length > 0 ? (
-                              <div className="grid gap-1">
-                                {activeMcpItems.map(({ entry, status }) => (
-                                  <div key={entry.id ?? entry.name} className="flex items-start gap-3 rounded-[16px] px-3 py-2.5 text-gray-11">
-                                    <Plug size={14} className="mt-0.5 shrink-0 text-gray-9" />
-                                    <div className="min-w-0 flex-1">
-                                      <div className="flex items-center justify-between gap-3">
-                                        <div className="truncate text-xs font-semibold text-gray-11">{entry.name}</div>
-                                        <div className="flex shrink-0 items-center gap-1">
-                                          {isLocalCapability(entry.origin) ? (
-                                            <span className="rounded-full bg-gray-3 px-2 py-0.5 text-[10px] font-medium text-gray-11">
-                                              {t("composer.source_local")}
-                                            </span>
+                          {toolMenuSection === "extensions" ? (
+                            <>
+                              {composerExtensions.length > 0 ? (
+                                <div className="grid gap-1">
+                                  {composerExtensions.map((entry) => (
+                                    <button
+                                      key={entry.id ?? entry.serverName ?? entry.name}
+                                      type="button"
+                                      className="flex w-full items-start gap-3 rounded-[16px] px-3 py-2.5 text-left text-gray-11 transition-colors hover:bg-gray-2/70"
+                                      onClick={() => applyExtensionSelection(entry)}
+                                    >
+                                      <div className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg border border-dls-border bg-white shadow-sm">
+                                        {extensionIcon(entry, 16)}
+                                      </div>
+                                      <div className="min-w-0 flex-1">
+                                        <div className="flex items-center justify-between gap-3">
+                                          <div className="truncate text-xs font-semibold text-gray-11">{entry.name}</div>
+                                          {entry.defaultEnabled ? (
+                                            <span className="shrink-0 rounded-full bg-green-3 px-2 py-0.5 text-[10px] font-medium text-green-11">Enabled</span>
                                           ) : null}
-                                          <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${mcpStatusBadgeClass(status)}`}>
-                                            {formatMcpStatusLabel(status)}
-                                          </span>
+                                        </div>
+                                        <div className="truncate text-xs text-gray-10">{entry.description}</div>
+                                      </div>
+                                    </button>
+                                  ))}
+                                </div>
+                              ) : null}
+                              {activeMcpItems.length > 0 ? (
+                                <div className={`grid gap-1 ${composerExtensions.length > 0 ? "mt-2 border-t border-dls-border pt-2" : ""}`}>
+                                  {activeMcpItems.map(({ entry, status }) => (
+                                    <div key={entry.id ?? entry.name} className="flex items-start gap-3 rounded-[16px] px-3 py-2.5 text-gray-11">
+                                      <Plug size={14} className="mt-0.5 shrink-0 text-gray-9" />
+                                      <div className="min-w-0 flex-1">
+                                        <div className="flex items-center justify-between gap-3">
+                                          <div className="truncate text-xs font-semibold text-gray-11">{entry.name}</div>
+                                          <div className="flex shrink-0 items-center gap-1">
+                                            {isLocalCapability(entry.origin) ? (
+                                              <span className="rounded-full bg-gray-3 px-2 py-0.5 text-[10px] font-medium text-gray-11">
+                                                {t("composer.source_local")}
+                                              </span>
+                                            ) : null}
+                                            <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${mcpStatusBadgeClass(status)}`}>
+                                              {formatMcpStatusLabel(status)}
+                                            </span>
+                                          </div>
+                                        </div>
+                                        <div className="truncate text-xs text-gray-10">
+                                          {entry.origin === "openwork-connect"
+                                            ? [entry.marketplaceName, entry.pluginName].filter(Boolean).join(" · ")
+                                              || entry.config.url
+                                              || "Remote app"
+                                            : entry.config.type === "remote"
+                                              ? entry.config.url ?? entry.config.command?.join(" ") ?? "Remote app"
+                                              : entry.config.command?.join(" ") ?? "Local app"}
                                         </div>
                                       </div>
-                                      <div className="truncate text-xs text-gray-10">
-                                        {entry.origin === "openwork-connect"
-                                          ? [entry.marketplaceName, entry.pluginName].filter(Boolean).join(" · ")
-                                            || entry.config.url
-                                            || "Remote MCP"
-                                          : entry.config.type === "remote"
-                                            ? entry.config.url ?? entry.config.command?.join(" ") ?? "Remote MCP"
-                                            : entry.config.command?.join(" ") ?? "Local MCP"}
-                                      </div>
                                     </div>
-                                  </div>
-                                ))}
-                              </div>
-                            ) : (
-                              <div className="px-3 py-2 text-xs text-gray-10">
-                                {!mcpLoaded && mcpLoading ? t("composer.loading_commands") : (mcpStatus ?? t("context_panel.no_mcp"))}
-                              </div>
-                            )
-                          ) : null}
-                          {toolMenuSection === "extensions" ? (
-                            composerExtensions.length > 0 ? (
-                              <div className="grid gap-1">
-                                {composerExtensions.map((entry) => (
-                                  <button
-                                    key={entry.id ?? entry.serverName ?? entry.name}
-                                    type="button"
-                                    className="flex w-full items-start gap-3 rounded-[16px] px-3 py-2.5 text-left text-gray-11 transition-colors hover:bg-gray-2/70"
-                                    onClick={() => applyExtensionSelection(entry)}
-                                  >
-                                    <div className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg border border-dls-border bg-white shadow-sm">
-                                      {extensionIcon(entry, 16)}
-                                    </div>
-                                    <div className="min-w-0 flex-1">
-                                      <div className="flex items-center justify-between gap-3">
-                                        <div className="truncate text-xs font-semibold text-gray-11">{entry.name}</div>
-                                        {entry.defaultEnabled ? (
-                                          <span className="shrink-0 rounded-full bg-green-3 px-2 py-0.5 text-[10px] font-medium text-green-11">Enabled</span>
-                                        ) : null}
-                                      </div>
-                                      <div className="truncate text-xs text-gray-10">{entry.description}</div>
-                                    </div>
-                                  </button>
-                                ))}
-                              </div>
-                            ) : (
-                              <div className="px-3 py-2 text-xs text-gray-10">No extensions enabled. Open Extensions to enable them.</div>
-                            )
+                                  ))}
+                                </div>
+                              ) : null}
+                              {composerExtensions.length === 0 && activeMcpItems.length === 0 ? (
+                                <div className="px-3 py-2 text-xs text-gray-10">
+                                  {!mcpLoaded && mcpLoading
+                                    ? t("composer.loading_commands")
+                                    : (mcpStatus ?? "No extensions enabled. Open Extensions to enable them.")}
+                                </div>
+                              ) : null}
+                            </>
                           ) : null}
                           {activePlugin ? (
                             activePlugin.files.length > 0 ? (

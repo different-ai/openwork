@@ -531,8 +531,8 @@ export function getInferenceRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/inference`;
 }
 
-export function getCloudRoute(orgSlug?: string | null): string {
-  return `${getOrgDashboardRoute(orgSlug)}/cloud`;
+export function getWebRoute(orgSlug?: string | null): string {
+  return `${getOrgDashboardRoute(orgSlug)}/web`;
 }
 
 export function getLlmProvidersRoute(orgSlug?: string | null): string {

@@ -26,11 +26,10 @@ type ManifestArtifact = {
   appName?: string;
 };
 
-// Only treat OpenWork desktop-app installers as artifacts. The orchestrator
-// release ships sidecar/CLI binaries (openwork-server-*.exe,
-// openwork-bun-*) that must NOT be treated as the desktop app, so we positively
-// require the desktop app's OS-tagged naming (openwork-mac / openwork-linux /
-// openwork-win + an installer extension).
+// Only treat OpenWork desktop-app installers as artifacts. Historical sidecar
+// and CLI release assets must NOT be treated as the desktop app, so we
+// positively require the desktop app's OS-tagged naming (openwork-mac /
+// openwork-linux / openwork-win + an installer extension).
 const SIDECAR_HINTS = ["orchestrator", "server", "bun-", "sidecar", "opencode"];
 
 function isDesktopAppAsset(name: string): boolean {
@@ -155,7 +154,7 @@ export async function GET() {
 
     const releases = (await response.json()) as GithubRelease[];
     // Prefer the newest release (incl. prereleases/alpha) that ships an actual
-    // OpenWork desktop installer (not the orchestrator sidecar bundle).
+    // OpenWork desktop installer, not sidecar or CLI bundles.
     const release = releases
       .filter((r) => !r.draft)
       .find((r) =>

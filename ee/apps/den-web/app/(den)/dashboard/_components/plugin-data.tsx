@@ -325,14 +325,14 @@ const MOCK_PLUGINS: DenPlugin[] = [
     name: "OpenWork Release Kit",
     slug: "openwork-release-kit",
     description:
-      "Internal plugin that automates OpenWork release prep, orchestrator sidecar builds, and changelog generation. Shipped by OpenWork infra.",
+      "Internal plugin that automates OpenWork release prep, server package checks, and changelog generation. Shipped by OpenWork infra.",
     version: "2.3.1",
     author: "OpenWork",
     category: "workflows",
     installed: true,
     source: { type: "github", repo: "different-ai/openwork-plugins" },
     skills: [
-      { id: "sk_ow_release_prep", name: "Release Prep", description: "Bump versions across app/desktop/orchestrator in lockstep." },
+      { id: "sk_ow_release_prep", name: "Release Prep", description: "Bump versions across app, desktop, and openwork-server in lockstep." },
       { id: "sk_ow_changelog", name: "Changelog Drafter", description: "Generate markdown release notes from merged PRs." },
     ],
     hooks: [

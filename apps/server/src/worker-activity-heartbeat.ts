@@ -1,3 +1,4 @@
+import { externalFetch } from "./server-fetch.js";
 import { createWorkspaceOpencodeClient } from "./server.js";
 import type { ServerConfig } from "./types.js";
 
@@ -122,7 +123,7 @@ export async function postWorkerActivityHeartbeat(input: {
     input.now ? input.now() : Date.now(),
     input.config.activeWindowMs,
   );
-  const response = await (input.fetchImpl ?? fetch)(input.config.url, {
+  const response = await (input.fetchImpl ?? externalFetch)(input.config.url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

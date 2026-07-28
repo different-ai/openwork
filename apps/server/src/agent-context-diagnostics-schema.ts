@@ -25,6 +25,8 @@ export const AGENT_CONTEXT_DIAGNOSTIC_CHECK_IDS = [
   "engine-mcp-sync",
   "engine-mcp-status",
   "cloud-tool-catalog",
+  "cloud-endpoint-differential",
+  "cloud-endpoint-transport",
   "organization-connections",
   "report-safety",
 ] as const;
@@ -62,6 +64,7 @@ const diagnosticHomePathPattern = /(^|[\s("'=,:])~[\\/][^,;)}\]>"'`\r\n]+/mu;
 const diagnosticPosixPathPattern = /(^|[\s("'=,:])\/(?!mcp\/agent(?:$|[\s.,;:!)}\]"']))[^/\s<>:"'`][^,;)}\]>"'`\r\n]*/mu;
 const diagnosticEncodedStructuralPattern = /%(?:2f|3a|5c)/iu;
 const diagnosticPercentOctetPattern = /%[0-9a-f]{2}/iu;
+const diagnosticCloudMcpPathPattern = /^\/(?:[^?#\u0000-\u001f\u007f-\u009f]+\/)*mcp\/agent$/u;
 const MAX_DIAGNOSTIC_PERCENT_DECODE_ROUNDS = 12;
 const sensitiveDiagnosticTextPatterns = [
   diagnosticUrlPattern,
@@ -147,6 +150,50 @@ function containsSensitiveDiagnosticText(value: string): boolean {
   );
 }
 
+function globalDiagnosticPattern(pattern: RegExp): RegExp {
+  return new RegExp(pattern.source, pattern.flags.includes("g") ? pattern.flags : `${pattern.flags}g`);
+}
+
+function scrubDiagnosticPathMatches(value: string, pattern: RegExp): string {
+  return value.replace(globalDiagnosticPattern(pattern), (match: string, boundary: string) => {
+    const pathWithSuffix = match.slice(boundary.length);
+    const suffixStart = pathWithSuffix.search(/\s/u);
+    const suffix = suffixStart >= 0 ? pathWithSuffix.slice(suffixStart) : "";
+    return `${boundary}[path]${suffix}`;
+  });
+}
+
+export function scrubAgentContextDiagnosticText(value: string): string {
+  const withoutUrls = value.replace(globalDiagnosticPattern(diagnosticUrlPattern), "[url]");
+  return scrubDiagnosticPathMatches(
+    scrubDiagnosticPathMatches(
+      scrubDiagnosticPathMatches(withoutUrls, diagnosticWindowsPathPattern),
+      diagnosticHomePathPattern,
+    ),
+    diagnosticPosixPathPattern,
+  );
+}
+
+function isDiagnosticOriginSafe(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return value === url.origin
+      && (url.protocol === "https:" || url.protocol === "http:")
+      && !url.username
+      && !url.password
+      && !url.search
+      && !url.hash;
+  } catch {
+    return false;
+  }
+}
+
+function isCloudMcpPathSafe(value: string): boolean {
+  return !forbiddenDiagnosticTextPattern.test(value)
+    && diagnosticCloudMcpPathPattern.test(value)
+    && !value.endsWith("/mcp/agent/");
+}
+
 export function sanitizeAgentContextDiagnosticText(value: string): string {
   if (value.length > 500) return "[redacted-sensitive-label]";
   if (containsSensitiveDiagnosticText(value)) return "[redacted-sensitive-label]";
@@ -165,12 +212,36 @@ const safeTextSchema = z.string()
     isAgentContextDiagnosticTextSafe,
     "diagnostic text cannot contain controls, credentials, URLs, or absolute paths",
   );
+const diagnosticOriginSchema = z.string().max(240).refine(isDiagnosticOriginSafe, "diagnostic origins must exclude path, query, hash, and credentials");
+const cloudMcpPathSchema = z.string().max(240).refine(isCloudMcpPathSafe, "cloud MCP paths must end in /mcp/agent and exclude query or hash");
+const transportCauseSchema = z.enum([
+  "tls_incomplete_chain",
+  "tls_untrusted_ca",
+  "tls_hostname_mismatch",
+  "tls_expired",
+  "tls_error",
+  "dns_error",
+  "connection_refused",
+  "connection_reset",
+  "timeout",
+  "http_error",
+  "auth_error",
+  "unknown",
+]);
 const registrationFailureDetailSchema = z.object({
   name: safeTextSchema.min(1).max(160),
   status: z.enum(["connected", "disabled", "failed", "needs-auth", "needs-client-registration", "not-recorded"]),
   source: z.enum(["transport_failure", "engine_status"]).nullable(),
   recordAgeMs: z.number().int().nonnegative().nullable(),
+  errorSummary: safeTextSchema.max(400).nullable(),
+  transportCause: transportCauseSchema.nullable(),
   engineReachableNow: z.boolean(),
+}).strict();
+const servedChainEntrySchema = z.object({
+  subjectCN: safeTextSchema.max(120).nullable(),
+  issuerCN: safeTextSchema.max(120).nullable(),
+  selfIssued: z.boolean(),
+  notAfter: safeTextSchema.max(120).nullable(),
 }).strict();
 const organizationConnectionNameSchema = z.string()
   .min(1)
@@ -182,11 +253,13 @@ const organizationConnectionNameSchema = z.string()
   );
 const safeDetailValueSchema = z.union([
   safeTextSchema,
+  diagnosticOriginSchema,
   z.number().finite(),
   z.boolean(),
   z.null(),
   z.array(safeTextSchema).max(100),
   z.array(registrationFailureDetailSchema).max(100),
+  z.array(servedChainEntrySchema).max(5),
 ]);
 const toolIdSchema = z.string().min(1).max(160).regex(/^[A-Za-z][A-Za-z0-9_.:-]*$/);
 
@@ -340,8 +413,8 @@ const mcpEvidenceSchema = z.object({
   type: z.enum(["local", "remote", "unknown"]),
   enabled: z.boolean(),
   disabledByTools: z.boolean(),
-  origin: safeTextSchema.max(240).nullable(),
-  path: z.literal("/mcp/agent").nullable(),
+  origin: diagnosticOriginSchema.nullable(),
+  path: cloudMcpPathSchema.nullable(),
   hasHeaders: z.boolean(),
   oauthMode: z.enum(["auto", "configured", "disabled", "none", "unknown"]),
   syncStatus: z.enum([
@@ -390,6 +463,8 @@ export const agentContextDiagnosticsReportSchema = z.object({
   safety: z.object({
     diagnosticsWorkspaceRuntimeConfigurationReadOnly: z.literal(true),
     cloudCatalogToolsListPerformed: z.boolean(),
+    credentialFreeTransportProbePerformed: z.boolean(),
+    cloudSessionCleanupRequested: z.boolean(),
     directNonCloudMcpFetchPerformed: z.literal(false),
     directMcpToolCallPerformed: z.literal(false),
     directProviderOperationPerformed: z.literal(false),
@@ -406,6 +481,7 @@ export const agentContextDiagnosticsReportSchema = z.object({
     providerResponsesIncluded: z.literal(false),
     stackTracesIncluded: z.literal(false),
     rawEngineErrorsIncluded: z.literal(false),
+    sanitizedEngineErrorSummariesIncluded: z.boolean(),
     secretBearingUrlsIncluded: z.literal(false),
     inputStrictlyValidated: z.literal(true),
   }).strict(),
@@ -500,7 +576,6 @@ export const agentContextDiagnosticsReportSchema = z.object({
 
   const engineConfigCheck = value.checks.find((check) => check.id === "engine-config");
   const engineAgentCheck = value.checks.find((check) => check.id === "engine-agent");
-  const toolPolicyCheck = value.checks.find((check) => check.id === "agent-connect-tool-permissions");
   if (value.agent.evidenceSource === "effective-engine") {
     if (!value.safety.engineApiReadPerformed) {
       context.addIssue({
@@ -539,25 +614,25 @@ export const agentContextDiagnosticsReportSchema = z.object({
     });
   }
 
-  if (value.safety.cloudCatalogToolsListPerformed) {
+  // Engine registration state and agent tool policy are deliberately not
+  // preconditions here: the independent runtime probe exists to diagnose
+  // engine-side failures, and it never calls a tool. Retained runtime
+  // evidence must still prove which managed entry was probed.
+  if (
+    value.safety.cloudCatalogToolsListPerformed
+    || value.safety.cloudSessionCleanupRequested
+    || value.safety.credentialFreeTransportProbePerformed
+  ) {
     const runtimeCloudMcp = value.mcps.find((mcp) =>
       mcp.source === "config.remote"
       && mcp.name === "openwork-cloud"
-      && mcp.path === "/mcp/agent"
-      && mcp.syncStatus === "connected",
+      && mcp.path !== null
     );
     if (!runtimeCloudMcp) {
       context.addIssue({
         code: "custom",
-        message: "cloud tools/list requires retained connected runtime OpenWork Cloud evidence",
+        message: "cloud handshake evidence requires the retained runtime OpenWork Cloud entry",
         path: ["mcps"],
-      });
-    }
-    if (value.agent.evidenceSource !== "effective-engine" || toolPolicyCheck?.status !== "passed") {
-      context.addIssue({
-        code: "custom",
-        message: "cloud tools/list requires observed effective agent policy that does not deny the candidate tool IDs",
-        path: ["safety", "cloudCatalogToolsListPerformed"],
       });
     }
   }

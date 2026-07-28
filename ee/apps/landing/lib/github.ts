@@ -129,15 +129,18 @@ export const getGithubData = async () => {
     (latestRelease && hasWindowsDesktopAsset(latestRelease) ? latestRelease : null) ||
     releaseList.find((release) => isStableDesktopRelease(release) && hasWindowsDesktopAsset(release));
 
-  // Since v0.17.38 releases also ship the paste-gated organization installers
-  // ("OpenWork-Installer-*", the two-door model's door 2). They match the
-  // loose per-arch keywords below ("mac-arm64", "win-x64", ...) and sort
-  // first, so they must be excluded here: the public landing only ever serves
-  // the plain desktop app artifacts.
-  const isGatedInstallerAsset = (asset: ReleaseAsset) =>
-    String(asset?.name || "").toLowerCase().startsWith("openwork-installer-");
+  // The public website and Den intentionally expose different builds from the
+  // same release. Exclude both the retired helper installer and the parallel
+  // Cloud and enterprise flavors here so loose per-architecture matching never
+  // swaps the public download for a managed distribution.
+  const isNonPublicDesktopAsset = (asset: ReleaseAsset) => {
+    const name = String(asset?.name || "").toLowerCase();
+    return name.startsWith("openwork-installer-")
+      || name.startsWith("openwork-cloud-")
+      || name.startsWith("openwork-enterprise-");
+  };
   const publicAssets = (list: ReleaseAsset[] | undefined) =>
-    (Array.isArray(list) ? list : []).filter((asset) => !isGatedInstallerAsset(asset));
+    (Array.isArray(list) ? list : []).filter((asset) => !isNonPublicDesktopAsset(asset));
 
   const assets = publicAssets(pick?.assets);
   const releaseUrl = pick?.html_url || FALLBACK_RELEASE;

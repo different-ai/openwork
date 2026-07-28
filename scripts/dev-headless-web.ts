@@ -130,20 +130,25 @@ const openworkServerBin = path.join(
   cwd,
   "apps/server/dist/bin/openwork-server",
 );
+const openworkPluginDir = path.join(
+  cwd,
+  "apps/server/dist/opencode-plugins",
+);
 
 const ensureOpenworkServer = async () => {
   try {
     await access(openworkServerBin);
+    await access(openworkPluginDir);
   } catch {
     if (!autoBuildEnabled) {
       logLine(
-        `[dev:headless-web] Missing OpenWork server binary at ${openworkServerBin}`,
+        `[dev:headless-web] Missing OpenWork server build output at ${openworkServerBin}`,
       );
       logLine(
         "[dev:headless-web] Auto-build disabled (OPENWORK_DEV_HEADLESS_WEB_AUTOBUILD=0)",
       );
       logLine(
-        "[dev:headless-web] Run: pnpm --filter openwork-server build:bin",
+        "[dev:headless-web] Run: pnpm --filter openwork-server build && pnpm --filter openwork-server build:bin",
       );
       logLine(
         "[dev:headless-web] Or unset/enable OPENWORK_DEV_HEADLESS_WEB_AUTOBUILD to auto-build.",
@@ -152,14 +157,16 @@ const ensureOpenworkServer = async () => {
     }
 
     logLine(
-      `[dev:headless-web] Missing OpenWork server binary at ${openworkServerBin}`,
+      `[dev:headless-web] Missing OpenWork server build output at ${openworkServerBin}`,
     );
     logLine(
-      "[dev:headless-web] Auto-building: pnpm --filter openwork-server build:bin",
+      "[dev:headless-web] Auto-building: pnpm --filter openwork-server build && pnpm --filter openwork-server build:bin",
     );
     try {
+      await runCommand("pnpm", ["--filter", "openwork-server", "build"]);
       await runCommand("pnpm", ["--filter", "openwork-server", "build:bin"]);
       await access(openworkServerBin);
+      await access(openworkPluginDir);
     } catch (error) {
       logLine(
         `[dev:headless-web] Auto-build failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -187,8 +194,9 @@ const headlessEnv = {
   OPENWORK_PORT: String(openworkPort),
   OPENWORK_TOKEN: openworkToken,
   OPENWORK_HOST_TOKEN: openworkHostToken,
-  OPENWORK_SERVER_BIN: openworkServerBin,
-  OPENWORK_SIDECAR_SOURCE: process.env.OPENWORK_SIDECAR_SOURCE ?? "external",
+  OPENWORK_MANAGE_OPENCODE: "1",
+  OPENWORK_OPENCODE_BIN: process.env.OPENWORK_OPENCODE_BIN ?? "opencode",
+  OPENWORK_EXTENSIONS_PLUGIN_DIR: openworkPluginDir,
 };
 
 await ensureOpenworkServer();
@@ -226,21 +234,23 @@ const webProcess = spawnLogged(
 );
 
 const headlessProcess = spawnLogged(
-  "pnpm",
+  openworkServerBin,
   [
-    "--filter",
-    "openwork-orchestrator",
-    "dev",
-    "--",
-    "start",
     "--workspace",
     workspace,
+    "--host",
+    host,
+    "--port",
+    String(openworkPort),
+    "--token",
+    openworkToken,
+    "--host-token",
+    openworkHostToken,
     "--approval",
     "auto",
-    "--allow-external",
-    ...(remoteAccessEnabled ? ["--remote-access"] : []),
-    "--openwork-port",
-    String(openworkPort),
+    "--cors",
+    "*",
+    "--verbose",
   ],
   path.join(tmpDir, "dev-headless.log"),
   headlessEnv,
@@ -260,5 +270,5 @@ process.on("SIGTERM", () => {
 
 webProcess.on("exit", (code, signal) => shutdown("web", code, signal));
 headlessProcess.on("exit", (code, signal) =>
-  shutdown("orchestrator", code, signal),
+  shutdown("openwork-server", code, signal),
 );

@@ -102,6 +102,8 @@ const CHECK_LABEL_KEYS: Record<AgentContextDiagnosticCheckId, string> = {
   "engine-mcp-sync": "connect.diagnostics_check_engine_mcp_sync",
   "engine-mcp-status": "connect.diagnostics_check_engine_mcp_status",
   "cloud-tool-catalog": "connect.diagnostics_check_cloud_tool_catalog",
+  "cloud-endpoint-differential": "connect.diagnostics_check_cloud_endpoint_differential",
+  "cloud-endpoint-transport": "connect.diagnostics_check_cloud_endpoint_transport",
   "organization-connections": "connect.diagnostics_check_organization_connections",
   "report-safety": "connect.diagnostics_check_report_safety",
 };
@@ -159,8 +161,22 @@ function detailLabel(key: string) {
     .replace(/^./, (value) => value.toUpperCase());
 }
 
+function nestedDetailValue(value: unknown): string {
+  if (typeof value === "boolean") return booleanLabel(value);
+  if (value === null) return t("connect.diagnostics_not_observed");
+  return String(value);
+}
+
 function detailValue(value: AgentContextDiagnosticCheck["details"][string]) {
-  if (Array.isArray(value)) return value.length > 0 ? value.join(", ") : t("connect.diagnostics_none");
+  if (Array.isArray(value)) {
+    if (value.length === 0) return t("connect.diagnostics_none");
+    return value.map((item) => {
+      if (typeof item !== "object" || item === null || Array.isArray(item)) return nestedDetailValue(item);
+      return Object.entries(item)
+        .map(([key, nested]) => `${detailLabel(key)}: ${nestedDetailValue(nested)}`)
+        .join(", ");
+    }).join("; ");
+  }
   if (typeof value === "boolean") return booleanLabel(value);
   if (value === null) return t("connect.diagnostics_not_observed");
   return String(value);

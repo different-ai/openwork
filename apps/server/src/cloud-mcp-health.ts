@@ -143,6 +143,7 @@ export type CloudMcpLiveStatusObserver = (
   name: string,
   mcpConfig: Record<string, unknown>,
   status: string,
+  errorSummary?: string | null,
 ) => void;
 
 export type CloudMcpServerMetadata = {
@@ -1713,6 +1714,7 @@ async function inspectOpenworkCloud(input: {
       OPENWORK_CLOUD_MCP_NAME,
       input.desiredConfig,
       cloudStatus.status,
+      "error" in cloudStatus && typeof cloudStatus.error === "string" ? cloudStatus.error : null,
     );
   }
   const engine = engineStatusFromMcpStatus(cloudStatus);

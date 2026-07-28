@@ -24,6 +24,7 @@ import {
   type DenUser,
 } from "../../../app/lib/den";
 import { exchangeHandoffAndSignIn } from "../../../app/lib/den-handoff";
+import { readDesktopDistributionInfo } from "../../../app/lib/desktop";
 import {
   denSessionUpdatedEvent,
   denSettingsChangedEvent,
@@ -92,6 +93,7 @@ type DenAuthProviderProps = {
 type PendingServerSwitch = {
   grant: string;
   denBaseUrl: string;
+  isEnterpriseActivation: boolean;
   currentHost: string;
   newHost: string;
 };
@@ -111,9 +113,17 @@ function readDeepLinkEventUrls(detail: unknown): string[] {
   return items.flatMap((url) => typeof url === "string" ? [url] : []);
 }
 
-function pendingServerSwitchForDeepLink(input: { grant: string; denBaseUrl: string }): PendingServerSwitch | null {
+function pendingServerSwitchForDeepLink(input: {
+  grant: string;
+  denBaseUrl: string;
+  isEnterpriseActivation: boolean;
+}): PendingServerSwitch | null {
   const bootstrap = readDenBootstrapConfig();
-  if (bootstrap.source !== "file") return null;
+  // An enterprise activation permanently binds the installation to the issuing
+  // Den, so confirm a control-plane change even when no bootstrap file
+  // provisioned one. Otherwise any openwork://den-auth link can repoint the
+  // control plane and activate the app in a single unattended step.
+  if (bootstrap.source !== "file" && !input.isEnterpriseActivation) return null;
 
   const currentApiBaseUrl = resolveDenBaseUrls(bootstrap).apiBaseUrl;
   const newApiBaseUrl = resolveDenBaseUrls(input.denBaseUrl).apiBaseUrl;
@@ -124,6 +134,7 @@ function pendingServerSwitchForDeepLink(input: { grant: string; denBaseUrl: stri
   return {
     grant: input.grant,
     denBaseUrl: input.denBaseUrl,
+    isEnterpriseActivation: input.isEnterpriseActivation,
     currentHost: hostLabel(currentApiBaseUrl),
     newHost: hostLabel(newApiBaseUrl),
   };
@@ -270,6 +281,7 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
     void setDenBootstrapConfig({
       baseUrl: denBaseUrl,
       requireSignin: bootstrap.requireSignin,
+      requireActivation: bootstrap.requireActivation,
       ...(bootstrap.brandAppName ? { brandAppName: bootstrap.brandAppName } : {}),
       ...(bootstrap.brandLogoUrl ? { brandLogoUrl: bootstrap.brandLogoUrl } : {}),
       ...(bootstrap.brandIconUrl ? { brandIconUrl: bootstrap.brandIconUrl } : {}),
@@ -323,7 +335,11 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
     return () => window.removeEventListener(denSettingsChangedEvent, handleSettingsChanged);
   }, [consumeBootstrapHandoff]);
 
-  const exchangeDeepLinkGrant = useCallback((grant: string, denBaseUrl: string) => {
+  const exchangeDeepLinkGrant = useCallback((
+    grant: string,
+    denBaseUrl: string,
+    isEnterpriseActivation: boolean,
+  ) => {
     handledGrantsRef.current.add(grant);
     const client = createDenClient({
       baseUrl: denBaseUrl,
@@ -331,8 +347,28 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
     void exchangeHandoffAndSignIn(grant, {
       baseUrl: denBaseUrl,
       client,
-    }).then((result) => {
-      if (!result.ok) handledGrantsRef.current.delete(grant);
+    }).then(async (result) => {
+      if (!result.ok) {
+        handledGrantsRef.current.delete(grant);
+        return;
+      }
+      if (!isEnterpriseActivation) return;
+
+      const bootstrap = readDenBootstrapConfig();
+      await setDenBootstrapConfig({
+        baseUrl: denBaseUrl,
+        requireSignin: true,
+        requireActivation: bootstrap.requireActivation,
+        ...(bootstrap.brandAppName ? { brandAppName: bootstrap.brandAppName } : {}),
+        ...(bootstrap.brandLogoUrl ? { brandLogoUrl: bootstrap.brandLogoUrl } : {}),
+        ...(bootstrap.brandIconUrl ? { brandIconUrl: bootstrap.brandIconUrl } : {}),
+        ...(bootstrap.claimLinks ? { claimLinks: bootstrap.claimLinks } : {}),
+        ...(bootstrap.prepared ? { prepared: bootstrap.prepared } : {}),
+        enterpriseActivation: {
+          activatedAt: new Date().toISOString(),
+          denBaseUrl,
+        },
+      });
     });
   }, []);
 
@@ -345,20 +381,28 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
         if (!parsed || handledGrantsRef.current.has(parsed.grant)) continue;
         handledGrantsRef.current.add(parsed.grant);
 
-        const pending = pendingServerSwitchForDeepLink(parsed);
+        const isEnterpriseActivation =
+          readDesktopDistributionInfo().flavor === "enterprise";
+        const pending = pendingServerSwitchForDeepLink({
+          ...parsed,
+          isEnterpriseActivation,
+        });
         if (pending) {
           setPendingServerSwitch(pending);
           continue;
         }
 
-        exchangeDeepLinkGrant(parsed.grant, parsed.denBaseUrl);
+        exchangeDeepLinkGrant(
+          parsed.grant,
+          parsed.denBaseUrl,
+          isEnterpriseActivation,
+        );
       }
     };
 
     handleUrls(drainPendingDeepLinks(window));
     const handleDeepLink = (event: Event) => {
-      if (!(event instanceof CustomEvent)) return;
-      handleUrls(readDeepLinkEventUrls(event.detail));
+      handleUrls(readDeepLinkEventUrls((event as CustomEvent<unknown>).detail));
     };
 
     window.addEventListener(deepLinkBridgeEvent, handleDeepLink);
@@ -406,7 +450,11 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
                 if (!pendingServerSwitch) return;
                 const next = pendingServerSwitch;
                 setPendingServerSwitch(null);
-                exchangeDeepLinkGrant(next.grant, next.denBaseUrl);
+                exchangeDeepLinkGrant(
+                  next.grant,
+                  next.denBaseUrl,
+                  next.isEnterpriseActivation,
+                );
               }}
             >
               {t("den.switch_server_confirm")}

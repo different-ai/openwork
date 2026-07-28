@@ -4,12 +4,11 @@ const FLOW_ID = "den-download-link-match-allowed-versions";
 const DEN_API_URL = cleanBaseUrl(process.env.OPENWORK_EVAL_DEN_API_URL);
 const DEN_TOKEN = process.env.OPENWORK_EVAL_DEN_TOKEN?.trim() || "";
 const MEMBER_TOKEN = process.env.OPENWORK_EVAL_MEMBER_DEN_TOKEN?.trim() || DEN_TOKEN;
-const LATEST_WINDOWS_INSTALLER_URL = "https://github.com/different-ai/openwork/releases/latest/download/OpenWork-Installer-win-x64.exe";
 const ALLOWED_VERSIONS = ["0.17.37", "0.17.38"];
 const SELECTED_VERSION = "0.17.38";
 const DISALLOWED_VERSION = "0.17.39";
 const LEGACY_ALLOWED_VERSIONS = ["0.17.26", "0.17.27"];
-const FIRST_GENERIC_INSTALLER_VERSION = "0.17.37";
+const LEGACY_SELECTED_VERSION = "0.17.27";
 
 // Narration is loaded from the approved script (evals/voiceovers/den-download-link-match-allowed-versions.md).
 // The runner fails this flow if the narration drifts from that script.
@@ -177,7 +176,8 @@ export default {
             const config = await denApiFetch(`/v1/install-config?token=${encodeURIComponent(state.memberInstallToken)}`, { auth: false });
             witness(ctx, config.response.ok, "The public install token resolves without a dashboard session", { status: config.response.status, body: config.body });
             witness(ctx, config.body?.clientName === state.organizationName, "The install token is tied to the organization, not to the caller role", config.body);
-            witness(ctx, config.body?.requireSignin === true, "The guided installer still requires normal sign-in", config.body);
+            witness(ctx, config.body?.requireSignin === true, "The enterprise desktop requires normal sign-in", config.body);
+            witness(ctx, config.body?.distribution === "enterprise", "The download config selects the enterprise distribution", config.body);
           },
         });
       },
@@ -185,7 +185,7 @@ export default {
     {
       name: "Frame 3 — Download selects the highest allowed version",
       run: async (ctx) => {
-        await ctx.prove("Clicking download returns OpenWork 0.17.38 instead of the disallowed 0.17.39 release", {
+        await ctx.prove("Clicking download returns OpenWork Enterprise 0.17.38 instead of the disallowed 0.17.39 release", {
           voiceover: vo[2],
           action: async () => {
             state.restrictedDownload = await fetchInstallerDownload(state.memberInstallToken);
@@ -199,9 +199,9 @@ export default {
       },
     },
     {
-      name: "Frame 4 — Legacy pins still get an installer binary that exists",
+      name: "Frame 4 — Legacy pins keep their own release tag",
       run: async (ctx) => {
-        await ctx.prove("Legacy desktop-version pins download the first generic installer release instead of a missing legacy asset", {
+        await ctx.prove("Legacy desktop-version pins download the exact version the organization allows", {
           voiceover: vo[3],
           action: async () => {
             await setAllowedDesktopVersions(ctx, LEGACY_ALLOWED_VERSIONS);
@@ -209,17 +209,17 @@ export default {
             state.legacyDownload = await fetchInstallerDownload(state.legacyInstallToken);
           },
           assert: async () => {
-            witness(ctx, [200, 302].includes(state.legacyDownload.status), "The legacy-pinned installer endpoint returns a download or redirect", state.legacyDownload);
-            witness(ctx, downloadMentionsVersion(state.legacyDownload, FIRST_GENERIC_INSTALLER_VERSION), "The legacy-pinned download uses the first release with installer assets", state.legacyDownload);
-            witness(ctx, !downloadMentionsVersion(state.legacyDownload, "0.17.27"), "The legacy-pinned download does not point at the missing v0.17.27 installer asset", state.legacyDownload);
+            witness(ctx, state.legacyDownload.status === 302, "The legacy-pinned download redirects to the app artifact", state.legacyDownload);
+            witness(ctx, downloadMentionsVersion(state.legacyDownload, LEGACY_SELECTED_VERSION), "The legacy-pinned download uses the highest allowed legacy version", state.legacyDownload);
+            witness(ctx, state.legacyDownload.location?.includes("/openwork-enterprise-win-x64-"), "The legacy-pinned download still selects the enterprise app artifact", state.legacyDownload);
           },
         });
       },
     },
     {
-      name: "Frame 5 — Unrestricted orgs follow the latest published release",
+      name: "Frame 5 — Unrestricted orgs follow Den's published desktop release",
       run: async (ctx) => {
-        await ctx.prove("Removing the allowed-version restriction redirects to GitHub's latest published installer", {
+        await ctx.prove("Removing the allowed-version restriction redirects to Den's configured enterprise app release", {
           voiceover: vo[4],
           action: async () => {
             await setAllowedDesktopVersions(ctx, null);
@@ -227,8 +227,10 @@ export default {
             state.unrestrictedDownload = await fetchInstallerDownload(state.unrestrictedInstallToken);
           },
           assert: async () => {
-            witness(ctx, state.unrestrictedDownload.status === 302, "The unrestricted installer endpoint redirects to GitHub", state.unrestrictedDownload);
-            witness(ctx, state.unrestrictedDownload.location === LATEST_WINDOWS_INSTALLER_URL, "The unrestricted download follows the latest published installer release", state.unrestrictedDownload);
+            witness(ctx, state.unrestrictedDownload.status === 302, "The unrestricted download endpoint redirects to GitHub", state.unrestrictedDownload);
+            witness(ctx, state.unrestrictedDownload.location?.includes("/different-ai/openwork/releases/download/"), "The unrestricted download uses the same GitHub release path as the public app", state.unrestrictedDownload);
+            witness(ctx, state.unrestrictedDownload.location?.includes("/openwork-enterprise-win-x64-"), "The unrestricted download selects the enterprise app artifact", state.unrestrictedDownload);
+            witness(ctx, !state.unrestrictedDownload.location?.includes("opaque-token"), "The release URL does not receive the Den install token", state.unrestrictedDownload);
           },
         });
       },

@@ -37,9 +37,20 @@ LOCAL_IMAGE_TAG="${DAYTONA_LOCAL_IMAGE_TAG:-openwork-daytona-snapshot:${SNAPSHOT
 OPENWORK_SERVER_VERSION="${OPENWORK_SERVER_VERSION:-$(node -e 'const fs=require("fs"); const pkg=JSON.parse(fs.readFileSync(process.argv[1], "utf8")); process.stdout.write(String(pkg.version));' "$ROOT_DIR/apps/server/package.json")}"
 OPENCODE_VERSION="$(node -e 'const fs=require("fs"); const parsed=JSON.parse(fs.readFileSync(process.argv[1], "utf8")); process.stdout.write(String(parsed.opencodeVersion || "").trim().replace(/^v/, ""));' "$ROOT_DIR/constants.json")"
 
+# The image is always linux/amd64 because that is what Daytona runs. The
+# Dockerfile's runtime asserts execute the installed binaries, which only works
+# when the build host is also x86_64; under emulation on an arm64 machine they
+# die with "Illegal instruction". Disable them for that cross-build case, which
+# is exactly the path the Dockerfile documents as "verified on target hardware".
+case "$(uname -m)" in
+  x86_64 | amd64) RUNTIME_ASSERTS="${RUNTIME_ASSERTS:-1}" ;;
+  *) RUNTIME_ASSERTS="${RUNTIME_ASSERTS:-0}" ;;
+esac
+
 echo "Building local image $LOCAL_IMAGE_TAG" >&2
 echo "- openwork-server@$OPENWORK_SERVER_VERSION" >&2
 echo "- opencode@$OPENCODE_VERSION" >&2
+echo "- runtime asserts: $RUNTIME_ASSERTS (host $(uname -m))" >&2
 
 docker buildx build \
   --platform linux/amd64 \
@@ -47,6 +58,7 @@ docker buildx build \
   -f "$DOCKERFILE" \
   --build-arg "OPENWORK_SERVER_VERSION=$OPENWORK_SERVER_VERSION" \
   --build-arg "OPENCODE_VERSION=$OPENCODE_VERSION" \
+  --build-arg "RUNTIME_ASSERTS=$RUNTIME_ASSERTS" \
   --load \
   "$ROOT_DIR"
 

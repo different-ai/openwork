@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { joinBaseUrl, readBaseUrlEnv } from "@openwork/types/url";
+import { DEFAULT_OPENWORK_WEB_URL } from "../../(den)/_lib/runtime-config";
 
 export const dynamic = "force-dynamic";
 
@@ -69,6 +70,7 @@ export async function GET() {
   return NextResponse.json(
     {
       openworkAppConnectUrl: readPublicRuntimeEnv("DEN_WEB_OPENWORK_APP_CONNECT_URL"),
+      openworkWebUrl: readPublicRuntimeEnv("DEN_WEB_OPENWORK_WEB_URL") || DEFAULT_OPENWORK_WEB_URL,
       openworkAuthCallbackUrl: readPublicRuntimeEnv("DEN_WEB_OPENWORK_AUTH_CALLBACK_URL"),
       orgMode,
       singleOrgName: readPublicRuntimeEnv("DEN_SINGLE_ORG_NAME") || "OpenWork",

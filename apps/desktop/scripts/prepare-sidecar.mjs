@@ -28,8 +28,6 @@ const readArg = (name) => {
   return null;
 };
 
-const hasFlag = (name) => process.argv.slice(2).includes(name);
-const forceBuild = hasFlag("--force") || process.env.OPENWORK_SIDECAR_FORCE_BUILD === "1";
 const sidecarOverride = process.env.OPENWORK_SIDECAR_DIR?.trim() || readArg("--outdir");
 const sidecarDir = sidecarOverride ? resolve(sidecarOverride) : join(__dirname, "..", "resources", "sidecars");
 const constantsPath = resolve(__dirname, "..", "..", "..", "constants.json");
@@ -87,27 +85,6 @@ const resolvedTargetTriple = (() => {
 })();
 const isWindowsTarget = process.platform === "win32" || resolvedTargetTriple?.includes("windows") === true;
 
-const bunTarget = (() => {
-  switch (resolvedTargetTriple) {
-    case "aarch64-apple-darwin":
-      return "bun-darwin-arm64";
-    case "x86_64-apple-darwin":
-      return "bun-darwin-x64-baseline";
-    case "aarch64-unknown-linux-gnu":
-      return "bun-linux-arm64";
-    case "x86_64-unknown-linux-gnu":
-      return "bun-linux-x64-baseline";
-    // Windows baseline artifacts intermittently fail to extract in CI
-    // with Bun 1.3.6. Use the stable x64 target here for now.
-    case "x86_64-pc-windows-msvc":
-      return "bun-windows-x64";
-    case "aarch64-pc-windows-msvc":
-      return "bun-windows-arm64";
-    default:
-      return null;
-  }
-})();
-
 const opencodeBaseName = isWindowsTarget ? "opencode.exe" : "opencode";
 const opencodePath = join(sidecarDir, opencodeBaseName);
 const opencodeTargetName = resolvedTargetTriple
@@ -119,44 +96,7 @@ const opencodeCandidatePath = opencodeTargetPath ?? opencodePath;
 let existingOpencodeVersion = null;
 
 // openwork-server paths
-const openworkServerBaseName = "openwork-server";
-const openworkServerName = isWindowsTarget ? `${openworkServerBaseName}.exe` : openworkServerBaseName;
-const openworkServerPath = join(sidecarDir, openworkServerName);
-const openworkServerBuildName = bunTarget
-  ? `${openworkServerBaseName}-${bunTarget}${bunTarget.includes("windows") ? ".exe" : ""}`
-  : openworkServerName;
-const openworkServerBuildPath = join(sidecarDir, openworkServerBuildName);
-const openworkServerTargetTriple = resolvedTargetTriple;
-const openworkServerTargetName = openworkServerTargetTriple
-  ? `${openworkServerBaseName}-${openworkServerTargetTriple}${openworkServerTargetTriple.includes("windows") ? ".exe" : ""}`
-  : null;
-const openworkServerTargetPath = openworkServerTargetName ? join(sidecarDir, openworkServerTargetName) : null;
-
 const openworkServerDir = resolve(__dirname, "..", "..", "server");
-
-const resolveBuildScript = (dir) => {
-  const scriptPath = resolve(dir, "script", "build.ts");
-  if (existsSync(scriptPath)) return scriptPath;
-  const scriptsPath = resolve(dir, "scripts", "build.ts");
-  if (existsSync(scriptsPath)) return scriptsPath;
-  return scriptPath;
-};
-
-// orchestrator paths
-const orchestratorBaseName = "openwork-orchestrator";
-const orchestratorName =
-  isWindowsTarget ? `${orchestratorBaseName}.exe` : orchestratorBaseName;
-const orchestratorPath = join(sidecarDir, orchestratorName);
-const orchestratorBuildName = bunTarget
-  ? `${orchestratorBaseName}-${bunTarget}${bunTarget.includes("windows") ? ".exe" : ""}`
-  : orchestratorName;
-const orchestratorBuildPath = join(sidecarDir, orchestratorBuildName);
-const orchestratorTargetTriple = resolvedTargetTriple;
-const orchestratorTargetName = orchestratorTargetTriple
-  ? `${orchestratorBaseName}-${orchestratorTargetTriple}${orchestratorTargetTriple.includes("windows") ? ".exe" : ""}`
-  : null;
-const orchestratorTargetPath = orchestratorTargetName ? join(sidecarDir, orchestratorTargetName) : null;
-const orchestratorDir = resolve(__dirname, "..", "..", "orchestrator");
 
 const readHeader = (filePath, length = 256) => {
   const fd = openSync(filePath, "r");
@@ -260,24 +200,8 @@ const adHocSignDarwinSidecars = (paths) => {
   }
 };
 
-const parseChecksum = (content, assetName) => {
-  const lines = content.split(/\r?\n/);
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    const [hash, name] = trimmed.split(/\s+/);
-    if (name === assetName) return hash.toLowerCase();
-    if (trimmed.endsWith(` ${assetName}`)) {
-      return trimmed.split(/\s+/)[0]?.toLowerCase() ?? null;
-    }
-  }
-  return null;
-};
-
 // openwork-server is no longer compiled as a sidecar binary — it runs
 // in-process inside Electron via a direct import of the server library.
-const didBuildOpenworkServer = false;
-
 // Server binary copy/sign skipped — runs in-process.
 
 if (!existingOpencodeVersion && opencodeCandidatePath) {
@@ -410,100 +334,15 @@ if (shouldDownloadOpencode) {
   console.log(`OpenCode sidecar updated to ${normalizedOpencodeVersion}.`);
 }
 
-// Build orchestrator sidecar
-let didBuildOrchestrator = false;
-const shouldBuildOrchestrator =
-  forceBuild || !existsSync(orchestratorBuildPath) || isStubBinary(orchestratorBuildPath);
-if (shouldBuildOrchestrator) {
-  mkdirSync(sidecarDir, { recursive: true });
-  if (existsSync(orchestratorBuildPath)) {
-    try {
-      unlinkSync(orchestratorBuildPath);
-    } catch {
-      // ignore
-    }
-  }
-  const orchestratorBuildScript = resolveBuildScript(orchestratorDir);
-  if (!existsSync(orchestratorBuildScript)) {
-    console.error(`Orchestrator build script not found at ${orchestratorBuildScript}`);
-    process.exit(1);
-  }
-  const orchestratorArgs = [
-    orchestratorBuildScript,
-    "--outdir",
-    sidecarDir,
-    "--filename",
-    orchestratorBaseName,
-  ];
-  if (bunTarget) {
-    orchestratorArgs.push("--target", bunTarget);
-  }
-  const result = spawnSync("bun", orchestratorArgs, {
-    cwd: orchestratorDir,
-    stdio: "inherit",
-    shell: true,
-    env: {
-      ...process.env,
-      NODE_ENV: "production",
-      BUN_ENV: "production",
-    },
-  });
-  if (result.status !== 0) {
-    process.exit(result.status ?? 1);
-  }
-
-  didBuildOrchestrator = true;
-}
-
-if (existsSync(orchestratorBuildPath)) {
-  const shouldCopyCanonical =
-    didBuildOrchestrator || !existsSync(orchestratorPath) || isStubBinary(orchestratorPath);
-  if (shouldCopyCanonical && orchestratorBuildPath !== orchestratorPath) {
-    try {
-      if (existsSync(orchestratorPath)) unlinkSync(orchestratorPath);
-    } catch {
-      // ignore
-    }
-    copyFileSync(orchestratorBuildPath, orchestratorPath);
-  }
-
-  if (orchestratorTargetPath) {
-    const shouldCopyTarget =
-      didBuildOrchestrator ||
-      !existsSync(orchestratorTargetPath) ||
-      isStubBinary(orchestratorTargetPath);
-    if (shouldCopyTarget && orchestratorBuildPath !== orchestratorTargetPath) {
-      try {
-        if (existsSync(orchestratorTargetPath)) unlinkSync(orchestratorTargetPath);
-      } catch {
-        // ignore
-      }
-      copyFileSync(orchestratorBuildPath, orchestratorTargetPath);
-    }
-  }
-}
-
 adHocSignDarwinSidecars([
   opencodePath,
   opencodeTargetPath,
   // openwork-server runs in-process — no binary to sign.
-  orchestratorBuildPath,
-  orchestratorPath,
-  orchestratorTargetPath,
 ]);
 
 const openworkServerVersion = (() => {
   try {
     const raw = readFileSync(resolve(openworkServerDir, "package.json"), "utf8");
-    return String(JSON.parse(raw).version ?? "").trim();
-  } catch {
-    return null;
-  }
-})();
-
-const orchestratorVersion = (() => {
-  try {
-    const raw = readFileSync(resolve(orchestratorDir, "package.json"), "utf8");
     return String(JSON.parse(raw).version ?? "").trim();
   } catch {
     return null;
@@ -518,10 +357,6 @@ const versions = {
   "openwork-server": {
     version: openworkServerVersion,
     sha256: "in-process",
-  },
-  "openwork-orchestrator": {
-    version: orchestratorVersion,
-    sha256: existsSync(orchestratorPath) ? sha256File(orchestratorPath) : null,
   },
 };
 

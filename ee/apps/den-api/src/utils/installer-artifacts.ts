@@ -9,9 +9,6 @@ export type ConfiguredInstallerArtifact = {
 }
 
 export const DEFAULT_INSTALLER_RELEASE_REPO = "different-ai/openwork"
-// First GitHub release tag on different-ai/openwork that carries the OpenWork-Installer-* assets;
-// earlier tags have no installer assets so redirects to them 404.
-export const FIRST_GENERIC_INSTALLER_RELEASE = "0.17.37"
 
 export function installerReleaseAssetUrl(
   fileName: string,
@@ -27,7 +24,7 @@ export function installerLatestReleaseAssetUrl(
   options: { releaseRepo?: string } = {},
 ) {
   const releaseRepo = options.releaseRepo ?? env.installerReleaseRepo
-  // GitHub latest only flips when publish-release un-drafts, which is gated on installer assets,
+  // GitHub latest only flips when publish-release un-drafts after release assets are ready,
   // so this URL cannot 404 during a release window.
   return `https://github.com/${releaseRepo}/releases/latest/download/${encodeURIComponent(fileName)}`
 }
@@ -49,21 +46,18 @@ export function desktopReleaseAssetName(platform: string, releaseTag: string) {
   return null
 }
 
-export function genericInstallerArtifactName(platform: string) {
-  if (platform === "mac-arm64") {
-    return "OpenWork-Installer-mac-arm64.dmg"
-  }
-  if (platform === "mac-x64") {
-    return "OpenWork-Installer-mac-x64.dmg"
-  }
-  if (platform === "win-x64") {
-    return "OpenWork-Installer-win-x64.exe"
-  }
-  return null
+export function enterpriseDesktopReleaseAssetName(platform: string, releaseTag: string) {
+  const publicName = desktopReleaseAssetName(platform, releaseTag)
+  return publicName?.replace(/^openwork-/, "openwork-enterprise-") ?? null
+}
+
+export function cloudDesktopReleaseAssetName(platform: string, releaseTag: string) {
+  const publicName = desktopReleaseAssetName(platform, releaseTag)
+  return publicName?.replace(/^openwork-/, "openwork-cloud-") ?? null
 }
 
 /**
- * Resolves only an explicitly provisioned standard installer. The normal
+ * Resolves only an explicitly provisioned desktop artifact. The normal
  * internet-connected path redirects the browser to GitHub instead, so Den
  * never downloads or caches a release artifact on demand.
  */

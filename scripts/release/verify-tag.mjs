@@ -17,13 +17,9 @@ if (!tag) {
 const version = tag.startsWith("v") ? tag.slice(1) : tag;
 
 const readJson = (path) => JSON.parse(readFileSync(path, "utf8"));
-const readText = (path) => readFileSync(path, "utf8");
-
 
 const appVersion = readJson(resolve(root, "apps", "app", "package.json")).version ?? null;
 const desktopVersion = readJson(resolve(root, "apps", "desktop", "package.json")).version ?? null;
-const orchestratorVersion =
-  readJson(resolve(root, "apps", "orchestrator", "package.json")).version ?? null;
 const serverVersion = readJson(resolve(root, "apps", "server", "package.json")).version ?? null;
 const publishedDesktopVersions = readGeneratedDesktopVersions();
 
@@ -41,7 +37,6 @@ const check = (label, actual) => {
 
 check("app", appVersion);
 check("desktop", desktopVersion);
-check("openwork-orchestrator", orchestratorVersion);
 check("openwork-server", serverVersion);
 check("desktop release inventory", publishedDesktopVersions[0] ?? null);
 
@@ -53,4 +48,4 @@ if (mismatches.length) {
   process.exit(1);
 }
 
-console.log(`Release tag ${tag} matches app/desktop/openwork-orchestrator versions.`);
+console.log(`Release tag ${tag} matches app/desktop/openwork-server versions.`);

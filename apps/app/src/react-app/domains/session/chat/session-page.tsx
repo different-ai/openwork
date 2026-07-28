@@ -2,7 +2,7 @@
 import type { CSSProperties } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePanelRef } from "react-resizable-panels";
-import { Cloud, FileText, Globe, Mic2, PanelRight, Settings2, TextSearch, Zap } from "lucide-react";
+import { Cloud, FileText, Globe, Mic2, PanelRight, TextSearch, Zap } from "lucide-react";
 
 import { resolveExtensionIconSrc } from "@/react-app/design-system/extension-icon-src";
 import { t } from "../../../../i18n";
@@ -336,10 +336,10 @@ export function SessionPage(props: SessionPageProps) {
   const artifactFileTargets = useMemo(() => accessibleTargets.filter(isCollectibleArtifactTarget), [accessibleTargets]);
   const artifactTargetCount = artifactFileTargets.length;
   const hasArtifactTargets = artifactTargetCount > 0;
+  const hasBrowserTabs = sessionPanelState.tabs.some((tab) => tab.type === "browser");
   const activeSidePanel = voiceSidePanelOpen ? "voice" : sessionSidePanel;
   const sidePanelOpen = activeSidePanel !== null;
   const panelRailActive = activeSidePanel === "panel";
-  const extensionsRailActive = activeSidePanel === "extensions";
   const voiceRailActive = activeSidePanel === "voice";
   const voiceExtension = useMemo(
     () => OPENWORK_EXTENSION_CATALOG.find((entry) => getExtensionId(entry) === "openwork-voice") ?? null,
@@ -521,18 +521,11 @@ export function SessionPage(props: SessionPageProps) {
     setCurrentSidePanel(null);
   }, [setCurrentSidePanel]);
   const openBrowserRailPane = useCallback(() => {
+    if (!hasBrowserTabs) return;
     // Opening the browser pane should land on a usable page, not an empty
-    // panel that forces the user to click "+". If no browser tab exists yet,
-    // create one (defaults to the new-tab URL in the main process).
-    const opening = !panelRailActive;
-    if (opening && isElectronRuntime()) {
-      const hasBrowserTab = sessionPanelState.tabs.some((tab) => tab.type === "browser");
-      if (!hasBrowserTab) {
-        void window.__OPENWORK_ELECTRON__?.browser?.createTab?.();
-      }
-    }
+    // panel that forces the user to click "+".
     toggleCurrentSidePanel("panel");
-  }, [panelRailActive, sessionPanelState.tabs, toggleCurrentSidePanel]);
+  }, [hasBrowserTabs, toggleCurrentSidePanel]);
   const openBrowserUrlControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "browser.open_url",
     label: "Open URL in built-in browser",
@@ -611,9 +604,6 @@ export function SessionPage(props: SessionPageProps) {
       toggleCurrentSidePanel("panel");
     }
   }, [artifactFileTargets, hasArtifactTargets, openTab, panelRailActive, props.selectedSessionId, selectTab, sessionPanelState, toggleCurrentSidePanel]);
-  const openExtensionsRailPane = useCallback(() => {
-    toggleCurrentSidePanel("extensions");
-  }, [toggleCurrentSidePanel]);
   const openVoiceRailPane = useCallback(() => {
     toggleCurrentSidePanel("voice");
   }, [toggleCurrentSidePanel]);
@@ -1438,13 +1428,14 @@ export function SessionPage(props: SessionPageProps) {
                 variant="ghost"
                 size="icon-sm"
                 className={cn(
-                  "rounded-xl transition-colors hover:bg-muted hover:text-foreground",
-                  panelRailActive && "bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary",
+                  "rounded-xl transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-muted-foreground",
+                  panelRailActive && hasBrowserTabs && "bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary",
                 )}
                 onClick={openBrowserRailPane}
-                title="Browser"
-                aria-label="Browser"
-                aria-pressed={panelRailActive}
+                title={hasBrowserTabs ? "Browser" : "Browser opens when a page is available"}
+                aria-label={hasBrowserTabs ? "Browser" : "Browser opens when a page is available"}
+                aria-pressed={panelRailActive && hasBrowserTabs}
+                disabled={!hasBrowserTabs}
               >
                 <Globe size={15} />
               </Button>
@@ -1469,13 +1460,13 @@ export function SessionPage(props: SessionPageProps) {
               variant="ghost"
               size="icon-sm"
               className={cn(
-                "rounded-xl transition-colors hover:bg-muted hover:text-foreground",
-                panelRailActive && "bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary",
+                "rounded-xl transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-muted-foreground",
+                panelRailActive && hasArtifactTargets && "bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary",
               )}
               onClick={openArtifactRailPane}
               title={hasArtifactTargets ? `Artifacts (${artifactTargetCount})` : "No artifacts yet"}
               aria-label={hasArtifactTargets ? `Artifacts (${artifactTargetCount})` : "No artifacts yet"}
-              aria-pressed={panelRailActive}
+              aria-pressed={panelRailActive && hasArtifactTargets}
               disabled={!hasArtifactTargets}
             >
               <FileText size={15} />
@@ -1484,20 +1475,6 @@ export function SessionPage(props: SessionPageProps) {
                   {artifactTargetCount > 9 ? "9+" : artifactTargetCount}
                 </span>
               ) : null}
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              className={cn(
-                "rounded-xl transition-colors hover:bg-muted hover:text-foreground",
-                extensionsRailActive && "bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary",
-              )}
-              onClick={props.settingsSlot ? openExtensionsRailPane : props.onOpenSettings}
-              title="Extensions"
-              aria-label="Extensions"
-              aria-pressed={extensionsRailActive}
-            >
-              <Settings2 size={15} />
             </Button>
           </aside>
           </div>

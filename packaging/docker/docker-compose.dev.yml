@@ -33,7 +33,7 @@ x-shared: &shared
     - ${OPENWORK_HOST_OPENCODE_DATA_DIR:-./workspace/.openwork-host-opencode-data}:/persist/.openwork-host-opencode-data:ro
 
 services:
-  orchestrator:
+  openwork-server:
     <<: *shared
     entrypoint: ["/bin/sh", "-c"]
     command:
@@ -51,7 +51,7 @@ services:
         export BUN_INSTALL="/root/.bun"
         export PATH="$$BUN_INSTALL/bin:$$PATH"
         if ! command -v bun >/dev/null 2>&1; then
-          echo "[orchestrator] Installing bun..."
+          echo "[openwork-server] Installing bun..."
           curl -fsSL https://bun.sh/install | bash
         fi
 
@@ -59,13 +59,21 @@ services:
         corepack enable && corepack prepare pnpm@10.27.0 --activate
 
         # --- Install deps ---
-        echo "[orchestrator] Installing dependencies..."
+        echo "[openwork-server] Installing dependencies..."
         pnpm install --no-frozen-lockfile --network-concurrency 1 --child-concurrency 1
 
-        # --- Use source entrypoints for the dev stack ---
-        # The orchestrator can spawn .ts files via Bun directly, which avoids bind-mount
-        # issues from bun --compile inside Docker on macOS.
-        export OPENWORK_SERVER_BIN="/app/apps/server/src/cli.ts"
+        # --- Build the server plugins and install the pinned OpenCode binary ---
+        pnpm --filter openwork-server build
+        OPENCODE_VERSION=$$(node -e 'const fs=require("fs"); const parsed=JSON.parse(fs.readFileSync("/app/constants.json", "utf8")); process.stdout.write(String(parsed.opencodeVersion || "").trim().replace(/^v/, ""));')
+        export OPENCODE_INSTALL_DIR="/root/.opencode/bin"
+        mkdir -p "$$OPENCODE_INSTALL_DIR"
+        if ! command -v opencode >/dev/null 2>&1; then
+          curl -fsSL https://opencode.ai/install | bash -s -- --version "$$OPENCODE_VERSION" --no-modify-path
+        fi
+        export PATH="$$OPENCODE_INSTALL_DIR:$$PATH"
+        export OPENWORK_MANAGE_OPENCODE=1
+        export OPENWORK_OPENCODE_BIN="$$(command -v opencode)"
+        export OPENWORK_EXTENSIONS_PLUGIN_DIR="/app/apps/server/dist/opencode-plugins"
 
         # --- Resolve tokens ---
         if [ -z "$$OPENWORK_TOKEN" ]; then
@@ -84,7 +92,7 @@ services:
 
         echo ""
         echo "============================================"
-        echo "  OpenWork orchestrator"
+        echo "  OpenWork server"
         echo "  Server:     http://localhost:${OPENWORK_PORT:-8787}"
         echo "  Health:     http://localhost:${OPENWORK_PORT:-8787}/health"
         echo "  Token:      $$OPENWORK_TOKEN"
@@ -92,16 +100,15 @@ services:
         echo "============================================"
         echo ""
 
-        exec pnpm --filter openwork-orchestrator dev -- start \
+        exec pnpm --filter openwork-server exec bun dist/cli.js \
           --workspace /workspace \
-          --remote-access \
-          --openwork-port 8787 \
-          --openwork-token "$$OPENWORK_TOKEN" \
-          --openwork-host-token "$$OPENWORK_HOST_TOKEN" \
-          --openwork-server-bin "$$OPENWORK_SERVER_BIN" \
+          --host 0.0.0.0 \
+          --port 8787 \
+          --token "$$OPENWORK_TOKEN" \
+          --host-token "$$OPENWORK_HOST_TOKEN" \
           --approval auto \
-          --allow-external \
-          --cors "*"
+          --cors "*" \
+          --verbose
     ports:
       - "${OPENWORK_PORT:-8787}:8787"
     healthcheck:
@@ -118,12 +125,11 @@ services:
       OPENWORK_DEV_MODE: ${OPENWORK_DEV_MODE:-1}
       OPENWORK_DEV_OPENCODE_IMPORT_CONFIG_DIR: /persist/.config/opencode
       OPENWORK_DEV_OPENCODE_IMPORT_DATA_DIR: /persist/.openwork-host-opencode-data
-      OPENWORK_SIDECAR_SOURCE: external
- 
+
   web:
     <<: *shared
     depends_on:
-      orchestrator:
+      openwork-server:
         condition: service_healthy
     entrypoint: ["/bin/sh", "-c"]
     command:
@@ -142,7 +148,7 @@ services:
         fi
         corepack enable && corepack prepare pnpm@10.27.0 --activate
 
-        # --- Read token written by orchestrator ---
+        # --- Read token written by openwork-server ---
         if [ -f "/app/tmp/.dev-env-${OPENWORK_DEV_ID:-default}" ]; then
           . "/app/tmp/.dev-env-${OPENWORK_DEV_ID:-default}"
           export VITE_OPENWORK_TOKEN="$$OPENWORK_TOKEN"
@@ -152,7 +158,7 @@ services:
         echo "============================================"
         echo "  OpenWork web UI"
         echo "  URL:   http://localhost:${WEB_PORT:-5173}"
-        echo "  Token: $${VITE_OPENWORK_TOKEN:-<see orchestrator logs>}"
+          echo "  Token: $${VITE_OPENWORK_TOKEN:-<see openwork-server logs>}"
         echo "============================================"
         echo ""
 

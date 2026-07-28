@@ -89,7 +89,6 @@ ROUTING_DIRS=(
 IGNORE_PREFIXES=(
   "apps/app/scripts/"
   "apps/desktop/scripts/"
-  "apps/orchestrator/scripts/"
   "scripts/stats"
 )
 

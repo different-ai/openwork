@@ -60,57 +60,18 @@ const targetVersion = async () => {
 const updatePackageJson = async (nextVersion) => {
   const uiPath = path.join(ROOT, "package.json");
   const tauriPath = path.join(REPO_ROOT, "apps", "desktop", "package.json");
-  const orchestratorPath = path.join(
-    REPO_ROOT,
-    "apps",
-    "orchestrator",
-    "package.json",
-  );
   const serverPath = path.join(REPO_ROOT, "apps", "server", "package.json");
-  const installerPath = path.join(
-    REPO_ROOT,
-    "apps",
-    "installer",
-    "package.json",
-  );
   const uiData = await readJson(uiPath);
   const tauriData = await readJson(tauriPath);
-  const orchestratorData = await readJson(orchestratorPath);
   const serverData = await readJson(serverPath);
-  const installerData = await readJson(installerPath);
   uiData.version = nextVersion;
   tauriData.version = nextVersion;
-  orchestratorData.version = nextVersion;
-  // The installer stamps this version into its artifacts when a release build
-  // has no tag to resolve from.
-  installerData.version = nextVersion;
-
-  // Ensure openwork-orchestrator uses the same openwork-server version.
-  orchestratorData.dependencies = orchestratorData.dependencies ?? {};
-  orchestratorData.dependencies["openwork-server"] = nextVersion;
 
   serverData.version = nextVersion;
   if (!isDryRun) {
     await writeFile(uiPath, JSON.stringify(uiData, null, 2) + "\n");
     await writeFile(tauriPath, JSON.stringify(tauriData, null, 2) + "\n");
-    await writeFile(
-      orchestratorPath,
-      JSON.stringify(orchestratorData, null, 2) + "\n",
-    );
     await writeFile(serverPath, JSON.stringify(serverData, null, 2) + "\n");
-    await writeFile(installerPath, JSON.stringify(installerData, null, 2) + "\n");
-  }
-};
-
-// apps/orchestrator pins exact versions of workspace packages, so the lockfile
-// must be resynced after a bump or CI's --frozen-lockfile install fails.
-const syncLockfile = () => {
-  const result = spawnSync("pnpm", ["install", "--lockfile-only"], {
-    cwd: REPO_ROOT,
-    stdio: "inherit",
-  });
-  if (result.status !== 0) {
-    throw new Error("pnpm install --lockfile-only failed");
   }
 };
 
@@ -144,7 +105,6 @@ const main = async () => {
   const nextVersion = await targetVersion();
   await updatePackageJson(nextVersion);
   syncDesktopVersions(nextVersion);
-  if (!isDryRun) syncLockfile();
 
   console.log(
     JSON.stringify(
@@ -155,11 +115,8 @@ const main = async () => {
         files: [
           "apps/app/package.json",
           "apps/desktop/package.json",
-          "apps/orchestrator/package.json",
           "apps/server/package.json",
-          "apps/installer/package.json",
           "ee/apps/den-api/src/generated/desktop-versions.ts",
-          "pnpm-lock.yaml",
         ],
       },
       null,

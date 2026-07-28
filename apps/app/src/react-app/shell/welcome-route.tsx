@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useCallback, useEffect, useReducer, useState } from "react";
+import { useCallback, useEffect, useReducer, useState, useSyncExternalStore } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { t } from "../../i18n";
@@ -41,6 +41,17 @@ import { writeActiveWorkspaceId, writeLastSessionFor, writeWorkspaceProjectDimen
 import { workspaceSessionRoute } from "./workspace-routes";
 import { ensureDesktopLocalOpenworkConnection } from "./desktop-local-openwork";
 import { saveControlPlaneUrl } from "../domains/settings/cloud/control-plane-url";
+import { shouldHoldWelcomeForDenSession } from "./welcome-den-session";
+
+function subscribeToDenSettings(onStoreChange: () => void) {
+  if (typeof window === "undefined") return () => {};
+  window.addEventListener(denSettingsChangedEvent, onStoreChange);
+  return () => window.removeEventListener(denSettingsChangedEvent, onStoreChange);
+}
+
+function readDenAuthTokenSnapshot() {
+  return readDenSettings().authToken?.trim() ?? "";
+}
 
 function folderNameFromPath(path: string) {
   const normalized = path.replace(/\\/g, "/").replace(/\/+$/, "");
@@ -137,6 +148,16 @@ export function WelcomeRoute() {
   const [organizationServerError, setOrganizationServerError] = useState<string | null>(null);
   const [joinOrganizationOpen, setJoinOrganizationOpen] = useState(false);
   const showOpenWorkModelsPromo = useOpenWorkModelsPromoEligibility();
+  const denAuthTokenSnapshot = useSyncExternalStore(
+    subscribeToDenSettings,
+    readDenAuthTokenSnapshot,
+    readDenAuthTokenSnapshot,
+  );
+  const holdSignedOutSurface = shouldHoldWelcomeForDenSession({
+    authStatus: denAuth.status,
+    hasStoredAuthToken: Boolean(denAuthTokenSnapshot),
+    isSignedIn: denAuth.isSignedIn,
+  });
 
   // If user already completed onboarding, redirect away immediately.
   useEffect(() => {
@@ -144,6 +165,12 @@ export function WelcomeRoute() {
       navigate("/session", { replace: true });
     }
   }, [local.prefs.hasCompletedOnboarding, navigate]);
+
+  useEffect(() => {
+    if (denAuth.isSignedIn) {
+      navigate("/onboarding", { replace: true });
+    }
+  }, [denAuth.isSignedIn, navigate]);
 
   const markOnboardingComplete = useCallback(() => {
     local.setPrefs((prev) => ({ ...prev, hasCompletedOnboarding: true }));
@@ -389,6 +416,10 @@ export function WelcomeRoute() {
     captureAnalyticsEvent("attribution_survey_skipped");
     finishOnboarding();
   }, [finishOnboarding]);
+
+  if (holdSignedOutSurface) {
+    return null;
+  }
 
   return (
     <>

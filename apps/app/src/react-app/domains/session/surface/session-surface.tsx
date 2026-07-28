@@ -46,6 +46,7 @@ import { decodeComposerMentionValue, encodeComposerMentionValue, type ComposerMe
 import { desktopBridge, openDesktopUrl } from "@/app/lib/desktop";
 import { parseSlashCommandInvocation } from "./composer/slash-command";
 import { connectSkillPrompt, parseConnectSkillToken } from "./composer/connect-skill-token";
+import { createPastedTextChip, resolvePastedTextPlaceholders } from "./composer/pasted-text";
 import { DevProfiler } from "@/react-app/shell/dev-profiler";
 import { PaperGrainGradient } from "@openwork/ui/react";
 import { useShellConfig } from "@/react-app/shell/shell-config";
@@ -101,10 +102,9 @@ import {
   type ApplyEnvironmentChangesResult,
 } from "@/react-app/domains/settings/pages/environment-variable-provider";
 import {
-  EMPTY_CONNECT_CAPABILITY_INVENTORY,
-  listAssignedConnectCapabilities,
-  type ConnectCapabilityInventory,
-} from "./connect-capability-inventory";
+  clearCloudInventoryCache,
+  loadSessionConnectCapabilities,
+} from "@/react-app/domains/connections/cloud-inventory-cache";
 import { consumeComposerAutoSend } from "./composer-auto-send";
 
 const EMPTY_TRANSCRIPT: UIMessage[] = [];
@@ -657,10 +657,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const [toolMcpStatuses, setToolMcpStatuses] = useState<McpStatusMap>({});
   const [toolImportedPlugins, setToolImportedPlugins] = useState<CloudImportedPlugin[]>([]);
   const [steering, setSteering] = useState(false);
-  const connectInventoryCacheRef = useRef<{
-    scope: string;
-    promise: Promise<ConnectCapabilityInventory>;
-  } | null>(null);
   const [verifiedOpenTargets, setVerifiedOpenTargets] = useState<OpenTarget[]>([]);
   const [cloudQueueRetryVersion, setCloudQueueRetryVersion] = useState(0);
   const sending = props.cloudMcpSubmissionState.status === "sending";
@@ -1001,10 +997,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     });
     // Expand paste placeholders in resolvedText so the model receives
     // the actual pasted content instead of "[pasted text <label>]".
-    let resolved = text;
-    for (const part of pasteParts) {
-      resolved = resolved.replace(`[pasted text ${part.label}]`, part.text);
-    }
+    let resolved = resolvePastedTextPlaceholders(text, pasteParts);
     resolved = resolved.replace(/\[attachment [^\]]+\]/g, "");
     resolved = resolved.replace(/\[connect-skill [^\]]+\]/g, (match) => {
       const token = parseConnectSkillToken(match);
@@ -1326,10 +1319,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
   };
 
   const handlePasteText = (text: string) => {
-    const id = `paste-${Math.random().toString(36).slice(2)}`;
-    const label = `${id.slice(-4)} · ${text.split(/\r?\n/).length} lines`;
-    setComposerPasteParts(props.sessionId, [...pasteParts, { id, label, text, lines: text.split(/\r?\n/).length }]);
-    setComposerDraft(props.sessionId, `${draft}[pasted text ${label}]`);
+    const pasted = createPastedTextChip(text);
+    setComposerPasteParts(props.sessionId, [...pasteParts, pasted]);
+    setComposerDraft(props.sessionId, `${draft}[pasted text ${pasted.label}]`);
   };
 
   const handleExpandPastedText = (id: string) => {
@@ -1423,37 +1415,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
   }), [chatStreaming, handleAbort]);
   useControlAction(props.isControlTarget ? composerStopControlAction : null);
 
-  const loadConnectCapabilityInventory = async (): Promise<ConnectCapabilityInventory> => {
-    const settings = readDenSettings();
-    const token = settings.authToken?.trim() ?? "";
-    const organizationId = settings.activeOrgId?.trim() ?? "";
-    if (!token || !organizationId) return EMPTY_CONNECT_CAPABILITY_INVENTORY;
-
-    const scope = `${settings.baseUrl}\n${organizationId}`;
-    if (connectInventoryCacheRef.current?.scope === scope) {
-      try {
-        return await connectInventoryCacheRef.current.promise;
-      } catch {
-        connectInventoryCacheRef.current = null;
-        return EMPTY_CONNECT_CAPABILITY_INVENTORY;
-      }
-    }
-
-    const client = createDenClient({ baseUrl: settings.baseUrl, token });
-    const promise = listAssignedConnectCapabilities({ client, organizationId });
-    connectInventoryCacheRef.current = { scope, promise };
-    try {
-      return await promise;
-    } catch {
-      if (connectInventoryCacheRef.current?.promise === promise) {
-        connectInventoryCacheRef.current = null;
-      }
-      return EMPTY_CONNECT_CAPABILITY_INVENTORY;
-    }
-  };
-
   const listSkills = async (): Promise<SkillCard[]> => {
-    const connectPromise = loadConnectCapabilityInventory();
+    const connectPromise = loadSessionConnectCapabilities();
     const response = await props.client.listSkills(props.workspaceId, { includeGlobal: true });
     const localSkills = (response.items ?? []).map((skill) => ({
       name: skill.name,
@@ -1470,7 +1433,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   };
 
   const listMcp = async (): Promise<{ servers: McpServerEntry[]; statuses: McpStatusMap; status: string | null }> => {
-    const connectPromise = loadConnectCapabilityInventory();
+    const connectPromise = loadSessionConnectCapabilities();
     const response = await props.client.listMcp(props.workspaceId);
     const localServers = (response.items ?? []).map((entry) => ({
       name: entry.name,
@@ -1606,7 +1569,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   useEffect(() => {
     const resetReconnectState = () => {
       useChatMcpReconnectStore.getState().reset();
-      connectInventoryCacheRef.current = null;
+      clearCloudInventoryCache();
       setToolSkills((current) => current.filter((skill) => skill.origin !== "openwork-connect"));
       setToolMcpServers((current) => current.filter((server) => server.origin !== "openwork-connect"));
       setToolMcpStatuses((current) => Object.fromEntries(

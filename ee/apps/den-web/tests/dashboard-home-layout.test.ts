@@ -27,16 +27,17 @@ describe("dashboard home layouts", () => {
 
     expect(overview).toContain("<OrganizationDownloadCard");
     expect(member).toContain("<OrganizationDownloadCard");
-    expect(downloadCard).toContain('data-testid="organization-download-card"');
-    expect(downloadCard).toContain('data-testid="organization-download-button"');
+    expect(downloadCard).toContain('data-testid="workspace-install-card"');
+    expect(downloadCard).toContain('data-testid="workspace-install-open"');
   });
 
-  test("uses a compact member resource overview backed by member-scoped data", () => {
+  test("member dashboard lists usable resources without a summary strip of empty counts", () => {
     const member = readDashboardComponent("member-dashboard-screen.tsx");
 
     expect(member).toContain('data-testid="member-dashboard"');
-    expect(member).toContain('data-testid="member-resource-overview"');
-    expect(member).toContain('data-testid="member-resource-card"');
+    expect(member).not.toContain('data-testid="member-resource-overview"');
+    expect(member).not.toContain('data-testid="member-resource-card"');
+    expect(member).not.toContain("Available resources");
     expect(member).toContain('useOrgLlmProviders(orgId, { scope: "usable" })');
     expect(member).toContain("useMarketplaces()");
     expect(member).toContain("usePlugins()");

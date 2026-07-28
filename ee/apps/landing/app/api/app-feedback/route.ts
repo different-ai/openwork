@@ -8,7 +8,6 @@ type FeedbackContext = {
   appVersion?: string;
   openworkServerVersion?: string;
   opencodeVersion?: string;
-  orchestratorVersion?: string;
   osName?: string;
   osVersion?: string;
   platform?: string;
@@ -37,7 +36,6 @@ function sanitizeContext(input: FeedbackContext | undefined) {
     appVersion: sanitizeValue(input?.appVersion),
     openworkServerVersion: sanitizeValue(input?.openworkServerVersion),
     opencodeVersion: sanitizeValue(input?.opencodeVersion),
-    orchestratorVersion: sanitizeValue(input?.orchestratorVersion),
     osName: sanitizeValue(input?.osName),
     osVersion: sanitizeValue(input?.osVersion),
     platform: sanitizeValue(input?.platform),
@@ -53,7 +51,6 @@ function formatDiagnosticsSummary(context: ReturnType<typeof sanitizeContext>) {
     ["App version", context.appVersion],
     ["OpenWork server", context.openworkServerVersion],
     ["OpenCode", context.opencodeVersion],
-    ["Orchestrator", context.orchestratorVersion],
     ["OS", osLabel],
     ["Platform", context.platform],
   ].filter(([, value]) => value);
@@ -146,7 +143,6 @@ export async function POST(request: Request) {
     appVersion: context.appVersion || "unknown",
     openworkServerVersion: context.openworkServerVersion || "unknown",
     opencodeVersion: context.opencodeVersion || "unknown",
-    orchestratorVersion: context.orchestratorVersion || "unknown",
     osName: context.osName || "unknown",
     osVersion: context.osVersion || "",
     platform: context.platform || "unknown",

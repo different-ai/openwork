@@ -167,8 +167,8 @@ The sidebar has two vertical rails, defined once in
 
 Rules when adding a sidebar row:
 
-1. Compose the row with `SIDEBAR_ROW_LANE` (or `SIDEBAR_ROW_LANE_NESTED`, one
-   12px step per depth level) instead of ad-hoc `ps-*`.
+1. Compose the row with `SIDEBAR_ROW_LANE` / `sidebarRowPaddingInlineStart(depth)`
+   (12px base + 16px per depth level) instead of ad-hoc `ps-*`.
 2. Render `SidebarGlyphSlot` as the first child even when there is no glyph, so
    the title never shifts when an indicator appears.
 3. Style section labels with `SIDEBAR_SECTION_LABEL`; put them on the glyph lane

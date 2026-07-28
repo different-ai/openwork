@@ -68,6 +68,11 @@ const HANDOFF_STATUS_RATE_LIMIT_WINDOW_MS = 60 * 1000
 const HANDOFF_STATUS_RATE_LIMIT_MAX = 240
 type WorkerOrgId = typeof WorkerTable.$inferSelect.org_id
 
+type ApprovedWebHandoffReturnUrlCandidate = {
+  origin: string
+  returnUrl: string
+}
+
 function readSingleHeader(value: string | null) {
   const first = value?.split(",")[0]?.trim() ?? ""
   return first || null
@@ -203,27 +208,23 @@ function hasPathTraversal(pathname: string) {
   return candidates.some((candidate) => candidate.split("/").some((segment) => segment === "." || segment === ".."))
 }
 
-export function approveWebHandoffReturnUrl(input: {
+function resolveWebHandoffReturnUrlCandidate(input: {
   returnUrl: string
-  signedPreviewUrl: string
   orgMode: DenOrgMode
-}) {
+}): ApprovedWebHandoffReturnUrlCandidate | null {
   if (input.orgMode !== "multi_org") {
     return null
   }
 
   let candidate: URL
-  let signedPreview: URL
   try {
     candidate = new URL(input.returnUrl)
-    signedPreview = new URL(input.signedPreviewUrl)
   } catch {
     return null
   }
 
   if (
     candidate.protocol !== "https:"
-    || signedPreview.protocol !== "https:"
     || candidate.username
     || candidate.password
     || candidate.hash
@@ -236,32 +237,101 @@ export function approveWebHandoffReturnUrl(input: {
     return null
   }
 
+  return {
+    origin: candidate.origin,
+    returnUrl: `${candidate.origin}/signin`,
+  }
+}
+
+function isConfiguredGatewayOrigin(candidateOrigin: string, gatewayOrigin: string | null | undefined) {
+  if (!gatewayOrigin) {
+    return false
+  }
+
+  let gateway: URL
+  try {
+    gateway = new URL(gatewayOrigin)
+  } catch {
+    return false
+  }
+
+  if (
+    gateway.protocol !== "https:"
+    || gateway.username
+    || gateway.password
+    || gateway.search
+    || gateway.hash
+    || (gateway.pathname !== "/" && gateway.pathname !== "")
+  ) {
+    return false
+  }
+
+  // Exact-origin only. As with Daytona preview origins, suffix-based gateway
+  // matches would approve an attacker-controlled origin.
+  return candidateOrigin === gateway.origin
+}
+
+function isSignedPreviewOrigin(candidateOrigin: string, signedPreviewUrl: string) {
+  let signedPreview: URL
+  try {
+    signedPreview = new URL(signedPreviewUrl)
+  } catch {
+    return false
+  }
+
+  if (signedPreview.protocol !== "https:") {
+    return false
+  }
+
   // Exact-origin only. The Daytona preview proxy zone is shared by every
   // Daytona customer, so any suffix-based match would approve an
   // attacker-controlled sandbox origin and leak one-time session grants.
   // If the preview URL was re-signed between opening the instance and
   // signing in, this fails closed and the user reopens Cloud for a fresh
   // URL.
-  if (candidate.origin !== signedPreview.origin) {
+  return candidateOrigin === signedPreview.origin
+}
+
+export function approveWebHandoffReturnUrl(input: {
+  returnUrl: string
+  signedPreviewUrl: string
+  orgMode: DenOrgMode
+  gatewayOrigin?: string | null
+}) {
+  const candidate = resolveWebHandoffReturnUrlCandidate(input)
+  if (!candidate) {
     return null
   }
 
-  return `${candidate.origin}/signin`
+  if (isConfiguredGatewayOrigin(candidate.origin, input.gatewayOrigin)) {
+    return candidate.returnUrl
+  }
+
+  if (isSignedPreviewOrigin(candidate.origin, input.signedPreviewUrl)) {
+    return candidate.returnUrl
+  }
+
+  return null
 }
 
 export function approveWebHandoffReturnUrlForSignedPreviews(input: {
   returnUrl: string
   signedPreviewUrls: string[]
   orgMode: DenOrgMode
+  gatewayOrigin?: string | null
 }) {
+  const candidate = resolveWebHandoffReturnUrlCandidate(input)
+  if (!candidate) {
+    return null
+  }
+
+  if (isConfiguredGatewayOrigin(candidate.origin, input.gatewayOrigin)) {
+    return candidate.returnUrl
+  }
+
   for (const signedPreviewUrl of input.signedPreviewUrls) {
-    const approved = approveWebHandoffReturnUrl({
-      returnUrl: input.returnUrl,
-      signedPreviewUrl,
-      orgMode: input.orgMode,
-    })
-    if (approved) {
-      return approved
+    if (isSignedPreviewOrigin(candidate.origin, signedPreviewUrl)) {
+      return candidate.returnUrl
     }
   }
 
@@ -283,10 +353,20 @@ async function getCloudSignedPreviewUrls(organizationId: WorkerOrgId) {
   return rows.map((row) => row.signedPreviewUrl)
 }
 
-async function resolveApprovedWebHandoffReturnUrl(input: {
+export async function resolveApprovedWebHandoffReturnUrl(input: {
   returnUrl: string
   activeOrganizationId?: string | null
 }) {
+  const gatewayReturnUrl = approveWebHandoffReturnUrlForSignedPreviews({
+    returnUrl: input.returnUrl,
+    signedPreviewUrls: [],
+    orgMode: env.orgMode,
+    gatewayOrigin: env.gatewayOrigin,
+  })
+  if (gatewayReturnUrl) {
+    return gatewayReturnUrl
+  }
+
   if (env.orgMode !== "multi_org" || !input.activeOrganizationId) {
     return null
   }
@@ -303,6 +383,7 @@ async function resolveApprovedWebHandoffReturnUrl(input: {
     returnUrl: input.returnUrl,
     signedPreviewUrls,
     orgMode: env.orgMode,
+    gatewayOrigin: env.gatewayOrigin,
   })
 }
 

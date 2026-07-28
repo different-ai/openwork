@@ -1,13 +1,8 @@
-import { execSync, spawn, spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { execSync } from "node:child_process";
 import {
-  chmodSync,
-  copyFileSync,
   existsSync,
-  mkdirSync,
   mkdtempSync,
   readFileSync,
-  rmSync,
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -22,7 +17,6 @@ const DEN_API_URL = cleanBaseUrl(process.env.OPENWORK_EVAL_DEN_API_URL);
 const DEN_WEB_URL = cleanBaseUrl(process.env.OPENWORK_EVAL_DEN_WEB_URL);
 const ADMIN_CDP_URL = cleanBaseUrl(process.env.OPENWORK_EVAL_WEB_CDP_ADMIN);
 const INVITEE_CDP_URL = cleanBaseUrl(process.env.OPENWORK_EVAL_WEB_CDP_INVITEE);
-const INSTALLER_BIN = process.env.OPENWORK_EVAL_INSTALLER_BIN?.trim() ?? "";
 const MARK_VERIFIED_CMD = process.env.OPENWORK_EVAL_MARK_VERIFIED_CMD?.trim() || "";
 const ADMIN_EMAIL = process.env.OPENWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
 const ADMIN_PASSWORD = process.env.OPENWORK_EVAL_DEMO_PASSWORD?.trim() || "OpenWorkDemo123!";
@@ -42,14 +36,8 @@ const state = {
   installToken: null,
   installConfig: null,
   installPageTargetId: null,
-  installerUiTargetId: null,
   authTargetId: null,
   frame3DownloadRedirect: null,
-  frame3BareRun: null,
-  frame3Ui: null,
-  frame4InstallerRun: null,
-  frame4Ui: null,
-  expiredResolve: null,
   memberSetup: null,
   browserSignInUrl: null,
   copiedDesktopUrl: null,
@@ -67,7 +55,6 @@ export default {
     "OPENWORK_EVAL_DEN_WEB_URL",
     "OPENWORK_EVAL_WEB_CDP_ADMIN",
     "OPENWORK_EVAL_WEB_CDP_INVITEE",
-    "OPENWORK_EVAL_INSTALLER_BIN",
     "OPENWORK_EVAL_MARK_VERIFIED_CMD",
   ],
   steps: [
@@ -175,119 +162,35 @@ export default {
     {
       name: "Frame 3",
       run: async (ctx) => {
-        state.installerUiTargetId = state.installerUiTargetId ?? (await newPageTarget(INVITEE_CDP_URL)).id;
-        try {
-          await withClient(ctx, INVITEE_CDP_URL, async () => {
-            await ctx.prove("The Acme install download redirects to the generic installer, and a bare installer asks for the pinned link without writing any bootstrap", {
-              voiceover: vo[2],
-              // "They download and open the installer — it asks for exactly one thing, the link"
-              action: async () => {
-                state.frame3DownloadRedirect = await fetchAndVerifyMacInstallerRedirect(ctx);
-                ctx.output("mac-installer-redirect", JSON.stringify(state.frame3DownloadRedirect, null, 2));
-
-                state.frame3BareRun = runBareInstallerWithoutConfig();
-                state.frame3Ui = await startInstallerUi("openwork-first-connection-bare-ui-");
-                await navigateToAbsolute(ctx, state.frame3Ui.url);
-                await ctx.waitForText("Paste your install link", { timeoutMs: 30_000 });
-                await ctx.waitForText("It's in the copy box on your team's install page", { timeoutMs: 30_000 });
-              },
-              assert: async () => {
-                const redirect = requireRedirectWitness(state.frame3DownloadRedirect);
-                witness(ctx, redirect.status === 302, "The macOS installer download returns a 302 instead of stamped bytes", redirect);
-                witness(ctx, redirect.location === redirect.expectedLocation, "The redirect Location is the exact generic macOS installer release asset", redirect);
-
-                const run = requireBareNoConfigRun(state.frame3BareRun);
-                witness(ctx, run.missing.status === 2, "Bare --headless --dry-run exits setup-required without an install link", run.missing.combined);
-                witness(ctx, run.missing.combined.includes("Paste an OpenWork install link"), "The bare headless installer asks for an OpenWork install link", run.missing.combined);
-                const writtenBootstraps = run.bootstrapPaths.filter((candidate) => existsSync(candidate));
-                witness(ctx, writtenBootstraps.length === 0, "Bare --headless --dry-run writes no desktop bootstrap, so it cannot default to the wrong server", { bootstrapPaths: run.bootstrapPaths, writtenBootstraps });
-                ctx.output("bare-installer-setup-required", run.missing.combined);
-
-                await ctx.expectText("Paste your install link");
-                await ctx.expectText("It's in the copy box on your team's install page");
-              },
-              screenshot: {
-                name: "bare-installer-asks-for-install-link",
-                requireText: ["Paste your install link", "It's in the copy box on your team's install page", "Continue"],
-              },
-            });
-          }, { targetId: state.installerUiTargetId });
-        } finally {
-          await closeTarget(INVITEE_CDP_URL, state.installerUiTargetId);
-          state.installerUiTargetId = null;
-          state.frame3Ui?.kill();
-          state.frame3Ui = null;
-        }
+        await withClient(ctx, INVITEE_CDP_URL, async () => {
+          await ctx.prove("The Acme install download redirects to the standard desktop release asset", {
+            voiceover: vo[2],
+            // "The download itself is just the standard desktop app for the org-approved version"
+            action: async () => {
+              state.frame3DownloadRedirect = await fetchAndVerifyMacInstallerRedirect(ctx);
+              ctx.output("mac-desktop-download-redirect", JSON.stringify(state.frame3DownloadRedirect, null, 2));
+            },
+            assert: async () => {
+              const redirect = requireRedirectWitness(state.frame3DownloadRedirect);
+              witness(ctx, redirect.status === 302, "The macOS desktop download returns a redirect instead of mutating the artifact", redirect);
+              witness(ctx, redirect.location === redirect.expectedLocation, "The redirect Location is the exact standard macOS desktop release asset", redirect);
+              await ctx.expectText("Download OpenWork for Acme Robotics");
+              await ctx.expectText("Open the installer and paste this link:");
+            },
+            screenshot: {
+              name: "standard-desktop-download-redirect",
+              requireText: ["Download OpenWork for Acme Robotics", "Open the installer and paste this link:", "Waiting for sign-in"],
+            },
+          });
+        }, { targetId: state.installPageTargetId });
       },
     },
     {
       name: "Frame 4",
       run: async (ctx) => {
-        state.installerUiTargetId = state.installerUiTargetId ?? (await newPageTarget(INVITEE_CDP_URL)).id;
-        try {
-          await withClient(ctx, INVITEE_CDP_URL, async () => {
-            await ctx.prove("Pasting Acme's install link lets the installer confirm the team and server, write the Acme bootstrap, and reject an expired link plainly", {
-              voiceover: vo[3],
-              // "They paste the link and the installer confirms the team and server, then installs"
-              action: async () => {
-                state.frame4InstallerRun = runInstallerWithInstallLink();
-                state.frame4Ui = await startInstallerUi("openwork-first-connection-link-ui-");
-                await navigateToAbsolute(ctx, state.frame4Ui.url);
-                await ctx.waitForText("Paste your install link", { timeoutMs: 30_000 });
-                await ctx.waitForText("It's in the copy box on your team's install page", { timeoutMs: 30_000 });
-                await ctx.fill("#install-link", requireStateValue(state.installPageUrl, "install page URL"));
-                await clickExactText(ctx, "Continue", "button");
-                await ctx.waitForText("This sets up OpenWork for Acme Robotics", { timeoutMs: 30_000 });
-              },
-              assert: async () => {
-                const run = requireInstallLinkRun(state.frame4InstallerRun);
-                witness(ctx, run.withLink.status === 0, "The bare installer dry-run succeeds when Acme's install link is supplied", run.withLink.combined);
-                witness(ctx, run.withLink.stdout.includes("OpenWork Installer — Acme Robotics"), "The --install-link dry-run resolves to Acme Robotics", run.withLink.stdout);
-                witness(ctx, run.withLink.stdout.includes("Configured via install link"), "The --install-link dry-run reports the install-link configuration source", run.withLink.stdout);
-                witness(ctx, run.withLink.stdout.includes("Dry run ok"), "The --install-link dry-run checks the organization-supported app version", run.withLink.stdout);
-                const bootstrap = readBootstrapConfig(ctx, run.bootstrapPath);
-                witness(ctx, cleanBaseUrl(bootstrap.parsed.baseUrl) === cleanBaseUrl(state.installConfig.webUrl), "The --install-link bootstrap baseUrl matches Acme's web URL", bootstrap.parsed);
-                witness(ctx, cleanBaseUrl(bootstrap.parsed.apiBaseUrl) === cleanBaseUrl(state.installConfig.apiUrl), "The --install-link bootstrap apiBaseUrl matches Acme's API URL", bootstrap.parsed);
-                witness(ctx, bootstrap.parsed.requireSignin === true, "The --install-link dry-run writes a required sign-in bootstrap", bootstrap.parsed);
-
-                await ctx.expectText("This sets up OpenWork for Acme Robotics");
-                await ctx.expectText(new URL(state.installConfig.webUrl).host);
-                await ctx.expectText("Configured via install link");
-                await ctx.expectText("Install");
-                await ctx.screenshot("installer-confirms-acme-after-paste", {
-                  claim: "Pasting Acme's install link lets the installer confirm the team and server before installing.",
-                  voiceover: vo[3],
-                  requireText: ["This sets up OpenWork for Acme Robotics", new URL(state.installConfig.webUrl).host, "Configured via install link", "Install"],
-                });
-
-                const expired = await prepareExpiredInstallLink(ctx);
-                state.expiredResolve = await resolveLinkInInstallerUi(ctx, expired.expiredInstallLink);
-                witness(ctx, expired.configStatus === 404, "The expired install token no longer resolves from Den", expired);
-                witness(ctx, state.expiredResolve.status === 400, "The installer resolve-link API rejects the expired link", state.expiredResolve);
-                witness(
-                  ctx,
-                  String(state.expiredResolve.body?.message ?? "").includes("This install link has expired or was replaced"),
-                  "The installer explains that the install link expired or was replaced",
-                  state.expiredResolve,
-                );
-                ctx.output("installer-install-link-bootstrap-and-expired-link", JSON.stringify({ run, bootstrap: bootstrap.parsed, expired, resolveLink: state.expiredResolve }, null, 2));
-              },
-            });
-          }, { targetId: state.installerUiTargetId });
-        } finally {
-          await closeTarget(INVITEE_CDP_URL, state.installerUiTargetId);
-          state.installerUiTargetId = null;
-          state.frame4Ui?.kill();
-          state.frame4Ui = null;
-        }
-      },
-    },
-    {
-      name: "Frame 5",
-      run: async (ctx) => {
         useDesktopClient(ctx);
         await ctx.prove("A plain first-run desktop asks whether to use OpenWork Cloud or join an organization, and pasting Acme's link binds it to Acme's server", {
-          voiceover: vo[4],
+          voiceover: vo[3],
           // "Suppose someone skips all that and installs the plain OpenWork app instead: "
           action: async () => {
             await ensureDesktopReady(ctx);
@@ -337,11 +240,11 @@ export default {
       },
     },
     {
-      name: "Frame 6",
+      name: "Frame 5",
       run: async (ctx) => {
         useDesktopClient(ctx);
         await ctx.prove("Desktop sign-in completes through Acme's browser handoff, while a later sign-in link for another server asks before switching", {
-          voiceover: vo[5],
+          voiceover: vo[4],
           // "The desktop opens sign-in for Acme Robotics with the browser handling the ha"
           action: async () => {
             await ensureDesktopReady(ctx);
@@ -425,11 +328,11 @@ export default {
       },
     },
     {
-      name: "Frame 7",
+      name: "Frame 6",
       run: async (ctx) => {
         await withClient(ctx, INVITEE_CDP_URL, async () => {
           await ctx.prove("The browser handoff and original install page both flip to Connected for Acme Robotics", {
-            voiceover: vo[6],
+            voiceover: vo[5],
             // "Back on the install page, step three flips to Connected — OpenWork is set up"
             action: async () => {
               await withClient(ctx, INVITEE_CDP_URL, async () => {
@@ -497,20 +400,6 @@ function requireRedirectWitness(value) {
     return value;
   }
   throw new Error("Installer redirect witness was not prepared.");
-}
-
-function requireBareNoConfigRun(value) {
-  if (value && typeof value === "object" && value.missing && Array.isArray(value.bootstrapPaths)) {
-    return value;
-  }
-  throw new Error("Bare no-config installer run was not prepared.");
-}
-
-function requireInstallLinkRun(value) {
-  if (value && typeof value === "object" && value.withLink && typeof value.bootstrapPath === "string") {
-    return value;
-  }
-  throw new Error("Install-link installer run was not prepared.");
 }
 
 async function withClient(ctx, cdpBaseUrl, fn, options = {}) {
@@ -1056,7 +945,8 @@ async function fetchAndVerifyMacInstallerRedirect(ctx) {
   });
   const location = response.headers.get("location") ?? "";
   const releaseTag = await expectedInstallerReleaseTag(ctx);
-  const fileName = "OpenWork-Installer-mac-arm64.dmg";
+  const version = releaseTag.startsWith("v") ? releaseTag.slice(1) : releaseTag;
+  const fileName = `openwork-mac-arm64-${version}.dmg`;
   const expectedLocation = `https://github.com/different-ai/openwork/releases/download/${encodeURIComponent(releaseTag)}/${encodeURIComponent(fileName)}`;
   const parsedLocation = location ? new URL(location) : null;
 
@@ -1076,146 +966,12 @@ async function fetchAndVerifyMacInstallerRedirect(ctx) {
   };
 }
 
-async function startInstallerUi(tempPrefix, { binaryName = "openwork-installer" } = {}) {
-  const tempDir = makeTempDir(tempPrefix);
-  const installerPath = copyInstallerTo(tempDir, binaryName);
-  const child = spawn(installerPath, [], {
-    cwd: tempDir,
-    env: sanitizedInstallerEnv({ OPENWORK_INSTALLER_UI: "manual" }),
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  let output = "";
-  child.stdout.on("data", (chunk) => { output += String(chunk); });
-  child.stderr.on("data", (chunk) => { output += String(chunk); });
-
-  const startedAt = Date.now();
-  while (Date.now() - startedAt < 20_000) {
-    const match = output.match(/UI ready at (http:\/\/127\.0\.0\.1:\d+\/?)/);
-    if (match) {
-      return { child, url: match[1], kill: () => { try { child.kill("SIGKILL"); } catch { /* gone */ } } };
-    }
-    if (child.exitCode !== null) {
-      throw new Error(`Installer UI exited early (${child.exitCode}): ${output}`);
-    }
-    await new Promise((resolve) => setTimeout(resolve, 200));
-  }
-  try { child.kill("SIGKILL"); } catch { /* gone */ }
-  throw new Error(`Installer UI did not print a ready URL in time: ${output}`);
-}
-
-function isolatedInstallerHome(tempDir) {
-  const xdgConfigHome = path.join(tempDir, "xdg-config");
-  const home = path.join(tempDir, "home");
-  mkdirSync(xdgConfigHome, { recursive: true });
-  mkdirSync(home, { recursive: true });
-  return {
-    env: { XDG_CONFIG_HOME: xdgConfigHome, HOME: home },
-    bootstrapPaths: [
-      path.join(xdgConfigHome, "openwork", "desktop-bootstrap.json"),
-      path.join(home, ".config", "openwork", "desktop-bootstrap.json"),
-    ],
-  };
-}
-
-function runBareInstallerWithoutConfig() {
-  const tempDir = makeTempDir("openwork-first-connection-bare-");
-  const installerPath = copyInstallerTo(tempDir);
-  const isolated = isolatedInstallerHome(tempDir);
-  const missing = runInstaller(installerPath, ["--headless", "--dry-run"], sanitizedInstallerEnv(isolated.env), tempDir);
-  return { missing, bootstrapPaths: isolated.bootstrapPaths };
-}
-
-function runInstallerWithInstallLink() {
-  const installLink = requireStateValue(state.installPageUrl, "install page URL");
-  const tempDir = makeTempDir("openwork-first-connection-link-");
-  const installerPath = copyInstallerTo(tempDir);
-  const isolated = isolatedInstallerHome(tempDir);
-  const bootstrapPath = BOOTSTRAP_PATH;
-  rmSync(bootstrapPath, { force: true });
-  const withLink = runInstaller(
-    installerPath,
-    ["--headless", "--dry-run", "--install-link", installLink],
-    sanitizedInstallerEnv({ ...isolated.env, OPENWORK_DESKTOP_BOOTSTRAP_PATH: bootstrapPath }),
-    tempDir,
-  );
-  return { withLink, bootstrapPath };
-}
-
-function runInstaller(installerPath, args, env, cwd) {
-  const result = spawnSync(installerPath, args, { cwd, env, encoding: "utf8" });
-  const stdout = result.stdout ?? "";
-  const stderr = result.stderr ?? "";
-  const error = result.error instanceof Error ? result.error.message : "";
-  return {
-    command: `${installerPath} ${args.map((arg) => JSON.stringify(arg)).join(" ")}`,
-    status: result.status ?? 1,
-    stdout,
-    stderr,
-    error,
-    combined: [stdout, stderr, error].filter(Boolean).join("\n"),
-  };
-}
-
-function sanitizedInstallerEnv(overrides = {}) {
-  const env = { ...process.env };
-  for (const key of Object.keys(env)) {
-    if (key.startsWith("OPENWORK_INSTALLER_") || key === "OPENWORK_DESKTOP_BOOTSTRAP_PATH") {
-      delete env[key];
-    }
-  }
-  return { ...env, ...overrides };
-}
-
-function copyInstallerTo(directory, binaryName = "openwork-installer") {
-  const installerPath = path.join(directory, binaryName);
-  copyFileSync(INSTALLER_BIN, installerPath);
-  chmodSync(installerPath, 0o755);
-  return installerPath;
-}
-
 function readBootstrapConfig(ctx, bootstrapPath) {
   ctx.assert(existsSync(bootstrapPath), `Desktop bootstrap file does not exist: ${bootstrapPath}`);
   const raw = readFileSync(bootstrapPath, "utf8");
   const parsed = JSON.parse(raw);
   ctx.assert(isRecord(parsed), `Desktop bootstrap file was not a JSON object: ${bootstrapPath}`);
   return { raw, parsed };
-}
-
-async function prepareExpiredInstallLink(ctx) {
-  const expired = await mintInstallLink(ctx, { rotate: false });
-  revokeInstallLinkToken(ctx, expired.token);
-  const config = await denApiFetch(`/v1/install-config?token=${encodeURIComponent(expired.token)}`, { method: "GET" });
-  return {
-    expiredInstallLink: installPageUrlForBrowser(expired.installPageUrl),
-    configStatus: config.response.status,
-    configBody: config.body,
-  };
-}
-
-function revokeInstallLinkToken(ctx, token) {
-  const tokenHash = createHash("sha256").update(token).digest("hex");
-  const sql = "UPDATE install_link SET revoked_at = CURRENT_TIMESTAMP(3) WHERE token_hash = "
-    + JSON.stringify(tokenHash);
-  const commands = [
-    ["mysql", ["-uroot", "-ppassword", "openwork_den", "-e", sql]],
-    ["docker", ["exec", "openwork-web-local-mysql", "mysql", "-uroot", "-ppassword", "openwork_den", "-e", sql]],
-  ];
-  const attempts = commands.map(([command, args]) => {
-    const result = spawnSync(command, args, { encoding: "utf8" });
-    return { command: `${command} ${args.join(" ")}`, status: result.status, stderr: result.stderr ?? "", error: result.error?.message ?? "" };
-  });
-  if (attempts.some((attempt) => attempt.status === 0)) {
-    return;
-  }
-  ctx.assert(false, `Could not revoke throwaway install link for expired-link coverage: ${JSON.stringify(attempts).slice(0, 900)}`);
-}
-
-async function resolveLinkInInstallerUi(ctx, installLink) {
-  return ctx.eval(`fetch('/api/resolve-link', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-installer-token': TOKEN },
-    body: JSON.stringify({ installLink: ${JSON.stringify(installLink)} }),
-  }).then(async (response) => ({ status: response.status, body: await response.json().catch(() => null) }))`, { awaitPromise: true });
 }
 
 function buildMismatchedDenAuthUrl() {

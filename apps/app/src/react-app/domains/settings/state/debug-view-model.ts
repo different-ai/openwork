@@ -15,7 +15,6 @@ import {
   pickFile,
   revealDesktopItemInDir,
   resetOpenworkState,
-  sandboxDebugProbe as sandboxDebugProbeCmd,
   updaterEnvironment as updaterEnvironmentCmd,
   workspaceBootstrap as workspaceBootstrapCmd,
   type AppBuildInfo,
@@ -23,7 +22,6 @@ import {
   type EngineInfo,
   type NukeManifestPreview,
   type OpenworkServerInfo,
-  type SandboxDebugProbeResult,
 } from "../../../../app/lib/desktop";
 import { createDenClient, readDenSettings } from "../../../../app/lib/den";
 import {
@@ -277,9 +275,6 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
   const [runtimeConfigStatus, setRuntimeConfigStatus] = useState<OpenworkRuntimeConfigStatus | null>(null);
   const [runtimeConfigStatusError, setRuntimeConfigStatusError] = useState<string | null>(null);
   const [runtimeDebugStatus, setRuntimeDebugStatus] = useState<string | null>(null);
-  const [sandboxProbeBusy, setSandboxProbeBusy] = useState(false);
-  const [sandboxProbeResult, setSandboxProbeResult] = useState<SandboxDebugProbeResult | null>(null);
-  const [sandboxProbeStatus, setSandboxProbeStatus] = useState<string | null>(null);
   const [opencodeRestarting, setOpencodeRestarting] = useState(false);
   const [openworkServerRestarting, setOpenworkServerRestarting] = useState(false);
   const [opencodeServiceStatus, setOpencodeServiceStatus] = useState<{
@@ -299,7 +294,9 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
   const [nukePreviewBusy, setNukePreviewBusy] = useState(false);
   const [nukeDialogOpen, setNukeDialogOpen] = useState(false);
   const [nukeConfirmationText, setNukeConfirmationText] = useState("");
-  const [nukePreserveBootstrap, setNukePreserveBootstrap] = useState(true);
+  // Opt-in: the bootstrap / organization server config is only wiped when the
+  // user explicitly asks for it. The IPC contract still speaks "preserve".
+  const [nukeDeleteBootstrap, setNukeDeleteBootstrap] = useState(false);
   const [nukeManifestPreview, setNukeManifestPreview] = useState<NukeManifestPreview | null>(null);
   const [engineSource, setEngineSourceState] = useState<"path" | "sidecar" | "custom">(readEngineSource);
   const [engineCustomBinPath, setEngineCustomBinPath] = useState<string>(() =>
@@ -670,26 +667,6 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
     }
   }, [electronAlphaUpdaterChannel]);
 
-  const onRunSandboxDebugProbe = useCallback(async () => {
-    if (!isDesktopRuntime()) return;
-    setSandboxProbeBusy(true);
-    setSandboxProbeStatus(null);
-    try {
-      const result = (await sandboxDebugProbeCmd()) as SandboxDebugProbeResult | null;
-      setSandboxProbeResult(result);
-      setSandboxProbeStatus(
-        result!.ready
-          ? t("settings.sandbox_probe_success")
-          : (result!.error ?? t("settings.sandbox_error")),
-      );
-      pushDeveloperLog(`sandbox probe ready=${String(result!.ready)}`);
-    } catch (error) {
-      setSandboxProbeStatus(error instanceof Error ? error.message : safeStringify(error));
-    } finally {
-      setSandboxProbeBusy(false);
-    }
-  }, [pushDeveloperLog]);
-
   const [startupStatus, setStartupStatus] = useState<string | null>(null);
 
   const onStopHost = useCallback(async () => {
@@ -973,7 +950,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       const preview = await nukeOpenworkAndOpencodeConfigPreview({ preserveBootstrap: true });
       setNukeManifestPreview(preview);
       setNukeConfirmationText("");
-      setNukePreserveBootstrap(true);
+      setNukeDeleteBootstrap(false);
       setNukeDialogOpen(true);
     } catch (error) {
       setNukeConfigStatus(error instanceof Error ? error.message : safeStringify(error));
@@ -982,16 +959,16 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
     }
   }, []);
 
-  const onSetNukePreserveBootstrap = useCallback(async (preserveBootstrap: boolean) => {
+  const onSetNukeDeleteBootstrap = useCallback(async (deleteBootstrap: boolean) => {
     if (nukeConfigBusy || nukePreviewBusy) return;
-    setNukePreserveBootstrap(preserveBootstrap);
+    setNukeDeleteBootstrap(deleteBootstrap);
     setNukePreviewBusy(true);
     setNukeConfigStatus(null);
     try {
-      const preview = await nukeOpenworkAndOpencodeConfigPreview({ preserveBootstrap });
+      const preview = await nukeOpenworkAndOpencodeConfigPreview({ preserveBootstrap: !deleteBootstrap });
       setNukeManifestPreview(preview);
     } catch (error) {
-      setNukePreserveBootstrap(!preserveBootstrap);
+      setNukeDeleteBootstrap(!deleteBootstrap);
       setNukeConfigStatus(error instanceof Error ? error.message : safeStringify(error));
     } finally {
       setNukePreviewBusy(false);
@@ -1009,7 +986,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
     setNukeConfigStatus(null);
     try {
       await revokeDenSessionBeforeNuke();
-      await nukeOpenworkAndOpencodeConfigAndExit({ preserveBootstrap: nukePreserveBootstrap });
+      await nukeOpenworkAndOpencodeConfigAndExit({ preserveBootstrap: !nukeDeleteBootstrap });
     } catch (error) {
       setNukeConfigStatus(error instanceof Error ? error.message : safeStringify(error));
       setNukeConfigBusy(false);
@@ -1017,7 +994,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
     } finally {
       setNukeDialogOpen(false);
     }
-  }, [nukeConfirmationText, nukePreserveBootstrap]);
+  }, [nukeConfirmationText, nukeDeleteBootstrap]);
 
   const [workspaceDebugEventsStatus, setWorkspaceDebugEventsStatus] = useState<string | null>(null);
   const onClearWorkspaceDebugEvents = useCallback(async () => {
@@ -1070,10 +1047,6 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       electronAlphaUpdaterChannel,
       onSetElectronAlphaUpdaterChannel,
       onCheckElectronAlphaUpdates,
-      sandboxProbeBusy,
-      sandboxProbeResult,
-      sandboxProbeStatus,
-      onRunSandboxDebugProbe,
       onStopHost,
       onResetStartupPreference,
       engineSource,
@@ -1121,12 +1094,12 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       nukePreviewBusy,
       nukeDialogOpen,
       nukeConfirmationText,
-      nukePreserveBootstrap,
+      nukeDeleteBootstrap,
       nukeManifestPreview,
       onOpenNukeDialog,
       onCloseNukeDialog,
       onSetNukeConfirmationText: setNukeConfirmationText,
-      onSetNukePreserveBootstrap,
+      onSetNukeDeleteBootstrap,
       onConfirmNukeOpenworkAndOpencodeConfig,
     }),
     [
@@ -1152,13 +1125,13 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       nukeConfirmationText,
       nukeDialogOpen,
       nukeManifestPreview,
-      nukePreserveBootstrap,
+      nukeDeleteBootstrap,
       nukePreviewBusy,
       onClearDeveloperLog,
       onClearEngineCustomBinPath,
       onClearWorkspaceDebugEvents,
       onCloseNukeDialog,
-      onSetNukePreserveBootstrap,
+      onSetNukeDeleteBootstrap,
       onCopyDeveloperLog,
       onCopyRuntimeDebugReport,
       onExportDeveloperLog,
@@ -1176,7 +1149,6 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       onResetStartupPreference,
       onRestartOpencode,
       onRestartOpenworkServer,
-      onRunSandboxDebugProbe,
       onSetElectronAlphaUpdaterChannel,
       onSetElectronMigrationSha512,
       onSetElectronMigrationUrl,
@@ -1210,9 +1182,6 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       runtimeDebugStatus,
       runtimeSummary,
       runtimeWorkspaceId,
-      sandboxProbeBusy,
-      sandboxProbeResult,
-      sandboxProbeStatus,
       serviceRestartError,
     ],
   );

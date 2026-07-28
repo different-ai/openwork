@@ -2,18 +2,23 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { CodeXml, Cpu, KeyRound, Plus, Search } from "lucide-react";
+import { Cpu, KeyRound, Plus, Search } from "lucide-react";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
+import { DenBadge } from "../../_components/ui/badge";
+import { DenBrandMark } from "../../_components/ui/brand-mark";
 import { DenButton, buttonVariants } from "../../_components/ui/button";
 import { DenCard } from "../../_components/ui/card";
 import { DenInput } from "../../_components/ui/input";
+import { DenNotice } from "../../_components/ui/notice";
+import { DenOptionCard } from "../../_components/ui/option-card";
+import { DenSectionHeader } from "../../_components/ui/section-header";
+import { DenTable, type DenTableColumn } from "../../_components/ui/table";
 import {
   getLlmProviderRoute,
   getNewLlmProviderRoute,
 } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import {
-  DESKTOP_POLICY_ENTERPRISE_PLAN_ERROR,
   createDesktopPolicy,
   updateDesktopPolicy,
   useOrgDesktopPolicies,
@@ -25,10 +30,18 @@ import {
   formatProviderTimestamp,
   getProviderDocUrl,
   getProviderEnvNames,
+  getProviderIconSlug,
   useOrgLlmProviders,
 } from "./llm-provider-data";
 
 type ModelAccessMode = "open" | "managed";
+
+type OpenWorkKeyRow = {
+  id: string;
+  name: string;
+  email: string;
+  createdAt: string | null;
+};
 
 const ADMIN_EXCEPTION_POLICY_NAME = "Admins may add providers";
 const ADMIN_EXCEPTION_ROLES: DenDesktopPolicyRole[] = ["owner", "admin"];
@@ -38,9 +51,23 @@ function getProviderSourceLabel(source: DenLlmProviderSource) {
   return source === "custom" ? "Custom" : "Catalog";
 }
 
-function getProviderSourceIcon(source: DenLlmProviderSource) {
-  return source === "custom" ? CodeXml : Cpu;
-}
+const openWorkKeyColumns: readonly DenTableColumn<OpenWorkKeyRow>[] = [
+  {
+    key: "member",
+    header: "Member",
+    render: (row) => (
+      <>
+        <p className="text-[14px] font-medium text-gray-950">{row.name}</p>
+        <p className="text-[12px] text-gray-500">{row.email}</p>
+      </>
+    ),
+  },
+  {
+    key: "created",
+    header: "Created",
+    render: (row) => <span className="text-[13px] text-gray-600">{formatProviderTimestamp(row.createdAt)}</span>,
+  },
+];
 
 function getPolicyMemberIds(policy: DenDesktopPolicy) {
   return policy.assignments.flatMap((assignment) => (assignment.orgMemberId ? [assignment.orgMemberId] : []));
@@ -257,126 +284,99 @@ export function LlmProvidersScreen() {
 
   return (
     <DashboardPageTemplate
-      icon={Cpu}
+      icon={KeyRound}
       badgeLabel="New"
-      title="LLM Providers"
-      description="Configure catalog-backed or custom providers, choose the exact models each one exposes, and grant access to the right people and teams."
+      title="Bring your Own Keys"
+      description="Connect Anthropic, OpenAI, Azure or any models.dev provider with your own credentials, choose the exact models each one exposes, and grant access to the right people and teams."
       colors={["#F3FFF9", "#0F766E", "#34D399", "#7DD3FC"]}
     >
       <DenCard data-testid="models-access-card" className="mb-8 grid gap-5">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <h2 className="text-[16px] font-medium tracking-[-0.02em] text-gray-950">Who can use models</h2>
-            <p className="mt-1 text-[13px] leading-6 text-gray-500">
-              Choose whether members bring their own providers or use only the models managed here.
-            </p>
-          </div>
-          <DenButton
-            type="button"
-            data-testid="models-access-save"
-            onClick={() => void saveModelAccess()}
-            loading={accessSaving}
-            disabled={accessFormDisabled}
-          >
-            Save
-          </DenButton>
-        </div>
+        <DenSectionHeader
+          title="Who can use models"
+          description="Choose whether members bring their own providers or use only the models managed here."
+          action={
+            <DenButton
+              type="button"
+              data-testid="models-access-save"
+              onClick={() => void saveModelAccess()}
+              loading={accessSaving}
+              disabled={accessFormDisabled}
+            >
+              Save
+            </DenButton>
+          }
+        />
 
-        {policiesError ? (
-          <div className="rounded-[20px] border border-red-200 bg-red-50 px-4 py-3 text-[13px] text-red-700">
-            {policiesError}
-          </div>
-        ) : null}
-        {accessError ? (
-          <div className="rounded-[20px] border border-red-200 bg-red-50 px-4 py-3 text-[13px] text-red-700">
-            {accessError === DESKTOP_POLICY_ENTERPRISE_PLAN_ERROR ? DESKTOP_POLICY_ENTERPRISE_PLAN_ERROR : accessError}
-          </div>
-        ) : null}
+        {policiesError ? <DenNotice message={policiesError} tone="error" /> : null}
+        {accessError ? <DenNotice message={accessError} tone="error" /> : null}
         {accessSaved ? (
-          <div className="rounded-[20px] border border-emerald-200 bg-emerald-50 px-4 py-3 text-[13px] text-emerald-700">
+          <p className="rounded-[24px] border border-emerald-200 bg-emerald-50 px-5 py-4 text-[14px] text-emerald-700">
             {accessSaved}
-          </div>
+          </p>
         ) : null}
         {!policiesBusy && !defaultPolicy ? (
-          <div className="rounded-[20px] border border-amber-200 bg-amber-50 px-4 py-3 text-[13px] text-amber-800">
+          <p className="rounded-[24px] border border-amber-200 bg-amber-50 px-5 py-4 text-[14px] text-amber-800">
             Default desktop policy not found.
-          </div>
+          </p>
         ) : null}
 
         <div className="grid gap-3 lg:grid-cols-2">
-          <label className="flex cursor-pointer items-start gap-3 rounded-[22px] border border-gray-200 bg-gray-50 px-4 py-3">
-            <input
-              type="radio"
-              name="models-access-mode"
-              data-testid="models-access-open"
-              className="mt-1 h-4 w-4"
-              checked={accessMode === "open"}
-              onChange={() => {
-                setAccessMode("open");
-                setAccessSaved(null);
-                setAccessError(null);
-              }}
-              disabled={accessFormDisabled}
-            />
-            <span>
-              <span className="block text-[14px] font-medium text-gray-950">Open</span>
-              <span className="mt-1 block text-[13px] leading-6 text-gray-500">Members may add their own providers.</span>
-            </span>
-          </label>
-
-          <label className="flex cursor-pointer items-start gap-3 rounded-[22px] border border-gray-200 bg-gray-50 px-4 py-3">
-            <input
-              type="radio"
-              name="models-access-mode"
-              data-testid="models-access-managed"
-              className="mt-1 h-4 w-4"
-              checked={accessMode === "managed"}
-              onChange={() => {
-                setAccessMode("managed");
-                setAccessSaved(null);
-                setAccessError(null);
-              }}
-              disabled={accessFormDisabled}
-            />
-            <span>
-              <span className="block text-[14px] font-medium text-gray-950">Managed</span>
-              <span className="mt-1 block text-[13px] leading-6 text-gray-500">Members use exactly the models below.</span>
-            </span>
-          </label>
+          <DenOptionCard
+            type="radio"
+            name="models-access-mode"
+            testId="models-access-open"
+            title="Open"
+            description="Members may add their own providers."
+            checked={accessMode === "open"}
+            disabled={accessFormDisabled}
+            onChange={() => {
+              setAccessMode("open");
+              setAccessSaved(null);
+              setAccessError(null);
+            }}
+          />
+          <DenOptionCard
+            type="radio"
+            name="models-access-mode"
+            testId="models-access-managed"
+            title="Managed"
+            description="Members use exactly the models below."
+            checked={accessMode === "managed"}
+            disabled={accessFormDisabled}
+            onChange={() => {
+              setAccessMode("managed");
+              setAccessSaved(null);
+              setAccessError(null);
+            }}
+          />
         </div>
 
         {accessMode === "managed" ? (
           <div className="grid gap-3 sm:grid-cols-2">
-            <label className="flex items-start gap-3 rounded-[20px] border border-gray-200 px-4 py-3 text-[13px] text-gray-700">
-              <input
-                type="checkbox"
-                data-testid="models-access-admin-exception"
-                className="mt-1 h-4 w-4"
-                checked={adminExceptionChecked}
-                onChange={(event) => {
-                  setAdminExceptionChecked(event.target.checked);
-                  setAccessSaved(null);
-                  setAccessError(null);
-                }}
-                disabled={accessFormDisabled}
-              />
-              <span>Admins may add their own providers</span>
-            </label>
-            <label className="flex items-start gap-3 rounded-[20px] border border-gray-200 px-4 py-3 text-[13px] text-gray-700">
-              <input
-                type="checkbox"
-                data-testid="models-access-zen"
-                className="mt-1 h-4 w-4"
-                checked={zenAllowed}
-                onChange={(event) => {
-                  setZenAllowed(event.target.checked);
-                  setAccessSaved(null);
-                  setAccessError(null);
-                }}
-                disabled={accessFormDisabled}
-              />
-              <span>Allow OpenCode Zen models</span>
-            </label>
+            <DenOptionCard
+              type="checkbox"
+              testId="models-access-admin-exception"
+              title="Admins may add their own providers"
+              checked={adminExceptionChecked}
+              disabled={accessFormDisabled}
+              onChange={(checked) => {
+                setAdminExceptionChecked(checked);
+                setAccessSaved(null);
+                setAccessError(null);
+              }}
+            />
+            <DenOptionCard
+              type="checkbox"
+              testId="models-access-zen"
+              title="Allow OpenCode Zen models"
+              checked={zenAllowed}
+              disabled={accessFormDisabled}
+              onChange={(checked) => {
+                setZenAllowed(checked);
+                setAccessSaved(null);
+                setAccessError(null);
+              }}
+            />
           </div>
         ) : null}
 
@@ -400,11 +400,7 @@ export function LlmProvidersScreen() {
         </Link>
       </div>
 
-      {providersError ? (
-        <div className="mb-6 rounded-[24px] border border-red-200 bg-red-50 px-5 py-4 text-[14px] text-red-700">
-          {providersError}
-        </div>
-      ) : null}
+      {providersError ? <DenNotice message={providersError} tone="error" className="mb-6" /> : null}
 
       {providersBusy ? (
         <div className="rounded-[28px] border border-gray-200 bg-white px-6 py-10 text-[15px] text-gray-500">
@@ -414,36 +410,20 @@ export function LlmProvidersScreen() {
       <div className="grid gap-8">
         {openWorkKeyRows.length > 0 ? (
           <section className="overflow-hidden rounded-[28px] border border-gray-200 bg-white">
-            <div className="border-b border-gray-100 px-6 py-4">
-              <h2 className="text-[16px] font-medium tracking-[-0.02em] text-gray-950">OpenWork Model Keys</h2>
-              <p className="mt-1 text-[13px] text-gray-500">Members in this organization with an OpenWork Models key.</p>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="min-w-full text-left text-[14px]">
-                <thead className="bg-gray-50 text-[12px] uppercase tracking-[0.08em] text-gray-500">
-                  <tr>
-                    <th className="px-6 py-3 font-medium">Member</th>
-                    <th className="px-6 py-3 font-medium">Created</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {openWorkKeyRows.map((row) => (
-                    <tr key={row.id}>
-                      <td className="px-6 py-3">
-                        <p className="text-[14px] font-medium text-gray-950">{row.name}</p>
-                        <p className="text-[12px] text-gray-500">{row.email}</p>
-                      </td>
-                      <td className="px-6 py-3 text-[13px] text-gray-600">{formatProviderTimestamp(row.createdAt)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <DenSectionHeader
+              className="border-b border-gray-100 px-6 py-4"
+              title="OpenWork Model Keys"
+              description="Members in this organization with an OpenWork Models key."
+            />
+            <DenTable columns={openWorkKeyColumns} rows={openWorkKeyRows} getRowKey={(row) => row.id} />
           </section>
         ) : null}
 
         <section className="grid gap-4">
-          <h2 className="text-[16px] font-medium tracking-[-0.02em] text-gray-950">Custom</h2>
+          <DenSectionHeader
+            title="Your providers"
+            description="Each card is one set of credentials and the models it exposes."
+          />
           {filteredProviders.length === 0 ? (
             <div className="rounded-[32px] border border-dashed border-gray-200 bg-white px-6 py-12 text-center">
               <p className="text-[16px] font-medium tracking-[-0.03em] text-gray-900">
@@ -458,7 +438,6 @@ export function LlmProvidersScreen() {
           ) : (
             <div className="grid gap-4 lg:grid-cols-2 2xl:grid-cols-3">
               {filteredProviders.map((provider) => {
-            const SourceIcon = getProviderSourceIcon(provider.source);
             const envNames = getProviderEnvNames(provider.providerConfig);
             const memberAccessCount = provider.access.members.length;
             const teamAccessCount = provider.access.teams.length;
@@ -466,49 +445,40 @@ export function LlmProvidersScreen() {
               <Link
                 key={provider.id}
                 href={getLlmProviderRoute(orgSlug, provider.id)}
-                className="block overflow-hidden rounded-[28px] border border-gray-200 bg-white p-6 transition hover:-translate-y-0.5 hover:border-gray-300 hover:shadow-[0_18px_40px_-24px_rgba(15,23,42,0.25)]"
+                data-testid="llm-provider-card"
+                className="block overflow-hidden rounded-[28px] border border-gray-200 bg-white p-6 transition-colors hover:border-gray-300"
               >
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <div className="inline-flex items-center gap-2 rounded-full border border-emerald-100 bg-emerald-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-emerald-700">
-                      <SourceIcon className="h-3.5 w-3.5" />
-                      {getProviderSourceLabel(provider.source)}
-                    </div>
-                    <h2 className="mt-4 text-[22px] font-semibold tracking-[-0.05em] text-gray-950">{provider.name}</h2>
-                    <p className="mt-2 text-[14px] text-gray-500">{provider.providerId}</p>
+                <div className="flex items-start gap-3">
+                  <DenBrandMark
+                    name={provider.name}
+                    simpleIconSlug={getProviderIconSlug(provider.providerId)}
+                    serviceUrl={getProviderDocUrl(provider.providerConfig)}
+                  />
+                  <div className="min-w-0 flex-1">
+                    <h3 className="truncate text-[16px] font-medium tracking-[-0.02em] text-gray-950">{provider.name}</h3>
+                    <p className="mt-0.5 truncate text-[13px] text-gray-500">
+                      {provider.providerId} · {getProviderSourceLabel(provider.source)}
+                    </p>
                   </div>
-
-                  <div className="rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-[12px] font-medium text-gray-600">
+                  <DenBadge>
                     {provider.models.length} {provider.models.length === 1 ? "model" : "models"}
-                  </div>
+                  </DenBadge>
                 </div>
 
-                <div className="mt-5 flex flex-wrap gap-2">
-                  <span className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-[12px] font-medium ${provider.hasApiKey ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
-                    <KeyRound className="h-3.5 w-3.5" />
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <DenBadge tone={provider.hasApiKey ? "success" : "warning"} icon={KeyRound}>
                     {provider.hasApiKey ? "Credential saved" : "Credential missing"}
-                  </span>
+                  </DenBadge>
                   {envNames.slice(0, 2).map((envName) => (
-                    <span key={envName} className="rounded-full bg-gray-100 px-3 py-1 text-[12px] font-medium text-gray-600">
-                      {envName}
-                    </span>
+                    <DenBadge key={envName}>{envName}</DenBadge>
                   ))}
-                  {envNames.length > 2 ? (
-                    <span className="rounded-full bg-gray-100 px-3 py-1 text-[12px] font-medium text-gray-600">
-                      +{envNames.length - 2} more keys
-                    </span>
-                  ) : null}
+                  {envNames.length > 2 ? <DenBadge>+{envNames.length - 2} more keys</DenBadge> : null}
                 </div>
 
-                <div className="mt-6 grid gap-3 rounded-[24px] bg-gray-50 p-4 text-[13px] text-gray-600 sm:grid-cols-2">
-                  <div>
-                    <p className="font-medium text-gray-900">Access</p>
-                    <p className="mt-1">{memberAccessCount} people · {teamAccessCount} teams</p>
-                  </div>
-                  <div>
-                    <p className="font-medium text-gray-900">Updated</p>
-                    <p className="mt-1">{formatProviderTimestamp(provider.updatedAt)}</p>
-                  </div>
+                <div className="mt-5 flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-gray-100 pt-4 text-[13px] text-gray-500">
+                  <span>{memberAccessCount} people · {teamAccessCount} teams</span>
+                  <span aria-hidden>·</span>
+                  <span>{formatProviderTimestamp(provider.updatedAt)}</span>
                 </div>
               </Link>
             );

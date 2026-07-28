@@ -4,6 +4,11 @@ import { createDenClient, readDenSettings, type DenExternalMcpConnection } from 
 import { denSettingsChangedEvent } from "@/app/lib/den-session-events";
 import { openDesktopUrl } from "@/app/lib/desktop";
 import { isDesktopRuntime } from "@/app/utils";
+import {
+  loadOrgMcpConnections,
+  readCachedOrgMcpConnections,
+  readCloudInventoryScope,
+} from "./cloud-inventory-cache";
 import { connectionNeedsReconnect, isNativeProviderConnectionId } from "./native-provider-connections";
 
 // Mirrors the poll-until-connected pattern used for local MCP OAuth
@@ -99,9 +104,14 @@ export function resolveOrgMcpConnectionCardState(
  * `execute_capability` surface, not local per-workspace `mcpServers` entries.
  */
 export function useOrgMcpConnections() {
-  const [connections, setConnections] = useState<DenExternalMcpConnection[]>([]);
+  // Settings remounts every time the extensions panel opens, so start from
+  // whatever the app already fetched instead of an empty list.
+  const prefetched = readCloudInventoryScope();
+  const [connections, setConnections] = useState<DenExternalMcpConnection[]>(
+    () => (prefetched ? readCachedOrgMcpConnections(prefetched) ?? [] : []),
+  );
   const [loading, setLoading] = useState(false);
-  const [loaded, setLoaded] = useState(false);
+  const [loaded, setLoaded] = useState(connections.length > 0);
   const [error, setError] = useState<string | null>(null);
   const [connectingId, setConnectingId] = useState<string | null>(null);
   const [disconnectingId, setDisconnectingId] = useState<string | null>(null);
@@ -144,7 +154,11 @@ export function useOrgMcpConnections() {
     setError(null);
     try {
       const client = createDenClient({ baseUrl: settings.baseUrl, token });
-      const result = await client.listMcpConnections(orgId, "usable");
+      const result = await loadOrgMcpConnections({
+        client,
+        scope: { baseUrl: settings.baseUrl, organizationId: orgId },
+        maxAgeMs: 0,
+      });
       if (
         refreshRunRef.current !== run
         || (expectedScope && !isActionScopeCurrent(expectedScope))
