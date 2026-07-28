@@ -30,4 +30,15 @@ describe("composer model controls", () => {
     expect(sessionSurfaceSource).toContain("if (!chatStreaming) setSteering(false);");
     expect(sessionSurfaceSource).toContain("steering={steering}");
   });
+
+  test("makes the unavailable-model hint a compact refresh control", () => {
+    const composerSource = readFileSync(composerPath, "utf8");
+
+    expect(composerSource).toContain("await props.onRefreshOrganizationModels();");
+    expect(composerSource).toContain("disabled={refreshingOrganizationModels}");
+    expect(composerSource).toContain("max-w-full");
+    expect(composerSource).toContain("sm:max-w-80");
+    expect(composerSource).toContain("min-w-0 truncate");
+    expect(composerSource).toContain('t("models.retry_organization_models")');
+  });
 });

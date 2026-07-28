@@ -1,7 +1,7 @@
 /** @jsxImportSource react */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Agent } from "@opencode-ai/sdk/v2/client";
-import { AppWindowMac, ArrowUp, Check, ChevronDown, ChevronRight, FileText, ListPlus, LoaderCircle, Paperclip, Plug, Settings, Square, Terminal, X, Zap } from "lucide-react";
+import { AppWindowMac, ArrowUp, Check, ChevronDown, ChevronRight, FileText, ListPlus, LoaderCircle, Paperclip, Plug, RefreshCw, Settings, Square, Terminal, X, Zap } from "lucide-react";
 import fuzzysort from "fuzzysort";
 import { toast } from "@/components/ui/sonner";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuShortcut, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -293,6 +293,7 @@ export function ReactSessionComposer(props: ComposerProps) {
   let fileInput: HTMLInputElement | undefined;
   const [agents, setAgents] = useState<Agent[]>([]);
   const [agentMenuOpen, setAgentMenuOpen] = useState(false);
+  const [refreshingOrganizationModels, setRefreshingOrganizationModels] = useState(false);
   const [commands, setCommands] = useState<SlashCommandOption[]>([]);
   const [commandsLoading, setCommandsLoading] = useState(false);
   const [skillsLoading, setSkillsLoading] = useState(false);
@@ -373,6 +374,19 @@ export function ReactSessionComposer(props: ComposerProps) {
       props.onModelPickerOpenChange(false);
     }
   }, [props.modelPickerOpen, props.onModelPickerOpenChange, props.steering]);
+
+  const handleRefreshOrganizationModels = useCallback(async () => {
+    if (!props.onRefreshOrganizationModels || refreshingOrganizationModels) return;
+
+    setRefreshingOrganizationModels(true);
+    try {
+      await props.onRefreshOrganizationModels();
+    } catch {
+      toast.error(t("models.refresh_organization_models_failed"));
+    } finally {
+      setRefreshingOrganizationModels(false);
+    }
+  }, [props.onRefreshOrganizationModels, refreshingOrganizationModels]);
 
   // Input history recall (#2012): ArrowUp on an empty composer recalls the
   // previous sent prompt; repeated ArrowUp/ArrowDown walk the history.
@@ -1718,18 +1732,25 @@ export function ReactSessionComposer(props: ComposerProps) {
                   sessionId={props.sessionId}
                   openWorkModelsEntitled={props.openWorkModelsEntitled}
                 />
-                {props.modelUnavailable ? (
-                  <span className="flex items-center gap-2 text-xs font-medium text-red-10">
-                    <span>{props.modelUnavailableMessage ?? t("models.model_unavailable_short")}</span>
-                    {props.onRefreshOrganizationModels ? (
-                      <button
-                        type="button"
-                        className="rounded-full border border-red-6 px-2 py-0.5 text-[11px] text-red-11 transition-colors hover:bg-red-3"
-                        onClick={() => void props.onRefreshOrganizationModels?.()}
-                      >
-                        {t("models.refresh_organization_models")}
-                      </button>
-                    ) : null}
+                {props.modelUnavailable ? props.onRefreshOrganizationModels ? (
+                  <button
+                    type="button"
+                    className="inline-flex h-7 min-w-0 max-w-full items-center gap-1.5 rounded-full border border-red-5 bg-red-2 px-2.5 text-[11px] font-medium text-red-11 transition-colors hover:border-red-6 hover:bg-red-3 disabled:cursor-wait disabled:opacity-70 sm:max-w-80"
+                    onClick={() => void handleRefreshOrganizationModels()}
+                    disabled={refreshingOrganizationModels}
+                    title={t("models.refresh_organization_models")}
+                  >
+                    <span className="min-w-0 truncate">
+                      {props.modelUnavailableMessage ?? t("models.model_unavailable_short")}
+                    </span>
+                    <span className="inline-flex shrink-0 items-center gap-1">
+                      <RefreshCw size={11} className={refreshingOrganizationModels ? "animate-spin" : ""} />
+                      {refreshingOrganizationModels ? t("models.refreshing_organization_models") : t("models.retry_organization_models")}
+                    </span>
+                  </button>
+                ) : (
+                  <span className="max-w-[20rem] truncate text-xs font-medium text-red-10">
+                    {props.modelUnavailableMessage ?? t("models.model_unavailable_short")}
                   </span>
                 ) : null}
 
