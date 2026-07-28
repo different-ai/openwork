@@ -1,18 +1,14 @@
-declare const test: (name: string, fn: () => void | Promise<void>) => void;
-declare const expect: (value: unknown) => {
-  toBe: (expected: unknown) => void;
-  toEqual: (expected: unknown) => void;
-};
+import { expect, test } from "bun:test";
 
 import type {
   DenOrgMarketplace,
   DenOrgPlugin,
   DenPluginConfigObject,
-} from "@/app/lib/den";
+} from "../src/app/lib/den";
 import {
   listAssignedConnectCapabilities,
   type ConnectCapabilityClient,
-} from "./connect-capability-inventory";
+} from "../src/react-app/domains/session/surface/connect-capability-inventory";
 
 const marketplace = (id: string, name: string): DenOrgMarketplace => ({
   id,
@@ -58,7 +54,7 @@ const configObject = (
   },
 });
 
-test("desktop Connect inventory filters admin management data through assigned capability references", async () => {
+test("admin desktop inventory intersects management data with assigned capability references", async () => {
   const assignedMarketplace = marketplace("market-assigned", "Assigned marketplace");
   const adminOnlyMarketplace = marketplace("market-admin", "Admin-only marketplace");
   const mixedPlugin = plugin("plugin-mixed", "Mixed plugin");
