@@ -1,14 +1,14 @@
-import { randomUUID } from "node:crypto";
+import { randomUUID, X509Certificate } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import tls from "node:tls";
 import { fileURLToPath } from "node:url";
 import { pathToFileURL } from "node:url";
-import { openworkEnvStorePath, openworkServerConfigPath, resolveWorkspaceOpencodeConfigPath } from "@openwork/paths";
+import { desktopBootstrapPath, openworkEnvStorePath, openworkServerConfigPath, resolveWorkspaceOpencodeConfigPath } from "@openwork/paths";
 import {
   dedupeCertificates,
   resolveSystemCaBundle,
@@ -21,6 +21,14 @@ const __runtimeDir = path.dirname(fileURLToPath(import.meta.url));
 const DIRECT_RUNTIME = "direct";
 const OPENWORK_SERVER_PORT_RANGE_START = 48_000;
 const OPENWORK_SERVER_PORT_RANGE_END = 51_000;
+const MAX_BOOTSTRAP_BYTES = 256 * 1024;
+const MAX_CHAIN_REPAIR_BODY_BYTES = 64 * 1024;
+const MAX_CHAIN_REPAIR_ORIGINS = 3;
+const CHAIN_REPAIR_TOTAL_TIMEOUT_MS = 6000;
+const CHAIN_REPAIR_SOCKET_TIMEOUT_MS = 4000;
+const CHAIN_REPAIR_FETCH_TIMEOUT_MS = 4000;
+/** @type {Map<string, X509Certificate | null>} */
+const chainRepairRootCache = new Map();
 
 function truncateOutput(value, limit = 8000) {
   const text = String(value ?? "");
@@ -446,9 +454,166 @@ function loadUserEnvFile() {
 }
 
 /**
+ * @param {unknown} value
+ * @returns {value is Record<string, unknown>}
+ */
+function isPlainObject(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Reduces an administrator-provisioned Den control-plane URL to its exact
+ * origin. Keep this in sync with apps/server/src/enterprise-den-origin.ts.
+ *
+ * @param {unknown} rawValue
+ * @returns {string | null}
+ */
+function exactEnterpriseOrigin(rawValue) {
+  if (typeof rawValue !== "string") return null;
+  const raw = rawValue.trim();
+  if (!raw || raw.length > 2 * 1024) return null;
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== "https:") return null;
+    if (url.username || url.password || url.search || url.hash) return null;
+    return url.origin;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * @param {string} filePath
+ * @returns {Promise<string | null>}
+ */
+async function readActivatedEnterpriseOrigin(filePath) {
+  if (typeof filePath !== "string" || !filePath.trim()) return null;
+  try {
+    const fileStat = await stat(filePath);
+    if (!fileStat.isFile() || fileStat.size > MAX_BOOTSTRAP_BYTES) return null;
+    const raw = await readFile(filePath, "utf8");
+    if (Buffer.byteLength(raw, "utf8") > MAX_BOOTSTRAP_BYTES) return null;
+    const data = JSON.parse(raw);
+    if (!isPlainObject(data)) return null;
+    const activation = isPlainObject(data.enterpriseActivation) ? data.enterpriseActivation : null;
+    if (!activation) return null;
+    if (typeof activation.activatedAt !== "string" || !activation.activatedAt.trim()) return null;
+    return exactEnterpriseOrigin(activation.denBaseUrl);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * @param {Iterable<string>} values
+ * @returns {string[]}
+ */
+function normalizeRepairOrigins(values) {
+  const seen = new Set();
+  const origins = [];
+  for (const value of values) {
+    const origin = exactEnterpriseOrigin(value);
+    if (!origin || seen.has(origin)) continue;
+    origins.push(origin);
+    seen.add(origin);
+    if (origins.length >= MAX_CHAIN_REPAIR_ORIGINS) break;
+  }
+  return origins;
+}
+
+/**
+ * @param {string} origin
+ * @returns {{ host: string, port: number }}
+ */
+function tlsTargetFromOrigin(origin) {
+  const url = new URL(origin);
+  return {
+    host: url.hostname.replace(/^\[(.*)\]$/, "$1"),
+    port: url.port ? Number(url.port) : 443,
+  };
+}
+
+/**
+ * @param {unknown} error
+ * @returns {string}
+ */
+function errorCode(error) {
+  return isPlainObject(error) && typeof error.code === "string" ? error.code : "unknown";
+}
+
+/**
+ * @param {RuntimeChainRepairSocket} socket
+ * @returns {void}
+ */
+function destroySocket(socket) {
+  try {
+    socket.destroy();
+  } catch {
+    // Best effort.
+  }
+}
+
+/**
  * @typedef {Object} RuntimeSystemCaTlsModule
  * @property {(type?: string) => string[]} [getCACertificates]
  * @property {(certificates: string[]) => void} [setDefaultCACertificates]
+ */
+
+/**
+ * @typedef {Object} RuntimeChainRepairFetchResponse
+ * @property {boolean} [ok]
+ * @property {number} [status]
+ * @property {() => Promise<ArrayBuffer>} arrayBuffer
+ */
+
+/**
+ * @typedef {Object} RuntimeChainRepairFetchOptions
+ * @property {AbortSignal} [signal]
+ */
+
+/**
+ * @typedef {(input: string, init?: RuntimeChainRepairFetchOptions) => Promise<RuntimeChainRepairFetchResponse>} RuntimeChainRepairFetch
+ */
+
+/**
+ * @typedef {Object} RuntimeChainRepairTlsConnectOptions
+ * @property {string} host
+ * @property {number} port
+ * @property {string} servername
+ * @property {boolean} rejectUnauthorized
+ * @property {number} timeout
+ */
+
+/**
+ * @typedef {Object} RuntimeChainRepairPeerCertificate
+ * @property {Buffer} [raw]
+ * @property {RuntimeChainRepairPeerCertificate} [issuerCertificate]
+ */
+
+/**
+ * @typedef {Object} RuntimeChainRepairSocket
+ * @property {boolean} [authorized]
+ * @property {unknown} [authorizationError]
+ * @property {(eventName: string, listener: (...args: unknown[]) => void) => RuntimeChainRepairSocket} once
+ * @property {(eventName: string, listener: (...args: unknown[]) => void) => RuntimeChainRepairSocket} off
+ * @property {(timeout: number) => RuntimeChainRepairSocket} setTimeout
+ * @property {() => void} destroy
+ * @property {() => X509Certificate | undefined} [getPeerX509Certificate]
+ * @property {(detailed?: boolean) => RuntimeChainRepairPeerCertificate | null} [getPeerCertificate]
+ */
+
+/**
+ * @typedef {(options: RuntimeChainRepairTlsConnectOptions) => RuntimeChainRepairSocket} RuntimeChainRepairTlsConnect
+ */
+
+/**
+ * @typedef {Object} RuntimeChainRepairOptions
+ * @property {string[]} [origins]
+ * @property {RuntimeChainRepairFetch} [fetchImpl]
+ * @property {() => string[]} [rootsProvider]
+ * @property {RuntimeChainRepairTlsConnect} [tlsConnectImpl]
+ * @property {string} [bootstrapPath]
+ * @property {boolean} [disabled]
  */
 
 /**
@@ -460,7 +625,345 @@ function loadUserEnvFile() {
  * @property {() => Promise<string[]>} [loadPlatformCertificates]
  * @property {string} [platformSourceName]
  * @property {NodeJS.Platform} [platform]
+ * @property {RuntimeChainRepairOptions} [chainRepair]
  */
+
+/**
+ * @param {string} origin
+ * @param {RuntimeChainRepairTlsConnect} tlsConnectImpl
+ * @param {boolean} rejectUnauthorized
+ * @returns {Promise<RuntimeChainRepairSocket>}
+ */
+function connectForChainRepair(origin, tlsConnectImpl, rejectUnauthorized) {
+  const target = tlsTargetFromOrigin(origin);
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let socket;
+    const finish = (value, isError) => {
+      if (settled) return;
+      settled = true;
+      if (socket) {
+        socket.off("secureConnect", onSecureConnect);
+        socket.off("error", onError);
+        socket.off("timeout", onTimeout);
+      }
+      if (isError) reject(value);
+      else resolve(value);
+    };
+    const onSecureConnect = () => finish(socket, false);
+    const onError = (error) => {
+      if (socket) destroySocket(socket);
+      finish(error, true);
+    };
+    const onTimeout = () => {
+      const error = new Error("TLS connection timed out");
+      Object.defineProperty(error, "code", { value: "ETIMEDOUT" });
+      if (socket) destroySocket(socket);
+      finish(error, true);
+    };
+
+    try {
+      socket = tlsConnectImpl({
+        host: target.host,
+        port: target.port,
+        servername: target.host,
+        rejectUnauthorized,
+        timeout: CHAIN_REPAIR_SOCKET_TIMEOUT_MS,
+      });
+      socket.once("secureConnect", onSecureConnect);
+      socket.once("error", onError);
+      socket.once("timeout", onTimeout);
+      socket.setTimeout(CHAIN_REPAIR_SOCKET_TIMEOUT_MS);
+    } catch (error) {
+      finish(error, true);
+    }
+  });
+}
+
+/**
+ * @param {string} origin
+ * @param {RuntimeChainRepairTlsConnect} tlsConnectImpl
+ * @returns {Promise<string | null>}
+ */
+async function strictProbeChainRepair(origin, tlsConnectImpl) {
+  let socket;
+  try {
+    socket = await connectForChainRepair(origin, tlsConnectImpl, true);
+    return socket.authorized === true ? null : String(socket.authorizationError || "UNAUTHORIZED");
+  } catch (error) {
+    return errorCode(error);
+  } finally {
+    if (socket) destroySocket(socket);
+  }
+}
+
+/**
+ * @param {RuntimeChainRepairPeerCertificate | null} peer
+ * @returns {boolean}
+ */
+function peerChainIsLeafOnly(peer) {
+  if (!peer || typeof peer !== "object") return true;
+  const issuer = peer.issuerCertificate;
+  if (!issuer || issuer === peer) return true;
+  if (peer.raw && issuer.raw && Buffer.compare(Buffer.from(peer.raw), Buffer.from(issuer.raw)) === 0) return true;
+  return false;
+}
+
+/**
+ * @param {string} origin
+ * @param {RuntimeChainRepairTlsConnect} tlsConnectImpl
+ * @returns {Promise<{ leaf: X509Certificate, leafOnly: boolean } | null>}
+ */
+async function introspectLeafCertificate(origin, tlsConnectImpl) {
+  let socket;
+  try {
+    socket = await connectForChainRepair(origin, tlsConnectImpl, false);
+    if (typeof socket.getPeerX509Certificate !== "function") return null;
+    const leaf = socket.getPeerX509Certificate();
+    if (!leaf) return null;
+    const peer = typeof socket.getPeerCertificate === "function" ? socket.getPeerCertificate(true) : null;
+    return { leaf, leafOnly: peerChainIsLeafOnly(peer) };
+  } catch {
+    return null;
+  } finally {
+    if (socket) destroySocket(socket);
+  }
+}
+
+/**
+ * @param {X509Certificate} certificate
+ * @returns {string[]}
+ */
+function caIssuerUrls(certificate) {
+  const urls = [];
+  const infoAccess = typeof certificate.infoAccess === "string" ? certificate.infoAccess : "";
+  for (const line of infoAccess.split(/\r?\n/)) {
+    const match = /^\s*CA Issuers\s*-\s*URI:(.+?)\s*$/i.exec(line);
+    if (!match) continue;
+    try {
+      const url = new URL(match[1].trim());
+      if (url.protocol !== "http:" && url.protocol !== "https:") continue;
+      urls.push(url.href);
+      if (urls.length >= 2) break;
+    } catch {
+      // Ignore malformed AIA entries.
+    }
+  }
+  return urls;
+}
+
+/**
+ * @param {ArrayBuffer} bytes
+ * @returns {X509Certificate}
+ */
+function certificateFromBody(bytes) {
+  const buffer = Buffer.from(bytes);
+  try {
+    return new X509Certificate(buffer);
+  } catch (bufferError) {
+    const text = buffer.toString("utf8");
+    if (/-----BEGIN CERTIFICATE-----/.test(text)) return new X509Certificate(text);
+    throw bufferError;
+  }
+}
+
+/**
+ * @param {X509Certificate} certificate
+ * @returns {string}
+ */
+function certificateCommonName(certificate) {
+  for (const line of certificate.subject.split(/\r?\n/)) {
+    const match = /^CN\s*=\s*(.+)$/.exec(line.trim());
+    if (match) return match[1].trim();
+  }
+  return certificate.subject || "unknown subject";
+}
+
+/**
+ * @param {string} pem
+ * @returns {X509Certificate | null}
+ */
+function cachedRootCertificate(pem) {
+  const key = String(pem ?? "").trim();
+  if (!key) return null;
+  if (chainRepairRootCache.has(key)) return chainRepairRootCache.get(key) ?? null;
+  try {
+    const certificate = new X509Certificate(key);
+    chainRepairRootCache.set(key, certificate);
+    return certificate;
+  } catch {
+    chainRepairRootCache.set(key, null);
+    return null;
+  }
+}
+
+/**
+ * @param {X509Certificate} intermediate
+ * @param {() => string[]} rootsProvider
+ * @returns {boolean}
+ */
+function intermediateChainsToTrustedRoot(intermediate, rootsProvider) {
+  let roots = [];
+  try {
+    roots = rootsProvider();
+  } catch {
+    roots = [];
+  }
+  for (const pem of roots) {
+    const root = cachedRootCertificate(pem);
+    if (root && intermediate.checkIssued(root) && intermediate.verify(root.publicKey)) return true;
+  }
+  return false;
+}
+
+/**
+ * @param {X509Certificate} leaf
+ * @param {X509Certificate} intermediate
+ * @param {() => string[]} rootsProvider
+ * @returns {string | null}
+ */
+function refusalReason(leaf, intermediate, rootsProvider) {
+  if (intermediate.ca !== true) return "fetched certificate is not a CA";
+  if (leaf.checkIssued(intermediate) !== true) return "fetched certificate did not issue leaf";
+  if (leaf.verify(intermediate.publicKey) !== true) return "leaf signature verification failed";
+  if (!intermediateChainsToTrustedRoot(intermediate, rootsProvider)) return "fetched certificate does not chain to a trusted public root";
+  return null;
+}
+
+/**
+ * @param {string} url
+ * @param {RuntimeChainRepairFetch} fetchImpl
+ * @returns {Promise<X509Certificate | null>}
+ */
+async function fetchIntermediateCertificate(url, fetchImpl) {
+  const response = await fetchImpl(url, { signal: AbortSignal.timeout(CHAIN_REPAIR_FETCH_TIMEOUT_MS) });
+  if (!response || typeof response.arrayBuffer !== "function") return null;
+  if (response.ok === false) return null;
+  const bytes = await response.arrayBuffer();
+  if (bytes.byteLength > MAX_CHAIN_REPAIR_BODY_BYTES) return null;
+  return certificateFromBody(bytes);
+}
+
+/**
+ * @param {ResolveSystemCaEnvOptions} options
+ * @returns {Promise<string[]>}
+ */
+async function resolveChainRepairOrigins(options) {
+  const env = options.parentEnv ?? {};
+  const chainRepair = options.chainRepair ?? {};
+  if (chainRepair.origins) return normalizeRepairOrigins(chainRepair.origins);
+  const envOrigins = typeof env.OPENWORK_CHAIN_REPAIR_ORIGINS === "string" ? env.OPENWORK_CHAIN_REPAIR_ORIGINS : "";
+  if (envOrigins.trim()) return normalizeRepairOrigins(envOrigins.split(","));
+  const bootstrapPath = chainRepair.bootstrapPath ?? desktopBootstrapPath({ env });
+  const origin = await readActivatedEnterpriseOrigin(bootstrapPath);
+  return origin ? [origin] : [];
+}
+
+/**
+ * @param {ResolveSystemCaEnvOptions} options
+ * @returns {Promise<{ pems: string[], timedOut: boolean }>}
+ */
+async function repairIncompleteChains(options) {
+  const env = options.parentEnv ?? {};
+  const chainRepair = options.chainRepair ?? {};
+  const logInfo = options.logInfo;
+  if (chainRepair.disabled === true || String(env.OPENWORK_DISABLE_CHAIN_REPAIR ?? "").trim() === "1") {
+    if (typeof logInfo === "function") logInfo("OpenWork runtime: chain repair disabled by OPENWORK_DISABLE_CHAIN_REPAIR.");
+    return { pems: [], timedOut: false };
+  }
+
+  const origins = await resolveChainRepairOrigins(options);
+  if (origins.length === 0) {
+    if (!chainRepair.origins && !String(env.OPENWORK_CHAIN_REPAIR_ORIGINS ?? "").trim() && typeof logInfo === "function") {
+      logInfo("OpenWork runtime: chain repair skipped: no activation record.");
+    }
+    return { pems: [], timedOut: false };
+  }
+
+  const fetchImpl = chainRepair.fetchImpl ?? globalThis.fetch;
+  const tlsModule = options.tlsModule ?? tls;
+  const tlsConnectImpl = chainRepair.tlsConnectImpl ?? tls.connect;
+  const rootsProvider = chainRepair.rootsProvider ?? (() => {
+    if (typeof tlsModule?.getCACertificates !== "function") return [];
+    const roots = tlsModule.getCACertificates("default");
+    return Array.isArray(roots) ? roots : [];
+  });
+
+  if (typeof fetchImpl !== "function") {
+    if (typeof logInfo === "function") {
+      for (const origin of origins) logInfo(`OpenWork runtime: chain repair skipped for ${origin}: fetch unavailable`);
+    }
+    return { pems: [], timedOut: false };
+  }
+
+  const run = async () => {
+    const pems = [];
+    for (const origin of origins) {
+      const strictError = await strictProbeChainRepair(origin, tlsConnectImpl);
+      if (strictError === null) {
+        if (typeof logInfo === "function") logInfo(`OpenWork runtime: chain ok for ${origin}`);
+        continue;
+      }
+      if (strictError !== "UNABLE_TO_VERIFY_LEAF_SIGNATURE") {
+        if (typeof logInfo === "function") logInfo(`OpenWork runtime: chain repair skipped for ${origin}: ${strictError}`);
+        continue;
+      }
+
+      const leafState = await introspectLeafCertificate(origin, tlsConnectImpl);
+      if (!leafState) {
+        if (typeof logInfo === "function") logInfo(`OpenWork runtime: chain repair skipped for ${origin}: certificate introspection failed`);
+        continue;
+      }
+      if (!leafState.leafOnly) {
+        if (typeof logInfo === "function") logInfo(`OpenWork runtime: chain repair skipped for ${origin}: served chain includes an intermediate`);
+        continue;
+      }
+
+      const issuerUrls = caIssuerUrls(leafState.leaf);
+      if (issuerUrls.length === 0) {
+        if (typeof logInfo === "function") logInfo(`OpenWork runtime: chain repair skipped for ${origin}: no CA Issuers AIA URL`);
+        continue;
+      }
+
+      let repaired = false;
+      for (const url of issuerUrls) {
+        let intermediate;
+        try {
+          intermediate = await fetchIntermediateCertificate(url, fetchImpl);
+        } catch {
+          intermediate = null;
+        }
+        if (!intermediate) continue;
+        const reason = refusalReason(leafState.leaf, intermediate, rootsProvider);
+        if (reason) {
+          if (typeof logInfo === "function") logInfo(`OpenWork runtime: chain repair refused for ${origin}: ${reason}`);
+          continue;
+        }
+        pems.push(intermediate.toString());
+        repaired = true;
+        if (typeof logInfo === "function") {
+          logInfo(`OpenWork runtime: chain repaired for ${origin}: added "${certificateCommonName(intermediate)}"`);
+        }
+        break;
+      }
+      if (!repaired && typeof logInfo === "function") {
+        logInfo(`OpenWork runtime: chain repair skipped for ${origin}: no usable AIA issuer certificate`);
+      }
+    }
+    return { pems, timedOut: false };
+  };
+
+  let timeoutId;
+  const timeout = new Promise((resolve) => {
+    timeoutId = setTimeout(() => resolve({ pems: [], timedOut: true }), CHAIN_REPAIR_TOTAL_TIMEOUT_MS);
+    timeoutId.unref?.();
+  });
+  try {
+    return await Promise.race([run(), timeout]);
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
 
 /**
  * @param {ResolveSystemCaEnvOptions} options
@@ -474,6 +977,7 @@ export async function resolveSystemCaEnv({
   loadPlatformCertificates,
   platformSourceName,
   platform = process.platform,
+  chainRepair,
 }) {
   const env = parentEnv ?? {};
   if (Object.prototype.hasOwnProperty.call(env, "NODE_EXTRA_CA_CERTS")) {
@@ -498,16 +1002,36 @@ export async function resolveSystemCaEnv({
     if (typeof logInfo === "function") {
       logInfo(`OpenWork runtime: system CA bundle sources ${summarizeSystemCaSources(bundle.sources)}`);
     }
-    if (bundle.certificates.length === 0) return {};
+    let repairedPems = [];
+    try {
+      const repaired = await repairIncompleteChains({
+        tlsModule,
+        userDataDir,
+        parentEnv: env,
+        logInfo,
+        loadPlatformCertificates,
+        platformSourceName,
+        platform,
+        chainRepair,
+      });
+      repairedPems = repaired.pems;
+      if (repaired.timedOut && typeof logInfo === "function") {
+        logInfo("OpenWork runtime: chain repair skipped: timed out");
+      }
+    } catch {
+      repairedPems = [];
+    }
+    const certificates = dedupeCertificates([...bundle.certificates, ...repairedPems]);
+    if (certificates.length === 0) return {};
     if (typeof tlsModule?.getCACertificates === "function" && typeof tlsModule?.setDefaultCACertificates === "function") {
       try {
         const defaultCerts = tlsModule.getCACertificates("default");
-        tlsModule.setDefaultCACertificates(dedupeCertificates([...(Array.isArray(defaultCerts) ? defaultCerts : []), ...bundle.certificates]));
+        tlsModule.setDefaultCACertificates(dedupeCertificates([...(Array.isArray(defaultCerts) ? defaultCerts : []), ...certificates]));
       } catch {
         // Best-effort only; child processes still receive NODE_EXTRA_CA_CERTS.
       }
     }
-    const pem = bundle.certificates.join("\n");
+    const pem = certificates.join("\n");
     if (!pem) return {};
     const bundlePath = path.join(userDataDir, "system-ca-bundle.pem");
     await mkdir(path.dirname(bundlePath), { recursive: true });
