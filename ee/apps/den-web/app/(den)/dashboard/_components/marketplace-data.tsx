@@ -22,12 +22,6 @@ export const marketplaceQueryKeys = {
   detail: (id: string) => [...marketplaceQueryKeys.all, "detail", id] as const,
   resolved: (id: string) => [...marketplaceQueryKeys.all, "resolved", id] as const,
   access: (id: string) => [...marketplaceQueryKeys.all, "access", id] as const,
-  pluginCandidates: () => [...marketplaceQueryKeys.all, "plugin-candidates"] as const,
-};
-
-export type MarketplacePluginCandidate = {
-  id: string;
-  name: string;
 };
 
 export type MarketplaceAccessRole = "viewer" | "editor" | "manager";
@@ -234,31 +228,6 @@ export function useMarketplace(marketplaceId: string | null) {
       }
 
       return parseMarketplaceResolvedPayload(payload);
-    },
-  });
-}
-
-export function useMarketplacePluginCandidates(enabled = true) {
-  return useQuery({
-    queryKey: marketplaceQueryKeys.pluginCandidates(),
-    enabled,
-    queryFn: async (): Promise<MarketplacePluginCandidate[]> => {
-      const { response, payload } = await requestJson(
-        "/v1/plugins?status=active&limit=100",
-        { method: "GET" },
-        15000,
-      );
-      if (!response.ok) {
-        throw new Error(getErrorMessage(payload, `Failed to load plugins (${response.status}).`));
-      }
-
-      const items = isRecord(payload) && Array.isArray(payload.items) ? payload.items : [];
-      return items.flatMap((entry) => {
-        if (!isRecord(entry)) return [];
-        const id = asString(entry.id);
-        const name = asString(entry.name);
-        return id && name ? [{ id, name }] : [];
-      });
     },
   });
 }

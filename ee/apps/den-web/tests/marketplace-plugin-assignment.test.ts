@@ -11,10 +11,10 @@ function readComponent(name: string) {
 
 describe("marketplace plugin assignment", () => {
   const data = readComponent("marketplace-data.tsx");
-  const detail = readComponent("marketplace-detail-screen.tsx");
+  const marketplaceDetail = readComponent("marketplace-detail-screen.tsx");
+  const pluginDetail = readComponent("plugin-detail-screen.tsx");
 
   test("uses the relationship assignment routes and refreshes marketplace views", () => {
-    expect(data).toContain('"/v1/plugins?status=active&limit=100"');
     expect(data).toContain("/plugins`,");
     expect(data).toContain('{ method: "POST", body: JSON.stringify({ pluginId: input.pluginId }) }');
     expect(data).toContain("/plugins/${encodeURIComponent(input.pluginId)}`");
@@ -23,23 +23,26 @@ describe("marketplace plugin assignment", () => {
     expect(data.match(/marketplaceQueryKeys\.list\(\)/g)?.length).toBeGreaterThanOrEqual(2);
   });
 
-  test("shows admins eligible existing plugins and assignment copy", () => {
-    expect(detail).toContain("access.isAdmin ? (");
-    expect(detail).toContain("useMarketplacePluginCandidates(access.isAdmin)");
-    expect(detail).toContain("marketplace-plugin-assignment-controls");
-    expect(detail).toContain("!assignedPluginIds.has(plugin.id)");
-    expect(detail).toContain("Assign an existing plugin");
-    expect(detail).toContain("Assign plugin");
-    expect(detail).toContain("No eligible plugins");
+  test("manages marketplace relationships from a dedicated Plugin tab", () => {
+    expect(pluginDetail).toContain('type PluginDetailTab = "contents" | "marketplaces"');
+    expect(pluginDetail).toContain('{ value: "marketplaces", label: "Marketplaces", icon: Store');
+    expect(pluginDetail).toContain('role="tabpanel" aria-label="Marketplaces"');
+    expect(pluginDetail).toContain("plugin-marketplace-assignment-controls");
+    expect(pluginDetail).toContain("useMarketplaces()");
+    expect(pluginDetail).toContain("!assignedIds.has(marketplace.id)");
+    expect(pluginDetail).toContain("Add Marketplace");
+    expect(pluginDetail).toContain("Added to every available Marketplace.");
   });
 
-  test("removes only the marketplace relationship with pending and error feedback", () => {
-    expect(detail).toContain("useRemoveMarketplacePlugin");
-    expect(detail).toContain("removePlugin.isPending && removePlugin.variables?.pluginId === plugin.id");
-    expect(detail).toContain("Removes this plugin from the marketplace only.");
-    expect(detail).toContain("confirm-remove-marketplace-plugin");
-    expect(detail).toContain("The global plugin and its configuration will remain available.");
-    expect(detail).toContain("Failed to remove plugin.");
-    expect(detail).not.toContain("useDeletePlugin");
+  test("removes only the relationship with confirmation and keeps Marketplace detail read-only", () => {
+    expect(pluginDetail).toContain("useRemoveMarketplacePlugin");
+    expect(pluginDetail).toContain("confirm-remove-plugin-marketplace");
+    expect(pluginDetail).toContain("The Plugin and Marketplace remain available.");
+    expect(pluginDetail).toContain("Failed to remove Marketplace.");
+    expect(pluginDetail).not.toContain("useDeletePlugin");
+    expect(marketplaceDetail).not.toContain("marketplace-plugin-assignment-controls");
+    expect(marketplaceDetail).not.toContain("confirm-remove-marketplace-plugin");
+    expect(marketplaceDetail).not.toContain("useAssignMarketplacePlugin");
+    expect(marketplaceDetail).not.toContain("useRemoveMarketplacePlugin");
   });
 });

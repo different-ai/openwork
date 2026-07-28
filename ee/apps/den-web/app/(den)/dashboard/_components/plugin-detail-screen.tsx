@@ -2,15 +2,23 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
-import { Archive, ArrowLeft, FileText, MoreHorizontal, Pencil, Plus, Puzzle, Server, Store, Terminal, Users, Webhook } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Archive, ArrowLeft, Check, FileText, MoreHorizontal, Pencil, Plus, Puzzle, Server, Store, Terminal, Users, Webhook, X } from "lucide-react";
 import { PaperMeshGradient } from "@openwork/ui/react";
 
-import { getNewPluginSkillRoute, getOrgAccessFlags, getPluginSkillRoute, getPluginsRoute } from "../../_lib/den-org";
+import { getMarketplaceRoute, getNewPluginSkillRoute, getOrgAccessFlags, getPluginSkillRoute, getPluginsRoute } from "../../_lib/den-org";
 import { buttonVariants, DenButton } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
+import { type TabItem, UnderlineTabs } from "../../_components/ui/tabs";
 import { DenTextarea } from "../../_components/ui/textarea";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
+import {
+  type DenMarketplace,
+  useAssignMarketplacePlugin,
+  useMarketplaces,
+  useRemoveMarketplacePlugin,
+} from "./marketplace-data";
+import { MarketplaceLogo } from "./marketplace-logo";
 import {
   type DenPlugin,
   type PluginHook,
@@ -24,12 +32,15 @@ import {
   useUpdatePlugin,
 } from "./plugin-data";
 
+type PluginDetailTab = "contents" | "marketplaces";
+
 export function PluginDetailScreen({ pluginId }: { pluginId: string }) {
   const router = useRouter();
   const { orgContext, orgSlug } = useOrgDashboard();
   const { data: plugin, isLoading, error, refetch } = usePlugin(pluginId);
   const archivePlugin = useArchivePlugin();
   const [actionsOpen, setActionsOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState<PluginDetailTab>("contents");
   const [editPlugin, setEditPlugin] = useState<{ name: string; description: string } | null>(null);
   const [archiveOpen, setArchiveOpen] = useState(false);
   const actionsRef = useRef<HTMLDivElement | null>(null);
@@ -76,6 +87,10 @@ export function PluginDetailScreen({ pluginId }: { pluginId: string }) {
   if (plugin.commands.length === 0) missingLabels.push("commands");
   if (plugin.hooks.length === 0) missingLabels.push("hooks");
   if (plugin.mcps.length === 0) missingLabels.push("MCP servers");
+  const tabs: readonly TabItem<PluginDetailTab>[] = [
+    { value: "contents", label: "Contents", icon: Puzzle },
+    { value: "marketplaces", label: "Marketplaces", icon: Store, count: marketplaces.length },
+  ];
 
   async function handleArchivePlugin() {
     try {
@@ -178,20 +193,6 @@ export function PluginDetailScreen({ pluginId }: { pluginId: string }) {
               <p className="mt-1 text-[13px] leading-[1.55] text-gray-500">{plugin.description}</p>
             ) : null}
 
-            {marketplaces.length > 0 ? (
-              <div className="mt-3 flex flex-wrap gap-1.5">
-                {marketplaces.map((marketplace) => (
-                  <span
-                    key={marketplace.id}
-                    className="inline-flex items-center gap-1 rounded-full bg-gray-50 px-2 py-0.5 text-[11px] text-gray-600"
-                  >
-                    <Store className="h-3 w-3 text-gray-400" aria-hidden />
-                    <span className="truncate">{marketplace.name}</span>
-                  </span>
-                ))}
-              </div>
-            ) : null}
-
             <p className="mt-3 text-[11.5px] text-gray-400">
               Updated {formatPluginTimestamp(plugin.updatedAt)}
             </p>
@@ -199,18 +200,35 @@ export function PluginDetailScreen({ pluginId }: { pluginId: string }) {
         </div>
       </article>
 
-      <div className="mt-6 space-y-6">
-        <SkillsSection orgSlug={orgSlug} plugin={plugin} />
-        <PrimitiveSection icon={Users} label="Agents" items={plugin.agents} render={renderAgentRow} />
-        <PrimitiveSection icon={Terminal} label="Commands" items={plugin.commands} render={renderCommandRow} />
-        <PrimitiveSection icon={Webhook} label="Hooks" items={plugin.hooks} render={renderHookRow} />
-        <PrimitiveSection icon={Server} label="MCP Servers" items={plugin.mcps} render={renderMcpRow} />
-      </div>
+      <UnderlineTabs className="mt-6" tabs={tabs} activeTab={activeTab} onChange={setActiveTab} />
 
-      {missingLabels.length > 0 ? (
-        <p className="mt-6 text-center text-[12px] text-gray-400">
-          No {formatMissingList(missingLabels)} detected in this plugin.
-        </p>
+      {activeTab === "contents" ? (
+        <div role="tabpanel" aria-label="Contents">
+          <div className="mt-6 space-y-6">
+            <SkillsSection orgSlug={orgSlug} plugin={plugin} />
+            <PrimitiveSection icon={Users} label="Agents" items={plugin.agents} render={renderAgentRow} />
+            <PrimitiveSection icon={Terminal} label="Commands" items={plugin.commands} render={renderCommandRow} />
+            <PrimitiveSection icon={Webhook} label="Hooks" items={plugin.hooks} render={renderHookRow} />
+            <PrimitiveSection icon={Server} label="MCP Servers" items={plugin.mcps} render={renderMcpRow} />
+          </div>
+
+          {missingLabels.length > 0 ? (
+            <p className="mt-6 text-center text-[12px] text-gray-400">
+              No {formatMissingList(missingLabels)} detected in this plugin.
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
+      {activeTab === "marketplaces" ? (
+        <div role="tabpanel" aria-label="Marketplaces" className="mt-6">
+          <PluginMarketplacesSection
+            orgSlug={orgSlug}
+            plugin={plugin}
+            canManage={access.isAdmin}
+            onChanged={() => refetch()}
+          />
+        </div>
       ) : null}
 
       {editPlugin ? (
@@ -235,6 +253,287 @@ export function PluginDetailScreen({ pluginId }: { pluginId: string }) {
         }}
         onConfirm={() => void handleArchivePlugin()}
       />
+    </div>
+  );
+}
+
+function PluginMarketplacesSection({
+  orgSlug,
+  plugin,
+  canManage,
+  onChanged,
+}: {
+  orgSlug: string | null;
+  plugin: DenPlugin;
+  canManage: boolean;
+  onChanged: () => Promise<unknown>;
+}) {
+  const { data: allMarketplaces = [], isLoading, error } = useMarketplaces();
+  const assignMarketplace = useAssignMarketplacePlugin();
+  const removeMarketplace = useRemoveMarketplacePlugin();
+  const [marketplaceToRemove, setMarketplaceToRemove] = useState<DenMarketplace | null>(null);
+  const assignedIds = new Set((plugin.marketplaces ?? []).map((marketplace) => marketplace.id));
+  const assignedMarketplaces = (plugin.marketplaces ?? []).map((marketplace) => (
+    allMarketplaces.find((candidate) => candidate.id === marketplace.id) ?? {
+      id: marketplace.id,
+      name: marketplace.name,
+      description: null,
+      logoUrl: null,
+      pluginCount: 0,
+      createdAt: "",
+      updatedAt: "",
+    }
+  ));
+  const availableMarketplaces = allMarketplaces.filter((marketplace) => !assignedIds.has(marketplace.id));
+  const busy = assignMarketplace.isPending || removeMarketplace.isPending;
+
+  async function handleAdd(marketplaceId: string) {
+    try {
+      await assignMarketplace.mutateAsync({ marketplaceId, pluginId: plugin.id });
+      await onChanged();
+    } catch {
+      // The mutation error is rendered in the section.
+    }
+  }
+
+  async function handleRemove() {
+    if (!marketplaceToRemove) return;
+    try {
+      await removeMarketplace.mutateAsync({ marketplaceId: marketplaceToRemove.id, pluginId: plugin.id });
+      setMarketplaceToRemove(null);
+      await onChanged();
+    } catch {
+      // The mutation error is rendered in the confirmation dialog.
+    }
+  }
+
+  return (
+    <section>
+      <div className="mb-3">
+        <h2 className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">
+          Marketplace access
+        </h2>
+        <p className="mt-1 text-[12.5px] text-gray-500">
+          Choose the Marketplaces where members can discover this plugin.
+        </p>
+      </div>
+
+      <div className="overflow-visible rounded-2xl border border-gray-100 bg-white" data-testid="plugin-marketplace-assignment-controls">
+        <div className="px-5 py-4">
+          <div className="mb-2 flex items-center gap-2">
+            <Store className="h-3.5 w-3.5 text-gray-400" aria-hidden />
+            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-400">Marketplaces</p>
+          </div>
+
+          {assignedMarketplaces.length === 0 ? (
+            <p className="text-[12.5px] text-gray-400">This plugin is not in a Marketplace yet.</p>
+          ) : (
+            <div className="space-y-2">
+              {assignedMarketplaces.map((marketplace) => (
+                <div key={marketplace.id} className="flex items-center gap-3 rounded-xl bg-gray-50 px-3 py-2.5">
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white">
+                    <MarketplaceLogo
+                      logoUrl={marketplace.logoUrl}
+                      name={marketplace.name}
+                      imgClassName="h-4 w-4"
+                      iconClassName="h-4 w-4"
+                    />
+                  </div>
+                  <Link href={getMarketplaceRoute(orgSlug, marketplace.id)} className="min-w-0 flex-1">
+                    <p className="truncate text-[13px] font-medium text-gray-900">{marketplace.name}</p>
+                    {marketplace.description ? (
+                      <p className="truncate text-[11.5px] text-gray-500">{marketplace.description}</p>
+                    ) : null}
+                  </Link>
+                  {canManage ? (
+                    <button
+                      type="button"
+                      aria-label={`Remove ${marketplace.name}`}
+                      disabled={busy}
+                      onClick={() => {
+                        removeMarketplace.reset();
+                        setMarketplaceToRemove(marketplace);
+                      }}
+                      className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-gray-400 transition hover:bg-gray-200 hover:text-gray-900 disabled:cursor-not-allowed disabled:opacity-50"
+                      data-testid={`remove-plugin-marketplace-${marketplace.id}`}
+                    >
+                      <X className="h-3.5 w-3.5" aria-hidden />
+                    </button>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {canManage ? (
+            <MarketplaceAddPicker
+              options={availableMarketplaces}
+              loading={isLoading}
+              disabled={busy}
+              onAdd={(marketplaceId) => void handleAdd(marketplaceId)}
+            />
+          ) : null}
+
+          {error ? <p className="mt-2 text-[12px] text-red-600">Failed to load available Marketplaces.</p> : null}
+          {assignMarketplace.error ? (
+            <p className="mt-2 text-[12px] text-red-600">
+              {assignMarketplace.error instanceof Error ? assignMarketplace.error.message : "Failed to add Marketplace."}
+            </p>
+          ) : null}
+        </div>
+      </div>
+
+      <RemovePluginMarketplaceDialog
+        marketplace={marketplaceToRemove}
+        pluginName={plugin.name}
+        busy={removeMarketplace.isPending}
+        error={removeMarketplace.error}
+        onClose={() => {
+          if (!removeMarketplace.isPending) setMarketplaceToRemove(null);
+        }}
+        onConfirm={() => void handleRemove()}
+      />
+    </section>
+  );
+}
+
+function MarketplaceAddPicker({
+  options,
+  loading,
+  disabled,
+  onAdd,
+}: {
+  options: DenMarketplace[];
+  loading: boolean;
+  disabled: boolean;
+  onAdd: (marketplaceId: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const ref = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function handlePointerDown(event: MouseEvent) {
+      if (ref.current && !ref.current.contains(event.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
+  }, [open]);
+
+  const filtered = useMemo(() => {
+    const normalized = query.trim().toLowerCase();
+    if (!normalized) return options;
+    return options.filter((marketplace) => (
+      marketplace.name.toLowerCase().includes(normalized)
+      || marketplace.description?.toLowerCase().includes(normalized)
+    ));
+  }, [options, query]);
+
+  if (!loading && options.length === 0) {
+    return <p className="mt-3 text-[11.5px] text-gray-400">Added to every available Marketplace.</p>;
+  }
+
+  return (
+    <div ref={ref} className="relative mt-3 inline-block">
+      <button
+        type="button"
+        disabled={disabled || loading}
+        onClick={() => setOpen((value) => !value)}
+        className="inline-flex items-center gap-1 rounded-full border border-dashed border-gray-200 px-2.5 py-1 text-[11.5px] text-gray-500 transition hover:border-gray-400 hover:text-gray-900 disabled:cursor-not-allowed disabled:opacity-50"
+        data-testid="add-plugin-marketplace"
+      >
+        <Plus className="h-3 w-3" aria-hidden />
+        {loading ? "Loading Marketplaces…" : "Add Marketplace"}
+      </button>
+
+      {open ? (
+        <div className="absolute left-0 top-[calc(100%+4px)] z-20 w-[280px] overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-[0_20px_40px_-16px_rgba(15,23,42,0.18)]">
+          <div className="border-b border-gray-100 px-3 py-2">
+            <input
+              type="search"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search Marketplaces..."
+              className="w-full bg-transparent text-[12.5px] text-gray-900 placeholder:text-gray-400 focus:outline-none"
+              autoFocus
+            />
+          </div>
+          <div className="max-h-[240px] overflow-y-auto py-1">
+            {filtered.length === 0 ? (
+              <p className="px-3 py-3 text-[12px] text-gray-400">No matches</p>
+            ) : (
+              filtered.map((marketplace) => (
+                <button
+                  key={marketplace.id}
+                  type="button"
+                  onClick={() => {
+                    onAdd(marketplace.id);
+                    setOpen(false);
+                    setQuery("");
+                  }}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left transition hover:bg-gray-50"
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-[12.5px] font-medium text-gray-900">{marketplace.name}</p>
+                    <p className="truncate text-[11px] text-gray-500">{marketplace.description ?? "Organization Marketplace"}</p>
+                  </div>
+                  <Check className="h-3.5 w-3.5 shrink-0 text-transparent" aria-hidden />
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function RemovePluginMarketplaceDialog({
+  marketplace,
+  pluginName,
+  busy,
+  error,
+  onClose,
+  onConfirm,
+}: {
+  marketplace: DenMarketplace | null;
+  pluginName: string;
+  busy: boolean;
+  error: unknown;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  if (!marketplace) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-6" onClick={busy ? undefined : onClose}>
+      <div
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="remove-plugin-marketplace-title"
+        aria-describedby="remove-plugin-marketplace-description"
+        className="w-full max-w-md rounded-[28px] border border-gray-200 bg-white p-6 shadow-[0_24px_80px_-32px_rgba(15,23,42,0.45)]"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <h2 id="remove-plugin-marketplace-title" className="text-[18px] font-semibold tracking-[-0.02em] text-gray-950">
+          Remove {marketplace.name}?
+        </h2>
+        <p id="remove-plugin-marketplace-description" className="mt-2 text-[13px] leading-6 text-gray-600">
+          This removes {pluginName} from {marketplace.name} only. The Plugin and Marketplace remain available.
+        </p>
+        {error ? (
+          <p className="mt-4 rounded-xl bg-red-50 px-3 py-2 text-[12.5px] text-red-600">
+            {error instanceof Error ? error.message : "Failed to remove Marketplace."}
+          </p>
+        ) : null}
+        <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          <DenButton variant="secondary" onClick={onClose} disabled={busy}>Cancel</DenButton>
+          <DenButton variant="destructive" loading={busy} onClick={onConfirm} data-testid="confirm-remove-plugin-marketplace">
+            Remove Marketplace
+          </DenButton>
+        </div>
+      </div>
     </div>
   );
 }

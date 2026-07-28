@@ -68,14 +68,14 @@ async function createFixtures(ctx) {
     headers: authHeaders(),
     body: JSON.stringify({
       name: state.marketplaceName,
-      description: "Temporary marketplace for assignment relationship proof.",
+      description: "Temporary Marketplace for Plugin relationship proof.",
     }),
   });
   state.marketplaceId = marketplace.body?.item?.id ?? "";
   witness(
     ctx,
     marketplace.response.status === 201 && state.marketplaceId.length > 0,
-    "The proof creates an empty Marketplace through the real Den API",
+    "The proof creates an active Marketplace through the real Den API",
     {
       status: marketplace.response.status,
       marketplaceId: state.marketplaceId,
@@ -87,7 +87,7 @@ async function createFixtures(ctx) {
     headers: authHeaders(),
     body: JSON.stringify({
       name: state.pluginName,
-      description: "Temporary active Plugin for relationship assignment proof.",
+      description: "Temporary active Plugin for Marketplace assignment proof.",
       orgWide: true,
     }),
   });
@@ -95,7 +95,7 @@ async function createFixtures(ctx) {
   witness(
     ctx,
     plugin.response.status === 201 && state.pluginId.length > 0,
-    "The proof creates an active Plugin outside the Marketplace",
+    "The proof creates an active Plugin outside every Marketplace",
     { status: plugin.response.status, pluginId: state.pluginId },
   );
 }
@@ -126,8 +126,8 @@ function screenshot(name, claim, requireText, rejectText = []) {
     claim,
     requireText,
     rejectText: [
-      "Failed to assign plugin",
-      "Failed to remove plugin",
+      "Failed to add Marketplace",
+      "Failed to remove Marketplace",
       "Something went wrong",
       ...rejectText,
     ],
@@ -136,8 +136,7 @@ function screenshot(name, claim, requireText, rejectText = []) {
 
 export default {
   id: FLOW_ID,
-  title:
-    "Den assigns and removes existing Plugins from one Marketplace relationship",
+  title: "Den manages Marketplace assignments from the Plugin detail tab",
   kind: "user-facing",
   preserveTheme: true,
   requiredEnv: ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_WEB_URL"],
@@ -158,53 +157,62 @@ export default {
       },
     },
     {
-      name: "Choose an eligible existing Plugin",
+      name: "Open the Plugin Marketplaces tab",
       run: async (ctx) => {
         await ctx.prove(
-          "An administrator can choose an active Plugin not yet assigned to the Marketplace",
+          "The Plugin detail page owns Marketplace assignment with the same compact add pattern as member access",
           {
             voiceover: vo[0],
             action: async () => {
               await navigateTo(
                 ctx,
-                `/dashboard/marketplaces/${encodeURIComponent(state.marketplaceId)}`,
+                `/dashboard/plugins/${encodeURIComponent(state.pluginId)}`,
               );
-              await ctx.waitForText("Assign an existing plugin", {
-                timeoutMs: 30_000,
-              });
+              await ctx.waitForText(state.pluginName, { timeoutMs: 30_000 });
               await ctx.eval(
-                `document.querySelector('button[aria-label="Eligible plugin"]')?.click()`,
+                `[...document.querySelectorAll('[role="tab"]')]
+                  .find((tab) => tab.textContent?.includes("Marketplaces"))?.click()`,
               );
               await ctx.waitFor(
-                `(() => [...document.querySelectorAll('[role="option"]')]
-                  .some((option) => option.textContent?.trim() === ${JSON.stringify(state.pluginName)}))()`,
-                { timeoutMs: 30_000, label: "eligible proof plugin" },
+                `Boolean(document.querySelector('[data-testid="plugin-marketplace-assignment-controls"]'))`,
+                { timeoutMs: 10_000, label: "Plugin Marketplace controls" },
+              );
+              await ctx.waitFor(
+                `(() => {
+                  const candidateVisible = [...document.querySelectorAll('button')]
+                    .some((button) => button.textContent?.includes(${JSON.stringify(state.marketplaceName)}));
+                  if (candidateVisible) return true;
+                  const pickerOpen = Boolean(document.querySelector('input[placeholder="Search Marketplaces..."]'));
+                  if (!pickerOpen) document.querySelector('[data-testid="add-plugin-marketplace"]')?.click();
+                  return false;
+                })()`,
+                { timeoutMs: 30_000, label: "eligible Marketplace" },
               );
             },
             assert: async () => {
               const initial = await ctx.eval(`(() => ({
-                countText: [...document.querySelectorAll('p')]
-                  .find((entry) => (entry.textContent ?? '').trim() === '0 plugins')
-                  ?.textContent?.trim() ?? "",
-                candidateNames: [...document.querySelectorAll('[role="option"]')]
-                  .map((option) => option.textContent?.trim() ?? ""),
+                tabSelected: [...document.querySelectorAll('[role="tab"]')]
+                  .some((tab) => tab.getAttribute('aria-selected') === 'true' && tab.textContent?.includes('Marketplaces')),
+                emptyCopy: document.body.textContent?.includes('This plugin is not in a Marketplace yet.') ?? false,
+                candidateVisible: [...document.querySelectorAll('button')]
+                  .some((button) => button.textContent?.includes(${JSON.stringify(state.marketplaceName)})),
               }))()`);
               witness(
                 ctx,
-                initial.countText === "0 plugins" &&
-                  initial.candidateNames.includes(state.pluginName),
-                "The empty Marketplace lists the unassigned Plugin as eligible",
+                initial.tabSelected && initial.emptyCopy && initial.candidateVisible,
+                "The empty Plugin lists the unassigned Marketplace as eligible",
                 initial,
               );
             },
             screenshot: screenshot(
-              "marketplace-existing-plugin-eligible",
-              "The Marketplace offers an active, unassigned Plugin as an assignment candidate.",
+              "plugin-marketplaces-eligible",
+              "The Plugin has a dedicated Marketplaces tab with an eligible Marketplace picker.",
               [
-                state.marketplaceName,
-                "0 plugins",
-                "Assign an existing plugin",
                 state.pluginName,
+                "Marketplaces",
+                "MARKETPLACE ACCESS",
+                "This plugin is not in a Marketplace yet.",
+                state.marketplaceName,
               ],
             ),
           },
@@ -212,46 +220,24 @@ export default {
       },
     },
     {
-      name: "Assign the existing Plugin",
+      name: "Add the Marketplace",
       run: async (ctx) => {
         await ctx.prove(
-          "Assigning creates the exact Marketplace relationship and removes the Plugin from eligibility",
+          "Adding from Plugin detail creates the exact Marketplace relationship",
           {
             voiceover: vo[1],
             action: async () => {
               const selected = await ctx.eval(`(() => {
-                const option = [...document.querySelectorAll('[role="option"]')]
-                  .find((entry) => entry.textContent?.trim() === ${JSON.stringify(state.pluginName)});
-                option?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+                const option = [...document.querySelectorAll('button')]
+                  .find((button) => button.textContent?.includes(${JSON.stringify(state.marketplaceName)}));
+                option?.click();
                 return Boolean(option);
               })()`);
-              witness(ctx, selected, "The proof selects the eligible Plugin");
+              witness(ctx, selected, "The proof selects the eligible Marketplace");
               await ctx.waitFor(
-                `!document.querySelector('[data-testid="assign-marketplace-plugin"]')?.disabled`,
-                { timeoutMs: 10_000, label: "enabled assignment action" },
-              );
-              await ctx.eval(
-                `document.querySelector('[data-testid="assign-marketplace-plugin"]')?.click()`,
-              );
-              await ctx.waitFor(
-                `(() => document.querySelector(${JSON.stringify(`#plugin-${state.pluginId}`)})
-                  && !document.querySelector('[role="alertdialog"]'))()`,
-                { timeoutMs: 30_000, label: "assigned Plugin card" },
-              );
-              await ctx.eval(
-                `document.querySelector('button[aria-label="Eligible plugin"]')?.click()`,
-              );
-              const stillEligible = await ctx.eval(
-                `[...document.querySelectorAll('[role="option"]')]
-                  .some((option) => option.textContent?.trim() === ${JSON.stringify(state.pluginName)})`,
-              );
-              witness(
-                ctx,
-                !stillEligible,
-                "The assigned Plugin is removed from the eligible choices",
-              );
-              await ctx.eval(
-                `document.querySelector('button[aria-label="Eligible plugin"]')?.click()`,
+                `[...document.querySelectorAll('a')]
+                  .some((link) => link.textContent?.includes(${JSON.stringify(state.marketplaceName)}))`,
+                { timeoutMs: 30_000, label: "assigned Marketplace row" },
               );
             },
             assert: async () => {
@@ -275,13 +261,13 @@ export default {
               );
             },
             screenshot: screenshot(
-              "marketplace-existing-plugin-assigned",
-              "The assigned Plugin appears in the Marketplace and is no longer offered as a candidate.",
+              "plugin-marketplace-assigned",
+              "The Marketplace appears as an assignment on the Plugin detail page.",
               [
-                state.marketplaceName,
-                "1 plugin",
                 state.pluginName,
-                "Remove",
+                "MARKETPLACE ACCESS",
+                state.marketplaceName,
+                "Add Marketplace",
               ],
             ),
           },
@@ -292,14 +278,14 @@ export default {
       name: "Confirm relationship-only removal",
       run: async (ctx) => {
         await ctx.prove(
-          "Removal is explicitly scoped to the Marketplace relationship",
+          "Removal is explicitly scoped to this Plugin-to-Marketplace relationship",
           {
             voiceover: vo[2],
             action: async () => {
               await ctx.eval(
-                `document.querySelector(${JSON.stringify(`[data-testid="remove-marketplace-plugin-${state.pluginId}"]`)})?.click()`,
+                `document.querySelector(${JSON.stringify(`[data-testid="remove-plugin-marketplace-${state.marketplaceId}"]`)})?.click()`,
               );
-              await ctx.waitForText(`Remove ${state.pluginName}?`, {
+              await ctx.waitForText(`Remove ${state.marketplaceName}?`, {
                 timeoutMs: 10_000,
               });
             },
@@ -315,23 +301,23 @@ export default {
                 ctx,
                 dialog.visible &&
                   dialog.text.includes(
-                    `This removes the plugin from ${state.marketplaceName} only.`,
+                    `This removes ${state.pluginName} from ${state.marketplaceName} only.`,
                   ) &&
                   dialog.text.includes(
-                    "The global plugin and its configuration will remain available.",
+                    "The Plugin and Marketplace remain available.",
                   ),
-                "The confirmation explains that the global Plugin remains available",
+                "The confirmation preserves both global resources",
                 dialog,
               );
             },
             screenshot: screenshot(
-              "marketplace-plugin-removal-confirmation",
+              "plugin-marketplace-removal-confirmation",
               "The named confirmation makes the relationship-only removal boundary explicit.",
               [
-                `Remove ${state.pluginName}?`,
-                `This removes the plugin from ${state.marketplaceName} only.`,
-                "The global plugin and its configuration will remain available.",
-                "Remove from marketplace",
+                `Remove ${state.marketplaceName}?`,
+                `This removes ${state.pluginName} from ${state.marketplaceName} only.`,
+                "The Plugin and Marketplace remain available.",
+                "Remove Marketplace",
               ],
             ),
           },
@@ -342,24 +328,26 @@ export default {
       name: "Remove only the relationship",
       run: async (ctx) => {
         await ctx.prove(
-          "Confirmed removal empties the Marketplace while leaving the Plugin active",
+          "Confirmed removal leaves both resources active and makes the Marketplace eligible again",
           {
             voiceover: vo[3],
             action: async () => {
               await ctx.eval(
-                `document.querySelector('[data-testid="confirm-remove-marketplace-plugin"]')?.click()`,
+                `document.querySelector('[data-testid="confirm-remove-plugin-marketplace"]')?.click()`,
               );
+              await ctx.waitForText("This plugin is not in a Marketplace yet.", {
+                timeoutMs: 30_000,
+              });
               await ctx.waitFor(
-                `!document.querySelector(${JSON.stringify(`#plugin-${state.pluginId}`)})`,
-                { timeoutMs: 30_000, label: "removed Plugin relationship" },
-              );
-              await ctx.eval(
-                `document.querySelector('button[aria-label="Eligible plugin"]')?.click()`,
-              );
-              await ctx.waitFor(
-                `[...document.querySelectorAll('[role="option"]')]
-                  .some((option) => option.textContent?.trim() === ${JSON.stringify(state.pluginName)})`,
-                { timeoutMs: 10_000, label: "Plugin eligible after removal" },
+                `(() => {
+                  const candidateVisible = [...document.querySelectorAll('button')]
+                    .some((button) => button.textContent?.includes(${JSON.stringify(state.marketplaceName)}));
+                  if (candidateVisible) return true;
+                  const pickerOpen = Boolean(document.querySelector('input[placeholder="Search Marketplaces..."]'));
+                  if (!pickerOpen) document.querySelector('[data-testid="add-plugin-marketplace"]')?.click();
+                  return false;
+                })()`,
+                { timeoutMs: 10_000, label: "Marketplace eligible after removal" },
               );
             },
             assert: async () => {
@@ -380,8 +368,9 @@ export default {
                   ) &&
                   plugin.response.ok &&
                   plugin.body?.item?.status === "active",
-                "The relationship is gone and the global Plugin remains active",
+                "The relationship is gone while the Plugin and Marketplace remain active",
                 {
+                  marketplaceStatus: resolved.body?.item?.marketplace?.status ?? "active",
                   resolvedPluginIds: resolved.body?.item?.plugins?.map(
                     (entry) => entry?.id,
                   ),
@@ -390,13 +379,13 @@ export default {
               );
             },
             screenshot: screenshot(
-              "marketplace-plugin-relationship-removed",
-              "The Marketplace is empty again and the still-active Plugin is eligible for reassignment.",
+              "plugin-marketplace-relationship-removed",
+              "The Plugin is unassigned again and the active Marketplace is available to add.",
               [
-                state.marketplaceName,
-                "0 plugins",
-                "No plugins in this marketplace yet",
                 state.pluginName,
+                "This plugin is not in a Marketplace yet.",
+                "Add Marketplace",
+                state.marketplaceName,
               ],
             ),
           },
