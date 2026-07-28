@@ -1,7 +1,7 @@
 "use client";
 
 import { Check, ChevronDown } from "lucide-react";
-import { useEffect, useId, useMemo, useRef, useState, type ChangeEvent, type FocusEvent, type KeyboardEvent } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type ChangeEvent, type FocusEvent, type KeyboardEvent, type ReactNode } from "react";
 import {
   denDropdownChevronSlotClass,
   denDropdownFieldBaseClass,
@@ -20,6 +20,8 @@ export type DenComboboxOption = {
   description?: string;
   meta?: string;
   keywords?: string[];
+  /** Leading brand/icon slot, shown in the list and next to the selected value. */
+  icon?: ReactNode;
 };
 
 export type DenComboboxProps = {
@@ -303,6 +305,11 @@ export function DenCombobox({
       }}
     >
       <div className="relative">
+        {selectedOption?.icon && !open ? (
+          <span className="pointer-events-none absolute inset-y-0 left-3 z-[1] flex items-center">
+            {selectedOption.icon}
+          </span>
+        ) : null}
         <input
           ref={inputRef}
           type="search"
@@ -336,6 +343,7 @@ export function DenCombobox({
           className={[
             denDropdownFieldBaseClass,
             "rounded-lg placeholder:text-gray-400",
+            selectedOption?.icon && !open ? "pl-11" : "",
             open ? denDropdownFieldOpenClass : "",
             disabled ? "cursor-not-allowed opacity-60" : "cursor-text",
             className ?? "",
@@ -380,6 +388,9 @@ export function DenCombobox({
                       .filter(Boolean)
                       .join(" ")}
                   >
+                    {option.icon ? (
+                      <span className="mt-0.5 flex shrink-0 items-center">{option.icon}</span>
+                    ) : null}
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-[14px] font-medium text-gray-900">{option.label}</p>
                       {option.description ? (
