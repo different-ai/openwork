@@ -35,19 +35,19 @@ const PROVIDER_LOGOS: { name: string; color: string; path: string }[] = [
 
 export function LlmProviderLogos() {
   return (
-    <div className="flex flex-wrap items-center gap-2">
+    <div className="flex flex-wrap items-center gap-1.5">
       {PROVIDER_LOGOS.map((provider) => (
         <div
           key={provider.name}
           title={provider.name}
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] border border-gray-100 bg-white shadow-sm"
+          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-gray-100 bg-white"
         >
-          <svg viewBox="0 0 24 24" role="img" aria-label={provider.name} fill={provider.color} className="h-4 w-4">
+          <svg viewBox="0 0 24 24" role="img" aria-label={provider.name} fill={provider.color} className="h-3.5 w-3.5">
             <path d={provider.path} />
           </svg>
         </div>
       ))}
-      <span className="text-[12px] font-medium text-gray-500">+ more</span>
+      <span className="ml-0.5 text-[13px] text-gray-400">and every models.dev provider</span>
     </div>
   );
 }

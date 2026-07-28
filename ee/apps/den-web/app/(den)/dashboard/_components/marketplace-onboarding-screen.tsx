@@ -15,6 +15,7 @@ import {
 } from "../../_lib/den-org";
 import { requestJson } from "../../_lib/den-flow";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
+import { LlmProviderLogos } from "./llm-provider-logos";
 
 const APP_INSTALLED_KEY = "openwork:onboarding:app-installed";
 
@@ -81,53 +82,49 @@ export function MarketplaceOnboardingScreen({
   const requiredDone = appInstalled && modelsEnabled;
 
   return (
-    <div className="mx-auto max-w-3xl px-4 pb-12 pt-8 sm:px-6" data-testid="marketplace-onboarding">
-      <header className="max-w-xl">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">Get started</p>
-        <h1 className="mt-3 text-[28px] font-semibold leading-[1.1] tracking-[-0.04em] text-gray-950 sm:text-[32px]">
+    <div className="mx-auto max-w-4xl px-4 pb-16 pt-12 sm:px-6" data-testid="marketplace-onboarding">
+      <header className="mx-auto max-w-xl text-center">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-gray-500">Get started</p>
+        <h1 className="mt-3 text-[30px] font-semibold leading-[1.15] tracking-[-0.04em] text-gray-950 sm:text-[34px]">
           {requiredDone ? `${orgName} is ready.` : `Get the OpenWork app`}
         </h1>
-        <p className="mt-3 text-[14px] leading-6 text-gray-500">
+        <p className="mx-auto mt-3 max-w-lg text-[15px] leading-6 text-gray-500">
           {requiredDone
             ? "The desktop app is installed and models are available. Jump into your dashboard whenever you're ready."
-            : "OpenWork runs on the desktop. Install the app, then choose OpenWork Models or bring your own keys."}
+            : "OpenWork runs on the desktop app. Install it, sign in, and this workspace syncs automatically."}
         </p>
       </header>
 
-      <section className="mt-8 grid gap-3">
-        <DenSectionHeader
-          title="1. Install the desktop app"
-          description="Computer Use, Browser, Image Gen, and Google Workspace only run in the app."
-          action={
-            appInstalled ? (
-              <DenBadge tone="success" icon={Check}>
-                Installed
-              </DenBadge>
-            ) : null
-          }
-        />
+      <section className="mt-8 grid gap-4">
         <DownloadOpenWorkCard installers={installers} releaseTag={releaseTag} />
-        {!appInstalled ? (
-          <button
-            type="button"
-            data-testid="onboarding-app-installed"
-            onClick={() => setAppInstalled(true)}
-            className="w-fit text-[13px] font-medium text-gray-500 transition hover:text-gray-950"
-          >
-            I&apos;ve already installed it →
-          </button>
-        ) : null}
+        <div className="flex justify-center">
+          {appInstalled ? (
+            <DenBadge tone="success" icon={Check}>
+              Installed
+            </DenBadge>
+          ) : (
+            <button
+              type="button"
+              data-testid="onboarding-app-installed"
+              onClick={() => setAppInstalled(true)}
+              className="text-[13px] font-medium text-gray-500 transition hover:text-gray-950"
+            >
+              I&apos;ve already installed it →
+            </button>
+          )}
+        </div>
       </section>
 
-      <section className="mt-10 grid gap-4">
+      <section className="mt-12 grid gap-5">
         <DenSectionHeader
-          title="2. Choose how your team uses models"
+          align="center"
+          title="Then bring your own keys, or use OpenWork Models"
           description={
             modelsLoading
               ? "Checking whether OpenWork Models are already on…"
               : modelsEnabled
                 ? "OpenWork Models are on for this workspace."
-                : "Pick one path. You can change this later under Models."
+                : "Pick one now, change it whenever — both live under Models."
           }
           action={
             modelsEnabled ? (
@@ -142,28 +139,33 @@ export function MarketplaceOnboardingScreen({
             testId="onboarding-choice-openwork-models"
             icon={<OpenWorkMark />}
             title="OpenWork Models"
-            description="Hosted frontier models for knowledge work. No API keys to manage — every member is provisioned automatically."
+            subtitle="No API keys, nothing to configure"
+            badge={<DenBadge tone="info">Recommended</DenBadge>}
+            description="Hand-picked frontier and open models, billed per member. Turn it on and everyone has models in the app immediately."
             href={getInferenceRoute(orgSlug)}
             ctaLabel={modelsEnabled ? "Manage models" : "Turn on models"}
             ctaVariant="primary"
           />
           <DenChoiceCard
             testId="onboarding-choice-byok"
-            icon={<KeyRound className="h-5 w-5 text-gray-700" aria-hidden />}
+            icon={<KeyRound className="h-[18px] w-[18px] text-gray-700" aria-hidden />}
             title="Bring your Own Keys"
-            description="Connect Anthropic, OpenAI, Azure, or any models.dev provider with credentials your org already has."
+            subtitle="Your providers, your billing"
+            description="Connect Anthropic, OpenAI, Azure, Mistral or your own gateway, and choose exactly which models the team sees."
             href={getCustomLlmProvidersRoute(orgSlug)}
-            ctaLabel="Add providers"
+            ctaLabel="Add a provider"
             ctaVariant="secondary"
-          />
+          >
+            <LlmProviderLogos />
+          </DenChoiceCard>
         </div>
       </section>
 
-      <footer className="mt-10 border-t border-gray-100 pt-5">
+      <footer className="mt-12 border-t border-gray-100 pt-5 text-center">
         <p className="text-[13px] text-gray-500">
           Already set up?{" "}
           <Link href={getOrgDashboardRoute(orgSlug)} className="font-medium text-gray-900 underline-offset-2 hover:underline">
-            Go to dashboard
+            Go to dashboard →
           </Link>
         </p>
       </footer>
