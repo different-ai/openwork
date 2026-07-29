@@ -625,7 +625,8 @@ export async function acceptPendingInvitationForBootstrapMembership(input: {
 
   // Bootstrap paths already grant same-org membership before email verification.
   // organization-join-verification.ts keeps that gate on the explicit accept endpoint.
-  return acceptInvitation(invitation, input.userId, { fallbackRole: input.defaultRole })
+  const accepted = await acceptInvitation(invitation, input.userId, { fallbackRole: input.defaultRole })
+  return accepted?.member ?? null
 }
 
 export async function reconcilePendingInvitationsForUser(userId: UserId) {
@@ -667,8 +668,10 @@ export async function reconcilePendingInvitationsForUser(userId: UserId) {
       continue
     }
 
-    await acceptInvitation(invitation, userId)
-    acceptedCount += 1
+    const accepted = await acceptInvitation(invitation, userId)
+    if (accepted) {
+      acceptedCount += 1
+    }
   }
 
   return acceptedCount
@@ -676,46 +679,68 @@ export async function reconcilePendingInvitationsForUser(userId: UserId) {
 
 async function acceptInvitation(invitation: InvitationRow, userId: UserId, options?: { fallbackRole?: string }) {
   const availableRoles = await listAssignableRoles(invitation.organizationId)
-  const role = normalizeAssignableRole(invitation.role, availableRoles, options?.fallbackRole)
-  const joinedAt = new Date()
-
-  const existingMemberRows = await db
-    .select()
-    .from(MemberTable)
-    .where(and(eq(MemberTable.organizationId, invitation.organizationId), eq(MemberTable.userId, userId), isNull(MemberTable.removedAt)))
-    .limit(1)
-
-  const invitedMemberRows = await db
-    .select()
-    .from(MemberTable)
-    .where(and(eq(MemberTable.inviteId, invitation.id), eq(MemberTable.organizationId, invitation.organizationId), isNull(MemberTable.removedAt)))
-    .limit(1)
-
-  const invitedMember = invitedMemberRows[0] ?? null
-  const existingMember = existingMemberRows[0] ?? null
-  const removedMember = existingMember
-    ? null
-    : await findSoftRemovedMemberForUser({
-      organizationId: invitation.organizationId,
-      userId,
-    })
-  let member = existingMember
-
-  if (existingMember && invitedMember) {
-    const existingJoinedAt = existingMember.joinedAt ?? joinedAt
-    const existingRole = roleIncludesOwner(existingMember.role) ? existingMember.role : role
-    await db
-      .update(MemberTable)
-      .set({ role: existingRole, joinedAt: existingJoinedAt })
-      .where(eq(MemberTable.id, existingMember.id))
-    if (invitedMember.id !== existingMember.id) {
-      await db.delete(MemberTable).where(eq(MemberTable.id, invitedMember.id))
+  return db.transaction(async (tx) => {
+    const lockedInvitations = await tx
+      .select()
+      .from(InvitationTable)
+      .where(and(
+        eq(InvitationTable.id, invitation.id),
+        eq(InvitationTable.organizationId, invitation.organizationId),
+      ))
+      .for("update")
+    const currentInvitation = lockedInvitations[0] ?? null
+    if (!currentInvitation) {
+      return null
     }
-    member = { ...existingMember, role: existingRole, joinedAt: existingJoinedAt }
-  }
 
-  if (!member && removedMember && invitedMember) {
-    await db.transaction(async (tx) => {
+    const existingMemberRows = await tx
+      .select()
+      .from(MemberTable)
+      .where(and(eq(MemberTable.organizationId, currentInvitation.organizationId), eq(MemberTable.userId, userId), isNull(MemberTable.removedAt)))
+      .limit(1)
+      .for("update")
+    const existingMember = existingMemberRows[0] ?? null
+    const invitationStatus = getInvitationStatus(currentInvitation)
+    if (invitationStatus !== "pending") {
+      return invitationStatus === "accepted" && existingMember
+        ? { invitation: currentInvitation, member: existingMember, newlyAccepted: false }
+        : null
+    }
+
+    const role = normalizeAssignableRole(currentInvitation.role, availableRoles, options?.fallbackRole)
+    const joinedAt = new Date()
+    const invitedMemberRows = await tx
+      .select()
+      .from(MemberTable)
+      .where(and(eq(MemberTable.inviteId, currentInvitation.id), eq(MemberTable.organizationId, currentInvitation.organizationId), isNull(MemberTable.removedAt)))
+      .limit(1)
+      .for("update")
+    const invitedMember = invitedMemberRows[0] ?? null
+    const removedMemberRows = existingMember
+      ? []
+      : await tx
+          .select()
+          .from(MemberTable)
+          .where(and(eq(MemberTable.organizationId, currentInvitation.organizationId), eq(MemberTable.userId, userId), isNotNull(MemberTable.removedAt)))
+          .limit(1)
+          .for("update")
+    const removedMember = removedMemberRows[0] ?? null
+    let member = existingMember
+
+    if (existingMember && invitedMember) {
+      const existingJoinedAt = existingMember.joinedAt ?? joinedAt
+      const existingRole = roleIncludesOwner(existingMember.role) ? existingMember.role : role
+      await tx
+        .update(MemberTable)
+        .set({ role: existingRole, joinedAt: existingJoinedAt })
+        .where(eq(MemberTable.id, existingMember.id))
+      if (invitedMember.id !== existingMember.id) {
+        await tx.delete(MemberTable).where(eq(MemberTable.id, invitedMember.id))
+      }
+      member = { ...existingMember, role: existingRole, joinedAt: existingJoinedAt }
+    }
+
+    if (!member && removedMember && invitedMember) {
       // A new explicit invitation is a new access lifecycle. Keep the removed
       // row for audit history, but activate the invitation placeholder so any
       // teams or direct grants assigned while the invite was pending remain
@@ -728,18 +753,16 @@ async function acceptInvitation(invitation: InvitationRow, userId: UserId, optio
         .update(MemberTable)
         .set({ userId, role, joinedAt })
         .where(eq(MemberTable.id, invitedMember.id))
-    })
-    member = {
-      ...invitedMember,
-      userId,
-      role,
-      joinedAt,
+      member = {
+        ...invitedMember,
+        userId,
+        role,
+        joinedAt,
+      }
     }
-  }
 
-  if (!member && removedMember) {
-    const memberId = createDenTypeId("member")
-    const createdMembers = await db.transaction(async (tx) => {
+    if (!member && removedMember) {
+      const memberId = createDenTypeId("member")
       // Legacy invitations may not have a pending member placeholder. They
       // still represent a fresh access lifecycle, so detach the audit row and
       // create a new membership instead of reviving stale membership grants.
@@ -749,75 +772,88 @@ async function acceptInvitation(invitation: InvitationRow, userId: UserId, optio
         .where(eq(MemberTable.id, removedMember.id))
       await tx.insert(MemberTable).values({
         id: memberId,
-        organizationId: invitation.organizationId,
+        organizationId: currentInvitation.organizationId,
         userId,
         role,
         joinedAt,
-        inviteId: invitation.id,
-        invitedByOrgMember: invitation.orgMemberId,
+        inviteId: currentInvitation.id,
+        invitedByOrgMember: currentInvitation.orgMemberId,
       })
-      return tx
+      const createdMembers = await tx
         .select()
         .from(MemberTable)
         .where(eq(MemberTable.id, memberId))
         .limit(1)
-    })
-    member = createdMembers[0]
-    if (!member) {
-      throw new Error("failed_to_create_member")
-    }
-  }
-
-  if (!member && invitedMember) {
-    await db
-      .update(MemberTable)
-      .set({ userId, role, joinedAt })
-      .where(eq(MemberTable.id, invitedMember.id))
-    member = { ...invitedMember, userId, role, joinedAt }
-  }
-
-  if (!member) {
-    const createdMember = await insertMemberIfMissing({
-      organizationId: invitation.organizationId,
-      userId,
-      role,
-    })
-    if (!createdMember) {
-      throw new Error("failed_to_create_member")
-    }
-    member = createdMember
-  }
-
-  if (invitation.teamId) {
-    const teams = await db
-      .select({ id: TeamTable.id })
-      .from(TeamTable)
-      .where(eq(TeamTable.id, invitation.teamId))
-      .limit(1)
-
-    if (teams[0]) {
-      const existingTeamMember = await db
-        .select({ id: TeamMemberTable.id })
-        .from(TeamMemberTable)
-        .where(and(eq(TeamMemberTable.teamId, invitation.teamId), eq(TeamMemberTable.orgMembershipId, member.id)))
-        .limit(1)
-
-      if (!existingTeamMember[0]) {
-        await db.insert(TeamMemberTable).values({
-          id: createDenTypeId("teamMember"),
-          teamId: invitation.teamId,
-          orgMembershipId: member.id,
-        })
+      member = createdMembers[0]
+      if (!member) {
+        throw new Error("failed_to_create_member")
       }
     }
-  }
 
-  await db
-    .update(InvitationTable)
-    .set({ status: "accepted" })
-    .where(eq(InvitationTable.id, invitation.id))
+    if (!member && invitedMember) {
+      await tx
+        .update(MemberTable)
+        .set({ userId, role, joinedAt })
+        .where(eq(MemberTable.id, invitedMember.id))
+      member = { ...invitedMember, userId, role, joinedAt }
+    }
 
-  return member
+    if (!member) {
+      const memberId = createDenTypeId("member")
+      await tx.insert(MemberTable).values({
+        id: memberId,
+        organizationId: currentInvitation.organizationId,
+        userId,
+        role,
+        joinedAt,
+        inviteId: currentInvitation.id,
+        invitedByOrgMember: currentInvitation.orgMemberId,
+      })
+      const createdMembers = await tx
+        .select()
+        .from(MemberTable)
+        .where(eq(MemberTable.id, memberId))
+        .limit(1)
+      member = createdMembers[0]
+      if (!member) {
+        throw new Error("failed_to_create_member")
+      }
+    }
+
+    if (currentInvitation.teamId) {
+      const teams = await tx
+        .select({ id: TeamTable.id })
+        .from(TeamTable)
+        .where(and(
+          eq(TeamTable.id, currentInvitation.teamId),
+          eq(TeamTable.organizationId, currentInvitation.organizationId),
+        ))
+        .limit(1)
+
+      if (teams[0]) {
+        const existingTeamMember = await tx
+          .select({ id: TeamMemberTable.id })
+          .from(TeamMemberTable)
+          .where(and(eq(TeamMemberTable.teamId, currentInvitation.teamId), eq(TeamMemberTable.orgMembershipId, member.id)))
+          .limit(1)
+
+        if (!existingTeamMember[0]) {
+          await tx.insert(TeamMemberTable).values({
+            id: createDenTypeId("teamMember"),
+            teamId: currentInvitation.teamId,
+            orgMembershipId: member.id,
+          })
+        }
+      }
+    }
+
+    await tx
+      .update(InvitationTable)
+      .set({ status: "accepted" })
+      .where(and(eq(InvitationTable.id, currentInvitation.id), eq(InvitationTable.status, "pending")))
+
+    return { invitation: currentInvitation, member, newlyAccepted: true }
+  })
 }
 
 export async function acceptInvitationForUser(input: {
@@ -882,12 +918,34 @@ export async function acceptInvitationForUser(input: {
     throw new OrganizationEmailDomainRestrictionError(input.email, allowedEmailDomains ?? [])
   }
 
-  const member = await acceptInvitation(invitation, input.userId)
-  await runPostOrganizationMemberChangeHooks({ organizationId: invitation.organizationId, memberId: member.id, change: "added" })
+  const accepted = await acceptInvitation(invitation, input.userId)
+  if (!accepted) {
+    const currentInvitation = await getInvitationById(input.invitationId)
+    if (currentInvitation && getInvitationStatus(currentInvitation) === "accepted") {
+      const removedMember = await findSoftRemovedMemberForUser({
+        organizationId: currentInvitation.organizationId,
+        userId: input.userId,
+      })
+      if (removedMember) {
+        return {
+          status: "membership_removed",
+          invitation: currentInvitation,
+        }
+      }
+    }
+    return null
+  }
+  if (accepted.newlyAccepted) {
+    await runPostOrganizationMemberChangeHooks({
+      organizationId: accepted.invitation.organizationId,
+      memberId: accepted.member.id,
+      change: "added",
+    })
+  }
   return {
     status: "accepted",
-    invitation,
-    member,
+    invitation: accepted.invitation,
+    member: accepted.member,
   }
 }
 
