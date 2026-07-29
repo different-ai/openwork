@@ -94,6 +94,13 @@ declare global {
           granted: boolean;
         }>;
       };
+      station?: {
+        publishState?: (state: unknown) => void;
+        show?: () => Promise<{ ok: boolean }>;
+        hide?: () => Promise<{ ok: boolean }>;
+        setExpanded?: (expanded: boolean) => Promise<{ ok: boolean; expanded: boolean }>;
+        onCommand?: (callback: (command: unknown) => void) => () => void;
+      };
       migration?: {
         readSnapshot?: () => Promise<unknown>;
         ackSnapshot?: () => Promise<{ ok: boolean; moved: boolean }>;
@@ -178,6 +185,12 @@ declare global {
         platform?: "darwin" | "linux" | "windows";
         version?: string;
       };
+    };
+    __OPENWORK_STATION__?: {
+      getState?: () => Promise<unknown>;
+      sendCommand?: (command: unknown) => void;
+      setExpanded?: (expanded: boolean) => Promise<{ ok: boolean; expanded: boolean }>;
+      onState?: (callback: (state: unknown) => void) => () => void;
     };
   }
 }

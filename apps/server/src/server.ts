@@ -108,7 +108,9 @@ const SERVER_VERSION = pkg.version;
 const OPENCODE_VERSION = constants.opencodeVersion.trim().replace(/^v/, "");
 
 const OPENWORK_VOICE_REALTIME_MODEL = "gpt-realtime-2";
+const OPENWORK_STATION_REALTIME_MODEL = "gpt-realtime-2.1";
 const OPENWORK_VOICE_TRANSCRIPTION_MODEL = "gpt-4o-transcribe";
+const OPENWORK_STATION_TRANSCRIPTION_MODEL = "gpt-live-transcribe";
 let desktopCloudSyncQueue: Promise<void> = Promise.resolve();
 const agentDiagnosticsLastRunByServer = new WeakMap<ServerConfig, Map<string, number>>();
 const agentDiagnosticsInFlightByServer = new WeakMap<ServerConfig, Set<string>>();
@@ -533,6 +535,7 @@ function readOpenAiClientSecret(payload: unknown): { clientSecret: string; expir
 }
 
 async function createOpenAiRealtimeVoiceSession(env: EnvService, input: unknown) {
+  const stationMode = readStringField(input, "mode") === "station";
   const managedVoice = await resolveOpenWorkModelsVoiceConfig(env);
   if (managedVoice) {
     try {
@@ -559,7 +562,9 @@ async function createOpenAiRealtimeVoiceSession(env: EnvService, input: unknown)
     throw new ApiError(
       400,
       "openai_api_key_missing",
-      "OpenAI API key missing. Save OPENAI_API_KEY in OpenWork Environment Variables or configure the Voice Mode extension.",
+      stationMode
+        ? "OpenWork Station needs an OpenAI project key. Add OPENAI_API_KEY to the ignored .env.station.local file and restart pnpm dev, or configure managed OpenWork Models."
+        : "OpenAI API key missing. Save OPENAI_API_KEY in OpenWork Environment Variables or configure the Voice Mode extension.",
     );
   }
 
@@ -567,6 +572,7 @@ async function createOpenAiRealtimeVoiceSession(env: EnvService, input: unknown)
 }
 
 async function createManagedVoiceSession(config: { baseUrl: string; apiKey: string }, input: unknown) {
+  const requestedMode = readStringField(input, "mode") === "station" ? "station" : "voice";
   const response = await externalFetch(`${config.baseUrl}/voice/realtime/session`, {
     method: "POST",
     headers: {
@@ -597,28 +603,66 @@ async function createManagedVoiceSession(config: { baseUrl: string; apiKey: stri
   ) {
     throw new ApiError(502, "openwork_models_voice_invalid_response", "OpenWork Models did not return a usable Realtime session payload");
   }
+  if (requestedMode === "station" && payload.mode !== "station") {
+    throw new ApiError(503, "openwork_models_station_unavailable", "OpenWork Models does not yet support Station Realtime sessions");
+  }
   return {
     ok: true,
     clientSecret: payload.clientSecret,
     expiresAt: typeof payload.expiresAt === "number" ? payload.expiresAt : null,
     model: payload.model,
-    transcriptionModel: typeof payload.transcriptionModel === "string" ? payload.transcriptionModel : OPENWORK_VOICE_TRANSCRIPTION_MODEL,
+    transcriptionModel: typeof payload.transcriptionModel === "string"
+      ? payload.transcriptionModel
+      : requestedMode === "station"
+        ? OPENWORK_STATION_TRANSCRIPTION_MODEL
+        : OPENWORK_VOICE_TRANSCRIPTION_MODEL,
     tools: payload.tools,
+    mode: payload.mode === "station" ? "station" : "voice",
     ...(typeof payload.source === "string" ? { source: payload.source } : {}),
   };
 }
 
 async function createDirectOpenAiVoiceSession(apiKey: string, input: unknown) {
-  const model = readStringField(input, "model") || OPENWORK_VOICE_REALTIME_MODEL;
+  const requestedMode = readStringField(input, "mode");
+  const mode = requestedMode === "station" ? "station" : "voice";
+  const model = readStringField(input, "model") || (
+    mode === "station" ? OPENWORK_STATION_REALTIME_MODEL : OPENWORK_VOICE_REALTIME_MODEL
+  );
   const sessionContext = readStringField(input, "sessionContext").slice(0, 6_000);
-  const response = await externalFetch("https://api.openai.com/v1/realtime/client_secrets", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      session: {
+  const session = mode === "station"
+      ? {
+          type: "realtime",
+          model,
+          output_modalities: ["text"],
+          audio: {
+            input: {
+              transcription: {
+                model: OPENWORK_STATION_TRANSCRIPTION_MODEL,
+                language: "en",
+                prompt: "OpenWork Station ambient work conversation. Preserve names, companies, dates, times, and commitments accurately.",
+              },
+              noise_reduction: { type: "near_field" },
+              turn_detection: {
+                type: "server_vad",
+                threshold: 0.5,
+                silence_duration_ms: 550,
+                prefix_padding_ms: 300,
+                create_response: true,
+                interrupt_response: false,
+              },
+            },
+          },
+          reasoning: { effort: "low" },
+          instructions: [
+            "You are OpenWork Station, a silent contextual helper running beside a live work conversation.",
+            "Listen without speaking. After a meaningful work-related turn, use the available contextual research tool when prior context, a commitment, a person, a date, or a useful next step may matter.",
+            "Ignore filler and casual speech. Never send messages, create events, change records, or take any external action.",
+            sessionContext ? `Current OpenWork context:\n${sessionContext}` : "",
+          ].filter(Boolean).join("\n\n"),
+          tool_choice: "auto",
+          tools: [],
+        }
+    : {
         type: "realtime",
         model,
         output_modalities: ["audio"],
@@ -638,7 +682,16 @@ async function createDirectOpenAiVoiceSession(apiKey: string, input: unknown) {
         instructions: openworkVoiceRealtimeInstructions(sessionContext),
         tool_choice: "auto",
         tools: OPENWORK_VOICE_REALTIME_TOOLS,
-      },
+      };
+  const response = await externalFetch("https://api.openai.com/v1/realtime/client_secrets", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+      "OpenAI-Safety-Identifier": mode === "voice" ? "openwork-voice-desktop" : "openwork-station-desktop",
+    },
+    body: JSON.stringify({
+      session,
     }),
   });
 
@@ -666,8 +719,11 @@ async function createDirectOpenAiVoiceSession(apiKey: string, input: unknown) {
     clientSecret,
     expiresAt,
     model,
-    transcriptionModel: OPENWORK_VOICE_TRANSCRIPTION_MODEL,
-    tools: OPENWORK_VOICE_REALTIME_TOOLS.map((tool) => tool.name),
+    transcriptionModel: mode === "station"
+      ? OPENWORK_STATION_TRANSCRIPTION_MODEL
+      : OPENWORK_VOICE_TRANSCRIPTION_MODEL,
+    tools: mode === "voice" ? OPENWORK_VOICE_REALTIME_TOOLS.map((tool) => tool.name) : [],
+    mode,
   };
 }
 

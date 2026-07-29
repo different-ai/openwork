@@ -81,6 +81,25 @@ contextBridge.exposeInMainWorld("__OPENWORK_ELECTRON__", {
       return ipcRenderer.invoke("openwork:system:askMicrophoneAccess");
     },
   },
+  station: {
+    publishState(state) {
+      ipcRenderer.send("openwork:station:publish-state", state);
+    },
+    show() {
+      return ipcRenderer.invoke("openwork:station:show");
+    },
+    hide() {
+      return ipcRenderer.invoke("openwork:station:hide");
+    },
+    setExpanded(expanded) {
+      return ipcRenderer.invoke("openwork:station:set-expanded", expanded === true);
+    },
+    onCommand(callback) {
+      const handler = (_event, command) => callback(command);
+      ipcRenderer.on("openwork:station:command", handler);
+      return () => ipcRenderer.removeListener("openwork:station:command", handler);
+    },
+  },
   migration: {
     readSnapshot() {
       return ipcRenderer.invoke("openwork:migration:read");

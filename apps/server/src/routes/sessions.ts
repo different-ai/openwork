@@ -11,6 +11,14 @@ import {
   type SessionGroupState,
 } from "../session-groups.js";
 import type { ServerConfig, TokenScope, WorkspaceInfo } from "../types.js";
+import {
+  buildStationAnalysisPrompt,
+  buildStationSystemPrompt,
+  createFallbackStationSuggestions,
+  normalizeStationSuggestions,
+  selectStationModel,
+  STATION_SUGGESTION_SCHEMA,
+} from "../station.js";
 import { addRoute, type RequestContext, type Route } from "./registry.js";
 
 type JsonResponse = (data: unknown, status?: number) => Response;
@@ -209,6 +217,97 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     return value.trim();
   }
 
+  async function analyzeStationTranscript(
+    workspace: WorkspaceInfo,
+    input: { transcript: string; sessionContext?: string },
+  ) {
+    const opencode = createWorkspaceOpencodeClient(config, workspace);
+    const stationModel = await opencode.provider.list()
+      .then((result) => selectStationModel(unwrapOpencodeResult(result, "/provider")))
+      .catch(() => undefined);
+    const session = unwrapOpencodeResult(
+      await opencode.session.create({
+        title: "OpenWork Station ambient analysis",
+        metadata: { openworkStation: true, transient: true },
+        permission: [
+          { permission: "*", pattern: "*", action: "deny" },
+          { permission: "openwork-cloud_search_capabilities", pattern: "*", action: "allow" },
+          { permission: "openwork-cloud_execute_capability", pattern: "*", action: "allow" },
+        ],
+      }),
+      "/session",
+    );
+    try {
+      let response;
+      try {
+        response = unwrapOpencodeResult(
+          await opencode.session.prompt({
+            sessionID: session.id,
+            ...(stationModel ? { model: stationModel } : {}),
+            variant: "low",
+            system: buildStationSystemPrompt(),
+            format: {
+              type: "json_schema",
+              schema: STATION_SUGGESTION_SCHEMA,
+              // Ambient help must stay responsive. One honest local fallback is
+              // better than holding the edge UI through multiple model retries.
+              retryCount: 0,
+            },
+            tools: {
+              bash: false,
+              edit: false,
+              write: false,
+              patch: false,
+              apply_patch: false,
+              task: false,
+              openwork_execute: false,
+            },
+            parts: [{
+              type: "text",
+              text: buildStationAnalysisPrompt(input.transcript, input.sessionContext),
+            }],
+          }, {
+            signal: AbortSignal.timeout(17_000),
+          }),
+          `/session/${encodeURIComponent(session.id)}/message`,
+        );
+      } catch (error) {
+        console.warn("[station] connected analysis fell back to local signals", {
+          reason: error instanceof Error ? error.name : "unknown_error",
+        });
+        return {
+          suggestions: createFallbackStationSuggestions(input.transcript),
+          source: "local-signal",
+        };
+      }
+      const structured = response.info.structured;
+      const text = response.parts
+        .flatMap((part) => part.type === "text" && typeof part.text === "string" ? [part.text] : [])
+        .join("\n")
+        .trim();
+      let parsed: unknown = structured;
+      if (parsed === undefined && text) {
+        try {
+          parsed = JSON.parse(text);
+        } catch {
+          parsed = null;
+        }
+      }
+      const suggestions = normalizeStationSuggestions(parsed);
+      const resolvedSuggestions = suggestions.length
+        ? suggestions
+        : createFallbackStationSuggestions(input.transcript);
+      return {
+        suggestions: resolvedSuggestions,
+        source: suggestions.some((suggestion) => suggestion.sources.length > 0)
+          ? "openwork-connect"
+          : "local-signal",
+      };
+    } finally {
+      await opencode.session.delete({ sessionID: session.id }).catch(() => undefined);
+    }
+  }
+
   addRoute(routes, "POST", "/workspace/:id/sessions", "client", async (ctx) => {
     ensureWritable(config);
     requireClientScope(ctx, "collaborator");
@@ -224,6 +323,34 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     }
     const result = await createWorkspaceSession(workspace, { title, ...(prompt ? { prompt } : {}) });
     return jsonResponse(result, 201);
+  });
+
+  addRoute(routes, "POST", "/workspace/:id/station/suggestions", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const body = await readJsonBody(ctx.request);
+    const transcript = requireStringField(body, "transcript");
+    if (transcript.length > 20_000) {
+      throw new ApiError(400, "invalid_payload", "transcript must be 20000 characters or fewer");
+    }
+    const sessionContext = optionalStringField(body, "sessionContext");
+    if (sessionContext && sessionContext.length > 6_000) {
+      throw new ApiError(400, "invalid_payload", "sessionContext must be 6000 characters or fewer");
+    }
+    try {
+      const result = await analyzeStationTranscript(workspace, { transcript, sessionContext });
+      return jsonResponse(result);
+    } catch (error) {
+      console.warn("[station] passive analysis fell back to local signals", {
+        workspaceId: workspace.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return jsonResponse({
+        suggestions: createFallbackStationSuggestions(transcript),
+        source: "local-signal",
+      });
+    }
   });
 
   addRoute(routes, "GET", "/workspace/:id/sessions", "client", async (ctx) => {

@@ -120,6 +120,24 @@ export type OpenworkSessionSnapshot = {
     | { type: "retry"; attempt: number; message: string; next: number };
 };
 
+export type OpenworkStationSuggestion = {
+  id: string;
+  kind: "memory" | "calendar" | "follow_up" | "context";
+  title: string;
+  summary: string;
+  reason: string;
+  relevance: number;
+  color: string;
+  sources: Array<{ label: string; url: string; provider: string }>;
+  action: {
+    kind: "open_source" | "review_draft" | "none";
+    label: string;
+    draft?: string;
+    url?: string;
+  };
+  createdAt: number;
+};
+
 export type OpenworkPluginItem = {
   spec: string;
   source: "config" | "dir.project" | "dir.global";
@@ -1307,6 +1325,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
     deleteWorkspace: 10_000,
     deleteSession: 12_000,
     sessionRead: 12_000,
+    stationAnalysis: 60_000,
     status: 6_000,
     diagnostics: AGENT_CONTEXT_DIAGNOSTICS_REQUEST_TIMEOUT_MS,
     config: 10_000,
@@ -1475,6 +1494,24 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         { token, hostToken, timeoutMs: timeouts.sessionRead },
       );
     },
+    getStationSuggestions: (
+      workspaceId: string,
+      payload: { transcript: string; sessionContext?: string },
+    ) =>
+      requestJson<{
+        suggestions: OpenworkStationSuggestion[];
+        source: "openwork-connect" | "local-signal";
+      }>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/station/suggestions`,
+        {
+          token,
+          hostToken,
+          method: "POST",
+          body: payload,
+          timeoutMs: timeouts.stationAnalysis,
+        },
+      ),
     getSessionSnapshot: (workspaceId: string, sessionId: string, options?: { limit?: number }) => {
       const query = new URLSearchParams();
       if (typeof options?.limit === "number") query.set("limit", String(options.limit));
@@ -2121,12 +2158,30 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         model: string;
         transcriptionModel: string;
         tools: string[];
+        mode?: "voice" | "station";
         source?: string;
       }>(baseUrl, "/voice/realtime/session", {
         token,
         hostToken,
         method: "POST",
         body: payload ?? {},
+        timeoutMs: timeouts.config,
+      }),
+    createStationRealtimeSession: (payload?: { model?: string; sessionContext?: string }) =>
+      requestJson<{
+        ok: true;
+        clientSecret: string;
+        expiresAt: number | null;
+        model: string;
+        transcriptionModel: string;
+        tools: [];
+        mode: "station";
+        source?: string;
+      }>(baseUrl, "/voice/realtime/session", {
+        token,
+        hostToken,
+        method: "POST",
+        body: { ...(payload ?? {}), mode: "station" },
         timeoutMs: timeouts.config,
       }),
   };

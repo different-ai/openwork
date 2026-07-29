@@ -609,6 +609,9 @@ export function SessionPage(props: SessionPageProps) {
   const openVoiceRailPane = useCallback(() => {
     toggleCurrentSidePanel("voice");
   }, [toggleCurrentSidePanel]);
+  const openStation = useCallback(() => {
+    void window.__OPENWORK_ELECTRON__?.station?.show?.();
+  }, []);
   const removeAccessibleTarget = useCallback((target: OpenTarget) => {
     const nextHiddenIds = new Set(hiddenAccessibleTargetIds);
     nextHiddenIds.add(target.id);
@@ -1431,21 +1434,33 @@ export function SessionPage(props: SessionPageProps) {
           </ResizablePanelGroup>
           <aside className="flex w-9 shrink-0 flex-col items-center gap-1 px-0.5 py-2 text-muted-foreground mac:titlebar-no-drag">
             {isElectronRuntime() ? (
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                className={cn(
-                  "rounded-xl transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-muted-foreground",
-                  panelRailActive && hasBrowserTabs && "bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary",
-                )}
-                onClick={openBrowserRailPane}
-                title={hasBrowserTabs ? "Browser" : "Browser opens when a page is available"}
-                aria-label={hasBrowserTabs ? "Browser" : "Browser opens when a page is available"}
-                aria-pressed={panelRailActive && hasBrowserTabs}
-                disabled={!hasBrowserTabs}
-              >
-                <Globe size={15} />
-              </Button>
+              <>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  className="rounded-xl text-violet-10 transition-colors hover:bg-violet-3 hover:text-violet-11"
+                  onClick={openStation}
+                  title="OpenWork Station (Experimental) · ⌘⇧Space"
+                  aria-label="Open OpenWork Station experimental passive AI"
+                >
+                  <Zap size={15} />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  className={cn(
+                    "rounded-xl transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-muted-foreground",
+                    panelRailActive && hasBrowserTabs && "bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary",
+                  )}
+                  onClick={openBrowserRailPane}
+                  title={hasBrowserTabs ? "Browser" : "Browser opens when a page is available"}
+                  aria-label={hasBrowserTabs ? "Browser" : "Browser opens when a page is available"}
+                  aria-pressed={panelRailActive && hasBrowserTabs}
+                  disabled={!hasBrowserTabs}
+                >
+                  <Globe size={15} />
+                </Button>
+              </>
             ) : null}
             {voiceExtensionEnabled ? (
               <Button

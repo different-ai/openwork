@@ -14,7 +14,9 @@ import { ensureUsableBuckets } from "./limits.js"
 import { db } from "./db.js"
 
 const OPENWORK_VOICE_REALTIME_MODEL = "gpt-realtime-2"
+const OPENWORK_STATION_REALTIME_MODEL = "gpt-realtime-2.1"
 const OPENWORK_VOICE_TRANSCRIPTION_MODEL = "gpt-4o-transcribe"
+const OPENWORK_STATION_TRANSCRIPTION_MODEL = "gpt-live-transcribe"
 
 const OPENWORK_VOICE_REALTIME_TOOLS = [
   {
@@ -120,15 +122,43 @@ async function createOpenAiRealtimeClientSecret(input: unknown, openworkRequestI
     return Response.json({ error: { message: "Managed voice is not configured.", type: "invalid_request_error", code: "openai_realtime_key_missing" } }, { status: 503 })
   }
 
-  const model = readStringField(input, "model") || OPENWORK_VOICE_REALTIME_MODEL
-  const response = await fetch("https://api.openai.com/v1/realtime/client_secrets", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${env.openAiRealtimeApiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      session: {
+  const mode = readStringField(input, "mode") === "station" ? "station" : "voice"
+  const model = readStringField(input, "model") || (
+    mode === "station" ? OPENWORK_STATION_REALTIME_MODEL : OPENWORK_VOICE_REALTIME_MODEL
+  )
+  const session = mode === "station"
+    ? {
+        type: "realtime",
+        model,
+        output_modalities: ["text"],
+        audio: {
+          input: {
+            transcription: {
+              model: OPENWORK_STATION_TRANSCRIPTION_MODEL,
+              language: "en",
+              prompt: "OpenWork Station ambient work conversation. Preserve names, companies, dates, times, and commitments accurately.",
+            },
+            noise_reduction: { type: "near_field" },
+            turn_detection: {
+              type: "server_vad",
+              threshold: 0.5,
+              silence_duration_ms: 550,
+              prefix_padding_ms: 300,
+              create_response: true,
+              interrupt_response: false,
+            },
+          },
+        },
+        reasoning: { effort: "low" },
+        instructions: [
+          "You are OpenWork Station, a silent contextual helper running beside a live work conversation.",
+          "Listen without speaking. After a meaningful work-related turn, use the client-provided contextual research tool when prior context, a commitment, a person, a date, or a useful next step may matter.",
+          "Ignore filler and casual speech. Never send messages, create events, change records, or take any external action.",
+        ].join("\n\n"),
+        tool_choice: "auto",
+        tools: [],
+      }
+    : {
         type: "realtime",
         model,
         output_modalities: ["audio"],
@@ -148,8 +178,15 @@ async function createOpenAiRealtimeClientSecret(input: unknown, openworkRequestI
         instructions: openworkVoiceRealtimeInstructions(),
         tool_choice: "auto",
         tools: OPENWORK_VOICE_REALTIME_TOOLS,
-      },
-    }),
+      }
+  const response = await fetch("https://api.openai.com/v1/realtime/client_secrets", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${env.openAiRealtimeApiKey}`,
+      "Content-Type": "application/json",
+      "OpenAI-Safety-Identifier": mode === "station" ? "openwork-station-desktop" : "openwork-voice-desktop",
+    },
+    body: JSON.stringify({ session }),
   })
 
   const text = await response.text()
@@ -176,8 +213,9 @@ async function createOpenAiRealtimeClientSecret(input: unknown, openworkRequestI
     clientSecret,
     expiresAt,
     model,
-    transcriptionModel: OPENWORK_VOICE_TRANSCRIPTION_MODEL,
-    tools: OPENWORK_VOICE_REALTIME_TOOLS.map((tool) => tool.name),
+    transcriptionModel: mode === "station" ? OPENWORK_STATION_TRANSCRIPTION_MODEL : OPENWORK_VOICE_TRANSCRIPTION_MODEL,
+    tools: mode === "station" ? [] : OPENWORK_VOICE_REALTIME_TOOLS.map((tool) => tool.name),
+    mode,
     source: "openwork-models",
     openworkRequestId,
   })

@@ -25,6 +25,7 @@
     "src/i18n/**/*",
     "src/lib/**/*",
     "src/overlay/**/*",
+    "src/station/**/*",
     "src/react-app/**/*",
     "src/app/lib/**/*",
     "src/app/cloud/**/*",

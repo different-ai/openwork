@@ -8,6 +8,20 @@ const desktopRoot = resolve(__dirname, "..");
 const repoRoot = resolve(desktopRoot, "../..");
 const electronSidecarDir = resolve(desktopRoot, "resources", "sidecars");
 const electronHelperDir = resolve(desktopRoot, "resources", "helpers");
+
+// Development-only secret slot for the OpenWork Station Realtime MVP.
+// `process.loadEnvFile` preserves variables already supplied by the shell, and
+// `.env.station.local` is ignored by git. Never expose this standard key to a
+// renderer; the server exchanges it for a short-lived Realtime client secret.
+try {
+  process.loadEnvFile(resolve(repoRoot, ".env.station.local"));
+  if (process.env.OPENAI_API_KEY?.trim()) {
+    console.log("[electron-dev] OpenWork Station Realtime key loaded from local development environment.");
+  }
+} catch {
+  // The Station key is optional for ordinary desktop development.
+}
+
 const defaultDevDataDir = resolve(
   process.env.HOME ?? process.env.USERPROFILE ?? repoRoot,
   ".openwork",

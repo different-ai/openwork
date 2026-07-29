@@ -33,6 +33,7 @@ import { createApplicationMenu } from "./app-menu.mjs";
 import { applyBrandAppName } from "./brand-app-name.mjs";
 import { createBrowserPanel } from "./browser-panel.mjs";
 import { createWorkspaceStore } from "./workspace-store.mjs";
+import { createStationWindowManager } from "./station-window.mjs";
 import {
   buildNukeManifest,
   executeNukeFreshStart,
@@ -82,11 +83,13 @@ const {
   app,
   BrowserWindow,
   dialog,
+  globalShortcut,
   ipcMain,
   nativeImage,
   nativeTheme,
   net: electronNet,
   Notification: ElectronNotification,
+  screen,
   session,
   shell,
   systemPreferences,
@@ -966,6 +969,30 @@ const IDLE_ROUTER_INFO = Object.freeze({
 
 let mainWindow = null;
 const pendingDeepLinks = [];
+
+const stationWindowManager = createStationWindowManager({
+  BrowserWindow,
+  globalShortcut,
+  ipcMain,
+  platform: process.platform,
+  preloadPath: path.join(__dirname, "station-preload.mjs"),
+  screen,
+  getMainWindow: () => mainWindow,
+  loadContent: async (window) => {
+    const startUrl = process.env.OPENWORK_ELECTRON_START_URL?.trim() || process.env.ELECTRON_START_URL?.trim();
+    if (startUrl) {
+      const stationUrl = new URL(startUrl);
+      stationUrl.pathname = "/station.html";
+      stationUrl.search = "";
+      stationUrl.hash = "";
+      await window.loadURL(stationUrl.toString());
+      return;
+    }
+    const packagedStationPath = path.join(process.resourcesPath, "app-dist", "station.html");
+    const devStationPath = path.resolve(__dirname, "../../app/dist/station.html");
+    await window.loadFile(app.isPackaged ? packagedStationPath : devStationPath);
+  },
+});
 
 const browserPanel = createBrowserPanel({
   remoteDebugPort,
@@ -2323,6 +2350,8 @@ async function createMainWindow() {
 
   mainWindow.on("closed", () => {
     browserPanel.destroy();
+    if (process.platform === "darwin") stationWindowManager.hide();
+    else stationWindowManager.dispose();
     mainWindow = null;
   });
 
@@ -2496,11 +2525,14 @@ or use: pnpm dev:worktree`);
     event.preventDefault();
     if (runtimeDisposeInProgress) return;
     showShutdownScreen();
+    stationWindowManager.dispose();
     void Promise.all([disposeRuntimeBeforeQuit(), uiControlServer.stop()]).finally(() => app.quit());
   });
 
   app.on("second-instance", async (_event, argv) => {
     const win = await createMainWindow();
+    stationWindowManager.initialize();
+    stationWindowManager.flushPendingCommands();
     if (win.isMinimized()) {
       win.restore();
     }
@@ -2582,6 +2614,7 @@ or use: pnpm dev:worktree`);
     }
     win.webContents.on("did-finish-load", () => {
       flushPendingDeepLinks();
+      stationWindowManager.flushPendingCommands();
     });
     setTimeout(() => {
       void linuxDesktopIntegration.maybePrompt(win).catch((error) => {
@@ -2596,7 +2629,7 @@ or use: pnpm dev:worktree`);
   });
 
   app.on("activate", async () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
+    if (!mainWindow || mainWindow.isDestroyed()) {
       await createMainWindow();
       return;
     }
