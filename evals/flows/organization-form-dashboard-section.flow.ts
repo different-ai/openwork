@@ -8,6 +8,7 @@ if (!vo) throw new Error(`Missing approved voice-over script for ${FLOW_ID}.`);
 
 const EMAIL = process.env.OPENWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
 const PASSWORD = process.env.OPENWORK_EVAL_DEMO_PASSWORD?.trim() || "OpenWorkDemo123!";
+const ORGANIZATION_NAME = "Acme Robotics";
 
 async function setViewport(ctx: FlowContext, width: number): Promise<void> {
   ctx.assert(Boolean(ctx.client), "A browser CDP client is required.");
@@ -47,7 +48,7 @@ export default defineFlow({
           voiceover: vo[0],
           action: async () => {
             await setViewport(ctx, 1440);
-            await signInViaBrowser(ctx, EMAIL, PASSWORD);
+            await signInViaBrowser(ctx, EMAIL, PASSWORD, ORGANIZATION_NAME);
             await navigate(ctx, "/dashboard/org-settings");
             await ctx.expectText("Organization", { timeoutMs: 30_000 });
             await ctx.waitFor(ORGANIZATION_SECTION, { timeoutMs: 15_000, label: "dedicated Organization section" });
