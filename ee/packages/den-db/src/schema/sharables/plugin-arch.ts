@@ -22,6 +22,7 @@ export const pluginStatusValues = ["active", "inactive", "deleted", "archived"] 
 export const marketplaceStatusValues = ["active", "inactive", "deleted", "archived"] as const
 export const membershipSourceValues = ["manual", "connector", "api", "system"] as const
 export const accessRoleValues = ["viewer", "editor", "manager"] as const
+export const accessGrantSourceValues = ["manual", "policy"] as const
 export const connectorTypeValues = ["github"] as const
 export const connectorAccountStatusValues = ["active", "inactive", "disconnected", "error"] as const
 export const connectorInstanceStatusValues = ["active", "disabled", "archived", "error"] as const
@@ -166,6 +167,7 @@ export const MarketplaceAccessGrantTable = mysqlTable(
     teamId: denTypeIdColumn("team", "team_id"),
     orgWide: boolean("org_wide").notNull().default(false),
     role: mysqlEnum("role", accessRoleValues).notNull(),
+    source: mysqlEnum("source", accessGrantSourceValues).notNull().default("manual"),
     createdByOrgMembershipId: denTypeIdColumn("member", "created_by_org_membership_id").notNull(),
     createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
     removedAt: timestamp("removed_at", { fsp: 3 }),
@@ -211,6 +213,7 @@ export const ConfigObjectAccessGrantTable = mysqlTable(
     teamId: denTypeIdColumn("team", "team_id"),
     orgWide: boolean("org_wide").notNull().default(false),
     role: mysqlEnum("role", accessRoleValues).notNull(),
+    source: mysqlEnum("source", accessGrantSourceValues).notNull().default("manual"),
     createdByOrgMembershipId: denTypeIdColumn("member", "created_by_org_membership_id").notNull(),
     createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
     removedAt: timestamp("removed_at", { fsp: 3 }),
@@ -235,6 +238,7 @@ export const PluginAccessGrantTable = mysqlTable(
     teamId: denTypeIdColumn("team", "team_id"),
     orgWide: boolean("org_wide").notNull().default(false),
     role: mysqlEnum("role", accessRoleValues).notNull(),
+    source: mysqlEnum("source", accessGrantSourceValues).notNull().default("manual"),
     createdByOrgMembershipId: denTypeIdColumn("member", "created_by_org_membership_id").notNull(),
     createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
     removedAt: timestamp("removed_at", { fsp: 3 }),

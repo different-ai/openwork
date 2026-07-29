@@ -249,6 +249,7 @@ export function registerBootstrapRoutes<T extends { Variables: AuthContextVariab
             teamId: null,
             orgWide: false,
             role: "manager",
+            source: "manual",
             createdByOrgMembershipId: setupMemberId,
           },
           {
@@ -259,6 +260,7 @@ export function registerBootstrapRoutes<T extends { Variables: AuthContextVariab
             teamId: null,
             orgWide: true,
             role: "viewer",
+            source: "manual",
             createdByOrgMembershipId: setupMemberId,
           },
         ])
@@ -303,6 +305,7 @@ export function registerBootstrapRoutes<T extends { Variables: AuthContextVariab
             teamId: null,
             orgWide: false,
             role: "manager",
+            source: "manual",
             createdByOrgMembershipId: setupMemberId,
           },
           {
@@ -313,6 +316,7 @@ export function registerBootstrapRoutes<T extends { Variables: AuthContextVariab
             teamId: null,
             orgWide: true,
             role: "viewer",
+            source: "manual",
             createdByOrgMembershipId: setupMemberId,
           },
         ])
@@ -346,6 +350,7 @@ export function registerBootstrapRoutes<T extends { Variables: AuthContextVariab
           teamId: null,
           orgWide: true,
           role: "viewer",
+          source: "manual",
           createdByOrgMembershipId: setupMemberId,
         })
 

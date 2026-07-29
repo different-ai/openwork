@@ -23,6 +23,7 @@ export const idTypesMapNameToPrefix = {
   invitation: "inv",
   team: "tem",
   teamMember: "tmb",
+  teamAccessPolicy: "tap",
   configObject: "cob",
   configObjectVersion: "cov",
   configObjectAccessGrant: "coa",

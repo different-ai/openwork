@@ -16,6 +16,19 @@ import {
   paramValidator,
 } from "../../middleware/index.js"
 import { denTypeIdSchema, emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
+import {
+  accessRoleSchema,
+  teamAccessPolicyCreateSchema,
+  teamAccessPolicyListResponseSchema,
+  teamAccessPolicyMutationResponseSchema,
+} from "./plugin-system/schemas.js"
+import {
+  applyPoliciesForMember,
+  createTeamAccessPolicy,
+  deleteTeamAccessPolicy,
+  listTeamAccessPolicies,
+  revokePoliciesForMember,
+} from "./plugin-system/store.js"
 import type { OrgRouteVariables } from "./shared.js"
 import {
   ensureTeamManager,
@@ -249,6 +262,12 @@ export function registerOrgTeamRoutes<T extends { Variables: OrgRouteVariables }
       }
 
       const updatedAt = new Date()
+
+      // Capture old member list for diff
+      const oldMembers = memberIds
+        ? await db.select().from(TeamMemberTable).where(eq(TeamMemberTable.teamId, team.id)).then((rows) => rows.map((r) => r.orgMembershipId))
+        : null
+
       await db.transaction(async (tx) => {
         await tx.update(TeamTable).set({ name: nextName, updatedAt }).where(eq(TeamTable.id, team.id))
 
@@ -266,6 +285,35 @@ export function registerOrgTeamRoutes<T extends { Variables: OrgRouteVariables }
           }
         }
       })
+
+      // Apply/revoke policies after transaction
+      if (memberIds && oldMembers) {
+        const newMemberSet = new Set(memberIds)
+        const oldMemberSet = new Set(oldMembers)
+
+        // Apply policies to newly added members
+        for (const memberId of memberIds) {
+          if (!oldMemberSet.has(memberId)) {
+            await applyPoliciesForMember({
+              organizationId: payload.organization.id,
+              teamId: team.id,
+              memberId,
+              actorMemberId: payload.currentMember.id,
+            })
+          }
+        }
+
+        // Revoke policies from removed members
+        for (const memberId of oldMembers) {
+          if (!newMemberSet.has(memberId)) {
+            await revokePoliciesForMember({
+              organizationId: payload.organization.id,
+              teamId: team.id,
+              memberId,
+            })
+          }
+        }
+      }
 
       return c.json({
         team: {
@@ -325,12 +373,175 @@ export function registerOrgTeamRoutes<T extends { Variables: OrgRouteVariables }
         return c.json({ error: "scim_managed_team", message: "Disable SCIM team mapping before deleting this team." }, 409)
       }
 
+      // Revoke policy-derived grants from all team members before deletion
+      const members = await db.select().from(TeamMemberTable).where(eq(TeamMemberTable.teamId, team.id))
+      for (const member of members) {
+        await revokePoliciesForMember({
+          organizationId: payload.organization.id,
+          teamId: team.id,
+          memberId: member.orgMembershipId,
+        })
+      }
+
       await db.transaction(async (tx) => {
         await tx.delete(TeamMemberTable).where(eq(TeamMemberTable.teamId, team.id))
         await tx.delete(TeamTable).where(eq(TeamTable.id, team.id))
       })
 
       return c.body(null, 204)
+    },
+  )
+
+  app.get(
+    "/v1/teams/:teamId/policies",
+    describeRoute({
+      tags: ["Teams"],
+      summary: "List team access policies",
+      description: "Lists all active access policies for a team, showing which plugins each team member automatically gets access to.",
+      responses: {
+        200: jsonResponse("Team access policies.", teamAccessPolicyListResponseSchema),
+        401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
+        403: jsonResponse("Only workspace owners and admins can list team policies.", forbiddenSchema),
+        404: jsonResponse("The team could not be found.", notFoundSchema),
+      },
+    }),
+    orgRoleRoute(["admin"]),
+    paramValidator(orgTeamParamsSchema),
+    async (c) => {
+      const permission = ensureTeamManager(c)
+      if (!permission.ok) {
+        return c.json(permission.response, orgAccessFailureStatus(permission.response))
+      }
+
+      const payload = c.get("organizationContext")
+      if (!payload) {
+        return c.json({ error: "organization_not_found" }, 404)
+      }
+      const params = c.req.valid("param")
+
+      try {
+        const result = await listTeamAccessPolicies({
+          context: {
+            memberTeams: [],
+            organizationContext: payload,
+            session: null,
+          },
+          teamId: params.teamId,
+        })
+        return c.json(result)
+      } catch (error) {
+        if (error instanceof Error && error.message === "team_not_found") {
+          return c.json({ error: "team_not_found" }, 404)
+        }
+        throw error
+      }
+    },
+  )
+
+  app.post(
+    "/v1/teams/:teamId/policies",
+    describeRoute({
+      tags: ["Teams"],
+      summary: "Create team access policy",
+      description: "Creates or updates an access policy for a team. When a policy is created, all existing team members automatically receive the specified plugin access. When a member later joins the team, they also receive access based on active policies.",
+      responses: {
+        201: jsonResponse("Team access policy created successfully.", teamAccessPolicyListResponseSchema),
+        400: jsonResponse("The request body was invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
+        403: jsonResponse("Only workspace owners and admins can manage team policies.", forbiddenSchema),
+        404: jsonResponse("The team or plugin could not be found.", notFoundSchema),
+      },
+    }),
+    orgRoleRoute(["admin"]),
+    paramValidator(orgTeamParamsSchema),
+    jsonValidator(teamAccessPolicyCreateSchema),
+    async (c) => {
+      const permission = ensureTeamManager(c)
+      if (!permission.ok) {
+        return c.json(permission.response, orgAccessFailureStatus(permission.response))
+      }
+
+      const payload = c.get("organizationContext")
+      if (!payload) {
+        return c.json({ error: "organization_not_found" }, 404)
+      }
+      const params = c.req.valid("param")
+      const input = c.req.valid("json")
+
+      try {
+        const result = await createTeamAccessPolicy({
+          context: {
+            memberTeams: [],
+            organizationContext: payload,
+            session: null,
+          },
+          teamId: params.teamId,
+          pluginId: input.pluginId,
+          role: input.role,
+        })
+        return c.json(result, 201)
+      } catch (error) {
+        if (error instanceof Error && error.message === "team_not_found") {
+          return c.json({ error: "team_not_found" }, 404)
+        }
+        if (error instanceof Error && error.message === "plugin_not_found") {
+          return c.json({ error: "plugin_not_found" }, 404)
+        }
+        throw error
+      }
+    },
+  )
+
+  app.delete(
+    "/v1/teams/:teamId/policies/:policyId",
+    describeRoute({
+      tags: ["Teams"],
+      summary: "Delete team access policy",
+      description: "Soft-deletes a team access policy and revokes all policy-derived grants for the associated plugin from team members.",
+      responses: {
+        200: jsonResponse("Team access policy deleted successfully.", teamAccessPolicyListResponseSchema),
+        401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
+        403: jsonResponse("Only workspace owners and admins can delete team policies.", forbiddenSchema),
+        404: jsonResponse("The team or policy could not be found.", notFoundSchema),
+      },
+    }),
+    orgRoleRoute(["admin"]),
+    paramValidator(z.object({
+      teamId: denTypeIdSchema("team"),
+      policyId: denTypeIdSchema("teamAccessPolicy"),
+    })),
+    async (c) => {
+      const permission = ensureTeamManager(c)
+      if (!permission.ok) {
+        return c.json(permission.response, orgAccessFailureStatus(permission.response))
+      }
+
+      const payload = c.get("organizationContext")
+      if (!payload) {
+        return c.json({ error: "organization_not_found" }, 404)
+      }
+      const params = c.req.valid("param")
+
+      try {
+        const result = await deleteTeamAccessPolicy({
+          context: {
+            memberTeams: [],
+            organizationContext: payload,
+            session: null,
+          },
+          teamId: params.teamId,
+          policyId: params.policyId,
+        })
+        return c.json(result)
+      } catch (error) {
+        if (error instanceof Error && error.message === "team_not_found") {
+          return c.json({ error: "team_not_found" }, 404)
+        }
+        if (error instanceof Error && error.message === "policy_not_found") {
+          return c.json({ error: "policy_not_found" }, 404)
+        }
+        throw error
+      }
     },
   )
 }
