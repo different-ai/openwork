@@ -265,15 +265,10 @@ async function ensureReadyState(ctx: FlowContext, label: string): Promise<void> 
 
 async function navigateAbsolute(ctx: FlowContext, url: string, label: string): Promise<void> {
   const safeUrl = new URL(url).toString();
-  const navigated = ctx.client
-    ? await ctx.client.send("Page.navigate", { url: safeUrl }).then(() => true).catch((error) => {
-        ctx.log(`CDP Page.navigate failed for ${label}; falling back to window.location: ${messageText(error)}`);
-        return false;
-      })
-    : false;
-  if (!navigated) {
-    await ctx.eval(`(() => { window.location.href = ${JSON.stringify(safeUrl)}; return true; })()`);
-  }
+  const client = ctx.client;
+  if (!client) throw new EvalError(`Cannot navigate to ${label}: no CDP client is attached to this surface.`);
+  // Structured CDP navigation only — never construct code from a URL.
+  await client.send("Page.navigate", { url: safeUrl });
   await ensureReadyState(ctx, `load ${label}`);
 }
 

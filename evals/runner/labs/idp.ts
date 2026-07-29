@@ -542,12 +542,25 @@ function sendJson(response: ServerResponse, status: number, body: unknown): void
   response.end(payload);
 }
 
-function sendHtml(response: ServerResponse, status: number, body: string): void {
+interface HtmlDocument {
+  title: string;
+  heading: string;
+  paragraphs: string[];
+}
+
+// Escaping happens here, at the single boundary that writes HTML, so no caller
+// can hand this server a pre-built markup string.
+function renderHtmlDocument(document: HtmlDocument): string {
+  const paragraphs = document.paragraphs.map((text) => `<p>${escapeHtml(text)}</p>`).join("");
+  return `<!doctype html><html><head><title>${escapeHtml(document.title)}</title></head><body><main style="font-family: sans-serif; max-width: 720px; margin: 48px auto;"><h1>${escapeHtml(document.heading)}</h1>${paragraphs}</main></body></html>`;
+}
+
+function sendHtml(response: ServerResponse, status: number, document: HtmlDocument): void {
   response.writeHead(status, {
     "content-type": "text/html; charset=utf-8",
     "cache-control": "no-store",
   });
-  response.end(body);
+  response.end(renderHtmlDocument(document));
 }
 
 function sendRedirect(response: ServerResponse, location: string): void {
@@ -665,8 +678,16 @@ function samlMetadata(config: NormalizedMockIdpConfig, certificate: string): str
 </EntityDescriptor>`;
 }
 
-function samlPostBindingPage(config: NormalizedMockIdpConfig): string {
-  return `<!doctype html><html><head><title>OpenWork Mock IdP SAML endpoint</title></head><body><main style="font-family: sans-serif; max-width: 720px; margin: 48px auto;"><p>OpenWork Mock IdP lab</p><h1>SAML POST binding endpoint</h1><p>This fixture exposes SAML metadata and a POST binding endpoint, but the OpenWork eval lab drives OIDC because this checkout implements OIDC and SAML SSO and OIDC keeps the signed-token path dependency-free.</p><p>Issuer: ${escapeHtml(config.issuer)}</p></main></body></html>`;
+function samlPostBindingPage(config: NormalizedMockIdpConfig): HtmlDocument {
+  return {
+    title: "OpenWork Mock IdP SAML endpoint",
+    heading: "SAML POST binding endpoint",
+    paragraphs: [
+      "OpenWork Mock IdP lab",
+      "This fixture exposes SAML metadata and a POST binding endpoint, but the OpenWork eval lab drives OIDC because this checkout implements OIDC and SAML SSO and OIDC keeps the signed-token path dependency-free.",
+      `Issuer: ${config.issuer}`,
+    ],
+  };
 }
 
 function authorize(state: MockIdpState, url: URL, response: ServerResponse): void {
@@ -682,7 +703,11 @@ function authorize(state: MockIdpState, url: URL, response: ServerResponse): voi
   const subject = subjectWithKnobs(state.config, requestedSubject);
   if (matchesBlockedUser(subject, state.config.knobs.blockedUser)) {
     const blocked = buildBlockedUserResponse(subject);
-    sendHtml(response, blocked.status, blocked.html);
+    sendHtml(response, blocked.status, {
+      title: "OpenWork Mock IdP policy block",
+      heading: "Sign-in blocked by identity provider policy",
+      paragraphs: ["OpenWork Mock IdP policy", blocked.message, "error=access_denied"],
+    });
     return;
   }
 
