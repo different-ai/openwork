@@ -25,7 +25,7 @@ async function navigate(ctx: FlowContext, path: string): Promise<void> {
   await ctx.eval(`(() => { location.assign(${JSON.stringify(url)}); return true; })()`);
   await ctx.waitFor(
     `location.pathname === ${JSON.stringify(path)} && document.readyState === 'complete'`,
-    { timeoutMs: 60_000, label: path },
+    { timeoutMs: 180_000, label: `${path} cold navigation` },
   );
 }
 
@@ -68,10 +68,13 @@ export default defineFlow({
             await setViewport(ctx, 1440);
             await signInViaBrowser(ctx, EMAIL, PASSWORD, ORGANIZATION_NAME);
             await navigate(ctx, "/dashboard/plugins");
-            await ctx.expectText("Plugins", { timeoutMs: 60_000 });
+            await ctx.waitFor(
+              "(document.body?.innerText ?? '').includes('Plugins')",
+              { timeoutMs: 180_000, label: "Plugins screen after cold route compilation" },
+            );
             await ctx.waitFor(
               "Boolean(document.querySelector('a[href*=\"/dashboard/plugins/\"]:not([href$=\"/new\"]):not([href$=\"/import\"])'))",
-              { timeoutMs: 30_000, label: "Den Plugin card" },
+              { timeoutMs: 120_000, label: "seeded Den Plugin card" },
             );
             await assertFlatCards(
               ctx,
@@ -87,8 +90,8 @@ export default defineFlow({
             ctx.assert(typeof marketplaceHref === "string" && marketplaceHref.length > 0, "Expected a seeded Marketplace detail link.");
             await navigate(ctx, String(marketplaceHref));
             await ctx.waitFor("Boolean(document.querySelector('div[id^=\"plugin-\"]'))", {
-              timeoutMs: 30_000,
-              label: "Marketplace Plugin card",
+              timeoutMs: 120_000,
+              label: "seeded Marketplace Plugin card after cold route compilation",
             });
             await assertFlatCards(ctx, 'div[id^="plugin-"]', "Marketplace");
 
