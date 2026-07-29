@@ -13,7 +13,7 @@ describe("connector and marketplace polish", () => {
   test("puts Marketplace first and renames the org connection surface to Connectors beta", () => {
     const shell = readDashboardComponent("org-dashboard-shell.tsx");
     const marketplaceIndex = shell.indexOf('{ href: getMarketplacesRoute(activeOrg.slug), label: "Marketplace" }');
-    const sourcesIndex = shell.indexOf('{ href: getIntegrationsRoute(activeOrg.slug), label: "Sources" }');
+    const sourcesIndex = shell.indexOf('{ href: getIntegrationsRoute(activeOrg.slug), label: "Sources", badge: "Alpha" }');
     const pluginsIndex = shell.indexOf('{ href: getPluginsRoute(activeOrg.slug), label: "Plugins" }');
     const connectorsIndex = shell.indexOf('{ href: getMcpConnectionsRoute(activeOrg.slug), label: "Connectors", badge: "Beta" }');
 

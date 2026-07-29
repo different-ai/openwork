@@ -42,6 +42,23 @@ export type DashboardPageTemplateProps = {
   children?: React.ReactNode;
 };
 
+export function DashboardPageMaturityBadge({
+  label,
+  title,
+}: {
+  label: string;
+  title: string;
+}) {
+  return (
+    <span
+      className="rounded-full border border-white/20 bg-white/20 px-2.5 py-1 text-[10px] uppercase tracking-[1px] text-white backdrop-blur-md"
+      aria-label={`${title} maturity: ${label}`}
+    >
+      {label}
+    </span>
+  );
+}
+
 export function DashboardPageTemplate({
   icon: Icon,
   badgeLabel,
@@ -118,9 +135,7 @@ export function DashboardPageTemplate({
           }`}
         >
           {badgeLabel ? (
-            <span className="rounded-full border border-white/20 bg-white/20 px-2.5 py-1 text-[10px] uppercase tracking-[1px] text-white backdrop-blur-md">
-              {badgeLabel}
-            </span>
+            <DashboardPageMaturityBadge label={badgeLabel} title={title} />
           ) : null}
           <h1
             className={`font-medium text-white ${

@@ -371,7 +371,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
         icon: Puzzle,
         children: [
           { href: getMarketplacesRoute(activeOrg.slug), label: "Marketplace" },
-          { href: getIntegrationsRoute(activeOrg.slug), label: "Sources" },
+          { href: getIntegrationsRoute(activeOrg.slug), label: "Sources", badge: "Alpha" },
           { href: getPluginsRoute(activeOrg.slug), label: "Plugins" },
           { href: getMcpConnectionsRoute(activeOrg.slug), label: "Connectors", badge: "Beta" },
         ],
@@ -662,7 +662,10 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
                   </span>
                   <span className="flex items-center gap-1.5">
                     {item.badge ? (
-                      <span className="rounded-full bg-white px-2 py-1 text-[9px] font-semibold uppercase tracking-[0.14em] text-gray-500">
+                      <span
+                        className="rounded-full bg-white px-2 py-1 text-[9px] font-semibold uppercase tracking-[0.14em] text-gray-500"
+                        aria-label={`${item.label} maturity: ${item.badge}`}
+                      >
                         {item.badge}
                       </span>
                     ) : null}
@@ -688,7 +691,10 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
                       >
                         {child.label}
                         {child.badge ? (
-                          <span className="rounded-full bg-white px-2 py-1 text-[9px] font-semibold uppercase tracking-[0.14em] text-gray-500">
+                          <span
+                            className="rounded-full bg-white px-2 py-1 text-[9px] font-semibold uppercase tracking-[0.14em] text-gray-500"
+                            aria-label={`${child.label} maturity: ${child.badge}`}
+                          >
                             {child.badge}
                           </span>
                         ) : null}
