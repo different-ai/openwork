@@ -63,6 +63,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Install eval workspace
+        run: pnpm --dir evals install --frozen-lockfile
+
       - name: Install Xvfb
         run: |
           sudo apt-get update -qq

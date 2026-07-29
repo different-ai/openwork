@@ -10,6 +10,7 @@ import {
   normalizeCertificateMaterial,
   normalizeDomain,
   normalizeMockIdpConfig,
+  startMockIdpLab,
   subjectWithKnobs,
   validateSsoConfiguration,
 } from "../src/idp.ts";
@@ -94,6 +95,21 @@ test("blocked-user response uses the Entra-style policy wording", () => {
   assert.match(response.errorDescription, /administrator has configured the application to block users/);
   assert.match(response.message, /IdP administrator/);
   assert.match(response.html, /OpenWork Mock IdP policy/);
+});
+
+test("mock IdP escapes request-derived blocked-user HTML", async () => {
+  const loginHint = "blocked@acme.test<script>alert(1)</script>";
+  await using lab = await startMockIdpLab({ knobs: { blockedUser: loginHint } });
+  const url = new URL(lab.authorizationEndpoint);
+  url.searchParams.set("client_id", lab.config.clientId);
+  url.searchParams.set("redirect_uri", "http://127.0.0.1/callback");
+  url.searchParams.set("login_hint", loginHint);
+
+  const response = await fetch(url);
+  const body = await response.text();
+  assert.equal(response.status, 403);
+  assert.doesNotMatch(body, /<script>/);
+  assert.match(body, /&lt;script&gt;/);
 });
 
 test("expectation matcher fails with actionable detail when the named error is missing", () => {

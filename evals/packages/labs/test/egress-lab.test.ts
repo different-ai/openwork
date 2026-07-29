@@ -5,6 +5,7 @@ import {
   createBlipSchedule,
   denyHostsFromOutboundManifest,
   opensslCertificateCommands,
+  opensslFlavor,
   outboundManifestFromUnknown,
   parseClientHelloVersions,
   resolveEgressProfileConfig,
@@ -109,6 +110,11 @@ test("openssl argv construction includes CA, AIA, and fullchain prerequisites", 
   ]);
   assert.ok(commands.some((command) => command.args.includes("/CN=OpenWork Egress Lab Corporate Interception CA")));
   assert.ok(commands.some((command) => command.args.includes("-extfile")));
+});
+
+test("openssl flavor probe returns a known value", async () => {
+  const flavor = await opensslFlavor();
+  assert.ok(["openssl", "libressl", "unknown"].includes(flavor));
 });
 
 test("deny-list seeding reads installer-critical hosts from the outbound manifest", () => {

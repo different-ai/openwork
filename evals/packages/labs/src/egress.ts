@@ -101,6 +101,8 @@ export type OpenSslCommandInput = {
   corporateIssuer: boolean;
 };
 
+export type OpenSslFlavor = "openssl" | "libressl" | "unknown";
+
 export type OutboundManifestHostEntry = {
   host: string;
   kind: string;
@@ -463,6 +465,25 @@ export function opensslCertificateCommands(input: OpenSslCommandInput): OpenSslC
   ];
 }
 
+function opensslBinary(env: NodeJS.ProcessEnv = process.env): string {
+  return env.OPENWORK_EVAL_OPENSSL?.trim() || "openssl";
+}
+
+export function opensslFlavor(env: NodeJS.ProcessEnv = process.env): Promise<OpenSslFlavor> {
+  return new Promise((resolve) => {
+    execFile(opensslBinary(env), ["version"], { env, encoding: "utf8", timeout: 5_000 }, (error, stdout, stderr) => {
+      if (error) {
+        resolve("unknown");
+        return;
+      }
+      const version = `${String(stdout)}\n${String(stderr)}`.toLowerCase();
+      if (version.includes("libressl")) resolve("libressl");
+      else if (version.includes("openssl")) resolve("openssl");
+      else resolve("unknown");
+    });
+  });
+}
+
 function intermediateExtFile(): string {
   return [
     "basicConstraints=critical,CA:TRUE,pathlen:0",
@@ -486,9 +507,10 @@ function leafExtFile(hostname: string, aiaUrl: string | null): string {
 
 function execOpenSsl(args: string[], cwd: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    execFile("openssl", args, { cwd, encoding: "utf8", timeout: 20_000, maxBuffer: 1024 * 1024 }, (error, stdout, stderr) => {
+    const binary = opensslBinary();
+    execFile(binary, args, { cwd, encoding: "utf8", timeout: 20_000, maxBuffer: 1024 * 1024 }, (error, stdout, stderr) => {
       if (error) {
-        reject(new Error([`openssl ${args.join(" ")}`, String(stdout).trim(), String(stderr).trim(), error.message].filter(Boolean).join("\n")));
+        reject(new Error([`${binary} ${args.join(" ")}`, String(stdout).trim(), String(stderr).trim(), error.message].filter(Boolean).join("\n")));
         return;
       }
       resolve();

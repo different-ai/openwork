@@ -8,6 +8,7 @@
 # the den stack, then the vitest spec lane against the same live stack.
 set -euo pipefail
 cd /workspace
+pnpm --dir evals install
 
 # Sandbox exec sessions have private /tmp namespaces; the artifacts volume is
 # the only log destination visible to other sessions (and over HTTP :8090).
@@ -47,6 +48,6 @@ echo "==> New spec lane against the same live stack"
 export OPENWORK_EVAL_DEN_API_URL="http://127.0.0.1:8790"
 export OPENWORK_EVAL_DEN_WEB_URL="http://localhost:3005"
 export OPENWORK_EVAL_CDP_URL="http://127.0.0.1:9825"
-pnpm vitest run --config evals/vitest.config.ts --project nightly 2>&1 | tee "$LOG_DIR/specs-real.log"
+pnpm --dir evals run spec:nightly 2>&1 | tee "$LOG_DIR/specs-real.log"
 
 echo "==> DONE"

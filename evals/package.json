@@ -2,6 +2,12 @@
   "name": "@openwork/evals",
   "private": true,
   "type": "module",
+  "scripts": {
+    "spec": "vitest run --config vitest.config.ts --project pr",
+    "spec:nightly": "vitest run --config vitest.config.ts",
+    "test": "node --test runner/*.test.ts packages/*/test/*.test.ts",
+    "typecheck": "tsc -p ."
+  },
   "dependencies": {
     "@openwork/behaviors": "workspace:*",
     "@openwork/cdp": "workspace:*",
@@ -12,5 +18,6 @@
   },
   "devDependencies": {
     "vitest": "^3.2.4"
-  }
+  },
+  "packageManager": "pnpm@11.4.0"
 }

@@ -2,6 +2,8 @@ import { createServer } from "node:http";
 import type { IncomingMessage, Server, ServerResponse } from "node:http";
 import { setTimeout as sleep } from "node:timers/promises";
 
+import { trimTrailingSlashes } from "./strings.ts";
+
 export type ReleasePlatform = "mac-arm64" | "mac-x64" | "win-x64" | "linux-x64" | "linux-arm64";
 export type ReleaseDistribution = "public" | "enterprise" | "cloud";
 
@@ -325,7 +327,7 @@ export function resolveAllowedUpdate(input: ResolveAllowedUpdateInput): string |
 }
 
 function cleanBaseUrl(value: string): string {
-  return value.trim().replace(/\/+$/, "");
+  return trimTrailingSlashes(value.trim());
 }
 
 export function buildReleaseAssetUrl(input: ReleaseAssetUrlInput): string {

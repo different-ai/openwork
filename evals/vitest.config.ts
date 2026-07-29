@@ -13,7 +13,7 @@ export default defineConfig({
         test: {
           ...common,
           name: "pr",
-          include: ["evals/specs/**/*.test.ts"],
+          include: ["specs/**/*.test.ts"],
           exclude: ["**/*.slow.test.ts"],
         },
       },
@@ -21,7 +21,7 @@ export default defineConfig({
         test: {
           ...common,
           name: "nightly",
-          include: ["evals/specs/**/*.test.ts"],
+          include: ["specs/**/*.test.ts"],
         },
       },
     ],

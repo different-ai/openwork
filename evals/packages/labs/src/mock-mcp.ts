@@ -3,6 +3,8 @@ import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import type { ChildProcess } from "node:child_process";
 
+import { trimTrailingSlashes } from "./strings.ts";
+
 export interface MockAuthorizeRequest {
   method: string;
   path: string;
@@ -78,7 +80,7 @@ async function waitForHealth(url: string, output: () => string, child: ChildProc
 
 export async function startMockMcp(options: StartMockMcpOptions = {}): Promise<MockMcpHandle> {
   const port = options.port ?? 3979;
-  const externalUrl = options.publicUrl?.trim().replace(/\/+$/, "");
+  const externalUrl = options.publicUrl ? trimTrailingSlashes(options.publicUrl.trim()) : undefined;
   const localUrl = `http://127.0.0.1:${port}`;
   const url = externalUrl || localUrl;
   let child: ChildProcess | null = null;

@@ -9,6 +9,12 @@ function messageText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function jsValue(value: unknown): string {
+  const json = JSON.stringify(value);
+  if (json === undefined) throw new Error("Cannot interpolate an undefined JavaScript value.");
+  return json.replace(/</g, "\\u003c").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
+}
+
 export async function evalIn(app: Surface, expression: string, opts: EvaluateOptions = {}): Promise<unknown> {
   return evaluate(app.client, expression, opts);
 }
@@ -34,14 +40,14 @@ export async function waitFor(
 }
 
 export async function waitForText(app: Surface, text: string, opts: { timeoutMs?: number } = {}): Promise<void> {
-  await waitFor(app, `document.body.innerText.includes(${JSON.stringify(text)})`, {
+  await waitFor(app, `document.body.innerText.includes(${jsValue(text)})`, {
     timeoutMs: opts.timeoutMs,
-    label: `visible text ${JSON.stringify(text)}`,
+    label: `visible text ${jsValue(text)}`,
   });
 }
 
 export async function hasText(app: Surface, text: string): Promise<boolean> {
-  return Boolean(await evalIn(app, `document.body.innerText.includes(${JSON.stringify(text)})`));
+  return Boolean(await evalIn(app, `document.body.innerText.includes(${jsValue(text)})`));
 }
 
 export async function visibleText(app: Surface): Promise<string> {
@@ -56,29 +62,29 @@ export async function clickText(
   { selector = "button, [role=button], a", timeoutMs = DEFAULT_TIMEOUT_MS }: { selector?: string; timeoutMs?: number } = {},
 ): Promise<unknown> {
   return waitFor(app, `(() => {
-    const candidates = document.querySelectorAll(${JSON.stringify(selector)});
+    const candidates = document.querySelectorAll(${jsValue(selector)});
     for (const element of candidates) {
       const label = (element.textContent ?? '').trim();
-      if (label.includes(${JSON.stringify(text)})) {
+      if (label.includes(${jsValue(text)})) {
         element.scrollIntoView({ block: 'center' });
         element.click();
         return label;
       }
     }
     return null;
-  })()`, { timeoutMs, label: `clickable element with text ${JSON.stringify(text)}` });
+  })()`, { timeoutMs, label: `clickable element with text ${jsValue(text)}` });
 }
 
 export async function clickButton(app: Surface, label: string, opts: { timeoutMs?: number } = {}): Promise<void> {
   const timeoutMs = opts.timeoutMs ?? 30_000;
   await waitFor(app, `Boolean([...document.querySelectorAll('button')]
-    .find((element) => (element.textContent ?? '').trim() === ${JSON.stringify(label)} && !element.disabled))`, {
+    .find((element) => (element.textContent ?? '').trim() === ${jsValue(label)} && !element.disabled))`, {
     timeoutMs,
     label: `enabled button: ${label}`,
   });
   const clicked = await evalIn(app, `(() => {
     const button = [...document.querySelectorAll('button')]
-      .find((element) => (element.textContent ?? '').trim() === ${JSON.stringify(label)} && !element.disabled);
+      .find((element) => (element.textContent ?? '').trim() === ${jsValue(label)} && !element.disabled);
     button?.scrollIntoView({ block: 'center' });
     button?.click();
     return Boolean(button);
@@ -88,24 +94,24 @@ export async function clickButton(app: Surface, label: string, opts: { timeoutMs
 
 export async function waitForButtonGone(app: Surface, label: string, opts: { timeoutMs?: number } = {}): Promise<void> {
   await waitFor(app, `!Boolean([...document.querySelectorAll('button')]
-    .find((element) => (element.textContent ?? '').trim() === ${JSON.stringify(label)}))`, {
+    .find((element) => (element.textContent ?? '').trim() === ${jsValue(label)}))`, {
     timeoutMs: opts.timeoutMs ?? 90_000,
     label: `button removed: ${label}`,
   });
 }
 
 export async function fill(app: Surface, selector: string, value: string, opts: { timeoutMs?: number } = {}): Promise<void> {
-  await waitFor(app, `Boolean(document.querySelector(${JSON.stringify(selector)}))`, {
+  await waitFor(app, `Boolean(document.querySelector(${jsValue(selector)}))`, {
     timeoutMs: opts.timeoutMs,
     label: `input ${selector}`,
   });
   await evalIn(app, `(() => {
-    const input = document.querySelector(${JSON.stringify(selector)});
+    const input = document.querySelector(${jsValue(selector)});
     const setter = Object.getOwnPropertyDescriptor(
       input instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype,
       'value',
     ).set;
-    setter.call(input, ${JSON.stringify(value)});
+    setter.call(input, ${jsValue(value)});
     input.dispatchEvent(new Event('input', { bubbles: true }));
     input.dispatchEvent(new Event('change', { bubbles: true }));
     return true;
@@ -114,7 +120,7 @@ export async function fill(app: Surface, selector: string, value: string, opts: 
 
 export async function go(app: Surface, hashPath: string): Promise<void> {
   const hash = hashPath.startsWith("#") ? hashPath : `#${hashPath}`;
-  await evalIn(app, `(() => { window.location.hash = ${JSON.stringify(hash)}; return true; })()`);
+  await evalIn(app, `(() => { window.location.hash = ${jsValue(hash)}; return true; })()`);
 }
 
 export async function currentHash(app: Surface): Promise<string> {

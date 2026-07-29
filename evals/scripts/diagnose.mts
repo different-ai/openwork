@@ -2,7 +2,7 @@ import { probeTls } from "@openwork/behaviors";
 import { diagnoseTls } from "@openwork/matchers";
 
 function usage(): never {
-  throw new Error("Usage: node scripts/support/diagnose.mts <origin> [--insecure-ca <pemPath>]");
+  throw new Error("Usage: node evals/scripts/diagnose.mts <origin> [--insecure-ca <pemPath>]");
 }
 
 const args = process.argv.slice(2);

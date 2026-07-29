@@ -19,11 +19,12 @@ describe("TLS 1.2-only egress", () => {
       ca: lab.rootPem,
     });
 
-    expect(tls.tls12.ok).toBe(true);
-    expect(tls.tls12.protocol).toBe("TLSv1.2");
-    expect(tls.tls13.stalled).toBe(true);
-    expect(tls.tls13.errorCode).toBe("ETIMEDOUT");
-    expect(diagnoseTls(tls).code).toBe("tls_handshake_stall_tls13_only");
+    const message = JSON.stringify(tls);
+    expect(tls.tls12.ok, message).toBe(true);
+    expect(tls.tls12.protocol, message).toBe("TLSv1.2");
+    expect(tls.tls13.stalled, message).toBe(true);
+    expect(tls.tls13.errorCode, message).toBe("ETIMEDOUT");
+    expect(diagnoseTls(tls).code, message).toBe("tls_handshake_stall_tls13_only");
   });
 
   const skipReason = productDiagnosticsPrecondition(process.env);

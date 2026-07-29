@@ -51,7 +51,7 @@
     "test:session-scope": "pnpm --filter @openwork/app test:session-scope",
     "test:session-switch": "pnpm --filter @openwork/app test:session-switch",
     "test:fs-engine": "pnpm --filter @openwork/app test:fs-engine",
-    "test:eval-runner": "pnpm evals:test",
+    "test:eval-runner": "pnpm --dir evals run test",
     "check:outbound-access": "node scripts/check-outbound-access.mjs",
     "test:e2e": "pnpm --filter @openwork/app test:e2e",
     "test:admin-scale": "pnpm --filter @openwork-ee/den-api test:admin-scale",
@@ -60,8 +60,8 @@
     "fraimz": "node evals/runner/run.mjs --mode demo",
     "evals:typecheck": "tsc -p evals",
     "evals:test": "node --test evals/runner/*.test.ts evals/packages/*/test/*.test.ts",
-    "evals:spec": "vitest run --config evals/vitest.config.ts --project pr",
-    "evals:spec:nightly": "vitest run --config evals/vitest.config.ts",
+    "evals:spec": "pnpm --dir evals run spec",
+    "evals:spec:nightly": "pnpm --dir evals run spec:nightly",
     "owt": "node evals/runner/run-owt.mjs",
     "bump:patch": "pnpm --filter @openwork/app bump:patch",
     "bump:minor": "pnpm --filter @openwork/app bump:minor",
@@ -74,13 +74,9 @@
     "release:ship:watch": "node scripts/release/ship.mjs --watch"
   },
   "devDependencies": {
-    "@openwork/behaviors": "workspace:*",
-    "@openwork/cdp": "workspace:*",
-    "@openwork/matchers": "workspace:*",
     "@types/node": "^24.0.0",
     "turbo": "^2.5.5",
-    "typescript": "^5.9.0",
-    "vitest": "^3.2.4"
+    "typescript": "^5.9.0"
   },
   "packageManager": "pnpm@11.4.0"
 }

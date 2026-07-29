@@ -7,7 +7,9 @@ const POLL_INTERVAL_MS = 250;
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function cleanBaseUrl(cdpBaseUrl: string): string {
-  return cdpBaseUrl.replace(/\/+$/, "");
+  let end = cdpBaseUrl.length;
+  while (end > 0 && cdpBaseUrl[end - 1] === "/") end -= 1;
+  return cdpBaseUrl.slice(0, end);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

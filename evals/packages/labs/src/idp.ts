@@ -3,6 +3,8 @@ import { createServer } from "node:http";
 import type { IncomingMessage, Server, ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 
+import { trimTrailingSlashes } from "./strings.ts";
+
 const DEFAULT_DOMAIN = "acme.test";
 const DEFAULT_CLIENT_ID = "openwork-eval-oidc-client";
 const DEFAULT_CLIENT_SECRET = "openwork-eval-oidc-secret";
@@ -203,7 +205,7 @@ function isNamedGroupClaim(value: MockGroupClaims): value is { claim: string; va
 }
 
 function cleanIssuer(value: string | undefined): string {
-  const trimmed = (value ?? DEFAULT_ISSUER).trim().replace(/\/+$/, "");
+  const trimmed = trimTrailingSlashes((value ?? DEFAULT_ISSUER).trim());
   return trimmed || DEFAULT_ISSUER;
 }
 
@@ -224,11 +226,12 @@ function configuredMockIdpIssuer(input: MockIdpConfig): URL | null {
 }
 
 export function normalizeDomain(value: string | undefined): string {
-  const normalized = (value ?? DEFAULT_DOMAIN)
-    .trim()
-    .toLowerCase()
-    .replace(/^@+/, "")
-    .replace(/\.+$/, "");
+  const input = (value ?? DEFAULT_DOMAIN).trim().toLowerCase();
+  let start = 0;
+  let end = input.length;
+  while (start < end && input[start] === "@") start += 1;
+  while (end > start && input[end - 1] === ".") end -= 1;
+  const normalized = input.slice(start, end);
   return normalized || DEFAULT_DOMAIN;
 }
 
@@ -294,9 +297,14 @@ export function normalizeMockIdpConfig(input: MockIdpConfig = {}): NormalizedMoc
 
 export function normalizeCertificateMaterial(value: string | null | undefined): NormalizedCertificateMaterial {
   const raw = value ?? "";
+  let end = raw.length;
+  while (end > 0 && raw[end - 1] === "\n") {
+    end -= 1;
+    if (end > 0 && raw[end - 1] === "\r") end -= 1;
+  }
   return {
-    value: raw.replace(/(?:\r?\n)+$/g, ""),
-    hadTrailingNewline: /(?:\r?\n)+$/.test(raw),
+    value: raw.slice(0, end),
+    hadTrailingNewline: end !== raw.length,
   };
 }
 
@@ -549,19 +557,18 @@ interface HtmlDocument {
   paragraphs: string[];
 }
 
-// Escaping happens here, at the single boundary that writes HTML, so no caller
-// can hand this server a pre-built markup string.
-function renderHtmlDocument(document: HtmlDocument): string {
-  const paragraphs = document.paragraphs.map((text) => `<p>${escapeHtml(text)}</p>`).join("");
-  return `<!doctype html><html><head><title>${escapeHtml(document.title)}</title></head><body><main style="font-family: sans-serif; max-width: 720px; margin: 48px auto;"><h1>${escapeHtml(document.heading)}</h1>${paragraphs}</main></body></html>`;
-}
-
 function sendHtml(response: ServerResponse, status: number, document: HtmlDocument): void {
+  // Escape at the write boundary so request-derived fields cannot reach the
+  // HTML response as markup.
+  const title = escapeHtml(document.title);
+  const heading = escapeHtml(document.heading);
+  const paragraphs = document.paragraphs.map((text) => `<p>${escapeHtml(text)}</p>`).join("");
+  const body = `<!doctype html><html><head><title>${title}</title></head><body><main style="font-family: sans-serif; max-width: 720px; margin: 48px auto;"><h1>${heading}</h1>${paragraphs}</main></body></html>`;
   response.writeHead(status, {
     "content-type": "text/html; charset=utf-8",
     "cache-control": "no-store",
   });
-  response.end(renderHtmlDocument(document));
+  response.end(body);
 }
 
 function sendRedirect(response: ServerResponse, location: string): void {

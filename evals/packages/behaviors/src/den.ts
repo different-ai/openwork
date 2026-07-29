@@ -8,6 +8,12 @@ export type DenFetchResult = { response: Response; body: unknown; text: string }
 
 const REPO_ROOT = fileURLToPath(new URL("../../../..", import.meta.url));
 
+function trimTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value[end - 1] === "/") end -= 1;
+  return value.slice(0, end);
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -29,7 +35,7 @@ export async function denFetch(den: DenRef, path: string, init: RequestInit = {}
   const headers = new Headers(init.headers);
   if (!headers.has("content-type")) headers.set("content-type", "application/json");
   if (!headers.has("origin")) headers.set("origin", den.webUrl);
-  const response = await fetch(`${den.apiUrl.replace(/\/+$/, "")}${path}`, { ...init, headers });
+  const response = await fetch(`${trimTrailingSlashes(den.apiUrl)}${path}`, { ...init, headers });
   const text = await response.text();
   let body: unknown = text;
   try {

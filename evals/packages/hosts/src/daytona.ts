@@ -151,7 +151,29 @@ function shellExport(assignments: Map<string, string>): string {
 }
 
 function sanitizeName(name: string): string {
-  return name.trim().replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "surface";
+  const normalized: string[] = [];
+  let invalidRun = false;
+  for (const character of name.trim()) {
+    const code = character.codePointAt(0) ?? 0;
+    const allowed = (code >= 48 && code <= 57)
+      || (code >= 65 && code <= 90)
+      || (code >= 97 && code <= 122)
+      || character === "."
+      || character === "_"
+      || character === "-";
+    if (allowed) {
+      normalized.push(character);
+      invalidRun = false;
+    } else if (!invalidRun) {
+      normalized.push("-");
+      invalidRun = true;
+    }
+  }
+  let start = 0;
+  let end = normalized.length;
+  while (start < end && normalized[start] === "-") start += 1;
+  while (end > start && normalized[end - 1] === "-") end -= 1;
+  return normalized.slice(start, end).join("") || "surface";
 }
 
 function timestamp(): string {
