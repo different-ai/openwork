@@ -371,7 +371,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
         icon: Puzzle,
         children: [
           { href: getMarketplacesRoute(activeOrg.slug), label: "Marketplace" },
-          { href: getIntegrationsRoute(activeOrg.slug), label: "Sources" },
+          { href: getIntegrationsRoute(activeOrg.slug), label: "Sources", badge: "Alpha" },
           { href: getPluginsRoute(activeOrg.slug), label: "Plugins" },
           { href: getMcpConnectionsRoute(activeOrg.slug), label: "Connectors", badge: "Beta" },
         ],
