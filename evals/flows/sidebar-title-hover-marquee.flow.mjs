@@ -1,3 +1,5 @@
+import { ensureSessionWorkspace } from "./lib/session-workspace.mjs";
+
 const LONG_TITLE =
   "Review the OpenWork desktop sidebar title animation across a deliberately overflowing conversation name";
 
@@ -39,14 +41,7 @@ export default {
     {
       name: "Overflow-only title motion preserves the sidebar row",
       run: async (ctx) => {
-        await ctx.waitFor("Boolean(window.__openworkControl)", {
-          timeoutMs: 60_000,
-          label: "control API",
-        });
-        await ctx.waitFor(
-          "window.__openworkControl.listActions().some((action) => action.id === 'session.create_task' && !action.disabled)",
-          { timeoutMs: 60_000, label: "session.create_task enabled" },
-        );
+        await ensureSessionWorkspace(ctx, "sidebar-title-hover-marquee");
         await ctx.control("session.create_task");
         const sessionId = await ctx.waitFor(`(() => {
           const route = window.__openworkControl.snapshot().route || "";

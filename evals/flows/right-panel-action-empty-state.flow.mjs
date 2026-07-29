@@ -1,3 +1,5 @@
+import { ensureSessionWorkspace } from "./lib/session-workspace.mjs";
+
 const READ_CHOOSER = `(() => {
   const panel = [...document.querySelectorAll('aside, [role="complementary"], main + div, [data-side-panel]')]
     .find((entry) => /choose|open in (the )?side panel|side panel/i.test(entry.textContent || ''));
@@ -24,15 +26,11 @@ export default {
     {
       name: "Opening an empty panel presents an actionable chooser",
       run: async (ctx) => {
-        await ctx.waitFor("Boolean(window.__openworkControl)", {
-          timeoutMs: 60_000,
-          label: "control API",
-        });
+        await ensureSessionWorkspace(
+          ctx,
+          "right-panel-action-empty-state",
+        );
         if (!String(await ctx.eval("window.__openworkControl.snapshot().route || ''")).includes("/session/")) {
-          await ctx.waitFor(
-            "window.__openworkControl.listActions().some((action) => action.id === 'session.create_task' && !action.disabled)",
-            { timeoutMs: 60_000, label: "session.create_task enabled" },
-          );
           await ctx.control("session.create_task");
           await ctx.waitFor(
             "window.__openworkControl.snapshot().route.includes('/session/')",
