@@ -2,12 +2,18 @@ import { and, asc, count, eq, gt, inArray, isNotNull, isNull, sql } from "@openw
 import {
   AuthSessionTable,
   AuthUserTable,
+  ConfigObjectAccessGrantTable,
   ConnectedAccountTable,
+  ConnectorInstanceAccessGrantTable,
+  DesktopPolicyMemberTable,
+  ExternalMcpConnectionAccessGrantTable,
   InvitationTable,
   LlmProviderAccessTable,
+  MarketplaceAccessGrantTable,
   MemberTable,
   OrganizationRoleTable,
   OrganizationTable,
+  PluginAccessGrantTable,
   SsoConnectionTable,
   TeamMemberTable,
   TeamTable,
@@ -1904,6 +1910,7 @@ export async function removeOrganizationMember(input: {
     }
 
     const member = memberRow.member
+    const removedAt = new Date()
 
     await tx
       .delete(ConnectedAccountTable)
@@ -1921,8 +1928,58 @@ export async function removeOrganizationMember(input: {
       .where(eq(LlmProviderAccessTable.orgMembershipId, member.id))
 
     await tx
+      .delete(DesktopPolicyMemberTable)
+      .where(and(
+        eq(DesktopPolicyMemberTable.organizationId, input.organizationId),
+        eq(DesktopPolicyMemberTable.orgMemberId, member.id),
+      ))
+
+    await tx
+      .delete(ExternalMcpConnectionAccessGrantTable)
+      .where(and(
+        eq(ExternalMcpConnectionAccessGrantTable.organizationId, input.organizationId),
+        eq(ExternalMcpConnectionAccessGrantTable.orgMembershipId, member.id),
+      ))
+
+    await tx
+      .update(MarketplaceAccessGrantTable)
+      .set({ removedAt })
+      .where(and(
+        eq(MarketplaceAccessGrantTable.organizationId, input.organizationId),
+        eq(MarketplaceAccessGrantTable.orgMembershipId, member.id),
+        isNull(MarketplaceAccessGrantTable.removedAt),
+      ))
+
+    await tx
+      .update(ConfigObjectAccessGrantTable)
+      .set({ removedAt })
+      .where(and(
+        eq(ConfigObjectAccessGrantTable.organizationId, input.organizationId),
+        eq(ConfigObjectAccessGrantTable.orgMembershipId, member.id),
+        isNull(ConfigObjectAccessGrantTable.removedAt),
+      ))
+
+    await tx
+      .update(PluginAccessGrantTable)
+      .set({ removedAt })
+      .where(and(
+        eq(PluginAccessGrantTable.organizationId, input.organizationId),
+        eq(PluginAccessGrantTable.orgMembershipId, member.id),
+        isNull(PluginAccessGrantTable.removedAt),
+      ))
+
+    await tx
+      .update(ConnectorInstanceAccessGrantTable)
+      .set({ removedAt })
+      .where(and(
+        eq(ConnectorInstanceAccessGrantTable.organizationId, input.organizationId),
+        eq(ConnectorInstanceAccessGrantTable.orgMembershipId, member.id),
+        isNull(ConnectorInstanceAccessGrantTable.removedAt),
+      ))
+
+    await tx
       .update(MemberTable)
-      .set({ removedAt: new Date(), removedByOrgMember: input.removedByOrgMemberId ?? null })
+      .set({ removedAt, removedByOrgMember: input.removedByOrgMemberId ?? null })
       .where(and(eq(MemberTable.id, member.id), eq(MemberTable.organizationId, input.organizationId), isNull(MemberTable.removedAt)))
 
     return { ok: true, member }
