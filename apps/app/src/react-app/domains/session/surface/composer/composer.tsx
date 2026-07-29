@@ -64,6 +64,7 @@ type ComposerProps = {
   steering: boolean;
   submissionPreparing: boolean;
   submissionBlocked: boolean;
+  submissionInputStatusLabel?: string;
   queuedCount: number;
   disabled: boolean;
   modelUnavailable?: boolean;
@@ -1264,99 +1265,123 @@ export function ReactSessionComposer(props: ComposerProps) {
             </div>
           ) : null}
 
-          <div className="px-4 pt-3 pb-2">
+          <div
+            className="px-4 pt-3 pb-2"
+            aria-busy={props.submissionPreparing}
+          >
             {/* Editor */}
-            <LexicalPromptEditor
-              ref={editorRef}
-              value={props.draft}
-              mentions={props.mentions}
-              pastedText={pastedTextTokens}
-              attachments={props.attachments.map((attachment) => ({
-                id: attachment.id,
-                name: attachment.name,
-                kind: isImageAttachment(attachment) ? "image" : "file",
-                previewUrl: attachment.previewUrl,
-              }))}
-              disabled={props.disabled}
-              placeholder={t("composer.placeholder")}
-              onChange={props.onDraftChange}
-              onSubmit={handleEditorSubmit}
-              onExpandPastedText={handleExpandPastedText}
-              onRemoveAttachment={props.onRemoveAttachment}
-              onPasteText={props.onPasteText}
-              onPaste={(event) => {
-                // Paste policy:
-                // 1. Actual files on the clipboard -> attach them.
-                // 2. Explicit text/uri-list (drag from Finder / browser) -> insert links.
-                // 3. Plain text -> DO NOTHING. Let Lexical's PlainTextPlugin
-                //    handle the paste natively so newlines render correctly
-                //    and no content is silently dropped. Previous behavior
-                //    hijacked pastes that merely contained absolute paths
-                //    like "/Users/..." or pastes longer than 10 lines, which
-                //    was the root cause of "paste into composer is broken".
-                const files = Array.from(event.clipboardData?.files ?? []);
-                if (files.length) {
-                  event.preventDefault();
-                  void addAttachments(files);
-                  return;
-                }
+            <div className="relative">
+              <div className={props.submissionBlocked ? "invisible" : undefined}>
+                <LexicalPromptEditor
+                  ref={editorRef}
+                  value={props.draft}
+                  mentions={props.mentions}
+                  pastedText={pastedTextTokens}
+                  attachments={props.attachments.map((attachment) => ({
+                    id: attachment.id,
+                    name: attachment.name,
+                    kind: isImageAttachment(attachment) ? "image" : "file",
+                    previewUrl: attachment.previewUrl,
+                  }))}
+                  disabled={props.disabled || props.submissionBlocked}
+                  placeholder={t("composer.placeholder")}
+                  onChange={props.onDraftChange}
+                  onSubmit={handleEditorSubmit}
+                  onExpandPastedText={handleExpandPastedText}
+                  onRemoveAttachment={props.onRemoveAttachment}
+                  onPasteText={props.onPasteText}
+                  onPaste={(event) => {
+                    // Paste policy:
+                    // 1. Actual files on the clipboard -> attach them.
+                    // 2. Explicit text/uri-list (drag from Finder / browser) -> insert links.
+                    // 3. Plain text -> DO NOTHING. Let Lexical's PlainTextPlugin
+                    //    handle the paste natively so newlines render correctly
+                    //    and no content is silently dropped. Previous behavior
+                    //    hijacked pastes that merely contained absolute paths
+                    //    like "/Users/..." or pastes longer than 10 lines, which
+                    //    was the root cause of "paste into composer is broken".
+                    const files = Array.from(event.clipboardData?.files ?? []);
+                    if (files.length) {
+                      event.preventDefault();
+                      void addAttachments(files);
+                      return;
+                    }
 
-                const uriList = event.clipboardData
-                  ? parseClipboardUriList(event.clipboardData)
-                  : [];
-                if (uriList.length) {
-                  event.preventDefault();
-                  props.onUnsupportedFileLinks(uriList);
-                  return;
-                }
+                    const uriList = event.clipboardData
+                      ? parseClipboardUriList(event.clipboardData)
+                      : [];
+                    if (uriList.length) {
+                      event.preventDefault();
+                      props.onUnsupportedFileLinks(uriList);
+                      return;
+                    }
 
-                const text = event.clipboardData?.getData("text/plain") ?? "";
+                    const text = event.clipboardData?.getData("text/plain") ?? "";
 
-                // Plain text paste display is owned by PasteChipPlugin inside
-                // the Lexical editor: text collapses when it would exceed the
-                // editor's current width and maximum height, unless the whole
-                // string is a standalone HTTP(S) URL. Text that fits, or is
-                // expanded from a chip, renders like normal text. Do NOT
-                // duplicate that here.
+                    // Plain text paste display is owned by PasteChipPlugin inside
+                    // the Lexical editor: text collapses when it would exceed the
+                    // editor's current width and maximum height, unless the whole
+                    // string is a standalone HTTP(S) URL. Text that fits, or is
+                    // expanded from a chip, renders like normal text. Do NOT
+                    // duplicate that here.
 
-                if (
-                  text.trim() &&
-                  (props.isRemoteWorkspace || props.isSandboxWorkspace) &&
-                  /file:\/\/|(^|\s)\/(Users|home|var|etc|opt|tmp|private|Volumes|Applications)\//.test(text)
-                ) {
-                  const attachedFiles = props.attachments.map((attachment) => attachment.file);
-                  toast.warning(t("composer.remote_worker_paste_warning"), {
-                    action:
-                      props.onUploadInboxFiles && attachedFiles.length > 0
-                        ? {
-                            label: t("composer.upload_to_shared_folder"),
-                            onClick: () => void props.onUploadInboxFiles?.(attachedFiles),
-                          }
-                        : undefined,
-                  });
-                  // Intentionally no preventDefault — the notice is advisory,
-                  // the paste still goes through the editor.
-                }
-              }}
-              onDragOver={(event) => {
-                if (event.dataTransfer?.files?.length) {
-                  event.preventDefault();
-                  if (!dropzoneActive) setDropzoneActive(true);
-                }
-              }}
-              onDragLeave={(event) => {
-                const nextTarget = event.relatedTarget;
-                if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) return;
-                setDropzoneActive(false);
-              }}
-              onDrop={(event) => {
-                const files = Array.from(event.dataTransfer?.files ?? []);
-                setDropzoneActive(false);
-                if (!files.length) return;
-                event.preventDefault();
-                void addAttachments(files);
-              }}
-            />
+                    if (
+                      text.trim() &&
+                      (props.isRemoteWorkspace || props.isSandboxWorkspace) &&
+                      /file:\/\/|(^|\s)\/(Users|home|var|etc|opt|tmp|private|Volumes|Applications)\//.test(text)
+                    ) {
+                      const attachedFiles = props.attachments.map((attachment) => attachment.file);
+                      toast.warning(t("composer.remote_worker_paste_warning"), {
+                        action:
+                          props.onUploadInboxFiles && attachedFiles.length > 0
+                            ? {
+                                label: t("composer.upload_to_shared_folder"),
+                                onClick: () => void props.onUploadInboxFiles?.(attachedFiles),
+                              }
+                            : undefined,
+                      });
+                      // Intentionally no preventDefault — the notice is advisory,
+                      // the paste still goes through the editor.
+                    }
+                  }}
+                  onDragOver={(event) => {
+                    if (event.dataTransfer?.files?.length) {
+                      event.preventDefault();
+                      if (!dropzoneActive) setDropzoneActive(true);
+                    }
+                  }}
+                  onDragLeave={(event) => {
+                    const nextTarget = event.relatedTarget;
+                    if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) return;
+                    setDropzoneActive(false);
+                  }}
+                  onDrop={(event) => {
+                    const files = Array.from(event.dataTransfer?.files ?? []);
+                    setDropzoneActive(false);
+                    if (!files.length) return;
+                    event.preventDefault();
+                    void addAttachments(files);
+                  }}
+                />
+              </div>
+              {props.submissionBlocked ? (
+                <div
+                  className="absolute inset-0 flex min-h-[60px] items-center justify-center gap-2 text-[13px] font-medium text-dls-secondary"
+                  data-testid="composer-connection-state"
+                  role="status"
+                  aria-live="polite"
+                >
+                  {props.submissionPreparing ? (
+                    <>
+                      <LoaderCircle size={15} className="animate-spin" />
+                      <span>{props.submissionInputStatusLabel ?? "Connecting signed-in services…"}</span>
+                    </>
+                  ) : (
+                    <span>Reconnect Den to continue.</span>
+                  )}
+                </div>
+              ) : null}
+            </div>
 
             {/* Action row — attachments, quick actions, model controls, and send */}
             <div className="mt-2 flex flex-wrap items-end justify-between gap-2">
@@ -1799,10 +1824,10 @@ export function ReactSessionComposer(props: ComposerProps) {
                     <div className="flex items-end">
                       <button
                         type="button"
-                        onClick={canSend ? props.onSteer : undefined}
-                        disabled={!canSend}
+                        onClick={canSend && !props.submissionBlocked ? props.onSteer : undefined}
+                        disabled={!canSend || props.submissionBlocked}
                         className={`inline-flex h-9 max-h-9 items-center gap-2 rounded-l-full pl-4 pr-3 text-[13px] font-medium transition-colors ${
-                          canSend
+                          canSend && !props.submissionBlocked
                             ? "bg-[var(--dls-accent)] text-[var(--dls-accent-fg)] hover:bg-[var(--dls-accent-hover)]"
                             : "bg-gray-4 text-gray-10"
                         }`}
@@ -1817,8 +1842,9 @@ export function ReactSessionComposer(props: ComposerProps) {
                             <button
                               type="button"
                               aria-label={t("composer.send_options")}
+                              disabled={props.submissionBlocked}
                               className={`relative inline-flex h-9 max-h-9 items-center rounded-r-full border-l pl-1.5 pr-2.5 transition-colors ${
-                                canSend
+                                canSend && !props.submissionBlocked
                                   ? "border-[color-mix(in_srgb,var(--dls-accent-fg)_25%,transparent)] bg-[var(--dls-accent)] text-[var(--dls-accent-fg)] hover:bg-[var(--dls-accent-hover)]"
                                   : "border-gray-6 bg-gray-4 text-gray-10"
                               }`}
@@ -1834,7 +1860,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                         />
                         <DropdownMenuContent align="end">
                           <DropdownMenuItem
-                            disabled={!canSend}
+                            disabled={!canSend || props.submissionBlocked}
                             onClick={() => void props.onQueue()}
                             title={t("composer.queue_hint")}
                           >

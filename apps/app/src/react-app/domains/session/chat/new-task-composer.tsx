@@ -250,6 +250,7 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
       steering={false}
       submissionPreparing={props.busy || Boolean(props.submissionPreparing)}
       submissionBlocked={props.busy || Boolean(props.submissionBlocked)}
+      submissionInputStatusLabel={props.busy ? "Preparing your workspace…" : undefined}
       queuedCount={0}
       disabled={Boolean(context?.modelUnavailable)}
       modelUnavailable={context?.modelUnavailable}
