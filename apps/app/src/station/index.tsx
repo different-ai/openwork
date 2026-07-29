@@ -4,9 +4,12 @@ import { createRoot } from "react-dom/client";
 import {
   ArrowLeft,
   ArrowRight,
+  Captions,
   CornerDownLeft,
+  Eraser,
   Mic,
   MicOff,
+  X,
 } from "lucide-react";
 
 import {
@@ -28,8 +31,17 @@ function isProcessing(phase: StationState["runtime"]["phase"]) {
     || phase === "connected_data_found";
 }
 
+function transcriptTail(value: string, limit = 320) {
+  const clean = value.trim().replace(/\s+/g, " ");
+  if (clean.length <= limit) return clean;
+  const tail = clean.slice(-limit);
+  const firstSpace = tail.indexOf(" ");
+  return `…${firstSpace >= 0 ? tail.slice(firstSpace + 1) : tail}`;
+}
+
 function StationApp() {
   const [state, setState] = useState<StationState>(INITIAL_STATION_STATE);
+  const [showDeveloperTranscript, setShowDeveloperTranscript] = useState(false);
   const selected = useMemo(
     () => state.suggestions.find((suggestion) => suggestion.id === state.selectedId)
       ?? state.suggestions[0]
@@ -39,6 +51,12 @@ function StationApp() {
   const active = state.interactionMode === "active";
   const processing = isProcessing(state.runtime.phase);
   const cardVisible = active && selected !== null;
+  const developerTranscriptAvailable = import.meta.env.DEV;
+  const captionVisible = developerTranscriptAvailable
+    && showDeveloperTranscript
+    && !cardVisible;
+  const completedCaption = transcriptTail(state.transcript);
+  const partialCaption = transcriptTail(state.partialTranscript, 180);
   const [presented, setPresented] = useState<StationSuggestion | null>(null);
   const presentedIndex = presented
     ? Math.max(0, state.suggestions.findIndex((suggestion) => suggestion.id === presented.id))
@@ -61,6 +79,12 @@ function StationApp() {
   }, []);
 
   useEffect(() => {
+    void window.__OPENWORK_STATION__?.setExpanded?.(
+      cardVisible || (developerTranscriptAvailable && showDeveloperTranscript),
+    );
+  }, [cardVisible, developerTranscriptAvailable, showDeveloperTranscript]);
+
+  useEffect(() => {
     if (cardVisible && selected) {
       setPresented(selected);
       return undefined;
@@ -78,6 +102,59 @@ function StationApp() {
       data-processing={processing ? "true" : "false"}
       data-runtime-phase={state.runtime.phase}
     >
+      {captionVisible ? (
+        <section
+          className="station-caption"
+          aria-label="Development live transcript"
+          aria-live="polite"
+          data-partial={partialCaption ? "true" : "false"}
+        >
+          <header>
+            <span className="station-caption-live-dot" aria-hidden="true" />
+            <strong>Live transcript</strong>
+            <span>{state.provenance.model ?? "OpenAI Realtime"}</span>
+            <div>
+              <button
+                type="button"
+                aria-label="Clear captured transcript"
+                title="Clear transcript"
+                disabled={!completedCaption && !partialCaption}
+                onClick={() => sendCommand({ type: "clear-transcript" })}
+              >
+                <Eraser size={10} />
+              </button>
+              <button
+                type="button"
+                aria-label="Hide live transcript"
+                title="Hide transcript"
+                onClick={() => setShowDeveloperTranscript(false)}
+              >
+                <X size={10} />
+              </button>
+            </div>
+          </header>
+          <p>
+            {completedCaption ? <span>{completedCaption}</span> : null}
+            {partialCaption ? <mark>{partialCaption}</mark> : null}
+            {!completedCaption && !partialCaption
+              ? <em>Listening for clear speech…</em>
+              : null}
+          </p>
+          <footer>
+            <span>{state.runtime.phase.replaceAll("_", " ")}</span>
+            <span>
+              {state.provenance.inputSource ?? "awaiting microphone"}
+              {" · "}
+              {state.source === "openwork-connect"
+                ? "connect"
+                : state.source === "local-signal"
+                  ? "connect unavailable"
+                  : "connect waiting"}
+            </span>
+          </footer>
+        </section>
+      ) : null}
+
       {presented ? (
         <section
           className={`station-island ${cardVisible ? "is-visible" : ""}`}
@@ -169,6 +246,18 @@ function StationApp() {
           </span>
         </button>
       </aside>
+
+      {developerTranscriptAvailable ? (
+        <button
+          type="button"
+          className={`station-caption-toggle ${showDeveloperTranscript ? "is-on" : ""}`}
+          aria-label={`${showDeveloperTranscript ? "Hide" : "Show"} live development transcript`}
+          title={`${showDeveloperTranscript ? "Hide" : "Show"} live transcript`}
+          onClick={() => setShowDeveloperTranscript((current) => !current)}
+        >
+          <Captions size={12} strokeWidth={1.6} />
+        </button>
+      ) : null}
     </main>
   );
 }

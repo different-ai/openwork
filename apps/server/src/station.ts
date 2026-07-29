@@ -183,6 +183,25 @@ OpenWork Connect, rank what matters now, and prepare the next useful move.
 
 # Research behavior
 
+- Treat OpenWork Connect as a private read-only research layer over the user's
+  connected Slack, Gmail, and Google Calendar.
+- Search only when live context could change what the user should know or do
+  next. Strong signals include:
+  - a named person, customer, project, channel, or email thread tied to a
+    question, risk, blocker, decision, or preparation need;
+  - a prior concern, promise, decision, owner, deadline, dependency, or
+    follow-up that may have changed;
+  - a concrete meeting, attendee, date, time zone, availability question,
+    conflict, agenda, or pre-meeting preparation need;
+  - a contradiction or correction that makes earlier context stale.
+- Use openwork-cloud_search_capabilities with two to four concise provider and
+  intent variants, such as "Slack search messages project", "Gmail search
+  threads person", or "Google Calendar list events attendee". Then execute
+  only exact read-only capabilities returned by discovery.
+- Prefer one or two targeted providers that fit the current signal. Do not
+  search Slack, Gmail, and Calendar blindly on every turn.
+- Prefer recent, directly relevant evidence. Cross-check providers when doing
+  so resolves a conflict or materially strengthens the card.
 - Classify suggestions consistently:
   - memory: prior facts, messages, concerns, decisions, or requests for recall;
   - calendar: time-zone reasoning, availability, meetings, agendas, or reminders;
@@ -192,8 +211,10 @@ OpenWork Connect, rank what matters now, and prepare the next useful move.
   decisions, and questions.
 - Give every retrieved claim a stable source URL when the provider returns one.
 - Do not invent a source, attendee, message, time, or completed action.
-- Return one to four distinct new suggestions. Station accumulates and re-ranks
-  useful signals across turns, so omit low-value filler rather than filling a quota.
+- Return zero to three distinct new suggestions. Station accumulates and
+  re-ranks useful signals across turns, so omit low-value filler rather than
+  filling a quota. A useful card should tell the user something they were
+  unlikely to remember or notice unaided.
 - Relevance is 0 to 1 and represents usefulness in the current conversational
   moment, not generic importance.
 
@@ -204,9 +225,13 @@ export function buildStationAnalysisPrompt(transcript: string, sessionContext = 
   const context = sessionContext.trim()
     ? `\n\nOpenWork session context:\n${sessionContext.trim().slice(0, 4_000)}`
     : "";
-  return `Analyze this recent live conversation as a passive agent. Research
-connected context when it can materially improve an answer or preparation.
-Return cited information, reviewable drafts, and relevance-ranked suggestions.
+  return `Analyze this accumulated live conversation as a passive agent.
+Decide what the user would benefit from knowing right now, then use OpenWork
+Connect to research Slack, Gmail, or Google Calendar only when those sources
+can materially improve recall, preparation, risk detection, or the next step.
+Return concise cited context cards ranked by immediate usefulness. Return no
+card when the connected evidence would be obvious, generic, stale, or merely
+restate the transcript.
 
 Recent live conversation:
 ${transcript.trim().slice(-12_000)}${context}`;
@@ -413,91 +438,4 @@ export function analyzeStationConnectedRecords(
     });
   }
   return normalizeStationSuggestions({ suggestions }, now);
-}
-
-function fallbackSuggestion(
-  kind: StationSuggestionKind,
-  title: string,
-  summary: string,
-  reason: string,
-  relevance: number,
-  action: StationSuggestionAction,
-  now: number,
-  index: number,
-): StationSuggestion {
-  return {
-    id: `station-local-${now}-${index}`,
-    kind,
-    title,
-    summary,
-    reason,
-    relevance,
-    color: STATION_COLORS[kind],
-    sources: [],
-    action,
-    createdAt: now,
-  };
-}
-
-export function createFallbackStationSuggestions(transcript: string, now = Date.now()): StationSuggestion[] {
-  const copy = transcript.trim();
-  if (!copy) return [];
-  const suggestions: StationSuggestion[] = [];
-  if (/\b(remember|last week|told you|mentioned earlier)\b/i.test(copy)) {
-    suggestions.push(fallbackSuggestion(
-      "memory",
-      "Context worth recalling",
-      "Station heard a request for earlier context. Connected research was unavailable, so no source is claimed yet.",
-      "The current conversation depends on information from an earlier exchange.",
-      0.9,
-      { kind: "none", label: "Waiting for a source" },
-      now,
-      suggestions.length,
-    ));
-  }
-  if (/\b(meet|meeting|available|calendar|next week|time zone|timezone|denver|berlin)\b/i.test(copy)) {
-    suggestions.push(fallbackSuggestion(
-      "calendar",
-      "Prepare the next meeting",
-      "A scheduling decision is forming. Station can prepare an invitation once the attendees and time are confirmed.",
-      "People are discussing availability or time zones.",
-      0.82,
-      {
-        kind: "review_draft",
-        label: "Review calendar draft",
-        draft: "Meeting follow-up\n\nAttendees: confirm participants\nTime: confirm the agreed local times\nNotes: add the purpose discussed on the call",
-      },
-      now,
-      suggestions.length,
-    ));
-  }
-  if (/\b(follow up|email|contact|let them know|send them|after (this|the) call)\b/i.test(copy)) {
-    suggestions.push(fallbackSuggestion(
-      "follow_up",
-      "Follow-up ready to shape",
-      "Station heard a commitment to contact someone after the conversation and prepared a reviewable starting point.",
-      "A future communication was promised in the live conversation.",
-      0.78,
-      {
-        kind: "review_draft",
-        label: "Review email draft",
-        draft: "Subject: Following up\n\nHi —\n\nFollowing up on our conversation, I wanted to share the next step we discussed.\n\nBest,",
-      },
-      now,
-      suggestions.length,
-    ));
-  }
-  if (!suggestions.length) {
-    suggestions.push(fallbackSuggestion(
-      "context",
-      "Understanding the conversation",
-      copy.length > 180 ? `${copy.slice(-177)}…` : copy,
-      "Station is holding the newest conversational context while it waits for a useful next move.",
-      0.46,
-      { kind: "none", label: "Keep in view" },
-      now,
-      0,
-    ));
-  }
-  return suggestions;
 }

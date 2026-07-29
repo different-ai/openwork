@@ -47,6 +47,7 @@ export type StationState = {
 export type StationCommand = {
   type:
     | "activate"
+    | "clear-transcript"
     | "dismiss"
     | "handoff"
     | "hide"
@@ -84,6 +85,7 @@ export function isStationCommand(value: unknown): value is StationCommand {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   const type = Reflect.get(value, "type");
   return type === "activate"
+    || type === "clear-transcript"
     || type === "dismiss"
     || type === "handoff"
     || type === "hide"

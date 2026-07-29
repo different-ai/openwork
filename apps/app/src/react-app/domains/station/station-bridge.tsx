@@ -561,6 +561,17 @@ export function OpenWorkStationBridge(props: OpenWorkStationBridgeProps) {
     });
   }, [observeLifecycle, transitionRuntime, updateState]);
 
+  const clearTranscript = useCallback(() => {
+    transcriptRef.current = "";
+    realtime.transcript.reset();
+    updateState((current) => ({
+      ...current,
+      transcript: "",
+      partialTranscript: "",
+    }));
+    return { ok: true };
+  }, [updateState]);
+
   const handleRealtimeEvent = useCallback((event: unknown) => {
     const type = readString(event, "type");
     if (type === "response.created") {
@@ -772,8 +783,8 @@ export function OpenWorkStationBridge(props: OpenWorkStationBridgeProps) {
       const researchCurrentContext = tool({
         name: "research_current_context",
         description: [
-          "Research the latest meaningful work conversation through OpenWork's review-only contextual scanner.",
-          "Use this when a person, past discussion, commitment, date, decision, or useful next step may benefit from connected context.",
+          "Research the accumulated meaningful work conversation through OpenWork Connect.",
+          "Use this proactively when Slack, Gmail, or Google Calendar could resolve a question, recall prior context, expose a blocker or contradiction, verify a commitment or deadline, prepare for a meeting, or make the next step materially more useful.",
           "The tool only prepares cited suggestions and reviewable drafts; it cannot send, schedule, create, update, or delete anything.",
         ].join(" "),
         parameters: z.object({
@@ -829,14 +840,18 @@ export function OpenWorkStationBridge(props: OpenWorkStationBridgeProps) {
       const agent = new RealtimeAgent({
         name: "OpenWork Station",
         instructions: [
-          "You are OpenWork Station, a silent passive AI right hand beside a live work conversation.",
-          "Listen continuously but never speak or address the people in the room. Your text output is internal and is not presented as a chat reply.",
-          "After each completed work-related turn, decide whether connected context could genuinely help. If it could, call research_current_context once with the relevant spoken context and a narrow focus.",
-          "Call the tool when someone explicitly asks what a named person said before, when time zones or calendar availability materially affect a concrete proposal, or when a commitment becomes specific enough to prepare for review.",
-          "Wait through general introductions, greetings, filler, background noise, repetitions, casual speech, and vague mentions. A person’s name alone is not enough.",
-          "When a later turn corrects a date, duration, or commitment, research the accumulated latest context so the existing suggestion can be replaced instead of contradicted.",
-          "If a tool call reports that connected context is temporarily unavailable, do not assume it remains unavailable. A later completed turn that explicitly asks to retry or return to that context should call the tool again.",
-          "The tool is review-only. Never send a message, schedule an event, create or update a record, or imply that an external action happened.",
+          "# Role and objective",
+          "You are OpenWork Station, a silent passive AI right hand beside the user's live work conversation. Listen continuously, notice when private work context could help, and proactively research it. Never speak or address anyone in the room; text output is internal and is not shown as a chat reply.",
+          "# Research decision",
+          "After every completed meaningful work turn, decide whether one read-only lookup could materially help now. If yes, call research_current_context once with the accumulated relevant transcript and the narrowest focus. Be eager about useful read-only research, but selective about cards.",
+          "Research when the conversation contains any of these signals: a named person, customer, project, or topic whose prior Slack or Gmail context would change the answer; a recalled decision, concern, promise, owner, blocker, deadline, or follow-up; a concrete meeting, date, time zone, attendee, availability question, conflict, or preparation need that Calendar could verify; an apparent contradiction or correction; or a moment where recent Slack, email, or calendar context would prevent the user from missing something important.",
+          "For named people or projects, wait until there is a question, decision, risk, commitment, or preparation need—a name alone is not useful enough. Prefer the most recent and directly relevant context over broad history.",
+          "# Quiet behavior",
+          "Do not research greetings, introductions, filler, background speech, repetitions, casual conversation, vague ideas, or turns that already contain everything needed. Do not create a card merely to prove that you are listening.",
+          "# Corrections and continuity",
+          "Use the accumulated latest context, not an isolated fragment. When a later turn corrects a person, date, duration, decision, or commitment, research again so stale context can be replaced rather than contradicted. If connected context was temporarily unavailable, retry only after a later turn makes the same context relevant again.",
+          "# Authority",
+          "Research is review-only. Never send a message, schedule an event, create or update a record, or imply that an external action happened. The only user-facing outcome is a contextual card they may continue as an OpenWork thread or dismiss.",
           sessionContext ? `Current OpenWork session context:\n${sessionContext}` : "",
         ].filter(Boolean).join("\n\n"),
         tools: [researchCurrentContext],
@@ -853,7 +868,7 @@ export function OpenWorkStationBridge(props: OpenWorkStationBridgeProps) {
               transcription: {
                 model: credentials.transcriptionModel,
                 language: "en",
-                prompt: "OpenWork Station ambient work conversation. Preserve names, companies, dates, times, and commitments accurately.",
+                prompt: "OpenWork Station live work conversation. Preserve exact names, companies, projects, customer names, Slack channels, email subjects, dates, times, time zones, deadlines, decisions, corrections, owners, and commitments. Vocabulary may include OpenWork, Slack, Gmail, Google Calendar, MCP, and Realtime.",
               },
               noiseReduction: { type: "near_field" },
               turnDetection: {
@@ -1387,6 +1402,7 @@ export function OpenWorkStationBridge(props: OpenWorkStationBridgeProps) {
   const handleCommand = useCallback(async (command: StationCommand) => {
     if (command.type === "start") return start();
     if (command.type === "stop") return stop();
+    if (command.type === "clear-transcript") return clearTranscript();
     if (command.type === "toggle-listening") return stateRef.current.listening ? stop() : start();
     if (command.type === "activate") return activateSuggestion(command.id);
     if (command.type === "handoff") return handoffSuggestion(command.id);
@@ -1434,6 +1450,7 @@ export function OpenWorkStationBridge(props: OpenWorkStationBridgeProps) {
     return { ok: false, error: "Unsupported Station command." };
   }, [
     activateSuggestion,
+    clearTranscript,
     handoffSuggestion,
     seedDemo,
     setInteractionMode,

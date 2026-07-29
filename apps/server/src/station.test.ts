@@ -3,7 +3,6 @@ import { describe, expect, test } from "bun:test";
 import {
   analyzeStationConnectedRecords,
   buildStationSystemPrompt,
-  createFallbackStationSuggestions,
   isReadOnlyStationCapability,
   normalizeStationSuggestions,
   selectStationModel,
@@ -22,6 +21,8 @@ describe("OpenWork Station passive-agent boundary", () => {
     const prompt = buildStationSystemPrompt();
     expect(prompt).toContain("passive AI right hand");
     expect(prompt).toContain("This run is read-only");
+    expect(prompt).toContain("Slack, Gmail, and Google Calendar");
+    expect(prompt).toContain("Do not");
     expect(prompt).toContain("must never be executed");
   });
 
@@ -129,17 +130,5 @@ describe("OpenWork Station passive-agent boundary", () => {
       42,
     );
     expect(suggestions).toEqual([]);
-  });
-});
-
-describe("OpenWork Station local signals", () => {
-  test("prepares review-only calendar and follow-up drafts", () => {
-    const suggestions = createFallbackStationSuggestions(
-      "Can we meet next week? I am in Denver. I will follow up by email after the call.",
-      100,
-    );
-    expect(suggestions.map((suggestion) => suggestion.kind)).toEqual(["calendar", "follow_up"]);
-    expect(suggestions.every((suggestion) => suggestion.action.kind === "review_draft")).toBe(true);
-    expect(suggestions.every((suggestion) => suggestion.sources.length === 0)).toBe(true);
   });
 });

@@ -11,6 +11,7 @@ export const STATION_EXPANDED_BOUNDS = Object.freeze({ width: 440, height: 420 }
 
 const ALLOWED_COMMANDS = new Set([
   "activate",
+  "clear-transcript",
   "dismiss",
   "handoff",
   "hide",
@@ -62,6 +63,7 @@ export function createStationWindowManager(options) {
   let stationWindow = null;
   let enabled = false;
   let expanded = false;
+  let rendererExpanded = false;
   let activeMode = false;
   let modeShortcutRegistered = false;
   let collapseTimer = null;
@@ -135,6 +137,12 @@ export function createStationWindowManager(options) {
     }, 170);
   }
 
+  function syncSurfaceExpanded() {
+    setSurfaceExpanded(
+      rendererExpanded || (activeMode && latestState.suggestions.length > 0),
+    );
+  }
+
   function show() {
     if (!enabled) return { ok: false, reason: "Station is disabled." };
     const win = ensureWindow();
@@ -172,7 +180,7 @@ export function createStationWindowManager(options) {
     if (!enabled) return;
     if (activeMode) registerActiveShortcuts();
     else unregisterActiveShortcuts();
-    setSurfaceExpanded(activeMode && latestState.suggestions.length > 0);
+    syncSurfaceExpanded();
     show();
   }
 
@@ -183,7 +191,7 @@ export function createStationWindowManager(options) {
       activeMode = next;
       syncModeSurface();
     } else {
-      setSurfaceExpanded(activeMode && latestState.suggestions.length > 0);
+      syncSurfaceExpanded();
       show();
     }
     if (forward) return forwardCommand({ type: "set-mode", active: activeMode });
@@ -241,7 +249,7 @@ export function createStationWindowManager(options) {
       } else if (activeMode) {
         registerActiveShortcuts();
       }
-      setSurfaceExpanded(activeMode && latestState.suggestions.length > 0);
+      syncSurfaceExpanded();
     }
     const win = ensureWindow();
     if (!win.webContents.isDestroyed()) {
@@ -292,8 +300,8 @@ export function createStationWindowManager(options) {
   }
 
   function setExpanded(value) {
-    expanded = value === true;
-    applyBounds();
+    rendererExpanded = value === true;
+    syncSurfaceExpanded();
     return { ok: true, expanded };
   }
 
@@ -356,6 +364,7 @@ export function createStationWindowManager(options) {
     enabled = false;
     activeMode = false;
     expanded = false;
+    rendererExpanded = false;
     pendingCommands.length = 0;
     unregisterActiveShortcuts();
     unregisterModeShortcut();

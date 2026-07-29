@@ -222,6 +222,23 @@ test("published active state expands for cards while passive state retracts befo
   assert.equal(FakeWindow.instances[0]?.bounds.width, 66);
 });
 
+test("developer transcript expansion stays anchored across passive state updates", async () => {
+  const harness = createHarness();
+  harness.manager.initialize();
+  harness.manager.setEnabled(true);
+  harness.manager.setExpanded(true);
+  harness.manager.publishState({
+    interactionMode: "passive",
+    transcript: "A live transcript update.",
+    suggestions: [],
+  });
+  await new Promise((resolve) => setTimeout(resolve, 190));
+  assert.equal(FakeWindow.instances[0]?.bounds.width, 440);
+  harness.manager.setExpanded(false);
+  await new Promise((resolve) => setTimeout(resolve, 190));
+  assert.equal(FakeWindow.instances[0]?.bounds.width, 66);
+});
+
 test("disabling Station stops the renderer and tears down every native capability", () => {
   const harness = createHarness();
   harness.manager.initialize();
@@ -246,4 +263,17 @@ test("rejects unrecognized renderer commands", () => {
     error: "invalid Station command",
   });
   assert.equal(harness.mainSent.length, 0);
+});
+
+test("forwards the development transcript reset without adding native behavior", () => {
+  const harness = createHarness();
+  harness.manager.initialize();
+  harness.manager.setEnabled(true);
+  assert.deepEqual(harness.manager.forwardCommand({ type: "clear-transcript" }), {
+    ok: true,
+  });
+  assert.deepEqual(harness.mainSent.at(-1), [
+    "openwork:station:command",
+    { type: "clear-transcript" },
+  ]);
 });

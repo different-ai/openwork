@@ -15,7 +15,6 @@ import {
   analyzeStationConnectedRecords,
   buildStationAnalysisPrompt,
   buildStationSystemPrompt,
-  createFallbackStationSuggestions,
   isReadOnlyStationCapability,
   normalizeStationSuggestions,
   selectStationModel,
@@ -358,11 +357,11 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
           `/session/${encodeURIComponent(session.id)}/message`,
         );
       } catch (error) {
-        console.warn("[station] connected analysis fell back to local signals", {
+        console.warn("[station] connected analysis produced no card", {
           reason: error instanceof Error ? error.name : "unknown_error",
         });
         return {
-          suggestions: createFallbackStationSuggestions(input.transcript),
+          suggestions: [],
           source: "local-signal",
           research: {
             boundary: "openwork-connect" as const,
@@ -387,15 +386,12 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
         }
       }
       const suggestions = normalizeStationSuggestions(parsed);
-      const resolvedSuggestions = suggestions.length
-        ? suggestions
-        : createFallbackStationSuggestions(input.transcript);
       const trace = readStationToolTrace(response.parts);
       const sourceProviders = Array.from(new Set(
-        resolvedSuggestions.flatMap((suggestion) => suggestion.sources.map((source) => source.provider)),
+        suggestions.flatMap((suggestion) => suggestion.sources.map((source) => source.provider)),
       ));
       return {
-        suggestions: resolvedSuggestions,
+        suggestions,
         source: suggestions.some((suggestion) => suggestion.sources.length > 0)
           ? "openwork-connect"
           : "local-signal",
@@ -456,7 +452,7 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
         error: error instanceof Error ? error.message : String(error),
       });
       return jsonResponse({
-        suggestions: createFallbackStationSuggestions(transcript),
+        suggestions: [],
         source: "local-signal",
         research: {
           boundary: "openwork-connect",

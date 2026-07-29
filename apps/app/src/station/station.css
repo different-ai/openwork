@@ -77,6 +77,142 @@ kbd {
   to { transform: translateX(0) scaleX(1); }
 }
 
+.station-caption {
+  position: absolute;
+  top: calc(50% + 58px);
+  right: 12px;
+  z-index: 8;
+  display: flex;
+  width: 286px;
+  max-height: 116px;
+  flex-direction: column;
+  gap: 7px;
+  padding: 9px 10px 8px;
+  overflow: hidden;
+  border: 1px solid rgb(39 68 90 / 34%);
+  border-radius: 12px;
+  color: #193247;
+  background: rgb(246 249 252 / 90%);
+  box-shadow: 0 9px 26px rgb(1 22 39 / 8%);
+  backdrop-filter: blur(16px) saturate(.9);
+  pointer-events: auto;
+  animation: station-caption-popover 150ms cubic-bezier(.16, 1, .3, 1) both;
+  user-select: text;
+  -webkit-app-region: no-drag;
+}
+
+@keyframes station-caption-popover {
+  from { opacity: 0; transform: translateY(-5px) scale(.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.station-caption header,
+.station-caption footer {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+}
+
+.station-caption header {
+  gap: 5px;
+  color: #6e8295;
+  font-size: 7px;
+}
+
+.station-caption header strong {
+  color: #27445a;
+  font-size: 8px;
+  font-weight: 650;
+  letter-spacing: .01em;
+}
+
+.station-caption header > span:not(.station-caption-live-dot) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.station-caption header > div {
+  display: flex;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.station-caption button {
+  display: grid;
+  width: 17px;
+  height: 17px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  color: #718397;
+  background: transparent;
+  cursor: pointer;
+}
+
+.station-caption button:hover {
+  color: #193247;
+  background: rgb(39 68 90 / 7%);
+}
+
+.station-caption button:disabled {
+  opacity: .3;
+  cursor: default;
+}
+
+.station-caption-live-dot {
+  width: 4px;
+  height: 4px;
+  flex: 0 0 auto;
+  border-radius: 99px;
+  background: #267ce8;
+  box-shadow: 0 0 0 2px rgb(38 124 232 / 10%);
+}
+
+.station-caption p {
+  min-height: 27px;
+  margin: 0;
+  overflow: hidden;
+  color: #35485a;
+  font-size: 9px;
+  line-height: 1.45;
+}
+
+.station-caption p span,
+.station-caption p mark {
+  white-space: pre-wrap;
+}
+
+.station-caption p mark {
+  margin-left: .25em;
+  color: #1e68be;
+  background: transparent;
+  font-style: italic;
+}
+
+.station-caption p em {
+  color: #91a0ae;
+  font-style: normal;
+}
+
+.station-caption footer {
+  justify-content: space-between;
+  color: #92a0ad;
+  font-size: 6px;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+.station-caption[data-partial="true"] .station-caption-live-dot {
+  animation: station-caption-listening 720ms ease-in-out infinite alternate;
+}
+
+@keyframes station-caption-listening {
+  to { opacity: .35; transform: scale(.72); }
+}
+
 .station-card {
   display: flex;
   width: 100%;
@@ -347,6 +483,46 @@ kbd {
   border: 0;
   border-radius: 99px;
   background: #a9b7c5;
+}
+
+.station-caption-toggle {
+  position: absolute;
+  z-index: 8;
+  top: calc(50% + 32px);
+  right: 20px;
+  display: grid;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  opacity: .42;
+  color: #7d8a96;
+  background: transparent;
+  cursor: pointer;
+  transition:
+    opacity 100ms ease,
+    color 100ms ease,
+    transform 100ms ease;
+  -webkit-app-region: no-drag;
+}
+
+.station-caption-toggle:hover,
+.station-caption-toggle.is-on {
+  opacity: .82;
+  color: #65727e;
+  background: transparent;
+}
+
+.station-caption-toggle:active {
+  transform: scale(.9);
+}
+
+.station-caption-toggle:focus-visible {
+  opacity: .82;
+  outline: 1px solid #a8b1b9;
+  outline-offset: 1px;
 }
 
 .station-pill.is-listening .station-mic {
