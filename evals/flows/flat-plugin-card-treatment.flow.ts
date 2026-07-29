@@ -1,6 +1,6 @@
 import { defineFlow, type FlowContext } from "../runner/flow.ts";
 import { loadVoiceoverParagraphs } from "../runner/voiceover.ts";
-import { denWebUrl, signInViaBrowser } from "./lib/den-web.mjs";
+import { denApiFetch, denWebUrl, signInViaBrowser } from "./lib/den-web.mjs";
 
 const FLOW_ID = "flat-plugin-card-treatment";
 const vo = await loadVoiceoverParagraphs(FLOW_ID);
@@ -9,6 +9,93 @@ if (!vo) throw new Error(`Missing approved voice-over script for ${FLOW_ID}.`);
 const EMAIL = process.env.OPENWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
 const PASSWORD = process.env.OPENWORK_EVAL_DEMO_PASSWORD?.trim() || "OpenWorkDemo123!";
 const ORGANIZATION_NAME = "Acme Robotics";
+const MARKETPLACE_NAME = "Flat Plugin Card Proof";
+const PLUGIN_NAME = "Flat Surface Proof Plugin";
+
+const state = {
+  marketplaceId: "",
+  pluginId: "",
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+async function seedPluginCards(ctx: FlowContext): Promise<void> {
+  const signedIn = await denApiFetch("/api/auth/sign-in/email", {
+    method: "POST",
+    body: JSON.stringify({ email: EMAIL, password: PASSWORD }),
+  });
+  const token = isRecord(signedIn.body) && typeof signedIn.body.token === "string"
+    ? signedIn.body.token
+    : "";
+  ctx.assert(
+    signedIn.response.ok && token.length > 0,
+    `Could not sign in ${EMAIL} through the Den API (${signedIn.response.status}).`,
+  );
+  const headers = { authorization: `Bearer ${token}` };
+
+  const marketplace = await denApiFetch("/v1/marketplaces", {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      name: MARKETPLACE_NAME,
+      description: "Deterministic marketplace for flat Plugin card acceptance proof.",
+    }),
+  });
+  const marketplaceItem = isRecord(marketplace.body) && isRecord(marketplace.body.item)
+    ? marketplace.body.item
+    : null;
+  state.marketplaceId = typeof marketplaceItem?.id === "string" ? marketplaceItem.id : "";
+  ctx.assert(
+    marketplace.response.ok && state.marketplaceId.length > 0,
+    `Marketplace proof setup failed (${marketplace.response.status}): ${JSON.stringify(marketplace.body).slice(0, 500)}`,
+  );
+
+  const access = await denApiFetch(`/v1/marketplaces/${state.marketplaceId}/access`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ orgWide: true, role: "viewer" }),
+  });
+  ctx.assert(
+    access.response.ok,
+    `Marketplace access proof setup failed (${access.response.status}): ${JSON.stringify(access.body).slice(0, 500)}`,
+  );
+
+  const plugin = await denApiFetch("/v1/plugins", {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      name: PLUGIN_NAME,
+      description: "Deterministic Plugin card used only by the acceptance evaluator.",
+      orgWide: true,
+      marketplaceId: state.marketplaceId,
+      components: [{
+        type: "skill",
+        input: {
+          rawSourceText: [
+            "---",
+            "name: flat-surface-proof",
+            "description: Deterministic fixture for flat Plugin card acceptance proof.",
+            "---",
+            "",
+            "Return a short confirmation that the flat Plugin card proof fixture is available.",
+          ].join("\n"),
+          metadata: {
+            name: "flat-surface-proof",
+            description: "Deterministic fixture for flat Plugin card acceptance proof.",
+          },
+        },
+      }],
+    }),
+  });
+  const pluginItem = isRecord(plugin.body) && isRecord(plugin.body.item) ? plugin.body.item : null;
+  state.pluginId = typeof pluginItem?.id === "string" ? pluginItem.id : "";
+  ctx.assert(
+    plugin.response.ok && state.pluginId.length > 0,
+    `Plugin proof setup failed (${plugin.response.status}): ${JSON.stringify(plugin.body).slice(0, 500)}`,
+  );
+}
 
 async function setViewport(ctx: FlowContext, width: number): Promise<void> {
   ctx.assert(Boolean(ctx.client), "A browser CDP client is required.");
@@ -56,7 +143,7 @@ export default defineFlow({
   id: FLOW_ID,
   title: "Den and Marketplace Plugin cards use a consistent flat semantic surface",
   kind: "user-facing",
-  requiredEnv: ["OPENWORK_EVAL_DEN_WEB_URL"],
+  requiredEnv: ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_WEB_URL"],
   preserveTheme: true,
   steps: [
     {
@@ -66,6 +153,7 @@ export default defineFlow({
           voiceover: vo[0],
           action: async () => {
             await setViewport(ctx, 1440);
+            await seedPluginCards(ctx);
             await signInViaBrowser(ctx, EMAIL, PASSWORD, ORGANIZATION_NAME);
             await navigate(ctx, "/dashboard/plugins");
             await ctx.waitFor(
@@ -74,7 +162,7 @@ export default defineFlow({
             );
             await ctx.waitFor(
               "Boolean(document.querySelector('a[href*=\"/dashboard/plugins/\"]:not([href$=\"/new\"]):not([href$=\"/import\"])'))",
-              { timeoutMs: 120_000, label: "seeded Den Plugin card" },
+              { timeoutMs: 60_000, label: "deterministically seeded Den Plugin card" },
             );
             await assertFlatCards(
               ctx,
@@ -82,16 +170,10 @@ export default defineFlow({
               "Den",
             );
 
-            const marketplaceHref = await ctx.eval(`(() => {
-              const link = [...document.querySelectorAll('a[href*="/dashboard/marketplaces/"]')]
-                .find((entry) => !entry.getAttribute("href")?.endsWith("/new"));
-              return link?.getAttribute("href") || "";
-            })()`);
-            ctx.assert(typeof marketplaceHref === "string" && marketplaceHref.length > 0, "Expected a seeded Marketplace detail link.");
-            await navigate(ctx, String(marketplaceHref));
+            await navigate(ctx, `/dashboard/marketplaces/${encodeURIComponent(state.marketplaceId)}`);
             await ctx.waitFor("Boolean(document.querySelector('div[id^=\"plugin-\"]'))", {
-              timeoutMs: 120_000,
-              label: "seeded Marketplace Plugin card after cold route compilation",
+              timeoutMs: 60_000,
+              label: "deterministically seeded Marketplace Plugin card after cold route compilation",
             });
             await assertFlatCards(ctx, 'div[id^="plugin-"]', "Marketplace");
 
