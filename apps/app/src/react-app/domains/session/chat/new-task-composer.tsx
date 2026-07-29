@@ -20,6 +20,7 @@ import {
 } from "@/react-app/domains/connections/cloud-inventory-cache";
 import { EMPTY_CONNECT_CAPABILITY_INVENTORY } from "@/react-app/domains/session/surface/connect-capability-inventory";
 import { resolveAttachmentFileMetadata } from "@/react-app/domains/session/sync/attachment-file-part";
+import type { CloudMcpSubmissionGateState } from "@/react-app/domains/connections/cloud-mcp-submit-readiness";
 
 /**
  * Workspace-scoped wiring for the new-task composer. Everything here is
@@ -51,6 +52,9 @@ export type NewTaskComposerContext = {
   searchFiles: (query: string) => Promise<string[]>;
   isRemoteWorkspace: boolean;
   isSandboxWorkspace: boolean;
+  cloudMcpSubmissionState: CloudMcpSubmissionGateState;
+  onRetryCloudConnection: () => void;
+  onOpenConnect: () => void;
   onOpenSettingsSection?: (section: "commands" | "skills" | "mcps" | "plugins" | "extensions") => void;
 };
 
@@ -61,6 +65,8 @@ export type NewTaskComposerProps = {
   onRunTask: (resolvedDraft: string, attachments: ComposerAttachment[]) => void;
   /** Disable submission while a default workspace is being prepared. */
   busy: boolean;
+  submissionPreparing?: boolean;
+  submissionBlocked?: boolean;
   context: NewTaskComposerContext | null;
 };
 
@@ -222,6 +228,7 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
   };
 
   const handleRunTask = () => {
+    if (props.submissionBlocked) return;
     props.onRunTask(resolvePastedTextPlaceholders(props.draft, pastedText), attachments);
   };
 
@@ -241,7 +248,8 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
       onStop={noop}
       busy={false}
       steering={false}
-      submissionPreparing={props.busy}
+      submissionPreparing={props.busy || Boolean(props.submissionPreparing)}
+      submissionBlocked={props.busy || Boolean(props.submissionBlocked)}
       queuedCount={0}
       disabled={Boolean(context?.modelUnavailable)}
       modelUnavailable={context?.modelUnavailable}

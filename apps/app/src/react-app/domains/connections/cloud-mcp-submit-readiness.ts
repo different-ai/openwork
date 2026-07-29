@@ -3,7 +3,6 @@ import type {
   OpenworkCloudMcpHealth,
   OpenworkCloudMcpProviderModelContext,
 } from "../../../app/lib/openwork-server";
-import type { PromptMode } from "../../../app/types";
 import type { CloudMcpUserState } from "./cloud-mcp-user-state";
 
 export const CLOUD_MCP_SUBMISSION_RETRY_DELAYS_MS = [1_000, 3_000];
@@ -79,15 +78,6 @@ export type CloudMcpSubmissionGateState = {
   attempt: number;
   maxAttempts: number;
 };
-
-export type CloudMcpSubmissionGatePolicy = "required" | "bypass";
-
-export function cloudMcpSubmissionGatePolicy(input: {
-  mode: PromptMode;
-  denConnectionRequired: boolean;
-}): CloudMcpSubmissionGatePolicy {
-  return input.denConnectionRequired && input.mode === "prompt" ? "required" : "bypass";
-}
 
 export const IDLE_CLOUD_MCP_SUBMISSION_GATE_STATE: CloudMcpSubmissionGateState = {
   status: "idle",

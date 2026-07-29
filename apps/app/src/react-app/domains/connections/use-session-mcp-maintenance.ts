@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import {
   mintCloudControlMcpToken,
@@ -64,6 +64,10 @@ export type SessionCloudMcpMaintenanceState = {
   issue: CloudMcpMaintenanceIssue | null;
   attempt: number;
   maxAttempts: number;
+};
+
+export type SessionCloudMcpMaintenanceController = SessionCloudMcpMaintenanceState & {
+  retry: () => void;
 };
 
 const IDLE_CLOUD_MCP_MAINTENANCE_STATE: SessionCloudMcpMaintenanceState = {
@@ -335,10 +339,12 @@ export function useSessionMcpMaintenance(input: {
   directory: string;
   engineReloadBusy?: boolean;
   providerModel?: OpenworkCloudMcpProviderModelContext;
-}): SessionCloudMcpMaintenanceState {
+}): SessionCloudMcpMaintenanceController {
   const [cloudMcpState, setCloudMcpState] = useState<SessionCloudMcpMaintenanceState>(
     IDLE_CLOUD_MCP_MAINTENANCE_STATE,
   );
+  const [retryVersion, setRetryVersion] = useState(0);
+  const retry = useCallback(() => setRetryVersion((version) => version + 1), []);
 
   useEffect(() => {
     if (input.engineReloadBusy) {
@@ -464,8 +470,9 @@ export function useSessionMcpMaintenance(input: {
     input.opencodeClient,
     input.providerModel?.model,
     input.providerModel?.provider,
+    retryVersion,
     input.workspaceId,
   ]);
 
-  return cloudMcpState;
+  return { ...cloudMcpState, retry };
 }

@@ -72,6 +72,12 @@ export function SessionEmptyHero(props: SessionEmptyHeroProps) {
   const denAuth = useDenAuth();
   const openWorkModelsPromoEligible = useOpenWorkModelsPromoEligibility();
   const [modelsPromoHidden, setModelsPromoHidden] = useState(isOpenWorkModelsPromoHidden);
+  const cloudMcpSubmissionState = props.composer?.cloudMcpSubmissionState;
+  const submissionPreparing = cloudMcpSubmissionState?.status === "checking" ||
+    cloudMcpSubmissionState?.status === "repairing";
+  const submissionBlocked = cloudMcpSubmissionState !== undefined &&
+    cloudMcpSubmissionState.status !== "idle" &&
+    cloudMcpSubmissionState.status !== "sending";
 
   useEffect(() => {
     const handlePromoChanged = () => setModelsPromoHidden(isOpenWorkModelsPromoHidden());
@@ -103,7 +109,7 @@ export function SessionEmptyHero(props: SessionEmptyHeroProps) {
 
   const submit = (resolvedPrompt: string, attachments: ComposerAttachment[]) => {
     const trimmedPrompt = resolvedPrompt.trim();
-    if (!trimmedPrompt || props.busy) return;
+    if (!trimmedPrompt || props.busy || submissionBlocked) return;
     props.onRunTask(trimmedPrompt, attachments);
   };
 
@@ -126,8 +132,30 @@ export function SessionEmptyHero(props: SessionEmptyHeroProps) {
         onDraftChange={setPrompt}
         onRunTask={submit}
         busy={props.busy ?? false}
+        submissionPreparing={submissionPreparing}
+        submissionBlocked={submissionBlocked}
         context={props.composer ?? null}
       />
+
+      {cloudMcpSubmissionState?.status === "failed" ? (
+        <div
+          className="flex items-center gap-3 rounded-xl border border-red-7/40 bg-red-2/40 px-3 py-2 text-left text-xs text-red-11"
+          data-testid="cloud-mcp-new-task-failure"
+        >
+          <span className="min-w-0 flex-1">
+            {[
+              cloudMcpSubmissionState.issue?.message ?? "Connected service tools could not be prepared.",
+              cloudMcpSubmissionState.issue?.recommendedAction,
+            ].filter(Boolean).join(" ")}
+          </span>
+          <button type="button" className="font-medium hover:underline" onClick={props.composer?.onRetryCloudConnection}>
+            Retry
+          </button>
+          <button type="button" className="font-medium hover:underline" onClick={props.composer?.onOpenConnect}>
+            Open Connect
+          </button>
+        </div>
+      ) : null}
 
       {showModelsHint ? (
         <div
