@@ -43,6 +43,10 @@ export default {
           timeoutMs: 60_000,
           label: "control API",
         });
+        await ctx.waitFor(
+          "window.__openworkControl.listActions().some((action) => action.id === 'session.create_task' && !action.disabled)",
+          { timeoutMs: 60_000, label: "session.create_task enabled" },
+        );
         await ctx.control("session.create_task");
         const sessionId = await ctx.waitFor(`(() => {
           const route = window.__openworkControl.snapshot().route || "";
