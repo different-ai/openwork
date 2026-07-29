@@ -513,13 +513,19 @@ function safeEqual(left: string, right: string): boolean {
   return timingSafeEqual(leftBuffer, rightBuffer);
 }
 
+const HTML_ENTITIES: Record<string, string> = {
+  "&": "&amp;",
+  "<": "&lt;",
+  ">": "&gt;",
+  '"': "&quot;",
+  "'": "&#39;",
+};
+
+// A single global character-class replace: linear (no backtracking) and the
+// shape static analysis recognises as HTML escaping, unlike a chain of
+// string-pattern replaceAll calls.
 function escapeHtml(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
+  return value.replace(/[&<>"']/g, (character) => HTML_ENTITIES[character] ?? character);
 }
 
 export function buildBlockedUserResponse(subject: MockIdpSubjectInput, policyName = "OpenWork Mock IdP policy"): BlockedUserResponseShape {
