@@ -12,6 +12,7 @@ import { ORGANIZATION_SAML_WANT_ASSERTIONS_SIGNED } from "./sso-saml-policy.js"
 
 type SsoConnection = typeof SsoConnectionTable.$inferSelect
 type OrganizationId = SsoConnection["organizationId"]
+type SsoTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
 
 type SamlRegistrationInput = {
   kind: "saml"
@@ -211,6 +212,58 @@ export async function getOrganizationSsoConnection(organizationId: OrganizationI
   return rows[0] ?? null
 }
 
+async function cleanupExternalIdentitiesForDeletedSsoConnection(
+  tx: SsoTransaction,
+  connection: SsoConnection,
+) {
+  await tx
+    .update(ExternalIdentityTable)
+    .set({
+      source: "scim",
+      ssoProviderId: null,
+      remoteId: null,
+      attributesJson: null,
+      lastSsoLoginAt: null,
+    })
+    .where(and(
+      eq(ExternalIdentityTable.organizationId, connection.organizationId),
+      eq(ExternalIdentityTable.ssoProviderId, connection.providerId),
+      isNotNull(ExternalIdentityTable.scimProviderId),
+    ))
+
+  await tx
+    .update(ExternalIdentityTable)
+    .set({
+      active: false,
+      ssoProviderId: null,
+      remoteId: null,
+      attributesJson: null,
+      lastSsoLoginAt: null,
+    })
+    .where(and(
+      eq(ExternalIdentityTable.organizationId, connection.organizationId),
+      eq(ExternalIdentityTable.ssoProviderId, connection.providerId),
+      isNull(ExternalIdentityTable.scimProviderId),
+    ))
+
+  await tx
+    .delete(AuthAccountTable)
+    .where(eq(AuthAccountTable.providerId, connection.providerId))
+}
+
+async function cleanupLegacySsoProvider(
+  tx: SsoTransaction,
+  connection: SsoConnection,
+  canonicalProviderId: string,
+) {
+  if (connection.providerId === canonicalProviderId) {
+    return
+  }
+
+  await cleanupExternalIdentitiesForDeletedSsoConnection(tx, connection)
+  await tx.delete(SsoProviderTable).where(eq(SsoProviderTable.providerId, connection.providerId))
+}
+
 export async function deleteOrganizationSsoConnection(organizationId: OrganizationId) {
   const connection = await getOrganizationSsoConnection(organizationId)
   if (!connection) {
@@ -218,40 +271,7 @@ export async function deleteOrganizationSsoConnection(organizationId: Organizati
   }
 
   await db.transaction(async (tx) => {
-    await tx
-      .update(ExternalIdentityTable)
-      .set({
-        source: "scim",
-        ssoProviderId: null,
-        remoteId: null,
-        attributesJson: null,
-        lastSsoLoginAt: null,
-      })
-      .where(and(
-        eq(ExternalIdentityTable.organizationId, connection.organizationId),
-        eq(ExternalIdentityTable.ssoProviderId, connection.providerId),
-        isNotNull(ExternalIdentityTable.scimProviderId),
-      ))
-
-    await tx
-      .update(ExternalIdentityTable)
-      .set({
-        active: false,
-        ssoProviderId: null,
-        remoteId: null,
-        attributesJson: null,
-        lastSsoLoginAt: null,
-      })
-      .where(and(
-        eq(ExternalIdentityTable.organizationId, connection.organizationId),
-        eq(ExternalIdentityTable.ssoProviderId, connection.providerId),
-        isNull(ExternalIdentityTable.scimProviderId),
-      ))
-
-    await tx
-      .delete(AuthAccountTable)
-      .where(eq(AuthAccountTable.providerId, connection.providerId))
-
+    await cleanupExternalIdentitiesForDeletedSsoConnection(tx, connection)
     await tx.delete(SsoConnectionTable).where(eq(SsoConnectionTable.id, connection.id))
     await tx.delete(SsoProviderTable).where(eq(SsoProviderTable.providerId, connection.providerId))
   })
@@ -277,18 +297,22 @@ export async function registerOrganizationSsoConnection(input: OrganizationSsoRe
           .set({ domainVerified: true })
           .where(eq(SsoProviderTable.providerId, providerId))
       }
-      await db
-        .update(SsoConnectionTable)
-        .set({
-          kind: input.kind,
-          issuer: input.issuer,
-          domain: input.domain,
-          status: "enabled",
-          signInPath: getOrganizationSsoSignInPath(input.organizationSlug),
-          lastTestedAt: new Date(),
-          lastError: null,
-        })
-        .where(eq(SsoConnectionTable.id, existing.id))
+      await db.transaction(async (tx) => {
+        await cleanupLegacySsoProvider(tx, existing, providerId)
+        await tx
+          .update(SsoConnectionTable)
+          .set({
+            providerId,
+            kind: input.kind,
+            issuer: input.issuer,
+            domain: input.domain,
+            status: "enabled",
+            signInPath: getOrganizationSsoSignInPath(input.organizationSlug),
+            lastTestedAt: new Date(),
+            lastError: null,
+          })
+          .where(eq(SsoConnectionTable.id, existing.id))
+      })
 
       const connection = await getOrganizationSsoConnection(input.organizationId)
       if (!connection) {
@@ -318,9 +342,11 @@ export async function registerOrganizationSsoConnection(input: OrganizationSsoRe
         })
         .where(eq(SsoProviderTable.providerId, providerId))
 
+      await cleanupLegacySsoProvider(tx, existing, providerId)
       await tx
         .update(SsoConnectionTable)
         .set({
+          providerId,
           kind: input.kind,
           issuer: input.issuer,
           domain: input.domain,
