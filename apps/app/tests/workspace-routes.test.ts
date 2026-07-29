@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 
-import { classifyRouteSessionReadError } from "../src/react-app/shell/route-workspaces";
+import {
+  classifyRouteSessionReadError,
+  mergeRouteWorkspaces,
+  refreshRouteWorkspaceListState,
+} from "../src/react-app/shell/route-workspaces";
 import {
   mergeWorkspaceRouteSession,
   preserveWorkspaceRouteSession,
@@ -65,5 +69,67 @@ describe("workspace route session read errors", () => {
     expect(classifyRouteSessionReadError(Object.assign(new Error("upstream"), { status: 502 }))).toBe("retryable");
     expect(classifyRouteSessionReadError(new Error("request timed out"))).toBe("retryable");
     expect(classifyRouteSessionReadError(Object.assign(new Error("forbidden"), { status: 403 }))).toBe("error");
+  });
+});
+
+describe("workspace route list merging", () => {
+  const previouslyKnownWorkspaces = [{
+    id: "workspace-known",
+    name: "Known workspace",
+    path: "/tmp/known",
+    workspaceType: "local",
+    displayNameResolved: "Known workspace",
+  }];
+  const desktopWorkspaces = [{
+    id: "workspace-desktop",
+    name: "Desktop workspace",
+    path: "/tmp/openwork",
+    workspaceType: "local",
+    displayNameResolved: "Desktop workspace",
+  }];
+
+  test("keeps desktop workspaces when the server workspace list is not an array", () => {
+    expect(mergeRouteWorkspaces({ items: undefined }, desktopWorkspaces)).toEqual(desktopWorkspaces);
+  });
+
+  test("preserves known workspaces when the route list payload is missing items", async () => {
+    await expect(refreshRouteWorkspaceListState({
+      load: async () => ({}),
+      desktopWorkspaces,
+      previousWorkspaces: previouslyKnownWorkspaces,
+      orderIds: [],
+    })).resolves.toMatchObject({
+      error: null,
+      usable: false,
+      workspaces: previouslyKnownWorkspaces,
+    });
+  });
+
+  test("preserves known workspaces when the route list payload has undefined items", async () => {
+    await expect(refreshRouteWorkspaceListState({
+      load: async () => ({ items: undefined }),
+      desktopWorkspaces,
+      previousWorkspaces: previouslyKnownWorkspaces,
+      orderIds: [],
+    })).resolves.toMatchObject({
+      error: null,
+      usable: false,
+      workspaces: previouslyKnownWorkspaces,
+    });
+  });
+
+  test("preserves known workspaces when the route list request rejects", async () => {
+    const result = await refreshRouteWorkspaceListState({
+      load: async () => {
+        throw new Error("workspace list unavailable");
+      },
+      desktopWorkspaces,
+      previousWorkspaces: previouslyKnownWorkspaces,
+      orderIds: [],
+    });
+
+    expect(result.usable).toBe(false);
+    expect(result.workspaces).toEqual(previouslyKnownWorkspaces);
+    expect(result.error).toBeInstanceOf(Error);
   });
 });

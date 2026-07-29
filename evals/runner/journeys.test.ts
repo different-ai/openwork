@@ -10,6 +10,7 @@ import {
   resolveDenWebUrl,
   validateActor,
 } from "./journeys/den.ts";
+import { capabilityMatchesFromSearchResult, mcpTextContent } from "./journeys/mcp.ts";
 
 test("Den URL helpers trim bases and build invite URLs", () => {
   const env: NodeJS.ProcessEnv = {
@@ -64,4 +65,34 @@ test("actor validation accepts complete actors and rejects incomplete shapes", (
     () => validateActor({ email: "missing@example.test", role: "fresh" }),
     (error) => error instanceof EvalError && error.message.includes("name, email, password, and role"),
   );
+});
+
+test("MCP journey helpers read text content and search_capabilities matches", () => {
+  const searchResult = {
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify({
+          matches: [
+            {
+              name: "mcp:connection:mock_echo",
+              summary: "Mock echo from reliability connection",
+              schemaDigest: "digest-1",
+              argumentsSchema: { type: "object" },
+            },
+          ],
+        }),
+      },
+    ],
+  };
+
+  assert.equal(mcpTextContent({ content: [{ type: "text", text: "hello" }] }), "hello");
+  assert.deepEqual(capabilityMatchesFromSearchResult(searchResult), [
+    {
+      name: "mcp:connection:mock_echo",
+      summary: "Mock echo from reliability connection",
+      schemaDigest: "digest-1",
+      argumentsSchema: { type: "object" },
+    },
+  ]);
 });

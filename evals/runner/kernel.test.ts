@@ -6,17 +6,20 @@ import { join } from "node:path";
 import test from "node:test";
 import type { Server } from "node:http";
 
-import { resolveHostPlacement } from "./cli.ts";
+import { parseArgs, resolveHostPlacement } from "./cli.ts";
 import { resolveActors } from "./actors.ts";
 import { EvalContext } from "./context.ts";
 import { applyManifestToEnv, manifestPath, readEnvManifest, writeEnvManifest } from "./env-manifest.ts";
 import { allocateFreePorts } from "./ports.ts";
-import { isFlowDefinition } from "./runner.ts";
+import { renderFrameIndex } from "./reporters/fraimz-html.ts";
+import { renderMarkdown } from "./reporters/markdown.ts";
+import { isFlowDefinition, runFlowRepeated, shouldKeepIterationFrames } from "./runner.ts";
 import { defineScenario } from "./scenario.ts";
 import { SurfaceRegistry } from "./surfaces.ts";
 import { loadVoiceoverParagraphs } from "./voiceover.ts";
 import type { CdpClient } from "./cdp.ts";
 import type { EnvManifest } from "./env-manifest.ts";
+import type { EvalReport, FlowDefinition } from "./flow.ts";
 import type { Host, SurfaceHandle } from "./hosts/types.ts";
 import type { Surface } from "./surfaces.ts";
 
@@ -231,6 +234,111 @@ test("resolveActors honors seeded owner env defaults", () => {
     password: "secret",
     role: "owner",
   });
+});
+
+test("eval CLI parses repeat and rejects non-positive values", () => {
+  assert.equal(parseArgs(["--flow", "invite-reliability"]).repeat, 1);
+  assert.equal(parseArgs(["--flow", "invite-reliability", "--repeat", "3"]).repeat, 3);
+  assert.throws(() => parseArgs(["--repeat", "0"]), /--repeat must be an integer >= 1/);
+  assert.throws(() => parseArgs(["--repeat", "twice"]), /--repeat must be an integer >= 1/);
+});
+
+test("runFlowRepeated threads iteration runstamps and keeps first plus failing iteration evidence", async () => {
+  let attempt = 0;
+  const runstamps: string[] = [];
+  const flow: FlowDefinition = {
+    id: "soak-flow",
+    title: "Soak flow",
+    requiresApp: false,
+    steps: [
+      {
+        name: "record iteration",
+        run: (ctx) => {
+          attempt += 1;
+          runstamps.push(ctx.env.OPENWORK_EVAL_RUNSTAMP ?? "");
+          ctx.recordEvidence({
+            type: "frame",
+            status: "passed",
+            file: `iteration-${attempt}.png`,
+            name: `iteration ${attempt}`,
+            claim: null,
+            voiceover: null,
+            url: "about:blank",
+            validations: [],
+          });
+          if (attempt === 2) throw new Error("iteration boom");
+        },
+      },
+    ],
+  };
+
+  const repeated = await runFlowRepeated(flow, {
+    cdpBaseUrl: null,
+    outDir: tmpdir(),
+    env: {},
+    mode: "automation",
+    repeat: 3,
+    runStamp: "soak-base",
+  });
+
+  assert.deepEqual(runstamps, ["soak-base-1", "soak-base-2", "soak-base-3"]);
+  assert.equal(repeated.summary.status, "failed");
+  assert.equal(repeated.summary.passed, 2);
+  assert.equal(repeated.summary.failed, 1);
+  assert.deepEqual(repeated.summary.capturedIterations, [1, 2]);
+  assert.deepEqual(repeated.summary.failures, [{ iteration: 2, step: "record iteration", error: "iteration boom" }]);
+  assert.deepEqual(repeated.results.map((result) => result.id), ["soak-flow#1", "soak-flow#2"]);
+  assert(repeated.results[0]?.steps[0]?.evidence.some((entry) => entry.type === "frame"));
+  assert(repeated.results[1]?.steps[0]?.evidence.some((entry) => entry.type === "frame"));
+  assert.equal(shouldKeepIterationFrames(1, "passed"), true);
+  assert.equal(shouldKeepIterationFrames(2, "passed"), false);
+  assert.equal(shouldKeepIterationFrames(2, "failed"), true);
+});
+
+test("core reliability scenarios are web-only, Den-staged, and narrated frame-for-frame", async () => {
+  for (const flowId of ["invite-reliability", "mcp-connect-reliability"]) {
+    const flowModule: unknown = await import(new URL(`../flows/${flowId}.flow.mjs`, import.meta.url).href);
+    const flow = isRecord(flowModule) ? flowModule.default : undefined;
+    assert(isFlowDefinition(flow));
+    const paragraphs = await loadVoiceoverParagraphs(flowId);
+    assert(paragraphs);
+    assert.equal(flow.requiresApp, false);
+    assert.equal(flow.steps.length, paragraphs.length);
+    assert(flow.requiredEnv?.includes("OPENWORK_EVAL_DEN_API_URL"));
+    assert(flow.requiredEnv?.includes("OPENWORK_EVAL_DEN_WEB_URL"));
+  }
+});
+
+test("reporters render soak tables only when repeat summaries are present", () => {
+  const report: EvalReport = {
+    runId: "report-test",
+    startedAt: "2026-07-28T00:00:00.000Z",
+    finishedAt: "2026-07-28T00:00:01.000Z",
+    cdpUrl: "(app-less run)",
+    mode: "automation",
+    flows: [],
+    summary: { passed: 1, failed: 0, skipped: 0 },
+  };
+  assert(!renderMarkdown(report).includes("Soak summary"));
+  assert(!renderFrameIndex(report).includes("Soak summary"));
+
+  const soakReport: EvalReport = {
+    ...report,
+    soak: [{
+      flowId: "invite-reliability",
+      title: "Invite reliability",
+      repeat: 3,
+      status: "passed",
+      passed: 3,
+      failed: 0,
+      skipped: 0,
+      durationMs: 123,
+      capturedIterations: [1],
+      failures: [],
+    }],
+  };
+  assert(renderMarkdown(soakReport).includes("| invite-reliability | 3 | 3 | 0 | 0 | 1 | passed |"));
+  assert(renderFrameIndex(soakReport).includes("Soak summary"));
 });
 
 test("SurfaceRegistry is idempotent, adopts manifest surfaces, and disposes only spawned handles", async () => {

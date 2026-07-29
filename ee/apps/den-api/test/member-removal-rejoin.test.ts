@@ -209,7 +209,7 @@ test("bootstrap returns null for a user with a removed member row", async () => 
   expect(rows[0]?.removedAt).toBeInstanceOf(Date)
 })
 
-test("a new explicit invitation revives the same removed member row", async () => {
+test("a new explicit invitation activates its placeholder as a fresh member lifecycle", async () => {
   if (!db || !schema || !orgs || !drizzle) {
     throw new Error("test modules not initialized")
   }
@@ -242,21 +242,27 @@ test("a new explicit invitation revives the same removed member row", async () =
     throw new Error("invite was not accepted")
   }
 
-  expect(accepted.member.id).toBe(removedMemberId)
+  expect(accepted.member.id).toBe(placeholderId)
   const rows = await db
     .select()
     .from(schema.MemberTable)
     .where(drizzle.inArray(schema.MemberTable.id, [removedMemberId, placeholderId]))
-  expect(rows).toHaveLength(1)
-  expect(rows[0]?.id).toBe(removedMemberId)
-  expect(rows[0]?.userId).toBe(reviveUserId)
-  expect(rows[0]?.role).toBe("admin")
-  expect(rows[0]?.removedAt).toBeNull()
-  expect(rows[0]?.removedByOrgMember).toBeNull()
-  expect(rows[0]?.inviteId).toBe(invitationId)
-  expect(rows[0]?.invitedByOrgMember).toBe(ownerMemberId)
-  expect(rows[0]?.joinedAt).toBeInstanceOf(Date)
-  expect(rows[0]?.joinedAt?.getTime()).not.toBe(past.getTime())
+  expect(rows).toHaveLength(2)
+
+  const removedRow = rows.find((row) => row.id === removedMemberId)
+  expect(removedRow?.userId).toBeNull()
+  expect(removedRow?.role).toBe("owner")
+  expect(removedRow?.removedAt).toBeInstanceOf(Date)
+  expect(removedRow?.removedByOrgMember).toBe(ownerMemberId)
+
+  const acceptedRow = rows.find((row) => row.id === placeholderId)
+  expect(acceptedRow?.userId).toBe(reviveUserId)
+  expect(acceptedRow?.role).toBe("admin")
+  expect(acceptedRow?.removedAt).toBeNull()
+  expect(acceptedRow?.removedByOrgMember).toBeNull()
+  expect(acceptedRow?.inviteId).toBe(invitationId)
+  expect(acceptedRow?.invitedByOrgMember).toBe(ownerMemberId)
+  expect(acceptedRow?.joinedAt).toBeInstanceOf(Date)
 })
 
 test("an old accepted invitation reports membership_removed for removed users", async () => {

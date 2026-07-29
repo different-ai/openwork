@@ -1,5 +1,20 @@
 import type { EvalReport } from "../flow.ts";
 
+function renderSoakTable(report: EvalReport): string[] {
+  if (!report.soak?.length) return [];
+  const lines = [
+    "## Soak summary",
+    "",
+    "| Flow | Repeat | Passed | Failed | Skipped | Captured iterations | Status |",
+    "| --- | ---: | ---: | ---: | ---: | --- | --- |",
+  ];
+  for (const soak of report.soak) {
+    lines.push(`| ${soak.flowId} | ${soak.repeat} | ${soak.passed} | ${soak.failed} | ${soak.skipped} | ${soak.capturedIterations.join(", ") || "none"} | ${soak.status} |`);
+  }
+  lines.push("");
+  return lines;
+}
+
 export function renderMarkdown(report: EvalReport): string {
   const lines = [
     `# Eval run ${report.runId}`,
@@ -11,6 +26,7 @@ export function renderMarkdown(report: EvalReport): string {
     `- fraimz: fraimz.html`,
     "",
   ];
+  lines.push(...renderSoakTable(report));
   for (const flow of report.flows) {
     const icon = flow.status === "passed" ? "✅" : flow.status === "skipped" ? "⏭️" : "❌";
     lines.push(`## ${icon} ${flow.id} — ${flow.title}`);

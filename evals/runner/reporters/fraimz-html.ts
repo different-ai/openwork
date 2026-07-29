@@ -15,6 +15,7 @@ function flowKindBadge(kind: FlowKind | null): string {
 }
 
 export function renderFrameIndex(report: EvalReport): string {
+  const soakSection = renderSoakSection(report);
   const flowSections = report.flows.map((flow) => {
     const steps = (flow.steps ?? []).map((step) => `
         <article class="step ${step.status === "passed" ? "passed" : "failed"}">
@@ -93,7 +94,7 @@ export function renderFrameIndex(report: EvalReport): string {
       <span>Failed: ${report.summary.failed}</span>
       <span>Skipped: ${report.summary.skipped}</span>
     </div>
-    ${flowSections}
+    ${soakSection}${flowSections}
   </main>
   <script>
     (function () {
@@ -127,6 +128,27 @@ export function renderFrameIndex(report: EvalReport): string {
   </script>
 </body>
 </html>`;
+}
+
+function renderSoakSection(report: EvalReport): string {
+  if (!report.soak?.length) return "";
+  const rows = report.soak.map((soak) => `<tr>
+        <td><code>${escapeHtml(soak.flowId)}</code></td>
+        <td>${soak.repeat}</td>
+        <td>${soak.passed}</td>
+        <td>${soak.failed}</td>
+        <td>${soak.skipped}</td>
+        <td>${escapeHtml(soak.capturedIterations.join(", ") || "none")}</td>
+        <td>${escapeHtml(soak.status)}</td>
+      </tr>`).join("\n");
+  return `<section>
+      <h2>Soak summary</h2>
+      <table style="width: 100%; border-collapse: collapse; background: white; border: 1px solid #ddd; border-radius: 12px; overflow: hidden;">
+        <thead><tr><th>Flow</th><th>Repeat</th><th>Passed</th><th>Failed</th><th>Skipped</th><th>Captured iterations</th><th>Status</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </section>
+    `;
 }
 
 function renderEvidence(evidence: Evidence[], mode: EvalMode): string {
