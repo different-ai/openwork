@@ -108,8 +108,10 @@ test("mock IdP escapes request-derived blocked-user HTML", async () => {
   const response = await fetch(url);
   const body = await response.text();
   assert.equal(response.status, 403);
-  assert.doesNotMatch(body, /<script>/);
-  assert.match(body, /&lt;script&gt;/);
+  // Plain substring checks: stricter than a tag regex (`<script` also catches
+  // `<script src=...`) and they cannot be mistaken for a tag-filtering sanitizer.
+  assert.ok(!body.includes("<script"), `escaped body must not contain raw markup: ${body}`);
+  assert.ok(body.includes("&lt;script&gt;"), `escaped body must contain the escaped payload: ${body}`);
 });
 
 test("expectation matcher fails with actionable detail when the named error is missing", () => {

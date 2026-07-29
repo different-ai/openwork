@@ -518,7 +518,8 @@ function escapeHtml(value: string): string {
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
 }
 
 export function buildBlockedUserResponse(subject: MockIdpSubjectInput, policyName = "OpenWork Mock IdP policy"): BlockedUserResponseShape {
