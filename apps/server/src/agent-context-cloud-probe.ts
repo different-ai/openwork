@@ -803,7 +803,7 @@ async function performProbe(
   let phaseStart = clock();
   const phaseMs = () => `${elapsed(phaseStart, clock)}ms`;
   try {
-    const initialized = await postJsonRpc(
+    let initialized = await postJsonRpc(
       prepared,
       baseProbeHeaders(prepared.authorization),
       {
@@ -821,6 +821,30 @@ async function performProbe(
     );
     currentHttpStatus = initialized.status;
     referenceId = captureReferenceId(initialized, referenceId);
+    if (initialized.status === 401) {
+      await cancelBody(initialized, deadline);
+      record(`initialize transient 401 observed ${phaseMs()}`);
+      currentHttpStatus = null;
+      initialized = await postJsonRpc(
+        prepared,
+        baseProbeHeaders(prepared.authorization),
+        {
+          jsonrpc: "2.0",
+          id: INITIALIZE_REQUEST_ID,
+          method: "initialize",
+          params: {
+            capabilities: {},
+            clientInfo: { name: "openwork-server-agent-context-diagnostics", version: "1.0.0" },
+            protocolVersion: MCP_PROTOCOL_VERSION,
+          },
+        },
+        fetchImpl,
+        deadline,
+      );
+      currentHttpStatus = initialized.status;
+      referenceId = captureReferenceId(initialized, referenceId);
+      if (initialized.status === 200) record(`initialize recovered after transient 401 ${phaseMs()}`);
+    }
     stage = "initialize_http";
     await requireHttpStatus(initialized, deadline, (status) => status === 200);
     stage = "initialize_protocol";

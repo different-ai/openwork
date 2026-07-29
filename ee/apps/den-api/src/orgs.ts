@@ -4,6 +4,7 @@ import {
   AuthUserTable,
   ConnectedAccountTable,
   InvitationTable,
+  LlmProviderAccessTable,
   MemberTable,
   OrganizationRoleTable,
   OrganizationTable,
@@ -713,6 +714,29 @@ async function acceptInvitation(invitation: InvitationRow, userId: UserId, optio
     member = { ...existingMember, role: existingRole, joinedAt: existingJoinedAt }
   }
 
+  if (!member && removedMember && invitedMember) {
+    await db.transaction(async (tx) => {
+      // A new explicit invitation is a new access lifecycle. Keep the removed
+      // row for audit history, but activate the invitation placeholder so any
+      // teams or direct grants assigned while the invite was pending remain
+      // attached to the member who joins.
+      await tx
+        .update(MemberTable)
+        .set({ userId: null })
+        .where(eq(MemberTable.id, removedMember.id))
+      await tx
+        .update(MemberTable)
+        .set({ userId, role, joinedAt })
+        .where(eq(MemberTable.id, invitedMember.id))
+    })
+    member = {
+      ...invitedMember,
+      userId,
+      role,
+      joinedAt,
+    }
+  }
+
   if (!member && removedMember) {
     await db
       .update(MemberTable)
@@ -725,9 +749,6 @@ async function acceptInvitation(invitation: InvitationRow, userId: UserId, optio
         invitedByOrgMember: invitation.orgMemberId,
       })
       .where(eq(MemberTable.id, removedMember.id))
-    if (invitedMember && invitedMember.id !== removedMember.id) {
-      await db.delete(MemberTable).where(eq(MemberTable.id, invitedMember.id))
-    }
     member = {
       ...removedMember,
       role,
@@ -1886,6 +1907,10 @@ export async function removeOrganizationMember(input: {
     await tx
       .delete(TeamMemberTable)
       .where(eq(TeamMemberTable.orgMembershipId, member.id))
+
+    await tx
+      .delete(LlmProviderAccessTable)
+      .where(eq(LlmProviderAccessTable.orgMembershipId, member.id))
 
     await tx
       .update(MemberTable)

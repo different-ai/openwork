@@ -104,7 +104,10 @@ import {
 import {
   clearCloudInventoryCache,
   loadSessionConnectCapabilities,
+  readCachedConnectCapabilities,
+  readCloudInventoryScope,
 } from "@/react-app/domains/connections/cloud-inventory-cache";
+import { EMPTY_CONNECT_CAPABILITY_INVENTORY } from "@/react-app/domains/session/surface/connect-capability-inventory";
 import { consumeComposerAutoSend } from "./composer-auto-send";
 
 const EMPTY_TRANSCRIPT: UIMessage[] = [];
@@ -659,6 +662,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const [toolMcpStatus, setToolMcpStatus] = useState<string | null>(null);
   const [toolMcpStatuses, setToolMcpStatuses] = useState<McpStatusMap>({});
   const [toolImportedPlugins, setToolImportedPlugins] = useState<CloudImportedPlugin[]>([]);
+  const skillsConnectPushRef = useRef(0);
+  const mcpConnectPushRef = useRef(0);
   const [steering, setSteering] = useState(false);
   const [verifiedOpenTargets, setVerifiedOpenTargets] = useState<OpenTarget[]>([]);
   const [cloudQueueRetryVersion, setCloudQueueRetryVersion] = useState(0);
@@ -1419,6 +1424,10 @@ export function SessionSurface(props: SessionSurfaceProps) {
   useControlAction(props.isControlTarget ? composerStopControlAction : null);
 
   const listSkills = async (): Promise<SkillCard[]> => {
+    const pushId = ++skillsConnectPushRef.current;
+    // Paint cached Connect inventory instantly; the fresh fan-out lands live.
+    const scope = readCloudInventoryScope();
+    const cachedConnect = (scope ? readCachedConnectCapabilities(scope) : null) ?? EMPTY_CONNECT_CAPABILITY_INVENTORY;
     const connectPromise = loadSessionConnectCapabilities();
     const response = await props.client.listSkills(props.workspaceId, { includeGlobal: true });
     const localSkills = (response.items ?? []).map((skill) => ({
@@ -1429,15 +1438,32 @@ export function SessionSurface(props: SessionSurfaceProps) {
       scope: skill.scope,
       origin: "local",
     } satisfies SkillCard));
-    const connect = await connectPromise;
-    const next = [...localSkills, ...connect.skills];
+    void connectPromise.then((connect) => {
+      if (skillsConnectPushRef.current !== pushId) return;
+      setToolSkills([...localSkills, ...connect.skills]);
+    });
+    const next = [...localSkills, ...cachedConnect.skills];
     setToolSkills(next);
     return next;
   };
 
   const listMcp = async (): Promise<{ servers: McpServerEntry[]; statuses: McpStatusMap; status: string | null }> => {
+    const pushId = ++mcpConnectPushRef.current;
+    const scope = readCloudInventoryScope();
+    const cachedConnect = (scope ? readCachedConnectCapabilities(scope) : null) ?? EMPTY_CONNECT_CAPABILITY_INVENTORY;
     const connectPromise = loadSessionConnectCapabilities();
-    const response = await props.client.listMcp(props.workspaceId);
+    const localMcpPromise = props.client.listMcp(props.workspaceId);
+    const directory = props.workspaceRoot.trim();
+    const localStatusesPromise: Promise<McpStatusMap> = directory
+      ? (async () => {
+        try {
+          return unwrap(await opencodeClient.mcp.status({ directory })) as McpStatusMap;
+        } catch {
+          return {};
+        }
+      })()
+      : Promise.resolve({});
+    const [response, localStatuses] = await Promise.all([localMcpPromise, localStatusesPromise]);
     const localServers = (response.items ?? []).map((entry) => ({
       name: entry.name,
       config: entry.config as McpServerEntry["config"],
@@ -1445,44 +1471,44 @@ export function SessionSurface(props: SessionSurfaceProps) {
       origin: entry.name === "openwork-cloud" ? "openwork-connect" : "local",
     } satisfies McpServerEntry));
 
-    let localStatuses: McpStatusMap = {};
-    try {
-      if (props.workspaceRoot.trim()) {
-        localStatuses = unwrap(await opencodeClient.mcp.status({ directory: props.workspaceRoot.trim() })) as McpStatusMap;
-      }
-    } catch {
-      localStatuses = {};
-    }
+    void connectPromise.then((connect) => {
+      if (mcpConnectPushRef.current !== pushId) return;
+      const freshServers = [...localServers, ...connect.mcpServers];
+      const freshStatuses = { ...connect.mcpStatuses, ...localStatuses };
+      const freshStatus = freshServers.length ? null : "No MCP servers loaded.";
+      setToolMcpServers(freshServers);
+      setToolMcpStatuses(freshStatuses);
+      setToolMcpStatus(freshStatus);
 
-    const connect = await connectPromise;
-    const servers = [...localServers, ...connect.mcpServers];
-    const statuses = { ...connect.mcpStatuses, ...localStatuses };
+      // Quiet self-heal: remote OAuth connectors whose access token expired
+      // show "Sign in needed" even though the stored refresh token still
+      // works. `mcp.connect` retries the refresh grant on a fresh transport
+      // without ever opening a browser; on success the badge flips live.
+      if (directory && localServers.length) {
+        void attemptSilentMcpReauth({
+          client: opencodeClient,
+          directory,
+          servers: localServers,
+          statuses: localStatuses,
+        })
+          .then(async (attempted) => {
+            if (!attempted) return;
+            const healed = unwrap(await opencodeClient.mcp.status({ directory })) as McpStatusMap;
+            if (mcpConnectPushRef.current !== pushId) return;
+            setToolMcpStatuses({ ...connect.mcpStatuses, ...healed });
+          })
+          .catch(() => {
+            // Best-effort; the manual Sign in path is unaffected.
+          });
+      }
+    });
+
+    const servers = [...localServers, ...cachedConnect.mcpServers];
+    const statuses = { ...cachedConnect.mcpStatuses, ...localStatuses };
     const status = servers.length ? null : "No MCP servers loaded.";
     setToolMcpServers(servers);
     setToolMcpStatuses(statuses);
     setToolMcpStatus(status);
-
-    // Quiet self-heal: remote OAuth connectors whose access token expired
-    // show "Sign in needed" even though the stored refresh token still
-    // works. `mcp.connect` retries the refresh grant on a fresh transport
-    // without ever opening a browser; on success the badge flips live.
-    const directory = props.workspaceRoot.trim();
-    if (directory && localServers.length) {
-      void attemptSilentMcpReauth({
-        client: opencodeClient,
-        directory,
-        servers: localServers,
-        statuses: localStatuses,
-      })
-        .then(async (attempted) => {
-          if (!attempted) return;
-          const healed = unwrap(await opencodeClient.mcp.status({ directory })) as McpStatusMap;
-          setToolMcpStatuses({ ...connect.mcpStatuses, ...healed });
-        })
-        .catch(() => {
-          // Best-effort; the manual Sign in path is unaffected.
-        });
-    }
 
     return { servers, statuses, status };
   };

@@ -814,7 +814,40 @@ describe("OpenWork Cloud catalog probe", () => {
       cleanupAttempted: false,
       cleanupSucceeded: null,
     });
-    expect(failed.steps).toEqual([expect.stringContaining("initialize failed unauthorized")]);
+    expect(failed.steps).toEqual([
+      expect.stringContaining("initialize transient 401 observed"),
+      expect.stringContaining("initialize failed unauthorized"),
+    ]);
+  });
+
+  test("retries one initialize 401 and records the recovered transient auth blip", async () => {
+    let initializeCalls = 0;
+    const fetchImpl: CloudCatalogProbeFetch = async (_url, init) => {
+      if (init?.method === "DELETE") return new Response(null, { status: 204 });
+      const body = requestPayload(init);
+      if (body.method === "initialize") {
+        initializeCalls += 1;
+        return initializeCalls === 1 ? new Response(null, { status: 401 }) : initializeResponse();
+      }
+      if (body.method === "notifications/initialized") return new Response(null, { status: 202 });
+      if (body.method === "tools/list") return jsonResponse("retry-transient-401");
+      throw new Error("Unexpected JSON-RPC method");
+    };
+    const probeInput = input({ requestId: "retry-transient-401" });
+    probeInput.fetchImpl = fetchImpl;
+
+    const observed = await probeOpenworkCloudCatalog(probeInput);
+
+    expect(initializeCalls).toBe(2);
+    expect(observed.status).toBe("observed");
+    expect(observed.steps).toEqual([
+      expect.stringContaining("initialize transient 401 observed"),
+      expect.stringContaining("initialize recovered after transient 401"),
+      expect.stringContaining("initialize ok 200"),
+      expect.stringContaining("initialized_notification ok 202"),
+      expect.stringContaining("tools_list ok 200"),
+      expect.stringContaining("session_cleanup ok"),
+    ]);
   });
 
   test("rejects an unsupported negotiated protocol version", async () => {

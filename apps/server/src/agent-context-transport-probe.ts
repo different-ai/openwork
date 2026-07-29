@@ -10,6 +10,7 @@ const MAX_ENDPOINT_LENGTH = 2 * 1024;
 const REQUIRED_TERMINAL_PATH = "/mcp/agent";
 const MAX_CERT_FIELD_CHARS = 120;
 const MAX_CHAIN_ENTRIES = 5;
+const TLS_VERSION_FALLBACK_TIMEOUT_MS = 1_500;
 
 export type CloudEndpointTransportHandshake = "ok" | "failed" | "not-performed";
 
@@ -33,6 +34,11 @@ export type CloudEndpointTransportProbe = {
   performed: boolean;
   verifiedHandshake: CloudEndpointTransportHandshake;
   verifyErrorCode: string | null;
+  tls13Handshake: CloudEndpointTransportHandshake | null;
+  tls13ErrorCode: string | null;
+  tls12Handshake: CloudEndpointTransportHandshake | null;
+  tls12ErrorCode: string | null;
+  tls12Protocol: string | null;
   dnsResolved: boolean | null;
   tcpConnected: boolean | null;
   servedChain: ServedCertificateEvidence[];
@@ -47,7 +53,9 @@ export type CloudEndpointTransportProbe = {
 export type TransportProbeTlsSocket = Pick<
   TLSSocket,
   "destroy" | "getPeerCertificate" | "once" | "removeListener" | "setTimeout"
->;
+> & {
+  getProtocol?: () => string | null;
+};
 
 export type TransportProbeConnector = (
   options: ConnectionOptions,
@@ -78,6 +86,7 @@ type PreparedEndpoint = {
 type TlsAttemptResult = {
   status: "ok";
   certificate: DetailedPeerCertificate | null;
+  protocol: string | null;
 } | {
   status: "failed";
   errorCode: string | null;
@@ -186,7 +195,7 @@ function stripIpv6HostnameBrackets(hostname: string): string {
   return hostname.startsWith("[") && hostname.endsWith("]") ? hostname.slice(1, -1) : hostname;
 }
 
-function tlsOptions(url: URL, rejectUnauthorized: boolean): ConnectionOptions {
+function tlsOptions(url: URL, rejectUnauthorized: boolean, version?: "TLSv1.2" | "TLSv1.3"): ConnectionOptions {
   const host = stripIpv6HostnameBrackets(url.hostname);
   const options: ConnectionOptions = {
     host,
@@ -194,6 +203,10 @@ function tlsOptions(url: URL, rejectUnauthorized: boolean): ConnectionOptions {
     rejectUnauthorized,
     ALPNProtocols: ["http/1.1"],
   };
+  if (version) {
+    options.minVersion = version;
+    options.maxVersion = version;
+  }
   // SNI forbids IP literals; Node throws ERR_INVALID_ARG_VALUE if servername is an IP address.
   if (isIP(host) === 0) options.servername = host;
   return options;
@@ -202,6 +215,7 @@ function tlsOptions(url: URL, rejectUnauthorized: boolean): ConnectionOptions {
 function connectTls(input: {
   url: URL;
   rejectUnauthorized: boolean;
+  version?: "TLSv1.2" | "TLSv1.3";
   connector: TransportProbeConnector;
   timeoutMs: number;
   inspectPeerCertificate: boolean;
@@ -242,9 +256,9 @@ function connectTls(input: {
     input.signal?.addEventListener("abort", onAbort, { once: true });
 
     try {
-      socket = input.connector(tlsOptions(input.url, input.rejectUnauthorized), () => {
+      socket = input.connector(tlsOptions(input.url, input.rejectUnauthorized, input.version), () => {
         const certificate = input.inspectPeerCertificate && socket ? socket.getPeerCertificate(true) : null;
-        settle({ status: "ok", certificate });
+        settle({ status: "ok", certificate, protocol: socket?.getProtocol?.() ?? null });
       });
       socket.once("error", onError);
       socket.setTimeout(input.timeoutMs, () => {
@@ -291,6 +305,46 @@ function caCertificateCount(tlsModule: TransportProbeTlsModule, type: "system" |
   }
 }
 
+async function timeoutVersionEvidence(input: {
+  url: URL;
+  connector: TransportProbeConnector;
+  timeoutMs: number;
+  signal?: AbortSignal;
+}): Promise<{
+  tls13Handshake: CloudEndpointTransportHandshake | null;
+  tls13ErrorCode: string | null;
+  tls12Handshake: CloudEndpointTransportHandshake | null;
+  tls12ErrorCode: string | null;
+  tls12Protocol: string | null;
+}> {
+  const timeoutMs = Math.min(input.timeoutMs, TLS_VERSION_FALLBACK_TIMEOUT_MS);
+  const tls13 = await connectTls({
+    url: input.url,
+    rejectUnauthorized: true,
+    version: "TLSv1.3",
+    connector: input.connector,
+    timeoutMs,
+    inspectPeerCertificate: false,
+    signal: input.signal,
+  });
+  const tls12 = await connectTls({
+    url: input.url,
+    rejectUnauthorized: true,
+    version: "TLSv1.2",
+    connector: input.connector,
+    timeoutMs,
+    inspectPeerCertificate: false,
+    signal: input.signal,
+  });
+  return {
+    tls13Handshake: tls13.status === "ok" ? "ok" : "failed",
+    tls13ErrorCode: tls13.status === "ok" ? null : tls13.errorCode,
+    tls12Handshake: tls12.status === "ok" ? "ok" : "failed",
+    tls12ErrorCode: tls12.status === "ok" ? null : tls12.errorCode,
+    tls12Protocol: tls12.status === "ok" ? tls12.protocol : null,
+  };
+}
+
 async function extraCaEvidence(input: {
   env: NodeJS.ProcessEnv;
   caFileReader?: (path: string) => Promise<string> | string;
@@ -330,6 +384,11 @@ export async function probeCloudEndpointTransport(
   const base = {
     endpointOrigin: endpoint ? endpointOrigin(endpoint.url) : null,
     endpointProtocol: endpointProtocol(endpoint?.url ?? null),
+    tls13Handshake: null,
+    tls13ErrorCode: null,
+    tls12Handshake: null,
+    tls12ErrorCode: null,
+    tls12Protocol: null,
     ...localTrust,
   };
   const skipReason = typeof prepared === "string"
@@ -376,6 +435,9 @@ export async function probeCloudEndpointTransport(
   }
 
   let servedChain: ServedCertificateEvidence[] = [];
+  const versionEvidence = verified.errorCode === "ETIMEDOUT"
+    ? await timeoutVersionEvidence({ url: endpoint.url, connector, timeoutMs, signal: input.signal })
+    : null;
   const certificateVerificationFailure = isCertificateVerificationError(verified.errorCode);
   if (certificateVerificationFailure) {
     const chainAttempt = await connectTls({
@@ -391,6 +453,7 @@ export async function probeCloudEndpointTransport(
 
   return {
     ...base,
+    ...(versionEvidence ?? {}),
     skipReason: null,
     performed: true,
     verifiedHandshake: "failed",
