@@ -11,6 +11,7 @@ const ownerMemberId = createDenTypeId("member")
 const removedUserId = createDenTypeId("user")
 const bootstrapUserId = createDenTypeId("user")
 const reviveUserId = createDenTypeId("user")
+const legacyReviveUserId = createDenTypeId("user")
 const oldInviteUserId = createDenTypeId("user")
 const scimUserId = createDenTypeId("user")
 
@@ -18,10 +19,11 @@ const ownerEmail = `owner+${ownerUserId}@member-removal.test`
 const removedEmail = `removed+${removedUserId}@member-removal.test`
 const bootstrapEmail = `bootstrap+${bootstrapUserId}@member-removal.test`
 const reviveEmail = `revive+${reviveUserId}@member-removal.test`
+const legacyReviveEmail = `legacy-revive+${legacyReviveUserId}@member-removal.test`
 const oldInviteEmail = `old-invite+${oldInviteUserId}@member-removal.test`
 const scimEmail = `scim+${scimUserId}@member-removal.test`
 
-const userIds = [ownerUserId, removedUserId, bootstrapUserId, reviveUserId, oldInviteUserId, scimUserId]
+const userIds = [ownerUserId, removedUserId, bootstrapUserId, reviveUserId, legacyReviveUserId, oldInviteUserId, scimUserId]
 
 function seedRequiredEnv() {
   process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/openwork_test"
@@ -145,6 +147,7 @@ beforeAll(async () => {
     { id: removedUserId, name: "Removed User", email: removedEmail, emailVerified: true },
     { id: bootstrapUserId, name: "Bootstrap Removed", email: bootstrapEmail, emailVerified: true },
     { id: reviveUserId, name: "Revive Removed", email: reviveEmail, emailVerified: true },
+    { id: legacyReviveUserId, name: "Legacy Revive Removed", email: legacyReviveEmail, emailVerified: true },
     { id: oldInviteUserId, name: "Old Invite Removed", email: oldInviteEmail, emailVerified: true },
     { id: scimUserId, name: "SCIM Removed", email: scimEmail, emailVerified: true },
   ])
@@ -209,7 +212,7 @@ test("bootstrap returns null for a user with a removed member row", async () => 
   expect(rows[0]?.removedAt).toBeInstanceOf(Date)
 })
 
-test("a new explicit invitation revives the same removed member row", async () => {
+test("a new explicit invitation activates its placeholder as a fresh member lifecycle", async () => {
   if (!db || !schema || !orgs || !drizzle) {
     throw new Error("test modules not initialized")
   }
@@ -242,21 +245,78 @@ test("a new explicit invitation revives the same removed member row", async () =
     throw new Error("invite was not accepted")
   }
 
-  expect(accepted.member.id).toBe(removedMemberId)
+  expect(accepted.member.id).toBe(placeholderId)
   const rows = await db
     .select()
     .from(schema.MemberTable)
     .where(drizzle.inArray(schema.MemberTable.id, [removedMemberId, placeholderId]))
-  expect(rows).toHaveLength(1)
-  expect(rows[0]?.id).toBe(removedMemberId)
-  expect(rows[0]?.userId).toBe(reviveUserId)
-  expect(rows[0]?.role).toBe("admin")
-  expect(rows[0]?.removedAt).toBeNull()
-  expect(rows[0]?.removedByOrgMember).toBeNull()
-  expect(rows[0]?.inviteId).toBe(invitationId)
-  expect(rows[0]?.invitedByOrgMember).toBe(ownerMemberId)
-  expect(rows[0]?.joinedAt).toBeInstanceOf(Date)
-  expect(rows[0]?.joinedAt?.getTime()).not.toBe(past.getTime())
+  expect(rows).toHaveLength(2)
+
+  const removedRow = rows.find((row) => row.id === removedMemberId)
+  expect(removedRow?.userId).toBeNull()
+  expect(removedRow?.role).toBe("owner")
+  expect(removedRow?.removedAt).toBeInstanceOf(Date)
+  expect(removedRow?.removedByOrgMember).toBe(ownerMemberId)
+
+  const acceptedRow = rows.find((row) => row.id === placeholderId)
+  expect(acceptedRow?.userId).toBe(reviveUserId)
+  expect(acceptedRow?.role).toBe("admin")
+  expect(acceptedRow?.removedAt).toBeNull()
+  expect(acceptedRow?.removedByOrgMember).toBeNull()
+  expect(acceptedRow?.inviteId).toBe(invitationId)
+  expect(acceptedRow?.invitedByOrgMember).toBe(ownerMemberId)
+  expect(acceptedRow?.joinedAt).toBeInstanceOf(Date)
+})
+
+test("a legacy invitation without a placeholder still creates a fresh member lifecycle", async () => {
+  if (!db || !schema || !orgs || !drizzle) {
+    throw new Error("test modules not initialized")
+  }
+
+  const removedMemberId = createDenTypeId("member")
+  const invitationId = createDenTypeId("invitation")
+  await db.insert(schema.MemberTable).values({
+    id: removedMemberId,
+    organizationId,
+    userId: legacyReviveUserId,
+    role: "admin",
+    joinedAt: past,
+    removedAt: past,
+    removedByOrgMember: ownerMemberId,
+  })
+  await createInvitation({
+    invitationId,
+    memberId: createDenTypeId("member"),
+    email: legacyReviveEmail,
+    role: "member",
+    createPlaceholder: false,
+  })
+
+  const accepted = await orgs.acceptInvitationForUser({
+    userId: legacyReviveUserId,
+    email: legacyReviveEmail,
+    invitationId,
+  })
+  if (!accepted || accepted.status !== "accepted") {
+    throw new Error("legacy invite was not accepted")
+  }
+
+  expect(accepted.member.id).not.toBe(removedMemberId)
+  const rows = await db
+    .select()
+    .from(schema.MemberTable)
+    .where(drizzle.inArray(schema.MemberTable.id, [removedMemberId, accepted.member.id]))
+  expect(rows).toHaveLength(2)
+
+  const removedRow = rows.find((row) => row.id === removedMemberId)
+  expect(removedRow?.userId).toBeNull()
+  expect(removedRow?.removedAt).toBeInstanceOf(Date)
+
+  const acceptedRow = rows.find((row) => row.id === accepted.member.id)
+  expect(acceptedRow?.userId).toBe(legacyReviveUserId)
+  expect(acceptedRow?.role).toBe("member")
+  expect(acceptedRow?.inviteId).toBe(invitationId)
+  expect(acceptedRow?.removedAt).toBeNull()
 })
 
 test("an old accepted invitation reports membership_removed for removed users", async () => {

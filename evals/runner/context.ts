@@ -26,6 +26,8 @@ import type {
   WaitForTextOptions,
 } from "./flow.ts";
 import type { CdpClient, CdpTarget } from "./cdp.ts";
+import type { ChromeSurfaceOptions, ElectronSurfaceOptions } from "./hosts/types.ts";
+import type { Surface, SurfaceFacade, SurfaceRegistry } from "./surfaces.ts";
 
 const DEFAULT_TIMEOUT_MS = 20_000;
 const DEFAULT_ROUTE_TIMEOUT_MS = 5_000;
@@ -111,6 +113,8 @@ interface EvalContextOptions {
   flowId: string;
   env: NodeJS.ProcessEnv;
   cdpBaseUrl?: string | null;
+  surfaces?: SurfaceRegistry | null;
+  state?: Record<string, unknown>;
 }
 
 /**
@@ -133,13 +137,18 @@ export class EvalContext implements FlowContext {
   currentStepEvidence: Evidence[];
   lastScreenshotHash: string | null;
   tabStack: CdpClient[];
+  readonly state: Record<string, unknown>;
+  private surfaceRegistry: SurfaceRegistry | null;
+  private activeSurfaceName: string | null;
 
-  constructor({ client, outDir, flowId, env, cdpBaseUrl }: EvalContextOptions) {
+  constructor({ client, outDir, flowId, env, cdpBaseUrl, surfaces = null, state = {} }: EvalContextOptions) {
     this.client = client;
     this.outDir = outDir;
     this.flowId = flowId;
     this.env = env;
     this.cdpBaseUrl = cdpBaseUrl ?? null;
+    this.surfaceRegistry = surfaces;
+    this.state = state;
     this.screenshots = [];
     this.evidenceFrames = [];
     this.logs = [];
@@ -148,6 +157,37 @@ export class EvalContext implements FlowContext {
     this.currentStepEvidence = [];
     this.lastScreenshotHash = null;
     this.tabStack = [];
+    this.activeSurfaceName = null;
+  }
+
+  get surfaces(): SurfaceFacade {
+    const registry = this.requireSurfaceRegistry();
+    return {
+      electron: (name: string, opts?: ElectronSurfaceOptions) => registry.electron(name, opts),
+      chrome: (name: string, opts?: ChromeSurfaceOptions) => registry.chrome(name, opts),
+      get: (name: string) => registry.get(name),
+    };
+  }
+
+  private requireSurfaceRegistry(): SurfaceRegistry {
+    if (!this.surfaceRegistry) {
+      throw new EvalError("This run has no surface registry; run via a scenario or pass --env.");
+    }
+    return this.surfaceRegistry;
+  }
+
+  async on<T>(surface: string | Surface, fn: () => Promise<T>): Promise<T> {
+    const next = typeof surface === "string" ? this.requireSurfaceRegistry().get(surface) : surface;
+    const previousClient = this.client;
+    const previousSurfaceName = this.activeSurfaceName;
+    this.client = next.client;
+    this.activeSurfaceName = next.handle.name;
+    try {
+      return await fn();
+    } finally {
+      this.client = previousClient;
+      this.activeSurfaceName = previousSurfaceName;
+    }
   }
 
   requireClient(client: CdpClient | null = this.client): CdpClient {
@@ -753,6 +793,7 @@ export class EvalContext implements FlowContext {
         status: passed ? "passed" : "failed",
         file: fileName,
         name,
+        surface: this.activeSurfaceName,
         claim: options.claim ?? null,
         voiceover: typeof options.voiceover === "string" && options.voiceover.trim() ? options.voiceover.trim() : null,
         url,

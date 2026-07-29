@@ -328,9 +328,9 @@ export function ReactSessionComposer(props: ComposerProps) {
     plugins: false,
   });
   const [commandsLoaded, setCommandsLoaded] = useState(false);
-  const [skillsLoaded, setSkillsLoaded] = useState(Boolean(props.skills));
-  const [mcpLoaded, setMcpLoaded] = useState(Boolean(props.mcpServers));
-  const [pluginsLoaded, setPluginsLoaded] = useState(Boolean(props.importedPlugins));
+  const [skillsLoaded, setSkillsLoaded] = useState(Boolean(props.skills?.length));
+  const [mcpLoaded, setMcpLoaded] = useState(Boolean(props.mcpServers?.length));
+  const [pluginsLoaded, setPluginsLoaded] = useState(Boolean(props.importedPlugins?.length));
   const [, setExtensionStateVersion] = useState(0);
   const [agentMenuIndex, setAgentMenuIndex] = useState(0);
   const agentItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
@@ -562,9 +562,9 @@ export function ReactSessionComposer(props: ComposerProps) {
       plugins: false,
     };
     setCommandsLoaded(false);
-    setSkillsLoaded(Boolean(props.skills));
-    setMcpLoaded(Boolean(props.mcpServers));
-    setPluginsLoaded(Boolean(props.importedPlugins));
+    setSkillsLoaded(Boolean(props.skills?.length));
+    setMcpLoaded(Boolean(props.mcpServers?.length));
+    setPluginsLoaded(Boolean(props.importedPlugins?.length));
   }, [toolMenuOpen]);
 
   useEffect(() => {

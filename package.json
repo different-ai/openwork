@@ -60,6 +60,7 @@
     "fraimz": "node evals/runner/run.mjs --mode demo",
     "evals:typecheck": "tsc -p evals",
     "evals:test": "node --test evals/runner/*.test.ts",
+    "owt": "node evals/runner/run-owt.mjs",
     "bump:patch": "pnpm --filter @openwork/app bump:patch",
     "bump:minor": "pnpm --filter @openwork/app bump:minor",
     "bump:major": "pnpm --filter @openwork/app bump:major",

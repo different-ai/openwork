@@ -1083,6 +1083,11 @@ export async function requestJson(path: string, init: RequestInit = {}, timeoutM
     headers.set("Content-Type", "application/json");
   }
 
+  if (!headers.has("Authorization") && !path.startsWith("/api/auth/") && typeof window !== "undefined") {
+    const token = window.localStorage.getItem(AUTH_TOKEN_STORAGE_KEY)?.trim() ?? "";
+    if (token) headers.set("Authorization", "Bearer " + token);
+  }
+
   const orgScope = getRequestOrgScope();
   if (orgScope && !headers.has(ORG_SCOPE_HEADER) && shouldPinOrgScopePath(path)) {
     headers.set(ORG_SCOPE_HEADER, orgScope);

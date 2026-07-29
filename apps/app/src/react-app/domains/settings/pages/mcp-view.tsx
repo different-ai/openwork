@@ -32,6 +32,7 @@ import type { CloudImportedPlugin } from "../../../../app/cloud/import-state";
 import { ExtensionCard, type ExtensionLayout } from "../../../design-system/extension-card";
 import { ExtensionDetailModal } from "../../../design-system/extension-detail-modal";
 import {
+  isOrgMcpConnectionReady,
   isOrgMcpConnectionItem,
   orgMcpConnectionActionLabel,
   resolveExtensionInventoryGroup,
@@ -65,7 +66,11 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ConfirmModal } from "../../../design-system/modals/confirm-modal";
 import { AddMcpModal } from "../../connections/modals/add-mcp-modal";
 import { ClaudePluginImportModal } from "../../connections/modals/claude-plugin-import-modal";
-import { canDisconnectNativeProviderAccount } from "../../connections/native-provider-connections";
+import {
+  canDisconnectMemberConnection,
+  canDisconnectNativeProviderAccount,
+  canMemberAuthorizeConnection,
+} from "../../connections/native-provider-connections";
 import type { OpenworkClaudePluginPreview } from "../../../../app/lib/openwork-server";
 import {
   isOpenWorkExtensionEnabled,
@@ -152,6 +157,9 @@ export type McpViewProps = {
   installClaudePlugin?: (url: string) => Promise<{ ok: boolean; message: string }>;
   /** Connected org-level External MCP Connections rendered in My Extensions. */
   orgMcpItems?: ExtensionItem[];
+  orgMcpConnectingId?: string | null;
+  connectOrgMcp?: (connectionId: string) => void;
+  reconnectOrgMcp?: (connectionId: string) => void;
   orgMcpDisconnectingId?: string | null;
   disconnectOrgMcp?: (connectionId: string) => void;
   initialFilter?: ExtensionInventoryFilter;
@@ -840,7 +848,11 @@ export function McpView(props: McpViewProps) {
 
       {detailOrgMcpItem && isOrgMcpConnectionItem(detailOrgMcpItem) ? (() => {
         const connection = detailOrgMcpItem.orgMcpConnection;
-        const canDisconnect = canDisconnectNativeProviderAccount(connection);
+        const ready = isOrgMcpConnectionReady(connection);
+        const canAuthorize = canMemberAuthorizeConnection(connection);
+        const canDisconnect = canDisconnectMemberConnection(connection);
+        const connectingBusy = props.orgMcpConnectingId === connection.id;
+        const disconnectingBusy = props.orgMcpDisconnectingId === connection.id;
         return (
           <ExtensionDetailModal
             open={true}
@@ -850,13 +862,20 @@ export function McpView(props: McpViewProps) {
             name={detailOrgMcpItem.name}
             description={detailOrgMcpItem.description ?? orgMcpConnectionActionLabel(connection)}
             taxonomy="connection"
-            connected={true}
+            connected={ready}
             connectedLabel={orgMcpConnectionActionLabel(connection)}
+            connecting={connectingBusy || disconnectingBusy}
+            connectingLabel={disconnectingBusy ? t("mcp.org_connection_disconnecting_action") : t("mcp.org_connection_waiting_browser")}
             beta
             url={connection.url}
             oauth={connection.authType === "oauth"}
+            connectLabel={orgMcpConnectionActionLabel(connection)}
+            reconnectLabel={t("mcp.org_connection_reconnect_action")}
+            onConnect={!ready && canAuthorize && props.connectOrgMcp ? () => props.connectOrgMcp?.(connection.id) : undefined}
+            onReconnect={ready && canAuthorize && props.reconnectOrgMcp ? () => props.reconnectOrgMcp?.(connection.id) : undefined}
             onUninstall={canDisconnect && props.disconnectOrgMcp ? () => props.disconnectOrgMcp?.(connection.id) : undefined}
             uninstallLabel={t("mcp.org_connection_disconnect_action")}
+            closeOnUninstall={false}
             showEnablementCard={false}
             configSlot={(
               <div className="flex flex-wrap gap-2">

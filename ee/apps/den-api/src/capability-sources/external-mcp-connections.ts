@@ -1369,14 +1369,19 @@ export async function memberCanUseExternalMcpConnection(input: {
 export async function deleteExternalMcpConnection(input: {
   organizationId: OrganizationId
   connectionId: ExternalMcpConnectionId
+  createdByOrgMembershipId?: OrgMembershipId
 }): Promise<boolean> {
   return db.transaction(async (tx) => {
+    const ownershipConditions = input.createdByOrgMembershipId === undefined
+      ? []
+      : [eq(ExternalMcpConnectionTable.createdByOrgMembershipId, input.createdByOrgMembershipId)]
     const rows = await tx
       .select({ id: ExternalMcpConnectionTable.id })
       .from(ExternalMcpConnectionTable)
       .where(and(
         eq(ExternalMcpConnectionTable.organizationId, input.organizationId),
         eq(ExternalMcpConnectionTable.id, input.connectionId),
+        ...ownershipConditions,
       ))
       .limit(1)
       .for("update")

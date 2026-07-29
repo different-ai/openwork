@@ -113,9 +113,9 @@ config:
     allowPrivateMcpUrls: "1"
 YAML
 helm template openwork-ee "$chart_dir" -f "$enabled_values" > "$enabled_rendered"
-assert_count "$enabled_rendered" 'DEN_ALLOW_PRIVATE_MCP_URLS' 1
-assert_count "$enabled_rendered" 'name: DEN_ALLOW_PRIVATE_MCP_URLS' 1
-assert_count "$enabled_rendered" 'value: "1"' 1
+assert_count "$enabled_rendered" 'DEN_ALLOW_PRIVATE_MCP_URLS' 2
+assert_count "$enabled_rendered" 'name: DEN_ALLOW_PRIVATE_MCP_URLS' 2
+assert_count "$enabled_rendered" 'value: "1"' 2
 assert_not_contains "$enabled_rendered" 'key: DEN_ALLOW_PRIVATE_MCP_URLS'
 assert_not_contains "$enabled_rendered" 'configMapKeyRef:'
 assert_not_contains "$enabled_rendered" 'openwork-ee-den-api-private-mcp-urls'

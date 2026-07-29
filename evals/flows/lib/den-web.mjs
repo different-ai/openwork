@@ -41,7 +41,7 @@ export async function signInApi(email, password) {
   return body.token ?? null;
 }
 
-export async function signInViaBrowser(ctx, email, password) {
+export async function signInViaBrowser(ctx, email, password, organizationName) {
   // Land on the den-web origin first so the relative sign-out fetch below
   // actually reaches den-web (a leftover session would otherwise bounce the
   // root URL straight to /dashboard with no sign-in card).
@@ -102,6 +102,39 @@ export async function signInViaBrowser(ctx, email, password) {
     })()`,
     { timeoutMs: 30_000, label: "signed-in dashboard or organization chooser" },
   );
+
+  const chooserVisible = await ctx.eval(
+    "Boolean(document.querySelector('[data-testid=\"org-chooser-root\"]'))",
+  );
+  if (chooserVisible) {
+    const selected = await ctx.eval(`(() => {
+      const list = document.querySelector('[data-testid="org-chooser-list"]');
+      if (!list) return false;
+      const buttons = [...list.querySelectorAll('button:not([disabled])')];
+      const target = ${JSON.stringify(organizationName?.trim() ?? "")};
+      const button =
+        target
+          ? buttons.find((entry) => (entry.textContent ?? "").includes(target))
+          : buttons[0];
+      button?.click();
+      return Boolean(button);
+    })()`);
+    ctx.assert(
+      selected,
+      organizationName
+        ? `No selectable organization matching ${organizationName} found.`
+        : "No selectable organization found.",
+    );
+    await ctx.waitFor(
+      `(() => {
+        const text = document.body?.innerText ?? '';
+        return location.pathname.startsWith('/dashboard')
+          && !document.querySelector('[data-testid="org-chooser-root"]')
+          && text.includes('Dashboard');
+      })()`,
+      { timeoutMs: 60_000, label: "selected organization dashboard" },
+    );
+  }
 }
 
 export async function openAdminConnections(ctx) {

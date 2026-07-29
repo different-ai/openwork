@@ -310,6 +310,7 @@ export async function rotateOrganizationScimToken(input: {
   const providerId = buildOrganizationScimProviderId(input.organizationId)
 
   if (existing && existing.providerId !== providerId) {
+    await cleanupExternalIdentitiesForDeletedScimConnection(existing)
     await db.delete(ScimProviderTable).where(eq(ScimProviderTable.id, existing.id))
   }
 

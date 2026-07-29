@@ -43,6 +43,15 @@ test("Den evaluator explicitly permits the isolated demo signup", () => {
   );
 });
 
+test("Den evaluator threads orgMode only when requested", () => {
+  const defaultEnv = denEvalEnvironment();
+  const multiOrgEnv = denEvalEnvironment({ orgMode: "multi_org" });
+
+  assert.equal(defaultEnv.DEN_ORG_MODE, undefined);
+  assert.equal(multiOrgEnv.DEN_ORG_MODE, "multi_org");
+  assert.equal(multiOrgEnv.PORT, defaultEnv.PORT);
+});
+
 test("Den evaluator trusts both loopback spellings used by the proof browser", () => {
   const trustedOrigins = denEvalEnvironment()
     .DEN_BETTER_AUTH_TRUSTED_ORIGINS?.split(",");

@@ -168,6 +168,7 @@ export type DenCloudInstance = {
   status: "provisioning" | "waking" | "ready" | "failed";
   url: string | null;
   imageVersion: string | null;
+  instanceName?: string | null;
   latestVersion: string | null;
 };
 
@@ -1236,6 +1237,7 @@ function parseCloudInstance(payload: unknown): DenCloudInstance | null {
     status: payload.status,
     url: payload.url,
     imageVersion: typeof payload.imageVersion === "string" ? payload.imageVersion : null,
+    ...(typeof payload.instanceName === "string" ? { instanceName: payload.instanceName } : {}),
     latestVersion: typeof payload.latestVersion === "string" ? payload.latestVersion : null,
   };
 }
@@ -2354,6 +2356,14 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
       await requestJson<unknown>(
         baseUrls,
         `/v1/oauth-providers/${encodeURIComponent(providerId)}/disconnect`,
+        { method: "POST", token, organizationId: orgId },
+      );
+    },
+
+    async disconnectMyMcpConnectionAccount(orgId: string, connectionId: string): Promise<void> {
+      await requestJson<unknown>(
+        baseUrls,
+        `/v1/mcp-connections/${encodeURIComponent(connectionId)}/disconnect-my-account`,
         { method: "POST", token, organizationId: orgId },
       );
     },

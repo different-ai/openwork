@@ -4,6 +4,7 @@ import {
   AuthUserTable,
   ConnectedAccountTable,
   InvitationTable,
+  LlmProviderAccessTable,
   MemberTable,
   OrganizationRoleTable,
   OrganizationTable,
@@ -713,29 +714,57 @@ async function acceptInvitation(invitation: InvitationRow, userId: UserId, optio
     member = { ...existingMember, role: existingRole, joinedAt: existingJoinedAt }
   }
 
+  if (!member && removedMember && invitedMember) {
+    await db.transaction(async (tx) => {
+      // A new explicit invitation is a new access lifecycle. Keep the removed
+      // row for audit history, but activate the invitation placeholder so any
+      // teams or direct grants assigned while the invite was pending remain
+      // attached to the member who joins.
+      await tx
+        .update(MemberTable)
+        .set({ userId: null })
+        .where(eq(MemberTable.id, removedMember.id))
+      await tx
+        .update(MemberTable)
+        .set({ userId, role, joinedAt })
+        .where(eq(MemberTable.id, invitedMember.id))
+    })
+    member = {
+      ...invitedMember,
+      userId,
+      role,
+      joinedAt,
+    }
+  }
+
   if (!member && removedMember) {
-    await db
-      .update(MemberTable)
-      .set({
+    const memberId = createDenTypeId("member")
+    const createdMembers = await db.transaction(async (tx) => {
+      // Legacy invitations may not have a pending member placeholder. They
+      // still represent a fresh access lifecycle, so detach the audit row and
+      // create a new membership instead of reviving stale membership grants.
+      await tx
+        .update(MemberTable)
+        .set({ userId: null })
+        .where(eq(MemberTable.id, removedMember.id))
+      await tx.insert(MemberTable).values({
+        id: memberId,
+        organizationId: invitation.organizationId,
+        userId,
         role,
         joinedAt,
-        removedAt: null,
-        removedByOrgMember: null,
         inviteId: invitation.id,
         invitedByOrgMember: invitation.orgMemberId,
       })
-      .where(eq(MemberTable.id, removedMember.id))
-    if (invitedMember && invitedMember.id !== removedMember.id) {
-      await db.delete(MemberTable).where(eq(MemberTable.id, invitedMember.id))
-    }
-    member = {
-      ...removedMember,
-      role,
-      joinedAt,
-      removedAt: null,
-      removedByOrgMember: null,
-      inviteId: invitation.id,
-      invitedByOrgMember: invitation.orgMemberId,
+      return tx
+        .select()
+        .from(MemberTable)
+        .where(eq(MemberTable.id, memberId))
+        .limit(1)
+    })
+    member = createdMembers[0]
+    if (!member) {
+      throw new Error("failed_to_create_member")
     }
   }
 
@@ -1886,6 +1915,10 @@ export async function removeOrganizationMember(input: {
     await tx
       .delete(TeamMemberTable)
       .where(eq(TeamMemberTable.orgMembershipId, member.id))
+
+    await tx
+      .delete(LlmProviderAccessTable)
+      .where(eq(LlmProviderAccessTable.orgMembershipId, member.id))
 
     await tx
       .update(MemberTable)

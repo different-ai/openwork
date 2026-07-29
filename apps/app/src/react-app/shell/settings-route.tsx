@@ -2415,6 +2415,9 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                 orgMcpItems={orgMcpConnectionItems}
                 uninstallSkill={(name) => { void extensionsStore.uninstallSkill(name); }}
                 removeCloudPlugin={(pluginId) => { void extensionsStore.removeCloudOrgPlugin(pluginId); }}
+                orgMcpConnectingId={orgMcpConnections.connectingId}
+                connectOrgMcp={(connectionId) => { void orgMcpConnections.connect(connectionId); }}
+                reconnectOrgMcp={(connectionId) => { void orgMcpConnections.connect(connectionId, { forceFreshAuthorization: true }); }}
                 orgMcpDisconnectingId={orgMcpConnections.disconnectingId}
                 disconnectOrgMcp={(connectionId) => { void orgMcpConnections.disconnect(connectionId); }}
                 readSkill={(name) => extensionsStore.readSkill(name)}

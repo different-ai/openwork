@@ -780,6 +780,7 @@ export default {
   "mcp.org_connection_connected_label": "Connected",
   "mcp.org_connection_disconnect_action": "Disconnect",
   "mcp.org_connection_disconnecting_action": "Disconnecting...",
+  "mcp.org_connection_waiting_browser": "Waiting for browser...",
   "mcp.org_connection_desc_per_member": "Available from your organization. Connect your own account to use it.",
   "mcp.org_connection_desc_per_member_connected": "Connected with your own account.",
   "mcp.org_connection_desc_per_member_reconnect": "Reconnect your account to grant newly requested permissions.",

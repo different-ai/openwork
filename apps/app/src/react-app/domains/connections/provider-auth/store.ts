@@ -13,6 +13,7 @@ import {
   type DenOrgLlmProvider,
   type DenOrgLlmProviderConnection,
 } from "../../../../app/lib/den";
+import { getOpenworkGatewayOrigin } from "../../../../app/lib/gateway-runtime";
 import { unwrap, waitForHealthy } from "../../../../app/lib/opencode";
 import {
   readOpencodeConfig,
@@ -101,6 +102,7 @@ type CloudProviderSyncReason =
 
 let lastGlobalProviderDisposeRefreshAt = 0;
 const globalCloudProviderSyncByContext = new Map<string, Promise<void>>();
+let loggedGatewayCloudProviderSyncSkip = false;
 
 function enqueueGlobalCloudProviderSync(
   contextKey: string,
@@ -1832,6 +1834,16 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
   }
 
   async function runCloudProviderSync(reason: CloudProviderSyncReason) {
+    if (getOpenworkGatewayOrigin()) {
+      if (!loggedGatewayCloudProviderSyncSkip) {
+        loggedGatewayCloudProviderSyncSkip = true;
+        console.info(
+          `[cloud-provider-sync:${reason}] Provider materialization is handled server-side in gateway mode.`,
+        );
+      }
+      return { outcome: "handled_server_side" };
+    }
+
     const request = cloudProviderSyncTail
       .catch(() => undefined)
       .then(() =>

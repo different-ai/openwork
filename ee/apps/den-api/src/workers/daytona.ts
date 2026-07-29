@@ -16,6 +16,7 @@ type ProvisionInput = {
   clientToken: string
   activityToken: string
 }
+type SandboxNameInput = Pick<ProvisionInput, "workerId" | "name">
 
 type ProvisionedInstance = {
   provider: string
@@ -192,7 +193,7 @@ function sandboxLabels(workerId: WorkerId) {
   }
 }
 
-export function daytonaSandboxName(input: ProvisionInput) {
+export function daytonaSandboxName(input: SandboxNameInput) {
   return slug(
     `${env.daytona.sandboxNamePrefix}-${input.name}-${workerHint(input.workerId)}`,
   ).slice(0, 63)
@@ -206,14 +207,14 @@ function snapshotShortVersion(snapshot: string) {
   return slug(snapshot).slice(0, 24) || "snapshot"
 }
 
-export function daytonaSandboxNameForSnapshot(input: ProvisionInput, snapshot: string) {
+export function daytonaSandboxNameForSnapshot(input: SandboxNameInput, snapshot: string) {
   const shortVersion = snapshotShortVersion(snapshot)
   const base = daytonaSandboxName(input)
   const baseLength = Math.max(1, 63 - shortVersion.length - 1)
   return slug(`${base.slice(0, baseLength)}-${shortVersion}`).slice(0, 63)
 }
 
-function currentDaytonaSandboxName(input: ProvisionInput) {
+export function currentDaytonaSandboxName(input: SandboxNameInput) {
   const snapshot = currentDaytonaImageVersion()
   return snapshot ? daytonaSandboxNameForSnapshot(input, snapshot) : daytonaSandboxName(input)
 }

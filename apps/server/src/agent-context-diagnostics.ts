@@ -524,7 +524,7 @@ function collisionDetails(collisions: McpConfigCollision[]): string[] {
   });
 }
 
-function cloudCatalogCheck(probe: CloudCatalogProbe): AgentContextDiagnosticCheck {
+export function cloudCatalogCheck(probe: CloudCatalogProbe): AgentContextDiagnosticCheck {
   const common = {
     id: "cloud-tool-catalog" as const,
     durationMs: probe.durationMs,
@@ -555,16 +555,24 @@ function cloudCatalogCheck(probe: CloudCatalogProbe): AgentContextDiagnosticChec
   if (probe.status === "observed") {
     const exact = probe.toolIds.length === REQUIRED_CLOUD_TOOL_IDS.length
       && REQUIRED_CLOUD_TOOL_IDS.every((toolId) => probe.toolIds.includes(toolId));
+    const transientUnauthorizedRecovered = exact
+      && probe.steps.some((step) => step.includes("recovered after transient 401"));
     return diagnosticCheck({
       ...common,
-      status: exact ? "passed" : "failed",
+      status: transientUnauthorizedRecovered ? "warning" : exact ? "passed" : "failed",
       evidenceKind: "observed",
-      code: exact ? "cloud_catalog_exact_match" : "cloud_catalog_mismatch",
-      message: exact
+      code: transientUnauthorizedRecovered
+        ? "cloud_catalog_recovered_after_transient_401"
+        : exact ? "cloud_catalog_exact_match" : "cloud_catalog_mismatch",
+      message: transientUnauthorizedRecovered
+        ? "The OpenWork runtime saw a transient HTTP 401 during the independent Cloud MCP initialize request and recovered on retry; this points to a proxy or auth-gateway blip, not a revoked OpenWork Cloud credential."
+        : exact
         ? "The canonical OpenWork Cloud catalog exposes exactly the two required capability tools."
         : "The OpenWork Cloud catalog does not match the required two-tool contract.",
-      owner: exact ? "openwork-server" : "openwork-support",
-      action: exact
+      owner: transientUnauthorizedRecovered ? "network-admin" : exact ? "openwork-server" : "openwork-support",
+      action: transientUnauthorizedRecovered
+        ? "Treat the first 401 as transient unless it repeats or carries a Den revoked-session envelope; inspect proxy and auth-gateway logs for one-off challenges."
+        : exact
         ? "No action is required."
         : "Review the OpenWork Cloud deployment and restore the canonical capability catalog.",
     });
@@ -624,11 +632,20 @@ function cloudCatalogCheck(probe: CloudCatalogProbe): AgentContextDiagnosticChec
       break;
     case "timeout":
     case "network_error":
-    case "redirect_rejected":
     case "http_error":
       owner = "network-admin";
-      message = "The independent runtime endpoint probe could not be completed through the configured network path.";
-      action = "Verify server egress, DNS, TLS, proxy policy, and the configured OpenWork Cloud service, then rerun diagnostics.";
+      if (probe.httpStatus === 451) {
+        message = "The independent runtime endpoint probe received HTTP 451, which indicates an egress proxy, firewall, or allowlist deny rather than an OpenWork Cloud catalog shape problem.";
+        action = "Add the configured OpenWork Cloud MCP host and its documented redirect targets to the corporate allowlist, then rerun diagnostics.";
+      } else {
+        message = "The independent runtime endpoint probe could not be completed through the configured network path.";
+        action = "Verify server egress, DNS, TLS, proxy policy, and the configured OpenWork Cloud service, then rerun diagnostics.";
+      }
+      break;
+    case "redirect_rejected":
+      owner = "network-admin";
+      message = "The independent runtime endpoint probe received an HTTP redirect during the MCP handshake and intentionally did not follow it; a proxy, captive portal, SSO challenge, or route rewrite is blocking the terminal /mcp/agent endpoint.";
+      action = "Fix the proxy or route so the configured Cloud MCP endpoint answers directly at /mcp/agent without a redirect, then rerun diagnostics.";
       break;
     case "dns_error":
       owner = "network-admin";
@@ -652,8 +669,13 @@ function cloudCatalogCheck(probe: CloudCatalogProbe): AgentContextDiagnosticChec
       break;
     case "proxy_error":
       owner = "network-admin";
-      message = "The configured proxy could not complete the independent runtime endpoint probe.";
-      action = "Verify proxy reachability, authentication, and bypass policy, then rerun diagnostics.";
+      if (probe.httpStatus === 451) {
+        message = "The independent runtime endpoint probe received HTTP 451, which indicates an egress proxy, firewall, or allowlist deny rather than an OpenWork Cloud catalog shape problem.";
+        action = "Add the configured OpenWork Cloud MCP host and its documented redirect targets to the corporate allowlist, then rerun diagnostics.";
+      } else {
+        message = "The configured proxy could not complete the independent runtime endpoint probe.";
+        action = "Verify proxy reachability, authentication, and bypass policy, then rerun diagnostics.";
+      }
       break;
     case "unauthorized":
       owner = "openwork-client";
@@ -720,7 +742,7 @@ function cloudCatalogCheck(probe: CloudCatalogProbe): AgentContextDiagnosticChec
   });
 }
 
-function cloudDifferentialCheck(probe: CloudCatalogProbe, engineReachableNow: boolean): AgentContextDiagnosticCheck {
+export function cloudDifferentialCheck(probe: CloudCatalogProbe, engineReachableNow: boolean): AgentContextDiagnosticCheck {
   const verdict = differentialCloudVerdict(probe, engineReachableNow);
   const common = {
     id: "cloud-endpoint-differential" as const,
@@ -798,7 +820,7 @@ function cloudDifferentialCheck(probe: CloudCatalogProbe, engineReachableNow: bo
   });
 }
 
-function cloudEndpointTransportCheck(
+export function cloudEndpointTransportCheck(
   probe: CloudEndpointTransportProbe,
   notRequired: boolean,
 ): AgentContextDiagnosticCheck {
@@ -809,6 +831,11 @@ function cloudEndpointTransportCheck(
     handshakePerformed: probe.performed,
     verifiedHandshake: probe.verifiedHandshake,
     verifyErrorCode: probe.verifyErrorCode,
+    tls13Handshake: probe.tls13Handshake,
+    tls13ErrorCode: probe.tls13ErrorCode,
+    tls12Handshake: probe.tls12Handshake,
+    tls12ErrorCode: probe.tls12ErrorCode,
+    tls12Protocol: probe.tls12Protocol,
     dnsResolved: probe.dnsResolved,
     tcpConnected: probe.tcpConnected,
     servedChainLength: probe.servedChainLength,
@@ -843,7 +870,78 @@ function cloudEndpointTransportCheck(
       details,
     });
   }
+  if (
+    probe.verifiedHandshake === "failed"
+    && probe.tls13Handshake === "failed"
+    && probe.tls13ErrorCode === "ETIMEDOUT"
+    && probe.tls12Handshake === "ok"
+  ) {
+    return diagnosticCheck({
+      id: "cloud-endpoint-transport",
+      status: "failed",
+      evidenceKind: "observed",
+      code: "endpoint_tls_version_handshake_fault",
+      message: "The credential-free transport probe reproduced a TLS version fault: TLS 1.3 timed out while TLS 1.2 completed, which points to an egress proxy or firewall stalling TLS 1.3 handshakes rather than a ServiceNow, credential, or allowlist issue.",
+      owner: "network-admin",
+      action: "Fix or bypass the egress device that stalls TLS 1.3 ClientHello traffic for OpenWork Cloud hosts, or temporarily force TLS 1.2 where your policy permits it, then rerun diagnostics.",
+      details,
+    });
+  }
+  if (probe.verifiedHandshake === "failed" && probe.verifyErrorCode === "ETIMEDOUT") {
+    if (
+      probe.tls13Handshake === "failed"
+      && probe.tls13ErrorCode === "ETIMEDOUT"
+      && probe.tls12Handshake === "failed"
+      && probe.tls12ErrorCode === "ETIMEDOUT"
+    ) {
+      return diagnosticCheck({
+        id: "cloud-endpoint-transport",
+        status: "failed",
+        evidenceKind: "observed",
+        code: "endpoint_tls_handshake_timeout_tls12_comparison_failed",
+        message: "The credential-free TLS handshake timed out before any HTTP response, and the explicit TLS 1.3 probe also timed out; the runtime TLS 1.2 comparison timed out too, so this still points to an egress TLS ClientHello stall but this runtime could not prove the TLS 1.2 workaround.",
+        owner: "network-admin",
+        action: "Verify the egress proxy and firewall pass TLS ClientHello traffic to OpenWork Cloud hosts, then compare with a known Node or openssl TLS 1.2-only probe and confirm every OpenWork runtime honors any temporary TLS-version pinning policy.",
+        details,
+      });
+    }
+    return diagnosticCheck({
+      id: "cloud-endpoint-transport",
+      status: "failed",
+      evidenceKind: "observed",
+      code: "endpoint_tls_handshake_timeout",
+      message: "The credential-free TLS handshake timed out before any HTTP response; this points to a TLS handshake or egress proxy fault consistent with a TLS 1.3 ClientHello stall, not an application credential or ServiceNow problem.",
+      owner: "network-admin",
+      action: "Verify that the egress proxy and firewall pass TLS 1.3 ClientHello traffic to OpenWork Cloud hosts; compare with a TLS 1.2-only probe or temporarily force TLS 1.2 where policy permits, then rerun diagnostics.",
+      details,
+    });
+  }
   if (isCloudEndpointCertificateVerificationFailure(probe)) {
+    const servedIssuer = probe.servedChain[0]?.issuerCN ?? "";
+    if (/corporate|interception|proxy|mitm/iu.test(servedIssuer)) {
+      return diagnosticCheck({
+        id: "cloud-endpoint-transport",
+        status: "failed",
+        evidenceKind: "observed",
+        code: "endpoint_tls_interception_detected",
+        message: "The OpenWork Cloud endpoint appears to be TLS-inspected or re-signed by a corporate proxy; the runtime does not trust that inspecting issuer.",
+        owner: "network-admin",
+        action: "Install the corporate inspection root for the OpenWork runtime with NODE_EXTRA_CA_CERTS, or bypass TLS inspection for OpenWork Cloud hosts, then rerun diagnostics.",
+        details,
+      });
+    }
+    if (probe.verifyErrorCode === "UNABLE_TO_VERIFY_LEAF_SIGNATURE" && probe.servedChainLength === 1) {
+      return diagnosticCheck({
+        id: "cloud-endpoint-transport",
+        status: "failed",
+        evidenceKind: "observed",
+        code: "endpoint_tls_incomplete_chain",
+        message: "The OpenWork Cloud endpoint served a leaf-only TLS chain and verification failed with UNABLE_TO_VERIFY_LEAF_SIGNATURE; the missing intermediate/fullchain must be repaired before blaming credentials or application logic.",
+        owner: "network-admin",
+        action: "Serve the complete certificate chain from the endpoint or let the OpenWork runtime add the AIA intermediate to NODE_EXTRA_CA_CERTS, then rerun diagnostics.",
+        details,
+      });
+    }
     return diagnosticCheck({
       id: "cloud-endpoint-transport",
       status: "failed",

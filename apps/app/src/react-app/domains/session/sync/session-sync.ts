@@ -40,6 +40,7 @@ type PendingDelta = {
 
 type SyncEntry = {
   input: SyncOptions;
+  openworkToken: string;
   refs: number;
   dispose: () => void;
   disposeTimer: ReturnType<typeof setTimeout> | null;
@@ -61,8 +62,23 @@ type SyncEntry = {
 
 const idleStatus: SessionStatus = { type: "idle" };
 const syncs = new Map<string, SyncEntry>();
+const workspaceSyncDisposeGraceMs = 2_000;
 const retainedSessionTtlMs = 10 * 60_000;
 const idleRetainedSessionTtlMs = 10_000;
+
+type SyncSubscriptionFactory = (
+  baseUrl: string,
+  openworkToken: string,
+  signal: AbortSignal,
+) => Promise<AsyncIterable<unknown>>;
+
+const defaultSyncSubscriptionFactory: SyncSubscriptionFactory = async (baseUrl, openworkToken, signal) => {
+  const client = createClient(baseUrl, undefined, { token: openworkToken, mode: "openwork" });
+  const subscription = await client.event.subscribe(undefined, { signal });
+  return subscription.stream;
+};
+
+let syncSubscriptionFactory = defaultSyncSubscriptionFactory;
 
 export const snapshotKey = (workspaceId: string, sessionId: string) =>
   ["react-session-snapshot", workspaceId, sessionId] as const;
@@ -78,7 +94,7 @@ export const questionKey = (workspaceId: string, sessionId: string) =>
   ["react-session-questions", workspaceId, sessionId] as const;
 
 function syncKey(input: SyncOptions) {
-  return `${input.workspaceId}:${input.baseUrl}:${input.openworkToken}`;
+  return `${input.workspaceId}:${input.baseUrl}`;
 }
 
 function getErrorStatus(error: unknown) {
@@ -1057,10 +1073,8 @@ function flushDeltas(entry: SyncEntry, workspaceId: string) {
   }
 }
 
-function startSync(input: SyncOptions) {
-  const client = createClient(input.baseUrl, undefined, { token: input.openworkToken, mode: "openwork" });
+function startSync(input: SyncOptions, entry: SyncEntry) {
   const controller = new AbortController();
-  const entry = syncs.get(syncKey(input));
   let disposed = false;
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
   let watchdogTimer: ReturnType<typeof setInterval> | null = null;
@@ -1083,15 +1097,14 @@ function startSync(input: SyncOptions) {
     const connectionController = new AbortController();
     activeConnectionController = connectionController;
     try {
-      const sub = await client.event.subscribe(undefined, { signal: connectionController.signal });
+      const stream = await syncSubscriptionFactory(input.baseUrl, entry.openworkToken, connectionController.signal);
       retryDelayMs = 1_000;
       lastEventAt = Date.now();
-      for await (const raw of sub.stream) {
+      for await (const raw of stream) {
         if (controller.signal.aborted || connectionController.signal.aborted) return;
         lastEventAt = Date.now();
         const event = normalizeEvent(raw);
         if (!event) continue;
-        if (!entry) continue;
         applyEvent(entry, input.workspaceId, event);
       }
       if (!controller.signal.aborted && activeConnectionController === connectionController) scheduleRetry();
@@ -1130,6 +1143,7 @@ export function ensureWorkspaceSessionSync(input: SyncOptions) {
   const key = syncKey(input);
   const existing = syncs.get(key);
   if (existing) {
+    existing.openworkToken = input.openworkToken;
     if (existing.disposeTimer) {
       clearTimeout(existing.disposeTimer);
       existing.disposeTimer = null;
@@ -1144,6 +1158,7 @@ export function ensureWorkspaceSessionSync(input: SyncOptions) {
 
   syncs.set(key, {
     input,
+    openworkToken: input.openworkToken,
     refs: 1,
     dispose: () => {},
     disposeTimer: null,
@@ -1159,7 +1174,7 @@ export function ensureWorkspaceSessionSync(input: SyncOptions) {
   });
 
   const created = syncs.get(key)!;
-  created.dispose = startSync(input);
+  created.dispose = startSync(input, created);
 
   return () => releaseWorkspaceSessionSync(input);
 }
@@ -1172,11 +1187,15 @@ function releaseWorkspaceSessionSync(input: SyncOptions) {
   if (input.onSessionUpdated) existing.sessionUpdatedListeners.delete(input.onSessionUpdated);
   if (input.onSessionDeleted) existing.sessionDeletedListeners.delete(input.onSessionDeleted);
   if (input.onSessionStatus) existing.sessionStatusListeners.delete(input.onSessionStatus);
-  existing.refs -= 1;
+  existing.refs = Math.max(0, existing.refs - 1);
   if (existing.refs > 0) return;
-  if (existing.retainedSessionTimers.size === 0) {
-    disposeWorkspaceSync(key, existing);
-  }
+  if (existing.retainedSessionTimers.size > 0 || existing.disposeTimer) return;
+  existing.disposeTimer = setTimeout(() => {
+    existing.disposeTimer = null;
+    if (existing.refs === 0 && existing.retainedSessionTimers.size === 0) {
+      disposeWorkspaceSync(key, existing);
+    }
+  }, workspaceSyncDisposeGraceMs);
 }
 
 export function seedSessionState(workspaceId: string, snapshot: OpenworkSessionSnapshot) {
@@ -1278,6 +1297,7 @@ export function __createWorkspaceSessionSyncForTest(input: SyncOptions) {
   const key = syncKey(input);
   syncs.set(key, {
     input,
+    openworkToken: input.openworkToken,
     refs: 1,
     dispose: () => {},
     disposeTimer: null,
@@ -1316,4 +1336,8 @@ export function __applySessionSyncEventForTest(input: SyncOptions, event: Openco
   const entry = syncs.get(syncKey(input));
   if (!entry) return;
   applyEvent(entry, input.workspaceId, event);
+}
+
+export function __setWorkspaceSessionSyncSubscriptionFactoryForTest(factory: SyncSubscriptionFactory | null) {
+  syncSubscriptionFactory = factory ?? defaultSyncSubscriptionFactory;
 }

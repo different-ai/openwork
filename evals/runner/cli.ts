@@ -1,19 +1,36 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveCdpBaseUrl } from "./cdp.ts";
 import { denStackDown, ensureDenStack } from "./den-stack.ts";
-import { missingEnv, loadFlows, runFlow } from "./runner.ts";
+import { applyManifestToEnv, readEnvManifest } from "./env-manifest.ts";
+import { createDaytonaHost } from "./hosts/daytona.ts";
+import { createLocalHost } from "./hosts/local.ts";
+import { ensureKubeStack, kubeStackDown } from "./kube-stack.ts";
+import { missingEnv, loadFlows, runFlow, runFlowRepeated } from "./runner.ts";
 import { renderMarkdown } from "./reporters/markdown.ts";
 import { renderFrameIndex } from "./reporters/fraimz-html.ts";
 import { postPrComment } from "./reporters/pr.ts";
 import { scaffoldFlow } from "./voiceover.ts";
 import type { EvalMode, EvalReport, FlowStatus } from "./flow.ts";
+import type { EnvManifest } from "./env-manifest.ts";
+import type { Host } from "./hosts/types.ts";
 
 const RUNNER_DIR = dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = resolve(RUNNER_DIR, "..", "..");
 const FLOWS_DIR = process.env.OPENWORK_EVAL_FLOWS_DIR?.trim() || join(RUNNER_DIR, "..", "flows");
 const DEFAULT_RESULTS_DIR = join(RUNNER_DIR, "..", "results");
 const DEFAULT_CDP_CANDIDATES = ["http://127.0.0.1:9825", "http://127.0.0.1:9823"];
+
+export interface HostPlacement {
+  defaultHostKind: string;
+  daytonaSandboxId: string | null;
+}
+
+export interface EvalHosts {
+  hosts: Map<string, Host>;
+  defaultHostKind: string;
+}
 
 interface CliArgs {
   flows: string[];
@@ -23,11 +40,16 @@ interface CliArgs {
   out: string | null;
   stack: string | null;
   stackDown: boolean;
+  kubeProfile: "single-org" | "multi-org";
+  images: "published" | "local" | null;
+  deleteCluster: boolean;
   scaffold: string | null;
   force: boolean;
   pr: true | string | null;
   help: boolean;
   mode: EvalMode;
+  envName: string | null;
+  repeat: number;
 }
 
 function readRequiredValue(argv: string[], index: number, flag: string): string {
@@ -45,11 +67,16 @@ export function parseArgs(argv: string[]): CliArgs {
     out: null,
     stack: null,
     stackDown: false,
+    kubeProfile: "single-org",
+    images: null,
+    deleteCluster: false,
     scaffold: null,
     force: false,
     pr: null,
     help: false,
     mode: "demo",
+    envName: null,
+    repeat: 1,
   };
   for (let index = 0; index < argv.length; index += 1) {
     const value = argv[index];
@@ -67,6 +94,20 @@ export function parseArgs(argv: string[]): CliArgs {
     } else if (value === "--stack") {
       args.stack = readRequiredValue(argv, index, value);
       index += 1;
+    } else if (value === "--kube-profile") {
+      const profile = readRequiredValue(argv, index, value);
+      if (profile !== "single-org" && profile !== "multi-org") {
+        throw new Error(`Unknown --kube-profile value: ${profile}. Supported: single-org, multi-org.`);
+      }
+      args.kubeProfile = profile;
+      index += 1;
+    } else if (value === "--images") {
+      const images = readRequiredValue(argv, index, value);
+      if (images !== "published" && images !== "local") {
+        throw new Error(`Unknown --images value: ${images}. Supported: published, local.`);
+      }
+      args.images = images;
+      index += 1;
     } else if (value === "--mode") {
       const mode = readRequiredValue(argv, index, value);
       if (mode !== "automation" && mode !== "demo") {
@@ -74,7 +115,17 @@ export function parseArgs(argv: string[]): CliArgs {
       }
       args.mode = mode;
       index += 1;
+    } else if (value === "--env") {
+      args.envName = readRequiredValue(argv, index, value);
+      index += 1;
+    } else if (value === "--repeat") {
+      const repeat = readRequiredValue(argv, index, value);
+      if (!/^\d+$/.test(repeat)) throw new Error(`--repeat must be an integer >= 1, got ${repeat}.`);
+      args.repeat = Number.parseInt(repeat, 10);
+      if (args.repeat < 1) throw new Error(`--repeat must be an integer >= 1, got ${repeat}.`);
+      index += 1;
     } else if (value === "--stack-down") args.stackDown = true;
+    else if (value === "--delete-cluster") args.deleteCluster = true;
     else if (value === "scaffold") {
       args.scaffold = readRequiredValue(argv, index, value);
       index += 1;
@@ -114,14 +165,82 @@ async function selectedStackNeedsApp(args: CliArgs): Promise<boolean> {
   return false;
 }
 
+function orgModeFromSource(source: string): "single_org" | "multi_org" | null {
+  const singleOrg = /orgMode\s*:\s*["']single_org["']/.test(source);
+  const multiOrg = /orgMode\s*:\s*["']multi_org["']/.test(source);
+  if (singleOrg === multiOrg) return null;
+  if (multiOrg) return "multi_org";
+  return "single_org";
+}
+
+async function selectedStackOrgMode(args: CliArgs): Promise<"single_org" | "multi_org" | undefined> {
+  if (args.list || args.all || args.flows.length === 0) return undefined;
+  let selected: "single_org" | "multi_org" | null = null;
+  for (const flowId of args.flows) {
+    const source = await readFlowSource(flowId);
+    if (!source) return undefined;
+    const orgMode = orgModeFromSource(source);
+    if (!orgMode) continue;
+    if (selected && selected !== orgMode) return undefined;
+    selected = orgMode;
+  }
+  return selected ?? undefined;
+}
+
 function incrementSummary(summary: Record<FlowStatus, number>, status: FlowStatus): void {
   if (status === "passed") summary.passed += 1;
   else if (status === "failed") summary.failed += 1;
   else summary.skipped += 1;
 }
 
+function manifestDaytonaSandbox(manifest: EnvManifest | null): string | null {
+  if (!manifest) return null;
+  for (const handle of Object.values(manifest.surfaces)) {
+    if (handle.hostKind === "daytona") {
+      const sandbox = handle.sandboxId?.trim();
+      if (sandbox) return sandbox;
+    }
+  }
+  return manifest.env?.OPENWORK_EVAL_DAYTONA_SANDBOX?.trim() || null;
+}
+
+export function resolveHostPlacement(manifest: EnvManifest | null, env: NodeJS.ProcessEnv = process.env): HostPlacement {
+  const daytonaSandboxId = manifestDaytonaSandbox(manifest) ?? (env.OPENWORK_EVAL_DAYTONA_SANDBOX?.trim() || null);
+  return {
+    daytonaSandboxId,
+    defaultHostKind: manifest?.defaultHostKind ?? (daytonaSandboxId ? "daytona" : "local"),
+  };
+}
+
+function daytonaReservedPorts(manifest: EnvManifest | null, kind: "chrome" | "electron"): number[] {
+  if (!manifest) return [];
+  const ports: number[] = [];
+  for (const handle of Object.values(manifest.surfaces)) {
+    const rawPort = handle.hostKind === "daytona" && handle.kind === kind ? handle.meta?.cdpPort : undefined;
+    if (!rawPort || !/^\d+$/.test(rawPort)) continue;
+    const port = Number.parseInt(rawPort, 10);
+    if (port > 0 && port <= 65_535) ports.push(port);
+  }
+  return ports;
+}
+
+export function createEvalHosts({ manifest, env, repoRoot, log }: { manifest: EnvManifest | null; env: NodeJS.ProcessEnv; repoRoot: string; log: (msg: string) => void }): EvalHosts {
+  const placement = resolveHostPlacement(manifest, env);
+  const hosts = new Map<string, Host>([["local", createLocalHost({ repoRoot, log })]]);
+  if (placement.daytonaSandboxId) {
+    hosts.set("daytona", createDaytonaHost({
+      sandboxId: placement.daytonaSandboxId,
+      log,
+      repoRoot,
+      reservedChromePorts: daytonaReservedPorts(manifest, "chrome"),
+      reservedElectronPorts: daytonaReservedPorts(manifest, "electron"),
+    }));
+  }
+  return { hosts, defaultHostKind: placement.defaultHostKind };
+}
+
 function printHelp(): void {
-  console.log("Usage: node evals/runner/run.mjs [--mode automation|demo] [--list | --all | --flow <id> ... | scaffold <id> [--force]] [--cdp-url <url>] [--out <dir>] [--pr [number]] [--stack den | --stack-down]");
+  console.log("Usage: node evals/runner/run.mjs [--mode automation|demo] [--list | --all | --flow <id> ... | scaffold <id> [--force]] [--cdp-url <url>] [--env <name>] [--repeat <n>] [--out <dir>] [--pr [number]] [--stack den|kube] [--kube-profile single-org|multi-org] [--images published|local] [--stack-down [--delete-cluster]]");
 }
 
 export async function main(argv: string[] = process.argv.slice(2)): Promise<void> {
@@ -133,6 +252,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
 
   if (args.stackDown) {
     await denStackDown({ log: (msg) => console.log(`▸ ${msg}`) });
+    await kubeStackDown({ log: (msg) => console.log(`▸ ${msg}`), deleteCluster: args.deleteCluster });
     return;
   }
 
@@ -147,14 +267,32 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     return;
   }
 
+  let manifest: EnvManifest | null = null;
+  if (args.envName) {
+    manifest = await readEnvManifest(args.envName);
+    if (!manifest) throw new Error(`Env manifest not found: ${args.envName}`);
+    applyManifestToEnv(manifest, process.env);
+  }
+
   if (args.stack === "den") {
+    const orgMode = await selectedStackOrgMode(args);
+    if (orgMode) console.log(`▸ Selected flow Den orgMode: ${orgMode}`);
     await ensureDenStack({
       log: (msg) => console.log(`▸ ${msg}`),
       cdpCandidates: args.cdpUrl ? [args.cdpUrl] : DEFAULT_CDP_CANDIDATES,
       skipApp: !(await selectedStackNeedsApp(args)),
+      orgMode,
+    });
+  } else if (args.stack === "kube") {
+    await ensureKubeStack({
+      log: (msg) => console.log(`▸ ${msg}`),
+      cdpCandidates: args.cdpUrl ? [args.cdpUrl] : DEFAULT_CDP_CANDIDATES,
+      skipApp: !(await selectedStackNeedsApp(args)),
+      profile: args.kubeProfile,
+      images: args.images ?? undefined,
     });
   } else if (args.stack) {
-    throw new Error(`Unknown stack: ${args.stack}. Supported: den`);
+    throw new Error(`Unknown stack: ${args.stack}. Supported: den, kube`);
   }
 
   const flows = await loadFlows(FLOWS_DIR);
@@ -197,17 +335,39 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     flows: [],
     summary: { passed: 0, failed: 0, skipped: 0 },
   };
+  const { hosts, defaultHostKind } = createEvalHosts({
+    manifest,
+    env: process.env,
+    repoRoot: REPO_ROOT,
+    log: (msg) => console.log(`▸ ${msg}`),
+  });
 
   for (const flow of selected) {
-    console.log(`▶ ${flow.id} — ${flow.title}`);
-    const result = await runFlow(flow, { cdpBaseUrl, outDir, env: process.env, mode: args.mode });
-    report.flows.push(result);
-    incrementSummary(report.summary, result.status);
-    for (const step of result.steps) {
-      const icon = step.status === "passed" ? "  ✓" : "  ✗";
-      console.log(`${icon} ${step.name} (${step.durationMs}ms)${step.error ? ` — ${step.error}` : ""}`);
+    console.log(`▶ ${flow.id} — ${flow.title}${args.repeat > 1 ? ` (repeat ${args.repeat})` : ""}`);
+    if (args.repeat === 1) {
+      const result = await runFlow(flow, { cdpBaseUrl, outDir, env: process.env, mode: args.mode, hosts, defaultHostKind, manifest });
+      report.flows.push(result);
+      incrementSummary(report.summary, result.status);
+      for (const step of result.steps) {
+        const icon = step.status === "passed" ? "  ✓" : "  ✗";
+        console.log(`${icon} ${step.name} (${step.durationMs}ms)${step.error ? ` — ${step.error}` : ""}`);
+      }
+      if (result.skipReason) console.log(`  ⏭ skipped: ${result.skipReason}`);
+    } else {
+      const repeatRunStamp = process.env.OPENWORK_EVAL_RUNSTAMP?.trim() || process.env.OPENWORK_EVAL_RUN_STAMP?.trim() || runId;
+      const repeated = await runFlowRepeated(flow, { cdpBaseUrl, outDir, env: process.env, mode: args.mode, hosts, defaultHostKind, manifest, repeat: args.repeat, runStamp: repeatRunStamp });
+      report.flows.push(...repeated.results);
+      report.soak = [...(report.soak ?? []), repeated.summary];
+      incrementSummary(report.summary, repeated.summary.status);
+      console.log(`  Soak: ${repeated.summary.passed} passed, ${repeated.summary.failed} failed, ${repeated.summary.skipped} skipped; captured iterations ${repeated.summary.capturedIterations.join(", ")}`);
+      for (const result of repeated.results) {
+        for (const step of result.steps) {
+          const icon = step.status === "passed" ? "  ✓" : "  ✗";
+          console.log(`${icon} ${result.id} · ${step.name} (${step.durationMs}ms)${step.error ? ` — ${step.error}` : ""}`);
+        }
+        if (result.skipReason) console.log(`  ⏭ ${result.id} skipped: ${result.skipReason}`);
+      }
     }
-    if (result.skipReason) console.log(`  ⏭ skipped: ${result.skipReason}`);
   }
 
   report.finishedAt = new Date().toISOString();

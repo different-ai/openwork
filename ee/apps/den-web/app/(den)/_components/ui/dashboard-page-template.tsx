@@ -3,6 +3,7 @@
 import type { ElementType, ReactNode } from "react";
 import { PaperMeshGradient } from "@openwork/ui/react";
 import { Dithering } from "@paper-design/shaders-react";
+import { useWebGlSupported } from "../../_lib/use-webgl-supported";
 
 /**
  * DashboardPageTemplate
@@ -51,6 +52,7 @@ export function DashboardPageTemplate({
   children,
 }: DashboardPageTemplateProps) {
   const compact = size === "compact";
+  const webGlSupported = useWebGlSupported();
 
   return (
     <div className={`mx-auto max-w-[860px] ${compact ? "p-6 md:p-8" : "p-8"}`}>
@@ -64,32 +66,36 @@ export function DashboardPageTemplate({
       >
         {/* Background layers: mesh gradient wrapped in a dithering texture */}
         <div className="absolute inset-0 z-0">
-          <Dithering
-            speed={0}
-            shape="warp"
-            type="4x4"
-            size={2.5}
-            scale={1}
-            frame={41112.4}
-            colorBack="#00000000"
-            colorFront="#FEFEFE"
-            style={{
-              backgroundColor: "#0f172a",
-              width: "100%",
-              height: "100%",
-            }}
-          >
-            <PaperMeshGradient
-              speed={0.1}
-              distortion={0.8}
-              swirl={0.1}
-              grainMixer={0}
-              grainOverlay={0}
-              frame={176868.9}
-              colors={colors}
-              style={{ width: "100%", height: "100%" }}
-            />
-          </Dithering>
+          {webGlSupported ? (
+            <Dithering
+              speed={0}
+              shape="warp"
+              type="4x4"
+              size={2.5}
+              scale={1}
+              frame={41112.4}
+              colorBack="#00000000"
+              colorFront="#FEFEFE"
+              style={{
+                backgroundColor: "#0f172a",
+                width: "100%",
+                height: "100%",
+              }}
+            >
+              <PaperMeshGradient
+                speed={0.1}
+                distortion={0.8}
+                swirl={0.1}
+                grainMixer={0}
+                grainOverlay={0}
+                frame={176868.9}
+                colors={colors}
+                style={{ width: "100%", height: "100%" }}
+              />
+            </Dithering>
+          ) : (
+            <div className="h-full w-full" style={{ background: `linear-gradient(135deg, ${colors.join(", ")})` }} />
+          )}
         </div>
 
         {/* Icon — top right */}

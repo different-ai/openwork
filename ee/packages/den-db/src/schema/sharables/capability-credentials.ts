@@ -2,14 +2,17 @@ import { relations, sql } from "drizzle-orm"
 import {
   boolean,
   index,
-  json,
   mysqlEnum,
   mysqlTable,
   timestamp,
   uniqueIndex,
   varchar,
 } from "drizzle-orm/mysql-core"
-import { denTypeIdColumn, encryptedTextColumn } from "../../columns"
+import {
+  compatJsonColumn,
+  denTypeIdColumn,
+  encryptedTextColumn,
+} from "../../columns"
 import { MemberTable, OrganizationTable } from "../org"
 import { ConfigObjectTable, PluginTable } from "./plugin-arch"
 
@@ -45,7 +48,7 @@ export const OrgOAuthClientTable = mysqlTable(
      * doesn't have to re-discover on every call. For native providers this
      * is typically empty.
      */
-    extra: json("extra").$type<Record<string, unknown>>(),
+    extra: compatJsonColumn<Record<string, unknown>>("extra"),
     createdByOrgMembershipId: denTypeIdColumn(
       "member",
       "created_by_org_membership_id",
@@ -80,7 +83,7 @@ export const ConnectedAccountTable = mysqlTable(
     orgMembershipId: denTypeIdColumn("member", "org_membership_id").notNull(),
     providerId: varchar("provider_id", { length: 255 }).notNull(),
     externalAccountId: varchar("external_account_id", { length: 255 }),
-    scopes: json("scopes").$type<string[]>(),
+    scopes: compatJsonColumn<string[]>("scopes"),
     accessToken: encryptedTextColumn("access_token"),
     refreshToken: encryptedTextColumn("refresh_token"),
     tokenType: varchar("token_type", { length: 64 }),
@@ -91,7 +94,7 @@ export const ConnectedAccountTable = mysqlTable(
      * tokens are saved.
      */
     pendingCodeVerifier: encryptedTextColumn("pending_code_verifier"),
-    credentialHealth: json("credential_health").$type<ExternalMcpCredentialHealth>(),
+    credentialHealth: compatJsonColumn<ExternalMcpCredentialHealth>("credential_health"),
     connectedAt: timestamp("connected_at", { fsp: 3 }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { fsp: 3 })
       .notNull()
@@ -162,7 +165,7 @@ export const ExternalMcpConnectionTable = mysqlTable(
      * and are classified lazily so manually registered legacy callbacks keep
      * working until an administrator migrates them.
      */
-    oauthConfiguration: json("oauth_configuration").$type<ExternalMcpOAuthConfiguration>(),
+    oauthConfiguration: compatJsonColumn<ExternalMcpOAuthConfiguration>("oauth_configuration"),
     /**
      * How the connection's credential relates to people:
      * - "shared": one org-level credential (this row's token columns, or
@@ -196,7 +199,7 @@ export const ExternalMcpConnectionTable = mysqlTable(
      * connect/callback. Cleared once tokens are saved.
      */
     pendingCodeVerifier: encryptedTextColumn("pending_code_verifier"),
-    credentialHealth: json("credential_health").$type<ExternalMcpCredentialHealth>(),
+    credentialHealth: compatJsonColumn<ExternalMcpCredentialHealth>("credential_health"),
     /**
      * Set when live discovery no longer matches the selected OAuth issuer.
      * The mismatch remains fail-closed until an administrator explicitly

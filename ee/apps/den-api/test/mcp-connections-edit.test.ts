@@ -24,18 +24,26 @@ let fakeServer: ReturnType<typeof Bun.serve> | undefined
 
 const adminUserId = createDenTypeId("user")
 const memberUserId = createDenTypeId("user")
+const peerAdminUserId = createDenTypeId("user")
 const otherAdminUserId = createDenTypeId("user")
+const superAdminUserId = createDenTypeId("user")
 const organizationId = createDenTypeId("organization")
 const otherOrganizationId = createDenTypeId("organization")
 const adminMemberId = createDenTypeId("member")
 const memberId = createDenTypeId("member")
+const peerAdminMemberId = createDenTypeId("member")
 const otherAdminMemberId = createDenTypeId("member")
+const superAdminMemberId = createDenTypeId("member")
 const adminSessionId = createDenTypeId("session")
 const memberSessionId = createDenTypeId("session")
+const peerAdminSessionId = createDenTypeId("session")
 const otherAdminSessionId = createDenTypeId("session")
+const superAdminSessionId = createDenTypeId("session")
 const adminToken = `mcp-edit-admin-${adminSessionId}`
 const memberToken = `mcp-edit-member-${memberSessionId}`
+const peerAdminToken = `mcp-edit-peer-admin-${peerAdminSessionId}`
 const otherAdminToken = `mcp-edit-other-admin-${otherAdminSessionId}`
+const superAdminToken = `mcp-edit-super-admin-${superAdminSessionId}`
 const observedAuthorization: Array<string | null> = []
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -84,7 +92,9 @@ beforeAll(async () => {
   await db.insert(schema.AuthUserTable).values([
     { id: adminUserId, name: "MCP Edit Admin", email: `mcp-edit-admin+${adminUserId}@test.local` },
     { id: memberUserId, name: "MCP Edit Member", email: `mcp-edit-member+${memberUserId}@test.local` },
+    { id: peerAdminUserId, name: "MCP Edit Peer Admin", email: `mcp-edit-peer+${peerAdminUserId}@test.local` },
     { id: otherAdminUserId, name: "Other MCP Edit Admin", email: `mcp-edit-other+${otherAdminUserId}@test.local` },
+    { id: superAdminUserId, name: "MCP Edit Super Admin", email: `mcp-edit-super+${superAdminUserId}@test.local` },
   ])
   await db.insert(schema.OrganizationTable).values([
     { id: organizationId, name: "MCP Edit Org", slug: `mcp-edit-${organizationId}` },
@@ -93,13 +103,17 @@ beforeAll(async () => {
   await db.insert(schema.MemberTable).values([
     { id: adminMemberId, organizationId, userId: adminUserId, role: "admin" },
     { id: memberId, organizationId, userId: memberUserId, role: "member" },
+    { id: peerAdminMemberId, organizationId, userId: peerAdminUserId, role: "admin" },
+    { id: superAdminMemberId, organizationId, userId: superAdminUserId, role: "super-admin" },
     { id: otherAdminMemberId, organizationId: otherOrganizationId, userId: otherAdminUserId, role: "admin" },
   ])
   const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000)
   await db.insert(schema.AuthSessionTable).values([
     { id: adminSessionId, userId: adminUserId, activeOrganizationId: organizationId, token: adminToken, expiresAt },
     { id: memberSessionId, userId: memberUserId, activeOrganizationId: organizationId, token: memberToken, expiresAt },
+    { id: peerAdminSessionId, userId: peerAdminUserId, activeOrganizationId: organizationId, token: peerAdminToken, expiresAt },
     { id: otherAdminSessionId, userId: otherAdminUserId, activeOrganizationId: otherOrganizationId, token: otherAdminToken, expiresAt },
+    { id: superAdminSessionId, userId: superAdminUserId, activeOrganizationId: organizationId, token: superAdminToken, expiresAt },
   ])
 })
 
@@ -132,7 +146,7 @@ afterAll(async () => {
   ))
   await db.delete(schema.AuthSessionTable).where(drizzle.inArray(
     schema.AuthSessionTable.id,
-    [adminSessionId, memberSessionId, otherAdminSessionId],
+    [adminSessionId, memberSessionId, peerAdminSessionId, otherAdminSessionId, superAdminSessionId],
   ))
   await db.delete(schema.MemberTable).where(drizzle.inArray(
     schema.MemberTable.organizationId,
@@ -144,7 +158,7 @@ afterAll(async () => {
   ))
   await db.delete(schema.AuthUserTable).where(drizzle.inArray(
     schema.AuthUserTable.id,
-    [adminUserId, memberUserId, otherAdminUserId],
+    [adminUserId, memberUserId, peerAdminUserId, otherAdminUserId, superAdminUserId],
   ))
   mock.restore()
 })
@@ -199,6 +213,18 @@ function humanRequest(input: {
       "content-type": "application/json",
     },
     body: JSON.stringify(input.body),
+  }))
+}
+
+function deleteRequest(input: {
+  connectionId: string
+  token?: string
+}) {
+  return app.fetch(new Request(`http://den-api.local/v1/mcp-connections/${input.connectionId}`, {
+    method: "DELETE",
+    headers: {
+      authorization: `Bearer ${input.token ?? adminToken}`,
+    },
   }))
 }
 
@@ -710,6 +736,54 @@ describe.serial("PUT /v1/mcp-connections/:connectionId", () => {
       error: "invalid_request",
       message: "This connection changed after authorization started. Start the connection flow again.",
     })
+  })
+})
+
+describe.serial("DELETE /v1/mcp-connections/:connectionId", () => {
+  test("members and admins can delete their own connections but not connections created by others", async () => {
+    const own = await createConnection({ name: "Admin-owned delete", authType: "none", credentialMode: "shared" })
+    const ownResponse = await deleteRequest({ connectionId: own.id })
+    expect(ownResponse.status).toBe(200)
+    expect(await connections.getExternalMcpConnection({ organizationId, connectionId: own.id })).toBeNull()
+
+    const memberOwned = await createConnection({
+      memberId,
+      name: "Member owned connector",
+      authType: "none",
+      credentialMode: "shared",
+    })
+    const memberOwnResponse = await deleteRequest({ connectionId: memberOwned.id, token: memberToken })
+    expect(memberOwnResponse.status).toBe(200)
+    expect(await connections.getExternalMcpConnection({ organizationId, connectionId: memberOwned.id })).toBeNull()
+
+    const otherAdminConnection = await createConnection({
+      memberId: peerAdminMemberId,
+      name: "Peer admin owned connector",
+      authType: "none",
+      credentialMode: "shared",
+    })
+    const denied = await deleteRequest({ connectionId: otherAdminConnection.id })
+    expect(denied.status).toBe(403)
+    expect(await connections.getExternalMcpConnection({ organizationId, connectionId: otherAdminConnection.id })).toMatchObject({
+      id: otherAdminConnection.id,
+    })
+
+    const memberDenied = await deleteRequest({ connectionId: otherAdminConnection.id, token: memberToken })
+    expect(memberDenied.status).toBe(403)
+    expect(await connections.getExternalMcpConnection({ organizationId, connectionId: otherAdminConnection.id })).toMatchObject({
+      id: otherAdminConnection.id,
+    })
+
+    const peerOwnResponse = await deleteRequest({ connectionId: otherAdminConnection.id, token: peerAdminToken })
+    expect(peerOwnResponse.status).toBe(200)
+    expect(await connections.getExternalMcpConnection({ organizationId, connectionId: otherAdminConnection.id })).toBeNull()
+  })
+
+  test("super-admins can delete connections created by other admins", async () => {
+    const adminConnection = await createConnection({ name: "Admin connector for super-admin", authType: "none", credentialMode: "shared" })
+    const response = await deleteRequest({ connectionId: adminConnection.id, token: superAdminToken })
+    expect(response.status).toBe(200)
+    expect(await connections.getExternalMcpConnection({ organizationId, connectionId: adminConnection.id })).toBeNull()
   })
 })
 

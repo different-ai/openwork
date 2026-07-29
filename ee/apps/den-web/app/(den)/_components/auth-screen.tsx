@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef } from "react";
 import { isSamePathname } from "../_lib/client-route";
 import { getMcpOAuthSelectOrganizationRoute } from "../_lib/mcp-oauth-route";
+import { useWebGlSupported } from "../_lib/use-webgl-supported";
 import { useDenFlow } from "../_providers/den-flow-provider";
 import { AuthPanel } from "./auth-panel";
 
@@ -48,6 +49,7 @@ export function AuthScreen() {
   const pathname = usePathname();
   const routingRef = useRef(false);
   const { user, sessionHydrated, desktopAuthRequested, webAuthRequested, resolveUserLandingRoute } = useDenFlow();
+  const webGlSupported = useWebGlSupported();
   const hasResolvedSession = sessionHydrated && Boolean(user) && !desktopAuthRequested && !webAuthRequested;
 
   useEffect(() => {
@@ -79,17 +81,21 @@ export function AuthScreen() {
         <div className="grid lg:grid-cols-[1fr_5fr]">
           <div className="relative hidden min-h-[520px] overflow-hidden lg:block" data-testid="auth-landing-visual">
             <div className="absolute inset-0 z-0">
-              <Dithering
-                speed={0}
-                shape="warp"
-                type="4x4"
-                size={2.5}
-                scale={1}
-                frame={30214.2}
-                colorBack="#00000000"
-                colorFront="#FEFEFE"
-                style={{ backgroundColor: "#142033", width: "100%", height: "100%" }}
-              />
+              {webGlSupported ? (
+                <Dithering
+                  speed={0}
+                  shape="warp"
+                  type="4x4"
+                  size={2.5}
+                  scale={1}
+                  frame={30214.2}
+                  colorBack="#00000000"
+                  colorFront="#FEFEFE"
+                  style={{ backgroundColor: "#142033", width: "100%", height: "100%" }}
+                />
+              ) : (
+                <div className="h-full w-full bg-[#142033]" />
+              )}
             </div>
           </div>
 

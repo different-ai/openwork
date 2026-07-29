@@ -114,6 +114,13 @@ function fakeSandbox() {
   }
 }
 
+function fakeSandboxWithId(sandboxId: string) {
+  return {
+    ...fakeSandbox(),
+    sandbox_id: sandboxId,
+  }
+}
+
 function expectedCloudInstance(input: {
   status: CloudInstanceStatus
   url: string | null
@@ -477,6 +484,36 @@ describe("Cloud gateway resolve route", () => {
     expect(payload).not.toHaveProperty("clientToken")
   })
 
+  test("does not add instanceName to the gateway resolve response", async () => {
+    const readyWorker = fakeWorker("healthy")
+    const store = makeCloudWorkerStore({ tokens: [makeToken(readyWorker.id, "host"), makeToken(readyWorker.id, "client")] })
+    const app = new Hono<{ Variables: OrgRouteVariables }>()
+    routes.registerCloudRoutes(app, {
+      memberRoute: contextMiddleware(organizationContext(JSON.stringify({ capabilities: { cloud: true } }))),
+      orgMode: "multi_org",
+      provisionerMode: "daytona",
+      daytonaApiKey: "daytona-test-key",
+      gatewayKey: "gateway-secret",
+      ensureCloudWorker: async () => readyWorker,
+      cloudWorkerStore: store.store,
+      getSandboxRecord: async () => fakeSandboxWithId("den-daytona-worker-cloud-test"),
+      probeSignedPreview: async () => true,
+      materializeProviders: async () => ({ ok: true, status: "noop", fingerprint: "owp:v1:test", providers: 0 }),
+    })
+
+    const response = await app.request("http://den.local/v1/cloud/gateway/resolve", {
+      headers: { "X-OpenWork-Gateway-Key": "gateway-secret" },
+    })
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toEqual({
+      status: "ready",
+      url: "https://preview.example.test",
+      clientToken: "client-token",
+      hostToken: "host-token",
+    })
+  })
+
   test("surfaces degraded provider materialization failures without leaking provider keys", async () => {
     const readyWorker = fakeWorker("healthy")
     const store = makeCloudWorkerStore({ tokens: [makeToken(readyWorker.id, "host"), makeToken(readyWorker.id, "client")] })
@@ -562,6 +599,54 @@ describe("Cloud gateway resolve route", () => {
 })
 
 describe("Cloud instance route lifecycle states", () => {
+  test("returns the Daytona sandbox identifier on the member instance response", async () => {
+    const worker = { ...fakeWorker("healthy"), image_version: "openwork-0.18.7" }
+    const app = new Hono<{ Variables: OrgRouteVariables }>()
+
+    routes.registerCloudRoutes(app, {
+      memberRoute: contextMiddleware(organizationContext(JSON.stringify({ capabilities: { cloud: true } }))),
+      orgMode: "multi_org",
+      provisionerMode: "daytona",
+      daytonaApiKey: "daytona-test-key",
+      ensureCloudWorker: async () => worker,
+      getSandboxRecord: async () => fakeSandboxWithId("den-daytona-worker-cloud-test"),
+      probeSignedPreview: async () => true,
+    })
+
+    const response = await app.request("http://den.local/v1/cloud/instance")
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toEqual({
+      ...expectedCloudInstance({
+        status: "ready",
+        url: "https://preview.example.test",
+        imageVersion: "openwork-0.18.7",
+      }),
+      instanceName: "den-daytona-worker-cloud-test",
+    })
+  })
+
+  test("omits instanceName on the member instance response without a sandbox record", async () => {
+    const worker = fakeWorker("provisioning")
+    const app = new Hono<{ Variables: OrgRouteVariables }>()
+
+    routes.registerCloudRoutes(app, {
+      memberRoute: contextMiddleware(organizationContext(JSON.stringify({ capabilities: { cloud: true } }))),
+      orgMode: "multi_org",
+      provisionerMode: "daytona",
+      daytonaApiKey: "daytona-test-key",
+      ensureCloudWorker: async () => worker,
+      getSandboxRecord: async () => null,
+    })
+
+    const response = await app.request("http://den.local/v1/cloud/instance")
+    const payload = await response.json()
+
+    expect(response.status).toBe(200)
+    expect(payload).toEqual(expectedCloudInstance({ status: "provisioning", url: null }))
+    expect(payload).not.toHaveProperty("instanceName")
+  })
+
   test("returns worker and latest image versions on the member instance response", async () => {
     const worker = { ...fakeWorker("healthy"), image_version: "openwork-0.18.7" }
     const app = new Hono<{ Variables: OrgRouteVariables }>()
