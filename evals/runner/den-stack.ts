@@ -37,8 +37,18 @@ const MYSQL_CONTAINER = "openwork-web-local-mysql";
 const MYSQL_STATE_DIR = join(STATE_DIR, "mysql");
 const MYSQL_SOCKET = join(MYSQL_STATE_DIR, "mysql.sock");
 const COMPOSE_ARGS = ["compose", "-p", "openwork-den-local", "-f", "packaging/docker/docker-compose.web-local.yml"];
+const DEFAULT_MOCK_IDP_ISSUER = "http://127.0.0.1:19190";
+const MOCK_IDP_ISSUER = (process.env.OPENWORK_EVAL_MOCK_IDP_ISSUER?.trim() || DEFAULT_MOCK_IDP_ISSUER).replace(/\/+$/, "");
 const DEN_WEB_ORIGIN = (process.env.OPENWORK_EVAL_DEN_WEB_URL ?? "http://localhost:3005").replace(/\/+$/, "");
 const DEN_WEB_PORT = new URL(DEN_WEB_ORIGIN).port || "3005";
+
+function envCsv(name: string): string[] {
+  return (process.env[name] ?? "")
+    .split(",")
+    .map((entry) => entry.trim().replace(/\/+$/, ""))
+    .filter(Boolean);
+}
+
 const DEN_TRUSTED_ORIGINS = [
   DEN_BASE_URL,
   DEN_WEB_ORIGIN,
@@ -46,6 +56,8 @@ const DEN_TRUSTED_ORIGINS = [
   `http://127.0.0.1:${DEN_WEB_PORT}`,
   "http://localhost:5173",
   "http://127.0.0.1:5173",
+  MOCK_IDP_ISSUER,
+  ...envCsv("OPENWORK_EVAL_DEN_EXTRA_TRUSTED_ORIGINS"),
 ].filter((origin, index, origins) => origins.indexOf(origin) === index).join(",");
 
 // Override with OPENWORK_EVAL_DATABASE_URL to isolate a run from the shared
