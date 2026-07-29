@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   createStationWindowManager,
   stationDecisionCommand,
+  STATION_DISMISS_SHORTCUT,
   STATION_MODE_SHORTCUT,
   stationWindowBounds,
 } from "./station-window.mjs";
@@ -242,7 +243,7 @@ test("ignores decision keys outside a focused unmodified key press", () => {
   );
 });
 
-test("Escape is not intercepted and cannot show or focus the OpenWork window", () => {
+test("Escape dismisses only a visible card without showing or focusing OpenWork", () => {
   const harness = createHarness();
   harness.manager.initialize();
   harness.manager.setEnabled(true);
@@ -250,14 +251,13 @@ test("Escape is not intercepted and cannot show or focus the OpenWork window", (
     interactionMode: "active",
     suggestions: [{ id: "card-1" }],
   });
-  const inputHandler = FakeWindow.instances[0]?.listeners.get("web:before-input-event");
-  let prevented = false;
-  inputHandler?.({ preventDefault: () => { prevented = true; } }, {
-    type: "keyDown",
-    key: "Escape",
-  });
-  assert.equal(prevented, false);
-  assert.equal(harness.mainSent.length, 0);
+  assert.ok(harness.shortcuts.has(STATION_DISMISS_SHORTCUT));
+  harness.shortcuts.get(STATION_DISMISS_SHORTCUT)?.();
+  assert.deepEqual(harness.mainSent.at(-1), [
+    "openwork:station:command",
+    { type: "dismiss" },
+  ]);
+  assert.equal(harness.shortcuts.has(STATION_DISMISS_SHORTCUT), false);
   assert.equal(harness.mainWindow.showCalls, 0);
   assert.equal(harness.mainWindow.focusCalls, 0);
 });

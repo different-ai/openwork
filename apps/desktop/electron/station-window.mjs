@@ -1,4 +1,5 @@
 export const STATION_MODE_SHORTCUT = "CommandOrControl+Shift+Space";
+export const STATION_DISMISS_SHORTCUT = "Esc";
 export const STATION_DECISION_KEYS = Object.freeze({
   previous: "ArrowLeft",
   next: "ArrowRight",
@@ -87,6 +88,7 @@ export function createStationWindowManager(options) {
   let rendererExpanded = false;
   let activeMode = false;
   let modeShortcutRegistered = false;
+  let dismissShortcutRegistered = false;
   let collapseTimer = null;
   let anchorDisplay = null;
   let latestState = {
@@ -191,9 +193,37 @@ export function createStationWindowManager(options) {
     return { ok: true };
   }
 
+  function unregisterDismissShortcut() {
+    if (!dismissShortcutRegistered) return;
+    try {
+      globalShortcut.unregister(STATION_DISMISS_SHORTCUT);
+    } catch {
+      // best effort while the visible decision is closing
+    }
+    dismissShortcutRegistered = false;
+  }
+
+  function syncDismissShortcut() {
+    const shouldRegister = enabled
+      && activeMode
+      && latestState.suggestions.length > 0
+      && !latestState.goal;
+    if (!shouldRegister) {
+      unregisterDismissShortcut();
+      return;
+    }
+    if (dismissShortcutRegistered) return;
+    dismissShortcutRegistered = globalShortcut.register(STATION_DISMISS_SHORTCUT, () => {
+      // Release immediately so Escape cannot be held or leak beyond this card.
+      unregisterDismissShortcut();
+      forwardCommand({ type: "dismiss" });
+    });
+  }
+
   function syncModeSurface() {
     if (!enabled) return;
     syncSurfaceExpanded();
+    syncDismissShortcut();
     show();
     if (!activeMode) stationWindow?.blur?.();
   }
@@ -222,6 +252,9 @@ export function createStationWindowManager(options) {
     }
     if (command.type === "set-mode" && command.active !== activeMode) {
       setActiveMode(command.active, { forward: false });
+    }
+    if (command.type === "dismiss" || command.type === "handoff") {
+      unregisterDismissShortcut();
     }
     show();
     const main = getMainWindow();
@@ -269,6 +302,7 @@ export function createStationWindowManager(options) {
         if (activeMode && hadDecision && !hasDecision) stationWindow?.blur?.();
       }
     }
+    syncDismissShortcut();
     const win = ensureWindow();
     if (!win.webContents.isDestroyed()) {
       win.webContents.send("openwork:station:state", latestState);
@@ -391,6 +425,7 @@ export function createStationWindowManager(options) {
     expanded = false;
     rendererExpanded = false;
     pendingCommands.length = 0;
+    unregisterDismissShortcut();
     unregisterModeShortcut();
     if (collapseTimer) clearTimeout(collapseTimer);
     collapseTimer = null;
@@ -422,6 +457,7 @@ export function createStationWindowManager(options) {
 
   function dispose() {
     enabled = false;
+    unregisterDismissShortcut();
     unregisterModeShortcut();
     if (collapseTimer) clearTimeout(collapseTimer);
     collapseTimer = null;

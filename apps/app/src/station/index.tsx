@@ -257,6 +257,7 @@ function StationApp() {
                   className="station-not-now"
                   onClick={() => sendCommand({ type: "dismiss", id: presented.id })}
                 >
+                  <kbd>Esc</kbd>
                   <span>Not now</span>
                 </button>
                 <button
