@@ -92,6 +92,13 @@ jobs:
           tail -100 /tmp/openwork-dev.log >&2
           exit 1
 
+      - name: Run core reliability soak
+        shell: bash
+        env:
+          DISPLAY: ":99"
+          OPENWORK_EVAL_DESKTOP_SURFACE: "0"
+        run: pnpm evals --stack den --flow invite-reliability --flow mcp-connect-reliability --repeat 3
+
       - name: Run eval flows
         shell: bash
         env:
