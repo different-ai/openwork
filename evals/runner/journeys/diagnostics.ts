@@ -729,7 +729,8 @@ async function diagnoseTlsLab(lab: EgressLabHandle): Promise<DiagnosticVerdict> 
 }
 
 async function diagnoseDenyLab(lab: EgressLabHandle): Promise<DiagnosticVerdict> {
-  const host = lab.deniedHosts.includes("github.com") ? "github.com" : lab.deniedHosts[0] ?? "github.com";
+  // Exact-match lookup (not a substring test) so the denied host is unambiguous.
+  const host = lab.deniedHosts.find((entry) => entry === "github.com") ?? lab.deniedHosts[0] ?? "github.com";
   const url = new URL("/fetch", lab.url);
   url.searchParams.set("url", `https://${host}/different-ai/openwork/releases/latest`);
   const response = await fetch(url);
