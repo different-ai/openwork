@@ -1,14 +1,15 @@
-export type TlsProbeFacts = {
-  ok: boolean;
+export interface TlsVersionFacts {
+  handshakeOk: boolean;
+  chainVerified: boolean;
   protocol: string | null;
   errorCode: string | null;
   stalled: boolean;
-};
+}
 
-export type TlsFacts = {
-  tls12: TlsProbeFacts;
-  tls13: TlsProbeFacts;
-};
+export interface TlsFacts {
+  tls12: TlsVersionFacts;
+  tls13: TlsVersionFacts;
+}
 
 export type Verdict = {
   ok: boolean;
@@ -74,19 +75,38 @@ export function matchVerdictExpectations(text: string, expect: DiagnosticVerdict
 }
 
 export function diagnoseTls(facts: TlsFacts): Verdict {
-  if (facts.tls12.ok && facts.tls13.stalled) {
+  if (facts.tls12.stalled && facts.tls13.stalled) {
+    return {
+      ok: false,
+      code: "tls_unreachable",
+      summary: "TLS 1.2 and TLS 1.3 both timed out before completing a handshake.",
+      action: "Check DNS, outbound routing, proxy policy, and the endpoint certificate chain.",
+    };
+  }
+  if (facts.tls12.handshakeOk && facts.tls13.stalled) {
     return {
       ok: false,
       code: "tls_handshake_stall_tls13_only",
-      summary: "TLS 1.2 succeeds while the TLS 1.3 ClientHello stalls.",
-      action: "Check the egress proxy or firewall for ClientHello inspection that blocks TLS 1.3, or bypass inspection for this host.",
+      summary: "TLS 1.2 completed while TLS 1.3 timed out during the ClientHello.",
+      action: "Check whether the egress proxy or firewall passes TLS ClientHello traffic, or bypass inspection for this host.",
     };
   }
-  if (facts.tls12.ok || facts.tls13.ok) {
+  const tls12Untrusted = facts.tls12.handshakeOk && !facts.tls12.chainVerified;
+  const tls13Untrusted = facts.tls13.handshakeOk && !facts.tls13.chainVerified;
+  if (tls12Untrusted || tls13Untrusted) {
+    const errorCode = tls12Untrusted ? facts.tls12.errorCode : facts.tls13.errorCode;
+    return {
+      ok: false,
+      code: "tls_chain_untrusted",
+      summary: `The TLS handshake completed, but the certificate chain was not trusted (${errorCode ?? "unauthorized"}).`,
+      action: "Install or trust the issuing CA in every runtime that connects to this endpoint.",
+    };
+  }
+  if (facts.tls12.chainVerified && facts.tls13.chainVerified) {
     return {
       ok: true,
       code: "tls_ok",
-      summary: "The endpoint completed a verified TLS handshake.",
+      summary: "The endpoint completed verified TLS 1.2 and TLS 1.3 handshakes.",
       action: "No TLS transport action is required.",
     };
   }

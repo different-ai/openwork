@@ -6,7 +6,9 @@ import type { DetailedPeerCertificate } from "node:tls";
 
 import { parseClientHelloVersions } from "@openwork/labs";
 import type { ClientHelloParseResult, EgressLabHandle, EgressLabProfile } from "@openwork/labs";
-import type { TlsFacts, TlsProbeFacts } from "@openwork/matchers";
+import type { TlsFacts, TlsVersionFacts } from "@openwork/matchers";
+
+export type { TlsFacts, TlsVersionFacts } from "@openwork/matchers";
 
 export type DiagnosticVerdict = {
   profile: EgressLabProfile;
@@ -548,14 +550,14 @@ function probeTlsVersion(
   target: { host: string; port: number; servername?: string; ca?: string | string[]; rejectUnauthorized?: boolean },
   version: "TLSv1.2" | "TLSv1.3",
   timeoutMs: number,
-): Promise<TlsProbeFacts> {
+): Promise<TlsVersionFacts> {
   return new Promise((resolve) => {
     let settled = false;
-    const finish = (result: Omit<TlsProbeFacts, "stalled">) => {
+    const finish = (result: TlsVersionFacts) => {
       if (settled) return;
       settled = true;
       socket.destroy();
-      resolve({ ...result, stalled: result.errorCode === "ETIMEDOUT" });
+      resolve(result);
     };
     const socket = tls.connect({
       host: target.host,
@@ -566,11 +568,24 @@ function probeTlsVersion(
       ca: target.ca,
       rejectUnauthorized: target.rejectUnauthorized ?? true,
     });
-    socket.once("secureConnect", () => finish({ ok: true, protocol: socket.getProtocol(), errorCode: null }));
-    socket.once("timeout", () => finish({ ok: false, protocol: null, errorCode: "ETIMEDOUT" }));
+    socket.once("secureConnect", () => {
+      const chainVerified = socket.authorized === true;
+      const authorizationError = socket.authorizationError;
+      const authorizationCode = isRecord(authorizationError) && typeof authorizationError.code === "string"
+        ? authorizationError.code
+        : String(authorizationError ?? "unauthorized");
+      finish({
+        handshakeOk: true,
+        chainVerified,
+        protocol: socket.getProtocol(),
+        errorCode: chainVerified ? null : authorizationCode,
+        stalled: false,
+      });
+    });
+    socket.once("timeout", () => finish({ handshakeOk: false, chainVerified: false, protocol: null, errorCode: "ETIMEDOUT", stalled: true }));
     socket.once("error", (error) => {
       const code = isRecord(error) && typeof error.code === "string" ? error.code : messageText(error);
-      finish({ ok: false, protocol: null, errorCode: code });
+      finish({ handshakeOk: false, chainVerified: false, protocol: null, errorCode: code, stalled: false });
     });
     socket.setTimeout(timeoutMs);
   });

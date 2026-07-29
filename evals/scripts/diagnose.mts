@@ -1,5 +1,5 @@
 import { probeTls } from "@openwork/behaviors";
-import { diagnoseTls } from "@openwork/matchers";
+import { diagnoseTls, type TlsVersionFacts } from "@openwork/matchers";
 
 function usage(): never {
   throw new Error("Usage: node evals/scripts/diagnose.mts <origin> [--insecure-ca <pemPath>]");
@@ -24,6 +24,15 @@ const tls = await probeTls({
   servername: url.hostname,
   ca,
 });
+function printVersion(label: string, facts: TlsVersionFacts): void {
+  const handshake = facts.handshakeOk ? "ok" : (facts.stalled ? "STALLED" : "FAILED");
+  const chain = facts.handshakeOk
+    ? (facts.chainVerified ? "verified" : `UNTRUSTED (${facts.errorCode ?? "unauthorized"})`)
+    : "not checked";
+  console.log(`${label}: handshake ${handshake} / chain ${chain}`);
+}
+printVersion("TLS 1.2", tls.tls12);
+printVersion("TLS 1.3", tls.tls13);
 const findings = [diagnoseTls(tls)];
 for (const finding of findings) {
   console.log(`${finding.ok ? "ok" : "FAIL"} tls ${finding.code}`);
