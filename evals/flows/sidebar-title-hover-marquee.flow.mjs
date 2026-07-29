@@ -1,0 +1,96 @@
+const LONG_TITLE =
+  "Review the OpenWork desktop sidebar title animation across a deliberately overflowing conversation name";
+
+const READ_TITLE = `(() => {
+  const title = [...document.querySelectorAll('[title], [aria-label]')]
+    .find((entry) => {
+      const label = entry.getAttribute('title') || entry.getAttribute('aria-label') || '';
+      return label === ${JSON.stringify(LONG_TITLE)};
+    });
+  if (!(title instanceof HTMLElement)) return null;
+  const viewport = title.parentElement;
+  if (!(viewport instanceof HTMLElement)) return null;
+  const titleStyle = getComputedStyle(title);
+  const viewportStyle = getComputedStyle(viewport);
+  const titleRect = title.getBoundingClientRect();
+  const viewportRect = viewport.getBoundingClientRect();
+  return {
+    left: titleRect.left,
+    top: titleRect.top,
+    width: titleRect.width,
+    height: titleRect.height,
+    clientWidth: viewport.clientWidth,
+    scrollWidth: viewport.scrollWidth,
+    transform: titleStyle.transform,
+    translate: titleStyle.translate,
+    animationName: titleStyle.animationName,
+    maskImage: viewportStyle.maskImage || viewportStyle.webkitMaskImage,
+    overflow: viewportStyle.overflow,
+    viewportLeft: viewportRect.left,
+    viewportRight: viewportRect.right,
+  };
+})()`;
+
+export default {
+  id: "sidebar-title-hover-marquee",
+  title: "Overflowing session titles become readable after hover intent without moving row controls",
+  kind: "user-facing",
+  steps: [
+    {
+      name: "Overflow-only title motion preserves the sidebar row",
+      run: async (ctx) => {
+        await ctx.waitFor("Boolean(window.__openworkControl)", {
+          timeoutMs: 60_000,
+          label: "control API",
+        });
+        await ctx.control("session.create_task");
+        const sessionId = await ctx.waitFor(`(() => {
+          const route = window.__openworkControl.snapshot().route || "";
+          const match = route.match(/session\\/([^/?#]+)/);
+          return match ? decodeURIComponent(match[1]) : null;
+        })()`, { timeoutMs: 30_000, label: "created session" });
+        await ctx.control("session.rename", { sessionId, title: LONG_TITLE });
+        await ctx.waitFor(`${READ_TITLE}?.scrollWidth > ${READ_TITLE}?.clientWidth`, {
+          timeoutMs: 30_000,
+          label: "overflowing session title",
+        });
+
+        const before = await ctx.eval(READ_TITLE);
+        ctx.assert(before, "Could not measure the overflowing title.");
+        await ctx.client.send("Input.dispatchMouseEvent", {
+          type: "mouseMoved",
+          x: Math.round(before.left + Math.min(before.width / 2, 80)),
+          y: Math.round(before.top + before.height / 2),
+        });
+        await new Promise((resolve) => setTimeout(resolve, 1_100));
+
+        await ctx.prove("A genuinely overflowing title moves only after hover intent and keeps clipped-edge affordance", {
+          action: async () => {},
+          assert: async () => {
+            const after = await ctx.eval(READ_TITLE);
+            ctx.assert(after, "Could not measure the title after hover.");
+            ctx.assert(
+              after.animationName !== "none" ||
+                after.transform !== "none" ||
+                after.translate !== "none" ||
+                after.left < before.left - 1,
+              `Expected visible title motion after hover intent: ${JSON.stringify({ before, after })}`,
+            );
+            ctx.assert(
+              after.maskImage !== "none",
+              `Expected a clipped-edge mask while the title is moving, got ${after.maskImage}.`,
+            );
+            ctx.assert(
+              after.viewportLeft === before.viewportLeft && after.viewportRight === before.viewportRight,
+              "The title viewport changed position while animating.",
+            );
+          },
+          screenshot: {
+            name: "overflowing-title-mid-animation",
+            requireText: ["Review the OpenWork desktop sidebar"],
+          },
+        });
+      },
+    },
+  ],
+};
