@@ -17,7 +17,7 @@ test("probeTls and diagnoseTls identify a TLS 1.3-only stall without the eval fr
     ca: lab.rootPem,
   });
 
-  assert.equal(facts.tls12.ok, true);
+  assert.equal(facts.tls12.ok, true, JSON.stringify(facts));
   assert.equal(facts.tls12.protocol, "TLSv1.2");
   assert.equal(facts.tls13.stalled, true);
   assert.equal(facts.tls13.errorCode, "ETIMEDOUT");
