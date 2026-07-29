@@ -1,6 +1,7 @@
 /** @jsxImportSource react */
 import * as React from "react";
 import type { WorkspaceConnectionState } from "../../../../app/types";
+import type { SessionNumberShortcutOs } from "../../../shell/session-number-shortcuts";
 
 export type SidebarContextValue = {
   selectedWorkspaceId: string;
@@ -31,6 +32,8 @@ export type SidebarContextValue = {
   toggleSessionExpanded: (sessionId: string) => void;
   expandedWorkspaceIds: Set<string>;
   expandedSessionIds: Set<string>;
+  sessionNumberShortcutOs: SessionNumberShortcutOs;
+  sessionNumberShortcutByTarget: ReadonlyMap<string, number>;
 };
 
 export const SidebarContext = React.createContext<SidebarContextValue | null>(null);

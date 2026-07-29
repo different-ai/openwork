@@ -61,6 +61,7 @@ import { NotificationBell } from "../../../shell/notification-center";
 import { useReactRenderWatchdog } from "../../../shell/react-render-watchdog";
 import { useShellConfig } from "../../../shell/shell-config";
 import { type SidePanelItem, useUiStateStore } from "../../../shell/ui-state-store";
+import type { SessionNumberShortcutsState } from "../../../shell/session-number-shortcuts";
 
 import { isElectronRuntime } from "../../../../app/utils";
 import { isCollectibleArtifactTarget, isLocalhostBrowserTarget, isOpenableFileTarget, type OpenTarget } from "../artifacts/open-target";
@@ -154,6 +155,7 @@ export type SessionPageSurfaceProps = Omit<
 >;
 
 export type SessionPageProps = {
+  sessionNumberShortcuts: SessionNumberShortcutsState;
   selectedSessionId: string | null;
   selectedWorkspaceId: string;
   selectedWorkspaceDisplay: {
@@ -1011,6 +1013,7 @@ export function SessionPage(props: SessionPageProps) {
         style={sidebarProviderStyle}
       >
         <AppSidebar
+          sessionNumberShortcuts={props.sessionNumberShortcuts}
           workspaceSessionGroups={props.sidebar.workspaceSessionGroups}
           selectedWorkspaceId={props.sidebar.selectedWorkspaceId}
           developerMode={props.sidebar.developerMode}
