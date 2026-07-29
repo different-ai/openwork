@@ -218,15 +218,12 @@ test("intentionally focused Station decisions navigate cards without global shor
   inputHandler?.(event, { type: "keyDown", key: "ArrowLeft" });
   inputHandler?.(event, { type: "keyDown", key: "ArrowRight" });
   inputHandler?.(event, { type: "keyDown", key: "Enter" });
-  inputHandler?.(event, { type: "keyDown", key: "Escape" });
-  assert.deepEqual(harness.mainSent.slice(-4), [
+  assert.deepEqual(harness.mainSent.slice(-3), [
     ["openwork:station:command", { type: "previous" }],
     ["openwork:station:command", { type: "next" }],
     ["openwork:station:command", { type: "handoff" }],
-    ["openwork:station:command", { type: "dismiss" }],
   ]);
-  assert.equal(prevented.length, 4);
-  assert.equal(FakeWindow.instances[0]?.focused, false);
+  assert.equal(prevented.length, 3);
   harness.shortcuts.get(STATION_MODE_SHORTCUT)?.();
   assert.deepEqual(harness.mainSent.at(-1), [
     "openwork:station:command",
@@ -245,15 +242,22 @@ test("ignores decision keys outside a focused unmodified key press", () => {
   );
 });
 
-test("Escape dismisses Station without showing or focusing the OpenWork window", () => {
+test("Escape is not intercepted and cannot show or focus the OpenWork window", () => {
   const harness = createHarness();
   harness.manager.initialize();
   harness.manager.setEnabled(true);
-  harness.manager.forwardCommand({ type: "dismiss", id: "card-1" });
-  assert.deepEqual(harness.mainSent.at(-1), [
-    "openwork:station:command",
-    { type: "dismiss", id: "card-1" },
-  ]);
+  harness.manager.publishState({
+    interactionMode: "active",
+    suggestions: [{ id: "card-1" }],
+  });
+  const inputHandler = FakeWindow.instances[0]?.listeners.get("web:before-input-event");
+  let prevented = false;
+  inputHandler?.({ preventDefault: () => { prevented = true; } }, {
+    type: "keyDown",
+    key: "Escape",
+  });
+  assert.equal(prevented, false);
+  assert.equal(harness.mainSent.length, 0);
   assert.equal(harness.mainWindow.showCalls, 0);
   assert.equal(harness.mainWindow.focusCalls, 0);
 });

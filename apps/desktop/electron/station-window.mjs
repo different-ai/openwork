@@ -3,7 +3,6 @@ export const STATION_DECISION_KEYS = Object.freeze({
   previous: "ArrowLeft",
   next: "ArrowRight",
   handoff: "Enter",
-  dismiss: "Escape",
 });
 
 export const STATION_COLLAPSED_BOUNDS = Object.freeze({ width: 66, height: 420 });
@@ -56,7 +55,6 @@ export function stationDecisionCommand(value) {
   if (value.key === STATION_DECISION_KEYS.previous) return { type: "previous" };
   if (value.key === STATION_DECISION_KEYS.next) return { type: "next" };
   if (value.key === STATION_DECISION_KEYS.handoff) return { type: "handoff" };
-  if (value.key === STATION_DECISION_KEYS.dismiss) return { type: "dismiss" };
   return null;
 }
 
@@ -318,7 +316,6 @@ export function createStationWindowManager(options) {
       if (!command) return;
       event.preventDefault();
       forwardCommand(command);
-      if (command.type === "dismiss") stationWindow?.blur?.();
     });
     stationWindow.on("closed", () => {
       stationWindow = null;
