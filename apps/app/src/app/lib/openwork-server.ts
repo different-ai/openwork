@@ -138,6 +138,14 @@ export type OpenworkStationSuggestion = {
   createdAt: number;
 };
 
+export type OpenworkStationResearch = {
+  boundary: "openwork-connect" | "development-mcp";
+  discoveredCapabilities: string[];
+  executedCapabilities: string[];
+  sourceProviders: string[];
+  resultCategory: "connected-data" | "no-result" | "no-useful-context" | "analysis-fallback";
+};
+
 export type OpenworkPluginItem = {
   spec: string;
   source: "config" | "dir.project" | "dir.global";
@@ -1496,11 +1504,12 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
     },
     getStationSuggestions: (
       workspaceId: string,
-      payload: { transcript: string; sessionContext?: string },
+      payload: { transcript: string; sessionContext?: string; scenarioId?: string },
     ) =>
       requestJson<{
         suggestions: OpenworkStationSuggestion[];
-        source: "openwork-connect" | "local-signal";
+        source: "openwork-connect" | "development-mcp" | "local-signal";
+        research: OpenworkStationResearch;
       }>(
         baseUrl,
         `/workspace/${encodeURIComponent(workspaceId)}/station/suggestions`,
@@ -1510,6 +1519,33 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
           method: "POST",
           body: payload,
           timeoutMs: timeouts.stationAnalysis,
+        },
+      ),
+    controlStationScenario: (
+      workspaceId: string,
+      payload: {
+        action: "reset" | "apply" | "status";
+        scenarioId: string;
+        patchId?: string;
+      },
+    ) =>
+      requestJson<{
+        configured: boolean;
+        scenarioId: string | null;
+        patchId: string | null;
+        available: boolean;
+        revision: number;
+        recordCount: number;
+        provider: "development-mcp";
+      }>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/station/scenario`,
+        {
+          token,
+          hostToken,
+          method: "POST",
+          body: payload,
+          timeoutMs: timeouts.config,
         },
       ),
     getSessionSnapshot: (workspaceId: string, sessionId: string, options?: { limit?: number }) => {

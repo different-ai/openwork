@@ -88,6 +88,12 @@ contextBridge.exposeInMainWorld("__OPENWORK_ELECTRON__", {
     show() {
       return ipcRenderer.invoke("openwork:station:show");
     },
+    getEnabled() {
+      return ipcRenderer.invoke("openwork:station:get-enabled");
+    },
+    setEnabled(enabled) {
+      return ipcRenderer.invoke("openwork:station:set-enabled", enabled === true);
+    },
     hide() {
       return ipcRenderer.invoke("openwork:station:hide");
     },

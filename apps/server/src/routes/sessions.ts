@@ -12,13 +12,20 @@ import {
 } from "../session-groups.js";
 import type { ServerConfig, TokenScope, WorkspaceInfo } from "../types.js";
 import {
+  analyzeStationConnectedRecords,
   buildStationAnalysisPrompt,
   buildStationSystemPrompt,
   createFallbackStationSuggestions,
+  isReadOnlyStationCapability,
   normalizeStationSuggestions,
   selectStationModel,
   STATION_SUGGESTION_SCHEMA,
 } from "../station.js";
+import {
+  StationDevelopmentMcpSimulator,
+  StationSimulatorUnavailableError,
+  type StationSimulatorResearch,
+} from "../station-simulator.js";
 import { addRoute, type RequestContext, type Route } from "./registry.js";
 
 type JsonResponse = (data: unknown, status?: number) => Response;
@@ -69,6 +76,33 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     unwrapOpencodeResult,
   } = options;
   const sessionGroupEvents = new SessionGroupEventStore();
+  const stationSimulator = new StationDevelopmentMcpSimulator();
+
+  function stationScenariosEnabled() {
+    return process.env.OPENWORK_DEV_MODE === "1" || process.env.NODE_ENV === "test";
+  }
+
+  function readStationToolTrace(parts: unknown[]) {
+    const discoveredCapabilities = new Set<string>();
+    const executedCapabilities = new Set<string>();
+    for (const part of parts) {
+      if (!isRecord(part) || part.type !== "tool") continue;
+      const toolName = typeof part.tool === "string" ? part.tool : "";
+      if (toolName.endsWith("search_capabilities")) {
+        discoveredCapabilities.add("search_capabilities");
+      }
+      if (!toolName.endsWith("execute_capability") || !isRecord(part.state)) continue;
+      const input = isRecord(part.state.input) ? part.state.input : null;
+      const capabilityName = input && typeof input.name === "string" ? input.name : "";
+      if (capabilityName && isReadOnlyStationCapability(capabilityName)) {
+        executedCapabilities.add(capabilityName);
+      }
+    }
+    return {
+      discoveredCapabilities: Array.from(discoveredCapabilities),
+      executedCapabilities: Array.from(executedCapabilities),
+    };
+  }
 
   function remapSessionReadError(error: unknown): never {
     if (error instanceof ApiError && error.code === "opencode_request_failed") {
@@ -219,8 +253,57 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
 
   async function analyzeStationTranscript(
     workspace: WorkspaceInfo,
-    input: { transcript: string; sessionContext?: string },
+    input: { transcript: string; sessionContext?: string; scenarioId?: string },
   ) {
+    if (input.scenarioId) {
+      if (!stationScenariosEnabled()) {
+        throw new ApiError(404, "station_scenario_unavailable", "Station scenarios are development-only.");
+      }
+      let simulatorResearch: StationSimulatorResearch;
+      try {
+        simulatorResearch = stationSimulator.research(workspace.id, input.transcript);
+      } catch (error) {
+        if (error instanceof StationSimulatorUnavailableError) {
+          throw new ApiError(
+            503,
+            "station_simulator_unavailable",
+            "Connected context is temporarily unavailable. Station remains safe to keep listening.",
+          );
+        }
+        throw error;
+      }
+      if (simulatorResearch.resultCategory === "no-result") {
+        return {
+          suggestions: [],
+          source: "development-mcp" as const,
+          research: {
+            boundary: "development-mcp" as const,
+            discoveredCapabilities: simulatorResearch.discoveredCapabilities,
+            executedCapabilities: simulatorResearch.executedCapabilities,
+            sourceProviders: [],
+            resultCategory: "no-result" as const,
+          },
+        };
+      }
+      const suggestions = analyzeStationConnectedRecords(
+        input.transcript,
+        simulatorResearch.records,
+      );
+      const sourceProviders = Array.from(new Set(
+        suggestions.flatMap((suggestion) => suggestion.sources.map((source) => source.provider)),
+      ));
+      return {
+        suggestions,
+        source: "development-mcp" as const,
+        research: {
+          boundary: "development-mcp" as const,
+          discoveredCapabilities: simulatorResearch.discoveredCapabilities,
+          executedCapabilities: simulatorResearch.executedCapabilities,
+          sourceProviders,
+          resultCategory: suggestions.length ? "connected-data" as const : "no-useful-context" as const,
+        },
+      };
+    }
     const opencode = createWorkspaceOpencodeClient(config, workspace);
     const stationModel = await opencode.provider.list()
       .then((result) => selectStationModel(unwrapOpencodeResult(result, "/provider")))
@@ -264,7 +347,10 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
             },
             parts: [{
               type: "text",
-              text: buildStationAnalysisPrompt(input.transcript, input.sessionContext),
+              text: buildStationAnalysisPrompt(
+                input.transcript,
+                input.sessionContext,
+              ),
             }],
           }, {
             signal: AbortSignal.timeout(17_000),
@@ -278,6 +364,13 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
         return {
           suggestions: createFallbackStationSuggestions(input.transcript),
           source: "local-signal",
+          research: {
+            boundary: "openwork-connect" as const,
+            discoveredCapabilities: [],
+            executedCapabilities: [],
+            sourceProviders: [],
+            resultCategory: "analysis-fallback" as const,
+          },
         };
       }
       const structured = response.info.structured;
@@ -297,11 +390,22 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
       const resolvedSuggestions = suggestions.length
         ? suggestions
         : createFallbackStationSuggestions(input.transcript);
+      const trace = readStationToolTrace(response.parts);
+      const sourceProviders = Array.from(new Set(
+        resolvedSuggestions.flatMap((suggestion) => suggestion.sources.map((source) => source.provider)),
+      ));
       return {
         suggestions: resolvedSuggestions,
         source: suggestions.some((suggestion) => suggestion.sources.length > 0)
           ? "openwork-connect"
           : "local-signal",
+        research: {
+          boundary: "openwork-connect" as const,
+          discoveredCapabilities: trace.discoveredCapabilities,
+          executedCapabilities: trace.executedCapabilities,
+          sourceProviders,
+          resultCategory: suggestions.length ? "connected-data" as const : "no-useful-context" as const,
+        },
       };
     } finally {
       await opencode.session.delete({ sessionID: session.id }).catch(() => undefined);
@@ -339,9 +443,14 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
       throw new ApiError(400, "invalid_payload", "sessionContext must be 6000 characters or fewer");
     }
     try {
-      const result = await analyzeStationTranscript(workspace, { transcript, sessionContext });
+      const scenarioId = optionalStringField(body, "scenarioId");
+      if (scenarioId && scenarioId.length > 100) {
+        throw new ApiError(400, "invalid_payload", "scenarioId must be 100 characters or fewer");
+      }
+      const result = await analyzeStationTranscript(workspace, { transcript, sessionContext, scenarioId });
       return jsonResponse(result);
     } catch (error) {
+      if (error instanceof ApiError) throw error;
       console.warn("[station] passive analysis fell back to local signals", {
         workspaceId: workspace.id,
         error: error instanceof Error ? error.message : String(error),
@@ -349,8 +458,35 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
       return jsonResponse({
         suggestions: createFallbackStationSuggestions(transcript),
         source: "local-signal",
+        research: {
+          boundary: "openwork-connect",
+          discoveredCapabilities: [],
+          executedCapabilities: [],
+          sourceProviders: [],
+          resultCategory: "analysis-fallback",
+        },
       });
     }
+  });
+
+  addRoute(routes, "POST", "/workspace/:id/station/scenario", "client", async (ctx) => {
+    if (!stationScenariosEnabled()) {
+      throw new ApiError(404, "station_scenario_unavailable", "Station scenarios are development-only.");
+    }
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const body = await readJsonBody(ctx.request);
+    const action = requireStringField(body, "action");
+    const scenarioId = requireStringField(body, "scenarioId").slice(0, 100);
+    if (action === "status") return jsonResponse(stationSimulator.status(workspace.id));
+    const patchId = requireStringField(body, "patchId").slice(0, 100);
+    if (action === "reset") {
+      return jsonResponse(stationSimulator.reset(workspace.id, scenarioId, patchId));
+    }
+    if (action === "apply") {
+      return jsonResponse(stationSimulator.applyPatch(workspace.id, scenarioId, patchId));
+    }
+    throw new ApiError(400, "invalid_payload", "action must be reset, apply, or status");
   });
 
   addRoute(routes, "GET", "/workspace/:id/sessions", "client", async (ctx) => {

@@ -1581,7 +1581,10 @@ export function SessionRoute() {
   );
 
 
-  const handleCreateTaskInWorkspace = useCallback(async (workspaceId: string): Promise<string | null> => {
+  const handleCreateTaskInWorkspace = useCallback(async (
+    workspaceId: string,
+    initialPrompt?: string,
+  ): Promise<string | null> => {
     const workspace = workspaces.find((item) => item.id === workspaceId);
     if (
       !workspace ||
@@ -1605,6 +1608,12 @@ export function SessionRoute() {
       const session = unwrap(
         await workspaceClient.session.create({ directory: workspace.path?.trim() || undefined }),
       );
+      const seededPrompt = initialPrompt?.trim();
+      if (seededPrompt) {
+        saveSessionDraft(workspaceId, session.id, { text: seededPrompt, mode: "prompt" });
+        useComposerStateStore.getState().setDraft(session.id, seededPrompt);
+        markComposerAutoSend(session.id);
+      }
       if (workspaceId === selectedWorkspaceId) {
         void sessionProviderAuthStore.runCloudProviderSync("new_chat");
       }
@@ -2350,9 +2359,15 @@ export function SessionRoute() {
       />
     ) : null}
     <OpenWorkStationBridge
+      enabled={local.prefs.featureFlags?.station === true}
       client={selectedWorkspaceEndpoint?.client ?? client}
       workspaceId={selectedWorkspaceEndpoint?.workspaceId ?? null}
       sessionId={selectedSessionId}
+      onCreateThread={(prompt) => (
+        selectedWorkspaceId
+          ? handleCreateTaskInWorkspace(selectedWorkspaceId, prompt)
+          : Promise.resolve(null)
+      )}
     />
     <SessionPage
       selectedSessionId={selectedSessionId}

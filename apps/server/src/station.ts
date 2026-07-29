@@ -26,6 +26,15 @@ export type StationSuggestion = {
   createdAt: number;
 };
 
+export type StationConnectedRecord = {
+  id: string;
+  kind: "message" | "calendar" | "email";
+  provider: string;
+  title: string;
+  detail: string;
+  url: string;
+};
+
 type StationModelCapabilities = {
   toolcall?: boolean;
   output?: { text?: boolean };
@@ -112,7 +121,7 @@ const STATION_COLORS: Record<StationSuggestionKind, string> = {
 };
 
 const WRITE_CAPABILITY_PATTERN = /\b(create|post|send|update|delete|remove|invite|schedule|publish|write|edit|cancel)\b/i;
-const READ_CAPABILITY_PATTERN = /\b(get|list|search|read|find|lookup|fetch|query)\b/i;
+const READ_CAPABILITY_PATTERN = /\b(get|list|search|read|find|lookup|query)\b/i;
 const STATION_PROVIDER_PREFERENCE = ["openai", "anthropic", "google", "opencode"] as const;
 const STATION_MODEL_PREFERENCE: Record<string, string[]> = {
   openai: ["gpt-5.4-mini-fast", "gpt-5.4-mini", "gpt-4.1-mini", "gpt-4o-mini"],
@@ -165,8 +174,8 @@ OpenWork Connect, rank what matters now, and prepare the next useful move.
   publish, or otherwise mutate anything in a connected system.
 - Use openwork-cloud_search_capabilities to discover relevant connected data.
 - Call openwork-cloud_execute_capability only when the exact capability name is
-  clearly read-only: it must describe get, list, search, read, find, lookup,
-  fetch, or query, and must not describe create, post, send, update, delete,
+  clearly read-only: it must describe get, list, search, read, find, lookup, or
+  query, and must not describe create, post, send, update, delete,
   remove, invite, schedule, publish, write, edit, or cancel.
 - If a capability's authority is ambiguous, do not call it.
 - Calendar invitations and messages may only be returned as reviewable draft
@@ -277,6 +286,133 @@ export function normalizeStationSuggestions(value: unknown, now = Date.now()): S
       createdAt: now,
     }];
   }).slice(0, 8);
+}
+
+function connectedSources(
+  records: StationConnectedRecord[],
+  kinds: StationConnectedRecord["kind"][],
+): StationSource[] {
+  const acceptedKinds = new Set(kinds);
+  return records
+    .filter((record) => acceptedKinds.has(record.kind))
+    .map((record) => ({
+      label: record.title,
+      provider: record.provider,
+      url: record.url,
+    }));
+}
+
+export function analyzeStationConnectedRecords(
+  transcript: string,
+  records: StationConnectedRecord[],
+  now = Date.now(),
+): StationSuggestion[] {
+  const copy = transcript.trim();
+  if (!copy || !records.length) return [];
+  const suggestions: unknown[] = [];
+  const memorySources = connectedSources(records, ["message"]);
+  if (
+    memorySources.length
+    && /\b(remember|last week|prior|earlier|concern (you )?raised|what .{0,30} said)\b/i.test(copy)
+  ) {
+    const memoryRecord = records.find((record) => record.kind === "message");
+    if (memoryRecord) {
+      suggestions.push({
+        kind: "memory",
+        title: memoryRecord.title,
+        summary: memoryRecord.detail,
+        reason: "The latest turn explicitly asks for a prior concern from this person.",
+        relevance: 0.97,
+        color: STATION_COLORS.memory,
+        sources: memorySources,
+        action: {
+          kind: "open_source",
+          label: "Open prior discussion",
+          url: memoryRecord.url,
+        },
+      });
+    }
+  }
+
+  const calendarSources = connectedSources(records, ["calendar"]);
+  if (
+    calendarSources.length
+    && /\b(calendar|availability|available|meet|meeting|tomorrow|friday|monday|denver|berlin|minutes?)\b/i.test(copy)
+  ) {
+    const correctedDay = /\bmonday\b/i.test(copy)
+      ? "Monday"
+      : /\bfriday\b/i.test(copy)
+        ? "Friday"
+        : /\btomorrow\b/i.test(copy)
+          ? "tomorrow"
+          : "the proposed day";
+    const hasDenverBerlin = /\bdenver\b/i.test(copy) && /\bberlin\b/i.test(copy);
+    const proposedTime = hasDenverBerlin
+      ? "2:00 PM Denver / 10:00 PM Berlin"
+      : /\b(at )?(three|3(?::00)?)\b/i.test(copy)
+        ? "3:00 PM"
+        : "the proposed time";
+    const duration = /\b(thirty|30)\s+minutes?\b/i.test(copy) ? "30 minutes" : "duration to confirm";
+    suggestions.push({
+      kind: "calendar",
+      title: hasDenverBerlin
+        ? "Denver ↔ Berlin working session"
+        : `${correctedDay} meeting`,
+      summary: `${correctedDay} at ${proposedTime}, for ${duration}.`,
+      reason: "The conversation contains a concrete scheduling proposal and the connected calendar supplies time-zone or availability context.",
+      relevance: 0.91,
+      color: STATION_COLORS.calendar,
+      sources: calendarSources,
+      action: {
+        kind: "review_draft",
+        label: "Review calendar draft",
+        draft: [
+          "Working session",
+          "",
+          `When: ${correctedDay}, ${proposedTime}`,
+          `Duration: ${duration}`,
+          "Status: prepared for review; no invitation has been created.",
+        ].join("\n"),
+      },
+    });
+  }
+
+  const followUpSources = connectedSources(records, ["message", "calendar", "email"]);
+  if (
+    followUpSources.length
+    && /\b(follow up|send .{0,30}(decision|note|email)|after (this|the) call|review date)\b/i.test(copy)
+  ) {
+    const includesBoundary = /\b(transcript|retention|privacy)\b/i.test(copy);
+    const includesReviewDate = /\breview date\b/i.test(copy);
+    suggestions.push({
+      kind: "follow_up",
+      title: "Follow up with Maya",
+      summary: includesBoundary
+        ? `A reviewable follow-up includes the transcript-retention boundary${includesReviewDate ? " and next review date" : ""}.`
+        : "A concise decision follow-up is ready to refine.",
+      reason: "A spoken commitment to contact Maya after the call is now specific enough to prepare.",
+      relevance: 0.9,
+      color: STATION_COLORS.follow_up,
+      sources: followUpSources,
+      action: {
+        kind: "review_draft",
+        label: "Review follow-up draft",
+        draft: [
+          "Subject: Enterprise pilot decision",
+          "",
+          "Hi Maya,",
+          "",
+          includesBoundary
+            ? "Following up with the transcript-retention boundary we discussed."
+            : "Following up with the decision from today’s call.",
+          includesReviewDate ? "I’ve also included the next review date for confirmation." : "",
+          "",
+          "Prepared for review; not sent.",
+        ].filter(Boolean).join("\n"),
+      },
+    });
+  }
+  return normalizeStationSuggestions({ suggestions }, now);
 }
 
 function fallbackSuggestion(

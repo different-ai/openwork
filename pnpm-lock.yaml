@@ -83,6 +83,9 @@ importers:
       '@openwork/install-config':
         specifier: workspace:*
         version: link:../../packages/install-config
+      '@openwork/station':
+        specifier: workspace:*
+        version: link:../../packages/station
       '@openwork/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -1009,6 +1012,15 @@ importers:
       '@types/node':
         specifier: ^22.10.2
         version: 22.19.7
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+
+  packages/station:
+    devDependencies:
+      tsup:
+        specifier: ^8.5.0
+        version: 8.5.1(jiti@2.6.1)(postcss@8.5.6)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.9.0)
       typescript:
         specifier: ^5.6.3
         version: 5.9.3

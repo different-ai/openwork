@@ -96,8 +96,20 @@ declare global {
       };
       station?: {
         publishState?: (state: unknown) => void;
-        show?: () => Promise<{ ok: boolean }>;
+        show?: () => Promise<{ ok: boolean; reason?: string }>;
         hide?: () => Promise<{ ok: boolean }>;
+        getEnabled?: () => Promise<{
+          enabled: boolean;
+          registered: boolean;
+          shortcut: string;
+        }>;
+        setEnabled?: (enabled: boolean) => Promise<{
+          ok: boolean;
+          enabled: boolean;
+          registered: boolean;
+          shortcut: string;
+          reason?: string;
+        }>;
         setExpanded?: (expanded: boolean) => Promise<{ ok: boolean; expanded: boolean }>;
         onCommand?: (callback: (command: unknown) => void) => () => void;
       };

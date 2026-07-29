@@ -40,8 +40,15 @@ export function effectiveStationRelevance(
 }
 
 function suggestionIdentity(suggestion: OpenworkStationSuggestion) {
-  const source = suggestion.sources[0]?.url ?? "";
-  return `${suggestion.kind}:${suggestion.title.toLowerCase().trim()}:${source}`;
+  const source = suggestion.sources
+    .map((candidate) => candidate.url.trim().toLowerCase())
+    .find(Boolean);
+  if (source) return `${suggestion.kind}:source:${source}`;
+  const actionUrl = suggestion.action.kind === "open_source"
+    ? suggestion.action.url?.trim().toLowerCase()
+    : "";
+  if (actionUrl) return `${suggestion.kind}:source:${actionUrl}`;
+  return `${suggestion.kind}:local:${suggestion.title.toLowerCase().trim()}`;
 }
 
 export function rankStationSuggestions(

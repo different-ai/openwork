@@ -49,4 +49,39 @@ describe("Station relevance engine", () => {
     expect(ranked.some((item) => item.id === "old")).toBe(false);
     expect(ranked[0]?.effectiveRelevance).toBeGreaterThanOrEqual(ranked[1]?.effectiveRelevance ?? 0);
   });
+
+  test("replaces a sourced suggestion when a later turn corrects its details", () => {
+    const source = [{
+      label: "Maya and Jalil availability",
+      provider: "Development Calendar",
+      url: "https://station.demo.openwork.local/calendar/availability/denver-berlin",
+    }];
+    const friday = suggestion({
+      id: "friday",
+      kind: "calendar",
+      title: "Friday at three",
+      summary: "A sixty-minute meeting on Friday.",
+      reason: "Friday was proposed.",
+      sources: source,
+      createdAt: 1_000,
+    });
+    const monday = suggestion({
+      id: "monday",
+      kind: "calendar",
+      title: "Monday at three",
+      summary: "A corrected thirty-minute meeting on Monday.",
+      reason: "The latest turn replaced Friday and shortened the meeting.",
+      sources: source,
+      createdAt: 2_000,
+    });
+    const ranked = rankStationSuggestions(
+      [friday],
+      [monday],
+      "No, make that Monday at three, and only thirty minutes.",
+      2_000,
+    );
+    expect(ranked).toHaveLength(1);
+    expect(ranked[0]?.id).toBe("monday");
+    expect(ranked[0]?.summary).toContain("thirty-minute");
+  });
 });

@@ -404,6 +404,11 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const routeWorkspaceId = props.workspaceId?.trim() || params.workspaceId?.trim() || "";
   const local = useLocal();
   const { memoryEnabled, toggleMemory } = useFeatureFlagsPreferences();
+  const stationEnabled = local.prefs.featureFlags?.station === true;
+  const stationSupported = typeof window !== "undefined"
+    && typeof window.__OPENWORK_ELECTRON__?.station?.setEnabled === "function";
+  const [stationPreferenceBusy, setStationPreferenceBusy] = useState(false);
+  const [stationPreferenceStatus, setStationPreferenceStatus] = useState<string | null>(null);
   const platform = usePlatform();
   const checkDesktopRestriction = useCheckDesktopRestriction();
   const restrictionNotice = useRestrictionNotice();
@@ -2174,6 +2179,47 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     navigateSettingsPath("cloud-account");
   };
 
+  const setStationPreference = async (enabled: boolean) => {
+    const bridge = window.__OPENWORK_ELECTRON__?.station;
+    if (!bridge?.setEnabled) {
+      setStationPreferenceStatus("Station requires the OpenWork desktop app.");
+      return;
+    }
+    setStationPreferenceBusy(true);
+    setStationPreferenceStatus(enabled ? "Enabling Station…" : "Stopping Station…");
+    try {
+      const result = await bridge.setEnabled(enabled);
+      if (!result.ok) {
+        throw new Error(result.reason || "Station could not update its native lifecycle.");
+      }
+      local.setPrefs((previous) => ({
+        ...previous,
+        featureFlags: {
+          ...previous.featureFlags,
+          station: enabled,
+        },
+      }));
+      setStationPreferenceStatus(
+        enabled
+          ? "Enabled. Station will listen when a workspace is open."
+          : "Disabled. Microphone capture, Realtime inference, the shortcut, and the island are off.",
+      );
+    } catch (error) {
+      setStationPreferenceStatus(error instanceof Error ? error.message : String(error));
+    } finally {
+      setStationPreferenceBusy(false);
+    }
+  };
+
+  const openStation = async () => {
+    const result = await window.__OPENWORK_ELECTRON__?.station?.show?.();
+    setStationPreferenceStatus(
+      result?.ok
+        ? "Station is open."
+        : result?.reason || "Enable Station before opening it.",
+    );
+  };
+
   const settingsView = (() => {
     switch (route.tab) {
       case "general":
@@ -2275,6 +2321,13 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             }}
             memoryEnabled={memoryEnabled}
             onToggleMemory={toggleMemory}
+            stationSupported={stationSupported}
+            stationEnabled={stationEnabled}
+            stationBusy={stationPreferenceBusy}
+            stationStatus={stationPreferenceStatus}
+            onEnableStation={() => void setStationPreference(true)}
+            onOpenStation={() => void openStation()}
+            onDisableStation={() => void setStationPreference(false)}
           />
         );
       case "extensions":

@@ -51,6 +51,7 @@
     "@openai/agents": "0.13.5",
     "@opencode-ai/sdk": "^1.17.11",
     "@openwork/install-config": "workspace:*",
+    "@openwork/station": "workspace:*",
     "@openwork/types": "workspace:*",
     "@openwork/ui": "workspace:*",
     "@paper-design/shaders-react": "0.0.72",

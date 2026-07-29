@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+  analyzeStationConnectedRecords,
   buildStationSystemPrompt,
   createFallbackStationSuggestions,
   isReadOnlyStationCapability,
@@ -90,6 +91,44 @@ describe("OpenWork Station passive-agent boundary", () => {
     expect(suggestions[0]?.color).toBe("#8B7CFF");
     expect(suggestions[0]?.sources).toHaveLength(1);
     expect(suggestions[0]?.action.kind).toBe("none");
+  });
+
+  test("turns raw connected records into corrected review-only context", () => {
+    const calendarRecord = {
+      id: "availability",
+      kind: "calendar" as const,
+      provider: "Development Calendar",
+      title: "Maya and Jalil availability",
+      detail: "Both calendars have a thirty-minute opening.",
+      url: "https://station.demo.openwork.local/calendar/availability",
+    };
+    const suggestions = analyzeStationConnectedRecords(
+      "Let’s meet Friday at three. No, make that Monday at three, and only thirty minutes.",
+      [calendarRecord],
+      42,
+    );
+    expect(suggestions).toHaveLength(1);
+    expect(suggestions[0]?.kind).toBe("calendar");
+    expect(suggestions[0]?.title).toContain("Monday");
+    expect(suggestions[0]?.summary).not.toContain("Friday");
+    expect(suggestions[0]?.action.kind).toBe("review_draft");
+    expect(suggestions[0]?.sources[0]?.provider).toBe("Development Calendar");
+  });
+
+  test("returns no suggestion when raw connected records are irrelevant to the spoken turn", () => {
+    const suggestions = analyzeStationConnectedRecords(
+      "Good morning. Nice weather today.",
+      [{
+        id: "message",
+        kind: "message",
+        provider: "Development Slack",
+        title: "Maya’s privacy concern",
+        detail: "A prior concern.",
+        url: "https://station.demo.openwork.local/slack/42",
+      }],
+      42,
+    );
+    expect(suggestions).toEqual([]);
   });
 });
 

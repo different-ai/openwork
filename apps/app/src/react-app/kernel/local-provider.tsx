@@ -49,6 +49,12 @@ export type LocalPreferences = {
   featureFlags: {
     microsandboxCreateSandbox: boolean;
     /**
+     * OpenWork Station is a desktop-only, per-device capability. It stays
+     * fully dormant until the user explicitly enables microphone-backed
+     * Realtime inference from Preferences.
+     */
+    station: boolean;
+    /**
      * Memory Bank preview. Client-only, per-device, never synced. Gates desktop
      * UI surfacing (the management panel + copy-prompt affordance); the routes
      * stay callable (owner-scoped + authz'd). Off by default — opt-in preview.
@@ -93,7 +99,7 @@ const INITIAL_PREFS: LocalPreferences = {
   defaultModel: null,
   selectedAgent: null,
   releaseChannel: "stable",
-  featureFlags: { microsandboxCreateSandbox: true, memory: false },
+  featureFlags: { microsandboxCreateSandbox: true, memory: false, station: false },
   hasCompletedOnboarding: false,
   analyticsEnabled: true,
   desktopNotifications: DEFAULT_DESKTOP_NOTIFICATION_PREFERENCE,
@@ -133,6 +139,10 @@ export function LocalProvider({ children }: LocalProviderProps) {
   );
   const [prefs, setPrefsRaw] = useState<LocalPreferences>(() => {
     const persisted = readPersisted(LOCAL_PREFERENCES_KEY, INITIAL_PREFS);
+    persisted.featureFlags = {
+      ...INITIAL_PREFS.featureFlags,
+      ...persisted.featureFlags,
+    };
     persisted.desktopNotifications = isDesktopNotificationPreference(persisted.desktopNotifications)
       ? persisted.desktopNotifications
       : DEFAULT_DESKTOP_NOTIFICATION_PREFERENCE;

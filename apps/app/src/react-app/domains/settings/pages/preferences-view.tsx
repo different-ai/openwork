@@ -7,6 +7,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 
 import { t } from "@/i18n";
@@ -42,6 +43,13 @@ export type PreferencesViewProps = {
   onDesktopNotificationsChange: (value: DesktopNotificationPreference) => void;
   memoryEnabled: boolean;
   onToggleMemory: () => void;
+  stationSupported: boolean;
+  stationEnabled: boolean;
+  stationBusy: boolean;
+  stationStatus: string | null;
+  onEnableStation: () => void;
+  onOpenStation: () => void;
+  onDisableStation: () => void;
 };
 
 function desktopNotificationPreferenceLabel(value: DesktopNotificationPreference) {
@@ -63,6 +71,94 @@ export function PreferencesView(props: PreferencesViewProps) {
 
   return (
     <LayoutStack>
+      <LayoutSection>
+        <LayoutSectionHeader>
+          <LayoutSectionTitle>OpenWork Station</LayoutSectionTitle>
+          <LayoutSectionDescription>
+            A discreet contextual helper that listens through your microphone,
+            uses OpenAI Realtime to research useful context, and keeps every
+            action under your control.
+          </LayoutSectionDescription>
+        </LayoutSectionHeader>
+
+        <LayoutSectionItem>
+          <LayoutSectionItemHeader>
+            <LayoutSectionItemTitle>
+              {props.stationEnabled ? "Station is enabled" : "Enable Station"}
+            </LayoutSectionItemTitle>
+            <LayoutSectionItemDescription>
+              {props.stationSupported
+                ? props.stationEnabled
+                  ? "The vertical island and shortcut are available. Listening starts while a workspace is open."
+                  : "Off means off: no Station window, shortcut, microphone capture, or Realtime session."
+                : "Station requires the OpenWork desktop app."}
+            </LayoutSectionItemDescription>
+            <LayoutSectionItemHeaderActions>
+              {props.stationEnabled ? (
+                <>
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={props.onOpenStation}
+                    disabled={props.stationBusy || !props.stationSupported}
+                  >
+                    Open Station
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={props.onDisableStation}
+                    disabled={props.stationBusy || !props.stationSupported}
+                  >
+                    Disable
+                  </Button>
+                </>
+              ) : (
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={props.onEnableStation}
+                  disabled={props.stationBusy || !props.stationSupported}
+                >
+                  {props.stationBusy ? "Enabling…" : "Enable Station"}
+                </Button>
+              )}
+            </LayoutSectionItemHeaderActions>
+          </LayoutSectionItemHeader>
+          <div
+            className="flex items-center gap-3 rounded-xl border border-border/70 bg-muted/15 px-3 py-2"
+            aria-label="Station processing path"
+          >
+            <div className="flex min-w-16 items-center justify-center gap-1" aria-hidden="true">
+              {[0, 1, 2, 3, 4, 5, 6].map((dot) => (
+                <span
+                  key={dot}
+                  className={`block rounded-full ${
+                    dot === 1 || dot === 3 || dot === 5
+                      ? "size-1.5"
+                      : "size-1"
+                  }`}
+                  style={{
+                    backgroundColor: "#267ce8",
+                    opacity: dot === 1 || dot === 3 || dot === 5 ? 0.9 : 0.38,
+                    transform: `translateY(${dot % 3 === 0 ? -1 : dot % 3 === 1 ? 1 : 0}px)`,
+                  }}
+                />
+              ))}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Physical microphone → OpenAI Realtime → review-only context cards
+            </p>
+          </div>
+          {props.stationStatus ? (
+            <p className="text-xs text-muted-foreground" role="status">
+              {props.stationStatus}
+            </p>
+          ) : null}
+        </LayoutSectionItem>
+      </LayoutSection>
+
       <LayoutSection>
         <LayoutSectionHeader>
           <LayoutSectionTitle>{t("settings.model_title")}</LayoutSectionTitle>
