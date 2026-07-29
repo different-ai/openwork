@@ -525,6 +525,9 @@ export function SessionPage(props: SessionPageProps) {
   const closeRightPane = useCallback(() => {
     setCurrentSidePanel(null);
   }, [setCurrentSidePanel]);
+  const openGeneralSidePanel = useCallback(() => {
+    setCurrentSidePanel("panel");
+  }, [setCurrentSidePanel]);
   const openBrowserRailPane = useCallback(() => {
     if (!hasBrowserTabs) return;
     // Opening the browser pane should land on a usable page, not an empty
@@ -574,7 +577,11 @@ export function SessionPage(props: SessionPageProps) {
   }), []);
   useControlAction(setBrowserProxyControlAction);
   const openArtifactRailPane = useCallback(() => {
-    if (!hasArtifactTargets || !props.selectedSessionId) return;
+    if (!hasArtifactTargets) {
+      setCurrentSidePanel("panel");
+      return;
+    }
+    if (!props.selectedSessionId) return;
     const activeTab = sessionPanelState.tabs.find((tab) => tab.id === sessionPanelState.activeTabId);
     const artifactTargetIds = new Set(artifactFileTargets.map((target) => target.id));
     const currentArtifactTab = activeTab?.type === "artifact" && artifactTargetIds.has(activeTab.id) ? activeTab : null;
@@ -608,7 +615,7 @@ export function SessionPage(props: SessionPageProps) {
     if (!panelRailActive) {
       toggleCurrentSidePanel("panel");
     }
-  }, [artifactFileTargets, hasArtifactTargets, openTab, panelRailActive, props.selectedSessionId, selectTab, sessionPanelState, toggleCurrentSidePanel]);
+  }, [artifactFileTargets, hasArtifactTargets, openTab, panelRailActive, props.selectedSessionId, selectTab, sessionPanelState, setCurrentSidePanel, toggleCurrentSidePanel]);
   const openVoiceRailPane = useCallback(() => {
     toggleCurrentSidePanel("voice");
   }, [toggleCurrentSidePanel]);
@@ -1133,7 +1140,7 @@ export function SessionPage(props: SessionPageProps) {
                         if (sidePanelOpen) {
                           closeRightPane();
                         } else {
-                          openBrowserRailPane();
+                          openGeneralSidePanel();
                         }
                       }}
                     >
@@ -1429,6 +1436,8 @@ export function SessionPage(props: SessionPageProps) {
                       workspaceRoot={props.selectedWorkspaceRoot}
                       isRemoteWorkspace={props.surface?.isRemoteWorkspace ?? false}
                       onClose={closeRightPane}
+                      onOpenExtensions={props.settingsSlot ? () => setCurrentSidePanel("extensions") : undefined}
+                      onOpenVoice={voiceExtensionEnabled ? openVoiceRailPane : undefined}
                     />
                   ) : null}
                   </div>
@@ -1474,14 +1483,13 @@ export function SessionPage(props: SessionPageProps) {
               variant="ghost"
               size="icon-sm"
               className={cn(
-                "rounded-xl transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-muted-foreground",
-                panelRailActive && hasArtifactTargets && "bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary",
+                "rounded-xl transition-colors hover:bg-muted hover:text-foreground",
+                panelRailActive && "bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary",
               )}
               onClick={openArtifactRailPane}
-              title={hasArtifactTargets ? `Artifacts (${artifactTargetCount})` : "No artifacts yet"}
-              aria-label={hasArtifactTargets ? `Artifacts (${artifactTargetCount})` : "No artifacts yet"}
-              aria-pressed={panelRailActive && hasArtifactTargets}
-              disabled={!hasArtifactTargets}
+              title={`Artifacts (${artifactTargetCount})`}
+              aria-label={`Artifacts (${artifactTargetCount})`}
+              aria-pressed={panelRailActive}
             >
               <FileText size={15} />
               {artifactTargetCount > 0 ? (
