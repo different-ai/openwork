@@ -545,7 +545,7 @@ function endpointForTransport(lab: EgressLabHandle): URL {
 }
 
 function probeTlsVersion(
-  target: { host: string; port: number; servername?: string; ca?: string | string[] },
+  target: { host: string; port: number; servername?: string; ca?: string | string[]; rejectUnauthorized?: boolean },
   version: "TLSv1.2" | "TLSv1.3",
   timeoutMs: number,
 ): Promise<TlsProbeFacts> {
@@ -564,7 +564,7 @@ function probeTlsVersion(
       minVersion: version,
       maxVersion: version,
       ca: target.ca,
-      rejectUnauthorized: true,
+      rejectUnauthorized: target.rejectUnauthorized ?? true,
     });
     socket.once("secureConnect", () => finish({ ok: true, protocol: socket.getProtocol(), errorCode: null }));
     socket.once("timeout", () => finish({ ok: false, protocol: null, errorCode: "ETIMEDOUT" }));
@@ -577,7 +577,7 @@ function probeTlsVersion(
 }
 
 export async function probeTls(
-  target: { host: string; port: number; servername?: string; ca?: string | string[] },
+  target: { host: string; port: number; servername?: string; ca?: string | string[]; rejectUnauthorized?: boolean },
   opts: { timeoutMs?: number } = {},
 ): Promise<TlsFacts> {
   const timeoutMs = opts.timeoutMs ?? 1_500;
