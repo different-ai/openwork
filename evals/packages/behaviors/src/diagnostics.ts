@@ -557,16 +557,14 @@ function probeTlsVersion(
       socket.destroy();
       resolve({ ...result, stalled: result.errorCode === "ETIMEDOUT" });
     };
-    const versionOptions: tls.ConnectionOptions = version === "TLSv1.2"
-      ? { secureProtocol: "TLSv1_2_method" }
-      : { minVersion: version, maxVersion: version };
     const socket = tls.connect({
       host: target.host,
       port: target.port,
       servername: target.servername ?? target.host,
+      minVersion: version,
+      maxVersion: version,
       ca: target.ca,
       rejectUnauthorized: true,
-      ...versionOptions,
     });
     socket.once("secureConnect", () => finish({ ok: true, protocol: socket.getProtocol(), errorCode: null }));
     socket.once("timeout", () => finish({ ok: false, protocol: null, errorCode: "ETIMEDOUT" }));

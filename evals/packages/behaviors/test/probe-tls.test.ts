@@ -8,7 +8,10 @@ test("probeTls and diagnoseTls identify a TLS 1.3-only stall without the eval fr
   await using lab = await startEgressLab({ profile: "tls12-only" });
   const url = new URL(lab.url);
   const facts = await probeTls({
-    host: url.hostname,
+    // The lab listens on IPv4. Keep certificate verification on the generated
+    // localhost identity without depending on the runner's localhost family
+    // preference.
+    host: "127.0.0.1",
     port: Number(url.port),
     servername: url.hostname,
     ca: lab.rootPem,
