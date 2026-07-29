@@ -10,7 +10,16 @@ import {
   preserveWorkspaceRouteSession,
   removeWorkspaceRouteSession,
   sessionIdForLegacyWorkspaceInference,
+  workspaceSettingsRoute,
 } from "../src/react-app/shell/workspace-routes";
+
+describe("workspace settings routes", () => {
+  test("builds the existing Extensions destination", () => {
+    expect(workspaceSettingsRoute(" workspace/a ", "extensions")).toBe(
+      "/workspace/workspace%2Fa/settings/extensions",
+    );
+  });
+});
 
 describe("workspace route session inference", () => {
   test("modern workspace routes do not contribute a refresh session id", () => {

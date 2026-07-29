@@ -33,6 +33,7 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarRail,
 } from "@/components/ui/sidebar";
 import {
   DropdownMenu,
@@ -59,6 +60,7 @@ import {
   SettingsPanelToolbarStatus,
 } from "./panel";
 import { useFeatureFlagsPreferences } from "../state/feature-flags-preferences";
+import { SidebarDestination } from "../../session/sidebar/sidebar-destination";
 
 export function getSettingsTabIcon(tab: SettingsTab) {
   switch (tab) {
@@ -204,6 +206,10 @@ export function isSettingsTabBeta(_tab: SettingsTab) {
   return false;
 }
 
+export function isSettingsTabActive(activeTab: SettingsTab, tab: SettingsTab) {
+  return activeTab === tab;
+}
+
 export function SettingsBetaBadge({ className }: { className?: string }) {
   return (
     <span
@@ -268,7 +274,7 @@ export function SettingsSidebar(props: SettingsSidebarProps) {
   const cloudTabs = getCloudSettingsTabs(memoryEnabled);
 
   return (
-    <Sidebar className="mac:**:data-[sidebar=sidebar]:bg-transparent">
+    <Sidebar collapsible="icon" className="mac:**:data-[sidebar=sidebar]:bg-transparent">
       <div className="hidden h-10 mac:block mac:titlebar-drag" />
       <SidebarHeader>
         <SidebarMenu>
@@ -311,7 +317,9 @@ export function SettingsSidebar(props: SettingsSidebarProps) {
               <SidebarMenuItem>
                 <SidebarMenuButton
                   type="button"
-                  isActive={props.activeTab === "general"}
+                  isActive={isSettingsTabActive(props.activeTab, "general")}
+                  aria-current={isSettingsTabActive(props.activeTab, "general") ? "page" : undefined}
+                  tooltip={getSettingsTabLabel("general")}
                   onClick={() => props.onSelectTab("general")}
                 >
                   <Cog />
@@ -329,16 +337,14 @@ export function SettingsSidebar(props: SettingsSidebarProps) {
               {workspaceTabs.map((tab) => {
                 const Icon = getSettingsTabIcon(tab);
                 return (
-                  <SidebarMenuItem key={tab}>
-                    <SidebarMenuButton
-                      type="button"
-                      isActive={props.activeTab === tab}
-                      onClick={() => props.onSelectTab(tab)}
-                    >
-                      <Icon />
-                      <SettingsSidebarTabLabel tab={tab} />
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
+                  <SidebarDestination
+                    key={tab}
+                    active={isSettingsTabActive(props.activeTab, tab)}
+                    icon={Icon}
+                    label={getSettingsTabLabel(tab)}
+                    labelContent={<SettingsSidebarTabLabel tab={tab} />}
+                    onSelect={() => props.onSelectTab(tab)}
+                  />
                 );
               })}
             </SidebarMenu>
@@ -352,16 +358,14 @@ export function SettingsSidebar(props: SettingsSidebarProps) {
               {globalTabs.map((tab) => {
                 const Icon = getSettingsTabIcon(tab);
                 return (
-                  <SidebarMenuItem key={tab}>
-                    <SidebarMenuButton
-                      type="button"
-                      isActive={props.activeTab === tab}
-                      onClick={() => props.onSelectTab(tab)}
-                    >
-                      <Icon />
-                      <SettingsSidebarTabLabel tab={tab} />
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
+                  <SidebarDestination
+                    key={tab}
+                    active={isSettingsTabActive(props.activeTab, tab)}
+                    icon={Icon}
+                    label={getSettingsTabLabel(tab)}
+                    labelContent={<SettingsSidebarTabLabel tab={tab} />}
+                    onSelect={() => props.onSelectTab(tab)}
+                  />
                 );
               })}
             </SidebarMenu>
@@ -375,22 +379,21 @@ export function SettingsSidebar(props: SettingsSidebarProps) {
               {cloudTabs.map((tab) => {
                 const Icon = getSettingsTabIcon(tab);
                 return (
-                  <SidebarMenuItem key={tab}>
-                    <SidebarMenuButton
-                      type="button"
-                      isActive={props.activeTab === tab}
-                      onClick={() => props.onSelectTab(tab)}
-                    >
-                      <Icon />
-                      <SettingsSidebarTabLabel tab={tab} />
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
+                  <SidebarDestination
+                    key={tab}
+                    active={isSettingsTabActive(props.activeTab, tab)}
+                    icon={Icon}
+                    label={getSettingsTabLabel(tab)}
+                    labelContent={<SettingsSidebarTabLabel tab={tab} />}
+                    onSelect={() => props.onSelectTab(tab)}
+                  />
                 );
               })}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
+      <SidebarRail />
     </Sidebar>
   );
 }
@@ -425,14 +428,20 @@ function DesktopPolicyBanner() {
   );
 }
 
+export function SettingsPageHeading({ activeTab }: Pick<SettingsPageProps, "activeTab">) {
+  return (
+    <SettingsPanelHeading>
+      <SettingsPanelTitle>{getSettingsTabLabel(activeTab)}</SettingsPanelTitle>
+      <SettingsPanelDescription>{getSettingsTabDescription(activeTab)}</SettingsPanelDescription>
+    </SettingsPanelHeading>
+  );
+}
+
 export function SettingsPage(props: SettingsPageProps) {
   return (
     <SettingsContent>
       <SettingsPanel>
-        <SettingsPanelHeading>
-          <SettingsPanelTitle>{getSettingsTabLabel(props.activeTab)}</SettingsPanelTitle>
-          <SettingsPanelDescription>{getSettingsTabDescription(props.activeTab)}</SettingsPanelDescription>
-        </SettingsPanelHeading>
+        <SettingsPageHeading activeTab={props.activeTab} />
         <DesktopPolicyBanner />
 
         {props.showUpdateToolbar && props.activeTab === "general" ? (

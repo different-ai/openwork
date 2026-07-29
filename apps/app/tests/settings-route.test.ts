@@ -1,8 +1,23 @@
 import { describe, expect, test } from "bun:test";
 
 import { parseSettingsPath } from "../src/react-app/shell/settings-route";
+import {
+  getWorkspaceSettingsTabs,
+  isSettingsTabActive,
+} from "../src/react-app/domains/settings/shell/settings-page";
 
 describe("settings route parsing", () => {
+  test("selects the Extensions destination for direct workspace navigation and reloads", () => {
+    const pathname = "/workspace/workspace_1/settings/extensions";
+    const route = parseSettingsPath(pathname);
+
+    expect(route).toEqual({ tab: "extensions", redirectPath: null, extensionsSection: "all" });
+    expect(parseSettingsPath(pathname)).toEqual(route);
+    expect(isSettingsTabActive(route.tab, "extensions")).toBe(true);
+    expect(isSettingsTabActive(route.tab, "general")).toBe(false);
+    expect(getWorkspaceSettingsTabs()).toEqual(["preferences", "permissions", "extensions", "advanced"]);
+  });
+
   test("redirects Connect settings into Extensions", () => {
     expect(parseSettingsPath("/settings/connect")).toEqual({
       tab: "extensions",

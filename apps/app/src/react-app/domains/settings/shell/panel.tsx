@@ -44,7 +44,7 @@ type SettingsPanelTitleProps = {
 };
 
 export function SettingsPanelTitle(props: SettingsPanelTitleProps) {
-  return <h2 className={cn("text-xl font-semibold tracking-tight", props.className)}>{props.children}</h2>;
+  return <h1 className={cn("text-xl font-semibold tracking-tight", props.className)}>{props.children}</h1>;
 }
 
 type SettingsPanelDescriptionProps = {
