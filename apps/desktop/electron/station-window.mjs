@@ -180,16 +180,11 @@ export function createStationWindowManager(options) {
     );
   }
 
-  function show({ focus = false } = {}) {
+  function show() {
     if (!enabled) return { ok: false, reason: "Station is disabled." };
     const win = ensureWindow();
     applyBounds();
-    if (focus) {
-      win.show();
-      win.focus();
-    } else {
-      win.showInactive();
-    }
+    win.showInactive();
     return { ok: true };
   }
 
@@ -201,9 +196,8 @@ export function createStationWindowManager(options) {
   function syncModeSurface() {
     if (!enabled) return;
     syncSurfaceExpanded();
-    const focusDecision = activeMode && latestState.suggestions.length > 0;
-    show({ focus: focusDecision });
-    if (!focusDecision) stationWindow?.blur?.();
+    show();
+    if (!activeMode) stationWindow?.blur?.();
   }
 
   function setActiveMode(value, { forward = true } = {}) {

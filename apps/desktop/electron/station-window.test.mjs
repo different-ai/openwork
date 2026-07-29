@@ -54,6 +54,18 @@ function createHarness(overrides = {}) {
   const shortcuts = new Map();
   const registrations = [];
   const unregistered = [];
+  const mainWindow = {
+    focusCalls: 0,
+    showCalls: 0,
+    isDestroyed: () => false,
+    isMinimized: () => false,
+    show() { this.showCalls += 1; },
+    focus() { this.focusCalls += 1; },
+    webContents: {
+      isDestroyed: () => false,
+      send: (name, payload) => mainSent.push([name, payload]),
+    },
+  };
   const manager = createStationWindowManager({
     BrowserWindow: FakeWindow,
     globalShortcut: {
@@ -79,20 +91,12 @@ function createHarness(overrides = {}) {
       getDisplayNearestPoint: () => ({ workArea: { x: 0, y: 0, width: 1440, height: 900 } }),
       getPrimaryDisplay: () => ({ workArea: { x: 0, y: 0, width: 1440, height: 900 } }),
     },
-    getMainWindow: () => ({
-      isDestroyed: () => false,
-      isMinimized: () => false,
-      show: () => {},
-      focus: () => {},
-      webContents: {
-        isDestroyed: () => false,
-        send: (name, payload) => mainSent.push([name, payload]),
-      },
-    }),
+    getMainWindow: () => mainWindow,
   });
   return {
     ipcHandlers,
     ipcListeners,
+    mainWindow,
     mainSent,
     manager,
     registrations,
@@ -159,7 +163,7 @@ test("re-anchors when cached display geometry no longer matches a live display",
   assert.equal(window.bounds.x + window.bounds.width, 1716);
 });
 
-test("the Station shortcut enters active mode without registering bare system keys", () => {
+test("the Station shortcut enters active mode without registering keys or taking focus", () => {
   const harness = createHarness();
   const result = harness.manager.initialize();
   assert.deepEqual(result, {
@@ -198,7 +202,7 @@ test("Station stays dormant until enabled and repeated enablement keeps one shor
   );
 });
 
-test("focused Station decisions navigate cards without swallowing keys system-wide", () => {
+test("intentionally focused Station decisions navigate cards without global shortcuts", () => {
   const harness = createHarness();
   harness.manager.initialize();
   harness.manager.setEnabled(true);
@@ -206,7 +210,8 @@ test("focused Station decisions navigate cards without swallowing keys system-wi
     suggestions: [{ id: "first" }, { id: "second" }],
   });
   harness.shortcuts.get(STATION_MODE_SHORTCUT)?.();
-  assert.equal(FakeWindow.instances[0]?.focused, true);
+  assert.notEqual(FakeWindow.instances[0]?.focused, true);
+  FakeWindow.instances[0]?.focus();
   const inputHandler = FakeWindow.instances[0]?.listeners.get("web:before-input-event");
   const prevented = [];
   const event = { preventDefault: () => prevented.push(true) };
@@ -238,6 +243,19 @@ test("ignores decision keys outside a focused unmodified key press", () => {
     stationDecisionCommand({ type: "keyDown", key: "ArrowLeft" }),
     { type: "previous" },
   );
+});
+
+test("Escape dismisses Station without showing or focusing the OpenWork window", () => {
+  const harness = createHarness();
+  harness.manager.initialize();
+  harness.manager.setEnabled(true);
+  harness.manager.forwardCommand({ type: "dismiss", id: "card-1" });
+  assert.deepEqual(harness.mainSent.at(-1), [
+    "openwork:station:command",
+    { type: "dismiss", id: "card-1" },
+  ]);
+  assert.equal(harness.mainWindow.showCalls, 0);
+  assert.equal(harness.mainWindow.focusCalls, 0);
 });
 
 test("publishes bounded state to the Station window", () => {

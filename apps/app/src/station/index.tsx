@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { StrictMode, useCallback, useEffect, useMemo, useState } from "react";
+import { StrictMode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   ArrowLeft,
@@ -43,7 +43,7 @@ function transcriptTail(value: string, limit = 320) {
 function StationApp() {
   const [state, setState] = useState<StationState>(INITIAL_STATION_STATE);
   const [showDeveloperTranscript, setShowDeveloperTranscript] = useState(false);
-  const [suppressedGoalId, setSuppressedGoalId] = useState<string | null>(null);
+  const autoApprovedGoalIdRef = useRef<string | null>(null);
   const selected = useMemo(
     () => state.suggestions.find((suggestion) => suggestion.id === state.selectedId)
       ?? state.suggestions[0]
@@ -55,8 +55,7 @@ function StationApp() {
   const goal = state.goal ?? null;
   const cardVisible = active && selected !== null && goal === null;
   const developerTranscriptAvailable = import.meta.env.DEV;
-  const goalRequestsTranscript = goal !== null && goal.id !== suppressedGoalId;
-  const transcriptExpanded = showDeveloperTranscript || goalRequestsTranscript;
+  const transcriptExpanded = showDeveloperTranscript;
   const captionVisible = developerTranscriptAvailable
     && transcriptExpanded
     && !cardVisible;
@@ -70,6 +69,19 @@ function StationApp() {
   const sendCommand = useCallback((command: StationCommand) => {
     window.__OPENWORK_STATION__?.sendCommand?.(command);
   }, []);
+
+  useEffect(() => {
+    if (
+      transcriptExpanded
+      || !goal
+      || goal.status !== "proposed"
+      || autoApprovedGoalIdRef.current === goal.id
+    ) {
+      return;
+    }
+    autoApprovedGoalIdRef.current = goal.id;
+    sendCommand({ type: "approve-goal", id: goal.id });
+  }, [goal, sendCommand, transcriptExpanded]);
 
   useEffect(() => {
     const bridge = window.__OPENWORK_STATION__;
@@ -145,10 +157,7 @@ function StationApp() {
                 type="button"
                 aria-label="Hide live transcript"
                 title="Hide transcript"
-                onClick={() => {
-                  setShowDeveloperTranscript(false);
-                  if (goal) setSuppressedGoalId(goal.id);
-                }}
+                onClick={() => setShowDeveloperTranscript(false)}
               >
                 <X size={10} />
               </button>
@@ -248,7 +257,6 @@ function StationApp() {
                   className="station-not-now"
                   onClick={() => sendCommand({ type: "dismiss", id: presented.id })}
                 >
-                  <kbd>Esc</kbd>
                   <span>Not now</span>
                 </button>
                 <button
@@ -256,7 +264,6 @@ function StationApp() {
                   className="station-enter"
                   onClick={() => sendCommand({ type: "handoff", id: presented.id })}
                 >
-                  <kbd>Enter</kbd>
                   <span>Start thread</span>
                   <CornerDownLeft size={13} />
                 </button>
@@ -305,10 +312,8 @@ function StationApp() {
           onClick={() => {
             if (transcriptExpanded) {
               setShowDeveloperTranscript(false);
-              if (goal) setSuppressedGoalId(goal.id);
               return;
             }
-            setSuppressedGoalId(null);
             setShowDeveloperTranscript(true);
           }}
         >

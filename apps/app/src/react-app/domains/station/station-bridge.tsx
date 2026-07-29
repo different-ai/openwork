@@ -986,7 +986,7 @@ export function OpenWorkStationBridge(props: OpenWorkStationBridgeProps) {
         description: [
           "Propose one intentional read-only research goal for the accumulated meaningful work conversation.",
           "Use this when Slack, Gmail, or Google Calendar could resolve a question, recall prior context, expose a blocker or contradiction, verify a commitment or deadline, prepare for a meeting, or make the next step materially more useful.",
-          "The user will see the goal as 'I'll look into …' and can approve or dismiss it before OpenWork Connect research begins.",
+          "When the development transcript is open, the user may review the goal as 'I'll look into …'. When it is hidden, the runtime can continue this read-only goal quietly and surface only a useful result card.",
         ].join(" "),
         parameters: z.object({
           transcript: z.string()
@@ -1042,7 +1042,7 @@ export function OpenWorkStationBridge(props: OpenWorkStationBridgeProps) {
         description: [
           "Propose one intentional local continuation goal from the accumulated live transcript when the user explicitly wants to continue, capture, develop, debug, or turn the current thought into work in OpenWork.",
           "Use this for direct requests for a card, suggestion, action, or OpenWork thread, and for a concrete unresolved work item that clearly deserves continued thinking.",
-          "The user will see the goal and can approve or dismiss it. This does not claim Slack, Gmail, Calendar, or any external source.",
+          "When the development transcript is open, the user may review the goal. When it is hidden, the runtime can continue quietly and surface only the resulting local card. This does not claim Slack, Gmail, Calendar, or any external source.",
         ].join(" "),
         parameters: z.object({
           title: z.string().min(1).max(80)
@@ -1095,7 +1095,7 @@ export function OpenWorkStationBridge(props: OpenWorkStationBridgeProps) {
           "# Direct OpenWork continuation",
           "When the user explicitly asks for a card, suggestion, action, continuation, capture, debugging task, or a new OpenWork thread, call propose_openwork_thread even when Connect is unavailable. Also use it for a concrete unresolved plan, design choice, decision, or problem that clearly deserves continued work. Ground the title and summary only in the accumulated live transcript. This is a local continuation goal, not connected research. Prefer this tool over propose_research_goal when the user is asking to continue the current thought rather than retrieve private history.",
           "# Goal review",
-          "Propose only one highest-value goal at a time. In passive mode, the user may approve it with Yes or reject it with No; do not perform connected research or publish a final card until approval. Active mode is explicit pre-approval for one immediate card, so the runtime may approve the proposed goal automatically. After a rejection, keep listening and look for a materially different useful goal rather than repeating the same one.",
+          "Propose only one highest-value goal at a time. The development transcript may expose a Yes/No review while it is intentionally open. When that panel is hidden, the runtime may approve one read-only goal quietly and surface only the resulting card. Active mode is explicit pre-approval for one immediate card. After a rejection, keep listening and look for a materially different useful goal rather than repeating the same one.",
           "# Corrections and continuity",
           "Use the accumulated latest context, not an isolated fragment. When a later turn corrects a person, date, duration, decision, or commitment, research again so stale context can be replaced rather than contradicted. If connected context was temporarily unavailable, retry only after a later turn makes the same context relevant again.",
           "# Authority",
