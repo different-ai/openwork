@@ -1,9 +1,9 @@
 export const STATION_MODE_SHORTCUT = "CommandOrControl+Shift+Space";
-export const STATION_ACTIVE_SHORTCUTS = Object.freeze({
-  previous: "Left",
-  next: "Right",
+export const STATION_DECISION_KEYS = Object.freeze({
+  previous: "ArrowLeft",
+  next: "ArrowRight",
   handoff: "Enter",
-  dismiss: "Esc",
+  dismiss: "Escape",
 });
 
 export const STATION_COLLAPSED_BOUNDS = Object.freeze({ width: 66, height: 420 });
@@ -39,6 +39,25 @@ function normalizeCommand(value) {
   if (value.type === "set-mode") command.active = value.active === true;
   if (value.type === "set-transcript-record") command.enabled = value.enabled === true;
   return command;
+}
+
+export function stationDecisionCommand(value) {
+  if (
+    !isRecord(value)
+    || value.type !== "keyDown"
+    || value.isAutoRepeat === true
+    || value.alt === true
+    || value.control === true
+    || value.meta === true
+    || value.shift === true
+  ) {
+    return null;
+  }
+  if (value.key === STATION_DECISION_KEYS.previous) return { type: "previous" };
+  if (value.key === STATION_DECISION_KEYS.next) return { type: "next" };
+  if (value.key === STATION_DECISION_KEYS.handoff) return { type: "handoff" };
+  if (value.key === STATION_DECISION_KEYS.dismiss) return { type: "dismiss" };
+  return null;
 }
 
 export function stationWindowBounds(display, expanded) {
@@ -99,13 +118,6 @@ export function createStationWindowManager(options) {
     error: null,
   };
   const pendingCommands = [];
-  const activeShortcutCommands = new Map([
-    [STATION_ACTIVE_SHORTCUTS.previous, { type: "previous" }],
-    [STATION_ACTIVE_SHORTCUTS.next, { type: "next" }],
-    [STATION_ACTIVE_SHORTCUTS.handoff, { type: "handoff" }],
-    [STATION_ACTIVE_SHORTCUTS.dismiss, { type: "dismiss" }],
-  ]);
-  const registeredActiveShortcuts = new Set();
 
   function activeDisplay() {
     if (anchorDisplay) return anchorDisplay;
@@ -168,11 +180,16 @@ export function createStationWindowManager(options) {
     );
   }
 
-  function show() {
+  function show({ focus = false } = {}) {
     if (!enabled) return { ok: false, reason: "Station is disabled." };
     const win = ensureWindow();
     applyBounds();
-    win.showInactive();
+    if (focus) {
+      win.show();
+      win.focus();
+    } else {
+      win.showInactive();
+    }
     return { ok: true };
   }
 
@@ -181,32 +198,12 @@ export function createStationWindowManager(options) {
     return { ok: true };
   }
 
-  function unregisterActiveShortcuts() {
-    for (const shortcut of registeredActiveShortcuts) {
-      try {
-        globalShortcut.unregister(shortcut);
-      } catch {
-        // best effort while leaving the temporary modal state
-      }
-    }
-    registeredActiveShortcuts.clear();
-  }
-
-  function registerActiveShortcuts() {
-    for (const [shortcut, command] of activeShortcutCommands) {
-      if (registeredActiveShortcuts.has(shortcut)) continue;
-      if (globalShortcut.register(shortcut, () => forwardCommand(command))) {
-        registeredActiveShortcuts.add(shortcut);
-      }
-    }
-  }
-
   function syncModeSurface() {
     if (!enabled) return;
-    if (activeMode) registerActiveShortcuts();
-    else unregisterActiveShortcuts();
     syncSurfaceExpanded();
-    show();
+    const focusDecision = activeMode && latestState.suggestions.length > 0;
+    show({ focus: focusDecision });
+    if (!focusDecision) stationWindow?.blur?.();
   }
 
   function setActiveMode(value, { forward = true } = {}) {
@@ -259,22 +256,26 @@ export function createStationWindowManager(options) {
 
   function publishState(state) {
     if (!isRecord(state)) return { ok: false, error: "invalid Station state" };
+    const hadDecision = latestState.suggestions.length > 0;
     latestState = {
       ...latestState,
       ...state,
       suggestions: Array.isArray(state.suggestions) ? state.suggestions.slice(0, 12) : latestState.suggestions,
     };
+    const hasDecision = latestState.suggestions.length > 0;
     if (!enabled) return { ok: true, dormant: true };
     if (state.interactionMode === "active" || state.interactionMode === "passive") {
       const nextActiveMode = state.interactionMode === "active";
-      if (activeMode !== nextActiveMode) {
+      const modeChanged = activeMode !== nextActiveMode;
+      if (modeChanged) {
         activeMode = nextActiveMode;
-        if (activeMode) registerActiveShortcuts();
-        else unregisterActiveShortcuts();
-      } else if (activeMode) {
-        registerActiveShortcuts();
       }
-      syncSurfaceExpanded();
+      if (modeChanged || (activeMode && !hadDecision && hasDecision)) {
+        syncModeSurface();
+      } else {
+        syncSurfaceExpanded();
+        if (activeMode && hadDecision && !hasDecision) stationWindow?.blur?.();
+      }
     }
     const win = ensureWindow();
     if (!win.webContents.isDestroyed()) {
@@ -316,6 +317,14 @@ export function createStationWindowManager(options) {
     stationWindow.setMenuBarVisibility(false);
     stationWindow.webContents.on("did-finish-load", () => {
       stationWindow?.webContents.send("openwork:station:state", latestState);
+    });
+    stationWindow.webContents.on("before-input-event", (event, input) => {
+      if (!activeMode || latestState.suggestions.length === 0) return;
+      const command = stationDecisionCommand(input);
+      if (!command) return;
+      event.preventDefault();
+      forwardCommand(command);
+      if (command.type === "dismiss") stationWindow?.blur?.();
     });
     stationWindow.on("closed", () => {
       stationWindow = null;
@@ -391,7 +400,6 @@ export function createStationWindowManager(options) {
     expanded = false;
     rendererExpanded = false;
     pendingCommands.length = 0;
-    unregisterActiveShortcuts();
     unregisterModeShortcut();
     if (collapseTimer) clearTimeout(collapseTimer);
     collapseTimer = null;
@@ -424,7 +432,6 @@ export function createStationWindowManager(options) {
   function dispose() {
     enabled = false;
     unregisterModeShortcut();
-    unregisterActiveShortcuts();
     if (collapseTimer) clearTimeout(collapseTimer);
     collapseTimer = null;
     if (stationWindow && !stationWindow.isDestroyed()) stationWindow.destroy();

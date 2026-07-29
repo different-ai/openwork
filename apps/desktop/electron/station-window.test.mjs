@@ -3,7 +3,7 @@ import test from "node:test";
 
 import {
   createStationWindowManager,
-  STATION_ACTIVE_SHORTCUTS,
+  stationDecisionCommand,
   STATION_MODE_SHORTCUT,
   stationWindowBounds,
 } from "./station-window.mjs";
@@ -41,6 +41,7 @@ class FakeWindow {
   restore() {}
   show() { this.hidden = false; }
   focus() { this.focused = true; }
+  blur() { this.focused = false; }
   destroy() { this.destroyed = true; }
   on(name, callback) { this.listeners.set(name, callback); }
 }
@@ -158,7 +159,7 @@ test("re-anchors when cached display geometry no longer matches a live display",
   assert.equal(window.bounds.x + window.bounds.width, 1716);
 });
 
-test("the Station shortcut enters active mode and exposes only temporary history shortcuts", () => {
+test("the Station shortcut enters active mode without registering bare system keys", () => {
   const harness = createHarness();
   const result = harness.manager.initialize();
   assert.deepEqual(result, {
@@ -172,11 +173,17 @@ test("the Station shortcut enters active mode and exposes only temporary history
     "openwork:station:command",
     { type: "set-mode", active: true },
   ]);
-  assert.ok(harness.shortcuts.has(STATION_ACTIVE_SHORTCUTS.previous));
-  assert.ok(harness.shortcuts.has(STATION_ACTIVE_SHORTCUTS.next));
-  assert.ok(harness.shortcuts.has(STATION_ACTIVE_SHORTCUTS.handoff));
-  assert.ok(harness.shortcuts.has(STATION_ACTIVE_SHORTCUTS.dismiss));
+  assert.deepEqual([...harness.shortcuts.keys()], [STATION_MODE_SHORTCUT]);
   assert.equal(FakeWindow.instances[0]?.hidden, false);
+  assert.notEqual(FakeWindow.instances[0]?.focused, true);
+  const inputHandler = FakeWindow.instances[0]?.listeners.get("web:before-input-event");
+  let prevented = false;
+  inputHandler?.({ preventDefault: () => { prevented = true; } }, { type: "keyDown", key: "Enter" });
+  assert.equal(prevented, false);
+  assert.deepEqual(harness.mainSent.at(-1), [
+    "openwork:station:command",
+    { type: "set-mode", active: true },
+  ]);
 });
 
 test("Station stays dormant until enabled and repeated enablement keeps one shortcut", () => {
@@ -191,30 +198,46 @@ test("Station stays dormant until enabled and repeated enablement keeps one shor
   );
 });
 
-test("active shortcuts navigate cards and the Station shortcut releases the modal keys", () => {
+test("focused Station decisions navigate cards without swallowing keys system-wide", () => {
   const harness = createHarness();
   harness.manager.initialize();
   harness.manager.setEnabled(true);
+  harness.manager.publishState({
+    suggestions: [{ id: "first" }, { id: "second" }],
+  });
   harness.shortcuts.get(STATION_MODE_SHORTCUT)?.();
-  harness.shortcuts.get(STATION_ACTIVE_SHORTCUTS.previous)?.();
-  harness.shortcuts.get(STATION_ACTIVE_SHORTCUTS.next)?.();
-  harness.shortcuts.get(STATION_ACTIVE_SHORTCUTS.handoff)?.();
-  harness.shortcuts.get(STATION_ACTIVE_SHORTCUTS.dismiss)?.();
+  assert.equal(FakeWindow.instances[0]?.focused, true);
+  const inputHandler = FakeWindow.instances[0]?.listeners.get("web:before-input-event");
+  const prevented = [];
+  const event = { preventDefault: () => prevented.push(true) };
+  inputHandler?.(event, { type: "keyDown", key: "ArrowLeft" });
+  inputHandler?.(event, { type: "keyDown", key: "ArrowRight" });
+  inputHandler?.(event, { type: "keyDown", key: "Enter" });
+  inputHandler?.(event, { type: "keyDown", key: "Escape" });
   assert.deepEqual(harness.mainSent.slice(-4), [
     ["openwork:station:command", { type: "previous" }],
     ["openwork:station:command", { type: "next" }],
     ["openwork:station:command", { type: "handoff" }],
     ["openwork:station:command", { type: "dismiss" }],
   ]);
+  assert.equal(prevented.length, 4);
+  assert.equal(FakeWindow.instances[0]?.focused, false);
   harness.shortcuts.get(STATION_MODE_SHORTCUT)?.();
   assert.deepEqual(harness.mainSent.at(-1), [
     "openwork:station:command",
     { type: "set-mode", active: false },
   ]);
-  assert.equal(harness.shortcuts.has(STATION_ACTIVE_SHORTCUTS.previous), false);
-  assert.equal(harness.shortcuts.has(STATION_ACTIVE_SHORTCUTS.next), false);
-  assert.equal(harness.shortcuts.has(STATION_ACTIVE_SHORTCUTS.handoff), false);
-  assert.equal(harness.shortcuts.has(STATION_ACTIVE_SHORTCUTS.dismiss), false);
+  assert.deepEqual([...harness.shortcuts.keys()], [STATION_MODE_SHORTCUT]);
+});
+
+test("ignores decision keys outside a focused unmodified key press", () => {
+  assert.equal(stationDecisionCommand({ type: "keyDown", key: "Enter", meta: true }), null);
+  assert.equal(stationDecisionCommand({ type: "keyDown", key: "Enter", isAutoRepeat: true }), null);
+  assert.equal(stationDecisionCommand({ type: "keyUp", key: "Enter" }), null);
+  assert.deepEqual(
+    stationDecisionCommand({ type: "keyDown", key: "ArrowLeft" }),
+    { type: "previous" },
+  );
 });
 
 test("publishes bounded state to the Station window", () => {
