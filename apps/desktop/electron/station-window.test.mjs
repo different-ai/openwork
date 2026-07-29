@@ -132,6 +132,32 @@ test("keeps the original display anchor and never delegates resizing animation t
   assert.equal(window.boundsCalls.at(-1)?.animate, false);
 });
 
+test("re-anchors when cached display geometry no longer matches a live display", () => {
+  let staleAnchor = false;
+  const disconnectedDisplay = {
+    id: 41,
+    workArea: { x: 0, y: 0, width: 1920, height: 900 },
+  };
+  const liveDisplay = {
+    id: 7,
+    workArea: { x: 0, y: 0, width: 1728, height: 900 },
+  };
+  const harness = createHarness({
+    screen: {
+      getCursorScreenPoint: () => ({ x: 1700, y: 100 }),
+      getDisplayNearestPoint: () => disconnectedDisplay,
+      getDisplayMatching: () => staleAnchor ? liveDisplay : disconnectedDisplay,
+      getPrimaryDisplay: () => liveDisplay,
+    },
+  });
+  harness.manager.initialize();
+  harness.manager.setEnabled(true);
+  staleAnchor = true;
+  harness.manager.setExpanded(true);
+  const window = FakeWindow.instances[0];
+  assert.equal(window.bounds.x + window.bounds.width, 1716);
+});
+
 test("the Station shortcut enters active mode and exposes only temporary history shortcuts", () => {
   const harness = createHarness();
   const result = harness.manager.initialize();

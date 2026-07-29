@@ -83,7 +83,7 @@ kbd {
   right: 12px;
   z-index: 8;
   display: flex;
-  width: 286px;
+  width: min(286px, calc(100% - 24px));
   max-height: 150px;
   flex-direction: column;
   gap: 7px;
@@ -496,7 +496,7 @@ kbd {
 
 .station-pill {
   position: relative;
-  z-index: 7;
+  z-index: 10;
   display: flex;
   width: 34px;
   height: 56px;
@@ -579,7 +579,7 @@ kbd {
 
 .station-caption-toggle {
   position: absolute;
-  z-index: 8;
+  z-index: 11;
   top: calc(50% + 32px);
   right: 20px;
   display: grid;

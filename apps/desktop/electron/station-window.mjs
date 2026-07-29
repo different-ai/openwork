@@ -119,7 +119,26 @@ export function createStationWindowManager(options) {
 
   function applyBounds() {
     if (!stationWindow || stationWindow.isDestroyed()) return;
-    const bounds = stationWindowBounds(activeDisplay(), expanded);
+    let display = activeDisplay();
+    let bounds = stationWindowBounds(display, expanded);
+    try {
+      const matchedDisplay = screen.getDisplayMatching?.(bounds);
+      if (
+        matchedDisplay
+        && matchedDisplay.id !== undefined
+        && display.id !== undefined
+        && matchedDisplay.id !== display.id
+      ) {
+        // Display metrics can change while Station remains enabled (dock/scale
+        // changes, disconnects, or mirrored displays). Re-anchor before the
+        // right-side pill can end up outside the current live work area.
+        anchorDisplay = matchedDisplay;
+        display = matchedDisplay;
+        bounds = stationWindowBounds(display, expanded);
+      }
+    } catch {
+      // Keep the last stable anchor if display discovery is unavailable.
+    }
     // Keep the OS-level frame change instantaneous. The visible rail and card
     // own the animation, so the pointer anchor never drifts during a resize.
     stationWindow.setBounds(bounds, false);
