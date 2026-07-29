@@ -16,6 +16,7 @@ import type {
 } from "@opencode-ai/sdk/v2/client";
 
 import { captureAnalyticsEvent, markTaskRunStart } from "@/app/lib/analytics";
+import { readDenBootstrapConfig } from "@/app/lib/den";
 import { trackSessionActive, trackTaskStarted } from "@/app/lib/den-telemetry";
 import { buildDiagnosticsBundleJson } from "@/app/lib/diagnostics-bundle";
 import { downloadTextAsFile } from "@/app/lib/download";
@@ -134,7 +135,10 @@ import {
 import { useMcpConnectedCount } from "@/react-app/domains/connections/use-mcp-connected-count";
 import { useSessionMcpMaintenance } from "@/react-app/domains/connections/use-session-mcp-maintenance";
 import { useCloudMcpSubmitReadiness } from "@/react-app/domains/connections/use-cloud-mcp-submit-readiness";
-import type { CloudMcpSubmissionResult } from "@/react-app/domains/connections/cloud-mcp-submit-readiness";
+import {
+  cloudMcpSubmissionGatePolicy,
+  type CloudMcpSubmissionResult,
+} from "@/react-app/domains/connections/cloud-mcp-submit-readiness";
 import { useRemoteAccessRestart } from "@/react-app/domains/workspace/remote-access-restart";
 import { RenameWorkspaceModal } from "@/react-app/domains/workspace/rename-workspace-modal";
 import { useRemoteWorkspaceConnectionEditor } from "@/react-app/domains/workspace/use-remote-workspace-connection-editor";
@@ -1169,9 +1173,13 @@ export function SessionRoute() {
         if (!sessionModelSelection && selectedModelUnavailable) throw new Error("Selected model is unavailable. Choose another model before sending.");
 
         return submitWithCloudMcpReadiness({
-          // Temporarily bypass the pre-send Cloud MCP gate: it blocks every
-          // message, including tasks that do not use connected services.
-          skipGate: true,
+          // Only managed installs that explicitly require Den fail closed on
+          // connected-tool readiness. Optional installs and direct shell
+          // execution must never inherit this gate just because auth exists.
+          gatePolicy: cloudMcpSubmissionGatePolicy({
+            mode: draft.mode,
+            denConnectionRequired: readDenBootstrapConfig().requireSignin,
+          }),
           send: async () => {
             captureAnalyticsEvent("task_message_sent", {
               mode: draft.mode ?? "prompt",

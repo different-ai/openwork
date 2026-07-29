@@ -5,6 +5,7 @@ import type {
   OpenworkCloudMcpHealth,
 } from "../src/app/lib/openwork-server";
 import {
+  cloudMcpSubmissionGatePolicy,
   createCloudMcpSubmissionCoordinator,
   decideCloudMcpSubmissionGate,
   ensureCloudMcpSubmissionReadiness,
@@ -153,6 +154,21 @@ function preparation(input: {
 }
 
 describe("Cloud MCP pre-send readiness", () => {
+  test("only prompts from Den-required installs enter the readiness gate", () => {
+    expect(cloudMcpSubmissionGatePolicy({
+      mode: "prompt",
+      denConnectionRequired: true,
+    })).toBe("required");
+    expect(cloudMcpSubmissionGatePolicy({
+      mode: "prompt",
+      denConnectionRequired: false,
+    })).toBe("bypass");
+    expect(cloudMcpSubmissionGatePolicy({
+      mode: "shell",
+      denConnectionRequired: true,
+    })).toBe("bypass");
+  });
+
   test("ready projected tools send immediately", async () => {
     const coordinator = createCloudMcpSubmissionCoordinator();
     const decision = requiredDecision();

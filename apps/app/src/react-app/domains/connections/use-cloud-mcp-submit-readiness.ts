@@ -19,6 +19,7 @@ import {
   IDLE_CLOUD_MCP_SUBMISSION_GATE_STATE,
   resolveCloudMcpSubmissionAuth,
   type CloudMcpSubmissionGateDecision,
+  type CloudMcpSubmissionGatePolicy,
   type CloudMcpSubmissionGateState,
   type CloudMcpSubmissionIssue,
   type CloudMcpSubmissionPreparationResult,
@@ -41,7 +42,7 @@ type UseCloudMcpSubmitReadinessInput = {
 };
 
 type CloudMcpSubmitInput = {
-  skipGate?: boolean;
+  gatePolicy: CloudMcpSubmissionGatePolicy;
   send: () => Promise<void>;
 };
 
@@ -182,7 +183,7 @@ export function useCloudMcpSubmitReadiness(
   const submit = useCallback(async (submission: CloudMcpSubmitInput): Promise<CloudMcpSubmissionResult> => {
     const initialSnapshot = gateSnapshotRef.current;
     const capturedScopeKey = initialSnapshot.decision.scopeKey;
-    const gateRequired = !submission.skipGate && initialSnapshot.decision.mode !== "bypass";
+    const gateRequired = submission.gatePolicy === "required" && initialSnapshot.decision.mode !== "bypass";
     let prepare: (() => Promise<CloudMcpSubmissionPreparationResult>) | undefined;
 
     if (gateRequired) {
