@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import type { DenCloudInstance } from "../src/app/lib/den";
-import { CloudWorkspaceOverlay } from "../src/react-app/shell/cloud-workspace-overlay";
+import { CloudWorkspaceOverlay, CloudWorkspaceStatusPanel } from "../src/react-app/shell/cloud-workspace-overlay";
 import {
   cloudWorkspaceStatusHasReadyContent,
   cloudWorkspaceUpdateAvailable,
@@ -19,6 +19,7 @@ function instance(input: Partial<DenCloudInstance> = {}): DenCloudInstance {
     status: input.status ?? "ready",
     url: input.url ?? "https://workspace.example.test",
     imageVersion: "imageVersion" in input ? input.imageVersion ?? null : "openwork-0.18.8",
+    ...(typeof input.instanceName === "string" ? { instanceName: input.instanceName } : {}),
     latestVersion: "latestVersion" in input ? input.latestVersion ?? null : "openwork-0.18.8",
   };
 }
@@ -32,6 +33,15 @@ describe("cloud workspace overlay state", () => {
     expect(state.statusLine).toBe("Connected · v0.18.8 (latest)");
     expect(state.latestLine).toBe("Latest: v0.18.8 (up to date)");
     expect(state.showUpdate).toBe(false);
+  });
+
+  test("maps a sandbox name to a quiet computer diagnostic line", () => {
+    const state = mapCloudWorkspaceState({
+      instance: instance({ instanceName: "den-daytona-worker-cloud-test" }),
+      updating: false,
+    });
+
+    expect(state.computerLine).toBe("Computer: den-daytona-worker-cloud-test");
   });
 
   test("maps stale and legacy workers to Update available", () => {
@@ -171,5 +181,44 @@ describe("cloud workspace overlay gateway gating", () => {
     });
 
     expect(renderToStaticMarkup(<CloudWorkspaceOverlay />)).toBe("");
+  });
+});
+
+describe("cloud workspace overlay diagnostics", () => {
+  test("renders the computer diagnostic in the expanded panel when present", () => {
+    const viewModel = mapCloudWorkspaceState({
+      instance: instance({ instanceName: "den-daytona-worker-cloud-test" }),
+      updating: false,
+    });
+
+    const html = renderToStaticMarkup(
+      <CloudWorkspaceStatusPanel
+        viewModel={viewModel}
+        updating={false}
+        onRefresh={() => {}}
+        onSignOut={() => {}}
+        onUpdateNow={() => {}}
+      />,
+    );
+
+    expect(html).toContain("Computer: den-daytona-worker-cloud-test");
+    expect(html).toContain("cloud-workspace-computer-line");
+  });
+
+  test("omits the computer diagnostic from the expanded panel when absent", () => {
+    const viewModel = mapCloudWorkspaceState({ instance: instance(), updating: false });
+
+    const html = renderToStaticMarkup(
+      <CloudWorkspaceStatusPanel
+        viewModel={viewModel}
+        updating={false}
+        onRefresh={() => {}}
+        onSignOut={() => {}}
+        onUpdateNow={() => {}}
+      />,
+    );
+
+    expect(html).not.toContain("Computer:");
+    expect(html).not.toContain("cloud-workspace-computer-line");
   });
 });

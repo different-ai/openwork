@@ -13,6 +13,7 @@ export type CloudWorkspaceViewModel = {
   label: string;
   tone: "neutral" | "amber";
   statusLine: string;
+  computerLine: string | null;
   versionLine: string;
   latestLine: string;
   backupsLine: string;
@@ -84,7 +85,9 @@ function baseLines(instance: DenCloudInstance | null, updateAvailable: boolean) 
   const version = versionDisplay(instance);
   const latest = latestDisplay(instance);
   const latestSuffix = !updateAvailable && instance?.latestVersion ? " (up to date)" : "";
+  const instanceName = instance?.instanceName?.trim() ?? "";
   return {
+    computerLine: instanceName ? `Computer: ${instanceName}` : null,
     versionLine: `Version: ${version}`,
     latestLine: `Latest: ${latest}${latestSuffix}`,
     backupsLine: "Backups on",

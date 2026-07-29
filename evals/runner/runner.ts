@@ -5,7 +5,7 @@ import { connect, debuggerUrlFor, pickAppTarget } from "./cdp.ts";
 import { EvalContext } from "./context.ts";
 import { SurfaceRegistry } from "./surfaces.ts";
 import { checkVoiceoverCoverage, loadVoiceoverParagraphs } from "./voiceover.ts";
-import type { EvalMode, Evidence, FlowDefinition, FlowResult, LoadedFlow, StepResult } from "./flow.ts";
+import type { EvalMode, Evidence, FlowDefinition, FlowResult, FlowStatus, LoadedFlow, SoakFailure, SoakSummary, StepResult } from "./flow.ts";
 import type { CdpClient } from "./cdp.ts";
 import type { EnvManifest } from "./env-manifest.ts";
 import type { Host } from "./hosts/types.ts";
@@ -92,9 +92,99 @@ export interface RunFlowOptions {
   hosts?: Map<string, Host>;
   defaultHostKind?: string;
   manifest?: EnvManifest | null;
+  artifactFlowId?: string;
 }
 
-export async function runFlow(flow: FlowDefinition, { cdpBaseUrl, outDir, env, mode, hosts, defaultHostKind, manifest = null }: RunFlowOptions): Promise<FlowResult> {
+export interface RunFlowRepeatedOptions extends RunFlowOptions {
+  repeat: number;
+  runStamp: string;
+}
+
+export interface RunFlowRepeatedResult {
+  results: FlowResult[];
+  summary: SoakSummary;
+}
+
+function sanitizeRunStamp(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-|-$/g, "") || "run";
+}
+
+function iterationEnv(env: NodeJS.ProcessEnv, runStamp: string, iteration: number): NodeJS.ProcessEnv {
+  return {
+    ...env,
+    OPENWORK_EVAL_RUNSTAMP: `${sanitizeRunStamp(runStamp)}-${iteration}`,
+  };
+}
+
+export function shouldKeepIterationFrames(iteration: number, status: FlowStatus): boolean {
+  return iteration === 1 || status === "failed";
+}
+
+function overallStatus(counts: Record<FlowStatus, number>): FlowStatus {
+  if (counts.failed > 0) return "failed";
+  if (counts.passed > 0) return "passed";
+  return "skipped";
+}
+
+function firstFailure(result: FlowResult, iteration: number): SoakFailure | null {
+  for (const step of result.steps) {
+    if (step.status === "failed") {
+      return { iteration, step: step.name, error: step.error };
+    }
+  }
+  return result.status === "failed" ? { iteration, step: null, error: result.skipReason } : null;
+}
+
+function labelIteration(result: FlowResult, iteration: number, repeat: number): FlowResult {
+  return {
+    ...result,
+    id: `${result.id}#${iteration}`,
+    title: `${result.title} (iteration ${iteration}/${repeat})`,
+  };
+}
+
+export async function runFlowRepeated(flow: FlowDefinition, options: RunFlowRepeatedOptions): Promise<RunFlowRepeatedResult> {
+  const { repeat, runStamp, ...runOptions } = options;
+  if (!Number.isInteger(repeat) || repeat < 1) throw new Error(`repeat must be an integer >= 1, got ${repeat}.`);
+  const counts: Record<FlowStatus, number> = { passed: 0, failed: 0, skipped: 0 };
+  const failures: SoakFailure[] = [];
+  const capturedIterations: number[] = [];
+  const results: FlowResult[] = [];
+  const startedAt = Date.now();
+
+  for (let iteration = 1; iteration <= repeat; iteration += 1) {
+    const result = await runFlow(flow, {
+      ...runOptions,
+      env: iterationEnv(runOptions.env, runStamp, iteration),
+      artifactFlowId: repeat > 1 ? `${flow.id}-iteration-${iteration}` : runOptions.artifactFlowId,
+    });
+    counts[result.status] += 1;
+    const failure = firstFailure(result, iteration);
+    if (failure) failures.push(failure);
+    if (shouldKeepIterationFrames(iteration, result.status)) {
+      capturedIterations.push(iteration);
+      results.push(repeat > 1 ? labelIteration(result, iteration, repeat) : result);
+    }
+  }
+
+  return {
+    results,
+    summary: {
+      flowId: flow.id,
+      title: flow.title,
+      repeat,
+      status: overallStatus(counts),
+      passed: counts.passed,
+      failed: counts.failed,
+      skipped: counts.skipped,
+      durationMs: Date.now() - startedAt,
+      capturedIterations,
+      failures,
+    },
+  };
+}
+
+export async function runFlow(flow: FlowDefinition, { cdpBaseUrl, outDir, env, mode, hosts, defaultHostKind, manifest = null, artifactFlowId }: RunFlowOptions): Promise<FlowResult> {
   const result: FlowResult = {
     id: flow.id,
     title: flow.title,
@@ -135,7 +225,7 @@ export async function runFlow(flow: FlowDefinition, { cdpBaseUrl, outDir, env, m
       },
     })
     : null;
-  ctx = new EvalContext({ client, outDir, flowId: flow.id, env, cdpBaseUrl, surfaces: registry });
+  ctx = new EvalContext({ client, outDir, flowId: artifactFlowId ?? flow.id, env, cdpBaseUrl, surfaces: registry });
   for (const line of pendingRegistryLogs) ctx.log(line);
 
   try {

@@ -108,6 +108,71 @@ export function classifyRouteSessionReadError(error: unknown): "not-found" | "re
   return "error";
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isOpenworkWorkspaceArray(value: unknown): value is OpenworkWorkspaceInfo[] {
+  return Array.isArray(value);
+}
+
+function routeListActiveId(list: unknown) {
+  if (!isRecord(list)) return null;
+  return typeof list.activeId === "string" ? list.activeId.trim() || null : null;
+}
+
+export type RouteWorkspaceListState = {
+  activeId: string | null;
+  error: unknown | null;
+  usable: boolean;
+  workspaces: RouteWorkspace[];
+};
+
+export function resolveRouteWorkspaceListState(input: {
+  list: unknown;
+  desktopWorkspaces: RouteWorkspace[];
+  previousWorkspaces: RouteWorkspace[];
+  orderIds: string[];
+}): RouteWorkspaceListState {
+  const serverItems = isRecord(input.list) && isOpenworkWorkspaceArray(input.list.items) ? input.list.items : null;
+  const workspaces = serverItems
+    ? mergeRouteWorkspaces(serverItems, input.desktopWorkspaces)
+    : input.previousWorkspaces.length > 0
+      ? input.previousWorkspaces
+      : input.desktopWorkspaces;
+
+  return {
+    activeId: routeListActiveId(input.list),
+    error: null,
+    usable: serverItems !== null,
+    workspaces: orderRouteWorkspaces(workspaces, input.orderIds),
+  };
+}
+
+export async function refreshRouteWorkspaceListState(input: {
+  load: () => Promise<unknown>;
+  desktopWorkspaces: RouteWorkspace[];
+  previousWorkspaces: RouteWorkspace[];
+  orderIds: string[];
+}): Promise<RouteWorkspaceListState> {
+  try {
+    return resolveRouteWorkspaceListState({
+      list: await input.load(),
+      desktopWorkspaces: input.desktopWorkspaces,
+      previousWorkspaces: input.previousWorkspaces,
+      orderIds: input.orderIds,
+    });
+  } catch (error) {
+    const state = resolveRouteWorkspaceListState({
+      list: null,
+      desktopWorkspaces: input.desktopWorkspaces,
+      previousWorkspaces: input.previousWorkspaces,
+      orderIds: input.orderIds,
+    });
+    return { ...state, error };
+  }
+}
+
 export function describeWorkspaceCreateError(error: unknown) {
   const message = describeRouteError(error);
   const lower = message.toLowerCase();
@@ -122,9 +187,10 @@ export function describeWorkspaceCreateError(error: unknown) {
 }
 
 export function mergeRouteWorkspaces(
-  serverWorkspaces: OpenworkWorkspaceInfo[],
+  serverWorkspaces: unknown,
   desktopWorkspaces: RouteWorkspace[],
 ): RouteWorkspace[] {
+  const serverWorkspaceList = isOpenworkWorkspaceArray(serverWorkspaces) ? serverWorkspaces : [];
   const desktopById = new Map(desktopWorkspaces.map((workspace) => [workspace.id, workspace]));
   const desktopByPath = new Map(
     desktopWorkspaces.flatMap((workspace) => {
@@ -142,7 +208,7 @@ export function mergeRouteWorkspaces(
   const remoteDesktopIds = new Set(
     desktopWorkspaces.flatMap((workspace) => workspace.workspaceType === "remote" ? [workspace.id] : []),
   );
-  const filteredServer = serverWorkspaces.filter((workspace) => !remoteDesktopIds.has(workspace.id));
+  const filteredServer = serverWorkspaceList.filter((workspace) => !remoteDesktopIds.has(workspace.id));
 
   const mergedServer = filteredServer.map((workspace) => {
     const match =

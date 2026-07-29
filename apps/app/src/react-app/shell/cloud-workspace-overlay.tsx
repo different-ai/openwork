@@ -271,6 +271,57 @@ export function CloudWorkspaceBootTakeover(props: { decision: CloudWorkspaceMain
   );
 }
 
+export function CloudWorkspaceStatusPanel(props: {
+  viewModel: CloudWorkspaceViewModel;
+  updating: boolean;
+  onRefresh: () => void;
+  onSignOut: () => void;
+  onUpdateNow: () => void;
+}) {
+  const { viewModel } = props;
+  return (
+    <>
+      <div className="space-y-1">
+        <p className="text-sm font-medium" data-testid="cloud-workspace-status-line">
+          {viewModel.statusLine}
+        </p>
+        {viewModel.computerLine ? (
+          <p
+            className="select-all break-all text-xs text-muted-foreground"
+            data-testid="cloud-workspace-computer-line"
+            title="Select and copy for support"
+          >
+            {viewModel.computerLine}
+          </p>
+        ) : null}
+        <p className="text-xs text-muted-foreground">{viewModel.versionLine}</p>
+        <p className="text-xs text-muted-foreground">{viewModel.latestLine}</p>
+        <p className="text-xs text-muted-foreground">{viewModel.backupsLine}</p>
+      </div>
+      {viewModel.showUpdate ? (
+        <div className="rounded-2xl border border-border bg-muted/30 p-3">
+          <Button type="button" size="sm" className="w-full" onClick={props.onUpdateNow} disabled={props.updating}>
+            Update now
+          </Button>
+          <p className="mt-2 text-xs text-muted-foreground">
+            Takes about 30 seconds. Your files and sessions come along.
+          </p>
+        </div>
+      ) : null}
+      <div className="flex items-center justify-end gap-2">
+        {viewModel.showRetry ? (
+          <Button type="button" size="sm" variant="outline" onClick={props.onRefresh}>
+            Retry
+          </Button>
+        ) : null}
+        <Button type="button" size="sm" variant="ghost" onClick={props.onSignOut}>
+          Sign out
+        </Button>
+      </div>
+    </>
+  );
+}
+
 function CloudWorkspaceOverlayInner() {
   const cloudWorkspace = useCloudWorkspaceStatus();
   const [open, setOpen] = useState(false);
@@ -302,37 +353,16 @@ function CloudWorkspaceOverlayInner() {
           }
         />
         <PopoverContent align="end" side="top" sideOffset={8} className="w-80 gap-3 p-4">
-          <div className="space-y-1">
-            <p className="text-sm font-medium" data-testid="cloud-workspace-status-line">
-              {viewModel.statusLine}
-            </p>
-            <p className="text-xs text-muted-foreground">{viewModel.versionLine}</p>
-            <p className="text-xs text-muted-foreground">{viewModel.latestLine}</p>
-            <p className="text-xs text-muted-foreground">{viewModel.backupsLine}</p>
-          </div>
-          {viewModel.showUpdate ? (
-            <div className="rounded-2xl border border-border bg-muted/30 p-3">
-              <Button type="button" size="sm" className="w-full" onClick={cloudWorkspace.updateNow} disabled={cloudWorkspace.updating}>
-                Update now
-              </Button>
-              <p className="mt-2 text-xs text-muted-foreground">
-                Takes about 30 seconds. Your files and sessions come along.
-              </p>
-            </div>
-          ) : null}
-          <div className="flex items-center justify-end gap-2">
-            {viewModel.showRetry ? (
-              <Button type="button" size="sm" variant="outline" onClick={() => void cloudWorkspace.refresh()}>
-                Retry
-              </Button>
-            ) : null}
-            <Button type="button" size="sm" variant="ghost" onClick={() => {
+          <CloudWorkspaceStatusPanel
+            viewModel={viewModel}
+            updating={cloudWorkspace.updating}
+            onRefresh={() => void cloudWorkspace.refresh()}
+            onUpdateNow={cloudWorkspace.updateNow}
+            onSignOut={() => {
               cloudWorkspace.signOut();
               setOpen(false);
-            }}>
-              Sign out
-            </Button>
-          </div>
+            }}
+          />
         </PopoverContent>
       </Popover>
     </div>

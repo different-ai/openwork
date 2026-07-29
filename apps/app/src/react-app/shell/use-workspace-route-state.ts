@@ -47,8 +47,8 @@ import {
   describeRouteError,
   isTransientStartupError,
   mapDesktopWorkspace,
-  mergeRouteWorkspaces,
   orderRouteWorkspaces,
+  refreshRouteWorkspaceListState,
   type RouteSession,
   type RouteWorkspace,
 } from "./route-workspaces";
@@ -429,11 +429,25 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
         token: resolvedToken,
         hostToken: resolvedHostToken || undefined,
       });
-      const list = await withRouteRefreshTimeout(openworkClient.listWorkspaces(), "Workspace list");
-      const nextWorkspaces = orderRouteWorkspaces(
-        mergeRouteWorkspaces(list.items, desktopWorkspaces),
-        workspaceOrderIdsRef.current,
-      );
+      const workspaceListState = await refreshRouteWorkspaceListState({
+        load: () => withRouteRefreshTimeout(openworkClient.listWorkspaces(), "Workspace list"),
+        desktopWorkspaces,
+        previousWorkspaces: workspacesRef.current,
+        orderIds: workspaceOrderIdsRef.current,
+      });
+      if (!workspaceListState.usable || workspaceListState.error) {
+        const message = workspaceListState.error
+          ? describeRouteError(workspaceListState.error)
+          : "Workspace list response did not include items.";
+        console.warn("[session-route] workspace list degraded", workspaceListState.error ?? message);
+        recordInspectorEvent("route.workspace_list.degraded", {
+          route: "session",
+          message,
+          preservedWorkspaceCount: workspacesRef.current.length,
+        });
+        setRouteError(message);
+      }
+      const nextWorkspaces = workspaceListState.workspaces;
 
       // Preserve any sessions we already have cached so switching routes
       // doesn't erase the sidebar while we refetch.
@@ -454,7 +468,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
           ? persistedActiveId
           : "") ||
         resolveWorkspaceListSelectedId(desktopList) ||
-        list.activeId?.trim() ||
+        workspaceListState.activeId ||
         nextWorkspaces[0]?.id ||
         "";
       if (workspaceInferenceSessionId) {
@@ -494,7 +508,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
       // OpenCode engine bound to it re-reads opencode.jsonc and applies
       // permissions. Fire-and-forget; the route is idempotent and any
       // transport failure is non-fatal. See issue #870.
-      if (nextWorkspaceId && list.activeId !== nextWorkspaceId && !launchActivatedWorkspaceIdsRef.current.has(nextWorkspaceId)) {
+      if (nextWorkspaceId && workspaceListState.activeId !== nextWorkspaceId && !launchActivatedWorkspaceIdsRef.current.has(nextWorkspaceId)) {
         launchActivatedWorkspaceIdsRef.current.add(nextWorkspaceId);
         const nextWorkspace = nextWorkspaces.find((workspace) => workspace.id === nextWorkspaceId) ?? null;
         const nextEndpoint = routeWorkspaceServerClientResolver(nextWorkspace);
