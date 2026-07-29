@@ -11,8 +11,10 @@ export const STATION_EXPANDED_BOUNDS = Object.freeze({ width: 440, height: 420 }
 
 const ALLOWED_COMMANDS = new Set([
   "activate",
+  "approve-goal",
   "clear-transcript",
   "dismiss",
+  "dismiss-goal",
   "handoff",
   "hide",
   "next",
@@ -20,6 +22,7 @@ const ALLOWED_COMMANDS = new Set([
   "select",
   "seed-demo",
   "set-mode",
+  "set-transcript-record",
   "start",
   "stop",
   "toggle-listening",
@@ -34,6 +37,7 @@ function normalizeCommand(value) {
   const command = { type: value.type };
   if (typeof value.id === "string" && value.id.trim()) command.id = value.id.trim().slice(0, 200);
   if (value.type === "set-mode") command.active = value.active === true;
+  if (value.type === "set-transcript-record") command.enabled = value.enabled === true;
   return command;
 }
 
@@ -89,6 +93,8 @@ export function createStationWindowManager(options) {
     partialTranscript: "",
     suggestions: [],
     selectedId: null,
+    goal: null,
+    transcriptRecordEnabled: true,
     source: null,
     error: null,
   };

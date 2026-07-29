@@ -7,6 +7,7 @@ import {
   Captions,
   CornerDownLeft,
   Eraser,
+  FileText,
   Mic,
   MicOff,
   X,
@@ -42,6 +43,7 @@ function transcriptTail(value: string, limit = 320) {
 function StationApp() {
   const [state, setState] = useState<StationState>(INITIAL_STATION_STATE);
   const [showDeveloperTranscript, setShowDeveloperTranscript] = useState(false);
+  const [suppressedGoalId, setSuppressedGoalId] = useState<string | null>(null);
   const selected = useMemo(
     () => state.suggestions.find((suggestion) => suggestion.id === state.selectedId)
       ?? state.suggestions[0]
@@ -50,10 +52,13 @@ function StationApp() {
   );
   const active = state.interactionMode === "active";
   const processing = isProcessing(state.runtime.phase);
-  const cardVisible = active && selected !== null;
+  const goal = state.goal ?? null;
+  const cardVisible = active && selected !== null && goal === null;
   const developerTranscriptAvailable = import.meta.env.DEV;
+  const goalRequestsTranscript = goal !== null && goal.id !== suppressedGoalId;
+  const transcriptExpanded = showDeveloperTranscript || goalRequestsTranscript;
   const captionVisible = developerTranscriptAvailable
-    && showDeveloperTranscript
+    && transcriptExpanded
     && !cardVisible;
   const completedCaption = transcriptTail(state.transcript);
   const partialCaption = transcriptTail(state.partialTranscript, 180);
@@ -80,9 +85,9 @@ function StationApp() {
 
   useEffect(() => {
     void window.__OPENWORK_STATION__?.setExpanded?.(
-      cardVisible || (developerTranscriptAvailable && showDeveloperTranscript),
+      cardVisible || (developerTranscriptAvailable && transcriptExpanded),
     );
-  }, [cardVisible, developerTranscriptAvailable, showDeveloperTranscript]);
+  }, [cardVisible, developerTranscriptAvailable, transcriptExpanded]);
 
   useEffect(() => {
     if (cardVisible && selected) {
@@ -116,6 +121,19 @@ function StationApp() {
             <div>
               <button
                 type="button"
+                aria-label={`${state.transcriptRecordEnabled ? "Disable" : "Enable"} transcript attachment for Station-started tasks`}
+                aria-pressed={state.transcriptRecordEnabled}
+                title={`${state.transcriptRecordEnabled ? "Attached" : "Not attached"} when starting a task`}
+                className={state.transcriptRecordEnabled ? "is-on" : ""}
+                onClick={() => sendCommand({
+                  type: "set-transcript-record",
+                  enabled: !state.transcriptRecordEnabled,
+                })}
+              >
+                <FileText size={10} />
+              </button>
+              <button
+                type="button"
                 aria-label="Clear captured transcript"
                 title="Clear transcript"
                 disabled={!completedCaption && !partialCaption}
@@ -127,7 +145,10 @@ function StationApp() {
                 type="button"
                 aria-label="Hide live transcript"
                 title="Hide transcript"
-                onClick={() => setShowDeveloperTranscript(false)}
+                onClick={() => {
+                  setShowDeveloperTranscript(false);
+                  if (goal) setSuppressedGoalId(goal.id);
+                }}
               >
                 <X size={10} />
               </button>
@@ -140,6 +161,34 @@ function StationApp() {
               ? <em>Listening for clear speech…</em>
               : null}
           </p>
+          {goal ? (
+            <aside className="station-goal" data-status={goal.status} aria-label="Station intentional goal">
+              <div>
+                <span>{goal.status === "researching" ? "Working" : "I’ll"}</span>
+                <strong>{goal.title}</strong>
+              </div>
+              <p>{goal.summary}</p>
+              {goal.status === "proposed" ? (
+                <footer>
+                  <button
+                    type="button"
+                    onClick={() => sendCommand({ type: "dismiss-goal", id: goal.id })}
+                  >
+                    No
+                  </button>
+                  <button
+                    type="button"
+                    className="is-primary"
+                    onClick={() => sendCommand({ type: "approve-goal", id: goal.id })}
+                  >
+                    Yes
+                  </button>
+                </footer>
+              ) : (
+                <span className="station-goal-progress">Researching while listening…</span>
+              )}
+            </aside>
+          ) : null}
           <footer>
             <span>{state.runtime.phase.replaceAll("_", " ")}</span>
             <span>
@@ -182,7 +231,7 @@ function StationApp() {
                 <p>{presented.sources[0]?.label}</p>
               </div>
             ) : (
-              <div className="station-evidence is-local">Local context</div>
+              <div className="station-evidence is-local">Live conversation</div>
             )}
 
             {state.error ? <div className="station-error">{state.error}</div> : null}
@@ -250,10 +299,18 @@ function StationApp() {
       {developerTranscriptAvailable ? (
         <button
           type="button"
-          className={`station-caption-toggle ${showDeveloperTranscript ? "is-on" : ""}`}
-          aria-label={`${showDeveloperTranscript ? "Hide" : "Show"} live development transcript`}
-          title={`${showDeveloperTranscript ? "Hide" : "Show"} live transcript`}
-          onClick={() => setShowDeveloperTranscript((current) => !current)}
+          className={`station-caption-toggle ${transcriptExpanded ? "is-on" : ""}`}
+          aria-label={`${transcriptExpanded ? "Hide" : "Show"} live development transcript`}
+          title={`${transcriptExpanded ? "Hide" : "Show"} live transcript`}
+          onClick={() => {
+            if (transcriptExpanded) {
+              setShowDeveloperTranscript(false);
+              if (goal) setSuppressedGoalId(goal.id);
+              return;
+            }
+            setSuppressedGoalId(null);
+            setShowDeveloperTranscript(true);
+          }}
         >
           <Captions size={12} strokeWidth={1.6} />
         </button>

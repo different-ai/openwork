@@ -277,3 +277,30 @@ test("forwards the development transcript reset without adding native behavior",
     { type: "clear-transcript" },
   ]);
 });
+
+test("forwards intentional goal approval and dismissal to the listening agent", () => {
+  const harness = createHarness();
+  harness.manager.initialize();
+  harness.manager.setEnabled(true);
+  harness.manager.forwardCommand({ type: "approve-goal", id: "goal-1" });
+  assert.deepEqual(harness.mainSent.at(-1), [
+    "openwork:station:command",
+    { type: "approve-goal", id: "goal-1" },
+  ]);
+  harness.manager.forwardCommand({ type: "dismiss-goal", id: "goal-1" });
+  assert.deepEqual(harness.mainSent.at(-1), [
+    "openwork:station:command",
+    { type: "dismiss-goal", id: "goal-1" },
+  ]);
+});
+
+test("forwards the transcript-record preference without persisting transcript content natively", () => {
+  const harness = createHarness();
+  harness.manager.initialize();
+  harness.manager.setEnabled(true);
+  harness.manager.forwardCommand({ type: "set-transcript-record", enabled: false });
+  assert.deepEqual(harness.mainSent.at(-1), [
+    "openwork:station:command",
+    { type: "set-transcript-record", enabled: false },
+  ]);
+});

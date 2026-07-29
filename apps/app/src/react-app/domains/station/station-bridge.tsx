@@ -17,12 +17,15 @@ import type {
 import { recordInspectorEvent, publishInspectorSlice } from "@/app/lib/app-inspector";
 import { useControlAction, type OpenworkControlAction } from "@/react-app/shell/control/control-provider";
 import { stationDismissal, stationHistorySelection } from "./station-history";
-import { buildStationThreadHandoff } from "./station-handoff";
+import { stationGoalVoiceDecision } from "./station-goal";
+import { buildStationThreadHandoff, type StationThreadHandoff } from "./station-handoff";
+import { createLiveConversationSuggestion } from "./station-live-suggestion";
 import { rankStationSuggestions } from "./station-relevance";
 import {
   INITIAL_STATION_STATE,
   isStationCommand,
   type StationCommand,
+  type StationGoal,
   type StationScenarioRuntime,
   type StationState,
 } from "./station-types";
@@ -50,7 +53,7 @@ type OpenWorkStationBridgeProps = {
   client: OpenworkServerClient | null;
   workspaceId: string | null;
   sessionId: string | null;
-  onCreateThread: (prompt: string) => Promise<string | null>;
+  onCreateThread: (handoff: StationThreadHandoff) => Promise<string | null>;
 };
 
 type FixturePlayback = {
@@ -72,6 +75,15 @@ const realtime = {
   energyFrame: null as number | null,
   transcript: new StationTranscriptAccumulator(),
   requestedToolCalls: new Set<string>(),
+  scoutTimer: null as number | null,
+  scoutInFlight: false,
+  responseInFlight: false,
+  lastScoutText: "",
+  lastScoutCharacterCount: 0,
+  lastScoutAt: 0,
+  pendingScoutText: "",
+  pendingScoutCharacterCount: 0,
+  handledGoals: [] as string[],
   fixturePlayback: null as FixturePlayback | null,
 };
 
@@ -316,8 +328,23 @@ async function requestMicrophonePermission() {
   return result.platform !== "darwin" || result.granted;
 }
 
+function opportunityScoutPrompt(context: string, handledGoals = realtime.handledGoals) {
+  return [
+    "[OpenWork Station opportunity scout]",
+    "The user may still be speaking. Silently inspect this interim live context without waiting for end-of-turn.",
+    "If there is exactly one concrete, non-speculative opportunity worth pursuing now, call propose_research_goal or propose_openwork_thread. Prefer a stable decision, blocker, commitment, named-context lookup, meeting-preparation need, or explicit request to continue the work.",
+    "If the sentence is incomplete, the signal is vague, or the same goal is already pending or was recently handled, use no tool and output nothing. Never speak.",
+    handledGoals.length
+      ? `Recently approved or rejected goals (do not repeat): ${handledGoals.slice(-6).join(" · ")}`
+      : "",
+    "",
+    context,
+  ].filter(Boolean).join("\n");
+}
+
 function disconnectRealtime() {
   if (realtime.energyFrame !== null) window.cancelAnimationFrame(realtime.energyFrame);
+  if (realtime.scoutTimer !== null) window.clearTimeout(realtime.scoutTimer);
   try { realtime.session?.close(); } catch {}
   try { realtime.stream?.getTracks().forEach((track) => track.stop()); } catch {}
   try { void realtime.audioContext?.close(); } catch {}
@@ -329,6 +356,15 @@ function disconnectRealtime() {
   realtime.energyFrame = null;
   realtime.transcript.reset();
   realtime.requestedToolCalls.clear();
+  realtime.scoutTimer = null;
+  realtime.scoutInFlight = false;
+  realtime.responseInFlight = false;
+  realtime.lastScoutText = "";
+  realtime.lastScoutCharacterCount = 0;
+  realtime.lastScoutAt = 0;
+  realtime.pendingScoutText = "";
+  realtime.pendingScoutCharacterCount = 0;
+  realtime.handledGoals = [];
   realtime.fixturePlayback = null;
 }
 
@@ -506,6 +542,109 @@ export function OpenWorkStationBridge(props: OpenWorkStationBridgeProps) {
     updateState,
   ]);
 
+  const proposeGoal = useCallback((
+    input: Pick<StationGoal, "kind" | "title" | "summary" | "reason" | "focus">,
+  ) => {
+    const existing = stateRef.current.goal;
+    if (existing) return existing;
+    const createdAt = Date.now();
+    const title = input.title.trim().replace(/\s+/g, " ").slice(0, 100);
+    const goal: StationGoal = {
+      id: `station-goal-${createdAt}-${input.kind}`,
+      kind: input.kind,
+      title: title || (input.kind === "research" ? "look into this context" : "continue this work"),
+      summary: input.summary.trim().replace(/\s+/g, " ").slice(0, 320),
+      reason: input.reason.trim().replace(/\s+/g, " ").slice(0, 220),
+      ...(input.focus ? { focus: input.focus } : {}),
+      status: "proposed",
+      createdAt,
+    };
+    updateState((current) => ({
+      ...current,
+      visible: true,
+      goal,
+      error: null,
+    }));
+    void window.__OPENWORK_ELECTRON__?.station?.show?.();
+    return goal;
+  }, [updateState]);
+
+  const dismissGoal = useCallback(() => {
+    const goal = stateRef.current.goal;
+    if (!goal) return { ok: false, reason: "No Station goal is waiting." };
+    const context = [transcriptRef.current.trim(), stateRef.current.partialTranscript.trim()]
+      .filter(Boolean)
+      .join("\n")
+      .slice(-4_000);
+    realtime.handledGoals = [...realtime.handledGoals, goal.title].slice(-6);
+    realtime.lastScoutAt = Date.now();
+    realtime.lastScoutText = context;
+    realtime.lastScoutCharacterCount = context.length;
+    realtime.pendingScoutText = context;
+    realtime.pendingScoutCharacterCount = context.length;
+    if (realtime.scoutTimer !== null) window.clearTimeout(realtime.scoutTimer);
+    realtime.scoutTimer = null;
+    updateState((current) => ({
+      ...current,
+      goal: null,
+      error: null,
+    }));
+    transitionRuntime({ type: "decision_completed" });
+    return { ok: true, goalId: goal.id, decision: "dismissed" };
+  }, [transitionRuntime, updateState]);
+
+  const approveGoal = useCallback(async () => {
+    const goal = stateRef.current.goal;
+    if (!goal) return { ok: false, reason: "No Station goal is waiting." };
+    const transcript = transcriptRef.current.trim();
+    if (!transcript) return { ok: false, reason: "No meaningful live transcript is available." };
+    realtime.handledGoals = [...realtime.handledGoals, goal.title].slice(-6);
+    updateState((current) => ({
+      ...current,
+      goal: current.goal ? { ...current.goal, status: "researching" } : null,
+      error: null,
+    }));
+    if (goal.kind === "thread") {
+      const suggestion = createLiveConversationSuggestion({
+        title: goal.title,
+        summary: goal.summary,
+        reason: goal.reason,
+      });
+      updateState((current) => ({
+        ...current,
+        interactionMode: "active",
+        visible: true,
+        suggestions: rankStationSuggestions(current.suggestions, [suggestion], transcript),
+        selectedId: suggestion.id,
+        goal: null,
+        source: "local-signal",
+        error: null,
+      }));
+      transitionRuntime({ type: "suggestions_published", count: 1 });
+      observeLifecycle("station.suggestions_published", {
+        id: suggestion.id,
+        suggestionCount: 1,
+        resultCategory: "approved-live-thread",
+        sourceCategory: "local-signal",
+      });
+      await window.__OPENWORK_ELECTRON__?.station?.show?.();
+      return { ok: true, goalId: goal.id, suggestionId: suggestion.id };
+    }
+    const result = await analyzeTranscript(transcript);
+    const hasSuggestions = result.ok
+      && typeof result.suggestionCount === "number"
+      && result.suggestionCount > 0;
+    updateState((current) => ({
+      ...current,
+      interactionMode: hasSuggestions ? "active" : current.interactionMode,
+      selectedId: hasSuggestions
+        ? current.suggestions[0]?.id ?? current.selectedId
+        : current.selectedId,
+      goal: null,
+    }));
+    return { ...result, goalId: goal.id };
+  }, [analyzeTranscript, observeLifecycle, transitionRuntime, updateState]);
+
   const scanScenario = useCallback(async (args: unknown) => {
     const transcript = isRecord(args) && typeof args.transcript === "string"
       ? args.transcript.trim().slice(-12_000)
@@ -559,7 +698,10 @@ export function OpenWorkStationBridge(props: OpenWorkStationBridgeProps) {
     observeLifecycle("station.realtime.transcript_completed", {
       resultCategory: "transcribed",
     });
-  }, [observeLifecycle, transitionRuntime, updateState]);
+    const goalDecision = stateRef.current.goal ? stationGoalVoiceDecision(clean) : null;
+    if (goalDecision === "approve") void approveGoal();
+    if (goalDecision === "dismiss") dismissGoal();
+  }, [approveGoal, dismissGoal, observeLifecycle, transitionRuntime, updateState]);
 
   const clearTranscript = useCallback(() => {
     transcriptRef.current = "";
@@ -572,12 +714,63 @@ export function OpenWorkStationBridge(props: OpenWorkStationBridgeProps) {
     return { ok: true };
   }, [updateState]);
 
+  const scheduleOpportunityScout = useCallback((partialTranscript: string) => {
+    const session = realtime.session;
+    if (!session || stateRef.current.goal) return;
+    const fullContext = [transcriptRef.current.trim(), partialTranscript.trim()]
+      .filter(Boolean)
+      .join("\n");
+    if (partialTranscript.trim().length < 80 || fullContext.length < 160) return;
+    realtime.pendingScoutText = fullContext.slice(-4_000);
+    realtime.pendingScoutCharacterCount = fullContext.length;
+    if (realtime.scoutInFlight || realtime.responseInFlight || realtime.scoutTimer !== null) return;
+    const waitMs = Math.max(250, 3_200 - (Date.now() - realtime.lastScoutAt));
+    realtime.scoutTimer = window.setTimeout(() => {
+      realtime.scoutTimer = null;
+      const latestSession = realtime.session;
+      if (
+        !latestSession
+        || stateRef.current.goal
+        || realtime.scoutInFlight
+        || realtime.responseInFlight
+        || realtime.pendingScoutCharacterCount - realtime.lastScoutCharacterCount < 120
+      ) return;
+      const context = realtime.pendingScoutText;
+      if (!context || context === realtime.lastScoutText) return;
+      realtime.scoutInFlight = true;
+      realtime.lastScoutText = context;
+      realtime.lastScoutCharacterCount = realtime.pendingScoutCharacterCount;
+      realtime.lastScoutAt = Date.now();
+      latestSession.sendMessage(opportunityScoutPrompt(context));
+    }, waitMs);
+  }, []);
+
   const handleRealtimeEvent = useCallback((event: unknown) => {
     const type = readString(event, "type");
     if (type === "response.created") {
+      realtime.responseInFlight = true;
       transitionRuntime({ type: "response_started" });
       observeLifecycle("station.realtime.response_started", {
         resultCategory: "model-turn",
+      });
+      return;
+    }
+    if (type === "response.done") {
+      realtime.scoutInFlight = false;
+      realtime.responseInFlight = false;
+      if (
+        realtime.pendingScoutText
+        && realtime.pendingScoutText !== realtime.lastScoutText
+        && !stateRef.current.goal
+      ) {
+        scheduleOpportunityScout(stateRef.current.partialTranscript);
+      }
+      if (stateRef.current.runtime.phase !== "deciding") return;
+      transitionRuntime({ type: "decision_completed" });
+      observeLifecycle("station.suggestions_published", {
+        suggestionCount: 0,
+        resultCategory: "model-no-tool",
+        sourceCategory: stateRef.current.source ?? "local-signal",
       });
       return;
     }
@@ -586,7 +779,7 @@ export function OpenWorkStationBridge(props: OpenWorkStationBridgeProps) {
       const itemType = readString(item, "type");
       if (type === "response.output_item.added" && itemType !== "function_call") return;
       const callId = readString(event, "call_id") || readString(item, "call_id") || readString(item, "id");
-      const toolName = readString(event, "name") || readString(item, "name") || "research_current_context";
+      const toolName = readString(event, "name") || readString(item, "name") || "propose_research_goal";
       const requestId = callId || `${toolName}:${stateRef.current.runtime.runId}`;
       if (realtime.requestedToolCalls.has(requestId)) return;
       realtime.requestedToolCalls.add(requestId);
@@ -613,6 +806,7 @@ export function OpenWorkStationBridge(props: OpenWorkStationBridgeProps) {
         partialTranscript: partial,
       }));
       transitionRuntime({ type: "transcription_delta" });
+      scheduleOpportunityScout(partial);
       return;
     }
     if (type === "conversation.item.input_audio_transcription.completed") {
@@ -635,8 +829,15 @@ export function OpenWorkStationBridge(props: OpenWorkStationBridgeProps) {
         error: error || "OpenAI Realtime reported an error.",
       }));
       transitionRuntime({ type: "recoverable_error" });
+      realtime.scoutInFlight = false;
     }
-  }, [completeTranscript, observeLifecycle, transitionRuntime, updateState]);
+  }, [
+    completeTranscript,
+    observeLifecycle,
+    scheduleOpportunityScout,
+    transitionRuntime,
+    updateState,
+  ]);
 
   const stop = useCallback(async () => {
     const scenarioStartedAt = scenarioStartedAtRef.current;
@@ -780,18 +981,22 @@ export function OpenWorkStationBridge(props: OpenWorkStationBridgeProps) {
           model: credentials.model,
         },
       }));
-      const researchCurrentContext = tool({
-        name: "research_current_context",
+      const proposeResearchGoal = tool({
+        name: "propose_research_goal",
         description: [
-          "Research the accumulated meaningful work conversation through OpenWork Connect.",
-          "Use this proactively when Slack, Gmail, or Google Calendar could resolve a question, recall prior context, expose a blocker or contradiction, verify a commitment or deadline, prepare for a meeting, or make the next step materially more useful.",
-          "The tool only prepares cited suggestions and reviewable drafts; it cannot send, schedule, create, update, or delete anything.",
+          "Propose one intentional read-only research goal for the accumulated meaningful work conversation.",
+          "Use this when Slack, Gmail, or Google Calendar could resolve a question, recall prior context, expose a blocker or contradiction, verify a commitment or deadline, prepare for a meeting, or make the next step materially more useful.",
+          "The user will see the goal as 'I'll look into …' and can approve or dismiss it before OpenWork Connect research begins.",
         ].join(" "),
         parameters: z.object({
           transcript: z.string()
             .min(1)
             .max(12_000)
-            .describe("The meaningful spoken turn or conversation context that should be researched."),
+            .describe("The meaningful spoken turn or conversation context that may deserve research."),
+          goal: z.string()
+            .min(1)
+            .max(100)
+            .describe("A concise lower-case phrase completing 'I'll …', such as 'look into Maya's launch concern'."),
           focus: z.enum([
             "prior_conversation",
             "person",
@@ -802,38 +1007,77 @@ export function OpenWorkStationBridge(props: OpenWorkStationBridgeProps) {
             "next_step",
           ]).optional().describe("The narrow reason connected context may be useful."),
         }),
-        execute: async ({ transcript, focus }) => {
+        execute: async ({ transcript, goal, focus }) => {
           if (runEpoch !== runEpochRef.current) {
-            return JSON.stringify({ ok: false, reason: "Station stopped before research began." });
+            return JSON.stringify({ ok: false, reason: "Station stopped before the goal was prepared." });
           }
           const latestTranscript = (transcriptRef.current.trim() || transcript.trim()).slice(-12_000);
           if (!latestTranscript) {
             return JSON.stringify({ ok: false, reason: "No meaningful transcript is available yet." });
           }
-          const result = await analyzeTranscript(latestTranscript);
-          if (!result.ok) {
+          const proposed = proposeGoal({
+            kind: "research",
+            title: goal,
+            summary: "Use OpenWork Connect to find the most relevant Slack, Gmail, or Calendar context before preparing a result.",
+            reason: "The live conversation contains a concrete question, risk, commitment, or preparation need that connected context may improve.",
+            focus,
+          });
+          if (stateRef.current.interactionMode === "active") {
+            const result = await approveGoal();
             return JSON.stringify({
-              ok: false,
-              reason: result.cancelled ? "Station stopped." : "Connected research was unavailable.",
-              ...(focus ? { focus } : {}),
+              ok: result.ok,
+              goalId: proposed.id,
+              status: result.ok ? "approved_from_active_mode" : "approval_failed",
             });
           }
           return JSON.stringify({
-            ok: stateRef.current.error === null,
-            source: stateRef.current.source,
-            ...(focus ? { focus } : {}),
-            suggestions: stateRef.current.suggestions.slice(0, 3).map((suggestion) => ({
-              kind: suggestion.kind,
-              title: suggestion.title,
-              summary: suggestion.summary,
-              reason: suggestion.reason,
-              sources: suggestion.sources.map((source) => ({
-                label: source.label,
-                provider: source.provider,
-                url: source.url,
-              })),
-              action: suggestion.action.kind,
-            })),
+            ok: true,
+            goalId: proposed.id,
+            status: "waiting_for_user",
+          });
+        },
+      });
+      const proposeOpenWorkThread = tool({
+        name: "propose_openwork_thread",
+        description: [
+          "Propose one intentional local continuation goal from the accumulated live transcript when the user explicitly wants to continue, capture, develop, debug, or turn the current thought into work in OpenWork.",
+          "Use this for direct requests for a card, suggestion, action, or OpenWork thread, and for a concrete unresolved work item that clearly deserves continued thinking.",
+          "The user will see the goal and can approve or dismiss it. This does not claim Slack, Gmail, Calendar, or any external source.",
+        ].join(" "),
+        parameters: z.object({
+          title: z.string().min(1).max(80)
+            .describe("A concrete title for the work to continue in OpenWork."),
+          summary: z.string().min(1).max(420)
+            .describe("What the user is trying to understand, decide, design, or complete."),
+          reason: z.string().min(1).max(220)
+            .describe("Why continuing this specific thought is useful now."),
+        }),
+        execute: async ({ title, summary, reason }) => {
+          if (runEpoch !== runEpochRef.current) {
+            return JSON.stringify({ ok: false, reason: "Station stopped before the card was prepared." });
+          }
+          const transcript = transcriptRef.current.trim();
+          if (!transcript) {
+            return JSON.stringify({ ok: false, reason: "No meaningful live transcript is available." });
+          }
+          const proposed = proposeGoal({
+            kind: "thread",
+            title,
+            summary,
+            reason,
+          });
+          if (stateRef.current.interactionMode === "active") {
+            const result = await approveGoal();
+            return JSON.stringify({
+              ok: result.ok,
+              goalId: proposed.id,
+              status: result.ok ? "approved_from_active_mode" : "approval_failed",
+            });
+          }
+          return JSON.stringify({
+            ok: true,
+            goalId: proposed.id,
+            status: "waiting_for_user",
           });
         },
       });
@@ -841,20 +1085,24 @@ export function OpenWorkStationBridge(props: OpenWorkStationBridgeProps) {
         name: "OpenWork Station",
         instructions: [
           "# Role and objective",
-          "You are OpenWork Station, a silent passive AI right hand beside the user's live work conversation. Listen continuously, notice when private work context could help, and proactively research it. Never speak or address anyone in the room; text output is internal and is not shown as a chat reply.",
+          "You are OpenWork Station, a silent passive AI right hand beside the user's live work conversation. Listen continuously, notice opportunities as the user speaks, propose one intentional goal, and research only goals the user approves. Never speak or address anyone in the room; text output is internal and is not shown as a chat reply.",
           "# Research decision",
-          "After every completed meaningful work turn, decide whether one read-only lookup could materially help now. If yes, call research_current_context once with the accumulated relevant transcript and the narrowest focus. Be eager about useful read-only research, but selective about cards.",
+          "After every completed meaningful work turn, decide whether one read-only lookup could materially help now. If yes, call propose_research_goal once with the accumulated relevant transcript, a concise intentional goal, and the narrowest focus. Be eager about useful read-only research, but selective about goals.",
           "Research when the conversation contains any of these signals: a named person, customer, project, or topic whose prior Slack or Gmail context would change the answer; a recalled decision, concern, promise, owner, blocker, deadline, or follow-up; a concrete meeting, date, time zone, attendee, availability question, conflict, or preparation need that Calendar could verify; an apparent contradiction or correction; or a moment where recent Slack, email, or calendar context would prevent the user from missing something important.",
           "For named people or projects, wait until there is a question, decision, risk, commitment, or preparation need—a name alone is not useful enough. Prefer the most recent and directly relevant context over broad history.",
           "# Quiet behavior",
           "Do not research greetings, introductions, filler, background speech, repetitions, casual conversation, vague ideas, or turns that already contain everything needed. Do not create a card merely to prove that you are listening.",
+          "# Direct OpenWork continuation",
+          "When the user explicitly asks for a card, suggestion, action, continuation, capture, debugging task, or a new OpenWork thread, call propose_openwork_thread even when Connect is unavailable. Also use it for a concrete unresolved plan, design choice, decision, or problem that clearly deserves continued work. Ground the title and summary only in the accumulated live transcript. This is a local continuation goal, not connected research. Prefer this tool over propose_research_goal when the user is asking to continue the current thought rather than retrieve private history.",
+          "# Goal review",
+          "Propose only one highest-value goal at a time. In passive mode, the user may approve it with Yes or reject it with No; do not perform connected research or publish a final card until approval. Active mode is explicit pre-approval for one immediate card, so the runtime may approve the proposed goal automatically. After a rejection, keep listening and look for a materially different useful goal rather than repeating the same one.",
           "# Corrections and continuity",
           "Use the accumulated latest context, not an isolated fragment. When a later turn corrects a person, date, duration, decision, or commitment, research again so stale context can be replaced rather than contradicted. If connected context was temporarily unavailable, retry only after a later turn makes the same context relevant again.",
           "# Authority",
           "Research is review-only. Never send a message, schedule an event, create or update a record, or imply that an external action happened. The only user-facing outcome is a contextual card they may continue as an OpenWork thread or dismiss.",
           sessionContext ? `Current OpenWork session context:\n${sessionContext}` : "",
         ].filter(Boolean).join("\n\n"),
-        tools: [researchCurrentContext],
+        tools: [proposeResearchGoal, proposeOpenWorkThread],
       });
       const transport = new OpenAIRealtimeWebRTC({ mediaStream: stream });
       const sdkSession = new RealtimeSession(agent, {
@@ -942,6 +1190,8 @@ export function OpenWorkStationBridge(props: OpenWorkStationBridgeProps) {
       });
       sdkSession.on("error", (event) => {
         if (runEpoch !== runEpochRef.current) return;
+        realtime.scoutInFlight = false;
+        realtime.responseInFlight = false;
         const detail = isRecord(event) ? event.error : event;
         const message = isRecord(detail) ? readString(detail, "message") : "";
         transitionRuntime({ type: "recoverable_error" });
@@ -993,10 +1243,11 @@ export function OpenWorkStationBridge(props: OpenWorkStationBridgeProps) {
       return { ok: false, error: message };
     }
   }, [
-    analyzeTranscript,
     handleRealtimeEvent,
     monitorAudioEnergy,
     observeLifecycle,
+    approveGoal,
+    proposeGoal,
     props.client,
     props.sessionId,
     props.workspaceId,
@@ -1303,8 +1554,11 @@ export function OpenWorkStationBridge(props: OpenWorkStationBridgeProps) {
       statusText: "Opening in OpenWork…",
     }));
     try {
-      const handoff = buildStationThreadHandoff(suggestion);
-      const threadId = await props.onCreateThread(handoff.prompt);
+      const handoff = buildStationThreadHandoff(suggestion, {
+        transcript: transcriptRef.current,
+        includeTranscriptRecord: stateRef.current.transcriptRecordEnabled,
+      });
+      const threadId = await props.onCreateThread(handoff);
       if (!threadId) throw new Error("OpenWork could not create the Station thread.");
       updateState((current) => ({
         ...current,
@@ -1332,9 +1586,55 @@ export function OpenWorkStationBridge(props: OpenWorkStationBridgeProps) {
       interactionMode,
       selectedId: active ? current.suggestions[0]?.id ?? null : current.selectedId,
     }));
-    if (active && !stateRef.current.listening) return start();
-    return { ok: true, interactionMode, listening: stateRef.current.listening };
-  }, [start, updateState]);
+    if (!active) {
+      return { ok: true, interactionMode, listening: stateRef.current.listening };
+    }
+    if (!stateRef.current.listening) {
+      const started = await start();
+      if (!started.ok) return started;
+    }
+    if (stateRef.current.goal) {
+      const result = await approveGoal();
+      return { ...result, interactionMode, activatedGoal: true };
+    }
+    if (stateRef.current.suggestions.length > 0) {
+      return {
+        ok: true,
+        interactionMode,
+        listening: stateRef.current.listening,
+        suggestionCount: stateRef.current.suggestions.length,
+      };
+    }
+    const context = [transcriptRef.current.trim(), stateRef.current.partialTranscript.trim()]
+      .filter(Boolean)
+      .join("\n")
+      .slice(-4_000);
+    if (!context || !realtime.session) {
+      return {
+        ok: true,
+        interactionMode,
+        listening: stateRef.current.listening,
+        waitingForContext: true,
+      };
+    }
+    if (!realtime.responseInFlight) {
+      realtime.scoutInFlight = true;
+      realtime.lastScoutText = context;
+      realtime.lastScoutCharacterCount = context.length;
+      realtime.lastScoutAt = Date.now();
+      realtime.session.sendMessage([
+        opportunityScoutPrompt(context),
+        "",
+        "Active mode was just enabled. Select the strongest useful continuation and call a tool now unless the context is genuinely unusable.",
+      ].join("\n"));
+    }
+    return {
+      ok: true,
+      interactionMode,
+      listening: stateRef.current.listening,
+      scouting: true,
+    };
+  }, [approveGoal, start, updateState]);
 
   const seedDemo = useCallback(async (args: unknown) => {
     if (import.meta.env.DEV) {
@@ -1390,6 +1690,8 @@ export function OpenWorkStationBridge(props: OpenWorkStationBridgeProps) {
       audioEnergy: listening ? 0.24 : 0,
       suggestions,
       selectedId,
+      goal: null,
+      transcriptRecordEnabled: stateRef.current.transcriptRecordEnabled,
       source: "demo",
       scenario: null,
       error: null,
@@ -1403,6 +1705,13 @@ export function OpenWorkStationBridge(props: OpenWorkStationBridgeProps) {
     if (command.type === "start") return start();
     if (command.type === "stop") return stop();
     if (command.type === "clear-transcript") return clearTranscript();
+    if (command.type === "approve-goal") return approveGoal();
+    if (command.type === "dismiss-goal") return dismissGoal();
+    if (command.type === "set-transcript-record") {
+      const enabled = command.enabled === true;
+      updateState((current) => ({ ...current, transcriptRecordEnabled: enabled }));
+      return { ok: true, enabled };
+    }
     if (command.type === "toggle-listening") return stateRef.current.listening ? stop() : start();
     if (command.type === "activate") return activateSuggestion(command.id);
     if (command.type === "handoff") return handoffSuggestion(command.id);
@@ -1449,8 +1758,10 @@ export function OpenWorkStationBridge(props: OpenWorkStationBridgeProps) {
     }
     return { ok: false, error: "Unsupported Station command." };
   }, [
+    approveGoal,
     activateSuggestion,
     clearTranscript,
+    dismissGoal,
     handoffSuggestion,
     seedDemo,
     setInteractionMode,
@@ -1542,6 +1853,8 @@ export function OpenWorkStationBridge(props: OpenWorkStationBridgeProps) {
     audioEnergy: state.audioEnergy,
     suggestions: state.suggestions,
     selectedId: state.selectedId,
+    goal: state.goal,
+    transcriptRecordEnabled: state.transcriptRecordEnabled,
     source: state.source,
     scenario: state.scenario,
     error: state.error,
@@ -1702,6 +2015,28 @@ export function OpenWorkStationBridge(props: OpenWorkStationBridgeProps) {
   }), []);
   useControlAction(import.meta.env.DEV ? scenarioStatusAction : null);
 
+  const scoutNowAction = useMemo<OpenworkControlAction>(() => ({
+    id: "station.scout.run",
+    label: "Run the Station opportunity scout now",
+    description: "Development-only: ask the live Realtime model to inspect the actual captured transcript for one intentional goal.",
+    sideEffect: "external",
+    disabled: !state.listening || !state.transcript.trim() || state.goal !== null,
+    execute: () => {
+      const session = realtime.session;
+      const context = transcriptRef.current.trim().slice(-4_000);
+      if (!session || !context) return { ok: false, reason: "A live Realtime session and transcript are required." };
+      if (stateRef.current.goal) return { ok: false, reason: "A Station goal is already waiting." };
+      if (realtime.responseInFlight) return { ok: false, reason: "The live model is already evaluating context." };
+      realtime.scoutInFlight = true;
+      realtime.lastScoutText = context;
+      realtime.lastScoutCharacterCount = transcriptRef.current.length;
+      realtime.lastScoutAt = Date.now();
+      session.sendMessage(opportunityScoutPrompt(context));
+      return { ok: true, capturedCharacters: context.length };
+    },
+  }), [state.goal, state.listening, state.transcript]);
+  useControlAction(import.meta.env.DEV ? scoutNowAction : null);
+
   const selectAction = useMemo<OpenworkControlAction>(() => ({
     id: "station.select",
     label: "Select a Station suggestion",
@@ -1785,6 +2120,8 @@ export function OpenWorkStationBridge(props: OpenWorkStationBridgeProps) {
       audioEnergy: stateRef.current.audioEnergy,
       suggestions: stateRef.current.suggestions,
       selectedId: stateRef.current.selectedId,
+      goal: stateRef.current.goal,
+      transcriptRecordEnabled: stateRef.current.transcriptRecordEnabled,
       source: stateRef.current.source,
       scenario: stateRef.current.scenario,
       transcript: {

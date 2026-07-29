@@ -46,6 +46,17 @@ describe("Station runtime state machine", () => {
     expect(state.runId).toBe(stoppedRun + 1);
   });
 
+  test("a completed no-tool model decision cannot remain stuck in deciding", () => {
+    let state = transitionStationRuntime(INITIAL_STATION_RUNTIME, { type: "start_requested", at: 1 });
+    state = transitionStationRuntime(state, { type: "connected", at: 2 });
+    state = transitionStationRuntime(state, { type: "transcript_completed", at: 3 });
+    expect(state.phase).toBe("deciding");
+
+    state = transitionStationRuntime(state, { type: "decision_completed", at: 4 });
+    expect(state.phase).toBe("no_useful_context");
+    expect(state.presentation).toBe("nothing_useful");
+  });
+
   test("inspector observations keep only bounded lifecycle metadata", () => {
     const observation = lifecycleObservation("station.realtime.tool_started", 7, {
       at: 42,

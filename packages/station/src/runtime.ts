@@ -47,6 +47,7 @@ export type StationRuntimeEvent =
   | { type: "transcription_delta"; at?: number }
   | { type: "transcript_completed"; at?: number }
   | { type: "response_started"; at?: number }
+  | { type: "decision_completed"; at?: number }
   | { type: "tool_requested"; at?: number }
   | { type: "tool_started"; at?: number }
   | { type: "mcp_discovery_started"; at?: number }
@@ -148,6 +149,9 @@ function phaseForEvent(current: StationRuntimeState, event: StationRuntimeEvent)
       return current.phase;
     }
     return "deciding";
+  }
+  if (event.type === "decision_completed") {
+    return current.phase === "deciding" ? "no_useful_context" : current.phase;
   }
   if (event.type === "transcript_completed") return "deciding";
   if (event.type === "tool_requested") return "tool_requested";

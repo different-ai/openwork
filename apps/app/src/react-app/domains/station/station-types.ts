@@ -14,6 +14,17 @@ export type StationSuggestion = OpenworkStationSuggestion & {
   effectiveRelevance: number;
 };
 
+export type StationGoal = {
+  id: string;
+  kind: "research" | "thread";
+  title: string;
+  summary: string;
+  reason: string;
+  focus?: "prior_conversation" | "person" | "commitment" | "calendar" | "follow_up" | "decision" | "next_step";
+  status: "proposed" | "researching";
+  createdAt: number;
+};
+
 export type StationScenarioRuntime = {
   id: string;
   title: string;
@@ -39,6 +50,8 @@ export type StationState = {
   audioEnergy: number;
   suggestions: StationSuggestion[];
   selectedId: string | null;
+  goal: StationGoal | null;
+  transcriptRecordEnabled: boolean;
   source: "openwork-connect" | "development-mcp" | "local-signal" | "demo" | null;
   scenario: StationScenarioRuntime | null;
   error: string | null;
@@ -47,8 +60,10 @@ export type StationState = {
 export type StationCommand = {
   type:
     | "activate"
+    | "approve-goal"
     | "clear-transcript"
     | "dismiss"
+    | "dismiss-goal"
     | "handoff"
     | "hide"
     | "next"
@@ -56,11 +71,13 @@ export type StationCommand = {
     | "select"
     | "seed-demo"
     | "set-mode"
+    | "set-transcript-record"
     | "start"
     | "stop"
     | "toggle-listening";
   id?: string;
   active?: boolean;
+  enabled?: boolean;
 };
 
 export const INITIAL_STATION_STATE: StationState = {
@@ -76,6 +93,8 @@ export const INITIAL_STATION_STATE: StationState = {
   audioEnergy: 0,
   suggestions: [],
   selectedId: null,
+  goal: null,
+  transcriptRecordEnabled: true,
   source: null,
   scenario: null,
   error: null,
@@ -85,8 +104,10 @@ export function isStationCommand(value: unknown): value is StationCommand {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   const type = Reflect.get(value, "type");
   return type === "activate"
+    || type === "approve-goal"
     || type === "clear-transcript"
     || type === "dismiss"
+    || type === "dismiss-goal"
     || type === "handoff"
     || type === "hide"
     || type === "next"
@@ -94,6 +115,7 @@ export function isStationCommand(value: unknown): value is StationCommand {
     || type === "select"
     || type === "seed-demo"
     || type === "set-mode"
+    || type === "set-transcript-record"
     || type === "start"
     || type === "stop"
     || type === "toggle-listening";

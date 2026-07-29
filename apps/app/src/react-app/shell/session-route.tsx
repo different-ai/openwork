@@ -97,6 +97,7 @@ import { useCheckDesktopRestriction } from "@/react-app/domains/cloud/desktop-co
 import { useRestrictionNotice } from "@/react-app/domains/cloud/restriction-notice-provider";
 import { ReactSessionRuntime } from "@/react-app/domains/session/sync/runtime-sync";
 import { OpenWorkStationBridge } from "@/react-app/domains/station/station-bridge";
+import { stationThreadComposerInput } from "@/react-app/domains/station/station-thread-attachment";
 import { useSessionActivityStore } from "@/react-app/domains/session/status/session-activity-store";
 import { buildOpenworkEnvSystemContext } from "@/react-app/domains/session/sync/env-context";
 import {
@@ -1584,6 +1585,7 @@ export function SessionRoute() {
   const handleCreateTaskInWorkspace = useCallback(async (
     workspaceId: string,
     initialPrompt?: string,
+    initialAttachments: ComposerAttachment[] = [],
   ): Promise<string | null> => {
     const workspace = workspaces.find((item) => item.id === workspaceId);
     if (
@@ -1610,8 +1612,14 @@ export function SessionRoute() {
       );
       const seededPrompt = initialPrompt?.trim();
       if (seededPrompt) {
-        saveSessionDraft(workspaceId, session.id, { text: seededPrompt, mode: "prompt" });
+        saveSessionDraft(workspaceId, session.id, {
+          text: seededPrompt.replace(/\[attachment [^\]]+\]/g, "").trim(),
+          mode: "prompt",
+        });
         useComposerStateStore.getState().setDraft(session.id, seededPrompt);
+        if (initialAttachments.length) {
+          useComposerStateStore.getState().setAttachments(session.id, initialAttachments);
+        }
         markComposerAutoSend(session.id);
       }
       if (workspaceId === selectedWorkspaceId) {
@@ -2363,11 +2371,15 @@ export function SessionRoute() {
       client={selectedWorkspaceEndpoint?.client ?? client}
       workspaceId={selectedWorkspaceEndpoint?.workspaceId ?? null}
       sessionId={selectedSessionId}
-      onCreateThread={(prompt) => (
-        selectedWorkspaceId
-          ? handleCreateTaskInWorkspace(selectedWorkspaceId, prompt)
-          : Promise.resolve(null)
-      )}
+      onCreateThread={(handoff) => {
+        if (!selectedWorkspaceId) return Promise.resolve(null);
+        const input = stationThreadComposerInput(handoff);
+        return handleCreateTaskInWorkspace(
+          selectedWorkspaceId,
+          input.prompt,
+          input.attachments,
+        );
+      }}
     />
     <SessionPage
       selectedSessionId={selectedSessionId}
