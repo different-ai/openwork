@@ -628,14 +628,16 @@ async function ensureDenWeb(log: (message: string) => void, orgMode?: DenOrgMode
     },
   });
   await writePidState("den-web.pid", pid);
-  for (let attempt = 0; attempt < 45; attempt += 1) {
+  // A clean Daytona checkout can spend more than 90 seconds compiling the
+  // first den-web route even after the process has started successfully.
+  for (let attempt = 0; attempt < 90; attempt += 1) {
     if (await httpOk(`${DEN_WEB_ORIGIN}/api/den/health`)) {
       log("den-web healthy");
       return;
     }
     await sleep(2_000);
   }
-  throw new Error(`den-web did not become healthy at ${DEN_WEB_ORIGIN} within 90s.`);
+  throw new Error(`den-web did not become healthy at ${DEN_WEB_ORIGIN} within 180s.`);
 }
 
 export function denSeedNodeArgs(): string[] {
