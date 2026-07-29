@@ -1,4 +1,4 @@
-import { and, eq, gt, isNull } from "@openwork-ee/den-db/drizzle"
+import { and, desc, eq, isNull } from "@openwork-ee/den-db/drizzle"
 import { AuthUserTable, InvitationTable, MemberTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
@@ -53,6 +53,12 @@ const invitePaymentRequiredSchema = z.object({
   freeSeatCount: z.number(),
   message: z.string(),
 }).meta({ ref: "InvitePaymentRequiredError" })
+
+const invitationNotPendingSchema = z.object({
+  error: z.literal("invitation_not_pending"),
+  message: z.string(),
+  status: z.string(),
+}).meta({ ref: "InvitationNotPendingError" })
 
 type InvitationId = typeof InvitationTable.$inferSelect.id
 
@@ -158,9 +164,9 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
           eq(InvitationTable.organizationId, payload.organization.id),
           eq(InvitationTable.email, email),
           eq(InvitationTable.status, "pending"),
-          gt(InvitationTable.expiresAt, new Date()),
         ),
       )
+      .orderBy(desc(InvitationTable.createdAt))
       .limit(1)
 
     if (existingInvitation[0]) {
@@ -333,6 +339,7 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
         401: jsonResponse("The caller must be signed in to cancel invitations.", unauthorizedSchema),
         403: jsonResponse("Only workspace owners and admins can cancel invitations.", forbiddenSchema),
         404: jsonResponse("The invitation or organization could not be found.", notFoundSchema),
+        409: jsonResponse("The invitation is no longer pending and cannot be canceled.", invitationNotPendingSchema),
       },
     }),
     orgRoleRoute(["admin"]),
@@ -365,6 +372,14 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
 
     if (!invitationRows[0]) {
       return c.json({ error: "invitation_not_found" }, 404)
+    }
+
+    if (invitationRows[0].status !== "pending") {
+      return c.json({
+        error: "invitation_not_pending",
+        message: "Only pending invitations can be canceled.",
+        status: invitationRows[0].status,
+      }, 409)
     }
 
     const invitedMemberRows = await db
