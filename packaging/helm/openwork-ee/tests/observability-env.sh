@@ -47,7 +47,7 @@ assert_file_not_contains() {
 default_rendered="$tmp_dir/default.yaml"
 helm template openwork-ee "$chart_dir" --set inference.enabled=true > "$default_rendered"
 assert_contains "$default_rendered" 'DEN_API_NODE_OPTIONS: ""'
-assert_count "$default_rendered" 'name: NODE_OPTIONS' 1
+assert_count "$default_rendered" 'name: NODE_OPTIONS' 2
 assert_count "$default_rendered" 'valueFrom: null' 1
 assert_not_contains "$default_rendered" 'key: DEN_API_NODE_OPTIONS'
 assert_count "$default_rendered" 'name: DEN_OBSERVABILITY_BACKEND' 2
@@ -108,7 +108,7 @@ denApi:
     NODE_OPTIONS: --tls-max-v1.2
 YAML
 helm template openwork-ee "$chart_dir" -f "$legacy_values" > "$legacy_rendered"
-assert_count "$legacy_rendered" 'name: NODE_OPTIONS' 1
+assert_count "$legacy_rendered" 'name: NODE_OPTIONS' 2
 assert_contains "$legacy_rendered" 'value: "--tls-max-v1.2"'
 assert_not_contains "$legacy_rendered" 'valueFrom: null'
 assert_not_contains "$legacy_rendered" 'key: DEN_API_NODE_OPTIONS'
