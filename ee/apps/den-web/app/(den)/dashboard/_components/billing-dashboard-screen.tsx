@@ -154,14 +154,14 @@ export function BillingDashboardScreen() {
     if (!quiet) setStripeError(null);
     try {
       const { response, payload } = await requestJson("/v1/billing", { method: "GET" }, 12000);
-      if (!response.ok) throw new Error(getErrorMessage(payload, `Stripe billing lookup failed (${response.status}).`));
+      if (!response.ok) throw new Error(getErrorMessage(payload, `Billing lookup failed (${response.status}).`));
       const parsed = parseStripeBilling(payload);
-      if (!parsed) throw new Error("Stripe billing response was incomplete.");
+      if (!parsed) throw new Error("Billing response was incomplete.");
       setStripeBilling(parsed);
       setPolarBilling(parsePolarBilling(payload));
       return parsed;
     } catch (error) {
-      if (!quiet) setStripeError(error instanceof Error ? error.message : "Could not load Stripe billing.");
+      if (!quiet) setStripeError(error instanceof Error ? error.message : "Could not load billing details.");
       return null;
     } finally {
       setStripeBusy(false);
@@ -195,12 +195,12 @@ export function BillingDashboardScreen() {
               12000,
             );
             if (!response.ok) {
-              setStripeError(getErrorMessage(payload, `Stripe checkout sync failed (${response.status}).`));
+              setStripeError(getErrorMessage(payload, `Checkout sync failed (${response.status}).`));
             }
           });
         } catch (error) {
           if (!cancelled) {
-            setStripeError(error instanceof Error ? error.message : "Could not sync Stripe checkout session.");
+            setStripeError(error instanceof Error ? error.message : "Could not sync the checkout session.");
           }
         }
       }
@@ -228,7 +228,7 @@ export function BillingDashboardScreen() {
 
   async function startSeatCheckout() {
     if (!canManageBillingSettings) {
-      setStripeError("Admins can start seat checkout from Members. Owners and super-admins manage Stripe settings here.");
+      setStripeError("Admins can start seat checkout from Members. Owners and super-admins manage Billing settings here.");
       return;
     }
 
@@ -270,7 +270,7 @@ export function BillingDashboardScreen() {
         window.location.href = url;
       });
     } catch (error) {
-      setStripeError(error instanceof Error ? error.message : "Could not open Stripe billing portal.");
+      setStripeError(error instanceof Error ? error.message : "Could not open the billing portal.");
     } finally {
       setStripeActionBusy(null);
     }
@@ -286,7 +286,7 @@ export function BillingDashboardScreen() {
     <div data-testid="stripe-billing-screen">
       <DashboardPageTemplate
         icon={CreditCard}
-        title="Stripe"
+        title="Billing"
         description="Manage workspace subscriptions, seats, and OpenWork Models in one place."
         colors={["#F5F3FF", "#312E81", "#635BFF", "#C4B5FD"]}
       >
@@ -296,13 +296,13 @@ export function BillingDashboardScreen() {
 
       {canManageBillingSettings ? null : (
         <div className="mb-6 rounded-[20px] border border-amber-200 bg-amber-50 px-4 py-3 text-[13px] text-amber-800">
-          Admins can view Stripe settings here. Owners and super-admins can open billing portals or start Settings checkouts.
+          Admins can view Billing settings here. Owners and super-admins can open billing portals or start Settings checkouts.
         </div>
       )}
 
       {stripeReturnChecking ? (
         <div className="mb-6 rounded-[20px] border border-blue-200 bg-blue-50 px-4 py-3 text-[13px] text-blue-800">
-          We&apos;re checking your Stripe subscription. This page will refresh automatically.
+          We&apos;re checking your subscription. This page will refresh automatically.
         </div>
       ) : null}
 
@@ -311,11 +311,11 @@ export function BillingDashboardScreen() {
           {stripeBusy ? (
             <div className="flex min-h-36 items-center justify-center gap-3 text-[14px] text-gray-500">
               <RefreshCw className="size-4 animate-spin text-[#635BFF]" aria-hidden="true" />
-              Loading Stripe billing details...
+              Loading billing details...
             </div>
           ) : (
             <div className="mx-auto grid max-w-lg justify-items-start gap-3">
-              <p className="text-[16px] font-medium text-gray-950">Stripe details could not be loaded</p>
+              <p className="text-[16px] font-medium text-gray-950">Billing details could not be loaded</p>
               <p className="text-[13px] leading-6 text-gray-500">{stripeError ?? "The billing response did not include the details this page needs."}</p>
               <DenButton icon={RefreshCw} onClick={() => void refreshStripeBilling(false)}>Try again</DenButton>
             </div>
@@ -325,8 +325,8 @@ export function BillingDashboardScreen() {
         <>
           <div className="mb-6 flex items-center justify-between gap-4 rounded-2xl border border-violet-100 bg-violet-50/70 px-5 py-4">
             <div>
-              <p className="text-[12px] font-semibold uppercase tracking-[0.14em] text-[#635BFF]">Stripe workspace billing</p>
-              <p className="mt-1 text-[13px] text-violet-950/70">Prices and billing intervals below come directly from your Stripe configuration.</p>
+              <p className="text-[12px] font-semibold uppercase tracking-[0.14em] text-[#635BFF]">Workspace billing</p>
+              <p className="mt-1 text-[13px] text-violet-950/70">Prices and billing intervals below come directly from your billing configuration.</p>
             </div>
             <DenButton variant="secondary" icon={RefreshCw} loading={stripeBusy} onClick={() => void refreshStripeBilling(false)}>Refresh</DenButton>
           </div>
@@ -353,7 +353,7 @@ export function BillingDashboardScreen() {
       <section className="mb-6 rounded-2xl border border-violet-100 bg-white p-8 shadow-[0_8px_30px_-20px_rgba(49,46,129,0.45)]">
         <div className="mb-8 flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
           <div>
-            <p className="mb-2 text-[12px] font-semibold uppercase tracking-[0.12em] text-blue-500">Stripe</p>
+            <p className="mb-2 text-[12px] font-semibold uppercase tracking-[0.12em] text-blue-500">Billing</p>
             <h2 className="text-[20px] font-medium text-gray-950">OpenWork Users</h2>
             <p className="mt-2 max-w-[620px] text-[14px] leading-6 text-gray-500">
               The first {seatBilling?.freeSeatCount} users in your organization are included. Additional users are {seatPrice} per user per {seatBilling?.interval}.
@@ -400,7 +400,7 @@ export function BillingDashboardScreen() {
               <p className="mt-1 text-[13px] leading-5 text-blue-900/70">You will only be charged for users above the free included seats.</p>
             </div>
             <DenButton disabled={!canManageBillingSettings || seatBilling?.configured === false} loading={stripeActionBusy === "seat-checkout"} onClick={startSeatCheckout}>
-              Subscribe with Stripe
+              Subscribe
             </DenButton>
           </div>
         )}
@@ -409,7 +409,7 @@ export function BillingDashboardScreen() {
       <section className="rounded-2xl border border-violet-100 bg-white p-8 shadow-[0_8px_30px_-20px_rgba(49,46,129,0.45)]">
         <div className="mb-8 flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
           <div>
-            <p className="mb-2 text-[12px] font-semibold uppercase tracking-[0.12em] text-blue-500">Stripe</p>
+            <p className="mb-2 text-[12px] font-semibold uppercase tracking-[0.12em] text-blue-500">Billing</p>
             <h2 className="text-[20px] font-medium text-gray-950">OpenWork Models</h2>
             <p className="mt-2 max-w-[620px] text-[14px] leading-6 text-gray-500">
               Model access is billed at {stripePrice} per user per {stripeBilling.interval}.

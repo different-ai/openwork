@@ -87,7 +87,7 @@ describe("cloud super-admin role hierarchy", () => {
       expect(shell).toContain(`label: "${label}"`);
     }
 
-    for (const label of ["General", "Diagnostics", "Brand appearance", "Desktop Policies", "Stripe", "API Keys", "SSO", "SCIM"]) {
+    for (const label of ["General", "Diagnostics", "Brand appearance", "Desktop Policies", "Billing", "API Keys", "SSO", "SCIM"]) {
       expect(shell).toContain(`label: "${label}"`);
     }
 

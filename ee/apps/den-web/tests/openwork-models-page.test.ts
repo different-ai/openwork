@@ -31,8 +31,9 @@ describe("OpenWork Models page", () => {
     }
   });
 
-  test("keeps the Stripe subscribe and enable flows", () => {
-    expect(screen).toContain("Subscribe with Stripe");
+  test("keeps the billing subscribe and enable flows", () => {
+    expect(screen).toContain(': "Subscribe";');
+    expect(screen).not.toContain("Subscribe with Stripe");
     expect(screen).toContain("Manage subscription");
     expect(screen).toContain("/v1/billing/stripe/checkout");
     expect(screen).toContain('method: "PATCH"');

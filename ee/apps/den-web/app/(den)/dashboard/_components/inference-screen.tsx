@@ -365,7 +365,7 @@ export function InferenceScreen() {
         window.location.href = url;
       });
     } catch (checkoutError) {
-      setError(checkoutError instanceof Error ? checkoutError.message : "Could not start Stripe checkout.");
+      setError(checkoutError instanceof Error ? checkoutError.message : "Could not start checkout.");
       setSubscribeBusy(false);
     }
   }
@@ -419,7 +419,7 @@ export function InferenceScreen() {
   const subscribed = status?.subscribed === true;
   const showGettingStarted = !loading && status !== null && !subscribed;
   const memberCount = status?.memberCount ?? 0;
-  const actionLabel = subscribed ? (enabled ? "Manage subscription" : "Enable") : "Subscribe with Stripe";
+  const actionLabel = subscribed ? (enabled ? "Manage subscription" : "Enable") : "Subscribe";
   const memberCaption = memberCount > 0
     ? `${memberCount} active member${memberCount === 1 ? "" : "s"}`
     : "billed per active member";

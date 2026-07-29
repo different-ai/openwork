@@ -773,7 +773,7 @@ async function shapeAdminUserRows(users: AdminUserBaseRow[], includeBilling: boo
         subscriptionStatus: null,
         currentPeriodEnd: null,
         source: "subscription",
-        note: "No cached Stripe organization subscription covers this user.",
+        note: "No cached organization subscription covers this user.",
       } : null,
       organizations: membershipsByUser.get(entry.id) ?? [],
     }
@@ -825,7 +825,7 @@ async function loadBillingForUsers(userIds: UserId[]) {
       subscriptionStatus,
       currentPeriodEnd,
       source: "subscription",
-      note: paid ? "Covered by an active Stripe organization subscription." : "Stripe organization subscription is not active.",
+      note: paid ? "Covered by an active organization subscription." : "Organization subscription is not active.",
     }
     const current = billingByUser.get(row.userId)
     if (!current || shouldReplaceBillingStatus(current, billing)) {

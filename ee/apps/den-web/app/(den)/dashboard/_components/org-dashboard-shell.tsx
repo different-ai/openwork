@@ -283,7 +283,7 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
     return "Your Connections";
   }
   if (pathname.startsWith(getBillingRoute(orgSlug))) {
-    return "Stripe";
+    return "Billing";
   }
   if (pathname.startsWith(getBrandAppearanceRoute(orgSlug))) {
     return "Brand appearance";
@@ -404,7 +404,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
               { href: getDiagnosticsRoute(activeOrg.slug), label: "Diagnostics" },
               { href: getBrandAppearanceRoute(activeOrg.slug), label: "Brand appearance" },
               { href: getDesktopPoliciesRoute(activeOrg.slug), label: "Desktop Policies" },
-              { href: getBillingRoute(activeOrg.slug), label: "Stripe" },
+              { href: getBillingRoute(activeOrg.slug), label: "Billing" },
               { href: getApiKeysRoute(activeOrg.slug), label: "API Keys" },
               { href: getSsoRoute(activeOrg.slug), label: "SSO" },
               { href: getScimRoute(activeOrg.slug), label: "SCIM" },
