@@ -48,6 +48,14 @@ const rawFaultDefinitionSchema = z.object({
     "provider-throttle",
     "provider-unavailable",
     "commit-then-disconnect",
+    "redirect-uri-whitelist",
+    "per-connector-redirect",
+    "dcr-required",
+    "method-405",
+    "duplicate-amplification",
+    "refresh-expired",
+    "trailing-dot-url",
+    "per-user-403",
   ]),
 })
 

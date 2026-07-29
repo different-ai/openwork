@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { EvalError } from "./context.ts";
+import { isFlowDefinition } from "./runner.ts";
 import {
   extractInviteFromHtml,
   extractInviteFromPayload,
@@ -10,6 +11,11 @@ import {
   resolveDenWebUrl,
   validateActor,
 } from "./journeys/den.ts";
+import { hostileGatewayBunPrecondition, hostileGatewayCaseById, hostileGatewayFaultCases, hostileGatewayFaultIds } from "./journeys/gateway.ts";
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 
 test("Den URL helpers trim bases and build invite URLs", () => {
   const env: NodeJS.ProcessEnv = {
@@ -64,4 +70,37 @@ test("actor validation accepts complete actors and rejects incomplete shapes", (
     () => validateActor({ email: "missing@example.test", role: "fresh" }),
     (error) => error instanceof EvalError && error.message.includes("name, email, password, and role"),
   );
+});
+
+test("hostile gateway journey exposes the required app-less fault cases", () => {
+  assert.deepEqual(hostileGatewayFaultIds, [
+    "redirect-uri-whitelist",
+    "per-connector-redirect",
+    "dcr-required",
+    "method-405",
+    "duplicate-amplification",
+    "refresh-expired",
+    "trailing-dot-url",
+    "per-user-403",
+  ]);
+  assert.equal(hostileGatewayFaultCases.length, hostileGatewayFaultIds.length);
+  assert.equal(hostileGatewayCaseById("method-405").expectedProductSnippets.includes("GET /mcp count 0"), true);
+});
+
+test("hostile gateway precondition reports an actionable bun skip reason", async () => {
+  const reason = await hostileGatewayBunPrecondition("__openwork_missing_bun__");
+
+  assert.equal(typeof reason, "string");
+  assert.match(reason || "", /bun is required/);
+});
+
+test("hostile-gateway-mcp flow is app-less and has one step per hostile case", async () => {
+  const flowModule: unknown = await import(new URL("../flows/hostile-gateway-mcp.flow.ts", import.meta.url).href);
+  const flow = isRecord(flowModule) ? flowModule.default : undefined;
+
+  assert(isFlowDefinition(flow));
+  assert.equal(flow.id, "hostile-gateway-mcp");
+  assert.equal(flow.requiresApp, false);
+  assert.equal(typeof flow.precondition, "function");
+  assert.deepEqual(flow.steps.map((step) => step.name), hostileGatewayFaultIds);
 });

@@ -134,11 +134,25 @@ function assertLocalProbeBase(baseUrl: URL): void {
 }
 
 function assertPinnedOrigin(urlValue: string | URL, baseUrl: URL, phase: HandshakePhase): URL {
+  if (hasTrailingDotHost(urlValue)) {
+    throw new ProbeFailure(phase, "oauth_trailing_dot_url", "Discovered endpoint used a stray trailing-dot URL")
+  }
   const url = new URL(urlValue)
   if (url.origin !== baseUrl.origin || url.username || url.password || url.hash) {
     throw new ProbeFailure(phase, defaultCategory(phase), "Discovered endpoint escaped the expected local mock origin")
   }
   return url
+}
+
+function hasTrailingDotHost(urlValue: string | URL): boolean {
+  const text = typeof urlValue === "string" ? urlValue : urlValue.href
+  const withoutScheme = text.split("://", 2)[1]
+  if (!withoutScheme) return false
+  const authority = withoutScheme.split(/[/?#]/u, 1)[0] ?? ""
+  const hostPort = authority.includes("@") ? authority.slice(authority.lastIndexOf("@") + 1) : authority
+  if (hostPort.startsWith("[")) return false
+  const host = hostPort.split(":", 1)[0] ?? ""
+  return host.endsWith(".")
 }
 
 async function fetchStep(
@@ -258,6 +272,7 @@ function defaultCategory(phase: HandshakePhase): string {
   if (phase === "AUTH_CLIENT_REGISTRATION") return "oauth_client_registration"
   if (phase === "AUTH_USER_OR_WORKLOAD") return "oauth_authorization"
   if (phase === "AUTH_TOKEN_ACQUISITION") return "oauth_token"
+  if (phase === "CONTINUITY_REFRESH") return "oauth_credential_expired"
   if (phase === "AUTH_RESOURCE_VALIDATION") return "resource_token_validation"
   if (phase === "MCP_VERSION") return "mcp_version"
   if (phase === "MCP_INITIALIZE") return "mcp_initialize"
@@ -292,11 +307,25 @@ async function expectOk(response: Response, phase: HandshakePhase): Promise<Resp
       message = errorBody.data.error_description ?? errorBody.data.message ?? errorBody.data.error
       if (errorBody.data.error === "invalid_client") category = "oauth_client_registration"
       if (errorBody.data.error === "invalid_grant") category = "oauth_token"
+      if (errorBody.data.error === "dynamic_client_registration_required") category = "oauth_dynamic_registration_required"
+      if (message.includes("redirect URI is not an allowed destination")) category = "oauth_redirect_uri_whitelist"
     }
   } catch {
     // Status and phase remain sufficient safe evidence.
   }
   throw new ProbeFailure(phase, category, message)
+}
+
+async function safeHttpErrorMessage(response: Response, phase: HandshakePhase, category: string): Promise<string> {
+  const text = await boundedResponseText(response, phase, category)
+  try {
+    const parsed: unknown = JSON.parse(text)
+    const errorBody = z.object({ error: z.string().optional(), error_description: z.string().optional(), message: z.string().optional() }).safeParse(parsed)
+    if (errorBody.success) return errorBody.data.error_description ?? errorBody.data.message ?? errorBody.data.error ?? `HTTP ${response.status}`
+  } catch {
+    // The HTTP status remains sufficient safe evidence.
+  }
+  return text.trim() || `HTTP ${response.status}`
 }
 
 function recordPassed(phases: ProbePhaseResult[], phase: HandshakePhase, startedAt: number, summary: string): void {
@@ -369,6 +398,9 @@ function classifyProviderToolError(value: unknown): ProbeFailure {
   if (code === "PROVIDER_UNAVAILABLE") {
     return new ProbeFailure("PROVIDER_EXECUTION", "provider_unavailable", "Provider was unavailable during the tool operation")
   }
+  if (code === "PROVIDER_DUPLICATE_REQUEST") {
+    return new ProbeFailure("PROVIDER_EXECUTION", "provider_duplicate_request", "The gateway amplified one MCP tool call into duplicate requests")
+  }
   return new ProbeFailure("MCP_TOOL_EXECUTION", "mcp_tool", `Provider returned tool error '${code}'`)
 }
 
@@ -376,6 +408,7 @@ export async function probeEnterpriseMcpMockServer(options: ProbeEnterpriseMcpMo
   const diagnosticId = randomUUID()
   const scenario = scenarioSchema.parse(options.scenario)
   const profile = getProviderProfile(scenario.profileId)
+  const activeFault = scenario.activeFault ? getFaultDefinition(scenario.activeFault.id) : undefined
   const mode = options.mode ?? "fixture-conformance"
   const baseUrl = new URL(options.baseUrl)
   assertLocalProbeBase(baseUrl)
@@ -451,6 +484,15 @@ export async function probeEnterpriseMcpMockServer(options: ProbeEnterpriseMcpMo
   }
   try {
     let startedAt = Date.now()
+    if (activeFault?.effect === "method-405") {
+      const methodResponse = await fetchStep(mcpUrl, { method: "GET" }, "HTTP_ROUTING", overallDeadline)
+      await discardResponseBody(methodResponse, "HTTP_ROUTING", "mcp_method_405")
+      throw new ProbeFailure(
+        "HTTP_ROUTING",
+        methodResponse.status === 405 ? "mcp_method_405" : "http_failure",
+        `MCP endpoint returned HTTP ${methodResponse.status} to GET`,
+      )
+    }
     const challengeResponse = await fetchStep(
       mcpUrl,
       {
@@ -645,6 +687,27 @@ export async function probeEnterpriseMcpMockServer(options: ProbeEnterpriseMcpMo
     sensitiveValues.push(accessToken, refreshToken)
     recordPassed(phases, "AUTH_TOKEN_ACQUISITION", startedAt, "Authorization code and PKCE token exchange passed")
 
+    if (activeFault?.effect === "refresh-expired") {
+      startedAt = Date.now()
+      const refreshForm = new URLSearchParams({
+        grant_type: "refresh_token",
+        client_id: clientId,
+        refresh_token: refreshToken,
+      })
+      if (tokenAuthMethod === "client_secret_post") refreshForm.set("client_secret", clientSecret)
+      const refreshResponse = await fetchStep(tokenEndpoint, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: refreshForm,
+      }, "CONTINUITY_REFRESH", overallDeadline)
+      if (refreshResponse.ok) {
+        await discardResponseBody(refreshResponse, "CONTINUITY_REFRESH", "oauth_credential_expired")
+        throw new ProbeFailure("CONTINUITY_REFRESH", "oauth_refresh_unexpected_success", "Refresh unexpectedly succeeded after the mock credential expired")
+      }
+      const message = await safeHttpErrorMessage(refreshResponse, "CONTINUITY_REFRESH", "oauth_credential_expired")
+      throw new ProbeFailure("CONTINUITY_REFRESH", "oauth_credential_expired", `${message} Reauthorization is required.`)
+    }
+
     const rpcHeaders = {
       authorization: `Bearer ${accessToken}`,
       accept: "application/json, text/event-stream",
@@ -733,14 +796,16 @@ export async function probeEnterpriseMcpMockServer(options: ProbeEnterpriseMcpMo
         if (cursors.has(cursor)) throw new ProbeFailure("MCP_TOOL_DISCOVERY", "mcp_pagination_loop", "Tool catalog repeated a cursor")
         cursors.add(cursor)
       }
-      const listResponse = await expectOk(
-        await fetchStep(mcpUrl, {
+      const listRawResponse = await fetchStep(mcpUrl, {
           method: "POST",
           headers: sessionHeaders,
           body: JSON.stringify({ jsonrpc: "2.0", id: 10 + page, method: "tools/list", params: cursor ? { cursor } : {} }),
-        }, "MCP_TOOL_DISCOVERY", overallDeadline),
-        "MCP_TOOL_DISCOVERY",
-      )
+        }, "MCP_TOOL_DISCOVERY", overallDeadline)
+      if (listRawResponse.status === 403) {
+        const message = await safeHttpErrorMessage(listRawResponse, "PROVIDER_AUTHORIZATION", "provider_per_user_403")
+        throw new ProbeFailure("PROVIDER_AUTHORIZATION", "provider_per_user_403", `${message} (HTTP 403)`)
+      }
+      const listResponse = await expectOk(listRawResponse, "MCP_TOOL_DISCOVERY")
       const envelope = await parseRpc(listResponse, "MCP_TOOL_DISCOVERY")
       if (envelope.id !== 10 + page) {
         throw new ProbeFailure("MCP_TOOL_DISCOVERY", "mcp_tools_discovery", "tools/list response JSON-RPC id did not match the request")
@@ -789,7 +854,7 @@ export async function probeEnterpriseMcpMockServer(options: ProbeEnterpriseMcpMo
     }
     recordPassed(phases, "MCP_TOOL_DISCOVERY", startedAt, `Retrieved ${toolNames.size} unique tools with bounded pagination`)
 
-    const fault = scenario.activeFault ? getFaultDefinition(scenario.activeFault.id) : undefined
+    const fault = activeFault
     const shouldCall = options.callTool !== undefined || mode === "safe-read" || fault?.phase === "PROVIDER_AUTHORIZATION" || fault?.phase === "PROVIDER_EXECUTION"
     if (shouldCall) {
       const selected = options.callTool

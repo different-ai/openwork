@@ -201,6 +201,12 @@ export async function handleMcpRequest(context: McpRequestContext): Promise<bool
     details: { method: request.method ?? "UNKNOWN", path: profile.endpointPath },
   })
 
+  if (request.method === "GET" && faultApplies(context, "method-405")) {
+    emitFault(context, "Returned HTTP 405 to a GET request at the MCP endpoint")
+    sendJson(response, 405, { error: "method_not_allowed", message: "HTTP 405 on GET" }, { allow: "POST, DELETE" })
+    return true
+  }
+
   if (!bearer) {
     unauthorizedChallenge(context)
     return true
@@ -457,6 +463,16 @@ function handleToolsList(context: McpRequestContext, rpc: JsonRpcRequest, sessio
     sendRpc(context, jsonRpcError(null, -32600, "tools/list must be a JSON-RPC request with an id"))
     return
   }
+  if (faultApplies(context, "per-user-403")) {
+    emitFault(context, "Returned a per-user HTTP 403 before exposing the MCP tool catalog")
+    sendJson(
+      context.response,
+      403,
+      { error: "provider_per_user_forbidden", message: "Authorization with MCP server failed — check your credentials and permissions" },
+      { "mcp-session-id": session.sessionId, "mcp-protocol-version": session.protocolVersion },
+    )
+    return
+  }
   const params = listToolsParamsSchema.safeParse(rpc.params)
   if (!params.success) {
     sendRpc(context, jsonRpcError(requestId, -32602, "Invalid tools/list params"))
@@ -653,6 +669,21 @@ function providerErrorResult(context: McpRequestContext): unknown | undefined {
     emitFault(context, "Returned synthetic provider unavailability as an MCP tool error")
     return toolError(context.state.issueOpaque("provider-request"), "PROVIDER_UNAVAILABLE", "The synthetic provider is temporarily unavailable", 503, "provider_unavailable", true, 1000)
   }
+  if (fault.effect === "duplicate-amplification" && context.state.shouldApplyFault(fault, context.scenario)) {
+    const firstRequestId = context.state.issueOpaque("provider-request")
+    const secondRequestId = context.state.issueOpaque("provider-request")
+    emitFault(context, "Amplified one MCP tool call into duplicate upstream provider requests")
+    return toolError(
+      secondRequestId,
+      "PROVIDER_DUPLICATE_REQUEST",
+      "The gateway amplified one MCP tool call into duplicate requests",
+      409,
+      "provider_duplicate_request",
+      false,
+      undefined,
+      { duplicateRequestCount: 2, duplicateRequestIds: [firstRequestId, secondRequestId] },
+    )
+  }
   return undefined
 }
 
@@ -664,11 +695,13 @@ function toolError(
   category: string,
   retryable = false,
   retryAfterMs?: number,
+  evidence?: Readonly<Record<string, unknown>>,
 ): unknown {
   const structuredContent = {
     providerStatus,
     category,
     requestId: providerRequestId,
+    ...evidence,
     retryAfterSeconds: retryAfterMs === undefined ? null : Math.ceil(retryAfterMs / 1000),
     error: {
       code,
