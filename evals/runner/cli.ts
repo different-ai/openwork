@@ -6,6 +6,7 @@ import { denStackDown, ensureDenStack } from "./den-stack.ts";
 import { applyManifestToEnv, readEnvManifest } from "./env-manifest.ts";
 import { createDaytonaHost } from "./hosts/daytona.ts";
 import { createLocalHost } from "./hosts/local.ts";
+import { ensureKubeStack, kubeStackDown } from "./kube-stack.ts";
 import { missingEnv, loadFlows, runFlow } from "./runner.ts";
 import { renderMarkdown } from "./reporters/markdown.ts";
 import { renderFrameIndex } from "./reporters/fraimz-html.ts";
@@ -39,6 +40,9 @@ interface CliArgs {
   out: string | null;
   stack: string | null;
   stackDown: boolean;
+  kubeProfile: "single-org" | "multi-org";
+  images: "published" | "local" | null;
+  deleteCluster: boolean;
   scaffold: string | null;
   force: boolean;
   pr: true | string | null;
@@ -62,6 +66,9 @@ export function parseArgs(argv: string[]): CliArgs {
     out: null,
     stack: null,
     stackDown: false,
+    kubeProfile: "single-org",
+    images: null,
+    deleteCluster: false,
     scaffold: null,
     force: false,
     pr: null,
@@ -85,6 +92,20 @@ export function parseArgs(argv: string[]): CliArgs {
     } else if (value === "--stack") {
       args.stack = readRequiredValue(argv, index, value);
       index += 1;
+    } else if (value === "--kube-profile") {
+      const profile = readRequiredValue(argv, index, value);
+      if (profile !== "single-org" && profile !== "multi-org") {
+        throw new Error(`Unknown --kube-profile value: ${profile}. Supported: single-org, multi-org.`);
+      }
+      args.kubeProfile = profile;
+      index += 1;
+    } else if (value === "--images") {
+      const images = readRequiredValue(argv, index, value);
+      if (images !== "published" && images !== "local") {
+        throw new Error(`Unknown --images value: ${images}. Supported: published, local.`);
+      }
+      args.images = images;
+      index += 1;
     } else if (value === "--mode") {
       const mode = readRequiredValue(argv, index, value);
       if (mode !== "automation" && mode !== "demo") {
@@ -96,6 +117,7 @@ export function parseArgs(argv: string[]): CliArgs {
       args.envName = readRequiredValue(argv, index, value);
       index += 1;
     } else if (value === "--stack-down") args.stackDown = true;
+    else if (value === "--delete-cluster") args.deleteCluster = true;
     else if (value === "scaffold") {
       args.scaffold = readRequiredValue(argv, index, value);
       index += 1;
@@ -188,7 +210,7 @@ export function createEvalHosts({ manifest, env, repoRoot, log }: { manifest: En
 }
 
 function printHelp(): void {
-  console.log("Usage: node evals/runner/run.mjs [--mode automation|demo] [--list | --all | --flow <id> ... | scaffold <id> [--force]] [--cdp-url <url>] [--env <name>] [--out <dir>] [--pr [number]] [--stack den | --stack-down]");
+  console.log("Usage: node evals/runner/run.mjs [--mode automation|demo] [--list | --all | --flow <id> ... | scaffold <id> [--force]] [--cdp-url <url>] [--env <name>] [--out <dir>] [--pr [number]] [--stack den|kube] [--kube-profile single-org|multi-org] [--images published|local] [--stack-down [--delete-cluster]]");
 }
 
 export async function main(argv: string[] = process.argv.slice(2)): Promise<void> {
@@ -200,6 +222,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
 
   if (args.stackDown) {
     await denStackDown({ log: (msg) => console.log(`▸ ${msg}`) });
+    await kubeStackDown({ log: (msg) => console.log(`▸ ${msg}`), deleteCluster: args.deleteCluster });
     return;
   }
 
@@ -227,8 +250,16 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       cdpCandidates: args.cdpUrl ? [args.cdpUrl] : DEFAULT_CDP_CANDIDATES,
       skipApp: !(await selectedStackNeedsApp(args)),
     });
+  } else if (args.stack === "kube") {
+    await ensureKubeStack({
+      log: (msg) => console.log(`▸ ${msg}`),
+      cdpCandidates: args.cdpUrl ? [args.cdpUrl] : DEFAULT_CDP_CANDIDATES,
+      skipApp: !(await selectedStackNeedsApp(args)),
+      profile: args.kubeProfile,
+      images: args.images ?? undefined,
+    });
   } else if (args.stack) {
-    throw new Error(`Unknown stack: ${args.stack}. Supported: den`);
+    throw new Error(`Unknown stack: ${args.stack}. Supported: den, kube`);
   }
 
   const flows = await loadFlows(FLOWS_DIR);

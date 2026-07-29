@@ -75,13 +75,13 @@ customCa:
   key: corp-root.pem
 YAML
 helm template openwork-ee "$chart_dir" -f "$secret_values" > "$secret_rendered"
-assert_count "$secret_rendered" 'name: NODE_EXTRA_CA_CERTS' 3
-assert_count "$secret_rendered" 'value: "/etc/openwork/custom-ca/ca-bundle.pem"' 3
-assert_count "$secret_rendered" 'name: custom-ca' 6
-assert_count "$secret_rendered" 'secretName: "openwork-ca-secret"' 3
-assert_count "$secret_rendered" 'key: "corp-root.pem"' 3
-assert_count "$secret_rendered" 'path: ca-bundle.pem' 3
-assert_count "$secret_rendered" 'mountPath: "/etc/openwork/custom-ca"' 3
+assert_count "$secret_rendered" 'name: NODE_EXTRA_CA_CERTS' 4
+assert_count "$secret_rendered" 'value: "/etc/openwork/custom-ca/ca-bundle.pem"' 5
+assert_count "$secret_rendered" 'name: custom-ca' 8
+assert_count "$secret_rendered" 'secretName: "openwork-ca-secret"' 4
+assert_count "$secret_rendered" 'key: "corp-root.pem"' 4
+assert_count "$secret_rendered" 'path: ca-bundle.pem' 4
+assert_count "$secret_rendered" 'mountPath: "/etc/openwork/custom-ca"' 4
 assert_not_contains "$secret_rendered" 'subPath:'
 assert_not_contains "$secret_rendered" 'name: "openwork-ca-config"'
 assert_not_contains "$secret_rendered" 'name: openwork-ee-inference'
@@ -101,13 +101,13 @@ assert_contains "$configmap_rendered" 'name: openwork-ee-den-api'
 assert_contains "$configmap_rendered" 'name: openwork-ee-den-web'
 assert_contains "$configmap_rendered" 'name: openwork-ee-inference'
 assert_contains "$configmap_rendered" 'name: openwork-ee-migrate'
-assert_count "$configmap_rendered" 'name: NODE_EXTRA_CA_CERTS' 4
-assert_count "$configmap_rendered" 'value: "/etc/openwork/custom-ca/ca-bundle.pem"' 4
-assert_count "$configmap_rendered" 'name: custom-ca' 8
-assert_count "$configmap_rendered" 'name: "openwork-ca-config"' 4
-assert_count "$configmap_rendered" 'key: "ca.crt"' 4
-assert_count "$configmap_rendered" 'path: ca-bundle.pem' 4
-assert_count "$configmap_rendered" 'mountPath: "/etc/openwork/custom-ca"' 4
+assert_count "$configmap_rendered" 'name: NODE_EXTRA_CA_CERTS' 5
+assert_count "$configmap_rendered" 'value: "/etc/openwork/custom-ca/ca-bundle.pem"' 6
+assert_count "$configmap_rendered" 'name: custom-ca' 10
+assert_count "$configmap_rendered" 'name: "openwork-ca-config"' 5
+assert_count "$configmap_rendered" 'key: "ca.crt"' 5
+assert_count "$configmap_rendered" 'path: ca-bundle.pem' 5
+assert_count "$configmap_rendered" 'mountPath: "/etc/openwork/custom-ca"' 5
 assert_not_contains "$configmap_rendered" 'subPath:'
 assert_not_contains "$configmap_rendered" 'secretName: "openwork-ca-secret"'
 
