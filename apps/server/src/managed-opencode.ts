@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import net from "node:net";
 import { randomUUID } from "node:crypto";
 
@@ -144,18 +144,27 @@ export async function createManagedOpencodeServer(options: {
     close() {
       closePromise ??= (async () => {
         if (child.exitCode !== null) return;
-        if (!child.killed) child.kill("SIGTERM");
-        const timeout = new Promise<void>((resolve) => {
-          setTimeout(() => resolve(), 1000);
-        });
-        await Promise.race([exited, timeout]);
-        if (child.exitCode === null) {
+        if (process.platform === "win32") {
           try {
-            child.kill("SIGKILL");
+            spawnSync("taskkill", ["/F", "/T", "/PID", String(child.pid)], { stdio: "ignore" });
           } catch {
-            // Process already exited.
+            // ignore
           }
-          await Promise.race([exited, new Promise<void>((resolve) => setTimeout(() => resolve(), 500))]);
+          await Promise.race([exited, new Promise<void>((resolve) => setTimeout(resolve, 1000))]);
+        } else {
+          if (!child.killed) child.kill("SIGTERM");
+          const timeout = new Promise<void>((resolve) => {
+            setTimeout(() => resolve(), 1000);
+          });
+          await Promise.race([exited, timeout]);
+          if (child.exitCode === null) {
+            try {
+              child.kill("SIGKILL");
+            } catch {
+              // Process already exited.
+            }
+            await Promise.race([exited, new Promise<void>((resolve) => setTimeout(() => resolve(), 500))]);
+          }
         }
       })();
       return closePromise;

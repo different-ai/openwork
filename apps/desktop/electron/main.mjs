@@ -1192,7 +1192,7 @@ async function disposeRuntimeBeforeQuit() {
   if (runtimeDisposedForQuit || runtimeDisposeInProgress) return;
   runtimeDisposeInProgress = true;
   try {
-    await runtimeManager.dispose().catch(() => undefined);
+    await runtimeManager.dispose();
     runtimeDisposedForQuit = true;
   } finally {
     runtimeDisposeInProgress = false;
@@ -2496,7 +2496,17 @@ or use: pnpm dev:worktree`);
     event.preventDefault();
     if (runtimeDisposeInProgress) return;
     showShutdownScreen();
-    void Promise.all([disposeRuntimeBeforeQuit(), uiControlServer.stop()]).finally(() => app.quit());
+
+    const shutdownTimeout = setTimeout(() => {
+      console.warn("Shutdown timed out, forcing quit");
+      runtimeDisposedForQuit = true;
+      app.quit();
+    }, 10000);
+
+    Promise.all([disposeRuntimeBeforeQuit(), uiControlServer.stop()]).finally(() => {
+      clearTimeout(shutdownTimeout);
+      app.quit();
+    });
   });
 
   app.on("second-instance", async (_event, argv) => {

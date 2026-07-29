@@ -1,6 +1,6 @@
 import { randomUUID, X509Certificate } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync, copyFileSync, writeFileSync, renameSync } from "node:fs";
 import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
@@ -1087,11 +1087,100 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
   }
 
   const userDataDir = app.getPath("userData");
-  const sidecarDirs = [
+  const originalSidecarDirs = [
     path.join(desktopRoot, "resources", "sidecars"),
     process.resourcesPath ? path.join(process.resourcesPath, "sidecars") : null,
     path.join(path.dirname(app.getPath("exe")), "sidecars"),
   ].filter(Boolean);
+  const stagedSidecarsDir = path.join(userDataDir, "run-sidecars");
+  const sidecarDirs = [stagedSidecarsDir];
+
+  function savePersistedPids(list) {
+    const persistedPidsPath = path.join(userDataDir, "running-processes.json");
+    try {
+      const tempPath = persistedPidsPath + ".tmp";
+      writeFileSync(tempPath, JSON.stringify(list, null, 2), "utf8");
+      renameSync(tempPath, persistedPidsPath);
+    } catch {
+      // ignore
+    }
+  }
+
+  function registerRunningPid(pid, name) {
+    if (!pid) return;
+    const persistedPidsPath = path.join(userDataDir, "running-processes.json");
+    try {
+      let list = [];
+      if (existsSync(persistedPidsPath)) {
+        list = JSON.parse(readFileSync(persistedPidsPath, "utf8"));
+      }
+      if (!list.some(item => item.pid === pid)) {
+        list.push({ pid, name, timestamp: Date.now() });
+        savePersistedPids(list);
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  function unregisterRunningPid(pid) {
+    if (!pid) return;
+    const persistedPidsPath = path.join(userDataDir, "running-processes.json");
+    try {
+      let list = [];
+      if (existsSync(persistedPidsPath)) {
+        list = JSON.parse(readFileSync(persistedPidsPath, "utf8"));
+      }
+      list = list.filter(item => item.pid !== pid);
+      savePersistedPids(list);
+    } catch {
+      // ignore
+    }
+  }
+
+  async function stageSidecars() {
+    await mkdir(stagedSidecarsDir, { recursive: true });
+
+    for (const sourceDir of originalSidecarDirs) {
+      if (sourceDir === stagedSidecarsDir) continue;
+      if (!existsSync(sourceDir)) continue;
+      try {
+        const files = readdirSync(sourceDir);
+        for (const file of files) {
+          const srcPath = path.join(sourceDir, file);
+          const destPath = path.join(stagedSidecarsDir, file);
+          const srcStat = statSync(srcPath);
+          if (!srcStat.isFile()) continue;
+
+          let shouldCopy = true;
+          if (existsSync(destPath)) {
+            const destStat = statSync(destPath);
+            if (destStat.size === srcStat.size && Math.abs(destStat.mtimeMs - srcStat.mtimeMs) < 1000) {
+              shouldCopy = false;
+            }
+          }
+
+          if (shouldCopy) {
+            try {
+              if (existsSync(destPath)) {
+                await rm(destPath, { force: true }).catch(() => {});
+              }
+              copyFileSync(srcPath, destPath);
+              // preserve mtime so future checks are fast
+              const utimesSync = (await import("node:fs")).utimesSync;
+              utimesSync(destPath, srcStat.atime, srcStat.mtime);
+            } catch (err) {
+              console.warn(`Failed to copy sidecar ${file} to staged directory:`, err);
+            }
+          }
+        }
+      } catch (err) {
+        console.warn(`Failed to read sidecar directory ${sourceDir}:`, err);
+      }
+    }
+    return stagedSidecarsDir;
+  }
+
   let systemCaEnvPromise = null;
 
   function systemCaEnv() {
@@ -1455,35 +1544,135 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     return commandMatchesPackagedSidecar(command, sidecarDirs);
   }
 
+  function isProcessRunning(pid) {
+    if (!Number.isFinite(pid) || pid <= 0) return false;
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch (err) {
+      return err && err.code === "EPERM";
+    }
+  }
+
+  async function waitForProcessExit(pid, timeoutMs = 2000) {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      if (!isProcessRunning(pid)) {
+        return true;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    return !isProcessRunning(pid);
+  }
+
   function killProcessId(pid, signal = "SIGTERM") {
     if (!Number.isFinite(pid) || pid <= 0 || pid === process.pid) return;
     try {
-      process.kill(pid, signal);
+      if (process.platform === "win32") {
+        spawnSync("taskkill", ["/F", "/T", "/PID", String(pid)], { stdio: "ignore" });
+      } else {
+        process.kill(pid, signal);
+      }
     } catch {
       // Process already exited or is not ours.
     }
   }
 
-  async function cleanupPackagedSidecars() {
-    if (!app.isPackaged) return;
-
-    // Safety net: an unclean Electron quit can orphan sidecars. Packaged builds
-    // should always own a fresh runtime per app launch, so remove any leftover
-    // sidecars from this app bundle before choosing ports for the new runtime.
-    const result = spawnSync("ps", ["-Ao", "pid=,command="], { encoding: "utf8" });
-    const rows = String(result.stdout ?? "").split(/\r?\n/);
-    const pids = [];
-    for (const row of rows) {
-      const match = row.match(/^\s*(\d+)\s+(.+)$/);
-      if (!match) continue;
-      const pid = Number(match[1]);
-      const command = match[2] ?? "";
-      if (processMatchesSidecar(command)) pids.push(pid);
+  function getActivePidsForName(name) {
+    if (process.platform !== "win32") {
+      try {
+        const result = spawnSync("ps", ["-Ao", "pid=,command="], { encoding: "utf8" });
+        const rows = String(result.stdout ?? "").split(/\r?\n/);
+        const pids = [];
+        for (const row of rows) {
+          const match = row.match(/^\s*(\d+)\s+(.+)$/);
+          if (!match) continue;
+          const pid = Number(match[1]);
+          const command = match[2] ?? "";
+          if (command.includes(name) && command.includes(userDataDir)) {
+            pids.push(pid);
+          }
+        }
+        return pids;
+      } catch {
+        return [];
+      }
+    } else {
+      try {
+        const result = spawnSync("powershell", [
+          "-NoProfile",
+          "-Command",
+          `Get-Process -Name "${name}" -ErrorAction SilentlyContinue | Select-Object Id, Path | ConvertTo-Json`
+        ], { encoding: "utf8" });
+        const stdout = (result.stdout ?? "").trim();
+        if (!stdout) return [];
+        const parsed = JSON.parse(stdout);
+        const list = Array.isArray(parsed) ? parsed : [parsed];
+        const pids = [];
+        for (const item of list) {
+          if (item && typeof item.Id === "number" && typeof item.Path === "string") {
+            if (item.Path.toLowerCase().includes(userDataDir.toLowerCase())) {
+              pids.push(item.Id);
+            }
+          }
+        }
+        return pids;
+      } catch {
+        return [];
+      }
     }
-    for (const pid of pids) killProcessId(pid, "SIGTERM");
+  }
+
+  async function cleanupPackagedSidecars() {
+    // 1. Read persisted PIDs from prior runs
+    const persistedPidsPath = path.join(userDataDir, "running-processes.json");
+    let persisted = [];
+    try {
+      if (existsSync(persistedPidsPath)) {
+        persisted = JSON.parse(readFileSync(persistedPidsPath, "utf8"));
+      }
+    } catch {
+      // ignore
+    }
+
+    const pidsToKill = new Set();
+    for (const item of persisted) {
+      if (item && typeof item.pid === "number") {
+        pidsToKill.add(item.pid);
+      }
+    }
+
+    // 2. Scan for running sidecar processes by name
+    const sidecarProcessNames = ["opencode", "openwork-server", "openwork-orchestrator"];
+    for (const name of sidecarProcessNames) {
+      for (const pid of getActivePidsForName(name)) {
+        pidsToKill.add(pid);
+      }
+    }
+
+    const pids = Array.from(pidsToKill);
+    for (const pid of pids) {
+      killProcessId(pid, "SIGTERM");
+    }
+
     if (pids.length > 0) {
-      await new Promise((resolve) => setTimeout(resolve, 500));
-      for (const pid of pids) killProcessId(pid, "SIGKILL");
+      const exitPromises = pids.map((pid) => waitForProcessExit(pid, 1500));
+      await Promise.all(exitPromises);
+
+      const remainingPids = pids.filter(isProcessRunning);
+      if (remainingPids.length > 0) {
+        for (const pid of remainingPids) {
+          killProcessId(pid, "SIGKILL");
+        }
+        const forceExitPromises = remainingPids.map((pid) => waitForProcessExit(pid, 1000));
+        await Promise.all(forceExitPromises);
+      }
+    }
+
+    try {
+      savePersistedPids([]);
+    } catch {
+      // ignore
     }
   }
 
@@ -1505,11 +1694,25 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     }
 
     if (child.exitCode == null && !child.killed) {
-      child.kill("SIGTERM");
-      await new Promise((resolve) => setTimeout(resolve, 500));
-      if (child.exitCode == null && !child.killed) {
-        child.kill("SIGKILL");
+      const exited = new Promise((resolve) => {
+        child.once("exit", resolve);
+        child.once("close", resolve);
+        setTimeout(resolve, 3000);
+      });
+      if (process.platform === "win32") {
+        try {
+          spawnSync("taskkill", ["/F", "/T", "/PID", String(child.pid)], { stdio: "ignore" });
+        } catch {
+          // ignore
+        }
+      } else {
+        child.kill("SIGTERM");
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        if (child.exitCode == null && !child.killed) {
+          child.kill("SIGKILL");
+        }
       }
+      await exited;
     }
   }
 
@@ -1620,6 +1823,9 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     engineState.managedByServer = Boolean(handle.managedOpencode);
     engineState.managedPid = handle.managedOpencode?.pid ?? null;
     engineState.managedIsAlive = handle.managedOpencode?.isAlive ?? null;
+    if (engineState.managedPid) {
+      registerRunningPid(engineState.managedPid, "opencode");
+    }
 
     const boundPort = handle.port;
     const baseUrl = handle.url;
@@ -1684,6 +1890,14 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
   }
 
   async function stopAllRuntimeChildren() {
+    const pids = [];
+    if (engineState.managedPid) {
+      pids.push(engineState.managedPid);
+    }
+    if (openworkServerState.child?.pid) {
+      pids.push(openworkServerState.child.pid);
+    }
+
     // Stop the in-process server (and its managed OpenCode child) if running.
     if (inProcessServer) {
       try { await inProcessServer.stop(); } catch { /* ignore */ }
@@ -1691,6 +1905,10 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     }
     await stopChild(openworkServerState);
     await stopChild(engineState);
+
+    for (const pid of pids) {
+      unregisterRunningPid(pid);
+    }
 
     Object.assign(engineState, createEngineState());
     Object.assign(openworkServerState, createOpenworkServerState());
@@ -1700,6 +1918,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     lifecycleState = "cleaning";
     await stopAllRuntimeChildren();
     await cleanupPackagedSidecars();
+    await stageSidecars();
     lifecycleState = "idle";
   }
 
