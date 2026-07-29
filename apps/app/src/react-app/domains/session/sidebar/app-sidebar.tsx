@@ -147,6 +147,7 @@ import {
 import { WorkspaceAvatarPicker } from "./workspace-avatar-picker";
 import { useWorkbenchStore } from "../chat/workbench-store";
 import { SidebarDestination } from "./sidebar-destination";
+import { SessionTitle } from "./session-title";
 
 /** Paper Desktop: unread #2FBE54, needs-action #E8933A (14px artboard → ~8px app). */
 const OUTCOME_DOT_UNREAD = "#2FBE54";
@@ -2261,6 +2262,8 @@ function SessionMenuItem({
   workspaceName,
 }: SessionMenuItemProps) {
   const ctx = useSidebarContext();
+  const [isTitleHovered, setIsTitleHovered] = React.useState(false);
+  const [isTitleFocused, setIsTitleFocused] = React.useState(false);
   const unreadIds = useUnreadSessionIds();
   const isSelected = ctx.selectedSessionId === session.id;
   const displayTitle = getDisplaySessionTitle(session.title);
@@ -2291,6 +2294,13 @@ function SessionMenuItem({
 
     ctx.onPrefetchSession?.(workspaceId, session.id);
   };
+
+  const handlePointerEnter = (event: React.PointerEvent) => {
+    prefetchSession();
+    if (event.pointerType === "mouse") setIsTitleHovered(true);
+  };
+
+  const titleIntent = isTitleFocused ? "focus" : isTitleHovered ? "hover" : null;
 
   const dragProps = depth === 0 ? {
     draggable: true,
@@ -2364,16 +2374,19 @@ function SessionMenuItem({
                 data-session-tab-id={session.id}
                 data-session-tab-active={isSelected ? "true" : undefined}
                 onClick={openSession}
-                onPointerEnter={prefetchSession}
-                onFocus={prefetchSession}
+                onPointerEnter={handlePointerEnter}
+                onPointerLeave={() => setIsTitleHovered(false)}
+                onFocus={() => {
+                  prefetchSession();
+                  setIsTitleFocused(true);
+                }}
+                onBlur={() => setIsTitleFocused(false)}
                 aria-label={accessibleState}
                 aria-description={shortcutDigit === undefined ? undefined : sessionNumberShortcutDescription(ctx.sessionNumberShortcutOs, shortcutDigit)}
                 aria-keyshortcuts={ariaKeyShortcuts}
               >
                 {leading}
-                <span data-session-title-slot className="min-w-0 flex-1 ow-fade-truncate" title={itemTitle}>
-                  {displayTitle}
-                </span>
+                <SessionTitle intent={titleIntent} title={displayTitle} tooltip={itemTitle} />
                 <SessionNumberShortcutSlot digit={shortcutDigit} />
                 <span className="flex size-6 shrink-0 items-center justify-center">
                   <ChevronRight className="size-4 text-muted-foreground transition-transform duration-200 group-data-open/session-collapsible:rotate-90 hover:text-foreground" />
@@ -2398,8 +2411,13 @@ function SessionMenuItem({
           data-session-tab-id={session.id}
           data-session-tab-active={isSelected ? "true" : undefined}
           onClick={openSession}
-          onPointerEnter={prefetchSession}
-          onFocus={prefetchSession}
+          onPointerEnter={handlePointerEnter}
+          onPointerLeave={() => setIsTitleHovered(false)}
+          onFocus={() => {
+            prefetchSession();
+            setIsTitleFocused(true);
+          }}
+          onBlur={() => setIsTitleFocused(false)}
           aria-label={accessibleState}
           aria-description={shortcutDigit === undefined ? undefined : sessionNumberShortcutDescription(ctx.sessionNumberShortcutOs, shortcutDigit)}
           aria-keyshortcuts={ariaKeyShortcuts}
@@ -2407,7 +2425,7 @@ function SessionMenuItem({
           style={rowButtonStyle}
         >
           {leading}
-          <span data-session-title-slot className="min-w-0 flex-1 ow-fade-truncate" title={itemTitle}>{displayTitle}</span>
+          <SessionTitle intent={titleIntent} title={displayTitle} tooltip={itemTitle} />
           <SessionNumberShortcutSlot digit={shortcutDigit} />
         </SidebarMenuSubButton>
       </SessionContextMenu>
