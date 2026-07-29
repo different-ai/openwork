@@ -142,6 +142,19 @@ const SPOTLIGHT_TIMING_MS = Object.freeze({
 
 const wait = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
 
+export async function waitForControlActionRegistration<T>(
+  read: () => T | null,
+  pause: () => Promise<void>,
+  attempts = 200,
+) {
+  for (let attempt = 0; attempt <= attempts; attempt += 1) {
+    const value = read();
+    if (value) return value;
+    if (attempt < attempts) await pause();
+  }
+  return null;
+}
+
 function describeError(error: unknown) {
   return error instanceof Error ? error.message : String(error || "Unknown error");
 }
@@ -392,7 +405,16 @@ export function OpenworkControlProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const executeAction = useCallback(async (actionId: string, args?: unknown): Promise<OpenworkControlResult> => {
-    const registered = actionsRef.current.get(actionId);
+    // The global bridge mounts before route-scoped actions while startup gates
+    // are resolving. Treat the first control call as readiness-sensitive so a
+    // known action does not fail merely because its route is still mounting.
+    const registered = await waitForControlActionRegistration(
+      () => {
+        const candidate = actionsRef.current.get(actionId);
+        return candidate?.ref.current ? candidate : null;
+      },
+      () => wait(50),
+    );
     const action = registered?.ref.current;
     if (!registered || !action) return { ok: false, actionId, error: `Unknown action: ${actionId}` };
     if (action.disabled) return { ok: false, actionId, error: `Action is disabled: ${action.label}` };

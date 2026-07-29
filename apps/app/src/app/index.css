@@ -239,6 +239,22 @@ body {
   mask-image: linear-gradient(to right, black calc(100% - 18px), transparent);
 }
 
+/* The viewport stays put while an overflowing session title makes one measured pass. */
+[data-session-title-viewport][data-moving="true"] {
+  mask-image: linear-gradient(to right, transparent, black 10px, black calc(100% - 10px), transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-session-title-text] {
+    transform: none !important;
+    transition: none !important;
+  }
+
+  [data-session-title-viewport] {
+    mask-image: none !important;
+  }
+}
+
 .ow-soft-card {
   border: 1px solid var(--dls-border);
   background: var(--dls-surface);
