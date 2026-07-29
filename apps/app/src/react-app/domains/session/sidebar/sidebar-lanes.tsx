@@ -16,9 +16,9 @@ export {
 /**
  * Sidebar lane system — two vertical rails shared by every row in the sidebar.
  *
- *   8px   row pill edge (SidebarGroup `p-2`)
- *   20px  glyph lane  — activity dot-matrix, chevrons, row icons, section labels
- *   44px  label lane  — every row title (glyph lane + 16px glyph + 8px `gap-2`)
+ *   6px   row pill edge (sidebar section `ps-1.5`)
+ *   14px  glyph lane  — activity dot-matrix, chevrons, row icons, section labels
+ *   38px  label lane  — every row title (glyph lane + 16px glyph + 8px `gap-2`)
  *
  * Rules:
  * 1. A row's first child is a `SidebarGlyphSlot`, rendered even when it has no
@@ -28,13 +28,13 @@ export {
  */
 
 /** Row padding that puts the glyph slot on the glyph lane. */
-export const SIDEBAR_ROW_LANE = "ps-3";
+export const SIDEBAR_ROW_LANE = "ps-2";
 
-/** One 12px nesting step right of `SIDEBAR_ROW_LANE`. */
+/** One 16px nesting step right of `SIDEBAR_ROW_LANE`. */
 export const SIDEBAR_ROW_LANE_NESTED = "ps-6";
 
 /** Glyph lane for direct children of the sidebar content, which have no row edge. */
-export const SIDEBAR_SECTION_LANE = "pl-5";
+export const SIDEBAR_SECTION_LANE = "ps-3.5";
 
 export const SIDEBAR_SECTION_LABEL =
   "text-[12px] font-normal uppercase tracking-[0.04em] text-muted-foreground";

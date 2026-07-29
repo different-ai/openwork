@@ -1,5 +1,5 @@
-/** Base inline-start padding (px) matching `SIDEBAR_ROW_LANE` / `ps-3`. */
-export const SIDEBAR_ROW_BASE_PAD_PX = 12;
+/** Base inline-start padding (px) matching `SIDEBAR_ROW_LANE` / `ps-2`. */
+export const SIDEBAR_ROW_BASE_PAD_PX = 8;
 
 /** Nesting step (px) — one step per tree depth level. */
 export const SIDEBAR_ROW_NEST_STEP_PX = 16;

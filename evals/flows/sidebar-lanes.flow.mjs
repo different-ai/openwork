@@ -1,15 +1,26 @@
+import { mkdir } from "node:fs/promises";
+import { resolve } from "node:path";
+
+import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
+
 /**
  * Sidebar lane system: every sidebar row lands on one of two vertical rails —
- * the 20px glyph lane (activity dot-matrix, chevrons, top-level section label)
- * and the 44px label lane (workspace names, session titles, group labels,
- * placeholders, account name). Regression for the ragged sidebar where the
+ * the 14px glyph lane (search, activity dot-matrix, chevrons, section label)
+ * and the 38px label lane (search, workspace names, session titles, group
+ * labels and placeholders). Regression for the ragged sidebar where the
  * section label, workspace titles and session titles each had their own left
  * edge. Lanes are defined in
  * `apps/app/src/react-app/domains/session/sidebar/sidebar-lanes.tsx`.
  */
-const GLYPH_LANE = 20;
-const LABEL_LANE = 44;
+const vo = await loadVoiceoverParagraphs("sidebar-lanes");
+const GLYPH_LANE = 14;
+const LABEL_LANE = 38;
 const NEST_STEP = 16;
+const FIXTURE_WORKSPACE = resolve(
+  process.env.OPENWORK_EVAL_ARTIFACTS_DIR ?? "evals/results",
+  "..",
+  "sidebar-lanes-workspace",
+);
 
 const MEASURE_LANES = `(() => {
   const sidebar = document.querySelector('[data-slot="sidebar"]');
@@ -45,6 +56,8 @@ const MEASURE_LANES = `(() => {
     const label = firstTextX(el);
     rows.push({ kind, glyph: glyphX(el, label), label, text });
   };
+  const search = sidebar.querySelector('[data-sidebar="header"] [data-sidebar="menu-button"]');
+  if (search) add("search", search);
   for (const el of sidebar.querySelectorAll(".group\\\\/workspaces-header")) add("section", el);
   for (const el of sidebar.querySelectorAll('.group\\\\/workspace-header [data-sidebar="menu-button"]')) add("workspace", el);
   for (const el of sidebar.querySelectorAll("[data-session-group]")) add("group-label", el);
@@ -53,18 +66,14 @@ const MEASURE_LANES = `(() => {
     if (el.closest("[data-sidebar-session-id]")) continue;
     add("placeholder", el);
   }
-  const account = sidebar.querySelector('[data-testid="account-status-menu"]');
-  if (account) rows.push({ kind: "account", glyph: null, label: firstTextX(account), text: "account" });
   return rows;
 })()`;
 
 const EXPAND_ALL_WORKSPACES = `(() => {
   let clicked = 0;
   for (const header of document.querySelectorAll(".group\\\\/workspace-header")) {
-    const toggle = Array.from(header.querySelectorAll("button")).find(
-      (button) => button.getAttribute("aria-expanded") === "false",
-    );
-    if (toggle) {
+    const toggle = header.querySelector("button.group\\\\/expand-collapse-button");
+    if (toggle?.getAttribute("aria-expanded") === "false") {
       toggle.click();
       clicked += 1;
     }
@@ -74,15 +83,17 @@ const EXPAND_ALL_WORKSPACES = `(() => {
 
 export default {
   id: "sidebar-lanes",
-  title: "Every sidebar row aligns on the shared glyph (20px) and label (44px) lanes",
+  title: "Sidebar rows align on tighter shared glyph (14px) and label (38px) lanes",
+  kind: "user-facing",
   spec: "apps/app/src/react-app/ARCHITECTURE.md",
   steps: [
     {
       name: "App is ready and Electron-backed",
       run: async (ctx) => {
+        await ctx.eval("location.reload()");
+        await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 60_000, label: "control API" });
         const userAgent = await ctx.eval("navigator.userAgent");
         ctx.assert(userAgent.includes("Electron/"), `Expected Electron userAgent, got ${userAgent}`);
-        await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 60_000, label: "control API" });
       },
     },
     {
@@ -90,6 +101,38 @@ export default {
       run: async (ctx) => {
         const hasSession = await ctx.eval(`document.querySelectorAll("[data-sidebar-session-id]").length > 0`);
         if (!hasSession) {
+          const canCreateTask = await ctx.eval(
+            "window.__openworkControl.listActions().some((action) => action.id === 'session.create_task' && !action.disabled)",
+          );
+          if (!canCreateTask) {
+            await mkdir(FIXTURE_WORKSPACE, { recursive: true });
+            const welcomeInput = 'input[placeholder="/workspace/my-project"]';
+            const onWelcome = await ctx.eval(`Boolean(document.querySelector(${JSON.stringify(welcomeInput)}))`);
+            if (onWelcome) {
+              await ctx.fill(welcomeInput, FIXTURE_WORKSPACE);
+              await ctx.clickText("Use this folder", { selector: "button", timeoutMs: 10_000 });
+              await ctx.clickText("Skip and use the free model", { selector: "button", timeoutMs: 30_000 }).catch(() => {});
+              await ctx.clickText("Skip", { selector: "button", timeoutMs: 10_000 }).catch(() => {});
+              await ctx.waitFor("location.hash.includes('/workspace/')", {
+                timeoutMs: 60_000,
+                label: "workspace route after folder selection",
+              });
+              await ctx.waitFor("Boolean(window.__openworkControl)", {
+                timeoutMs: 60_000,
+                label: "control API after onboarding",
+              });
+            } else {
+              await ctx.waitFor(
+                "window.__openworkControl.listActions().some((action) => action.id === 'workspace.create' && !action.disabled)",
+                { timeoutMs: 30_000, label: "workspace creation control" },
+              );
+              await ctx.control("workspace.create", { path: FIXTURE_WORKSPACE });
+            }
+            await ctx.waitFor(
+              "window.__openworkControl.listActions().some((action) => action.id === 'session.create_task' && !action.disabled)",
+              { timeoutMs: 60_000, label: "enabled task creation" },
+            );
+          }
           await ctx.control("session.create_task");
         }
         await ctx.eval(EXPAND_ALL_WORKSPACES);
@@ -107,6 +150,7 @@ export default {
         ctx.log(`Measured rows: ${JSON.stringify(rows)}`);
 
         const kinds = new Set(rows.map((row) => row.kind));
+        ctx.assert(kinds.has("search"), "No search row was measured.");
         ctx.assert(kinds.has("workspace"), "No workspace header row was measured.");
         ctx.assert(kinds.has("session"), "No session row was measured.");
 
@@ -122,14 +166,15 @@ export default {
         });
 
         await ctx.prove("Sidebar rows land on the two shared lanes", {
+          voiceover: vo[0],
           claim:
-            "Section label, workspace titles, group labels, session titles, placeholders and the account name all sit on the 20px glyph lane or the 44px label lane (+16px per nesting depth).",
+            "Search, section labels, workspace titles, group labels, session titles and placeholders all sit on the 14px glyph lane or the 38px label lane (+16px per nesting depth).",
           assert: () => {
             ctx.assert(
               offLane.length === 0,
               `Rows off the shared lanes: ${JSON.stringify(offLane)}`,
             );
-            const titles = rows.filter((row) => row.kind === "workspace" || row.kind === "session");
+            const titles = rows.filter((row) => row.kind === "search" || row.kind === "workspace" || row.kind === "session");
             for (const row of titles) {
               const onANestLane = allowedLabel.some((lane) => lane >= LABEL_LANE && Math.abs(row.label - lane) <= 1);
               ctx.assert(
@@ -138,7 +183,10 @@ export default {
               );
             }
           },
-          screenshot: { name: "sidebar-lanes-aligned" },
+          screenshot: {
+            name: "sidebar-lanes-aligned",
+            requireText: ["Search sessions", "WORKSPACES"],
+          },
         });
       },
     },

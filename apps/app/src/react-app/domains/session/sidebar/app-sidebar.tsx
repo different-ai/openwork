@@ -749,7 +749,7 @@ function SidebarSplitPill({ workspaceSessionGroups, selectedWorkspaceId, selecte
   ];
 
   return (
-    <div className="px-2 pb-1">
+    <div className="px-1.5 pb-1">
       <div className="mb-1 flex items-center gap-1 px-1 text-[12px] font-medium uppercase tracking-wide text-sidebar-foreground/50">
         <Columns2 className="size-3" />
         {t("session_management.split_view")}
@@ -766,7 +766,7 @@ function SidebarSplitPill({ workspaceSessionGroups, selectedWorkspaceId, selecte
               key={pane}
               data-session-tab-id={sessionId}
               className={cn(
-                "flex min-w-0 flex-1 items-center gap-1 px-2 py-1.5 text-xs transition-colors",
+                "flex min-w-0 flex-1 items-center gap-1 px-1.5 py-1.5 text-xs transition-colors",
                 focused
                   ? "bg-black/[0.07] text-sidebar-foreground dark:bg-white/[0.12]"
                   : "text-sidebar-foreground/70 hover:bg-black/[0.05] dark:hover:bg-white/[0.09]",
@@ -1043,7 +1043,7 @@ export function AppSidebar(props: AppSidebarProps) {
         {brandLogoUrl ? (
           <div
             data-testid="brand-logo"
-            className="flex h-14 shrink-0 items-center px-3 pb-3 pt-2 mac:pt-0"
+            className="flex h-14 shrink-0 items-center px-2 pb-3 pt-2 mac:pt-0"
           >
             <img
               src={brandLogoUrl}
@@ -1085,13 +1085,13 @@ export function AppSidebar(props: AppSidebarProps) {
           </div>
         ) : null}
         {props.onOpenSessionSearch ? (
-          <SidebarHeader className="pb-0 pe-0">
+          <SidebarHeader className="pb-0 pe-0 ps-1.5">
             <SidebarMenu>
               <SidebarMenuItem>
                 <SidebarMenuButton
                   onClick={props.onOpenSessionSearch}
                   aria-keyshortcuts={isMacPlatform() ? "Meta+Shift+F" : "Control+Shift+F"}
-                  className="text-sidebar-foreground/70"
+                  className="px-2 text-sidebar-foreground/70"
                 >
                   <Search className="size-4" />
                   <span className="flex-1 truncate">{t("workspace_list.search_sessions")}</span>
@@ -1182,7 +1182,7 @@ type GlobalPinnedSessionEntry = {
 
 function GlobalPinnedSessions({ entries }: { entries: GlobalPinnedSessionEntry[] }) {
   return (
-    <SidebarGroup data-global-pinned-sessions className="pb-1 pe-0 pt-2">
+    <SidebarGroup data-global-pinned-sessions className="pb-1 pe-0 ps-1.5 pt-2">
       <SidebarGroupContent>
         <div className={cn("flex items-center gap-2 pb-1 pr-3", SIDEBAR_ROW_LANE)}>
           <SidebarGlyphSlot>
@@ -1217,7 +1217,7 @@ function GlobalArchivedSessions({ entries }: { entries: GlobalArchivedSessionEnt
   const [expanded, setExpanded] = React.useState(false);
 
   return (
-    <SidebarGroup data-global-archived-sessions className="pb-1 pe-0 pt-1">
+    <SidebarGroup data-global-archived-sessions className="pb-1 pe-0 ps-1.5 pt-1">
       <SidebarGroupContent>
         <Collapsible open={expanded} onOpenChange={setExpanded} className="group/archived">
           <CollapsibleTrigger
@@ -1395,7 +1395,7 @@ function WorkspaceHeader({
     <SidebarMenuButton
       {...props}
       className={cn(
-        "gap-2 group-hover/workspace-header:bg-sidebar-accent group-hover/workspace-header:text-sidebar-accent-foreground mac:group-hover/workspace-header:bg-black/5 dark:mac:group-hover/workspace-header:bg-white/10",
+        "gap-2 ps-2 group-hover/workspace-header:bg-sidebar-accent group-hover/workspace-header:text-sidebar-accent-foreground mac:group-hover/workspace-header:bg-black/5 dark:mac:group-hover/workspace-header:bg-white/10",
         statusLabel && "h-10",
       )}
       onClick={(event) => {
@@ -1520,7 +1520,7 @@ function WorkspaceSidebarGroup({
     : t("workspace_list.show_more_fallback");
 
   return (
-    <SidebarGroup className={cn(className, "pe-0")}>
+    <SidebarGroup className={cn(className, "pe-0 ps-1.5")}>
       <SidebarGroupContent>
         <SidebarMenu>
           <Collapsible
