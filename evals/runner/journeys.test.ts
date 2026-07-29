@@ -12,6 +12,7 @@ import {
   validateActor,
 } from "./journeys/den.ts";
 import { hostileGatewayBunPrecondition, hostileGatewayCaseById, hostileGatewayFaultCases, hostileGatewayFaultIds } from "./journeys/gateway.ts";
+import { capabilityMatchesFromSearchResult, mcpTextContent } from "./journeys/mcp.ts";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -103,4 +104,34 @@ test("hostile-gateway-mcp flow is app-less and has one step per hostile case", a
   assert.equal(flow.requiresApp, false);
   assert.equal(typeof flow.precondition, "function");
   assert.deepEqual(flow.steps.map((step) => step.name), hostileGatewayFaultIds);
+});
+
+test("MCP journey helpers read text content and search_capabilities matches", () => {
+  const searchResult = {
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify({
+          matches: [
+            {
+              name: "mcp:connection:mock_echo",
+              summary: "Mock echo from reliability connection",
+              schemaDigest: "digest-1",
+              argumentsSchema: { type: "object" },
+            },
+          ],
+        }),
+      },
+    ],
+  };
+
+  assert.equal(mcpTextContent({ content: [{ type: "text", text: "hello" }] }), "hello");
+  assert.deepEqual(capabilityMatchesFromSearchResult(searchResult), [
+    {
+      name: "mcp:connection:mock_echo",
+      summary: "Mock echo from reliability connection",
+      schemaDigest: "digest-1",
+      argumentsSchema: { type: "object" },
+    },
+  ]);
 });

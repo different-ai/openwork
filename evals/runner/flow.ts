@@ -206,6 +206,25 @@ export interface FlowResult {
   evidenceFrames?: FrameEvidenceInput[];
 }
 
+export interface SoakFailure {
+  iteration: number;
+  step: string | null;
+  error: string | null;
+}
+
+export interface SoakSummary {
+  flowId: string;
+  title: string;
+  repeat: number;
+  status: FlowStatus;
+  passed: number;
+  failed: number;
+  skipped: number;
+  durationMs: number;
+  capturedIterations: number[];
+  failures: SoakFailure[];
+}
+
 export interface EvalReport {
   runId: string;
   startedAt: string;
@@ -214,6 +233,7 @@ export interface EvalReport {
   mode: EvalMode;
   flows: FlowResult[];
   summary: Record<FlowStatus, number>;
+  soak?: SoakSummary[];
 }
 
 export function defineFlow(flow: FlowDefinition): FlowDefinition {

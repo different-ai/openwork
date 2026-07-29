@@ -24,6 +24,7 @@ export interface ElectronSurfaceOptions {
 export interface ChromeSurfaceOptions {
   profile?: "fresh" | "shared";
   startUrl?: string;
+  headless?: boolean;
 }
 
 export interface DenServiceOptions {

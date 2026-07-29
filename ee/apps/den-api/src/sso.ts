@@ -71,6 +71,16 @@ export function getSsoOidcRedirectUrl(providerId: string) {
   return `${env.betterAuthUrl}/api/auth/sso/callback/${encodeURIComponent(providerId)}`
 }
 
+function isDevLoopbackIssuer(issuer: string) {
+  if (!env.devMode) return false
+  try {
+    const url = new URL(issuer)
+    return url.hostname === "127.0.0.1" || url.hostname === "localhost"
+  } catch {
+    return false
+  }
+}
+
 function getOidcDiscoveryUrl(issuer: string) {
   return `${issuer.replace(/\/$/, "")}/.well-known/openid-configuration`
 }
@@ -251,7 +261,7 @@ export async function deleteOrganizationSsoConnection(organizationId: Organizati
 export async function registerOrganizationSsoConnection(input: OrganizationSsoRegistrationInput) {
   const providerId = buildOrganizationSsoProviderId(input.organizationId)
   const existing = await getOrganizationSsoConnection(input.organizationId)
-  const domainVerified = isMicrosoftEntraManagedDomain({
+  const domainVerified = isDevLoopbackIssuer(input.issuer) || isMicrosoftEntraManagedDomain({
     domain: input.domain,
     issuer: input.issuer,
     entryPoint: input.kind === "saml" ? input.entryPoint : null,

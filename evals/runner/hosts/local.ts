@@ -200,6 +200,7 @@ function chromeArgs(cdpPort: number, profileDir: string, startUrl: string, headl
   const args = [
     `--remote-debugging-port=${cdpPort}`,
     `--user-data-dir=${profileDir}`,
+    "--window-size=1280,900",
     "--no-first-run",
     "--no-default-browser-check",
     "--disable-popup-blocking",
@@ -455,7 +456,7 @@ export function createLocalHost(options: LocalHostOptions): Host {
       };
       let spawned: SpawnedDetached;
       try {
-        spawned = await launch(false);
+        spawned = await launch(opts.headless === true || process.env.OPENWORK_EVAL_CHROME_HEADLESS === "1");
       } catch (error) {
         if (!messageText(error).includes("SIGTRAP")) throw error;
         log(`Chrome surface ${name} exited with SIGTRAP under the windowed launch; retrying with --headless=new.`);

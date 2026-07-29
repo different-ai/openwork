@@ -6,7 +6,8 @@ import { denStackDown, ensureDenStack } from "./den-stack.ts";
 import { applyManifestToEnv, readEnvManifest } from "./env-manifest.ts";
 import { createDaytonaHost } from "./hosts/daytona.ts";
 import { createLocalHost } from "./hosts/local.ts";
-import { missingEnv, loadFlows, runFlow } from "./runner.ts";
+import { ensureKubeStack, kubeStackDown } from "./kube-stack.ts";
+import { missingEnv, loadFlows, runFlow, runFlowRepeated } from "./runner.ts";
 import { renderMarkdown } from "./reporters/markdown.ts";
 import { renderFrameIndex } from "./reporters/fraimz-html.ts";
 import { postPrComment } from "./reporters/pr.ts";
@@ -39,12 +40,16 @@ interface CliArgs {
   out: string | null;
   stack: string | null;
   stackDown: boolean;
+  kubeProfile: "single-org" | "multi-org";
+  images: "published" | "local" | null;
+  deleteCluster: boolean;
   scaffold: string | null;
   force: boolean;
   pr: true | string | null;
   help: boolean;
   mode: EvalMode;
   envName: string | null;
+  repeat: number;
 }
 
 function readRequiredValue(argv: string[], index: number, flag: string): string {
@@ -62,12 +67,16 @@ export function parseArgs(argv: string[]): CliArgs {
     out: null,
     stack: null,
     stackDown: false,
+    kubeProfile: "single-org",
+    images: null,
+    deleteCluster: false,
     scaffold: null,
     force: false,
     pr: null,
     help: false,
     mode: "demo",
     envName: null,
+    repeat: 1,
   };
   for (let index = 0; index < argv.length; index += 1) {
     const value = argv[index];
@@ -85,6 +94,20 @@ export function parseArgs(argv: string[]): CliArgs {
     } else if (value === "--stack") {
       args.stack = readRequiredValue(argv, index, value);
       index += 1;
+    } else if (value === "--kube-profile") {
+      const profile = readRequiredValue(argv, index, value);
+      if (profile !== "single-org" && profile !== "multi-org") {
+        throw new Error(`Unknown --kube-profile value: ${profile}. Supported: single-org, multi-org.`);
+      }
+      args.kubeProfile = profile;
+      index += 1;
+    } else if (value === "--images") {
+      const images = readRequiredValue(argv, index, value);
+      if (images !== "published" && images !== "local") {
+        throw new Error(`Unknown --images value: ${images}. Supported: published, local.`);
+      }
+      args.images = images;
+      index += 1;
     } else if (value === "--mode") {
       const mode = readRequiredValue(argv, index, value);
       if (mode !== "automation" && mode !== "demo") {
@@ -95,7 +118,14 @@ export function parseArgs(argv: string[]): CliArgs {
     } else if (value === "--env") {
       args.envName = readRequiredValue(argv, index, value);
       index += 1;
+    } else if (value === "--repeat") {
+      const repeat = readRequiredValue(argv, index, value);
+      if (!/^\d+$/.test(repeat)) throw new Error(`--repeat must be an integer >= 1, got ${repeat}.`);
+      args.repeat = Number.parseInt(repeat, 10);
+      if (args.repeat < 1) throw new Error(`--repeat must be an integer >= 1, got ${repeat}.`);
+      index += 1;
     } else if (value === "--stack-down") args.stackDown = true;
+    else if (value === "--delete-cluster") args.deleteCluster = true;
     else if (value === "scaffold") {
       args.scaffold = readRequiredValue(argv, index, value);
       index += 1;
@@ -133,6 +163,28 @@ async function selectedStackNeedsApp(args: CliArgs): Promise<boolean> {
     if (!source || !/requiresApp\s*:\s*false/.test(source)) return true;
   }
   return false;
+}
+
+function orgModeFromSource(source: string): "single_org" | "multi_org" | null {
+  const singleOrg = /orgMode\s*:\s*["']single_org["']/.test(source);
+  const multiOrg = /orgMode\s*:\s*["']multi_org["']/.test(source);
+  if (singleOrg === multiOrg) return null;
+  if (multiOrg) return "multi_org";
+  return "single_org";
+}
+
+async function selectedStackOrgMode(args: CliArgs): Promise<"single_org" | "multi_org" | undefined> {
+  if (args.list || args.all || args.flows.length === 0) return undefined;
+  let selected: "single_org" | "multi_org" | null = null;
+  for (const flowId of args.flows) {
+    const source = await readFlowSource(flowId);
+    if (!source) return undefined;
+    const orgMode = orgModeFromSource(source);
+    if (!orgMode) continue;
+    if (selected && selected !== orgMode) return undefined;
+    selected = orgMode;
+  }
+  return selected ?? undefined;
 }
 
 function incrementSummary(summary: Record<FlowStatus, number>, status: FlowStatus): void {
@@ -188,7 +240,7 @@ export function createEvalHosts({ manifest, env, repoRoot, log }: { manifest: En
 }
 
 function printHelp(): void {
-  console.log("Usage: node evals/runner/run.mjs [--mode automation|demo] [--list | --all | --flow <id> ... | scaffold <id> [--force]] [--cdp-url <url>] [--env <name>] [--out <dir>] [--pr [number]] [--stack den | --stack-down]");
+  console.log("Usage: node evals/runner/run.mjs [--mode automation|demo] [--list | --all | --flow <id> ... | scaffold <id> [--force]] [--cdp-url <url>] [--env <name>] [--repeat <n>] [--out <dir>] [--pr [number]] [--stack den|kube] [--kube-profile single-org|multi-org] [--images published|local] [--stack-down [--delete-cluster]]");
 }
 
 export async function main(argv: string[] = process.argv.slice(2)): Promise<void> {
@@ -200,6 +252,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
 
   if (args.stackDown) {
     await denStackDown({ log: (msg) => console.log(`▸ ${msg}`) });
+    await kubeStackDown({ log: (msg) => console.log(`▸ ${msg}`), deleteCluster: args.deleteCluster });
     return;
   }
 
@@ -222,13 +275,24 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
   }
 
   if (args.stack === "den") {
+    const orgMode = await selectedStackOrgMode(args);
+    if (orgMode) console.log(`▸ Selected flow Den orgMode: ${orgMode}`);
     await ensureDenStack({
       log: (msg) => console.log(`▸ ${msg}`),
       cdpCandidates: args.cdpUrl ? [args.cdpUrl] : DEFAULT_CDP_CANDIDATES,
       skipApp: !(await selectedStackNeedsApp(args)),
+      orgMode,
+    });
+  } else if (args.stack === "kube") {
+    await ensureKubeStack({
+      log: (msg) => console.log(`▸ ${msg}`),
+      cdpCandidates: args.cdpUrl ? [args.cdpUrl] : DEFAULT_CDP_CANDIDATES,
+      skipApp: !(await selectedStackNeedsApp(args)),
+      profile: args.kubeProfile,
+      images: args.images ?? undefined,
     });
   } else if (args.stack) {
-    throw new Error(`Unknown stack: ${args.stack}. Supported: den`);
+    throw new Error(`Unknown stack: ${args.stack}. Supported: den, kube`);
   }
 
   const flows = await loadFlows(FLOWS_DIR);
@@ -279,15 +343,31 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
   });
 
   for (const flow of selected) {
-    console.log(`▶ ${flow.id} — ${flow.title}`);
-    const result = await runFlow(flow, { cdpBaseUrl, outDir, env: process.env, mode: args.mode, hosts, defaultHostKind, manifest });
-    report.flows.push(result);
-    incrementSummary(report.summary, result.status);
-    for (const step of result.steps) {
-      const icon = step.status === "passed" ? "  ✓" : "  ✗";
-      console.log(`${icon} ${step.name} (${step.durationMs}ms)${step.error ? ` — ${step.error}` : ""}`);
+    console.log(`▶ ${flow.id} — ${flow.title}${args.repeat > 1 ? ` (repeat ${args.repeat})` : ""}`);
+    if (args.repeat === 1) {
+      const result = await runFlow(flow, { cdpBaseUrl, outDir, env: process.env, mode: args.mode, hosts, defaultHostKind, manifest });
+      report.flows.push(result);
+      incrementSummary(report.summary, result.status);
+      for (const step of result.steps) {
+        const icon = step.status === "passed" ? "  ✓" : "  ✗";
+        console.log(`${icon} ${step.name} (${step.durationMs}ms)${step.error ? ` — ${step.error}` : ""}`);
+      }
+      if (result.skipReason) console.log(`  ⏭ skipped: ${result.skipReason}`);
+    } else {
+      const repeatRunStamp = process.env.OPENWORK_EVAL_RUNSTAMP?.trim() || process.env.OPENWORK_EVAL_RUN_STAMP?.trim() || runId;
+      const repeated = await runFlowRepeated(flow, { cdpBaseUrl, outDir, env: process.env, mode: args.mode, hosts, defaultHostKind, manifest, repeat: args.repeat, runStamp: repeatRunStamp });
+      report.flows.push(...repeated.results);
+      report.soak = [...(report.soak ?? []), repeated.summary];
+      incrementSummary(report.summary, repeated.summary.status);
+      console.log(`  Soak: ${repeated.summary.passed} passed, ${repeated.summary.failed} failed, ${repeated.summary.skipped} skipped; captured iterations ${repeated.summary.capturedIterations.join(", ")}`);
+      for (const result of repeated.results) {
+        for (const step of result.steps) {
+          const icon = step.status === "passed" ? "  ✓" : "  ✗";
+          console.log(`${icon} ${result.id} · ${step.name} (${step.durationMs}ms)${step.error ? ` — ${step.error}` : ""}`);
+        }
+        if (result.skipReason) console.log(`  ⏭ ${result.id} skipped: ${result.skipReason}`);
+      }
     }
-    if (result.skipReason) console.log(`  ⏭ skipped: ${result.skipReason}`);
   }
 
   report.finishedAt = new Date().toISOString();

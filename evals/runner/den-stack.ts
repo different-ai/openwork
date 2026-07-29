@@ -37,8 +37,18 @@ const MYSQL_CONTAINER = "openwork-web-local-mysql";
 const MYSQL_STATE_DIR = join(STATE_DIR, "mysql");
 const MYSQL_SOCKET = join(MYSQL_STATE_DIR, "mysql.sock");
 const COMPOSE_ARGS = ["compose", "-p", "openwork-den-local", "-f", "packaging/docker/docker-compose.web-local.yml"];
+const DEFAULT_MOCK_IDP_ISSUER = "http://127.0.0.1:19190";
+const MOCK_IDP_ISSUER = (process.env.OPENWORK_EVAL_MOCK_IDP_ISSUER?.trim() || DEFAULT_MOCK_IDP_ISSUER).replace(/\/+$/, "");
 const DEN_WEB_ORIGIN = (process.env.OPENWORK_EVAL_DEN_WEB_URL ?? "http://localhost:3005").replace(/\/+$/, "");
 const DEN_WEB_PORT = new URL(DEN_WEB_ORIGIN).port || "3005";
+
+function envCsv(name: string): string[] {
+  return (process.env[name] ?? "")
+    .split(",")
+    .map((entry) => entry.trim().replace(/\/+$/, ""))
+    .filter(Boolean);
+}
+
 const DEN_TRUSTED_ORIGINS = [
   DEN_BASE_URL,
   DEN_WEB_ORIGIN,
@@ -46,6 +56,8 @@ const DEN_TRUSTED_ORIGINS = [
   `http://127.0.0.1:${DEN_WEB_PORT}`,
   "http://localhost:5173",
   "http://127.0.0.1:5173",
+  MOCK_IDP_ISSUER,
+  ...envCsv("OPENWORK_EVAL_DEN_EXTRA_TRUSTED_ORIGINS"),
 ].filter((origin, index, origins) => origins.indexOf(origin) === index).join(",");
 
 // Override with OPENWORK_EVAL_DATABASE_URL to isolate a run from the shared
@@ -588,6 +600,7 @@ export async function ensureDenOrgMode(orgMode: DenOrgMode | undefined, log: (me
   log(`Den orgMode ${detail}; restarting den-api and den-web for ${orgMode}.`);
   await stopRecordedProcess("den-api.pid", "den-api", log);
   await stopRecordedProcess("den-web.pid", "den-web", log);
+  await freePorts([DEN_API_PORT, DEN_API_INTERNAL_PORT, Number(DEN_WEB_PORT)].filter((port) => Number.isInteger(port) && port > 0), log, "Den orgMode restart");
   await clearDenWebBuildCache();
 }
 
@@ -650,18 +663,15 @@ async function ensureSeed(log: (message: string) => void): Promise<void> {
   log("Demo org seeded");
 }
 
-async function freeStaleAppPorts(log: (message: string) => void): Promise<void> {
-  // If no app page target is serving but the dev ports are held, a previous
-  // run left a half-dead app behind (e.g. Electron without its renderer).
-  // Clear them so the fresh spawn does not lose the bind race.
-  for (const port of [9823, 5173]) {
+async function freePorts(ports: number[], log: (message: string) => void, reason: string): Promise<void> {
+  for (const port of ports) {
     try {
       const { stdout } = await run("lsof", ["-nP", "-ti", `tcp:${port}`]);
       const pids = stdout.split("\n").map((line) => line.trim()).filter(Boolean);
       for (const pid of pids) {
         try {
           process.kill(Number(pid), "SIGKILL");
-          log(`Cleared stale process ${pid} holding :${port}`);
+          log(`Cleared process ${pid} holding :${port} (${reason})`);
         } catch {
           // Already gone.
         }
@@ -671,6 +681,13 @@ async function freeStaleAppPorts(log: (message: string) => void): Promise<void> 
     }
   }
   await sleep(1_500);
+}
+
+async function freeStaleAppPorts(log: (message: string) => void): Promise<void> {
+  // If no app page target is serving but the dev ports are held, a previous
+  // run left a half-dead app behind (e.g. Electron without its renderer).
+  // Clear them so the fresh spawn does not lose the bind race.
+  await freePorts([9823, 5173], log, "stale app cleanup");
 }
 
 async function ensureApp(log: (message: string) => void, cdpCandidates: string[]): Promise<void> {
