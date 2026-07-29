@@ -67,6 +67,7 @@ type ComposerProps = {
   disabled: boolean;
   modelUnavailable?: boolean;
   modelUnavailableMessage?: string | null;
+  organizationModelsEmpty?: boolean;
   statusLabel: string;
   modelPickerOpen: boolean;
   selectedModel: ModelRef;
@@ -1724,6 +1725,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                 <ModelSelect
                   open={props.modelPickerOpen}
                   value={props.selectedModel}
+                  hideValue={props.organizationModelsEmpty}
                   onOpenChange={props.onModelPickerOpenChange}
                   onChange={(model) => {
                     if (!props.steering) props.onModelChange(model);

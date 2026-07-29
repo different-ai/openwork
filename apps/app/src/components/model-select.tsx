@@ -181,6 +181,7 @@ function isSameModel(a: ModelRef, b: ModelRef) {
 interface ModelSelectProps {
   open: boolean;
   value: ModelRef;
+  hideValue?: boolean;
   onOpenChange: (open: boolean) => void;
   onChange: (model: ModelRef) => void;
   disabled?: boolean;
@@ -193,6 +194,7 @@ interface ModelSelectProps {
 export function ModelSelect({
   open,
   value,
+  hideValue = false,
   onOpenChange,
   onChange,
   disabled = false,
@@ -317,7 +319,7 @@ export function ModelSelect({
           }
         >
           <span className="max-w-48 truncate">
-            {selectedOption?.title ?? value.modelID ?? "Select model"}
+            {hideValue ? "Select model" : (selectedOption?.title ?? value.modelID ?? "Select model")}
           </span>
           <ChevronDown className="h-3 w-3" />
         </TooltipTrigger>

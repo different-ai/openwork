@@ -28,6 +28,7 @@ export type NewTaskComposerContext = {
   selectedModel: ModelRef;
   modelUnavailable?: boolean;
   modelUnavailableMessage?: string | null;
+  organizationModelsEmpty?: boolean;
   onRefreshOrganizationModels?: () => void | Promise<void>;
   modelPickerOpen: boolean;
   onModelPickerOpenChange: (open: boolean) => void;
@@ -221,6 +222,7 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
       disabled={Boolean(context?.modelUnavailable)}
       modelUnavailable={context?.modelUnavailable}
       modelUnavailableMessage={context?.modelUnavailableMessage}
+      organizationModelsEmpty={context?.organizationModelsEmpty}
       statusLabel=""
       modelPickerOpen={context?.modelPickerOpen ?? false}
       selectedModel={context?.selectedModel ?? FALLBACK_MODEL}
