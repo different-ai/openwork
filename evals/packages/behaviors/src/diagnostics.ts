@@ -545,7 +545,7 @@ function endpointForTransport(lab: EgressLabHandle): URL {
 }
 
 function probeTlsVersion(
-  target: { host: string; port: number; servername?: string; ca?: string },
+  target: { host: string; port: number; servername?: string; ca?: string | string[] },
   version: "TLSv1.2" | "TLSv1.3",
   timeoutMs: number,
 ): Promise<TlsProbeFacts> {
@@ -577,7 +577,7 @@ function probeTlsVersion(
 }
 
 export async function probeTls(
-  target: { host: string; port: number; servername?: string; ca?: string },
+  target: { host: string; port: number; servername?: string; ca?: string | string[] },
   opts: { timeoutMs?: number } = {},
 ): Promise<TlsFacts> {
   const timeoutMs = opts.timeoutMs ?? 1_500;

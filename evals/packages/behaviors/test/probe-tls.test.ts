@@ -8,6 +8,7 @@ import { probeTls } from "../src/diagnostics.ts";
 test("probeTls and diagnoseTls identify a TLS 1.3-only stall without the eval framework", async () => {
   await using lab = await startEgressLab({ profile: "tls12-only" });
   const url = new URL(lab.url);
+  if (!lab.rootPem) throw new Error("TLS lab did not provide a root certificate");
   if (!lab.intermediatePemPath) throw new Error("TLS lab did not provide an intermediate certificate");
   const intermediatePem = await readFile(lab.intermediatePemPath, "utf8");
   const facts = await probeTls({
@@ -19,7 +20,7 @@ test("probeTls and diagnoseTls identify a TLS 1.3-only stall without the eval fr
     servername: url.hostname,
     // Some macOS runner/OpenSSL combinations do not use the server-provided
     // intermediate when the trust input contains only the root.
-    ca: `${lab.rootPem}\n${intermediatePem}`,
+    ca: [lab.rootPem, intermediatePem],
   });
 
   assert.equal(facts.tls12.ok, true, JSON.stringify(facts));
