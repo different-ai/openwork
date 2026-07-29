@@ -35,6 +35,41 @@ pnpm evals --all --cdp-url http://127.0.0.1:9825   # explicit CDP endpoint
 unnarrated frames render without a warning. `pnpm fraimz` is demo mode: it keeps
 the voice-over drift check and narrated-frame warnings described below.
 
+## Composable packages + spec lane
+
+`evals/` is its own **standalone pnpm workspace** (`evals/pnpm-workspace.yaml`)
+so eval tooling can never affect product installs or image builds. Install it
+separately:
+
+```bash
+pnpm --dir evals install           # required once (and in CI) before the commands below
+pnpm --dir evals run test          # node:test unit tests (runner + packages)
+pnpm --dir evals run spec          # vitest spec lane, pr project
+pnpm --dir evals run spec:nightly  # includes *.slow.test.ts
+```
+
+The layers live in [`packages/`](./packages) and are consumable independently of
+the runner:
+
+| Package | Owns |
+| --- | --- |
+| `@openwork/cdp` | raw CDP client, targets, `Surface`, `attachSurface` |
+| `@openwork/labs` | egress / idp / release-feed / mock-mcp — `start*(config) → handle` with `stop()` + `Symbol.asyncDispose` |
+| `@openwork/hosts` | local + daytona hosts, `resolveHost()` |
+| `@openwork/behaviors` | framework-free actions/observations over narrow handles; return facts, never record evidence |
+| `@openwork/matchers` | pure functions over facts (`diagnoseTls`, …) — testable with fabricated facts, no I/O |
+| `@openwork/fraimz` | frame capture + annotation channel |
+
+Specs in [`specs/`](./specs) are plain vitest tests: acquire resources with
+`await using`, drive them with behaviors, assert with matchers. Because behaviors
+take handles rather than a framework context, the same calls run outside any test
+— see [`scripts/diagnose.mts`](./scripts/diagnose.mts), which imports only
+`@openwork/behaviors` + `@openwork/matchers` and points them at a real endpoint:
+
+```bash
+node evals/scripts/diagnose.mts https://den.customer.example
+```
+
 ### fraimz — the deliverable
 
 Every run writes **`fraimz.html`** to `evals/results/<run-id>/`: the
