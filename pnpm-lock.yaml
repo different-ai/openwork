@@ -32,6 +32,9 @@ importers:
       '@openwork/behaviors':
         specifier: workspace:*
         version: link:evals/packages/behaviors
+      '@openwork/cdp':
+        specifier: workspace:*
+        version: link:evals/packages/cdp
       '@openwork/matchers':
         specifier: workspace:*
         version: link:evals/packages/matchers

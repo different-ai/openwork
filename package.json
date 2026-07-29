@@ -75,6 +75,7 @@
   },
   "devDependencies": {
     "@openwork/behaviors": "workspace:*",
+    "@openwork/cdp": "workspace:*",
     "@openwork/matchers": "workspace:*",
     "@types/node": "^24.0.0",
     "turbo": "^2.5.5",
