@@ -129,6 +129,7 @@ import {
 import { cn } from "@/lib/utils";
 import { getSessionActivityStatusLabel, type SessionActivityStatus } from "../status/session-activity-store";
 import { SessionDotMatrixLoader } from "./session-dot-matrix-loader";
+import { SessionTitleMarquee } from "./session-title-marquee";
 import {
   SIDEBAR_ROW_LANE,
   SIDEBAR_SECTION_LABEL,
@@ -2206,6 +2207,7 @@ function SessionMenuItem({
   workspaceName,
 }: SessionMenuItemProps) {
   const ctx = useSidebarContext();
+  const [keyboardFocused, setKeyboardFocused] = React.useState(false);
   const unreadIds = useUnreadSessionIds();
   const isSelected = ctx.selectedSessionId === session.id;
   const displayTitle = getDisplaySessionTitle(session.title);
@@ -2299,13 +2301,19 @@ function SessionMenuItem({
                 data-session-tab-active={isSelected ? "true" : undefined}
                 onClick={openSession}
                 onPointerEnter={prefetchSession}
-                onFocus={prefetchSession}
+                onFocus={(event) => {
+                  prefetchSession();
+                  setKeyboardFocused(event.currentTarget.matches(":focus-visible"));
+                }}
+                onBlur={() => setKeyboardFocused(false)}
                 aria-label={accessibleState}
               >
                 {leading}
-                <span className="min-w-0 flex-1 ow-fade-truncate" title={itemTitle}>
-                  {displayTitle}
-                </span>
+                <SessionTitleMarquee
+                  keyboardFocused={keyboardFocused}
+                  title={displayTitle}
+                  tooltip={itemTitle}
+                />
                 <span className="flex size-6 shrink-0 items-center justify-center">
                   <ChevronRight className="size-4 text-muted-foreground transition-transform duration-200 group-data-open/session-collapsible:rotate-90 hover:text-foreground" />
                 </span>
@@ -2325,13 +2333,21 @@ function SessionMenuItem({
           data-session-tab-active={isSelected ? "true" : undefined}
           onClick={openSession}
           onPointerEnter={prefetchSession}
-          onFocus={prefetchSession}
+          onFocus={(event) => {
+            prefetchSession();
+            setKeyboardFocused(event.currentTarget.matches(":focus-visible"));
+          }}
+          onBlur={() => setKeyboardFocused(false)}
           aria-label={accessibleState}
           className={rowButtonClass}
           style={rowButtonStyle}
         >
           {leading}
-          <span className="min-w-0 flex-1 ow-fade-truncate" title={itemTitle}>{displayTitle}</span>
+          <SessionTitleMarquee
+            keyboardFocused={keyboardFocused}
+            title={displayTitle}
+            tooltip={itemTitle}
+          />
         </SidebarMenuSubButton>
       </SessionContextMenu>
       {trailing}
