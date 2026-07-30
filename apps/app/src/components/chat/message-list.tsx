@@ -8,7 +8,9 @@ import {
   Copy,
   Download,
   FileIcon,
+  FolderOpen,
   LoaderCircle,
+  MoreHorizontal,
   Pencil,
   Split,
   Undo2,
@@ -22,7 +24,8 @@ import {
   type UIMessage,
 } from "ai"
 import type { SessionStatus } from "@opencode-ai/sdk/v2/client"
-import { openDesktopUrl } from "@/app/lib/desktop"
+import { openDesktopUrl, revealDesktopItemInDir } from "@/app/lib/desktop"
+import { isElectronRuntime } from "@/app/lib/runtime-env"
 import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "@/app/types"
 import { ApplyPatchTool } from "@/components/tools/apply-patch"
 import { BashTool } from "@/components/tools/bash"
@@ -48,6 +51,12 @@ import {
   DescriptiveButtonTitle,
 } from "@/components/descriptive-button"
 import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import {
   ContextMenu,
   ContextMenuContent,
@@ -97,7 +106,7 @@ import {
 } from "@/lib/tool-activity"
 import { faviconUrlForHref } from "@/lib/favicon"
 import { cn } from "@/lib/utils"
-import { groupMessages, isMessageGroup, getLastTextPart, getAggregateOnlyParts, getAssistantRenderGroups, getFileTitle, getMediaBadge, getMessageCompleted, getMessageCreated, formatMessageTimestamp, splitTurnAtAnswer, type UIMessageWithIndex, getMessagesText, getSafeFileDownloadUrl } from "./utils"
+import { groupMessages, isMessageGroup, getLastTextPart, getAggregateOnlyParts, getAssistantRenderGroups, getFileTitle, getMediaBadge, getMessageCompleted, getMessageCreated, formatMessageTimestamp, splitTurnAtAnswer, type UIMessageWithIndex, getMessagesText, getSafeFileDownloadUrl, getSafeFileRevealPath } from "./utils"
 import type { AnyToolPart } from "@/lib/tool-aggregate"
 
 const SEARCH_HIGHLIGHT_MARK_CLASS = "rounded px-0.5 bg-amber-4/70 text-current"
@@ -266,6 +275,8 @@ function FileMessage({ part, tone }: FileMessageProps) {
   const badge = getMediaBadge(part)
   const isImage = part.mediaType.startsWith("image/") && Boolean(part.url)
   const downloadUrl = getSafeFileDownloadUrl(part)
+  const revealPath = getSafeFileRevealPath(part)
+  const canReveal = isElectronRuntime() && Boolean(revealPath)
 
   const handleDownload = React.useCallback(() => {
     if (!downloadUrl) return
@@ -277,6 +288,11 @@ function FileMessage({ part, tone }: FileMessageProps) {
     anchor.click()
     anchor.remove()
   }, [downloadUrl, title])
+
+  const handleReveal = React.useCallback(() => {
+    if (!revealPath) return
+    void revealDesktopItemInDir(revealPath)
+  }, [revealPath])
 
   if (isImage && tone === "user") {
     return <ImageAttachmentBadge src={part.url} alt={title} />
@@ -311,17 +327,35 @@ function FileMessage({ part, tone }: FileMessageProps) {
           ) : null}
         </DescriptiveButtonContent>
       </div>
-      {downloadUrl ? (
-        <Button
-          type="button"
-          variant="outline"
-          size="xs"
-          onClick={handleDownload}
-          aria-label={`Download ${title}`}
-        >
-          <Download className="size-3" />
-          Download
-        </Button>
+      {downloadUrl || canReveal ? (
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                aria-label={`More actions for ${title}`}
+              >
+                <MoreHorizontal />
+              </Button>
+            }
+          />
+          <DropdownMenuContent align="end" className="min-w-44">
+            {downloadUrl ? (
+              <DropdownMenuItem onClick={handleDownload}>
+                <Download />
+                Download
+              </DropdownMenuItem>
+            ) : null}
+            {canReveal ? (
+              <DropdownMenuItem onClick={handleReveal}>
+                <FolderOpen />
+                Reveal in Finder
+              </DropdownMenuItem>
+            ) : null}
+          </DropdownMenuContent>
+        </DropdownMenu>
       ) : null}
     </div>
   )

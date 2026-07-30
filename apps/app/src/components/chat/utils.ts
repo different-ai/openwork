@@ -81,6 +81,18 @@ export function getSafeFileDownloadUrl(part: Pick<FileUIPart, "url">) {
   }
 }
 
+export function getSafeFileRevealPath(part: Pick<FileUIPart, "url">) {
+  try {
+    const url = new URL(part.url)
+    if (url.protocol !== "file:") return null
+    const pathname = decodeURIComponent(url.pathname)
+    if (!pathname) return null
+    return /^\/[A-Za-z]:\//.test(pathname) ? pathname.slice(1) : pathname
+  } catch {
+    return null
+  }
+}
+
 function getMessageOpencodeMetadata(message: UIMessage): object | null {
   const metadata: unknown = message.metadata
   if (!metadata || typeof metadata !== "object" || !("opencode" in metadata)) return null
