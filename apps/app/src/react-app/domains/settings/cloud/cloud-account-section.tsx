@@ -26,6 +26,19 @@ export interface CloudAccountSectionProps {
   onSignOut: () => void | Promise<void>;
 }
 
+function organizationRoleLabel(role: DenOrgSummary["role"]) {
+  switch (role) {
+    case "super-admin":
+      return "Super admin";
+    case "owner":
+      return "Owner";
+    case "admin":
+      return "Admin";
+    case "member":
+      return "Member";
+  }
+}
+
 export function CloudAccountSection({
   activeOrgId,
   authBusy,
@@ -118,7 +131,7 @@ function ConnectedOrg({ org }: { org: DenOrgSummary }) {
       <div className="min-w-0 flex-1">
         <div className="text-sm font-medium text-dls-text">{org.name}</div>
         <div className="text-xs text-dls-secondary">
-          {org.role === "owner" ? "Owner" : "Member"} &middot; Connected
+          {organizationRoleLabel(org.role)} &middot; Connected
         </div>
       </div>
       <Check size={16} className="shrink-0 text-green-11" />
@@ -202,7 +215,7 @@ function OrgPicker({
             <div className="min-w-0 flex-1">
               <div className="text-sm font-medium text-dls-text">{org.name}</div>
               <div className="text-xs text-dls-secondary">
-                {org.role === "owner" ? "Owner" : "Member"}
+                {organizationRoleLabel(org.role)}
               </div>
             </div>
           </button>

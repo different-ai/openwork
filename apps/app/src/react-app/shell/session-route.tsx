@@ -178,7 +178,11 @@ import { useComposerStateStore } from "@/react-app/domains/session/surface/compo
 import { useControlAction, type OpenworkControlAction } from "./control/control-provider";
 import { useReactRenderWatchdog } from "./react-render-watchdog";
 
-import { createDenClient, readDenSettings } from "@/app/lib/den";
+import {
+  createDenClient,
+  readDenSettings,
+  type DenOrgRole,
+} from "@/app/lib/den";
 import { denSessionUpdatedEvent, denSettingsChangedEvent } from "@/app/lib/den-session-events";
 
 import { filterProviderList } from "@/app/utils/providers";
@@ -457,7 +461,7 @@ export function SessionRoute() {
   const reloadCoordinator = useReloadCoordinator();
   const checkDesktopRestriction = useCheckDesktopRestriction();
   const restrictionNotice = useRestrictionNotice();
-  const [activeOrganizationRole, setActiveOrganizationRole] = useState<"owner" | "admin" | "member" | null>(null);
+  const [activeOrganizationRole, setActiveOrganizationRole] = useState<DenOrgRole | null>(null);
   const [openworkServerHostInfoState, setOpenworkServerHostInfoState] = useState<OpenworkServerInfo | null>(null);
   const [openworkServerSettingsVersion, setOpenworkServerSettingsVersion] = useState(0);
   const [developerMode, setDeveloperMode] = useState(() => {
@@ -859,7 +863,11 @@ export function SessionRoute() {
     await refreshOrganizationModelAccess();
   }, [refreshOrganizationModelAccess]);
   const organizationModelsSettingsUrl = useMemo(() => {
-    if (activeOrganizationRole !== "owner" && activeOrganizationRole !== "admin") {
+    if (
+      activeOrganizationRole !== "super-admin" &&
+      activeOrganizationRole !== "owner" &&
+      activeOrganizationRole !== "admin"
+    ) {
       return undefined;
     }
     return new URL("/dashboard/custom-llm-providers", readDenSettings().baseUrl).toString();

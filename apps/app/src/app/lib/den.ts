@@ -139,11 +139,13 @@ export type DenBootstrapConfig = DenBaseUrls & {
 
 export type DenDesktopConfig = SharedDesktopConfig;
 
+export type DenOrgRole = "super-admin" | "owner" | "admin" | "member";
+
 export type DenOrgSummary = {
   id: string;
   name: string;
   slug: string;
-  role: "owner" | "admin" | "member";
+  role: DenOrgRole;
 };
 
 export type DenWorkerSummary = {
@@ -1128,7 +1130,12 @@ function getOrgList(payload: unknown): DenOrgSummary[] {
       typeof entry.id !== "string" ||
       typeof entry.name !== "string" ||
       typeof entry.slug !== "string" ||
-      (entry.role !== "owner" && entry.role !== "admin" && entry.role !== "member")
+      (
+        entry.role !== "super-admin" &&
+        entry.role !== "owner" &&
+        entry.role !== "admin" &&
+        entry.role !== "member"
+      )
     ) {
       return [];
     }

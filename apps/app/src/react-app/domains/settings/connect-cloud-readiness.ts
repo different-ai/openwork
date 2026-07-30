@@ -14,7 +14,7 @@ const instructionalTypes = new Set(["agent", "command", "context", "custom", "sk
 const desktopInstallTypes = new Set(["hook", "tool"]);
 
 export function isConnectAdminRole(role: ConnectOrgRole) {
-  return role === "owner" || role === "admin";
+  return role === "super-admin" || role === "owner" || role === "admin";
 }
 
 export function pluginHasInstructionalComponents(componentCounts: Record<string, number>) {
