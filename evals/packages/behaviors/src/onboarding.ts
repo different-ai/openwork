@@ -141,6 +141,6 @@ export async function createLocalWorkspaceViaUi(
       route: location.hash,
       entrypoint: ${JSON.stringify(entrypoint)},
     };
-  })()`, { awaitPromise: true });
+  })()`, { awaitPromise: true, timeoutMs: 120_000 });
   return parseWorkspaceFacts(raw);
 }

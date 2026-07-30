@@ -70,7 +70,7 @@ export async function writeComposerText(app: Surface, text: string): Promise<voi
   const hasControl = await evalIn(app, `Boolean(window.__openworkControl?.listActions?.()
     .find((entry) => entry.id === "composer.set_text" && entry.disabled === false))`).catch(() => false);
   if (hasControl === true) {
-    await control(app, "composer.set_text", { text });
+    await control(app, "composer.set_text", { text }, { timeoutMs: 120_000 });
     await waitFor(app, `(() => {
       const editor = document.querySelector('[contenteditable="true"][data-lexical-editor="true"]')
         ?? document.querySelector('[contenteditable="true"]');

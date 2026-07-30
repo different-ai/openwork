@@ -8,6 +8,14 @@ const POLL_INTERVAL_MS = 250;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+function messageText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function logCleanupError(name: string, error: unknown): void {
+  console.warn(`[openwork/evals] Desktop ${name} cleanup failed: ${messageText(error)}`);
+}
+
 export interface DesktopOptions {
   name?: string;
   mode?: "spawn" | "attach";
@@ -154,15 +162,19 @@ export async function desktop(opts: DesktopOptions = {}): Promise<DesktopHandle>
       stopped = true;
       await closeSpawnedSurface(attached, host, handle);
     };
+    const dispose = async (): Promise<void> => {
+      await stop().catch((error: unknown) => logCleanupError(handle.name, error));
+    };
     return {
       handle: attached.handle,
       client: attached.client,
       readiness,
       stop,
-      [Symbol.asyncDispose]: stop,
+      [Symbol.asyncDispose]: dispose,
     };
   } catch (error) {
-    await closeSpawnedSurface(attached, host, handle).catch(() => undefined);
+    await closeSpawnedSurface(attached, host, handle)
+      .catch((cleanupError: unknown) => logCleanupError(handle.name, cleanupError));
     throw error;
   }
 }

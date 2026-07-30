@@ -541,7 +541,10 @@ function containerLaunchArgs(existing: string | undefined): string | undefined {
     },
 
     async [Symbol.asyncDispose](): Promise<void> {
-      await this.stop();
+      for (const handle of [...spawnedSurfaces]) {
+        await this.disposeSurface(handle)
+          .catch((error: unknown) => log(`Local surface ${handle.name} cleanup failed: ${messageText(error)}`));
+      }
     },
   };
 }

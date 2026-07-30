@@ -329,7 +329,10 @@ test.skipIf(!appSpecsEnabled || !apiUrl)(managedTitle, async () => {
   onTestFinished(async () => restoreManagedState(admin, state));
   await configureManagedEmpty(admin, state);
 
-  await using app = await desktop({ name: "models-managed-recovery" });
+  await using app = await desktop({
+    name: "models-managed-recovery",
+    bootstrap: { baseUrl: den.webUrl, apiBaseUrl: den.webUrl, requireSignin: false },
+  });
   await using roll = photoRoll("models-managed-recovery");
   await signInDesktopAs(app, den, admin);
   const workspacePath = `/tmp/openwork-managed-models-${Date.now()}`;

@@ -103,7 +103,10 @@ test.skipIf(!apiUrl || !appSpecsEnabled)(title, async () => {
   onTestFinished(async () => deleteConnection(admin, connection.id));
   expect((await readUsableConnection(member, connection.id))?.connectedForMe).toBe(false);
 
-  await using app = await desktop({ name: "org-connection-lifecycle" });
+  await using app = await desktop({
+    name: "org-connection-lifecycle",
+    bootstrap: { baseUrl: den.webUrl, apiBaseUrl: den.webUrl, requireSignin: false },
+  });
   await using roll = photoRoll("org-connection-lifecycle");
   await signInDesktopAs(app, den, member);
   const workspacePath = `/tmp/openwork-org-connection-lifecycle-${Date.now()}`;

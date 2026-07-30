@@ -145,11 +145,16 @@ export async function enabledButtons(app: Surface): Promise<string[]> {
 }
 
 /** Invoke a registered `window.__openworkControl` action, the product's own automation seam. */
-export async function control(app: Surface, action: string, args?: unknown): Promise<unknown> {
+export async function control(
+  app: Surface,
+  action: string,
+  args?: unknown,
+  opts: EvaluateOptions = {},
+): Promise<unknown> {
   const result = await evalIn(
     app,
     `window.__openworkControl.execute(${JSON.stringify(action)}, ${JSON.stringify(args ?? null)})`,
-    { awaitPromise: true },
+    { ...opts, awaitPromise: true },
   );
   if (!isRecord(result) || result.ok !== true) {
     throw new Error(`Desktop control action ${action} failed: ${isRecord(result) ? String(result.error ?? "unknown") : "unknown"}`);

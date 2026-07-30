@@ -6,6 +6,30 @@ import { createLocalWorkspaceViaUi } from "./onboarding.ts";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+function messageText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+async function waitForDenState(
+  app: Surface,
+  den: DenRef,
+  expression: string,
+  options: { timeoutMs: number; label: string },
+): Promise<void> {
+  try {
+    await waitFor(app, expression, options);
+  } catch (error) {
+    const keys = await evalIn(
+      app,
+      "Array.from({ length: localStorage.length }, (_, index) => localStorage.key(index)).filter(Boolean).sort()",
+      { timeoutMs: 5_000 },
+    ).catch((keysError: unknown) => [`<unavailable: ${messageText(keysError)}>`]);
+    throw new Error(
+      `${messageText(error)} Resolved Den URLs: web=${den.webUrl}, api=${den.apiUrl}. Current localStorage keys: ${JSON.stringify(keys)}.`,
+    );
+  }
+}
+
 export interface SelectedWorkspaceFacts {
   workspaceId: string;
   route: string;
@@ -18,11 +42,11 @@ export async function signInDesktopAs(app: Surface, den: DenRef, member: DenSess
   });
   const grant = await createDesktopHandoffGrant(member);
   await control(app, "auth.exchange-grant", { grant, baseUrl: den.webUrl });
-  await waitFor(app, "Boolean((localStorage.getItem('openwork.den.authToken') ?? '').trim())", {
+  await waitForDenState(app, den, "Boolean((localStorage.getItem('openwork.den.authToken') ?? '').trim())", {
     timeoutMs: 45_000,
     label: "persisted den auth token",
   });
-  await waitFor(app, "Boolean((localStorage.getItem('openwork.den.activeOrgId') ?? '').trim())", {
+  await waitForDenState(app, den, "Boolean((localStorage.getItem('openwork.den.activeOrgId') ?? '').trim())", {
     timeoutMs: 60_000,
     label: "active org resolved",
   });

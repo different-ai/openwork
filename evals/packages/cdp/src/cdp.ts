@@ -16,8 +16,12 @@ export interface CdpTarget {
 export interface CdpClient {
   targetId?: string | null;
   webSocketDebuggerUrl?: string;
-  send(method: string, params?: Record<string, unknown>): Promise<unknown>;
+  send(method: string, params?: Record<string, unknown>, options?: CdpSendOptions): Promise<unknown>;
   close(): void;
+}
+
+export interface CdpSendOptions {
+  timeoutMs?: number;
 }
 
 export interface CdpConnectOptions {
@@ -27,6 +31,7 @@ export interface CdpConnectOptions {
 
 export interface EvaluateOptions {
   awaitPromise?: boolean;
+  timeoutMs?: number;
 }
 
 interface PendingCallbacks {
@@ -178,15 +183,15 @@ export function connect(
         targetId: new URL(webSocketDebuggerUrl).pathname.split("/").pop() ?? null,
         webSocketDebuggerUrl,
         close: () => socket.close(),
-        send(method: string, params: Record<string, unknown> = {}) {
+        send(method: string, params: Record<string, unknown> = {}, { timeoutMs = sendTimeoutMs }: CdpSendOptions = {}) {
           const id = nextId;
           nextId += 1;
           return new Promise((innerResolve, innerReject) => {
-            const timer = sendTimeoutMs > 0
+            const timer = timeoutMs > 0
               ? setTimeout(() => {
                 pending.delete(id);
-                innerReject(new Error(`CDP call ${method} timed out after ${sendTimeoutMs}ms.`));
-              }, sendTimeoutMs)
+                innerReject(new Error(`CDP call ${method} timed out after ${timeoutMs}ms.`));
+              }, timeoutMs)
               : null;
             pending.set(id, { resolve: innerResolve, reject: innerReject, timer });
             try {
@@ -234,12 +239,16 @@ export function connect(
   });
 }
 
-export async function evaluate(client: CdpClient, expression: string, { awaitPromise = false }: EvaluateOptions = {}): Promise<unknown> {
+export async function evaluate(
+  client: CdpClient,
+  expression: string,
+  { awaitPromise = false, timeoutMs }: EvaluateOptions = {},
+): Promise<unknown> {
   const payload = await client.send("Runtime.evaluate", {
     expression,
     awaitPromise,
     returnByValue: true,
-  });
+  }, { timeoutMs });
   if (!isRecord(payload)) return undefined;
   if (isRecord(payload.exceptionDetails)) {
     const exception = payload.exceptionDetails.exception;

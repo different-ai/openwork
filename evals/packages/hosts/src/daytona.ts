@@ -616,6 +616,11 @@ export function createDaytonaHost(options: DaytonaHostOptions): DaytonaHost {
     share,
     disposeSurface,
     stop,
-    [Symbol.asyncDispose]: stop,
+    async [Symbol.asyncDispose](): Promise<void> {
+      for (const handle of [...spawnedSurfaces]) {
+        await disposeSurface(handle)
+          .catch((error: unknown) => options.log(`Daytona surface ${handle.name} cleanup failed: ${messageText(error)}`));
+      }
+    },
   };
 }
