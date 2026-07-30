@@ -114,6 +114,7 @@ import { isAgentOAuthClientConnection } from "../mcp-connections.js"
 import {
   PluginArchRouteFailure,
   addPluginMembership,
+  attachExistingMcpConnectionToPlugin,
   attachConfigObjectToPlugin,
   createConfigObject,
   createConfigObjectVersion,
@@ -235,11 +236,18 @@ async function configurePluginMcpConnectionResponse(c: OrgContext) {
   try {
     const params = validParam<z.infer<typeof pluginParamsSchema>>(c)
     const body = validJson<z.infer<typeof pluginMcpRequirementConfigureSchema>>(c)
-    if (isAgentPluginMcpSecretSetup({ apiKey: body.apiKey, oauthClient: body.oauthClient, sessionId: c.get("session")?.id })) {
+    if (!("externalMcpConnectionId" in body) && isAgentPluginMcpSecretSetup({ apiKey: body.apiKey, oauthClient: body.oauthClient, sessionId: c.get("session")?.id })) {
       return c.json({ error: "invalid_request", message: "Plugin MCP credentials cannot be set from the agent. Add them in the OpenWork Cloud dashboard under Connections." }, 400)
     }
     const admin = ensureOrganizationAdmin(c, "Only workspace owners and admins can configure plugin MCP requirements.")
     if (!admin.ok) return c.json(admin.response, orgAccessFailureStatus(admin.response))
+    if ("externalMcpConnectionId" in body) {
+      return c.json({ ok: true, item: await attachExistingMcpConnectionToPlugin({
+        connectionId: body.externalMcpConnectionId,
+        context: actorContext(c),
+        pluginId: normalizeDenTypeId("plugin", params.pluginId),
+      }) })
+    }
     return c.json({ ok: true, item: await configureMarketplacePluginMcpRequirement({
       authType: body.authType,
       apiKey: body.apiKey,
@@ -903,13 +911,14 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
     describeRoute({
       tags: ["Plugins"],
       summary: "Configure plugin MCP requirement",
-      description: "Admin-only privileged setup for one declared remote MCP server. The server name and URL are derived from the active plugin config object; the request never supplies a URL and does not start OAuth.",
+      description: "Admin-only setup for one declared remote MCP server or assignment of an existing organization MCP connection. The request never supplies a URL and does not start OAuth.",
       responses: {
         200: jsonResponse("Plugin MCP requirement configured successfully.", pluginMcpRequirementConfigureResponseSchema),
         400: jsonResponse("The plugin MCP requirement request was invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in to configure plugin MCP requirements.", unauthorizedSchema),
         403: jsonResponse("Only workspace owners and admins can configure plugin MCP requirements.", forbiddenSchema),
         404: jsonResponse("The plugin MCP requirement could not be found.", notFoundSchema),
+        409: jsonResponse("The MCP connection is already assigned to the plugin.", invalidRequestSchema),
       },
     }),
     configurePluginMcpConnectionResponse)

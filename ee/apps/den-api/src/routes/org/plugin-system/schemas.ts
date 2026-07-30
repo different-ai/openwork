@@ -44,6 +44,7 @@ export const marketplaceIdSchema = denTypeIdSchema("marketplace")
 export const marketplacePluginIdSchema = denTypeIdSchema("marketplacePlugin")
 export const marketplaceAccessGrantIdSchema = denTypeIdSchema("marketplaceAccessGrant")
 export const pluginMcpRequirementBindingIdSchema = denTypeIdSchema("pluginMcpRequirementBinding")
+export const externalMcpConnectionIdSchema = denTypeIdSchema("externalMcpConnection")
 export const connectorAccountIdSchema = denTypeIdSchema("connectorAccount")
 export const connectorInstanceIdSchema = denTypeIdSchema("connectorInstance")
 export const connectorInstanceAccessGrantIdSchema = denTypeIdSchema("connectorInstanceAccessGrant")
@@ -421,7 +422,7 @@ export const githubPluginMcpImportSchema = githubPluginMcpImportPreviewSchema.ex
   selectedServerNames: z.array(z.string().trim().min(1).max(255)).max(200).optional(),
 })
 
-export const pluginMcpRequirementConfigureSchema = z.object({
+const pluginMcpRequirementDeclaredConfigureSchema = z.object({
   configObjectId: configObjectIdSchema,
   serverName: z.string().trim().min(1).max(255),
   authType: z.enum(["oauth", "apikey", "none"]).optional().default("oauth"),
@@ -432,6 +433,11 @@ export const pluginMcpRequirementConfigureSchema = z.object({
     clientSecret: z.string().trim().min(1).max(4096).optional(),
   }).optional(),
 })
+
+export const pluginMcpRequirementConfigureSchema = z.union([
+  pluginMcpRequirementDeclaredConfigureSchema,
+  z.object({ externalMcpConnectionId: externalMcpConnectionIdSchema }),
+])
 
 export const githubDiscoveryTreeQuerySchema = z.object({
   cursor: z.string().trim().min(1).max(255).optional(),

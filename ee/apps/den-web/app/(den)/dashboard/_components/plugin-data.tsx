@@ -7,6 +7,7 @@ import {
   type ConnectedIntegration,
   integrationQueryKeys,
 } from "./integration-data";
+import { mcpConnectionQueryKeys } from "./mcp-connections-data";
 
 /**
  * Plugin primitives — mirror OpenCode / Claude Code's plugin surface:
@@ -64,6 +65,7 @@ export type PluginMcpTransport = "stdio" | "http" | "sse";
 
 export type PluginMcp = {
   configObjectId?: string;
+  externalMcpConnectionId?: string;
   id: string;
   name: string;
   description: string;
@@ -477,16 +479,20 @@ export function pluginMcpEntries(item: {
     ? entries
     : [[item.title, payload] satisfies [string, Record<string, unknown>]];
 
-  return servers.map(([serverName, config], index) => ({
-    configObjectId: item.id,
-    description: item.description,
-    id: servers.length === 1 ? item.id : `${item.id}:${index}`,
-    name: servers.length === 1 ? item.title : serverName,
-    serverName,
-    toolCount: typeof config.toolCount === "number" ? config.toolCount : 0,
-    transport: pluginMcpTransport(config),
-    url: asString(config.url),
-  }));
+  return servers.map(([serverName, config], index) => {
+    const externalMcpConnectionId = asString(config.externalMcpConnectionId);
+    return {
+      configObjectId: item.id,
+      description: item.description,
+      ...(externalMcpConnectionId ? { externalMcpConnectionId } : {}),
+      id: servers.length === 1 ? item.id : `${item.id}:${index}`,
+      name: servers.length === 1 ? item.title : serverName,
+      serverName,
+      toolCount: typeof config.toolCount === "number" ? config.toolCount : 0,
+      transport: pluginMcpTransport(config),
+      url: asString(config.url),
+    };
+  });
 }
 
 function parseMembershipConfigObject(entry: unknown) {
@@ -705,6 +711,61 @@ export function useArchivePlugin() {
     onSuccess: (pluginId) => {
       queryClient.removeQueries({ queryKey: pluginQueryKeys.detail(pluginId) });
       queryClient.invalidateQueries({ queryKey: pluginQueryKeys.list() });
+    },
+  });
+}
+
+export function useAttachPluginMcpConnection() {
+  const queryClient = useQueryClient();
+  const { runReauthableAction } = useOrgDashboard();
+
+  return useMutation({
+    mutationFn: async (input: { pluginId: string; connectionId: string }) => {
+      await runReauthableAction("attach-plugin-mcp-connection", async () => {
+        const { response, payload } = await requestJson(
+          `/v1/plugins/${encodeURIComponent(input.pluginId)}/mcp-connections`,
+          {
+            method: "POST",
+            body: JSON.stringify({ externalMcpConnectionId: input.connectionId }),
+          },
+          15000,
+        );
+        if (!response.ok) {
+          throw getRequestError(payload, response, `Failed to add MCP connection (${response.status}).`);
+        }
+      });
+      return input.pluginId;
+    },
+    onSuccess: (pluginId) => {
+      queryClient.invalidateQueries({ queryKey: pluginQueryKeys.detail(pluginId) });
+      queryClient.invalidateQueries({ queryKey: pluginQueryKeys.list() });
+      queryClient.invalidateQueries({ queryKey: mcpConnectionQueryKeys.all });
+    },
+  });
+}
+
+export function useRemovePluginMcpConnection() {
+  const queryClient = useQueryClient();
+  const { runReauthableAction } = useOrgDashboard();
+
+  return useMutation({
+    mutationFn: async (input: { pluginId: string; configObjectId: string }) => {
+      await runReauthableAction("remove-plugin-mcp-connection", async () => {
+        const { response, payload } = await requestJson(
+          `/v1/plugins/${encodeURIComponent(input.pluginId)}/config-objects/${encodeURIComponent(input.configObjectId)}`,
+          { method: "DELETE" },
+          15000,
+        );
+        if (!response.ok) {
+          throw getRequestError(payload, response, `Failed to remove MCP connection (${response.status}).`);
+        }
+      });
+      return input.pluginId;
+    },
+    onSuccess: (pluginId) => {
+      queryClient.invalidateQueries({ queryKey: pluginQueryKeys.detail(pluginId) });
+      queryClient.invalidateQueries({ queryKey: pluginQueryKeys.list() });
+      queryClient.invalidateQueries({ queryKey: mcpConnectionQueryKeys.all });
     },
   });
 }

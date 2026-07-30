@@ -4408,6 +4408,95 @@ function importedConnectionBackedMcpPayload(input: {
   }
 }
 
+export async function attachExistingMcpConnectionToPlugin(input: {
+  connectionId: ExternalMcpConnectionRow["id"]
+  context: PluginArchActorContext
+  pluginId: PluginId
+}) {
+  const organizationId = input.context.organizationContext.organization.id
+  const plugin = await ensureEditablePlugin(input.context, input.pluginId)
+  const connection = await getExternalMcpConnection({
+    connectionId: input.connectionId,
+    organizationId,
+  })
+  if (!connection) {
+    throw new PluginArchRouteFailure(404, "mcp_connection_not_found", "MCP connection not found.")
+  }
+
+  const existingBindings = await db
+    .select({
+      externalMcpConnectionId: PluginMcpRequirementBindingTable.externalMcpConnectionId,
+      serverName: PluginMcpRequirementBindingTable.serverName,
+    })
+    .from(PluginMcpRequirementBindingTable)
+    .where(and(
+      eq(PluginMcpRequirementBindingTable.organizationId, organizationId),
+      eq(PluginMcpRequirementBindingTable.pluginId, plugin.id),
+    ))
+  if (existingBindings.some((binding) => binding.externalMcpConnectionId === connection.id)) {
+    throw new PluginArchRouteFailure(409, "mcp_connection_already_assigned", "This MCP connection is already assigned to the plugin.")
+  }
+
+  const baseServerName = slugifyPluginMcpName(connection.name)
+  const serverName = existingBindings.some((binding) => binding.serverName === baseServerName)
+    ? `${baseServerName}-${connection.id.slice(-6)}`
+    : baseServerName
+  const payload = {
+    mcpServers: {
+      [serverName]: {
+        type: "remote",
+        url: connection.url,
+        openworkManaged: "den_external_mcp",
+        externalMcpConnectionId: connection.id,
+        externalMcpConnectionOwnedByPlugin: false,
+        requiredAuthType: connection.authType,
+        ...(connection.authType === "oauth" ? { oauth: true } : {}),
+      },
+    },
+    openworkManaged: "den_external_mcp",
+    externalMcpConnectionId: connection.id,
+    externalMcpConnectionOwnedByPlugin: false,
+    requiredAuthType: connection.authType,
+  }
+  const configObject = await createConfigObject({
+    context: input.context,
+    objectType: "mcp",
+    pluginIds: [plugin.id],
+    sourceMode: "cloud",
+    value: {
+      metadata: {
+        description: "Existing Den-managed MCP connection.",
+        externalMcpConnectionId: connection.id,
+        externalMcpConnectionOwnedByPlugin: false,
+        name: connection.name,
+        openworkManaged: "den_external_mcp",
+        requiredAuthType: connection.authType,
+      },
+      normalizedPayloadJson: payload,
+      schemaVersion: "openwork.den_external_mcp.v1",
+    },
+  })
+  const binding = await upsertPluginMcpRequirementBinding({
+    configObjectId: configObject.id,
+    createdByOrgMembershipId: input.context.organizationContext.currentMember.id,
+    externalMcpConnectionId: connection.id,
+    organizationId,
+    pluginId: plugin.id,
+    serverName,
+    requiredAuthType: connection.authType,
+    connectionOwnedByPlugin: false,
+  })
+  await syncPluginMcpRequirementBindingAccess(binding)
+
+  return {
+    binding: serializePluginMcpRequirementBinding(binding),
+    connection: serializePluginMcpRequirementConnection(connection),
+    links: {
+      yourConnections: openworkYourConnectionsUrl(connection.id),
+    },
+  }
+}
+
 function importedPluginName(plan: GithubPluginMcpImportPlan) {
   if (plan.plugins.length === 1) return plan.plugins[0].name
   return plan.marketplace?.name?.trim() || plan.rootPath.split("/").filter(Boolean).at(-1) || plan.repositoryFullName.split("/").at(-1) || "GitHub MCP Plugin"
