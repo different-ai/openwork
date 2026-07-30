@@ -22,7 +22,7 @@
   "dependencies": {
     "@better-auth/api-key": "1.6.11",
     "@better-auth/oauth-provider": "1.6.11",
-    "@better-auth/scim": "1.6.11",
+    "@better-auth/scim": "1.6.25",
     "@better-auth/sso": "1.6.11",
     "@daytonaio/sdk": "^0.173.0",
     "@hono/mcp": "^0.2.5",
