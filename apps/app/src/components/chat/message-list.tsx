@@ -1142,15 +1142,31 @@ export function shouldShowMessageListLoading(status: ThreadStatus, messageCount:
   return status === "streaming" || (status === "submitted" && messageCount > 0)
 }
 
+export function hasVisibleStreamingReasoning(messages: UIMessage[], showThinking: boolean) {
+  if (!showThinking) return false
+
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]
+    if (message.role !== "assistant") return false
+    if (message.parts.some((part) =>
+      part.type === "reasoning" && part.state === "streaming" && part.text.trim()
+    )) return true
+  }
+
+  return false
+}
+
 export function MessageList({ messages, status, retryStatus }: MessageListProps) {
+  const { showThinking } = useMessageList()
   const isStreaming = status === "streaming" || status === "retrying"
-  const showLoading = shouldShowMessageListLoading(status, messages.length)
   const items = React.useMemo(() => groupMessages(messages, status), [messages, status]);
   const error = useSessionErrorMessage();
   const hasSessionErrorMessage = React.useMemo(() => messages.some(isSessionErrorMessage), [messages])
   const liveActionLabel = isStreaming
     ? getActiveToolLabel(collectToolParts(messages))
     : null
+  const showLoading = shouldShowMessageListLoading(status, messages.length)
+    && (liveActionLabel !== null || !hasVisibleStreamingReasoning(messages, showThinking))
 
   return (
     <div className={cn("flex flex-col gap-2 @container/message-list")}>
