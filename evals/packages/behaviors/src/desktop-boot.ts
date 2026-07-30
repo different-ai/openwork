@@ -134,9 +134,9 @@ export async function createAndSelectWorkspace(
     }
   }
   if (!workspaceId) throw new Error("Workspace creation did not produce a workspace ID.");
-  const route = await waitForTaskUi(app, workspaceId);
+  const taskRoute = await waitForTaskUi(app, workspaceId);
   // The task UI can be mounted while the panel still renders placeholders, so
   // hand back only once the app is actually interactive.
   await waitUntilInteractive(app);
-  return { workspaceId, route };
+  return { workspaceId, route: taskRoute };
 }
