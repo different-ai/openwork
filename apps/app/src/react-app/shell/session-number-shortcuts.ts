@@ -108,10 +108,14 @@ function isVisibleElement(element: Element) {
   return element.getClientRects().length > 0 && element.getAttribute("aria-hidden") !== "true";
 }
 
-export function isSessionNumberShortcutBlockingOwner(element: Element) {
+export function isSessionNumberShortcutBlockingOwner(
+  element: Pick<Element, "getAttribute">,
+) {
+  const slot = element.getAttribute("data-slot");
   const role = element.getAttribute("role");
+  if (slot === "popover-content") return false;
   return (
-    element.getAttribute("data-slot") === "dialog-content" ||
+    slot === "dialog-content" ||
     role === "dialog" ||
     role === "alertdialog"
   );

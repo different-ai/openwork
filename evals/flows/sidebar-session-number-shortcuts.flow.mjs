@@ -1,4 +1,8 @@
-import { ensureSessionWorkspace } from "./lib/session-workspace.mjs";
+import {
+  createSession,
+  ensureSessionWorkspace,
+} from "./lib/session-workspace.mjs";
+import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
 
 const READ_SHORTCUT_ROWS = `(() => [...document.querySelectorAll('[aria-keyshortcuts]')]
   .map((entry) => ({
@@ -7,6 +11,82 @@ const READ_SHORTCUT_ROWS = `(() => [...document.querySelectorAll('[aria-keyshort
     visible: Boolean(entry.getClientRects().length),
   }))
   .filter((entry) => entry.visible && /(?:Meta|Control)\\+[1-9]/.test(entry.shortcut || '')))()`;
+const READ_SHORTCUT_TARGETS = `(() => [...document.querySelectorAll('[data-sidebar-session-id]')]
+  .flatMap((row) => {
+    const button = row.querySelector('[data-session-tab-id][aria-keyshortcuts]');
+    const shortcut = button?.getAttribute('aria-keyshortcuts') || '';
+    const match = shortcut.match(/(?:Meta|Control)\\+([1-9])/);
+    const sessionId = row.getAttribute('data-sidebar-session-id') || '';
+    return button && button.getClientRects().length && match && sessionId
+      ? [{ digit: Number(match[1]), sessionId }]
+      : [];
+  }))()`;
+const vo = await loadVoiceoverParagraphs("sidebar-session-number-shortcuts");
+
+async function dispatchKey(ctx, payload) {
+  let timeout;
+  try {
+    await Promise.race([
+      ctx.client.send("Input.dispatchKeyEvent", payload),
+      new Promise((_, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error(`Timed out dispatching ${payload.type} for ${payload.key}`)),
+          10_000,
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function activateDifferentVisibleSession(ctx, modifier) {
+  const currentSessionId = await ctx.eval(
+    "window.__openwork?.slice?.('route')?.selectedSessionId || ''",
+  );
+  await dispatchKey(ctx, {
+    type: "keyDown",
+    key: modifier.key,
+    code: modifier.code,
+    modifiers: modifier.modifiers,
+  });
+  try {
+    await ctx.waitFor(`${READ_SHORTCUT_TARGETS}.length >= 2`, {
+      timeoutMs: 20_000,
+      label: "at least two numbered session targets",
+    });
+    const targets = await ctx.eval(READ_SHORTCUT_TARGETS);
+    const target = targets.find((entry) => entry.sessionId !== currentSessionId);
+    ctx.assert(Boolean(target), `Expected a numbered target other than ${currentSessionId}.`);
+    await dispatchKey(ctx, {
+      type: "keyDown",
+      key: String(target.digit),
+      code: `Digit${target.digit}`,
+      modifiers: modifier.modifiers,
+      windowsVirtualKeyCode: 48 + target.digit,
+      nativeVirtualKeyCode: 48 + target.digit,
+    });
+    await dispatchKey(ctx, {
+      type: "keyUp",
+      key: String(target.digit),
+      code: `Digit${target.digit}`,
+      modifiers: modifier.modifiers,
+      windowsVirtualKeyCode: 48 + target.digit,
+      nativeVirtualKeyCode: 48 + target.digit,
+    });
+    await ctx.waitFor(
+      `window.__openwork?.slice?.('route')?.selectedSessionId === ${JSON.stringify(target.sessionId)}`,
+      { timeoutMs: 20_000, label: `session ${target.digit} to open` },
+    );
+    return target;
+  } finally {
+    await dispatchKey(ctx, {
+      type: "keyUp",
+      key: modifier.key,
+      code: modifier.code,
+    });
+  }
+}
 
 export default {
   id: "sidebar-session-number-shortcuts",
@@ -21,12 +101,7 @@ export default {
           "sidebar-session-number-shortcuts",
         );
         for (let index = 1; index <= 3; index += 1) {
-          await ctx.control("session.create_task");
-          const sessionId = await ctx.waitFor(`(() => {
-            const route = window.__openworkControl.snapshot().route || "";
-            const match = route.match(/session\\/([^/?#]+)/);
-            return match ? decodeURIComponent(match[1]) : null;
-          })()`, { timeoutMs: 30_000, label: `created session ${index}` });
+          const sessionId = await createSession(ctx, `created session ${index}`);
           await ctx.control("session.rename", {
             sessionId,
             title: `Shortcut proof chat ${index}`,
@@ -34,39 +109,114 @@ export default {
         }
 
         const isMac = await ctx.eval("navigator.platform.toLowerCase().includes('mac')");
-        await ctx.client.send("Input.dispatchKeyEvent", {
-          type: "keyDown",
+        const modifier = {
           key: isMac ? "Meta" : "Control",
           code: isMac ? "MetaLeft" : "ControlLeft",
           modifiers: isMac ? 4 : 2,
+        };
+        await dispatchKey(ctx, {
+          type: "keyDown",
+          key: modifier.key,
+          code: modifier.code,
+          modifiers: modifier.modifiers,
         });
-        await ctx.waitFor(`${READ_SHORTCUT_ROWS}.length >= 3`, {
-          timeoutMs: 20_000,
-          label: "numbered visible session rows",
-        });
+        try {
+          await ctx.waitFor(`${READ_SHORTCUT_ROWS}.length >= 3`, {
+            timeoutMs: 20_000,
+            label: "numbered visible session rows",
+          });
 
-        await ctx.prove("Modifier badges appear without changing layout and expose accessible shortcuts", {
-          action: async () => {},
+          await ctx.prove("Modifier badges appear without changing layout and expose accessible shortcuts", {
+            voiceover: vo[0],
+            action: async () => {},
+            assert: async () => {
+              const rows = await ctx.eval(READ_SHORTCUT_ROWS);
+              ctx.assert(rows.length >= 3, `Expected at least three numbered rows, got ${JSON.stringify(rows)}.`);
+              const firstNine = rows.slice(0, 9).map((entry) => entry.shortcut);
+              ctx.assert(new Set(firstNine).size === firstNine.length, "Visible session shortcuts must be unique.");
+              ctx.assert(
+                firstNine.every((shortcut, index) => shortcut.endsWith(`+${index + 1}`)),
+                `Shortcut numbering did not match visible order: ${JSON.stringify(firstNine)}.`,
+              );
+            },
+            screenshot: {
+              name: "sidebar-session-number-shortcuts-held",
+              requireText: ["Shortcut proof chat"],
+            },
+          });
+        } finally {
+          await dispatchKey(ctx, {
+            type: "keyUp",
+            key: modifier.key,
+            code: modifier.code,
+          });
+        }
+
+        let composerTarget;
+        await ctx.prove("The numbered session jump works while the composer owns focus", {
+          voiceover: vo[1],
+          action: async () => {
+            await ctx.waitFor(
+              "Boolean(document.querySelector('[contenteditable=\"true\"][aria-placeholder]'))",
+              { timeoutMs: 20_000, label: "composer editor" },
+            );
+            const focused = await ctx.eval(`(() => {
+              const editor = document.querySelector('[contenteditable="true"][aria-placeholder]');
+              editor?.focus();
+              return document.activeElement === editor;
+            })()`);
+            ctx.assert(focused, "Expected the composer editor to own keyboard focus.");
+            composerTarget = await activateDifferentVisibleSession(ctx, modifier);
+          },
           assert: async () => {
-            const rows = await ctx.eval(READ_SHORTCUT_ROWS);
-            ctx.assert(rows.length >= 3, `Expected at least three numbered rows, got ${JSON.stringify(rows)}.`);
-            const firstNine = rows.slice(0, 9).map((entry) => entry.shortcut);
-            ctx.assert(new Set(firstNine).size === firstNine.length, "Visible session shortcuts must be unique.");
+            const selectedSessionId = await ctx.eval(
+              "window.__openwork?.slice?.('route')?.selectedSessionId || ''",
+            );
             ctx.assert(
-              firstNine.every((shortcut, index) => shortcut.endsWith(`+${index + 1}`)),
-              `Shortcut numbering did not match visible order: ${JSON.stringify(firstNine)}.`,
+              selectedSessionId === composerTarget?.sessionId,
+              `Expected composer shortcut to open ${composerTarget?.sessionId}, got ${selectedSessionId}.`,
             );
           },
           screenshot: {
-            name: "sidebar-session-number-shortcuts-held",
+            name: "sidebar-session-number-shortcuts-composer",
             requireText: ["Shortcut proof chat"],
+            hashIncludes: "/session/",
           },
         });
 
-        await ctx.client.send("Input.dispatchKeyEvent", {
-          type: "keyUp",
-          key: isMac ? "Meta" : "Control",
-          code: isMac ? "MetaLeft" : "ControlLeft",
+        let selectTarget;
+        await ctx.prove("The numbered session jump works while the model select is open", {
+          voiceover: vo[2],
+          action: async () => {
+            const opened = await ctx.eval(`(() => {
+              const trigger = document.querySelector('[aria-label="Change model"]');
+              trigger?.click();
+              return Boolean(trigger);
+            })()`);
+            ctx.assert(opened, "Expected the Change model trigger to be available.");
+            await ctx.waitFor(
+              `(() => {
+                const input = document.querySelector('input[placeholder="Search models..."]');
+                return Boolean(input && input.getClientRects().length && document.activeElement === input);
+              })()`,
+              { timeoutMs: 20_000, label: "open model select search input" },
+            );
+            selectTarget = await activateDifferentVisibleSession(ctx, modifier);
+          },
+          assert: async () => {
+            const selectedSessionId = await ctx.eval(
+              "window.__openwork?.slice?.('route')?.selectedSessionId || ''",
+            );
+            ctx.assert(
+              selectedSessionId === selectTarget?.sessionId,
+              `Expected select-open shortcut to open ${selectTarget?.sessionId}, got ${selectedSessionId}.`,
+            );
+          },
+          screenshot: {
+            name: "sidebar-session-number-shortcuts-select",
+            requireText: ["Shortcut proof chat"],
+            hashIncludes: "/session/",
+          },
         });
       },
     },

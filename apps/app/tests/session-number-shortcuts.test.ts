@@ -95,10 +95,13 @@ describe("session number shortcut keyboard ownership", () => {
   test("keeps open selects and menus non-blocking while dialogs retain ownership", () => {
     const element = (attributes: Record<string, string>) => ({
       getAttribute: (name: string) => attributes[name] ?? null,
-    }) as Element;
+    });
 
     expect(isSessionNumberShortcutBlockingOwner(element({ role: "listbox" }))).toBe(false);
     expect(isSessionNumberShortcutBlockingOwner(element({ role: "menu" }))).toBe(false);
+    expect(isSessionNumberShortcutBlockingOwner(
+      element({ role: "dialog", "data-slot": "popover-content" }),
+    )).toBe(false);
     expect(isSessionNumberShortcutBlockingOwner(element({ role: "dialog" }))).toBe(true);
     expect(isSessionNumberShortcutBlockingOwner(element({ role: "alertdialog" }))).toBe(true);
     expect(isSessionNumberShortcutBlockingOwner(element({ "data-slot": "dialog-content" }))).toBe(true);
