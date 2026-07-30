@@ -1,6 +1,6 @@
-import { attachSurface, evaluate } from "@openwork/cdp";
+import { attachSurface, describeAppState, isInteractive, probeAppState } from "@openwork/cdp";
 import { resolveHost } from "./resolve.ts";
-import type { AttachedSurface, Surface, SurfaceHandle } from "@openwork/cdp";
+import type { AppStateProbe, AppSurfaceState, AttachedSurface, Surface, SurfaceHandle } from "@openwork/cdp";
 import type { Host } from "./types.ts";
 
 const DEFAULT_TIMEOUT_MS = 180_000;
@@ -29,7 +29,7 @@ export interface DesktopOptions {
 }
 
 export interface AppReadiness {
-  state: "welcome" | "workspace";
+  state: AppSurfaceState;
   workspaceId: string | null;
   route: string;
 }
@@ -39,79 +39,24 @@ export interface DesktopHandle extends AttachedSurface {
   stop(): Promise<void>;
 }
 
-interface ReadinessProbe {
-  ready: boolean;
-  state: AppReadiness["state"] | null;
-  workspaceId: string | null;
-  route: string;
-  text: string;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function parseProbe(value: unknown): ReadinessProbe {
-  if (!isRecord(value)) {
-    return { ready: false, state: null, workspaceId: null, route: "", text: "" };
-  }
-  const state = value.state === "welcome" || value.state === "workspace" ? value.state : null;
-  return {
-    ready: value.ready === true,
-    state,
-    workspaceId: typeof value.workspaceId === "string" ? value.workspaceId : null,
-    route: typeof value.route === "string" ? value.route : "",
-    text: typeof value.text === "string" ? value.text : "",
-  };
-}
-
-async function probeReadiness(app: Surface): Promise<ReadinessProbe> {
-  const value = await evaluate(app.client, `(() => {
-    const text = document.body?.innerText ?? "";
-    const route = window.location.hash.replace(/^#/, "") || window.location.pathname;
-    const workspace = /^\\/workspace\\/([^/?#]+)\\/session\\/?$/.exec(route);
-    const transitional = [
-      "Preparing workspace",
-      "Connecting signed-in services",
-      "Connecting services",
-      "Loading available resources",
-    ].some((message) => text.includes(message));
-    const taskUiMounted = text.includes("What do you need done?")
-      || [...document.querySelectorAll("button")]
-        .some((button) => (button.textContent ?? "").trim() === "Run task");
-    const state = route === "/welcome"
-      ? "welcome"
-      : workspace && taskUiMounted
-        ? "workspace"
-        : null;
-    return {
-      ready: Boolean(window.__openworkControl && !transitional && state),
-      state,
-      workspaceId: state === "workspace" ? workspace?.[1] ?? null : null,
-      route,
-      text: text.slice(0, 300),
-    };
-  })()`);
-  return parseProbe(value);
-}
-
 async function waitForReadiness(app: Surface, timeoutMs: number): Promise<AppReadiness> {
   const deadline = Date.now() + timeoutMs;
-  let last = await probeReadiness(app).catch(() => parseProbe(null));
+  // Give each probe room to answer while the app is busy; the poll's own
+  // deadline is what bounds the wait, not a per-call default.
+  const probeTimeoutMs = Math.min(Math.max(timeoutMs, 20_000), 120_000);
+  let last: AppStateProbe = { controlReady: false, transitional: null, surface: null, workspaceId: null, route: "", text: "" };
   while (Date.now() < deadline) {
     try {
-      last = await probeReadiness(app);
-      if (last.ready && last.state) {
-        return { state: last.state, workspaceId: last.workspaceId, route: last.route };
+      last = await probeAppState(app.client, { timeoutMs: probeTimeoutMs });
+      if (isInteractive(last) && last.surface) {
+        return { state: last.surface, workspaceId: last.workspaceId, route: last.route };
       }
     } catch {
-      // Navigations can briefly destroy the execution context while the app boots.
+      // Navigations briefly destroy the execution context while the app boots.
     }
     await sleep(POLL_INTERVAL_MS);
   }
-  throw new Error(
-    `OpenWork desktop did not become ready after ${timeoutMs}ms. Current route: ${last.route || "<unknown>"}. Visible text: ${JSON.stringify(last.text)}`,
-  );
+  throw new Error(`OpenWork desktop did not become ready after ${timeoutMs}ms: ${describeAppState(last)}`);
 }
 
 async function closeSpawnedSurface(

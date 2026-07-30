@@ -1,5 +1,5 @@
-import { evaluate } from "@openwork/cdp";
-import type { EvaluateOptions, Surface } from "@openwork/cdp";
+import { describeAppState, evaluate, isInteractive, probeAppState } from "@openwork/cdp";
+import type { AppStateProbe, EvaluateOptions, Surface } from "@openwork/cdp";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -30,9 +30,13 @@ export async function waitFor(
 ): Promise<unknown> {
   const startedAt = Date.now();
   let lastError: unknown = null;
+  // A busy renderer can take longer than the CDP client's default per-call
+  // timeout to answer; the wait's own deadline bounds the loop, so let each
+  // evaluation use the remaining budget instead of dying on the default.
+  const evalTimeoutMs = Math.min(Math.max(timeoutMs, 20_000), 120_000);
   while (Date.now() - startedAt < timeoutMs) {
     try {
-      const value = await evalIn(app, expression);
+      const value = await evalIn(app, expression, { timeoutMs: evalTimeoutMs });
       if (value) return value;
       lastError = null;
     } catch (error) {
@@ -50,12 +54,12 @@ export async function waitForText(app: Surface, text: string, opts: { timeoutMs?
   });
 }
 
-export async function hasText(app: Surface, text: string): Promise<boolean> {
-  return Boolean(await evalIn(app, `document.body.innerText.includes(${jsValue(text)})`));
+export async function hasText(app: Surface, text: string, opts: EvaluateOptions = {}): Promise<boolean> {
+  return Boolean(await evalIn(app, `document.body.innerText.includes(${jsValue(text)})`, opts));
 }
 
-export async function visibleText(app: Surface): Promise<string> {
-  const text = await evalIn(app, "document.body.innerText");
+export async function visibleText(app: Surface, opts: EvaluateOptions = {}): Promise<string> {
+  const text = await evalIn(app, "document.body.innerText", opts);
   if (typeof text !== "string") throw new Error("CDP did not return document.body.innerText as a string.");
   return text;
 }
@@ -160,4 +164,28 @@ export async function control(
     throw new Error(`Desktop control action ${action} failed: ${isRecord(result) ? String(result.error ?? "unknown") : "unknown"}`);
   }
   return result.result;
+}
+
+/**
+ * Wait until the app is interactive again — the same predicate the lifecycle
+ * layer applies when handing out a desktop handle. Use it after any action that
+ * navigates or creates a workspace/session, so assertions and frames never race
+ * the app's loading placeholders.
+ */
+export async function waitUntilInteractive(
+  app: Surface,
+  { timeoutMs = 120_000 }: { timeoutMs?: number } = {},
+): Promise<AppStateProbe> {
+  const deadline = Date.now() + timeoutMs;
+  let last: AppStateProbe = { controlReady: false, transitional: null, surface: null, workspaceId: null, route: "", text: "" };
+  while (Date.now() < deadline) {
+    try {
+      last = await probeAppState(app.client, { timeoutMs: Math.min(timeoutMs, 120_000) });
+      if (isInteractive(last)) return last;
+    } catch {
+      // A navigation can destroy the execution context mid-probe.
+    }
+    await sleep(POLL_INTERVAL_MS);
+  }
+  throw new Error(`App did not become interactive after ${timeoutMs}ms: ${describeAppState(last)}`);
 }
