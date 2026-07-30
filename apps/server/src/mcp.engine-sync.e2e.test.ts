@@ -977,6 +977,50 @@ describe("runtime MCP engine sync", () => {
     }
   });
 
+  test("startup sync skips the managed workspace already covered by OPENCODE_CONFIG", async () => {
+    const rootA = await createWorkspaceRoot();
+    const rootB = await createWorkspaceRoot();
+    const previousDb = process.env.OPENWORK_RUNTIME_DB;
+    process.env.OPENWORK_RUNTIME_DB = join(rootA, "runtime.sqlite");
+    try {
+      const mock = startMockOpencode();
+      const baseUrl = `http://127.0.0.1:${mock.server.port}`;
+      const config: ServerConfig = {
+        host: "127.0.0.1",
+        port: 0,
+        token: "owt_test_token",
+        hostToken: "owt_host_token",
+        approval: { mode: "auto", timeoutMs: 1000 },
+        corsOrigins: ["*"],
+        workspaces: [
+          { id: "ws_1", name: "A", path: rootA, preset: "starter", workspaceType: "local", baseUrl },
+          { id: "ws_2", name: "B", path: rootB, preset: "starter", workspaceType: "local", baseUrl },
+        ],
+        authorizedRoots: [rootA, rootB],
+        readOnly: false,
+        startedAt: Date.now(),
+        tokenSource: "cli",
+        hostTokenSource: "cli",
+        logFormat: "pretty",
+        logRequests: false,
+      };
+
+      await writeRuntimeOpencodeConfig(config, "ws_1", (current) => ({ ...current, mcp: { posthog: POSTHOG_CONFIG } }));
+      await writeRuntimeOpencodeConfig(config, "ws_2", (current) => ({ ...current, mcp: { stripe: POSTHOG_CONFIG } }));
+
+      await syncAllWorkspacesRuntimeMcpToEngine(config, {
+        skipRuntimeMcpWorkspaceIds: new Set(["ws_1"]),
+      });
+
+      const syncs = mock.requests.filter((entry) => entry.method === "POST" && entry.pathname === "/mcp");
+      expect(syncs.map((entry) => (entry.body as { name?: string } | null)?.name)).toEqual(["stripe"]);
+      expect(syncs[0]?.search).toContain(`directory=${encodeURIComponent(rootB)}`);
+    } finally {
+      if (previousDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
+      else process.env.OPENWORK_RUNTIME_DB = previousDb;
+    }
+  });
+
   test("MCP add still succeeds when the engine is unreachable", async () => {
     const workspaceRoot = await createWorkspaceRoot();
     const previousDb = process.env.OPENWORK_RUNTIME_DB;

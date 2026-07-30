@@ -53,6 +53,7 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
   // Spawn managed OpenCode if requested and no explicit base URL was provided.
   let managedOpencode: ManagedOpencodeServer | null = null;
   let managedOpencodeIdentity: string | null = null;
+  let managedRuntimeConfigWorkspaceId: string | null = null;
 
   if (!config.readOnly) {
     await ensureLocalWorkspaceFiles(config.workspaces);
@@ -65,6 +66,7 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
       // instance rebuild, and keepOpenworkRuntimeConfigFileFresh synchronizes it
       // on every runtime-DB write — so disposes always pick up current state.
       const { path: runtimeConfigPath } = await writeOpenworkRuntimeConfigFile(config, workspace.id);
+      managedRuntimeConfigWorkspaceId = workspace.id;
       keepOpenworkRuntimeConfigFileFresh(config, workspace.id);
       const cwd = options.opencodeCwd
         || process.env.OPENWORK_MANAGED_OPENCODE_CWD?.trim()
@@ -118,11 +120,17 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
 
   const server = await startServer(config);
 
-  // The runtime config file above only covers workspaces[0]. Push every
-  // workspace's runtime-DB MCPs into the engine so they aren't invisible
-  // until a manual reload. Best-effort.
+  // The runtime config file above already covers the managed workspace. Push
+  // the remaining workspaces' runtime-DB MCPs into the engine so they aren't
+  // invisible until a manual reload. Best-effort.
   if (managedOpencode) {
-    void syncAllWorkspacesRuntimeMcpToEngine(config);
+    if (managedRuntimeConfigWorkspaceId) {
+      void syncAllWorkspacesRuntimeMcpToEngine(config, {
+        skipRuntimeMcpWorkspaceIds: new Set([managedRuntimeConfigWorkspaceId]),
+      });
+    } else {
+      void syncAllWorkspacesRuntimeMcpToEngine(config);
+    }
   }
 
   return {

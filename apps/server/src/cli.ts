@@ -36,6 +36,7 @@ const logger = createServerLogger(config);
 const serverUrl = `http://${config.host === "0.0.0.0" ? "127.0.0.1" : config.host}:${config.port}`;
 let managedOpencode: ManagedOpencodeServer | null = null;
 let managedOpencodeIdentity: string | null = null;
+let managedRuntimeConfigWorkspaceId: string | null = null;
 
 if (!config.readOnly) {
   await ensureLocalWorkspaceFiles(config.workspaces);
@@ -48,6 +49,7 @@ if (!config.opencodeBaseUrl && process.env.OPENWORK_MANAGE_OPENCODE === "1") {
     // instance rebuild, and keepOpenworkRuntimeConfigFileFresh synchronizes it
     // on every runtime-DB write — so disposes always pick up current state.
     const { path: runtimeConfigPath } = await writeOpenworkRuntimeConfigFile(config, workspace.id);
+    managedRuntimeConfigWorkspaceId = workspace.id;
     keepOpenworkRuntimeConfigFileFresh(config, workspace.id);
     const managedOpencodeCwd = process.env.OPENWORK_MANAGED_OPENCODE_CWD?.trim() || workspace.path;
     await mkdir(managedOpencodeCwd, { recursive: true });
@@ -92,11 +94,17 @@ if (!config.opencodeBaseUrl && process.env.OPENWORK_MANAGE_OPENCODE === "1") {
 const server = await startServer(config);
 const workerActivityHeartbeat = startWorkerActivityHeartbeat(config, logger);
 
-// The runtime config file above only covers workspaces[0]. Push every
-// workspace's runtime-DB MCPs into the engine so they aren't invisible
-// until a manual reload. Best-effort.
+// The runtime config file above already covers the managed workspace. Push
+// the remaining workspaces' runtime-DB MCPs into the engine so they aren't
+// invisible until a manual reload. Best-effort.
 if (managedOpencode) {
-  void syncAllWorkspacesRuntimeMcpToEngine(config);
+  if (managedRuntimeConfigWorkspaceId) {
+    void syncAllWorkspacesRuntimeMcpToEngine(config, {
+      skipRuntimeMcpWorkspaceIds: new Set([managedRuntimeConfigWorkspaceId]),
+    });
+  } else {
+    void syncAllWorkspacesRuntimeMcpToEngine(config);
+  }
 }
 
 const url = `http://${config.host}:${server.port}`;
