@@ -1,5 +1,5 @@
 import { relations, sql } from "drizzle-orm"
-import { index, json, mysqlTable, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core"
+import { index, int, json, mysqlTable, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core"
 import type { DesktopAppRestrictions } from "@openwork/types/den/desktop-app-restrictions"
 import type { ConnectLinkClaims } from "@openwork/types/connect-link"
 import { denTypeIdColumn, mediumBlobColumn } from "../columns"
@@ -73,6 +73,26 @@ export const OrganizationBrandAssetTable = mysqlTable(
       table.version,
       table.extension,
     ),
+  ],
+)
+
+export const FileReferenceTable = mysqlTable(
+  "file_reference",
+  {
+    id: varchar("id", { length: 64 }).notNull().primaryKey(),
+    organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
+    orgMembershipId: denTypeIdColumn("member", "org_membership_id").notNull(),
+    filename: varchar("filename", { length: 255 }).notNull(),
+    mimeType: varchar("mime_type", { length: 255 }).notNull(),
+    byteLength: int("byte_length", { unsigned: true }).notNull(),
+    sha256: varchar("sha256", { length: 64 }).notNull(),
+    bytes: mediumBlobColumn("bytes").notNull(),
+    expiresAt: timestamp("expires_at", { fsp: 3 }).notNull(),
+    createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("file_reference_scope").on(table.organizationId, table.orgMembershipId, table.expiresAt),
+    index("file_reference_expires_at").on(table.expiresAt),
   ],
 )
 

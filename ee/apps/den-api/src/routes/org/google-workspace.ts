@@ -4,6 +4,7 @@ import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import { env } from "../../env.js"
+import { databaseFileReferenceStorage, type FileReferenceStorage } from "../../file-references.js"
 import { jsonValidator, orgMemberRoute, paramValidator, queryValidator } from "../../middleware/index.js"
 import { invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import { buildGmailDraftRaw, readGmailDraftIds } from "../../capability-sources/gmail.js"
@@ -35,17 +36,14 @@ const DRIVE_FILE_SCOPE = "https://www.googleapis.com/auth/drive.file"
 const DRIVE_READ_SCOPE = "https://www.googleapis.com/auth/drive.readonly"
 const DRIVE_FULL_SCOPE = "https://www.googleapis.com/auth/drive"
 const GOOGLE_WORKSPACE_API_TIMEOUT_MS = 30_000
-const MAX_GMAIL_ATTACHMENT_BYTES = 10 * 1024 * 1024
 const MAX_GMAIL_ATTACHMENTS_TOTAL_BYTES = 20 * 1024 * 1024
-const MAX_GMAIL_ATTACHMENT_BASE64_LENGTH = Math.ceil(MAX_GMAIL_ATTACHMENT_BYTES / 3) * 4
+const DRIVE_RESUMABLE_UPLOAD_THRESHOLD_BYTES = 5 * 1024 * 1024
 const GMAIL_REPLY_SUBJECT_RE = /^\s*(re|fwd?)\s*:/i
 
 const CONNECT_GOOGLE_ACCOUNT_MESSAGE = "Connect your Google account first: open Settings > Connect and use Connect your account on the Google Workspace row, or connect from the OpenWork Cloud dashboard."
 
 const gmailDraftAttachmentSchema = z.object({
-  filename: z.string().trim().min(1).max(255).refine((value) => !/[\r\n]/.test(value), "Filename must not contain line breaks.").describe("Filename to show in Gmail."),
-  mimeType: z.string().trim().regex(/^[!#$%&'*+.^_`|~0-9A-Za-z-]+\/[!#$%&'*+.^_`|~0-9A-Za-z-]+$/).describe("Attachment MIME type."),
-  dataBase64: z.string().min(1).max(MAX_GMAIL_ATTACHMENT_BASE64_LENGTH).regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/).describe("File bytes encoded as standard base64. Read the file from the active workspace and base64-encode it. Maximum decoded size: 10 MiB per file and 20 MiB total."),
+  fileRef: z.string().regex(/^file_ref_[a-f0-9]{32}$/i).describe("Opaque member-scoped reference returned by openwork-cloud-files stage_file. Filename, MIME type, and bytes come from the reference and cannot be changed by the agent."),
 }).strict()
 
 const createDraftBodySchema = z.object({
@@ -55,17 +53,8 @@ const createDraftBodySchema = z.object({
   subject: z.string().trim().min(1).max(500).describe("Draft subject line. For replies or forwards, include threadId; subjects starting with Re: or Fwd: are rejected without threadId so the draft stays on the existing conversation."),
   body: z.string().min(1).max(50_000).describe("Plain-text draft body. Write plain prose with no markdown syntax, separate paragraphs with blank lines, and do not hard-wrap prose. For threaded drafts, the server appends the quoted conversation automatically; do not include quoted history."),
   threadId: z.string().trim().min(1).max(512).optional().describe("Gmail thread id to reply on. Required for replies and forwards; get it from the gmail-messages capability. When set, the draft is attached to that thread as a reply — keep the thread's subject (e.g. 'Re: …')."),
-  attachments: z.array(gmailDraftAttachmentSchema).min(1).max(10).optional().describe("Optional files from the active workspace to attach to this draft."),
-}).strict().superRefine((input, context) => {
-  const totalBytes = (input.attachments ?? []).reduce((total, attachment) => total + Buffer.byteLength(attachment.dataBase64, "base64"), 0)
-  if (totalBytes > MAX_GMAIL_ATTACHMENTS_TOTAL_BYTES) {
-    context.addIssue({
-      code: "custom",
-      path: ["attachments"],
-      message: "Attachments must be 20 MiB or less in total.",
-    })
-  }
-})
+  attachments: z.array(gmailDraftAttachmentSchema).min(1).max(10).optional().describe("Optional staged files as [{ fileRef }]. Use openwork-cloud-files stage_file first; file bytes never pass through model context."),
+}).strict()
 
 const createDraftResponseSchema = z.object({
   ok: z.literal(true),
@@ -158,7 +147,11 @@ const gmailAttachmentResponseSchema = z.object({
   messageId: z.string(),
   attachmentId: z.string(),
   size: z.number().describe("Attachment size in bytes."),
-  dataBase64: z.string().describe("Standard base64-encoded attachment bytes; decode locally to reconstruct the file."),
+  fileRef: z.string().describe("Opaque member-scoped reference. Use openwork-cloud-files materialize_file to copy it into the active workspace."),
+  filename: z.string(),
+  mimeType: z.string(),
+  sha256: z.string(),
+  expiresAt: z.string(),
 }).meta({ ref: "GoogleWorkspaceGmailAttachmentResponse" })
 
 const calendarEventsQuerySchema = z.object({
@@ -230,19 +223,9 @@ const driveFilesQuerySchema = z.object({
 })
 
 const uploadDriveFileBodySchema = z.object({
-  filename: z.string().trim().min(1).max(255).refine((value) => !/[\r\n]/.test(value), "Filename must not contain line breaks.").describe("Filename to create in Google Drive."),
-  mimeType: z.string().trim().regex(/^[!#$%&'*+.^_`|~0-9A-Za-z-]+\/[!#$%&'*+.^_`|~0-9A-Za-z-]+$/).describe("File MIME type."),
-  dataBase64: z.string().min(1).max(MAX_GMAIL_ATTACHMENT_BASE64_LENGTH).regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/).describe("File bytes as standard base64. The gmail-attachment capability returns dataBase64 in this exact encoding — pass it through directly to save an email attachment to Drive. Maximum decoded size: 10 MiB."),
+  fileRef: z.string().regex(/^file_ref_[a-f0-9]{32}$/i).describe("Opaque member-scoped reference returned by openwork-cloud-files stage_file or gmail-attachment. The original filename, MIME type, and bytes are preserved exactly; files above 5 MiB use Google's resumable upload flow."),
   folderId: z.string().trim().min(1).max(512).optional().describe("Optional Google Drive parent folder id."),
-}).strict().superRefine((input, context) => {
-  if (Buffer.byteLength(input.dataBase64, "base64") > MAX_GMAIL_ATTACHMENT_BYTES) {
-    context.addIssue({
-      code: "custom",
-      path: ["dataBase64"],
-      message: "File must be 10 MiB or less.",
-    })
-  }
-}).meta({ ref: "GoogleWorkspaceUploadDriveFileBody" })
+}).strict().meta({ ref: "GoogleWorkspaceUploadDriveFileBody" })
 
 const driveFileParamSchema = z.object({
   fileId: z.string().trim().min(1).max(512).describe("Google Drive file id."),
@@ -418,13 +401,95 @@ function buildCalendarConferenceData(): CalendarConferenceData {
   }
 }
 
+async function resolveFileReference(
+  storage: FileReferenceStorage,
+  payload: NonNullable<OrgRouteVariables["organizationContext"]>,
+  fileRef: string,
+) {
+  return storage.read({
+    organizationId: payload.organization.id,
+    orgMembershipId: payload.currentMember.id,
+    fileRef,
+  })
+}
+
+async function uploadReferencedDriveFile(input: {
+  accessToken: string
+  file: NonNullable<Awaited<ReturnType<FileReferenceStorage["read"]>>>
+  folderId?: string
+}) {
+  const metadata: { name: string; parents?: string[] } = { name: input.file.filename }
+  if (input.folderId) metadata.parents = [input.folderId]
+  const fields = "id,name,mimeType,modifiedTime,webViewLink,size"
+
+  if (input.file.byteLength <= DRIVE_RESUMABLE_UPLOAD_THRESHOLD_BYTES) {
+    const boundary = `openwork-${randomUUID()}`
+    const url = new URL(`${driveApiBase()}/upload/drive/v3/files`)
+    url.searchParams.set("uploadType", "multipart")
+    url.searchParams.set("fields", fields)
+    const uploadBody = buildDriveMultipartUpload({
+      metadata,
+      content: Buffer.from(input.file.bytes),
+      mimeType: input.file.mimeType,
+      boundary,
+    })
+    const uploadBodyBytes = new Uint8Array(uploadBody.byteLength)
+    uploadBodyBytes.set(uploadBody)
+    return googleWorkspaceApiFetch(url, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${input.accessToken}`,
+        "content-type": `multipart/related; boundary=${boundary}`,
+      },
+      body: uploadBodyBytes,
+    })
+  }
+
+  const initiateUrl = new URL(`${driveApiBase()}/upload/drive/v3/files`)
+  initiateUrl.searchParams.set("uploadType", "resumable")
+  initiateUrl.searchParams.set("fields", fields)
+  const initiation = await googleWorkspaceApiFetch(initiateUrl, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${input.accessToken}`,
+      "content-type": "application/json; charset=UTF-8",
+      "x-upload-content-type": input.file.mimeType,
+      "x-upload-content-length": String(input.file.byteLength),
+    },
+    body: JSON.stringify(metadata),
+  })
+  if (!initiation.ok) return initiation
+  const location = initiation.headers.get("location")
+  if (!location) {
+    return new Response(JSON.stringify({ error: "google_api_error", message: "Google Drive resumable upload returned no session location." }), {
+      status: 502,
+      headers: { "content-type": "application/json" },
+    })
+  }
+  const uploadBytes = new Uint8Array(input.file.bytes.byteLength)
+  uploadBytes.set(input.file.bytes)
+  return googleWorkspaceApiFetch(location, {
+    method: "PUT",
+    headers: {
+      authorization: `Bearer ${input.accessToken}`,
+      "content-type": input.file.mimeType,
+      "content-length": String(input.file.byteLength),
+    },
+    body: uploadBytes,
+  })
+}
+
 /**
  * Native Google Workspace capabilities, executed by Den with the calling
  * member Den-brokered credential (getValidAccessToken). Tagged
  * "Capability Sources" so search_capabilities/execute_capability discover
  * them — the agent path needs no MCP server and no extra wiring.
  */
-export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
+export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVariables }>(
+  app: Hono<T>,
+  options: { fileReferenceStorage?: FileReferenceStorage } = {},
+) {
+  const fileReferenceStorage = options.fileReferenceStorage ?? databaseFileReferenceStorage
   app.get(
     "/v1/capabilities/google-workspace/gmail-messages",
     describeRoute({
@@ -549,8 +614,8 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
     "/v1/capabilities/google-workspace/gmail-attachment/:messageId/:attachmentId",
     describeRoute({
       tags: ["Capability Sources"],
-      summary: "Download a Gmail attachment's bytes as the calling member",
-      description: "Downloads one Gmail attachment (file) as base64-encoded bytes, using the messageId and the attachmentId from the gmail-message capability's attachments metadata. Decode dataBase64 locally to reconstruct the file, e.g. a PDF or spreadsheet, then extract its contents.",
+      summary: "Stage a Gmail attachment outside model context as the calling member",
+      description: "Downloads one Gmail attachment directly into a scoped, expiring file reference. The response contains metadata and fileRef only; use openwork-cloud-files materialize_file to copy it into the active workspace.",
       responses: {
         200: jsonResponse("Gmail attachment returned.", gmailAttachmentResponseSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
@@ -577,6 +642,19 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
       }
 
       const { messageId, attachmentId } = c.req.valid("param")
+      const messageUrl = new URL(`${gmailApiBase()}/gmail/v1/users/me/messages/${encodeURIComponent(messageId)}`)
+      messageUrl.searchParams.set("format", "full")
+      const messageResponse = await googleWorkspaceApiFetch(messageUrl, {
+        headers: { authorization: `Bearer ${token.accessToken}` },
+      })
+      if (!messageResponse.ok) {
+        return c.json(await googleApiError("Gmail attachment metadata read", messageResponse), 502)
+      }
+      const attachmentMetadata = extractGmailMessage(await readJson(messageResponse)).attachments
+        .find((candidate) => candidate.attachmentId === attachmentId)
+      if (!attachmentMetadata) {
+        return c.json({ error: "google_api_error", message: "Gmail message did not contain the requested attachment." }, 502)
+      }
       const url = new URL(`${gmailApiBase()}/gmail/v1/users/me/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}`)
       const response = await googleWorkspaceApiFetch(url, {
         headers: { authorization: `Bearer ${token.accessToken}` },
@@ -589,8 +667,24 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
       if (!attachment) {
         return c.json({ error: "google_api_error", message: "Gmail attachment download returned no data." }, 502)
       }
-
-      return c.json({ ok: true, messageId, attachmentId, size: attachment.size, dataBase64: attachment.dataBase64 })
+      const stored = await fileReferenceStorage.put({
+        organizationId: payload.organization.id,
+        orgMembershipId: payload.currentMember.id,
+        filename: attachmentMetadata.filename,
+        mimeType: attachmentMetadata.mimeType || "application/octet-stream",
+        bytes: attachment.bytes,
+      })
+      return c.json({
+        ok: true,
+        messageId,
+        attachmentId,
+        size: stored.byteLength,
+        fileRef: stored.fileRef,
+        filename: stored.filename,
+        mimeType: stored.mimeType,
+        sha256: stored.sha256,
+        expiresAt: stored.expiresAt.toISOString(),
+      })
     },
   )
 
@@ -828,8 +922,8 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
     "/v1/capabilities/google-workspace/drive-files",
     describeRoute({
       tags: ["Capability Sources"],
-      summary: "Upload file bytes to Google Drive as the calling member",
-      description: "Creates a file in the calling member's Google Drive using standard base64 bytes. The gmail-attachment capability returns dataBase64 in this exact encoding — pass it through directly to save an email attachment to Drive. The response file.webViewLink is the user-facing link — share it with the user.",
+      summary: "Upload a referenced file to Google Drive as the calling member",
+      description: "Uploads a scoped fileRef while preserving its original bytes, filename, and MIME type. Files up to 5 MiB use Google multipart upload; larger files use Google's resumable upload flow. The response file.webViewLink is the user-facing link.",
       responses: {
         200: jsonResponse("Google Drive file uploaded. The file.webViewLink is the user-facing link — share it with the user.", uploadDriveFileResponseSchema),
         400: jsonResponse("The upload request was invalid.", invalidRequestSchema),
@@ -857,29 +951,17 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
       }
 
       const input = c.req.valid("json")
-      const metadata: { name: string; parents?: string[] } = { name: input.filename }
-      if (input.folderId) {
-        metadata.parents = [input.folderId]
+      const referencedFile = await resolveFileReference(fileReferenceStorage, payload, input.fileRef)
+      if (!referencedFile) {
+        return c.json({
+          error: "invalid_request",
+          message: "fileRef is missing, expired, or belongs to another member. Stage the workspace file again.",
+        }, 400)
       }
-      const boundary = `openwork-${randomUUID()}`
-      const url = new URL(`${driveApiBase()}/upload/drive/v3/files`)
-      url.searchParams.set("uploadType", "multipart")
-      url.searchParams.set("fields", "id,name,mimeType,modifiedTime,webViewLink,size")
-      const uploadBody = buildDriveMultipartUpload({
-        metadata,
-        content: Buffer.from(input.dataBase64, "base64"),
-        mimeType: input.mimeType,
-        boundary,
-      })
-      const uploadBodyBytes = new Uint8Array(uploadBody.byteLength)
-      uploadBodyBytes.set(uploadBody)
-      const response = await googleWorkspaceApiFetch(url, {
-        method: "POST",
-        headers: {
-          authorization: `Bearer ${token.accessToken}`,
-          "content-type": `multipart/related; boundary=${boundary}`,
-        },
-        body: uploadBodyBytes,
+      const response = await uploadReferencedDriveFile({
+        accessToken: token.accessToken,
+        file: referencedFile,
+        folderId: input.folderId,
       })
       if (!response.ok) {
         return c.json(await googleApiError("Google Drive file upload", response), 502)
@@ -1040,8 +1122,8 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
     "/v1/capabilities/google-workspace/gmail-drafts",
     describeRoute({
       tags: ["Capability Sources"],
-      summary: "Create a Gmail draft or threaded reply draft; attach workspace files with body.attachments: [{ filename, mimeType, dataBase64 }], where dataBase64 is each attachment's file bytes encoded as standard base64",
-      description: "Creates a plain-text Gmail draft in the calling member own mailbox, with optional Cc/Bcc recipients and files read from the active workspace. Set threadId to attach the draft to an existing Gmail thread as a reply using the thread's matching subject; threadId is required for replies and forwards. For threaded drafts, OpenWork appends the quoted conversation automatically. Always share the returned draftUrl with the user because it opens the ready-to-send draft in Gmail for review and send. Returns needs_connection when the member has not connected their Google account yet or when a threaded reply needs Gmail read permission.",
+      summary: "Create a Gmail draft or threaded reply draft; attach staged workspace files with body.attachments: [{ fileRef }]",
+      description: "Creates a plain-text Gmail draft in the calling member own mailbox. Stage attachments with openwork-cloud-files stage_file first, then pass only fileRef; original bytes, filename, and MIME type are preserved outside model context. Set threadId for replies and forwards. Always share the returned draftUrl.",
       responses: {
         200: jsonResponse("Draft created.", createDraftResponseSchema),
         400: jsonResponse("The draft request was invalid.", z.union([invalidRequestSchema, missingThreadIdSchema])),
@@ -1073,10 +1155,31 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
         return c.json({ error: "needs_connection", message: token.message }, 409)
       }
 
-      const attachments: GmailDraftAttachment[] = (attachmentInputs ?? []).map((attachment) => ({
+      const referencedAttachments = await Promise.all((attachmentInputs ?? []).map((attachment) =>
+        resolveFileReference(fileReferenceStorage, payload, attachment.fileRef)))
+      if (referencedAttachments.some((attachment) => attachment === null)) {
+        return c.json({
+          error: "invalid_request",
+          message: "One or more fileRef values are missing, expired, or belong to another member. Stage the workspace files again.",
+        }, 400)
+      }
+      const availableAttachments = referencedAttachments.filter(
+        (attachment): attachment is NonNullable<typeof attachment> => attachment !== null,
+      )
+      const totalAttachmentBytes = availableAttachments.reduce(
+        (total, attachment) => total + attachment.byteLength,
+        0,
+      )
+      if (totalAttachmentBytes > MAX_GMAIL_ATTACHMENTS_TOTAL_BYTES) {
+        return c.json({
+          error: "invalid_request",
+          message: "Attachments must be 20 MiB or less in total.",
+        }, 400)
+      }
+      const attachments: GmailDraftAttachment[] = availableAttachments.map((attachment) => ({
         filename: attachment.filename,
         mimeType: attachment.mimeType,
-        content: Buffer.from(attachment.dataBase64, "base64"),
+        content: Buffer.from(attachment.bytes),
       }))
       const headers: { name: string; value: string }[] = []
       let draftBody = body

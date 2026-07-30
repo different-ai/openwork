@@ -17,10 +17,16 @@ import {
   OPENAI_IMAGE_GENERATION_EXTENSION_ACTIONS,
   OPENAI_IMAGE_GENERATION_EXTENSION_ID,
 } from "./openai-image-generation.js";
+import {
+  callOpenWorkCloudFileAction,
+  OPENWORK_CLOUD_FILE_ACTIONS,
+  OPENWORK_CLOUD_FILES_EXTENSION_ID,
+} from "./cloud-files.js";
 
 const OPENWORK_EXPERIMENTAL_EXTENSION_ACTIONS = [
   ...GOOGLE_WORKSPACE_EXTENSION_ACTIONS,
   ...OPENAI_IMAGE_GENERATION_EXTENSION_ACTIONS,
+  ...OPENWORK_CLOUD_FILE_ACTIONS,
 ];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -78,6 +84,11 @@ export async function callExperimentalExtensionAction(config: ServerConfig, env:
 
   if (extensionId === OPENAI_IMAGE_GENERATION_EXTENSION_ID) {
     const result = await callOpenAiImageGenerationExtensionAction(config, env, action, args, context);
+    if (result) return result;
+  }
+
+  if (extensionId === OPENWORK_CLOUD_FILES_EXTENSION_ID) {
+    const result = await callOpenWorkCloudFileAction(config, action, args, context);
     if (result) return result;
   }
 

@@ -10,6 +10,7 @@ import { registerOrgCoreRoutes } from "./core.js"
 import { registerDeleteOrganizationRoutes } from "./delete-organization.js"
 import { registerOrgDesktopPolicyRoutes } from "./desktop-policies.js"
 import { registerOrgEgressDiagnosticRoutes } from "./egress-diagnostics.js"
+import { registerFileReferenceRoutes } from "./file-references.js"
 import { registerOrgInvitationRoutes } from "./invitations.js"
 import { registerGoogleWorkspaceRoutes } from "./google-workspace.js"
 import { registerOrgInstallLinkRoutes } from "./install-links.js"
@@ -61,6 +62,7 @@ export function registerOrgRoutes<T extends { Variables: OrgRouteVariables & Req
   registerOrgBrandAssetRoutes(app)
   registerOrgDesktopPolicyRoutes(app)
   registerOrgEgressDiagnosticRoutes(app)
+  registerFileReferenceRoutes(app)
   registerOrgInferenceRoutes(app)
   registerOrgScimRoutes(app)
   registerOrgSsoRoutes(app)

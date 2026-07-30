@@ -92,6 +92,7 @@ let forceGmailThreadError = false
 let lastDriveQuery: string | null = null
 let lastDriveUploadContentType: string | null = null
 let lastDriveUploadBody: Buffer | null = null
+let lastDriveUploadMethod: string | null = null
 let lastDriveSharePayload: unknown = null
 let lastDriveShareUrl: string | null = null
 let lastCalendarEventPayload: unknown = null
@@ -111,6 +112,7 @@ function resetFakeGoogle() {
   lastDriveQuery = null
   lastDriveUploadContentType = null
   lastDriveUploadBody = null
+  lastDriveUploadMethod = null
   lastDriveSharePayload = null
   lastDriveShareUrl = null
   lastCalendarEventPayload = null
@@ -281,9 +283,29 @@ const fakeGoogleServer = Bun.serve({
     if (url.pathname === "/upload/drive/v3/files" && request.method === "POST") {
       lastDriveUploadContentType = request.headers.get("content-type")
       lastDriveUploadBody = Buffer.from(await request.arrayBuffer())
+      lastDriveUploadMethod = request.method
       if (forceDriveUploadError) {
         return new Response("upload exploded", { status: 500 })
       }
+      if (url.searchParams.get("uploadType") === "resumable") {
+        return new Response(null, {
+          status: 200,
+          headers: { location: `${fakeGoogleServer.url.origin}/upload-session/session_1` },
+        })
+      }
+      return json({
+        id: "uploaded_file_1",
+        name: "plan.pdf",
+        mimeType: "application/pdf",
+        modifiedTime: "2026-07-08T12:00:00Z",
+        webViewLink: "https://drive.google.com/file/d/uploaded_file_1/view",
+        size: "28",
+      })
+    }
+    if (url.pathname === "/upload-session/session_1" && request.method === "PUT") {
+      lastDriveUploadContentType = request.headers.get("content-type")
+      lastDriveUploadBody = Buffer.from(await request.arrayBuffer())
+      lastDriveUploadMethod = request.method
       return json({
         id: "uploaded_file_1",
         name: "plan.pdf",
@@ -340,6 +362,8 @@ let searchCapabilities: typeof import("../src/mcp/search.js").searchCapabilities
 const userId = createDenTypeId("user")
 const organizationId = createDenTypeId("organization")
 const memberId = createDenTypeId("member")
+const otherUserId = createDenTypeId("user")
+const otherMemberId = createDenTypeId("member")
 
 async function seedConnectedAccount(scopes: string[] | null = FULL_SCOPES) {
   await upsertConnectedAccount({
@@ -374,6 +398,20 @@ function request(path: string, init?: { method?: string; body?: unknown }) {
     headers,
     body: body === undefined ? undefined : JSON.stringify(body),
   })
+}
+
+async function stageFileReference(filename: string, mimeType: string, bytes: Uint8Array) {
+  const headers = authHeaders()
+  const form = new FormData()
+  form.append("file", new File([bytes], filename, { type: mimeType }))
+  const response = await app.request("http://den-api.local/v1/file-references", {
+    method: "POST",
+    headers,
+    body: form,
+  })
+  expect(response.status).toBe(200)
+  const body = expectRecord(await response.json(), "staged file reference")
+  return expectString(body.fileRef, "staged fileRef")
 }
 
 beforeAll(async () => {
@@ -419,20 +457,34 @@ beforeAll(async () => {
     userId,
     role: "member",
   })
+  await db.insert(schema.AuthUserTable).values({
+    id: otherUserId,
+    name: "Other File Reference User",
+    email: `gws-caps+${otherUserId}@test.local`,
+  })
+  await db.insert(schema.MemberTable).values({
+    id: otherMemberId,
+    organizationId,
+    userId: otherUserId,
+    role: "member",
+  })
 })
 
 beforeEach(async () => {
   resetFakeGoogle()
   await db.delete(schema.ConnectedAccountTable).where(drizzle.eq(schema.ConnectedAccountTable.organizationId, organizationId))
+  await db.delete(schema.FileReferenceTable).where(drizzle.eq(schema.FileReferenceTable.organizationId, organizationId))
   await seedConnectedAccount()
 })
 
 afterAll(async () => {
+  await db.delete(schema.FileReferenceTable).where(drizzle.eq(schema.FileReferenceTable.organizationId, organizationId))
   await db.delete(schema.ConnectedAccountTable).where(drizzle.eq(schema.ConnectedAccountTable.organizationId, organizationId))
   await db.delete(schema.MemberTable).where(drizzle.eq(schema.MemberTable.organizationId, organizationId))
   await db.delete(schema.OrganizationRoleTable).where(drizzle.eq(schema.OrganizationRoleTable.organizationId, organizationId))
   await db.delete(schema.OrganizationTable).where(drizzle.eq(schema.OrganizationTable.id, organizationId))
   await db.delete(schema.AuthUserTable).where(drizzle.eq(schema.AuthUserTable.id, userId))
+  await db.delete(schema.AuthUserTable).where(drizzle.eq(schema.AuthUserTable.id, otherUserId))
   fakeGoogleServer.stop(true)
   mock.restore()
 })
@@ -577,21 +629,54 @@ test("gmail list returns metadata-mapped messages", async () => {
   })
 })
 
-test("gmail attachment download returns standard base64 bytes and sends the member token", async () => {
-  // The fixture must exercise base64url -> base64 normalization, or this test proves nothing.
-  expect(attachmentBytes.toString("base64url")).not.toBe(attachmentBytes.toString("base64"))
-
+test("gmail attachment download returns a scoped fileRef and materializes exact bytes outside model context", async () => {
   const response = await request("/v1/capabilities/google-workspace/gmail-attachment/msg_1/att_1")
   expect(response.status).toBe(200)
   expect(lastAuthorization).toBe("Bearer gws-token")
-  const body: unknown = await response.json()
-  expect(body).toEqual({
-    ok: true,
-    messageId: "msg_1",
-    attachmentId: "att_1",
-    size: attachmentBytes.byteLength,
-    dataBase64: attachmentBytes.toString("base64"),
+  const body = expectRecord(await response.json(), "gmail attachment file reference")
+  expect(body.ok).toBe(true)
+  expect(body.messageId).toBe("msg_1")
+  expect(body.attachmentId).toBe("att_1")
+  expect(body.filename).toBe("plan.pdf")
+  expect(body.mimeType).toBe("application/pdf")
+  expect(body.size).toBe(attachmentBytes.byteLength)
+  expect(typeof body.sha256).toBe("string")
+  expect(typeof body.expiresAt).toBe("string")
+  expect("dataBase64" in body).toBe(false)
+
+  const materialized = await app.request(
+    `http://den-api.local/v1/file-references/${encodeURIComponent(expectString(body.fileRef, "gmail attachment fileRef"))}/content`,
+    { headers: authHeaders() },
+  )
+  expect(materialized.status).toBe(200)
+  expect(materialized.headers.get("content-type")).toBe("application/pdf")
+  expect(decodeURIComponent(materialized.headers.get("x-openwork-filename") ?? "")).toBe("plan.pdf")
+  expect(Buffer.from(await materialized.arrayBuffer())).toEqual(attachmentBytes)
+})
+
+test("file references are opaque, member-scoped, and expire", async () => {
+  const fileRef = await stageFileReference("private.txt", "text/plain", Buffer.from("private bytes", "utf8"))
+  const otherHeaders = new Headers({
+    "x-den-internal-mcp-principal": session.createInternalMcpPrincipalHeader({
+      userId: otherUserId,
+      organizationId,
+    }),
   })
+  const crossMember = await app.request(
+    `http://den-api.local/v1/file-references/${encodeURIComponent(fileRef)}/content`,
+    { headers: otherHeaders },
+  )
+  expect(crossMember.status).toBe(404)
+
+  await db
+    .update(schema.FileReferenceTable)
+    .set({ expiresAt: new Date(Date.now() - 1_000) })
+    .where(drizzle.eq(schema.FileReferenceTable.id, fileRef))
+  const expired = await app.request(
+    `http://den-api.local/v1/file-references/${encodeURIComponent(fileRef)}/content`,
+    { headers: authHeaders() },
+  )
+  expect(expired.status).toBe(404)
 })
 
 test("gmail attachment download requires Gmail read scope before calling Google", async () => {
@@ -610,7 +695,7 @@ test("gmail attachment download returns google_api_error when Google rejects the
   const body: unknown = await response.json()
   const responseBody = expectRecord(body, "attachment error response")
   expect(responseBody.error).toBe("google_api_error")
-  expect(expectMessage(body).startsWith("Gmail attachment download failed: 404")).toBe(true)
+  expect(expectMessage(body)).toBe("Gmail message did not contain the requested attachment.")
 })
 
 test("gmail plain draft supports cc without requiring a thread", async () => {
@@ -647,19 +732,16 @@ test("gmail plain draft supports cc without requiring a thread", async () => {
   })
 })
 
-test("gmail plain draft attaches active workspace file bytes with filename and MIME type", async () => {
+test("gmail plain draft attaches referenced bytes with their preserved filename and MIME type", async () => {
   const attachmentBytes = Buffer.from("%PDF-1.4\nworkspace invoice\n", "utf8")
+  const fileRef = await stageFileReference("invoice-2026.pdf", "application/pdf", attachmentBytes)
   const response = await request("/v1/capabilities/google-workspace/gmail-drafts", {
     method: "POST",
     body: {
       to: "accounts@acme.test",
       subject: "Workspace invoice",
       body: "Please see the attached invoice.",
-      attachments: [{
-        filename: "invoice-2026.pdf",
-        mimeType: "application/pdf",
-        dataBase64: attachmentBytes.toString("base64"),
-      }],
+      attachments: [{ fileRef }],
     },
   })
   expect(response.status).toBe(200)
@@ -678,6 +760,7 @@ test("gmail plain draft attaches active workspace file bytes with filename and M
 })
 
 test("gmail threaded reply draft reads thread metadata and sends reply headers", async () => {
+  const fileRef = await stageFileReference("notes.txt", "text/plain", Buffer.from("workspace notes", "utf8"))
   const response = await request("/v1/capabilities/google-workspace/gmail-drafts", {
     method: "POST",
     body: {
@@ -686,11 +769,7 @@ test("gmail threaded reply draft reads thread metadata and sends reply headers",
       subject: "Quarterly plan",
       threadId: "thread_1",
       body: "Reply body",
-      attachments: [{
-        filename: "notes.txt",
-        mimeType: "text/plain",
-        dataBase64: Buffer.from("workspace notes", "utf8").toString("base64"),
-      }],
+      attachments: [{ fileRef }],
     },
   })
   expect(response.status).toBe(200)
@@ -742,11 +821,10 @@ test("gmail reply-looking draft requires threadId before calling Google", async 
   })
 })
 
-test("gmail draft rejects invalid attachment encoding and MIME type without calling Google", async () => {
+test("gmail draft rejects model-facing base64 and missing file references without calling Google", async () => {
   for (const attachment of [
-    { filename: "invoice.pdf", mimeType: "application/pdf", dataBase64: "not base64!" },
-    { filename: "invoice.pdf", mimeType: "invalid mime type", dataBase64: "aW52b2ljZQ==" },
-    { filename: "invoice.pdf\r\nBcc: attacker@acme.test", mimeType: "application/pdf", dataBase64: "aW52b2ljZQ==" },
+    { filename: "invoice.pdf", mimeType: "application/pdf", dataBase64: "aW52b2ljZQ==" },
+    { fileRef: "file_ref_00000000000000000000000000000000" },
   ]) {
     resetFakeGoogle()
     const response = await request("/v1/capabilities/google-workspace/gmail-drafts", {
@@ -760,37 +838,13 @@ test("gmail draft rejects invalid attachment encoding and MIME type without call
     })
     expect(response.status).toBe(400)
     expect(googleCallCount).toBe(0)
-    const body: unknown = await response.json()
-    expect(expectRecord(body, "invalid attachment response").error).toBe("invalid_request")
-  }
-})
-
-test("gmail draft rejects attachments over per-file and aggregate size limits without calling Google", async () => {
-  const overPerFile = Buffer.alloc((10 * 1024 * 1024) + 1).toString("base64")
-  const aggregateFiles = Array.from({ length: 3 }, (_, index) => ({
-    filename: `part-${index}.bin`,
-    mimeType: "application/octet-stream",
-    dataBase64: Buffer.alloc(7 * 1024 * 1024).toString("base64"),
-  }))
-  for (const attachments of [
-    [{ filename: "large.bin", mimeType: "application/octet-stream", dataBase64: overPerFile }],
-    aggregateFiles,
-  ]) {
-    resetFakeGoogle()
-    const response = await request("/v1/capabilities/google-workspace/gmail-drafts", {
-      method: "POST",
-      body: { to: "sam@acme.test", subject: "Quarterly plan", body: "Draft body", attachments },
-    })
-    expect(response.status).toBe(400)
-    expect(googleCallCount).toBe(0)
+    expect(expectRecord(await response.json(), "invalid attachment response").error).toBe("invalid_request")
   }
 })
 
 test("gmail draft rejects empty and excessive attachment lists without calling Google", async () => {
   for (const attachments of [[], Array.from({ length: 11 }, (_, index) => ({
-    filename: `file-${index}.txt`,
-    mimeType: "text/plain",
-    dataBase64: "ZmlsZQ==",
+    fileRef: `file_ref_${index.toString(16).padStart(32, "0")}`,
   }))]) {
     resetFakeGoogle()
     const response = await request("/v1/capabilities/google-workspace/gmail-drafts", {
@@ -891,16 +945,15 @@ test("drive search returns mapped files", async () => {
   })
 })
 
-test("drive upload stores decoded bytes as multipart and returns the user-facing Drive link", async () => {
+test("drive upload preserves referenced bytes and metadata with multipart up to 5 MiB", async () => {
   await seedConnectedAccount([DRIVE_FILE_SCOPE])
   resetFakeGoogle()
   const uploadBytes = Buffer.from("%PDF-1.4\nDrive upload bytes\n", "utf8")
+  const fileRef = await stageFileReference("plan.pdf", "application/pdf", uploadBytes)
   const response = await request("/v1/capabilities/google-workspace/drive-files", {
     method: "POST",
     body: {
-      filename: "plan.pdf",
-      mimeType: "application/pdf",
-      dataBase64: uploadBytes.toString("base64"),
+      fileRef,
       folderId: "folder_1",
     },
   })
@@ -932,16 +985,32 @@ test("drive upload stores decoded bytes as multipart and returns the user-facing
   })
 })
 
+test("drive upload uses Google's resumable flow above 5 MiB and preserves exact bytes", async () => {
+  await seedConnectedAccount([DRIVE_FILE_SCOPE])
+  resetFakeGoogle()
+  const uploadBytes = Buffer.alloc((5 * 1024 * 1024) + 1, 0x5a)
+  const fileRef = await stageFileReference("large.bin", "application/octet-stream", uploadBytes)
+  const response = await request("/v1/capabilities/google-workspace/drive-files", {
+    method: "POST",
+    body: { fileRef },
+  })
+  expect(response.status).toBe(200)
+  expect(googleCallUrls).toHaveLength(2)
+  const initiateUrl = new URL(expectString(googleCallUrls[0], "resumable initiation URL"))
+  expect(initiateUrl.pathname).toBe("/upload/drive/v3/files")
+  expect(initiateUrl.searchParams.get("uploadType")).toBe("resumable")
+  expect(lastDriveUploadMethod).toBe("PUT")
+  expect(lastDriveUploadContentType).toBe("application/octet-stream")
+  expect(lastDriveUploadBody).toEqual(uploadBytes)
+})
+
 test("drive upload requires Drive write scope before calling Google", async () => {
   await seedConnectedAccount([DRIVE_READ_SCOPE])
   resetFakeGoogle()
+  const fileRef = await stageFileReference("plan.pdf", "application/pdf", Buffer.from("drive bytes", "utf8"))
   const response = await request("/v1/capabilities/google-workspace/drive-files", {
     method: "POST",
-    body: {
-      filename: "plan.pdf",
-      mimeType: "application/pdf",
-      dataBase64: Buffer.from("drive bytes", "utf8").toString("base64"),
-    },
+    body: { fileRef },
   })
   expect(response.status).toBe(409)
   expect(googleCallCount).toBe(0)
@@ -996,13 +1065,10 @@ test("drive upload returns google_api_error when Google rejects the upload", asy
   await seedConnectedAccount([DRIVE_FILE_SCOPE])
   resetFakeGoogle()
   forceDriveUploadError = true
+  const fileRef = await stageFileReference("plan.pdf", "application/pdf", Buffer.from("drive bytes", "utf8"))
   const response = await request("/v1/capabilities/google-workspace/drive-files", {
     method: "POST",
-    body: {
-      filename: "plan.pdf",
-      mimeType: "application/pdf",
-      dataBase64: Buffer.from("drive bytes", "utf8").toString("base64"),
-    },
+    body: { fileRef },
   })
   expect(response.status).toBe(502)
   expect(googleCallCount).toBe(1)
@@ -1068,11 +1134,11 @@ test("Google Workspace capability tools are discoverable and keep readable names
   expect(gmailMatch?.name).toBe("getCapabilitiesGoogleWorkspaceGmailMessages")
   expect(gmailMatch?.queryParams).toEqual(["q", "maxResults"])
   expect(searchCapabilities(catalog, "outlook mail messages", 20).find((match) => match.name === "getCapabilitiesMicrosoft365MailMessages")?.queryParams).toEqual(["search", "maxResults"])
-  const draftMatch = searchCapabilities(catalog, "gmail draft workspace attachment", 10)[0]
+  const draftMatch = searchCapabilities(catalog, "create gmail draft staged fileRef", 10)[0]
   expect(draftMatch?.name).toBe("postCapabilitiesGoogleWorkspaceGmailDrafts")
-  expect(draftMatch?.summary).toContain("attachments: [{ filename, mimeType, dataBase64 }]")
-  expect(draftMatch?.summary).toContain("standard base64")
-  expect(searchCapabilities(catalog, "download gmail attachment bytes", 10)[0]?.name).toBe("getCapabilitiesGoogleWorkspaceGmailAttachment")
+  expect(draftMatch?.summary).toContain("attachments: [{ fileRef }]")
+  expect(draftMatch?.summary).not.toContain("base64")
+  expect(searchCapabilities(catalog, "stage gmail attachment file reference", 10)[0]?.name).toBe("getCapabilitiesGoogleWorkspaceGmailAttachment")
 
   const expectedNames = [
     "getCapabilitiesGoogleWorkspaceGmailMessages",

@@ -109,15 +109,17 @@ describe("extractGmailMessage", () => {
 })
 
 describe("extractGmailAttachmentData", () => {
-  test("normalizes base64url data to standard base64 and keeps Gmail's size", () => {
-    // "----_w" decodes to bytes fb ef be ff; standard base64 re-encodes them as "++++/w==".
-    expect(extractGmailAttachmentData({ size: 4, data: "----_w" })).toEqual({ size: 4, dataBase64: "++++/w==" })
+  test("decodes base64url data to bytes and keeps Gmail's size", () => {
+    expect(extractGmailAttachmentData({ size: 4, data: "----_w" })).toEqual({
+      size: 4,
+      bytes: Uint8Array.from([0xfb, 0xef, 0xbe, 0xff]),
+    })
   })
 
   test("falls back to decoded byte length when size is missing", () => {
     expect(extractGmailAttachmentData({ data: base64Url("hello") })).toEqual({
       size: 5,
-      dataBase64: Buffer.from("hello", "utf8").toString("base64"),
+      bytes: Uint8Array.from(Buffer.from("hello", "utf8")),
     })
   })
 

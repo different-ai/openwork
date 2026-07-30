@@ -65,16 +65,17 @@ export default {
     {
       name: "The agent can discover the workspace attachment contract",
       run: async (ctx) => {
-        await ctx.prove("Capability search tells the agent exactly how to attach active-workspace file bytes", {
+        await ctx.prove("Capability search tells the agent to stage workspace bytes outside model context", {
           voiceover: vo[0],
           assert: async () => {
             const { route } = await sources();
             witness(
               ctx,
-              route.includes("body.attachments: [{ filename, mimeType, dataBase64 }]") ,
+              route.includes("body.attachments: [{ fileRef }]") ,
               "The searchable operation summary exposes the exact attachment body shape",
             );
-            witness(ctx, route.includes("Read the file from the active workspace and base64-encode it"), "The data field directs the agent to the active workspace file");
+            witness(ctx, route.includes("Use openwork-cloud-files stage_file first"), "The capability directs the agent through the trusted file-reference bridge");
+            witness(ctx, !route.includes("dataBase64"), "The model-facing Google capability contains no inline byte field");
             witness(ctx, route.includes("attachments: z.array(gmailDraftAttachmentSchema).min(1).max(10).optional()"), "The draft body accepts an optional bounded attachment list");
             ctx.output("discoverable Gmail-draft contract", [
               snippet(route, "const gmailDraftAttachmentSchema", 20),
@@ -116,7 +117,7 @@ export default {
             witness(ctx, route.includes('/gmail/v1/users/me/drafts'), "The Google request targets Gmail drafts.create, not a send endpoint");
             witness(ctx, !route.includes('/gmail/v1/users/me/messages/send'), "The capability contains no Gmail send call");
             witness(ctx, route.includes("attachments: attachments.map((attachment) => ({"), "The response confirms each attachment filename, MIME type, and byte size");
-            witness(ctx, routeTest.includes("gmail plain draft attaches active workspace file bytes with filename and MIME type"), "The route integration test creates an attached plain draft");
+            witness(ctx, routeTest.includes("gmail plain draft attaches referenced bytes with their preserved filename and MIME type"), "The route integration test creates an attached plain draft from a scoped reference");
             witness(ctx, routeTest.includes('to: "sam@acme.test"') && routeTest.includes('subject: "Quarterly plan"'), "The integration request includes the expected recipient and subject");
             ctx.output("draft creation and confirmation", snippet(route, "const message: { raw: string; threadId?: string }", 44));
           },
@@ -133,9 +134,9 @@ export default {
             witness(ctx, routeTest.includes('expect(decoded).toContain("Content-Type: multipart/mixed;")'), "The Gmail-bound raw message is multipart/mixed");
             witness(ctx, routeTest.includes('Content-Type: application/pdf; name="invoice-2026.pdf"'), "The Gmail-bound attachment keeps its PDF type and filename");
             witness(ctx, routeTest.includes('Content-Disposition: attachment; filename="invoice-2026.pdf"'), "The Gmail-bound message exposes the file as an attachment");
-            witness(ctx, routeTest.includes('attachmentBytes.toString("base64")'), "The Gmail-bound MIME contains the exact workspace file bytes");
+            witness(ctx, routeTest.includes("expect(decoded).toContain(attachmentBytes.toString"), "The Gmail-bound MIME contains the exact referenced file bytes");
             witness(ctx, routeTest.includes('size: attachmentBytes.byteLength'), "The capability response reports the observed attachment byte size");
-            ctx.output("mock Gmail external witness", snippet(routeTest, "test(\"gmail plain draft attaches active workspace file bytes", 42));
+            ctx.output("mock Gmail external witness", snippet(routeTest, "test(\"gmail plain draft attaches referenced bytes", 42));
           },
         });
       },
@@ -150,7 +151,7 @@ export default {
             witness(ctx, routeTest.includes('expect(message.threadId).toBe("thread_1")'), "The reply draft remains attached to the requested Gmail thread");
             witness(ctx, routeTest.includes('In-Reply-To: <orig-2@mail.gmail.com>'), "The reply draft retains In-Reply-To metadata");
             witness(ctx, routeTest.includes('References: <orig-1@mail.gmail.com> <orig-2@mail.gmail.com>'), "The reply draft retains References metadata");
-            witness(ctx, routeTest.includes('filename: "notes.txt"'), "The threaded draft request includes the workspace attachment filename");
+            witness(ctx, routeTest.includes('stageFileReference("notes.txt"'), "The threaded draft stages the workspace attachment with its source filename");
             witness(ctx, routeTest.includes('Content-Disposition: attachment; filename="notes.txt"'), "The threaded Gmail MIME includes the attachment");
             ctx.output("threaded reply attachment witness", snippet(routeTest, "test(\"gmail threaded reply draft reads thread metadata", 54));
           },
