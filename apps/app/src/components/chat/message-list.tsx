@@ -1138,8 +1138,13 @@ interface MessageListProps {
   retryStatus?: RetryStatus | null
 }
 
+export function shouldShowMessageListLoading(status: ThreadStatus, messageCount: number) {
+  return status === "streaming" || (status === "submitted" && messageCount > 0)
+}
+
 export function MessageList({ messages, status, retryStatus }: MessageListProps) {
   const isStreaming = status === "streaming" || status === "retrying"
+  const showLoading = shouldShowMessageListLoading(status, messages.length)
   const items = React.useMemo(() => groupMessages(messages, status), [messages, status]);
   const error = useSessionErrorMessage();
   const hasSessionErrorMessage = React.useMemo(() => messages.some(isSessionErrorMessage), [messages])
@@ -1180,7 +1185,7 @@ export function MessageList({ messages, status, retryStatus }: MessageListProps)
         )
       })}
 
-      {status === "streaming" && <LoadingMessage label={liveActionLabel ?? undefined} />}
+      {showLoading && <LoadingMessage label={liveActionLabel ?? undefined} />}
       {retryStatus ? <RetryMessage status={retryStatus} /> : null}
       {error && !hasSessionErrorMessage ? <ErrorMessage error={error} /> : null}
     </div>
