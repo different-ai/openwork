@@ -22,7 +22,7 @@ export type TelemetryDimensionInput = {
   metadata?: Record<string, unknown>;
 };
 
-type TelemetryEventFields = {
+export type TelemetryEventFields = {
   sessionId?: string;
   durationMs?: number;
   success?: boolean;

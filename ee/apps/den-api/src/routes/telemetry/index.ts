@@ -17,6 +17,7 @@ import { enterprisePlanRequiredSchema, invalidRequestSchema, jsonResponse, unaut
 import type { AuthContextVariables } from "../../session.js"
 import type { UserOrganizationsContext, OrganizationContextVariables } from "../../middleware/index.js"
 import { deriveDimensionValue } from "./dimension-value.js"
+import { captureTelemetrySentryEvent } from "./sentry-events.js"
 
 type TelemetryRouteVariables = AuthContextVariables & Partial<UserOrganizationsContext> & Partial<OrganizationContextVariables>
 
@@ -299,6 +300,9 @@ export function registerTelemetryRoutes<T extends { Variables: TelemetryRouteVar
             orgId,
             ...pendingDimension,
           })
+        }
+        for (const event of acceptedEvents) {
+          captureTelemetrySentryEvent(event)
         }
       } catch {
         // Swallow errors -- telemetry should never break the app

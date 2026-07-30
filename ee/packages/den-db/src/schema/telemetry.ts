@@ -12,6 +12,7 @@ export const TelemetryEventType = [
   "task.started",
   "task.completed",
   "task.failed",
+  "connect.mcp_failed",
 ] as const
 
 export const TelemetryEventTable = mysqlTable(

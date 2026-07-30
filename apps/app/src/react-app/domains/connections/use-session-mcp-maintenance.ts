@@ -16,6 +16,10 @@ import type {
 import { unwrap } from "../../../app/lib/opencode";
 import type { Client, McpServerEntry, McpStatusMap } from "../../../app/types";
 import { attemptSilentMcpReauth } from "./mcp-silent-reauth";
+import {
+  clearCloudMcpSentryFailure,
+  reportCloudMcpFailureToSentry,
+} from "./cloud-mcp-sentry";
 import { recordCloudMcpMaintenanceOutcome } from "./cloud-mcp-maintenance-outcome";
 import {
   CLOUD_MCP_SERVER_NAME,
@@ -424,7 +428,7 @@ export function useSessionMcpMaintenance(input: {
         targetKey,
         task: async () => {
           if (input.cloudSignedIn) {
-            await runCloudMcpMaintenanceWithRetry({
+            const result = await runCloudMcpMaintenanceWithRetry({
               attempt: () => syncCloudControlMcpInBackground({
                 client,
                 workspaceId,
@@ -432,6 +436,15 @@ export function useSessionMcpMaintenance(input: {
               }),
               onAttempt: recordCloudAttempt,
             });
+            if (result.outcome === "ready") {
+              clearCloudMcpSentryFailure(targetKey);
+            } else if (result.outcome === "failed") {
+              reportCloudMcpFailureToSentry({
+                targetKey,
+                issue: result.issue,
+                health: result.health,
+              });
+            }
           }
           await healWorkspaceMcpInBackground({
             client,

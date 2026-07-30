@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
+import type { TelemetryEventFields } from "../src/app/lib/den-telemetry";
 import type { OpenworkCloudMcpHealth } from "../src/app/lib/openwork-server";
 import {
   buildCloudMcpSupportBundle,
@@ -8,6 +9,11 @@ import {
   cloudMcpEngineRefreshLines,
   cloudMcpProbeTraceLines,
 } from "../src/react-app/domains/connections/cloud-mcp-diagnostics";
+import {
+  buildCloudMcpFailureTelemetryDimensions,
+  clearCloudMcpSentryFailure,
+  reportCloudMcpFailureToSentry,
+} from "../src/react-app/domains/connections/cloud-mcp-sentry";
 
 const CHECKED_AT = "2026-07-22T10:00:00.000Z";
 
@@ -218,5 +224,142 @@ describe("cloud MCP advanced diagnostics", () => {
     expect(parsed.capturedAt).toBe(CHECKED_AT);
     expect((parsed.context as Record<string, unknown>).workspaceId).toBe("ws_1");
     expect(bundle).not.toContain("owt_super_secret_token_value");
+  });
+
+  test("builds bounded Sentry context from diagnostics without private payloads", () => {
+    const health = baseHealth({
+      workspace: {
+        id: "private-workspace-id",
+        type: "local",
+        directory: "/Users/private/customer",
+        path: "/Users/private/customer",
+      },
+      desired: {
+        ...baseHealth().desired,
+        config: {
+          headers: { Authorization: "Bearer owt_super_secret_token_value" },
+          url: "https://private.customer.example/mcp",
+        },
+        org: { id: "private-org-id", slug: "private-customer", name: "Private Customer" },
+      },
+      tools: {
+        ...baseHealth().tools,
+        direct: {
+          checked: true,
+          source: "mcp_tools_list",
+          expected: ["search_capabilities", "execute_capability"],
+          present: [],
+          missing: ["search_capabilities", "execute_capability"],
+          trace: {
+            endpoint: "https://private.customer.example/mcp/agent?token=secret",
+            startedAt: CHECKED_AT,
+            latencyMs: 42,
+            protocolVersion: null,
+            serverInfo: null,
+            steps: [
+              {
+                step: "initialize",
+                ok: false,
+                httpStatus: 401,
+                latencyMs: 42,
+                error: { message: "member@example.com Bearer owt_super_secret_token_value" },
+              },
+            ],
+          },
+        },
+      },
+    });
+    const issue = health.firstFailure;
+    if (!issue) throw new Error("Expected a synthetic Cloud MCP failure.");
+
+    const dimensions = buildCloudMcpFailureTelemetryDimensions({ issue, health });
+    expect(Object.fromEntries(dimensions.map((item) => [item.type, item.value]))).toEqual({
+      "cloud_mcp.failure_code": "opencode_mcp_sync_failed",
+      "cloud_mcp.failure_stage": "engine_delivery",
+      "cloud_mcp.retryable": "true",
+      "cloud_mcp.health_phase": "engine_failed",
+      "cloud_mcp.engine_status": "failed",
+      "cloud_mcp.delivery_state": "failed",
+      "cloud_mcp.direct_probe": "initialize_http_401",
+      "cloud_mcp.versions": "app_0.17.36__server_0.17.36__engine_1.17.11",
+    });
+    const serialized = JSON.stringify(dimensions);
+    expect(serialized).not.toContain("private");
+    expect(serialized).not.toContain("member@example.com");
+    expect(serialized).not.toContain("owt_super_secret_token_value");
+  });
+
+  test("maps content-like diagnostic classifications to safe fallbacks", () => {
+    const health = baseHealth({
+      phase: "member@example.com",
+      engine: { status: "private_customer" },
+      delivery: {
+        ...baseHealth().delivery,
+        state: "private_customer",
+      },
+      compatibility: {
+        ...baseHealth().compatibility,
+        openwork: {
+          serverVersion: "member@example.com",
+          app: { version: "private/customer" },
+        },
+        opencode: {
+          ...baseHealth().compatibility.opencode,
+          actualVersion: "Bearer private-token",
+        },
+      },
+    });
+    const dimensions = buildCloudMcpFailureTelemetryDimensions({
+      issue: {
+        code: "member@example.com",
+        stage: "private_customer",
+        retryable: true,
+      },
+      health,
+    });
+
+    expect(Object.fromEntries(dimensions.map((item) => [item.type, item.value]))).toMatchObject({
+      "cloud_mcp.failure_code": "connect_failure",
+      "cloud_mcp.failure_stage": "unknown",
+      "cloud_mcp.health_phase": "unknown",
+      "cloud_mcp.engine_status": "unknown",
+      "cloud_mcp.delivery_state": "unknown",
+      "cloud_mcp.versions": "app_unknown__server_unknown__engine_unknown",
+    });
+    const serialized = JSON.stringify(dimensions);
+    expect(serialized).not.toContain("member");
+    expect(serialized).not.toContain("private");
+  });
+
+  test("reports one Sentry telemetry event per failure fingerprint until recovery", () => {
+    const health = baseHealth();
+    const issue = health.firstFailure;
+    if (!issue) throw new Error("Expected a synthetic Cloud MCP failure.");
+    const events: Array<{ type: string; fields: TelemetryEventFields }> = [];
+    const track = (type: string, fields: TelemetryEventFields) => events.push({ type, fields });
+    const targetKey = "sentry-dedupe-target";
+
+    expect(reportCloudMcpFailureToSentry({ targetKey, issue, health, track })).toBe(true);
+    expect(reportCloudMcpFailureToSentry({ targetKey, issue, health, track })).toBe(false);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: "connect.mcp_failed",
+      fields: { success: false, durationMs: 480 },
+    });
+
+    clearCloudMcpSentryFailure(targetKey);
+    expect(reportCloudMcpFailureToSentry({ targetKey, issue, health, track })).toBe(true);
+    expect(events).toHaveLength(2);
+
+    const failingTargetKey = "sentry-reporter-failure-target";
+    expect(reportCloudMcpFailureToSentry({
+      targetKey: failingTargetKey,
+      issue,
+      health,
+      track: () => {
+        throw new Error("Telemetry unavailable");
+      },
+    })).toBe(false);
+    expect(reportCloudMcpFailureToSentry({ targetKey: failingTargetKey, issue, health, track })).toBe(true);
   });
 });
