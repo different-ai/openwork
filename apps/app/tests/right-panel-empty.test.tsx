@@ -6,8 +6,19 @@ import {
   handlePanelEscape,
   PanelEmpty,
 } from "../src/react-app/domains/session/panel/panel-empty";
+import {
+  getSidePanelSessionKey,
+  NO_SESSION_SIDE_PANEL_KEY,
+} from "../src/react-app/domains/session/panel/side-panel-session";
 
 describe("right panel empty state", () => {
+  test("keeps the panel addressable before a session exists", () => {
+    expect(getSidePanelSessionKey(null)).toBe(NO_SESSION_SIDE_PANEL_KEY);
+    expect(getSidePanelSessionKey("")).toBe(NO_SESSION_SIDE_PANEL_KEY);
+    expect(getSidePanelSessionKey("   ")).toBe(NO_SESSION_SIDE_PANEL_KEY);
+    expect(getSidePanelSessionKey("ses_existing")).toBe("ses_existing");
+  });
+
   test("renders spacious keyboard-accessible destination actions", () => {
     const html = renderToStaticMarkup(
       <PanelEmpty

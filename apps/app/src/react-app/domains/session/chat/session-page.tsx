@@ -68,6 +68,7 @@ import { isCollectibleArtifactTarget, isLocalhostBrowserTarget, isOpenableFileTa
 import type { OpenTargetOptions } from "@/lib/target-provider";
 import { VoicePanel } from "../voice/voice-panel";
 import { SidePanel } from "../panel/side-panel";
+import { getSidePanelSessionKey } from "../panel/side-panel-session";
 import { TerminalDock } from "../terminal/terminal-dock";
 import { useActivePanelTab, usePanelTabStore, useSessionPanelState } from "../panel/panel-tab-store";
 import { useWorkspaceShellLayout } from "../../../shell/workspace-shell-layout";
@@ -316,8 +317,9 @@ export function SessionPage(props: SessionPageProps) {
   const denAuth = useDenAuth();
   const sidebarOpen = useUiStateStore((state) => state.sidebarOpen);
   const setSidebarOpen = useUiStateStore((state) => state.setSidebarOpen);
+  const sidePanelSessionKey = getSidePanelSessionKey(props.selectedSessionId);
   const sessionSidePanel = useUiStateStore((state) => (
-    props.selectedSessionId ? state.sidePanelState[props.selectedSessionId] ?? null : null
+    state.sidePanelState[sidePanelSessionKey] ?? null
   ));
   const voiceSidePanelOpen = useUiStateStore((state) => state.sidePanelState[GLOBAL_VOICE_SIDE_PANEL_KEY] === "voice");
   const setSidePanelState = useUiStateStore((state) => state.setSidePanelState);
@@ -328,8 +330,8 @@ export function SessionPage(props: SessionPageProps) {
   const transcriptTargets = usePanelTabStore((state) => (
     props.selectedSessionId ? state.transcriptArtifactTargets[props.selectedSessionId] ?? EMPTY_TRANSCRIPT_TARGETS : EMPTY_TRANSCRIPT_TARGETS
   ));
-  const sessionPanelState = useSessionPanelState(props.selectedSessionId ?? "");
-  const activePanelTab = useActivePanelTab(props.selectedSessionId ?? "");
+  const sessionPanelState = useSessionPanelState(sidePanelSessionKey);
+  const activePanelTab = useActivePanelTab(sidePanelSessionKey);
   const [hiddenTargetRevision, setHiddenTargetRevision] = useState(0);
   const [, setExtensionStateVersion] = useState(0);
   const hiddenAccessibleTargetIds = useMemo(
@@ -398,8 +400,8 @@ export function SessionPage(props: SessionPageProps) {
   const setCurrentSidePanel = useCallback((panel: SidePanelItem | null) => {
     setSidePanelState(GLOBAL_VOICE_SIDE_PANEL_KEY, panel === "voice" ? "voice" : null);
     if (panel === "voice") return;
-    setSidePanelState(props.selectedSessionId, panel);
-  }, [props.selectedSessionId, setSidePanelState]);
+    setSidePanelState(sidePanelSessionKey, panel);
+  }, [setSidePanelState, sidePanelSessionKey]);
 
   const toggleCurrentSidePanel = useCallback((panel: SidePanelItem) => {
     if (panel === "voice") {
@@ -407,8 +409,8 @@ export function SessionPage(props: SessionPageProps) {
       return;
     }
     setSidePanelState(GLOBAL_VOICE_SIDE_PANEL_KEY, null);
-    toggleSidePanelState(props.selectedSessionId, panel);
-  }, [props.selectedSessionId, setSidePanelState, toggleSidePanelState]);
+    toggleSidePanelState(sidePanelSessionKey, panel);
+  }, [setSidePanelState, sidePanelSessionKey, toggleSidePanelState]);
 
   // When the agent calls a built-in browser tool, the main process opens
   // the WebContentsView and sends panel-opened; when hide_browser is called
@@ -1431,9 +1433,9 @@ export function SessionPage(props: SessionPageProps) {
                       sessionId={props.selectedSessionId}
                       onClose={closeRightPane}
                     />
-                  ) : activeSidePanel === "panel" && props.selectedSessionId ? (
+                  ) : activeSidePanel === "panel" ? (
                     <SidePanel
-                      sessionId={props.selectedSessionId}
+                      sessionId={sidePanelSessionKey}
                       client={props.openworkServerClient}
                       workspaceId={props.runtimeWorkspaceId}
                       workspaceRoot={props.selectedWorkspaceRoot}

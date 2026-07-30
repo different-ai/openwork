@@ -121,7 +121,7 @@ export function PanelEmpty({ onOpenBrowser, onOpenExtensions, onOpenVoice }: Pan
                 "group flex min-h-16 w-full items-center gap-3 rounded-xl border border-border bg-background p-3 text-left",
                 "transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
               )}
-              onClick={item.activate}
+              onClick={() => item.activate()}
             >
               <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground [&_svg]:size-4">
                 {item.icon}
