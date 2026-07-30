@@ -35,7 +35,6 @@ type SessionNumberShortcutIntent =
   | { type: "activate"; digit: number };
 
 type SessionNumberShortcutIntentOptions = {
-  editable: boolean;
   ownerActive: boolean;
   cancelled: boolean;
 };
@@ -50,12 +49,10 @@ export type SessionNumberShortcutTransition =
 
 const SESSION_ROW_SELECTOR =
   "[data-sidebar-session-id][data-sidebar-session-workspace-id]";
-const SHORTCUT_OWNER_SELECTOR = [
+const SHORTCUT_OWNER_CANDIDATE_SELECTOR = [
   '[data-slot="dialog-content"]',
   '[role="dialog"]',
   '[role="alertdialog"]',
-  '[role="menu"]',
-  '[role="listbox"]',
 ].join(",");
 
 export function sessionNumberShortcutTargetKey(workspaceId: string, sessionId: string) {
@@ -107,17 +104,23 @@ export function sessionNumberShortcutHelp(os: SessionNumberShortcutOs) {
   };
 }
 
-export function isEditableShortcutTarget(target: EventTarget | null) {
-  if (!(target instanceof Element)) return false;
-  return Boolean(target.closest('input, textarea, select, [contenteditable="true"], [role="textbox"]'));
-}
-
 function isVisibleElement(element: Element) {
   return element.getClientRects().length > 0 && element.getAttribute("aria-hidden") !== "true";
 }
 
+export function isSessionNumberShortcutBlockingOwner(element: Element) {
+  const role = element.getAttribute("role");
+  return (
+    element.getAttribute("data-slot") === "dialog-content" ||
+    role === "dialog" ||
+    role === "alertdialog"
+  );
+}
+
 export function hasSessionNumberShortcutOwner(documentRoot: Document) {
-  return Array.from(documentRoot.querySelectorAll(SHORTCUT_OWNER_SELECTOR)).some(isVisibleElement);
+  return Array.from(documentRoot.querySelectorAll(SHORTCUT_OWNER_CANDIDATE_SELECTOR)).some(
+    (element) => isSessionNumberShortcutBlockingOwner(element) && isVisibleElement(element),
+  );
 }
 
 export function getSessionNumberShortcutIntent(
@@ -136,7 +139,6 @@ export function getSessionNumberShortcutIntent(
     oppositeModifierPressed ||
     event.shiftKey ||
     event.altKey ||
-    options.editable ||
     options.ownerActive ||
     options.cancelled
   ) {

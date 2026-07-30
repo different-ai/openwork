@@ -4,6 +4,7 @@ import {
   SESSION_NUMBER_SHORTCUT_LIMIT,
   assignSessionNumberShortcuts,
   getSessionNumberShortcutIntent,
+  isSessionNumberShortcutBlockingOwner,
   isSessionNumberModifierKey,
   nextSessionNumberModifierHeld,
   resolveSessionNumberShortcutOs,
@@ -25,7 +26,6 @@ const macModifier = {
 };
 
 const available = {
-  editable: false,
   ownerActive: false,
   cancelled: false,
 };
@@ -68,7 +68,6 @@ describe("visible session number shortcut ordering", () => {
 describe("session number shortcut keyboard ownership", () => {
   test("tracks modifier press and every required cleanup transition", () => {
     expect(getSessionNumberShortcutIntent(macModifier, "macos", available)).toEqual({ type: "hold" });
-    expect(getSessionNumberShortcutIntent(macModifier, "macos", { ...available, editable: true })).toEqual({ type: "hold" });
     expect(nextSessionNumberModifierHeld("modifier-down")).toBe(true);
     const cleanupTransitions: SessionNumberShortcutTransition[] = [
       "modifier-up",
@@ -84,14 +83,25 @@ describe("session number shortcut keyboard ownership", () => {
     expect(isSessionNumberModifierKey("Control", "windows")).toBe(true);
   });
 
-  test("activates digits but yields to editable and modal owners", () => {
+  test("activates digits globally but still yields to modal owners", () => {
     const digit = { ...macModifier, key: "4" };
     expect(getSessionNumberShortcutIntent(digit, "macos", available)).toEqual({ type: "activate", digit: 4 });
-    expect(getSessionNumberShortcutIntent(digit, "macos", { ...available, editable: true })).toEqual({ type: "ignore" });
     expect(getSessionNumberShortcutIntent(digit, "macos", { ...available, ownerActive: true })).toEqual({ type: "ignore" });
     expect(getSessionNumberShortcutIntent(digit, "macos", { ...available, cancelled: true })).toEqual({ type: "ignore" });
     expect(getSessionNumberShortcutIntent({ ...digit, shiftKey: true }, "macos", available)).toEqual({ type: "ignore" });
     expect(getSessionNumberShortcutIntent({ ...digit, ctrlKey: true }, "macos", available)).toEqual({ type: "ignore" });
+  });
+
+  test("keeps open selects and menus non-blocking while dialogs retain ownership", () => {
+    const element = (attributes: Record<string, string>) => ({
+      getAttribute: (name: string) => attributes[name] ?? null,
+    }) as Element;
+
+    expect(isSessionNumberShortcutBlockingOwner(element({ role: "listbox" }))).toBe(false);
+    expect(isSessionNumberShortcutBlockingOwner(element({ role: "menu" }))).toBe(false);
+    expect(isSessionNumberShortcutBlockingOwner(element({ role: "dialog" }))).toBe(true);
+    expect(isSessionNumberShortcutBlockingOwner(element({ role: "alertdialog" }))).toBe(true);
+    expect(isSessionNumberShortcutBlockingOwner(element({ "data-slot": "dialog-content" }))).toBe(true);
   });
 });
 

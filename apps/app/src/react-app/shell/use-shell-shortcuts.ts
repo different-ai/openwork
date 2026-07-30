@@ -6,7 +6,6 @@ import { usePlatform } from "../kernel/platform";
 import {
   getSessionNumberShortcutIntent,
   hasSessionNumberShortcutOwner,
-  isEditableShortcutTarget,
   isSessionNumberModifierKey,
   nextSessionNumberModifierHeld,
   readVisibleSessionNumberShortcutTargets,
@@ -135,7 +134,6 @@ export function useShellShortcuts(input: UseShellShortcutsInput) {
 
   const handleSessionNumberKeyDown = useEffectEvent((event: KeyboardEvent) => {
     const intent = getSessionNumberShortcutIntent(event, sessionNumberOs, {
-      editable: isEditableShortcutTarget(event.target),
       ownerActive: hasSessionNumberShortcutOwner(document),
       cancelled: sessionNumberCancelledRef.current,
     });
@@ -193,14 +191,16 @@ export function useShellShortcuts(input: UseShellShortcutsInput) {
       }
     });
 
-    window.addEventListener("keydown", keyDown);
+    // Capture first so text fields and open select/menu popovers cannot consume
+    // the global session jump before the shell sees it.
+    window.addEventListener("keydown", keyDown, true);
     window.addEventListener("keyup", keyUp);
     window.addEventListener("blur", blur);
     document.addEventListener("visibilitychange", visibilityChange);
     document.addEventListener("focusin", focusIn);
     observer.observe(document.body, { childList: true, subtree: true, attributes: true });
     return () => {
-      window.removeEventListener("keydown", keyDown);
+      window.removeEventListener("keydown", keyDown, true);
       window.removeEventListener("keyup", keyUp);
       window.removeEventListener("blur", blur);
       document.removeEventListener("visibilitychange", visibilityChange);
