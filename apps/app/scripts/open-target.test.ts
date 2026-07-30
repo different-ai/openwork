@@ -75,6 +75,23 @@ describe("deriveOpenTargets", () => {
     expect(targets[0]).toMatchObject({ value: "reports/summary.md", preview: "markdown", confidence: 95 });
   });
 
+  it("bumps revision each time a write tool re-touches the same path, so a stale preview can be detected", () => {
+    const singleWrite = deriveOpenTargets([
+      toolMessage("msg_tool_1", "write", { filePath: "reports/summary.md" }, { filePath: "reports/summary.md" }),
+    ]);
+    const singleWriteRevision = singleWrite[0]?.revision;
+
+    expect(singleWriteRevision).toBeGreaterThan(0);
+
+    const rewritten = deriveOpenTargets([
+      toolMessage("msg_tool_1", "write", { filePath: "reports/summary.md" }, { filePath: "reports/summary.md" }),
+      toolMessage("msg_tool_2", "edit_file", { filePath: "reports/summary.md" }, { filePath: "reports/summary.md" }),
+    ]);
+
+    expect(rewritten[0]).toMatchObject({ value: "reports/summary.md" });
+    expect(rewritten[0]?.revision).toBeGreaterThan(singleWriteRevision ?? 0);
+  });
+
   it("keeps written unsupported files available for opening externally", () => {
     const targets = deriveOpenTargets([
       toolMessage("msg_tool", "write", { filePath: "src/widget.tsx" }, { filePath: "src/widget.tsx" }),

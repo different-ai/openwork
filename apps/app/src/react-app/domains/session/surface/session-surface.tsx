@@ -869,7 +869,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   useControlAction(props.isControlTarget ? seedChatTranscriptControlAction : null);
   const openTargets = useMemo(() => deriveOpenTargets(renderedMessages), [renderedMessages]);
   const openTargetsFingerprint = useMemo(
-    () => openTargets.map((target) => `${target.kind}:${target.value}:${target.confidence}`).join("|"),
+    () => openTargets.map((target) => `${target.kind}:${target.value}:${target.confidence}:${target.revision ?? 0}`).join("|"),
     [openTargets],
   );
   const autoOpenTarget = selectAutoOpenTarget(verifiedOpenTargets);
