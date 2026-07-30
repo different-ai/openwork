@@ -169,12 +169,14 @@ test("two apps never share a session partition", () => {
   const a = surfaceWindowOptions({
     appId: "com.a.app",
     bounds: { x: 0, y: 0, width: 200, height: 200 },
+    alwaysOnTop: false,
     preloadPath: "/p",
     partition: "persist:openwork-app-com.a.app",
   })
   const b = surfaceWindowOptions({
     appId: "com.b.app",
     bounds: { x: 0, y: 0, width: 200, height: 200 },
+    alwaysOnTop: false,
     preloadPath: "/p",
     partition: "persist:openwork-app-com.b.app",
   })
@@ -355,6 +357,9 @@ function supervisor(fake, hooks = {}) {
     electron: fake.electron,
     installedRoots: installed,
     preloadPath: "/preload.mjs",
+    // Defaults so the shape is complete before `hooks` overrides any of it.
+    onCrash: () => {},
+    onGesture: () => {},
     ...hooks,
   })
 }
@@ -521,6 +526,7 @@ test("the session stamps a CSP on every response", async () => {
   session.webRequest.headersReceived({ responseHeaders: {} }, (value) => {
     headers = value.responseHeaders
   })
+  assert.ok(headers, "the session must supply response headers")
   assert.match(headers["Content-Security-Policy"][0], /default-src 'none'/)
   assert.deepEqual(headers["X-Content-Type-Options"], ["nosniff"])
 })
