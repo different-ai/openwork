@@ -17,7 +17,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null
 }
 
-test("MCP OAuth redirect policy allows HTTPS callbacks and HTTP loopback only", () => {
+test("MCP OAuth redirect policy allows HTTPS callbacks, HTTP loopback, and allowlisted private-use URIs", () => {
   for (const uri of [
     "http://127.0.0.1:49321/callback",
     "http://localhost:49321/callback",
@@ -26,16 +26,18 @@ test("MCP OAuth redirect policy allows HTTPS callbacks and HTTP loopback only", 
     "https://www.cursor.com/agents/mcp/oauth/callback",
     "https://claude.ai/api/mcp/auth_callback",
     "https://example.com/oauth/callback",
+    "cursor://anysphere.cursor-mcp/oauth/callback",
   ]) {
     expect(isAllowedMcpOAuthRedirectUri(uri)).toBe(true)
   }
 })
 
-test("MCP OAuth redirect policy rejects non-loopback HTTP, custom schemes, blocked schemes, and non-URLs", () => {
+test("MCP OAuth redirect policy rejects non-loopback HTTP, non-allowlisted custom schemes, blocked schemes, and non-URLs", () => {
   for (const uri of [
     "http://example.com/oauth/callback",
     "com.openwork.desktop:/oauth/callback",
-    "cursor://anysphere.cursor-mcp/oauth/callback",
+    "cursor://anysphere.cursor-mcp/oauth/callback/extra",
+    "cursor://evil.example/oauth/callback",
     "openwork:/oauth/callback",
     "javascript:alert(1)",
     "file:///tmp/callback",
@@ -54,6 +56,7 @@ test("MCP OAuth redirect policy rejects fragments", () => {
     "http://localhost:49321/callback#fragment",
     "http://127.0.0.1:49321/callback#fragment",
     "http://[::1]:49321/callback#fragment",
+    "cursor://anysphere.cursor-mcp/oauth/callback#fragment",
   ]) {
     expect(isAllowedMcpOAuthRedirectUri(uri)).toBe(false)
   }
@@ -77,7 +80,7 @@ test("MCP OAuth redirect policy lists invalid registration redirect URIs", () =>
   expect(getInvalidMcpOAuthRedirectUris([
     "cursor://anysphere.cursor-mcp/oauth/callback",
     "https://www.cursor.com/agents/mcp/oauth/callback",
-  ])).toEqual(["cursor://anysphere.cursor-mcp/oauth/callback"])
+  ])).toEqual([])
 })
 
 test("MCP OAuth registration error copy states the MCP 2025-11-25 redirect policy", () => {

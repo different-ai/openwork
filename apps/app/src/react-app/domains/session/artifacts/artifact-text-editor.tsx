@@ -1,7 +1,7 @@
 /** @jsxImportSource react */
 import { useEffect, useRef } from "react";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
-import { markdown } from "@codemirror/lang-markdown";
+import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { EditorState } from "@codemirror/state";
 import { EditorView, keymap, lineNumbers } from "@codemirror/view";
 import { cn } from "@/lib/utils";
@@ -38,7 +38,9 @@ export function ArtifactTextEditor(props: ArtifactTextEditorProps) {
           props.language === "markdown" ? [] : lineNumbers(),
           history(),
           keymap.of([...defaultKeymap, ...historyKeymap]),
-          props.language === "markdown" ? [markdown(), markdownLivePreview()] : [],
+          // GFM base so tables, strikethrough and task lists parse; the
+          // CommonMark default never produces Table nodes to render.
+          props.language === "markdown" ? [markdown({ base: markdownLanguage }), markdownLivePreview()] : [],
           EditorView.lineWrapping,
           EditorView.updateListener.of((update) => {
             if (update.docChanged) {

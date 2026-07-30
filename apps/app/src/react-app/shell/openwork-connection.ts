@@ -1,12 +1,17 @@
 import {
+  getOpenworkGatewayOrigin,
+  readOpenworkGatewayDenToken,
+} from "../../app/lib/gateway-runtime";
+import {
   isLoopbackOpenworkServerUrl,
   normalizeOpenworkServerUrl,
   readOpenworkServerSettings,
 } from "../../app/lib/openwork-server";
+import { isWebDeployment } from "../../app/lib/openwork-deployment";
 import { openworkServerInfo, type OpenworkServerInfo } from "../../app/lib/desktop";
 import { isDesktopRuntime } from "../../app/utils";
 
-export type OpenworkConnectionSource = "desktop-runtime" | "stored-settings" | "empty";
+export type OpenworkConnectionSource = "desktop-runtime" | "stored-settings" | "same-origin" | "gateway" | "empty";
 
 export type ResolvedOpenworkConnection = {
   normalizedBaseUrl: string;
@@ -29,6 +34,17 @@ function hasUsableConnection(url: string, token: string) {
  * connections and for desktop cases where the runtime bridge is unavailable.
  */
 export async function resolveOpenworkConnection(): Promise<ResolvedOpenworkConnection> {
+  const gatewayOrigin = getOpenworkGatewayOrigin();
+  if (gatewayOrigin) {
+    return {
+      normalizedBaseUrl: normalizeOpenworkServerUrl(gatewayOrigin) ?? "",
+      resolvedToken: readOpenworkGatewayDenToken(),
+      resolvedHostToken: "",
+      hostInfo: null,
+      source: "gateway",
+    };
+  }
+
   let staleDesktopRuntimeBaseUrl = "";
 
   if (isDesktopRuntime()) {
@@ -55,6 +71,10 @@ export async function resolveOpenworkConnection(): Promise<ResolvedOpenworkConne
 
   const settings = readOpenworkServerSettings();
   const normalizedBaseUrl = normalizeOpenworkServerUrl(settings.urlOverride ?? "") ?? "";
+  const sameOriginBaseUrl =
+    !normalizedBaseUrl && !isDesktopRuntime() && isWebDeployment() && typeof window !== "undefined"
+      ? normalizeOpenworkServerUrl(window.location.origin) ?? ""
+      : "";
   const resolvedToken = settings.token?.trim() ?? "";
   const resolvedHostToken =
     normalizedBaseUrl && isLoopbackOpenworkServerUrl(normalizedBaseUrl)
@@ -68,10 +88,16 @@ export async function resolveOpenworkConnection(): Promise<ResolvedOpenworkConne
   const source =
     !storedConnectionIsStaleDesktopRuntime && hasUsableConnection(normalizedBaseUrl, resolvedToken)
       ? "stored-settings"
-      : "empty";
+      : hasUsableConnection(sameOriginBaseUrl, resolvedToken)
+        ? "same-origin"
+        : "empty";
 
   return {
-    normalizedBaseUrl: source === "empty" ? "" : normalizedBaseUrl,
+    normalizedBaseUrl: source === "same-origin"
+      ? sameOriginBaseUrl
+      : source === "empty"
+        ? ""
+        : normalizedBaseUrl,
     resolvedToken: source === "empty" ? "" : resolvedToken,
     resolvedHostToken: source === "empty" ? "" : resolvedHostToken,
     hostInfo: null,

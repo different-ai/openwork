@@ -7,6 +7,7 @@ import {
   extensionResource,
   isTrustedBuiltInExtension,
   type OpenWorkExtensionManifest,
+  type OpenWorkExtensionPlatform,
 } from "./extensions";
 
 export const MODEL_PREF_KEY = "openwork.defaultModel";
@@ -193,3 +194,23 @@ export const MCP_QUICK_CONNECT: McpDirectoryInfo[] = [
 ];
 
 export const OPENWORK_EXTENSION_CATALOG = MCP_QUICK_CONNECT.filter((entry) => entry.kind === "extension");
+
+export function resolveOpenWorkExtensionCatalogPlatform(
+  platform: "web" | "desktop",
+  os?: "macos" | "windows" | "linux",
+): OpenWorkExtensionPlatform {
+  if (platform === "web") return "web";
+  if (os === "macos") return "darwin";
+  if (os === "windows") return "windows";
+  return "linux";
+}
+
+export function filterOpenWorkExtensionCatalogForPlatform<TEntry extends Pick<McpDirectoryInfo, "extensionManifest">>(
+  entries: TEntry[],
+  platform: OpenWorkExtensionPlatform,
+): TEntry[] {
+  return entries.filter((entry) => {
+    const platforms = entry.extensionManifest?.platform;
+    return !platforms || platforms.includes(platform);
+  });
+}

@@ -220,7 +220,7 @@ Use these files to choose stable selectors before guessing DOM structure:
 
 | UI control | Preferred selector | Source file |
 |---|---|---|
-| Settings button | `button[aria-label="Settings"]` | `apps/app/src/react-app/domains/session/chat/status-bar.tsx` |
+| Settings | `[data-testid="account-status-menu"]`, then menu item text `Settings` | `apps/app/src/react-app/domains/session/sidebar/account-status-menu.tsx` |
 | AI Providers tab | button text `AI Providers` | `apps/app/src/react-app/domains/settings/shell/settings-page.tsx`, `settings-route.tsx` |
 | Connect provider | button text `Connect provider` | `apps/app/src/react-app/domains/settings/pages/ai-view.tsx` |
 | Provider search | `input[placeholder="Filter providers by name or ID"]` | `apps/app/src/react-app/domains/connections/provider-auth/provider-auth-modal.tsx` |
@@ -361,7 +361,7 @@ worker reload, completes the callback, and appears as `Ready`.
 
 | UI control | Preferred selector | Source file |
 |---|---|---|
-| Settings button | `button[aria-label="Settings"]` | `apps/app/src/react-app/domains/session/chat/status-bar.tsx` |
+| Settings | `[data-testid="account-status-menu"]`, then menu item text `Settings` | `apps/app/src/react-app/domains/session/sidebar/account-status-menu.tsx` |
 | Extensions tab | button text `Extensions` | `apps/app/src/react-app/shell/settings-route.tsx` |
 | Add custom MCP | button text `Add Custom App` | `apps/app/src/react-app/domains/settings/pages/mcp-view.tsx` |
 | Server name input | `input[placeholder="github-copilot"]` | `apps/app/src/react-app/domains/connections/modals/add-mcp-modal.tsx` |

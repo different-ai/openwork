@@ -1,5 +1,10 @@
 # Enterprise network doctor
 
+Published customer-facing network diagnostics guidance lives in
+[`packages/docs/start-here/network-diagnostics.mdx`](../../packages/docs/start-here/network-diagnostics.mdx).
+This repository page keeps the support handoff snippet and maintainer repro
+harness in one stable path.
+
 `scripts/support/openwork-doctor.ps1` is a Windows PowerShell 5.1-compatible, no-admin, read-only report for customer IT. It checks DNS, TCP 443, the live TLS certificate/chain with `SslStream`, served certificates with `openssl` when available, WinHTTP/.NET proxy settings, PowerShell/OS version, and `NODE_EXTRA_CA_CERTS`. Send this Teams-ready one-liner to the customer's IT contact once the file is available at the raw URL:
 
 ```powershell

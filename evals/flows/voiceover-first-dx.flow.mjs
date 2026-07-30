@@ -124,12 +124,13 @@ export default {
               });
               witness(ctx, scaffold.status === 0, "pnpm fraimz scaffold <id> exits 0", scaffold.stderr?.trim() || String(scaffold.status));
               ctx.output("$ pnpm fraimz scaffold _scaffold-demo", scaffold.stdout.trim());
-              const stub = await readFile(join(flowsDir, `${scaffoldId}.flow.mjs`), "utf8");
+              const stub = await readFile(join(flowsDir, `${scaffoldId}.flow.ts`), "utf8");
               witness(ctx, (stub.match(/ctx\.prove\(/g) ?? []).length === 2, "The generated flow has one ctx.prove per script paragraph");
+              witness(ctx, stub.includes("defineFlow"), "The generated flow uses the typed defineFlow contract");
               witness(ctx, stub.includes("loadVoiceoverParagraphs"), "The generated flow loads its narration from the script file");
               // Drift, end to end: a flow that skips a scripted frame and
               // narrates an unapproved line must fail the real runner.
-              await writeFile(join(flowsDir, `${scaffoldId}.flow.mjs`), `export default {
+              await writeFile(join(flowsDir, `${scaffoldId}.flow.ts`), `export default {
   id: ${JSON.stringify(scaffoldId)},
   title: "Drifted narration fixture",
   kind: "internal",
@@ -230,7 +231,11 @@ export default {
               });
               witness(ctx, run.status === 1, "A failing frame makes the run exit 1 (the signal a required check consumes)", String(run.status));
               witness(ctx, run.stdout.includes("Result: FAILED"), "The verdict is stated honestly");
-              const [redRunId] = run.stdout.match(/[\d-]+T[\dZ-]+/) ?? [];
+              // Anchor on the full run-id shape: the loose [\d-]+T[\dZ-]+ form
+              // could first-match a random mkdtemp suffix in the printed
+              // Report path (e.g. .../fraimz-red-out-42T7xy/...) and point the
+              // fraimz-exists check at a directory that never existed.
+              const [redRunId] = run.stdout.match(/\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z/) ?? [];
               witness(ctx, Boolean(redRunId) && (await exists(join(outDir, redRunId, "fraimz.html"))), "The fraimz is still written for a red run, so the failure is reviewable");
               ctx.output("$ pnpm fraimz --flow _red-demo (fixture)", run.stdout.trim().split("\n").slice(-6).join("\n"));
             },

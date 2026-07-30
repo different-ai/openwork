@@ -18,6 +18,15 @@ export type DesktopConnectGrantResult =
   | { ok: true; claims: ConnectLinkClaims }
   | { ok: false; code: DesktopConnectGrantFailureCode }
 
+export type DesktopConnectGrantStatusResult =
+  | {
+      ok: true
+      status: "pending" | "connected"
+      claims: ConnectLinkClaims
+      expiresAt: Date
+    }
+  | { ok: false; code: Exclude<DesktopConnectGrantFailureCode, "replayed"> }
+
 type DesktopConnectGrantRow = {
   grant: typeof DesktopConnectGrantTable.$inferSelect
   installLink: typeof InstallLinkTable.$inferSelect
@@ -54,6 +63,25 @@ function validateGrantRow(row: DesktopConnectGrantRow | undefined, now: Date): D
   return claims.success
     ? { ok: true, claims: claims.data }
     : { ok: false, code: "invalid_token" }
+}
+
+function inspectGrantRow(row: DesktopConnectGrantRow | undefined, now: Date): DesktopConnectGrantStatusResult {
+  if (!row || row.installLink.revokedAt || (row.installLink.expiresAt && row.installLink.expiresAt <= now)) {
+    return { ok: false, code: "invalid_token" }
+  }
+  if (row.grant.expiresAt <= now) {
+    return { ok: false, code: "expired" }
+  }
+  const claims = connectLinkClaimsSchema.safeParse(grantClaimsInput(row.grant.claims))
+  if (!claims.success) {
+    return { ok: false, code: "invalid_token" }
+  }
+  return {
+    ok: true,
+    status: row.grant.consumedAt ? "connected" : "pending",
+    claims: claims.data,
+    expiresAt: row.grant.expiresAt,
+  }
 }
 
 export async function mintDesktopConnectGrant(
@@ -97,9 +125,13 @@ export async function mintDesktopConnectGrant(
     consumedNonce: null,
   })
 
+  const activationUrl = new URL("/activate", input.webUrl)
+  activationUrl.searchParams.set("code", code)
+
   return {
     connectUrl: buildConnectExchangeDeepLink(code, input.apiUrl),
     connectExpiresAt: expiresAt.toISOString(),
+    activationUrl: activationUrl.toString(),
   }
 }
 
@@ -112,6 +144,17 @@ export async function previewDesktopConnectGrant(code: string): Promise<DesktopC
     .where(eq(DesktopConnectGrantTable.codeHash, hashConnectGrantCode(code)))
     .limit(1)
   return validateGrantRow(row, now)
+}
+
+export async function inspectDesktopConnectGrant(code: string): Promise<DesktopConnectGrantStatusResult> {
+  const now = new Date()
+  const [row] = await db
+    .select({ grant: DesktopConnectGrantTable, installLink: InstallLinkTable })
+    .from(DesktopConnectGrantTable)
+    .innerJoin(InstallLinkTable, eq(DesktopConnectGrantTable.installLinkId, InstallLinkTable.id))
+    .where(eq(DesktopConnectGrantTable.codeHash, hashConnectGrantCode(code)))
+    .limit(1)
+  return inspectGrantRow(row, now)
 }
 
 export async function consumeDesktopConnectGrant(code: string): Promise<DesktopConnectGrantResult> {

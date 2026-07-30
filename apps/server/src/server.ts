@@ -1,8 +1,8 @@
-import { existsSync } from "node:fs";
 import { readFile, writeFile, rm, stat } from "node:fs/promises";
 import { homedir, hostname } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
+import { resolveGlobalOpencodeConfigPath } from "@openwork/paths";
 import type { ApprovalRequest, Capabilities, ServerConfig, WorkspaceInfo, Actor, ReloadReason, ReloadTrigger, TokenScope } from "./types.js";
 import { agentContextDiagnosticsRequestSchema } from "./agent-context-diagnostics-schema.js";
 import { ApprovalService } from "./approvals.js";
@@ -11,7 +11,6 @@ import { sanitizePortableOpencodeConfig } from "./portable-opencode.js";
 import { addMcp, listMcp, removeMcp, setMcpEnabled } from "./mcp.js";
 import { exportExtensions } from "./extensions-export.js";
 import { deleteSkill, listSkills, upsertSkill } from "./skills.js";
-import { installHubSkill, listHubSkills } from "./skill-hub.js";
 import { deleteCommand, listCommands, repairCommands, upsertCommand } from "./commands.js";
 import { ApiError, formatError } from "./errors.js";
 import { readJsoncFile, updateJsoncTopLevel, writeJsoncFile } from "./jsonc.js";
@@ -57,6 +56,7 @@ import {
   type WorkspaceExportSensitiveMode,
 } from "./workspace-export-safety.js";
 import { serve, type ServeResult } from "./serve-node.js";
+import { serveStaticUi } from "./static-ui.js";
 import { externalFetch, loopbackFetch } from "./server-fetch.js";
 import { registerCoreRoutes } from "./routes/core.js";
 import { registerFileRoutes } from "./routes/files.js";
@@ -72,13 +72,17 @@ import {
 } from "./cloud-mcp-health.js";
 import { runAgentContextDiagnostics } from "./agent-context-diagnostics.js";
 import { createAgentDiagnosticsEngineFetch } from "./agent-context-engine-inspection.js";
+import { sanitizeDiagnosticString } from "./diagnostic-sanitizer.js";
 import {
   mergeOpencodeConfigs,
   mergeRuntimeProviderUpdate,
+  readGlobalRuntimeOpencodeConfig,
   readRuntimeOpencodeConfig,
   runtimeDisabledProviderList,
   runtimeMcpMap,
+  runtimeProviderMap,
   type RuntimeOpencodeConfig,
+  writeGlobalRuntimeOpencodeConfig,
   writeRuntimeOpencodeConfig,
 } from "./runtime-opencode-config-store.js";
 import {
@@ -88,8 +92,9 @@ import {
   seedOpenworkWorkspaceConfigIfEmpty,
   writeOpenworkWorkspaceConfig,
 } from "./openwork-workspace-config-store.js";
-import { buildOpenworkRuntimeConfigObject, openworkRuntimeConfigFilePath } from "./openwork-runtime-config.js";
+import { buildOpenworkRuntimeConfigObject, openworkRuntimeConfigFilePath, writeOpenworkRuntimeConfigFile } from "./openwork-runtime-config.js";
 import { readLegacyConfigSweepState } from "./legacy-config-sweep.js";
+import { findManagedEngineWorkspace } from "./workspaces.js";
 import pkg from "../package.json" with { type: "json" };
 import constants from "../../../constants.json" with { type: "json" };
 
@@ -322,6 +327,30 @@ function parseDisabledProvidersPayload(value: unknown): string[] {
     if (!providers.includes(provider)) providers.push(provider);
   }
   return providers;
+}
+
+function parseRuntimeProviderPatchPayload(body: Record<string, unknown>): Record<string, unknown> {
+  const provider = body.provider;
+  if (!isRecord(provider)) {
+    throw new ApiError(400, "invalid_payload", "provider must be an object");
+  }
+  for (const [providerId, value] of Object.entries(provider)) {
+    if (!providerId.trim()) {
+      throw new ApiError(400, "invalid_payload", "provider keys must be non-empty strings");
+    }
+    if (value !== null && !isRecord(value)) {
+      throw new ApiError(400, "invalid_payload", "provider values must be objects or null");
+    }
+  }
+  return provider;
+}
+
+function resolveEngineRuntimeWorkspace(config: ServerConfig): WorkspaceInfo {
+  const workspace = findManagedEngineWorkspace(config.workspaces) ?? config.workspaces[0];
+  if (!workspace) {
+    throw new ApiError(400, "workspace_missing", "At least one workspace is required for engine runtime config");
+  }
+  return workspace;
 }
 
 function redactBearerTokens(value: string): string {
@@ -922,6 +951,8 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
 
       const route = matchRoute(routes, request.method, url.pathname);
       if (!route) {
+        const staticUiResponse = await serveStaticUi(request, config);
+        if (staticUiResponse) return finalize(staticUiResponse);
         errorMessage = "not_found";
         return finalize(jsonResponse({ code: "not_found", message: "Not found" }, 404));
       }
@@ -1010,7 +1041,7 @@ function buildOpencodeDirectoryHeader(directory: string) {
   return /[^\x00-\x7F]/.test(directory) ? encodeURIComponent(directory) : directory;
 }
 
-function createOpencodeDirectoryFetch(directory: string, fetchImpl: typeof fetch = fetch): typeof fetch {
+function createOpencodeDirectoryFetch(directory: string, fetchImpl: typeof fetch = globalThis.fetch): typeof fetch {
   return Object.assign(
     (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
       const request = input instanceof Request ? input : new Request(input, init);
@@ -1026,14 +1057,14 @@ type OpencodeClientResult<T, E> =
   | { data: T | undefined; error: undefined; response: Response }
   | { data: undefined; error: E; response: Response };
 
-function createWorkspaceOpencodeClient(
+export function createWorkspaceOpencodeClient(
   config: ServerConfig,
   workspace: WorkspaceInfo,
   options?: { boundedDiagnosticsReads?: boolean },
 ) {
   const connection = resolveWorkspaceOpencodeConnection(config, workspace);
   const directory = resolveOpencodeDirectory(workspace);
-  const baseFetch = directory ? createOpencodeDirectoryFetch(directory) : fetch;
+  const baseFetch = directory ? createOpencodeDirectoryFetch(directory) : globalThis.fetch;
   const clientFetch = options?.boundedDiagnosticsReads
     ? createAgentDiagnosticsEngineFetch(baseFetch)
     : directory ? baseFetch : undefined;
@@ -1226,13 +1257,6 @@ function buildCapabilities(config: ServerConfig): Capabilities {
     serverVersion: SERVER_VERSION,
     opencodeVersion: OPENCODE_VERSION,
     skills: { read: true, write: writeEnabled, source: "openwork" },
-    hub: {
-      skills: {
-        read: true,
-        install: writeEnabled,
-        repo: { owner: "different-ai", name: "openwork-hub", ref: "main" },
-      },
-    },
     plugins: { read: true, write: writeEnabled },
     mcp: { read: true, write: writeEnabled },
     commands: { read: true, write: writeEnabled },
@@ -1288,9 +1312,12 @@ function resolveInboxMaxBytes(): number {
   const raw = (process.env.OPENWORK_INBOX_MAX_BYTES ?? "").trim();
   const parsed = raw ? Number(raw) : NaN;
   if (Number.isFinite(parsed) && parsed > 0) {
-    return Math.min(Math.trunc(parsed), 250_000_000);
+    return Math.trunc(parsed);
   }
-  return 50_000_000;
+  // Generous default: the composer no longer caps attachment sizes, so large
+  // uploads should be bounded here (memory: formData buffers the body) and by
+  // downstream provider/tool limits rather than an arbitrary small cap.
+  return 250_000_000;
 }
 
 function resolveToyUiEnabled(): boolean {
@@ -1993,6 +2020,36 @@ function createRoutes(
     });
   });
 
+  addRoute(routes, "GET", "/runtime-config/providers", "host-token", async () => {
+    const runtime = await readGlobalRuntimeOpencodeConfig(config);
+    return jsonResponse({ provider: runtimeProviderMap(runtime) });
+  });
+
+  addRoute(routes, "PATCH", "/runtime-config/providers", "host-token", async (ctx) => {
+    ensureWritable(config);
+    const workspace = resolveEngineRuntimeWorkspace(config);
+    const body = await readJsonBody(ctx.request);
+    const providerPatch = parseRuntimeProviderPatchPayload(body);
+    const result = await writeGlobalRuntimeOpencodeConfig(config, (current) => ({
+      ...current,
+      provider: mergeRuntimeProviderUpdate(current.provider, providerPatch),
+    }));
+
+    const fileResult = await writeOpenworkRuntimeConfigFile(config, workspace.id);
+    const shouldReload = result.changed || fileResult.changed;
+    if (shouldReload) {
+      await reloadOpencodeEngine(config, workspace, engineMcpServerState);
+    }
+
+    return jsonResponse({
+      ok: true,
+      changed: result.changed,
+      provider: runtimeProviderMap(result.config),
+      runtimeConfigPath: openworkRuntimeConfigFilePath(config),
+      reload: shouldReload ? "reloaded" : "skipped",
+    });
+  });
+
   addRoute(routes, "GET", "/workspace/:id/runtime-config", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const runtime = await readRuntimeOpencodeConfig(config, workspace.id);
@@ -2311,69 +2368,11 @@ function createRoutes(
     return jsonResponse(result);
   });
 
-  addRoute(routes, "GET", "/hub/skills", "client", async (ctx) => {
-    const owner = ctx.url.searchParams.get("owner")?.trim();
-    const repo = ctx.url.searchParams.get("repo")?.trim();
-    const ref = ctx.url.searchParams.get("ref")?.trim();
-    const items = await listHubSkills({
-      owner: owner || "different-ai",
-      repo: repo || "openwork-hub",
-      ref: ref || "main",
-    });
-    return jsonResponse({ items });
-  });
-
   addRoute(routes, "GET", "/workspace/:id/skills", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const includeGlobal = ctx.url.searchParams.get("includeGlobal") === "true";
     const items = await listSkills(workspace.path, includeGlobal);
     return jsonResponse({ items });
-  });
-
-  addRoute(routes, "POST", "/workspace/:id/skills/hub/:name", "client", async (ctx) => {
-    ensureWritable(config);
-    requireClientScope(ctx, "collaborator");
-    const workspace = await resolveWorkspace(config, ctx.params.id);
-    const name = String(ctx.params.name ?? "").trim();
-    if (!name) {
-      throw new ApiError(400, "invalid_skill_name", "Skill name is required");
-    }
-    const body = await readJsonBody(ctx.request);
-    const overwrite = body?.overwrite === true;
-    const repoPayload = body?.repo && typeof body.repo === "object" ? (body.repo as Record<string, unknown>) : undefined;
-    const repo = repoPayload
-      ? {
-          owner: typeof repoPayload.owner === "string" ? repoPayload.owner : undefined,
-          repo: typeof repoPayload.repo === "string" ? repoPayload.repo : undefined,
-          ref: typeof repoPayload.ref === "string" ? repoPayload.ref : undefined,
-        }
-      : undefined;
-
-    await requireApproval(ctx, {
-      workspaceId: workspace.id,
-      action: "skills.install_hub",
-      summary: `Install hub skill ${name}`,
-      paths: [join(workspace.path, ".opencode", "skills", name)],
-    });
-
-    const result = await installHubSkill(workspace.path, { name, overwrite, repo });
-    await recordAudit(workspace.path, {
-      id: shortId(),
-      workspaceId: workspace.id,
-      actor: ctx.actor ?? { type: "remote" },
-      action: "skills.install_hub",
-      target: result.path,
-      summary: `Installed hub skill ${name}`,
-      timestamp: Date.now(),
-    });
-    emitReloadEvent(ctx.reloadEvents, workspace, "skills", {
-      type: "skill",
-      name,
-      action: result.action,
-      path: result.path,
-    });
-
-    return jsonResponse({ ok: true, ...result });
   });
 
   addRoute(routes, "GET", "/workspace/:id/skills/:name", "client", async (ctx) => {
@@ -3114,15 +3113,8 @@ function normalizeOpencodeScope(value: string | null | undefined): "project" | "
   return value?.trim().toLowerCase() === "global" ? "global" : "project";
 }
 
-function resolveOpencodeConfigFilePath(scope: "project" | "global", workspaceRoot: string): string {
-  if (scope === "global") {
-    const base = join(homedir(), ".config", "opencode");
-    const jsoncPath = join(base, "opencode.jsonc");
-    const jsonPath = join(base, "opencode.json");
-    if (existsSync(jsoncPath)) return jsoncPath;
-    if (existsSync(jsonPath)) return jsonPath;
-    return jsoncPath;
-  }
+export function resolveOpencodeConfigFilePath(scope: "project" | "global", workspaceRoot: string): string {
+  if (scope === "global") return resolveGlobalOpencodeConfigPath();
   return opencodeConfigPath(workspaceRoot);
 }
 
@@ -3488,11 +3480,12 @@ async function postMcpEntryWithRetry(
         // actual state by polling GET /mcp. Parse the response only as optional
         // diagnostics evidence: an absent or malformed status must fail closed
         // to `not-recorded` without turning accepted delivery into a failure.
-        const status = await parseEngineMcpRegistrationStatus(response, name);
+        const registration = await parseEngineMcpRegistrationStatus(response, name);
         return {
           name,
-          status,
-          source: status ? "engine_status" : null,
+          status: registration.status,
+          source: registration.status ? "engine_status" : null,
+          errorSummary: registration.errorSummary,
           failure: null,
         };
       }
@@ -3503,7 +3496,7 @@ async function postMcpEntryWithRetry(
         registrationStatus: "failed",
         message: "OpenCode rejected the MCP registration request",
       };
-      if (response.status < 500) return { name, status: "failed", source: "transport_failure", failure };
+      if (response.status < 500) return { name, status: "failed", source: "transport_failure", errorSummary: null, failure };
     } catch {
       failure = {
         name,
@@ -3516,6 +3509,7 @@ async function postMcpEntryWithRetry(
     name,
     status: "failed",
     source: "transport_failure",
+    errorSummary: null,
     failure: failure ?? {
       name,
       registrationStatus: "failed",
@@ -3538,13 +3532,20 @@ export type EngineMcpRegistrationInspection = {
   status: EngineMcpRegistrationStatus | "not-recorded";
   source: EngineMcpRegistrationSource | null;
   recordAgeMs: number | null;
+  errorSummary: string | null;
 };
 
 type EngineMcpRegistrationResult = {
   name: string;
   status: EngineMcpRegistrationStatus | null;
   source: EngineMcpRegistrationSource | null;
+  errorSummary: string | null;
   failure: EngineMcpSyncFailure | null;
+};
+
+type ParsedEngineMcpRegistrationStatus = {
+  status: EngineMcpRegistrationStatus | null;
+  errorSummary: string | null;
 };
 
 type EngineMcpDeferredSync = {
@@ -3557,24 +3558,38 @@ type EngineMcpDeferredSync = {
 async function parseEngineMcpRegistrationStatus(
   response: Response,
   name: string,
-): Promise<EngineMcpRegistrationStatus | null> {
+): Promise<ParsedEngineMcpRegistrationStatus> {
   let text: string;
   try {
     text = await readBoundedEngineMcpRegistrationResponse(response);
   } catch {
-    return null;
+    return { status: null, errorSummary: null };
   }
 
   let body: unknown;
   try {
     body = JSON.parse(text) as unknown;
   } catch {
-    return null;
+    return { status: null, errorSummary: null };
   }
-  if (!isRecord(body) || !Object.hasOwn(body, name)) return null;
+  if (!isRecord(body) || !Object.hasOwn(body, name)) return { status: null, errorSummary: null };
   const entry = body[name];
-  if (!isRecord(entry)) return null;
-  return normalizeEngineMcpRegistrationStatus(entry.status);
+  if (!isRecord(entry)) return { status: null, errorSummary: null };
+  const status = normalizeEngineMcpRegistrationStatus(entry.status);
+  return {
+    status,
+    errorSummary: sanitizeEngineMcpRegistrationErrorSummary(entry.error, status),
+  };
+}
+
+function sanitizeEngineMcpRegistrationErrorSummary(
+  error: unknown,
+  status: EngineMcpRegistrationStatus | null,
+): string | null {
+  if (status !== "failed" && status !== "needs-client-registration") return null;
+  if (typeof error !== "string") return null;
+  const sanitized = sanitizeDiagnosticString(error).trim().slice(0, 400);
+  return sanitized || null;
 }
 
 function normalizeEngineMcpRegistrationStatus(status: unknown): EngineMcpRegistrationStatus | null {
@@ -3713,6 +3728,7 @@ type EngineMcpRegistrationRecord = {
   fingerprint: string;
   status: EngineMcpRegistrationStatus;
   source: EngineMcpRegistrationSource;
+  errorSummary: string | null;
   registrationIdentity: string;
   generation: number;
   recordedAt: number;
@@ -4040,6 +4056,7 @@ function recordEngineMcpSyncResult(
       fingerprint,
       status: registration.status,
       source: registration.source,
+      errorSummary: registration.errorSummary,
       registrationIdentity,
       generation: state.generation,
       recordedAt,
@@ -4095,11 +4112,16 @@ function inspectEngineMcpRegistrationInState(
     registrations?.delete(name);
     return notRecordedEngineMcpRegistration();
   }
-  return { status: registration.status, source: registration.source, recordAgeMs: Math.round(ageMs) };
+  return {
+    status: registration.status,
+    source: registration.source,
+    recordAgeMs: Math.round(ageMs),
+    errorSummary: registration.errorSummary,
+  };
 }
 
 function notRecordedEngineMcpRegistration(): EngineMcpRegistrationInspection {
-  return { status: "not-recorded", source: null, recordAgeMs: null };
+  return { status: "not-recorded", source: null, recordAgeMs: null, errorSummary: null };
 }
 
 export function inspectEngineMcpRegistration(
@@ -4128,6 +4150,7 @@ export function refreshEngineMcpRegistrationFromLiveStatus(
   name: string,
   mcpConfig: Record<string, unknown>,
   liveStatus: unknown,
+  liveError: unknown = null,
 ): boolean {
   const status = normalizeEngineMcpRegistrationStatus(liveStatus);
   if (!status) return false;
@@ -4151,6 +4174,7 @@ export function refreshEngineMcpRegistrationFromLiveStatus(
     fingerprint,
     status,
     source: "engine_status",
+    errorSummary: sanitizeEngineMcpRegistrationErrorSummary(liveError, status),
     registrationIdentity,
     generation: state.generation,
     recordedAt: Date.now(),

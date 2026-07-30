@@ -19,6 +19,13 @@ import { toast } from "@/components/ui/sonner";
 
 const reloadAfterOrgOnboardingKey = "openwork.reloadAfterOrgOnboarding";
 
+function canRestartDesktopForReloadError(error: unknown) {
+  return (
+    error instanceof OpenworkServerError &&
+    (error.code === "opencode_engine_unreachable" || error.code === "opencode_unconfigured")
+  );
+}
+
 function taskCreateUnavailableToastId(workspaceId: string) {
   return `opencode-unavailable:${workspaceId}`;
 }
@@ -64,9 +71,7 @@ export function useEngineReload(input: UseEngineReloadInput) {
     try {
       await endpoint.client.reloadEngine(endpoint.workspaceId);
     } catch (error) {
-      const unreachable =
-        error instanceof OpenworkServerError && error.code === "opencode_engine_unreachable";
-      if (!unreachable || !isDesktopRuntime()) {
+      if (!canRestartDesktopForReloadError(error) || !isDesktopRuntime()) {
         throw error;
       }
       await engineRestart({});

@@ -19,10 +19,9 @@
 OpenWorkは、エージェントワークフローを再現可能なプロダクト化されたプロセスとして簡単にリリースできるように設計されています。
 
 ## 代替UI
-- **OpenWork Orchestrator（CLIホスト）**: デスクトップUIなしでOpenCode + OpenWorkサーバーを実行します。
-  - インストール: `npm install -g openwork-orchestrator`
-  - 実行: `openwork start --workspace /path/to/workspace --approval auto`
-  - ドキュメント: [apps/orchestrator/README.md](../apps/orchestrator/README.md)
+- **OpenWork Server（CLIホスト）**: デスクトップUIなしでOpenWorkサーバーを実行します。
+  - インストール: `npm install -g openwork-server`
+  - 実行: `openwork-server`
 
 ## クイックスタート
 
@@ -132,8 +131,7 @@ curl -fsSL https://opencode.ai/install | bash -s -- --version "$(node -e "const 
 ## アーキテクチャ（概要）
 
 - **ホストモード**では、OpenWorkはローカルホストスタックを実行し、UIをそれに接続します。
-  - デフォルトランタイム: `openwork`（`openwork-orchestrator` からインストール）。`opencode` と `openwork-server` をオーケストレーションします。
-  - フォールバックランタイム: `direct`。デスクトップアプリが直接 `opencode serve --hostname 127.0.0.1 --port <free-port>` を起動します。
+  - デフォルトランタイム: `openwork-server`。OpenCodeとOpenWork APIを同じサーバーで提供します。
 
 プロジェクトフォルダを選択すると、OpenWorkはそのフォルダを使用してローカルでホストスタックを実行し、デスクトップUIを接続します。
 これにより、リモートサーバーなしで完全にマシン上でエージェントワークフローの実行、プロンプトの送信、進捗の確認が可能です。

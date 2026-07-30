@@ -86,6 +86,10 @@ test("MySQL grants preview across pods and allow exactly one concurrent consumer
 
   expect(firstPreview.ok).toBe(true)
   expect(secondPreview.ok).toBe(true)
+  await expect(grants.inspectDesktopConnectGrant(code)).resolves.toMatchObject({
+    ok: true,
+    status: "pending",
+  })
 
   const attempts = await Promise.all([
     grants.consumeDesktopConnectGrant(code),
@@ -95,6 +99,10 @@ test("MySQL grants preview across pods and allow exactly one concurrent consumer
   expect(attempts.filter((result) => result.ok)).toHaveLength(1)
   expect(attempts.filter((result) => !result.ok && result.code === "replayed")).toHaveLength(2)
   await expect(grants.previewDesktopConnectGrant(code)).resolves.toEqual({ ok: false, code: "replayed" })
+  await expect(grants.inspectDesktopConnectGrant(code)).resolves.toMatchObject({
+    ok: true,
+    status: "connected",
+  })
 
   const [stored] = await db.select({
     claims: schema.DesktopConnectGrantTable.claims,

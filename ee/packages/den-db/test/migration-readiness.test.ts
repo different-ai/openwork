@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { spawnSync } from "node:child_process"
-import { readFileSync } from "node:fs"
+import { readdirSync, readFileSync } from "node:fs"
 import path from "node:path"
 import { describe, test } from "node:test"
 import { fileURLToPath } from "node:url"
@@ -12,6 +12,13 @@ const pnpmCommand = process.platform === "win32" ? "pnpm.cmd" : "pnpm"
 
 function readRepoFile(relativePath: string) {
   return readFileSync(path.join(repoRoot, relativePath), "utf8")
+}
+
+function readDenDbMigrations() {
+  return readdirSync(path.join(packageDir, "drizzle"))
+    .filter((entry) => entry.endsWith(".sql"))
+    .map((entry) => readFileSync(path.join(packageDir, "drizzle", entry), "utf8"))
+    .join("\n")
 }
 
 function requireSlice(contents: string, start: string, end: string) {
@@ -35,6 +42,14 @@ function shortOutput(output: string) {
 }
 
 describe("Den DB migration readiness wiring", () => {
+  test("oauth access token lookup has a token prefix index", () => {
+    const authSchema = readRepoFile("ee/packages/den-db/src/schema/auth.ts")
+    const migrations = readDenDbMigrations()
+
+    assert.equal(authSchema.includes('index("oauth_access_token_token").on(sql`${table.token}(191)`)'), true)
+    assert.match(migrations, /CREATE INDEX `oauth_access_token_token` ON `oauthAccessToken` \(`token`\(191\)\);/)
+  })
+
   test("Helm migration defaults execute the precompiled dist runner", () => {
     const values = readRepoFile("packaging/helm/openwork-ee/values.yaml")
     const migrationsBlock = requireSlice(values, "migrations:\n", "\ningress:")

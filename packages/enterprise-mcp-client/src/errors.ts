@@ -1,3 +1,5 @@
+import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js"
+
 import type { EnterpriseMcpOperationPhase, EnterpriseMcpRequestPhase } from "./contracts.js"
 
 export type EnterpriseMcpErrorCode =
@@ -62,6 +64,47 @@ export class EnterpriseMcpClientError extends Error {
     this.operationPhase = input.operationPhase
     this.requestPhase = input.requestPhase
   }
+}
+
+/**
+ * Marks a lifecycle abort as ours on the `data` of an MCP error. The SDK
+ * rethrows an `McpError` untouched but collapses any other abort reason into
+ * `String(reason)` on a RequestTimeout, leaving downstream diagnostics unable
+ * to tell an OpenWork deadline apart from a provider-declared failure.
+ */
+export const ENTERPRISE_MCP_LIFECYCLE_DEADLINE_DATA_KEY = "enterpriseMcpLifecycleDeadline"
+
+export class EnterpriseMcpLifecycleDeadlineError extends McpError {
+  readonly operationPhase: EnterpriseMcpOperationPhase
+
+  constructor(operationPhase: EnterpriseMcpOperationPhase) {
+    super(ErrorCode.RequestTimeout, `Enterprise MCP ${operationPhase} exceeded its lifecycle deadline.`, {
+      [ENTERPRISE_MCP_LIFECYCLE_DEADLINE_DATA_KEY]: true,
+      operationPhase,
+    })
+    this.name = "EnterpriseMcpLifecycleDeadlineError"
+    this.operationPhase = operationPhase
+  }
+}
+
+/** Walks an error chain for the deadline marker set by this client. */
+export function isEnterpriseMcpLifecycleDeadline(value: unknown): boolean {
+  let current: unknown = value
+  for (let depth = 0; depth < 5 && current; depth += 1) {
+    if (current instanceof EnterpriseMcpLifecycleDeadlineError) return true
+    if (typeof current === "object" && current !== null && "data" in current) {
+      const data: unknown = current.data
+      if (
+        typeof data === "object" && data !== null
+        && ENTERPRISE_MCP_LIFECYCLE_DEADLINE_DATA_KEY in data
+        && data[ENTERPRISE_MCP_LIFECYCLE_DEADLINE_DATA_KEY] === true
+      ) {
+        return true
+      }
+    }
+    current = typeof current === "object" && current !== null && "cause" in current ? current.cause : undefined
+  }
+  return false
 }
 
 export type EnterpriseMcpOAuthContractErrorCode =

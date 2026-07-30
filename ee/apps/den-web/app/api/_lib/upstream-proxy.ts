@@ -1,4 +1,5 @@
 import { NextRequest } from "next/server";
+import { joinBaseUrl, readBaseUrlEnv } from "@openwork/types/url";
 
 import { denWebLogger } from "../../../observability/runtime-logger";
 
@@ -17,23 +18,71 @@ const REQUEST_ONLY_HEADERS = new Set(["host", "content-length"]);
 const RESPONSE_ONLY_HEADERS = new Set(["content-length", "content-encoding"]);
 const SPOOFABLE_FORWARDING_HEADERS = new Set(["forwarded", "x-forwarded-host", "x-forwarded-prefix", "x-forwarded-proto"]);
 
+/**
+ * OpenWork Cloud instances are served from Daytona preview origins that are
+ * re-signed (and therefore renamed) on every wake, so they can never appear in
+ * a static CORS allowlist. The signed-in SPA running there has to reach Den for
+ * /v1/me, /v1/me/orgs, MCP tokens and org connections.
+ *
+ * We reflect those origins, and make that safe by stripping the cookie header
+ * from the forwarded request: an instance-origin call is authenticated by its
+ * bearer token alone and can never ride the viewer's app.openworklabs.com
+ * session. A hostile page on some other origin therefore gains nothing from the
+ * reflection - it has no bearer token and its cookies are discarded.
+ *
+ * Only the Den API proxy opts in; /api/auth keeps cookies and the strict
+ * allowlist, because that is where sessions are actually established.
+ */
+const DEN_API_ROUTE_PREFIX = "/api/den";
+const DEFAULT_CLOUD_INSTANCE_ORIGIN_SUFFIXES = [".daytonaproxy01.net"];
+const CORS_ALLOW_HEADERS = "authorization,content-type,x-openwork-org-id,x-request-id,accept";
+const CORS_ALLOW_METHODS = "GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS";
+
+function cloudInstanceOriginSuffixes(): string[] {
+  const configured = process.env.DEN_CLOUD_INSTANCE_ORIGIN_SUFFIXES?.trim();
+  if (!configured) return DEFAULT_CLOUD_INSTANCE_ORIGIN_SUFFIXES;
+  const parsed = configured
+    .split(",")
+    .map((entry) => entry.trim().toLowerCase())
+    .filter((entry) => entry.startsWith("."));
+  return parsed.length > 0 ? parsed : DEFAULT_CLOUD_INSTANCE_ORIGIN_SUFFIXES;
+}
+
+function isCloudInstanceOrigin(origin: string | null): boolean {
+  if (!origin) return false;
+  let parsed: URL;
+  try {
+    parsed = new URL(origin);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== "https:") return false;
+  const hostname = parsed.hostname.toLowerCase();
+  return cloudInstanceOriginSuffixes().some((suffix) => hostname.endsWith(suffix));
+}
+
+function reflectsCloudInstanceOrigin(request: NextRequest, options: ProxyOptions): boolean {
+  return options.routePrefix === DEN_API_ROUTE_PREFIX && isCloudInstanceOrigin(request.headers.get("origin"));
+}
+
+function applyCloudInstanceCorsHeaders(headers: Headers, origin: string): void {
+  // Never emit a second allow-origin: browsers reject duplicates, and den-api
+  // already reflects on the grant-exchange route.
+  if (!headers.has("access-control-allow-origin")) {
+    headers.set("access-control-allow-origin", origin);
+    headers.set("access-control-allow-credentials", "true");
+  }
+  headers.append("vary", "Origin");
+}
+
 type ProxyOptions = {
   routePrefix: string;
   upstreamPathPrefix?: string;
   rewriteAuthLocationsToRequestOrigin?: boolean;
 };
 
-function normalizeBaseUrl(value: string): string {
-  return value.trim().replace(/\/+$/, "");
-}
-
-function readBaseUrlEnv(name: string): string | null {
-  const value = process.env[name]?.trim();
-  return value ? normalizeBaseUrl(value) : null;
-}
-
 function requestPublicOrigin(request: NextRequest): URL {
-  const configuredOrigin = readBaseUrlEnv("DEN_WEB_PUBLIC_ORIGIN");
+  const configuredOrigin = readBaseUrlEnv(process.env, "DEN_WEB_PUBLIC_ORIGIN");
   if (configuredOrigin) {
     try {
       return new URL(configuredOrigin);
@@ -73,7 +122,7 @@ function buildTargetUrl(
 ): string {
   const incoming = new URL(request.url);
   const prefixedPath = [normalizePathPrefix(upstreamPathPrefix), targetPath].filter(Boolean).join("/");
-  const upstream = new URL(prefixedPath ? `${base}/${prefixedPath}` : base);
+  const upstream = new URL(prefixedPath ? joinBaseUrl(base, prefixedPath) : base);
   upstream.search = incoming.search;
   return upstream.toString();
 }
@@ -104,12 +153,18 @@ async function injectActiveTraceContext(headers: Headers): Promise<void> {
   }
 }
 
-async function cloneRequestHeaders(request: NextRequest, routePrefix: string): Promise<Headers> {
+async function cloneRequestHeaders(
+  request: NextRequest,
+  routePrefix: string,
+  stripCookies = false,
+): Promise<Headers> {
   const headers = new Headers();
   request.headers.forEach((value, name) => {
-    if (!shouldSkipRequestHeader(name)) {
-      headers.append(name, value);
-    }
+    if (shouldSkipRequestHeader(name)) return;
+    // Bearer-only for reflected instance origins - see the note above
+    // isCloudInstanceOrigin. This is what makes reflection safe.
+    if (stripCookies && name.toLowerCase() === "cookie") return;
+    headers.append(name, value);
   });
   const publicOrigin = requestPublicOrigin(request);
   headers.set("x-forwarded-host", publicOrigin.host);
@@ -198,7 +253,7 @@ export async function proxyUpstream(
   options: ProxyOptions,
 ): Promise<Response> {
   const startedAtMs = Date.now();
-  const apiBase = readBaseUrlEnv("DEN_API_BASE");
+  const apiBase = readBaseUrlEnv(process.env, "DEN_API_BASE");
   if (!apiBase) {
     denWebLogger.error("den-web upstream proxy misconfigured", {
       route_prefix: options.routePrefix,
@@ -209,13 +264,32 @@ export async function proxyUpstream(
     return buildUpstreamErrorResponse(503, "DEN_API_BASE must be configured.");
   }
 
+  const instanceOrigin = reflectsCloudInstanceOrigin(request, options)
+    ? request.headers.get("origin")
+    : null;
+
+  // Answer the preflight here: den-api's allowlist cannot know this origin, and
+  // the browser will not send the real request without it.
+  if (instanceOrigin && request.method === "OPTIONS") {
+    const preflight = new Headers({
+      "access-control-allow-origin": instanceOrigin,
+      "access-control-allow-credentials": "true",
+      "access-control-allow-headers":
+        request.headers.get("access-control-request-headers") ?? CORS_ALLOW_HEADERS,
+      "access-control-allow-methods": CORS_ALLOW_METHODS,
+      "access-control-max-age": "600",
+    });
+    preflight.append("vary", "Origin");
+    return new Response(null, { status: 204, headers: preflight });
+  }
+
   const targetPath = getTargetPath(request, segments, options.routePrefix);
   const targetUrl = buildTargetUrl(apiBase, request, targetPath, options.upstreamPathPrefix);
   let upstream: Response;
   try {
     upstream = await fetch(targetUrl, {
       method: request.method,
-      headers: await cloneRequestHeaders(request, options.routePrefix),
+      headers: await cloneRequestHeaders(request, options.routePrefix, instanceOrigin !== null),
       body: await readRequestBody(request),
       redirect: "manual",
     });
@@ -241,9 +315,13 @@ export async function proxyUpstream(
   });
 
   const shouldDropBody = request.method === "HEAD" || NO_BODY_STATUS.has(upstream.status);
+  const responseHeaders = cloneResponseHeaders(request, upstream, options, apiBase);
+  if (instanceOrigin) {
+    applyCloudInstanceCorsHeaders(responseHeaders, instanceOrigin);
+  }
 
   return new Response(shouldDropBody ? null : upstream.body, {
     status: upstream.status,
-    headers: cloneResponseHeaders(request, upstream, options, apiBase),
+    headers: responseHeaders,
   });
 }

@@ -1,7 +1,7 @@
-@import "tailwindcss";
-@config "../../tailwind.config.ts";
+@import "tailwindcss" source(none);
 
 @import "../styles/colors.css";
+@import "../styles/tailwind-theme.css";
 
 @import "tw-animate-css";
 
@@ -10,6 +10,10 @@
 @import "@fontsource-variable/geist";
 
 @import "@fontsource-variable/ibm-plex-sans";
+
+@source "../../index.html";
+@source "../";
+@source inline("{bg,text,border}-{bronze,gold,brown,orange,tomato,red,ruby,crimson,pink,plum,purple,violet,iris,indigo,blue,cyan,teal,jade,green,grass,sky,mint,lime,yellow,amber,gray,mauve,slate,sage,olive,sand}-{1..12}");
 
 @custom-variant dark (&:is(.dark, .dark *, [data-theme="dark"], [data-theme="dark"] *));
 @custom-variant electron {
@@ -182,14 +186,10 @@ html {
 body {
   margin: 0;
   font-family:
-    "IBM Plex Sans",
-    Geist,
-    "Avenir Next",
-    Inter,
-    ui-sans-serif,
-    system-ui,
     -apple-system,
     BlinkMacSystemFont,
+    system-ui,
+    ui-sans-serif,
     "Segoe UI",
     Roboto,
     "Helvetica Neue",
@@ -197,7 +197,7 @@ body {
     "Noto Sans",
     "Apple Color Emoji",
     "Segoe UI Emoji";
-  font-size: 0.875rem;
+  font-size: 13px;
   line-height: 1.5;
   color: var(--dls-text-primary);
   -webkit-font-smoothing: antialiased;
@@ -229,6 +229,14 @@ body {
   background: var(--dls-surface);
   border-radius: 2rem;
   box-shadow: var(--dls-shell-shadow);
+}
+
+/* Arc-style overflow: long labels fade out instead of showing an ellipsis. */
+.ow-fade-truncate {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: clip;
+  mask-image: linear-gradient(to right, black calc(100% - 18px), transparent);
 }
 
 .ow-soft-card {
@@ -433,6 +441,33 @@ select:disabled {
   animation: progress-shimmer 2s infinite linear;
 }
 
+/* Quiet text shimmer for lightweight loading hints (e.g. cloud worker
+   sessions catching up): a soft highlight sweeps across muted text. */
+@keyframes ow-text-shimmer {
+  0% {
+    background-position: 150% 0;
+  }
+  100% {
+    background-position: -50% 0;
+  }
+}
+
+@utility ow-text-shimmer {
+  background-image: linear-gradient(
+    90deg,
+    rgb(var(--dls-secondary-rgb) / 0.7) 0%,
+    rgb(var(--dls-secondary-rgb) / 0.7) 42%,
+    var(--dls-text-primary) 50%,
+    rgb(var(--dls-secondary-rgb) / 0.7) 58%,
+    rgb(var(--dls-secondary-rgb) / 0.7) 100%
+  );
+  background-size: 200% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+  animation: ow-text-shimmer 2.4s linear infinite;
+}
+
 /* Quiet, small dot ticker (`:: :: ::`). Each dot pulses briefly in sequence,
    illuminating left-to-right like a subtle running light. Used for boot,
    "awaiting first token", and any idle-but-alive hint. */
@@ -502,8 +537,9 @@ select:disabled {
 }
 
 @theme inline {
-  --font-sans: 'Geist Variable', sans-serif;
-  --font-heading: 'IBM Plex Sans Variable', sans-serif;
+  --font-sans: -apple-system, BlinkMacSystemFont, system-ui, ui-sans-serif, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-heading: -apple-system, BlinkMacSystemFont, system-ui, ui-sans-serif, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --text-sm: 0.8125rem;
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);

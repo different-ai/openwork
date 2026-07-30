@@ -21,7 +21,13 @@ import { idParamSchema } from "../shared.js"
 
 const cursorSchema = z.string().trim().min(1).max(255)
 const jsonObjectSchema = z.object({}).passthrough()
-const rawSourceTextSchema = z.string().trim().min(1)
+// MEDIUMTEXT allows ~12.58 MB of encrypted plaintext; 1 MiB stays safely below storage
+// while still ~40x the largest real skill document, yielding a clean 400 instead of a 500.
+const configObjectInputMaxPayloadBytes = 1_048_576
+const rawSourceTextSchema = z.string().trim().min(1).refine(
+  (value) => Buffer.byteLength(value, "utf8") <= configObjectInputMaxPayloadBytes,
+  { message: `rawSourceText must be at most ${configObjectInputMaxPayloadBytes} bytes (1 MiB) after UTF-8 encoding.` },
+)
 const nullableStringSchema = z.string().trim().min(1).nullable()
 const nullableTimestampSchema = z.string().datetime({ offset: true }).nullable()
 const queryBooleanSchema = z.enum(["true", "false"]).transform((value) => value === "true")
@@ -161,7 +167,10 @@ export const connectorAccountRepositoryParamsSchema = connectorAccountParamsSche
 
 export const configObjectInputSchema = z.object({
   rawSourceText: rawSourceTextSchema.optional(),
-  normalizedPayloadJson: jsonObjectSchema.optional(),
+  normalizedPayloadJson: jsonObjectSchema.refine(
+    (value) => Buffer.byteLength(JSON.stringify(value), "utf8") <= configObjectInputMaxPayloadBytes,
+    { message: `normalizedPayloadJson must stringify to at most ${configObjectInputMaxPayloadBytes} bytes (1 MiB) after UTF-8 encoding.` },
+  ).optional(),
   parserMode: z.string().trim().min(1).max(100).optional(),
   schemaVersion: z.string().trim().min(1).max(100).optional(),
   metadata: jsonObjectSchema.optional(),
@@ -890,8 +899,8 @@ export const githubPluginMcpImportResponseSchema = pluginArchMutationResponseSch
       url: z.string(),
     })),
     importedSkills: z.array(z.object({
+      configObjectId: configObjectIdSchema,
       name: z.string(),
-      skillId: denTypeIdSchema("skill"),
       sourcePath: z.string(),
     })),
     marketplaceId: marketplaceIdSchema.nullable(),

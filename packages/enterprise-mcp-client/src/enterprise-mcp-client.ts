@@ -20,7 +20,7 @@ import type {
   EnterpriseMcpOperationPhase,
   EnterpriseMcpRequestPhase,
 } from "./contracts.js"
-import { EnterpriseMcpClientError, EnterpriseMcpToolResultError } from "./errors.js"
+import { EnterpriseMcpClientError, EnterpriseMcpLifecycleDeadlineError, EnterpriseMcpToolResultError } from "./errors.js"
 import { EnterpriseMcpOAuthProvider } from "./oauth-provider.js"
 import { createEnterpriseMcpRequestObserver, type EnterpriseMcpRequestObserver } from "./request-observer.js"
 import { collectEnterpriseMcpTools } from "./tool-catalog.js"
@@ -146,6 +146,7 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
     clientName,
     clientVersion,
   } = parsedOptions
+  const explicitOperationTimeoutMs = options.operationTimeoutMs
   const clock: EnterpriseMcpClock = options.clock ?? { now: () => Date.now() }
   const configuredFetch: EnterpriseMcpFetch = options.fetch
 
@@ -168,14 +169,25 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
       || phase === "endpoint-request"
   }
 
-  async function invalidateTerminallyRejectedCredential(session: Session): Promise<void> {
-    if (!session.oauthProvider) return
+  async function invalidateTerminallyRejectedCredential(
+    session: Session,
+    input: { connectionId: string; operationPhase: EnterpriseMcpOperationPhase },
+  ): Promise<void> {
+    if (!session.oauthProvider || input.operationPhase !== "tool-execution") return
     const failure = session.observer.lastRequestFailure()
     if (!failure || !isMcpResourceRequest(failure.requestPhase)) return
-    const rejected = failure.httpStatus === 401
+    const rejected = (failure.httpStatus === 401 && failure.invalidToken)
       || (failure.httpStatus === 403 && (failure.bearerChallenge || failure.insufficientScope))
     if (!rejected) return
     await session.oauthProvider.invalidateCredentials("tokens")
+    emitDiagnostic({
+      kind: "credential-invalidation",
+      connectionId: input.connectionId,
+      operationPhase: input.operationPhase,
+      requestPhase: failure.requestPhase,
+      httpStatus: failure.httpStatus,
+      invalidToken: failure.invalidToken,
+    })
   }
 
   function createSession(input: {
@@ -195,9 +207,14 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
       : undefined
     const controller = new AbortController()
     const configuredExpiresAt = options.lifecycle?.expiresAt ?? (clock.now() + operationTimeoutMs)
-    const remaining = Math.max(1, Math.min(operationTimeoutMs, configuredExpiresAt - clock.now()))
+    const remaining = Math.max(1, configuredExpiresAt - clock.now())
+    const maxRequestTimeoutMs = remaining > 1 ? remaining - 1 : remaining
+    const requestTimeoutMs = Math.max(1, Math.min(
+      options.lifecycle ? explicitOperationTimeoutMs ?? maxRequestTimeoutMs : operationTimeoutMs,
+      maxRequestTimeoutMs,
+    ))
     const timeout = setTimeout(() => {
-      controller.abort(new Error(`Enterprise MCP ${input.operationPhase} exceeded its lifecycle deadline.`))
+      controller.abort(new EnterpriseMcpLifecycleDeadlineError(input.operationPhase))
     }, remaining)
     controller.signal.addEventListener("abort", () => clearTimeout(timeout), { once: true })
 
@@ -239,9 +256,10 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
     const client = new Client({ name: clientName, version: clientVersion }, { capabilities: {} })
     const requestOptions: RequestOptions = {
       signal: requestSignal,
-      timeout: remaining,
+      timeout: requestTimeoutMs,
       maxTotalTimeout: remaining,
-      resetTimeoutOnProgress: false,
+      resetTimeoutOnProgress: true,
+      onprogress: () => undefined,
     }
     return {
       client,
@@ -352,7 +370,10 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
             }
           }
         } catch (error) {
-          await invalidateTerminallyRejectedCredential(session)
+          await invalidateTerminallyRejectedCredential(session, {
+            connectionId: input.connection.id,
+            operationPhase: input.operationPhase,
+          })
           throw error
         }
       },
@@ -497,10 +518,7 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
       const authorizationId = configurationValue(() => authorizationIdSchema.parse(input.authorizationId))
       if (input.connection.authorization.type !== "oauth") return
       const controller = new AbortController()
-      const expiresAt = Math.min(
-        options.lifecycle?.expiresAt ?? (clock.now() + operationTimeoutMs),
-        clock.now() + operationTimeoutMs,
-      )
+      const expiresAt = options.lifecycle?.expiresAt ?? (clock.now() + operationTimeoutMs)
       await input.connection.authorization.persistence.authorizations.invalidate({
         context: {
           connectionId: input.connection.id,

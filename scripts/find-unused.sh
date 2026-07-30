@@ -41,7 +41,6 @@ INFRA_GLOBS=(
   "turbo.json"
   # Build configs
   "apps/app/vite.config.ts"
-  "apps/app/tailwind.config.ts"
   "apps/story-book/vite.config.ts"
   "apps/ui-demo/vite.config.ts"
   "ee/apps/den-web/next.config.js"
@@ -89,7 +88,6 @@ ROUTING_DIRS=(
 IGNORE_PREFIXES=(
   "apps/app/scripts/"
   "apps/desktop/scripts/"
-  "apps/orchestrator/scripts/"
   "scripts/stats"
 )
 

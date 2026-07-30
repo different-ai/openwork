@@ -10,7 +10,6 @@ import {
   Cog,
   FolderLock,
   Info,
-  Layout,
   Paintbrush,
   Puzzle,
   RefreshCcw,
@@ -42,8 +41,10 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { t } from "../../../../i18n";
+import type { PlatformCapabilities } from "../../../../app/lib/platform-capabilities";
 import type { SettingsTab } from "../../../../app/types";
 import { cn } from "@/lib/utils";
+import { usePlatform } from "../../../kernel/platform";
 import { useOrgRestrictions } from "../../cloud/desktop-config-provider";
 import {
   SettingsContent,
@@ -57,7 +58,6 @@ import {
   SettingsPanelToolbarMessage,
   SettingsPanelToolbarStatus,
 } from "./panel";
-import { WorkspaceIcon } from "../../../design-system/workspace-icon";
 import { useFeatureFlagsPreferences } from "../state/feature-flags-preferences";
 
 export function getSettingsTabIcon(tab: SettingsTab) {
@@ -66,8 +66,6 @@ export function getSettingsTabIcon(tab: SettingsTab) {
       return Zap;
     case "preferences":
       return SlidersHorizontal;
-    case "shell":
-      return Layout;
     case "permissions":
       return FolderLock;
     case "cloud-account":
@@ -107,8 +105,6 @@ export function getSettingsTabLabel(tab: SettingsTab) {
       return "AI Providers";
     case "preferences":
       return "Preferences";
-    case "shell":
-      return "Customization";
     case "permissions":
       return "Permissions";
     case "cloud-account":
@@ -150,8 +146,6 @@ export function getSettingsTabDescription(tab: SettingsTab) {
       return "Connect services that provide AI models";
     case "preferences":
       return "Default model, reasoning, and compaction";
-    case "shell":
-      return "Branding, visibility, and shell controls";
     case "permissions":
       return "Authorized folders and file access";
     case "cloud-account":
@@ -191,19 +185,23 @@ export function getWorkspaceSettingsTabs(): SettingsTab[] {
   return ["preferences", "permissions", "extensions", "advanced"];
 }
 
-export function getGlobalSettingsTabs(developerMode: boolean): SettingsTab[] {
-  const tabs: SettingsTab[] = ["ai", "shell", "appearance", "environment", "updates", "recovery"];
+export function getGlobalSettingsTabs(
+  developerMode: boolean,
+  capabilities: Pick<PlatformCapabilities, "autoUpdate" | "localRuntimeControl">,
+): SettingsTab[] {
+  const tabs: SettingsTab[] = ["ai", "appearance", "environment"];
+  if (capabilities.autoUpdate) tabs.push("updates");
+  if (capabilities.localRuntimeControl) tabs.push("recovery");
   if (developerMode) tabs.push("debug");
   return tabs;
 }
 
 export const CLOUD_SETTINGS_TABS: SettingsTab[] = [
   "cloud-account",
-  "connect",
 ];
 
-export function isSettingsTabBeta(tab: SettingsTab) {
-  return tab === "connect";
+export function isSettingsTabBeta(_tab: SettingsTab) {
+  return false;
 }
 
 export function SettingsBetaBadge({ className }: { className?: string }) {
@@ -214,7 +212,7 @@ export function SettingsBetaBadge({ className }: { className?: string }) {
         className,
       )}
     >
-      {t("common.alpha")}
+      {t("common.beta")}
     </span>
   );
 }
@@ -234,7 +232,7 @@ function SettingsSidebarTabLabel({ tab }: { tab: SettingsTab }) {
  * surfaces (sidebar + compact section menu) must use this so they can't drift.
  */
 export function getCloudSettingsTabs(memoryEnabled: boolean): SettingsTab[] {
-  return memoryEnabled ? ["cloud-account", "memory", "connect"] : CLOUD_SETTINGS_TABS;
+  return memoryEnabled ? ["cloud-account", "memory"] : CLOUD_SETTINGS_TABS;
 }
 
 type SettingsPageProps = {
@@ -263,9 +261,10 @@ type SettingsSidebarProps = Pick<SettingsPageProps, "activeTab" | "onSelectTab" 
 };
 
 export function SettingsSidebar(props: SettingsSidebarProps) {
+  const platform = usePlatform();
   const { memoryEnabled } = useFeatureFlagsPreferences();
   const workspaceTabs = getWorkspaceSettingsTabs();
-  const globalTabs = getGlobalSettingsTabs(props.developerMode);
+  const globalTabs = getGlobalSettingsTabs(props.developerMode, platform.capabilities);
   const cloudTabs = getCloudSettingsTabs(memoryEnabled);
 
   return (
@@ -284,7 +283,6 @@ export function SettingsSidebar(props: SettingsSidebarProps) {
               <DropdownMenuTrigger
                 render={
                   <SidebarMenuButton type="button">
-                    <WorkspaceIcon workspaceId={props.selectedWorkspaceId} sizeClass="size-4" />
                     <span className="truncate">{props.selectedWorkspaceName}</span>
                     <ChevronDown className="ml-auto" />
                   </SidebarMenuButton>
@@ -297,7 +295,6 @@ export function SettingsSidebar(props: SettingsSidebarProps) {
                     onClick={() => props.onSelectWorkspace(workspace.id)}
                     disabled={workspace.id === props.selectedWorkspaceId}
                   >
-                    <WorkspaceIcon workspaceId={workspace.id} sizeClass="size-4" />
                     <span className="truncate">{workspace.name}</span>
                   </DropdownMenuItem>
                 ))}

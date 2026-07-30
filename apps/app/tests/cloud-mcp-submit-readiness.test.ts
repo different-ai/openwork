@@ -12,6 +12,13 @@ import {
   type CloudMcpSubmissionGateDecision,
   type CloudMcpSubmissionPreparationResult,
 } from "../src/react-app/domains/connections/cloud-mcp-submit-readiness";
+import {
+  cloudMcpAppSubmissionBlocked,
+  deriveCloudMcpAppSubmissionState,
+} from "../src/react-app/domains/connections/cloud-mcp-app-readiness";
+import type {
+  SessionCloudMcpMaintenanceState,
+} from "../src/react-app/domains/connections/use-session-mcp-maintenance";
 
 const PROVIDER_MODEL = { provider: "openwork", model: "gpt-5" };
 
@@ -153,6 +160,41 @@ function preparation(input: {
 }
 
 describe("Cloud MCP pre-send readiness", () => {
+  test("app startup blocks only retained Den sessions until background connection readiness", () => {
+    const maintenance = (
+      status: SessionCloudMcpMaintenanceState["status"],
+    ): SessionCloudMcpMaintenanceState => ({
+      status,
+      issue: status === "failed"
+        ? failure({ code: "cloud_connection_failed" })
+        : null,
+      attempt: status === "idle" ? 0 : 1,
+      maxAttempts: 3,
+    });
+    const state = (
+      authStatus: "checking" | "signed_in" | "unavailable" | "signed_out",
+      hasSessionToken: boolean,
+      maintenanceStatus: SessionCloudMcpMaintenanceState["status"],
+    ) => deriveCloudMcpAppSubmissionState({
+      authStatus,
+      hasSessionToken,
+      maintenance: maintenance(maintenanceStatus),
+    });
+
+    expect(cloudMcpAppSubmissionBlocked(state("signed_out", false, "failed"))).toBe(false);
+    expect(cloudMcpAppSubmissionBlocked(state("checking", false, "idle"))).toBe(false);
+
+    expect(state("checking", true, "idle").status).toBe("checking");
+    expect(state("signed_in", true, "idle").status).toBe("checking");
+    expect(state("signed_in", true, "checking").status).toBe("checking");
+    expect(state("signed_in", true, "retrying").status).toBe("repairing");
+    expect(state("signed_in", true, "failed").status).toBe("failed");
+    expect(state("signed_in", true, "skipped").status).toBe("failed");
+    expect(state("unavailable", true, "ready").status).toBe("failed");
+
+    expect(cloudMcpAppSubmissionBlocked(state("signed_in", true, "ready"))).toBe(false);
+  });
+
   test("ready projected tools send immediately", async () => {
     const coordinator = createCloudMcpSubmissionCoordinator();
     const decision = requiredDecision();

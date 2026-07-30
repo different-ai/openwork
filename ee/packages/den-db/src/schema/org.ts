@@ -67,7 +67,6 @@ export const OrganizationBrandAssetTable = mysqlTable(
     createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
   },
   (table) => [
-    index("organization_brand_asset_organization_id").on(table.organizationId),
     uniqueIndex("organization_brand_asset_version").on(
       table.organizationId,
       table.kind,
@@ -92,7 +91,6 @@ export const MemberTable = mysqlTable(
     createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
   },
   (table) => [
-    index("member_organization_id").on(table.organizationId),
     index("member_user_id").on(table.userId),
     index("member_invite_id").on(table.inviteId),
     index("member_invited_by_org_member").on(table.invitedByOrgMember),
@@ -204,7 +202,6 @@ export const OrganizationRoleTable = mysqlTable(
       .default(sql`CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)`),
   },
   (table) => [
-    index("organization_role_organization_id").on(table.organizationId),
     uniqueIndex("organization_role_name").on(table.organizationId, table.role),
   ],
 )

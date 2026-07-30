@@ -189,7 +189,8 @@ export default {
 
             // Idempotence: a previous run may have left a split pane open.
             const closedStaleSplit = await ctx.eval(`(() => {
-              const button = document.querySelector('button[aria-label="Close split"]');
+              const button = document.querySelector('button[aria-label="Close split"]')
+                ?? document.querySelectorAll('[data-session-tab-split-pill] button[aria-label="Close split view"]')[1];
               if (!button) return false;
               button.click();
               return true;
@@ -201,18 +202,28 @@ export default {
               );
             }
 
-            // Target session A's tab specifically: the tab strip persists
-            // tabs from earlier sessions, so "first enabled split button"
-            // could split a stale session.
-            const clicked = await ctx.eval(`(() => {
-              const tab = document.querySelector('[data-session-tab-id=${JSON.stringify(sessionA)}]');
-              if (!tab) return { ok: false, reason: "tab for session A not found" };
-              const button = tab.querySelector('button[aria-label="Open in split view"]');
-              if (!button || button.disabled) return { ok: false, reason: "split button missing or disabled" };
-              button.click();
+            // The sidebar rows are the vertical tabs now: open session A in
+            // split view through its row context menu.
+            const opened = await ctx.eval(`(() => {
+              const row = [...document.querySelectorAll('[data-session-tab-id=${JSON.stringify(sessionA)}]')]
+                .find((element) => !element.closest("[data-session-tab-split-pill]"));
+              if (!row) return { ok: false, reason: "sidebar row for session A not found" };
+              const rect = row.getBoundingClientRect();
+              row.dispatchEvent(new MouseEvent("contextmenu", {
+                bubbles: true,
+                cancelable: true,
+                clientX: Math.round(rect.x + rect.width / 2),
+                clientY: Math.round(rect.y + rect.height / 2),
+              }));
               return { ok: true };
             })()`);
-            ctx.assert(clicked.ok, `Could not split session A's tab: ${JSON.stringify(clicked)}.`);
+            ctx.assert(opened.ok, `Could not open session A's context menu: ${JSON.stringify(opened)}.`);
+            await ctx.waitFor(
+              `Boolean([...document.querySelectorAll('[data-slot="context-menu-item"]')].find((e) => e.textContent.includes("Open in split view")))`,
+              { timeoutMs: 10_000, label: "Open in split view menu item" },
+            );
+            await ctx.eval(`[...document.querySelectorAll('[data-slot="context-menu-item"]')]
+              .find((e) => e.textContent.includes("Open in split view")).click()`);
           },
           assert: async () => {
             const ids = await ctx.waitFor(

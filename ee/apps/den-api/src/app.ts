@@ -21,6 +21,8 @@ import { createRequestAccessLogMiddleware, createTelemetryErrorSanitizerMiddlewa
 import { registerAdminRoutes } from "./routes/admin/index.js"
 import { registerAuthRoutes } from "./routes/auth/index.js"
 import { registerBootstrapRoutes } from "./routes/bootstrap/index.js"
+import { registerCloudRoutes } from "./routes/cloud/index.js"
+import { registerDeprecatedSkillHubRoutes } from "./routes/deprecated-skill-hubs.js"
 import { registerDevRoutes } from "./routes/dev/index.js"
 import { registerMcpTokenRoutes } from "./routes/mcp/index.js"
 import { registerMemoryRoutes } from "./routes/memory/index.js"
@@ -83,6 +85,25 @@ registerAppErrorHandler(app, (error, c, requestId) => {
   }
   return operationalErrorResponse(error, c, requestId)
 })
+
+// The handoff exchange is called from Cloud instance pages, whose Daytona
+// preview origins rotate on every re-sign and can never be statically
+// allowlisted. Reflecting the origin here is safe because this route is
+// authenticated solely by the one-time, 5-minute grant in the request body
+// and never consults cookies or sessions - a hostile page gains nothing
+// without a valid grant. Registered before the global CORS middleware so it
+// answers the preflight for exactly this path; every other route keeps the
+// strict allowlist below.
+app.use(
+  "/v1/auth/desktop-handoff/exchange",
+  cors({
+    origin: (origin) => origin,
+    credentials: true,
+    allowHeaders: ["Content-Type", "Authorization", "X-Request-Id"],
+    allowMethods: ["POST", "OPTIONS"],
+    maxAge: 600,
+  }),
+)
 
 if (env.corsOrigins.length > 0) {
   app.use(
@@ -170,6 +191,8 @@ app.get(
 registerAdminRoutes(app)
 registerAuthRoutes(app)
 registerBootstrapRoutes(app)
+registerCloudRoutes(app)
+registerDeprecatedSkillHubRoutes(app)
 registerDevRoutes(app)
 registerMeRoutes(app)
 registerMemoryRoutes(app)
@@ -224,8 +247,6 @@ app.get(
         { name: "Teams", description: "Organization team management routes." },
         { name: "Templates", description: "Organization shared template routes." },
         { name: "LLM Providers", description: "Organization LLM provider catalog, configuration, and access routes." },
-        { name: "Skills", description: "Organization skill authoring and sharing routes." },
-        { name: "Skill Hubs", description: "Organization skill hub management and access routes." },
         { name: "Workers", description: "Worker lifecycle, billing, and runtime routes." },
         { name: "Worker Runtime", description: "Worker runtime inspection and upgrade routes." },
         { name: "Worker Activity", description: "Worker heartbeat and activity reporting routes." },

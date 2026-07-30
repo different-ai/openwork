@@ -110,9 +110,9 @@ async function runInjectedSessionTools(baseUrl) {
   const script = `
     const { OpenWorkExtensionsPreview } = await import("./apps/server/src/opencode-plugins/openwork-extensions-preview.ts");
     const plugin = await OpenWorkExtensionsPreview();
-    const search = JSON.parse(await plugin.tool.openwork_session_search.execute({ query: "raven launch", limit: 5, scanLimit: 10 }));
-    const read = JSON.parse(await plugin.tool.openwork_session_read.execute({ sessionId: "ses_archive", count: 2 }));
-    console.log(JSON.stringify({ search, read }));
+    const search = JSON.parse(await plugin.tool.openwork_query.execute({ id: "session.search", args: { query: "raven launch", limit: 5, scanLimit: 10 } }));
+    const read = JSON.parse(await plugin.tool.openwork_query.execute({ id: "session.read", args: { sessionId: "ses_archive", count: 2 } }));
+    console.log(JSON.stringify({ search: search.result, read: read.result }));
   `;
   const { stdout } = await execFile("bun", ["--eval", script], {
     cwd: process.cwd(),
@@ -198,11 +198,11 @@ export default {
         try {
           const output = await runInjectedSessionTools(server.baseUrl);
           ctx.toolOutput = output;
-          await ctx.prove("openwork_session_search returns a transcript hit from another chat", {
+          await ctx.prove("openwork_query session.search returns a transcript hit from another chat", {
             action: async () => {
               const hit = output.search.results[0];
               await showProofPanel(ctx, "Past Chat Search Tool Proof", [
-                { label: "Tool called", value: "openwork_session_search" },
+                { label: "Tool called", value: "openwork_query session.search" },
                 { label: "Query", value: output.search.query },
                 { label: "Matched session", value: `${hit.workspaceId} / ${hit.sessionId}` },
                 { label: "Match kind", value: `${hit.kind} (${hit.role})` },
@@ -220,7 +220,7 @@ export default {
                 "Search did not load transcript messages through the OpenWork server API.",
               );
             },
-            screenshot: { name: "session-search-hit", requireText: ["openwork_session_search", "raven launch", "ses_alpha"] },
+            screenshot: { name: "session-search-hit", requireText: ["openwork_query session.search", "raven launch", "ses_alpha"] },
           });
         } finally {
           await server.close();
@@ -231,10 +231,10 @@ export default {
       name: "Injected read tool retrieves another chat transcript",
       run: async (ctx) => {
         const output = ctx.toolOutput;
-        await ctx.prove("openwork_session_read retrieves the referenced session transcript", {
+        await ctx.prove("openwork_query session.read retrieves the referenced session transcript", {
           action: async () => {
             await showProofPanel(ctx, "Past Chat Read Tool Proof", [
-              { label: "Tool called", value: "openwork_session_read" },
+              { label: "Tool called", value: "openwork_query session.read" },
               { label: "Session", value: `${output.read.workspaceId} / ${output.read.sessionId}` },
               { label: "Title", value: output.read.title },
               { label: "Returned transcript", value: output.read.messages.map((message) => `${message.role}: ${message.text}`).join("\n") },
@@ -249,7 +249,7 @@ export default {
               "Read tool did not return the expected transcript text.",
             );
           },
-          screenshot: { name: "session-read-transcript", requireText: ["openwork_session_read", "Archive decisions", "ship the archive importer first"] },
+          screenshot: { name: "session-read-transcript", requireText: ["openwork_query session.read", "Archive decisions", "ship the archive importer first"] },
         });
       },
     },

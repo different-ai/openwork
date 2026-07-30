@@ -1,6 +1,6 @@
-// Local UI-control HTTP bridge: a loopback server exposing /snapshot,
-// /actions, /execute, dispatched to the renderer's window.__openworkControl
-// surface via executeJavaScript. Consumed over HTTP by openwork-ui-mcp.
+// Local UI-control HTTP bridge: a loopback server exposing the legacy
+// /snapshot, /actions and /execute routes plus the semantic /context, /query
+// and /command surface. Dispatched to the renderer's window.__openworkControl.
 // Extracted from main.mjs; state and lifecycle live in this factory
 // (createRuntimeManager pattern).
 import { randomBytes } from "node:crypto";
@@ -58,13 +58,11 @@ export function createUiControlServer({ appName, appIdentifier, getWindow }) {
     return JSON.stringify(JSON.stringify(value ?? {}));
   }
 
-  async function evaluateOpenworkControl(expression, options = {}) {
+  async function evaluateOpenworkControl(expression) {
     const win = await getWindow();
-    if (options.focus === true) {
-      win.show();
-      if (win.isMinimized()) win.restore();
-      win.focus();
-    }
+    // Commands mutate renderer state directly and do not require the desktop
+    // window to become active. Foreground activation must be an explicit
+    // affordance, never an implicit side effect of remote control.
     return win.webContents.executeJavaScript(expression, true);
   }
 
@@ -86,6 +84,24 @@ export function createUiControlServer({ appName, appIdentifier, getWindow }) {
         return { ok: true, actions: control.listActions() };
       })()`);
     }
+    if (command === "context") {
+      return evaluateOpenworkControl(`(async () => {
+        const control = window.__openworkControl;
+        if (!control) return { ok: false, error: "OpenWork control surface is not available yet." };
+        return { ok: true, context: control.context() };
+      })()`);
+    }
+    if (command === "query" || command === "command") {
+      return evaluateOpenworkControl(`(async () => {
+        const control = window.__openworkControl;
+        const input = JSON.parse(${argsJsonLiteral});
+        if (!control) return { ok: false, error: "OpenWork control surface is not available yet." };
+        if (!input || typeof input.id !== "string" || !input.id.trim()) {
+          return { ok: false, error: "Missing OpenWork affordance id." };
+        }
+        return control[${JSON.stringify(command)}](input);
+      })()`);
+    }
     if (command === "execute") {
       return evaluateOpenworkControl(`(async () => {
         const control = window.__openworkControl;
@@ -96,7 +112,7 @@ export function createUiControlServer({ appName, appIdentifier, getWindow }) {
         }
         control.setEnabled?.(true);
         return control.execute(input.actionId, input.args ?? {});
-      })()`, { focus: true });
+      })()`);
     }
     return { ok: false, error: `Unknown OpenWork control command: ${command}` };
   }
@@ -107,7 +123,7 @@ export function createUiControlServer({ appName, appIdentifier, getWindow }) {
       try {
         const url = new URL(request.url ?? "/", "http://127.0.0.1");
         if (request.method === "GET" && url.pathname === "/health") {
-          sendJsonResponse(response, 200, { ok: true, app: appName, version: 1 });
+          sendJsonResponse(response, 200, { ok: true, app: appName, version: 2 });
           return;
         }
         if (!authorizedUiControlRequest(request)) {
@@ -120,6 +136,18 @@ export function createUiControlServer({ appName, appIdentifier, getWindow }) {
         }
         if (request.method === "GET" && url.pathname === "/actions") {
           sendJsonResponse(response, 200, await runOpenworkControlCommand("actions"));
+          return;
+        }
+        if (request.method === "GET" && url.pathname === "/context") {
+          sendJsonResponse(response, 200, await runOpenworkControlCommand("context"));
+          return;
+        }
+        if (request.method === "POST" && url.pathname === "/query") {
+          sendJsonResponse(response, 200, await runOpenworkControlCommand("query", await readJsonRequestBody(request)));
+          return;
+        }
+        if (request.method === "POST" && url.pathname === "/command") {
+          sendJsonResponse(response, 200, await runOpenworkControlCommand("command", await readJsonRequestBody(request)));
           return;
         }
         if (request.method === "POST" && url.pathname === "/execute") {
@@ -141,7 +169,7 @@ export function createUiControlServer({ appName, appIdentifier, getWindow }) {
     uiControlDiscoveryPath = path.join(app.getPath("userData"), "openwork-ui-control.json");
     await writeFile(
       uiControlDiscoveryPath,
-      `${JSON.stringify({ version: 1, app: appName, identifier: appIdentifier, platform: process.platform, baseUrl: `http://127.0.0.1:${port}`, token: uiControlToken }, null, 2)}\n`,
+      `${JSON.stringify({ version: 2, app: appName, identifier: appIdentifier, platform: process.platform, baseUrl: `http://127.0.0.1:${port}`, token: uiControlToken }, null, 2)}\n`,
       "utf8",
     );
     // Make the discovery path available to child processes (server → managed OpenCode → plugin).

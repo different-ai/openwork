@@ -35,7 +35,7 @@ export type ForcedSigninPageProps = {
  * string (>= 12 chars) or an `openwork://den-auth?grant=…` deep link.
  * Matches the Solid ForcedSigninPage exactly so flows stay fungible.
  */
-function parseManualAuthInput(value: string) {
+export function parseManualAuthInput(value: string) {
   const trimmed = value.trim();
   if (!trimmed) return null;
 
@@ -83,7 +83,10 @@ export function ForcedSigninPage({ developerMode }: ForcedSigninPageProps) {
   const initial = readDenSettings();
   const bootstrap = readDenBootstrapConfig();
   const appName = bootstrap.brandAppName?.trim() || "OpenWork";
-  const initialBaseUrl = initial.baseUrl || DEFAULT_DEN_BASE_URL;
+  const initialBaseUrl =
+    bootstrap.enterpriseActivation?.denBaseUrl ||
+    initial.baseUrl ||
+    DEFAULT_DEN_BASE_URL;
 
   const [baseUrl, setBaseUrl] = useState(initialBaseUrl);
   const [baseUrlDraft, setBaseUrlDraft] = useState(initialBaseUrl);
@@ -124,17 +127,7 @@ export function ForcedSigninPage({ developerMode }: ForcedSigninPageProps) {
     [baseUrl],
   );
 
-  const submitManualAuth = useCallback(async () => {
-    const parsed = parseManualAuthInput(manualAuthInput);
-    if (!parsed || authBusy) {
-      if (!parsed) {
-        setAuthError(t("den.error_paste_valid_code"));
-      }
-      return;
-    }
-
-    const nextBaseUrl = parsed.baseUrl ?? baseUrl;
-
+  const exchangeGrant = useCallback(async (grant: string, nextBaseUrl: string) => {
     setAuthBusy(true);
     setAuthError(null);
     setStatusMessage(t("den.signing_in"));
@@ -144,7 +137,7 @@ export function ForcedSigninPage({ developerMode }: ForcedSigninPageProps) {
         baseUrl: nextBaseUrl,
       });
       // The helper exchanges, persists, and dispatches the success/error session events.
-      const result = await exchangeHandoffAndSignIn(parsed.grant, {
+      const result = await exchangeHandoffAndSignIn(grant, {
         baseUrl: nextBaseUrl,
         client,
         fallbackErrorMessage: t("den.error_no_token"),
@@ -165,7 +158,37 @@ export function ForcedSigninPage({ developerMode }: ForcedSigninPageProps) {
     } finally {
       setAuthBusy(false);
     }
-  }, [authBusy, baseUrl, developerMode, manualAuthInput]);
+  }, [developerMode]);
+
+  const submitManualAuth = useCallback(async () => {
+    const parsed = parseManualAuthInput(manualAuthInput);
+    if (!parsed || authBusy) {
+      if (!parsed) {
+        setAuthError(t("den.error_paste_valid_code"));
+      }
+      return;
+    }
+
+    const nextBaseUrl = parsed.baseUrl ?? baseUrl;
+    return exchangeGrant(parsed.grant, nextBaseUrl);
+  }, [authBusy, baseUrl, exchangeGrant, manualAuthInput]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || authBusy) return;
+
+    const url = new URL(window.location.href);
+    const grant = url.searchParams.get("grant")?.trim() ?? "";
+    if (!grant) return;
+
+    url.searchParams.delete("grant");
+    window.history.replaceState(
+      window.history.state,
+      document.title,
+      `${url.pathname}${url.search}${url.hash}`,
+    );
+
+    void exchangeGrant(grant, baseUrl);
+  }, [authBusy, baseUrl, exchangeGrant]);
 
   const applyBaseUrl = useCallback(async (value?: string) => {
     const normalized = normalizeDenBaseUrl(value ?? baseUrlDraft);

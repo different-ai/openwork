@@ -1,32 +1,37 @@
 import { describe, expect, test } from "bun:test";
 import {
-  PASTE_CHIP_CHAR_THRESHOLD,
+  createPastedTextChip,
+  resolvePastedTextPlaceholders,
   shouldCollapsePastedText,
 } from "../src/react-app/domains/session/surface/composer/pasted-text";
 
 describe("pasted text collapse policy", () => {
-  test("keeps text at or below the threshold directly in the text field", () => {
-    expect(PASTE_CHIP_CHAR_THRESHOLD).toBe(50);
-    expect(shouldCollapsePastedText("a".repeat(PASTE_CHIP_CHAR_THRESHOLD - 1))).toBeFalse();
-    expect(shouldCollapsePastedText("a".repeat(PASTE_CHIP_CHAR_THRESHOLD))).toBeFalse();
+  test("keeps text that fits without scrolling directly in the text field", () => {
+    expect(shouldCollapsePastedText("Short paste", false)).toBeFalse();
   });
 
-  test("collapses text above the threshold into an expandable chip", () => {
-    expect(shouldCollapsePastedText("a".repeat(PASTE_CHIP_CHAR_THRESHOLD + 1))).toBeTrue();
+  test("collapses text that would make the composer scroll", () => {
+    expect(shouldCollapsePastedText("Long paste", true)).toBeTrue();
   });
 
   test("does not collapse standalone HTTP or HTTPS URLs", () => {
-    expect(shouldCollapsePastedText(`https://example.com/${"a".repeat(PASTE_CHIP_CHAR_THRESHOLD)}`)).toBeFalse();
-    expect(shouldCollapsePastedText(`http://example.com/${"b".repeat(PASTE_CHIP_CHAR_THRESHOLD)}`)).toBeFalse();
+    expect(shouldCollapsePastedText("https://example.com/long-url", true)).toBeFalse();
+    expect(shouldCollapsePastedText("http://example.com/long-url", true)).toBeFalse();
   });
 
   test("only exempts URLs that are the whole paste with no whitespace", () => {
-    const longUrl = `https://example.com/${"c".repeat(PASTE_CHIP_CHAR_THRESHOLD)}`;
-    expect(shouldCollapsePastedText(`${longUrl} `)).toBeTrue();
-    expect(shouldCollapsePastedText(`Read ${longUrl}`)).toBeTrue();
+    const longUrl = "https://example.com/long-url";
+    expect(shouldCollapsePastedText(`${longUrl} `, true)).toBeTrue();
+    expect(shouldCollapsePastedText(`Read ${longUrl}`, true)).toBeTrue();
   });
 
-  test("does not collapse short multiline text", () => {
-    expect(shouldCollapsePastedText("first\nsecond\nthird")).toBeFalse();
+  test("creates a reusable chip and resolves it before submission", () => {
+    const pasted = createPastedTextChip("first\nsecond");
+    expect(pasted.id).toStartWith("paste-");
+    expect(pasted.label).toEndWith("· 2 lines");
+    expect(pasted.lines).toBe(2);
+    expect(
+      resolvePastedTextPlaceholders(`Before [pasted text ${pasted.label}] after`, [pasted]),
+    ).toBe("Before first\nsecond after");
   });
 });

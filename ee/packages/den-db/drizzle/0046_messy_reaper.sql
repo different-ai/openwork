@@ -1,0 +1,1 @@
+CREATE INDEX `oauth_access_token_token` ON `oauthAccessToken` (`token`(191));

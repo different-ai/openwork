@@ -4,8 +4,11 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import type { CapabilityMatch } from "./search.js"
 import { scoreText, tokenize } from "./search.js"
 import { DEN_ADMIN_MCP_VERSION, registerAdminMcpTools } from "./admin-tools.js"
+import { normalizeToolRecord } from "./invoke.js"
 
 export const ADMIN_CAPABILITY_PREFIX = "admin:"
+
+const ADMIN_ARGUMENT_INVOCATION: NonNullable<CapabilityMatch["invocation"]> = { argumentsField: "body" }
 
 type AdminToolResult = {
   isError?: boolean
@@ -40,21 +43,25 @@ export async function searchAdminCapabilities(query: string, limit = 5): Promise
   const { tools } = await withAdminClient((client) => client.listTools())
 
   return tools
-    .map((tool) => ({
-      name: `${ADMIN_CAPABILITY_PREFIX}${tool.name}`,
-      method: "MCP",
-      path: "/mcp/admin",
-      score: scoreText(
-        tokenize(tool.name),
-        tokenize(tool.description ?? ""),
-        queryTokens,
-        ["admin", "platform"],
-      ),
-      summary: `[OpenWork Admin] ${tool.description ?? tool.name}`,
-      pathParams: [],
-      queryParams: [],
-      hasBody: Object.keys(tool.inputSchema.properties ?? {}).length > 0,
-    }))
+    .map((tool) => {
+      const hasBody = Object.keys(tool.inputSchema.properties ?? {}).length > 0
+      return {
+        name: `${ADMIN_CAPABILITY_PREFIX}${tool.name}`,
+        method: "MCP",
+        path: "/mcp/admin",
+        score: scoreText(
+          tokenize(tool.name),
+          tokenize(tool.description ?? ""),
+          queryTokens,
+          ["admin", "platform"],
+        ),
+        summary: `[OpenWork Admin] ${tool.description ?? tool.name}`,
+        pathParams: [],
+        queryParams: [],
+        hasBody,
+        ...(hasBody ? { argumentsSchema: tool.inputSchema, invocation: ADMIN_ARGUMENT_INVOCATION } : {}),
+      }
+    })
     .filter((match) => match.score > 0)
     .sort((a, b) => (b.score - a.score) || a.name.localeCompare(b.name))
     .slice(0, boundedLimit)
@@ -66,11 +73,6 @@ export async function searchAvailableAdminCapabilities(
   limit = 5,
 ): Promise<CapabilityMatch[]> {
   return platformAdmin ? searchAdminCapabilities(query, limit) : []
-}
-
-function normalizeArguments(body: unknown): Record<string, unknown> {
-  if (typeof body !== "object" || body === null || Array.isArray(body)) return {}
-  return Object.fromEntries(Object.entries(body))
 }
 
 function isTextContent(value: unknown): value is { type: "text"; text: string } {
@@ -98,7 +100,7 @@ export async function executeAdminCapability(name: string, body: unknown): Promi
   if (!toolName) return null
 
   return withAdminClient(async (client) => {
-    const result = await client.callTool({ name: toolName, arguments: normalizeArguments(body) })
+    const result = await client.callTool({ name: toolName, arguments: normalizeToolRecord(body) ?? {} })
     const content = resultTextContent(result)
     return {
       ...(resultIsError(result) ? { isError: true } : {}),

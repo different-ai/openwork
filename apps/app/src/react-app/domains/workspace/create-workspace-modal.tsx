@@ -153,6 +153,9 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
       );
       const next = await props.onPickFolder();
       if (next) setSelectedFolder(next);
+    } catch {
+      // Folder picker cancellation or bridge errors should never leave the
+      // modal in a busy state.
     } finally {
       setPickingFolder(false);
     }

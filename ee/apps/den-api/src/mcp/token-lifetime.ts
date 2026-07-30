@@ -1,4 +1,19 @@
-export const DEN_MCP_ACCESS_TOKEN_EXPIRES_IN_SECONDS = 15 * 60
+export const DEN_MCP_DEFAULT_ACCESS_TOKEN_EXPIRES_IN_SECONDS = 45 * 60
+
+function accessTokenExpiresInSeconds() {
+  if (process.env.OPENWORK_DEV_MODE?.trim() !== "1") return DEN_MCP_DEFAULT_ACCESS_TOKEN_EXPIRES_IN_SECONDS
+
+  const configured = process.env.DEN_MCP_TEST_ACCESS_TOKEN_EXPIRES_IN_SECONDS?.trim()
+  if (!configured) return DEN_MCP_DEFAULT_ACCESS_TOKEN_EXPIRES_IN_SECONDS
+
+  const parsed = Number(configured)
+  if (!/^\d+$/.test(configured) || !Number.isSafeInteger(parsed) || parsed < 1 || parsed > DEN_MCP_DEFAULT_ACCESS_TOKEN_EXPIRES_IN_SECONDS) {
+    throw new Error(`DEN_MCP_TEST_ACCESS_TOKEN_EXPIRES_IN_SECONDS must be a positive integer no greater than ${DEN_MCP_DEFAULT_ACCESS_TOKEN_EXPIRES_IN_SECONDS}.`)
+  }
+  return parsed
+}
+
+export const DEN_MCP_ACCESS_TOKEN_EXPIRES_IN_SECONDS = accessTokenExpiresInSeconds()
 // Refresh grants are rotating: every successful refresh revokes the old token
 // and issues a new one with a fresh inactivity window. Thirty days keeps an
 // occasionally used MCP connected without making access tokens long-lived.

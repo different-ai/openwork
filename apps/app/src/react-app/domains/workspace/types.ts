@@ -1,4 +1,4 @@
-import type { WorkspacePreset } from "../../../app/types";
+import type { ComposerAttachment, WorkspacePreset } from "../../../app/types";
 
 export type CreateWorkspaceScreen = "chooser" | "local" | "remote";
 
@@ -14,6 +14,10 @@ export type RemoteWorkspaceInput = {
 
 export type CreateWorkspaceOptions = {
   projectLabel?: string | null;
+  /** Saved as the first session's composer draft after the workspace is created. */
+  firstTaskPrompt?: string | null;
+  /** Seeded into the first session's composer with the draft, then sent by auto-send. */
+  firstTaskAttachments?: ComposerAttachment[] | null;
 };
 
 export type CreateWorkspaceProgress = {

@@ -1,4 +1,4 @@
-import { splitRoleString, type DenOrgMember } from "../../_lib/den-org";
+import { getOrgAccessFlags, type DenOrgMember } from "../../_lib/den-org";
 
 function getInitials(name: string) {
   return name
@@ -15,7 +15,14 @@ export function OrgMemberIdentity({
   member: DenOrgMember;
   inverted?: boolean;
 }) {
-  const isAdmin = splitRoleString(member.role).includes("admin");
+  const access = getOrgAccessFlags(member.role, member.isOwner);
+  const roleBadge = access.isOwner
+    ? "Owner"
+    : access.isSuperAdmin
+      ? "Super admin"
+      : access.isAdminRole
+        ? "Admin"
+        : null;
   const isInvited = !member.joinedAt;
 
   return (
@@ -28,9 +35,9 @@ export function OrgMemberIdentity({
           <p className={`truncate text-[13px] font-medium ${inverted ? "text-white" : "text-gray-900"}`}>
             {member.user.name}
           </p>
-          {isAdmin ? (
+          {roleBadge ? (
             <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] ${inverted ? "bg-white/15 text-white/80" : "bg-indigo-50 text-indigo-600"}`}>
-              Admin
+              {roleBadge}
             </span>
           ) : null}
           {isInvited ? (

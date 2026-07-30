@@ -34,6 +34,45 @@ import type { CapabilityMatch } from "./search.js"
 
 const MARKETPLACE_CAPABILITY_PREFIX = "plugin:"
 const PROVENANCE_SUFFIX = "in your organization's library."
+const AGENT_SKILL_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
+
+export type RemoteSkillDescriptor = {
+  name: string
+  title: string
+  description: string
+  marketplaceName?: string
+  pluginName?: string
+  capability: string
+  location: string
+}
+
+export type AccessibleMarketplaceCapabilityReference = {
+  configObjectId: string
+  marketplaceId: string
+  objectType: MarketplaceCapabilityObjectType
+  pluginId: string
+}
+
+export function normalizeRemoteSkillDescription(input: {
+  description: string | null
+  name: string
+  title: string
+}): string {
+  const description = input.description?.replace(/\s+/g, " ").trim()
+  return (description || input.title.trim() || input.name).slice(0, 1_024)
+}
+
+export function standardSkillName(title: string, stableId: string): string {
+  const suffix = stableId.replace(/^skill_/, "").slice(-8).toLowerCase()
+  const base = title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .replace(/-{2,}/g, "-")
+  const bounded = base.slice(0, Math.max(1, 64 - suffix.length - 1)).replace(/-+$/g, "")
+  const name = `${bounded || "skill"}-${suffix}`
+  return AGENT_SKILL_NAME_PATTERN.test(name) ? name : `skill-${suffix}`
+}
 
 type OrganizationId = DenTypeId<"organization">
 type PluginId = DenTypeId<"plugin">
@@ -192,17 +231,6 @@ function normalizeMarketplaceIds(input: { configObjectId: string; pluginId: stri
   } catch {
     return null
   }
-}
-
-function roleIncludes(roleValue: string, role: string): boolean {
-  return roleValue
-    .split(",")
-    .map((entry) => entry.trim())
-    .includes(role)
-}
-
-function isOrgAdmin(member: MemberRow): boolean {
-  return roleIncludes(member.role, "owner") || roleIncludes(member.role, "admin")
 }
 
 function unique<T>(values: T[]): T[] {
@@ -449,12 +477,9 @@ async function listMarketplaceGrants(organizationId: OrganizationId, marketplace
 
 async function filterVisibleRows(input: {
   member: McpMemberIdentity
-  memberRow: MemberRow
   organizationId: OrganizationId
   rows: MarketplaceCapabilityRow[]
 }): Promise<MarketplaceCapabilityRow[]> {
-  if (isOrgAdmin(input.memberRow)) return input.rows
-
   const configObjectGrantRows = await listConfigObjectGrants(
     input.organizationId,
     unique(input.rows.map((row) => row.configObject.id)),
@@ -472,10 +497,87 @@ async function filterVisibleRows(input: {
   const marketplaceGrants = groupGrants(marketplaceGrantRows)
 
   return input.rows.filter((row) => {
+    // Administrative visibility in Den must not silently publish every
+    // capability to that administrator's personal desktop catalog. Desktop
+    // discovery follows the same explicit member, team, and org-wide grants
+    // for every role so admins can curate what OpenWork exposes to them.
     if (grantRole(input.member, configObjectGrants.get(row.configObject.id) ?? [])) return true
     if (grantRole(input.member, pluginGrants.get(row.plugin.id) ?? [])) return true
     return Boolean(grantRole(input.member, marketplaceGrants.get(row.marketplace.id) ?? []))
   })
+}
+
+export async function listAccessibleMarketplaceCapabilityReferences(input: {
+  enabled?: boolean
+  member: McpMemberIdentity | null
+  organizationId: string
+}): Promise<AccessibleMarketplaceCapabilityReference[]> {
+  if (input.enabled === false || !input.member) return []
+  const organizationId = normalizeDenTypeId("organization", input.organizationId)
+  if (!(await getActiveMember(organizationId, input.member))) return []
+
+  const rows = await filterVisibleRows({
+    organizationId,
+    member: input.member,
+    rows: await listActiveMarketplaceRows(organizationId),
+  })
+  const references = new Map<string, AccessibleMarketplaceCapabilityReference>()
+  for (const row of rows) {
+    const key = `${row.marketplace.id}:${row.plugin.id}:${row.configObject.id}`
+    references.set(key, {
+      configObjectId: row.configObject.id,
+      marketplaceId: row.marketplace.id,
+      objectType: row.configObject.objectType,
+      pluginId: row.plugin.id,
+    })
+  }
+  return [...references.values()].sort((left, right) =>
+    left.marketplaceId.localeCompare(right.marketplaceId)
+    || left.pluginId.localeCompare(right.pluginId)
+    || left.configObjectId.localeCompare(right.configObjectId)
+  )
+}
+
+export async function listAccessibleMarketplaceSkillDescriptors(input: {
+  enabled?: boolean
+  member: McpMemberIdentity | null
+  organizationId: string
+}): Promise<RemoteSkillDescriptor[]> {
+  if (input.enabled === false || !input.member) return []
+
+  const organizationId = normalizeDenTypeId("organization", input.organizationId)
+  const memberRow = await getActiveMember(organizationId, input.member)
+  if (!memberRow) return []
+
+  const rows = await filterVisibleRows({
+    organizationId,
+    member: input.member,
+    rows: (await listActiveMarketplaceRows(organizationId))
+      .filter((row) => row.configObject.objectType === "skill"),
+  })
+  const descriptors = new Map<string, RemoteSkillDescriptor>()
+  for (const row of rows) {
+    const capability = buildMarketplaceCapabilityName(row.plugin.id, row.configObject.id)
+    if (descriptors.has(capability)) continue
+    const uniqueSuffix = `${row.plugin.id.slice(-4)}${row.configObject.id.slice(-4)}`
+    const name = standardSkillName(row.configObject.title, uniqueSuffix)
+    descriptors.set(capability, {
+      name,
+      title: row.configObject.title,
+      description: normalizeRemoteSkillDescription({
+        description: row.configObject.description,
+        name,
+        title: row.configObject.title,
+      }),
+      marketplaceName: row.marketplace.name,
+      pluginName: row.plugin.name,
+      capability,
+      location: `skill://${name}/SKILL.md`,
+    })
+  }
+
+  return [...descriptors.values()]
+    .sort((a, b) => a.name.localeCompare(b.name) || a.capability.localeCompare(b.capability))
 }
 
 async function latestVersion(configObjectId: ConfigObjectId, organizationId: OrganizationId) {
@@ -1132,7 +1234,6 @@ export async function searchMarketplaceCapabilities(input: {
   const rows = await filterVisibleRows({
     organizationId,
     member: input.member,
-    memberRow,
     rows: await listActiveMarketplaceRows(organizationId),
   })
   const requirementStatusesByPluginId = await marketplacePluginMcpRequirementStatuses({
@@ -1220,7 +1321,7 @@ export async function executeMarketplaceCapability(input: {
   if (!memberRow) {
     return { ok: false, error: "forbidden", message: "No active org membership for this token." }
   }
-  const visibleRows = await filterVisibleRows({ organizationId, member: input.member, memberRow, rows })
+  const visibleRows = await filterVisibleRows({ organizationId, member: input.member, rows })
   const row = visibleRows[0]
   if (!row) {
     return { ok: false, error: "forbidden", message: "You have not been granted access to this marketplace plugin capability." }

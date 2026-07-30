@@ -57,6 +57,11 @@ import {
 } from "../_lib/den-flow";
 import { EMPTY_RUNTIME_CONFIG, getRuntimeConfig, type DenWebRuntimeConfig } from "../_lib/runtime-config";
 import {
+  getDesktopHandoffGrant,
+  getDesktopHandoffOpenworkUrl,
+  rememberDesktopHandoffGrant,
+} from "../_lib/desktop-handoff";
+import {
   PENDING_ORG_INVITATION_STORAGE_KEY,
   PENDING_ORG_SELECTION_STORAGE_KEY,
   PENDING_WORKSPACE_CLAIM_STORAGE_KEY,
@@ -90,6 +95,7 @@ type DenFlowContextValue = {
   sessionHydrated: boolean;
   desktopAuthRequested: boolean;
   desktopAuthScheme: string;
+  webAuthRequested: boolean;
   desktopRedirectUrl: string | null;
   desktopRedirectBusy: boolean;
   showAuthFeedback: boolean;
@@ -217,9 +223,13 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
   const [sessionHydrated, setSessionHydrated] = useState(false);
   const [desktopAuthRequested, setDesktopAuthRequested] = useState(false);
   const [desktopAuthScheme, setDesktopAuthScheme] = useState("openwork");
+  const [webAuthRequested, setWebAuthRequested] = useState(false);
+  const [webAuthReturnUrl, setWebAuthReturnUrl] = useState<string | null>(null);
   const [desktopRedirectBusy, setDesktopRedirectBusy] = useState(false);
   const [desktopRedirectUrl, setDesktopRedirectUrl] = useState<string | null>(null);
   const [desktopRedirectAttempted, setDesktopRedirectAttempted] = useState(false);
+  const [webRedirectBusy, setWebRedirectBusy] = useState(false);
+  const [webRedirectAttempted, setWebRedirectAttempted] = useState(false);
   const [billingSummary, setBillingSummary] = useState<BillingSummary | null>(null);
   const [billingBusy, setBillingBusy] = useState(false);
   const [billingError, setBillingError] = useState<string | null>(null);
@@ -474,6 +484,11 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     }
 
     if (desktopAuthRequested) {
+      setAuthInfo("Signed in. Returning to OpenWork...");
+      return null;
+    }
+
+    if (webAuthRequested) {
       setAuthInfo("Signed in. Returning to OpenWork...");
       return null;
     }
@@ -1001,19 +1016,76 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
         return;
       }
 
-      const openworkPayload = payload as { openworkUrl?: unknown } | null;
-      const openworkUrl = typeof openworkPayload?.openworkUrl === "string" ? openworkPayload.openworkUrl.trim() : "";
+      const openworkUrl = getDesktopHandoffOpenworkUrl(payload) ?? "";
       if (!openworkUrl) {
         setAuthError("Desktop handoff succeeded, but no OpenWork redirect URL was returned.");
         return;
       }
 
+      rememberDesktopHandoffGrant(getDesktopHandoffGrant(payload, openworkUrl));
       setDesktopRedirectUrl(openworkUrl);
       window.location.assign(openworkUrl);
     } catch (error) {
       setAuthError(error instanceof Error ? error.message : "Failed to open OpenWork.");
     } finally {
       setDesktopRedirectBusy(false);
+    }
+  }
+
+  function getWebHandoffReturnUrl(payload: unknown) {
+    if (typeof payload !== "object" || payload === null || !("returnUrl" in payload)) {
+      return null;
+    }
+
+    const returnUrl = payload.returnUrl;
+    return typeof returnUrl === "string" && returnUrl.trim() ? returnUrl.trim() : null;
+  }
+
+  async function completeWebAuthHandoff() {
+    if (!webAuthRequested || webRedirectBusy) {
+      return;
+    }
+
+    setWebRedirectBusy(true);
+    setWebRedirectAttempted(true);
+    setAuthError(null);
+
+    try {
+      if (!webAuthReturnUrl) {
+        setAuthError("Web handoff failed because no return URL was provided.");
+        return;
+      }
+
+      const headers = new Headers();
+      if (authToken) {
+        headers.set("Authorization", `Bearer ${authToken}`);
+      }
+
+      const { response, payload } = await requestJson("/v1/auth/desktop-handoff", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ returnUrl: webAuthReturnUrl })
+      });
+
+      if (!response.ok) {
+        setAuthError(getErrorMessage(payload, `Web handoff failed with ${response.status}.`));
+        return;
+      }
+
+      const grant = getDesktopHandoffGrant(payload, null) ?? "";
+      const approvedReturnUrl = getWebHandoffReturnUrl(payload) ?? "";
+      if (!grant || !approvedReturnUrl) {
+        setAuthError("Web handoff succeeded, but no Cloud return URL was returned.");
+        return;
+      }
+
+      const redirectUrl = new URL(approvedReturnUrl);
+      redirectUrl.searchParams.set("grant", grant);
+      window.location.replace(redirectUrl.toString());
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : "Failed to return to OpenWork Cloud.");
+    } finally {
+      setWebRedirectBusy(false);
     }
   }
 
@@ -1776,6 +1848,9 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     if (/^[a-z][a-z0-9+.-]*$/i.test(requestedScheme)) {
       setDesktopAuthScheme(requestedScheme);
     }
+    setWebAuthRequested(params.get("webAuth") === "1");
+    const requestedWebReturnUrl = params.get("webAuthReturn")?.trim() ?? "";
+    setWebAuthReturnUrl(requestedWebReturnUrl || null);
 
     const invitationId = params.get("invite")?.trim() ?? "";
     if (invitationId) {
@@ -2011,6 +2086,14 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
   }, [desktopAuthRequested, user?.id, authToken, desktopRedirectUrl, desktopRedirectBusy, desktopRedirectAttempted, desktopAuthScheme]);
 
   useEffect(() => {
+    if (!webAuthRequested || !user || webRedirectBusy || webRedirectAttempted) {
+      return;
+    }
+
+    void completeWebAuthHandoff();
+  }, [webAuthRequested, webAuthReturnUrl, user?.id, authToken, webRedirectBusy, webRedirectAttempted]);
+
+  useEffect(() => {
     if (!user || !onboardingPending) {
       onboardingAutoLaunchKeyRef.current = null;
       return;
@@ -2079,6 +2162,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     sessionHydrated,
     desktopAuthRequested,
     desktopAuthScheme,
+    webAuthRequested,
     desktopRedirectUrl,
     desktopRedirectBusy,
     showAuthFeedback,

@@ -18,7 +18,7 @@ const OPENCODE_RECONNECT_COMMAND = `opencode mcp logout openwork
 opencode mcp auth openwork`;
 const INSTALL_COPY_BUTTON_SELECTOR = `${SECTION_SELECTOR} [role="tabpanel"]:not([hidden]) button[aria-label="Copy the OpenWork MCP install command"]`;
 const CLIENT_STATUS_EXPECTATIONS = [
-  { label: "Cursor", status: "Setup only", explanationNeedles: ["Cursor Web/Agents", "cursor://anysphere.cursor-mcp/oauth/callback"] },
+  { label: "Cursor", status: "Setup only", explanationNeedles: ["cursor://anysphere.cursor-mcp/oauth/callback", "PKCE S256"] },
   { label: "Codex", status: "Setup only", explanationNeedles: ["Native proof must be rerun on this exact branch"] },
   { label: "ChatGPT Desktop", status: "Setup only", explanationNeedles: ["Settings > MCP servers", "Native proof is not complete"] },
   { label: "Claude Code", status: "Setup only", explanationNeedles: ["use /mcp in Claude Code"] },

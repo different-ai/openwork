@@ -1,20 +1,34 @@
-import { randomUUID } from "node:crypto";
-import { spawn, spawnSync } from "node:child_process";
+import { randomUUID, X509Certificate } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import tls from "node:tls";
 import { fileURLToPath } from "node:url";
 import { pathToFileURL } from "node:url";
+import { desktopBootstrapPath, openworkEnvStorePath, openworkServerConfigPath, resolveWorkspaceOpencodeConfigPath } from "@openwork/paths";
+import {
+  dedupeCertificates,
+  resolveSystemCaBundle,
+  summarizeSystemCaSources,
+  systemPlatformCertificateLoader,
+} from "./system-ca.mjs";
 
 const __runtimeDir = path.dirname(fileURLToPath(import.meta.url));
 
 const DIRECT_RUNTIME = "direct";
-const ORCHESTRATOR_RUNTIME = "openwork-orchestrator";
 const OPENWORK_SERVER_PORT_RANGE_START = 48_000;
 const OPENWORK_SERVER_PORT_RANGE_END = 51_000;
+const MAX_BOOTSTRAP_BYTES = 256 * 1024;
+const MAX_CHAIN_REPAIR_BODY_BYTES = 64 * 1024;
+const MAX_CHAIN_REPAIR_ORIGINS = 3;
+const CHAIN_REPAIR_TOTAL_TIMEOUT_MS = 20000;
+const CHAIN_REPAIR_SOCKET_TIMEOUT_MS = 8000;
+const CHAIN_REPAIR_FETCH_TIMEOUT_MS = 8000;
+/** @type {Map<string, X509Certificate | null>} */
+const chainRepairRootCache = new Map();
 
 function truncateOutput(value, limit = 8000) {
   const text = String(value ?? "");
@@ -49,16 +63,7 @@ export function prioritizeWorkspacePaths(preferredPath, workspacePaths = []) {
 }
 
 export function resolveOpenworkServerConfigPath(env = process.env) {
-  const override = String(env.OPENWORK_SERVER_CONFIG ?? "").trim();
-  if (override) return path.resolve(override);
-  if (process.platform === "win32") {
-    const appData = String(env.APPDATA ?? "").trim();
-    const root = appData || path.join(os.homedir(), "AppData", "Roaming");
-    return path.join(root, "openwork", "server.json");
-  }
-  const xdgConfigHome = String(env.XDG_CONFIG_HOME ?? "").trim();
-  const root = xdgConfigHome || path.join(os.homedir(), ".config");
-  return path.join(root, "openwork", "server.json");
+  return openworkServerConfigPath({ env });
 }
 
 export function seedWorkspacePathsForEmbeddedServer(workspacePaths, serverConfigExists) {
@@ -78,9 +83,7 @@ export function commandMatchesPackagedSidecar(command, sidecarDirs = []) {
   if (!sidecarDirs.some((dir) => String(dir ?? "").trim() && value.includes(dir))) {
     return false;
   }
-  return value.includes("openwork-orchestrator") ||
-    value.includes("openwork-server") ||
-    /(?:^|[/\\])opencode[^/\\\s]*\s+serve\b/.test(value);
+  return /(?:^|[/\\])opencode[^/\\\s]*\s+serve\b/.test(value);
 }
 
 export function embeddedServerImportUrl(embeddedPath) {
@@ -198,24 +201,6 @@ function snapshotOpenworkServerState(state) {
   };
 }
 
-const SECRET_ENV_PATTERN = /(TOKEN|PASSWORD|USERNAME|AUTH|SECRET|KEY|CREDENTIAL)/i;
-
-function redactedExecutionSnapshot(command, args, cwd, injectedEnv) {
-  return {
-    command,
-    args: [...args],
-    cwd,
-    env: Object.entries(injectedEnv ?? {})
-      .filter((entry) => typeof entry[1] === "string")
-      .map(([name, value]) => ({
-        name,
-        value: SECRET_ENV_PATTERN.test(name) ? "<redacted>" : value,
-        redacted: SECRET_ENV_PATTERN.test(name),
-      }))
-      .sort((left, right) => left.name.localeCompare(right.name)),
-  };
-}
-
 function assertOpenworkServerReady(snapshot) {
   if (!snapshot?.running) {
     throw new Error("OpenWork server did not stay running after startup.");
@@ -227,18 +212,6 @@ function assertOpenworkServerReady(snapshot) {
     throw new Error("OpenWork server did not report an access token after startup.");
   }
   return snapshot;
-}
-
-function createOrchestratorState() {
-  return {
-    child: null,
-    childExited: true,
-    dataDir: null,
-    baseUrl: null,
-    daemonPort: null,
-    lastStdout: null,
-    lastStderr: null,
-  };
 }
 
 async function fileExists(targetPath) {
@@ -429,30 +402,11 @@ async function findFreePort(host = "127.0.0.1") {
   });
 }
 
-async function waitForHttpOk(url, timeoutMs) {
-  const deadline = Date.now() + timeoutMs;
-  let lastError = "Request did not succeed.";
-
-  while (Date.now() < deadline) {
-    try {
-      const response = await fetch(url);
-      if (response.ok) {
-        return response;
-      }
-      lastError = `HTTP ${response.status}`;
-    } catch (error) {
-      lastError = error instanceof Error ? error.message : String(error);
-    }
-    await new Promise((resolve) => setTimeout(resolve, 200));
-  }
-
-  throw new Error(lastError);
-}
-
 async function fetchJson(url, options = {}, timeoutMs = 3000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
+    // loopback-fetch: fetchJson callers pass runtime-managed 127.0.0.1 server URLs.
     const response = await fetch(url, {
       ...options,
       signal: controller.signal,
@@ -470,18 +424,8 @@ async function fetchJson(url, options = {}, timeoutMs = 3000) {
   }
 }
 
-// Resolves ~/.config/openwork/env.json (or %APPDATA%\openwork\env.json on
-// Windows) — must agree byte-for-byte with apps/server/src/env-file.ts and
-// apps/orchestrator/src/cli.ts. Honor OPENWORK_ENV_STORE override.
 function resolveUserEnvFilePath() {
-  const override = String(process.env.OPENWORK_ENV_STORE ?? "").trim();
-  if (override) return path.resolve(override);
-  if (process.platform === "win32") {
-    const appData = String(process.env.APPDATA ?? "").trim();
-    const root = appData || path.join(os.homedir(), "AppData", "Roaming");
-    return path.join(root, "openwork", "env.json");
-  }
-  return path.join(os.homedir(), ".config", "openwork", "env.json");
+  return openworkEnvStorePath();
 }
 
 const USER_ENV_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -510,8 +454,166 @@ function loadUserEnvFile() {
 }
 
 /**
+ * @param {unknown} value
+ * @returns {value is Record<string, unknown>}
+ */
+function isPlainObject(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Reduces an administrator-provisioned Den control-plane URL to its exact
+ * origin. Keep this in sync with apps/server/src/enterprise-den-origin.ts.
+ *
+ * @param {unknown} rawValue
+ * @returns {string | null}
+ */
+function exactEnterpriseOrigin(rawValue) {
+  if (typeof rawValue !== "string") return null;
+  const raw = rawValue.trim();
+  if (!raw || raw.length > 2 * 1024) return null;
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== "https:") return null;
+    if (url.username || url.password || url.search || url.hash) return null;
+    return url.origin;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * @param {string} filePath
+ * @returns {Promise<string | null>}
+ */
+async function readActivatedEnterpriseOrigin(filePath) {
+  if (typeof filePath !== "string" || !filePath.trim()) return null;
+  try {
+    const fileStat = await stat(filePath);
+    if (!fileStat.isFile() || fileStat.size > MAX_BOOTSTRAP_BYTES) return null;
+    const raw = await readFile(filePath, "utf8");
+    if (Buffer.byteLength(raw, "utf8") > MAX_BOOTSTRAP_BYTES) return null;
+    const data = JSON.parse(raw);
+    if (!isPlainObject(data)) return null;
+    const activation = isPlainObject(data.enterpriseActivation) ? data.enterpriseActivation : null;
+    if (!activation) return null;
+    if (typeof activation.activatedAt !== "string" || !activation.activatedAt.trim()) return null;
+    return exactEnterpriseOrigin(activation.denBaseUrl);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * @param {Iterable<string>} values
+ * @returns {string[]}
+ */
+function normalizeRepairOrigins(values) {
+  const seen = new Set();
+  const origins = [];
+  for (const value of values) {
+    const origin = exactEnterpriseOrigin(value);
+    if (!origin || seen.has(origin)) continue;
+    origins.push(origin);
+    seen.add(origin);
+    if (origins.length >= MAX_CHAIN_REPAIR_ORIGINS) break;
+  }
+  return origins;
+}
+
+/**
+ * @param {string} origin
+ * @returns {{ host: string, port: number }}
+ */
+function tlsTargetFromOrigin(origin) {
+  const url = new URL(origin);
+  return {
+    host: url.hostname.replace(/^\[(.*)\]$/, "$1"),
+    port: url.port ? Number(url.port) : 443,
+  };
+}
+
+/**
+ * @param {unknown} error
+ * @returns {string}
+ */
+function errorCode(error) {
+  return isPlainObject(error) && typeof error.code === "string" ? error.code : "unknown";
+}
+
+/**
+ * @param {RuntimeChainRepairSocket} socket
+ * @returns {void}
+ */
+function destroySocket(socket) {
+  try {
+    socket.destroy();
+  } catch {
+    // Best effort.
+  }
+}
+
+/**
  * @typedef {Object} RuntimeSystemCaTlsModule
  * @property {(type?: string) => string[]} [getCACertificates]
+ * @property {(certificates: string[]) => void} [setDefaultCACertificates]
+ */
+
+/**
+ * @typedef {Object} RuntimeChainRepairFetchResponse
+ * @property {boolean} [ok]
+ * @property {number} [status]
+ * @property {() => Promise<ArrayBuffer>} arrayBuffer
+ */
+
+/**
+ * @typedef {Object} RuntimeChainRepairFetchOptions
+ * @property {AbortSignal} [signal]
+ */
+
+/**
+ * @typedef {(input: string, init?: RuntimeChainRepairFetchOptions) => Promise<RuntimeChainRepairFetchResponse>} RuntimeChainRepairFetch
+ */
+
+/**
+ * @typedef {Object} RuntimeChainRepairTlsConnectOptions
+ * @property {string} host
+ * @property {number} port
+ * @property {string} servername
+ * @property {boolean} rejectUnauthorized
+ * @property {number} timeout
+ */
+
+/**
+ * @typedef {Object} RuntimeChainRepairPeerCertificate
+ * @property {Buffer} [raw]
+ * @property {RuntimeChainRepairPeerCertificate} [issuerCertificate]
+ */
+
+/**
+ * @typedef {Object} RuntimeChainRepairSocket
+ * @property {boolean} [authorized]
+ * @property {unknown} [authorizationError]
+ * @property {(eventName: string, listener: (...args: unknown[]) => void) => RuntimeChainRepairSocket} once
+ * @property {(eventName: string, listener: (...args: unknown[]) => void) => RuntimeChainRepairSocket} off
+ * @property {(timeout: number) => RuntimeChainRepairSocket} setTimeout
+ * @property {() => void} destroy
+ * @property {() => X509Certificate | undefined} [getPeerX509Certificate]
+ * @property {(detailed?: boolean) => RuntimeChainRepairPeerCertificate | null} [getPeerCertificate]
+ */
+
+/**
+ * @typedef {(options: RuntimeChainRepairTlsConnectOptions) => RuntimeChainRepairSocket} RuntimeChainRepairTlsConnect
+ */
+
+/**
+ * @typedef {Object} RuntimeChainRepairOptions
+ * @property {string[]} [origins]
+ * @property {RuntimeChainRepairFetch} [fetchImpl]
+ * @property {() => string[]} [rootsProvider]
+ * @property {RuntimeChainRepairTlsConnect} [tlsConnectImpl]
+ * @property {string} [bootstrapPath]
+ * @property {boolean} [disabled]
  */
 
 /**
@@ -520,7 +622,353 @@ function loadUserEnvFile() {
  * @property {string} userDataDir
  * @property {NodeJS.ProcessEnv} [parentEnv]
  * @property {(...args: unknown[]) => void} [logInfo]
+ * @property {() => Promise<string[]>} [loadPlatformCertificates]
+ * @property {string} [platformSourceName]
+ * @property {NodeJS.Platform} [platform]
+ * @property {RuntimeChainRepairOptions} [chainRepair]
  */
+
+/**
+ * @param {string} origin
+ * @param {RuntimeChainRepairTlsConnect} tlsConnectImpl
+ * @param {boolean} rejectUnauthorized
+ * @returns {Promise<RuntimeChainRepairSocket>}
+ */
+function connectForChainRepair(origin, tlsConnectImpl, rejectUnauthorized) {
+  const target = tlsTargetFromOrigin(origin);
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let socket;
+    const finish = (value, isError) => {
+      if (settled) return;
+      settled = true;
+      if (socket) {
+        socket.off("secureConnect", onSecureConnect);
+        socket.off("error", onError);
+        socket.off("timeout", onTimeout);
+      }
+      if (isError) reject(value);
+      else resolve(value);
+    };
+    const onSecureConnect = () => finish(socket, false);
+    const onError = (error) => {
+      if (socket) destroySocket(socket);
+      finish(error, true);
+    };
+    const onTimeout = () => {
+      const error = new Error("TLS connection timed out");
+      Object.defineProperty(error, "code", { value: "ETIMEDOUT" });
+      if (socket) destroySocket(socket);
+      finish(error, true);
+    };
+
+    try {
+      socket = tlsConnectImpl({
+        host: target.host,
+        port: target.port,
+        servername: target.host,
+        rejectUnauthorized,
+        timeout: CHAIN_REPAIR_SOCKET_TIMEOUT_MS,
+      });
+      socket.once("secureConnect", onSecureConnect);
+      socket.once("error", onError);
+      socket.once("timeout", onTimeout);
+      socket.setTimeout(CHAIN_REPAIR_SOCKET_TIMEOUT_MS);
+    } catch (error) {
+      finish(error, true);
+    }
+  });
+}
+
+/**
+ * @param {string} origin
+ * @param {RuntimeChainRepairTlsConnect} tlsConnectImpl
+ * @returns {Promise<string | null>}
+ */
+async function strictProbeChainRepair(origin, tlsConnectImpl) {
+  let socket;
+  try {
+    socket = await connectForChainRepair(origin, tlsConnectImpl, true);
+    return socket.authorized === true ? null : String(socket.authorizationError || "UNAUTHORIZED");
+  } catch (error) {
+    return errorCode(error);
+  } finally {
+    if (socket) destroySocket(socket);
+  }
+}
+
+/**
+ * @param {RuntimeChainRepairPeerCertificate | null} peer
+ * @returns {boolean}
+ */
+function peerChainIsLeafOnly(peer) {
+  if (!peer || typeof peer !== "object") return true;
+  const issuer = peer.issuerCertificate;
+  if (!issuer || issuer === peer) return true;
+  if (peer.raw && issuer.raw && Buffer.compare(Buffer.from(peer.raw), Buffer.from(issuer.raw)) === 0) return true;
+  return false;
+}
+
+/**
+ * @param {string} origin
+ * @param {RuntimeChainRepairTlsConnect} tlsConnectImpl
+ * @returns {Promise<{ leaf: X509Certificate, leafOnly: boolean } | null>}
+ */
+async function introspectLeafCertificate(origin, tlsConnectImpl) {
+  let socket;
+  try {
+    socket = await connectForChainRepair(origin, tlsConnectImpl, false);
+    if (typeof socket.getPeerX509Certificate !== "function") return null;
+    const leaf = socket.getPeerX509Certificate();
+    if (!leaf) return null;
+    const peer = typeof socket.getPeerCertificate === "function" ? socket.getPeerCertificate(true) : null;
+    return { leaf, leafOnly: peerChainIsLeafOnly(peer) };
+  } catch {
+    return null;
+  } finally {
+    if (socket) destroySocket(socket);
+  }
+}
+
+/**
+ * @param {X509Certificate} certificate
+ * @returns {string[]}
+ */
+function caIssuerUrls(certificate) {
+  const urls = [];
+  const infoAccess = typeof certificate.infoAccess === "string" ? certificate.infoAccess : "";
+  for (const line of infoAccess.split(/\r?\n/)) {
+    const match = /^\s*CA Issuers\s*-\s*URI:(.+?)\s*$/i.exec(line);
+    if (!match) continue;
+    try {
+      const url = new URL(match[1].trim());
+      if (url.protocol !== "http:" && url.protocol !== "https:") continue;
+      urls.push(url.href);
+      if (urls.length >= 2) break;
+    } catch {
+      // Ignore malformed AIA entries.
+    }
+  }
+  return urls;
+}
+
+/**
+ * @param {ArrayBuffer} bytes
+ * @returns {X509Certificate}
+ */
+function certificateFromBody(bytes) {
+  const buffer = Buffer.from(bytes);
+  try {
+    return new X509Certificate(buffer);
+  } catch (bufferError) {
+    const text = buffer.toString("utf8");
+    if (/-----BEGIN CERTIFICATE-----/.test(text)) return new X509Certificate(text);
+    throw bufferError;
+  }
+}
+
+/**
+ * @param {X509Certificate} certificate
+ * @returns {string}
+ */
+function certificateCommonName(certificate) {
+  for (const line of certificate.subject.split(/\r?\n/)) {
+    const match = /^CN\s*=\s*(.+)$/.exec(line.trim());
+    if (match) return match[1].trim();
+  }
+  return certificate.subject || "unknown subject";
+}
+
+/**
+ * @param {string} pem
+ * @returns {X509Certificate | null}
+ */
+function cachedRootCertificate(pem) {
+  const key = String(pem ?? "").trim();
+  if (!key) return null;
+  if (chainRepairRootCache.has(key)) return chainRepairRootCache.get(key) ?? null;
+  try {
+    const certificate = new X509Certificate(key);
+    chainRepairRootCache.set(key, certificate);
+    return certificate;
+  } catch {
+    chainRepairRootCache.set(key, null);
+    return null;
+  }
+}
+
+/**
+ * @param {X509Certificate} intermediate
+ * @param {() => string[]} rootsProvider
+ * @returns {boolean}
+ */
+function intermediateChainsToTrustedRoot(intermediate, rootsProvider) {
+  let roots = [];
+  try {
+    roots = rootsProvider();
+  } catch {
+    roots = [];
+  }
+  for (const pem of roots) {
+    const root = cachedRootCertificate(pem);
+    if (root && intermediate.checkIssued(root) && intermediate.verify(root.publicKey)) return true;
+  }
+  return false;
+}
+
+/**
+ * @param {X509Certificate} leaf
+ * @param {X509Certificate} intermediate
+ * @param {() => string[]} rootsProvider
+ * @returns {string | null}
+ */
+function refusalReason(leaf, intermediate, rootsProvider) {
+  if (intermediate.ca !== true) return "fetched certificate is not a CA";
+  if (leaf.checkIssued(intermediate) !== true) return "fetched certificate did not issue leaf";
+  if (leaf.verify(intermediate.publicKey) !== true) return "leaf signature verification failed";
+  if (!intermediateChainsToTrustedRoot(intermediate, rootsProvider)) return "fetched certificate does not chain to a trusted public root";
+  return null;
+}
+
+/**
+ * @param {string} url
+ * @param {RuntimeChainRepairFetch} fetchImpl
+ * @returns {Promise<X509Certificate | null>}
+ */
+async function fetchIntermediateCertificate(url, fetchImpl) {
+  const response = await fetchImpl(url, { signal: AbortSignal.timeout(CHAIN_REPAIR_FETCH_TIMEOUT_MS) });
+  if (!response || typeof response.arrayBuffer !== "function") return null;
+  if (response.ok === false) return null;
+  const bytes = await response.arrayBuffer();
+  if (bytes.byteLength > MAX_CHAIN_REPAIR_BODY_BYTES) return null;
+  return certificateFromBody(bytes);
+}
+
+/**
+ * @param {ResolveSystemCaEnvOptions} options
+ * @returns {Promise<string[]>}
+ */
+async function resolveChainRepairOrigins(options) {
+  const env = options.parentEnv ?? {};
+  const chainRepair = options.chainRepair ?? {};
+  if (chainRepair.origins) return normalizeRepairOrigins(chainRepair.origins);
+  const envOrigins = typeof env.OPENWORK_CHAIN_REPAIR_ORIGINS === "string" ? env.OPENWORK_CHAIN_REPAIR_ORIGINS : "";
+  if (envOrigins.trim()) return normalizeRepairOrigins(envOrigins.split(","));
+  const bootstrapPath = chainRepair.bootstrapPath ?? desktopBootstrapPath({ env });
+  const origin = await readActivatedEnterpriseOrigin(bootstrapPath);
+  return origin ? [origin] : [];
+}
+
+/**
+ * @param {ResolveSystemCaEnvOptions} options
+ * @returns {Promise<{ pems: string[], timedOut: boolean }>}
+ */
+async function repairIncompleteChains(options) {
+  const env = options.parentEnv ?? {};
+  const chainRepair = options.chainRepair ?? {};
+  const logInfo = options.logInfo;
+  if (chainRepair.disabled === true || String(env.OPENWORK_DISABLE_CHAIN_REPAIR ?? "").trim() === "1") {
+    if (typeof logInfo === "function") logInfo("OpenWork runtime: chain repair disabled by OPENWORK_DISABLE_CHAIN_REPAIR.");
+    return { pems: [], timedOut: false };
+  }
+
+  const origins = await resolveChainRepairOrigins(options);
+  if (origins.length === 0) {
+    if (!chainRepair.origins && !String(env.OPENWORK_CHAIN_REPAIR_ORIGINS ?? "").trim() && typeof logInfo === "function") {
+      logInfo("OpenWork runtime: chain repair skipped: no activation record.");
+    }
+    return { pems: [], timedOut: false };
+  }
+
+  const fetchImpl = chainRepair.fetchImpl ?? globalThis.fetch;
+  const tlsModule = options.tlsModule ?? tls;
+  const tlsConnectImpl = chainRepair.tlsConnectImpl ?? tls.connect;
+  const totalTimeoutValue = Number(env.OPENWORK_CHAIN_REPAIR_TIMEOUT_MS);
+  const totalTimeoutMs =
+    Number.isFinite(totalTimeoutValue) && totalTimeoutValue >= 1000 && totalTimeoutValue <= 120000
+      ? totalTimeoutValue
+      : CHAIN_REPAIR_TOTAL_TIMEOUT_MS;
+  const rootsProvider = chainRepair.rootsProvider ?? (() => {
+    if (typeof tlsModule?.getCACertificates !== "function") return [];
+    const roots = tlsModule.getCACertificates("default");
+    return Array.isArray(roots) ? roots : [];
+  });
+
+  if (typeof fetchImpl !== "function") {
+    if (typeof logInfo === "function") {
+      for (const origin of origins) logInfo(`OpenWork runtime: chain repair skipped for ${origin}: fetch unavailable`);
+    }
+    return { pems: [], timedOut: false };
+  }
+
+  const run = async () => {
+    const pems = [];
+    for (const origin of origins) {
+      const strictError = await strictProbeChainRepair(origin, tlsConnectImpl);
+      if (strictError === null) {
+        if (typeof logInfo === "function") logInfo(`OpenWork runtime: chain ok for ${origin}`);
+        continue;
+      }
+      if (strictError !== "UNABLE_TO_VERIFY_LEAF_SIGNATURE") {
+        if (typeof logInfo === "function") logInfo(`OpenWork runtime: chain repair skipped for ${origin}: ${strictError}`);
+        continue;
+      }
+
+      const leafState = await introspectLeafCertificate(origin, tlsConnectImpl);
+      if (!leafState) {
+        if (typeof logInfo === "function") logInfo(`OpenWork runtime: chain repair skipped for ${origin}: certificate introspection failed`);
+        continue;
+      }
+      if (!leafState.leafOnly) {
+        if (typeof logInfo === "function") logInfo(`OpenWork runtime: chain repair skipped for ${origin}: served chain includes an intermediate`);
+        continue;
+      }
+
+      const issuerUrls = caIssuerUrls(leafState.leaf);
+      if (issuerUrls.length === 0) {
+        if (typeof logInfo === "function") logInfo(`OpenWork runtime: chain repair skipped for ${origin}: no CA Issuers AIA URL`);
+        continue;
+      }
+
+      let repaired = false;
+      for (const url of issuerUrls) {
+        let intermediate;
+        try {
+          intermediate = await fetchIntermediateCertificate(url, fetchImpl);
+        } catch {
+          intermediate = null;
+        }
+        if (!intermediate) continue;
+        const reason = refusalReason(leafState.leaf, intermediate, rootsProvider);
+        if (reason) {
+          if (typeof logInfo === "function") logInfo(`OpenWork runtime: chain repair refused for ${origin}: ${reason}`);
+          continue;
+        }
+        pems.push(intermediate.toString());
+        repaired = true;
+        if (typeof logInfo === "function") {
+          logInfo(`OpenWork runtime: chain repaired for ${origin}: added "${certificateCommonName(intermediate)}"`);
+        }
+        break;
+      }
+      if (!repaired && typeof logInfo === "function") {
+        logInfo(`OpenWork runtime: chain repair skipped for ${origin}: no usable AIA issuer certificate`);
+      }
+    }
+    return { pems, timedOut: false };
+  };
+
+  let timeoutId;
+  const timeout = new Promise((resolve) => {
+    timeoutId = setTimeout(() => resolve({ pems: [], timedOut: true }), totalTimeoutMs);
+    timeoutId.unref?.();
+  });
+  try {
+    return await Promise.race([run(), timeout]);
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
 
 /**
  * @param {ResolveSystemCaEnvOptions} options
@@ -531,6 +979,10 @@ export async function resolveSystemCaEnv({
   userDataDir,
   parentEnv = process.env,
   logInfo = console.info,
+  loadPlatformCertificates,
+  platformSourceName,
+  platform = process.platform,
+  chainRepair,
 }) {
   const env = parentEnv ?? {};
   if (Object.prototype.hasOwnProperty.call(env, "NODE_EXTRA_CA_CERTS")) {
@@ -541,10 +993,50 @@ export async function resolveSystemCaEnv({
   }
 
   try {
-    if (typeof tlsModule?.getCACertificates !== "function") return {};
-    const certs = tlsModule.getCACertificates("system");
-    if (!Array.isArray(certs) || certs.length === 0) return {};
-    const pem = certs.filter((cert) => typeof cert === "string" && cert.trim()).join("\n");
+    const platformLoader = loadPlatformCertificates
+      ? { name: platformSourceName || "platform-stores", load: loadPlatformCertificates }
+      : systemPlatformCertificateLoader(platform);
+    const bundle = await resolveSystemCaBundle({
+      runtime: () => {
+        if (typeof tlsModule?.getCACertificates !== "function") return [];
+        const certs = tlsModule.getCACertificates("system");
+        return Array.isArray(certs) ? certs : [];
+      },
+      platform: platformLoader,
+    });
+    if (typeof logInfo === "function") {
+      logInfo(`OpenWork runtime: system CA bundle sources ${summarizeSystemCaSources(bundle.sources)}`);
+    }
+    let repairedPems = [];
+    try {
+      const repaired = await repairIncompleteChains({
+        tlsModule,
+        userDataDir,
+        parentEnv: env,
+        logInfo,
+        loadPlatformCertificates,
+        platformSourceName,
+        platform,
+        chainRepair,
+      });
+      repairedPems = repaired.pems;
+      if (repaired.timedOut && typeof logInfo === "function") {
+        logInfo("OpenWork runtime: chain repair skipped: timed out");
+      }
+    } catch {
+      repairedPems = [];
+    }
+    const certificates = dedupeCertificates([...bundle.certificates, ...repairedPems]);
+    if (certificates.length === 0) return {};
+    if (typeof tlsModule?.getCACertificates === "function" && typeof tlsModule?.setDefaultCACertificates === "function") {
+      try {
+        const defaultCerts = tlsModule.getCACertificates("default");
+        tlsModule.setDefaultCACertificates(dedupeCertificates([...(Array.isArray(defaultCerts) ? defaultCerts : []), ...certificates]));
+      } catch {
+        // Best-effort only; child processes still receive NODE_EXTRA_CA_CERTS.
+      }
+    }
+    const pem = certificates.join("\n");
     if (!pem) return {};
     const bundlePath = path.join(userDataDir, "system-ca-bundle.pem");
     await mkdir(path.dirname(bundlePath), { recursive: true });
@@ -572,12 +1064,11 @@ export function mergeSystemCaChildEnv(baseEnv = {}, caEnv = {}, extra = {}) {
 export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths }) {
   const engineState = createEngineState();
   const openworkServerState = createOpenworkServerState();
-  const orchestratorState = createOrchestratorState();
 
   // Serialize engine lifecycle operations. Without this, concurrent renderer
   // invocations of engineStart/engineStop/engineRestart race: each call's
-  // stopAllRuntimeChildren kills the previous call's freshly-spawned
-  // orchestrator daemon, and the prior call then times out its /health probe.
+  // stopAllRuntimeChildren kills the previous call's freshly-started server,
+  // and the prior call then times out its /health probe.
   /** @type {Promise<unknown>} */
   let runtimeLifecycleQueue = Promise.resolve();
   let lifecycleState = "idle";
@@ -618,53 +1109,6 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
 
   function managedOpencodeWorkdir() {
     return path.join(userDataDir, "managed-opencode-workdir");
-  }
-
-  function orchestratorDataDir() {
-    const envDir = process.env.OPENWORK_DATA_DIR?.trim();
-    if (envDir) return envDir;
-    return path.join(app.getPath("home"), ".openwork", "openwork-orchestrator");
-  }
-
-  function orchestratorStatePath(dataDir) {
-    return path.join(dataDir, "openwork-orchestrator-state.json");
-  }
-
-  function orchestratorAuthPath(dataDir) {
-    return path.join(dataDir, "openwork-orchestrator-auth.json");
-  }
-
-  async function readOrchestratorStateFile(dataDir) {
-    return readJsonFile(orchestratorStatePath(dataDir), null);
-  }
-
-  async function readOrchestratorAuthFile(dataDir) {
-    return readJsonFile(orchestratorAuthPath(dataDir), null);
-  }
-
-  async function writeOrchestratorAuthFile(dataDir, auth) {
-    const filePath = orchestratorAuthPath(dataDir);
-    await mkdir(path.dirname(filePath), { recursive: true });
-    await writeFile(filePath, `${JSON.stringify({ ...auth, updatedAt: nowMs() }, null, 2)}\n`, "utf8");
-  }
-
-  async function clearOrchestratorAuthFile(dataDir) {
-    await rm(orchestratorAuthPath(dataDir), { force: true });
-  }
-
-  async function requestOrchestratorShutdown(dataDir) {
-    const state = await readOrchestratorStateFile(dataDir);
-    const baseUrl = state?.daemon?.baseUrl?.trim();
-    if (!baseUrl) return false;
-    try {
-      await fetch(`${baseUrl.replace(/\/+$/, "")}/shutdown`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-      });
-      return true;
-    } catch {
-      return false;
-    }
   }
 
   async function loadTokenStore() {
@@ -782,8 +1226,8 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
   async function buildChildEnv(extra = {}) {
     /** @type {NodeJS.ProcessEnv} */
     // User env is layered first so process.env + any caller overrides always
-    // win. See apps/server/src/env-file.ts and apps/orchestrator/src/cli.ts —
-    // all loaders must agree on path + reserved-keys policy.
+    // win. See apps/server/src/env-file.ts — all loaders must agree on path +
+    // reserved-keys policy.
     const baseEnv = {
       ...loadUserEnvFile(),
       ...process.env,
@@ -925,27 +1369,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     );
   }
 
-  function parseDockerClientVersion(stdout) {
-    const line = String(stdout ?? "").split(/\r?\n/)[0]?.trim() ?? "";
-    return line.toLowerCase().startsWith("docker version") ? line : null;
-  }
-
-  function parseDockerServerVersion(stdout) {
-    for (const line of String(stdout ?? "").split(/\r?\n/)) {
-      const trimmed = line.trim();
-      if (trimmed.startsWith("Server Version:")) {
-        return trimmed.slice("Server Version:".length).trim() || null;
-      }
-    }
-    return null;
-  }
-
-  function deriveOrchestratorContainerName(runId) {
-    const sanitized = String(runId ?? "")
-      .replace(/[^a-zA-Z0-9_.-]+/g, "-")
-      .slice(0, 24);
-    return `openwork-orchestrator-${sanitized}`;
-  }
+  const legacyOpenworkContainerPrefix = `${["openwork", "orchestrator"].join("-")}-`;
 
   async function listOpenworkManagedContainers() {
     const result = runDockerCommandDetailed(["ps", "-a", "--format", "{{.Names}}"], 8000);
@@ -956,7 +1380,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     return result.stdout
       .split(/\r?\n/)
       .map((line) => line.trim())
-      .filter((name) => name && (name.startsWith("openwork-orchestrator-") || name.startsWith("openwork-dev-") || name.startsWith("openwrk-")))
+      .filter((name) => name && (name.startsWith(legacyOpenworkContainerPrefix) || name.startsWith("openwork-dev-") || name.startsWith("openwrk-")))
       .sort();
   }
 
@@ -1027,36 +1451,6 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     return `curl -fsSL https://opencode.ai/install | bash -s -- --version ${version} --no-modify-path`;
   }
 
-  function spawnManagedChild(state, program, args, options = {}) {
-    const child = spawn(program, args, {
-      cwd: options.cwd,
-      env: options.env,
-      stdio: ["ignore", "pipe", "pipe"],
-      windowsHide: true,
-    });
-
-    state.child = child;
-    state.childExited = false;
-    state.lastStdout = null;
-    state.lastStderr = null;
-
-    child.stdout?.on("data", (chunk) => appendOutput(state, "lastStdout", chunk.toString()));
-    child.stderr?.on("data", (chunk) => appendOutput(state, "lastStderr", chunk.toString()));
-    child.on("exit", (code) => {
-      state.childExited = true;
-      if (code != null && code !== 0) {
-        appendOutput(state, "lastStderr", `Process exited with code ${code}.\n`);
-      }
-      options.onExit?.(code);
-    });
-    child.on("error", (error) => {
-      state.childExited = true;
-      appendOutput(state, "lastStderr", `${error instanceof Error ? error.message : String(error)}\n`);
-    });
-
-    return child;
-  }
-
   function processMatchesSidecar(command) {
     return commandMatchesPackagedSidecar(command, sidecarDirs);
   }
@@ -1072,12 +1466,6 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
 
   async function cleanupPackagedSidecars() {
     if (!app.isPackaged) return;
-
-    // First ask the previously recorded orchestrator daemon to shut itself and
-    // its OpenCode child down. This handles the happy path without relying on
-    // process-list parsing.
-    await requestOrchestratorShutdown(orchestratorState.dataDir || orchestratorDataDir()).catch(() => false);
-    await new Promise((resolve) => setTimeout(resolve, 300));
 
     // Safety net: an unclean Electron quit can orphan sidecars. Packaged builds
     // should always own a fresh runtime per app launch, so remove any leftover
@@ -1126,19 +1514,14 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
   }
 
   async function ensureOpencodeConfig(projectDir) {
-    const jsoncPath = path.join(projectDir, "opencode.jsonc");
-    const jsonPath = path.join(projectDir, "opencode.json");
-    if ((await fileExists(jsoncPath)) || (await fileExists(jsonPath))) return;
-    await mkdir(projectDir, { recursive: true });
+    const configPath = resolveWorkspaceOpencodeConfigPath(projectDir);
+    if (await fileExists(configPath)) return;
+    await mkdir(path.dirname(configPath), { recursive: true });
     await writeFile(
-      jsoncPath,
+      configPath,
       `${JSON.stringify({ $schema: "https://opencode.ai/config.json" }, null, 2)}\n`,
       "utf8",
     );
-  }
-
-  function generateManagedCredentials() {
-    return [randomUUID().replace(/-/g, "") + randomUUID().replace(/-/g, ""), randomUUID().replace(/-/g, "") + randomUUID().replace(/-/g, "")];
   }
 
   async function issueOwnerToken(baseUrl, hostToken) {
@@ -1300,143 +1683,6 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     return snapshotOpenworkServerState(openworkServerState);
   }
 
-  async function resolveOrchestratorBaseUrl() {
-    if (orchestratorState.baseUrl) {
-      return orchestratorState.baseUrl;
-    }
-    const stateFile = await readOrchestratorStateFile(orchestratorState.dataDir || orchestratorDataDir());
-    const baseUrl = stateFile?.daemon?.baseUrl?.trim();
-    if (!baseUrl) {
-      throw new Error("orchestrator daemon is not running");
-    }
-    return baseUrl;
-  }
-
-  async function startOrchestratorRuntime(projectDir, options = {}) {
-    const dataDir = orchestratorDataDir();
-    await mkdir(dataDir, { recursive: true });
-    const daemonPort = await findFreePort("127.0.0.1");
-    const opencodePort = await findFreePort("127.0.0.1");
-    const [username, password] = generateManagedCredentials();
-
-    const orchestratorProgram = resolveBinary("openwork-orchestrator") ?? resolveBinary("openwork");
-    if (!orchestratorProgram) {
-      throw new Error("Failed to locate openwork-orchestrator.");
-    }
-
-    const opencodeBinary = resolveOpencodeBinary(options.opencodeBinPath);
-    if (!opencodeBinary?.path) {
-      throw new Error("Failed to locate opencode.");
-    }
-
-    const env = await buildChildEnv({
-      OPENWORK_INTERNAL_ALLOW_OPENCODE_CREDENTIALS: "1",
-      OPENWORK_OPENCODE_USERNAME: username,
-      OPENWORK_OPENCODE_PASSWORD: password,
-      ...(options.opencodeEnableExa !== false ? { OPENCODE_ENABLE_EXA: "1" } : {}),
-    });
-
-    const args = [
-      "daemon",
-      "run",
-      "--data-dir",
-      dataDir,
-      "--daemon-host",
-      "127.0.0.1",
-      "--daemon-port",
-      String(daemonPort),
-      "--opencode-bin",
-      opencodeBinary.path,
-      "--opencode-host",
-      "127.0.0.1",
-      "--opencode-workdir",
-      projectDir,
-      "--opencode-port",
-      String(opencodePort),
-      "--allow-external",
-      "--cors",
-      "*",
-    ];
-
-    spawnManagedChild(orchestratorState, orchestratorProgram, args, { env });
-    orchestratorState.dataDir = dataDir;
-    orchestratorState.daemonPort = daemonPort;
-    orchestratorState.baseUrl = `http://127.0.0.1:${daemonPort}`;
-
-    await writeOrchestratorAuthFile(dataDir, {
-      opencodeUsername: username,
-      opencodePassword: password,
-      projectDir,
-    });
-
-    const health = await waitForHttpOk(`${orchestratorState.baseUrl}/health`, 180_000).then((response) => response.json());
-    const opencode = health?.opencode;
-    if (!opencode?.port) {
-      throw new Error("Orchestrator did not report OpenCode status.");
-    }
-
-    engineState.runtime = ORCHESTRATOR_RUNTIME;
-    engineState.projectDir = projectDir;
-    engineState.hostname = "127.0.0.1";
-    engineState.port = opencode.port;
-    engineState.baseUrl = `http://127.0.0.1:${opencode.port}`;
-    engineState.opencodeUsername = username;
-    engineState.opencodePassword = password;
-    engineState.opencodeBinPath = opencodeBinary.path;
-    engineState.opencodeBinSource = opencodeBinary.source;
-    engineState.managedByServer = false;
-    engineState.managedPid = null;
-    engineState.managedIsAlive = null;
-
-    return snapshotEngineState(engineState);
-  }
-
-  async function startDirectRuntime(projectDir, options = {}) {
-    const opencodeBinary = resolveOpencodeBinary(options.opencodeBinPath);
-    if (!opencodeBinary?.path) {
-      throw new Error("Failed to locate opencode.");
-    }
-
-    const port = await findFreePort("127.0.0.1");
-    const [username, password] = generateManagedCredentials();
-    const env = await buildChildEnv({
-      OPENCODE_SERVER_USERNAME: username,
-      OPENCODE_SERVER_PASSWORD: password,
-    });
-
-    const args = ["serve", "--hostname", "127.0.0.1", "--port", String(port), "--cors", "*"];
-    engineState.execution = redactedExecutionSnapshot(opencodeBinary.path, args, projectDir, {
-      OPENCODE_SERVER_USERNAME: username,
-      OPENCODE_SERVER_PASSWORD: password,
-    });
-
-    spawnManagedChild(
-      engineState,
-      opencodeBinary.path,
-      args,
-      {
-        cwd: projectDir,
-        env,
-      },
-    );
-
-    engineState.runtime = DIRECT_RUNTIME;
-    engineState.projectDir = projectDir;
-    engineState.hostname = "127.0.0.1";
-    engineState.port = port;
-    engineState.baseUrl = `http://127.0.0.1:${port}`;
-    engineState.opencodeUsername = username;
-    engineState.opencodePassword = password;
-    engineState.opencodeBinPath = opencodeBinary.path;
-    engineState.opencodeBinSource = opencodeBinary.source;
-    engineState.managedByServer = false;
-    engineState.managedPid = null;
-    engineState.managedIsAlive = null;
-
-    await waitForHttpOk(`${engineState.baseUrl}/health`, 10_000).catch(() => undefined);
-    return snapshotEngineState(engineState);
-  }
-
   async function stopAllRuntimeChildren() {
     // Stop the in-process server (and its managed OpenCode child) if running.
     if (inProcessServer) {
@@ -1444,15 +1690,10 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
       inProcessServer = null;
     }
     await stopChild(openworkServerState);
-    await stopChild(orchestratorState, {
-      requestShutdown: () => requestOrchestratorShutdown(orchestratorState.dataDir || orchestratorDataDir()),
-    });
-    await clearOrchestratorAuthFile(orchestratorState.dataDir || orchestratorDataDir()).catch(() => undefined);
     await stopChild(engineState);
 
     Object.assign(engineState, createEngineState());
     Object.assign(openworkServerState, createOpenworkServerState());
-    Object.assign(orchestratorState, createOrchestratorState());
   }
 
   async function prepareFreshRuntime() {
@@ -1597,57 +1838,6 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     });
   }
 
-  async function orchestratorStatus() {
-    const engine = snapshotEngineState(engineState);
-    const openworkServer = snapshotOpenworkServerState(openworkServerState);
-    const workspaces = engine.projectDir
-      ? [{ id: normalizeWorkspaceKey(engine.projectDir), path: engine.projectDir, name: path.basename(engine.projectDir) || "Workspace" }]
-      : [];
-    return {
-      running: engine.running,
-      dataDir: null,
-      daemon: openworkServer.running
-        ? { baseUrl: openworkServer.baseUrl, port: openworkServer.port, pid: openworkServer.pid, runtime: "direct" }
-        : null,
-      opencode: engine.running
-        ? { baseUrl: engine.baseUrl, port: engine.port, pid: engine.pid, projectDir: engine.projectDir, runtime: "direct" }
-        : null,
-      cliVersion: null,
-      sidecar: null,
-      binaries: null,
-      activeId: workspaces[0]?.id ?? null,
-      workspaceCount: workspaces.length,
-      workspaces,
-      lastError: engine.lastStderr,
-    };
-  }
-
-  async function orchestratorWorkspaceActivate(input) {
-    const workspacePath = String(input?.workspacePath ?? "").trim();
-    if (!workspacePath) {
-      throw new Error("workspacePath is required");
-    }
-    const resolved = path.resolve(workspacePath);
-    if (normalizeWorkspaceKey(engineState.projectDir) !== normalizeWorkspaceKey(resolved)) {
-      await engineStart(resolved, {
-        runtime: DIRECT_RUNTIME,
-        workspacePaths: [resolved],
-      });
-    }
-    return {
-      id: normalizeWorkspaceKey(resolved),
-      path: resolved,
-      name: input?.name ?? (path.basename(resolved) || "Workspace"),
-    };
-  }
-
-  async function orchestratorInstanceDispose(workspacePath) {
-    if (normalizeWorkspaceKey(engineState.projectDir) === normalizeWorkspaceKey(workspacePath)) {
-      return true;
-    }
-    return true;
-  }
-
   async function engineInstall() {
     if (process.platform === "win32") {
       return {
@@ -1701,123 +1891,6 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     };
   }
 
-  async function sandboxDoctor() {
-    const candidates = resolveDockerCandidates();
-    const debug = {
-      candidates,
-      selectedBin: null,
-      versionCommand: null,
-      infoCommand: null,
-    };
-
-    let version;
-    try {
-      version = runDockerCommandDetailed(["--version"], 2000);
-    } catch (error) {
-      return {
-        installed: false,
-        daemonRunning: false,
-        permissionOk: false,
-        ready: false,
-        clientVersion: null,
-        serverVersion: null,
-        error: error instanceof Error ? error.message : String(error),
-        debug,
-      };
-    }
-
-    debug.selectedBin = version.program;
-    debug.versionCommand = {
-      status: version.status,
-      stdout: truncateOutput(version.stdout, 1200),
-      stderr: truncateOutput(version.stderr, 1200),
-    };
-
-    const clientVersion = parseDockerClientVersion(version.stdout);
-    if (version.status !== 0) {
-      return {
-        installed: false,
-        daemonRunning: false,
-        permissionOk: false,
-        ready: false,
-        clientVersion: null,
-        serverVersion: null,
-        error: `docker --version failed (status ${version.status}): ${version.stderr.trim()}`,
-        debug,
-      };
-    }
-
-    let info;
-    try {
-      info = runDockerCommandDetailed(["info"], 8000);
-    } catch (error) {
-      return {
-        installed: true,
-        daemonRunning: false,
-        permissionOk: false,
-        ready: false,
-        clientVersion,
-        serverVersion: null,
-        error: error instanceof Error ? error.message : String(error),
-        debug,
-      };
-    }
-
-    debug.infoCommand = {
-      status: info.status,
-      stdout: truncateOutput(info.stdout, 1200),
-      stderr: truncateOutput(info.stderr, 1200),
-    };
-
-    if (info.status === 0) {
-      return {
-        installed: true,
-        daemonRunning: true,
-        permissionOk: true,
-        ready: true,
-        clientVersion,
-        serverVersion: parseDockerServerVersion(info.stdout),
-        error: null,
-        debug,
-      };
-    }
-
-    const combined = `${info.stdout.trim()}\n${info.stderr.trim()}`.trim().toLowerCase();
-    const permissionOk = !combined.includes("permission denied") && !combined.includes("access is denied");
-    const daemonRunning = !combined.includes("cannot connect to the docker daemon") && !combined.includes("is the docker daemon running") && !combined.includes("connection refused") && !combined.includes("no such file or directory");
-
-    return {
-      installed: true,
-      daemonRunning,
-      permissionOk,
-      ready: false,
-      clientVersion,
-      serverVersion: null,
-      error: `${info.stdout.trim()}\n${info.stderr.trim()}`.trim() || `docker info failed (status ${info.status})`,
-      debug,
-    };
-  }
-
-  async function sandboxStop(containerName) {
-    const name = String(containerName ?? "").trim();
-    if (!name) {
-      throw new Error("containerName is required");
-    }
-    if (!name.startsWith("openwork-orchestrator-")) {
-      throw new Error("Refusing to stop container: expected name starting with 'openwork-orchestrator-'");
-    }
-    if (!/^[A-Za-z0-9_.-]+$/.test(name)) {
-      throw new Error("containerName contains invalid characters");
-    }
-    const result = runDockerCommandDetailed(["stop", name], 15_000);
-    return {
-      ok: result.status === 0,
-      status: result.status,
-      stdout: result.stdout,
-      stderr: result.stderr,
-    };
-  }
-
   async function sandboxCleanupOpenworkContainers() {
     const candidates = await listOpenworkManagedContainers().catch((error) => {
       throw error;
@@ -1841,158 +1914,6 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     return { candidates, removed, errors };
   }
 
-  async function orchestratorStartDetached(options = {}) {
-    const workspacePath = String(options.workspacePath ?? "").trim();
-    if (!workspacePath) {
-      throw new Error("workspacePath is required");
-    }
-
-    const sandboxBackend = String(options.sandboxBackend ?? "none").trim().toLowerCase();
-    if (!["none", "docker", "microsandbox"].includes(sandboxBackend)) {
-      throw new Error("sandboxBackend must be one of: none, docker, microsandbox");
-    }
-
-    const wantsDockerSandbox = sandboxBackend === "docker" || sandboxBackend === "microsandbox";
-    const runId = String(options.runId ?? randomUUID()).trim();
-    const containerName = wantsDockerSandbox ? deriveOrchestratorContainerName(runId) : null;
-    const port = await findFreePort("127.0.0.1");
-    const token = String(options.openworkToken ?? randomUUID()).trim();
-    const hostToken = String(options.openworkHostToken ?? randomUUID()).trim();
-    const openworkUrl = `http://127.0.0.1:${port}`;
-    const program = resolveBinary("openwork-orchestrator") ?? resolveBinary("openwork");
-    if (!program) {
-      throw new Error("Failed to locate openwork orchestrator.");
-    }
-
-    const args = [
-      "start",
-      "--workspace",
-      workspacePath,
-      "--approval",
-      "auto",
-      "--detach",
-      "--openwork-port",
-      String(port),
-      "--run-id",
-      runId,
-      ...(wantsDockerSandbox ? ["--sandbox", "docker"] : []),
-      ...(options.sandboxImageRef ? ["--sandbox-image", String(options.sandboxImageRef)] : []),
-    ];
-
-    const child = spawn(program, args, {
-      env: { ...(await buildChildEnv()), OPENWORK_TOKEN: token, OPENWORK_HOST_TOKEN: hostToken },
-      detached: true,
-      stdio: "ignore",
-      windowsHide: true,
-    });
-    child.unref();
-
-    await waitForHttpOk(`${openworkUrl}/health`, wantsDockerSandbox ? 90_000 : 12_000);
-    const ownerToken = await issueOwnerToken(openworkUrl, hostToken).catch(() => null);
-
-    return {
-      openworkUrl,
-      token,
-      ownerToken,
-      hostToken,
-      port,
-      sandboxBackend: wantsDockerSandbox ? sandboxBackend : null,
-      sandboxRunId: wantsDockerSandbox ? runId : null,
-      sandboxContainerName: containerName,
-    };
-  }
-
-  async function sandboxDebugProbe() {
-    const startedAt = nowMs();
-    const runId = `probe-${randomUUID()}`;
-    const workspacePath = path.join(os.tmpdir(), `openwork-sandbox-probe-${randomUUID()}`);
-    await mkdir(workspacePath, { recursive: true });
-
-    const doctor = await sandboxDoctor();
-    let detachedHost = null;
-    let dockerInspect = null;
-    let dockerLogs = null;
-    let error = null;
-    const cleanupErrors = [];
-    let containerRemoved = false;
-    let workspaceRemoved = false;
-    let removeResult = null;
-
-    if (doctor.ready) {
-      try {
-        detachedHost = await orchestratorStartDetached({
-          workspacePath,
-          sandboxBackend: "docker",
-          runId,
-        });
-        const containerName = detachedHost.sandboxContainerName ?? deriveOrchestratorContainerName(runId);
-        try {
-          const inspectResult = runDockerCommandDetailed(["inspect", containerName], 6000);
-          dockerInspect = {
-            status: inspectResult.status,
-            stdout: truncateOutput(inspectResult.stdout, 48000),
-            stderr: truncateOutput(inspectResult.stderr, 48000),
-          };
-        } catch (inspectError) {
-          cleanupErrors.push(`docker inspect failed: ${inspectError instanceof Error ? inspectError.message : String(inspectError)}`);
-        }
-        try {
-          const logsResult = runDockerCommandDetailed(["logs", "--timestamps", "--tail", "400", containerName], 8000);
-          dockerLogs = {
-            status: logsResult.status,
-            stdout: truncateOutput(logsResult.stdout, 48000),
-            stderr: truncateOutput(logsResult.stderr, 48000),
-          };
-        } catch (logsError) {
-          cleanupErrors.push(`docker logs failed: ${logsError instanceof Error ? logsError.message : String(logsError)}`);
-        }
-
-        try {
-          const rmResult = runDockerCommandDetailed(["rm", "-f", containerName], 20_000);
-          containerRemoved = rmResult.status === 0;
-          removeResult = {
-            status: rmResult.status,
-            stdout: truncateOutput(rmResult.stdout, 48000),
-            stderr: truncateOutput(rmResult.stderr, 48000),
-          };
-        } catch (removeError) {
-          cleanupErrors.push(`docker rm -f ${containerName} failed: ${removeError instanceof Error ? removeError.message : String(removeError)}`);
-        }
-      } catch (probeError) {
-        error = `Sandbox probe failed to start: ${probeError instanceof Error ? probeError.message : String(probeError)}`;
-      }
-    } else {
-      error = doctor.error ?? "Docker is not ready for sandbox creation";
-    }
-
-    try {
-      await rm(workspacePath, { recursive: true, force: true });
-      workspaceRemoved = true;
-    } catch (workspaceError) {
-      cleanupErrors.push(`Failed to remove probe workspace: ${workspaceError instanceof Error ? workspaceError.message : String(workspaceError)}`);
-    }
-
-    return {
-      startedAt,
-      finishedAt: nowMs(),
-      runId,
-      workspacePath,
-      ready: doctor.ready && !error,
-      doctor,
-      detachedHost,
-      dockerInspect,
-      dockerLogs,
-      cleanup: {
-        containerName: detachedHost?.sandboxContainerName ?? null,
-        containerRemoved,
-        removeResult,
-        workspaceRemoved,
-        errors: cleanupErrors,
-      },
-      error,
-    };
-  }
-
   return {
     engineStart: (projectDir, options) => withRuntimeLifecycle(() => engineStart(projectDir, options)),
     engineStop: () => withRuntimeLifecycle(() => engineStop()),
@@ -2005,14 +1926,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     engineInstall,
     openworkServerInfo,
     openworkServerRestart: (options) => withRuntimeLifecycle(() => openworkServerRestart(options)),
-    orchestratorStatus,
-    orchestratorWorkspaceActivate,
-    orchestratorInstanceDispose,
-    orchestratorStartDetached,
     opencodeMcpAuth,
-    sandboxDoctor,
-    sandboxStop,
     sandboxCleanupOpenworkContainers,
-    sandboxDebugProbe,
   };
 }

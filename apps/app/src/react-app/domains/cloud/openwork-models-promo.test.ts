@@ -7,6 +7,7 @@ declare const expect: (value: unknown) => {
 
 import { DEFAULT_DEN_BASE_URL, HOSTED_DEFAULT_DEN_BASE_URL, setDenBootstrapConfig } from "../../../app/lib/den";
 import {
+  hasOpenWorkModelsAvailable,
   isOpenWorkModelsPromoEligible,
   isOpenWorkModelsPromoEligibleForDenBaseUrl,
   shouldShowOpenWorkModelsPromo,
@@ -28,5 +29,22 @@ describe("OpenWork Models promo eligibility", () => {
     expect(isOpenWorkModelsPromoEligible()).toBe(false);
     expect(shouldShowOpenWorkModelsPromo()).toBe(false);
     expect(wasOpenWorkModelsStartupPromoShown()).toBe(true);
+  });
+});
+
+describe("hasOpenWorkModelsAvailable", () => {
+  test("requires a connected openwork provider with at least one model", () => {
+    expect(
+      hasOpenWorkModelsAvailable({
+        providerConnectedIds: ["openwork"],
+        providers: [{ id: "openwork", models: {} }],
+      }),
+    ).toBe(false);
+    expect(
+      hasOpenWorkModelsAvailable({
+        providerConnectedIds: ["openwork"],
+        providers: [{ id: "openwork", models: { "gpt-5": {} } }],
+      }),
+    ).toBe(true);
   });
 });

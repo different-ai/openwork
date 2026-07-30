@@ -14,17 +14,10 @@ const PROBE_SCRIPT = `
   console.log(JSON.stringify({ tools: Object.keys(plugin.tool).sort(), system: output.system.join("\\n") }));
 `;
 
-function envWithUiControl(value) {
-  const env = { ...process.env };
-  if (value === null) delete env.OPENWORK_UI_CONTROL_TOOLS;
-  else env.OPENWORK_UI_CONTROL_TOOLS = value;
-  return env;
-}
-
-async function probeUiControlTools(value) {
+async function probeSemanticTools() {
   const { stdout } = await execFile("bun", ["-e", PROBE_SCRIPT], {
     cwd: ROOT,
-    env: envWithUiControl(value),
+    env: process.env,
     maxBuffer: 1024 * 1024,
   });
   return JSON.parse(stdout.trim());
@@ -45,47 +38,28 @@ function witness(ctx, condition, assertion, actual) {
 
 export default {
   id: "ui-control-tools-opt-in",
-  title: "Built-in OpenWork UI-control preview tools are opt-in",
+  title: "Built-in OpenWork agent surface is semantic-only",
   kind: "internal",
   requiresApp: false,
   steps: [
     {
-      name: "UI-control tools are absent by default",
+      name: "Only semantic OpenWork tools are registered",
       run: async (ctx) => {
         let result = null;
-        await ctx.prove("The built-in UI-control preview tools do not clutter default sessions", {
-          voiceover: "With the environment flag unset, the plugin still exposes extension discovery and cross-session memory, but the openwork UI-control preview tools are gone from the tool list and the system prompt.",
+        await ctx.prove("The preview plugin exposes openwork_context/query/execute only", {
+          voiceover: "The bundled OpenWork plugin no longer registers legacy session, extension, browser, or UI-control tool aliases. Agents use the three semantic tools and affordance ids from openwork_context.",
           action: async () => {
-            result = await probeUiControlTools(null);
-            ctx.output("OPENWORK_UI_CONTROL_TOOLS unset", pretty(result));
+            result = await probeSemanticTools();
+            ctx.output("semantic tool surface", pretty(result));
           },
           assert: async () => {
             witness(ctx, Array.isArray(result?.tools), "The probe printed a tools array", result ? pretty(result.tools) : "null");
-            witness(ctx, !result.tools.includes("openwork_ui_snapshot"), "openwork_ui_snapshot is not registered by default", result.tools.join(", "));
-            witness(ctx, !result.tools.includes("openwork_ui_list_actions"), "openwork_ui_list_actions is not registered by default", result.tools.join(", "));
-            witness(ctx, !result.tools.includes("openwork_ui_execute_action"), "openwork_ui_execute_action is not registered by default", result.tools.join(", "));
-            witness(ctx, result.tools.includes("openwork_session_search"), "openwork_session_search remains registered", result.tools.join(", "));
-            witness(ctx, !result.system.includes("openwork_ui_"), "The default system prompt lacks openwork_ui_ steering", result.system);
-          },
-        });
-      },
-    },
-    {
-      name: "Setting OPENWORK_UI_CONTROL_TOOLS=1 restores the surface",
-      run: async (ctx) => {
-        let result = null;
-        await ctx.prove("The preview UI-control surface returns when explicitly opted in", {
-          voiceover: "When internal tooling sets OPENWORK_UI_CONTROL_TOOLS to one, the same plugin initialization registers all three openwork UI-control tools and restores the steering that tells agents how to use them.",
-          action: async () => {
-            result = await probeUiControlTools("1");
-            ctx.output("OPENWORK_UI_CONTROL_TOOLS=1", pretty(result));
-          },
-          assert: async () => {
-            witness(ctx, Array.isArray(result?.tools), "The opt-in probe printed a tools array", result ? pretty(result.tools) : "null");
-            witness(ctx, result.tools.includes("openwork_ui_snapshot"), "openwork_ui_snapshot is registered when opted in", result.tools.join(", "));
-            witness(ctx, result.tools.includes("openwork_ui_list_actions"), "openwork_ui_list_actions is registered when opted in", result.tools.join(", "));
-            witness(ctx, result.tools.includes("openwork_ui_execute_action"), "openwork_ui_execute_action is registered when opted in", result.tools.join(", "));
-            witness(ctx, result.system.includes("openwork_ui_execute_action"), "The opt-in system prompt includes UI-control steering", result.system);
+            witness(ctx, result.tools.join(",") === "openwork_context,openwork_execute,openwork_query", "Only the three semantic tools are registered", result.tools.join(", "));
+            witness(ctx, !result.tools.some((tool) => tool.startsWith("openwork_ui_")), "Legacy openwork_ui_* tools are gone", result.tools.join(", "));
+            witness(ctx, !result.tools.some((tool) => tool.startsWith("openwork_session_")), "Legacy openwork_session_* tools are gone", result.tools.join(", "));
+            witness(ctx, !result.system.includes("openwork_ui_"), "The system prompt lacks openwork_ui_ steering", result.system);
+            witness(ctx, result.system.includes("openwork_context"), "The system prompt steers toward openwork_context", result.system);
+            witness(ctx, result.system.includes("browser.open_url"), "The system prompt steers browser work through browser.open_url", result.system);
           },
         });
       },

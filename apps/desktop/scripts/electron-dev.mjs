@@ -11,13 +11,37 @@ const electronHelperDir = resolve(desktopRoot, "resources", "helpers");
 const defaultDevDataDir = resolve(
   process.env.HOME ?? process.env.USERPROFILE ?? repoRoot,
   ".openwork",
-  "openwork-orchestrator-dev",
+  "openwork-server-dev",
 );
 
 const pnpmCmd = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
 const nodeCmd = process.execPath;
-const portValue = Number.parseInt(process.env.PORT ?? "", 10);
-const devPort = Number.isFinite(portValue) && portValue > 0 ? portValue : 5173;
+
+async function findFreeTcpPort() {
+  return new Promise((resolvePort, rejectPort) => {
+    const server = net.createServer();
+    server.once("error", rejectPort);
+    server.listen({ port: 0, host: "127.0.0.1" }, () => {
+      const address = server.address();
+      server.close(() => {
+        if (address && typeof address === "object") {
+          resolvePort(address.port);
+          return;
+        }
+        rejectPort(new Error("Unable to resolve a free Vite dev port"));
+      });
+    });
+  });
+}
+
+const rawPort = process.env.PORT?.trim() ?? "";
+const portValue = Number.parseInt(rawPort, 10);
+const devPort = rawPort === "0"
+  ? await findFreeTcpPort()
+  : Number.isFinite(portValue) && portValue > 0 ? portValue : 5173;
+if (rawPort === "0") {
+  console.log(`[electron-dev] Vite dev server will use free port ${devPort}`);
+}
 const explicitStartUrl = process.env.OPENWORK_ELECTRON_START_URL?.trim() || "";
 const startUrl = explicitStartUrl || `http://localhost:${devPort}`;
 const viteProbeUrls = explicitStartUrl

@@ -14,7 +14,13 @@ function resourcesPathFromAppAsarPath(path: string): string | null {
   return match ? path.slice(0, match.index) : null;
 }
 
-export function openworkPluginPath(name: string, here = dirname(fileURLToPath(import.meta.url))): string {
+export function openworkPluginPath(name: string, here?: string): string {
+  const pluginDir = process.env.OPENWORK_EXTENSIONS_PLUGIN_DIR;
+  if (pluginDir) {
+    return join(pluginDir, `${name}.js`);
+  }
+
+  here = here ?? dirname(fileURLToPath(import.meta.url));
   const resourcesPath = resourcesPathFromAppAsarPath(here);
   if (resourcesPath) {
     const electronResourcesPath = process.resourcesPath?.includes("app.asar") ? resourcesPath : process.resourcesPath?.trim();

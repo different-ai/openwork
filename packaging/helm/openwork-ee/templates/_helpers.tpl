@@ -45,6 +45,16 @@ app.kubernetes.io/component: {{ .component }}
 {{ include "openwork-ee.fullname" . }}-config
 {{- end -}}
 
+{{- define "openwork-ee.allowPrivateMcpUrls" -}}
+{{- $value := .Values.config.public.allowPrivateMcpUrls | default "" | toString | trim | lower -}}
+{{- if eq $value "1" -}}
+1
+{{- else if or (eq $value "") (eq $value "0") (eq $value "false") -}}
+{{- else -}}
+{{- fail "config.public.allowPrivateMcpUrls must be blank, 0, false, or \"1\"" -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "openwork-ee.secretName" -}}
 {{- if .Values.secret.existingSecret -}}
 {{- .Values.secret.existingSecret -}}

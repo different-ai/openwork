@@ -28,7 +28,6 @@ const state = {
   installToken: null,
   installPageUrl: null,
   installConfig: null,
-  installerUrl: null,
   updaterBefore: null,
 };
 
@@ -116,32 +115,6 @@ async function mintInstallLink(ctx) {
     return body;
   });
   state.installConfig = config;
-}
-
-async function startRemoteInstaller(ctx) {
-  const binary = ctx.env.OPENWORK_EVAL_INSTALLER_BIN?.trim() || "/workspace/apps/installer/dist/openwork-installer";
-  const sidecar = Buffer.from(JSON.stringify(state.installConfig), "utf8").toString("base64");
-  const stdout = await daytonaExec(ctx, "configured installer UI", `
-set -euo pipefail
-work=/tmp/acme-work-installer
-rm -rf "$work"
-mkdir -p "$work"
-cp '${binary}' "$work/openwork-installer"
-chmod +x "$work/openwork-installer"
-printf '%s' '${sidecar}' | base64 -d > "$work/openwork-installer.json"
-pkill -f '/tmp/acme-work-installer/openwork-installer' 2>/dev/null || true
-OPENWORK_INSTALLER_UI=manual nohup "$work/openwork-installer" >/tmp/acme-work-installer.log 2>&1 </dev/null &
-for _ in $(seq 1 30); do
-  url=$(grep -o 'http://127[.]0[.]0[.]1:[0-9]*/' /tmp/acme-work-installer.log | tail -n 1 || true)
-  if [ -n "$url" ]; then printf '%s\n' "$url"; exit 0; fi
-  sleep 1
-done
-cat /tmp/acme-work-installer.log >&2
-exit 1
-`);
-  const url = stdout.split(/\r?\n/).find((line) => line.startsWith("http://127.0.0.1:"));
-  ctx.assert(Boolean(url), `Installer did not report its UI URL: ${stdout}`);
-  state.installerUrl = url;
 }
 
 async function nativeWindowTitle(ctx) {
@@ -262,28 +235,8 @@ export default {
     {
       name: "Frame 3",
       run: async (ctx) => {
-        await ctx.prove("The real configured installer UI identifies Acme Work and Example Corp", {
-          voiceover: vo[2],
-          action: async () => {
-            await startRemoteInstaller(ctx);
-            await panelEval(ctx, `location.replace(${JSON.stringify(state.installerUrl)})`).catch(() => undefined);
-            await waitForPanel(ctx, `document.body.innerText.includes('${APP_NAME} Installer') && document.body.innerText.includes('${ORG_NAME}')`, { timeoutMs: 30_000, label: "configured Acme Work installer" });
-          },
-          assert: async () => {
-            const text = await panelEval(ctx, "document.body.innerText");
-            ctx.assert(text.includes(`${APP_NAME} Installer`), `Installer title missing from ${text.slice(0, 500)}`);
-            ctx.assert(text.includes(`This sets up ${APP_NAME} for ${ORG_NAME}`), `Installer organization copy missing from ${text.slice(0, 500)}`);
-            ctx.assert(text.includes("Configured via install link"), "Installer did not report install-link configuration.");
-          },
-          screenshot: { name: "frame-3-acme-work-installer", sandboxCapture: true, textTargetUrlIncludes: "127.0.0.1", requireText: [`${APP_NAME} Installer`, `This sets up ${APP_NAME} for ${ORG_NAME}`] },
-        });
-      },
-    },
-    {
-      name: "Frame 4",
-      run: async (ctx) => {
         await ctx.prove("After sign-in, the desktop title and sidebar apply Acme Work live", {
-          voiceover: vo[3],
+          voiceover: vo[2],
           action: async () => {
             await memberRefresh(ctx);
             await ctx.navigateHash("/session");
@@ -303,10 +256,10 @@ export default {
       },
     },
     {
-      name: "Frame 5",
+      name: "Frame 4",
       run: async (ctx) => {
         await ctx.prove("Branding survives a fresh desktop process while app and updater identity remain OpenWork-compatible", {
-          voiceover: vo[4],
+          voiceover: vo[3],
           action: async () => {
             await relaunchDesktop(ctx);
             await memberRefresh(ctx);

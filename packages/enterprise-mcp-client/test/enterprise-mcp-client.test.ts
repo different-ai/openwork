@@ -28,6 +28,16 @@ const rpcRequestSchema = z.object({
   id: z.union([z.string(), z.number()]).optional(),
   method: z.string(),
 }).passthrough()
+const rpcProgressRequestSchema = rpcRequestSchema.extend({
+  params: z.object({
+    _meta: z.object({
+      progressToken: z.union([z.string(), z.number()]).optional(),
+    }).passthrough().optional(),
+  }).passthrough().optional(),
+})
+const textToolResultSchema = z.object({
+  content: z.array(z.object({ type: z.literal("text"), text: z.string() })),
+}).passthrough()
 
 type MockMcpOptions = {
   toolError?: boolean
@@ -256,6 +266,102 @@ async function startOAuthMcpServer(options: {
   }
 }
 
+async function startProgressMcpServer(options: {
+  resultDelayMs: number
+  progressIntervalMs: number
+}) {
+  let origin = ""
+  const server = createServer(async (request, response) => {
+    try {
+      const url = new URL(request.url ?? "/", origin)
+      if (url.pathname !== "/mcp") {
+        sendJson(response, 404, { error: "not_found" })
+        return
+      }
+      const body = await requestBody(request)
+      if (!body) {
+        response.writeHead(202)
+        response.end()
+        return
+      }
+      const parsed: unknown = JSON.parse(body)
+      const rpc = rpcProgressRequestSchema.parse(parsed)
+      if (rpc.method === "notifications/initialized") {
+        response.writeHead(202)
+        response.end()
+        return
+      }
+      if (rpc.method === "initialize") {
+        sendJson(response, 200, {
+          jsonrpc: "2.0",
+          id: rpc.id,
+          result: {
+            protocolVersion: "2025-06-18",
+            capabilities: { tools: {} },
+            serverInfo: { name: "progress-enterprise-mcp-test", version: "1.0.0" },
+          },
+        })
+        return
+      }
+      if (rpc.method !== "tools/call") {
+        sendJson(response, 404, { error: "not_found" })
+        return
+      }
+
+      response.writeHead(200, {
+        "content-type": "text/event-stream",
+        "cache-control": "no-cache",
+      })
+      const progressToken = rpc.params?._meta?.progressToken
+      let progress = 0
+      const writeMessage = (message: unknown) => {
+        response.write(`event: message\ndata: ${JSON.stringify(message)}\n\n`)
+      }
+      const progressTimer = setInterval(() => {
+        if (progressToken === undefined) return
+        progress += 1
+        writeMessage({
+          jsonrpc: "2.0",
+          method: "notifications/progress",
+          params: { progressToken, progress },
+        })
+      }, options.progressIntervalMs)
+      const resultTimer = setTimeout(() => {
+        clearInterval(progressTimer)
+        writeMessage({
+          jsonrpc: "2.0",
+          id: rpc.id,
+          result: { content: [{ type: "text", text: "streamed result" }] },
+        })
+        response.end()
+      }, options.resultDelayMs)
+      response.on("close", () => {
+        clearInterval(progressTimer)
+        clearTimeout(resultTimer)
+      })
+    } catch (error) {
+      sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
+    }
+  })
+
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject)
+    server.listen(0, "127.0.0.1", resolve)
+  })
+  const address = server.address()
+  if (!address || typeof address === "string") {
+    server.close()
+    throw new Error("Progress MCP test server did not bind to a TCP port.")
+  }
+  origin = `http://127.0.0.1:${address.port}`
+  return {
+    origin,
+    close: () => new Promise<void>((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve())
+    }),
+  }
+}
+
 function noAuthConnection(): EnterpriseMcpConnection {
   return {
     id: "connection-1",
@@ -306,9 +412,9 @@ describe("enterprise MCP client", () => {
       arguments: { table: "incident" },
     })
     assert.equal("isError" in result ? result.isError : undefined, false)
-    assert.ok(events.some((event) => event.requestPhase === "mcp-initialize" && event.outcome === "succeeded"))
-    assert.ok(events.some((event) => event.requestPhase === "mcp-tool-discovery" && event.outcome === "succeeded"))
-    assert.ok(events.some((event) => event.requestPhase === "mcp-tool-execution" && event.outcome === "succeeded"))
+    assert.ok(events.some((event) => event.kind !== "credential-invalidation" && event.requestPhase === "mcp-initialize" && event.outcome === "succeeded"))
+    assert.ok(events.some((event) => event.kind !== "credential-invalidation" && event.requestPhase === "mcp-tool-discovery" && event.outcome === "succeeded"))
+    assert.ok(events.some((event) => event.kind !== "credential-invalidation" && event.requestPhase === "mcp-tool-execution" && event.outcome === "succeeded"))
   })
 
   it("connects to a spec-legal MCP server that does not advertise tools", async () => {
@@ -413,6 +519,62 @@ describe("enterprise MCP client", () => {
       assert.ok(Date.now() - startedAt < 500)
     } finally {
       clearTimeout(timer)
+    }
+  })
+
+  it("honors an injected lifecycle longer than the per-request timeout while progress streams", async () => {
+    const server = await startProgressMcpServer({ resultDelayMs: 70, progressIntervalMs: 10 })
+    try {
+      const client = createEnterpriseMcpClient({
+        fetch,
+        operationTimeoutMs: 25,
+        lifecycle: { expiresAt: Date.now() + 120, signal: new AbortController().signal },
+      })
+      const result = await client.callTool({
+        connection: {
+          id: "progress-connection",
+          serverUrl: `${server.origin}/mcp`,
+          authorization: { type: "none" },
+        },
+        redirectUri: "https://den.example.test/callback",
+        toolName: "lookup-record",
+        arguments: {},
+      })
+      const parsedResult = textToolResultSchema.parse(result)
+      assert.equal(parsedResult.content[0]?.text, "streamed result")
+    } finally {
+      await server.close()
+    }
+  })
+
+  it("still stops a progressing provider at the injected absolute lifecycle", async () => {
+    const server = await startProgressMcpServer({ resultDelayMs: 160, progressIntervalMs: 10 })
+    try {
+      const client = createEnterpriseMcpClient({
+        fetch,
+        operationTimeoutMs: 25,
+        lifecycle: { expiresAt: Date.now() + 80, signal: new AbortController().signal },
+      })
+      const startedAt = Date.now()
+      await assert.rejects(
+        client.callTool({
+          connection: {
+            id: "progress-deadline-connection",
+            serverUrl: `${server.origin}/mcp`,
+            authorization: { type: "none" },
+          },
+          redirectUri: "https://den.example.test/callback",
+          toolName: "lookup-record",
+          arguments: {},
+        }),
+        (error: unknown) => error instanceof EnterpriseMcpClientError
+          && error.operationPhase === "tool-execution",
+      )
+      const elapsedMs = Date.now() - startedAt
+      assert.ok(elapsedMs >= 60, `expected lifecycle timeout to outlast per-request timeout, got ${elapsedMs}ms`)
+      assert.ok(elapsedMs < 500, `expected lifecycle timeout before the provider result, got ${elapsedMs}ms`)
+    } finally {
+      await server.close()
     }
   })
 
@@ -643,6 +805,58 @@ function oauthProvider(input: {
     authorizationTransactionTtlMs: input.authorizationTransactionTtlMs ?? 600_000,
     expirationSkewMs: input.expirationSkewMs ?? 0,
   })
+}
+
+function runtimeRejectingMcpFetch(input: {
+  rejectMethod: "tools/call" | "tools/list"
+  status: number
+  wwwAuthenticate?: string
+}): EnterpriseMcpFetch {
+  return async (_url, init) => {
+    const body = requestText(init?.body)
+    if (!body) return new Response(null, { status: 202 })
+    const request = rpcRequestSchema.parse(JSON.parse(body))
+    if (request.method === "notifications/initialized") return new Response(null, { status: 202 })
+    if (request.method === "initialize") {
+      return Response.json({
+        jsonrpc: "2.0",
+        id: request.id,
+        result: {
+          protocolVersion: "2025-06-18",
+          capabilities: { tools: {} },
+          serverInfo: { name: "runtime-rejection-test", version: "1.0.0" },
+        },
+      })
+    }
+    if (request.method === input.rejectMethod) {
+      const headers = new Headers()
+      if (input.wwwAuthenticate) headers.set("www-authenticate", input.wwwAuthenticate)
+      return new Response(null, { status: input.status, headers })
+    }
+    if (request.method === "tools/list") {
+      return Response.json({
+        jsonrpc: "2.0",
+        id: request.id,
+        result: { tools: [{ name: "oauth-tool", inputSchema: { type: "object", properties: {} } }] },
+      })
+    }
+    if (request.method === "tools/call") {
+      return Response.json({
+        jsonrpc: "2.0",
+        id: request.id,
+        result: { content: [{ type: "text", text: "ok" }], isError: false },
+      })
+    }
+    return new Response(null, { status: 404 })
+  }
+}
+
+function oauthRuntimeConnection(id: string, persistence: EnterpriseMcpOAuthPersistence): EnterpriseMcpConnection {
+  return {
+    id,
+    serverUrl: "https://mcp.example.test/mcp",
+    authorization: { type: "oauth", persistence },
+  }
 }
 
 describe("enterprise MCP OAuth persistence contract", () => {
@@ -1296,51 +1510,78 @@ describe("enterprise MCP OAuth persistence contract", () => {
     }
   })
 
-  it("invalidates a credential when the MCP resource terminally rejects it", async () => {
-    const origin = "https://mcp.example.test"
+  it("preserves a credential when tool execution gets a 401 without invalid_token", async () => {
     const persistence = new MemoryOAuthPersistence()
     persistence.seedRegistration({ client_id: "registered-client" })
     persistence.seedCredential({ access_token: "rejected-access-token", token_type: "Bearer" })
     const client = createEnterpriseMcpClient({
-      fetch: async (url) => {
-        const target = new URL(url)
-        if (target.pathname === "/mcp") {
-          return new Response(null, {
-            status: 401,
-            headers: {
-              "www-authenticate": `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp"`,
-            },
-          })
-        }
-        if (target.pathname === "/.well-known/oauth-protected-resource/mcp") {
-          return Response.json({ resource: `${origin}/mcp`, authorization_servers: [origin] })
-        }
-        if (target.pathname === "/.well-known/oauth-authorization-server") {
-          return Response.json({
-            issuer: origin,
-            authorization_endpoint: `${origin}/authorize`,
-            token_endpoint: `${origin}/token`,
-            response_types_supported: ["code"],
-            grant_types_supported: ["authorization_code"],
-            token_endpoint_auth_methods_supported: ["none"],
-            code_challenge_methods_supported: ["S256"],
-          })
-        }
-        return new Response(null, { status: 404 })
-      },
+      fetch: runtimeRejectingMcpFetch({ rejectMethod: "tools/call", status: 401 }),
     })
-    const connection: EnterpriseMcpConnection = {
-      id: "runtime-rejected-token",
-      serverUrl: `${origin}/mcp`,
-      authorization: { type: "oauth", persistence },
-    }
 
-    await assert.rejects(client.listTools({
-      connection,
+    await assert.rejects(client.callTool({
+      connection: oauthRuntimeConnection("runtime-plain-401", persistence),
       redirectUri: "https://den.example.test/oauth/callback",
+      toolName: "oauth-tool",
+      arguments: {},
+    }))
+    assert.equal(persistence.credential?.tokens.access_token, "rejected-access-token")
+    assert.equal(persistence.invalidationCount, 0)
+  })
+
+  it("invalidates a credential and emits diagnostics when tool execution gets invalid_token", async () => {
+    const persistence = new MemoryOAuthPersistence()
+    persistence.seedRegistration({ client_id: "registered-client" })
+    persistence.seedCredential({ access_token: "rejected-access-token", token_type: "Bearer" })
+    const events: EnterpriseMcpDiagnosticEvent[] = []
+    const client = createEnterpriseMcpClient({
+      fetch: runtimeRejectingMcpFetch({
+        rejectMethod: "tools/call",
+        status: 401,
+        wwwAuthenticate: 'Bearer error="invalid_token"',
+      }),
+      diagnosticSink: (event) => events.push(event),
+    })
+
+    await assert.rejects(client.callTool({
+      connection: oauthRuntimeConnection("runtime-invalid-token", persistence),
+      redirectUri: "https://den.example.test/oauth/callback",
+      toolName: "oauth-tool",
+      arguments: {},
     }))
     assert.equal(persistence.credential, undefined)
     assert.equal(persistence.invalidationCount, 1)
+    const invalidationEvents = events.filter((event) => event.kind === "credential-invalidation")
+    assert.equal(invalidationEvents.length, 1)
+    const [event] = invalidationEvents
+    if (!event || event.kind !== "credential-invalidation") throw new Error("Expected a credential invalidation event.")
+    assert.deepEqual(event, {
+      kind: "credential-invalidation",
+      connectionId: "runtime-invalid-token",
+      operationPhase: "tool-execution",
+      requestPhase: "mcp-tool-execution",
+      httpStatus: 401,
+      invalidToken: true,
+    })
+  })
+
+  it("preserves a credential when tool discovery gets invalid_token", async () => {
+    const persistence = new MemoryOAuthPersistence()
+    persistence.seedRegistration({ client_id: "registered-client" })
+    persistence.seedCredential({ access_token: "rejected-access-token", token_type: "Bearer" })
+    const client = createEnterpriseMcpClient({
+      fetch: runtimeRejectingMcpFetch({
+        rejectMethod: "tools/list",
+        status: 401,
+        wwwAuthenticate: 'Bearer error="invalid_token"',
+      }),
+    })
+
+    await assert.rejects(client.listTools({
+      connection: oauthRuntimeConnection("discovery-invalid-token", persistence),
+      redirectUri: "https://den.example.test/oauth/callback",
+    }))
+    assert.equal(persistence.credential?.tokens.access_token, "rejected-access-token")
+    assert.equal(persistence.invalidationCount, 0)
   })
 
   it("preserves a credential when a provider returns a plain tool-policy 403", async () => {
@@ -1369,6 +1610,28 @@ describe("enterprise MCP OAuth persistence contract", () => {
     } finally {
       await server.close()
     }
+  })
+
+  it("still invalidates a credential when tool execution gets a 403 bearer challenge", async () => {
+    const persistence = new MemoryOAuthPersistence()
+    persistence.seedRegistration({ client_id: "registered-client" })
+    persistence.seedCredential({ access_token: "rejected-access-token", token_type: "Bearer" })
+    const client = createEnterpriseMcpClient({
+      fetch: runtimeRejectingMcpFetch({
+        rejectMethod: "tools/call",
+        status: 403,
+        wwwAuthenticate: "Bearer realm=\"provider\"",
+      }),
+    })
+
+    await assert.rejects(client.callTool({
+      connection: oauthRuntimeConnection("runtime-bearer-403", persistence),
+      redirectUri: "https://den.example.test/oauth/callback",
+      toolName: "oauth-tool",
+      arguments: {},
+    }))
+    assert.equal(persistence.credential, undefined)
+    assert.equal(persistence.invalidationCount, 1)
   })
 
   it("rejects a stale concurrent refresh response instead of overwriting newer credentials", async () => {

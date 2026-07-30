@@ -10,7 +10,7 @@ import {
 export type { SharedDesktopConfig };
 export { normalizeDesktopConfig };
 
-import { isDesktopDeployment } from "./openwork-deployment";
+import { isDesktopDeployment, isWebDeployment } from "./openwork-deployment";
 import {
   dispatchDenSettingsChanged,
 } from "./den-session-events";
@@ -18,11 +18,13 @@ import {
   desktopFetch,
   desktopFetchViaMain,
   getDesktopBootstrapConfig as getDesktopBootstrapConfigFromShell,
+  readInitialDesktopBootstrapConfig,
   setDesktopBootstrapConfig as setDesktopBootstrapConfigInShell,
   type DesktopBootstrapConfig as ShellDesktopBootstrapConfig,
 } from "./desktop";
+import { getOpenworkGatewayOrigin } from "./gateway-runtime";
 import { isDesktopRuntime } from "./runtime-env";
-import type { DenOrgSkillCard, ReloadReason } from "../types";
+import type { ReloadReason } from "../types";
 import type {
   OpenWorkExtensionContribution,
   OpenWorkExtensionContributionType,
@@ -63,6 +65,7 @@ export const DEN_INFERENCE_PATH = "/dashboard/inference";
 // the many existing den.ts importers keep working.
 export type * from "./den-types";
 import type {
+  DenAssignedMarketplaceCapability,
   DenOrgExtensionProjection,
   DenOrgMarketplace,
   DenOrgPlugin,
@@ -87,6 +90,8 @@ type DenBaseUrls = {
   apiBaseUrl: string;
 };
 
+export type DenBootstrapSource = "file" | "default";
+
 /** Org + first-skill identity shared by the handoff and prepared records. */
 export type DenBootstrapOrgSkill = {
   orgId: string;
@@ -108,8 +113,15 @@ export type DenBootstrapPrepared = DenBootstrapOrgSkill & {
   preparedAt: string;
 };
 
+export type DenEnterpriseActivation = {
+  activatedAt: string;
+  denBaseUrl: string;
+};
+
 export type DenBootstrapConfig = DenBaseUrls & {
+  source: DenBootstrapSource;
   requireSignin: boolean;
+  requireActivation?: boolean;
   brandAppName?: string | null;
   brandLogoUrl?: string | null;
   brandIconUrl?: string | null;
@@ -122,6 +134,7 @@ export type DenBootstrapConfig = DenBaseUrls & {
   }> | null;
   handoff?: DenBootstrapHandoff | null;
   prepared?: DenBootstrapPrepared | null;
+  enterpriseActivation?: DenEnterpriseActivation | null;
 };
 
 export type DenDesktopConfig = SharedDesktopConfig;
@@ -150,6 +163,18 @@ export type DenWorkerTokens = {
   openworkUrl: string | null;
   workspaceId: string | null;
 };
+
+export type DenCloudInstance = {
+  status: "provisioning" | "waking" | "ready" | "failed";
+  url: string | null;
+  imageVersion: string | null;
+  instanceName?: string | null;
+  latestVersion: string | null;
+};
+
+export type DenCloudInstanceUpdateResult =
+  | { ok: true; status: "update_requested" }
+  | { ok: false; error: "already_current" | "flush_failed" };
 
 export type DenMemoryContext = {
   id: string;
@@ -297,8 +322,12 @@ export const DEFAULT_DEN_API_BASE_URL = defaultBootstrapBaseUrls.apiBaseUrl;
 
 let desktopBootstrapConfig: DenBootstrapConfig = {
   ...defaultBootstrapBaseUrls,
+  source: "default",
   requireSignin: BUILD_DEN_REQUIRE_SIGNIN,
 };
+let gatewayBootstrapConfig: DenBootstrapConfig | null = null;
+let gatewayBootstrapConfigOrigin: string | null = null;
+let gatewayBootstrapConfigSource: DenBootstrapConfig | null = null;
 
 export type DenAppVersionMetadata = {
   minAppVersion: string;
@@ -542,13 +571,31 @@ function ensureDenApiBasePath(input: string | null | undefined): string | null {
 export function resolveDenBaseUrls(input: { baseUrl?: string | null; apiBaseUrl?: string | null } | string | null | undefined): DenBaseUrls {
   const rawBaseUrl = typeof input === "string" ? input : input?.baseUrl;
   const normalizedBaseUrl = normalizeDenBaseUrl(rawBaseUrl);
-  const legacyApiBaseUrl = typeof input === "string" ? null : normalizeDenBaseUrl(input?.apiBaseUrl);
-  const seedUrl = stripDenApiBasePath(normalizedBaseUrl ?? legacyApiBaseUrl) ?? DEFAULT_DEN_BASE_URL;
+  const normalizedApiBaseUrl = typeof input === "string" ? null : normalizeDenBaseUrl(input?.apiBaseUrl);
+  const gatewayOrigin = getOpenworkGatewayOrigin();
+
+  if (gatewayOrigin) {
+    const normalizedGatewayOrigin = normalizeDenBaseUrl(gatewayOrigin) ?? gatewayOrigin;
+    const gatewayBaseUrl =
+      normalizedBaseUrl && denOriginComparisonKey(normalizedBaseUrl) !== denOriginComparisonKey(normalizedGatewayOrigin)
+        ? normalizedBaseUrl
+        : DEFAULT_DEN_BASE_URL;
+    const baseUrl = stripDenApiBasePath(gatewayBaseUrl) ?? DEFAULT_DEN_BASE_URL;
+
+    return {
+      baseUrl,
+      apiBaseUrl: ensureDenApiBasePath(normalizedGatewayOrigin) ?? normalizedGatewayOrigin,
+    };
+  }
+
+  const seedUrl = stripDenApiBasePath(normalizedBaseUrl ?? normalizedApiBaseUrl) ?? DEFAULT_DEN_BASE_URL;
   const baseUrl = stripDenApiBasePath(seedUrl) ?? DEFAULT_DEN_BASE_URL;
 
   return {
     baseUrl,
-    apiBaseUrl: ensureDenApiBasePath(baseUrl) ?? baseUrl,
+    apiBaseUrl: normalizedApiBaseUrl
+      ? ensureDenApiBasePath(normalizedApiBaseUrl) ?? normalizedApiBaseUrl
+      : ensureDenApiBasePath(baseUrl) ?? baseUrl,
   };
 }
 
@@ -601,23 +648,32 @@ function resolveDenBootstrapConfig(
     baseUrl: string;
     apiBaseUrl?: string | null;
     requireSignin?: boolean | null;
+    requireActivation?: boolean | null;
     brandAppName?: string | null;
     brandLogoUrl?: string | null;
     brandIconUrl?: string | null;
+    fromFile?: boolean | null;
+    source?: DenBootstrapSource | null;
     claimLinks?: DenBootstrapConfig["claimLinks"];
     handoff?: DenBootstrapHandoff | null;
     prepared?: DenBootstrapPrepared | null;
+    enterpriseActivation?: DenEnterpriseActivation | null;
   },
 ): DenBootstrapConfig {
   return {
     ...resolveDenBaseUrls(input),
+    source: input.source === "file" || input.fromFile === true ? "file" : "default",
     requireSignin: input.requireSignin === true,
+    ...(typeof input.requireActivation === "boolean"
+      ? { requireActivation: input.requireActivation }
+      : {}),
     ...(input.brandAppName?.trim() ? { brandAppName: input.brandAppName.trim().slice(0, 64) } : {}),
     ...(input.brandLogoUrl?.trim() ? { brandLogoUrl: input.brandLogoUrl.trim() } : {}),
     ...(input.brandIconUrl?.trim() ? { brandIconUrl: input.brandIconUrl.trim() } : {}),
     ...(input.claimLinks ? { claimLinks: input.claimLinks } : {}),
     ...(input.handoff ? { handoff: input.handoff } : {}),
     ...(input.prepared ? { prepared: input.prepared } : {}),
+    ...(input.enterpriseActivation ? { enterpriseActivation: input.enterpriseActivation } : {}),
   };
 }
 
@@ -630,12 +686,15 @@ function getPendingBootstrapConfig(next: DenSettings): DenBootstrapConfig | null
   return resolveDenBootstrapConfig({
     baseUrl: next.baseUrl ?? previous.baseUrl,
     requireSignin: previous.requireSignin,
+    requireActivation: previous.requireActivation,
     brandAppName: previous.brandAppName,
     brandLogoUrl: previous.brandLogoUrl,
     brandIconUrl: previous.brandIconUrl,
+    source: previous.source,
     claimLinks: previous.claimLinks,
     handoff: previous.handoff,
     prepared: previous.prepared,
+    enterpriseActivation: previous.enterpriseActivation,
   });
 }
 
@@ -644,15 +703,45 @@ function applyDesktopBootstrapConfig(config: DenBootstrapConfig) {
 }
 
 export function readDenBootstrapConfig(): DenBootstrapConfig {
+  const gatewayOrigin = getOpenworkGatewayOrigin();
+  if (gatewayOrigin) {
+    if (
+      gatewayBootstrapConfig &&
+      gatewayBootstrapConfigOrigin === gatewayOrigin &&
+      gatewayBootstrapConfigSource === desktopBootstrapConfig
+    ) {
+      return gatewayBootstrapConfig;
+    }
+
+    gatewayBootstrapConfig = {
+      ...desktopBootstrapConfig,
+      ...resolveDenBaseUrls({
+        baseUrl: desktopBootstrapConfig.baseUrl,
+        apiBaseUrl: gatewayOrigin,
+      }),
+    };
+    gatewayBootstrapConfigOrigin = gatewayOrigin;
+    gatewayBootstrapConfigSource = desktopBootstrapConfig;
+    return gatewayBootstrapConfig;
+  }
+
   return desktopBootstrapConfig;
 }
 
 export async function initializeDenBootstrapConfig(): Promise<DenBootstrapConfig> {
   if (!isDesktopRuntime()) {
+    const gatewayOrigin = getOpenworkGatewayOrigin();
     desktopBootstrapConfig = resolveDenBootstrapConfig({
       baseUrl: BUILD_DEN_BASE_URL,
+      ...(gatewayOrigin ? { apiBaseUrl: gatewayOrigin } : {}),
       requireSignin: BUILD_DEN_REQUIRE_SIGNIN,
     });
+    return desktopBootstrapConfig;
+  }
+
+  const initialBootstrap = readInitialDesktopBootstrapConfig();
+  if (initialBootstrap) {
+    applyDesktopBootstrapConfig(resolveDenBootstrapConfig(initialBootstrap));
     return desktopBootstrapConfig;
   }
 
@@ -663,7 +752,7 @@ export async function initializeDenBootstrapConfig(): Promise<DenBootstrapConfig
   const SHELL_BOOTSTRAP_RETRY_DELAY_MS = 350;
   for (let attempt = 1; attempt <= SHELL_BOOTSTRAP_ATTEMPTS; attempt += 1) {
     try {
-      const bootstrap = await getDesktopBootstrapConfigFromShell() as ShellDesktopBootstrapConfig;
+      const bootstrap = await getDesktopBootstrapConfigFromShell();
       applyDesktopBootstrapConfig(resolveDenBootstrapConfig(bootstrap));
       return desktopBootstrapConfig;
     } catch (error) {
@@ -690,7 +779,7 @@ export async function initializeDenBootstrapConfig(): Promise<DenBootstrapConfig
     for (let attempt = 0; attempt < 15; attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, 2_000));
       try {
-        const bootstrap = await getDesktopBootstrapConfigFromShell() as ShellDesktopBootstrapConfig;
+        const bootstrap = await getDesktopBootstrapConfigFromShell();
         applyDesktopBootstrapConfig(resolveDenBootstrapConfig(bootstrap));
         dispatchDenSettingsChanged({ settings: readDenSettings() });
         return;
@@ -712,7 +801,7 @@ export async function initializeDenBootstrapConfig(): Promise<DenBootstrapConfig
 export async function refreshDenBootstrapConfigFromShell(): Promise<DenBootstrapConfig> {
   if (isDesktopRuntime()) {
     try {
-      const bootstrap = await getDesktopBootstrapConfigFromShell() as ShellDesktopBootstrapConfig;
+      const bootstrap = await getDesktopBootstrapConfigFromShell();
       applyDesktopBootstrapConfig(resolveDenBootstrapConfig(bootstrap));
       dispatchDenSettingsChanged({ settings: readDenSettings() });
     } catch {
@@ -724,28 +813,39 @@ export async function refreshDenBootstrapConfigFromShell(): Promise<DenBootstrap
 
 export async function setDenBootstrapConfig(
   next: ShellDesktopBootstrapConfig,
+  options?: { dispatchSettingsChanged?: boolean },
 ): Promise<DenBootstrapConfig> {
-  const normalized = resolveDenBootstrapConfig(next);
+  const previous = readDenBootstrapConfig();
+  const normalized = resolveDenBootstrapConfig({
+    ...next,
+    enterpriseActivation: next.enterpriseActivation ?? previous.enterpriseActivation,
+  });
 
   if (isDesktopRuntime()) {
     const persisted = await setDesktopBootstrapConfigInShell({
       baseUrl: normalized.baseUrl,
       requireSignin: normalized.requireSignin,
+      ...(typeof normalized.requireActivation === "boolean"
+        ? { requireActivation: normalized.requireActivation }
+        : {}),
       ...(normalized.brandAppName ? { brandAppName: normalized.brandAppName } : {}),
       ...(normalized.brandLogoUrl ? { brandLogoUrl: normalized.brandLogoUrl } : {}),
       ...(normalized.brandIconUrl ? { brandIconUrl: normalized.brandIconUrl } : {}),
       ...(normalized.handoff ? { handoff: normalized.handoff } : {}),
       ...(normalized.prepared ? { prepared: normalized.prepared } : {}),
-    }) as ShellDesktopBootstrapConfig;
+      ...(normalized.enterpriseActivation ? { enterpriseActivation: normalized.enterpriseActivation } : {}),
+    });
     
-    applyDesktopBootstrapConfig(resolveDenBootstrapConfig(persisted));
+    applyDesktopBootstrapConfig(resolveDenBootstrapConfig({ ...persisted, source: "file" }));
   } else {
     applyDesktopBootstrapConfig(normalized);
   }
 
-  dispatchDenSettingsChanged({
-    settings: readDenSettings(),
-  });
+  if (options?.dispatchSettingsChanged !== false) {
+    dispatchDenSettingsChanged({
+      settings: readDenSettings(),
+    });
+  }
 
   return readDenBootstrapConfig();
 }
@@ -756,6 +856,9 @@ export function buildDenAuthUrl(baseUrl: string, mode: "sign-in" | "sign-up"): s
   if (isDesktopDeployment()) {
     target.searchParams.set("desktopAuth", "1");
     target.searchParams.set("desktopScheme", "openwork");
+  } else if (isWebDeployment() && typeof window !== "undefined") {
+    target.searchParams.set("webAuth", "1");
+    target.searchParams.set("webAuthReturn", window.location.origin);
   }
   return target.toString();
 }
@@ -775,11 +878,12 @@ export function readDenSettings(): DenSettings {
     };
   }
 
-  const baseUrls = resolveDenBaseUrls({
-    baseUrl: isDesktopRuntime()
-      ? readDenBootstrapConfig().baseUrl
-      : window.localStorage.getItem(STORAGE_BASE_URL) ?? readDenBootstrapConfig().baseUrl,
-  });
+  const bootstrapConfig = readDenBootstrapConfig();
+  const baseUrls = resolveDenBaseUrls(
+    isDesktopRuntime() || getOpenworkGatewayOrigin()
+      ? bootstrapConfig
+      : { baseUrl: window.localStorage.getItem(STORAGE_BASE_URL) ?? bootstrapConfig.baseUrl },
+  );
 
   return {
     ...baseUrls,
@@ -885,6 +989,7 @@ export function writeDenSettings(next: DenSettings, options?: { persistBootstrap
       void setDenBootstrapConfig({
         baseUrl: pendingBootstrap.baseUrl,
         requireSignin: currentBootstrap.requireSignin,
+        requireActivation: currentBootstrap.requireActivation,
         brandAppName: currentBootstrap.brandAppName,
         brandLogoUrl: currentBootstrap.brandLogoUrl,
         brandIconUrl: currentBootstrap.brandIconUrl,
@@ -1119,6 +1224,40 @@ function getWorkerTokens(payload: unknown): DenWorkerTokens | null {
   };
 }
 
+function parseCloudInstance(payload: unknown): DenCloudInstance | null {
+  if (
+    !isRecord(payload) ||
+    (payload.status !== "provisioning" && payload.status !== "waking" && payload.status !== "ready" && payload.status !== "failed") ||
+    (typeof payload.url !== "string" && payload.url !== null)
+  ) {
+    return null;
+  }
+
+  return {
+    status: payload.status,
+    url: payload.url,
+    imageVersion: typeof payload.imageVersion === "string" ? payload.imageVersion : null,
+    ...(typeof payload.instanceName === "string" ? { instanceName: payload.instanceName } : {}),
+    latestVersion: typeof payload.latestVersion === "string" ? payload.latestVersion : null,
+  };
+}
+
+function parseCloudInstanceUpdateResult(payload: unknown): DenCloudInstanceUpdateResult | null {
+  if (!isRecord(payload) || typeof payload.ok !== "boolean") {
+    return null;
+  }
+
+  if (payload.ok === true && payload.status === "update_requested") {
+    return { ok: true, status: "update_requested" };
+  }
+
+  if (payload.ok === false && (payload.error === "already_current" || payload.error === "flush_failed")) {
+    return { ok: false, error: payload.error };
+  }
+
+  return null;
+}
+
 function getMcpToken(payload: unknown): DenMcpToken | null {
   if (
     !isRecord(payload) ||
@@ -1138,32 +1277,6 @@ function getMcpToken(payload: unknown): DenMcpToken | null {
       : [],
     resource: payload.resource,
   };
-}
-
-function parseDenOrgSkillRow(record: Record<string, unknown>): DenOrgSkillCard | null {
-  if (typeof record.id !== "string" || typeof record.title !== "string" || typeof record.skillText !== "string") {
-    return null;
-  }
-  const description = typeof record.description === "string" ? record.description : null;
-  const shared = record.shared === "org" || record.shared === "public" ? record.shared : null;
-  return {
-    id: record.id,
-    title: record.title,
-    description,
-    skillText: record.skillText,
-    shared,
-    updatedAt: typeof record.updatedAt === "string" ? record.updatedAt : null,
-  };
-}
-
-function getDenOrgSkillsFromPayload(payload: unknown): DenOrgSkillCard[] {
-  if (!isRecord(payload) || !Array.isArray(payload.skills)) {
-    return [];
-  }
-  return payload.skills.flatMap((entry) => {
-    const skill = isRecord(entry) ? parseDenOrgSkillRow(entry) : null;
-    return skill ? [skill] : [];
-  });
 }
 
 function parseJsonRecord(value: unknown): Record<string, unknown> {
@@ -1746,6 +1859,28 @@ function getOrgPluginResolved(plugin: DenOrgPlugin, payload: unknown): DenOrgPlu
   return { plugin, memberships };
 }
 
+function getAssignedMarketplaceCapabilities(payload: unknown): DenAssignedMarketplaceCapability[] {
+  if (!isRecord(payload) || !Array.isArray(payload.items)) return [];
+  return payload.items.flatMap((item) => {
+    if (
+      !isRecord(item)
+      || typeof item.configObjectId !== "string"
+      || typeof item.marketplaceId !== "string"
+      || typeof item.objectType !== "string"
+      || typeof item.pluginId !== "string"
+    ) {
+      return [];
+    }
+    const objectType = parsePluginConfigObjectType(item.objectType);
+    return objectType ? [{
+      configObjectId: item.configObjectId,
+      marketplaceId: item.marketplaceId,
+      objectType,
+      pluginId: item.pluginId,
+    }] : [];
+  });
+}
+
 function getBillingPrice(value: unknown): DenBillingPrice | null {
   if (!isRecord(value)) {
     return null;
@@ -1793,11 +1928,6 @@ function getBillingInvoice(value: unknown): DenBillingInvoice | null {
     invoiceNumber: typeof value.invoiceNumber === "string" ? value.invoiceNumber : null,
     invoiceUrl: typeof value.invoiceUrl === "string" ? value.invoiceUrl : null,
   };
-}
-
-function getCreatedOrgSkillId(payload: unknown): string | null {
-  if (!isRecord(payload) || !isRecord(payload.skill)) return null;
-  return typeof payload.skill.id === "string" ? payload.skill.id : null;
 }
 
 function getBillingSummary(payload: unknown): DenBillingSummary | null {
@@ -2147,34 +2277,31 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
       return tokens;
     },
 
-    async listOrgSkills(orgId: string): Promise<DenOrgSkillCard[]> {
-      const payload = await requestJson<unknown>(baseUrls, "/v1/skills", {
+    async getCloudInstance(orgId: string): Promise<DenCloudInstance> {
+      const payload = await requestJson<unknown>(baseUrls, "/v1/cloud/instance", {
         method: "GET",
         token,
         organizationId: orgId,
       });
-      return getDenOrgSkillsFromPayload(payload);
+      const instance = parseCloudInstance(payload);
+      if (!instance) {
+        throw new DenApiError(500, "invalid_cloud_instance_payload", "Cloud instance response was invalid.");
+      }
+      return instance;
     },
 
-    async createOrgSkill(
-      orgId: string,
-      input: { skillText: string; shared?: "org" | "public" | null },
-    ): Promise<{ id: string }> {
-      const body = {
-        skillText: input.skillText,
-        shared: input.shared === undefined ? ("org" as const) : input.shared,
-      };
-      const payload = await requestJson<unknown>(baseUrls, "/v1/skills", {
+    async updateCloudInstance(orgId: string): Promise<DenCloudInstanceUpdateResult> {
+      const payload = await requestJson<unknown>(baseUrls, "/v1/cloud/instance/update", {
         method: "POST",
         token,
         organizationId: orgId,
-        body,
+        body: {},
       });
-      const id = getCreatedOrgSkillId(payload);
-      if (!id) {
-        throw new DenApiError(500, "invalid_skill_payload", "Skill response was missing id.");
+      const result = parseCloudInstanceUpdateResult(payload);
+      if (!result) {
+        throw new DenApiError(500, "invalid_cloud_update_payload", "Cloud update response was invalid.");
       }
-      return { id };
+      return result;
     },
 
     async listOrgLlmProviders(orgId: string): Promise<DenOrgLlmProvider[]> {
@@ -2233,6 +2360,14 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
       );
     },
 
+    async disconnectMyMcpConnectionAccount(orgId: string, connectionId: string): Promise<void> {
+      await requestJson<unknown>(
+        baseUrls,
+        `/v1/mcp-connections/${encodeURIComponent(connectionId)}/disconnect-my-account`,
+        { method: "POST", token, organizationId: orgId },
+      );
+    },
+
     async listOrgMarketplaces(orgId: string): Promise<DenOrgMarketplace[]> {
       const payload = await requestJson<unknown>(
         baseUrls,
@@ -2240,6 +2375,15 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
         { method: "GET", token, organizationId: orgId },
       );
       return getOrgMarketplaces(payload);
+    },
+
+    async listAssignedMarketplaceCapabilities(orgId: string): Promise<DenAssignedMarketplaceCapability[]> {
+      const payload = await requestJson<unknown>(
+        baseUrls,
+        "/v1/resources/marketplace-capabilities",
+        { method: "GET", token, organizationId: orgId },
+      );
+      return getAssignedMarketplaceCapabilities(payload);
     },
 
     async getOrgMarketplaceResolved(orgId: string, marketplaceId: string): Promise<DenOrgMarketplaceResolved> {
@@ -2305,18 +2449,6 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
 }
 
 export type DenClient = ReturnType<typeof createDenClient>;
-
-export async function fetchDenOrgSkillsCatalog(
-  client: ReturnType<typeof createDenClient>,
-  orgId: string,
-): Promise<DenOrgSkillCard[]> {
-  const skills = await client.listOrgSkills(orgId);
-  const byId = new Map<string, DenOrgSkillCard>();
-  for (const skill of skills) {
-    byId.set(skill.id, skill);
-  }
-  return Array.from(byId.values()).toSorted((a, b) => a.title.localeCompare(b.title));
-}
 
 /**
  * Mint an org-scoped MCP access token for the Den cloud MCP using the

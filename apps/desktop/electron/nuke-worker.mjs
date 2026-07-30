@@ -70,6 +70,9 @@ export function validateNukeWorkerPayload(value) {
       platform,
       preserveBootstrap: nukeInput.preserveBootstrap !== false,
       userDataPath,
+      workspacePaths: Array.isArray(nukeInput.workspacePaths)
+        ? nukeInput.workspacePaths.filter((entry) => typeof entry === "string" && entry.trim())
+        : [],
     },
     appExecutablePath,
     appArgv,

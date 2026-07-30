@@ -26,7 +26,7 @@ describe("Den egress diagnostic settings flow", () => {
     const shell = readFileSync(shellPath, "utf8");
 
     expect(settings).not.toContain("EgressDiagnosticsCard");
-    expect(diagnostics).toContain("<EgressDiagnosticsCard canRun />");
+    expect(diagnostics).toContain("<EgressDiagnosticsCard canView={access.canViewSettings} canManage={access.canManageSettings} />");
     expect(shell).toContain('{ href: getDiagnosticsRoute(activeOrg.slug), label: "Diagnostics" }');
     expect(card).toContain("Run egress diagnostic");
     expect(card).toContain("Open support trace");

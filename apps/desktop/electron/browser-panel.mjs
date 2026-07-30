@@ -93,7 +93,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
     if (url.startsWith("file://") || url.startsWith("data:")) return true;
     try {
       const target = new URL(url);
-      if (target.hostname === "127.0.0.1" || target.hostname === "localhost") return true;
+      if (target.hostname === "127.0.0.1" || target.hostname === "localhost" || target.hostname === "[::1]") return true;
       const currentUrl = window()?.webContents.getURL();
       if (!currentUrl || currentUrl === "about:blank") return true;
       const current = new URL(currentUrl);
@@ -122,6 +122,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
 
   async function listCdpTargets() {
     if (!remoteDebugPort || remoteDebugPort <= 0) return [];
+    // loopback-fetch: CDP discovery targets Electron's local remote debugging port on 127.0.0.1.
     const response = await fetch(`${cdpBrowserUrl()}/json/list`, { signal: AbortSignal.timeout(1000) });
     if (!response.ok) throw new Error(`CDP target list failed: HTTP ${response.status}`);
     const targets = await response.json();

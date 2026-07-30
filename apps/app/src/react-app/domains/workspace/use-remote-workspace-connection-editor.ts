@@ -5,7 +5,8 @@ import {
   workspaceUpdateRemote,
   type WorkspaceInfo,
 } from "../../../app/lib/desktop";
-import { buildOpenworkWorkspaceBaseUrl } from "../../../app/lib/openwork-server";
+import { buildOpenworkWorkspaceBaseUrl, type OpenworkServerClient } from "../../../app/lib/openwork-server";
+import { isDesktopRuntime } from "../../../app/lib/runtime-env";
 import { t } from "../../../i18n";
 import type { RemoteWorkspaceInput } from "./types";
 
@@ -22,9 +23,10 @@ function describeEditorError(error: unknown) {
 
 export function useRemoteWorkspaceConnectionEditor<TWorkspace extends WorkspaceInfo>(input: {
   workspaces: TWorkspace[];
+  client: OpenworkServerClient | null;
   onSaved: (workspaceId: string) => void | Promise<void>;
 }) {
-  const { onSaved, workspaces } = input;
+  const { client, onSaved, workspaces } = input;
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -88,18 +90,42 @@ export function useRemoteWorkspaceConnectionEditor<TWorkspace extends WorkspaceI
       setBusy(true);
       setError(null);
       try {
-        await workspaceUpdateRemote({
-          workspaceId: id,
-          baseUrl,
-          openworkHostUrl: baseUrl,
-          openworkToken: fields.openworkToken?.trim() ?? "",
-          openworkClientToken: "",
-          openworkHostToken: "",
-          displayName: fields.displayName?.trim() || null,
-          directory: fields.directory?.trim() || null,
-          remoteType: "openwork",
-        });
-        await onSaved(id);
+        const displayName = fields.displayName?.trim() || null;
+        const directory = fields.directory?.trim() || null;
+        const openworkToken = fields.openworkToken?.trim() ?? "";
+        if (isDesktopRuntime()) {
+          await workspaceUpdateRemote({
+            workspaceId: id,
+            baseUrl,
+            openworkHostUrl: baseUrl,
+            openworkToken,
+            openworkClientToken: "",
+            openworkHostToken: "",
+            displayName,
+            directory,
+            remoteType: "openwork",
+          });
+          await onSaved(id);
+        } else {
+          if (!client) throw new Error(t("app.error_connect_first"));
+          const connectionChanged = baseUrl !== (initialValues.openworkHostUrl?.trim() ?? "") ||
+            openworkToken !== (initialValues.openworkToken?.trim() ?? "") ||
+            directory !== (initialValues.directory?.trim() || null);
+          if (connectionChanged) {
+            const result = await client.createRemoteWorkspace({
+              baseUrl,
+              openworkHostUrl: baseUrl,
+              openworkToken: openworkToken || null,
+              displayName,
+              directory,
+              remoteType: "openwork",
+            });
+            await onSaved(result.activeId ?? id);
+          } else {
+            await client.updateWorkspaceDisplayName(id, displayName);
+            await onSaved(id);
+          }
+        }
         setWorkspaceId(null);
       } catch (nextError) {
         setError(describeEditorError(nextError));
@@ -107,7 +133,7 @@ export function useRemoteWorkspaceConnectionEditor<TWorkspace extends WorkspaceI
         setBusy(false);
       }
     },
-    [onSaved, workspaceId],
+    [client, initialValues.directory, initialValues.openworkHostUrl, initialValues.openworkToken, onSaved, workspaceId],
   );
 
   return {

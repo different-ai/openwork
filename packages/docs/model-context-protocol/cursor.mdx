@@ -1,0 +1,76 @@
+---
+title: "OpenWork MCP for Cursor"
+sidebarTitle: "Cursor"
+description: "Cursor MCP setup for OpenWork Connect on Cursor Desktop, Cursor Web, and Cursor Agents."
+---
+
+The OpenWork MCP server ([OpenWork Connect](/cloud/run-in-the-cloud/cloud-mcp))
+enables Cursor to use the OpenWork capabilities your
+organization has made available to you: Gmail read/search, Calendar list/create,
+Drive search/read, Gmail draft creation, shared MCP connections such as Notion,
+Linear, Slack, Stripe, Exa, and Context7, shared skills, and OpenWork Cloud
+resources like skills, plugins, marketplaces, workers, members, roles, teams,
+and LLM providers. The server exposes only `search_capabilities` and
+`execute_capability`, so Cursor searches what you can access and runs exact
+capability names instead of loading hundreds of tool definitions into context.
+
+## Server URL
+
+```text
+https://api.openworklabs.com/mcp/agent
+```
+
+OAuth sign-in uses your OpenWork account, and the organization you pick is
+pinned into the token. If you do not have an account, create a
+[free OpenWork account](https://app.openworklabs.com?mode=sign-up).
+
+## Cursor Desktop
+
+Add OpenWork as a remote MCP server in Cursor's MCP settings, paste the server
+URL, and start OAuth from Cursor's connection prompt. Sign in to OpenWork and
+pick the organization Cursor should use.
+
+Cursor Desktop's OAuth callback is the private-use URI
+`cursor://anysphere.cursor-mcp/oauth/callback`. OpenWork accepts exactly this
+callback through an allowlist and enforces PKCE S256 for the client, so an
+intercepted authorization code cannot be redeemed without the code verifier.
+Other private-use callback schemes remain rejected: OpenWork otherwise accepts
+HTTPS callbacks or HTTP loopback callbacks only.
+
+## Cursor Web and Cursor Agents
+
+Use Cursor Web or Cursor Agents where they ask for a remote MCP server URL.
+Paste the server URL, start OAuth from Cursor's connection prompt, sign in to
+OpenWork, and pick the organization Cursor should use.
+
+Cursor Web and Cursor Agents use HTTPS OAuth callbacks, which OpenWork
+accepts.
+
+## Switch organizations
+
+Remove the stored MCP auth token for `openwork`, then connect again and choose
+the organization you want during browser sign-in.
+
+<Note>
+This is a setup guide for Cursor Desktop, Cursor Web, and Cursor Agents. These
+steps match OpenWork Connect's OAuth profile: HTTPS or HTTP loopback callbacks
+plus Cursor Desktop's allowlisted private-use callback, PKCE S256, and dynamic
+client registration fallback. Cursor is listed as setup only because native
+proof is not complete. See the
+[client support status](/cloud/run-in-the-cloud/cloud-mcp#client-support-status)
+table.
+</Note>
+
+## What you can ask
+
+- "Which OpenWork organization am I connected to?"
+- "Add omar@example.com to my organization."
+- "Search my org's capabilities for calendar tools, then list tomorrow's events."
+- "Find the Q3 launch page in Notion and summarize it."
+
+## What's next
+
+- Read the [hub overview](/cloud/run-in-the-cloud/cloud-mcp) for OAuth, token,
+  server exposure, and troubleshooting details.
+- Publish Notion, Linear, Slack, and other shared tools with
+  [shared MCP connections](/cloud/share-with-your-team/shared-mcp-connections).

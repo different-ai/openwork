@@ -7,6 +7,7 @@ import { setSessionArchived } from "../../../../app/lib/opencode-session";
 import { getDisplaySessionTitle } from "../../../../app/lib/session-title";
 import { useControlAction, type OpenworkControlAction } from "../../../shell/control/control-provider";
 import { useSessionManagementStore } from "../sidebar/session-management-store";
+import { useWorkbenchStore } from "../chat/workbench-store";
 
 type SessionLike = {
   id?: string;
@@ -99,6 +100,8 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
     id: "session.list_sessions",
     label: "List available sessions",
     description: "Return the list of sessions across workspaces so the user can ask to open one by name.",
+    kind: "query",
+    effects: { data: "read", ui: "none", external: false },
     sideEffect: "none",
     execute: () => {
       const out: { sessionId: string; title: string; workspace: string; updatedAt: number }[] = [];
@@ -121,17 +124,34 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
   const openSessionControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "session.open",
     label: "Open a session by ID",
-    description: "Navigate to a specific session. Use list_sessions first to get the session ID.",
+    description: "Focus a visible session or reuse its existing tab. Use list_sessions first to get the session ID.",
+    effects: { data: "none", ui: "navigate", external: false },
     sideEffect: "navigation",
     requiresArgs: true,
     args: [{ name: "sessionId", type: "string", required: true, description: "Session ID from session.list_sessions." }],
     execute: (args) => {
       const sessionId = stringArg(args, "sessionId");
       if (!sessionId) return { ok: false, error: "sessionId is required" };
+      const targetWorkspace = findSessionWorkspace(workspaces, sessionsByWorkspaceId, sessionId);
+      const workbench = useWorkbenchStore.getState();
+      if (targetWorkspace?.id === workbench.workspaceId) {
+        if (sessionId === workbench.primarySessionId) {
+          workbench.focusPane("primary");
+          return { ok: true, sessionId, reused: "primary-pane" };
+        }
+        if (sessionId === workbench.splitSessionId) {
+          workbench.focusPane("secondary");
+          return { ok: true, sessionId, reused: "secondary-pane" };
+        }
+      }
       navigateToSession(sessionId);
-      return { ok: true, navigatedTo: sessionId };
+      return {
+        ok: true,
+        sessionId,
+        reused: workbench.tabs.some((tab) => tab.sessionId === sessionId) ? "tab" : "new-tab",
+      };
     },
-  }), [navigateToSession]);
+  }), [navigateToSession, sessionsByWorkspaceId, workspaces]);
   useControlAction(openSessionControlAction);
 
   const renameSessionControlAction = useMemo<OpenworkControlAction>(() => ({
@@ -199,6 +219,7 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
     id: "session.model_picker.open",
     label: "Open the model picker",
     description: "Open the current session model picker.",
+    effects: { data: "none", ui: "dialog", external: false },
     sideEffect: "none",
     disabled: !selectedWorkspaceId,
     execute: openModelPicker,
@@ -231,7 +252,7 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
   const pinControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "session.pin",
     label: "Pin or unpin a session",
-    description: "Toggle pin on a session. Pinned sessions float to the top of the sidebar.",
+    description: "Toggle pin on a session. Pinned sessions appear in a global section at the top of the sidebar.",
     sideEffect: "mutation",
     requiresArgs: true,
     args: [{ name: "sessionId", type: "string", required: true, description: "Session ID to pin/unpin." }],
@@ -347,6 +368,8 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
     id: "session.group.list",
     label: "List session groups",
     description: "List all groups in a workspace with their IDs and labels.",
+    kind: "query",
+    effects: { data: "read", ui: "none", external: false },
     sideEffect: "none",
     args: [{ name: "workspaceId", type: "string", required: false, description: "Workspace ID. Defaults to selected." }],
     execute: (args) => {

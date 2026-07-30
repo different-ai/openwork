@@ -146,8 +146,14 @@ export const buildCloudProviderConfig = (
     id: provider.providerId,
     name: provider.name,
     env: getCloudProviderEnv(provider.providerConfig),
-    models,
   };
+
+  // OpenWork Models are catalog-backed via OPENCODE_MODELS_URL. Den provisions
+  // the provider + key with zero model rows — writing `models: {}` can prevent
+  // the engine from keeping catalog models, so omit an empty map for openwork.
+  if (Object.keys(models).length > 0 || provider.source !== "openwork") {
+    next.models = models;
+  }
 
   if (
     typeof provider.providerConfig.npm === "string" &&

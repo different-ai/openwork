@@ -15,6 +15,7 @@ function seedRequiredEnv() {
   process.env.BETTER_AUTH_SECRET = "y".repeat(32)
   process.env.BETTER_AUTH_URL = "http://127.0.0.1:8790"
   process.env.CORS_ORIGINS = "http://127.0.0.1:8790"
+  process.env.DEN_ORG_MODE = "multi_org"
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -89,7 +90,7 @@ async function replaceOrganizationMetadata(metadata: Record<string, unknown>) {
     .where(drizzle.eq(schema.OrganizationTable.id, organizationId))
 }
 
-async function putCapabilities(capabilities: { installLinks?: boolean | null; mcpConnections?: boolean | null }) {
+async function putCapabilities(capabilities: { installLinks?: boolean | null; mcpConnections?: boolean | null; cloud?: boolean | null }) {
   return routeApp().request(`http://den.local/v1/admin/organizations/${organizationId}/capabilities`, {
     method: "PUT",
     headers: { "content-type": "application/json" },
@@ -186,12 +187,12 @@ test("admin capability routes show effective defaults while preserving raw overr
 
   const getAbsent = await routeApp().request(`http://den.local/v1/admin/organizations/${organizationId}/capabilities`)
   expect(getAbsent.status).toBe(200)
-  await expect(getAbsent.json()).resolves.toMatchObject({ capabilities: { installLinks: true, mcpConnections: true } })
+  await expect(getAbsent.json()).resolves.toMatchObject({ capabilities: { installLinks: true, mcpConnections: true, cloud: false } })
 
   const listAbsent = await routeApp().request(`http://den.local/v1/admin/organizations?search=${organizationId}`)
   expect(listAbsent.status).toBe(200)
   await expect(listAbsent.json()).resolves.toMatchObject({
-    organizations: [{ id: organizationId, capabilities: { installLinks: true, mcpConnections: true } }],
+    organizations: [{ id: organizationId, capabilities: { installLinks: true, mcpConnections: true, cloud: false } }],
   })
 
   const enableInstallLinks = await putCapabilities({ installLinks: true })
@@ -209,6 +210,16 @@ test("admin capability routes show effective defaults while preserving raw overr
   expect(clearConnect.status).toBe(200)
   await expect(clearConnect.json()).resolves.toMatchObject({ capabilities: { installLinks: true, mcpConnections: true } })
   expect("mcpConnections" in readCapabilityMetadata(await readOrganizationMetadata())).toBe(false)
+
+  const enableCloud = await putCapabilities({ cloud: true })
+  expect(enableCloud.status).toBe(200)
+  await expect(enableCloud.json()).resolves.toMatchObject({ capabilities: { cloud: true } })
+  expect(readCapabilityMetadata(await readOrganizationMetadata())).toMatchObject({ installLinks: true, cloud: true })
+
+  const disableCloud = await putCapabilities({ cloud: false })
+  expect(disableCloud.status).toBe(200)
+  await expect(disableCloud.json()).resolves.toMatchObject({ capabilities: { cloud: false } })
+  expect(readCapabilityMetadata(await readOrganizationMetadata())).toMatchObject({ installLinks: true, cloud: false })
 
   await replaceOrganizationMetadata({ connectEnabled: true, capabilities: { installLinks: true } })
   const disableFlatEnabledConnect = await putCapabilities({ mcpConnections: false })

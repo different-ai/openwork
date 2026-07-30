@@ -163,7 +163,7 @@ export function getMockReposFor(provider: IntegrationProvider, accountId: string
       id: `${tag}:openwork`,
       name: "openwork",
       fullName: `${accountToLabel(accountId)}/openwork`,
-      description: "Core OpenWork monorepo — desktop, server, and orchestrator.",
+      description: "Core OpenWork monorepo — desktop, server, and cloud apps.",
       hasPlugins: true,
     },
     {

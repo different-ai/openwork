@@ -4,6 +4,7 @@ import * as React from "react"
 import {
   AlertTriangle,
   Check,
+  ChevronRight,
   Copy,
   Download,
   FileIcon,
@@ -31,6 +32,7 @@ import { ReadFileTool, WriteFileTool } from "@/components/tools/file"
 import { GlobTool } from "@/components/tools/glob"
 import { GrepTool } from "@/components/tools/grep"
 import { LspTool } from "@/components/tools/lsp"
+import { OpenWorkSessionCreateTool } from "@/components/tools/openwork-session-create"
 import { QuestionTool } from "@/components/tools/question"
 import { SkillTool } from "@/components/tools/skill"
 import { TodoWriteTool } from "@/components/tools/todowrite"
@@ -52,6 +54,12 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu"
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible"
+import { ImageAttachmentBadge } from "@/components/chat/image-attachment-badge"
 import { Image } from "@/components/ui/image"
 import {
   Message,
@@ -60,6 +68,10 @@ import {
   MessageContent,
 } from "@/components/ui/message"
 import { Tool } from "@/components/ui/tool"
+import { CapabilityCallLine } from "@/components/chat/capability-call-line"
+import { ReasoningBlock } from "@/components/chat/reasoning-block"
+import { SubagentRunLine } from "@/components/chat/subagent-run-line"
+import { ToolAggregateGroup } from "@/components/chat/tool-aggregate-group"
 import {
   isApplyPatchToolPart,
   isBashToolPart,
@@ -71,20 +83,27 @@ import {
   isQuestionToolPart,
   isReadToolPart,
   isSkillToolPart,
+  isTaskToolPart,
   isTodoWriteToolPart,
   isWebFetchToolPart,
   isWebSearchToolPart,
   isWriteToolPart,
 } from "@/lib/build-in-tools"
 import type { ThreadStatus } from "@/lib/messages"
+import { formatToolCallDuration } from "@/lib/tool-call-duration"
 import {
   collectToolParts,
   getActiveToolLabel,
 } from "@/lib/tool-activity"
+import { faviconUrlForHref } from "@/lib/favicon"
 import { cn } from "@/lib/utils"
-import { groupMessages, isMessageGroup, getLastTextPart, getAssistantRenderGroups, getFileTitle, getMediaBadge, getMessageCreated, formatMessageTimestamp, type UIMessageWithIndex, getMessagesText, getSafeFileDownloadUrl } from "./utils"
+import { groupMessages, isMessageGroup, getLastTextPart, getAggregateOnlyParts, getAssistantRenderGroups, getFileTitle, getMediaBadge, getMessageCompleted, getMessageCreated, formatMessageTimestamp, splitTurnAtAnswer, type UIMessageWithIndex, getMessagesText, getSafeFileDownloadUrl } from "./utils"
+import type { AnyToolPart } from "@/lib/tool-aggregate"
 
 const SEARCH_HIGHLIGHT_MARK_CLASS = "rounded px-0.5 bg-amber-4/70 text-current"
+
+/** Above this many step rows a finished turn folds into one summary line. */
+const COLLAPSED_STEP_RUN_MIN_ROWS = 4
 
 function MessageTimestamp({ message, className }: { message: UIMessage; className?: string }) {
   const created = getMessageCreated(message)
@@ -194,6 +213,27 @@ const ToolMessageInner = ({ part }: ToolMessageProps) => {
     return <EnvVarRequestTool part={part} />
   }
 
+  if (part.type === "dynamic-tool" && part.toolName === "openwork_session_create") {
+    return <OpenWorkSessionCreateTool part={part} />
+  }
+
+  if (isTaskToolPart(part)) {
+    return <SubagentRunLine part={part} />
+  }
+
+  // Failed calls use the same sentence line with the "failures are
+  // instructions" treatment (inline Reconnect/Retry).
+  if (part.type === "dynamic-tool") {
+    return (
+      <CapabilityCallLine
+        part={part}
+        onReconnect={onMcpReconnect}
+        onReopenAuthorization={onMcpReopenAuthorization}
+        onRetry={onMcpRetry}
+      />
+    )
+  }
+
   return (
     <Tool
       toolPart={part}
@@ -221,11 +261,10 @@ interface FileMessageProps {
   tone: "user" | "assistant"
 }
 
-// TODO: Add tone to the file message
-function FileMessage({ part }: FileMessageProps) {
+function FileMessage({ part, tone }: FileMessageProps) {
   const title = getFileTitle(part)
   const badge = getMediaBadge(part)
-  const isImage = part.mediaType.startsWith("image/") && part.url
+  const isImage = part.mediaType.startsWith("image/") && Boolean(part.url)
   const downloadUrl = getSafeFileDownloadUrl(part)
 
   const handleDownload = React.useCallback(() => {
@@ -239,6 +278,10 @@ function FileMessage({ part }: FileMessageProps) {
     anchor.remove()
   }, [downloadUrl, title])
 
+  if (isImage && tone === "user") {
+    return <ImageAttachmentBadge src={part.url} alt={title} />
+  }
+
   if (isImage) {
     return (
       <Image
@@ -246,20 +289,23 @@ function FileMessage({ part }: FileMessageProps) {
         alt={title}
         loading="lazy"
         decoding="async"
+        previewMaxWidth={280}
+        previewMaxHeight={160}
+        className="rounded-xl border border-border/70"
       />
     )
   }
 
   return (
-    <div className="flex h-auto w-fit min-w-0 max-w-full shrink items-center justify-start gap-2 rounded-xl border border-border ps-2 pe-2 py-1 text-left text-sm font-medium whitespace-normal">
+    <div className="flex h-auto w-fit min-w-0 max-w-full shrink items-center justify-start gap-2 rounded-xl border border-border/70 bg-background/40 ps-2 pe-2 py-1 text-left text-sm font-medium whitespace-normal">
       <div className="flex min-w-0 items-center gap-2 pe-2">
         <DescriptiveButtonIcon>
-          <FileIcon className="size-6 shrink-0" />
+          <FileIcon className="size-5 shrink-0" />
         </DescriptiveButtonIcon>
         <DescriptiveButtonContent className="gap-0">
-          <DescriptiveButtonTitle>{title}</DescriptiveButtonTitle>
+          <DescriptiveButtonTitle className="truncate text-xs">{title}</DescriptiveButtonTitle>
           {badge ? (
-            <DescriptiveButtonDescription className="text-xs">
+            <DescriptiveButtonDescription className="text-[10px]">
               {badge}
             </DescriptiveButtonDescription>
           ) : null}
@@ -326,14 +372,19 @@ type AssistantMessageProps = {
   isLastMessage: boolean
   isStreaming: boolean
   isLastStep: boolean
+  /** Set when the turn's collapsed step run shows this reasoning instead. */
+  hideReasoning?: boolean
 }
 
 const AssistantMessage = React.memo(
-  ({ message }: AssistantMessageProps) => {
+  ({ message, hideReasoning }: AssistantMessageProps) => {
     const { showThinking, highlightQuery } = useMessageList()
     const assistantRenderGroups = React.useMemo(
-      () => getAssistantRenderGroups(message.parts, showThinking),
-      [message.parts, showThinking]
+      () => {
+        const groups = getAssistantRenderGroups(message.parts, showThinking)
+        return hideReasoning ? groups.filter((group) => group.kind !== "reasoning") : groups
+      },
+      [hideReasoning, message.parts, showThinking]
     )
 
     return (
@@ -359,20 +410,26 @@ const AssistantMessage = React.memo(
 
             if (group.kind === "reasoning") {
               return (
-                <MessageContent
+                <ReasoningBlock
                   key={`reasoning-${index}`}
-                  className="text-muted-foreground prose w-full min-w-0 flex-1 rounded-lg bg-transparent p-0"
-                  markdown
-                >
-                  {group.text}
-                </MessageContent>
+                  text={group.text}
+                  isStreaming={group.isStreaming}
+                />
               )
             }
 
             if (group.kind === "file") {
               return (
-                <div key={`file-${index}`} className="w-full">
+                <div key={`file-${index}`} className="w-fit max-w-full">
                   <FileMessage part={group.part} tone="assistant" />
+                </div>
+              )
+            }
+
+            if (group.kind === "tool-aggregate") {
+              return (
+                <div key={`tool-aggregate-${index}`} className="w-full">
+                  <ToolAggregateGroup parts={group.parts} />
                 </div>
               )
             }
@@ -441,15 +498,67 @@ function renderPlainTextWithSearchHighlights(text: string, highlightQuery: strin
   return nodes
 }
 
+// Bare URL, excluding trailing punctuation that usually ends a sentence.
+const PLAIN_URL_RE = /https?:\/\/[^\s<>"')\]]+[^\s<>"')\].,;:!?]/g
+
+/** User bubbles are plain text, so bare https:// URLs need explicit anchors. */
+function renderPlainTextWithLinks(text: string, highlightQuery: string | undefined, keyPrefix: string) {
+  const nodes: React.ReactNode[] = []
+  let cursor = 0
+  for (const match of text.matchAll(PLAIN_URL_RE)) {
+    const start = match.index
+    const url = match[0]
+    if (start > cursor) {
+      nodes.push(
+        <React.Fragment key={`${keyPrefix}:pre:${cursor}`}>
+          {renderPlainTextWithSearchHighlights(text.slice(cursor, start), highlightQuery, `${keyPrefix}:pre:${cursor}`)}
+        </React.Fragment>
+      )
+    }
+    const favicon = faviconUrlForHref(url)
+    nodes.push(
+      <a
+        key={`${keyPrefix}:url:${start}`}
+        href={url}
+        target="_blank"
+        rel="noreferrer noopener"
+        className="text-indigo-10 transition-colors hover:text-indigo-8 break-all"
+      >
+        {favicon ? (
+          <img
+            src={favicon}
+            alt=""
+            aria-hidden="true"
+            loading="lazy"
+            decoding="async"
+            className="me-1 inline-block size-3.5 rounded-[3px] align-[-2px]"
+          />
+        ) : null}
+        {url}
+      </a>
+    )
+    cursor = start + url.length
+  }
+  if (nodes.length === 0) return renderPlainTextWithSearchHighlights(text, highlightQuery, keyPrefix)
+  if (cursor < text.length) {
+    nodes.push(
+      <React.Fragment key={`${keyPrefix}:post:${cursor}`}>
+        {renderPlainTextWithSearchHighlights(text.slice(cursor), highlightQuery, `${keyPrefix}:post:${cursor}`)}
+      </React.Fragment>
+    )
+  }
+  return nodes
+}
+
 function renderUserTextWithSkillChips(text: string, highlightQuery: string | undefined) {
-  if (!USER_SKILL_TOKEN_RE.test(text)) return renderPlainTextWithSearchHighlights(text, highlightQuery, "text")
+  if (!USER_SKILL_TOKEN_RE.test(text)) return renderPlainTextWithLinks(text, highlightQuery, "text")
   let offset = 0
   return text.split(USER_SKILL_TOKEN_RE).map((segment) => {
     const key = `${offset}:${segment}`
     offset += segment.length
     const skillMatch = segment.match(/^(?:Load )?\[skill ([^\]]+)\](?: and follow its instructions\.)?$/)
     if (skillMatch?.[1]) return <UserSkillChip key={key} name={skillMatch[1]} />
-    return <React.Fragment key={key}>{renderPlainTextWithSearchHighlights(segment, highlightQuery, key)}</React.Fragment>
+    return <React.Fragment key={key}>{renderPlainTextWithLinks(segment, highlightQuery, key)}</React.Fragment>
   })
 }
 
@@ -457,6 +566,11 @@ const UserMessage = React.memo(
   ({ message, isStreaming }: UserMessageProps) => {
     const { onRevertToUserMessage, onForkAtMessage, onEditUserMessage, highlightQuery } = useMessageList()
     const messageText = React.useMemo(() => getMessagesText([message]), [message])
+    const inlineParts = React.useMemo(
+      () => message.parts.filter((part) => (part.type === "text" && Boolean(part.text)) || isFileUIPart(part)),
+      [message.parts],
+    )
+    const hasContent = inlineParts.length > 0
 
     return (
       <Message
@@ -466,17 +580,38 @@ const UserMessage = React.memo(
       >
         <ContextMenu>
           <ContextMenuTrigger
+            // Override Trigger's select-none so user bubbles stay copyable.
+            className="!select-text"
             render={
-              <div className="group flex w-full flex-col items-end gap-1">
-                {message.parts.filter(isFileUIPart).map((part, index) => (
-                  <FileMessage key={`${part.url}-${index}`} part={part} tone="user" />
-                ))}
-                {message.parts.some((part) => part.type === "text" && part.text) ? (
+              <div
+                className="group flex w-full flex-col items-end gap-1 !select-text"
+                style={{ userSelect: "text" }}
+              >
+                {hasContent ? (
                   <MessageContent
-                    layoutId={message.id}
-                    className="bg-muted text-foreground max-w-[85%] rounded-3xl px-5 py-2.5 whitespace-pre-wrap sm:max-w-[75%]"
+                    className="bg-muted text-foreground max-w-[85%] rounded-3xl px-4 py-2.5 leading-6 sm:max-w-[75%] !select-text not-prose"
+                    style={{ userSelect: "text" }}
                   >
-                    {renderUserTextWithSkillChips(message.parts.map((part) => (part.type === "text" ? part.text : "")).join(""), highlightQuery)}
+                    {inlineParts.map((part, index) => {
+                      if (part.type === "text") {
+                        return (
+                          <span key={`text-${index}`} className="whitespace-pre-wrap">
+                            {renderUserTextWithSkillChips(part.text, highlightQuery)}
+                          </span>
+                        )
+                      }
+                      if (isFileUIPart(part)) {
+                        return (
+                          <span
+                            key={`file-${part.url}-${index}`}
+                            className="mx-1 inline-flex align-middle not-prose"
+                          >
+                            <FileMessage part={part} tone="user" />
+                          </span>
+                        )
+                      }
+                      return null
+                    })}
                   </MessageContent>
                 ) : null}
                 {!isStreaming && (
@@ -559,10 +694,11 @@ type MessageComponentProps = {
   isLastMessage: boolean
   isStreaming: boolean
   isLastStep: boolean
+  hideReasoning?: boolean
 }
 
 const MessageComponent = React.memo(
-  ({ message, isLastMessage, isStreaming, isLastStep }: MessageComponentProps) => {
+  ({ message, isLastMessage, isStreaming, isLastStep, hideReasoning }: MessageComponentProps) => {
     if (isSessionErrorMessage(message)) {
       return <ErrorMessage error={getMessagesText([message]) || "Session failed"} />
     }
@@ -578,6 +714,7 @@ const MessageComponent = React.memo(
           isLastMessage={isLastMessage}
           isStreaming={isStreaming}
           isLastStep={isLastStep}
+          hideReasoning={hideReasoning}
         />
       )
     }
@@ -710,8 +847,37 @@ function getRenderableMessage(message: UIMessage) {
   return parts.length > 0 ? { ...message, parts } : null;
 }
 
-function MessageArtifacts(props: { message: UIMessage }) {
-  return <ArtifactList messages={[props.message]} includeTargetFallbacks={false} />;
+/**
+ * A finished turn's steps collapse to a single "Worked for 1m 19s" line
+ * that expands back into the full run. Only live turns show their steps
+ * unprompted; once the answer is in, the reasoning is available but out
+ * of the way.
+ */
+function CompletedStepRun({ label, children }: { label: string; children: React.ReactNode }) {
+  const [open, setOpen] = React.useState(false)
+
+  return (
+    <Collapsible open={open} onOpenChange={setOpen} className="flex w-full flex-col gap-2">
+      <div className="mx-auto flex w-full max-w-3xl px-2 md:px-10">
+        <CollapsibleTrigger
+          className="group flex cursor-pointer items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground"
+          aria-label={open ? `${label}. Hide steps` : `${label}. Show steps`}
+        >
+          <span>{label}</span>
+          <ChevronRight
+            aria-hidden="true"
+            className={cn(
+              "size-3.5 text-muted-foreground/70 transition-transform duration-150",
+              open && "rotate-90"
+            )}
+          />
+        </CollapsibleTrigger>
+      </div>
+      <CollapsibleContent className="h-(--collapsible-panel-height) overflow-hidden transition-[height] duration-150 ease-out data-starting-style:h-0 data-ending-style:h-0 [&[hidden]:not([hidden='until-found'])]:hidden">
+        {children}
+      </CollapsibleContent>
+    </Collapsible>
+  )
 }
 
 interface AssistantMessageGroupProps {
@@ -725,7 +891,7 @@ function MessageGroup({
   messages,
   isStreaming,
 }: AssistantMessageGroupProps) {
-  const { onRevertToUserMessage, onForkAtMessage } = useMessageList()
+  const { onRevertToUserMessage, onForkAtMessage, showThinking } = useMessageList()
   const lastItem = items[items.length - 1]
   // Branch/revert must target a real server-side message id. Synthetic
   // client-side messages (e.g. session errors) don't exist on the server and
@@ -756,10 +922,71 @@ function MessageGroup({
   while (stepCount < items.length && !getRenderableMessage(items[stepCount].message)) {
     stepCount += 1
   }
-  const stepItems = items.slice(0, stepCount)
-  const proseItems = items.slice(stepCount)
+  let stepItems = items.slice(0, stepCount)
+  let proseItems = items.slice(stepCount)
+  // OpenCode delivers a whole turn as one assistant message with steps and
+  // the answer interleaved in its parts. Split the first prose message so
+  // its leading steps fold with the rest instead of pinning the run open.
+  const firstProse = proseItems[0]
+  if (firstProse && firstProse.message.role === "assistant" && !isSessionErrorMessage(firstProse.message)) {
+    const split = splitTurnAtAnswer(firstProse.message)
+    if (split) {
+      stepItems = [...stepItems, { index: firstProse.index, message: split.steps }]
+      proseItems = [{ index: firstProse.index, message: split.answer }, ...proseItems.slice(1)]
+    }
+  }
+  // How long the turn spent working, from the first step to when the answer
+  // finished (or started, for older history without a completed timestamp).
+  // Server timestamps, so this survives a reload.
+  const stepsStartedAt = stepItems.length > 0 ? getMessageCreated(stepItems[0].message) : null
+  const stepsEndedAt = getMessageCompleted(lastItem.message) ?? getMessageCreated(lastItem.message)
 
-  const renderItem = (item: UIMessageWithIndex, groupIndex: number) => {
+  // The answer message's own thinking belongs to the work, not the answer, so
+  // a collapsed run shows it and the message below renders text only.
+  const proseReasoning = proseItems.flatMap((item) =>
+    item.message.role === "assistant" && !isSessionErrorMessage(item.message)
+      ? getAssistantRenderGroups(item.message.parts, showThinking).flatMap((group, groupIndex) =>
+        group.kind === "reasoning"
+          ? [{ key: `${item.message.id}-${groupIndex}`, text: group.text, isStreaming: group.isStreaming }]
+          : []
+      )
+      : []
+  )
+  // An aggregate line counts each call it absorbed: it reads as one row but
+  // stands for that much work, and folding should key off the work done.
+  const stepRowCount =
+    stepItems.reduce(
+      (total, item) =>
+        total +
+        (item.message.role === "assistant" && !isSessionErrorMessage(item.message)
+          ? getAssistantRenderGroups(item.message.parts, showThinking).reduce(
+            (rows, group) => rows + (group.kind === "tool-aggregate" ? group.parts.length : 1),
+            0
+          )
+          : 1),
+      0
+    ) + proseReasoning.length
+  const stepRunLabel =
+    stepsStartedAt !== null && stepsEndedAt !== null && stepsEndedAt > stepsStartedAt
+      ? `Worked for ${formatToolCallDuration(stepsEndedAt - stepsStartedAt)}`
+      : stepRowCount === 1
+        ? "1 step"
+        : `${stepRowCount} steps`
+  // A short finished run reads fine as a list, so only long ones fold away.
+  const collapseSteps =
+    !isLiveGroup && stepItems.length > 0 && stepRowCount > COLLAPSED_STEP_RUN_MIN_ROWS
+  const foldedReasoning = collapseSteps
+    ? proseReasoning.map((reasoning) => (
+      <Message
+        key={`folded-reasoning-${reasoning.key}`}
+        className="mx-auto flex w-full max-w-3xl flex-col items-start gap-2 px-2 md:px-10"
+      >
+        <ReasoningBlock text={reasoning.text} isStreaming={reasoning.isStreaming} />
+      </Message>
+    ))
+    : []
+
+  const renderItem = (item: UIMessageWithIndex, groupIndex: number, hideReasoning?: boolean) => {
     const isLastMessage = item.index === messages.length - 1
 
     return (
@@ -769,20 +996,71 @@ function MessageGroup({
           isLastMessage={isLastMessage}
           isStreaming={isLastMessage && isStreaming}
           isLastStep={groupIndex === items.length - 1}
+          hideReasoning={hideReasoning}
         />
-        <MessageArtifacts message={item.message} />
       </div>
     )
   }
 
+  // Consecutive step messages that contain nothing but command/edit/read/
+  // search tool calls merge into one aggregate line (Paper "Recurring
+  // actions"); any prose, reasoning, or other tool breaks the run.
+  const renderItems = (slice: UIMessageWithIndex[], offset: number, hideReasoning?: boolean) => {
+    const nodes: React.ReactNode[] = []
+    let run: { parts: AnyToolPart[]; key: string } | null = null
+    const flush = () => {
+      if (!run) return
+      nodes.push(
+        <div key={`aggregate-${run.key}`}>
+          <Message className="mx-auto flex w-full max-w-3xl flex-col items-start gap-2 px-2 md:px-10">
+            <ToolAggregateGroup parts={run.parts} className="w-full" />
+          </Message>
+        </div>
+      )
+      run = null
+    }
+    slice.forEach((item, sliceIndex) => {
+      const aggregateParts =
+        item.message.role === "assistant" && !isSessionErrorMessage(item.message)
+          ? getAggregateOnlyParts(item.message, showThinking)
+          : null
+      if (aggregateParts) {
+        if (!run) run = { parts: [], key: item.message.id }
+        run.parts.push(...aggregateParts)
+        return
+      }
+      flush()
+      nodes.push(renderItem(item, offset + sliceIndex, hideReasoning))
+    })
+    flush()
+    return nodes
+  }
+
   return (
       <div className="flex flex-col gap-2 group/message-group">
+      {/* The scroll area keeps the same 8px rhythm the parts inside a single
+          message use, so a step row is spaced identically whether or not a
+          message boundary happens to fall between it and the previous row. */}
       {stepItems.length > 0 ? (
-        <div ref={stepsRef} className="max-h-[520px] overflow-y-auto">
-          {stepItems.map((item, groupIndex) => renderItem(item, groupIndex))}
-        </div>
+        collapseSteps ? (
+          <CompletedStepRun label={stepRunLabel}>
+            <div className="flex max-h-[520px] flex-col gap-2 overflow-y-auto">
+              {renderItems(stepItems, 0)}
+              {foldedReasoning}
+            </div>
+          </CompletedStepRun>
+        ) : (
+          <div ref={stepsRef} className="flex max-h-[520px] flex-col gap-2 overflow-y-auto">
+            {renderItems(stepItems, 0)}
+          </div>
+        )
       ) : null}
-      {proseItems.map((item, groupIndex) => renderItem(item, stepItems.length + groupIndex))}
+      {renderItems(proseItems, stepItems.length, collapseSteps)}
+      {/* Paper artifact strip: one FILES row per turn, at the end. */}
+      <ArtifactList
+        messages={items.map((item) => item.message)}
+        includeTargetFallbacks={false}
+      />
       {lastTextMessage && !isStreaming && (
         <div className="mx-auto flex w-full max-w-3xl flex-wrap items-center gap-2 px-2 opacity-0 transition-opacity duration-150 group-hover/message-group:opacity-100 md:px-8">
           <MessageActions className="flex gap-0">
@@ -863,7 +1141,7 @@ export function MessageList({ messages, status, retryStatus }: MessageListProps)
               isStreaming={isLastMessage && isStreaming}
               isLastStep={isLastStep}
             />
-            <MessageArtifacts message={item.message} />
+            <ArtifactList messages={[item.message]} includeTargetFallbacks={false} />
           </div>
         )
       })}

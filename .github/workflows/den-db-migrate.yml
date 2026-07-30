@@ -104,10 +104,48 @@ jobs:
       - name: Disable safe migrations (allow DDL for this run only)
         run: |
           set -euo pipefail
-          state="$(pscale branch show "$DATABASE_NAME" "$PLANETSCALE_BRANCH" --org "$PLANETSCALE_ORG" --format json | jq -r '.safe_migrations')"
+          pscale_retry() {
+            local attempt err_file error_output output status
+            for attempt in $(seq 1 5); do
+              err_file="$(mktemp)"
+              if output="$("$@" 2>"$err_file")"; then
+                error_output="$(<"$err_file")"
+                rm -f "$err_file"
+                if [ -n "$error_output" ]; then
+                  printf '%s\n' "$error_output" >&2
+                fi
+                printf '%s\n' "$output"
+                return 0
+              else
+                status=$?
+                error_output="$(<"$err_file")"
+                rm -f "$err_file"
+                if [ -n "$output" ]; then
+                  printf '%s\n' "$output" >&2
+                fi
+                if [ -n "$error_output" ]; then
+                  printf '%s\n' "$error_output" >&2
+                fi
+                if [ "$attempt" -lt 5 ]; then
+                  echo "pscale command failed (attempt $attempt/5, exit $status); retrying in 10s..." >&2
+                  sleep 10
+                fi
+              fi
+            done
+            return 1
+          }
+          read_safe_migrations_state() {
+            pscale_retry bash -o pipefail -c 'pscale branch show "$1" "$2" --org "$3" --format json | jq -r ".safe_migrations"' _ "$DATABASE_NAME" "$PLANETSCALE_BRANCH" "$PLANETSCALE_ORG"
+          }
+          if ! state="$(read_safe_migrations_state)"; then
+            state=""
+          fi
           echo "safe_migrations before run: $state"
           if [ "$state" = "true" ]; then
-            pscale branch safe-migrations disable "$DATABASE_NAME" "$PLANETSCALE_BRANCH" --org "$PLANETSCALE_ORG"
+            if ! pscale_retry pscale branch safe-migrations disable "$DATABASE_NAME" "$PLANETSCALE_BRANCH" --org "$PLANETSCALE_ORG"; then
+              echo "::error::Could not disable safe migrations for $DATABASE_NAME/$PLANETSCALE_BRANCH."
+              exit 1
+            fi
             echo "Safe migrations disabled for the duration of this run."
           elif [ "$state" = "false" ]; then
             echo "Safe migrations already disabled; will re-enable at the end of this run."
@@ -201,10 +239,72 @@ jobs:
         if: always() && steps.setup-pscale.conclusion == 'success'
         run: |
           set -euo pipefail
-          pscale branch safe-migrations enable "$DATABASE_NAME" "$PLANETSCALE_BRANCH" --org "$PLANETSCALE_ORG"
-          state="$(pscale branch show "$DATABASE_NAME" "$PLANETSCALE_BRANCH" --org "$PLANETSCALE_ORG" --format json | jq -r '.safe_migrations')"
-          echo "safe_migrations after run: $state"
-          if [ "$state" != "true" ]; then
+          pscale_retry() {
+            local attempt err_file error_output output status
+            for attempt in $(seq 1 5); do
+              err_file="$(mktemp)"
+              if output="$("$@" 2>"$err_file")"; then
+                error_output="$(<"$err_file")"
+                rm -f "$err_file"
+                if [ -n "$error_output" ]; then
+                  printf '%s\n' "$error_output" >&2
+                fi
+                printf '%s\n' "$output"
+                return 0
+              else
+                status=$?
+                error_output="$(<"$err_file")"
+                rm -f "$err_file"
+                if [ -n "$output" ]; then
+                  printf '%s\n' "$output" >&2
+                fi
+                if [ -n "$error_output" ]; then
+                  printf '%s\n' "$error_output" >&2
+                fi
+                if [ "$attempt" -lt 5 ]; then
+                  echo "pscale command failed (attempt $attempt/5, exit $status); retrying in 10s..." >&2
+                  sleep 10
+                fi
+              fi
+            done
+            return 1
+          }
+          read_safe_migrations_state() {
+            pscale_retry bash -o pipefail -c 'pscale branch show "$1" "$2" --org "$3" --format json | jq -r ".safe_migrations"' _ "$DATABASE_NAME" "$PLANETSCALE_BRANCH" "$PLANETSCALE_ORG"
+          }
+
+          confirmed="false"
+          for attempt in $(seq 1 5); do
+            echo "Enabling safe migrations (attempt $attempt/5)."
+            if output="$(pscale branch safe-migrations enable "$DATABASE_NAME" "$PLANETSCALE_BRANCH" --org "$PLANETSCALE_ORG" 2>&1)"; then
+              if [ -n "$output" ]; then
+                printf '%s\n' "$output"
+              fi
+            else
+              status=$?
+              if [ -n "$output" ]; then
+                printf '%s\n' "$output" >&2
+              fi
+              echo "pscale enable failed (attempt $attempt/5, exit $status); checking branch state." >&2
+            fi
+
+            if state="$(read_safe_migrations_state)"; then
+              echo "safe_migrations after run: $state"
+              if [ "$state" = "true" ]; then
+                confirmed="true"
+                break
+              fi
+            else
+              echo "Could not verify safe_migrations state after enable attempt $attempt." >&2
+            fi
+
+            if [ "$attempt" -lt 5 ]; then
+              echo "Safe migrations not confirmed enabled yet; retrying in 10s..."
+              sleep 10
+            fi
+          done
+
+          if [ "$confirmed" != "true" ]; then
             echo "::error::Safe migrations is NOT re-enabled on $DATABASE_NAME/$PLANETSCALE_BRANCH. Re-enable it manually: pscale branch safe-migrations enable $DATABASE_NAME $PLANETSCALE_BRANCH --org $PLANETSCALE_ORG"
             exit 1
           fi

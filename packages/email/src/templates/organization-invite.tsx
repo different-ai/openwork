@@ -1,5 +1,7 @@
 import React, { type CSSProperties } from "react"
-import { Body, Button, Container, Head, Heading, Hr, Html, Preview, Text } from "@react-email/components"
+import { Body, Button, Container, Head, Heading, Hr, Html, Img, Preview, Section, Text } from "@react-email/components"
+
+const LOGO_URL = "https://openworklabs.com/email/openwork-mark.png"
 
 export type OrganizationInviteEmailProps = {
   inviteLink: string
@@ -23,14 +25,27 @@ export function OrganizationInviteEmail({
       <Head />
       <Preview>{invitedByName} invited you to join {organizationName} on OpenWork</Preview>
       <Body style={styles.body}>
-        <Container style={styles.container}>
-          <Text style={styles.eyebrow}>OpenWork invite</Text>
-          <Heading style={styles.heading}>Join {organizationName}</Heading>
-          <Text style={styles.text}>{inviter} invited you to join {organizationName} as {articleFor(role)} {role}.</Text>
-          <Button href={inviteLink} style={styles.button}>Accept invite</Button>
-          <Hr style={styles.hr} />
-          <Text style={styles.footer}>If the button does not work, paste this link into your browser:</Text>
-          <Text style={styles.link}>{inviteLink}</Text>
+        <Container style={styles.frame}>
+          <Section style={styles.brand}>
+            <Img src={LOGO_URL} width="31" height="24" alt="OpenWork" style={styles.brandLogo} />
+            <span style={styles.brandName}>OpenWork</span>
+          </Section>
+          <Section style={styles.card}>
+            <Text style={styles.eyebrow}>Invitation</Text>
+            <Heading style={styles.heading}>Join {organizationName} on OpenWork</Heading>
+            <Text style={styles.text}>
+              {inviter} invited you to join the <span style={styles.strong}>{organizationName}</span> workspace as {articleFor(role)} {role}.
+            </Text>
+            <Button href={inviteLink} style={styles.button}>Accept invite</Button>
+            <Hr style={styles.hr} />
+            <Text style={styles.fallback}>If the button doesn&apos;t work, paste this link into your browser:</Text>
+            <Text style={styles.link}>{inviteLink}</Text>
+          </Section>
+          <Text style={styles.footer}>
+            You received this email because someone invited you to an OpenWork workspace.
+            <br />
+            OpenWork · openworklabs.com
+          </Text>
         </Container>
       </Body>
     </Html>
@@ -43,64 +58,95 @@ function articleFor(value: string) {
 
 const styles = {
   body: {
-    backgroundColor: "#f6f4ef",
-    color: "#171412",
-    fontFamily: "Arial, sans-serif",
+    backgroundColor: "#F0F1F3",
+    color: "#1C2024",
+    fontFamily: "'IBM Plex Sans', -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif",
     margin: 0,
   },
-  container: {
-    backgroundColor: "#fffdf8",
-    border: "1px solid #e8dfd0",
-    borderRadius: "20px",
-    margin: "40px auto",
+  frame: {
+    margin: "0 auto",
     maxWidth: "560px",
-    padding: "32px",
+    padding: "56px 0",
+  },
+  brand: {
+    marginBottom: "20px",
+    paddingLeft: "4px",
+  },
+  brandLogo: {
+    display: "inline-block",
+    verticalAlign: "middle",
+  },
+  brandName: {
+    color: "#1C2024",
+    fontSize: "15px",
+    fontWeight: 600,
+    marginLeft: "8px",
+    verticalAlign: "middle",
+  },
+  card: {
+    backgroundColor: "#FFFFFF",
+    border: "1px solid #E1E4E8",
+    borderRadius: "16px",
+    padding: "40px",
   },
   eyebrow: {
-    color: "#8a5a28",
-    fontSize: "13px",
-    fontWeight: 700,
+    color: "#60646C",
+    fontSize: "12px",
+    fontWeight: 500,
     letterSpacing: "0.08em",
     margin: "0 0 12px",
     textTransform: "uppercase",
   },
   heading: {
-    color: "#171412",
-    fontSize: "28px",
-    lineHeight: "34px",
-    margin: "0 0 16px",
+    color: "#1C2024",
+    fontSize: "24px",
+    fontWeight: 600,
+    letterSpacing: "-0.01em",
+    lineHeight: "32px",
+    margin: "0 0 12px",
   },
   text: {
-    color: "#4d4640",
-    fontSize: "16px",
+    color: "#60646C",
+    fontSize: "15px",
     lineHeight: "24px",
-    margin: "0 0 24px",
+    margin: "0 0 28px",
+  },
+  strong: {
+    color: "#1C2024",
+    fontWeight: 500,
   },
   button: {
-    backgroundColor: "#171412",
-    borderRadius: "999px",
-    color: "#fff8eb",
+    backgroundColor: "#1C2024",
+    borderRadius: "10px",
+    color: "#FFFFFF",
     display: "inline-block",
     fontSize: "15px",
-    fontWeight: 700,
-    padding: "13px 22px",
+    fontWeight: 500,
+    padding: "12px 24px",
     textDecoration: "none",
   },
   hr: {
-    borderColor: "#e8dfd0",
-    margin: "28px 0 18px",
+    borderColor: "#E1E4E8",
+    margin: "32px 0 20px",
   },
-  footer: {
-    color: "#756c62",
-    fontSize: "14px",
-    lineHeight: "21px",
-    margin: "0 0 8px",
+  fallback: {
+    color: "#60646C",
+    fontSize: "13px",
+    lineHeight: "20px",
+    margin: "0 0 4px",
   },
   link: {
-    color: "#5b3a18",
+    color: "#3E63DD",
     fontSize: "13px",
-    lineHeight: "19px",
+    lineHeight: "20px",
     margin: 0,
     wordBreak: "break-all",
+  },
+  footer: {
+    color: "#8B8D98",
+    fontSize: "12px",
+    lineHeight: "18px",
+    margin: "24px 0 0",
+    paddingLeft: "4px",
   },
 } satisfies Record<string, CSSProperties>

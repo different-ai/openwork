@@ -2,6 +2,7 @@ import { and, asc, eq, inArray, isNull, or } from "@openwork-ee/den-db/drizzle"
 import {
   DesktopPolicyMemberTable,
   DesktopPolicyTable,
+  MemberTable,
   TeamMemberTable,
   TeamTable,
 } from "@openwork-ee/den-db/schema"
@@ -101,13 +102,34 @@ export async function calculateDesktopPolicyForOrgMember(input: {
   }
 
   const defaultPolicy = orgPolicies.find((policy) => policy.isDefault === true && policy.isEnabled === true) ?? null
+  const memberRows = await db
+    .select({ role: MemberTable.role })
+    .from(MemberTable)
+    .where(and(
+      eq(MemberTable.organizationId, input.organizationId),
+      eq(MemberTable.id, input.orgMemberId),
+      isNull(MemberTable.removedAt),
+    ))
+    .limit(1)
+  const memberRole = memberRows[0]?.role ?? null
   const teamIds = await listTeamIdsForOrgMember(input)
-  const assignedWhere = teamIds.length > 0
-    ? or(
-        eq(DesktopPolicyMemberTable.orgMemberId, input.orgMemberId),
-        inArray(DesktopPolicyMemberTable.teamId, teamIds),
-      )
-    : eq(DesktopPolicyMemberTable.orgMemberId, input.orgMemberId)
+  const assignedWhere = memberRole
+    ? teamIds.length > 0
+      ? or(
+          eq(DesktopPolicyMemberTable.orgMemberId, input.orgMemberId),
+          inArray(DesktopPolicyMemberTable.teamId, teamIds),
+          eq(DesktopPolicyMemberTable.role, memberRole),
+        )
+      : or(
+          eq(DesktopPolicyMemberTable.orgMemberId, input.orgMemberId),
+          eq(DesktopPolicyMemberTable.role, memberRole),
+        )
+    : teamIds.length > 0
+      ? or(
+          eq(DesktopPolicyMemberTable.orgMemberId, input.orgMemberId),
+          inArray(DesktopPolicyMemberTable.teamId, teamIds),
+        )
+      : eq(DesktopPolicyMemberTable.orgMemberId, input.orgMemberId)
 
   const assignedPolicies = assignedWhere
     ? await db

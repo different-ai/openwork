@@ -1,17 +1,23 @@
 /** @jsxImportSource react */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Agent } from "@opencode-ai/sdk/v2/client";
-import { AppWindowMac, ArrowUp, Check, ChevronDown, ChevronRight, FileText, ListPlus, LoaderCircle, Paperclip, Plug, Settings, Square, Terminal, X, Zap } from "lucide-react";
+import { AppWindowMac, ArrowUp, Check, ChevronDown, ChevronRight, FileText, ListPlus, LoaderCircle, Paperclip, Plug, RefreshCw, Settings, Square, Terminal, X, Zap } from "lucide-react";
 import fuzzysort from "fuzzysort";
 import { toast } from "@/components/ui/sonner";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuShortcut, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { OPENWORK_EXTENSION_CATALOG, type McpDirectoryInfo } from "@/app/constants";
+import {
+  OPENWORK_EXTENSION_CATALOG,
+  filterOpenWorkExtensionCatalogForPlatform,
+  resolveOpenWorkExtensionCatalogPlatform,
+  type McpDirectoryInfo,
+} from "@/app/constants";
 import type { CloudImportedPlugin, CloudImportedPluginFile } from "@/app/cloud/import-state";
 import type { ComposerAttachment, McpServerEntry, McpStatusMap, ModelRef, SkillCard, SlashCommandOption } from "@/app/types";
-import { formatBytes, isMacPlatform } from "@/app/utils";
+import { isMacPlatform } from "@/app/utils";
 import { t } from "@/i18n";
 import { isOpenWorkExtensionEnabled, isOpenWorkExtensionHidden, OPENWORK_EXTENSION_STATE_CHANGED } from "@/react-app/domains/settings/extension-state";
 import { useDesktopRestriction } from "@/react-app/domains/cloud/desktop-config-provider";
+import { usePlatform } from "@/react-app/kernel/platform";
 import { resolveExtensionIconUrl } from "@/react-app/design-system/extension-icon-src";
 import { ModelBehaviorSelect } from "@/components/model-behavior-select";
 import { ModelSelect } from "@/components/model-select";
@@ -25,7 +31,8 @@ import {
   skillSlashCommandName,
   type ComposerSlashCommandOption,
 } from "./slash-command";
-import { FILE_URL_RE, HTTP_URL_RE } from "./pasted-text";
+import { encodeConnectSkillToken } from "./connect-skill-token";
+import { FILE_URL_RE, HTTP_URL_RE, type PastedTextChip } from "./pasted-text";
 
 type MentionItem = {
   id: string;
@@ -34,14 +41,7 @@ type MentionItem = {
   label: string;
 };
 
-type PastedTextChip = {
-  id: string;
-  label: string;
-  text: string;
-  lines: number;
-};
-
-type ToolMenuSettingsSection = "commands" | "skills" | "mcps" | "plugins";
+type ToolMenuSettingsSection = "commands" | "skills" | "mcps" | "plugins" | "extensions";
 type ToolMenuSection = "agents" | "commands" | "skills" | "mcps" | "extensions" | `plugin:${string}`;
 
 function isComposerExtensionAvailable(entry: McpDirectoryInfo) {
@@ -63,12 +63,20 @@ type ComposerProps = {
   busy: boolean;
   steering: boolean;
   submissionPreparing: boolean;
+  submissionBlocked: boolean;
+  submissionInputStatusLabel?: string;
   queuedCount: number;
   disabled: boolean;
   modelUnavailable?: boolean;
+  modelUnavailableMessage?: string | null;
+  organizationModelsEmpty?: boolean;
   statusLabel: string;
   modelPickerOpen: boolean;
   selectedModel: ModelRef;
+  /** When set, the full model picker opened from here targets this session. */
+  sessionId?: string;
+  openWorkModelsEntitled?: boolean;
+  onRefreshOrganizationModels?: () => void | Promise<void>;
   onModelPickerOpenChange: (open: boolean) => void;
   onModelChange: (model: ModelRef) => void;
   attachments: ComposerAttachment[];
@@ -109,12 +117,13 @@ type ComposerProps = {
   onUploadInboxFiles?: ((files: File[]) => void | Promise<unknown>) | null;
   draftScopeKey?: string;
   compactTopSpacing?: boolean;
+  /** Render inline in a page (new-task hero): no sticky dock chrome or inner max-width, aligning with sibling content. */
+  flush?: boolean;
   topAccessory?: ReactNode;
 };
 
 const FLUSH_PROMPT_EVENT = "openwork:flushPromptDraft";
 const FOCUS_PROMPT_EVENT = "openwork:focusPrompt";
-const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
 const IMAGE_COMPRESS_MAX_PX = 2048;
 const IMAGE_COMPRESS_QUALITY = 0.82;
 const IMAGE_COMPRESS_TARGET_BYTES = 1_500_000;
@@ -282,10 +291,12 @@ function pluginSlashCommandName(file: CloudImportedPluginFile) {
 }
 
 export function ReactSessionComposer(props: ComposerProps) {
+  const platform = usePlatform();
   const builtInExtensionsDisabled = useDesktopRestriction("allowBuiltInExtensions");
   let fileInput: HTMLInputElement | undefined;
   const [agents, setAgents] = useState<Agent[]>([]);
   const [agentMenuOpen, setAgentMenuOpen] = useState(false);
+  const [refreshingOrganizationModels, setRefreshingOrganizationModels] = useState(false);
   const [commands, setCommands] = useState<SlashCommandOption[]>([]);
   const [commandsLoading, setCommandsLoading] = useState(false);
   const [skillsLoading, setSkillsLoading] = useState(false);
@@ -319,9 +330,9 @@ export function ReactSessionComposer(props: ComposerProps) {
     plugins: false,
   });
   const [commandsLoaded, setCommandsLoaded] = useState(false);
-  const [skillsLoaded, setSkillsLoaded] = useState(Boolean(props.skills));
-  const [mcpLoaded, setMcpLoaded] = useState(Boolean(props.mcpServers));
-  const [pluginsLoaded, setPluginsLoaded] = useState(Boolean(props.importedPlugins));
+  const [skillsLoaded, setSkillsLoaded] = useState(Boolean(props.skills?.length));
+  const [mcpLoaded, setMcpLoaded] = useState(Boolean(props.mcpServers?.length));
+  const [pluginsLoaded, setPluginsLoaded] = useState(Boolean(props.importedPlugins?.length));
   const [, setExtensionStateVersion] = useState(0);
   const [agentMenuIndex, setAgentMenuIndex] = useState(0);
   const agentItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
@@ -367,6 +378,19 @@ export function ReactSessionComposer(props: ComposerProps) {
     }
   }, [props.modelPickerOpen, props.onModelPickerOpenChange, props.steering]);
 
+  const handleRefreshOrganizationModels = useCallback(async () => {
+    if (!props.onRefreshOrganizationModels || refreshingOrganizationModels) return;
+
+    setRefreshingOrganizationModels(true);
+    try {
+      await props.onRefreshOrganizationModels();
+    } catch {
+      toast.error(t("models.refresh_organization_models_failed"));
+    } finally {
+      setRefreshingOrganizationModels(false);
+    }
+  }, [props.onRefreshOrganizationModels, refreshingOrganizationModels]);
+
   // Input history recall (#2012): ArrowUp on an empty composer recalls the
   // previous sent prompt; repeated ArrowUp/ArrowDown walk the history.
   // Editing the recalled text exits recall mode, and ArrowDown past the
@@ -393,14 +417,14 @@ export function ReactSessionComposer(props: ComposerProps) {
   const handleEditorSubmit = useCallback((options: { queue: boolean }) => {
     const hasContent = props.draft.trim().length > 0 || props.attachments.length > 0;
     if (!hasContent) return;
-    if (props.submissionPreparing) return;
+    if (props.submissionPreparing || props.submissionBlocked) return;
     if (props.busy) {
       if (options.queue) void props.onQueue();
       else void props.onSteer();
       return;
     }
     void props.onSend();
-  }, [props.busy, props.draft, props.attachments, props.onSend, props.onSteer, props.onQueue, props.submissionPreparing]);
+  }, [props.busy, props.draft, props.attachments, props.onSend, props.onSteer, props.onQueue, props.submissionBlocked, props.submissionPreparing]);
 
   const slashCommandQuery = getSlashCommandQuery(props.draft);
   const slashOpenNext = slashCommandQuery !== null;
@@ -540,9 +564,9 @@ export function ReactSessionComposer(props: ComposerProps) {
       plugins: false,
     };
     setCommandsLoaded(false);
-    setSkillsLoaded(Boolean(props.skills));
-    setMcpLoaded(Boolean(props.mcpServers));
-    setPluginsLoaded(Boolean(props.importedPlugins));
+    setSkillsLoaded(Boolean(props.skills?.length));
+    setMcpLoaded(Boolean(props.mcpServers?.length));
+    setPluginsLoaded(Boolean(props.importedPlugins?.length));
   }, [toolMenuOpen]);
 
   useEffect(() => {
@@ -696,7 +720,7 @@ export function ReactSessionComposer(props: ComposerProps) {
         }
       };
     }
-    if (toolMenuSection === "mcps" && listMcp && !toolMenuLoadRef.current.mcps) {
+    if ((toolMenuSection === "extensions" || toolMenuSection === "mcps") && listMcp && !toolMenuLoadRef.current.mcps) {
       let cancelled = false;
       toolMenuLoadRef.current.mcps = true;
       setMcpLoading(true);
@@ -773,7 +797,8 @@ export function ReactSessionComposer(props: ComposerProps) {
   const activePlugin = toolMenuSection.startsWith("plugin:")
     ? pluginSections.find((entry) => entry.section === toolMenuSection)?.plugin ?? null
     : null;
-  const composerExtensions = OPENWORK_EXTENSION_CATALOG.filter((entry) =>
+  const extensionCatalogPlatform = resolveOpenWorkExtensionCatalogPlatform(platform.platform, platform.os);
+  const composerExtensions = filterOpenWorkExtensionCatalogForPlatform(OPENWORK_EXTENSION_CATALOG, extensionCatalogPlatform).filter((entry) =>
     !builtInExtensionsDisabled &&
     !isOpenWorkExtensionHidden(entry) && isComposerExtensionAvailable(entry)
   );
@@ -818,16 +843,23 @@ export function ReactSessionComposer(props: ComposerProps) {
       ? { name: input, path: "", origin: "local" as const }
       : input;
     if (skill.origin === "openwork-connect") {
-      const prompt = t("composer.connect_skill_prompt", {
+      const slug = skillSlashCommandName(skill);
+      const token = encodeConnectSkillToken({
+        slug,
         name: skill.name,
         marketplace: skill.marketplaceName ?? "assigned",
         capability: skill.connectCapabilityName ?? skill.name,
       });
       if (options?.replaceSkillDraft) {
-        props.onDraftChange(prompt);
+        props.onDraftChange(`${token} `);
       } else {
-        const separator = props.draft.length > 0 && !/\s$/.test(props.draft) ? " " : "";
-        props.onDraftChange(`${props.draft}${separator}${prompt}`);
+        const editor = editorRef.current;
+        if (editor) {
+          editor.insertSkillAtSelection(slug, token);
+        } else {
+          const separator = props.draft.length > 0 && !/\s$/.test(props.draft) ? " " : "";
+          props.onDraftChange(`${props.draft}${separator}${token} `);
+        }
       }
       setSlashOpen(false);
       setToolMenuOpen(false);
@@ -875,10 +907,15 @@ export function ReactSessionComposer(props: ComposerProps) {
     setToolMenuOpen(false);
   };
 
+  // Configure lands on the matching OpenWork Extensions section: skills and
+  // plugin tabs keep their scoped views, everything else opens the inventory.
   const openToolMenuSettings = () => {
-    const section: ToolMenuSettingsSection = toolMenuSection === "commands" || toolMenuSection === "skills" || toolMenuSection === "mcps"
-      ? toolMenuSection
-      : "plugins";
+    const section: ToolMenuSettingsSection =
+      toolMenuSection === "commands" || toolMenuSection === "skills"
+        ? toolMenuSection
+        : toolMenuSection === "agents" || toolMenuSection === "extensions"
+          ? "extensions"
+          : "plugins";
     props.onOpenSettingsSection?.(section);
   };
 
@@ -1059,30 +1096,16 @@ export function ReactSessionComposer(props: ComposerProps) {
       return;
     }
 
+    // No client-side size cap: oversized files are rejected upstream (upload
+    // endpoint or provider) with their own errors instead of a composer rule.
     const accepted: File[] = [];
-    const oversize: string[] = [];
-
     for (const original of inputFiles) {
-      const processed = original.type.startsWith("image/") ? await compressImageFile(original) : original;
-      if (processed.size > MAX_ATTACHMENT_BYTES) {
-        oversize.push(processed.name || original.name);
-        continue;
-      }
-      accepted.push(processed);
+      accepted.push(original.type.startsWith("image/") ? await compressImageFile(original) : original);
     }
 
     if (accepted.length) {
       props.onAttachFiles(accepted);
     }
-
-    if (oversize.length) {
-      toast.warning(
-        oversize.length === 1
-          ? t("composer.file_exceeds_limit", { name: oversize[0] })
-          : `${oversize.length} files exceed the 8MB limit.`,
-      );
-    }
-
   };
 
   const activeMcpItems = mcpServers.map((entry) => ({
@@ -1205,7 +1228,7 @@ export function ReactSessionComposer(props: ComposerProps) {
   return (
     <div
       ref={rootRef}
-      className={`sticky bottom-0 ${toolMenuOpen ? "z-50" : "z-20"} bg-gradient-to-t from-dls-surface via-dls-surface/95 to-transparent px-4 pb-2 md:px-8 ${props.compactTopSpacing ? "pt-0" : "pt-1"}`}
+      className={props.flush ? `relative ${toolMenuOpen ? "z-50" : "z-20"}` : `sticky bottom-0 ${toolMenuOpen ? "z-50" : "z-20"} bg-gradient-to-t from-dls-surface via-dls-surface/95 to-transparent px-4 pb-2 md:px-8 ${props.compactTopSpacing ? "pt-0" : "pt-1"}`}
       style={{ contain: "layout style" }}
       onKeyDownCapture={handleKeyDownCapture}
       onCompositionStart={() => {
@@ -1215,47 +1238,15 @@ export function ReactSessionComposer(props: ComposerProps) {
         imeComposingRef.current = false;
       }}
     >
-      <div className="max-w-[800px] mx-auto">
+      <div className={props.flush ? "" : "max-w-[800px] mx-auto"}>
         {/* Main composer panel */}
         <div
-          className={`relative overflow-visible rounded-[24px] border border-dls-border bg-dls-surface transition-all ${panelRoundedClass}`}
+          className={`relative overflow-visible rounded-[18px] border border-dls-border bg-dls-surface transition-all ${panelRoundedClass}`}
         >
           {props.topAccessory ? <div className="relative z-10">{props.topAccessory}</div> : null}
 
           {renderMentionMenu()}
           {renderSlashMenu()}
-
-          {props.attachments.length > 0 ? (
-            <div className="mx-5 mt-5 flex flex-wrap gap-2 md:mx-6">
-              {props.attachments.map((attachment) => (
-                <div key={attachment.id} className="flex items-center gap-2 rounded-2xl border border-gray-6 bg-gray-2 px-3 py-2 text-xs text-gray-10">
-                  {isImageAttachment(attachment) && attachment.previewUrl ? (
-                    <div className="h-10 w-10 overflow-hidden rounded-xl border border-gray-6 bg-gray-1">
-                      <img src={attachment.previewUrl} alt={attachment.name} decoding="async" className="h-full w-full object-cover" />
-                    </div>
-                  ) : (
-                    <FileText size={14} className="text-gray-9" />
-                  )}
-                  <div className="max-w-[160px] min-w-0">
-                    <div className="truncate text-[12px] font-medium text-gray-11">{attachment.name}</div>
-                    <div className="flex items-center gap-1.5 text-[11px] text-gray-10">
-                      <span>{isImageAttachment(attachment) ? t("composer.image_kind") : t("composer.file_kind")}</span>
-                      <span>·</span>
-                      <span>{formatBytes(attachment.size)}</span>
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    className="ml-1 inline-flex h-5 w-5 items-center justify-center rounded-full text-gray-10 transition-colors hover:bg-gray-3 hover:text-gray-12"
-                    onClick={() => props.onRemoveAttachment(attachment.id)}
-                    title={t("action.remove")}
-                  >
-                    <X size={12} />
-                  </button>
-                </div>
-              ))}
-            </div>
-          ) : null}
 
           {/*
             The pasted-text chip used to render twice — once inline inside
@@ -1274,90 +1265,123 @@ export function ReactSessionComposer(props: ComposerProps) {
             </div>
           ) : null}
 
-          <div className="px-4 pt-3 pb-2">
+          <div
+            className="px-4 pt-3 pb-2"
+            aria-busy={props.submissionPreparing}
+          >
             {/* Editor */}
-            <LexicalPromptEditor
-              ref={editorRef}
-              value={props.draft}
-              mentions={props.mentions}
-              pastedText={pastedTextTokens}
-              disabled={props.disabled}
-              placeholder={t("composer.placeholder")}
-              onChange={props.onDraftChange}
-              onSubmit={handleEditorSubmit}
-              onExpandPastedText={handleExpandPastedText}
-              onPasteText={props.onPasteText}
-              onPaste={(event) => {
-                // Paste policy:
-                // 1. Actual files on the clipboard -> attach them.
-                // 2. Explicit text/uri-list (drag from Finder / browser) -> insert links.
-                // 3. Plain text -> DO NOTHING. Let Lexical's PlainTextPlugin
-                //    handle the paste natively so newlines render correctly
-                //    and no content is silently dropped. Previous behavior
-                //    hijacked pastes that merely contained absolute paths
-                //    like "/Users/..." or pastes longer than 10 lines, which
-                //    was the root cause of "paste into composer is broken".
-                const files = Array.from(event.clipboardData?.files ?? []);
-                if (files.length) {
-                  event.preventDefault();
-                  void addAttachments(files);
-                  return;
-                }
+            <div className="relative">
+              <div className={props.submissionBlocked ? "invisible" : undefined}>
+                <LexicalPromptEditor
+                  ref={editorRef}
+                  value={props.draft}
+                  mentions={props.mentions}
+                  pastedText={pastedTextTokens}
+                  attachments={props.attachments.map((attachment) => ({
+                    id: attachment.id,
+                    name: attachment.name,
+                    kind: isImageAttachment(attachment) ? "image" : "file",
+                    previewUrl: attachment.previewUrl,
+                  }))}
+                  disabled={props.disabled || props.submissionBlocked}
+                  placeholder={t("composer.placeholder")}
+                  onChange={props.onDraftChange}
+                  onSubmit={handleEditorSubmit}
+                  onExpandPastedText={handleExpandPastedText}
+                  onRemoveAttachment={props.onRemoveAttachment}
+                  onPasteText={props.onPasteText}
+                  onPaste={(event) => {
+                    // Paste policy:
+                    // 1. Actual files on the clipboard -> attach them.
+                    // 2. Explicit text/uri-list (drag from Finder / browser) -> insert links.
+                    // 3. Plain text -> DO NOTHING. Let Lexical's PlainTextPlugin
+                    //    handle the paste natively so newlines render correctly
+                    //    and no content is silently dropped. Previous behavior
+                    //    hijacked pastes that merely contained absolute paths
+                    //    like "/Users/..." or pastes longer than 10 lines, which
+                    //    was the root cause of "paste into composer is broken".
+                    const files = Array.from(event.clipboardData?.files ?? []);
+                    if (files.length) {
+                      event.preventDefault();
+                      void addAttachments(files);
+                      return;
+                    }
 
-                const uriList = event.clipboardData
-                  ? parseClipboardUriList(event.clipboardData)
-                  : [];
-                if (uriList.length) {
-                  event.preventDefault();
-                  props.onUnsupportedFileLinks(uriList);
-                  return;
-                }
+                    const uriList = event.clipboardData
+                      ? parseClipboardUriList(event.clipboardData)
+                      : [];
+                    if (uriList.length) {
+                      event.preventDefault();
+                      props.onUnsupportedFileLinks(uriList);
+                      return;
+                    }
 
-                const text = event.clipboardData?.getData("text/plain") ?? "";
+                    const text = event.clipboardData?.getData("text/plain") ?? "";
 
-                // Plain text paste display is owned by PasteChipPlugin inside
-                // the Lexical editor: >50 chars collapse unless the whole
-                // string is a standalone HTTP(S) URL; expanded pasted text gets
-                // the gray pasted-content styling. Do NOT duplicate that here.
+                    // Plain text paste display is owned by PasteChipPlugin inside
+                    // the Lexical editor: text collapses when it would exceed the
+                    // editor's current width and maximum height, unless the whole
+                    // string is a standalone HTTP(S) URL. Text that fits, or is
+                    // expanded from a chip, renders like normal text. Do NOT
+                    // duplicate that here.
 
-                if (
-                  text.trim() &&
-                  (props.isRemoteWorkspace || props.isSandboxWorkspace) &&
-                  /file:\/\/|(^|\s)\/(Users|home|var|etc|opt|tmp|private|Volumes|Applications)\//.test(text)
-                ) {
-                  const attachedFiles = props.attachments.map((attachment) => attachment.file);
-                  toast.warning(t("composer.remote_worker_paste_warning"), {
-                    action:
-                      props.onUploadInboxFiles && attachedFiles.length > 0
-                        ? {
-                            label: t("composer.upload_to_shared_folder"),
-                            onClick: () => void props.onUploadInboxFiles?.(attachedFiles),
-                          }
-                        : undefined,
-                  });
-                  // Intentionally no preventDefault — the notice is advisory,
-                  // the paste still goes through the editor.
-                }
-              }}
-              onDragOver={(event) => {
-                if (event.dataTransfer?.files?.length) {
-                  event.preventDefault();
-                  if (!dropzoneActive) setDropzoneActive(true);
-                }
-              }}
-              onDragLeave={(event) => {
-                const nextTarget = event.relatedTarget;
-                if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) return;
-                setDropzoneActive(false);
-              }}
-              onDrop={(event) => {
-                const files = Array.from(event.dataTransfer?.files ?? []);
-                setDropzoneActive(false);
-                if (!files.length) return;
-                event.preventDefault();
-                void addAttachments(files);
-              }}
-            />
+                    if (
+                      text.trim() &&
+                      (props.isRemoteWorkspace || props.isSandboxWorkspace) &&
+                      /file:\/\/|(^|\s)\/(Users|home|var|etc|opt|tmp|private|Volumes|Applications)\//.test(text)
+                    ) {
+                      const attachedFiles = props.attachments.map((attachment) => attachment.file);
+                      toast.warning(t("composer.remote_worker_paste_warning"), {
+                        action:
+                          props.onUploadInboxFiles && attachedFiles.length > 0
+                            ? {
+                                label: t("composer.upload_to_shared_folder"),
+                                onClick: () => void props.onUploadInboxFiles?.(attachedFiles),
+                              }
+                            : undefined,
+                      });
+                      // Intentionally no preventDefault — the notice is advisory,
+                      // the paste still goes through the editor.
+                    }
+                  }}
+                  onDragOver={(event) => {
+                    if (event.dataTransfer?.files?.length) {
+                      event.preventDefault();
+                      if (!dropzoneActive) setDropzoneActive(true);
+                    }
+                  }}
+                  onDragLeave={(event) => {
+                    const nextTarget = event.relatedTarget;
+                    if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) return;
+                    setDropzoneActive(false);
+                  }}
+                  onDrop={(event) => {
+                    const files = Array.from(event.dataTransfer?.files ?? []);
+                    setDropzoneActive(false);
+                    if (!files.length) return;
+                    event.preventDefault();
+                    void addAttachments(files);
+                  }}
+                />
+              </div>
+              {props.submissionBlocked ? (
+                <div
+                  className="absolute inset-0 flex min-h-[60px] items-center justify-center gap-2 text-[13px] font-medium text-dls-secondary"
+                  data-testid="composer-connection-state"
+                  role="status"
+                  aria-live="polite"
+                >
+                  {props.submissionPreparing ? (
+                    <>
+                      <LoaderCircle size={15} className="animate-spin" />
+                      <span>{props.submissionInputStatusLabel ?? "Connecting signed-in services…"}</span>
+                    </>
+                  ) : (
+                    <span>Reconnect Den to continue.</span>
+                  )}
+                </div>
+              ) : null}
+            </div>
 
             {/* Action row — attachments, quick actions, model controls, and send */}
             <div className="mt-2 flex flex-wrap items-end justify-between gap-2">
@@ -1421,7 +1445,6 @@ export function ReactSessionComposer(props: ComposerProps) {
                             ["commands", t("dashboard.commands")],
                             ["skills", t("dashboard.skills")],
                             ["extensions", "Extensions"],
-                            ["mcps", t("composer.mcps_label")],
                           ] as const).map(([section, label]) => (
                             <button
                               key={section}
@@ -1553,73 +1576,74 @@ export function ReactSessionComposer(props: ComposerProps) {
                               </div>
                             )
                           ) : null}
-                          {toolMenuSection === "mcps" ? (
-                            activeMcpItems.length > 0 ? (
-                              <div className="grid gap-1">
-                                {activeMcpItems.map(({ entry, status }) => (
-                                  <div key={entry.id ?? entry.name} className="flex items-start gap-3 rounded-[16px] px-3 py-2.5 text-gray-11">
-                                    <Plug size={14} className="mt-0.5 shrink-0 text-gray-9" />
-                                    <div className="min-w-0 flex-1">
-                                      <div className="flex items-center justify-between gap-3">
-                                        <div className="truncate text-xs font-semibold text-gray-11">{entry.name}</div>
-                                        <div className="flex shrink-0 items-center gap-1">
-                                          {isLocalCapability(entry.origin) ? (
-                                            <span className="rounded-full bg-gray-3 px-2 py-0.5 text-[10px] font-medium text-gray-11">
-                                              {t("composer.source_local")}
-                                            </span>
+                          {toolMenuSection === "extensions" ? (
+                            <>
+                              {composerExtensions.length > 0 ? (
+                                <div className="grid gap-1">
+                                  {composerExtensions.map((entry) => (
+                                    <button
+                                      key={entry.id ?? entry.serverName ?? entry.name}
+                                      type="button"
+                                      className="flex w-full items-start gap-3 rounded-[16px] px-3 py-2.5 text-left text-gray-11 transition-colors hover:bg-gray-2/70"
+                                      onClick={() => applyExtensionSelection(entry)}
+                                    >
+                                      <div className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg border border-dls-border bg-white shadow-sm">
+                                        {extensionIcon(entry, 16)}
+                                      </div>
+                                      <div className="min-w-0 flex-1">
+                                        <div className="flex items-center justify-between gap-3">
+                                          <div className="truncate text-xs font-semibold text-gray-11">{entry.name}</div>
+                                          {entry.defaultEnabled ? (
+                                            <span className="shrink-0 rounded-full bg-green-3 px-2 py-0.5 text-[10px] font-medium text-green-11">Enabled</span>
                                           ) : null}
-                                          <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${mcpStatusBadgeClass(status)}`}>
-                                            {formatMcpStatusLabel(status)}
-                                          </span>
+                                        </div>
+                                        <div className="truncate text-xs text-gray-10">{entry.description}</div>
+                                      </div>
+                                    </button>
+                                  ))}
+                                </div>
+                              ) : null}
+                              {activeMcpItems.length > 0 ? (
+                                <div className={`grid gap-1 ${composerExtensions.length > 0 ? "mt-2 border-t border-dls-border pt-2" : ""}`}>
+                                  {activeMcpItems.map(({ entry, status }) => (
+                                    <div key={entry.id ?? entry.name} className="flex items-start gap-3 rounded-[16px] px-3 py-2.5 text-gray-11">
+                                      <Plug size={14} className="mt-0.5 shrink-0 text-gray-9" />
+                                      <div className="min-w-0 flex-1">
+                                        <div className="flex items-center justify-between gap-3">
+                                          <div className="truncate text-xs font-semibold text-gray-11">{entry.name}</div>
+                                          <div className="flex shrink-0 items-center gap-1">
+                                            {isLocalCapability(entry.origin) ? (
+                                              <span className="rounded-full bg-gray-3 px-2 py-0.5 text-[10px] font-medium text-gray-11">
+                                                {t("composer.source_local")}
+                                              </span>
+                                            ) : null}
+                                            <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${mcpStatusBadgeClass(status)}`}>
+                                              {formatMcpStatusLabel(status)}
+                                            </span>
+                                          </div>
+                                        </div>
+                                        <div className="truncate text-xs text-gray-10">
+                                          {entry.origin === "openwork-connect"
+                                            ? [entry.marketplaceName, entry.pluginName].filter(Boolean).join(" · ")
+                                              || entry.config.url
+                                              || "Remote app"
+                                            : entry.config.type === "remote"
+                                              ? entry.config.url ?? entry.config.command?.join(" ") ?? "Remote app"
+                                              : entry.config.command?.join(" ") ?? "Local app"}
                                         </div>
                                       </div>
-                                      <div className="truncate text-xs text-gray-10">
-                                        {entry.origin === "openwork-connect"
-                                          ? [entry.marketplaceName, entry.pluginName].filter(Boolean).join(" · ")
-                                            || entry.config.url
-                                            || "Remote MCP"
-                                          : entry.config.type === "remote"
-                                            ? entry.config.url ?? entry.config.command?.join(" ") ?? "Remote MCP"
-                                            : entry.config.command?.join(" ") ?? "Local MCP"}
-                                      </div>
                                     </div>
-                                  </div>
-                                ))}
-                              </div>
-                            ) : (
-                              <div className="px-3 py-2 text-xs text-gray-10">
-                                {!mcpLoaded && mcpLoading ? t("composer.loading_commands") : (mcpStatus ?? t("context_panel.no_mcp"))}
-                              </div>
-                            )
-                          ) : null}
-                          {toolMenuSection === "extensions" ? (
-                            composerExtensions.length > 0 ? (
-                              <div className="grid gap-1">
-                                {composerExtensions.map((entry) => (
-                                  <button
-                                    key={entry.id ?? entry.serverName ?? entry.name}
-                                    type="button"
-                                    className="flex w-full items-start gap-3 rounded-[16px] px-3 py-2.5 text-left text-gray-11 transition-colors hover:bg-gray-2/70"
-                                    onClick={() => applyExtensionSelection(entry)}
-                                  >
-                                    <div className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg border border-dls-border bg-white shadow-sm">
-                                      {extensionIcon(entry, 16)}
-                                    </div>
-                                    <div className="min-w-0 flex-1">
-                                      <div className="flex items-center justify-between gap-3">
-                                        <div className="truncate text-xs font-semibold text-gray-11">{entry.name}</div>
-                                        {entry.defaultEnabled ? (
-                                          <span className="shrink-0 rounded-full bg-green-3 px-2 py-0.5 text-[10px] font-medium text-green-11">Enabled</span>
-                                        ) : null}
-                                      </div>
-                                      <div className="truncate text-xs text-gray-10">{entry.description}</div>
-                                    </div>
-                                  </button>
-                                ))}
-                              </div>
-                            ) : (
-                              <div className="px-3 py-2 text-xs text-gray-10">No extensions enabled. Open Extensions to enable them.</div>
-                            )
+                                  ))}
+                                </div>
+                              ) : null}
+                              {composerExtensions.length === 0 && activeMcpItems.length === 0 ? (
+                                <div className="px-3 py-2 text-xs text-gray-10">
+                                  {!mcpLoaded && mcpLoading
+                                    ? t("composer.loading_commands")
+                                    : (mcpStatus ?? "No extensions enabled. Open Extensions to enable them.")}
+                                </div>
+                              ) : null}
+                            </>
                           ) : null}
                           {activePlugin ? (
                             activePlugin.files.length > 0 ? (
@@ -1727,14 +1751,35 @@ export function ReactSessionComposer(props: ComposerProps) {
                 <ModelSelect
                   open={props.modelPickerOpen}
                   value={props.selectedModel}
+                  hideValue={props.organizationModelsEmpty}
                   onOpenChange={props.onModelPickerOpenChange}
                   onChange={(model) => {
                     if (!props.steering) props.onModelChange(model);
                   }}
                   disabled={props.steering}
+                  sessionId={props.sessionId}
+                  openWorkModelsEntitled={props.openWorkModelsEntitled}
                 />
-                {props.modelUnavailable ? (
-                  <span className="text-xs font-medium text-red-10">Model no longer available</span>
+                {props.modelUnavailable ? props.onRefreshOrganizationModels ? (
+                  <button
+                    type="button"
+                    className="inline-flex h-7 min-w-0 max-w-full items-center gap-1.5 rounded-full border border-red-5 bg-red-2 px-2.5 text-[11px] font-medium text-red-11 transition-colors hover:border-red-6 hover:bg-red-3 disabled:cursor-wait disabled:opacity-70 sm:max-w-80"
+                    onClick={() => void handleRefreshOrganizationModels()}
+                    disabled={refreshingOrganizationModels}
+                    title={t("models.refresh_organization_models")}
+                  >
+                    <span className="min-w-0 truncate">
+                      {props.modelUnavailableMessage ?? t("models.model_unavailable_short")}
+                    </span>
+                    <span className="inline-flex shrink-0 items-center gap-1">
+                      <RefreshCw size={11} className={refreshingOrganizationModels ? "animate-spin" : ""} />
+                      {refreshingOrganizationModels ? t("models.refreshing_organization_models") : t("models.retry_organization_models")}
+                    </span>
+                  </button>
+                ) : (
+                  <span className="max-w-[20rem] truncate text-xs font-medium text-red-10">
+                    {props.modelUnavailableMessage ?? t("models.model_unavailable_short")}
+                  </span>
                 ) : null}
 
                 <ModelBehaviorSelect
@@ -1779,10 +1824,10 @@ export function ReactSessionComposer(props: ComposerProps) {
                     <div className="flex items-end">
                       <button
                         type="button"
-                        onClick={canSend ? props.onSteer : undefined}
-                        disabled={!canSend}
+                        onClick={canSend && !props.submissionBlocked ? props.onSteer : undefined}
+                        disabled={!canSend || props.submissionBlocked}
                         className={`inline-flex h-9 max-h-9 items-center gap-2 rounded-l-full pl-4 pr-3 text-[13px] font-medium transition-colors ${
-                          canSend
+                          canSend && !props.submissionBlocked
                             ? "bg-[var(--dls-accent)] text-[var(--dls-accent-fg)] hover:bg-[var(--dls-accent-hover)]"
                             : "bg-gray-4 text-gray-10"
                         }`}
@@ -1797,8 +1842,9 @@ export function ReactSessionComposer(props: ComposerProps) {
                             <button
                               type="button"
                               aria-label={t("composer.send_options")}
+                              disabled={props.submissionBlocked}
                               className={`relative inline-flex h-9 max-h-9 items-center rounded-r-full border-l pl-1.5 pr-2.5 transition-colors ${
-                                canSend
+                                canSend && !props.submissionBlocked
                                   ? "border-[color-mix(in_srgb,var(--dls-accent-fg)_25%,transparent)] bg-[var(--dls-accent)] text-[var(--dls-accent-fg)] hover:bg-[var(--dls-accent-hover)]"
                                   : "border-gray-6 bg-gray-4 text-gray-10"
                               }`}
@@ -1814,7 +1860,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                         />
                         <DropdownMenuContent align="end">
                           <DropdownMenuItem
-                            disabled={!canSend}
+                            disabled={!canSend || props.submissionBlocked}
                             onClick={() => void props.onQueue()}
                             title={t("composer.queue_hint")}
                           >
@@ -1833,17 +1879,21 @@ export function ReactSessionComposer(props: ComposerProps) {
                 ) : (
                   <button
                     type="button"
-                    onClick={canSend && !props.submissionPreparing ? props.onSend : undefined}
-                    disabled={props.disabled || !canSend || props.submissionPreparing}
+                    onClick={canSend && !props.submissionBlocked ? props.onSend : undefined}
+                    disabled={props.disabled || !canSend || props.submissionBlocked}
                     className={`inline-flex h-9 max-h-9 items-center gap-2 rounded-full px-4 text-[13px] font-medium transition-colors ${
-                      !canSend || props.disabled || props.submissionPreparing
+                      !canSend || props.disabled || props.submissionBlocked
                         ? "bg-gray-4 text-gray-10"
                         : "bg-[var(--dls-accent)] text-[var(--dls-accent-fg)] hover:bg-[var(--dls-accent-hover)]"
                     }`}
-                    title={props.submissionPreparing ? "Preparing connected service tools…" : t("composer.run_task")}
+                    title={props.submissionPreparing
+                      ? "Connecting signed-in services…"
+                      : props.submissionBlocked
+                        ? "Reconnect Den before running this task."
+                        : t("composer.run_task")}
                   >
                     {props.submissionPreparing ? <LoaderCircle size={15} className="animate-spin" /> : <ArrowUp size={15} />}
-                    <span>{props.submissionPreparing ? "Preparing connected service tools…" : t("composer.run_task")}</span>
+                    <span>{props.submissionPreparing ? "Connecting services…" : t("composer.run_task")}</span>
                   </button>
                 )}
               </div>

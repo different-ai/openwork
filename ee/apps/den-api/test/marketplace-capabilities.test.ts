@@ -471,6 +471,140 @@ function expectOrganizationConnectionsUrl(value: string | undefined) {
 }
 
 describe("marketplace capabilities source", () => {
+  test("lists only marketplace plugin skills assigned to the member for prompt discovery", async () => {
+    const owner = await seedMember()
+    const assigned = await seedCapability({
+      owner,
+      objectType: "skill",
+      title: "Renewal Playbook",
+      description: "Use for enterprise renewal strategy",
+      rawSourceText: "# Renewal Playbook\n\nAlways mention expansion risk.",
+    })
+    const unassigned = await seedCapability({
+      owner,
+      objectType: "skill",
+      title: "Private Acquisition Playbook",
+      grant: "none",
+      rawSourceText: "# Private Acquisition Playbook",
+    })
+    await seedCapability({
+      owner,
+      objectType: "command",
+      title: "Assigned Command",
+      rawSourceText: "Draft a follow-up.",
+    })
+
+    const descriptors = await marketplaceCapabilities.listAccessibleMarketplaceSkillDescriptors({
+      organizationId: owner.organizationId,
+      member: owner.member,
+      enabled: true,
+    })
+
+    expect(descriptors).toHaveLength(1)
+    expect(descriptors[0]).toMatchObject({
+      title: "Renewal Playbook",
+      description: "Use for enterprise renewal strategy",
+      marketplaceName: "Team Marketplace",
+      pluginName: "Revenue Ops Plugin",
+      capability: assigned.name,
+    })
+    expect(descriptors[0]?.name).toStartWith("renewal-playbook-")
+    expect(descriptors[0]?.location).toBe(`skill://${descriptors[0]?.name}/SKILL.md`)
+    expect(descriptors.some((descriptor) => descriptor.capability === unassigned.name)).toBe(false)
+  })
+
+  test("admins only discover, search, and execute marketplace capabilities granted to them", async () => {
+    const admin = await seedMember({ role: "admin" })
+    const assignedSkill = await seedCapability({
+      owner: admin,
+      objectType: "skill",
+      title: "Admin Access Approved Playbook",
+      grant: "config_object",
+      rawSourceText: "# Approved Admin Playbook",
+    })
+    const denOnlySkill = await seedCapability({
+      owner: admin,
+      objectType: "skill",
+      title: "Admin Access Den Only Playbook",
+      grant: "none",
+      rawSourceText: "# Den Only Admin Playbook",
+    })
+    const pluginGrantedCommand = await seedCapability({
+      owner: admin,
+      objectType: "command",
+      title: "Admin Access Plugin Granted Command",
+      grant: "plugin",
+      rawSourceText: "Run the plugin-granted command.",
+    })
+    const denOnlyCommand = await seedCapability({
+      owner: admin,
+      objectType: "command",
+      title: "Admin Access Den Only Command",
+      grant: "none",
+      rawSourceText: "Do not expose this command.",
+    })
+    const marketplaceGrantedMcp = await seedCapability({
+      owner: admin,
+      objectType: "mcp",
+      title: "Admin Access Marketplace Granted MCP",
+      grant: "marketplace",
+      normalizedPayloadJson: { mcpServers: { proof: { url: "https://mcp.example.test/remote" } } },
+      rawSourceText: JSON.stringify({ mcpServers: { proof: { url: "https://mcp.example.test/remote" } } }),
+    })
+    const denOnlyMcp = await seedCapability({
+      owner: admin,
+      objectType: "mcp",
+      title: "Admin Access Den Only MCP",
+      grant: "none",
+      normalizedPayloadJson: { mcpServers: { private: { url: "https://private-mcp.example.test/remote" } } },
+      rawSourceText: JSON.stringify({ mcpServers: { private: { url: "https://private-mcp.example.test/remote" } } }),
+    })
+
+    const descriptors = await marketplaceCapabilities.listAccessibleMarketplaceSkillDescriptors({
+      organizationId: admin.organizationId,
+      member: admin.member,
+      enabled: true,
+    })
+
+    expect(descriptors.some((descriptor) => descriptor.capability === assignedSkill.name)).toBe(true)
+    expect(descriptors.some((descriptor) => descriptor.capability === denOnlySkill.name)).toBe(false)
+
+    const assignedReferences = await marketplaceCapabilities.listAccessibleMarketplaceCapabilityReferences({
+      organizationId: admin.organizationId,
+      member: admin.member,
+      enabled: true,
+    })
+    const assignedConfigObjectIds = assignedReferences.map((reference) => reference.configObjectId)
+    expect(assignedConfigObjectIds).toContain(assignedSkill.configObjectId)
+    expect(assignedConfigObjectIds).toContain(pluginGrantedCommand.configObjectId)
+    expect(assignedConfigObjectIds).toContain(marketplaceGrantedMcp.configObjectId)
+    expect(assignedConfigObjectIds).not.toContain(denOnlySkill.configObjectId)
+    expect(assignedConfigObjectIds).not.toContain(denOnlyCommand.configObjectId)
+    expect(assignedConfigObjectIds).not.toContain(denOnlyMcp.configObjectId)
+
+    const matches = await marketplaceCapabilities.searchMarketplaceCapabilities({
+      organizationId: admin.organizationId,
+      member: admin.member,
+      query: "admin access",
+      limit: 20,
+      enabled: true,
+    })
+
+    expect(matches.find((match) => match.name === assignedSkill.name)?.kind).toBe("skill")
+    expect(matches.find((match) => match.name === pluginGrantedCommand.name)?.kind).toBe("command")
+    expect(matches.find((match) => match.name === marketplaceGrantedMcp.name)?.kind).toBe("mcp")
+    expect(matches.some((match) => match.name === denOnlySkill.name)).toBe(false)
+    expect(matches.some((match) => match.name === denOnlyCommand.name)).toBe(false)
+    expect(matches.some((match) => match.name === denOnlyMcp.name)).toBe(false)
+
+    expect((await execute(admin, assignedSkill)).ok).toBe(true)
+    expect((await execute(admin, pluginGrantedCommand)).ok).toBe(true)
+    expect((await execute(admin, marketplaceGrantedMcp)).ok).toBe(true)
+    expect(await execute(admin, denOnlySkill)).toMatchObject({ ok: false, error: "forbidden" })
+    expect(await execute(admin, denOnlyCommand)).toMatchObject({ ok: false, error: "forbidden" })
+    expect(await execute(admin, denOnlyMcp)).toMatchObject({ ok: false, error: "forbidden" })
+  })
+
   test("search finds a published plugin skill and execute returns provenance-framed raw content", async () => {
     const owner = await seedMember()
     const seeded = await seedCapability({

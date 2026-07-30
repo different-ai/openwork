@@ -94,6 +94,16 @@ export async function resolveScimProviderFromBearerToken(bearerToken: string) {
   return provider
 }
 
+export async function clearRemovedMemberMemoryForScimReactivation(input: {
+  organizationId: OrganizationId
+  userId: UserId
+}) {
+  await db
+    .update(MemberTable)
+    .set({ userId: null })
+    .where(and(eq(MemberTable.organizationId, input.organizationId), eq(MemberTable.userId, input.userId), isNotNull(MemberTable.removedAt)))
+}
+
 async function syncExternalIdentityForProvider(input: {
   provider: ScimProvider
   resource: ScimUserResource
@@ -139,6 +149,12 @@ async function syncExternalIdentityForProvider(input: {
         email ? eq(ScimUserTombstoneTable.email, email.toLowerCase()) : eq(ScimUserTombstoneTable.deprovisionedUserId, userId),
       ),
     ))
+  // SCIM reactivation is the IdP-authoritative path back in; clear the
+  // removal memory so SSO JIT can create a fresh active membership.
+  await clearRemovedMemberMemoryForScimReactivation({
+    organizationId: input.provider.organizationId,
+    userId,
+  })
   const payload = {
     organizationId: input.provider.organizationId,
     userId,
@@ -294,6 +310,7 @@ export async function rotateOrganizationScimToken(input: {
   const providerId = buildOrganizationScimProviderId(input.organizationId)
 
   if (existing && existing.providerId !== providerId) {
+    await cleanupExternalIdentitiesForDeletedScimConnection(existing)
     await db.delete(ScimProviderTable).where(eq(ScimProviderTable.id, existing.id))
   }
 

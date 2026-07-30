@@ -128,11 +128,23 @@ const connectStateResponseSchema = z.object({
   }).passthrough(),
 }).passthrough();
 
+const connectSkillsResponseSchema = z.object({
+  ok: z.literal(true),
+  schemaVersion: z.number(),
+  instruction: z.string(),
+}).passthrough();
+
 export const OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION =
-  "If the user asks for something you cannot do with obvious built-in tools, check OpenWork extensions before saying the capability is unavailable. Use openwork_extension_list_actions to inspect available extension actions, then call the matching action with openwork_extension_call.";
+  "If the user asks for something you cannot do with obvious built-in tools, check OpenWork extensions before saying the capability is unavailable. Use openwork_query with id extension.actions to inspect available extension actions, then openwork_execute with id extension.call for the matching action.";
+
+export const OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION =
+  "Skill creation: Cloud. When the user asks to create a skill, retrieve and follow the listed create-skill remote skill by calling openwork-cloud_execute_capability with its exact <capability>. Create the skill in OpenWork Cloud as a private plugin, not in the workspace. For later steps, use add-to-marketplace or add-user-to-marketplace only when the user asks. Use a workspace-local skill only when the user explicitly requests one. Do not create both copies.";
+
+export const OPENWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION =
+  "Skill creation: Local. Create or update a workspace-local skill only when the user requests one. Keep one skill in .opencode/skills/<skill-name>/SKILL.md, validate it, and re-read it after writing. Do not create a Cloud copy.";
 
 export const OPENWORK_CLOUD_CONNECTION_INSTRUCTION =
-  "The OpenWork Cloud connection is verified ready for this exact workspace/model. For email (Gmail), calendar, Google Drive, and org-connected services such as Notion, Linear, Slack, etc., FIRST call openwork-cloud_search_capabilities with 2-4 keyword variants, then call openwork-cloud_execute_capability with an exact returned name. Search before claiming these are unavailable. OpenWork extensions (openwork_extension_list_actions / openwork_extension_call) remain available for other local actions such as image generation; use OpenWork Cloud capabilities for Google Workspace. Settings > Connect is the relevant settings surface for Google Workspace. A successful search proves OpenWork Cloud itself is authorized, so a downstream connector failure does not mean OpenWork Cloud needs to be reconnected. If a result has kind connection_status, name connectionStatus.connectionName and relay connectionStatus.action exactly: use Your Connections for the member, the organization Connections dashboard for an org admin, or the provider admin console for a provider-side failure. After the requested human fixes that connector, search again in the same task because results are live, not cached, so unchanged retries return the same error.";
+  "The OpenWork Cloud connection is verified ready for this exact workspace/model. For org-connected services, use openwork-cloud_search_capabilities with 2-4 keyword variants, then openwork-cloud_execute_capability with an exact returned name — and only mention services that search (or available_skills) actually returns. When a remote skill is listed under available_skills, call openwork-cloud_execute_capability with that skill's <capability> directly; do not treat the local OpenCode skill list as the full inventory. Local OpenWork extensions remain available through openwork_query/openwork_execute with extension.actions and extension.call. Settings > Extensions is the member inventory surface for org and local apps. A successful search proves OpenWork Cloud itself is authorized, so a downstream connector failure does not mean OpenWork Cloud needs to be reconnected. If a result has kind connection_status, name connectionStatus.connectionName and relay connectionStatus.action exactly: use Your Connections for the member, the organization Connections dashboard for an org admin, or the provider admin console for a provider-side failure. After the requested human fixes that connector, search again in the same task because results are live, not cached, so unchanged retries return the same error.";
 
 export const OPENWORK_CONNECT_SIGN_IN_INSTRUCTION =
   `${OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION} OpenWork Cloud is not signed in or no desired agent access configuration exists for this workspace. Direct the user to sign in to OpenWork and connect the service in Settings → Connect.`;
@@ -285,6 +297,20 @@ async function fetchOpenWorkConnectState(input: unknown, fetcher: OpenWorkFetch)
   };
 }
 
+export async function resolveOpenWorkConnectSkillInstruction(_input?: unknown, fetcher: OpenWorkFetch = fetch): Promise<string> {
+  try {
+    const { url, token } = requireOpenWorkServer();
+    // Connect skills are server-scoped; workspace/directory query params are unused.
+    const response = await fetcher(`${url}/experimental/connect/skills`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!response.ok) return "";
+    return connectSkillsResponseSchema.parse(await parseResponse(response)).instruction;
+  } catch {
+    return "";
+  }
+}
+
 export function composeOpenWorkExtensionDiscoveryInstruction(state: OpenWorkExtensionConnectState | null): string {
   if (!state) return OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION;
   if (state.workspace?.resolution && state.workspace.resolution !== "resolved") return OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION;
@@ -304,6 +330,16 @@ export function composeSteeringFromEngineMcpStatus(status: string | undefined): 
   if (status === "disabled") return OPENWORK_CONNECT_DISABLED_INSTRUCTION;
   if (status === "needs_auth" || status === "needs_client_registration") return OPENWORK_CONNECT_SIGN_IN_INSTRUCTION;
   return OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION;
+}
+
+export function composeSkillAuthoringInstruction(extensionInstruction: string): {
+  mode: "cloud" | "local";
+  prompt: string;
+} {
+  if (extensionInstruction === OPENWORK_CLOUD_CONNECTION_INSTRUCTION) {
+    return { mode: "cloud", prompt: OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION };
+  }
+  return { mode: "local", prompt: OPENWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION };
 }
 
 export function resetOpenWorkExtensionDiscoveryInstructionCacheForTests(): void {

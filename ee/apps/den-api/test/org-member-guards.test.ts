@@ -23,18 +23,14 @@ test("member removal rejects organization owners", () => {
   })
 })
 
-test("member removal rejects the last active privileged member", () => {
-  const admin = member("member_admin", "admin", "user_admin")
+test("member removal allows non-owner privileged members", () => {
+  const admin = member("member_admin", "super-admin", "user_admin")
   const inactiveOwner = member("member_owner", "owner", null)
 
   expect(validateOrganizationMemberRemoval({
     member: admin,
     activeMembers: [admin, inactiveOwner],
-  })).toEqual({
-    ok: false,
-    error: "last_privileged_member",
-    message: "Add another workspace owner or admin before removing this member.",
-  })
+  })).toEqual({ ok: true })
 })
 
 test("member removal allows admins when another active privileged member remains", () => {
@@ -57,7 +53,37 @@ test("member role changes reject the last active privileged downgrade", () => {
   })).toEqual({
     ok: false,
     error: "last_privileged_member",
-    message: "Add another workspace owner or admin before changing this member's role.",
+    message: "Add another workspace owner, super-admin, or admin before changing this member's role.",
+  })
+})
+
+test("member role changes reject organization owners", () => {
+  const owner = member("member_owner", "owner", "user_owner")
+  const superAdmin = member("member_super", "super-admin", "user_super")
+
+  expect(validateOrganizationMemberRoleChange({
+    member: owner,
+    activeMembers: [owner, superAdmin],
+    nextRole: "super-admin",
+  })).toEqual({
+    ok: false,
+    error: "owner_role_locked",
+    message: "The organization owner role cannot be changed.",
+  })
+})
+
+test("member role changes reject owner assignment", () => {
+  const admin = member("member_admin", "admin", "user_admin")
+  const superAdmin = member("member_super", "super-admin", "user_super")
+
+  expect(validateOrganizationMemberRoleChange({
+    member: admin,
+    activeMembers: [admin, superAdmin],
+    nextRole: "owner",
+  })).toEqual({
+    ok: false,
+    error: "owner_role_locked",
+    message: "The organization owner role cannot be assigned.",
   })
 })
 
@@ -72,22 +98,22 @@ test("member role changes allow privileged downgrades when another active privil
   })).toEqual({ ok: true })
 })
 
-test("ownership transfer makes the old owner an admin and preserves custom target roles", () => {
+test("ownership transfer makes the old owner a super-admin and preserves custom target roles", () => {
   expect(getRoleValueAfterOwnershipTransfer({
     currentRole: "owner,security-admin",
-    targetRole: "admin,billing-admin",
+    targetRole: "super-admin,billing-admin",
   })).toEqual({
-    previousOwnerRole: "admin,security-admin",
+    previousOwnerRole: "super-admin,security-admin",
     newOwnerRole: "owner,billing-admin",
   })
 })
 
-test("ownership transfer promotes a basic member to owner", () => {
+test("ownership transfer removes redundant built-in roles from the new owner", () => {
   expect(getRoleValueAfterOwnershipTransfer({
     currentRole: "owner",
-    targetRole: "member",
+    targetRole: "super-admin,admin,member",
   })).toEqual({
-    previousOwnerRole: "admin",
+    previousOwnerRole: "super-admin",
     newOwnerRole: "owner",
   })
 })

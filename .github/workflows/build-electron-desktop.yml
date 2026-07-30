@@ -50,7 +50,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          # Bun >= 1.3.10 is required to compile bun-windows-arm64 sidecars.
+          # Bun >= 1.3.10 is required by the server build and package-time helpers.
           bun-version: 1.3.10
 
       - name: Install dependencies

@@ -234,6 +234,9 @@ describe("runtime MCP engine sync", () => {
           "client-registration": "needs_client_registration",
         },
         mcpResponseForName: (name) => {
+          if (name === "failed") {
+            return Response.json({ failed: { status: "failed", error: "unable to verify the first certificate" } });
+          }
           if (name === "auth") {
             return Response.json({
               auth: { status: "needs_auth", error: rawErrorCanary },
@@ -280,7 +283,10 @@ describe("runtime MCP engine sync", () => {
         openwork.config.workspaces[0]!,
         "failed",
         configs.get("failed")!,
-      ).source).toBe("engine_status");
+      )).toMatchObject({
+        source: "engine_status",
+        errorSummary: "unable to verify the first certificate",
+      });
       expect(inspectRegistration("auth", configs.get("auth")!)).toBe("needs-auth");
       expect(inspectRegistration(
         "client-registration",
@@ -296,6 +302,18 @@ describe("runtime MCP engine sync", () => {
         "connected",
       )).toBe(true);
       expect(inspectRegistration("failed", configs.get("failed")!)).toBe("connected");
+      expect(inspectEngineMcpRegistrationDetails(
+        openwork.config,
+        openwork.config.workspaces[0]!,
+        "failed",
+        configs.get("failed")!,
+      ).errorSummary).toBeNull();
+      expect(inspectEngineMcpRegistrationDetails(
+        openwork.config,
+        openwork.config.workspaces[0]!,
+        "failed",
+        { ...POSTHOG_CONFIG, url: "https://changed.example/mcp" },
+      )).toMatchObject({ status: "not-recorded", errorSummary: null });
 
       const listResponse = await fetch(`${openwork.base}/workspace/ws_1/mcp`, {
         headers: auth(openwork.token),
@@ -552,7 +570,11 @@ describe("runtime MCP engine sync", () => {
     process.env.OPENWORK_RUNTIME_DB = join(workspaceRoot, "runtime.sqlite");
     process.env.OPENWORK_MCP_REGISTRATION_MAX_AGE_MS = "5";
     try {
-      const engine = startMockOpencode();
+      const engine = startMockOpencode({
+        mcpResponseForName: (name) => name === "posthog"
+          ? Response.json({ posthog: { status: "failed", error: "unable to verify the first certificate" } })
+          : null,
+      });
       const openwork = await startOpenworkServer(workspaceRoot, `http://127.0.0.1:${engine.server.port}`);
       const workspace = openwork.config.workspaces[0]!;
       const response = await fetch(`${openwork.base}/workspace/ws_1/mcp`, {
@@ -561,11 +583,16 @@ describe("runtime MCP engine sync", () => {
         body: JSON.stringify({ name: "posthog", config: POSTHOG_CONFIG }),
       });
       expect(response.status).toBe(200);
-      expect(inspectEngineMcpRegistration(openwork.config, workspace, "posthog", POSTHOG_CONFIG)).toBe("connected");
+      expect(inspectEngineMcpRegistrationDetails(
+        openwork.config,
+        workspace,
+        "posthog",
+        POSTHOG_CONFIG,
+      )).toMatchObject({ status: "failed", errorSummary: "unable to verify the first certificate" });
 
       await Bun.sleep(10);
-      expect(inspectEngineMcpRegistration(openwork.config, workspace, "posthog", POSTHOG_CONFIG))
-        .toBe("not-recorded");
+      expect(inspectEngineMcpRegistrationDetails(openwork.config, workspace, "posthog", POSTHOG_CONFIG))
+        .toMatchObject({ status: "not-recorded", errorSummary: null });
     } finally {
       if (previousDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
       else process.env.OPENWORK_RUNTIME_DB = previousDb;

@@ -11,12 +11,16 @@ import {
     User,
     Users,
 } from "lucide-react";
+import { DenAutoNameField } from "../../_components/ui/auto-name-field";
+import { DenBrandMark } from "../../_components/ui/brand-mark";
 import { DenButton } from "../../_components/ui/button";
 import { DenCombobox } from "../../_components/ui/combobox";
 import { DenInput } from "../../_components/ui/input";
 import { DenSelectableRow } from "../../_components/ui/selectable-row";
+import { DenStickyActionBar } from "../../_components/ui/sticky-action-bar";
 import { UnderlineTabs } from "../../_components/ui/tabs";
 import { DenTextarea } from "../../_components/ui/textarea";
+import { DenToggleRow } from "../../_components/ui/toggle-row";
 import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
 import {
     getLlmProviderRoute,
@@ -42,6 +46,7 @@ import {
     type LlmProviderProbeResult,
     getProviderDocUrl,
     getProviderEnvNames,
+    getProviderIconSlug,
     getProviderNpmPackage,
     requestLlmProviderCatalog,
     requestLlmProviderCatalogDetail,
@@ -96,6 +101,10 @@ export function LlmProviderEditorScreen({
     const [detailBusy, setDetailBusy] = useState(false);
     const [detailError, setDetailError] = useState<string | null>(null);
     const [providerName, setProviderName] = useState("");
+    // False while the name still tracks the automatic "<Provider> — key N"
+    // value; any manual rename flips it permanently (clearing reverts).
+    const [nameTouched, setNameTouched] = useState(false);
+    const [allMembers, setAllMembers] = useState(false);
     const [selectedModelIds, setSelectedModelIds] = useState<string[]>([]);
     const [modelQuery, setModelQuery] = useState("");
     const [customConfigText, setCustomConfigText] = useState(
@@ -172,6 +181,8 @@ export function LlmProviderEditorScreen({
             setSource(provider.source === "custom" ? "custom" : "models_dev");
             setSelectedProviderId(provider.providerId);
             setProviderName(provider.name);
+            setNameTouched(true);
+            setAllMembers(provider.access.allMembers);
             setSelectedModelIds(provider.models.map((entry) => entry.id));
             setSelectedMemberIds(
                 provider.access.members.map((entry) => entry.orgMembershipId),
@@ -212,6 +223,8 @@ export function LlmProviderEditorScreen({
         setSource("models_dev");
         setSelectedProviderId("");
         setProviderName("");
+        setNameTouched(false);
+        setAllMembers(false);
         setSelectedModelIds([]);
         setSelectedMemberIds(
             orgContext?.currentMember.id ? [orgContext.currentMember.id] : [],
@@ -401,13 +414,54 @@ export function LlmProviderEditorScreen({
                 label: catalogProvider.name,
                 description: catalogProvider.id,
                 meta: `${catalogProvider.modelCount} ${catalogProvider.modelCount === 1 ? "model" : "models"}`,
+                // Companies always show as icon + name.
+                icon: (
+                    <DenBrandMark
+                        name={catalogProvider.name}
+                        simpleIconSlug={getProviderIconSlug(catalogProvider.id)}
+                        serviceUrl={catalogProvider.doc}
+                        className="h-6 w-6 rounded-[8px]"
+                        imageClassName="h-3.5 w-3.5"
+                    />
+                ),
             })),
         [catalogProviders],
     );
 
+    // The provider id only derives from the name once the admin actually
+    // typed a name — the automatic "<Provider> — key N" value is not a slug
+    // source, otherwise the two fields would derive from each other.
     const resolvedCustomProviderId = customProviderIdTouched
         ? customProviderId.trim()
-        : slugifyProviderId(providerName);
+        : nameTouched
+          ? slugifyProviderId(providerName)
+          : "";
+
+    // Automatic name: "<Provider> — key N", where N counts this org's other
+    // keys for the same provider. Manual renames win until cleared.
+    const customHostName = (() => {
+        try {
+            return new URL(customBaseUrl.trim()).hostname;
+        } catch {
+            return "";
+        }
+    })();
+    const autoNameBasis =
+        source === "models_dev"
+            ? selectedProviderId
+                ? (catalogProviders.find((entry) => entry.id === selectedProviderId)?.name ??
+                  catalogDetail?.name ??
+                  provider?.name ??
+                  selectedProviderId)
+                : ""
+            : customProviderId.trim() || customHostName;
+    const autoNameProviderId = source === "models_dev" ? selectedProviderId : resolvedCustomProviderId;
+    const keyNumber =
+        llmProviders.filter(
+            (entry) => entry.id !== provider?.id && entry.providerId === autoNameProviderId,
+        ).length + 1;
+    const autoName = autoNameBasis ? `${autoNameBasis} — key ${keyNumber}` : "";
+    const effectiveName = nameTouched && providerName.trim() ? providerName.trim() : autoName;
 
     // The env var names the selected provider reads. More than one name means
     // the credential section renders one input per env key and saves them as
@@ -440,6 +494,9 @@ export function LlmProviderEditorScreen({
         probeState === "ok" && !customManualModels
             ? selectedCustomModelIds
             : parseGuidedModelIds(customModelsText);
+
+    const summaryModelCount =
+        source === "models_dev" ? selectedModelIds.length : resolvedCustomModelIds.length;
 
     // "Save anyway" stays armed only while the inputs still match the run
     // that produced the failures; any edit re-verifies on the next save.
@@ -520,7 +577,7 @@ export function LlmProviderEditorScreen({
                 JSON.stringify(
                     buildGuidedCustomProviderConfig({
                         providerId: resolvedCustomProviderId,
-                        name: providerName,
+                        name: effectiveName,
                         baseUrl: customBaseUrl,
                         modelIds,
                         envNames: customEnvNames,
@@ -562,8 +619,8 @@ export function LlmProviderEditorScreen({
             return;
         }
 
-        if (!providerName.trim()) {
-            setSaveError("Give this provider a name.");
+        if (!effectiveName) {
+            setSaveError("Pick a provider so the key gets a name, or rename it yourself.");
             return;
         }
 
@@ -653,10 +710,11 @@ export function LlmProviderEditorScreen({
             await runReauthableAction("save-llm-provider", async () => {
             setSaveBusy(true);
             const body: Record<string, unknown> = {
-                name: providerName.trim(),
+                name: effectiveName,
                 source,
-                memberIds: [...new Set(selectedMemberIds)],
-                teamIds: [...new Set(selectedTeamIds)],
+                allMembers,
+                memberIds: allMembers ? [] : [...new Set(selectedMemberIds)],
+                teamIds: allMembers ? [] : [...new Set(selectedTeamIds)],
             };
 
             if (source === "models_dev") {
@@ -665,7 +723,7 @@ export function LlmProviderEditorScreen({
             } else if (customMode === "form") {
                 body.customConfig = buildGuidedCustomProviderConfig({
                     providerId: resolvedCustomProviderId,
-                    name: providerName,
+                    name: effectiveName,
                     baseUrl: customBaseUrl,
                     modelIds: resolvedCustomModelIds,
                     envNames: customEnvNames,
@@ -845,13 +903,12 @@ export function LlmProviderEditorScreen({
                     <div>
                         <h1 className="text-[34px] font-semibold tracking-[-0.07em] text-gray-950">
                             {provider
-                                ? (providerName.trim() || provider.name)
+                                ? (effectiveName || provider.name)
                                 : "Add a new LLM provider"}
                         </h1>
                         <p className="mt-3 max-w-[720px] text-[16px] leading-8 text-gray-500">
-                            Pick a provider from the catalog or describe a
-                            custom endpoint, then decide which models to allow
-                            and which teammates can use it.
+                            Pick a provider, paste a credential, choose models
+                            and who can use them. We name it for you.
                         </p>
                     </div>
                 </div>
@@ -869,19 +926,6 @@ export function LlmProviderEditorScreen({
                     <ArrowLeft className="h-5 w-5" />
                     Back
                 </Link>
-
-                <DenButton
-                    loading={saveBusy}
-                    onClick={() => void saveProvider()}
-                >
-                    {verifyBusy
-                        ? "Verifying models..."
-                        : saveAnywayArmed
-                          ? "Save anyway"
-                          : provider
-                            ? "Save Provider"
-                            : "Create Provider"}
-                </DenButton>
             </div>
 
             {saveError ? (
@@ -901,26 +945,8 @@ export function LlmProviderEditorScreen({
             ) : null}
 
             <section className="mb-8 rounded-[36px] border border-gray-200 bg-white p-8 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.24)]">
-                <label className="grid gap-3">
-                    <span className="text-[14px] font-medium text-gray-700">
-                        Name
-                    </span>
-                    <DenInput
-                        value={providerName}
-                        onChange={(event) => setProviderName(event.target.value)}
-                        placeholder="Give this key a name"
-                        autoComplete="off"
-                    />
-                </label>
-                <p className="mt-3 text-[13px] text-gray-500">
-                    Pick a clear label so teammates know which key or provider
-                    setup they are using.
-                </p>
-            </section>
-
-            <section className="mb-8 rounded-[36px] border border-gray-200 bg-white p-8 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.24)]">
                 <h2 className="mb-6 text-[24px] font-semibold tracking-[-0.05em] text-gray-950">
-                    Provider type
+                    Provider
                 </h2>
                 <UnderlineTabs
                     tabs={SOURCE_TABS}
@@ -1236,6 +1262,24 @@ export function LlmProviderEditorScreen({
                         </button>
                     </div>
                 )}
+
+                <div className="mt-8">
+                    <DenAutoNameField
+                        value={effectiveName}
+                        auto={!nameTouched || !providerName.trim()}
+                        placeholder="Pick a provider first"
+                        testId="llm-provider-name"
+                        onChange={(nextName) => {
+                            if (nextName === null) {
+                                setProviderName("");
+                                setNameTouched(false);
+                                return;
+                            }
+                            setProviderName(nextName);
+                            setNameTouched(true);
+                        }}
+                    />
+                </div>
             </section>
 
             {/* The guided custom form collects the credential inline (before
@@ -1377,14 +1421,32 @@ export function LlmProviderEditorScreen({
             <section className="rounded-[36px] border border-gray-200 bg-white p-8 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.24)]">
                 <div>
                     <h2 className="text-[24px] font-semibold tracking-[-0.05em] text-gray-950">
-                        Configure access
+                        Who can use it
                     </h2>
                     <p className="mt-2 text-[15px] text-gray-500">
-                        Select which teams and people can use this provider.
+                        Grant everyone access, or pick teams and people.
                     </p>
                 </div>
 
-                <div className="mt-8 grid w-80 grid-cols-2 rounded-xl bg-gray-200 p-1 text-[13px] font-medium text-gray-500">
+                <div className="mt-6">
+                    <DenToggleRow
+                        icon={Users}
+                        testId="llm-provider-all-members"
+                        title={`Everyone in ${orgContext?.organization.name ?? "this organization"}`}
+                        description={`All ${orgContext?.members.length ?? 0} current members — and anyone who joins later — can use these models.`}
+                        checked={allMembers}
+                        onChange={(checked) => setAllMembers(checked)}
+                    />
+                </div>
+
+                {allMembers ? (
+                    <p className="mt-3 text-[13px] text-gray-400">
+                        Turn off “Everyone” to pick specific teams and people.
+                    </p>
+                ) : null}
+
+                <div className={allMembers ? "pointer-events-none select-none opacity-45" : undefined} aria-disabled={allMembers}>
+                <div className="mt-6 grid w-80 grid-cols-2 rounded-xl bg-gray-200 p-1 text-[13px] font-medium text-gray-500">
                     <button
                         type="button"
                         onClick={() => {
@@ -1527,7 +1589,62 @@ export function LlmProviderEditorScreen({
                         No people are available to assign yet.
                     </div>
                 )}
+                </div>
             </section>
+
+            <DenStickyActionBar
+                testId="llm-provider-save-bar"
+                summary={
+                    <>
+                        {autoNameProviderId ? (
+                            <DenBrandMark
+                                name={effectiveName || "Provider"}
+                                simpleIconSlug={getProviderIconSlug(autoNameProviderId)}
+                                serviceUrl={providerDoc}
+                                className="h-6 w-6 rounded-[8px]"
+                                imageClassName="h-3.5 w-3.5"
+                            />
+                        ) : null}
+                        <span className="truncate font-medium text-gray-950">
+                            {effectiveName || "New provider"}
+                        </span>
+                        <span className="text-gray-300">·</span>
+                        <span className="whitespace-nowrap">
+                            {summaryModelCount} {summaryModelCount === 1 ? "model" : "models"}
+                        </span>
+                        <span className="text-gray-300">·</span>
+                        <span className="truncate">
+                            {allMembers
+                                ? `Everyone in ${orgContext?.organization.name ?? "the organization"}`
+                                : `${selectedTeamIds.length} ${selectedTeamIds.length === 1 ? "team" : "teams"} · ${selectedMemberIds.length} ${selectedMemberIds.length === 1 ? "person" : "people"}`}
+                        </span>
+                    </>
+                }
+            >
+                <Link
+                    href={
+                        provider
+                            ? getLlmProviderRoute(orgSlug, provider.id)
+                            : getLlmProvidersRoute(orgSlug)
+                    }
+                    className="px-2 text-[13px] font-medium text-gray-500 transition hover:text-gray-900"
+                >
+                    Cancel
+                </Link>
+                <DenButton
+                    data-testid="llm-provider-save"
+                    loading={saveBusy}
+                    onClick={() => void saveProvider()}
+                >
+                    {verifyBusy
+                        ? "Verifying models..."
+                        : saveAnywayArmed
+                          ? "Save anyway"
+                          : provider
+                            ? "Save Provider"
+                            : "Create Provider"}
+                </DenButton>
+            </DenStickyActionBar>
         </div>
     );
 }

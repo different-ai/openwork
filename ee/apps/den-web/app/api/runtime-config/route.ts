@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { joinBaseUrl, readBaseUrlEnv } from "@openwork/types/url";
+import { DEFAULT_OPENWORK_WEB_URL } from "../../(den)/_lib/runtime-config";
 
 export const dynamic = "force-dynamic";
 
@@ -27,15 +29,6 @@ function readBooleanEnv(name: string, defaultValue: boolean) {
   return defaultValue;
 }
 
-function normalizeBaseUrl(value: string) {
-  return value.trim().replace(/\/+$/, "");
-}
-
-function readBaseUrlEnv(name: string) {
-  const value = process.env[name]?.trim();
-  return value ? normalizeBaseUrl(value) : "";
-}
-
 function readBooleanProperty(value: object, key: string) {
   return Object.getOwnPropertyDescriptor(value, key)?.value === true;
 }
@@ -45,7 +38,7 @@ async function readSingleOrgSsoConfigured(orgMode: string) {
     return false;
   }
 
-  const apiBase = readBaseUrlEnv("DEN_API_BASE");
+  const apiBase = readBaseUrlEnv(process.env, "DEN_API_BASE") ?? "";
   if (!apiBase) {
     return false;
   }
@@ -53,7 +46,7 @@ async function readSingleOrgSsoConfigured(orgMode: string) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 2_000);
   try {
-    const response = await fetch(`${apiBase}/v1/orgs/sso/singleton`, {
+    const response = await fetch(joinBaseUrl(apiBase, "v1/orgs/sso/singleton"), {
       cache: "no-store",
       signal: controller.signal,
     });
@@ -77,6 +70,7 @@ export async function GET() {
   return NextResponse.json(
     {
       openworkAppConnectUrl: readPublicRuntimeEnv("DEN_WEB_OPENWORK_APP_CONNECT_URL"),
+      openworkWebUrl: readPublicRuntimeEnv("DEN_WEB_OPENWORK_WEB_URL") || DEFAULT_OPENWORK_WEB_URL,
       openworkAuthCallbackUrl: readPublicRuntimeEnv("DEN_WEB_OPENWORK_AUTH_CALLBACK_URL"),
       orgMode,
       singleOrgName: readPublicRuntimeEnv("DEN_SINGLE_ORG_NAME") || "OpenWork",

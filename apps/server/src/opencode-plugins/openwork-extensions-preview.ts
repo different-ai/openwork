@@ -2,12 +2,24 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { homedir, platform } from "node:os";
 import { z } from "zod";
+import type { OpenworkAffordanceEffects } from "@openwork/types/openwork-affordance";
 import {
-  OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION,
+  combineInstructionSections,
+  composeAgentInstructions,
+  createInstructionSection,
+} from "./agent-instruction-compose.js";
+import {
+  composeSkillAuthoringInstruction,
+  resolveOpenWorkConnectSkillInstruction,
   resolveOpenWorkExtensionDiscoveryInstruction,
   type OpenCodeContext,
   type OpenWorkEngineMcpStatusClient,
 } from "./openwork-extensions-preview-steering.js";
+import {
+  buildOpenworkProviderContributions,
+  type ConnectSkillDescriptor,
+  type EngineMcpDescriptor,
+} from "./openwork-provider-adapters.js";
 
 type ExtensionActionPayload = {
   extensionId: string;
@@ -22,23 +34,27 @@ const listActionsArgsSchema = z.object({
 
 const callArgsSchema = z.object({
   extensionId: z.string().describe("Extension id, such as google-workspace."),
-  action: z.string().describe("Action id from openwork_extension_list_actions."),
+  action: z.string().describe("Action id from extension.actions."),
   args: z.record(z.string(), z.unknown()).optional().describe("JSON arguments for the action."),
 });
 
-const uiExecuteArgsSchema = z.object({
-  actionId: z.string().describe("The action id from openwork_ui_list_actions, e.g. 'settings.panel.open' or 'composer.set_text'."),
-  args: z.record(z.string(), z.unknown()).optional().describe("JSON arguments for the action, if required."),
+const openworkAffordanceRequestSchema = z.object({
+  id: z.string().trim().min(1).describe("Semantic affordance id from openwork_context."),
+  args: z.record(z.string(), z.unknown()).optional().describe("JSON arguments for the affordance."),
+  expectedRevision: z.number().int().nonnegative().optional().describe("Context revision from openwork_context. Use for commands to prevent stale writes."),
+  actor: z.string().trim().min(1).optional().describe("Optional agent or client id used to attribute serialized commands."),
 });
 
-const browserOpenUrlArgsSchema = z.object({
-  url: z.string().describe("The website URL to open in the OpenWork built-in browser."),
-  provider: z.enum(["auto", "builtin", "external"]).optional().describe("Browser provider. Use builtin or auto; external is reserved for future support."),
-});
+const connectSkillDescriptorSchema = z.object({
+  name: z.string(),
+  title: z.string().optional(),
+  description: z.string(),
+  capability: z.string(),
+}).passthrough();
 
-const browserSetProxyArgsSchema = z.object({
-  proxy: z.string().describe("Proxy URL like http://user:pass@host:8080 or socks5://host:1080. Prefer env:NAME (resolves the OPENWORK_BROWSER_PROXY_NAME environment variable on the user's machine) so credentials never enter the conversation."),
-});
+const connectSkillsEnvelopeSchema = z.object({
+  skills: z.array(connectSkillDescriptorSchema),
+}).passthrough();
 
 const sessionSearchArgsSchema = z.object({
   query: z.string().trim().min(1).describe("Text to search for across OpenWork session titles and message transcripts."),
@@ -49,15 +65,17 @@ const sessionSearchArgsSchema = z.object({
 });
 
 const sessionReadArgsSchema = z.object({
-  sessionId: z.string().trim().min(1).describe("OpenWork/OpenCode session ID returned by openwork_session_search."),
+  sessionId: z.string().trim().min(1).describe("OpenWork/OpenCode session ID returned by session.search."),
   workspaceId: z.string().trim().optional().describe("Optional OpenWork workspace id/name. Omit to resolve the session across all workspaces."),
   count: z.number().int().positive().max(100).optional().describe("Number of recent transcript messages to return. Defaults to 30, max 100."),
 });
 
-const extensionsExportArgsSchema = z.object({
-  skills: z.array(z.string().trim().min(1)).optional().describe("Names of installed skills to export, as shown in Settings > Skills or .opencode/skills/**."),
-  mcps: z.array(z.string().trim().min(1)).optional().describe("Names of installed MCP servers to export, including OpenWork-managed runtime MCPs."),
-  workspaceId: z.string().trim().optional().describe("Optional OpenWork workspace id/name. Defaults to the workspace containing the current directory."),
+const sessionCreateArgsSchema = z.object({
+  sessions: z.array(z.object({
+    title: z.string().trim().min(1).max(120).describe("Short title shown in the OpenWork session list."),
+    prompt: z.string().trim().min(1).max(100_000).describe("Self-contained task to start in the new session."),
+  })).min(1).describe("One entry per new session to create and start."),
+  workspaceId: z.string().trim().optional().describe("Optional OpenWork workspace id/name. Defaults to the workspace containing the current session."),
 });
 
 const workspaceSchema = z.object({
@@ -90,6 +108,11 @@ const sessionEnvelopeSchema = z.object({
   item: sessionInfoSchema,
 }).passthrough();
 
+const createdSessionEnvelopeSchema = z.object({
+  item: sessionInfoSchema,
+  started: z.boolean(),
+}).passthrough();
+
 const sessionPartSchema = z.object({
   type: z.string().optional(),
   text: z.string().optional(),
@@ -110,27 +133,19 @@ const sessionMessagesEnvelopeSchema = z.object({
   items: z.array(sessionMessageSchema),
 }).passthrough();
 
-const OPENWORK_UI_CONTROL_INSTRUCTION =
-  `IMPORTANT: You are running inside the OpenWork desktop app. When the user asks you to open settings, navigate the app, add providers, or control the OpenWork UI in any way, ALWAYS use the openwork_ui_* tools — NOT the browser_* tools. The browser tools are for external websites only. The openwork_ui_* tools control the app directly and are instant (one tool call).
-
-To open settings: openwork_ui_execute_action with actionId "settings.panel.open" and args {panel:"general"} (or "ai", "extensions", "permissions", "skills", "appearance", etc.)
-To add a provider: openwork_ui_execute_action with actionId "settings.provider.add" and optional args {providerId:"anthropic"}
-To see what the user sees: openwork_ui_snapshot
-To list all available actions: openwork_ui_list_actions
-To ask what OpenWork can do: openwork_ui_execute_action with actionId "help.capabilities"`;
-
-const OPENWORK_SESSION_MEMORY_INSTRUCTION =
-  `## Cross-session memory
-When the user asks what they said, what happened, or what was decided in another OpenWork chat/session, treat it as a session-history lookup, not hidden model memory.
-Use openwork_session_search first to search session titles and message transcripts across workspaces. If there is one clear match, use openwork_session_read with the returned sessionId/workspaceId to retrieve transcript context without navigating the UI.
-Answer only from the returned search/read results. If multiple sessions match, ask a short clarifying question. If the returned transcript is limited or missing the older context needed, say so instead of guessing.`;
+const OPENWORK_AGENT_SURFACE_INSTRUCTION =
+  `## OpenWork app context
+Use openwork_context when the request depends on the current OpenWork screen, open tabs, split view, focused pane, sidebar, side panel, settings panel, or available app actions.
+Each affordance declares its effects and executor. Use openwork_query only for side-effect-free affordances whose executor is OpenWork. Use openwork_execute for OpenWork commands without activating the desktop window. If executor names another tool, call that exact tool instead.
+Reading another session does not require opening it. Prefer session.search then session.read for transcript questions; use session.create for new chats and a UI command only when the user asks to navigate.
+To open settings or navigate the app, use openwork_execute with ids from openwork_context such as settings.panel.open — never browser_* tools for the OpenWork app itself.`;
 
 const OPENWORK_BROWSER_INSTRUCTION =
   `Do NOT use browser_navigate, browser_click, or browser_snapshot to interact with the OpenWork app itself. Those are for browsing external websites.
 
 ## Built-in Browser (external websites)
-For web browsing tasks, ALWAYS start with openwork_browser_open_url. It creates/selects a built-in OpenWork browser tab and returns browser_url plus target_id. Use that exact browser_url and target_id for every later browser_snapshot, browser_click, browser_fill, browser_eval, and browser_screenshot call.
-Do not call browser_navigate without a target_id returned by openwork_browser_open_url. Do not use browser_* tools on the OpenWork app target (avoid targets with title "OpenWork" or URLs containing ":5173/#/").`;
+For web browsing tasks, ALWAYS start with openwork_execute id browser.open_url. It creates/selects a built-in OpenWork browser tab and returns browser_url plus target_id. Use that exact browser_url and target_id for every later browser_snapshot, browser_click, browser_fill, browser_eval, and browser_screenshot call.
+Do not call browser_navigate without a target_id returned by browser.open_url. Do not use browser_* tools on the OpenWork app target (avoid targets with title "OpenWork" or URLs containing ":5173/#/").`;
 
 // ── UI control bridge discovery ──
 
@@ -156,9 +171,45 @@ type SessionSearchResult = {
   messageId?: string;
   messageIndex?: number;
 };
+type CreatedOpenWorkSessionResult = {
+  ok: true;
+  sessionId: string;
+  title: string;
+  started: boolean;
+  route: string;
+};
+type FailedOpenWorkSessionResult = {
+  ok: false;
+  title: string;
+  error: string;
+};
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+const affordanceReadEffects: OpenworkAffordanceEffects = { data: "read", ui: "none", external: false };
+const affordanceWriteEffects: OpenworkAffordanceEffects = { data: "write", ui: "none", external: false };
+const affordanceExternalWriteEffects: OpenworkAffordanceEffects = { data: "write", ui: "none", external: true };
+
+function affordanceResult(
+  id: string,
+  result: unknown,
+  effects: OpenworkAffordanceEffects,
+) {
+  if (isRecord(result) && result.ok === false) {
+    return {
+      ok: false,
+      id,
+      error: typeof result.error === "string" ? result.error : `${id} failed`,
+      code: "failed",
+    };
+  }
+  return { ok: true, id, result, effects };
+}
+
+function unavailableAffordance(id: string, error: string) {
+  return { ok: false, id, error, code: "unavailable" };
 }
 
 function optionalStringProperty(value: unknown, key: string): string | undefined {
@@ -227,16 +278,6 @@ function userAppDataDir(): string {
   return process.env.XDG_CONFIG_HOME || join(homedir(), ".config");
 }
 
-// The agent-facing UI-control surface (system steering + openwork_ui_* tools)
-// is opt-in: it noises every session's prompt/tool list, and the supported way
-// to grant agents UI control is the hidden "OpenWork UI Control" MCP in
-// Settings -> Extensions. Set OPENWORK_UI_CONTROL_TOOLS=1 to re-enable the
-// built-in preview surface (used by internal tooling).
-function uiControlToolsEnabled(): boolean {
-  const raw = process.env.OPENWORK_UI_CONTROL_TOOLS?.trim().toLowerCase() ?? "";
-  return raw === "1" || raw === "true";
-}
-
 function uiControlDiscoveryPaths(): string[] {
   return [
     process.env.OPENWORK_UI_CONTROL_DISCOVERY?.trim(),
@@ -293,6 +334,151 @@ async function serverGet(path: string): Promise<unknown> {
   const payload = await parseResponse(response);
   if (!response.ok) throw new Error(errorMessage(payload, "OpenWork server request failed"));
   return payload;
+}
+
+async function readConnectSkillDescriptors(): Promise<ConnectSkillDescriptor[]> {
+  try {
+    const parsed = connectSkillsEnvelopeSchema.safeParse(
+      await serverGet("/experimental/connect/skills"),
+    );
+    return parsed.success ? parsed.data.skills : [];
+  } catch {
+    return [];
+  }
+}
+
+async function readEngineMcpDescriptors(
+  client: OpenWorkEngineMcpStatusClient | undefined,
+  directory: string | undefined,
+): Promise<EngineMcpDescriptor[]> {
+  if (!client) return [];
+  try {
+    const result = await client.mcp.status(directory ? { query: { directory } } : undefined);
+    const payload = isRecord(result) && result.data !== undefined ? result.data : result;
+    if (!isRecord(payload)) return [];
+    return Object.entries(payload).map(([name, entry]) => {
+      const status = typeof entry === "string"
+        ? entry
+        : optionalStringProperty(entry, "status");
+      return status ? { name, status } : { name };
+    });
+  } catch {
+    return [];
+  }
+}
+
+async function readOpenworkAgentContext(
+  engineMcpStatusClient: OpenWorkEngineMcpStatusClient | undefined,
+  engineMcpStatusDirectory: string | undefined,
+): Promise<Record<string, unknown>> {
+  const [uiResult, skills, mcps] = await Promise.all([
+    uiBridgeRequest("/context"),
+    readConnectSkillDescriptors(),
+    readEngineMcpDescriptors(engineMcpStatusClient, engineMcpStatusDirectory),
+  ]);
+  const contributions = buildOpenworkProviderContributions(skills, mcps);
+  const providerAffordances = contributions.flatMap((contribution) => contribution.affordances);
+  const uiContext = isRecord(uiResult) && isRecord(uiResult.context) ? uiResult.context : null;
+  if (!uiContext) {
+    return {
+      ok: true,
+      context: null,
+      ui: uiResult,
+      availableAffordances: providerAffordances,
+      contributions,
+    };
+  }
+  const uiAffordances = Array.isArray(uiContext.availableAffordances)
+    ? uiContext.availableAffordances
+    : [];
+  return {
+    ok: true,
+    context: {
+      ...uiContext,
+      availableAffordances: [...uiAffordances, ...providerAffordances],
+      contributions,
+    },
+  };
+}
+
+async function queryOpenworkAffordance(rawArgs: unknown): Promise<unknown> {
+  const request = openworkAffordanceRequestSchema.parse(rawArgs);
+  if (request.id === "session.search") {
+    return affordanceResult(
+      request.id,
+      await searchOpenWorkSessions(request.args ?? {}),
+      affordanceReadEffects,
+    );
+  }
+  if (request.id === "session.read") {
+    return affordanceResult(
+      request.id,
+      await readOpenWorkSession(request.args ?? {}),
+      affordanceReadEffects,
+    );
+  }
+  if (request.id === "extension.actions") {
+    const args = listActionsArgsSchema.parse(request.args ?? {});
+    const query = args.extensionId ? `?extensionId=${encodeURIComponent(args.extensionId)}` : "";
+    return affordanceResult(
+      request.id,
+      await serverGet(`/experimental/extensions/actions${query}`),
+      affordanceReadEffects,
+    );
+  }
+  if (request.id.startsWith("connect.")) {
+    return unavailableAffordance(
+      request.id,
+      "This affordance declares a dedicated Connect executor. Call the tool named in openwork_context.",
+    );
+  }
+  const result = await uiBridgeRequest("/query", {
+    method: "POST",
+    body: request,
+  });
+  return isRecord(result) && typeof result.ok === "boolean"
+    ? result
+    : unavailableAffordance(request.id, "OpenWork UI query returned an invalid response.");
+}
+
+async function executeOpenworkAffordance(
+  rawArgs: unknown,
+  context: OpenCodeContext,
+): Promise<unknown> {
+  const request = openworkAffordanceRequestSchema.parse(rawArgs);
+  if (request.id === "session.create") {
+    return affordanceResult(
+      request.id,
+      await createOpenWorkSessions(request.args ?? {}, context),
+      affordanceWriteEffects,
+    );
+  }
+  if (request.id === "extension.call") {
+    const args = callArgsSchema.parse(request.args ?? {});
+    return affordanceResult(
+      request.id,
+      await postJson("/experimental/extensions/call", {
+        extensionId: args.extensionId,
+        action: args.action,
+        args: args.args ?? {},
+        context: contextPayload(context),
+      }),
+      affordanceExternalWriteEffects,
+    );
+  }
+  if (request.id.startsWith("connect.")) {
+    return unavailableAffordance(
+      request.id,
+      "This affordance declares a dedicated Connect executor. Call the tool named in openwork_context.",
+    );
+  }
+  const result = await uiBridgeRequest("/command", {
+    method: "POST",
+    body: request,
+  });
+  return isRecord(result) && typeof result.ok === "boolean"
+    ? result
+    : unavailableAffordance(request.id, "OpenWork UI command returned an invalid response.");
 }
 
 function collapseWhitespace(value: string): string {
@@ -572,13 +758,6 @@ function getStringProperty(value: unknown, key: string): string | null {
   return typeof property === "string" ? property : null;
 }
 
-function addContext(payload: unknown, context: OpenCodeContext): object {
-  if (typeof payload === "object" && payload !== null && !Array.isArray(payload)) {
-    return Object.assign({}, payload, { context: contextPayload(context) });
-  }
-  return { payload, context: contextPayload(context) };
-}
-
 function errorMessage(payload: unknown, fallback: string): string {
   return getStringProperty(payload, "message") ?? getStringProperty(payload, "code") ?? fallback;
 }
@@ -618,20 +797,39 @@ async function resolveContextWorkspace(workspaceId: string | undefined, context:
   throw new Error(`Multiple OpenWork workspaces match; pass workspaceId. Available: ${workspaces.map((workspace) => workspaceLabel(workspace)).join(", ")}`);
 }
 
-async function exportOpenWorkExtensions(rawArgs: unknown, context: OpenCodeContext): Promise<object> {
-  const args = extensionsExportArgsSchema.parse(rawArgs);
-  const skills = args.skills ?? [];
-  const mcps = args.mcps ?? [];
-  if (skills.length === 0 && mcps.length === 0) {
-    return { ok: false, error: "Provide at least one skill or mcp name to export." };
-  }
+async function createOpenWorkSessions(rawArgs: unknown, context: OpenCodeContext): Promise<object> {
+  const args = sessionCreateArgsSchema.parse(rawArgs);
   const workspace = await resolveContextWorkspace(args.workspaceId, context);
-  const payload = await postJson(`/workspace/${encodeURIComponent(workspace.id)}/extensions/export`, { skills, mcps });
-  const base = { ok: true, workspaceId: workspace.id, workspace: workspaceLabel(workspace) };
-  if (typeof payload === "object" && payload !== null && !Array.isArray(payload)) {
-    return Object.assign(base, payload);
-  }
-  return Object.assign(base, { result: payload });
+  const results = await Promise.all(args.sessions.map(async (session): Promise<CreatedOpenWorkSessionResult | FailedOpenWorkSessionResult> => {
+    try {
+      const payload = createdSessionEnvelopeSchema.parse(await postJson(
+        `/workspace/${encodeURIComponent(workspace.id)}/sessions`,
+        session,
+      ));
+      return {
+        ok: true,
+        sessionId: payload.item.id,
+        title: payload.item.title?.trim() || session.title,
+        started: payload.started,
+        route: `/workspace/${encodeURIComponent(workspace.id)}/session/${encodeURIComponent(payload.item.id)}`,
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        title: session.title,
+        error: unknownErrorMessage(error),
+      };
+    }
+  }));
+  const created = results.filter((result): result is CreatedOpenWorkSessionResult => result.ok);
+  const failures = results.filter((result): result is FailedOpenWorkSessionResult => !result.ok);
+  return {
+    ok: failures.length === 0,
+    workspaceId: workspace.id,
+    workspace: workspaceLabel(workspace),
+    created,
+    failures,
+  };
 }
 
 async function postJson(path: string, body: ExtensionActionPayload | Record<string, unknown>): Promise<unknown> {
@@ -663,145 +861,63 @@ function contextPayload(context: OpenCodeContext) {
 }
 
 export const OpenWorkExtensionsPreview = async (factoryInput?: unknown) => {
-  const uiControlEnabled = uiControlToolsEnabled();
   const factoryContext = normalizeOpenCodeContext(factoryInput);
   const engineMcpStatusClient = readEngineMcpStatusClient(factoryInput);
   const engineMcpStatusDirectory = factoryContext.directory ?? factoryContext.worktree;
   return {
   "experimental.chat.system.transform": async (input: unknown, output: { system: string[] }) => {
     const mergedInput = mergeTransformInputWithFactoryContext(input, factoryContext);
-    output.system.push(await resolveOpenWorkExtensionDiscoveryInstruction(mergedInput, fetch, {
-      client: engineMcpStatusClient,
-      directory: engineMcpStatusDirectory,
-    }));
-    output.system.push(OPENWORK_SESSION_MEMORY_INSTRUCTION);
-    output.system.push(OPENWORK_BROWSER_INSTRUCTION);
-    if (uiControlEnabled) output.system.push(OPENWORK_UI_CONTROL_INSTRUCTION);
+    const [extensionInstruction, skillInstruction] = await Promise.all([
+      resolveOpenWorkExtensionDiscoveryInstruction(mergedInput, fetch, {
+        client: engineMcpStatusClient,
+        directory: engineMcpStatusDirectory,
+      }),
+      resolveOpenWorkConnectSkillInstruction(mergedInput, fetch),
+    ]);
+    const skillAuthoring = composeSkillAuthoringInstruction(extensionInstruction);
+    if (process.env.OPENWORK_DEV_MODE === "1") {
+      console.log("[openwork:skill-authoring] system prompt selected", {
+        mode: skillAuthoring.mode,
+        prompt: skillAuthoring.prompt,
+        directory: normalizeOpenCodeContext(mergedInput).directory ?? factoryContext.directory ?? null,
+      });
+    }
+    // One section id per concern — combine drops empties/duplicates so routing,
+    // remote skills, session, and browser guidance never overlap by accident.
+    const sections = combineInstructionSections(
+      createInstructionSection("routing", extensionInstruction),
+      createInstructionSection("agent-surface", OPENWORK_AGENT_SURFACE_INSTRUCTION),
+      createInstructionSection("skill-authoring", skillAuthoring.prompt),
+      createInstructionSection("connect-skills", skillInstruction),
+      createInstructionSection("browser", OPENWORK_BROWSER_INSTRUCTION),
+    );
+    output.system.push(...composeAgentInstructions(sections));
   },
   tool: {
-    openwork_extension_list_actions: {
-      description: `List extension actions currently exposed by OpenWork. ${OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION}`,
-      args: listActionsArgsSchema.shape,
-      async execute(rawArgs: unknown, context: OpenCodeContext) {
-        const args = listActionsArgsSchema.parse(rawArgs);
-        const query = args.extensionId ? `?extensionId=${encodeURIComponent(args.extensionId)}` : "";
-        const { url, token } = requireOpenWorkServer();
-        const response = await fetch(`${url}/experimental/extensions/actions${query}`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        const payload = await parseResponse(response);
-        if (!response.ok) throw new Error(errorMessage(payload, "OpenWork extension action listing failed"));
-        return JSON.stringify(addContext(payload, context), null, 2);
-      },
-    },
-    openwork_extension_call: {
-      description: `Call an OpenWork extension action. Use openwork_extension_list_actions first to inspect available actions and schemas. ${OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION}`,
-      args: callArgsSchema.shape,
-      async execute(rawArgs: unknown, context: OpenCodeContext) {
-        const args = callArgsSchema.parse(rawArgs);
-        const payload = await postJson("/experimental/extensions/call", {
-          extensionId: args.extensionId,
-          action: args.action,
-          args: args.args ?? {},
-          context: contextPayload(context),
-        });
-        return JSON.stringify(payload, null, 2);
-      },
-    },
-    ...(uiControlEnabled ? {
-    openwork_ui_snapshot: {
-      description: "Get a snapshot of the current OpenWork UI state: active route, narration, visible actions, and status. Use this to understand what the user sees before taking action.",
+    openwork_context: {
+      description: "Read one semantic snapshot of OpenWork: current screen, retained conversation tabs, split view and focused pane, sidebar and side panel state, settings panel, provider contributions, remote skill guidance, and available affordances with explicit effects and executors.",
       args: {},
       async execute() {
-        const result = await uiBridgeRequest("/snapshot");
-        return JSON.stringify(result, null, 2);
+        return JSON.stringify(
+          await readOpenworkAgentContext(engineMcpStatusClient, engineMcpStatusDirectory),
+          null,
+          2,
+        );
       },
     },
-    openwork_ui_list_actions: {
-      description: `List all UI control actions currently available in OpenWork. Each action has an id you can pass to openwork_ui_execute_action. ${OPENWORK_UI_CONTROL_INSTRUCTION}`,
-      args: {},
-      async execute() {
-        const result = await uiBridgeRequest("/actions");
-        return JSON.stringify(result, null, 2);
-      },
-    },
-    openwork_ui_execute_action: {
-      description: `Execute an OpenWork UI action by its id. Use openwork_ui_list_actions first to see available actions. ${OPENWORK_UI_CONTROL_INSTRUCTION}`,
-      args: uiExecuteArgsSchema.shape,
+    openwork_query: {
+      description: "Run a side-effect-free OpenWork affordance whose executor is OpenWork. Use the exact id and arguments from openwork_context. This reads backend or app state without navigation or window focus.",
+      args: openworkAffordanceRequestSchema.shape,
       async execute(rawArgs: unknown) {
-        const { actionId, args } = uiExecuteArgsSchema.parse(rawArgs);
-        const result = await uiBridgeRequest("/execute", {
-          method: "POST",
-          body: { actionId, args: args ?? {} },
-        });
-        return JSON.stringify(result, null, 2);
+        return JSON.stringify(await queryOpenworkAffordance(rawArgs), null, 2);
       },
     },
-    } : {}),
-    openwork_session_search: {
-      description: "Search OpenWork past chat sessions by title and full message transcript text without navigating the UI. Use this when the user refers to another/past chat or asks what was said, decided, or done previously.",
-      args: sessionSearchArgsSchema.shape,
-      async execute(rawArgs: unknown) {
-        const result = await searchOpenWorkSessions(rawArgs);
-        return JSON.stringify(result, null, 2);
-      },
-    },
-    openwork_session_read: {
-      description: "Read recent transcript messages from a specific OpenWork session without opening it. Use sessionId/workspaceId from openwork_session_search, then answer only from the returned transcript.",
-      args: sessionReadArgsSchema.shape,
-      async execute(rawArgs: unknown) {
-        const result = await readOpenWorkSession(rawArgs);
-        return JSON.stringify(result, null, 2);
-      },
-    },
-    openwork_extensions_export: {
-      description: "Export portable definitions of installed skills and MCP servers from OpenWork, including OpenWork-managed runtime MCPs that are not visible as workspace files. Returns full SKILL.md content and MCP configs with secret header/environment values redacted (listed in redactedKeys). Use this when packaging skills/MCPs into a plugin or publishing them to a marketplace; declare redacted keys as required inputs instead of inlining values.",
-      args: extensionsExportArgsSchema.shape,
+    openwork_execute: {
+      description: "Execute an OpenWork command whose executor is OpenWork without activating the desktop window. Use the exact id and arguments from openwork_context, and pass expectedRevision for UI commands to prevent stale writes. If the descriptor names another executor tool, call that tool instead.",
+      args: openworkAffordanceRequestSchema.shape,
       async execute(rawArgs: unknown, context: OpenCodeContext) {
-        try {
-          const result = await exportOpenWorkExtensions(rawArgs, context);
-          return JSON.stringify(result, null, 2);
-        } catch (error) {
-          return JSON.stringify({ ok: false, error: unknownErrorMessage(error) }, null, 2);
-        }
-      },
-    },
-    openwork_browser_open_url: {
-      description: "Open a URL in the OpenWork built-in browser and return the exact CDP browser_url and target_id to use for browser_* automation tools. Always use this before browser_snapshot/click/fill/eval for web browsing tasks.",
-      args: browserOpenUrlArgsSchema.shape,
-      async execute(rawArgs: unknown) {
-        const args = browserOpenUrlArgsSchema.parse(rawArgs);
-        const result = await uiBridgeRequest("/execute", {
-          method: "POST",
-          body: {
-            actionId: "browser.open_url",
-            args: { url: args.url, provider: args.provider ?? "builtin" },
-          },
-        });
-        return JSON.stringify(result, null, 2);
-      },
-    },
-    openwork_browser_set_proxy: {
-      description: "Route all OpenWork built-in browser traffic through an HTTP/SOCKS proxy — for example to fetch search results or pages as seen from another location. Applies to every built-in browser tab (including browser_* automation) until cleared with openwork_browser_clear_proxy. If the user has named proxies configured as OPENWORK_BROWSER_PROXY_<NAME> environment variables, pass env:NAME instead of a raw URL.",
-      args: browserSetProxyArgsSchema.shape,
-      async execute(rawArgs: unknown) {
-        const args = browserSetProxyArgsSchema.parse(rawArgs);
-        const result = await uiBridgeRequest("/execute", {
-          method: "POST",
-          body: { actionId: "browser.set_proxy", args: { proxy: args.proxy } },
-        });
-        return JSON.stringify(result, null, 2);
-      },
-    },
-    openwork_browser_clear_proxy: {
-      description: "Clear the OpenWork built-in browser proxy and restore the system network settings.",
-      args: {},
-      async execute() {
-        const result = await uiBridgeRequest("/execute", {
-          method: "POST",
-          body: { actionId: "browser.set_proxy", args: { proxy: "" } },
-        });
-        return JSON.stringify(result, null, 2);
+        const mergedContext = { ...factoryContext, ...normalizeOpenCodeContext(context) };
+        return JSON.stringify(await executeOpenworkAffordance(rawArgs, mergedContext), null, 2);
       },
     },
   },

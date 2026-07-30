@@ -19,13 +19,55 @@ A growing subset of flows is codified under [`flows/`](./flows) and executed by
 the zero-dependency runner in [`runner/`](./runner) with machine-checkable
 assertions, poll-until-condition waits (no fixed sleeps), and JSON + markdown
 reports with screenshots. The runner also writes a browseable frame-by-frame
-`index.html` in each result directory.
+`index.html` in each result directory. New flows should be typed
+`*.flow.ts` files using `defineFlow` from `../runner/flow.ts`; legacy
+`*.flow.mjs` files are still supported.
 
 ```bash
-pnpm evals --list                 # show available coded flows
-pnpm evals --all                  # run everything runnable
-pnpm evals --flow app-smoke       # run one flow
+pnpm evals --list                 # automation mode: show available coded flows
+pnpm evals --all                  # automation mode: no narration policy
+pnpm evals --flow app-smoke       # automation mode: run one flow
+pnpm evals:typecheck              # typecheck *.flow.ts + runner TypeScript
 pnpm evals --all --cdp-url http://127.0.0.1:9825   # explicit CDP endpoint
+```
+
+`pnpm evals` is automation mode: it never enforces voice-over coverage and
+unnarrated frames render without a warning. `pnpm fraimz` is demo mode: it keeps
+the voice-over drift check and narrated-frame warnings described below.
+
+## Composable packages + spec lane
+
+`evals/` is its own **standalone pnpm workspace** (`evals/pnpm-workspace.yaml`)
+so eval tooling can never affect product installs or image builds. Install it
+separately:
+
+```bash
+pnpm --dir evals install           # required once (and in CI) before the commands below
+pnpm --dir evals run test          # node:test unit tests (runner + packages)
+pnpm --dir evals run spec          # vitest spec lane, pr project
+pnpm --dir evals run spec:nightly  # includes *.slow.test.ts
+```
+
+The layers live in [`packages/`](./packages) and are consumable independently of
+the runner:
+
+| Package | Owns |
+| --- | --- |
+| `@openwork/cdp` | raw CDP client, targets, `Surface`, `attachSurface` |
+| `@openwork/labs` | egress / idp / release-feed / mock-mcp — `start*(config) → handle` with `stop()` + `Symbol.asyncDispose` |
+| `@openwork/hosts` | local + daytona hosts, `resolveHost()` |
+| `@openwork/behaviors` | framework-free actions/observations over narrow handles; return facts, never record evidence |
+| `@openwork/matchers` | pure functions over facts (`diagnoseTls`, …) — testable with fabricated facts, no I/O |
+| `@openwork/fraimz` | frame capture + annotation channel |
+
+Specs in [`specs/`](./specs) are plain vitest tests: acquire resources with
+`await using`, drive them with behaviors, assert with matchers. Because behaviors
+take handles rather than a framework context, the same calls run outside any test
+— see [`scripts/diagnose.mts`](./scripts/diagnose.mts), which imports only
+`@openwork/behaviors` + `@openwork/matchers` and points them at a real endpoint:
+
+```bash
+node evals/scripts/diagnose.mts https://den.customer.example
 ```
 
 ### fraimz — the deliverable
@@ -55,7 +97,7 @@ title, optional context prose, and one **numbered paragraph per frame**.
 On approval the build moves to a fresh worktree/branch; the journey ends with the PR carrying the proof (see the `voiceover` skill).
 
 ```bash
-pnpm fraimz scaffold <flow-id>    # generate evals/flows/<flow-id>.flow.mjs
+pnpm fraimz scaffold <flow-id>    # generate evals/flows/<flow-id>.flow.ts
                                   # from the approved script: one ctx.prove
                                   # stub per paragraph, narration pre-wired
 pnpm fraimz --flow <flow-id> --pr # after the run, post the frame proof as a
@@ -71,10 +113,13 @@ can follow the demo step by step. If the token is missing or an upload fails,
 the comment still posts with a note and the screenshots stay available in
 `evals/results/<run-id>/`.
 
-Flows load their narration with `loadVoiceoverParagraphs(<flow-id>)`; when a
-script exists for a flow, the runner appends a **Voice-over script coverage**
-step that fails the flow if the run's narration drifts from the approved file
-(a scripted frame never narrated, or an unapproved line narrated).
+Flows load their narration with `loadVoiceoverParagraphs(<flow-id>)`; in demo
+mode, when a script exists for a flow, the runner appends a **Voice-over script
+coverage** step that fails the flow if the run's narration drifts from the
+approved file (a scripted frame never narrated, or an unapproved line narrated).
+`pnpm evals scaffold <flow-id>` in automation mode emits the same narrated stub
+when a script exists; without a script it emits a plain typed stub instead.
+`pnpm fraimz scaffold <flow-id>` still requires the approved script.
 
 Internal demos of terminal/tooling experiences can set `requiresApp: false` to
 run without a CDP endpoint; their frames carry claims, assertions, and
@@ -156,7 +201,8 @@ plugin (configured in `.opencode/opencode.json`). Every tool takes
 
 ## Conventions
 
-- Prefer coded flows in `evals/flows/*.flow.mjs` over ad hoc browser tool calls.
+- Prefer coded flows in `evals/flows/*.flow.ts` using `defineFlow` over ad hoc
+  browser tool calls; legacy `*.flow.mjs` files remain runnable.
 - Declare the demo kind on every new flow: `kind: "user-facing"` (a flow demo
   where the end user is the protagonist) or `kind: "internal"` (an internal
   demo, e.g. perf improvements or invariants). The runner rejects other values
@@ -168,7 +214,7 @@ plugin (configured in `.opencode/opencode.json`). Every tool takes
   evidence. It records the claim, voiceover, assertions, screenshot, and
   validation results together so the HTML frame proof explains why each image
   proves the step.
-- Every `ctx.prove` should carry a `voiceover`: one or two spoken-style
+- In demo mode, every `ctx.prove` should carry a `voiceover`: one or two spoken-style
   sentences narrating what the viewer sees in that frame. `fraimz.html` renders
   it per frame with a play button (Web Speech API) and a per-flow "Play full
   voiceover". Write the voiceover script for the whole demo before coding the
@@ -177,6 +223,14 @@ plugin (configured in `.opencode/opencode.json`). Every tool takes
 - Screenshots should include `claim`, `requireText`, `rejectText`, or
   `hashIncludes` whenever possible. A screenshot without an assertion is only a
   visual checkpoint, not proof that the workflow passed.
+- Pretty screenshots are available with `pretty: true` (or
+  `pretty: { padding, radius }`) on the existing screenshot primitive. The
+  default padding is `0.06` of the longer raw capture edge, rounded corners
+  default to `18px`, and the runner adds validations for the mesh-gradient
+  background corners, rounded clipping, drop shadow, and unchanged app-content
+  center pixel. Use this for PR hero frames, newsletters, and docs; the evidence
+  semantics stay the same, and duplicate detection still compares the raw app
+  capture.
 - Use direct `browser_eval` only for debugging/prototyping or when a flow has
   not yet been codified. If the behavior matters for a PR, codify it before
   calling the UI validation complete.

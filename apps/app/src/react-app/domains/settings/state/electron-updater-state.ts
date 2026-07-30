@@ -25,6 +25,7 @@ export type SettingsUpdateStatus = {
   totalBytes?: number | null;
   downloadedBytes?: number;
   message?: string;
+  failedAction?: "check" | "download" | "install";
 } | null;
 
 type ElectronUpdaterBridge = NonNullable<Window["__OPENWORK_ELECTRON__"]>["updater"] & {
@@ -47,10 +48,30 @@ type UseElectronUpdaterStateOptions = {
   setError: (message: string | null) => void;
 };
 
-type ElectronUpdaterEnvState = {
+export type ElectronUpdaterEnvState = {
   appVersion: string | null;
   updateEnv: { supported?: boolean; reason?: string | null } | null;
 };
+
+export const ELECTRON_UPDATER_UNSUPPORTED_REASON = "Electron updater bridge is unavailable.";
+
+export function unsupportedElectronUpdaterEnvState(): ElectronUpdaterEnvState {
+  return {
+    appVersion: null,
+    updateEnv: { supported: false, reason: ELECTRON_UPDATER_UNSUPPORTED_REASON },
+  };
+}
+
+export function shouldScheduleElectronUpdateAutoCheck(input: {
+  updateAutoCheck: boolean;
+  updateEnv: ElectronUpdaterEnvState["updateEnv"];
+  autoCheckKey: string | null;
+  nextAutoCheckKey: string;
+}) {
+  return input.updateAutoCheck &&
+    input.updateEnv?.supported !== false &&
+    input.autoCheckKey !== input.nextAutoCheckKey;
+}
 
 type ElectronUpdaterEnvAction =
   | { type: "app-version"; appVersion: string | null }
@@ -126,7 +147,9 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
   const [updateStatus, setUpdateStatus] = useState<SettingsUpdateStatus>(null);
   const [envState, dispatchEnvState] = useReducer(electronUpdaterEnvReducer, {
     appVersion: null,
-    updateEnv: null,
+    updateEnv: isElectronRuntime()
+      ? null
+      : { supported: false, reason: ELECTRON_UPDATER_UNSUPPORTED_REASON },
   });
   const { appVersion, updateEnv } = envState;
   const autoCheckKeyRef = useRef<string | null>(null);
@@ -181,10 +204,13 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
   ]);
 
   useEffect(() => {
-    if (!isElectronRuntime()) return;
+    if (!isElectronRuntime()) {
+      dispatchEnvState({ type: "unsupported", reason: ELECTRON_UPDATER_UNSUPPORTED_REASON });
+      return;
+    }
     const bridge = electronUpdaterBridge();
     if (!bridge?.getChannel) {
-      dispatchEnvState({ type: "unsupported", reason: "Electron updater bridge is unavailable." });
+      dispatchEnvState({ type: "unsupported", reason: ELECTRON_UPDATER_UNSUPPORTED_REASON });
       return;
     }
     let cancelled = false;
@@ -204,7 +230,7 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
       })
       .catch(() => {
         if (!cancelled) {
-          dispatchEnvState({ type: "unsupported", reason: "Electron updater bridge is unavailable." });
+          dispatchEnvState({ type: "unsupported", reason: ELECTRON_UPDATER_UNSUPPORTED_REASON });
         }
       });
     return () => {
@@ -216,7 +242,7 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
     const bridge = electronUpdaterBridge();
     if (!bridge?.download) {
       const message = "Electron updater downloads are available only in the Electron desktop app.";
-      setUpdateStatus({ state: "error", message });
+      setUpdateStatus({ state: "error", message, failedAction: "download" });
       setError(message);
       return;
     }
@@ -228,7 +254,11 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
     const releaseChannelResolution = await resolvePolicyReleaseChannel(
       requestedReleaseChannel,
     ).catch((error: unknown) => {
-      setUpdateStatus({ state: "error", message: describeError(error) });
+      setUpdateStatus({
+        state: "error",
+        message: describeError(error),
+        failedAction: "download",
+      });
       return null;
     });
     if (!releaseChannelResolution) return;
@@ -264,7 +294,11 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
     try {
       const result = await bridge.download();
       if (!result?.ok) {
-        setUpdateStatus({ state: "error", message: result?.reason ?? "Update download failed." });
+        setUpdateStatus({
+          state: "error",
+          message: result?.reason ?? "Update download failed.",
+          failedAction: "download",
+        });
         return;
       }
       if (
@@ -285,7 +319,11 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
         state: "ready",
       }));
     } catch (error) {
-      setUpdateStatus({ state: "error", message: describeError(error) });
+      setUpdateStatus({
+        state: "error",
+        message: describeError(error),
+        failedAction: "download",
+      });
     } finally {
       unsubProgress?.();
     }
@@ -300,11 +338,12 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
     channelOverride?: ReleaseChannel,
     manual = false,
   ) => {
+    if (!isElectronRuntime()) return;
     const requestedReleaseChannel = channelOverride ?? releaseChannel;
     const bridge = electronUpdaterBridge();
     if (!bridge?.check) {
       const message = "Electron update checks are available only in the Electron desktop app.";
-      setUpdateStatus({ state: "error", message });
+      setUpdateStatus({ state: "error", message, failedAction: "check" });
       setError(message);
       return;
     }
@@ -398,7 +437,11 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
         return;
       }
       if (result.reason) {
-        setUpdateStatus({ state: "error", message: result.reason });
+        setUpdateStatus({
+          state: "error",
+          message: result.reason,
+          failedAction: "check",
+        });
         return;
       }
       const latestDesktopConfig = checkedReleaseChannel === "alpha"
@@ -435,7 +478,11 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
         await downloadUpdate(checkedReleaseChannel);
       }
     } catch (error) {
-      setUpdateStatus({ state: "error", message: describeError(error) });
+      setUpdateStatus({
+        state: "error",
+        message: describeError(error),
+        failedAction: "check",
+      });
     }
   }, [appVersion, downloadUpdate, onReleaseChannelChange, refreshDesktopConfig, releaseChannel, resolvePolicyReleaseChannel, setError, updateAutoDownload]);
 
@@ -445,9 +492,13 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
   );
 
   useEffect(() => {
-    if (!updateAutoCheck || updateEnv?.supported === false) return;
     const key = `${policyReleaseChannel}:${appVersion ?? "unknown"}`;
-    if (autoCheckKeyRef.current === key) return;
+    if (!shouldScheduleElectronUpdateAutoCheck({
+      updateAutoCheck,
+      updateEnv,
+      autoCheckKey: autoCheckKeyRef.current,
+      nextAutoCheckKey: key,
+    })) return;
     autoCheckKeyRef.current = key;
     void runCheckForUpdates(undefined, false);
   }, [appVersion, policyReleaseChannel, runCheckForUpdates, updateAutoCheck, updateEnv?.supported]);
@@ -455,16 +506,16 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
   // Run a check when the native "Check for Updates..." menu item was used.
   const updateCheckRequestedAt = useUpdateCheckRequestStore((state) => state.requestedAt);
   useEffect(() => {
-    if (updateCheckRequestedAt == null) return;
+    if (updateCheckRequestedAt == null || updateEnv?.supported === false) return;
     useUpdateCheckRequestStore.getState().clearUpdateCheckRequest();
     void checkForUpdates();
-  }, [checkForUpdates, updateCheckRequestedAt]);
+  }, [checkForUpdates, updateCheckRequestedAt, updateEnv?.supported]);
 
   const installUpdateAndRestart = useCallback(async () => {
     const bridge = electronUpdaterBridge();
     if (!bridge?.installAndRestart) {
       const message = "Electron update install is available only in the Electron desktop app.";
-      setUpdateStatus({ state: "error", message });
+      setUpdateStatus({ state: "error", message, failedAction: "install" });
       setError(message);
       return;
     }
@@ -481,12 +532,28 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
       }
       const result = await bridge.installAndRestart();
       if (!result?.ok) {
-        setUpdateStatus({ state: "error", message: result?.reason ?? "Update install failed." });
+        if (result?.reason === "update-not-downloaded") {
+          // The main-side staged download was invalidated; re-check so the UI
+          // returns to a working stable-targeted download/install flow.
+          downloadedReleaseChannelRef.current = null;
+          availableReleaseChannelRef.current = null;
+          await runCheckForUpdates(undefined, true);
+          return;
+        }
+        setUpdateStatus({
+          state: "error",
+          message: result?.reason ?? "Update install failed.",
+          failedAction: "install",
+        });
       }
     } catch (error) {
-      setUpdateStatus({ state: "error", message: describeError(error) });
+      setUpdateStatus({
+        state: "error",
+        message: describeError(error),
+        failedAction: "install",
+      });
     }
-  }, [onReleaseChannelChange, resolvePolicyReleaseChannel, setError]);
+  }, [onReleaseChannelChange, resolvePolicyReleaseChannel, runCheckForUpdates, setError]);
 
   const setReleaseChannel = useCallback(
     async (next: ReleaseChannel) => {
@@ -503,7 +570,11 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
         }
         await checkForUpdates(state.channel ?? allowedReleaseChannel);
       } catch (error) {
-        setUpdateStatus({ state: "error", message: describeError(error) });
+        setUpdateStatus({
+          state: "error",
+          message: describeError(error),
+          failedAction: "check",
+        });
       }
     },
     [checkForUpdates, onReleaseChannelChange, resolvePolicyReleaseChannel],

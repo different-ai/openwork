@@ -15,14 +15,14 @@ companies (managed deployment, skill development, MCP consulting).
 | Plan | Price | Includes |
 |---|---|---|
 | Solo | $0 | Open-source desktop app, BYO keys |
-| Team Starter | $50/mo | 5 seats, API access, Skill Hub Manager, distributed keys |
+| Team Starter | $50/mo | 5 seats, API access, marketplace/plugin management, distributed keys |
 | Enterprise | Custom | Everything in Team, plus: SSO/SAML + SCIM, Desktop policies & version controls, enforced SSO (`requireSso`), managed deployment (self-hosted or hosted by us), custom skill development, MCP consulting, rollout support, custom commercial terms |
 
 Services (sold with Enterprise, delivered by us):
 
 - **Managed deployment** — we run Den (or guide a self-hosted install), wire up
   the customer's gateway/LiteLLM, IdP, and version pinning.
-- **Skill development** — we build org-specific skills and Skill Hub packs for
+- **Skill development** — we build org-specific skill plugins and marketplace packs for
   the customer's workflows.
 - **MCP consulting** — we connect internal data sources and tools as MCP
   servers, with policy guardrails.

@@ -1,0 +1,1 @@
+ALTER TABLE `desktop_policy_member` ADD `role` varchar(64);

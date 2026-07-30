@@ -10,7 +10,6 @@ type FeedbackUrlOptions = {
   appVersion?: string | null;
   openworkServerVersion?: string | null;
   opencodeVersion?: string | null;
-  orchestratorVersion?: string | null;
 };
 
 type ClientOsContext = {
@@ -93,7 +92,6 @@ export function buildFeedbackUrl(options: FeedbackUrlOptions): string {
     appVersion: options.appVersion?.trim() || ENV_APP_VERSION,
     openworkServerVersion: options.openworkServerVersion?.trim() ?? "",
     opencodeVersion: options.opencodeVersion?.trim() ?? "",
-    orchestratorVersion: options.orchestratorVersion?.trim() ?? "",
     osName: osContext.osName?.trim() ?? "",
     osVersion: osContext.osVersion?.trim() ?? "",
     platform: osContext.platform?.trim() ?? "",

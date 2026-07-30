@@ -98,6 +98,11 @@ export function UpdatesView(props: UpdatesViewProps) {
   const updateDownloadedBytes = props.updateStatus?.downloadedBytes ?? null;
   const updateTotalBytes = props.updateStatus?.totalBytes ?? null;
   const updateErrorMessage = props.updateStatus?.message ?? null;
+  const updateErrorTitle = props.updateStatus?.failedAction === "install"
+    ? t("settings.update_install_failed")
+    : props.updateStatus?.failedAction === "download"
+      ? t("settings.update_download_failed")
+      : t("settings.update_check_failed");
   const updateNotes = props.updateStatus?.notes ?? null;
 
   const updateRestartActiveRunsMessage =
@@ -129,7 +134,7 @@ export function UpdatesView(props: UpdatesViewProps) {
                         : updateState === "ready"
                           ? t("settings.update_ready_version", undefined, { version: updateVersion ?? "" })
                           : updateState === "error"
-                            ? t("settings.update_check_failed")
+                            ? updateErrorTitle
                             : t("settings.update_uptodate")}
                 </LayoutSectionItemTitle>
                 <LayoutSectionItemDescription>

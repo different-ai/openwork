@@ -14,7 +14,7 @@ const FIXTURE_WORKSPACE = resolve(
 const MEASURE_SESSION_ROW = `(() => {
   const title = document.querySelector(${JSON.stringify(`span[title="${LONG_TITLE}"]`)});
   const row = title?.closest('[data-sidebar="menu-sub-button"]');
-  const indicator = row?.parentElement?.querySelector('[aria-label="Thinking"]');
+  const indicator = row?.querySelector('[data-session-loading-indicator]');
   if (!title || !row || !indicator) return null;
   const titleRect = title.getBoundingClientRect();
   const indicatorRect = indicator.getBoundingClientRect();
@@ -27,12 +27,13 @@ const MEASURE_SESSION_ROW = `(() => {
     whiteSpace: style.whiteSpace,
     overflow: style.overflow,
     textOverflow: style.textOverflow,
-    titleRight: Math.round(titleRect.right),
-    indicatorLeft: Math.round(indicatorRect.left),
+    titleLeft: Math.round(titleRect.left),
+    indicatorRight: Math.round(indicatorRect.right),
     rowRight: Math.round(rowRect.right),
     rowPaddingInlineEnd: rowStyle.paddingInlineEnd,
     rowClassName: row.className,
-    overlap: titleRect.right > indicatorRect.left,
+    // Dot-matrix loader occupies the fixed left activity lane — title must start after it.
+    overlap: titleRect.left < indicatorRect.right - 1,
   };
 })()`;
 
@@ -103,7 +104,7 @@ export default {
           label: "truncated active session title",
         });
 
-        await ctx.prove("A long active session title truncates before its spinner", {
+        await ctx.prove("A long active session title truncates cleanly beside its left spinner", {
           voiceover: vo[0],
           assert: async () => {
             const metrics = await ctx.eval(MEASURE_SESSION_ROW);
@@ -112,10 +113,11 @@ export default {
             ctx.assert(metrics.overflow === "hidden", `Expected hidden overflow, got ${metrics.overflow}.`);
             ctx.assert(metrics.textOverflow === "ellipsis", `Expected ellipsis, got ${metrics.textOverflow}.`);
             ctx.assert(metrics.titleScrollWidth > metrics.titleClientWidth, "The long title was not truncated.");
-            ctx.assert(!metrics.overlap, `Title and spinner overlap: ${JSON.stringify(metrics)}.`);
+            ctx.assert(!metrics.overlap, `Title and left spinner overlap: ${JSON.stringify(metrics)}.`);
+            ctx.assert(metrics.indicatorRight <= metrics.titleLeft, "Spinner should sit to the left of the title.");
           },
           screenshot: {
-            name: "session-title-truncates-before-spinner",
+            name: "session-title-truncates-beside-left-spinner",
             requireText: ["OpenWork diagnostics authorization"],
           },
         });

@@ -59,7 +59,6 @@ export const LlmProviderModelTable = mysqlTable(
     createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
   },
   (table) => [
-    index("llm_provider_model_llm_provider_id").on(table.llmProviderId),
     index("llm_provider_model_model_id").on(table.modelId),
     uniqueIndex("llm_provider_model_provider_model").on(
       table.llmProviderId,
@@ -78,7 +77,6 @@ export const LlmProviderAccessTable = mysqlTable(
     createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
   },
   (table) => [
-    index("llm_provider_access_llm_provider_id").on(table.llmProviderId),
     index("llm_provider_access_org_membership_id").on(table.orgMembershipId),
     index("llm_provider_access_team_id").on(table.teamId),
     uniqueIndex("llm_provider_access_provider_org_membership").on(

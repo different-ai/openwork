@@ -8,6 +8,7 @@ import {
 import { LOCAL_PREFERENCES_KEY } from "@/react-app/kernel/local-preferences-storage";
 
 type DesktopNotificationImportance = "important" | "routine";
+type WebNotificationHandler = (title: string, description?: string, href?: string) => Promise<void>;
 
 export type DesktopNotificationEvent =
   | { type: "task.completed"; sessionId: string }
@@ -20,6 +21,12 @@ type NotificationCopy = {
   body: string;
   importance: DesktopNotificationImportance;
 };
+
+let webNotificationHandler: WebNotificationHandler | null = null;
+
+export function setWebNotificationHandler(handler: WebNotificationHandler | null): void {
+  webNotificationHandler = handler;
+}
 
 function readDesktopNotificationPreference(): DesktopNotificationPreference {
   if (typeof window === "undefined") return DEFAULT_DESKTOP_NOTIFICATION_PREFERENCE;
@@ -82,10 +89,14 @@ function copyForEvent(event: DesktopNotificationEvent): NotificationCopy {
 }
 
 export function notifyDesktopEvent(event: DesktopNotificationEvent): void {
-  if (!isDesktopRuntime()) return;
   const copy = copyForEvent(event);
   if (!shouldNotify(readDesktopNotificationPreference(), copy.importance)) return;
   if (isAppInView()) return;
+
+  if (!isDesktopRuntime()) {
+    void webNotificationHandler?.(copy.title, copy.body).catch(() => undefined);
+    return;
+  }
 
   void desktopNotificationShow({
     title: copy.title,

@@ -2,6 +2,7 @@
 // global keyboard shortcuts that toggle them. Extracted verbatim from
 // session-route.tsx.
 import { useEffect, useEffectEvent, useState } from "react";
+import { usePlatform } from "../kernel/platform";
 
 export type UseShellShortcutsInput = {
   canCreateTask: boolean;
@@ -32,6 +33,7 @@ export function useCommandPaletteShortcut(enabled = true) {
 }
 
 export function useShellShortcuts(input: UseShellShortcutsInput) {
+  const platform = usePlatform();
   const { canCreateTask, workspaceId, onCreateTask, onNextSessionTab, onPrevSessionTab } = input;
   const { commandPaletteOpen, setCommandPaletteOpen } = useCommandPaletteShortcut();
   const [sessionSearchOpen, setSessionSearchOpen] = useState(false);
@@ -76,7 +78,7 @@ export function useShellShortcuts(input: UseShellShortcutsInput) {
       }
       return;
     }
-    if (key === "j") {
+    if (key === "j" && platform.capabilities.terminal) {
       event.preventDefault();
       setTerminalOpen((value) => !value);
       return;

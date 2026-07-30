@@ -17,6 +17,7 @@ import {
 } from "./react-app/kernel/platform";
 import { AppProviders } from "./react-app/shell/providers";
 import { AppRoot } from "./react-app/shell/app-root";
+import { setWebNotificationHandler } from "./react-app/shell/desktop-notifications";
 import { startDeepLinkBridge } from "./react-app/shell/startup-deep-links";
 import "./app/index.css";
 
@@ -34,6 +35,7 @@ if (!root) {
 root.dataset.openworkDeployment = getOpenWorkDeployment();
 
 const platform = createDefaultPlatform();
+setWebNotificationHandler(platform.notify);
 const queryClient = getReactQueryClient();
 const Router = isDesktopRuntime() ? HashRouter : BrowserRouter;
 

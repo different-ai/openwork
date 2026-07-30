@@ -1,0 +1,77 @@
+---
+title: "Certificate trust and proxies"
+description: "Configure private CAs and outbound proxies for desktop, local runtimes, Den, and strict MySQL TLS."
+---
+
+OpenWork has several network trust surfaces. Installing a private root for one surface does not automatically configure all of the others.
+
+## The four trust surfaces
+
+### 1. Desktop app HTTPS
+
+The desktop app's external HTTPS calls should go through Electron's Chromium network stack. That path uses Chromium/Electron certificate trust and the system proxy configuration. The built-in browser panel is separate: it has its own explicit proxy surface for browsing traffic.
+
+Enterprise roots should be installed in OS trust on Windows and macOS. On Linux, also import the root into the Chromium/Electron-compatible NSS or user trust database required by your distribution. Do not assume `/etc/ssl` alone is sufficient for Electron on every Linux image.
+
+Real-machine validation found exactly this distinction: a Daytona Linux Electron E2E installed a private CA into Debian `/etc/ssl`. `curl` and Node with `--use-system-ca` trusted it; bare Node `fetch` failed with `UNABLE_TO_VERIFY_LEAF_SIGNATURE`; Electron `net.fetch` returned `ERR_CERT_AUTHORITY_INVALID` because Chromium used its NSS/user trust path on that image.
+
+Bare Node `fetch` is not the sanctioned desktop external path. The desktop external-call guard routes new external desktop calls through `electronNet.fetch`, but that does not remove the Linux Chromium/NSS trust-store distinction.
+
+### 2. Spawned local runtimes and sidecars
+
+The desktop also starts the embedded OpenWork server plus local runtimes and sidecars. On each launch, OpenWork builds an additive `system-ca-bundle.pem` inside the user data directory from every OS trust source it can read: Node's system store, Windows LocalMachine and CurrentUser `Root`/`CA` certificate stores, and the macOS administrator-controlled System and SystemRoot keychains. The desktop merges and deduplicates those certificates before passing the bundle to child processes with `NODE_EXTRA_CA_CERTS`.
+
+- If the user or launcher already set `NODE_EXTRA_CA_CERTS`, that user-provided value wins and OpenWork does not overwrite it.
+- The Electron main process extends Node's default CA list with the same generated additions when the runtime supports it, so the embedded server's own outbound TLS diagnostics and probes use the same enterprise roots.
+- The generated bundle is for spawned Node-compatible runtimes. It does not configure Electron's Chromium trust store.
+- Do not assume every sidecar honors `HTTP_PROXY` or `HTTPS_PROXY` universally. Use proxy settings documented for the specific runtime or sidecar.
+
+#### Automatic chain repair for the activated organization server
+
+At startup, the desktop checks the activated organization server for a leaf-only TLS chain. If the leaf certificate points to a missing intermediate through AIA, OpenWork fetches that intermediate, verifies the leaf signature, and confirms the intermediate chains to bundled public roots before adding it to the generated `system-ca-bundle.pem`. It refuses private or corporate roots and any non-leaf-only TLS failure. The repair phase is bounded at 20 seconds by default and can be tuned with `OPENWORK_CHAIN_REPAIR_TIMEOUT_MS`. Set `OPENWORK_DISABLE_CHAIN_REPAIR=1` to turn this resilience behavior off. The server should still be fixed to serve its full chain; diagnostics continue to report what the server actually sends.
+
+### 3. Den containers and Helm
+
+For Kubernetes Den installs, use the Helm chart's `customCa` support when Den must trust a private CA for outbound TLS or strict database verification. The chart mounts the selected Secret or ConfigMap key at:
+
+```text
+/etc/openwork/custom-ca/ca-bundle.pem
+```
+
+It sets `NODE_EXTRA_CA_CERTS` to that file for `den-api`, `den-web`, enabled `inference`, and the migration Job. CA rotation requires restarting the running workloads so Node reloads the file.
+
+The low-level values and conflict rules are in the Helm README's [Custom CA certificates](https://github.com/different-ai/openwork/blob/dev/packaging/helm/openwork-ee/README.md#custom-ca-certificates) section.
+
+### 4. Strict MySQL TLS
+
+For MySQL-compatible databases, encryption and certificate identity verification are separate decisions.
+
+- `sslaccept=accept` keeps TLS enabled but does not verify the certificate chain. Use it only for smoke tests or transitional setup.
+- `sslmode=require` encrypts the connection, but do not describe it as certificate identity verification.
+- `sslmode=verify-ca`, `sslmode=verify-full`, and `sslaccept=strict` are certificate-verifying modes. Pair them with the correct CA bundle, usually through Helm `customCa`.
+
+## Proxy guidance
+
+### Desktop
+
+- External desktop network calls use Chromium/system proxy behavior through `electronNet.fetch`.
+- The built-in browser has its own explicit proxy controls for browser traffic.
+- If a corporate proxy re-signs TLS, install the enterprise root for the matching trust surface. On Linux Electron, include the Chromium/NSS store where required.
+
+### Den Node runtime
+
+For Den running on Node.js 24.5 or newer, configure proxy settings before the process starts:
+
+```dotenv
+NODE_USE_ENV_PROXY=1
+HTTPS_PROXY=http://proxy.example.internal:8080
+NO_PROXY=localhost,127.0.0.1,.svc,.cluster.local,openwork-ee-den-api
+```
+
+Use `NODE_EXTRA_CA_CERTS` or Helm `customCa` when TLS inspection uses a private trust root. These are process-start settings; setting them in the browser or in-app environment editor is too late for Den.
+
+## How to validate
+
+- For Windows desktop reachability and TLS-chain evidence, use the PowerShell doctor in [Network diagnostics](/start-here/network-diagnostics).
+- For Den's runtime path, use the Den outbound diagnostic in [Network diagnostics](/start-here/network-diagnostics).
+- For destination inventories, use [Outbound network access](/start-here/outbound-network-access).

@@ -44,3 +44,37 @@ export function loopbackFetch(
 ): ReturnType<typeof globalThis.fetch> {
   return globalThis.fetch(input, init);
 }
+
+export type RuntimeDiagnosticRuntimeFamily = "electron-node" | "node" | "bun" | "unknown";
+export type RuntimeDiagnosticTransport = "node-undici" | "bun-fetch" | "test-seam" | "unknown";
+
+export type RuntimeDiagnosticTransportInfo = {
+  runtimeFamily: RuntimeDiagnosticRuntimeFamily;
+  transport: RuntimeDiagnosticTransport;
+};
+
+/**
+ * Identifies the JavaScript runtime and fetch transport behind
+ * runtimeDiagnosticFetch, so a diagnostic can attribute its own egress path
+ * instead of implying it exercised Chromium networking or the OpenCode engine.
+ */
+export function runtimeDiagnosticTransportInfo(): RuntimeDiagnosticTransportInfo {
+  const versions: Record<string, string | undefined> = process.versions;
+  if (versions.bun) return { runtimeFamily: "bun", transport: "bun-fetch" };
+  if (versions.electron && versions.node) return { runtimeFamily: "electron-node", transport: "node-undici" };
+  if (versions.node) return { runtimeFamily: "node", transport: "node-undici" };
+  return { runtimeFamily: "unknown", transport: "unknown" };
+}
+
+/**
+ * Deliberate runtime-diagnostic egress. Unlike externalFetch, this must stay
+ * on the embedding JavaScript runtime's own fetch stack (Node/undici inside
+ * Electron main and standalone Node, Bun's fetch in the compiled binary) and
+ * must never route through Chromium's electronNet or the OpenCode engine —
+ * that independence is what lets diagnostics compare the OpenWork runtime's
+ * network path against the engine's report. Pair every use with
+ * runtimeDiagnosticTransportInfo so reports state which stack actually ran.
+ */
+export function runtimeDiagnosticFetch(input: string | URL | Request, init?: RequestInit): Promise<Response> {
+  return globalThis.fetch(input, init);
+}

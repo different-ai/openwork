@@ -72,10 +72,6 @@ mock.module("../src/enterprise-auth-requirement.js", () => ({
   findEnterpriseAuthRequirementForEmail: () => Promise.resolve(null),
 }))
 
-mock.module("../src/organization-capabilities.js", () => ({
-  normalizeOrganizationCapabilities: () => ({}),
-}))
-
 mock.module("../src/organization-join-verification.js", () => ({
   validateInvitationAcceptVerification: () => ({ ok: true }),
 }))

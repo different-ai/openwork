@@ -2,15 +2,20 @@
 // fed by a latest-values ref, lifecycle (start/dispose), Zen-restriction sync,
 // workspace-change resync, the post-onboarding auto-open latch, and cloud
 // provider auto-sync. Extracted verbatim from session-route.tsx.
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { ProviderListResponse } from "@opencode-ai/sdk/v2/client";
 
 import type { Client, ProviderListItem, WorkspaceDisplay } from "@/app/types";
+import { readDenSettings } from "@/app/lib/den";
+import { denSessionUpdatedEvent, denSettingsChangedEvent } from "@/app/lib/den-session-events";
 import type { ResolvedWorkspaceEndpoint } from "@/app/lib/workspace-endpoint";
 import { useCheckDesktopRestriction } from "@/react-app/domains/cloud/desktop-config-provider";
+import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider";
 import { useCloudProviderAutoSync } from "@/react-app/domains/cloud/use-cloud-provider-auto-sync";
 import { useReloadCoordinator } from "@/react-app/shell/reload-coordinator";
 import { type RouteWorkspace, workspaceLabel } from "@/react-app/shell/route-workspaces";
+import { reconcilePolicyDisabledProviders } from "@/react-app/domains/connections/policy-provider-reconcile";
+import { shouldWaitForCloudProviderSyncBeforePolicyReconcile } from "./managed-models-recovery";
 import { createProviderAuthStore, useProviderAuthStoreSnapshot } from "./store";
 
 const emptyWorkspaceDisplay: WorkspaceDisplay = {
@@ -55,10 +60,13 @@ export function useSessionProviderAuth(input: UseSessionProviderAuthInput) {
     setProviderConnectedIds,
     setDisabledProviderIds,
   } = input;
+  const denAuth = useDenAuth();
   const checkDesktopRestriction = useCheckDesktopRestriction();
   const reloadCoordinator = useReloadCoordinator();
   const { markReloadRequired } = reloadCoordinator;
   const onboardingProviderAuthPendingRef = useRef(false);
+  const policyProviderReconcileInFlightRef = useRef(false);
+  const [denSettingsVersion, bumpDenSettingsVersion] = useReducer((value: number) => value + 1, 0);
 
   const stateRef = useRef({
     opencodeClient,
@@ -131,15 +139,45 @@ export function useSessionProviderAuth(input: UseSessionProviderAuthInput) {
       }),
     [checkDesktopRestriction, markReloadRequired],
   );
-  const cloudProviderSyncContext = useMemo(() => ({
-    client: opencodeClient,
-    workspaceId: selectedWorkspaceEndpoint?.workspaceId ?? null,
-    workspaceRoot: selectedWorkspaceRoot,
-  }), [opencodeClient, selectedWorkspaceEndpoint?.workspaceId, selectedWorkspaceRoot]);
+  useEffect(() => {
+    const bump = () => bumpDenSettingsVersion();
+    window.addEventListener(denSessionUpdatedEvent, bump);
+    window.addEventListener(denSettingsChangedEvent, bump);
+    return () => {
+      window.removeEventListener(denSessionUpdatedEvent, bump);
+      window.removeEventListener(denSettingsChangedEvent, bump);
+    };
+  }, []);
+
+  const cloudProviderSyncContext = useMemo(() => {
+    const settings = readDenSettings();
+    return {
+      client: opencodeClient,
+      workspaceId: selectedWorkspaceEndpoint?.workspaceId ?? null,
+      workspaceRoot: selectedWorkspaceRoot,
+      denBaseUrl: settings.baseUrl,
+      activeOrgId: settings.activeOrgId?.trim() ?? "",
+      signedIn: denAuth.isSignedIn && Boolean(settings.authToken?.trim()),
+    };
+  }, [denAuth.isSignedIn, denSettingsVersion, opencodeClient, selectedWorkspaceEndpoint?.workspaceId, selectedWorkspaceRoot]);
   const [completedCloudProviderSync, setCompletedCloudProviderSync] = useState<{
     context: typeof cloudProviderSyncContext;
     providerList: ProviderListResponse | null;
   } | null>(null);
+  const currentCloudProviderSync =
+    completedCloudProviderSync?.context === cloudProviderSyncContext
+      ? completedCloudProviderSync
+      : null;
+  const cloudProviderSyncReady = Boolean(currentCloudProviderSync);
+  const loadCloudProviderSync = useCallback(async (reason: "app_launch" | "manual") => {
+    await store.runCloudProviderSync(reason);
+    return store.refreshProviders({ force: true });
+  }, [store]);
+  const refreshCloudProviderSync = useCallback(async (reason: "manual") => {
+    const providerList = await loadCloudProviderSync(reason);
+    setCompletedCloudProviderSync({ context: cloudProviderSyncContext, providerList });
+    return providerList;
+  }, [cloudProviderSyncContext, loadCloudProviderSync]);
 
   useEffect(() => {
     store.start();
@@ -150,16 +188,56 @@ export function useSessionProviderAuth(input: UseSessionProviderAuthInput) {
 
   useEffect(() => {
     if (!opencodeClient || !selectedWorkspaceId) return;
+    if (shouldWaitForCloudProviderSyncBeforePolicyReconcile({
+      signedIn: cloudProviderSyncContext.signedIn,
+      clientConnected: Boolean(cloudProviderSyncContext.client),
+      workspaceId: cloudProviderSyncContext.workspaceId,
+      activeOrgId: cloudProviderSyncContext.activeOrgId,
+      cloudProviderSyncReady,
+    })) return;
+    if (policyProviderReconcileInFlightRef.current) return;
 
-    void store
-      .ensureProjectProviderDisabledState(
-        "opencode",
-        checkDesktopRestriction({ restriction: "allowZenModel" }),
-      )
-      .catch((error) => {
-        console.warn("[desktop-app-restrictions] failed to sync Zen restriction", error);
-      });
-  }, [checkDesktopRestriction, disabledProviderIds, opencodeClient, selectedWorkspaceId, selectedWorkspaceRoot, store]);
+    policyProviderReconcileInFlightRef.current = true;
+    void reconcilePolicyDisabledProviders({
+      opencodeClient,
+      openworkClient: selectedWorkspaceEndpoint?.client ?? null,
+      workspaceId: selectedWorkspaceEndpoint?.workspaceId ?? null,
+      workspaceType: selectedWorkspace?.workspaceType ?? null,
+      allProviders: providers,
+      connectedProviderIds: providerConnectedIds,
+      disabledProviderIds,
+      checkRestriction: checkDesktopRestriction,
+      setDisabledProviders: setDisabledProviderIds,
+      markReloadRequired: () => {
+        markReloadRequired("config", {
+          type: "config",
+          name: "opencode.json",
+          action: "updated",
+        });
+      },
+    }).catch((error) => {
+      console.warn("[desktop-app-restrictions] failed to sync provider restrictions", error);
+    }).finally(() => {
+      policyProviderReconcileInFlightRef.current = false;
+    });
+  }, [
+    checkDesktopRestriction,
+    cloudProviderSyncContext.activeOrgId,
+    cloudProviderSyncContext.client,
+    cloudProviderSyncContext.signedIn,
+    cloudProviderSyncContext.workspaceId,
+    cloudProviderSyncReady,
+    disabledProviderIds,
+    markReloadRequired,
+    opencodeClient,
+    providerConnectedIds,
+    providers,
+    selectedWorkspace?.workspaceType,
+    selectedWorkspaceEndpoint?.client,
+    selectedWorkspaceEndpoint?.workspaceId,
+    selectedWorkspaceId,
+    setDisabledProviderIds,
+  ]);
 
   useEffect(() => {
     store.syncFromOptions();
@@ -173,20 +251,23 @@ export function useSessionProviderAuth(input: UseSessionProviderAuthInput) {
   ]);
 
   useEffect(() => {
-    if (!cloudProviderSyncContext.client || !cloudProviderSyncContext.workspaceId) return;
+    if (
+      !cloudProviderSyncContext.client ||
+      !cloudProviderSyncContext.workspaceId ||
+      !cloudProviderSyncContext.signedIn ||
+      !cloudProviderSyncContext.activeOrgId
+    ) return;
 
     let cancelled = false;
-    void (async () => {
-      await store.runCloudProviderSync("app_launch");
-      const providerList = await store.refreshProviders({ force: true });
+    void loadCloudProviderSync("app_launch").then((providerList) => {
       if (!cancelled) {
         setCompletedCloudProviderSync({ context: cloudProviderSyncContext, providerList });
       }
-    })();
+    });
     return () => {
       cancelled = true;
     };
-  }, [cloudProviderSyncContext, store]);
+  }, [cloudProviderSyncContext, loadCloudProviderSync]);
 
   // After onboarding, auto-open the provider modal if no providers are connected.
   // The welcome route appends ?onboarding=1 to the session URL after workspace creation.
@@ -202,22 +283,20 @@ export function useSessionProviderAuth(input: UseSessionProviderAuthInput) {
     if (!onboardingProviderAuthPendingRef.current) return;
     if (!selectedWorkspaceEndpoint) return;
     onboardingProviderAuthPendingRef.current = false;
-    store.openProviderAuthModal({ returnFocusTarget: "composer" });
+    if (store.isProviderAddRestricted()) return;
+    void store.openProviderAuthModal({ returnFocusTarget: "composer" });
   }, [selectedWorkspaceEndpoint, store]);
 
   // Session is where forced sign-in lands. Keep org-managed cloud providers in
   // sync here so sign-in applies opencode.json changes before Settings opens.
   useCloudProviderAutoSync(store.runCloudProviderSync);
   const snapshot = useProviderAuthStoreSnapshot(store);
-  const currentCloudProviderSync =
-    completedCloudProviderSync?.context === cloudProviderSyncContext
-      ? completedCloudProviderSync
-      : null;
 
   return {
     store,
     snapshot,
-    cloudProviderSyncReady: Boolean(currentCloudProviderSync),
+    cloudProviderSyncReady,
     cloudProviderList: currentCloudProviderSync?.providerList ?? null,
+    refreshCloudProviderSync,
   };
 }

@@ -361,8 +361,10 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
 
   const fetchImpl = isDesktopRuntime()
     ? createDesktopFetch(auth)
-    : (input: RequestInfo | URL, init?: RequestInit) =>
-        fetchWithTimeout(globalThis.fetch, input, init, DEFAULT_OPENCODE_REQUEST_TIMEOUT_MS);
+    : (input: RequestInfo | URL, init?: RequestInit) => {
+        const timeoutMs = requestIsStreaming(input, init) ? 0 : DEFAULT_OPENCODE_REQUEST_TIMEOUT_MS;
+        return fetchWithTimeout(globalThis.fetch, input, init, timeoutMs);
+      };
   const client = createOpencodeClient({
     baseUrl,
     directory,

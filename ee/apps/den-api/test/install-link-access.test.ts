@@ -22,7 +22,8 @@ const organizationId = createDenTypeId("organization")
 const installLinkId = createDenTypeId("installLink")
 const insertedRows: unknown[] = []
 const revokedRows: unknown[] = []
-const officialWindowsInstallerUrl = "https://github.com/different-ai/openwork/releases/download/v9.9.9/openwork-win-x64-9.9.9.exe"
+const officialWindowsDesktopUrl = "https://github.com/different-ai/openwork/releases/download/v9.9.9/openwork-enterprise-win-x64-9.9.9.exe"
+const officialWindowsCloudDesktopUrl = "https://github.com/different-ai/openwork/releases/download/v9.9.9/openwork-cloud-win-x64-9.9.9.exe"
 const connectKeyPair = generateConnectLinkKeyPair()
 const connectKeyId = "owc-route-test"
 
@@ -159,6 +160,8 @@ beforeEach(() => {
   envModule.env.installerArtifactsDir = undefined
   envModule.env.installerReleaseRepo = "different-ai/openwork"
   envModule.env.installerReleaseTag = "v9.9.9"
+  envModule.env.installerReleaseTagExplicit = true
+  envModule.env.orgMode = "single_org"
   insertedRows.length = 0
   revokedRows.length = 0
   role = "member"
@@ -174,10 +177,9 @@ afterAll(() => {
 })
 
 function createApp(options: {
-  installerDirectUrl?: string
   configuredArtifact?: { filePath: string; size: number }
   artifactFileNames?: string[]
-  grantOverrides?: Partial<Pick<InstallExperienceDependencies, "mintConnectGrant" | "previewConnectGrant" | "consumeConnectGrant">>
+  grantOverrides?: Partial<Pick<InstallExperienceDependencies, "mintConnectGrant" | "previewConnectGrant" | "inspectConnectGrant" | "consumeConnectGrant">>
 } = {}) {
   const app = new Hono()
   app.use("*", async (c, next) => {
@@ -206,9 +208,6 @@ function createApp(options: {
             return Promise.resolve(options.configuredArtifact ?? null)
           },
         }
-      : {}),
-    ...(options.installerDirectUrl
-      ? { resolveDirectUrl: () => options.installerDirectUrl ?? officialWindowsInstallerUrl }
       : {}),
     ...options.grantOverrides,
   }
@@ -344,17 +343,87 @@ test("members cannot mint an install link for another organization", async () =>
   expect(insertedInstallLinks()).toHaveLength(0)
 })
 
-test("zero-config downloads redirect the browser to the official release", async () => {
-  const response = await createApp({ installerDirectUrl: officialWindowsInstallerUrl }).request("http://den.local/v1/install/win-x64?token=opaque-token", {
+test("zero-config downloads redirect the browser to the enterprise desktop release", async () => {
+  const response = await createApp().request("http://den.local/v1/install/win-x64?token=opaque-token", {
     redirect: "manual",
   })
 
   expect(response.status).toBe(302)
-  expect(response.headers.get("location")).toBe(officialWindowsInstallerUrl)
+  expect(response.headers.get("location")).toBe(officialWindowsDesktopUrl)
   expect(response.headers.get("location")).not.toContain("opaque-token")
 })
 
+test("Cloud downloads resolve the matching version without forwarding the install token", async () => {
+  envModule.env.orgMode = "multi_org"
+  const response = await createApp().request("http://den.local/v1/install/win-x64?token=opaque-token", {
+    redirect: "manual",
+  })
+
+  expect(response.status).toBe(302)
+  expect(response.headers.get("location")).toBe(officialWindowsCloudDesktopUrl)
+  expect(response.headers.get("location")).not.toContain("opaque-token")
+})
+
+test("mounted artifact lookup uses the resolved enterprise desktop filename", async () => {
+  organizationMetadata = {
+    ...defaultOrganizationMetadata(),
+    allowedDesktopVersions: ["0.17.26", "0.17.27"],
+  }
+  const artifactFileNames: string[] = []
+  const installer = Buffer.from("signed-enterprise-windows-installer", "utf8")
+  const artifactPath = path.join(mkdtempSync(path.join(os.tmpdir(), "openwork-install-route-")), "installer.exe")
+  writeFileSync(artifactPath, installer)
+
+  const response = await createApp({
+    artifactFileNames,
+    configuredArtifact: { filePath: artifactPath, size: installer.byteLength },
+  }).request("http://den.local/v1/install/win-x64?token=opaque-token")
+
+  expect(response.status).toBe(200)
+  expect(artifactFileNames).toEqual(["openwork-enterprise-win-x64-0.17.27.exe"])
+  expect(response.headers.get("content-type")).toBe("application/vnd.microsoft.portable-executable")
+  expect(response.headers.get("content-disposition")).toContain("openwork-enterprise-win-x64-0.17.27.exe")
+  expect(response.headers.get("content-disposition")).not.toContain("opaque-token")
+  expect(Buffer.from(await response.arrayBuffer())).toEqual(installer)
+})
+
+test("hosted Cloud mounted artifact lookup uses the resolved Cloud desktop filename", async () => {
+  envModule.env.orgMode = "multi_org"
+  const artifactFileNames: string[] = []
+  const installer = Buffer.from("signed-cloud-mac-installer", "utf8")
+  const artifactPath = path.join(mkdtempSync(path.join(os.tmpdir(), "openwork-install-route-")), "installer.dmg")
+  writeFileSync(artifactPath, installer)
+
+  const response = await createApp({
+    artifactFileNames,
+    configuredArtifact: { filePath: artifactPath, size: installer.byteLength },
+  }).request("http://den.local/v1/install/mac-arm64?token=opaque-token")
+
+  expect(response.status).toBe(200)
+  expect(artifactFileNames).toEqual(["openwork-cloud-mac-arm64-9.9.9.dmg"])
+  expect(response.headers.get("content-type")).toBe("application/x-apple-diskimage")
+  expect(response.headers.get("content-disposition")).toContain("openwork-cloud-mac-arm64-9.9.9.dmg")
+  expect(response.headers.get("content-disposition")).not.toContain("opaque-token")
+  expect(Buffer.from(await response.arrayBuffer())).toEqual(installer)
+})
+
 test("unordered organization allowed desktop versions select the maximum direct release URL", async () => {
+  organizationMetadata = {
+    ...defaultOrganizationMetadata(),
+    allowedDesktopVersions: ["0.18.5", "0.18.4", "0.18.6"],
+  }
+
+  const response = await createApp().request("http://den.local/v1/install/win-x64?token=opaque-token", {
+    redirect: "manual",
+  })
+
+  expect(response.status).toBe(302)
+  expect(response.headers.get("location")).toBe("https://github.com/different-ai/openwork/releases/download/v0.18.6/openwork-enterprise-win-x64-0.18.6.exe")
+  expect(response.headers.get("location")).not.toContain("v9.9.9")
+  expect(response.headers.get("location")).not.toContain("opaque-token")
+})
+
+test("older allowed desktop versions keep their matching release tag", async () => {
   organizationMetadata = {
     ...defaultOrganizationMetadata(),
     allowedDesktopVersions: ["0.17.26", "0.17.25", "0.17.27"],
@@ -365,33 +434,11 @@ test("unordered organization allowed desktop versions select the maximum direct 
   })
 
   expect(response.status).toBe(302)
-  expect(response.headers.get("location")).toBe("https://github.com/different-ai/openwork/releases/download/v0.17.27/openwork-win-x64-0.17.27.exe")
-  expect(response.headers.get("location")).not.toContain("v9.9.9")
+  expect(response.headers.get("location")).toBe("https://github.com/different-ai/openwork/releases/download/v0.17.27/openwork-enterprise-win-x64-0.17.27.exe")
   expect(response.headers.get("location")).not.toContain("opaque-token")
 })
 
-test("mounted artifact lookup uses the organization-specific allowed desktop version filename", async () => {
-  organizationMetadata = {
-    ...defaultOrganizationMetadata(),
-    allowedDesktopVersions: ["0.17.26", "0.17.27"],
-  }
-  const artifactFileNames: string[] = []
-  const installer = Buffer.from("signed-standard-windows-installer", "utf8")
-  const artifactPath = path.join(mkdtempSync(path.join(os.tmpdir(), "openwork-installer-route-")), "installer.exe")
-  writeFileSync(artifactPath, installer)
-
-  const response = await createApp({
-    artifactFileNames,
-    configuredArtifact: { filePath: artifactPath, size: installer.byteLength },
-  }).request("http://den.local/v1/install/win-x64?token=opaque-token")
-
-  expect(response.status).toBe(200)
-  expect(artifactFileNames).toEqual(["openwork-win-x64-0.17.27.exe"])
-  expect(response.headers.get("content-disposition")).toContain("openwork-win-x64-0.17.27.exe")
-  expect(Buffer.from(await response.arrayBuffer())).toEqual(installer)
-})
-
-test("unrestricted organizations use Den's configured installer release tag", async () => {
+test("unrestricted organizations use Den's configured desktop release tag", async () => {
   organizationMetadata = {
     ...defaultOrganizationMetadata(),
     allowedDesktopVersions: [],
@@ -402,16 +449,67 @@ test("unrestricted organizations use Den's configured installer release tag", as
   })
 
   expect(response.status).toBe(302)
-  expect(response.headers.get("location")).toBe(officialWindowsInstallerUrl)
+  expect(response.headers.get("location")).toBe(officialWindowsDesktopUrl)
+  expect(response.headers.get("location")).not.toContain("opaque-token")
+})
+
+test("unrestricted organizations use Den's release version when the tag was not set explicitly", async () => {
+  envModule.env.installerReleaseTagExplicit = false
+  organizationMetadata = {
+    ...defaultOrganizationMetadata(),
+    allowedDesktopVersions: [],
+  }
+
+  const response = await createApp().request("http://den.local/v1/install/win-x64?token=opaque-token", {
+    redirect: "manual",
+  })
+
+  expect(response.status).toBe(302)
+  expect(response.headers.get("location")).toBe(officialWindowsDesktopUrl)
+  expect(response.headers.get("location")).not.toContain("opaque-token")
+})
+
+test("organization version pins stay tag-pinned even without an explicit installer tag", async () => {
+  envModule.env.installerReleaseTagExplicit = false
+  organizationMetadata = {
+    ...defaultOrganizationMetadata(),
+    allowedDesktopVersions: ["0.18.4", "0.18.6"],
+  }
+
+  const response = await createApp().request("http://den.local/v1/install/win-x64?token=opaque-token", {
+    redirect: "manual",
+  })
+
+  expect(response.status).toBe(302)
+  expect(response.headers.get("location")).toBe("https://github.com/different-ai/openwork/releases/download/v0.18.6/openwork-enterprise-win-x64-0.18.6.exe")
+  expect(response.headers.get("location")).not.toContain("/releases/latest/")
+  expect(response.headers.get("location")).not.toContain("opaque-token")
+})
+
+test("custom release repos never use the latest-release URL", async () => {
+  envModule.env.installerReleaseTagExplicit = false
+  envModule.env.installerReleaseRepo = "acme/openwork"
+  organizationMetadata = {
+    ...defaultOrganizationMetadata(),
+    allowedDesktopVersions: [],
+  }
+
+  const response = await createApp().request("http://den.local/v1/install/win-x64?token=opaque-token", {
+    redirect: "manual",
+  })
+
+  expect(response.status).toBe(302)
+  expect(response.headers.get("location")).toBe("https://github.com/acme/openwork/releases/download/v9.9.9/openwork-enterprise-win-x64-9.9.9.exe")
+  expect(response.headers.get("location")).not.toContain("/releases/latest/")
   expect(response.headers.get("location")).not.toContain("opaque-token")
 })
 
 test("install token organization policy applies to member and admin downloads", async () => {
   organizationMetadata = {
     ...defaultOrganizationMetadata(),
-    allowedDesktopVersions: ["0.17.26", "0.17.27"],
+    allowedDesktopVersions: ["0.18.4", "0.18.6"],
   }
-  const expectedUrl = "https://github.com/different-ai/openwork/releases/download/v0.17.27/openwork-win-x64-0.17.27.exe"
+  const expectedUrl = "https://github.com/different-ai/openwork/releases/download/v0.18.6/openwork-enterprise-win-x64-0.18.6.exe"
 
   for (const nextRole of ["member", "admin"]) {
     role = nextRole
@@ -424,11 +522,50 @@ test("install token organization policy applies to member and admin downloads", 
   }
 })
 
-test.each(["mac-arm64", "win-x64", "linux-x64", "linux-arm64"])(
-  "zero-config %s downloads redirect immediately to the normal installer without forwarding the token",
-  async (platform) => {
-    const directUrl = `https://github.com/different-ai/openwork/releases/download/v9.9.9/${platform}`
-    const response = await createApp({ installerDirectUrl: directUrl }).request(
+test("explicit configured desktop release tags are used verbatim", async () => {
+  envModule.env.installerReleaseTagExplicit = true
+  envModule.env.installerReleaseTag = "v0.17.27"
+  organizationMetadata = {
+    ...defaultOrganizationMetadata(),
+    allowedDesktopVersions: [],
+  }
+
+  const response = await createApp().request("http://den.local/v1/install/win-x64?token=opaque-token", {
+    redirect: "manual",
+  })
+
+  expect(response.status).toBe(302)
+  expect(response.headers.get("location")).toBe("https://github.com/different-ai/openwork/releases/download/v0.17.27/openwork-enterprise-win-x64-0.17.27.exe")
+  expect(response.headers.get("location")).not.toContain("opaque-token")
+})
+
+test("custom desktop release repos use the organization-approved version", async () => {
+  envModule.env.installerReleaseRepo = "acme/openwork"
+  organizationMetadata = {
+    ...defaultOrganizationMetadata(),
+    allowedDesktopVersions: ["0.17.26", "0.17.27"],
+  }
+
+  const response = await createApp().request("http://den.local/v1/install/win-x64?token=opaque-token", {
+    redirect: "manual",
+  })
+
+  expect(response.status).toBe(302)
+  expect(response.headers.get("location")).toBe("https://github.com/acme/openwork/releases/download/v0.17.27/openwork-enterprise-win-x64-0.17.27.exe")
+  expect(response.headers.get("location")).not.toContain("opaque-token")
+})
+
+test.each([
+  { platform: "mac-arm64", assetName: "openwork-enterprise-mac-arm64-9.9.9.dmg" },
+  { platform: "mac-x64", assetName: "openwork-enterprise-mac-x64-9.9.9.dmg" },
+  { platform: "win-x64", assetName: "openwork-enterprise-win-x64-9.9.9.exe" },
+  { platform: "linux-x64", assetName: "openwork-enterprise-linux-x86_64-9.9.9.AppImage" },
+  { platform: "linux-arm64", assetName: "openwork-enterprise-linux-arm64-9.9.9.AppImage" },
+])(
+  "zero-config $platform downloads redirect to the enterprise desktop asset without forwarding the token",
+  async ({ platform, assetName }) => {
+    const directUrl = `https://github.com/different-ai/openwork/releases/download/v9.9.9/${assetName}`
+    const response = await createApp().request(
       `http://den.local/v1/install/${platform}?token=opaque-token`,
       { redirect: "manual" },
     )
@@ -439,33 +576,22 @@ test.each(["mac-arm64", "win-x64", "linux-x64", "linux-arm64"])(
   },
 )
 
-test("guided semi-air-gapped downloads return a provisioned standard installer without ZIP wrapping", async () => {
-  const installer = Buffer.from("signed-standard-windows-installer", "utf8")
-  const artifactPath = path.join(mkdtempSync(path.join(os.tmpdir(), "openwork-installer-route-")), "installer.exe")
-  writeFileSync(artifactPath, installer)
-  const response = await createApp({
-    configuredArtifact: { filePath: artifactPath, size: installer.byteLength },
-  }).request(
-    "http://den.local/v1/install/win-x64?token=opaque-token",
-  )
-
-  expect(response.status).toBe(200)
-  expect(response.headers.get("content-type")).toBe("application/vnd.microsoft.portable-executable")
-  expect(response.headers.get("content-disposition")).toContain("openwork-win-x64-")
-  expect(Buffer.from(await response.arrayBuffer())).toEqual(installer)
-})
-
 test("zero-config install config mints a short-lived exchange without storing the raw code", async () => {
   const response = await createApp().request("http://127.0.0.1:8790/v1/install-config?token=opaque-token")
 
   expect(response.status).toBe(200)
   const body = await response.json()
   expect(body.connectUrl).toStartWith("openwork://connect?code=")
+  expect(body.activationUrl).toStartWith("http://127.0.0.1:8790/activate?code=")
   expect(body.requireSignin).toBe(true)
+  expect(body.desktopVersion).toBe("9.9.9")
+  expect(body.distribution).toBe("enterprise")
   expect(Date.parse(body.connectExpiresAt)).toBeGreaterThan(Date.now())
+  expect(body.activationExpiresAt).toBe(body.connectExpiresAt)
 
   const url = new URL(body.connectUrl)
   const code = url.searchParams.get("code") ?? ""
+  expect(new URL(body.activationUrl).searchParams.get("code")).toBe(code)
   expect(code.length).toBeGreaterThanOrEqual(24)
   expect(url.searchParams.get("apiBaseUrl")).toBe("http://127.0.0.1:8790")
 
@@ -486,6 +612,17 @@ test("zero-config install config mints a short-lived exchange without storing th
   })
   expect(grant).not.toHaveProperty("code")
   expect(JSON.stringify(grant)).not.toContain(code)
+})
+
+test("hosted multi-org install config selects Cloud without enterprise activation", async () => {
+  envModule.env.orgMode = "multi_org"
+  const response = await createApp().request("http://127.0.0.1:8790/v1/install-config?token=opaque-token")
+
+  expect(response.status).toBe(200)
+  const body = await response.json()
+  expect(body.requireSignin).toBe(true)
+  expect(body.desktopVersion).toBe("9.9.9")
+  expect(body.distribution).toBe("cloud")
 })
 
 test("keyless preview is read-only and exchange consumes the grant once", async () => {
@@ -513,6 +650,12 @@ test("keyless preview is read-only and exchange consumes the grant once", async 
         consumed = true
         return Promise.resolve({ ok: true, claims })
       },
+      inspectConnectGrant: () => Promise.resolve({
+        ok: true,
+        status: consumed ? "connected" : "pending",
+        claims,
+        expiresAt: new Date((claims.exp + 1) * 1000),
+      }),
     },
   })
   const request = (mode: "preview" | "exchange") => app.request(`http://den.local/v1/install-connect/${mode}`, {
@@ -524,23 +667,37 @@ test("keyless preview is read-only and exchange consumes the grant once", async 
   const firstPreview = await request("preview")
   expect(firstPreview.status).toBe(200)
   expect(consumed).toBe(false)
+  const pending = await app.request("http://den.local/v1/install-connect/status", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ code }),
+  })
+  expect(pending.status).toBe(200)
+  await expect(pending.json()).resolves.toMatchObject({ status: "pending", claims })
   const exchange = await request("exchange")
   expect(exchange.status).toBe(200)
   expect(consumed).toBe(true)
+  const connected = await app.request("http://den.local/v1/install-connect/status", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ code }),
+  })
+  expect(connected.status).toBe(200)
+  await expect(connected.json()).resolves.toMatchObject({ status: "connected", claims })
   const replay = await request("exchange")
   expect(replay.status).toBe(409)
   await expect(replay.json()).resolves.toEqual({ error: "connect_grant_replayed" })
 })
 
-test("signed handoffs use the same direct standard-installer route", async () => {
+test("signed handoffs use the same direct enterprise desktop route", async () => {
   envModule.env.connectLink = { privateKeyPem: "unused by download route", kid: "test" }
-  const response = await createApp({ installerDirectUrl: officialWindowsInstallerUrl }).request(
+  const response = await createApp().request(
     "http://den.local/v1/install/win-x64?token=opaque-token",
     { redirect: "manual" },
   )
 
   expect(response.status).toBe(302)
-  expect(response.headers.get("location")).toBe(officialWindowsInstallerUrl)
+  expect(response.headers.get("location")).toBe(officialWindowsDesktopUrl)
 })
 
 test("install config includes a fresh signed organization handoff while preserving normal sign-in", async () => {
@@ -550,7 +707,10 @@ test("install config includes a fresh signed organization handoff while preservi
   expect(response.status).toBe(200)
   const body = await response.json()
   expect(body.connectUrl).toStartWith("openwork://connect?token=")
+  expect(body.activationUrl).toStartWith("http://127.0.0.1:8790/activate?code=")
   expect(body.requireSignin).toBe(true)
+  expect(body.desktopVersion).toBe("9.9.9")
+  expect(body.distribution).toBe("enterprise")
 
   const token = new URL(body.connectUrl).searchParams.get("token") ?? ""
   const verified = verifyConnectLinkToken({

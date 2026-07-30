@@ -1,0 +1,319 @@
+{
+  "hosts": [
+    {
+      "host": "accounts.google.com",
+      "kind": "fetched",
+      "components": ["server"],
+      "purpose": "Google Workspace OAuth authorization page opened when a user connects Google Workspace.",
+      "requirement": "opt-in",
+      "blockedEffect": "Users cannot complete Google Workspace sign-in from OpenWork.",
+      "override": null
+    },
+    {
+      "host": "api.github.com",
+      "kind": "fetched",
+      "components": ["server"],
+      "purpose": "GitHub API calls for importing and previewing GitHub-hosted Claude Code/OpenWork plugins.",
+      "requirement": "opt-in",
+      "blockedEffect": "GitHub plugin import cannot inspect repositories, branches, or plugin manifests.",
+      "override": "OPENWORK_GITHUB_API_BASE"
+    },
+    {
+      "host": "api.githubcopilot.com",
+      "kind": "fetched",
+      "components": ["renderer", "server"],
+      "purpose": "Example remote MCP server URL for GitHub Copilot; reached only if a user configures that URL.",
+      "requirement": "opt-in",
+      "blockedEffect": "A GitHub Copilot MCP connection using the example URL cannot connect.",
+      "override": "MCP server URL setting"
+    },
+    {
+      "host": "api.openai.com",
+      "kind": "fetched",
+      "components": ["renderer", "server"],
+      "purpose": "Direct OpenAI Realtime voice and image-generation calls when the user provides an OpenAI key.",
+      "requirement": "opt-in",
+      "blockedEffect": "Direct OpenAI voice or image features fail for users who configured OpenAI.",
+      "override": null
+    },
+    {
+      "host": "api.openworklabs.com",
+      "kind": "fetched",
+      "components": ["desktop", "installer", "server"],
+      "purpose": "Hosted OpenWork public API and OpenWork Connect MCP endpoint used by hosted Cloud and install flows.",
+      "requirement": "required-for-cloud",
+      "blockedEffect": "Hosted install checks, OpenWork Connect, or legacy hosted API configurations cannot reach OpenWork Cloud.",
+      "override": "installer apiUrl / self-hosted Den API origin"
+    },
+    {
+      "host": "app.openworklabs.com",
+      "kind": "fetched",
+      "components": ["desktop", "renderer", "bootstrap"],
+      "purpose": "Hosted OpenWork Cloud web origin; the desktop derives Den API and MCP calls from this base URL.",
+      "requirement": "required-for-cloud",
+      "blockedEffect": "Hosted Cloud sign-in, org settings, marketplace, and remote workspace flows cannot load.",
+      "override": "desktop base URL (self-hosted Den replaces this host)"
+    },
+    {
+      "host": "cdn.simpleicons.org",
+      "kind": "fetched",
+      "components": ["renderer"],
+      "purpose": "Brand icons for MCP and extension cards when a built-in local icon is not available.",
+      "requirement": "optional",
+      "blockedEffect": "Some provider icons are missing; the app still works.",
+      "override": null
+    },
+    {
+      "host": "chat.googleapis.com",
+      "kind": "fetched",
+      "components": ["server"],
+      "purpose": "Google Chat API calls for Google Workspace chat actions.",
+      "requirement": "opt-in",
+      "blockedEffect": "Google Chat spaces, messages, and send-message actions fail for connected Google Workspace accounts.",
+      "override": null
+    },
+    {
+      "host": "code.claude.com",
+      "kind": "link-only",
+      "components": ["server"],
+      "purpose": "Source-code comment pointing maintainers to the Claude Code plugin format reference.",
+      "requirement": "optional",
+      "blockedEffect": "No runtime effect; it is not opened or fetched by OpenWork.",
+      "override": null
+    },
+    {
+      "host": "discord.gg",
+      "kind": "link-only",
+      "components": ["renderer"],
+      "purpose": "Community link from Settings.",
+      "requirement": "optional",
+      "blockedEffect": "The Discord community link will not open.",
+      "override": null
+    },
+    {
+      "host": "ghcr.io",
+      "kind": "subprocess",
+      "components": ["den"],
+      "purpose": "Container registry for self-hosted Den API, web, inference images, and Helm chart pulls.",
+      "requirement": "required",
+      "blockedEffect": "A self-hosted Den deployment cannot pull OpenWork images or the Helm chart from GitHub Container Registry.",
+      "override": "container registry mirror / Helm image.repository values"
+    },
+    {
+      "host": "github.com",
+      "kind": "fetched",
+      "components": ["desktop", "installer", "renderer", "server"],
+      "purpose": "Desktop installer and updater release URLs, GitHub issue links, and GitHub plugin source URLs.",
+      "requirement": "required-in-practice",
+      "blockedEffect": "Desktop install/update downloads cannot start; GitHub issue and plugin-source links may not open.",
+      "override": null
+    },
+    {
+      "host": "gmail.googleapis.com",
+      "kind": "fetched",
+      "components": ["server"],
+      "purpose": "Gmail API calls for Google Workspace message search, reading, attachments, and draft creation.",
+      "requirement": "opt-in",
+      "blockedEffect": "Gmail read and draft actions fail for connected Google Workspace accounts.",
+      "override": null
+    },
+    {
+      "host": "linear.app",
+      "kind": "link-only",
+      "components": ["renderer"],
+      "purpose": "Sample link in the deterministic demo transcript used to exercise link rendering.",
+      "requirement": "optional",
+      "blockedEffect": "Clicking that sample Linear link fails; OpenWork functionality is unaffected.",
+      "override": null
+    },
+    {
+      "host": "mail.google.com",
+      "kind": "link-only",
+      "components": ["server"],
+      "purpose": "Gmail draft and thread links returned after Google Workspace Gmail actions.",
+      "requirement": "opt-in",
+      "blockedEffect": "Generated Gmail draft/thread links cannot open in the user's browser.",
+      "override": null
+    },
+    {
+      "host": "mcp.context7.com",
+      "kind": "fetched",
+      "components": ["renderer", "server"],
+      "purpose": "Context7 MCP Quick Connect preset.",
+      "requirement": "opt-in",
+      "blockedEffect": "The Context7 MCP connection cannot connect when enabled.",
+      "override": "MCP server URL setting"
+    },
+    {
+      "host": "mcp.linear.app",
+      "kind": "fetched",
+      "components": ["renderer", "server"],
+      "purpose": "Linear MCP Quick Connect preset.",
+      "requirement": "opt-in",
+      "blockedEffect": "The Linear MCP connection cannot connect when enabled.",
+      "override": "MCP server URL setting"
+    },
+    {
+      "host": "mcp.notion.com",
+      "kind": "fetched",
+      "components": ["renderer", "server"],
+      "purpose": "Notion MCP Quick Connect preset.",
+      "requirement": "opt-in",
+      "blockedEffect": "The Notion MCP connection cannot connect when enabled.",
+      "override": "MCP server URL setting"
+    },
+    {
+      "host": "mcp.sentry.dev",
+      "kind": "fetched",
+      "components": ["renderer", "server"],
+      "purpose": "Sentry MCP Quick Connect preset.",
+      "requirement": "opt-in",
+      "blockedEffect": "The Sentry MCP connection cannot connect when enabled.",
+      "override": "MCP server URL setting"
+    },
+    {
+      "host": "mcp.slack.com",
+      "kind": "fetched",
+      "components": ["renderer", "server"],
+      "purpose": "Slack MCP connection preset and OAuth guidance.",
+      "requirement": "opt-in",
+      "blockedEffect": "The Slack MCP connection cannot connect when enabled.",
+      "override": "MCP server URL setting"
+    },
+    {
+      "host": "mcp.stripe.com",
+      "kind": "fetched",
+      "components": ["renderer", "server"],
+      "purpose": "Stripe MCP Quick Connect preset.",
+      "requirement": "opt-in",
+      "blockedEffect": "The Stripe MCP connection cannot connect when enabled.",
+      "override": "MCP server URL setting"
+    },
+    {
+      "host": "models.openworklabs.com",
+      "kind": "fetched",
+      "components": ["server"],
+      "purpose": "First-party OpenCode model catalog mirror passed to managed OpenCode as OPENCODE_MODELS_URL.",
+      "requirement": "required-in-practice",
+      "blockedEffect": "The model catalog is unavailable or degraded; model selection may be stale or incomplete.",
+      "override": "OPENCODE_MODELS_URL"
+    },
+    {
+      "host": "oauth2.googleapis.com",
+      "kind": "fetched",
+      "components": ["server"],
+      "purpose": "Google OAuth token exchange, refresh, and revocation for Google Workspace connections.",
+      "requirement": "opt-in",
+      "blockedEffect": "Google Workspace accounts cannot finish OAuth, refresh tokens, or revoke tokens cleanly.",
+      "override": "OPENWORK_GOOGLE_WORKSPACE_TOKEN_BROKER_URL for token exchange/refresh only"
+    },
+    {
+      "host": "release-assets.githubusercontent.com",
+      "kind": "redirect-target",
+      "components": ["desktop", "installer"],
+      "purpose": "Current GitHub release-asset download target reached after github.com redirects installer and updater downloads. Verified live against a real OpenWork release asset.",
+      "requirement": "required-in-practice",
+      "blockedEffect": "OpenWork downloads start from github.com and then fail partway through when the redirect target is blocked.",
+      "override": null
+    },
+    {
+      "host": "objects.githubusercontent.com",
+      "kind": "redirect-target",
+      "components": ["desktop", "installer"],
+      "purpose": "Legacy GitHub release-asset download target. GitHub has migrated to release-assets.githubusercontent.com, but allow both so older clients and any staged rollback keep working.",
+      "requirement": "required-in-practice",
+      "blockedEffect": "OpenWork downloads start from github.com and then fail partway through if GitHub serves this legacy redirect target and it is blocked.",
+      "override": null
+    },
+    {
+      "host": "ollama.com",
+      "kind": "link-only",
+      "components": ["renderer"],
+      "purpose": "Ollama download and library links in local model settings.",
+      "requirement": "optional",
+      "blockedEffect": "Users cannot open Ollama download/library links from the settings UI; local Ollama traffic remains loopback.",
+      "override": null
+    },
+    {
+      "host": "opencode.ai",
+      "kind": "fetched",
+      "components": ["desktop", "renderer", "server"],
+      "purpose": "Fallback OpenCode installer command plus OpenCode auth/docs links and config schema identifiers.",
+      "requirement": "optional",
+      "blockedEffect": "Guided fallback OpenCode installation and OpenCode web links fail; packaged builds still use bundled OpenCode.",
+      "override": null
+    },
+    {
+      "host": "openwork.dev",
+      "kind": "link-only",
+      "components": ["renderer"],
+      "purpose": "Documentation and feedback links in the command palette.",
+      "requirement": "optional",
+      "blockedEffect": "Those external support links will not open.",
+      "override": null
+    },
+    {
+      "host": "openworklabs.com",
+      "kind": "link-only",
+      "components": ["desktop", "renderer"],
+      "purpose": "Documentation, feedback, support, and sample OpenWork links.",
+      "requirement": "optional",
+      "blockedEffect": "Documentation or feedback links do not open; core app networking is unaffected.",
+      "override": "VITE_OPENWORK_FEEDBACK_URL for the feedback link only"
+    },
+    {
+      "host": "raw.githubusercontent.com",
+      "kind": "fetched",
+      "components": ["server"],
+      "purpose": "Raw file downloads for GitHub-hosted plugin manifests, MCP configs, skills, commands, and agents.",
+      "requirement": "opt-in",
+      "blockedEffect": "GitHub plugin import can discover metadata but cannot download component contents.",
+      "override": "OPENWORK_GITHUB_RAW_BASE"
+    },
+    {
+      "host": "registry.npmjs.org",
+      "kind": "subprocess",
+      "components": ["desktop", "renderer"],
+      "purpose": "npx package resolution for openwork-ui-mcp and development-only MCP helper commands.",
+      "requirement": "required-in-practice",
+      "blockedEffect": "The OpenWork UI-control MCP is silently unavailable when npx cannot download openwork-ui-mcp.",
+      "override": "npm registry configuration used by npx"
+    },
+    {
+      "host": "schemas.agentskills.io",
+      "kind": "schema-string",
+      "components": ["server"],
+      "purpose": "Skill index $schema identifier used for validation; OpenWork does not fetch the schema URL.",
+      "requirement": "optional",
+      "blockedEffect": "No runtime network effect.",
+      "override": null
+    },
+    {
+      "host": "us.i.posthog.com",
+      "kind": "fetched",
+      "components": ["renderer"],
+      "purpose": "Optional product analytics endpoint when analytics are enabled and a PostHog key is configured.",
+      "requirement": "optional",
+      "blockedEffect": "Analytics events are dropped silently; user-facing app behavior is unaffected.",
+      "override": "VITE_OPENWORK_POSTHOG_HOST; users can disable analytics with the analyticsEnabled preference"
+    },
+    {
+      "host": "www.google.com",
+      "kind": "fetched",
+      "components": ["desktop", "renderer"],
+      "purpose": "Favicon image service and the embedded browser panel's user-created new-tab page.",
+      "requirement": "optional",
+      "blockedEffect": "Favicons may be missing and the browser panel's new tab page may not load.",
+      "override": null
+    },
+    {
+      "host": "www.googleapis.com",
+      "kind": "fetched",
+      "components": ["server"],
+      "purpose": "Google profile, Calendar, and Drive API calls for Google Workspace connections.",
+      "requirement": "opt-in",
+      "blockedEffect": "Google profile, Calendar, and Drive actions fail for connected Google Workspace accounts.",
+      "override": null
+    }
+  ]
+}

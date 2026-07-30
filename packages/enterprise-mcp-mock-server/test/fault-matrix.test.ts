@@ -9,6 +9,42 @@ import {
 } from "../src/index.js"
 
 const oauthClientSecret = "synthetic-test-client-secret-32-bytes"
+const hostileGatewayCases = [
+  { faultId: "redirect-uri-whitelist", snippet: "redirect URI is not an allowed destination" },
+  { faultId: "per-connector-redirect", snippet: "External MCP connect callback token exchange failed" },
+  { faultId: "dcr-required", snippet: "The MCP connection failed before OpenWork could complete the protocol lifecycle" },
+  { faultId: "method-405", snippet: "HTTP 405" },
+  { faultId: "duplicate-amplification", snippet: "duplicate requests" },
+  { faultId: "refresh-expired", snippet: "refresh token expired" },
+  { faultId: "trailing-dot-url", snippet: "trailing-dot URL" },
+  { faultId: "per-user-403", snippet: "Authorization with MCP server failed — check your credentials and permissions" },
+]
+
+test("hostile gateway fault catalog advertises every required selectable case", () => {
+  const faultIds = new Set(listFaultDefinitions().map((fault) => fault.id))
+  assert.deepEqual(hostileGatewayCases.map((fault) => fault.faultId).filter((faultId) => !faultIds.has(faultId)), [])
+})
+
+test("hostile gateway probes preserve the required safe evidence strings", async (context) => {
+  for (const { faultId, snippet } of hostileGatewayCases) {
+    await context.test(faultId, async () => {
+      const scenario = createFaultScenario("servicenow-inbound-quickstart", faultId)
+      const server = createEnterpriseMcpMockServer({ scenario, secrets: { oauthClientSecret } })
+      await server.start()
+      try {
+        const result = await probeEnterpriseMcpMockServer({
+          baseUrl: server.baseUrl,
+          scenario,
+          credentials: { clientSecret: oauthClientSecret },
+        })
+        assert.equal(result.ok, true, result.error?.messageSafe)
+        assert.match(result.error?.messageSafe ?? "", new RegExp(snippet.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")))
+      } finally {
+        await server.stop()
+      }
+    })
+  }
+})
 
 test("every advertised fault is observed at its actual first phase and leaves bounded state", async (context) => {
   for (const fault of listFaultDefinitions()) {

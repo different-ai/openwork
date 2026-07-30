@@ -6,6 +6,7 @@ import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { auth } from "../../auth.js"
 import { validateBrandIconUrl } from "../../brand-icon-validation.js"
+import { organizationCloudEnabled } from "../../capability-sources/cloud-rollout.js"
 import { memberFacingMcpConnectionsEnabled } from "../../capability-sources/external-mcp-rollout.js"
 import { organizationInstallLinksEnabled } from "../../capability-sources/install-links-rollout.js"
 import { db } from "../../db.js"
@@ -14,10 +15,8 @@ import { env } from "../../env.js"
 import { findEnterpriseAuthRequirementForEmail } from "../../enterprise-auth-requirement.js"
 import { authenticatedRoute, jsonValidator, orgMemberRoute, orgRoleRoute, publicRoute, queryValidator, resolveMemberTeamsMiddleware } from "../../middleware/index.js"
 import { denTypeIdSchema, enterprisePlanRequiredSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
-import { normalizeOrganizationCapabilities } from "../../organization-capabilities.js"
 import { validateInvitationAcceptVerification } from "../../organization-join-verification.js"
 import { normalizeOrganizationMetadata } from "../../organization-limits.js"
-import { isDesktopVersionOnlyOrganizationUpdate } from "../../organization-settings-permissions.js"
 import {
   acceptInvitationForUser,
   createOrganizationForUser,
@@ -25,12 +24,14 @@ import {
   getSingletonSsoStatus,
   normalizeAllowedEmailDomains,
   OrganizationEmailDomainRestrictionError,
+  serializeMemberFacingOrganizationMetadata,
   setSessionActiveOrganization,
+  type AcceptInvitationForUserResult,
   updateOrganizationSettings,
 } from "../../orgs.js"
 import { getRequiredUserEmail } from "../../user.js"
 import type { OrgRouteVariables } from "./shared.js"
-import { ensureOwner } from "./shared.js"
+import { ensureOrganizationSuperAdmin, orgAccessFailureStatus } from "./shared.js"
 
 const createOrganizationSchema = z.object({
   name: z.string().trim().min(2).max(120),
@@ -92,7 +93,27 @@ const organizationOwnerSchema = z.object({
   image: z.string().nullable().optional(),
 }).meta({ ref: "OrganizationOwner" })
 
-const invitationPreviewResponseSchema = z.object({}).passthrough().meta({ ref: "InvitationPreviewResponse" })
+const invitationPreviewResponseSchema = z.object({
+  invitation: z.object({
+    id: denTypeIdSchema("invitation"),
+    email: z.string().email(),
+    role: z.string(),
+    status: z.enum(["pending", "accepted", "canceled", "expired"]),
+    expiresAt: z.string().datetime(),
+    createdAt: z.string().datetime(),
+  }),
+  organization: z.object({
+    id: denTypeIdSchema("organization"),
+    name: z.string(),
+    slug: z.string(),
+    allowedEmailDomains: z.array(z.string()).nullable(),
+    branding: z.object({
+      appName: z.string(),
+      logoUrl: z.string().url().nullable(),
+      iconUrl: z.string().url().nullable(),
+    }),
+  }),
+}).meta({ ref: "InvitationPreviewResponse" })
 
 const invitationAcceptedResponseSchema = z.object({
   accepted: z.literal(true),
@@ -137,6 +158,11 @@ const accountEmailDomainNotAllowedSchema = z.object({
   emailDomain: z.string().nullable(),
   allowedEmailDomains: z.array(z.string()),
 }).meta({ ref: "AccountEmailDomainNotAllowedError" })
+
+const membershipRemovedSchema = z.object({
+  error: z.literal("membership_removed"),
+  message: z.string(),
+}).meta({ ref: "MembershipRemovedError" })
 
 function getStoredSessionId(session: { id?: string | null } | null) {
   if (!session?.id) {
@@ -262,6 +288,7 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         401: jsonResponse("The caller must be signed in to accept an invitation.", unauthorizedSchema),
         403: jsonResponse("API keys cannot accept invitations, or the deployment requires a verified account email.", forbiddenSchema),
         409: jsonResponse("The current account email is not allowed to join this organization.", accountEmailDomainNotAllowedSchema),
+        410: jsonResponse("The user previously accepted this invitation, but their workspace access was removed.", membershipRemovedSchema),
         404: jsonResponse("The invitation could not be found.", notFoundSchema),
       },
     }),
@@ -291,7 +318,7 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
       return c.json({ error: verification.error, message: verification.message }, 403)
     }
 
-    let accepted
+    let accepted: AcceptInvitationForUserResult | null = null
     try {
       accepted = await acceptInvitationForUser({
         userId: normalizeDenTypeId("user", user.id),
@@ -312,6 +339,13 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
 
     if (!accepted) {
       return c.json({ error: "invitation_not_found" }, 404)
+    }
+
+    if (accepted.status === "membership_removed") {
+      return c.json({
+        error: "membership_removed",
+        message: "Your access to this workspace was removed. Ask a workspace admin for a new invite.",
+      }, 410)
     }
 
     await setRequestActiveOrganization(c, accepted.member.organizationId)
@@ -336,7 +370,7 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
     describeRoute({
       tags: ["Organizations"],
       summary: "Update organization",
-      description: "Updates organization fields. Workspace admins can change allowed desktop versions; all other fields remain owner-only. The slug is immutable to avoid breaking dashboard URLs.",
+      description: "Updates organization fields. Workspace owners and super-admins can change settings. The slug is immutable to avoid breaking dashboard URLs.",
       responses: {
         200: jsonResponse("Organization updated successfully.", organizationResponseSchema),
         400: jsonResponse("The organization update request body was invalid, contained malformed email domains, or contained an invalid brand icon URL.", updateOrganizationBadRequestSchema),
@@ -346,21 +380,14 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         404: jsonResponse("The organization could not be found.", notFoundSchema),
       },
     }),
-    orgRoleRoute(["admin"]),
+    orgRoleRoute(["super-admin"]),
     jsonValidator(updateOrganizationSchema),
     async (c) => {
       const payload = c.get("organizationContext")
       const input = c.req.valid("json")
-      if (payload.currentMember.isOwner) {
-        const permission = ensureOwner(c)
-        if (!permission.ok) {
-          return c.json(permission.response, 403)
-        }
-      } else if (!isDesktopVersionOnlyOrganizationUpdate(input)) {
-        return c.json({
-          error: "forbidden",
-          message: "Workspace admins can only change allowed desktop versions.",
-        }, 403)
+      const permission = ensureOrganizationSuperAdmin(c, "Only workspace owners and super-admins can update organization settings.")
+      if (!permission.ok) {
+        return c.json(permission.response, orgAccessFailureStatus(permission.response))
       }
 
       const normalizedDomains: { domains: string[] | null | undefined; invalidDomains: string[] } = input.allowedEmailDomains === undefined
@@ -495,7 +522,7 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
     async (c) => {
       const payload = c.get("organizationContext")
       const owner = payload.members.find((member: typeof payload.members[number]) => member.isOwner) ?? null
-      const capabilities = normalizeOrganizationCapabilities(payload.organization.metadata)
+      const cloudEnabled = organizationCloudEnabled(payload.organization.metadata, { orgMode: env.orgMode })
       const [ssoRows, scimRows] = await Promise.all([
         db
           .select({ id: SsoConnectionTable.id })
@@ -513,6 +540,7 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         ...payload,
         organization: {
           ...payload.organization,
+          metadata: serializeMemberFacingOrganizationMetadata(payload.organization.metadata),
           owner: owner
             ? {
               memberId: owner.id,
@@ -527,7 +555,6 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         plan: parseOrganizationPlan(payload.organization.metadata),
         entitlements: getOrganizationEntitlements(payload.organization.metadata),
         capabilities: {
-          ...capabilities,
           // Expose the effective value, not the raw stored flag: Connect is
           // member-facing default-on unless an explicit org kill switch says no.
           mcpConnections: memberFacingMcpConnectionsEnabled(payload.organization.metadata, {
@@ -536,6 +563,7 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
           installLinks: organizationInstallLinksEnabled(payload.organization.metadata, {
             gatingEnabled: env.installLinksGatingEnabled,
           }),
+          ...(cloudEnabled ? { cloud: true } : {}),
         },
         authMethods: {
           sso: Boolean(ssoRows[0]),

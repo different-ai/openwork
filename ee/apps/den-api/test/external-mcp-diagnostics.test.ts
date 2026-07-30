@@ -1,7 +1,11 @@
 import { describe, expect, test } from "bun:test"
 import type { OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js"
 import type { OAuthClientInformationMixed, OAuthTokens } from "@modelcontextprotocol/sdk/shared/auth.js"
-import { EnterpriseMcpOAuthContractError } from "@openwork/enterprise-mcp-client"
+import {
+  EnterpriseMcpClientError,
+  EnterpriseMcpLifecycleDeadlineError,
+  EnterpriseMcpOAuthContractError,
+} from "@openwork/enterprise-mcp-client"
 import {
   ExternalMcpDiagnosticTracker,
   catalogDiagnosticError,
@@ -648,6 +652,41 @@ describe("external MCP diagnostics", () => {
     })
   })
 
+  test("attributes our own lifecycle deadline to OpenWork rather than the provider", () => {
+    const tracker = new ExternalMcpDiagnosticTracker("req_own_deadline")
+    tracker.begin("MCP_TOOL_EXECUTION")
+    const error = tracker.error(new EnterpriseMcpLifecycleDeadlineError("tool-execution"))
+
+    expect(error.diagnostic).toMatchObject({
+      phase: "MCP_TOOL_EXECUTION",
+      category: "lifecycle_deadline",
+      code: "MCP_LIFECYCLE_DEADLINE",
+      retryable: true,
+    })
+    expect(error.diagnostic.message).toBe(
+      "The capability did not finish within the time OpenWork allows a single tool call.",
+    )
+    expect(error.diagnostic.operatorAction).not.toContain("JSON-RPC error code")
+  })
+
+  test("attributes a wrapped lifecycle deadline to OpenWork through its cause chain", () => {
+    const tracker = new ExternalMcpDiagnosticTracker("req_wrapped_deadline")
+    tracker.begin("MCP_TOOL_EXECUTION")
+    const error = tracker.error(
+      new EnterpriseMcpClientError({
+        operationPhase: "tool-execution",
+        requestPhase: "mcp-tool-execution",
+        cause: new EnterpriseMcpLifecycleDeadlineError("tool-execution"),
+      }),
+    )
+
+    expect(error.diagnostic).toMatchObject({
+      category: "lifecycle_deadline",
+      code: "MCP_LIFECYCLE_DEADLINE",
+      retryable: true,
+    })
+  })
+
   test("captures URL elicitation links from 200 JSON-RPC error bodies with null ids", async () => {
     const connectUrl = "https://gateway.example.com/auth/url-elicitation"
     const diagnostic = await diagnosticForMcpJsonResponse({
@@ -1141,6 +1180,9 @@ describe("external MCP diagnostics", () => {
     expect(html).toContain("Enterprise MCP &lt;test&gt; is connected to OpenWork.")
     expect(html).toContain("window.close()")
     expect(html).toContain("Close window")
+    expect(html).toContain("OpenWork Connect")
+    expect(html).toContain("background: #f8fbff")
+    expect(html).not.toContain("@keyframes")
     expect(html).not.toContain("openwork://")
     expect(html).not.toContain("Open OpenWork")
   })

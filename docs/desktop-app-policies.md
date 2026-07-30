@@ -14,6 +14,14 @@ Do not duplicate the list of policy IDs in app docs or feature code unless a fea
 
 For boolean policy keys, `false` means the feature is restricted or disabled. `true` or `undefined` means the app should not block the feature locally.
 
+## Organization Prompt Suggestions
+
+Desktop policy documents can also include `onboardingPrompts` and `onboardingPromptDescriptions`. The shared schema requires 2 or 3 prompts, caps each prompt at 500 characters, and caps each description at 120 characters.
+
+In the desktop app, `onboardingPromptDescriptions` become prompt-card titles. `onboardingPrompts` become the visible card descriptions and the text inserted into the composer when a user clicks a card; the click does not auto-send.
+
+Boolean policy keys are OR-unioned across matching policies by `calculateEffectiveDesktopPolicy()`. Prompt suggestions are different: `selectEffectiveOnboardingPromptConfig()` picks one matching prompt config by highest `priority`, then earliest `createdAt`, then policy `id`, falling back to the default policy only when no targeted prompt config applies.
+
 ## Preferred Check
 
 Use `useCheckDesktopRestriction()` when gating app behavior.

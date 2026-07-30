@@ -41,11 +41,11 @@ const mailMessageSchema = mailMessageSummarySchema.extend({
 const mailMessagesQuerySchema = z.object({
   search: z.string().trim().min(1).max(1_000).optional().describe("Optional Outlook message search text."),
   maxResults: z.coerce.number().int().min(1).max(25).default(10).describe("Maximum messages to return, capped at 25."),
-}).meta({ ref: "Microsoft365MailMessagesQuery" })
+})
 
 const mailMessageParamSchema = z.object({
   messageId: z.string().trim().min(1).max(512).describe("Microsoft Graph message id."),
-}).meta({ ref: "Microsoft365MailMessageParams" })
+})
 
 const mailMessagesResponseSchema = z.object({
   ok: z.literal(true),
@@ -74,7 +74,7 @@ const calendarEventsQuerySchema = z.object({
   timeMin: z.string().datetime().describe("Inclusive lower bound for event start time."),
   timeMax: z.string().datetime().describe("Exclusive upper bound for event start time."),
   maxResults: z.coerce.number().int().min(1).max(100).default(25).describe("Maximum events to return, capped at 100."),
-}).meta({ ref: "Microsoft365CalendarEventsQuery" })
+})
 
 const calendarEventSchema = z.object({
   id: z.string(),
@@ -118,11 +118,11 @@ const calendarEventResponseSchema = z.object({
 const driveFilesQuerySchema = z.object({
   query: z.string().trim().min(1).max(500).describe("Text to search in OneDrive file names and content."),
   maxResults: z.coerce.number().int().min(1).max(25).default(10).describe("Maximum files to return, capped at 25."),
-}).meta({ ref: "Microsoft365DriveFilesQuery" })
+})
 
 const driveFileParamSchema = z.object({
   itemId: z.string().trim().min(1).max(512).describe("Microsoft Graph drive item id."),
-}).meta({ ref: "Microsoft365DriveFileParams" })
+})
 
 const driveItemSchema = z.object({
   id: z.string(),
@@ -162,15 +162,15 @@ const driveFileWriteResponseSchema = z.object({
 
 const teamsChatsQuerySchema = z.object({
   maxResults: z.coerce.number().int().min(1).max(50).default(20),
-}).meta({ ref: "Microsoft365TeamsChatsQuery" })
+})
 
 const teamsChatParamSchema = z.object({
   chatId: z.string().trim().min(1).max(1_024),
-}).meta({ ref: "Microsoft365TeamsChatParams" })
+})
 
 const teamsMessagesQuerySchema = z.object({
   maxResults: z.coerce.number().int().min(1).max(50).default(20),
-}).meta({ ref: "Microsoft365TeamsMessagesQuery" })
+})
 
 const teamsMessageBodySchema = z.object({
   content: z.string().trim().min(1).max(20_000),

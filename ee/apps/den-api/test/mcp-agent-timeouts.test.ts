@@ -3,6 +3,14 @@ import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js"
 import type { Transport, TransportSendOptions } from "@modelcontextprotocol/sdk/shared/transport.js"
 import { beforeAll, expect, test } from "bun:test"
 import type { ExecuteCapabilityToolResult } from "../src/mcp/agent.js"
+import {
+  BUILTIN_ADD_TO_MARKETPLACE_CAPABILITY,
+  BUILTIN_ADD_USER_TO_MARKETPLACE_CAPABILITY,
+  BUILTIN_CREATE_SKILL_CAPABILITY,
+  BUILTIN_SKILL_DESCRIPTORS,
+  executeBuiltinSkillCapability,
+  searchBuiltinSkillCapabilities,
+} from "../src/mcp/builtin-skills.js"
 import { compareCapabilityMatches, type CapabilityMatch } from "../src/mcp/search.js"
 
 function seedRequiredEnv() {
@@ -51,7 +59,8 @@ beforeAll(async () => {
 })
 
 test("executeCapabilityWithBudget returns a structured timeout result", async () => {
-  expect(agentModule.EXECUTE_CAPABILITY_TIMEOUT_MS).toBeGreaterThan(150_000)
+  const { EXTERNAL_MCP_TOOL_LIFECYCLE_TIMEOUT_MS } = await import("../src/capability-sources/external-mcp-client.js")
+  expect(agentModule.EXECUTE_CAPABILITY_TIMEOUT_MS).toBeGreaterThan(EXTERNAL_MCP_TOOL_LIFECYCLE_TIMEOUT_MS)
 
   const result = await agentModule.executeCapabilityWithBudget({
     capability: "gmail_search",
@@ -107,6 +116,9 @@ test("agent MCP server exposes steering instructions during initialize", async (
 
   expect(client.getInstructions()).toBe(agentModule.AGENT_MCP_INSTRUCTIONS)
   expect(client.getInstructions()).toContain("search_capabilities and execute_capability")
+  expect(client.getInstructions()).toContain("create-skill")
+  expect(client.getInstructions()).toContain("add-to-marketplace")
+  expect(client.getInstructions()).toContain("add-user-to-marketplace")
   expect(client.getInstructions()).toContain("add a public GitHub plugin to an organization marketplace")
   expect(client.getInstructions()).toContain("Preview first")
   expect(client.getInstructions()).toContain("Do not choose one authentication type for every server")
@@ -120,6 +132,132 @@ test("agent MCP server exposes steering instructions during initialize", async (
   expect(client.getInstructions()).toContain("always attempts the downstream provider call")
   expect(client.getInstructions()).toContain("invalid_capability_arguments")
   expect(client.getInstructions()).toContain("never retry the same arguments unchanged")
+
+  await client.close()
+  await server.close()
+})
+
+test("agent MCP server exposes a standards-shaped remote skill index", () => {
+  const index = agentModule.buildAgentSkillIndex([{
+    name: "customer-briefing",
+    title: "Customer Briefing",
+    description: "Use for accounts & renewals",
+    marketplaceName: "Go To Market",
+    pluginName: "Revenue Operations",
+    capability: "skill:skill_customer_briefing",
+    location: "skill://customer-briefing/SKILL.md",
+  }])
+  expect(index).toEqual({
+    $schema: "https://schemas.agentskills.io/discovery/0.2.0/schema.json",
+    skills: [{
+      name: "customer-briefing",
+      type: "skill-md",
+      title: "Customer Briefing",
+      description: "Use for accounts & renewals",
+      marketplaceName: "Go To Market",
+      pluginName: "Revenue Operations",
+      url: "skill://customer-briefing/SKILL.md",
+      capability: "skill:skill_customer_briefing",
+    }],
+  })
+})
+
+test("built-in cloud skills are searchable and executable as skill capabilities", () => {
+  expect(searchBuiltinSkillCapabilities("create a skill").map((match) => match.name)).toContain(BUILTIN_CREATE_SKILL_CAPABILITY)
+  expect(searchBuiltinSkillCapabilities("add this to marketplace").map((match) => match.name)).toContain(BUILTIN_ADD_TO_MARKETPLACE_CAPABILITY)
+  expect(searchBuiltinSkillCapabilities("add this user to the marketplace").map((match) => match.name)).toContain(BUILTIN_ADD_USER_TO_MARKETPLACE_CAPABILITY)
+  expect(searchBuiltinSkillCapabilities("calendar events")).toEqual([])
+
+  const createSkill = executeBuiltinSkillCapability(BUILTIN_CREATE_SKILL_CAPABILITY)
+  expect(createSkill).toMatchObject({
+    kind: "skill",
+    name: "Create Skill",
+    provenance: "Built into OpenWork Cloud.",
+  })
+  expect(createSkill?.content).toContain("name: create-skill")
+  expect(createSkill?.content).toContain("postPlugins")
+  expect(createSkill?.content).toContain("Do not send `marketplaceId` or `orgWide`")
+  expect(createSkill?.content).not.toContain("Set organization-wide access or a marketplace")
+
+  const addToMarketplace = executeBuiltinSkillCapability(BUILTIN_ADD_TO_MARKETPLACE_CAPABILITY)
+  expect(addToMarketplace?.content).toContain("name: add-to-marketplace")
+  expect(addToMarketplace?.content).toContain("postMarketplacesPlugins")
+  expect(addToMarketplace?.content).toContain("Do not create a new skill or plugin")
+
+  const addUser = executeBuiltinSkillCapability(BUILTIN_ADD_USER_TO_MARKETPLACE_CAPABILITY)
+  expect(addUser?.content).toContain("name: add-user-to-marketplace")
+  expect(addUser?.content).toContain("postMarketplacesAccess")
+  expect(addUser?.content).toContain("orgMembershipId")
+  expect(executeBuiltinSkillCapability("skill:missing")).toBeNull()
+})
+
+test("agent MCP server publishes built-in cloud skills as readable MCP resources", async () => {
+  const server = agentModule.createAgentMcpServer()
+  agentModule.registerAgentSkillResources({
+    server,
+    organizationId: "org_test",
+    member: null,
+    skills: BUILTIN_SKILL_DESCRIPTORS,
+  })
+  const client = new Client({ name: "test-client", version: "1.0.0" })
+  const transports = createMemoryTransportPair()
+
+  await server.connect(transports.server)
+  await client.connect(transports.client)
+
+  const resources = await client.listResources()
+  for (const skill of BUILTIN_SKILL_DESCRIPTORS) {
+    expect(resources.resources).toContainEqual(expect.objectContaining({
+      uri: skill.location,
+      name: skill.name,
+    }))
+    const resource = await client.readResource({ uri: skill.location })
+    const content = resource.contents[0]
+    const source = content && "text" in content ? content.text : ""
+    expect(source).toContain(`name: ${skill.name}`)
+  }
+
+  await client.close()
+  await server.close()
+})
+
+test("agent MCP server publishes the authorized skill index as an MCP resource", async () => {
+  const server = agentModule.createAgentMcpServer()
+  agentModule.registerAgentSkillResources({
+    server,
+    organizationId: "org_test",
+    member: null,
+    skills: [{
+      name: "customer-briefing",
+      title: "Customer Briefing",
+      description: "Prepare customer briefings.",
+      capability: "skill:skill_customer_briefing",
+      location: "skill://customer-briefing/SKILL.md",
+    }],
+  })
+  const client = new Client({ name: "test-client", version: "1.0.0" })
+  const transports = createMemoryTransportPair()
+
+  await server.connect(transports.server)
+  await client.connect(transports.client)
+
+  const resources = await client.listResources()
+  expect(resources.resources.map((resource) => resource.uri)).toContain("skill://index.json")
+  expect(resources.resources.map((resource) => resource.uri)).toContain("skill://customer-briefing/SKILL.md")
+  expect(resources.resources.find((resource) => resource.uri === "skill://customer-briefing/SKILL.md")).toMatchObject({
+    name: "customer-briefing",
+    title: "Customer Briefing",
+    description: "Prepare customer briefings.",
+  })
+  const index = await client.readResource({ uri: "skill://index.json" })
+  const content = index.contents[0]
+  expect(content && "text" in content ? JSON.parse(content.text) : null).toEqual(agentModule.buildAgentSkillIndex([{
+    name: "customer-briefing",
+    title: "Customer Briefing",
+    description: "Prepare customer briefings.",
+    capability: "skill:skill_customer_briefing",
+    location: "skill://customer-briefing/SKILL.md",
+  }]))
 
   await client.close()
   await server.close()

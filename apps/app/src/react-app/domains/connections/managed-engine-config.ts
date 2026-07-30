@@ -61,7 +61,6 @@ export async function updateManagedDisabledProviders(
 
   if (options.openworkClient && workspaceId && options.workspaceType === "local") {
     const result = await options.openworkClient.setRuntimeDisabledProviders(workspaceId, disabledProviders);
-    options.markReloadRequired?.();
     return { managedRuntime: true, disabledProviders: result.disabledProviders };
   }
 

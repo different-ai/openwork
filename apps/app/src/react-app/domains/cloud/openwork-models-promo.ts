@@ -71,6 +71,18 @@ export function hasOpenWorkModelsProvider(providerIds: readonly string[]) {
   return providerIds.some((id) => id.trim().toLowerCase() === OPENWORK_MODELS_PROVIDER_ID);
 }
 
+/** Local engine has OpenWork Models connected with at least one selectable model. */
+export function hasOpenWorkModelsAvailable(input: {
+  providerConnectedIds: readonly string[];
+  providers: ReadonlyArray<{ id: string; models?: Record<string, unknown> | null }>;
+}) {
+  if (!hasOpenWorkModelsProvider(input.providerConnectedIds)) return false;
+  const openwork = input.providers.find(
+    (provider) => provider.id.trim().toLowerCase() === OPENWORK_MODELS_PROVIDER_ID,
+  );
+  return Object.keys(openwork?.models ?? {}).length > 0;
+}
+
 export function getOpenWorkModelsActionUrl(
   isSignedIn: boolean,
   authMode: "sign-in" | "sign-up" = "sign-in",

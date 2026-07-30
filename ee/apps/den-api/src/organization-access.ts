@@ -1,5 +1,14 @@
 import { createAccessControl } from "better-auth/plugins/access"
 import { defaultRoles, defaultStatements } from "better-auth/plugins/organization/access"
+import {
+  ORGANIZATION_MEMBER_ROLE,
+  ORGANIZATION_OWNER_ROLE,
+  ORGANIZATION_ADMIN_ROLE,
+  ORGANIZATION_SUPER_ADMIN_ROLE,
+  normalizeOrganizationRoleName,
+  organizationRoleValueSatisfies,
+  splitOrganizationRoles,
+} from "./organization-role-hierarchy.js"
 
 export const SECURITY_CONFIGURATION_PERMISSION_RESOURCE = "security_configuration"
 export const SECURITY_CONFIGURATION_PERMISSION_ACTION = "manage"
@@ -11,7 +20,7 @@ const denOrganizationStatements = {
 
 export const denOrganizationAccess = createAccessControl(denOrganizationStatements)
 
-export type OrganizationPermissionRecord = Record<string, string[]>
+export type OrganizationPermissionRecord = Record<string, readonly string[]>
 
 export type OrganizationRolePermission = {
   role: string
@@ -34,23 +43,43 @@ type PermissionValidationResult = {
   message: string
 }
 
-const denOwnerRole = denOrganizationAccess.newRole({
+type InvitationRoleValidationResult = {
+  ok: true
+  role: string
+} | {
+  ok: false
+  error: "invalid_role" | "forbidden"
+  message: string
+}
+
+const denOwnerStatements = {
   ...defaultRoles.owner.statements,
   [SECURITY_CONFIGURATION_PERMISSION_RESOURCE]: [SECURITY_CONFIGURATION_PERMISSION_ACTION],
-})
-const denAdminRole = denOrganizationAccess.newRole(defaultRoles.admin.statements)
+} as const
+const denAdminStatements = {
+  invitation: ["create", "cancel"],
+  member: ["delete"],
+  team: ["create", "update", "delete"],
+  ac: ["read"],
+} as const
+
+const denOwnerRole = denOrganizationAccess.newRole(denOwnerStatements)
+const denSuperAdminRole = denOrganizationAccess.newRole(denOwnerStatements)
+const denAdminRole = denOrganizationAccess.newRole(denAdminStatements)
 const denMemberRole = denOrganizationAccess.newRole(defaultRoles.member.statements)
 
 const denOrganizationPermissionCatalogEntries = Object.entries(denOrganizationStatements)
 
 export const denOrganizationStaticRoles = {
   owner: denOwnerRole,
+  "super-admin": denSuperAdminRole,
   admin: denAdminRole,
   member: denMemberRole,
 } as const
 
 export const denDefaultDynamicOrganizationRoles = {
-  admin: defaultRoles.admin.statements,
+  "super-admin": denOwnerStatements,
+  admin: denAdminStatements,
   member: defaultRoles.member.statements,
 } as const
 
@@ -169,15 +198,91 @@ export function validateAssignableOrganizationPermissionRecord(input: {
   return { ok: true }
 }
 
+export function validateInvitationRoleAssignment(input: {
+  role: string
+  availableRoles: ReadonlySet<string>
+  currentMember: {
+    isOwner: boolean
+    role: string
+  }
+  roles: readonly OrganizationRolePermission[]
+}): InvitationRoleValidationResult {
+  const requestedRoles = splitOrganizationRoles(input.role || ORGANIZATION_MEMBER_ROLE)
+    .map((role) => normalizeOrganizationRoleName(role))
+    .filter(Boolean)
+  const roleValue = requestedRoles[0] ? requestedRoles.join(",") : ORGANIZATION_MEMBER_ROLE
+
+  if (requestedRoles.includes(ORGANIZATION_OWNER_ROLE)) {
+    return {
+      ok: false,
+      error: "forbidden",
+      message: "Owner can only be assigned by the Den ownership transfer API.",
+    }
+  }
+
+  const canInviteMembers = organizationRoleValueSatisfies({
+    roleValue: input.currentMember.role,
+    requiredRole: ORGANIZATION_ADMIN_ROLE,
+    isOwner: input.currentMember.isOwner,
+  })
+  if (!canInviteMembers) {
+    return {
+      ok: false,
+      error: "forbidden",
+      message: "Only workspace owners and admins can create invitations.",
+    }
+  }
+
+  const canAssignRoles = organizationRoleValueSatisfies({
+    roleValue: input.currentMember.role,
+    requiredRole: ORGANIZATION_SUPER_ADMIN_ROLE,
+    isOwner: input.currentMember.isOwner,
+  })
+  if (!canAssignRoles) {
+    if (roleValue === ORGANIZATION_MEMBER_ROLE) {
+      return { ok: true, role: ORGANIZATION_MEMBER_ROLE }
+    }
+
+    return {
+      ok: false,
+      error: "forbidden",
+      message: "Workspace admins can only invite members.",
+    }
+  }
+
+  const missingRole = requestedRoles.find((role) => !input.availableRoles.has(role))
+  if (missingRole) {
+    return {
+      ok: false,
+      error: "invalid_role",
+      message: "Choose one of the existing organization roles.",
+    }
+  }
+
+  const assignableRole = validateAssignableOrganizationPermissionRecord({
+    permission: resolveOrganizationPermissionRecord(roleValue, input.roles),
+    roleValue: input.currentMember.role,
+    roles: input.roles,
+  })
+  if (!assignableRole.ok) {
+    return {
+      ok: false,
+      error: "forbidden",
+      message: "You can only invite members into roles with permissions you already have.",
+    }
+  }
+
+  return { ok: true, role: roleValue }
+}
+
 export function canManageSecurityConfiguration(payload: SecurityConfigurationPermissionPayload | null | undefined) {
   if (!payload) {
     return false
   }
 
-  if (payload.currentMember.isOwner) {
-    return true
-  }
-
-  const permissions = resolveOrganizationPermissionRecord(payload.currentMember.role, payload.roles)
-  return permissions[SECURITY_CONFIGURATION_PERMISSION_RESOURCE]?.includes(SECURITY_CONFIGURATION_PERMISSION_ACTION) ?? false
+  return organizationRoleValueSatisfies({
+    roleValue: payload.currentMember.role,
+    requiredRole: ORGANIZATION_SUPER_ADMIN_ROLE,
+    isOwner: payload.currentMember.isOwner,
+  })
 }

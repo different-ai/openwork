@@ -13,6 +13,8 @@ import {
 } from "../../app/utils";
 import { normalizeModelBehaviorValue } from "../../app/lib/model-behavior";
 
+export const storedDefaultModelChangedEvent = "openwork.defaultModelChanged";
+
 export type SessionChoiceOverride = {
   model?: ModelRef | null;
   variant?: string | null;
@@ -159,6 +161,7 @@ export function writeStoredDefaultModel(model: ModelRef): void {
   if (typeof window === "undefined") return;
   try {
     window.localStorage.setItem(MODEL_PREF_KEY, formatModelRef(model));
+    window.dispatchEvent(new Event(storedDefaultModelChangedEvent));
   } catch {
     // ignore quota errors
   }

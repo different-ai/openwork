@@ -4,13 +4,13 @@ export type FeedbackEmailProps = {
   name: string
   email: string
   message: string
+  mode?: "feedback" | "contact"
   source: string
   entrypoint: string
   deployment: string
   appVersion: string
   openworkServerVersion: string
   opencodeVersion: string
-  orchestratorVersion: string
   osName: string
   osVersion: string
   platform: string
@@ -22,13 +22,13 @@ export function FeedbackEmail({
   name,
   email,
   message,
+  mode = "feedback",
   source,
   entrypoint,
   deployment,
   appVersion,
   openworkServerVersion,
   opencodeVersion,
-  orchestratorVersion,
   osName,
   osVersion,
   platform,
@@ -36,6 +36,8 @@ export function FeedbackEmail({
   submittedAt,
 }: FeedbackEmailProps) {
   const osLabel = [osName, osVersion].filter(Boolean).join(" ")
+  const isContact = mode === "contact"
+  const label = isContact ? "contact message" : "feedback"
   const metadata = [
     ["Source", source],
     ["Entrypoint", entrypoint],
@@ -43,7 +45,6 @@ export function FeedbackEmail({
     ["App version", appVersion],
     ["OpenWork server", openworkServerVersion],
     ["OpenCode", opencodeVersion],
-    ["Orchestrator", orchestratorVersion],
     ["OS", osLabel],
     ["Platform", platform],
     ["Submitted", submittedAt],
@@ -52,11 +53,11 @@ export function FeedbackEmail({
   return (
     <Html>
       <Head />
-      <Preview>{name} sent OpenWork feedback from {entrypoint || source || "unknown"}</Preview>
+      <Preview>{name} sent an OpenWork {label} from {entrypoint || source || "unknown"}</Preview>
       <Body style={styles.body}>
         <Container style={styles.container}>
-          <Text style={styles.eyebrow}>OpenWork feedback</Text>
-          <Heading style={styles.heading}>Feedback from {name}</Heading>
+          <Text style={styles.eyebrow}>{isContact ? "OpenWork contact" : "OpenWork feedback"}</Text>
+          <Heading style={styles.heading}>{isContact ? "Contact message" : "Feedback"} from {name}</Heading>
           <Text style={styles.contact}>{email}</Text>
 
           <Section style={styles.messageBox}>

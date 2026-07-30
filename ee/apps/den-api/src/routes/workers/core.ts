@@ -273,6 +273,7 @@ export function registerWorkerCoreRoutes<T extends { Variables: WorkerRouteVaria
     if (input.destination === "cloud") {
       void continueCloudProvisioning({
         workerId,
+        orgId,
         name: input.name,
         hostToken,
         clientToken,

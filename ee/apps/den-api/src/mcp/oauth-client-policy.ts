@@ -1,6 +1,19 @@
 export const MCP_OAUTH_REDIRECT_URI_ERROR_DESCRIPTION =
   "MCP OAuth redirect URIs must use HTTPS callbacks or HTTP loopback callbacks and must not include fragments."
 
+/**
+ * Exact private-use redirect URIs accepted for known native MCP clients.
+ *
+ * The MCP spec restricts OAuth redirect URIs to HTTPS or HTTP loopback
+ * callbacks, but some popular native clients only support RFC 8252
+ * private-use schemes. Callback interception is mitigated by PKCE S256:
+ * the OAuth provider requires PKCE for every public client and for all
+ * dynamically registered clients (DCR cannot set require_pkce to false).
+ */
+export const MCP_OAUTH_PRIVATE_USE_REDIRECT_URIS: ReadonlySet<string> = new Set([
+  "cursor://anysphere.cursor-mcp/oauth/callback",
+])
+
 function isIpv4Loopback(hostname: string) {
   const parts = hostname.split(".")
   if (parts.length !== 4 || parts[0] !== "127") {
@@ -36,6 +49,10 @@ export function isAllowedMcpOAuthRedirectUri(uri: string) {
 
   if (uri.includes("#")) {
     return false
+  }
+
+  if (MCP_OAUTH_PRIVATE_USE_REDIRECT_URIS.has(uri)) {
+    return true
   }
 
   if (parsed.protocol === "https:") {

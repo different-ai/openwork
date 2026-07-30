@@ -4,8 +4,8 @@ import { ExternalLink, Eye, FolderOpen, Loader2 } from "lucide-react";
 
 import type { DesktopApplication } from "@/app/lib/desktop";
 import { getDesktopApplicationsForFile, openDesktopWithApp } from "@/app/lib/desktop";
-import { isElectronRuntime } from "@/app/utils";
 import type { OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
+import { usePlatform } from "@/react-app/kernel/platform";
 import type { OpenTargetOptions } from "@/lib/target-provider";
 
 const SUPPORTED_PANEL_PREVIEWS = new Set(["markdown", "sheet", "slides", "image", "pdf", "html", "text"]);
@@ -18,11 +18,12 @@ type LinkActionMenuProps = {
 };
 
 export function LinkActionMenu({ target, anchorRect, onOpenTarget, onClose }: LinkActionMenuProps) {
+  const platform = usePlatform();
   const menuRef = useRef<HTMLDivElement>(null);
   const [apps, setApps] = useState<DesktopApplication[] | null>(null);
   const [appsLoading, setAppsLoading] = useState(false);
   const canOpenInPanel = target.kind === "file" && SUPPORTED_PANEL_PREVIEWS.has(target.preview);
-  const canOpenExternally = isElectronRuntime() && target.kind === "file";
+  const canOpenExternally = platform.capabilities.revealInFileManager && target.kind === "file";
 
   useEffect(() => {
     function handleOutside(event: MouseEvent) {
@@ -94,15 +95,16 @@ export function LinkActionMenu({ target, anchorRect, onOpenTarget, onClose }: Li
       className="fixed z-50 min-w-52 rounded-lg border border-border bg-popover/95 p-1 shadow-lg backdrop-blur-xl"
       style={{ top, left }}
     >
-      <button
-        type="button"
-        onClick={handleOpenDefault}
-        disabled={!canOpenExternally}
-        className="flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium text-foreground transition-colors hover:bg-foreground/10 disabled:opacity-50"
-      >
-        <ExternalLink className="size-4 shrink-0" />
-        Open with default app
-      </button>
+      {canOpenExternally ? (
+        <button
+          type="button"
+          onClick={handleOpenDefault}
+          className="flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium text-foreground transition-colors hover:bg-foreground/10"
+        >
+          <ExternalLink className="size-4 shrink-0" />
+          Open with default app
+        </button>
+      ) : null}
       {canOpenInPanel ? (
         <button
           type="button"
@@ -113,15 +115,16 @@ export function LinkActionMenu({ target, anchorRect, onOpenTarget, onClose }: Li
           Open in panel
         </button>
       ) : null}
-      <button
-        type="button"
-        onClick={handleReveal}
-        disabled={!canOpenExternally}
-        className="flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium text-foreground transition-colors hover:bg-foreground/10 disabled:opacity-50"
-      >
-        <FolderOpen className="size-4 shrink-0" />
-        Show in folder
-      </button>
+      {canOpenExternally ? (
+        <button
+          type="button"
+          onClick={handleReveal}
+          className="flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium text-foreground transition-colors hover:bg-foreground/10"
+        >
+          <FolderOpen className="size-4 shrink-0" />
+          Show in folder
+        </button>
+      ) : null}
       {canOpenExternally && apps && apps.length > 0 ? (
         <>
           <div className="my-1 h-px bg-foreground/5" />

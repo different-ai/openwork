@@ -39,8 +39,7 @@ OpenWork 圍繞一個核心理念設計：讓您可以輕鬆地將智能體工�
   - `curl -fsSL https://raw.githubusercontent.com/different-ai/owpenbot/dev/install.sh | bash`
   - 運行 `owpenbot setup`，然後 `owpenbot whatsapp login`，接著 `owpenbot start`
   - 完整設置：https://github.com/different-ai/owpenbot/blob/dev/README.md
-- **Openwrk (CLI 主機)**：無需桌面 UI 即可運行 OpenCode + OpenWork 伺服器。使用 `npm install -g openwrk` 安裝。
-  - 文檔：[apps/orchestrator/README.md](../apps/orchestrator/README.md)
+- **OpenWork Server (CLI 主機)**：無需桌面 UI 即可運行 OpenWork 伺服器。使用 `npm install -g openwork-server` 安裝，然後運行 `openwork-server`。
 
 
 ## 快速開始

@@ -1,0 +1,16 @@
+{
+  "name": "@openwork/fraimz",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/annotate.ts",
+      "development": "./src/annotate.ts",
+      "default": "./src/annotate.ts"
+    }
+  },
+  "dependencies": {
+    "@openwork/cdp": "workspace:*"
+  }
+}

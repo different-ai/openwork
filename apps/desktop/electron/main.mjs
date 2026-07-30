@@ -16,6 +16,7 @@ import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { globalOpencodeConfigDir, workspaceOpencodeConfigCandidates } from "@openwork/paths";
 
 import { configureFakeMediaForTests, installMediaPermissionHandlers } from "./media-permissions.mjs";
 import { registerMigrationIpc } from "./migration.mjs";
@@ -49,7 +50,16 @@ import {
 } from "./connect-link-branding.mjs";
 import { resolveConnectLinkPublicKeys } from "./connect-link-keys.mjs";
 import { openExternalUrl } from "./open-external.mjs";
+import { resolveAppIdentifier, resolveUserDataPath } from "./dev-profile.mjs";
 import { fetchAgentContextDiagnosticsResponse } from "./agent-context-diagnostics-fetch.mjs";
+import {
+  createLinuxDesktopIntegration,
+} from "./linux-desktop-integration.mjs";
+import {
+  desktopActivationRequired,
+  enterprisePreactivationCommandAllowed,
+  resolveDesktopDistribution,
+} from "./desktop-distribution.mjs";
 import {
   applyWindowsTaskbarIcon,
   windowsBrandAppUserModelId,
@@ -62,7 +72,9 @@ import {
 } from "./brand-icon-windows.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const APP_ROOT = path.resolve(__dirname, "../../..");
 const require = createRequire(import.meta.url);
+const desktopPackageMetadata = require("../package.json");
 // Electron 35 eagerly resolves every export in a named ESM import, including
 // safeStorage. Loading through CommonJS keeps safeStorage lazy so isolated demo
 // profiles do not show macOS's native keychain dialog before our switches run.
@@ -81,17 +93,29 @@ const {
 } = require("electron");
 const pty = require(["node", "pty"].join("-"));
 const NATIVE_DEEP_LINK_EVENT = "openwork:deep-link-native";
-const TAURI_APP_IDENTIFIER = "com.differentai.openwork";
-const DEV_APP_IDENTIFIER = "com.differentai.openwork.dev";
-const DESKTOP_PROTOCOL_SCHEME = "openwork";
 const isDevMode = process.env.OPENWORK_DEV_MODE === "1";
+const DESKTOP_DISTRIBUTION = resolveDesktopDistribution({
+  isPackaged: app.isPackaged,
+  packageFlavor: Reflect.get(desktopPackageMetadata, "openworkDistribution"),
+  environmentFlavor: process.env.OPENWORK_DESKTOP_DISTRIBUTION,
+});
+const TAURI_APP_IDENTIFIER = DESKTOP_DISTRIBUTION.appIdentifier;
+const DEV_APP_IDENTIFIER = `${DESKTOP_DISTRIBUTION.appIdentifier}.dev`;
+const DESKTOP_PROTOCOL_SCHEME = DESKTOP_DISTRIBUTION.protocolScheme;
 const APP_NAME =
-  process.env.OPENWORK_ELECTRON_APP_NAME?.trim() ||
-  (isDevMode ? "OpenWork - Dev" : "OpenWork");
+  (!app.isPackaged ? process.env.OPENWORK_ELECTRON_APP_NAME?.trim() : "") ||
+  (isDevMode ? `${DESKTOP_DISTRIBUTION.appName} - Dev` : DESKTOP_DISTRIBUTION.appName);
 let currentDisplayAppName = APP_NAME;
-const APP_IDENTIFIER =
-  process.env.OPENWORK_ELECTRON_APP_IDENTIFIER?.trim() ||
-  (isDevMode ? DEV_APP_IDENTIFIER : TAURI_APP_IDENTIFIER);
+const BASE_APP_IDENTIFIER = isDevMode ? DEV_APP_IDENTIFIER : TAURI_APP_IDENTIFIER;
+const APP_IDENTIFIER = resolveAppIdentifier({
+  appIdentifierOverride: process.env.OPENWORK_ELECTRON_APP_IDENTIFIER,
+  appRootPath: APP_ROOT,
+  baseAppIdentifier: BASE_APP_IDENTIFIER,
+  devAppIdentifier: DEV_APP_IDENTIFIER,
+  devProfile: process.env.OPENWORK_DEV_PROFILE,
+  isDevMode,
+  isPackaged: app.isPackaged,
+});
 if (process.env.OPENWORK_ELECTRON_USE_MOCK_KEYCHAIN === "1") {
   // Fresh, isolated development profiles otherwise trigger macOS's native
   // "Login" keychain prompt as soon as Chromium persists an authenticated
@@ -154,22 +178,30 @@ function killTerminalsForWebContents(webContentsId) {
 // so in-place migration is a no-op for almost every file. Dev mode uses the
 // separate dev identifier so it can run beside the production app.
 //
-// Override via OPENWORK_ELECTRON_USERDATA so dogfooders can isolate their
-// Electron install from the real Tauri app.
+// Dev profile precedence: OPENWORK_ELECTRON_USERDATA (explicit profile path)
+// wins over everything; then OPENWORK_ELECTRON_APP_IDENTIFIER; then
+// OPENWORK_DEV_PROFILE in unpackaged dev; then the legacy identifier default.
 app.setName(APP_NAME);
 app.setAppUserModelId(APP_IDENTIFIER);
-if (app.isPackaged && process.env.OPENWORK_ELECTRON_DISABLE_PROTOCOL_REGISTRATION !== "1") {
+if (
+  app.isPackaged
+  && process.env.OPENWORK_ELECTRON_DISABLE_PROTOCOL_REGISTRATION !== "1"
+  && !(process.platform === "linux" && process.env.APPIMAGE)
+) {
   app.setAsDefaultProtocolClient(DESKTOP_PROTOCOL_SCHEME);
 }
-const userDataOverride = process.env.OPENWORK_ELECTRON_USERDATA?.trim();
-if (userDataOverride) {
-  app.setPath("userData", userDataOverride);
-} else {
-  app.setPath(
-    "userData",
-    path.join(app.getPath("appData"), APP_IDENTIFIER),
-  );
-}
+const userDataPath = resolveUserDataPath({
+  appDataPath: app.getPath("appData"),
+  appIdentifier: APP_IDENTIFIER,
+  userDataOverride: process.env.OPENWORK_ELECTRON_USERDATA,
+});
+app.setPath("userData", userDataPath);
+const linuxDesktopIntegration = createLinuxDesktopIntegration({
+  app,
+  dialog,
+  appName: APP_NAME,
+  distribution: DESKTOP_DISTRIBUTION.flavor,
+});
 
 // Resolve and cache the app icon (reused for BrowserWindow + mac dock).
 // Packaged builds ship icons via electron-builder config, but for `dev:electron`
@@ -188,6 +220,7 @@ function resolveAppIconPath() {
     path.resolve(__dirname, "../resources/icons/icon.png"),
     // Packaged: electron-builder copies extraResources but we fall back to this
     // if custom packaging ever exposes the icon here.
+    path.join(process.resourcesPath ?? "", "icons", "linux", "512x512.png"),
     path.join(process.resourcesPath ?? "", "icons", "icon.png"),
   ];
   for (const candidate of candidates) {
@@ -288,8 +321,11 @@ function selectDownloadFile(files, arch) {
 
 async function resolveCorrectArchitectureDownloadUrl(arch) {
   const manifestUrl = `${RELEASE_DOWNLOAD_BASE_URL}/${updaterManifestName(arch)}`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10_000);
   try {
-    const response = await fetch(manifestUrl, {
+    const response = await electronNet.fetch(manifestUrl, {
+      signal: controller.signal,
       headers: { Accept: "text/yaml, text/plain, */*" },
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -301,6 +337,8 @@ async function resolveCorrectArchitectureDownloadUrl(arch) {
   } catch (error) {
     console.warn("[architecture] failed to resolve latest download URL", error);
     return null;
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
@@ -847,6 +885,10 @@ if (remoteDebugPort > 0) {
 // Make the resolved port available to the embedded server so it flows into
 // agent instructions via ensureOpenworkAgent → resolveAgentTemplate.
 process.env.OPENWORK_ELECTRON_REMOTE_DEBUG_PORT = String(remoteDebugPort);
+if (isDevMode && !app.isPackaged) {
+  const cdpAddress = remoteDebugPort > 0 ? `http://127.0.0.1:${remoteDebugPort}` : "disabled";
+  console.log(`[openwork] dev profile=${app.getPath("userData")} cdp=${cdpAddress}`);
+}
 
 // Apply extra Chromium flags from ELECTRON_EXTRA_LAUNCH_ARGS.
 // Used in headless/Daytona environments to pass e.g. --disable-gpu.
@@ -866,7 +908,8 @@ if (extraLaunchArgs) {
 configureFakeMediaForTests(app, envFlagEnabled("OPENWORK_ELECTRON_FAKE_MEDIA"));
 const DEFAULT_DEN_BASE_URL = "https://app.openworklabs.com";
 const DEFAULT_LOCAL_BASE_URL = "http://127.0.0.1:4096";
-const FORCE_DESKTOP_REQUIRE_SIGNIN = envFlagEnabled("OPENWORK_FORCE_SIGNIN");
+const FORCE_DESKTOP_REQUIRE_SIGNIN =
+  DESKTOP_DISTRIBUTION.requireSignin || envFlagEnabled("OPENWORK_FORCE_SIGNIN");
 const DEFAULT_DESKTOP_REQUIRE_SIGNIN = FORCE_DESKTOP_REQUIRE_SIGNIN;
 
 function envFlagEnabled(name) {
@@ -976,11 +1019,28 @@ async function acceptConnectLink(rawUrl) {
 }
 
 async function persistConnectLinkClaims(claims) {
-  return persistConnectLinkBranding(claims, {
+  const previous = workspaceStore.readDesktopBootstrapConfigSync();
+  const config = await persistConnectLinkBranding(claims, {
     persistBootstrap: (config) => workspaceStore.setDesktopBootstrapConfig(config),
     applyBrandIconUrl: (iconUrl) => applyBrandIconUrl(iconUrl).catch((error) =>
       brandIconFailure("connect-apply-failed", error)),
+    enterpriseActivation: DESKTOP_DISTRIBUTION.flavor === "enterprise"
+      ? {
+          activatedAt: new Date().toISOString(),
+          denBaseUrl: claims.den.baseUrl,
+        }
+      : null,
   });
+  if (
+    desktopActivationRequired(DESKTOP_DISTRIBUTION, previous)
+    && !desktopActivationRequired(DESKTOP_DISTRIBUTION, config)
+  ) {
+    await uiControlServer.start().catch((error) => {
+      console.warn("[ui-control] failed to start", error);
+    });
+    await runtimeManager.prepareFreshRuntime();
+  }
+  return config;
 }
 
 function normalizePlatform(value) {
@@ -995,8 +1055,8 @@ function forwardedDeepLinks(argv) {
     .map((entry) => entry.trim())
     .filter(
       (entry) =>
-        entry.startsWith("openwork://") ||
-        entry.startsWith("openwork-dev://") ||
+        entry.startsWith(`${DESKTOP_PROTOCOL_SCHEME}://`) ||
+        (!app.isPackaged && entry.startsWith("openwork-dev://")) ||
         entry.startsWith("https://") ||
         entry.startsWith("http://"),
     );
@@ -1017,18 +1077,8 @@ function flushPendingDeepLinks() {
   mainWindow.webContents.send(NATIVE_DEEP_LINK_EVENT, urls);
 }
 
-function configHomePath() {
-  if (process.env.XDG_CONFIG_HOME?.trim()) {
-    return process.env.XDG_CONFIG_HOME.trim();
-  }
-  if (process.platform === "win32" && process.env.APPDATA?.trim()) {
-    return process.env.APPDATA.trim();
-  }
-  return path.join(os.homedir(), ".config");
-}
-
 function globalOpencodeRoot() {
-  return path.join(configHomePath(), "opencode");
+  return globalOpencodeConfigDir();
 }
 
 function execResult(ok, stdout = "", stderr = "", status = ok ? 0 : 1) {
@@ -1217,10 +1267,6 @@ async function bootRuntimeForSelectedWorkspace() {
       watchedId: String(fallback.id ?? ""),
     }).catch(() => undefined);
   }
-  await runtimeManager.orchestratorWorkspaceActivate({
-    workspacePath: bootWorkspaceRoot,
-    name: bootWorkspace.name ?? bootWorkspace.displayName ?? null,
-  }).catch(() => undefined);
   const openworkServer = assertOpenworkServerReady(await runtimeManager.openworkServerInfo());
   return { ok: true, skipped: false, engine, openworkServer, workspaceId: bootWorkspace.id ?? null };
 }
@@ -1236,26 +1282,28 @@ function ensureRuntimeBootstrap() {
 }
 
 function resolveOpencodeConfigPath(scope, projectDir) {
-  let root;
   if (scope === "project") {
     if (!String(projectDir ?? "").trim()) {
       throw new Error("projectDir is required");
     }
-    root = projectDir;
+    return workspaceOpencodeConfigCandidates(projectDir);
   } else if (scope === "global") {
-    root = globalOpencodeRoot();
+    const root = globalOpencodeRoot();
+    return [path.join(root, "opencode.jsonc"), path.join(root, "opencode.json")];
   } else {
     throw new Error("scope must be 'project' or 'global'");
   }
+}
 
-  const jsoncPath = path.join(root, "opencode.jsonc");
-  const jsonPath = path.join(root, "opencode.json");
-  return { jsoncPath, jsonPath };
+async function selectOpencodeConfigPath(candidates) {
+  for (const candidate of candidates) {
+    if (await pathExists(candidate)) return candidate;
+  }
+  return candidates[0];
 }
 
 async function readOpencodeConfig(scope, projectDir) {
-  const { jsoncPath, jsonPath } = resolveOpencodeConfigPath(scope, projectDir);
-  const chosenPath = (await pathExists(jsoncPath)) ? jsoncPath : (await pathExists(jsonPath)) ? jsonPath : jsoncPath;
+  const chosenPath = await selectOpencodeConfigPath(resolveOpencodeConfigPath(scope, projectDir));
   const exists = await pathExists(chosenPath);
   return {
     path: chosenPath,
@@ -1265,8 +1313,7 @@ async function readOpencodeConfig(scope, projectDir) {
 }
 
 async function writeOpencodeConfig(scope, projectDir, content) {
-  const { jsoncPath, jsonPath } = resolveOpencodeConfigPath(scope, projectDir);
-  const targetPath = (await pathExists(jsoncPath)) ? jsoncPath : (await pathExists(jsonPath)) ? jsonPath : jsoncPath;
+  const targetPath = await selectOpencodeConfigPath(resolveOpencodeConfigPath(scope, projectDir));
   await mkdir(path.dirname(targetPath), { recursive: true });
   await writeFile(targetPath, content, "utf8");
   return execResult(true, `Wrote ${targetPath}`);
@@ -1611,15 +1658,6 @@ const desktopCommandHandlers = {
   "engineInstall": async (event, ...args) => {
       return runtimeManager.engineInstall();
   },
-  "orchestratorStatus": async (event, ...args) => {
-      return runtimeManager.orchestratorStatus();
-  },
-  "orchestratorWorkspaceActivate": async (event, ...args) => {
-      return runtimeManager.orchestratorWorkspaceActivate(args[0] ?? {});
-  },
-  "orchestratorInstanceDispose": async (event, ...args) => {
-      return runtimeManager.orchestratorInstanceDispose(String(args[0] ?? "").trim());
-  },
   "appBuildInfo": async (event, ...args) => {
       return {
         version: app.getVersion(),
@@ -1630,6 +1668,15 @@ const desktopCommandHandlers = {
   },
   "desktopNotificationShow": async (event, ...args) => {
       return showDesktopNotification(args[0] ?? {});
+  },
+  "desktopIntegrationStatus": async (event, ...args) => {
+      return linuxDesktopIntegration.getStatus();
+  },
+  "desktopIntegrationInstall": async (event, ...args) => {
+      return linuxDesktopIntegration.install(args[0] ?? {});
+  },
+  "desktopIntegrationRemove": async (event, ...args) => {
+      return linuxDesktopIntegration.remove();
   },
   "getUiControlBridgeInfo": async (event, ...args) => {
       try {
@@ -1682,7 +1729,27 @@ const desktopCommandHandlers = {
       return workspaceStore.clearDesktopBootstrapConfig();
   },
   "setDesktopBootstrapConfig": async (event, ...args) => {
-      return workspaceStore.setDesktopBootstrapConfig(args[0] ?? {});
+      const previous = workspaceStore.readDesktopBootstrapConfigSync();
+      // A locked installation must never be able to unlock itself by writing
+      // policy through the bridge. The activation requirement is cleared only
+      // by an administrator editing desktop-bootstrap.json on disk (which this
+      // process reads, never writes) or by a completed Den activation.
+      const requested = args[0] ?? {};
+      const guarded = desktopActivationRequired(DESKTOP_DISTRIBUTION, previous)
+          && requested?.requireActivation === false
+        ? { ...requested, requireActivation: true }
+        : requested;
+      const next = await workspaceStore.setDesktopBootstrapConfig(guarded);
+      if (
+        desktopActivationRequired(DESKTOP_DISTRIBUTION, previous)
+        && !desktopActivationRequired(DESKTOP_DISTRIBUTION, next)
+      ) {
+        await uiControlServer.start().catch((error) => {
+          console.warn("[ui-control] failed to start", error);
+        });
+        await runtimeManager.prepareFreshRuntime();
+      }
+      return next;
   },
   "connectLinkVerify": async (event, ...args) => {
       // Read-only check — parses + verifies the deep link, writes nothing.
@@ -1722,6 +1789,7 @@ const desktopCommandHandlers = {
         platform: process.platform,
         preserveBootstrap: args[0]?.preserveBootstrap !== false,
         userDataPath: app.getPath("userData"),
+        workspacePaths: await workspaceStore.listLocalWorkspacePaths(),
       });
   },
   "nukeOpenworkAndOpencodeConfigAndExit": async (event, ...args) => {
@@ -1731,22 +1799,19 @@ const desktopCommandHandlers = {
         runtimeManager,
         uiControlServer,
         removeWindowsBrandShortcut,
-      }, { preserveBootstrap: args[0]?.preserveBootstrap !== false });
-  },
-  "orchestratorStartDetached": async (event, ...args) => {
-      return runtimeManager.orchestratorStartDetached(args[0] ?? {});
-  },
-  "sandboxDoctor": async (event, ...args) => {
-      return runtimeManager.sandboxDoctor();
-  },
-  "sandboxStop": async (event, ...args) => {
-      return runtimeManager.sandboxStop(String(args[0] ?? "").trim());
+      }, {
+        preserveBootstrap: args[0]?.preserveBootstrap !== false,
+        input: {
+          env: process.env,
+          homedir: os.homedir(),
+          platform: process.platform,
+          userDataPath: app.getPath("userData"),
+          workspacePaths: await workspaceStore.listLocalWorkspacePaths(),
+        },
+      });
   },
   "sandboxCleanupOpenworkContainers": async (event, ...args) => {
       return runtimeManager.sandboxCleanupOpenworkContainers();
-  },
-  "sandboxDebugProbe": async (event, ...args) => {
-      return runtimeManager.sandboxDebugProbe();
   },
   "openworkServerInfo": async (event, ...args) => {
       return runtimeManager.openworkServerInfo();
@@ -1929,7 +1994,9 @@ const desktopCommandHandlers = {
       }
   },
   "__applyBrandAppName": async (event, ...args) => {
-    currentDisplayAppName = applyBrandAppName(args[0], {
+    currentDisplayAppName = applyBrandAppName(
+      DESKTOP_DISTRIBUTION.flavor === "enterprise" ? null : args[0],
+      {
       fallbackName: APP_NAME,
       platform: process.platform,
       updateElectronAppName: process.platform === "darwin",
@@ -1937,7 +2004,8 @@ const desktopCommandHandlers = {
       app,
       applicationMenu,
       window: mainWindow,
-    });
+      },
+    );
     if (process.platform === "win32") {
       await registerWindowsDisplayShortcut();
     }
@@ -2044,7 +2112,7 @@ const desktopCommandHandlers = {
       };
       if (init.agentContextDiagnostics && typeof init.agentContextDiagnostics === "object") {
         return fetchAgentContextDiagnosticsResponse(
-          (input, fetchInit) => electronNet.fetch(input, fetchInit),
+          electronNet.fetch,
           url,
           requestInit,
           init.agentContextDiagnostics.deadlineAtMs,
@@ -2157,7 +2225,19 @@ function desktopErrorMessageWithCauses(error) {
   }
 }
 
+function assertDesktopActivation() {
+  if (desktopActivationRequired(
+    DESKTOP_DISTRIBUTION,
+    workspaceStore.readDesktopBootstrapConfigSync(),
+  )) {
+    throw new Error("OpenWork must be activated from your Den portal before this command is available.");
+  }
+}
+
 async function handleDesktopInvoke(event, command, ...args) {
+  if (!enterprisePreactivationCommandAllowed(command)) {
+    assertDesktopActivation();
+  }
   const handler = desktopCommandHandlers[command];
   if (!handler) {
     throw new Error(`Electron desktop bridge method is not implemented yet: ${command}`);
@@ -2302,6 +2382,12 @@ async function createMainWindow() {
   return mainWindow;
 }
 
+ipcMain.on("openwork:desktop-bootstrap-sync", (event) => {
+  event.returnValue = workspaceStore.readDesktopBootstrapConfigSync();
+});
+ipcMain.on("openwork:desktop-distribution-sync", (event) => {
+  event.returnValue = DESKTOP_DISTRIBUTION;
+});
 ipcMain.handle("openwork:desktop", handleDesktopInvoke);
 ipcMain.handle("openwork:shell:openExternal", async (_event, url) => {
   if (typeof url !== "string" || url.trim().length === 0) {
@@ -2328,6 +2414,7 @@ ipcMain.handle("openwork:system:askMicrophoneAccess", async () => {
 
 // ── Terminal IPC ────────────────────────────────────────────────────────
 ipcMain.handle("openwork:terminal:create", async (event, options = {}) => {
+  assertDesktopActivation();
   const cwd = await resolveTerminalCwd(options?.cwd);
   const cols = Number.isFinite(options?.cols) ? Math.max(20, Math.floor(options.cols)) : 80;
   const rows = Number.isFinite(options?.rows) ? Math.max(5, Math.floor(options.rows)) : 24;
@@ -2379,10 +2466,30 @@ ipcMain.handle("openwork:terminal:kill", (event, terminalId) => {
 browserPanel.registerIpc(ipcMain);
 
 registerMigrationIpc({ app, ipcMain });
-const { ensureAutoUpdater } = registerUpdaterIpc({ app, ipcMain, getMainWindow: () => mainWindow });
+const { ensureAutoUpdater } = registerUpdaterIpc({
+  app,
+  ipcMain,
+  getMainWindow: () => mainWindow,
+  // All distributions intentionally share one application identifier, so they also
+  // share Squirrel's ShipIt domain. Keep the shared default rather than
+  // implying an isolation the bundle identifier cannot provide.
+  manifestChannel: DESKTOP_DISTRIBUTION.flavor === "public"
+    ? "latest"
+    : DESKTOP_DISTRIBUTION.flavor,
+});
 
 if (!app.requestSingleInstanceLock()) {
-  app.quit();
+  if (isDevMode && !app.isPackaged) {
+    console.error(`[openwork] Another OpenWork dev instance already holds this profile directory:
+  ${app.getPath("userData")}
+The second process is exiting so its CDP port is released.
+Run this worktree with an isolated profile: OPENWORK_DEV_PROFILE=auto pnpm dev
+or use: pnpm dev:worktree`);
+    app.exit(1);
+    setImmediate(() => process.exit(1));
+  } else {
+    app.quit();
+  }
 } else {
   app.on("before-quit", (event) => {
     if (runtimeDisposedForQuit) return;
@@ -2404,7 +2511,12 @@ if (!app.requestSingleInstanceLock()) {
 
   app.on("open-url", async (event, url) => {
     event.preventDefault();
-    await createMainWindow();
+    const win = await createMainWindow();
+    if (win.isMinimized()) {
+      win.restore();
+    }
+    win.show();
+    win.focus();
     queueDeepLinks([url]);
   });
 
@@ -2420,14 +2532,19 @@ if (!app.requestSingleInstanceLock()) {
     });
     await workspaceStore.importBundledDesktopBootstrapConfigIfPreferred();
     const bootstrapConfig = await workspaceStore.getDesktopBootstrapConfig();
-    currentDisplayAppName = applyBrandAppName(bootstrapConfig.brandAppName, {
+    currentDisplayAppName = applyBrandAppName(
+      DESKTOP_DISTRIBUTION.flavor === "enterprise"
+        ? null
+        : bootstrapConfig.brandAppName,
+      {
       fallbackName: APP_NAME,
       platform: process.platform,
       updateElectronAppName: true,
       runtimeProcess: process,
       app,
       applicationMenu,
-    });
+      },
+    );
     if (process.platform === "win32") {
       await registerWindowsDisplayShortcut();
     }
@@ -2435,19 +2552,28 @@ if (!app.requestSingleInstanceLock()) {
       await applyDesktopBootstrapBrandIcon(bootstrapConfig, applyBrandIconUrl);
     }
     applicationMenu.install();
-    await runtimeManager.prepareFreshRuntime().catch(() => undefined);
+    if (!desktopActivationRequired(DESKTOP_DISTRIBUTION, bootstrapConfig)) {
+      await runtimeManager.prepareFreshRuntime().catch(() => undefined);
+    }
 
     // Use Tauri's existing workspace state file as canonical so rollback and
     // Electron see the same workspace list. Import the short-lived
     // Electron-only filename only when the shared file is missing.
     await workspaceStore.migrateLegacyElectronWorkspaceStateIfNeeded();
-    await uiControlServer.start().catch((error) => {
-      console.warn("[ui-control] failed to start", error);
-    });
-    runtimeBootstrapPromise = bootRuntimeForSelectedWorkspace().catch((error) => ({
-      ok: false,
-      error: error instanceof Error ? error.message : String(error),
-    }));
+    // The UI-control bridge evaluates arbitrary JavaScript in the renderer, so
+    // it stays down until the installation is activated. Otherwise it is a
+    // local bypass of the pre-activation restriction.
+    if (!desktopActivationRequired(DESKTOP_DISTRIBUTION, bootstrapConfig)) {
+      await uiControlServer.start().catch((error) => {
+        console.warn("[ui-control] failed to start", error);
+      });
+    }
+    if (!desktopActivationRequired(DESKTOP_DISTRIBUTION, bootstrapConfig)) {
+      runtimeBootstrapPromise = bootRuntimeForSelectedWorkspace().catch((error) => ({
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      }));
+    }
 
     queueDeepLinks(forwardedDeepLinks(process.argv));
     const win = await createMainWindow();
@@ -2457,6 +2583,11 @@ if (!app.requestSingleInstanceLock()) {
     win.webContents.on("did-finish-load", () => {
       flushPendingDeepLinks();
     });
+    setTimeout(() => {
+      void linuxDesktopIntegration.maybePrompt(win).catch((error) => {
+        console.warn("[desktop-integration] prompt failed", error);
+      });
+    }, 500);
 
     // Initialize the packaged updater after the window is up so the user sees
     // a working app first. Renderer-owned checks pass the selected release

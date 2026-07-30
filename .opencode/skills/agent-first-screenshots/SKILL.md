@@ -81,6 +81,10 @@ only on pass); both use `sharp`.
 
 ## Beautify (Screen.Studio-style framing)
 
+For coded eval/fraimz flows, the paved path for polished publication frames is
+the built-in screenshot option `pretty: true`: it keeps the runner's proof
+semantics while framing the captured app in OpenWork's brand background.
+
 `scripts/beautify.mjs` turns a verified raw screenshot into a publication
 frame: gradient background, padding, rounded corners, soft shadow, optional
 window chrome. Zero extra deps (resolves `sharp` from the pnpm store — run

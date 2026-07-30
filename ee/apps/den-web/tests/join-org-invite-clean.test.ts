@@ -1,18 +1,41 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "bun:test";
+import { parseInvitationPreviewPayload } from "../app/(den)/_lib/den-org";
 
 const joinOrgScreenPath = fileURLToPath(
   new URL("../app/(den)/_components/join-org-screen.tsx", import.meta.url),
+);
+const onboardingShellPath = fileURLToPath(
+  new URL("../app/(den)/_components/onboarding-shell.tsx", import.meta.url),
+);
+const sharedDitherShellPath = fileURLToPath(
+  new URL("../../../../packages/ui/src/react/dithered-onboarding-shell.tsx", import.meta.url),
+);
+const joinOrgSuccessPath = fileURLToPath(
+  new URL("../app/(den)/_components/join-org-success.tsx", import.meta.url),
+);
+const onboardingCardPath = fileURLToPath(
+  new URL("../app/(den)/_components/onboarding-card.tsx", import.meta.url),
+);
+const installScreenPath = fileURLToPath(
+  new URL("../app/(den)/_components/install-screen.tsx", import.meta.url),
+);
+const brandIdentityPath = fileURLToPath(
+  new URL("../app/(den)/_components/organization-brand-identity.tsx", import.meta.url),
 );
 
 function readJoinOrgScreenSource() {
   return readFileSync(joinOrgScreenPath, "utf8");
 }
 
+function readOnboardingShellSource() {
+  return readFileSync(sharedDitherShellPath, "utf8");
+}
+
 describe("join organization invite clean layout contract", () => {
   test("uses one light Dithering layer and no mesh gradient", () => {
-    const source = readJoinOrgScreenSource();
+    const source = readOnboardingShellSource();
     const ditheringImports = source.match(/import \{ Dithering \} from "@paper-design\/shaders-react"/g) ?? [];
     const ditheringUses = source.match(/<Dithering\b/g) ?? [];
 
@@ -25,29 +48,42 @@ describe("join organization invite clean layout contract", () => {
   });
 
   test("keeps the decorative background separate, restrained, and reduced-motion aware", () => {
-    const source = readJoinOrgScreenSource();
+    const source = readOnboardingShellSource();
 
     expect(source).toContain("min-h-dvh overflow-y-auto bg-[#f8fbff]");
     expect(source).toContain("pointer-events-none fixed inset-0 z-0 overflow-hidden bg-[#f8fbff] opacity-[0.09]");
     expect(source).toContain('aria-hidden="true"');
-    expect(source).toContain('data-testid="join-org-background"');
-    expect(source).toContain('data-testid="join-org-foreground"');
+    expect(source).toContain('backgroundTestId = "join-org-background"');
+    expect(source).toContain('foregroundTestId = "join-org-foreground"');
     expect(source).toContain("relative z-10");
     expect(source).toContain("useSyncExternalStore");
     expect(source).toContain('const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";');
-    expect(source).toContain("function getReducedMotionServerSnapshot()");
+    expect(source).toContain("() => true");
     expect(source).toContain("const shaderSpeed = reducedMotion ? 0 : 0.012;");
     expect(source).toContain("speed={shaderSpeed}");
     expect(source).toContain('data-shader-speed={shaderSpeed}');
   });
 
-  test("removes stacked frames while keeping a compact centered hierarchy", () => {
+  test("removes stacked frames while using the shared wide welcome card hierarchy", () => {
     const source = readJoinOrgScreenSource();
+    const shellSource = readOnboardingShellSource();
+    const denShellSource = readFileSync(onboardingShellPath, "utf8");
+    const cardSource = readFileSync(onboardingCardPath, "utf8");
+    const cardUsages = source.match(/<OnboardingCard\b/g) ?? [];
+    const wideShellUsages = source.match(/width="wide"/g) ?? [];
 
     expect(source).not.toContain("den-frame");
     expect(source).not.toContain("den-frame-inset");
-    expect(source).toContain("w-full max-w-md");
-    expect(source).toContain('data-testid="join-org-root"');
+    expect(shellSource).toContain('compact: "max-w-md"');
+    expect(shellSource).toContain('rootTestId = "join-org-root"');
+    expect(denShellSource).toContain("<DitheredOnboardingShell");
+    expect(cardUsages.length).toBeGreaterThanOrEqual(8);
+    expect(wideShellUsages.length).toBeGreaterThanOrEqual(8);
+    expect(cardSource).toContain("rounded-[1.75rem] border border-slate-200/80 bg-white p-6 sm:p-8 md:p-10");
+    expect(cardSource).toContain("/openwork-mark.svg");
+    expect(cardSource).toContain("OpenWork Cloud");
+    expect(cardSource).toContain("OrganizationBrandIdentity");
+    expect(source).toContain("text-[30px] font-semibold leading-[38px] tracking-[-0.03em]");
     expect(source).toContain('data-testid="join-org-invitation-details"');
     expect(source).toContain('data-testid="join-org-actions"');
     expect(source).toContain('data-testid="join-org-auth"');
@@ -86,10 +122,112 @@ describe("join organization invite clean layout contract", () => {
     expect(source).toContain("statusMessage(preview)");
     expect(source).toContain("handleSwitchAccount");
     expect(source).toContain("window.sessionStorage.setItem(PENDING_ORG_INVITATION_STORAGE_KEY, invitationId);");
+    expect(source).toContain("acceptedInvitationResolutionRef");
+    expect(source).toContain('preview.invitation.status !== "accepted"');
+    expect(source).toContain("acceptedInvitationResolutionRef.current = acceptedInvitationId;");
+    expect(source).toContain('getStringProperty(payload, "error") === "membership_removed"');
+    expect(source).toContain("Your access was removed.");
+    expect(source).toContain("Ask a workspace admin for a new invite.");
+    expect(source).toContain("router.replace(getOrgDashboardRoute(nextJoinedOrg.slug));");
+    expect(source).toContain("Opening your workspace.");
+    expect(source).toContain("You've already joined ${preview.organization.name}.");
+    expect(source).toContain("This invite was already accepted. Sign in as ${preview.invitation.email} to open your workspace.");
+    expect(source).toContain('initialMode="sign-in"');
+    expect(source).toContain('initialMode="sign-up"');
     expect(source).toContain("This invite needs a different email domain.");
     expect(source).toContain("This invite is for");
     expect(source).toContain("Use a different account");
     expect(source).toContain("Log out");
     expect(source).toContain("Join ${preview.organization.name}");
+  });
+
+  test("resolves an invite accepted during sign-in before showing it as already used", () => {
+    const source = readJoinOrgScreenSource();
+
+    expect(source).toContain('preview.invitation.status !== "accepted"');
+    expect(source).toContain("acceptedInvitationResolutionRef.current === acceptedInvitationId");
+    expect(source).toContain("resolveAcceptedInvitation");
+    expect(source).toContain("Opening your workspace.");
+    expect(source).toContain('reason: "membership_removed" | "unknown"');
+  });
+
+  test("carries explicit organization branding through the invitation preview", () => {
+    const preview = parseInvitationPreviewPayload({
+      invitation: {
+        id: "invitation_123",
+        email: "teammate@example.com",
+        role: "member",
+        status: "pending",
+      },
+      organization: {
+        id: "organization_123",
+        name: "Blue Yonder",
+        slug: "blue-yonder",
+        allowedEmailDomains: ["example.com"],
+        branding: {
+          appName: "Agent Blue",
+          logoUrl: "https://cdn.example.com/wordmark.png",
+          iconUrl: "https://cdn.example.com/icon.png",
+        },
+      },
+    });
+
+    expect(preview?.organization.branding).toEqual({
+      appName: "Agent Blue",
+      logoUrl: "https://cdn.example.com/wordmark.png",
+      iconUrl: "https://cdn.example.com/icon.png",
+    });
+
+    const legacyPreview = parseInvitationPreviewPayload({
+      invitation: {
+        id: "invitation_legacy",
+        email: "teammate@example.com",
+        role: "member",
+        status: "pending",
+      },
+      organization: {
+        id: "organization_legacy",
+        name: "Blue Yonder",
+        slug: "blue-yonder",
+        allowedEmailDomains: null,
+      },
+    });
+
+    expect(legacyPreview?.organization.branding).toEqual({
+      appName: "OpenWork",
+      logoUrl: null,
+      iconUrl: null,
+    });
+  });
+
+  test("keeps onboarding focused and reuses the responsive platform grid", () => {
+    const successSource = readFileSync(joinOrgSuccessPath, "utf8");
+    const installSource = readFileSync(installScreenPath, "utf8");
+    const identitySource = readFileSync(brandIdentityPath, "utf8");
+
+    expect(successSource).toContain("Get the desktop app");
+    expect(successSource).toContain("Return to OpenWork");
+    expect(successSource).toContain("desktopAuthRequested");
+    expect(successSource).toContain("Continue in the browser");
+    expect(successSource).toContain("Email me the download link");
+    expect(successSource).not.toContain("capabilities");
+    expect(successSource).not.toContain("Open OpenWork");
+    expect(successSource).toContain("<OnboardingCard organization={{ name: organizationName, brand }}>");
+    expect(successSource).toContain("text-[30px] font-semibold leading-[38px] tracking-[-0.03em]");
+    expect(successSource).toContain("den-button-primary min-h-12 w-full");
+    expect(successSource).toContain("<span>You&apos;re in, welcome to</span>");
+    expect(successSource).toContain('className="whitespace-nowrap">&apos;s {brand.appName}</span>');
+    expect(installSource).toContain("DownloadPlatformGrid");
+    expect(installSource).toContain("<span>Download OpenWork Enterprise</span>");
+    expect(installSource).toContain("Download OpenWork");
+    expect(installSource).not.toContain('data-testid="install-cloud-download-primary"');
+    expect(installSource).not.toContain("Other platforms");
+    expect(installSource).toContain('config.distribution === "cloud"');
+    expect(installSource).not.toContain("never asks for an enterprise activation code");
+    expect(installSource).toContain("<span>for</span>");
+    expect(installSource).toContain("AppImage (ARM64)");
+    expect(installSource).toContain('desktopScheme: "openwork"');
+    expect(identitySource).toContain("failedLogoUrl");
+    expect(identitySource).toContain("failedIconUrl");
   });
 });

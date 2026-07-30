@@ -161,6 +161,9 @@ data:
   {{ with .Values.config.public.openworkAppConnectUrl }}
   DEN_WEB_OPENWORK_APP_CONNECT_URL: {{ . | quote }}
   {{ end }}
+  {{ with .Values.config.public.openworkWebUrl }}
+  DEN_WEB_OPENWORK_WEB_URL: {{ . | quote }}
+  {{ end }}
   {{ with .Values.config.web.posthogKey }}
   DEN_WEB_POSTHOG_KEY: {{ . | quote }}
   {{ end }}

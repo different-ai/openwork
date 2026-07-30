@@ -122,7 +122,7 @@ export default {
             witness(ctx, entries.length === 2, "The organization ZIP has exactly two top-level files", entries);
             witness(ctx, entries.some((entry) => /^openwork-mac-arm64-.+\.dmg$/.test(entry)), "The ZIP contains the normal versioned macOS DMG", entries);
             witness(ctx, entries.includes("desktop-bootstrap.json"), "The ZIP contains desktop-bootstrap.json", entries);
-            witness(ctx, !entries.some((entry) => entry.includes("openwork-installer")), "The ZIP contains no separate installer application", entries);
+            witness(ctx, !entries.some((entry) => /installer/i.test(entry)), "The ZIP contains no separate installer application", entries);
             ctx.output("organization-download.zip", `${entries.join("\n")}\n\n${statSync(BUNDLE_ZIP).size} bytes`);
           },
         });

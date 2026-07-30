@@ -1,0 +1,83 @@
+---
+title: "Outbound network access"
+description: "Customer IT allowlist guidance for OpenWork desktop, Den, deployment artifacts, and opt-in providers."
+---
+
+OpenWork works best when customer IT approves outbound access by component. The canonical machine-readable source is [`docs/enterprise/outbound-access.json`](https://github.com/different-ai/openwork/blob/dev/docs/enterprise/outbound-access.json). CI guards that file with `node scripts/check-outbound-access.mjs`; this page is the published human-readable summary.
+
+## Minimum hosted desktop allowlist
+
+For a practical OpenWork Cloud desktop install, allow TCP 443 to these hosts:
+
+```text
+app.openworklabs.com
+api.openworklabs.com
+github.com
+release-assets.githubusercontent.com
+objects.githubusercontent.com
+registry.npmjs.org
+models.openworklabs.com
+```
+
+Common misses:
+
+- GitHub release downloads redirect away from `github.com`. Allow `release-assets.githubusercontent.com`, which is the current verified GitHub release-asset host, and `objects.githubusercontent.com`, which is kept for older clients and rollback paths.
+- `registry.npmjs.org` is used when packaged desktop builds start `npx -y openwork-ui-mcp`. If it is blocked, the desktop can still open, but UI-control MCP is unavailable.
+- `models.openworklabs.com` is the default OpenCode model catalog. Set `OPENCODE_MODELS_URL` to an approved internal mirror if the public catalog is blocked.
+
+## Desktop and local runtime destinations
+
+| Host | Requirement | Why it is reached | What breaks when blocked |
+| --- | --- | --- | --- |
+| `app.openworklabs.com` | Required for OpenWork Cloud | Hosted Cloud web origin. The desktop uses one base URL and derives Den API/MCP calls through `/api/den/...`. | Cloud sign-in, org settings, marketplace, and remote workspace flows cannot load. |
+| `api.openworklabs.com` | Required for hosted install and OpenWork Connect | Hosted public API and OpenWork Connect MCP endpoint used by install and external-client flows. | Hosted install checks and public OpenWork Connect fail. |
+| Your self-hosted Den web origin | Required for self-hosted desktop | Replaces `app.openworklabs.com` for signed-in desktop traffic. In the single-origin shape, API and MCP use `/api/den/...` on the same origin. | The desktop cannot sign in or reach Den. |
+| Your separate Den API origin, if configured | Required only for that topology | Used by one-time install-link exchange and external MCP clients when `DEN_API_PUBLIC_URL` points at a separate origin. | Install-link handoff or external MCP clients cannot complete. |
+| `github.com` | Required in practice unless mirrored | Installer/updater release URLs, GitHub issue links, and GitHub plugin source URLs. | Install/update downloads cannot start; GitHub links may not open. |
+| `release-assets.githubusercontent.com` | Required in practice unless mirrored | Current GitHub release-asset redirect target. | Downloads start from `github.com` and fail partway through. |
+| `objects.githubusercontent.com` | Required in practice for legacy/rollback | Legacy GitHub release-asset redirect target. | Older clients or rollback downloads can fail partway through. |
+| `registry.npmjs.org` | Required in practice unless npm is mirrored | `npx` package resolution for `openwork-ui-mcp` and development-only helper commands. | OpenWork UI-control MCP is unavailable. |
+| `models.openworklabs.com` | Required in practice unless mirrored | Default OpenCode model catalog passed as `OPENCODE_MODELS_URL`. | Model selection can be stale, incomplete, or unavailable. |
+| `cdn.simpleicons.org` | Optional | Provider icons when no local icon exists. | Some icons are missing. |
+| `www.google.com` | Optional | Favicon image service and embedded browser new-tab page. | Favicons or the browser panel new tab may not load. |
+| `us.i.posthog.com` | Optional | Product analytics when analytics are enabled. | Analytics are dropped silently. |
+| `openworklabs.com`, `openwork.dev`, `discord.gg`, `ollama.com`, `opencode.ai`, `linear.app`, `mail.google.com` | Optional or link-only | Docs, feedback, community, provider help, local model links, sample links, and generated Gmail links. | Links do not open; core app behavior is unaffected. |
+
+`code.claude.com` and `schemas.agentskills.io` appear in source or schema metadata. They are findable in the manifest, but OpenWork does not fetch them for normal runtime behavior.
+
+## Den runtime destinations
+
+Approve Den separately from desktop clients. A self-hosted Den behind VPN or inside Kubernetes uses the server network, not the user's laptop network.
+
+| Destination | Requirement | Why it is reached | What breaks when blocked |
+| --- | --- | --- | --- |
+| Your MySQL-compatible database host | Required | Den control-plane state. | Den cannot start, migrate, sign users in, or store organization state. |
+| Your SMTP host or Resend | Optional | Transactional email when configured. | Invites, lifecycle, or notification email cannot send. |
+| `api.github.com`, `raw.githubusercontent.com` | Opt-in | GitHub-hosted plugin import and sync. | Plugin import cannot inspect repos or download manifests, skills, commands, agents, or MCP configs. |
+| Google Workspace hosts | Opt-in | Google OAuth and APIs. | Google sign-in or Workspace actions fail. |
+| Provider and MCP hosts | Opt-in | Calls to enabled model providers, OAuth/token endpoints, and MCP servers. | Only the enabled provider or MCP connection fails. |
+
+Google Workspace hostnames in the manifest are `accounts.google.com`, `oauth2.googleapis.com`, `www.googleapis.com`, `gmail.googleapis.com`, and `chat.googleapis.com`.
+
+## Deployment and image-pull destinations
+
+| Host | Requirement | Why it is reached | What breaks when blocked |
+| --- | --- | --- | --- |
+| `ghcr.io` | Required unless mirrored | OpenWork Helm chart and container images. | Kubernetes cannot pull the chart or `openwork-den-api`, `openwork-den-web`, and optional `openwork-inference` images. |
+| Internal registry mirror | Required when public GHCR is blocked | Your mirrored chart and images. | Installs and upgrades fail until the mirror has the requested version. |
+
+For fully isolated deployments, also mirror installer artifacts, npm packages used by `npx`, and the model catalog. See [Air-gapped deployment](/start-here/air-gapped-deployment) and [Installer delivery](/start-here/installer-delivery).
+
+## Opt-in provider and connection hostnames
+
+These hosts are only needed when the corresponding feature, provider, connection, or import path is enabled:
+
+| Feature group | Hostnames | What breaks when blocked |
+| --- | --- | --- |
+| OpenAI direct features | `api.openai.com` | Direct OpenAI Realtime voice and image-generation features fail for users who configured OpenAI. |
+| Google Workspace | `accounts.google.com`, `oauth2.googleapis.com`, `www.googleapis.com`, `gmail.googleapis.com`, `chat.googleapis.com`, `mail.google.com` | OAuth, profile, Calendar, Drive, Gmail, Chat, and generated Gmail links fail as applicable. |
+| Built-in MCP presets | `mcp.notion.com`, `mcp.linear.app`, `mcp.sentry.dev`, `mcp.stripe.com`, `mcp.context7.com`, `mcp.slack.com` | That specific MCP preset cannot connect. |
+| Example or custom MCP URLs | `api.githubcopilot.com` or the customer-configured MCP URL | Only the connection that points at that URL fails. |
+| GitHub plugin import | `api.github.com`, `raw.githubusercontent.com`, and optionally `github.com` links | GitHub plugin import cannot preview or download plugin contents. |
+
+The JSON manifest remains the ownership point for exact host metadata, requirement level, override name, and blocked effect. Use this page for review conversations and the JSON file for automation.

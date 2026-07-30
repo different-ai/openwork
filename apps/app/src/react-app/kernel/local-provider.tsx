@@ -19,7 +19,11 @@ import {
   type DesktopNotificationPreference,
 } from "./desktop-notification-preferences";
 import { LOCAL_PREFERENCES_KEY } from "./local-preferences-storage";
-import { readStoredDefaultModel } from "./model-config";
+import {
+  readStoredDefaultModel,
+  storedDefaultModelChangedEvent,
+  writeStoredDefaultModel,
+} from "./model-config";
 
 export type LocalUIState = {
   view: View;
@@ -149,7 +153,31 @@ export function LocalProvider({ children }: LocalProviderProps) {
 
   useEffect(() => {
     writePersisted(LOCAL_PREFERENCES_KEY, prefs);
+    if (prefs.defaultModel) writeStoredDefaultModel(prefs.defaultModel);
   }, [prefs]);
+
+  useEffect(() => {
+    const updateDefaultModel = () => {
+      const model = readStoredDefaultModel();
+      setPrefsRaw((previous) => {
+        if (
+          previous.defaultModel?.providerID === model.providerID &&
+          previous.defaultModel.modelID === model.modelID
+        ) {
+          return previous;
+        }
+
+        return {
+          ...previous,
+          defaultModel: model,
+          modelVariant: null,
+        };
+      });
+    };
+
+    window.addEventListener(storedDefaultModelChangedEvent, updateDefaultModel);
+    return () => window.removeEventListener(storedDefaultModelChangedEvent, updateDefaultModel);
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") return;

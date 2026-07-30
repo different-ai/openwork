@@ -45,15 +45,13 @@ export const searchMemoryQuerySchema = z
     q: z.string().trim().min(1).max(MAX_QUERY_LENGTH),
     limit: z.coerce.number().int().min(1).max(MAX_SEARCH_LIMIT).default(DEFAULT_LIMIT),
   })
-  .meta({ ref: "MemorySearchQuery" })
 
 export const listMemoryQuerySchema = z
   .object({
     limit: z.coerce.number().int().min(1).max(MAX_LIST_LIMIT).default(DEFAULT_LIMIT),
   })
-  .meta({ ref: "MemoryListQuery" })
 
-export const memoryIdParamSchema = z.object({ id: z.string() }).meta({ ref: "MemoryIdParam" })
+export const memoryIdParamSchema = z.object({ id: z.string() })
 
 const memoryContextResponseSchema = z
   .object({

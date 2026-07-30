@@ -13,7 +13,7 @@ import { jsonValidator, orgMemberRoute, paramValidator } from "../../middleware/
 import { denTypeIdSchema } from "../../openapi.js"
 import { auth } from "../../auth.js"
 import type { OrgRouteVariables } from "./shared.js"
-import { ensureApiKeyManager, idParamSchema, orgAccessFailureStatus } from "./shared.js"
+import { ensureApiKeyManager, ensureApiKeyReader, idParamSchema, orgAccessFailureStatus } from "./shared.js"
 
 const createOrganizationApiKeySchema = z.object({
   name: z.string().trim().min(2).max(64),
@@ -132,7 +132,7 @@ export function registerOrgApiKeyRoutes<T extends { Variables: OrgRouteVariables
           },
         },
         403: {
-          description: "Only workspace owners or members with security configuration permission can list API keys.",
+          description: "Only workspace owners and admins can list API keys.",
           content: {
             "application/json": {
               schema: resolver(forbiddenApiKeyManagerSchema),
@@ -151,7 +151,7 @@ export function registerOrgApiKeyRoutes<T extends { Variables: OrgRouteVariables
     }),
     orgMemberRoute(),
     async (c) => {
-      const access = ensureApiKeyManager(c)
+      const access = ensureApiKeyReader(c)
       if (!access.ok) {
         return c.json(access.response, orgAccessFailureStatus(access.response))
       }
@@ -196,7 +196,7 @@ export function registerOrgApiKeyRoutes<T extends { Variables: OrgRouteVariables
           },
         },
         403: {
-          description: "Only workspace owners or members with security configuration permission can create API keys.",
+          description: "Only workspace owners and super-admins can create API keys.",
           content: {
             "application/json": {
               schema: resolver(forbiddenApiKeyManagerSchema),
@@ -299,7 +299,7 @@ export function registerOrgApiKeyRoutes<T extends { Variables: OrgRouteVariables
           },
         },
         403: {
-          description: "Only workspace owners or members with security configuration permission can delete API keys.",
+          description: "Only workspace owners and super-admins can delete API keys.",
           content: {
             "application/json": {
               schema: resolver(forbiddenApiKeyManagerSchema),

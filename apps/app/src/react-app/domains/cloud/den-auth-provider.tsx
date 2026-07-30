@@ -14,14 +14,17 @@ import {
   clearDenSession,
   createDenClient,
   ensureDenActiveOrganization,
+  denOriginComparisonKey,
   isDenSessionRevokedError,
   readDenBootstrapConfig,
   readDenSettings,
+  resolveDenBaseUrls,
   setDenBootstrapConfig,
   type DenBootstrapConfig,
   type DenUser,
 } from "../../../app/lib/den";
 import { exchangeHandoffAndSignIn } from "../../../app/lib/den-handoff";
+import { readDesktopDistributionInfo } from "../../../app/lib/desktop";
 import {
   denSessionUpdatedEvent,
   denSettingsChangedEvent,
@@ -29,9 +32,19 @@ import {
 import {
   deepLinkBridgeEvent,
   drainPendingDeepLinks,
-  type DeepLinkBridgeDetail,
 } from "../../../app/lib/deep-link-bridge";
 import { parseDenAuthDeepLink } from "../../../app/lib/openwork-links";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { t } from "@/i18n";
 
 export type DenAuthStatus =
   | "checking"
@@ -77,6 +90,56 @@ type DenAuthProviderProps = {
   children: ReactNode;
 };
 
+type PendingServerSwitch = {
+  grant: string;
+  denBaseUrl: string;
+  isEnterpriseActivation: boolean;
+  currentHost: string;
+  newHost: string;
+};
+
+function hostLabel(value: string): string {
+  try {
+    return new URL(value).host;
+  } catch {
+    return value.replace(/^https?:\/\//, "").replace(/\/+$/, "");
+  }
+}
+
+function readDeepLinkEventUrls(detail: unknown): string[] {
+  if (!detail || typeof detail !== "object" || !("urls" in detail)) return [];
+  const urlsValue = detail.urls;
+  const items: readonly unknown[] = Array.isArray(urlsValue) ? urlsValue : [];
+  return items.flatMap((url) => typeof url === "string" ? [url] : []);
+}
+
+function pendingServerSwitchForDeepLink(input: {
+  grant: string;
+  denBaseUrl: string;
+  isEnterpriseActivation: boolean;
+}): PendingServerSwitch | null {
+  const bootstrap = readDenBootstrapConfig();
+  // An enterprise activation permanently binds the installation to the issuing
+  // Den, so confirm a control-plane change even when no bootstrap file
+  // provisioned one. Otherwise any openwork://den-auth link can repoint the
+  // control plane and activate the app in a single unattended step.
+  if (bootstrap.source !== "file" && !input.isEnterpriseActivation) return null;
+
+  const currentApiBaseUrl = resolveDenBaseUrls(bootstrap).apiBaseUrl;
+  const newApiBaseUrl = resolveDenBaseUrls(input.denBaseUrl).apiBaseUrl;
+  const currentOrigin = denOriginComparisonKey(currentApiBaseUrl);
+  const newOrigin = denOriginComparisonKey(newApiBaseUrl);
+  if (!currentOrigin || !newOrigin || currentOrigin === newOrigin) return null;
+
+  return {
+    grant: input.grant,
+    denBaseUrl: input.denBaseUrl,
+    isEnterpriseActivation: input.isEnterpriseActivation,
+    currentHost: hostLabel(currentApiBaseUrl),
+    newHost: hostLabel(newApiBaseUrl),
+  };
+}
+
 /**
  * React port of the Solid `DenAuthProvider` (`apps/app/src/app/cloud/den-auth-provider.tsx`
  * on dev). Drives the Den auth status signal the forced-signin gate and
@@ -93,6 +156,7 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
   const lastSignalRetryAtRef = useRef<number | null>(null);
   const signalRetryInFlightRef = useRef(false);
   const handledGrantsRef = useRef<Set<string>>(new Set());
+  const [pendingServerSwitch, setPendingServerSwitch] = useState<PendingServerSwitch | null>(null);
 
   const updateStatus = useCallback((nextStatus: DenAuthStatus) => {
     statusRef.current = nextStatus;
@@ -217,6 +281,7 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
     void setDenBootstrapConfig({
       baseUrl: denBaseUrl,
       requireSignin: bootstrap.requireSignin,
+      requireActivation: bootstrap.requireActivation,
       ...(bootstrap.brandAppName ? { brandAppName: bootstrap.brandAppName } : {}),
       ...(bootstrap.brandLogoUrl ? { brandLogoUrl: bootstrap.brandLogoUrl } : {}),
       ...(bootstrap.brandIconUrl ? { brandIconUrl: bootstrap.brandIconUrl } : {}),
@@ -270,6 +335,43 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
     return () => window.removeEventListener(denSettingsChangedEvent, handleSettingsChanged);
   }, [consumeBootstrapHandoff]);
 
+  const exchangeDeepLinkGrant = useCallback((
+    grant: string,
+    denBaseUrl: string,
+    isEnterpriseActivation: boolean,
+  ) => {
+    handledGrantsRef.current.add(grant);
+    const client = createDenClient({
+      baseUrl: denBaseUrl,
+    });
+    void exchangeHandoffAndSignIn(grant, {
+      baseUrl: denBaseUrl,
+      client,
+    }).then(async (result) => {
+      if (!result.ok) {
+        handledGrantsRef.current.delete(grant);
+        return;
+      }
+      if (!isEnterpriseActivation) return;
+
+      const bootstrap = readDenBootstrapConfig();
+      await setDenBootstrapConfig({
+        baseUrl: denBaseUrl,
+        requireSignin: true,
+        requireActivation: bootstrap.requireActivation,
+        ...(bootstrap.brandAppName ? { brandAppName: bootstrap.brandAppName } : {}),
+        ...(bootstrap.brandLogoUrl ? { brandLogoUrl: bootstrap.brandLogoUrl } : {}),
+        ...(bootstrap.brandIconUrl ? { brandIconUrl: bootstrap.brandIconUrl } : {}),
+        ...(bootstrap.claimLinks ? { claimLinks: bootstrap.claimLinks } : {}),
+        ...(bootstrap.prepared ? { prepared: bootstrap.prepared } : {}),
+        enterpriseActivation: {
+          activatedAt: new Date().toISOString(),
+          denBaseUrl,
+        },
+      });
+    });
+  }, []);
+
   useEffect(() => {
     if (typeof window === "undefined") return;
 
@@ -279,26 +381,33 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
         if (!parsed || handledGrantsRef.current.has(parsed.grant)) continue;
         handledGrantsRef.current.add(parsed.grant);
 
-        const client = createDenClient({
-          baseUrl: parsed.denBaseUrl,
+        const isEnterpriseActivation =
+          readDesktopDistributionInfo().flavor === "enterprise";
+        const pending = pendingServerSwitchForDeepLink({
+          ...parsed,
+          isEnterpriseActivation,
         });
-        void exchangeHandoffAndSignIn(parsed.grant, {
-          baseUrl: parsed.denBaseUrl,
-          client,
-        }).then((result) => {
-          if (!result.ok) handledGrantsRef.current.delete(parsed.grant);
-        });
+        if (pending) {
+          setPendingServerSwitch(pending);
+          continue;
+        }
+
+        exchangeDeepLinkGrant(
+          parsed.grant,
+          parsed.denBaseUrl,
+          isEnterpriseActivation,
+        );
       }
     };
 
     handleUrls(drainPendingDeepLinks(window));
     const handleDeepLink = (event: Event) => {
-      handleUrls(((event as CustomEvent<DeepLinkBridgeDetail>).detail?.urls ?? []) as string[]);
+      handleUrls(readDeepLinkEventUrls((event as CustomEvent<unknown>).detail));
     };
 
     window.addEventListener(deepLinkBridgeEvent, handleDeepLink);
     return () => window.removeEventListener(deepLinkBridgeEvent, handleDeepLink);
-  }, []);
+  }, [exchangeDeepLinkGrant]);
 
   const value = useMemo<DenAuthStore>(
     () => ({
@@ -312,7 +421,48 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
   );
 
   return (
-    <DenAuthContext.Provider value={value}>{children}</DenAuthContext.Provider>
+    <DenAuthContext.Provider value={value}>
+      {children}
+      <AlertDialog
+        open={Boolean(pendingServerSwitch)}
+        onOpenChange={(open) => {
+          if (!open) setPendingServerSwitch(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("den.switch_server_title")}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {pendingServerSwitch
+                ? t("den.switch_server_body", {
+                    currentHost: pendingServerSwitch.currentHost,
+                    newHost: pendingServerSwitch.newHost,
+                  })
+                : null}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setPendingServerSwitch(null)}>
+              {t("common.cancel")}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (!pendingServerSwitch) return;
+                const next = pendingServerSwitch;
+                setPendingServerSwitch(null);
+                exchangeDeepLinkGrant(
+                  next.grant,
+                  next.denBaseUrl,
+                  next.isEnterpriseActivation,
+                );
+              }}
+            >
+              {t("den.switch_server_confirm")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </DenAuthContext.Provider>
   );
 }
 

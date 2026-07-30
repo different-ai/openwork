@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { existsSync, readdirSync } from "node:fs";
-import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
+import { opencodeDataDirs as defaultOpencodeDataDirs } from "@openwork/paths";
 
 import Database from "better-sqlite3";
 
@@ -21,7 +21,7 @@ function truthy(value: string | undefined): boolean {
   return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
 }
 
-function opencodeOrchestratorDataDirs(): string[] {
+function opencodeOpenworkDataDirs(): string[] {
   const root = process.env.OPENWORK_DATA_DIR?.trim();
   if (!root) return [];
 
@@ -45,16 +45,7 @@ function opencodeOrchestratorDataDirs(): string[] {
 }
 
 function opencodeDataDirs(): string[] {
-  const dirs: string[] = [];
-  dirs.push(...opencodeOrchestratorDataDirs());
-  const xdg = process.env.XDG_DATA_HOME?.trim();
-  if (xdg) dirs.push(join(xdg, "opencode"));
-  dirs.push(join(homedir(), ".local", "share", "opencode"));
-  if (process.platform === "darwin") dirs.push(join(homedir(), "Library", "Application Support", "opencode"));
-  if (process.platform === "win32") {
-    const appData = process.env.APPDATA?.trim();
-    if (appData) dirs.push(join(appData, "opencode"));
-  }
+  const dirs = [...opencodeOpenworkDataDirs(), ...defaultOpencodeDataDirs()];
   return Array.from(new Set(dirs));
 }
 
@@ -70,10 +61,12 @@ function candidateOpencodeDbPaths(): string[] {
   if (override) {
     if (isAbsolute(override)) return [override];
     const candidates: string[] = [];
-    for (const dir of opencodeDataDirs()) {
+    const dirs = opencodeDataDirs();
+    for (const dir of dirs) {
       candidates.push(join(dir, override));
     }
-    candidates.push(join(opencodeDataDirs()[0] ?? join(homedir(), ".local", "share", "opencode"), override));
+    const firstDir = dirs[0];
+    if (firstDir) candidates.push(join(firstDir, override));
     return Array.from(new Set(candidates));
   }
 
@@ -91,7 +84,9 @@ export function resolveOpencodeDbPath(): string {
   const candidates = candidateOpencodeDbPaths();
   const existing = candidates.find((candidate) => existsSync(candidate));
   if (existing) return existing;
-  return candidates[0] ?? join(homedir(), ".local", "share", "opencode", preferredDbNames()[0] ?? "opencode.db");
+  const firstCandidate = candidates[0];
+  if (firstCandidate) return firstCandidate;
+  return "opencode.db";
 }
 
 function findOpencodeSessionDbPath(sessionId: string, inputPath?: string): string | null {

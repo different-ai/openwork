@@ -15,7 +15,6 @@ export const TeamTable = mysqlTable(
       .default(sql`CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)`),
   },
   (table) => [
-    index("team_organization_id").on(table.organizationId),
     uniqueIndex("team_organization_name").on(table.organizationId, table.name),
   ],
 )
@@ -29,7 +28,6 @@ export const TeamMemberTable = mysqlTable(
     createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
   },
   (table) => [
-    index("team_member_team_id").on(table.teamId),
     index("team_member_org_membership_id").on(table.orgMembershipId),
     uniqueIndex("team_member_team_org_membership").on(table.teamId, table.orgMembershipId),
   ],

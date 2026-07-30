@@ -4,11 +4,13 @@ import { env } from "./env.js"
 import { appLogger } from "./observability/logger.js"
 import { shutdownObservability } from "./observability/runtime.js"
 import { startScimMaintenanceLoop } from "./scim-maintenance.js"
+import { startCloudIdleStopLoop } from "./workers/cloud-lifecycle.js"
 import { startWorkerProvisioningReconcileLoop } from "./workers/reconciler.js"
 import { startTelegramUpdateDispatcher } from "./capability-sources/telegram-dispatcher.js"
 import { externalMcpClientRuntimeName } from "./capability-sources/external-mcp-client-runtime.js"
 
 const stopScimMaintenanceLoop = startScimMaintenanceLoop()
+const stopCloudIdleStopLoop = startCloudIdleStopLoop()
 const stopWorkerProvisioningReconcileLoop = startWorkerProvisioningReconcileLoop()
 const stopTelegramUpdateDispatcher = startTelegramUpdateDispatcher()
 
@@ -66,6 +68,7 @@ async function closeServer() {
 async function stopBackgroundLoops() {
   const results = await Promise.allSettled([
     stopScimMaintenanceLoop(),
+    stopCloudIdleStopLoop(),
     stopWorkerProvisioningReconcileLoop(),
     stopTelegramUpdateDispatcher(),
   ])

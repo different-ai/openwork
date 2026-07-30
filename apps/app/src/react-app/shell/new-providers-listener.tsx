@@ -17,6 +17,8 @@ const NEW_PROVIDERS_DEDUPE_KEY = "new-providers";
 
 /** Custom event to request the model picker to open. */
 export const openModelPickerEvent = "openwork-open-model-picker";
+/** Custom event to request the provider auth (connect API keys) modal to open. */
+export const openProviderAuthEvent = "openwork-open-provider-auth";
 export const pendingModelPickerProviderIdsKey = PENDING_MODEL_PICKER_KEY;
 
 function readSeenProviderIds(): Set<string> {

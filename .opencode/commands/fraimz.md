@@ -13,7 +13,7 @@ Arguments: `$ARGUMENTS`
 - If it names an existing flow id (see `pnpm evals --list`), make fraimz for it.
 - Otherwise treat it as the experience to prove and create a flow first.
 - If empty, default to the canonical core flow (`core-flow`): open the app →
-  write a message → get a response → close → reopen with the session intact.
+  create a task → write a message → get a response.
 
 Run the full loop, in order, and stop on any failure:
 

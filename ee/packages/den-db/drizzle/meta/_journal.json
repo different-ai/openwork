@@ -309,6 +309,41 @@
       "when": 1784265799888,
       "tag": "0044_daily_clea",
       "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "5",
+      "when": 1784756365895,
+      "tag": "0045_drop_skill_hub",
+      "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "5",
+      "when": 1784791218612,
+      "tag": "0046_messy_reaper",
+      "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "5",
+      "when": 1784798456005,
+      "tag": "0047_warm_quasar",
+      "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "5",
+      "when": 1784977685376,
+      "tag": "0048_nosy_celestials",
+      "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "5",
+      "when": 1784998956602,
+      "tag": "0049_third_caretaker",
+      "breakpoints": true
     }
   ]
 }

@@ -10,18 +10,23 @@ function readOrgSelectionSource() {
   return readFileSync(orgSelectionPath, "utf8");
 }
 
-describe("org selection paper contract", () => {
-  test("uses the same light Dithering layer as the join flow", () => {
+describe("org selection desktop sign-in pattern", () => {
+  test("uses the same dither + centered card shell as desktop forced sign-in", () => {
     const source = readOrgSelectionSource();
 
-    expect(source).toContain('className="relative isolate min-h-dvh overflow-y-auto bg-[#f8fbff] px-4 py-8 text-slate-950 sm:py-12"');
-    expect(source).toContain('className="pointer-events-none fixed inset-0 z-0 overflow-hidden bg-[#f8fbff] opacity-[0.09]"');
-    expect(source).toContain('colorBack="#F8FBFF"');
-    expect(source).toContain('colorFront="#8FB7E8"');
-    expect(source).toContain("const shaderSpeed = reducedMotion ? 0 : 0.012;");
-    expect(source).toContain('data-shader-speed={shaderSpeed}');
-    expect(source).toContain('className="den-frame-inset grid gap-2 rounded-[1.5rem] p-2"');
-    expect(source).not.toContain("bg-[#0f1d31]");
+    expect(source).toContain('data-testid="org-chooser-root"');
+    expect(source).toContain('data-testid="org-chooser-background"');
+    expect(source).toContain('opacity-[0.1]');
+    expect(source).toContain('type="2x2"');
+    expect(source).toContain("size={20.3}");
+    expect(source).toContain('colorBack="#00000000"');
+    expect(source).toContain('colorFront="#000000"');
+    expect(source).toContain("const shaderSpeed = reducedMotion ? 0 : 0.01;");
+    expect(source).toContain("max-w-[720px]");
+    expect(source).toContain("rounded-3xl");
+    expect(source).toContain("/openwork-mark.svg");
+    expect(source).not.toContain("bg-[#f8fbff]");
+    expect(source).not.toContain('colorFront="#8FB7E8"');
     expect(source).not.toContain("PaperMeshGradient");
   });
 
@@ -30,16 +35,16 @@ describe("org selection paper contract", () => {
 
     expect(source).toContain('data-testid="org-chooser-foreground"');
     expect(source).toContain('data-testid="org-chooser-list"');
-    expect(source).toContain("hover:bg-white");
-    expect(source).not.toContain("disabled:opacity");
+    expect(source).toContain("Choose an organization");
+    expect(source).toContain("hover:bg-[var(--dls-hover)]");
   });
 
   test("keeps the shell and actions stable on small screens", () => {
     const source = readOrgSelectionSource();
 
-    expect(source).toContain('data-testid="org-chooser-root"');
     expect(source).toContain('data-testid="org-chooser-actions"');
     expect(source).toContain("Create or join");
     expect(source).toContain("Sign out");
+    expect(source).toContain("sm:px-16");
   });
 });

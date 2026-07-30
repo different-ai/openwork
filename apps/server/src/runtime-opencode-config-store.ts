@@ -1,10 +1,9 @@
-import { homedir } from "node:os";
 import { existsSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
-import { eq } from "drizzle-orm";
-import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { runtimeDbPath } from "./runtime-db.js";
 import type { ServerConfig } from "./types.js";
-import { ensureDir } from "./utils.js";
+import { createWorkspaceKvStore, isRecord } from "./workspace-kv-store.js";
+
+export { runtimeDbPath, runtimeStorageDir } from "./runtime-db.js";
 
 export type RuntimeOpencodeConfig = {
   default_agent?: string;
@@ -17,19 +16,10 @@ export type RuntimeOpencodeConfig = {
   provider?: Record<string, unknown>;
 };
 
-const runtimeOpencodeConfigs = sqliteTable("runtime_opencode_configs", {
-  workspaceId: text("workspace_id").primaryKey(),
-  configJson: text("config_json").notNull(),
-  updatedAt: integer("updated_at").notNull(),
-});
+export const ENGINE_GLOBAL_RUNTIME_CONFIG_ID = "__openwork_engine_global__";
 
-type RuntimeOpencodeDb = {
-  get: (workspaceId: string) => { configJson: string } | undefined;
-  upsert: (value: { workspaceId: string; configJson: string; updatedAt: number }) => void;
-};
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+export function isEngineGlobalRuntimeConfigId(workspaceId: string): boolean {
+  return workspaceId === ENGINE_GLOBAL_RUNTIME_CONFIG_ID;
 }
 
 function normalizeRuntimeOpencodeConfig(value: unknown): RuntimeOpencodeConfig {
@@ -61,18 +51,12 @@ function parseRuntimeOpencodeConfig(configJson: string): RuntimeOpencodeConfig {
   }
 }
 
-export function runtimeDbPath(config: ServerConfig): string {
-  const override = process.env.OPENWORK_RUNTIME_DB?.trim();
-  if (override) return resolve(override);
-  const configPath = config.configPath?.trim();
-  const configDir = configPath ? dirname(configPath) : join(homedir(), ".config", "openwork");
-  return join(configDir, "runtime.sqlite");
-}
-
-/** Directory holding runtime state (the SQLite DB and derived files). */
-export function runtimeStorageDir(config: ServerConfig): string {
-  return dirname(runtimeDbPath(config));
-}
+const runtimeOpencodeConfigStore = createWorkspaceKvStore<RuntimeOpencodeConfig>({
+  tableName: "runtime_opencode_configs",
+  valueColumn: "config_json",
+  parse: parseRuntimeOpencodeConfig,
+  serialize: (value) => JSON.stringify(value),
+});
 
 export type RuntimeOpencodeConfigWriteListener = (config: ServerConfig, workspaceId: string) => void;
 
@@ -88,60 +72,6 @@ export function onRuntimeOpencodeConfigWrite(listener: RuntimeOpencodeConfigWrit
   return () => writeListeners.delete(listener);
 }
 
-async function openRuntimeDb(path: string): Promise<RuntimeOpencodeDb> {
-  await ensureDir(dirname(path));
-  if (typeof process.versions.bun === "string") {
-    const { Database } = await import("bun:sqlite");
-    const { drizzle } = await import("drizzle-orm/bun-sqlite");
-    const sqlite = new Database(path, { create: true });
-    sqlite.run("CREATE TABLE IF NOT EXISTS runtime_opencode_configs (workspace_id TEXT PRIMARY KEY NOT NULL, config_json TEXT NOT NULL, updated_at INTEGER NOT NULL)");
-    const db = drizzle(sqlite);
-    return {
-      get: (workspaceId) => db
-        .select()
-        .from(runtimeOpencodeConfigs)
-        .where(eq(runtimeOpencodeConfigs.workspaceId, workspaceId))
-        .get(),
-      upsert: ({ workspaceId, configJson, updatedAt }) => {
-        db
-          .insert(runtimeOpencodeConfigs)
-          .values({ workspaceId, configJson, updatedAt })
-          .onConflictDoUpdate({
-            target: runtimeOpencodeConfigs.workspaceId,
-            set: { configJson, updatedAt },
-          })
-          .run();
-      },
-    };
-  }
-  const { DatabaseSync } = await import("node:sqlite");
-  const sqlite = new DatabaseSync(path);
-  sqlite.exec("CREATE TABLE IF NOT EXISTS runtime_opencode_configs (workspace_id TEXT PRIMARY KEY NOT NULL, config_json TEXT NOT NULL, updated_at INTEGER NOT NULL)");
-  const get = sqlite.prepare("SELECT config_json AS configJson FROM runtime_opencode_configs WHERE workspace_id = ?");
-  const upsert = sqlite.prepare("INSERT INTO runtime_opencode_configs (workspace_id, config_json, updated_at) VALUES (?, ?, ?) ON CONFLICT(workspace_id) DO UPDATE SET config_json = excluded.config_json, updated_at = excluded.updated_at");
-  return {
-    get: (workspaceId) => {
-      const row = get.get(workspaceId);
-      if (!isRecord(row) || typeof row.configJson !== "string") return undefined;
-      return { configJson: row.configJson };
-    },
-    upsert: ({ workspaceId, configJson, updatedAt }) => {
-      upsert.run(workspaceId, configJson, updatedAt);
-    },
-  };
-}
-
-const dbByPath = new Map<string, Promise<RuntimeOpencodeDb>>();
-
-async function runtimeDb(config: ServerConfig): Promise<RuntimeOpencodeDb> {
-  const path = runtimeDbPath(config);
-  const existing = dbByPath.get(path);
-  if (existing) return existing;
-  const db = openRuntimeDb(path);
-  dbByPath.set(path, db);
-  return db;
-}
-
 export function runtimePluginList(config: RuntimeOpencodeConfig): string[] {
   return Array.isArray(config.plugin) ? config.plugin.filter((item) => typeof item === "string") : [];
 }
@@ -154,6 +84,24 @@ export function runtimeDisabledProviderList(config: RuntimeOpencodeConfig): stri
 
 export function runtimeMcpMap(config: RuntimeOpencodeConfig): Record<string, Record<string, unknown>> {
   return isRecord(config.mcp) ? config.mcp as Record<string, Record<string, unknown>> : {};
+}
+
+export function runtimeProviderMap(config: RuntimeOpencodeConfig): Record<string, Record<string, unknown>> {
+  const provider: Record<string, Record<string, unknown>> = {};
+  if (!isRecord(config.provider)) return provider;
+  for (const [providerId, value] of Object.entries(config.provider)) {
+    if (isRecord(value)) provider[providerId] = value;
+  }
+  return provider;
+}
+
+/** Narrow server-owned read port for consumers that need one runtime MCP endpoint. */
+export async function readRuntimeMcpConfig(
+  config: ServerConfig,
+  workspaceId: string,
+  name: string,
+): Promise<Record<string, unknown> | null> {
+  return runtimeMcpMap(await readRuntimeOpencodeConfig(config, workspaceId))[name] ?? null;
 }
 
 export function runtimeExternalDirectory(config: RuntimeOpencodeConfig): Record<string, unknown> {
@@ -184,10 +132,78 @@ export function mergeRuntimeProviderUpdate(
 }
 
 export async function readRuntimeOpencodeConfig(config: ServerConfig, workspaceId: string): Promise<RuntimeOpencodeConfig> {
-  const db = await runtimeDb(config);
-  const row = db.get(workspaceId);
-  if (!row) return {};
-  return parseRuntimeOpencodeConfig(row.configJson);
+  return await runtimeOpencodeConfigStore.get(config, workspaceId) ?? {};
+}
+
+export async function readGlobalRuntimeOpencodeConfig(config: ServerConfig): Promise<RuntimeOpencodeConfig> {
+  return await readRuntimeOpencodeConfig(config, ENGINE_GLOBAL_RUNTIME_CONFIG_ID);
+}
+
+export async function writeGlobalRuntimeOpencodeConfig(
+  config: ServerConfig,
+  updater: (current: RuntimeOpencodeConfig) => RuntimeOpencodeConfig,
+): Promise<{ config: RuntimeOpencodeConfig; changed: boolean }> {
+  return await writeRuntimeOpencodeConfig(config, ENGINE_GLOBAL_RUNTIME_CONFIG_ID, updater);
+}
+
+function uniqueStrings(items: string[]): string[] {
+  return items.filter((item, index, list) => list.indexOf(item) === index);
+}
+
+function mergeRuntimeOpencodeConfigLayers(
+  base: RuntimeOpencodeConfig,
+  overlay: RuntimeOpencodeConfig,
+): RuntimeOpencodeConfig {
+  const plugin = uniqueStrings([
+    ...runtimePluginList(base),
+    ...runtimePluginList(overlay),
+  ]);
+  const disabledProviders = uniqueStrings([
+    ...runtimeDisabledProviderList(base),
+    ...runtimeDisabledProviderList(overlay),
+  ]);
+  const mcp = {
+    ...runtimeMcpMap(base),
+    ...runtimeMcpMap(overlay),
+  };
+  const basePermission = isRecord(base.permission) ? base.permission : {};
+  const overlayPermission = isRecord(overlay.permission) ? overlay.permission : {};
+  const externalDirectory = {
+    ...runtimeExternalDirectory(base),
+    ...runtimeExternalDirectory(overlay),
+  };
+  const permission = {
+    ...basePermission,
+    ...overlayPermission,
+    ...(Object.keys(externalDirectory).length ? { external_directory: externalDirectory } : {}),
+  };
+  const provider = {
+    ...runtimeProviderMap(base),
+    ...runtimeProviderMap(overlay),
+  };
+
+  return normalizeRuntimeOpencodeConfig({
+    ...(base.default_agent || overlay.default_agent ? { default_agent: overlay.default_agent ?? base.default_agent } : {}),
+    ...(plugin.length ? { plugin } : {}),
+    ...(disabledProviders.length ? { disabled_providers: disabledProviders } : {}),
+    ...(Object.keys(mcp).length ? { mcp } : {}),
+    ...(Object.keys(permission).length ? { permission } : {}),
+    ...(Object.keys(provider).length ? { provider } : {}),
+  });
+}
+
+export async function readEffectiveRuntimeOpencodeConfig(
+  config: ServerConfig,
+  workspaceId: string,
+): Promise<RuntimeOpencodeConfig> {
+  if (isEngineGlobalRuntimeConfigId(workspaceId)) {
+    return await readRuntimeOpencodeConfig(config, workspaceId);
+  }
+  const [globalRuntime, workspaceRuntime] = await Promise.all([
+    readGlobalRuntimeOpencodeConfig(config),
+    readRuntimeOpencodeConfig(config, workspaceId),
+  ]);
+  return mergeRuntimeOpencodeConfigLayers(globalRuntime, workspaceRuntime);
 }
 
 export type RuntimeOpencodeConfigInspection = {
@@ -354,16 +370,15 @@ export async function writeRuntimeOpencodeConfig(
   workspaceId: string,
   updater: (current: RuntimeOpencodeConfig) => RuntimeOpencodeConfig,
 ): Promise<{ config: RuntimeOpencodeConfig; changed: boolean }> {
-  const db = await runtimeDb(config);
-  const row = db.get(workspaceId);
-  const current = row ? parseRuntimeOpencodeConfig(row.configJson) : {};
+  const row = await runtimeOpencodeConfigStore.getRow(config, workspaceId);
+  const current = row ? row.value : {};
   const next = normalizeRuntimeOpencodeConfig(updater(current));
   const now = Date.now();
-  const configJson = JSON.stringify(next);
-  if (row?.configJson === configJson) {
+  const configJson = runtimeOpencodeConfigStore.serialize(next);
+  if (row?.valueJson === configJson) {
     return { config: next, changed: false };
   }
-  db.upsert({ workspaceId, configJson, updatedAt: now });
+  await runtimeOpencodeConfigStore.setSerialized(config, workspaceId, configJson, now);
   for (const listener of writeListeners) listener(config, workspaceId);
   return { config: next, changed: true };
 }
@@ -376,6 +391,7 @@ export function mergeOpencodeConfigs(
   const persistedExternalDirectory = isRecord(persistedPermission.external_directory)
     ? persistedPermission.external_directory
     : {};
+  const runtimeProvider = runtimeProviderMap(runtime);
   return {
     ...persisted,
     plugin: [
@@ -397,7 +413,7 @@ export function mergeOpencodeConfigs(
         ...runtimeExternalDirectory(runtime),
       },
     },
-    ...(runtime.provider ? { provider: { ...(isRecord(persisted.provider) ? persisted.provider : {}), ...runtime.provider } } : {}),
+    ...(Object.keys(runtimeProvider).length ? { provider: { ...(isRecord(persisted.provider) ? persisted.provider : {}), ...runtimeProvider } } : {}),
     ...(runtime.default_agent ? { default_agent: runtime.default_agent } : {}),
   };
 }

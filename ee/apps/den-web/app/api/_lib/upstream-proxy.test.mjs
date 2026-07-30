@@ -82,6 +82,89 @@ describe("Den upstream proxy", () => {
     }
   });
 
+  const INSTANCE_ORIGIN = "https://8787-2bnptanfwxs5j8vu.daytonaproxy01.net";
+
+  test("answers the preflight for a rotating Cloud instance origin", async () => {
+    const { proxyUpstream } = await import("./upstream-proxy.ts");
+    const request = new NextRequest("https://app.example.com/api/den/v1/me", {
+      method: "OPTIONS",
+      headers: {
+        origin: INSTANCE_ORIGIN,
+        "access-control-request-method": "GET",
+        "access-control-request-headers": "authorization,content-type",
+      },
+    });
+
+    const response = await proxyUpstream(request, [], { routePrefix: "/api/den" });
+
+    expect(response.status).toBe(204);
+    expect(response.headers.get("access-control-allow-origin")).toBe(INSTANCE_ORIGIN);
+    expect(response.headers.get("access-control-allow-credentials")).toBe("true");
+    expect(response.headers.get("access-control-allow-headers")).toBe("authorization,content-type");
+    expect(response.headers.get("vary")).toContain("Origin");
+  });
+
+  test("reflects the instance origin on the real response and strips cookies upstream", async () => {
+    const { proxyUpstream } = await import("./upstream-proxy.ts");
+    const request = new NextRequest("https://app.example.com/api/den/v1/me", {
+      method: "GET",
+      headers: {
+        origin: INSTANCE_ORIGIN,
+        authorization: "Bearer tok_instance",
+        cookie: "ow_session=must_not_leak",
+      },
+    });
+
+    const response = await proxyUpstream(request, [], { routePrefix: "/api/den" });
+
+    expect(response.headers.get("access-control-allow-origin")).toBe(INSTANCE_ORIGIN);
+    // The whole safety argument: an instance-origin call is bearer-only and can
+    // never ride the viewer's dashboard session.
+    expect(observed.cookie).toBeNull();
+    expect(observed.authorization).toBe("Bearer tok_instance");
+  });
+
+  test("does not reflect a non-instance origin and keeps its cookies", async () => {
+    const { proxyUpstream } = await import("./upstream-proxy.ts");
+    const request = new NextRequest("https://app.example.com/api/den/v1/me", {
+      method: "GET",
+      headers: {
+        origin: "https://evil.example.com",
+        cookie: "ow_session=sess_test",
+      },
+    });
+
+    const response = await proxyUpstream(request, [], { routePrefix: "/api/den" });
+
+    expect(response.headers.get("access-control-allow-origin")).toBeNull();
+    expect(observed.cookie).toBe("ow_session=sess_test");
+  });
+
+  test("does not reflect instance origins on the auth proxy", async () => {
+    const { proxyUpstream } = await import("./upstream-proxy.ts");
+    const request = new NextRequest("https://app.example.com/api/auth/session", {
+      method: "GET",
+      headers: { origin: INSTANCE_ORIGIN, cookie: "ow_session=sess_test" },
+    });
+
+    const response = await proxyUpstream(request, [], { routePrefix: "/api/auth", upstreamPathPrefix: "api/auth" });
+
+    expect(response.headers.get("access-control-allow-origin")).toBeNull();
+    expect(observed.cookie).toBe("ow_session=sess_test");
+  });
+
+  test("rejects http and lookalike hostnames", async () => {
+    const { proxyUpstream } = await import("./upstream-proxy.ts");
+    for (const origin of ["http://8787-x.daytonaproxy01.net", "https://daytonaproxy01.net.evil.com"]) {
+      const request = new NextRequest("https://app.example.com/api/den/v1/me", {
+        method: "GET",
+        headers: { origin },
+      });
+      const response = await proxyUpstream(request, [], { routePrefix: "/api/den" });
+      expect(response.headers.get("access-control-allow-origin")).toBeNull();
+    }
+  });
+
   test("passes method, path, query, body, cookies, auth, status, and headers through", async () => {
     const { proxyUpstream } = await import("./upstream-proxy.ts");
     const request = new NextRequest("https://app.example.com/api/den/v1/me?include=org", {

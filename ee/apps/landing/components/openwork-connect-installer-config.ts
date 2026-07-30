@@ -43,7 +43,7 @@ opencode mcp auth openwork`;
 export const CONNECT_CLIENT_SUPPORT: Record<OpenWorkConnectClientId, OpenWorkConnectClientSupport> = {
   "cursor": {
     status: "Setup only",
-    explanation: "Setup guide only: use Cursor Web/Agents with its HTTPS OAuth callback. Cursor Desktop OAuth uses cursor://anysphere.cursor-mcp/oauth/callback, which OpenWork's MCP profile intentionally rejects."
+    explanation: "Setup guide only: paste the server URL into Cursor and start OAuth. Cursor Desktop's cursor://anysphere.cursor-mcp/oauth/callback callback is accepted through an exact allowlist with PKCE S256 enforced. Native proof is not complete."
   },
   "codex": {
     status: "Setup only",

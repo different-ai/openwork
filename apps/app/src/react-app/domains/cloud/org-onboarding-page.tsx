@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useMutation, useQueries, useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import {
@@ -33,7 +33,10 @@ import {
   isAlphaUpdateAllowed,
   resolveFreshStableDesktopUpdate,
 } from "@/app/lib/version-gate";
-import { exchangeHandoffAndSignIn } from "@/app/lib/den-handoff";
+import {
+  DEN_HANDOFF_AUTO_CONTINUE_KEY,
+  exchangeHandoffAndSignIn,
+} from "@/app/lib/den-handoff";
 import { denSettingsChangedEvent } from "@/app/lib/den-session-events";
 import { usePlatform } from "../../kernel/platform";
 import { useBootState } from "../../shell/boot-state";
@@ -257,9 +260,6 @@ function PreparedWorkspacePage({ prepared }: { prepared: PreparedBootstrapSummar
             <CheckCircle2 className="size-3.5" />
             Setup complete — OpenWork is ready
           </div>
-          <div className="mx-auto flex size-14 items-center justify-center rounded-2xl border border-dls-border bg-dls-hover">
-            <BuildingOffice2Icon className="size-7 text-foreground" />
-          </div>
           <PageTitle>{prepared.orgName}</PageTitle>
         </PageHeader>
 
@@ -331,6 +331,55 @@ function markProvidersSeen(providers: DenOrgLlmProvider[]) {
   } catch {}
 }
 
+type OrgOnboardingInitialSelectionState = {
+  hasSelectedOrganization: boolean;
+  autoContinueResources: boolean;
+};
+
+export function initialOrgOnboardingSelectionState(): OrgOnboardingInitialSelectionState {
+  return {
+    hasSelectedOrganization: false,
+    autoContinueResources: false,
+  };
+}
+
+type OrgOnboardingPostListStep =
+  | { kind: "auto-select-single-org"; organization: DenOrgSummary }
+  | { kind: "choose-org"; defaultOrganization: DenOrgSummary }
+  | { kind: "resources"; autoContinue: boolean };
+
+export function resolveOrgOnboardingPostListStep({
+  orgs,
+  activeOrgId,
+  hasSelectedOrganization,
+  autoContinueResources,
+  autoSelectFailedOrgId,
+}: {
+  orgs: DenOrgSummary[];
+  activeOrgId: string;
+  hasSelectedOrganization: boolean;
+  autoContinueResources: boolean;
+  autoSelectFailedOrgId: string | null;
+}): OrgOnboardingPostListStep {
+  const singleOrg = orgs.length === 1 ? orgs[0] : null;
+
+  if (orgs.length > 0 && !hasSelectedOrganization) {
+    if (singleOrg && autoSelectFailedOrgId !== singleOrg.id) {
+      return { kind: "auto-select-single-org", organization: singleOrg };
+    }
+
+    return {
+      kind: "choose-org",
+      defaultOrganization: orgs.find((org) => org.id === activeOrgId) ?? orgs[0],
+    };
+  }
+
+  return {
+    kind: "resources",
+    autoContinue: autoContinueResources || orgs.length <= 1,
+  };
+}
+
 /**
  * Full-screen onboarding page shown after sign-in + org selection.
  * Fetches all org resources (providers, marketplaces, skills)
@@ -343,8 +392,16 @@ export function OrgOnboardingPage() {
   const { authToken, denClient, orgId, settings } = useDenClient();
   const { markRouteReady } = useBootState();
   const prepared = usePreparedBootstrap();
-  const [hasSelectedOrganization, setHasSelectedOrganization] = useState(false);
-  
+  const initialSelectionState = initialOrgOnboardingSelectionState();
+  const [hasSelectedOrganization, setHasSelectedOrganization] = useState(
+    initialSelectionState.hasSelectedOrganization,
+  );
+  const [autoContinueResources, setAutoContinueResources] = useState(
+    initialSelectionState.autoContinueResources,
+  );
+  const [autoSelectFailedOrgId, setAutoSelectFailedOrgId] = useState<string | null>(null);
+  const autoSelectingOrgIdRef = useRef<string | null>(null);
+
   useEffect(() => {
     window.dispatchEvent(new CustomEvent(orgOnboardingVisibilityEvent, { detail: { visible: true } }));
     return () => {
@@ -380,6 +437,51 @@ export function OrgOnboardingPage() {
     enabled: Boolean(authToken),
     queryFn: () => denClient.listOrgs(),
   });
+  const orgs = data?.orgs ?? [];
+  const postListStep = resolveOrgOnboardingPostListStep({
+    orgs,
+    activeOrgId: orgId,
+    hasSelectedOrganization,
+    autoContinueResources,
+    autoSelectFailedOrgId,
+  });
+  const autoSelectOrg = postListStep.kind === "auto-select-single-org"
+    ? postListStep.organization
+    : null;
+
+  useEffect(() => {
+    if (!authToken || !autoSelectOrg) return;
+    if (autoSelectingOrgIdRef.current === autoSelectOrg.id) return;
+
+    let cancelled = false;
+    autoSelectingOrgIdRef.current = autoSelectOrg.id;
+    void denClient
+      .setActiveOrganization({ organizationId: autoSelectOrg.id })
+      .then(() => {
+        if (cancelled) return;
+        writeDenSettings({
+          ...settings,
+          authToken: authToken || null,
+          activeOrgId: autoSelectOrg.id,
+          activeOrgSlug: autoSelectOrg.slug,
+          activeOrgName: autoSelectOrg.name,
+        });
+        setAutoContinueResources(true);
+        setHasSelectedOrganization(true);
+      })
+      .catch(() => {
+        if (!cancelled) setAutoSelectFailedOrgId(autoSelectOrg.id);
+      })
+      .finally(() => {
+        if (autoSelectingOrgIdRef.current === autoSelectOrg.id) {
+          autoSelectingOrgIdRef.current = null;
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [authToken, autoSelectOrg, denClient, settings]);
 
   if (!authToken) {
     return prepared ? <PreparedWorkspacePage prepared={prepared} /> : null;
@@ -392,9 +494,6 @@ export function OrgOnboardingPage() {
         <PageTitlebarRegion />
         <PageContainer>
           <PageHeader>
-            <div className="mx-auto flex size-14 items-center justify-center rounded-2xl border border-dls-border bg-dls-hover">
-              <BuildingOffice2Icon className="size-7 text-foreground" />
-            </div>
             <PageTitle>Your organization</PageTitle>
           </PageHeader>
           <PageContent>
@@ -415,9 +514,6 @@ export function OrgOnboardingPage() {
         <PageTitlebarRegion />
         <PageContainer>
           <PageHeader>
-            <div className="mx-auto flex size-14 items-center justify-center rounded-2xl border border-dls-border bg-dls-hover">
-              <BuildingOffice2Icon className="size-7 text-foreground" />
-            </div>
             <PageTitle>Choose your organization</PageTitle>
             <Alert variant="destructive">
               <CircleAlert />
@@ -431,23 +527,47 @@ export function OrgOnboardingPage() {
     );
   }
 
-  if ((data?.orgs.length ?? 0) > 0 && !hasSelectedOrganization) {
+  if (postListStep.kind === "auto-select-single-org") {
+    return (
+      <Page>
+        <PageBackground />
+        <PageTitlebarRegion />
+        <PageContainer>
+          <PageHeader>
+            <PageTitle>Your organization</PageTitle>
+          </PageHeader>
+          <PageContent>
+            <PageLoading>
+              <PageLoadingSpinner />
+              <PageLoadingDescription>Loading organizations...</PageLoadingDescription>
+            </PageLoading>
+          </PageContent>
+        </PageContainer>
+      </Page>
+    );
+  }
+
+  if (postListStep.kind === "choose-org") {
     return (
       <OrganizationSelectionPage
-        orgs={data.orgs}
-        defaultOrganization={
-          data.orgs.find((org) => org.id === orgId) ??
-          data.orgs[0]
-        }
-        onContinue={() => setHasSelectedOrganization(true)}
+        orgs={orgs}
+        defaultOrganization={postListStep.defaultOrganization}
+        onContinue={() => {
+          setAutoContinueResources(false);
+          setHasSelectedOrganization(true);
+        }}
       />
     );
   }
 
-  return <ResourceSelectionPage />;
+  return (
+    <ResourceSelectionPage
+      autoContinue={postListStep.autoContinue}
+    />
+  );
 }
 
-export function ResourceSelectionPage() {
+export function ResourceSelectionPage({ autoContinue = false }: { autoContinue?: boolean }) {
   const navigate = useNavigate();
   const platform = usePlatform();
   const { markRouteReady } = useBootState();
@@ -463,6 +583,7 @@ export function ResourceSelectionPage() {
   } | null>(null);
   const [preparingBranding, setPreparingBranding] = useState(false);
   const [brandingRestart, setBrandingRestart] = useState<BrandingRestartState | null>(null);
+  const autoContinueAttemptedRef = useRef(false);
 
   // Redirect if no auth or no org — can't show onboarding without them
   useEffect(() => {
@@ -496,7 +617,7 @@ export function ResourceSelectionPage() {
     }),
   });
 
-  const finishOnboarding = useCallback(() => {
+  const finishOnboarding = useCallback((optionsArg?: { requestReload?: boolean }) => {
     // If user picked a default model, write it
     if (selectedDefault) {
       writeStoredDefaultModel({
@@ -507,7 +628,10 @@ export function ResourceSelectionPage() {
     // Mark all providers shown on this page as "seen" so the global
     // toast doesn't re-fire for them on the next sync interval.
     markProvidersSeen(providers);
-    if (providers.length > 0) {
+    try {
+      window.sessionStorage.removeItem(DEN_HANDOFF_AUTO_CONTINUE_KEY);
+    } catch {}
+    if (providers.length > 0 && optionsArg?.requestReload !== false) {
       try {
         window.localStorage.setItem(RELOAD_AFTER_ONBOARDING_KEY, "1");
       } catch {}
@@ -515,9 +639,9 @@ export function ResourceSelectionPage() {
     navigate("/session", { replace: true });
   }, [navigate, providers, selectedDefault]);
 
-  const handleContinue = useCallback(async () => {
+  const handleContinue = useCallback(async (optionsArg?: { requestReload?: boolean }) => {
     if (!window.__OPENWORK_ELECTRON__?.shell?.relaunch) {
-      finishOnboarding();
+      finishOnboarding({ requestReload: optionsArg?.requestReload });
       return;
     }
 
@@ -525,13 +649,13 @@ export function ResourceSelectionPage() {
     try {
       const desktopConfig = await refreshFresh();
       if (!hasWorkspaceBranding(desktopConfig)) {
-        finishOnboarding();
+        finishOnboarding({ requestReload: optionsArg?.requestReload });
         return;
       }
 
       const fingerprint = workspaceBrandingFingerprint(orgId, desktopConfig);
       if (window.localStorage.getItem(APPLIED_BRANDING_FINGERPRINT_KEY) === fingerprint) {
-        finishOnboarding();
+        finishOnboarding({ requestReload: optionsArg?.requestReload });
         return;
       }
 
@@ -568,6 +692,14 @@ export function ResourceSelectionPage() {
     }
   }, [finishOnboarding, orgId, refreshFresh]);
 
+  useEffect(() => {
+    if (!autoContinue || autoContinueAttemptedRef.current) return;
+    if (loading || error || preparingBranding || brandingRestart) return;
+
+    autoContinueAttemptedRef.current = true;
+    void handleContinue({ requestReload: false });
+  }, [autoContinue, brandingRestart, error, handleContinue, loading, preparingBranding]);
+
   const restartWithBranding = useCallback(async () => {
     if (!brandingRestart) return;
     window.localStorage.setItem(APPLIED_BRANDING_FINGERPRINT_KEY, brandingRestart.fingerprint);
@@ -588,6 +720,8 @@ export function ResourceSelectionPage() {
 
   const totalModels = providers.reduce((sum, provider) => sum + provider.models.length, 0);
   const hasResources = providers.length > 0 || marketplaces.length > 0;
+  const autoContinuePending =
+    autoContinue && !loading && !error && !brandingRestart;
 
   if (preparingBranding) {
     return (
@@ -596,9 +730,6 @@ export function ResourceSelectionPage() {
         <PageTitlebarRegion />
         <PageContainer>
           <PageHeader>
-            <div className="mx-auto flex size-14 items-center justify-center rounded-2xl border border-dls-border bg-dls-hover">
-              <BuildingOffice2Icon className="size-7 text-foreground" />
-            </div>
             <PageTitle>Preparing workspace identity</PageTitle>
             <PageDescription>
               Applying {orgName || "your workspace"}&apos;s branding and checking for an application update.
@@ -622,9 +753,6 @@ export function ResourceSelectionPage() {
         <PageTitlebarRegion />
         <PageContainer>
           <PageHeader>
-            <div className="mx-auto flex size-14 items-center justify-center rounded-2xl border border-dls-border bg-dls-hover">
-              <BuildingOffice2Icon className="size-7 text-foreground" />
-            </div>
             <PageTitle>Workspace identity is ready</PageTitle>
             <PageDescription>
               Restart OpenWork once to finish applying {orgName || "your workspace"}&apos;s name and app icon everywhere.
@@ -666,6 +794,26 @@ export function ResourceSelectionPage() {
     );
   }
 
+  if (autoContinuePending) {
+    return (
+      <Page>
+        <PageBackground />
+        <PageTitlebarRegion />
+        <PageContainer>
+          <PageHeader>
+            <PageTitle>{orgName || "Your organization"}</PageTitle>
+          </PageHeader>
+          <PageContent>
+            <PageLoading>
+              <PageLoadingSpinner />
+              <PageLoadingDescription>Loading available resources...</PageLoadingDescription>
+            </PageLoading>
+          </PageContent>
+        </PageContainer>
+      </Page>
+    );
+  }
+
   return (
     <Page>
       <PageBackground />
@@ -683,9 +831,6 @@ export function ResourceSelectionPage() {
               Setup complete — OpenWork prepared this workspace
             </div>
           ) : null}
-          <div className="mx-auto flex size-14 items-center justify-center rounded-2xl border border-dls-border bg-dls-hover">
-            <BuildingOffice2Icon className="size-7 text-foreground" />
-          </div>
           <PageTitle>
             {orgName || "Your organization"}
           </PageTitle>
@@ -1000,9 +1145,6 @@ function OrganizationSelectionPage({
       <PageTitlebarRegion />
       <PageContainer>
         <PageHeader>
-          <div className="mx-auto flex size-14 items-center justify-center rounded-2xl border border-dls-border bg-dls-hover">
-            <BuildingOffice2Icon className="size-7 text-foreground" />
-          </div>
           <PageTitle>Choose your organization</PageTitle>
           {error ? (
             <Alert variant="destructive">

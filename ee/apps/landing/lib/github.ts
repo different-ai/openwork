@@ -129,9 +129,22 @@ export const getGithubData = async () => {
     (latestRelease && hasWindowsDesktopAsset(latestRelease) ? latestRelease : null) ||
     releaseList.find((release) => isStableDesktopRelease(release) && hasWindowsDesktopAsset(release));
 
-  const assets = Array.isArray(pick?.assets) ? pick.assets : [];
+  // The public website and Den intentionally expose different builds from the
+  // same release. Exclude both the retired helper installer and the parallel
+  // Cloud and enterprise flavors here so loose per-architecture matching never
+  // swaps the public download for a managed distribution.
+  const isNonPublicDesktopAsset = (asset: ReleaseAsset) => {
+    const name = String(asset?.name || "").toLowerCase();
+    return name.startsWith("openwork-installer-")
+      || name.startsWith("openwork-cloud-")
+      || name.startsWith("openwork-enterprise-");
+  };
+  const publicAssets = (list: ReleaseAsset[] | undefined) =>
+    (Array.isArray(list) ? list : []).filter((asset) => !isNonPublicDesktopAsset(asset));
+
+  const assets = publicAssets(pick?.assets);
   const releaseUrl = pick?.html_url || FALLBACK_RELEASE;
-  const windowsAssets = Array.isArray(windowsPick?.assets) ? windowsPick.assets : assets;
+  const windowsAssets = windowsPick ? publicAssets(windowsPick.assets) : assets;
   const windowsReleaseUrl = windowsPick?.html_url || releaseUrl;
   const dmg = selectAsset(assets, [".dmg"], ["openwork-mac-"]);
   const exe = selectAsset(windowsAssets, [".exe"], ["openwork-win-"]);

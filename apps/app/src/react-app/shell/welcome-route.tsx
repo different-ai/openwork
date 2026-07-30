@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useCallback, useEffect, useReducer, useState } from "react";
+import { useCallback, useEffect, useReducer, useState, useSyncExternalStore } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { t } from "../../i18n";
@@ -28,6 +28,7 @@ import {
   markOpenWorkModelsStartupPromoShown,
 } from "../domains/cloud/openwork-models-promo";
 import { useDenAuth } from "../domains/cloud/den-auth-provider";
+import { JoinOrganizationDialog } from "../domains/cloud/join-organization-dialog";
 import { resolveOpenworkConnection } from "./openwork-connection";
 import { captureAnalyticsEvent } from "../../app/lib/analytics";
 import { buildOpenworkWorkspaceBaseUrl, createOpenworkServerClient } from "../../app/lib/openwork-server";
@@ -40,6 +41,17 @@ import { writeActiveWorkspaceId, writeLastSessionFor, writeWorkspaceProjectDimen
 import { workspaceSessionRoute } from "./workspace-routes";
 import { ensureDesktopLocalOpenworkConnection } from "./desktop-local-openwork";
 import { saveControlPlaneUrl } from "../domains/settings/cloud/control-plane-url";
+import { shouldHoldWelcomeForDenSession } from "./welcome-den-session";
+
+function subscribeToDenSettings(onStoreChange: () => void) {
+  if (typeof window === "undefined") return () => {};
+  window.addEventListener(denSettingsChangedEvent, onStoreChange);
+  return () => window.removeEventListener(denSettingsChangedEvent, onStoreChange);
+}
+
+function readDenAuthTokenSnapshot() {
+  return readDenSettings().authToken?.trim() ?? "";
+}
 
 function folderNameFromPath(path: string) {
   const normalized = path.replace(/\\/g, "/").replace(/\/+$/, "");
@@ -134,7 +146,18 @@ export function WelcomeRoute() {
   const [organizationServerUrl, setOrganizationServerUrl] = useState(() => readDenSettings().baseUrl);
   const [organizationServerBusy, setOrganizationServerBusy] = useState(false);
   const [organizationServerError, setOrganizationServerError] = useState<string | null>(null);
+  const [joinOrganizationOpen, setJoinOrganizationOpen] = useState(false);
   const showOpenWorkModelsPromo = useOpenWorkModelsPromoEligibility();
+  const denAuthTokenSnapshot = useSyncExternalStore(
+    subscribeToDenSettings,
+    readDenAuthTokenSnapshot,
+    readDenAuthTokenSnapshot,
+  );
+  const holdSignedOutSurface = shouldHoldWelcomeForDenSession({
+    authStatus: denAuth.status,
+    hasStoredAuthToken: Boolean(denAuthTokenSnapshot),
+    isSignedIn: denAuth.isSignedIn,
+  });
 
   // If user already completed onboarding, redirect away immediately.
   useEffect(() => {
@@ -142,6 +165,12 @@ export function WelcomeRoute() {
       navigate("/session", { replace: true });
     }
   }, [local.prefs.hasCompletedOnboarding, navigate]);
+
+  useEffect(() => {
+    if (denAuth.isSignedIn) {
+      navigate("/onboarding", { replace: true });
+    }
+  }, [denAuth.isSignedIn, navigate]);
 
   const markOnboardingComplete = useCallback(() => {
     local.setPrefs((prev) => ({ ...prev, hasCompletedOnboarding: true }));
@@ -358,9 +387,10 @@ export function WelcomeRoute() {
   }, [handleCreateWorkspace, manualFolder]);
 
   const handleTeamSignIn = useCallback(() => {
+    markOnboardingComplete();
     const settings = readDenSettings();
     platform.openLink(buildDenAuthUrl(settings.baseUrl || DEFAULT_DEN_BASE_URL, "sign-in"));
-  }, [platform]);
+  }, [markOnboardingComplete, platform]);
 
   const finishOnboarding = useCallback(() => {
     markOnboardingComplete();
@@ -387,11 +417,14 @@ export function WelcomeRoute() {
     finishOnboarding();
   }, [finishOnboarding]);
 
+  if (holdSignedOutSurface) {
+    return null;
+  }
+
   return (
     <>
       <WelcomePage
         onGetStarted={handleGetStarted}
-        getStartedLabel={t("welcome.pick_folder")}
         busy={state.createBusy}
         error={state.createError}
         manualFolder={manualFolder}
@@ -399,10 +432,19 @@ export function WelcomeRoute() {
         onUseManualFolder={handleUseManualFolder}
         showManualFolder={import.meta.env.DEV && isDesktopRuntime()}
         onTeamSignIn={handleTeamSignIn}
+        onJoinOrganization={() => setJoinOrganizationOpen(true)}
         organizationServerBusy={organizationServerBusy}
         organizationServerError={organizationServerError}
         organizationServerUrl={organizationServerUrl}
         onOrganizationServerSave={handleOrganizationServerSave}
+      />
+      <JoinOrganizationDialog
+        open={joinOrganizationOpen}
+        onOpenChange={setJoinOrganizationOpen}
+        onConnected={() => {
+          markOnboardingComplete();
+          setJoinOrganizationOpen(false);
+        }}
       />
       <CreateWorkspaceModal
         open={state.modalOpen}

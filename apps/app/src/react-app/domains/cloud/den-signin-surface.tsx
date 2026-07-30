@@ -4,12 +4,11 @@ import {
   Cloud,
   ChevronDown,
   ChevronUp,
-  Users,
-  Share2,
 } from "lucide-react";
-import { PaperGrainGradient } from "@openwork/ui/react";
+import { Dithering } from "@paper-design/shaders-react";
 
 import { t } from "../../../i18n";
+import { resolveExtensionIconSrc } from "../../design-system/extension-icon-src";
 import { DEFAULT_DEN_BASE_URL } from "../../../app/lib/den";
 import { Button } from "@/components/ui/button";
 import { TextInput } from "../../design-system/text-input";
@@ -56,95 +55,6 @@ const softNoticeClass =
   "rounded-xl border border-dls-border bg-dls-hover px-3 py-2 text-xs text-dls-secondary";
 const errorBannerClass =
   "rounded-xl border border-red-7/30 bg-red-1/40 px-3 py-2 text-xs text-red-11";
-
-/* ------------------------------------------------------------------ */
-/*  Brand icon via Simple Icons CDN                                    */
-/* ------------------------------------------------------------------ */
-
-function BrandIcon({ slug, size = 18 }: { slug: string; size?: number }) {
-  return (
-    <img
-      src={`https://cdn.simpleicons.org/${slug}`}
-      alt=""
-      width={size}
-      height={size}
-      loading="lazy"
-      style={{ display: "block" }}
-    />
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/*  Right-side showcase: capabilities + team features                  */
-/* ------------------------------------------------------------------ */
-
-const capabilities = [
-  { slug: "googlesheets", title: "Edit spreadsheets", desc: "Create, clean, and transform CSV and Excel files." },
-  { slug: "semanticweb", title: "Control your browser", desc: "Automate the built-in browser for repetitive web tasks." },
-  { slug: "apple", title: "Organize files", desc: "Read, write, and manage files and folders." },
-  { slug: "zapier", title: "Automate tasks", desc: "Build reusable workflows with skills and commands." },
-  { slug: "medium", title: "Generate content", desc: "Draft documents, emails, and reports." },
-  { slug: "stripe", title: "Connect to APIs", desc: "Plug into external services and tools via MCP." },
-];
-
-function ShowcasePanel() {
-  return (
-    <div className="flex flex-col gap-5">
-      {/* Hero */}
-      <div>
-        <h2 className="text-[20px] font-semibold tracking-[-0.01em] text-dls-text">
-          Your computer,
-          <br />
-          but it works for you.
-        </h2>
-      </div>
-
-      {/* Capabilities */}
-      <div className="grid grid-cols-3 gap-2">
-        {capabilities.map((cap) => (
-          <div
-            key={cap.title}
-            className="flex flex-col gap-1.5 rounded-xl border border-dls-border bg-dls-surface p-3"
-          >
-            <BrandIcon slug={cap.slug} size={18} />
-            <div className="text-[12px] font-medium leading-tight text-dls-text">
-              {cap.title}
-            </div>
-            <div className="text-[11px] leading-snug text-dls-secondary">
-              {cap.desc}
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {/* Team features */}
-      <div className="grid grid-cols-2 gap-2">
-        <div className="flex items-start gap-2.5 rounded-xl border border-dls-border bg-dls-surface p-3">
-          <Share2 size={16} className="mt-0.5 shrink-0 text-dls-secondary" strokeWidth={1.5} />
-          <div>
-            <div className="text-[12px] font-medium text-dls-text">
-              Shared extensions
-            </div>
-            <div className="mt-0.5 text-[11px] leading-snug text-dls-secondary">
-              Share approved skills, MCPs, and plugins with your organization.
-            </div>
-          </div>
-        </div>
-        <div className="flex items-start gap-2.5 rounded-xl border border-dls-border bg-dls-surface p-3">
-          <Users size={16} className="mt-0.5 shrink-0 text-dls-secondary" strokeWidth={1.5} />
-          <div>
-            <div className="text-[12px] font-medium text-dls-text">
-              Provision your team
-            </div>
-            <div className="mt-0.5 text-[11px] leading-snug text-dls-secondary">
-              Manage workspaces, models, and permissions.
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 /* ------------------------------------------------------------------ */
 /*  Main surface                                                      */
@@ -305,37 +215,58 @@ export function DenSignInSurface(props: DenSignInSurfaceProps) {
   /* ---------------------------------------------------------------- */
 
   if (variant === "fullscreen") {
+    // Paper first-load spec: same centered welcome card as WelcomePage.
+    // Forced sign-in only removes the "Use Without Cloud" option.
     return (
-      <div className="relative min-h-screen bg-dls-background text-dls-text">
-        {/* Subtle background texture */}
-        <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden">
-          <div className="absolute -left-[20%] -top-[30%] h-[70%] w-[60%] rounded-full bg-[radial-gradient(ellipse,rgba(14,51,217,0.06),transparent_70%)] blur-3xl" />
-          <div className="absolute -bottom-[20%] -right-[10%] h-[50%] w-[50%] rounded-full bg-[radial-gradient(ellipse,rgba(255,126,46,0.05),transparent_70%)] blur-3xl" />
-          <div className="absolute left-[30%] top-[60%] h-[40%] w-[40%] rounded-full bg-[radial-gradient(ellipse,rgba(255,227,64,0.04),transparent_70%)] blur-3xl" />
+      <div className="relative min-h-screen bg-background text-foreground">
+        {/* Pixel-dither mosaic background (dark:invert keeps it visible in dark mode) */}
+        <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden opacity-[0.1] dark:invert">
+          <Dithering
+            className="size-full"
+            speed={0.01}
+            shape="warp"
+            type="2x2"
+            size={20.3}
+            scale={1.19}
+            frame={264559.21}
+            colorBack="#00000000"
+            colorFront="#000000"
+          />
         </div>
 
         {/* Titlebar drag region */}
         <div className="absolute inset-x-0 top-0 z-20 h-10 mac:titlebar-drag" />
 
-        <div className="relative z-10 flex min-h-screen">
-          {/* ---- Left: sign-in (transparent on page bg) ---- */}
-          <div className="flex w-full flex-col items-center justify-center px-8 py-16 lg:w-[45%] lg:px-12">
-            <div className="w-full max-w-md space-y-8">
-              <div className="space-y-2">
-                {props.logoUrl ? (
-                  <img src={props.logoUrl} alt={`${appName} logo`} className="mb-6 max-h-16 max-w-64 object-contain object-left" />
-                ) : null}
-                <h1 className="text-2xl font-semibold tracking-tight text-dls-text">
-                  Welcome to {appName}
-                </h1>
-                <p className="text-sm text-dls-secondary">
-                  Sign in to get started with your workspace.
-                </p>
-              </div>
+        <div className="relative z-10 flex min-h-screen items-center justify-center px-6 py-16">
+          <div className="w-full max-w-[720px] rounded-3xl border border-border bg-background px-8 pb-12 pt-10 sm:px-16 sm:pb-16 sm:pt-14">
+            <div className="flex items-center gap-2.5">
+              <img
+                src={props.logoUrl ?? resolveExtensionIconSrc("/openwork-mark.svg")}
+                alt=""
+                width={26}
+                height={26}
+                className={`max-h-[26px] shrink-0 object-contain object-left ${props.logoUrl ? "" : "dark:invert"}`}
+                aria-hidden="true"
+              />
+              <span className="text-[15px] font-semibold tracking-tight text-foreground">
+                {appName}
+              </span>
+            </div>
 
-              <button
+            <div className="mt-10 flex flex-col gap-2.5 sm:mt-14">
+              <h1 className="text-[30px] font-semibold leading-[38px] tracking-[-0.03em] text-foreground sm:text-[38px] sm:leading-[46px]">
+                Welcome to {appName}
+              </h1>
+              <p className="text-[15px] leading-[23px] text-muted-foreground">
+                {t("welcome.subtitle")}
+              </p>
+            </div>
+
+            <div className="mt-11 flex flex-col gap-3">
+              <Button
                 type="button"
-                className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-full bg-dls-accent text-sm font-semibold text-[var(--dls-accent-fg)] transition-all hover:bg-[var(--dls-accent-hover)] disabled:opacity-60 disabled:cursor-not-allowed"
+                size="lg"
+                className="h-12 w-full text-[15px] font-semibold"
                 // Opens on the sign-up tab (label stays "Sign in"): most
                 // people hitting this are new, and the web page's tabs let
                 // returning users switch to sign-in in one tap.
@@ -344,7 +275,7 @@ export function DenSignInSurface(props: DenSignInSurfaceProps) {
               >
                 Sign in to {appName}
                 <ArrowUpRight size={15} />
-              </button>
+              </Button>
 
               {props.signinFallbackUrl ? (
                 <SignInFallbackNotice url={props.signinFallbackUrl} />
@@ -457,36 +388,6 @@ export function DenSignInSurface(props: DenSignInSurfaceProps) {
                   </div>
                 </div>
               ) : null}
-            </div>
-          </div>
-
-          {/* ---- Right: shader outer card > white inner card ---- */}
-          <div className="hidden lg:flex lg:w-[55%] lg:items-center lg:justify-center lg:p-6">
-            {/* Outer: shader card */}
-            <div className="relative w-full max-w-xl overflow-hidden rounded-3xl">
-              {/* Shader background */}
-              <div className="absolute inset-0 z-0">
-                <PaperGrainGradient
-                  speed={0}
-                  scale={1}
-                  rotation={0}
-                  offsetX={0}
-                  offsetY={0}
-                  softness={0.5}
-                  intensity={0.5}
-                  noise={0.25}
-                  shape="corners"
-                  frame={37706.748}
-                  colors={["#0E33D9", "#FF7E2E", "#FFE340", "#000000"]}
-                  colorBack="#00000000"
-                  style={{ backgroundColor: "#FFFFFF", width: "100%", height: "100%" }}
-                />
-              </div>
-
-              {/* Inner: card with capabilities */}
-              <div className="relative z-10 m-3 rounded-2xl bg-dls-surface p-7">
-                <ShowcasePanel />
-              </div>
             </div>
           </div>
         </div>

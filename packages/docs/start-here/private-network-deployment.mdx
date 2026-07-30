@@ -1,0 +1,72 @@
+---
+title: "Private network deployment"
+description: "Run OpenWork when laptops have internet and VPN access while Den stays inside a private network."
+---
+
+Most enterprise OpenWork installs are not fully air-gapped. The common shape is:
+
+- Employee laptops have normal internet access and VPN access.
+- Den web and Den API run inside the customer's private network.
+- The desktop is configured with one customer Den URL over the VPN.
+
+This page is for IT and platform teams approving those two network paths. For full isolation terminology and checklist items, see [Air-gapped deployment](/start-here/air-gapped-deployment).
+
+## What the desktop must reach
+
+Use one desktop-facing Den origin when you can: the Den web origin, with its `/api/den` route proxying to Den API inside your deployment. The signed-in desktop runtime is pointed at that Den web URL and derives API and MCP traffic from it:
+
+- API: `<den-web-origin>/api/den/v1/...`
+- MCP: `<den-web-origin>/api/den/mcp/...`
+
+`DEN_API_PUBLIC_URL` still must be configured correctly, but it does not need to be a second desktop-facing origin. In the single-origin shape, set it to the proxied API base, for example `https://openwork.example.internal/api/den`. Den uses that value for install-link claims, OAuth callbacks, webhooks, MCP resource/audience values, and links.
+
+If you publish a separate Den API origin, the one-time install-link exchange and external MCP clients must be able to reach that origin too.
+
+External MCP clients such as Cursor, Claude Code, VS Code, ChatGPT, and OpenCode are separate from the desktop. They must reach the MCP endpoint you configure for them, usually `<DEN_API_PUBLIC_URL>/mcp/agent`; with the single-origin proxy example above, that is `https://openwork.example.internal/api/den/mcp/agent`. See [OpenWork Connect MCP](/cloud/run-in-the-cloud/cloud-mcp) for the external-client flow.
+
+Unless you mirror or replace public dependencies internally, laptops may also need outbound access for installers, release assets, npm packages used by `npx`, and the OpenCode model catalog. Keep that allowlist in [Outbound network access](/start-here/outbound-network-access), and use [Installer delivery](/start-here/installer-delivery) when installer downloads must stay inside Den.
+
+## What Den must reach
+
+The hard requirements are small:
+
+- The MySQL-compatible database endpoint configured for Den.
+- The OpenWork chart and images at deploy or image-pull time, unless you mirror the Helm chart and enabled images into an internal registry.
+
+Everything else is feature-specific and can be blocked until that feature is approved: Google Workspace, Microsoft 365, GitHub plugin import, transactional email, model providers, MCP presets, custom MCP servers, and OAuth/token endpoints. Keep the customer IT hostname inventory in [Outbound network access](/start-here/outbound-network-access).
+
+If the private network uses TLS inspection, private roots, or an outbound proxy, configure the correct trust surface instead of setting browser-only values. See [Certificate trust and proxies](/start-here/certificate-trust-and-proxies).
+
+## Three surprises for operators
+
+### Internal MCP servers are refused
+
+**Symptom:** adding or testing an MCP server on a private address fails with `MCP_URL_BLOCKED` and the operator action says: "Use a public HTTPS MCP URL or change the deployment's private-network policy through security review."
+
+**Why:** Den fetches MCP URLs server-side. By default, it blocks private and reserved addresses as SSRF protection for multi-tenant deployments.
+
+**Fix:** set `DEN_ALLOW_PRIVATE_MCP_URLS=1` on Den, or the matching Helm public config value. This disables that SSRF protection, so use it only when Den's network position is trusted and the people allowed to add MCP connections are trusted.
+
+### The Cloud MCP diagnostic is skipped
+
+**Symptom:** `Settings → Debug` reports that the live cloud catalog was not observed, and the detail says the endpoint is outside the diagnostics trust policy.
+
+**Why:** the diagnostic only sends a credentialed probe to trusted origins. By default, it trusts the hosted OpenWork origins, not your self-hosted Den origin.
+
+**Fix:** trust your Den origin before OpenWork launches. This affects the diagnostic only; Cloud MCP itself can still work in real chats without this variable, so do not treat a skipped probe as proof that the deployment is broken. See [Network diagnostics](/start-here/network-diagnostics) for exact syntax and launch-surface guidance.
+
+### Den's outbound self-check points at a public host
+
+**Symptom:** an admin-triggered Den outbound diagnostic cannot reach the default public diagnostic host from a VPN-isolated Den deployment.
+
+**Why:** `DEN_DIAGNOSTICS_ORIGIN` defaults to the public OpenWork diagnostic service.
+
+**Fix:** deploy the diagnostics app at an internally reachable supported runtime/origin, then point Den at it with `DEN_DIAGNOSTICS_ORIGIN` and `DEN_DIAGNOSTICS_BEARER_TOKEN`. Do not assume a generic Kubernetes package unless your deployment path has been validated. The check is optional and admin-triggered; it is not a background dependency for Den. See [Network diagnostics](/start-here/network-diagnostics).
+
+## Verification checklist
+
+| Chain | Success looks like | First place to look if it fails |
+| --- | --- | --- |
+| Installer activates against internal Den | The Den install page opens over VPN, the installer download completes, and **Open OpenWork** shows the expected organization and server before changing local configuration. | If the app opens, use `Settings → Debug` to confirm the Den web and API endpoints. If it never opens, return to the Den install page and check [Installer delivery](/start-here/installer-delivery). |
+| Desktop signs in and reaches a ready workspace | The user signs in through the internal Den URL, sees the correct organization, and can open a ready workspace or start a chat. | `Settings → Debug` for server endpoints, sign-in state, proxy, and TLS/certificate clues. Use [Network diagnostics](/start-here/network-diagnostics) for desktop DNS/TLS/proxy evidence. |
+| Cloud MCP works in a real chat | In a chat, the agent can search available OpenWork capabilities and execute one that the user is allowed to run. | `Settings → Connect` for provider sign-in or admin setup. Use `Settings → Debug` to interpret diagnostics, especially a skipped catalog probe. |

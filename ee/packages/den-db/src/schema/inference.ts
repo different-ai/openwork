@@ -48,7 +48,6 @@ export const InferenceOrgLimitPolicyTable = mysqlTable(
     ...timestamps,
   },
   (table) => [
-    index("inference_org_limit_policies_organization_id").on(table.organization_id),
     uniqueIndex("inference_org_limit_policies_org_window_type").on(
       table.organization_id,
       table.window_type,
@@ -74,7 +73,6 @@ export const InferenceOrgUsageBucketTable = mysqlTable(
       table.window_start_at,
       table.window_end_at,
     ),
-    index("inference_org_usage_buckets_policy_id").on(table.policy_id),
     index("inference_org_usage_buckets_policy_window").on(
       table.policy_id,
       table.window_start_at,
@@ -99,7 +97,6 @@ export const InferenceOrgUpstreamProviderKeyTable = mysqlTable(
     ...timestamps,
   },
   (table) => [
-    index("inference_org_upstream_provider_keys_organization_id").on(table.organization_id),
     index("inference_org_upstream_provider_keys_external_key_hash").on(table.external_key_hash),
     uniqueIndex("inference_org_upstream_provider_keys_org_provider").on(
       table.organization_id,

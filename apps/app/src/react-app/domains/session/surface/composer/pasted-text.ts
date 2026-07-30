@@ -1,12 +1,17 @@
-export const PASTE_CHIP_CHAR_THRESHOLD = 50;
 export const FILE_URL_RE = /^file:\/\//i;
 export const HTTP_URL_RE = /^https?:\/\//i;
-export const PASTED_TEXT_INLINE_STYLE = "background-color: rgba(229, 231, 235, 0.6); border-radius: 4px; box-decoration-break: clone; -webkit-box-decoration-break: clone; padding: 1px 2px;";
 
 export type PastedTextSegment =
   | { kind: "text"; text: string }
   | { kind: "line-break" }
   | { kind: "tab" };
+
+export type PastedTextChip = {
+  id: string;
+  label: string;
+  text: string;
+  lines: number;
+};
 
 const WHITESPACE_RE = /\s/;
 
@@ -14,8 +19,27 @@ export function isStandaloneHttpUrl(text: string) {
   return HTTP_URL_RE.test(text) && !WHITESPACE_RE.test(text);
 }
 
-export function shouldCollapsePastedText(text: string) {
-  return text.length > PASTE_CHIP_CHAR_THRESHOLD && !isStandaloneHttpUrl(text);
+export function shouldCollapsePastedText(text: string, wouldOverflowComposer: boolean) {
+  return wouldOverflowComposer && !isStandaloneHttpUrl(text);
+}
+
+export function createPastedTextChip(text: string): PastedTextChip {
+  const id = `paste-${Math.random().toString(36).slice(2)}`;
+  const lines = text.split(/\r?\n/).length;
+  return {
+    id,
+    label: `${id.slice(-4)} · ${lines} lines`,
+    text,
+    lines,
+  };
+}
+
+export function resolvePastedTextPlaceholders(text: string, pastedText: readonly Pick<PastedTextChip, "label" | "text">[]) {
+  let resolved = text;
+  for (const part of pastedText) {
+    resolved = resolved.replace(`[pasted text ${part.label}]`, part.text);
+  }
+  return resolved;
 }
 
 export function splitPastedText(text: string) {

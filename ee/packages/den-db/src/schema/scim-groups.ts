@@ -17,7 +17,6 @@ export const ScimGroupTable = mysqlTable(
     uniqueIndex("scim_group_provider_external_id").on(table.providerId, table.externalId),
     uniqueIndex("scim_group_team_id").on(table.teamId),
     index("scim_group_organization_id").on(table.organizationId),
-    index("scim_group_provider_id").on(table.providerId),
   ],
 )
 

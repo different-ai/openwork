@@ -10,6 +10,7 @@ Every tagged Den API product surface is allowed unless it is listed under blocke
 - `Capability Sources`
 - `Config Objects`
 - `Connectors`
+- `Desktop Policies`
 - `GitHub`
 - `Invitations`
 - `LLM Providers`
@@ -18,13 +19,13 @@ Every tagged Den API product surface is allowed unless it is listed under blocke
 - `Organizations`
 - `Plugins`
 - `Roles`
-- `Skill Hubs`
-- `Skills`
 - `Teams`
 - `Users`
 - `Worker Activity`
 - `Worker Runtime`
 - `Workers`
+
+`Desktop Policies` reads require org admin; mutations require super-admin + Enterprise entitlement. Both are enforced in-route.
 
 ## Blocked Tags
 

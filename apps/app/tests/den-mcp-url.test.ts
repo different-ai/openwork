@@ -8,7 +8,7 @@ import {
 } from "../src/app/lib/den";
 
 describe("resolveDenBaseUrls", () => {
-  test("always derives the API proxy from the base URL", () => {
+  test("adds the API proxy path to an explicit API base URL", () => {
     const resolved = resolveDenBaseUrls({
       baseUrl: "https://app.openworklabs.com",
       apiBaseUrl: "https://app.openworklabs.com",
@@ -16,25 +16,28 @@ describe("resolveDenBaseUrls", () => {
     expect(resolved.apiBaseUrl).toBe("https://app.openworklabs.com/api/den");
   });
 
-  test("ignores an explicit API origin when a base URL is present", () => {
+  test("keeps an explicit API origin independent from the web base URL", () => {
     const resolved = resolveDenBaseUrls({
       baseUrl: "https://app.openworklabs.com",
       apiBaseUrl: "https://api.example.com",
     });
-    expect(resolved.apiBaseUrl).toBe("https://app.openworklabs.com/api/den");
+    expect(resolved.baseUrl).toBe("https://app.openworklabs.com");
+    expect(resolved.apiBaseUrl).toBe("https://api.example.com/api/den");
   });
 
-  test("ignores an explicit loopback API URL when a base URL is present", () => {
+  test("keeps an explicit loopback API URL when a base URL is present", () => {
     const resolved = resolveDenBaseUrls({
       baseUrl: "http://localhost:3000",
       apiBaseUrl: "http://127.0.0.1:8787",
     });
-    expect(resolved.apiBaseUrl).toBe("http://localhost:3000/api/den");
+    expect(resolved.baseUrl).toBe("http://localhost:3000");
+    expect(resolved.apiBaseUrl).toBe("http://127.0.0.1:8787/api/den");
   });
 
   test("derives the /api/den proxy from a web-app baseUrl when no apiBaseUrl is set", () => {
-    const resolved = resolveDenBaseUrls({ baseUrl: "https://app.openworklabs.com" });
-    expect(resolved.apiBaseUrl).toBe("https://app.openworklabs.com/api/den");
+    const resolved = resolveDenBaseUrls({ baseUrl: "https://den.self-hosted.example.com" });
+    expect(resolved.baseUrl).toBe("https://den.self-hosted.example.com");
+    expect(resolved.apiBaseUrl).toBe("https://den.self-hosted.example.com/api/den");
   });
 });
 

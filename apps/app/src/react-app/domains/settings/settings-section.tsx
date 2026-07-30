@@ -220,3 +220,27 @@ interface SectionItemHeaderActionsProps {
 export function SettingsSectionHeaderActions({ children, className }: SectionItemHeaderActionsProps) {
   return <div className={cn("flex flex-wrap items-center gap-2", className)}>{children}</div>;
 }
+
+export interface SettingsGroupHeaderProps {
+  label: string;
+  count?: number;
+  hint?: string;
+  className?: string;
+}
+
+/** Compact uppercase inventory/group label used across settings list surfaces. */
+export function SettingsGroupHeader({ label, count, hint, className }: SettingsGroupHeaderProps) {
+  return (
+    <div className={cn("flex items-center justify-between gap-3", className)}>
+      <div className="flex items-center gap-2">
+        <h3 className="text-[11px] font-semibold uppercase tracking-widest text-dls-secondary">
+          {label}
+        </h3>
+        {typeof count === "number" ? (
+          <span className="text-[11px] uppercase text-dls-secondary">{count}</span>
+        ) : null}
+      </div>
+      {hint ? <span className="text-[11px] text-dls-secondary">{hint}</span> : null}
+    </div>
+  );
+}

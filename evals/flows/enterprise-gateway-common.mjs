@@ -445,6 +445,21 @@ export async function ensureComposerReady(ctx, timeout = 90_000) {
   await ctx.waitFor("document.body.innerText.includes('Run task')", { timeoutMs: 60_000, label: "Run task button" });
 }
 
+async function ensurePromptComposerReady(ctx, timeout = 90_000) {
+  let last = null;
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    await clickThroughWorkspaceOnboarding(ctx, "");
+    last = await workspaceSessionState(ctx);
+    const onWorkspaceSessionRoute = /^#\/workspace\/[^/?#]+\/session(?:\/ses_[^/?#]+)?/.test(last?.hash ?? "");
+    if (onWorkspaceSessionRoute && last.hasComposer && !last.opencodeUnavailable) break;
+    await sleep(1_000);
+  }
+  if (last?.opencodeUnavailable) throw new Error(`OpenCode unavailable while waiting for the prompt composer: ${JSON.stringify(last)}`);
+  if (!last?.hasComposer) throw new Error(`Workspace prompt composer did not become ready within ${timeout}ms: ${JSON.stringify(last)}`);
+  await ctx.waitFor("document.body.innerText.includes('Run task')", { timeoutMs: 60_000, label: "Run task button" });
+}
+
 export async function readTranscriptSnapshot(ctx) {
   return ctx.eval(`(async () => {
     const normalize = (value) => String(value ?? "").replace(/\\s+/g, " ").trim();
@@ -595,7 +610,7 @@ async function insertPromptWithSyntheticPaste(ctx, prompt) {
 }
 
 export async function sendPromptAndWait(ctx, prompt, { timeout = 300_000 } = {}) {
-  await ensureComposerReady(ctx);
+  await ensurePromptComposerReady(ctx);
   const before = await readTranscriptSnapshot(ctx).catch(() => ({ messageCount: 0, length: 0 }));
   await insertPromptWithSyntheticPaste(ctx, prompt);
   await clickExactText(ctx, "Run task", "button", 30_000);
@@ -683,7 +698,17 @@ export async function retryAfterGatewayLoginIfNeeded(ctx, email, transcript, exp
 }
 
 export async function listSkillsFor(ctx, token) {
-  const result = await denApiFetch(ctx, "/v1/skills", { headers: { authorization: `Bearer ${token}` } });
-  ctx.assert(result.response.ok, httpFailureMessage("GET /v1/skills failed", result));
-  return result.body?.skills ?? [];
+  const marketplaces = await denApiFetch(ctx, "/v1/marketplaces", { headers: { authorization: `Bearer ${token}` } });
+  ctx.assert(marketplaces.response.ok, httpFailureMessage("GET /v1/marketplaces failed", marketplaces));
+  const skills = [];
+  for (const marketplace of marketplaces.body?.items ?? []) {
+    if (!marketplace?.id) continue;
+    const resolved = await denApiFetch(ctx, `/v1/marketplaces/${encodeURIComponent(marketplace.id)}/resolved`, { headers: { authorization: `Bearer ${token}` } });
+    ctx.assert(resolved.response.ok, httpFailureMessage(`GET /v1/marketplaces/${marketplace.id}/resolved failed`, resolved));
+    for (const plugin of resolved.body?.item?.plugins ?? []) {
+      if (!plugin?.componentCounts?.skill) continue;
+      skills.push({ id: plugin.id, title: plugin.name, marketplaceId: marketplace.id });
+    }
+  }
+  return skills;
 }

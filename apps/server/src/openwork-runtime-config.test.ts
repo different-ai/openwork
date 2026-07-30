@@ -62,7 +62,7 @@ describe("openwork runtime config file", () => {
       mcp: { posthog: { type: "remote", url: "https://mcp.posthog.com/mcp", enabled: true } },
     }));
 
-    const path = await writeOpenworkRuntimeConfigFile(config, "ws_1");
+    const { path } = await writeOpenworkRuntimeConfigFile(config, "ws_1");
     expect(path).toBe(openworkRuntimeConfigFilePath(config));
 
     const parsed = await readConfigFile(config);
@@ -70,6 +70,19 @@ describe("openwork runtime config file", () => {
     expect(mcp.posthog?.enabled).toBe(true);
     expect(parsed.default_agent).toBe("openwork");
     expect(Array.isArray(parsed.plugin)).toBe(true);
+    expect(parsed.agent).toMatchObject({
+      openwork: {
+        permission: {
+          skill: {
+            "customize-opencode": "deny",
+            "get-started": "deny",
+            "command-creator": "deny",
+            "agent-creator": "deny",
+            "plugin-creator": "deny",
+          },
+        },
+      },
+    });
   });
 
   test("openwork prompt has a static search-first Memory Bank section, distinct from ## Memory", async () => {

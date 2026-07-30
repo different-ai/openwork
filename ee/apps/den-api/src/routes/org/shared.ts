@@ -5,6 +5,13 @@ import type { MemberTeamsContext, OrganizationContextVariables, UserOrganization
 import { env } from "../../env.js"
 import { denTypeIdSchema } from "../../openapi.js"
 import {
+  ORGANIZATION_ADMIN_ROLE,
+  ORGANIZATION_SUPER_ADMIN_ROLE,
+  normalizeOrganizationRoleName,
+  organizationRoleValueSatisfies,
+  splitOrganizationRoles,
+} from "../../organization-role-hierarchy.js"
+import {
   canManageSecurityConfiguration as canManageOrganizationSecurityConfiguration,
   type SecurityConfigurationPermissionPayload,
 } from "../../organization-access.js"
@@ -93,21 +100,15 @@ export function idParamSchema<K extends string>(key: K, typeName?: DenTypeIdName
 }
 
 export function splitRoles(value: string) {
-  return value
-    .split(",")
-    .map((entry) => entry.trim())
-    .filter(Boolean)
+  return splitOrganizationRoles(value)
 }
 
 export function memberHasRole(value: string, role: string) {
-  return splitRoles(value).includes(role)
+  return organizationRoleValueSatisfies({ roleValue: value, requiredRole: role })
 }
 
 export function normalizeRoleName(value: string) {
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, "-")
+  return normalizeOrganizationRoleName(value)
 }
 
 export function replaceRoleValue(value: string, previousRole: string, nextRole: string | null) {
@@ -138,7 +139,7 @@ export function ensureOwner(c: PrivilegedOrgRouteContext) {
       ok: false as const,
       response: {
         error: "forbidden",
-        message: "Only workspace owners can manage members and roles.",
+        message: "Only workspace owners can transfer ownership.",
       },
     }
   }
@@ -162,7 +163,11 @@ export function ensureOrganizationAdminRole(c: OrganizationAdminRouteContext, me
     }
   }
 
-  if (payload.currentMember.isOwner || memberHasRole(payload.currentMember.role, "admin")) {
+  if (organizationRoleValueSatisfies({
+    roleValue: payload.currentMember.role,
+    requiredRole: ORGANIZATION_ADMIN_ROLE,
+    isOwner: payload.currentMember.isOwner,
+  })) {
     return { ok: true as const }
   }
 
@@ -173,6 +178,38 @@ export function ensureOrganizationAdminRole(c: OrganizationAdminRouteContext, me
       message,
     },
   }
+}
+
+export function ensureOrganizationSuperAdmin(
+  c: PrivilegedOrgRouteContext,
+  message: string,
+  maxAgeMs = PRIVILEGED_SESSION_MAX_AGE_MS,
+) {
+  const payload = c.get("organizationContext")
+  if (!payload) {
+    return {
+      ok: false as const,
+      response: {
+        error: "organization_not_found",
+      },
+    }
+  }
+
+  if (!organizationRoleValueSatisfies({
+    roleValue: payload.currentMember.role,
+    requiredRole: ORGANIZATION_SUPER_ADMIN_ROLE,
+    isOwner: payload.currentMember.isOwner,
+  })) {
+    return {
+      ok: false as const,
+      response: {
+        error: "forbidden",
+        message,
+      },
+    }
+  }
+
+  return ensureFreshPrivilegedSession(c, maxAgeMs)
 }
 
 export function ensureOrganizationAdmin(
@@ -199,7 +236,11 @@ export function ensureInviteManager(c: PrivilegedOrgRouteContext) {
     }
   }
 
-  if (payload.currentMember.isOwner || memberHasRole(payload.currentMember.role, "admin")) {
+  if (organizationRoleValueSatisfies({
+    roleValue: payload.currentMember.role,
+    requiredRole: ORGANIZATION_ADMIN_ROLE,
+    isOwner: payload.currentMember.isOwner,
+  })) {
     return ensureFreshPrivilegedSession(c)
   }
 
@@ -223,7 +264,11 @@ export function ensureMemberRemover(c: PrivilegedOrgRouteContext) {
     }
   }
 
-  if (payload.currentMember.isOwner || memberHasRole(payload.currentMember.role, "admin")) {
+  if (organizationRoleValueSatisfies({
+    roleValue: payload.currentMember.role,
+    requiredRole: ORGANIZATION_ADMIN_ROLE,
+    isOwner: payload.currentMember.isOwner,
+  })) {
     return ensureFreshPrivilegedSession(c)
   }
 
@@ -240,28 +285,12 @@ export function ensureTeamManager(c: PrivilegedOrgRouteContext) {
   return ensureOrganizationAdmin(c, "Only workspace owners and admins can manage teams.")
 }
 
+export function ensureApiKeyReader(c: OrganizationAdminRouteContext) {
+  return ensureOrganizationAdminRole(c, "Only workspace owners and admins can read API keys.")
+}
+
 export function ensureApiKeyManager(c: PrivilegedOrgRouteContext) {
-  const payload = c.get("organizationContext")
-  if (!payload) {
-    return {
-      ok: false as const,
-      response: {
-        error: "organization_not_found",
-      },
-    }
-  }
-
-  if (canManageApiKeys(payload)) {
-    return ensureFreshPrivilegedSession(c)
-  }
-
-  return {
-    ok: false as const,
-    response: {
-      error: "forbidden",
-      message: "Only workspace owners or members with security configuration permission can manage API keys.",
-    },
-  }
+  return ensureOrganizationSuperAdmin(c, "Only workspace owners and super-admins can manage API keys.")
 }
 
 export function canManageSecurityConfiguration(payload: SecurityConfigurationPermissionPayload | null | undefined) {
@@ -276,52 +305,20 @@ export function canManageIdentityConfiguration(payload: SecurityConfigurationPer
   return canManageSecurityConfiguration(payload)
 }
 
+export function ensureScimReader(c: OrganizationAdminRouteContext) {
+  return ensureOrganizationAdminRole(c, "Only workspace owners and admins can read SCIM.")
+}
+
 export function ensureScimManager(c: PrivilegedOrgRouteContext) {
-  const payload = c.get("organizationContext")
-  if (!payload) {
-    return {
-      ok: false as const,
-      response: {
-        error: "organization_not_found",
-      },
-    }
-  }
+  return ensureOrganizationSuperAdmin(c, "Only workspace owners and super-admins can manage SCIM.")
+}
 
-  if (canManageIdentityConfiguration(payload)) {
-    return ensureFreshPrivilegedSession(c)
-  }
-
-  return {
-    ok: false as const,
-    response: {
-      error: "forbidden",
-      message: "Only workspace owners or members with security configuration permission can manage SCIM.",
-    },
-  }
+export function ensureSsoReader(c: OrganizationAdminRouteContext) {
+  return ensureOrganizationAdminRole(c, "Only workspace owners and admins can read SSO.")
 }
 
 export function ensureSsoManager(c: PrivilegedOrgRouteContext) {
-  const payload = c.get("organizationContext")
-  if (!payload) {
-    return {
-      ok: false as const,
-      response: {
-        error: "organization_not_found",
-      },
-    }
-  }
-
-  if (canManageIdentityConfiguration(payload)) {
-    return ensureFreshPrivilegedSession(c)
-  }
-
-  return {
-    ok: false as const,
-    response: {
-      error: "forbidden",
-      message: "Only workspace owners or members with security configuration permission can manage SSO.",
-    },
-  }
+  return ensureOrganizationSuperAdmin(c, "Only workspace owners and super-admins can manage SSO.")
 }
 
 export function createInvitationId() {

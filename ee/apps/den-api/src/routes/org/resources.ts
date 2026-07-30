@@ -13,6 +13,9 @@ import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { db } from "../../db.js"
+import { env } from "../../env.js"
+import { memberFacingMcpConnectionsEnabled } from "../../capability-sources/external-mcp-rollout.js"
+import { listAccessibleMarketplaceCapabilityReferences } from "../../mcp/marketplace-capabilities.js"
 import {
   type MemberTeamsContext,
   orgMemberRoute,
@@ -49,6 +52,15 @@ const resourceSnapshotResponseSchema = z.object({
     })),
   }),
 }).meta({ ref: "ResourceSnapshotResponse" })
+
+const assignedMarketplaceCapabilitiesResponseSchema = z.object({
+  items: z.array(z.object({
+    configObjectId: z.string(),
+    marketplaceId: z.string(),
+    objectType: z.string(),
+    pluginId: z.string(),
+  })),
+}).meta({ ref: "AssignedMarketplaceCapabilitiesResponse" })
 
 type ResourceSnapshot = z.infer<typeof resourceSnapshotResponseSchema>
 type ResourceMarketplace = ResourceSnapshot["resources"]["marketplaces"][string]
@@ -242,6 +254,42 @@ async function listAccessibleMarketplaces(input: {
 }
 
 export function registerOrgResourceRoutes<T extends { Variables: OrgRouteVariables & Partial<MemberTeamsContext> }>(app: Hono<T>) {
+  app.get(
+    "/v1/resources/marketplace-capabilities",
+    describeRoute({
+      tags: ["Resources"],
+      summary: "List assigned marketplace capabilities",
+      description: "Returns grant-scoped marketplace capability references for the current member. Organization administration visibility never expands this desktop and agent inventory.",
+      responses: {
+        200: jsonResponse("Assigned marketplace capabilities returned successfully.", assignedMarketplaceCapabilitiesResponseSchema),
+        401: jsonResponse("The caller must be signed in to list assigned capabilities.", unauthorizedSchema),
+      },
+    }),
+    orgMemberRoute(),
+    resolveMemberTeamsMiddleware,
+    async (c) => {
+      const organizationContext = c.get("organizationContext")
+      if (!organizationContext) {
+        return c.json({ error: "organization_not_found" }, 404)
+      }
+      const teamIds = readMemberTeams(
+        c.get("memberTeams"),
+        organizationContext.organization.id,
+      ).map((team) => team.id)
+      const items = await listAccessibleMarketplaceCapabilityReferences({
+        organizationId: organizationContext.organization.id,
+        member: {
+          orgMembershipId: organizationContext.currentMember.id,
+          teamIds,
+        },
+        enabled: memberFacingMcpConnectionsEnabled(organizationContext.organization.metadata, {
+          gatingEnabled: env.mcpConnectionsGatingEnabled,
+        }),
+      })
+      return c.json({ items })
+    },
+  )
+
   app.get(
     "/v1/resources",
     describeRoute({

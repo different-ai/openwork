@@ -21,6 +21,7 @@ import {
   WorkerTable,
   AdminAllowlistTable,
 } from "@openwork-ee/den-db/schema"
+import { isDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
@@ -29,10 +30,12 @@ import { parseOrganizationPlan, type PlanTier } from "../../entitlements.js"
 import { adminRoute, queryValidator } from "../../middleware/index.js"
 import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import { appLogger } from "../../observability/logger.js"
+import { organizationCloudEnabled } from "../../capability-sources/cloud-rollout.js"
 import { memberFacingMcpConnectionsEnabled } from "../../capability-sources/external-mcp-rollout.js"
 import { organizationInstallLinksEnabled } from "../../capability-sources/install-links-rollout.js"
 import { normalizeOrganizationCapabilities, readOrganizationCapabilityOverrides } from "../../organization-capabilities.js"
 import { DEFAULT_ORGANIZATION_LIMITS, normalizeOrganizationMetadata } from "../../organization-limits.js"
+import { env } from "../../env.js"
 import type { AuthContextVariables } from "../../session.js"
 import { calculateOrganizationSeatBillingCounts, getOrganizationSeatBillingCounts, refreshOrgSubscriptionFromStripe, syncSeatSubscriptionQuantityAfterMemberChange } from "../../stripe-billing.js"
 import { buildAdminPageInfo, normalizeAdminPageRequest, sanitizeAdminSearchForLike, type AdminPageRequest } from "./scale-performance.js"
@@ -80,6 +83,7 @@ const updateOrganizationCapabilitiesSchema = z.object({
   capabilities: z.object({
     installLinks: z.boolean().nullable().optional(),
     mcpConnections: z.boolean().nullable().optional(),
+    cloud: z.boolean().nullable().optional(),
   }),
 })
 
@@ -263,6 +267,7 @@ function readAdminVisibleOrganizationCapabilities(metadata: Record<string, unkno
   return {
     installLinks: organizationInstallLinksEnabled(metadata, { gatingEnabled: false }),
     mcpConnections: memberFacingMcpConnectionsEnabled(metadata, { gatingEnabled: false }),
+    cloud: organizationCloudEnabled(metadata, { orgMode: env.orgMode }),
   }
 }
 
@@ -271,7 +276,7 @@ function readUnmanagedCapabilityMetadata(metadata: Record<string, unknown>): Rec
   const capabilities: Record<string, unknown> = {}
 
   for (const [key, value] of Object.entries(raw)) {
-    if (key !== "installLinks" && key !== "mcpConnections") {
+    if (key !== "installLinks" && key !== "mcpConnections" && key !== "cloud") {
       capabilities[key] = value
     }
   }
@@ -292,7 +297,7 @@ function isOrganizationId(value: string): value is OrganizationId {
 }
 
 function isUserId(value: string): value is UserId {
-  return value.startsWith("user_")
+  return isDenTypeId("user", value)
 }
 
 async function mapWithConcurrency<T, R>(items: T[], limit: number, mapper: (item: T) => Promise<R>): Promise<R[]> {
@@ -1383,6 +1388,14 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
           delete capabilities.mcpConnections
         } else {
           capabilities.mcpConnections = mcpConnections
+        }
+      }
+      const cloud = body.data.capabilities.cloud
+      if (cloud !== undefined) {
+        if (cloud === null) {
+          delete capabilities.cloud
+        } else {
+          capabilities.cloud = cloud
         }
       }
 

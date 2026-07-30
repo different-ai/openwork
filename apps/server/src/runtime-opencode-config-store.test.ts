@@ -44,13 +44,21 @@ function serverConfig(root: string, dbPath: string): ServerConfig {
 async function withWorkspace(fn: (input: { root: string; config: ServerConfig }) => Promise<void>) {
   const root = await mkdtemp(join(tmpdir(), "openwork-runtime-config-"));
   const previousDb = process.env.OPENWORK_RUNTIME_DB;
+  const previousOpencodeConfigDir = process.env.OPENCODE_CONFIG_DIR;
   const dbPath = join(root, "runtime.sqlite");
   process.env.OPENWORK_RUNTIME_DB = dbPath;
+  // MCP listings merge the global OpenCode config layer, so point it at an
+  // empty directory inside the fixture. Without this the assertions observe
+  // whatever MCP servers the developer happens to have in ~/.config/opencode.
+  process.env.OPENCODE_CONFIG_DIR = join(root, "global-opencode");
+  await mkdir(process.env.OPENCODE_CONFIG_DIR, { recursive: true });
   try {
     await fn({ root, config: serverConfig(root, dbPath) });
   } finally {
     if (previousDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
     else process.env.OPENWORK_RUNTIME_DB = previousDb;
+    if (previousOpencodeConfigDir === undefined) delete process.env.OPENCODE_CONFIG_DIR;
+    else process.env.OPENCODE_CONFIG_DIR = previousOpencodeConfigDir;
     await rm(root, { recursive: true, force: true });
   }
 }

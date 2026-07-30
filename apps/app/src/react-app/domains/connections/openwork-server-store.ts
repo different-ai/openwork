@@ -9,6 +9,10 @@ import {
   type OpenworkServerInfo,
 } from "../../../app/lib/desktop";
 import {
+  getOpenworkGatewayOrigin,
+  readOpenworkGatewayDenToken,
+} from "../../../app/lib/gateway-runtime";
+import {
   clearOpenworkServerSettings,
   createOpenworkServerClient,
   isLoopbackOpenworkServerUrl,
@@ -130,6 +134,9 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
   };
 
   const getBaseUrl = () => {
+    const gatewayOrigin = getOpenworkGatewayOrigin();
+    if (gatewayOrigin) return normalizeOpenworkServerUrl(gatewayOrigin) ?? "";
+
     const pref = options.startupPreference();
     const hostInfo = state.openworkServerHostInfo;
     const settingsUrl = normalizeOpenworkServerUrl(state.openworkServerSettings.urlOverride ?? "") ?? "";
@@ -143,6 +150,12 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
   };
 
   const getAuth = () => {
+    const gatewayOrigin = getOpenworkGatewayOrigin();
+    if (gatewayOrigin) {
+      const token = readOpenworkGatewayDenToken().trim();
+      return { token: token || undefined, hostToken: undefined };
+    }
+
     const pref = options.startupPreference();
     const hostInfo = state.openworkServerHostInfo;
     const settingsUrl = normalizeOpenworkServerUrl(state.openworkServerSettings.urlOverride ?? "") ?? "";

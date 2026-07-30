@@ -1,0 +1,18 @@
+extends: ./electron-builder.base.yml
+appId: com.differentai.openwork
+productName: OpenWork Cloud
+extraMetadata:
+  openworkDistribution: cloud
+protocols:
+  - name: OpenWork Cloud
+    schemes:
+      - openwork
+publish:
+  - provider: github
+    owner: different-ai
+    repo: openwork
+    releaseType: release
+    channel: cloud
+linux:
+  executableName: openwork-cloud
+artifactName: openwork-cloud-${os}-${arch}-${version}.${ext}

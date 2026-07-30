@@ -109,14 +109,51 @@ async function waitForTranscriptIncrease(ctx, before) {
   throw new Error(`Transcript did not grow beyond ${before}.`);
 }
 
-async function waitForConnectReady(ctx) {
-  const deadline = Date.now() + 90_000;
+const ACCOUNT_MENU = '[data-testid="account-status-menu"]';
+const CONNECT_ROW = '[data-testid="openwork-connect-status"]';
+
+/** Live status lives inside the sidebar account menu, so frames open it first. */
+async function openAccountMenu(ctx) {
+  await ctx.eval(`(() => {
+    const trigger = document.querySelector('${ACCOUNT_MENU}');
+    if (trigger && trigger.getAttribute("aria-expanded") !== "true") trigger.click();
+    return true;
+  })()`);
+  await ctx.waitFor(`Boolean(document.querySelector('${CONNECT_ROW}') || document.body.innerText.includes("Ready for new tasks"))`, {
+    timeoutMs: 10_000,
+    label: "account status menu open",
+  });
+}
+
+async function closeAccountMenu(ctx) {
+  await ctx.eval(`(() => {
+    const trigger = document.querySelector('${ACCOUNT_MENU}');
+    if (trigger && trigger.getAttribute("aria-expanded") === "true") trigger.click();
+    return true;
+  })()`);
+  await ctx.waitFor(`!document.querySelector('${CONNECT_ROW}')`, {
+    timeoutMs: 10_000,
+    label: "account status menu closed",
+  });
+}
+
+/** The trigger mirrors the lifecycle state so polling never needs the menu open. */
+async function connectState(ctx) {
+  return ctx.eval(`document.querySelector('${ACCOUNT_MENU}')?.dataset.connectState ?? ""`);
+}
+
+async function waitForConnectState(ctx, expected, timeoutMs = 90_000) {
+  const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (await ctx.hasText("OpenWork Connect: Ready")) return;
+    if (await connectState(ctx) === expected) return;
     await ctx.eval("window.dispatchEvent(new Event('focus'))");
-    await new Promise((resolve) => setTimeout(resolve, 3_000));
+    await new Promise((resolve) => setTimeout(resolve, 2_000));
   }
-  throw new Error("OpenWork Connect did not become ready after background retries.");
+  throw new Error(`OpenWork Connect did not reach "${expected}" after background retries.`);
+}
+
+async function waitForConnectReady(ctx) {
+  await waitForConnectState(ctx, "ready");
 }
 
 async function beginSavedSessionRestore(ctx) {
@@ -236,6 +273,7 @@ export default {
           voiceover: vo[0],
           action: async () => {
             await beginSavedSessionRestore(ctx);
+            await openAccountMenu(ctx);
             await ctx.waitForText("OpenWork Connect: Checking", { timeoutMs: 10_000 });
           },
           assert: async () => {
@@ -257,6 +295,7 @@ export default {
         await ctx.prove("The shared background lifecycle leaves normal message submission unblocked", {
           voiceover: vo[1],
           action: async () => {
+            await closeAccountMenu(ctx);
             await ctx.control("composer.set_text", { text: PROMPT });
             const clicked = await ctx.eval(`(() => {
               const button = [...document.querySelectorAll("button")].find((entry) => entry.title === "Run task");
@@ -277,6 +316,7 @@ export default {
               ctx.assert(retried, "Could not resubmit after the first-task model choice.");
             }
             state.transcriptCount = await waitForTranscriptIncrease(ctx, state.transcriptCount);
+            await openAccountMenu(ctx);
           },
           assert: async () => {
             witness(ctx, state.transcriptCount > 0, "The message entered the transcript while Connect restoration remained pending.", { transcriptCount: state.transcriptCount });
@@ -298,8 +338,10 @@ export default {
         await ctx.prove("Successful reconciliation changes OpenWork Connect to Ready", {
           voiceover: vo[2],
           action: async () => {
+            await closeAccountMenu(ctx);
             await authDelay(ctx, "release");
             await waitForConnectReady(ctx);
+            await openAccountMenu(ctx);
           },
           assert: async () => {
             ctx.expectNoText("OpenWork Connect: Needs attention");
@@ -319,24 +361,20 @@ export default {
         await ctx.prove("A persistent lifecycle failure turns the status red and offers diagnostics", {
           voiceover: vo[3],
           action: async () => {
+            await closeAccountMenu(ctx);
             await installHealthFailureProbe(ctx);
-            const deadline = Date.now() + 45_000;
-            while (Date.now() < deadline && !(await ctx.hasText("OpenWork Connect: Needs attention"))) {
-              await ctx.eval("window.dispatchEvent(new Event('focus'))");
-              await new Promise((resolve) => setTimeout(resolve, 1_000));
-            }
-            ctx.assert(await ctx.hasText("OpenWork Connect: Needs attention"), "OpenWork Connect did not reach Needs attention after bounded retries.");
-            await ctx.clickText("OpenWork Connect: Needs attention", { selector: "button", timeoutMs: 5_000 });
+            await waitForConnectState(ctx, "needs_attention", 45_000);
+            await openAccountMenu(ctx);
             await ctx.waitForText("Run diagnostics", { timeoutMs: 5_000 });
           },
           assert: async () => {
-            const red = await ctx.eval(`Boolean(document.querySelector('[data-testid="openwork-connect-status"] .bg-red-9'))`);
+            const red = await ctx.eval(`Boolean(document.querySelector('${CONNECT_ROW} .bg-red-9'))`);
             witness(ctx, red, "The failed OpenWork Connect status uses the red error indicator.", { red });
           },
           screenshot: {
             name: "openwork-connect-needs-attention",
             claim: "The failed status is red and explains how to run diagnostics.",
-            requireText: ["OpenWork Connect: Needs attention", "OpenWork Connect needs attention", "Run diagnostics"],
+            requireText: ["OpenWork Connect: Needs attention", "Run diagnostics"],
             hashIncludes: `/workspace/${state.workspaceId}/session/`,
           },
         });
@@ -348,6 +386,7 @@ export default {
         await ctx.prove("The OpenWork Connect status is absent when the user is signed out", {
           voiceover: vo[4],
           action: async () => {
+            await closeAccountMenu(ctx);
             await restoreHealthProbe(ctx);
             await ctx.eval(`(() => {
               const token = localStorage.getItem("openwork.den.authToken") || "";
@@ -358,6 +397,7 @@ export default {
             })()`);
             await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 60_000, label: "control API after sign-out" });
             await ctx.waitFor("!document.body.innerText.includes('OpenWork Connect:')", { timeoutMs: 15_000, label: "Connect status hidden" });
+            await openAccountMenu(ctx);
           },
           assert: async () => {
             ctx.expectNoText("OpenWork Connect:");

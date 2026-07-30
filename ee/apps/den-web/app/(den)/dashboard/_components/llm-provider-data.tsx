@@ -52,6 +52,7 @@ export type DenLlmProvider = {
   };
   models: DenLlmProviderModel[];
   access: {
+    allMembers: boolean;
     members: DenLlmProviderMemberAccess[];
     teams: DenLlmProviderTeamAccess[];
   };
@@ -213,6 +214,7 @@ function asLlmProvider(value: unknown): DenLlmProvider | null {
       ? value.models.map(asLlmProviderModel).filter((entry): entry is DenLlmProviderModel => entry !== null)
       : [],
     access: {
+      allMembers: value.access.allMembers === true,
       members: Array.isArray(value.access.members)
         ? value.access.members
             .map(asLlmProviderMemberAccess)
@@ -290,6 +292,24 @@ export function getProviderEnvNames(config: Record<string, unknown>): string[] {
 
 export function getProviderDocUrl(config: Record<string, unknown>): string | null {
   return asString(config.doc);
+}
+
+/**
+ * Simple Icons slugs for providers whose models.dev id does not match the CDN
+ * slug. Anything missing here falls back to the provider id, then to the
+ * favicon of the documentation domain, then to a monogram.
+ */
+const SIMPLE_ICON_SLUG_BY_PROVIDER_ID: Record<string, string> = {
+  google: "googlegemini",
+  "google-vertex": "googlegemini",
+  mistral: "mistralai",
+  xai: "x",
+  amazonbedrock: "amazonaws",
+  openrouter: "openrouter",
+};
+
+export function getProviderIconSlug(providerId: string): string {
+  return SIMPLE_ICON_SLUG_BY_PROVIDER_ID[providerId] ?? providerId;
 }
 
 export function getProviderNpmPackage(config: Record<string, unknown>): string | null {

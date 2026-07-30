@@ -37,18 +37,13 @@
             "group": "Do work with it",
             "pages": [
               "start-here/do-work-with-it/control-the-browser",
-              "start-here/do-work-with-it/import-a-skill",
               "start-here/do-work-with-it/cross-chat-memory",
+              "start-here/do-work-with-it/what-uses-tokens",
               "start-here/do-work-with-it/workflows",
+              "start-here/do-work-with-it/skills-plugins-and-mcp",
+              "start-here/do-work-with-it/create-a-skill-from-chat",
+              "start-here/do-work-with-it/publish-and-copy-a-skill",
               "start-here/do-work-with-it/share-your-setup"
-            ]
-          },
-          {
-            "group": "Self-host",
-            "pages": [
-              "start-here/self-host",
-              "start-here/on-prem-branding",
-              "start-here/github-connector-helm"
             ]
           },
           {
@@ -67,6 +62,40 @@
         ]
       },
       {
+        "tab": "Self-host",
+        "pages": [
+          {
+            "group": "Overview",
+            "pages": [
+              "start-here/self-host"
+            ]
+          },
+          {
+            "group": "Plan your network",
+            "pages": [
+              "start-here/private-network-deployment",
+              "start-here/air-gapped-deployment",
+              "start-here/outbound-network-access",
+              "start-here/certificate-trust-and-proxies"
+            ]
+          },
+          {
+            "group": "Install and operate",
+            "pages": [
+              "start-here/installer-delivery",
+              "start-here/on-prem-branding",
+              "start-here/github-connector-helm"
+            ]
+          },
+          {
+            "group": "Troubleshoot",
+            "pages": [
+              "start-here/network-diagnostics"
+            ]
+          }
+        ]
+      },
+      {
         "tab": "Cloud",
         "pages": [
           "cloud/get-started",
@@ -76,6 +105,7 @@
             "pages": [
               "cloud/share-with-your-team/team-templates",
               "cloud/share-with-your-team/desktop-policies",
+              "cloud/share-with-your-team/team-prompt-cards",
               "cloud/share-with-your-team/managed-llm-provider",
               "cloud/share-with-your-team/custom-llm-provider",
               "cloud/share-with-your-team/shared-mcp-connections"
@@ -85,7 +115,23 @@
             "group": "Run in the cloud",
             "pages": [
               "cloud/run-in-the-cloud/shared-workspace",
+              "cloud/run-in-the-cloud/open-cloud-in-browser"
+            ]
+          },
+          {
+            "group": "Model Context Protocol (MCP)",
+            "pages": [
               "cloud/run-in-the-cloud/cloud-mcp",
+              "model-context-protocol/opencode",
+              "model-context-protocol/claude-code",
+              "model-context-protocol/codex",
+              "model-context-protocol/claude-desktop",
+              "model-context-protocol/chatgpt",
+              "model-context-protocol/cursor",
+              "model-context-protocol/vs-code",
+              "model-context-protocol/windsurf",
+              "model-context-protocol/zed",
+              "model-context-protocol/gemini-cli",
               "cloud/run-in-the-cloud/connect-openwork-mcp-remote-machine"
             ]
           },
@@ -118,6 +164,10 @@
     {
       "source": "/",
       "destination": "/start-here/get-started"
+    },
+    {
+      "source": "/model-context-protocol",
+      "destination": "/cloud/run-in-the-cloud/cloud-mcp"
     },
     {
       "source": "/quickstart",

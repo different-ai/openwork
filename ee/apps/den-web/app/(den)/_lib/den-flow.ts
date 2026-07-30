@@ -313,7 +313,7 @@ export function getSocialCallbackUrl(authCallbackBaseUrl = ""): string {
     const callbackUrl = new URL("/", origin);
     if (typeof window !== "undefined") {
       const params = new URLSearchParams(window.location.search);
-      for (const key of ["mode", "desktopAuth", "desktopScheme", "invite", "intent"]) {
+      for (const key of ["mode", "desktopAuth", "desktopScheme", "webAuth", "webAuthReturn", "invite", "intent"]) {
         const value = params.get(key)?.trim() ?? "";
         if (value) {
           callbackUrl.searchParams.set(key, value);
@@ -1081,6 +1081,11 @@ export async function requestJson(path: string, init: RequestInit = {}, timeoutM
 
   if (init.body && !(init.body instanceof FormData) && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
+  }
+
+  if (!headers.has("Authorization") && !path.startsWith("/api/auth/") && typeof window !== "undefined") {
+    const token = window.localStorage.getItem(AUTH_TOKEN_STORAGE_KEY)?.trim() ?? "";
+    if (token) headers.set("Authorization", "Bearer " + token);
   }
 
   const orgScope = getRequestOrgScope();

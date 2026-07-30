@@ -62,6 +62,13 @@ function emitFault(context: OAuthRequestContext, summary: string): void {
   })
 }
 
+function trailingDotAuthorityUrl(baseUrl: string): string {
+  const url = new URL(baseUrl)
+  if (!url.hostname || url.hostname.endsWith(".")) return baseUrl
+  const port = url.port ? `:${url.port}` : ""
+  return `${url.protocol}//${url.hostname}.${port}`
+}
+
 function sendInvalidClient(context: OAuthRequestContext): void {
   const { response, profile, scenario, state, correlationId } = context
   if (profile.provider === "microsoft") {
@@ -112,9 +119,13 @@ export async function handleOAuthRequest(context: OAuthRequestContext): Promise<
       sendJson(response, 200, { resource: `${mcpUrl}/wrong-resource`, authorization_servers: [baseUrl] })
       return true
     }
+    const authorizationServers = faultApplies(context, "trailing-dot-url")
+      ? [trailingDotAuthorityUrl(baseUrl)]
+      : [baseUrl]
+    if (authorizationServers[0] !== baseUrl) emitFault(context, "Published an authorization-server URL with a stray trailing-dot host")
     sendJson(response, 200, {
       resource: mcpUrl,
-      authorization_servers: [baseUrl],
+      authorization_servers: authorizationServers,
       scopes_supported: scenario.oauth.requiredResourceScopes,
       bearer_methods_supported: ["header"],
     })
@@ -247,6 +258,21 @@ export async function handleOAuthRequest(context: OAuthRequestContext): Promise<
       sendOAuthError(response, 400, "invalid_request", "Client, redirect URI, resource, and PKCE S256 must match the active scenario")
       return true
     }
+    if (faultApplies(context, "redirect-uri-whitelist")) {
+      emitFault(context, "Rejected OAuth authorization because the redirect URI is not allowlisted")
+      sendOAuthError(response, 400, "invalid_request", "redirect URI is not an allowed destination")
+      return true
+    }
+    if (faultApplies(context, "dcr-required")) {
+      emitFault(context, "Rejected manual OAuth authorization because dynamic client registration is required")
+      sendOAuthError(
+        response,
+        400,
+        "dynamic_client_registration_required",
+        "The MCP connection failed before OpenWork could complete the protocol lifecycle. Dynamic client registration is required before this gateway accepts OAuth authorization.",
+      )
+      return true
+    }
     if (
       requestedScopes.length === 0 ||
       requestedScopes.some((requestedScope) => !scenario.oauth.authorizationScopes.includes(requestedScope)) ||
@@ -311,6 +337,16 @@ export async function handleOAuthRequest(context: OAuthRequestContext): Promise<
       const code = form.get("code") ?? ""
       const codeRecord = state.authorizationCodes.get(code)
       const verifier = form.get("code_verifier") ?? ""
+      if (faultApplies(context, "per-connector-redirect")) {
+        emitFault(context, "Rejected token exchange because the provider expected a per-connector redirect URI")
+        sendOAuthError(
+          response,
+          400,
+          "invalid_grant",
+          "External MCP connect callback token exchange failed: the provider expected a per-connector redirect URI.",
+        )
+        return true
+      }
       const invalidGrant =
         faultApplies(context, "reject-grant") ||
         !codeRecord ||
@@ -333,6 +369,11 @@ export async function handleOAuthRequest(context: OAuthRequestContext): Promise<
     if (grantType === "refresh_token") {
       const refreshToken = form.get("refresh_token") ?? ""
       const existing = state.refreshTokens.get(refreshToken)
+      if (faultApplies(context, "refresh-expired")) {
+        emitFault(context, "Rejected refresh-token continuity because the credential expired")
+        sendOAuthError(response, 400, "invalid_grant", "The refresh token expired; reconnect the provider account before retrying.")
+        return true
+      }
       if (!existing || existing.clientId !== clientId) {
         sendOAuthError(response, 400, "invalid_grant", "The synthetic refresh token was rejected")
         return true

@@ -16,6 +16,7 @@ import {
 } from "../capability-sources/external-mcp-connections.js"
 import { callExternalMcpTool, listExternalMcpTools } from "../capability-sources/external-mcp-client-runtime.js"
 import {
+  EXTERNAL_MCP_TOOL_LIFECYCLE_TIMEOUT_MS,
   createExternalMcpLifecycleDeadline,
   type ExternalMcpLifecycleDeadline,
 } from "../capability-sources/external-mcp-client.js"
@@ -1039,9 +1040,10 @@ export async function executeExternalCapability(input: {
 
   let currentSchemaDigest: string | undefined
   let schemaGuidance: ExternalMcpSchemaGuidance | undefined
+  const deadline = createExternalMcpLifecycleDeadline(EXTERNAL_MCP_TOOL_LIFECYCLE_TIMEOUT_MS)
   try {
     const redirectUri = redirectUriFor(input.redirectUriBase, connection.id)
-    const tools = await listExternalMcpTools(connection, redirectUri, member)
+    const tools = await listExternalMcpTools(connection, redirectUri, member, undefined, deadline)
     const tool = tools.find((candidate) => candidate.name === input.toolName)
     if (!tool) {
       return {
@@ -1077,6 +1079,7 @@ export async function executeExternalCapability(input: {
       toolName: input.toolName,
       args: forwardedArguments,
       member,
+      lifecycleDeadline: deadline,
     })
 
     const validation = validateExternalMcpToolArguments(tool.inputSchema, input.args)

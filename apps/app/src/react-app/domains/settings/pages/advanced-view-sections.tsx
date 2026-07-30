@@ -24,6 +24,7 @@ import {
 import { isDesktopRuntime } from "@/app/utils";
 import { t } from "@/i18n";
 import { ControlPlaneUrlEditor } from "../cloud/control-plane-url-editor";
+import { usePlatform } from "../../../kernel/platform";
 import {
   displayCustomControlPlaneUrl,
   isValidControlPlaneUrl,
@@ -184,6 +185,7 @@ interface AdvancedOrganizationServerSectionProps {
 }
 
 export function AdvancedOrganizationServerSection(props: AdvancedOrganizationServerSectionProps) {
+  const platform = usePlatform();
   const [clearConfirming, setClearConfirming] = useState(false);
   const controlsDisabled = [props.authBusy, props.baseUrlBusy, props.sessionBusy].some(Boolean);
   const customUrl = displayCustomControlPlaneUrl(props.baseUrlDraft);
@@ -224,23 +226,25 @@ export function AdvancedOrganizationServerSection(props: AdvancedOrganizationSer
             : t("settings.organization_server_default")}
         </LayoutSectionItemFootnote>
         {isDesktopRuntime() ? <ServerEndpointsCard cloudMcpUrl={props.cloudMcpUrl} /> : null}
-        <div className="flex flex-wrap items-center gap-2 text-[11px] text-gray-9">
-          <Button
-            variant={clearConfirming ? "destructive" : "outline"}
-            size="sm"
-            onClick={clearServerConfiguration}
-            disabled={controlsDisabled}
-          >
-            {clearConfirming
-              ? t("den.cloud_control_plane_clear_confirm")
-              : t("den.cloud_control_plane_clear")}
-          </Button>
-          <span>
-            {clearConfirming
-              ? t("den.cloud_control_plane_clear_confirm_hint")
-              : t("den.cloud_control_plane_clear_hint")}
-          </span>
-        </div>
+        {platform.capabilities.desktopBootstrap ? (
+          <div className="flex flex-wrap items-center gap-2 text-[11px] text-gray-9">
+            <Button
+              variant={clearConfirming ? "destructive" : "outline"}
+              size="sm"
+              onClick={clearServerConfiguration}
+              disabled={controlsDisabled}
+            >
+              {clearConfirming
+                ? t("den.cloud_control_plane_clear_confirm")
+                : t("den.cloud_control_plane_clear")}
+            </Button>
+            <span>
+              {clearConfirming
+                ? t("den.cloud_control_plane_clear_confirm_hint")
+                : t("den.cloud_control_plane_clear_hint")}
+            </span>
+          </div>
+        ) : null}
         {props.baseUrlError ? <SettingsNotice tone="error">{props.baseUrlError}</SettingsNotice> : null}
       </LayoutSectionItem>
     </LayoutSection>
@@ -422,9 +426,29 @@ export function AdvancedCloudMcpDiagnosticsSection(props: AdvancedCloudMcpDiagno
               <DiagnosticRow label="Applied revision" value={props.cloudMcpHealth.delivery.appliedRevision ?? "none"} />
               <DiagnosticRow label="Delivery" value={`${props.cloudMcpHealth.delivery.state}${props.cloudMcpHealth.delivery.trigger ? ` / ${props.cloudMcpHealth.delivery.trigger}` : ""}`} />
               <DiagnosticRow label="Engine status" value={props.cloudMcpHealth.engine.status} />
+              {props.cloudMcpHealth.engineInspection?.checked ? (
+                <DiagnosticRow
+                  label="Engine MCP servers"
+                  value={(props.cloudMcpHealth.engineInspection.servers ?? []).length
+                    ? (props.cloudMcpHealth.engineInspection.servers ?? []).map((server) => `${server.name} ${server.status}${server.error ? ` (${server.error})` : ""}`).join("; ")
+                    : "none tracked"}
+                />
+              ) : null}
               <DiagnosticRow label="Provider/model" value={projection?.checked ? `${projection.provider ?? "unknown"}/${projection.model ?? "unknown"}; source ${projection.source ?? "unknown"}; tool calling ${formatMaybe(projection.toolCalling)}; present ${joinList(projection.present)}; missing ${joinList(projection.missing)}${projection.limitation ? `; limitation: ${projection.limitation}` : ""}` : "not checked"} />
               <DiagnosticRow label="Cloud tools" value={`derived present ${joinList(props.cloudMcpHealth.tools.present)}; missing ${joinList(props.cloudMcpHealth.tools.missing)}`} />
-              <DiagnosticRow label="Direct tools/list" value={`present ${joinList(props.cloudMcpHealth.tools.direct.present)}; missing ${joinList(props.cloudMcpHealth.tools.direct.missing)}`} />
+              <DiagnosticRow label="Direct tools/list" value={`checked ${props.cloudMcpHealth.tools.direct.checked ? "yes" : "no"}; present ${joinList(props.cloudMcpHealth.tools.direct.present)}; missing ${joinList(props.cloudMcpHealth.tools.direct.missing)}`} />
+              {props.cloudMcpHealth.tools.direct.trace ? (
+                <DiagnosticRow
+                  label="Direct probe"
+                  value={`${props.cloudMcpHealth.tools.direct.trace.endpoint ?? "unknown endpoint"} · ${props.cloudMcpHealth.tools.direct.trace.latencyMs} ms · ${props.cloudMcpHealth.tools.direct.trace.steps.map((step) => `${step.step} ${step.ok ? "ok" : "failed"}${step.httpStatus !== undefined ? ` (HTTP ${step.httpStatus})` : ""} ${Math.max(0, Math.round(step.latencyMs))}ms`).join(" → ") || "no steps"}`}
+                />
+              ) : null}
+              {props.cloudMcpHealth.firstFailure ? (
+                <DiagnosticRow
+                  label="First failure"
+                  value={`${props.cloudMcpHealth.firstFailure.code} (stage ${props.cloudMcpHealth.firstFailure.stage}; ${props.cloudMcpHealth.firstFailure.retryable ? "retryable" : "not retryable"}): ${props.cloudMcpHealth.firstFailure.message}`}
+                />
+              ) : null}
               <DiagnosticRow label="Plugin canaries" value={`present ${joinList(props.cloudMcpHealth.pluginCanaries.present)}; missing ${joinList(props.cloudMcpHealth.pluginCanaries.missing)}`} />
               <DiagnosticRow label="Safe capabilities" value={`schema v${props.cloudMcpHealth.schemaVersion}; connect catalog ${props.cloudMcpHealth.connectCatalogEnabled ? "enabled" : "disabled"}`} />
               {compatibility ? (

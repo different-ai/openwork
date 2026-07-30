@@ -20,9 +20,9 @@ import type {
 } from "../../../../app/lib/openwork-server";
 import { pickDirectory } from "../../../../app/lib/desktop";
 import {
-  isDesktopRuntime,
   safeStringify,
 } from "../../../../app/utils";
+import { usePlatform } from "../../../kernel/platform";
 import {
   authorizedFoldersReducer,
   buildAuthorizedFoldersStatus,
@@ -115,6 +115,7 @@ function AuthorizedFolderItem(props: AuthorizedFolderItemProps) {
 }
 
 export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
+  const platform = usePlatform();
   const [serverWorkspaceRoot, setServerWorkspaceRoot] = useState("");
   const [folderState, dispatchFolderState] = useReducer(
     authorizedFoldersReducer,
@@ -151,8 +152,9 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
     return null;
   }, [canReadConfig, canWriteConfig, openworkServerReady, openworkServerWorkspaceReady]);
 
+  const canUseNativeFilePicker = platform.capabilities.nativeFilePicker;
   const canPickAuthorizedFolder =
-    isDesktopRuntime() && canWriteConfig && props.activeWorkspaceType === "local";
+    canUseNativeFilePicker && canWriteConfig && props.activeWorkspaceType === "local";
   const workspaceRootFolder = serverWorkspaceRoot || props.selectedWorkspaceRoot.trim();
   const visibleAuthorizedFolders = useMemo(() => {
     const root = workspaceRootFolder;
@@ -235,7 +237,7 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
   }, [authorizedFolders, persistAuthorizedFolders]);
 
   const pickAuthorizedFolder = useCallback(async () => {
-    if (!isDesktopRuntime()) return;
+    if (!canUseNativeFilePicker) return;
     try {
       const selection = await pickDirectory({
         title: t("onboarding.authorize_folder"),
@@ -264,7 +266,7 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
       const message = error instanceof Error ? error.message : safeStringify(error);
       setAuthorizedFoldersError(message);
     }
-  }, [authorizedFolders, persistAuthorizedFolders, workspaceRootFolder]);
+  }, [authorizedFolders, canUseNativeFilePicker, persistAuthorizedFolders, workspaceRootFolder]);
 
   return (
     <LayoutSectionItem className="gap-6">
@@ -275,15 +277,17 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
         <LayoutSectionItemDescription>
           {t("context_panel.authorized_folders_desc")}
         </LayoutSectionItemDescription>
-        <LayoutSectionItemHeaderActions>
-          <Button
-            onClick={() => void pickAuthorizedFolder()}
-            disabled={authorizedFoldersLoading || authorizedFoldersSaving || !canPickAuthorizedFolder}
-          >
-            <Plus className="size-4" />
-            Add folder
-          </Button>
-        </LayoutSectionItemHeaderActions>
+        {canUseNativeFilePicker ? (
+          <LayoutSectionItemHeaderActions>
+            <Button
+              onClick={() => void pickAuthorizedFolder()}
+              disabled={authorizedFoldersLoading || authorizedFoldersSaving || !canPickAuthorizedFolder}
+            >
+              <Plus className="size-4" />
+              Add folder
+            </Button>
+          </LayoutSectionItemHeaderActions>
+        ) : null}
       </LayoutSectionItemHeader>
 
       {!canReadConfig ? (
@@ -317,18 +321,22 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
                   {t("context_panel.no_external_folders")}
                 </EmptyTitle>
                 <EmptyDescription>
-                  {t("context_panel.add_folder_hint")}
+                  {canUseNativeFilePicker
+                    ? t("context_panel.add_folder_hint")
+                    : t("context_panel.manage_folders_from_workspace")}
                 </EmptyDescription>
               </EmptyHeader>
-            <EmptyContent>
-              <Button
-                onClick={() => void pickAuthorizedFolder()}
-                disabled={authorizedFoldersLoading || authorizedFoldersSaving || !canPickAuthorizedFolder}
-              >
-                <Plus className="size-4" />
-                Add folder
-              </Button>
-            </EmptyContent>
+            {canUseNativeFilePicker ? (
+              <EmptyContent>
+                <Button
+                  onClick={() => void pickAuthorizedFolder()}
+                  disabled={authorizedFoldersLoading || authorizedFoldersSaving || !canPickAuthorizedFolder}
+                >
+                  <Plus className="size-4" />
+                  Add folder
+                </Button>
+              </EmptyContent>
+            ) : null}
             </Empty>
           )}
 

@@ -8,6 +8,7 @@ import {
   ChevronDown,
   ChevronRight,
   FileText,
+  Globe,
   Home,
   LogOut,
   Menu,
@@ -45,6 +46,7 @@ import {
   getPluginsRoute,
   getSsoRoute,
   getScimRoute,
+  getWebRoute,
 } from "../../_lib/den-org";
 import { useOrgListWindow } from "../../_lib/use-org-list-window";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
@@ -168,24 +170,33 @@ export function SidebarBrandMark({
   );
 }
 
+const DEFAULT_WORKSPACE_FAVICON_HREF = "/openwork-mark.svg";
+
 export function WorkspaceFavicon({
   metadata,
 }: {
   metadata: string | null | undefined;
 }) {
+  const orgContextLoading = metadata === undefined;
   const iconUrl = getManagedBrandIconUrl(metadata ?? null);
 
   useEffect(() => {
-    if (!iconUrl) {
+    if (orgContextLoading) {
+      // Keep the server-rendered favicon until the org context is known.
       return;
     }
 
     let favicon = document.head.querySelector<HTMLLinkElement>('link[rel="icon"]');
-    const created = favicon === null;
     if (!favicon) {
       favicon = document.createElement("link");
       favicon.rel = "icon";
       document.head.appendChild(favicon);
+    }
+
+    if (!iconUrl) {
+      favicon.href = DEFAULT_WORKSPACE_FAVICON_HREF;
+      favicon.removeAttribute("type");
+      return;
     }
 
     const previousHref = favicon.getAttribute("href");
@@ -197,12 +208,8 @@ export function WorkspaceFavicon({
       : "image/png";
 
     return () => {
-      if (created) {
-        favicon.remove();
-        return;
-      }
       if (previousHref === null) {
-        favicon.removeAttribute("href");
+        favicon.setAttribute("href", DEFAULT_WORKSPACE_FAVICON_HREF);
       } else {
         favicon.setAttribute("href", previousHref);
       }
@@ -212,7 +219,7 @@ export function WorkspaceFavicon({
         favicon.setAttribute("type", previousType);
       }
     };
-  }, [iconUrl]);
+  }, [orgContextLoading, iconUrl]);
 
   return null;
 }
@@ -246,7 +253,7 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
     return "Background Tasks";
   }
   if (pathname.startsWith(getCustomLlmProvidersRoute(orgSlug))) {
-    return "LLM Providers";
+    return "Bring your Own Keys";
   }
   if (pathname.startsWith(getDesktopPoliciesRoute(orgSlug))) {
     return "Desktop Policies";
@@ -256,6 +263,9 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
   }
   if (pathname.startsWith(getInferenceRoute(orgSlug))) {
     return "OpenWork Models";
+  }
+  if (pathname.startsWith(getWebRoute(orgSlug))) {
+    return "Web";
   }
   if (pathname.startsWith(getPluginsRoute(orgSlug))) {
     return "Plugins";
@@ -337,11 +347,17 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
       !profilePromptDismissed &&
       user.name?.trim() === DEFAULT_AUTH_NAME,
   );
+  const showFeedbackLink = runtimeConfigLoaded && runtimeConfig.orgMode === "multi_org";
   const feedbackHref = buildDenFeedbackUrl({
     pathname,
     orgSlug: activeOrg?.slug,
   });
   const mcpConnectionsEnabled = orgContext?.capabilities.mcpConnections === true;
+  // Web access is backed by the existing hosted cloud capability. The org
+  // payload only reports `cloud` after the server rollout helper has verified
+  // the multi-org deployment gate, so the sidebar stays hidden by default until
+  // both config and org context load.
+  const showWeb = runtimeConfigLoaded && orgContext?.capabilities.cloud === true;
 
   // Top-level rows: Dashboard, optional Your Connections, Extensions, Models,
   // Members, Analytics, Settings. Everything tool-shaped groups under
@@ -376,24 +392,24 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
           ...(showOpenWorkModels
             ? [{ href: getInferenceRoute(activeOrg.slug), label: "OpenWork Models" }]
             : []),
-          { href: getCustomLlmProvidersRoute(activeOrg.slug), label: "LLM Providers" },
+          { href: getCustomLlmProvidersRoute(activeOrg.slug), label: "Bring your Own Keys" },
         ],
       }
     : null;
   const settingsChildren: DashboardNavChild[] = activeOrg
     ? [
-        ...(access.isAdmin
+        ...(access.canViewSettings
           ? [
               { href: getOrgSettingsRoute(activeOrg.slug), label: "General" },
               { href: getDiagnosticsRoute(activeOrg.slug), label: "Diagnostics" },
               { href: getBrandAppearanceRoute(activeOrg.slug), label: "Brand appearance" },
               { href: getDesktopPoliciesRoute(activeOrg.slug), label: "Desktop Policies" },
               { href: getBillingRoute(activeOrg.slug), label: "Stripe" },
+              { href: getApiKeysRoute(activeOrg.slug), label: "API Keys" },
+              { href: getSsoRoute(activeOrg.slug), label: "SSO" },
+              { href: getScimRoute(activeOrg.slug), label: "SCIM" },
             ]
           : []),
-        ...(access.canManageApiKeys ? [{ href: getApiKeysRoute(activeOrg.slug), label: "API Keys" }] : []),
-        ...(access.canManageSso ? [{ href: getSsoRoute(activeOrg.slug), label: "SSO" }] : []),
-        ...(access.canManageScim ? [{ href: getScimRoute(activeOrg.slug), label: "SCIM" }] : []),
       ]
     : [];
   const settingsGroup: DashboardNavItem | null = settingsChildren.length > 0
@@ -419,6 +435,14 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
           label: "Your Connections",
           icon: Plug,
           badge: "Beta",
+        }]
+      : []),
+    ...(showWeb
+      ? [{
+          href: activeOrg ? getWebRoute(activeOrg.slug) : "#",
+          label: "Web",
+          icon: Globe,
+          badge: "Alpha",
         }]
       : []),
     ...(extensionsGroup ? [extensionsGroup] : []),
@@ -726,15 +750,17 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
           </div>
 
           <div className="flex items-center gap-1">
-            <a
-              href={feedbackHref}
-              target="_blank"
-              rel="noreferrer"
-              className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] text-gray-500 transition-colors hover:bg-gray-50 hover:text-gray-700"
-            >
-              <MessageSquare className="h-4 w-4" />
-              <span className="hidden sm:inline">Feedback</span>
-            </a>
+            {showFeedbackLink ? (
+              <a
+                href={feedbackHref}
+                target="_blank"
+                rel="noreferrer"
+                className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] text-gray-500 transition-colors hover:bg-gray-50 hover:text-gray-700"
+              >
+                <MessageSquare className="h-4 w-4" />
+                <span className="hidden sm:inline">Feedback</span>
+              </a>
+            ) : null}
             <a
               href={OPENWORK_DOCS_URL}
               target="_blank"

@@ -1,10 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowLeft, FileText, Puzzle, Server, Store, Terminal, Users, Webhook } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
+import { Archive, ArrowLeft, FileText, MoreHorizontal, Pencil, Plus, Puzzle, Server, Store, Terminal, Users, Webhook } from "lucide-react";
 import { PaperMeshGradient } from "@openwork/ui/react";
 
-import { getPluginsRoute } from "../../_lib/den-org";
+import { getNewPluginSkillRoute, getOrgAccessFlags, getPluginSkillRoute, getPluginsRoute } from "../../_lib/den-org";
+import { buttonVariants, DenButton } from "../../_components/ui/button";
+import { DenInput } from "../../_components/ui/input";
+import { DenTextarea } from "../../_components/ui/textarea";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import {
   type DenPlugin,
@@ -14,12 +19,36 @@ import {
   type PluginAgent,
   type PluginCommand,
   formatPluginTimestamp,
+  useArchivePlugin,
   usePlugin,
+  useUpdatePlugin,
 } from "./plugin-data";
 
 export function PluginDetailScreen({ pluginId }: { pluginId: string }) {
-  const { orgSlug } = useOrgDashboard();
-  const { data: plugin, isLoading, error } = usePlugin(pluginId);
+  const router = useRouter();
+  const { orgContext, orgSlug } = useOrgDashboard();
+  const { data: plugin, isLoading, error, refetch } = usePlugin(pluginId);
+  const archivePlugin = useArchivePlugin();
+  const [actionsOpen, setActionsOpen] = useState(false);
+  const [editPlugin, setEditPlugin] = useState<{ name: string; description: string } | null>(null);
+  const [archiveOpen, setArchiveOpen] = useState(false);
+  const actionsRef = useRef<HTMLDivElement | null>(null);
+  const access = getOrgAccessFlags(
+    orgContext?.currentMember.role ?? "member",
+    orgContext?.currentMember.isOwner ?? false,
+    orgContext?.roles ?? [],
+  );
+
+  useEffect(() => {
+    if (!actionsOpen) return;
+    function handlePointerDown(event: MouseEvent) {
+      if (actionsRef.current && !event.composedPath().includes(actionsRef.current)) {
+        setActionsOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
+  }, [actionsOpen]);
 
   if (isLoading && !plugin) {
     return (
@@ -43,11 +72,21 @@ export function PluginDetailScreen({ pluginId }: { pluginId: string }) {
 
   const marketplaces = plugin.marketplaces ?? [];
   const missingLabels: string[] = [];
-  if (plugin.skills.length === 0) missingLabels.push("skills");
   if (plugin.agents.length === 0) missingLabels.push("agents");
   if (plugin.commands.length === 0) missingLabels.push("commands");
   if (plugin.hooks.length === 0) missingLabels.push("hooks");
   if (plugin.mcps.length === 0) missingLabels.push("MCP servers");
+
+  async function handleArchivePlugin() {
+    try {
+      await archivePlugin.mutateAsync(pluginId);
+      setArchiveOpen(false);
+      router.push(getPluginsRoute(orgSlug));
+      router.refresh();
+    } catch {
+      // The mutation error is rendered in the confirmation dialog.
+    }
+  }
 
   return (
     <div className="mx-auto max-w-[860px] px-6 py-8 md:px-8">
@@ -59,6 +98,56 @@ export function PluginDetailScreen({ pluginId }: { pluginId: string }) {
           <ArrowLeft className="h-4 w-4" />
           Back
         </Link>
+        {access.isAdmin ? (
+          <div ref={actionsRef} className="relative">
+            <button
+              type="button"
+              onClick={() => setActionsOpen((current) => !current)}
+              className="flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-500 transition hover:border-gray-300 hover:bg-gray-50 hover:text-gray-900"
+              aria-label={`More actions for ${plugin.name}`}
+              aria-haspopup="menu"
+              aria-expanded={actionsOpen}
+              data-testid="plugin-actions-trigger"
+            >
+              <MoreHorizontal className="h-4 w-4" aria-hidden />
+            </button>
+            {actionsOpen ? (
+              <div
+                role="menu"
+                aria-label={`Actions for ${plugin.name}`}
+                className="absolute right-0 top-10 z-30 w-44 overflow-hidden rounded-2xl border border-gray-100 bg-white p-1.5 text-[13px] shadow-xl shadow-gray-900/10"
+              >
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setActionsOpen(false);
+                    setEditPlugin({ name: plugin.name, description: plugin.description });
+                  }}
+                  className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-gray-600 transition hover:bg-gray-50 hover:text-gray-900"
+                >
+                  <Pencil className="h-3.5 w-3.5" aria-hidden />
+                  Edit
+                </button>
+                <div className="my-1 border-t border-gray-100" />
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setActionsOpen(false);
+                    archivePlugin.reset();
+                    setArchiveOpen(true);
+                  }}
+                  className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-red-600 transition hover:bg-red-50"
+                  data-testid="archive-plugin-action"
+                >
+                  <Archive className="h-3.5 w-3.5" aria-hidden />
+                  Archive
+                </button>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </div>
 
       <article className="overflow-hidden rounded-2xl border border-gray-100 bg-white">
@@ -111,7 +200,7 @@ export function PluginDetailScreen({ pluginId }: { pluginId: string }) {
       </article>
 
       <div className="mt-6 space-y-6">
-        <PrimitiveSection icon={FileText} label="Skills" items={plugin.skills} render={renderSkillRow} />
+        <SkillsSection orgSlug={orgSlug} plugin={plugin} />
         <PrimitiveSection icon={Users} label="Agents" items={plugin.agents} render={renderAgentRow} />
         <PrimitiveSection icon={Terminal} label="Commands" items={plugin.commands} render={renderCommandRow} />
         <PrimitiveSection icon={Webhook} label="Hooks" items={plugin.hooks} render={renderHookRow} />
@@ -123,6 +212,171 @@ export function PluginDetailScreen({ pluginId }: { pluginId: string }) {
           No {formatMissingList(missingLabels)} detected in this plugin.
         </p>
       ) : null}
+
+      {editPlugin ? (
+        <EditPluginDialog
+          pluginId={plugin.id}
+          initialName={editPlugin.name}
+          initialDescription={editPlugin.description}
+          onClose={() => setEditPlugin(null)}
+          onSaved={() => {
+            setEditPlugin(null);
+            void refetch();
+          }}
+        />
+      ) : null}
+      <ArchivePluginDialog
+        open={archiveOpen}
+        pluginName={plugin.name}
+        busy={archivePlugin.isPending}
+        error={archivePlugin.error}
+        onClose={() => {
+          if (!archivePlugin.isPending) setArchiveOpen(false);
+        }}
+        onConfirm={() => void handleArchivePlugin()}
+      />
+    </div>
+  );
+}
+
+function EditPluginDialog({
+  pluginId,
+  initialName,
+  initialDescription,
+  onClose,
+  onSaved,
+}: {
+  pluginId: string;
+  initialName: string;
+  initialDescription: string;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const updatePlugin = useUpdatePlugin();
+  const [name, setName] = useState(initialName);
+  const [description, setDescription] = useState(initialDescription);
+  const trimmedName = name.trim();
+  const trimmedDescription = description.trim();
+  const unchanged = trimmedName === initialName && trimmedDescription === initialDescription;
+
+  async function handleSave() {
+    try {
+      await updatePlugin.mutateAsync({
+        pluginId,
+        name: trimmedName,
+        description: trimmedDescription || null,
+      });
+      onSaved();
+    } catch {
+      // The mutation error is rendered in the dialog.
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-6" onClick={updatePlugin.isPending ? undefined : onClose}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="edit-plugin-title"
+        className="w-full max-w-[440px] rounded-2xl border border-gray-100 bg-white p-6 shadow-[0_24px_60px_-24px_rgba(15,23,42,0.4)]"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <h2 id="edit-plugin-title" className="text-[16px] font-semibold tracking-[-0.01em] text-gray-950">
+          Edit plugin
+        </h2>
+        <p className="mt-1 text-[13px] leading-6 text-gray-500">
+          Update the name and description shown throughout Den.
+        </p>
+        <label className="mt-4 block">
+          <span className="mb-1.5 block text-[12px] font-medium text-gray-700">Name</span>
+          <DenInput
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            disabled={updatePlugin.isPending}
+            data-testid="plugin-edit-name"
+            autoFocus
+          />
+        </label>
+        <label className="mt-3 block">
+          <span className="mb-1.5 block text-[12px] font-medium text-gray-700">Description (optional)</span>
+          <DenTextarea
+            value={description}
+            onChange={(event) => setDescription(event.target.value)}
+            disabled={updatePlugin.isPending}
+            rows={3}
+            data-testid="plugin-edit-description"
+          />
+        </label>
+        {updatePlugin.error ? (
+          <p className="mt-3 text-[12.5px] text-red-600">
+            {updatePlugin.error instanceof Error ? updatePlugin.error.message : "Failed to update plugin."}
+          </p>
+        ) : null}
+        <div className="mt-5 flex items-center justify-end gap-2">
+          <DenButton variant="secondary" onClick={onClose} disabled={updatePlugin.isPending}>
+            Cancel
+          </DenButton>
+          <DenButton
+            loading={updatePlugin.isPending}
+            disabled={!trimmedName || unchanged}
+            onClick={() => void handleSave()}
+            data-testid="plugin-edit-save"
+          >
+            Save changes
+          </DenButton>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ArchivePluginDialog({
+  open,
+  pluginName,
+  busy,
+  error,
+  onClose,
+  onConfirm,
+}: {
+  open: boolean;
+  pluginName: string;
+  busy: boolean;
+  error: unknown;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-6" onClick={busy ? undefined : onClose}>
+      <div
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="archive-plugin-title"
+        aria-describedby="archive-plugin-description"
+        className="w-full max-w-md rounded-[28px] border border-gray-200 bg-white p-6 shadow-[0_24px_80px_-32px_rgba(15,23,42,0.45)]"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <h2 id="archive-plugin-title" className="text-[17px] font-semibold tracking-[-0.02em] text-gray-950">
+          Archive “{pluginName}”?
+        </h2>
+        <p id="archive-plugin-description" className="mt-2 text-[13px] leading-6 text-gray-500">
+          This removes the plugin from active Den lists without deleting its historical skills, marketplace relationships, or audit trail.
+        </p>
+        {error ? (
+          <p className="mt-3 text-[12.5px] text-red-600">
+            {error instanceof Error ? error.message : "Failed to archive plugin."}
+          </p>
+        ) : null}
+        <div className="mt-5 flex items-center justify-end gap-2">
+          <DenButton variant="secondary" onClick={onClose} disabled={busy}>
+            Cancel
+          </DenButton>
+          <DenButton variant="destructive" loading={busy} onClick={onConfirm} data-testid="archive-plugin-confirm">
+            Archive plugin
+          </DenButton>
+        </div>
+      </div>
     </div>
   );
 }
@@ -166,17 +420,49 @@ function PrimitiveSection<T>({
   );
 }
 
-function renderSkillRow(skill: PluginSkill) {
+function SkillsSection({ orgSlug, plugin }: { orgSlug: string | null; plugin: DenPlugin }) {
   return (
-    <div
-      key={skill.id}
-      className="rounded-xl border border-gray-100 bg-white px-4 py-3 transition hover:border-gray-200"
+    <section>
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div>
+          <h2 className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">
+            <FileText className="h-3.5 w-3.5" />
+            Skills
+          </h2>
+          <p className="mt-1 text-[12px] text-gray-400">Reusable instructions included in this plugin.</p>
+        </div>
+        <Link href={getNewPluginSkillRoute(orgSlug, plugin.id)} className={buttonVariants({ size: "sm" })}>
+          <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+          Add skill
+        </Link>
+      </div>
+      {plugin.skills.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-gray-200 bg-white px-5 py-8 text-center">
+          <p className="text-[14px] font-medium text-gray-900">No skills in this plugin yet.</p>
+          <p className="mt-1 text-[12.5px] text-gray-500">Add reusable guidance without leaving this plugin.</p>
+        </div>
+      ) : (
+        <div className="grid gap-2">
+          {plugin.skills.map((skill) => (
+            <SkillRow key={skill.id} orgSlug={orgSlug} pluginId={plugin.id} skill={skill} />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function SkillRow({ orgSlug, pluginId, skill }: { orgSlug: string | null; pluginId: string; skill: PluginSkill }) {
+  return (
+    <Link
+      href={getPluginSkillRoute(orgSlug, pluginId, skill.id)}
+      className="block rounded-xl border border-gray-100 bg-white px-4 py-3 transition hover:border-gray-200"
     >
       <p className="truncate text-[14px] font-semibold tracking-[-0.01em] text-gray-900">{skill.name}</p>
       {skill.description ? (
         <p className="mt-0.5 line-clamp-2 text-[12.5px] leading-[1.55] text-gray-500">{skill.description}</p>
       ) : null}
-    </div>
+    </Link>
   );
 }
 

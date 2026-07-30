@@ -3,7 +3,7 @@ title: "Desktop policies"
 description: "Use OpenWork Cloud to control desktop app capabilities for members and teams."
 ---
 
-Desktop policies let organization owners and admins manage what the OpenWork desktop app allows after a member signs in to Cloud. Policies can apply to the whole organization through the default policy, or to specific members and teams through assigned policies. The desktop app caches the effective policy, applies it on reload, and refreshes it when the active Cloud organization changes or the Cloud account is refreshed.
+Desktop policies let organization owners and admins manage what the OpenWork desktop app allows after a member signs in to Cloud. Policies can apply to the whole organization through the default policy, or to specific members and teams through assigned policies. Policies can also provide [team prompt cards](/cloud/share-with-your-team/team-prompt-cards). The desktop app caches the effective policy, applies it on reload, and refreshes it when the active Cloud organization changes, the Cloud account changes, or the hourly desktop-config refresh runs.
 
 ## What policies control
 
@@ -24,6 +24,6 @@ Current desktop policy keys map to concrete product capabilities:
 3. Create a new policy or edit the default policy.
 4. Turn capabilities on or off.
 5. Assign the policy to members or teams when it should not apply to everyone.
-6. Save the policy, then have members refresh their Cloud account or switch the active organization in the desktop app.
+6. Save the policy, then have members reload, refresh their Cloud account, switch the active organization, or wait for the hourly desktop-config refresh.
 
 The desktop app explains blocked capabilities as organization-controlled. For example, a built-in extension disabled by policy is hidden from the normal catalog and can appear in hidden views with a `Disabled by organization` explanation.

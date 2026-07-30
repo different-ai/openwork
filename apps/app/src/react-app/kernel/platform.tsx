@@ -2,7 +2,8 @@
 import { createContext, use, type ReactNode } from "react";
 
 import { desktopNotificationShow, openDesktopUrl, relaunchDesktopApp } from "../../app/lib/desktop";
-import { isDesktopRuntime } from "../../app/utils";
+import { platformCapabilities, type PlatformCapabilities } from "../../app/lib/platform-capabilities";
+import { isDesktopRuntime, isMacPlatform, isWindowsPlatform } from "../../app/utils";
 
 export type SyncStorage = {
   getItem(key: string): string | null;
@@ -20,6 +21,7 @@ export type Platform = {
   platform: "web" | "desktop";
   os?: "macos" | "windows" | "linux";
   version?: string;
+  capabilities: PlatformCapabilities;
   openLink(url: string): void;
   restart(): Promise<void>;
   notify(title: string, description?: string, href?: string): Promise<void>;
@@ -58,9 +60,18 @@ function shouldOpenInCurrentTab(url: string) {
   return /^(mailto|tel):/i.test(url.trim());
 }
 
+function currentDesktopOs(): Platform["os"] {
+  if (isMacPlatform()) return "macos";
+  if (isWindowsPlatform()) return "windows";
+  return "linux";
+}
+
 export function createDefaultPlatform(): Platform {
+  const desktop = isDesktopRuntime();
   return {
-    platform: isDesktopRuntime() ? "desktop" : "web",
+    platform: desktop ? "desktop" : "web",
+    os: desktop ? currentDesktopOs() : undefined,
+    capabilities: platformCapabilities(),
     openLink(url: string) {
       if (isDesktopRuntime()) {
         void openDesktopUrl(url).catch(() => {

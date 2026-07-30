@@ -2,9 +2,9 @@ import { copyFile, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { applyEdits, modify, parse, printParseErrorCode } from "jsonc-parser";
+import { runtimeStorageDir } from "./runtime-db.js";
 import type { ServerConfig } from "./types.js";
 import { ensureDir, exists } from "./utils.js";
-import { runtimeStorageDir } from "./runtime-opencode-config-store.js";
 
 export type LegacyConfigSweepFile = {
   path: string;

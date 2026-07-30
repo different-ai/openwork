@@ -34,11 +34,12 @@ async function withIsolatedBootstrapStore(callback) {
 
   try {
     const module = await import(`./workspace-store.mjs?bootstrap-test=${Date.now()}-${Math.random()}`);
-    const createStore = () => module.createWorkspaceStore({
+    const createStore = (overrides = {}) => module.createWorkspaceStore({
       app: { getPath: (name) => name === "userData" ? path.join(root, "userData") : root },
       defaultDenBaseUrl: "https://default.example.com",
       defaultRequireSignin: false,
       forceRequireSignin: false,
+      ...overrides,
     });
     const store = createStore();
     return await callback({
@@ -322,6 +323,7 @@ test("desktop bootstrap prefers a newer canonical writtenAt over stale legacy", 
 
     const config = await store.getDesktopBootstrapConfig();
     assert.equal(config.baseUrl, "https://canonical.example.com");
+    assert.equal(config.fromFile, true);
 
     const persisted = JSON.parse(await readFile(canonicalPath, "utf8"));
     assert.equal(persisted.baseUrl, "https://canonical.example.com");
@@ -344,9 +346,46 @@ test("desktop bootstrap migrates a newer legacy writtenAt to canonical", async (
     const config = await store.getDesktopBootstrapConfig();
     assert.equal(config.baseUrl, "https://legacy.example.com");
     assert.equal(config.requireSignin, true);
+    assert.equal(config.fromFile, true);
 
     const migrated = JSON.parse(await readFile(canonicalPath, "utf8"));
     assert.equal(migrated.baseUrl, "https://legacy.example.com");
+  });
+});
+
+test("explicit desktop bootstrap path never inherits legacy activation state", async () => {
+  await withIsolatedBootstrapStore(async ({ store, legacyPath, root }) => {
+    const explicitPath = path.join(root, "isolated", "desktop-bootstrap.json");
+    process.env.OPENWORK_DESKTOP_BOOTSTRAP_PATH = explicitPath;
+    await writeBootstrapConfig(legacyPath, {
+      baseUrl: "https://app.openworklabs.com",
+      requireSignin: true,
+      enterpriseActivation: {
+        activatedAt: "2026-07-27T13:30:23.342Z",
+        denBaseUrl: "https://app.openworklabs.com/api/den",
+      },
+    });
+
+    const config = await store.getDesktopBootstrapConfig();
+    assert.equal(config.fromFile, false);
+    assert.equal(config.enterpriseActivation, undefined);
+    await assert.rejects(readFile(explicitPath, "utf8"));
+  });
+});
+
+test("explicit desktop bootstrap path still reads its configured bootstrap", async () => {
+  await withIsolatedBootstrapStore(async ({ store, root }) => {
+    const explicitPath = path.join(root, "isolated", "desktop-bootstrap.json");
+    process.env.OPENWORK_DESKTOP_BOOTSTRAP_PATH = explicitPath;
+    await writeBootstrapConfig(explicitPath, {
+      baseUrl: "https://enterprise.example.com",
+      requireSignin: true,
+    });
+
+    const config = await store.getDesktopBootstrapConfig();
+    assert.equal(config.fromFile, true);
+    assert.equal(config.baseUrl, "https://enterprise.example.com");
+    assert.equal("requireActivation" in config, false);
   });
 });
 
@@ -367,6 +406,7 @@ test("desktop bootstrap prefers an older legacy organization config over a newer
 
     const config = await store.getDesktopBootstrapConfig();
     assert.equal(config.baseUrl, "https://openwork.organization.internal.example");
+    assert.equal(config.fromFile, true);
     const migrated = JSON.parse(await readFile(canonicalPath, "utf8"));
     assert.equal(migrated.baseUrl, "https://openwork.organization.internal.example");
   });
@@ -389,6 +429,7 @@ test("desktop bootstrap keeps an older canonical organization config over a newe
 
     const config = await store.getDesktopBootstrapConfig();
     assert.equal(config.baseUrl, "https://openwork.organization.internal.example");
+    assert.equal(config.fromFile, true);
     const persisted = JSON.parse(await readFile(canonicalPath, "utf8"));
     assert.equal(persisted.baseUrl, "https://openwork.organization.internal.example");
   });
@@ -409,6 +450,7 @@ test("desktop bootstrap ignores a newer malformed canonical config when legacy i
 
     const config = await store.getDesktopBootstrapConfig();
     assert.equal(config.baseUrl, "https://legacy.organization.internal.example");
+    assert.equal(config.fromFile, true);
     const migrated = JSON.parse(await readFile(canonicalPath, "utf8"));
     assert.equal(migrated.baseUrl, "https://legacy.organization.internal.example");
   });
@@ -431,6 +473,50 @@ test("desktop bootstrap falls back to mtime when writtenAt is missing", async ()
 
     const config = await store.getDesktopBootstrapConfig();
     assert.equal(config.baseUrl, "https://legacy.example.com");
+    assert.equal(config.fromFile, true);
+  });
+});
+
+test("sync desktop bootstrap reader matches async reader for canonical, legacy, and missing configs", async () => {
+  await withIsolatedBootstrapStore(async ({ store, canonicalPath }) => {
+    await writeBootstrapConfig(canonicalPath, {
+      baseUrl: "https://canonical.example.com",
+      requireSignin: false,
+      writtenAt: "2026-01-02T00:00:00.000Z",
+    });
+    assert.deepEqual(store.readDesktopBootstrapConfigSync(), await store.getDesktopBootstrapConfig());
+  });
+
+  await withIsolatedBootstrapStore(async ({ store, legacyPath }) => {
+    await writeBootstrapConfig(legacyPath, {
+      baseUrl: "https://legacy.example.com",
+      requireSignin: true,
+      writtenAt: "2026-01-02T00:00:00.000Z",
+    });
+    const syncConfig = store.readDesktopBootstrapConfigSync();
+    const asyncConfig = await store.getDesktopBootstrapConfig();
+    assert.deepEqual(syncConfig, asyncConfig);
+    assert.equal(syncConfig.fromFile, true);
+  });
+
+  await withIsolatedBootstrapStore(async ({ store }) => {
+    const syncConfig = store.readDesktopBootstrapConfigSync();
+    const asyncConfig = await store.getDesktopBootstrapConfig();
+    assert.deepEqual(syncConfig, asyncConfig);
+    assert.equal(syncConfig.fromFile, false);
+  });
+});
+
+test("desktop bootstrap fallback marks fromFile false only when no parseable file is available", async () => {
+  await withIsolatedBootstrapStore(async ({ store, canonicalPath }) => {
+    await mkdir(path.dirname(canonicalPath), { recursive: true });
+    await writeFile(canonicalPath, "{ malformed", "utf8");
+
+    const syncConfig = store.readDesktopBootstrapConfigSync();
+    const asyncConfig = await store.getDesktopBootstrapConfig();
+    assert.deepEqual(syncConfig, asyncConfig);
+    assert.equal(syncConfig.baseUrl, "https://default.example.com");
+    assert.equal(syncConfig.fromFile, false);
   });
 });
 
@@ -445,6 +531,51 @@ test("desktop bootstrap writes include a fresh writtenAt stamp", async () => {
     const persisted = JSON.parse(await readFile(canonicalPath, "utf8"));
     assert.equal(persisted.baseUrl, "https://canonical.example.com");
     assert.equal(Number.isFinite(Date.parse(persisted.writtenAt)), true);
+  });
+});
+
+test("enterprise activation is preserved, required activation is overrideable, and forced sign-in cannot be disabled", async () => {
+  await withIsolatedBootstrapStore(async ({ createStore, canonicalPath }) => {
+    const store = createStore({
+      defaultRequireSignin: true,
+      forceRequireSignin: true,
+    });
+    await store.setDesktopBootstrapConfig({
+      baseUrl: "https://app.openworklabs.com",
+      requireSignin: false,
+      requireActivation: false,
+      enterpriseActivation: {
+        activatedAt: "2026-07-27T12:00:00.000Z",
+        denBaseUrl: "https://app.openworklabs.com",
+      },
+    });
+
+    const config = await store.getDesktopBootstrapConfig();
+    assert.equal(config.requireSignin, true);
+    assert.equal(config.requireActivation, false);
+    assert.deepEqual(config.enterpriseActivation, {
+      activatedAt: "2026-07-27T12:00:00.000Z",
+      denBaseUrl: "https://app.openworklabs.com",
+    });
+    const persisted = JSON.parse(await readFile(canonicalPath, "utf8"));
+    assert.equal(persisted.requireSignin, true);
+    assert.equal(persisted.requireActivation, false);
+  });
+});
+
+// Both flavors share one application identifier, so they share this file. An
+// omitted policy must stay omitted: writing the enterprise build default here
+// would gate the public artifact on the same machine.
+test("an omitted requireActivation is never materialized into the shared bootstrap file", async () => {
+  await withIsolatedBootstrapStore(async ({ store, canonicalPath }) => {
+    await store.setDesktopBootstrapConfig({
+      baseUrl: "https://app.openworklabs.com",
+      requireSignin: true,
+    });
+
+    const persisted = JSON.parse(await readFile(canonicalPath, "utf8"));
+    assert.equal("requireActivation" in persisted, false);
+    assert.equal("requireActivation" in await store.getDesktopBootstrapConfig(), false);
   });
 });
 
@@ -490,6 +621,7 @@ test("imports the newest organization bootstrap beside a Windows installer when 
       brandLogoUrl: "https://openwork.internal.example/logo.png",
       brandIconUrl: "https://openwork.internal.example/icon.png",
       writtenAt: "2026-07-10T12:00:00.000Z",
+      fromFile: true,
     });
     const persisted = JSON.parse(await readFile(canonicalPath, "utf8"));
     assert.equal(persisted.baseUrl, "https://openwork.internal.example");
@@ -621,5 +753,6 @@ test("clearDesktopBootstrapConfig removes bootstrap files without deleting works
     const config = await store.getDesktopBootstrapConfig();
     assert.equal(config.baseUrl, "https://default.example.com");
     assert.equal(config.requireSignin, false);
+    assert.equal(config.fromFile, false);
   });
 });

@@ -4,9 +4,10 @@
 // session-route.tsx; settings-route carries a sibling copy that should adopt
 // this hook next.
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { isDesktopProviderBlocked } from "@/app/cloud/desktop-app-restrictions";
 import type { Client, ModelOption } from "@/app/types";
 import { useCheckDesktopRestriction } from "@/react-app/domains/cloud/desktop-config-provider";
+import { isCloudManagedProviderKey } from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
+import { filterEntitledModelOptions } from "@/react-app/domains/connections/provider-auth/provider-policy";
 import {
   getConnectedProviderItems,
   useProviderListQuery,
@@ -124,9 +125,8 @@ export function useModelPicker(input: UseModelPickerInput) {
           behaviorDescription: "",
           behaviorValue: null,
           isFree: false,
-          isConnected: true,
           isRecommended: isNew,
-          source: /^lpr_/i.test(provider.id) ? "cloud" as const : undefined,
+          source: isCloudManagedProviderKey(provider.id) ? "cloud" : undefined,
         });
       }
     }
@@ -136,25 +136,14 @@ export function useModelPicker(input: UseModelPickerInput) {
   // Apply org-level restrictions (dev #1505) on top of the raw model list
   // so the picker never surfaces blocked options:
   //   - `allowZenModel` hides the built-in OpenCode provider entries when false
-  //   - `allowCustomProviders` hides providers that OpenCode does not report
-  //     as connected through the provider list endpoint.
+  //   - `allowCustomProviders` keeps org-managed providers, plus Zen when allowed.
   const options = useMemo(() => {
     const restrictToCloud = checkDesktopRestriction({
       restriction: "allowCustomProviders",
     });
-    return modelOptions.filter((option) => {
-      if (
-        isDesktopProviderBlocked({
-          providerId: option.providerID,
-          checkRestriction: checkDesktopRestriction,
-        })
-      ) {
-        return false;
-      }
-      if (restrictToCloud && !option.isConnected) {
-        return false;
-      }
-      return true;
+    return filterEntitledModelOptions(modelOptions, {
+      restrictToCloud,
+      checkRestriction: checkDesktopRestriction,
     });
   }, [checkDesktopRestriction, modelOptions]);
 

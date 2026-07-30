@@ -2,14 +2,17 @@ import { relations, sql } from "drizzle-orm"
 import {
   boolean,
   index,
-  json,
   mysqlEnum,
   mysqlTable,
   timestamp,
   uniqueIndex,
   varchar,
 } from "drizzle-orm/mysql-core"
-import { denTypeIdColumn, encryptedTextColumn } from "../../columns"
+import {
+  compatJsonColumn,
+  denTypeIdColumn,
+  encryptedTextColumn,
+} from "../../columns"
 import { MemberTable, OrganizationTable } from "../org"
 import { ConfigObjectTable, PluginTable } from "./plugin-arch"
 
@@ -45,7 +48,7 @@ export const OrgOAuthClientTable = mysqlTable(
      * doesn't have to re-discover on every call. For native providers this
      * is typically empty.
      */
-    extra: json("extra").$type<Record<string, unknown>>(),
+    extra: compatJsonColumn<Record<string, unknown>>("extra"),
     createdByOrgMembershipId: denTypeIdColumn(
       "member",
       "created_by_org_membership_id",
@@ -56,7 +59,6 @@ export const OrgOAuthClientTable = mysqlTable(
       .default(sql`CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)`),
   },
   (table) => [
-    index("org_oauth_client_organization_id").on(table.organizationId),
     uniqueIndex("org_oauth_client_org_provider").on(
       table.organizationId,
       table.providerId,
@@ -81,7 +83,7 @@ export const ConnectedAccountTable = mysqlTable(
     orgMembershipId: denTypeIdColumn("member", "org_membership_id").notNull(),
     providerId: varchar("provider_id", { length: 255 }).notNull(),
     externalAccountId: varchar("external_account_id", { length: 255 }),
-    scopes: json("scopes").$type<string[]>(),
+    scopes: compatJsonColumn<string[]>("scopes"),
     accessToken: encryptedTextColumn("access_token"),
     refreshToken: encryptedTextColumn("refresh_token"),
     tokenType: varchar("token_type", { length: 64 }),
@@ -92,7 +94,7 @@ export const ConnectedAccountTable = mysqlTable(
      * tokens are saved.
      */
     pendingCodeVerifier: encryptedTextColumn("pending_code_verifier"),
-    credentialHealth: json("credential_health").$type<ExternalMcpCredentialHealth>(),
+    credentialHealth: compatJsonColumn<ExternalMcpCredentialHealth>("credential_health"),
     connectedAt: timestamp("connected_at", { fsp: 3 }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { fsp: 3 })
       .notNull()
@@ -100,7 +102,6 @@ export const ConnectedAccountTable = mysqlTable(
   },
   (table) => [
     index("connected_account_organization_id").on(table.organizationId),
-    index("connected_account_org_membership_id").on(table.orgMembershipId),
     uniqueIndex("connected_account_member_provider").on(
       table.orgMembershipId,
       table.providerId,
@@ -164,7 +165,7 @@ export const ExternalMcpConnectionTable = mysqlTable(
      * and are classified lazily so manually registered legacy callbacks keep
      * working until an administrator migrates them.
      */
-    oauthConfiguration: json("oauth_configuration").$type<ExternalMcpOAuthConfiguration>(),
+    oauthConfiguration: compatJsonColumn<ExternalMcpOAuthConfiguration>("oauth_configuration"),
     /**
      * How the connection's credential relates to people:
      * - "shared": one org-level credential (this row's token columns, or
@@ -198,7 +199,7 @@ export const ExternalMcpConnectionTable = mysqlTable(
      * connect/callback. Cleared once tokens are saved.
      */
     pendingCodeVerifier: encryptedTextColumn("pending_code_verifier"),
-    credentialHealth: json("credential_health").$type<ExternalMcpCredentialHealth>(),
+    credentialHealth: compatJsonColumn<ExternalMcpCredentialHealth>("credential_health"),
     /**
      * Set when live discovery no longer matches the selected OAuth issuer.
      * The mismatch remains fail-closed until an administrator explicitly
@@ -287,7 +288,6 @@ export const PluginMcpRequirementBindingTable = mysqlTable(
     updatedAt: timestamp("updated_at", { fsp: 3 }).notNull().default(sql`CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)`),
   },
   (table) => [
-    index("plugin_mcp_req_binding_organization_id").on(table.organizationId),
     index("plugin_mcp_req_binding_plugin_id").on(table.pluginId),
     index("plugin_mcp_req_binding_config_object_id").on(table.configObjectId),
     index("plugin_mcp_req_binding_connection_id").on(table.externalMcpConnectionId),

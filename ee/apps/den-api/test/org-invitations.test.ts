@@ -74,6 +74,44 @@ test("invitation cancel still validates against the unscoped handler", async () 
   await expect(response.json()).resolves.toEqual({ error: "unauthorized" })
 })
 
+test("admin invitation refresh is denied when the pending invitation is privileged", () => {
+  const roles = [
+    { role: "member", permission: {} },
+    { role: "admin", permission: { invitation: ["create", "cancel"], member: ["delete"], team: ["create", "update", "delete"], ac: ["read"] } },
+    { role: "security-admin", permission: { security_configuration: ["manage"] } },
+  ]
+  const availableRoles = new Set(roles.map((role) => role.role))
+
+  expect(invitationModule.validateInvitationRefreshRole({
+    existingRole: "member",
+    availableRoles,
+    currentMember: { isOwner: false, role: "admin" },
+    roles,
+  })).toEqual({ ok: true, role: "member" })
+
+  expect(invitationModule.validateInvitationRefreshRole({
+    existingRole: "admin",
+    availableRoles,
+    currentMember: { isOwner: false, role: "admin" },
+    roles,
+  })).toEqual({
+    ok: false,
+    error: "forbidden",
+    message: "Workspace admins can only invite members.",
+  })
+
+  expect(invitationModule.validateInvitationRefreshRole({
+    existingRole: "security-admin",
+    availableRoles,
+    currentMember: { isOwner: false, role: "admin" },
+    roles,
+  })).toEqual({
+    ok: false,
+    error: "forbidden",
+    message: "Workspace admins can only invite members.",
+  })
+})
+
 test("session hydration only runs when a user session is missing an active organization", () => {
   expect(userOrganizationsModule.shouldHydrateSessionActiveOrganization({
     scopedOrganizationId: null,

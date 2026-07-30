@@ -192,7 +192,7 @@ async function prepareCanonicalState(ctx) {
 $canonical = '${CANONICAL_BOOTSTRAP}'
 $legacy = '${LEGACY_BOOTSTRAP}'
 $bundle = '${DOWNLOAD_BUNDLE}'
-Get-Process -Name msedge,openwork-installer -ErrorAction SilentlyContinue | Stop-Process -Force
+Get-Process -Name msedge -ErrorAction SilentlyContinue | Stop-Process -Force
 Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle -match '^OpenWork Setup' } | Stop-Process -Force
 Remove-Item -LiteralPath 'C:\\Users\\Administrator\\AppData\\Local\\Microsoft\\Edge\\User Data\\Default\\Sessions' -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -Path 'HKLM:\\SOFTWARE\\Policies\\Microsoft\\Edge' -Force | Out-Null

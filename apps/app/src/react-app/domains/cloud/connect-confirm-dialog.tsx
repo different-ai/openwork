@@ -75,7 +75,7 @@ export function ConnectConfirmDialog({
 }: ConnectConfirmDialogProps) {
   const targetHost = claims ? formatControlPlaneHost(claims.den.baseUrl) : null;
   const switching = Boolean(currentHost && targetHost && currentHost !== targetHost);
-  const trustedBrandUrl = transport === "signed" ? claims?.brand.iconUrl ?? claims?.brand.logoUrl : null;
+  const trustedBrandUrl = transport ? claims?.brand.iconUrl ?? claims?.brand.logoUrl : null;
   const logoUrl = trustedBrandUrl && isHttpsUrl(trustedBrandUrl) ? trustedBrandUrl : null;
 
   return (

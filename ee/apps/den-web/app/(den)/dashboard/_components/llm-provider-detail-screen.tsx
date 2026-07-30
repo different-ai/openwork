@@ -303,11 +303,17 @@ export function LlmProviderDetailScreen({
                     </div>
                     <div className="inline-flex items-center gap-2 rounded-full bg-gray-100 px-4 py-2 text-[13px] font-medium text-gray-600">
                         <Users className="h-4 w-4" />
-                        {provider.access.members.length +
-                            provider.access.teams.length}{" "}
-                        grants
+                        {provider.access.allMembers
+                            ? "Everyone"
+                            : `${provider.access.members.length + provider.access.teams.length} grants`}
                     </div>
                 </div>
+
+                {provider.access.allMembers ? (
+                    <p className="mt-6 rounded-[20px] bg-gray-50 px-5 py-4 text-[14px] text-gray-600">
+                        Everyone in the organization — including members who join later — can use this provider.
+                    </p>
+                ) : null}
 
                 <div className="mt-8 grid gap-6 xl:grid-cols-2">
                     <div className="rounded-[24px] bg-gray-50 p-5">

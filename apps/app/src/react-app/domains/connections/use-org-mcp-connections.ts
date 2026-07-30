@@ -1,9 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { createDenClient, readDenSettings, type DenExternalMcpConnection } from "@/app/lib/den";
+import { createDenClient, readDenSettings, type DenClient, type DenExternalMcpConnection } from "@/app/lib/den";
 import { denSettingsChangedEvent } from "@/app/lib/den-session-events";
 import { openDesktopUrl } from "@/app/lib/desktop";
 import { isDesktopRuntime } from "@/app/utils";
+import {
+  loadOrgMcpConnections,
+  readCachedOrgMcpConnections,
+  readCloudInventoryScope,
+} from "./cloud-inventory-cache";
 import { connectionNeedsReconnect, isNativeProviderConnectionId } from "./native-provider-connections";
 
 // Mirrors the poll-until-connected pattern used for local MCP OAuth
@@ -22,6 +27,14 @@ async function openAuthorizationUrl(url: string) {
   if (typeof window !== "undefined") {
     window.open(url, "_blank", "noopener,noreferrer");
   }
+}
+
+async function disconnectMemberAccount(client: DenClient, orgId: string, connectionId: string): Promise<void> {
+  if (isNativeProviderConnectionId(connectionId)) {
+    await client.disconnectOauthProviderAccount(orgId, connectionId);
+    return;
+  }
+  await client.disconnectMyMcpConnectionAccount(orgId, connectionId);
 }
 
 export type OrgMcpConnectionCardState = {
@@ -99,9 +112,19 @@ export function resolveOrgMcpConnectionCardState(
  * `execute_capability` surface, not local per-workspace `mcpServers` entries.
  */
 export function useOrgMcpConnections() {
-  const [connections, setConnections] = useState<DenExternalMcpConnection[]>([]);
+  // Settings remounts every time the extensions panel opens, so start from
+  // whatever the app already fetched instead of an empty list.
+  const prefetched = readCloudInventoryScope();
+  const [connections, setConnectionsState] = useState<DenExternalMcpConnection[]>(
+    () => (prefetched ? readCachedOrgMcpConnections(prefetched) ?? [] : []),
+  );
+  const connectionsRef = useRef(connections);
+  const setConnections = useCallback((nextConnections: DenExternalMcpConnection[]) => {
+    connectionsRef.current = nextConnections;
+    setConnectionsState(nextConnections);
+  }, []);
   const [loading, setLoading] = useState(false);
-  const [loaded, setLoaded] = useState(false);
+  const [loaded, setLoaded] = useState(connections.length > 0);
   const [error, setError] = useState<string | null>(null);
   const [connectingId, setConnectingId] = useState<string | null>(null);
   const [disconnectingId, setDisconnectingId] = useState<string | null>(null);
@@ -144,7 +167,11 @@ export function useOrgMcpConnections() {
     setError(null);
     try {
       const client = createDenClient({ baseUrl: settings.baseUrl, token });
-      const result = await client.listMcpConnections(orgId, "usable");
+      const result = await loadOrgMcpConnections({
+        client,
+        scope: { baseUrl: settings.baseUrl, organizationId: orgId },
+        maxAgeMs: 0,
+      });
       if (
         refreshRunRef.current !== run
         || (expectedScope && !isActionScopeCurrent(expectedScope))
@@ -165,13 +192,16 @@ export function useOrgMcpConnections() {
         setLoaded(true);
       }
     }
-  }, [isActionScopeCurrent]);
+  }, [isActionScopeCurrent, setConnections]);
 
-  const connect = useCallback(async (connectionId: string) => {
+  const connect = useCallback(async (connectionId: string, options?: { forceFreshAuthorization?: boolean }) => {
     const settings = readDenSettings();
     const token = settings.authToken?.trim() ?? "";
     const orgId = settings.activeOrgId?.trim() ?? "";
     if (!token || !orgId) return;
+
+    const previous = connectionsRef.current.find((entry) => entry.id === connectionId);
+    const previousConnectedAt = previous?.connectedAt ?? null;
 
     stopPolling();
     const pollScope: OrgMcpPollScope = {
@@ -182,6 +212,10 @@ export function useOrgMcpConnections() {
     setConnectingId(connectionId);
     try {
       const client = createDenClient({ baseUrl: settings.baseUrl, token });
+      if (options?.forceFreshAuthorization === true && previous?.connectedForMe) {
+        await disconnectMemberAccount(client, orgId, connectionId);
+        if (!isActionScopeCurrent(pollScope)) return;
+      }
       const result = await client.startMcpConnectionConnect(orgId, connectionId);
       if (!isActionScopeCurrent(pollScope)) return;
       if (result.status === "connected") {
@@ -227,7 +261,10 @@ export function useOrgMcpConnections() {
           if (!isActionScopeCurrent(pollScope)) return;
           setConnections(polled);
           const match = polled.find((entry) => entry.id === connectionId);
-          if (match?.connectedForMe && !connectionNeedsReconnect(match)) {
+          const fresh = Boolean(match && match.connectedForMe && !connectionNeedsReconnect(match)
+            && typeof match.connectedAt === "string" && match.connectedAt.length > 0
+            && match.connectedAt !== previousConnectedAt);
+          if (fresh) {
             stopPolling();
             setConnectingId(null);
           }
@@ -240,11 +277,9 @@ export function useOrgMcpConnections() {
       setError(connectError instanceof Error ? connectError.message : "Failed to start the connection.");
       setConnectingId(null);
     }
-  }, [isActionScopeCurrent, refresh, stopPolling]);
+  }, [isActionScopeCurrent, refresh, setConnections, stopPolling]);
 
   const disconnect = useCallback(async (connectionId: string) => {
-    if (!isNativeProviderConnectionId(connectionId)) return;
-
     const settings = readDenSettings();
     const token = settings.authToken?.trim() ?? "";
     const orgId = settings.activeOrgId?.trim() ?? "";
@@ -260,7 +295,7 @@ export function useOrgMcpConnections() {
     setError(null);
     try {
       const client = createDenClient({ baseUrl: settings.baseUrl, token });
-      await client.disconnectOauthProviderAccount(orgId, connectionId);
+      await disconnectMemberAccount(client, orgId, connectionId);
       if (!isActionScopeCurrent(actionScope)) return;
       await refresh(actionScope);
       if (!isActionScopeCurrent(actionScope)) return;
@@ -289,7 +324,7 @@ export function useOrgMcpConnections() {
       stopPolling();
       window.removeEventListener(denSettingsChangedEvent, handleSettingsChanged);
     };
-  }, [refresh, stopPolling]);
+  }, [refresh, setConnections, stopPolling]);
 
   return { connections, loading, loaded, error, connectingId, disconnectingId, refresh, connect, disconnect };
 }

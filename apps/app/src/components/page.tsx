@@ -1,5 +1,6 @@
 import type { ComponentProps } from "react";
 import { Loader2 } from "lucide-react";
+import { Dithering } from "@paper-design/shaders-react";
 
 import { cn } from "@/lib/utils";
 
@@ -12,15 +13,28 @@ function Page({ className, ...props }: ComponentProps<"div">) {
   );
 }
 
+/**
+ * Paper first-load spec: subtle pixel-dither mosaic over the page ground.
+ * `dark:invert` flips the black pixels to white so the texture survives
+ * dark mode.
+ */
 function PageBackground({ className, ...props }: ComponentProps<"div">) {
   return (
     <div
-      className={cn("pointer-events-none fixed inset-0 z-0 overflow-hidden", className)}
+      className={cn("pointer-events-none fixed inset-0 z-0 overflow-hidden opacity-[0.1] dark:invert", className)}
       {...props}
     >
-      <div className="absolute -left-[20%] -top-[30%] h-[70%] w-[60%] rounded-full bg-[radial-gradient(ellipse,rgba(14,51,217,0.06),transparent_70%)] blur-3xl" />
-      <div className="absolute -bottom-[20%] -right-[10%] h-[50%] w-[50%] rounded-full bg-[radial-gradient(ellipse,rgba(255,126,46,0.05),transparent_70%)] blur-3xl" />
-      <div className="absolute left-[30%] top-[60%] h-[40%] w-[40%] rounded-full bg-[radial-gradient(ellipse,rgba(255,227,64,0.04),transparent_70%)] blur-3xl" />
+      <Dithering
+        className="size-full"
+        speed={0.01}
+        shape="warp"
+        type="2x2"
+        size={20.3}
+        scale={1.19}
+        frame={264559.21}
+        colorBack="#00000000"
+        colorFront="#000000"
+      />
     </div>
   );
 }
@@ -34,12 +48,23 @@ function PageTitlebarRegion({ className, ...props }: ComponentProps<"div">) {
   );
 }
 
-function PageContainer({ className, ...props }: ComponentProps<"div">) {
+/**
+ * Centers page content inside a bounded card (same treatment as the
+ * sign-in/welcome card) so onboarding stages stay readable over the
+ * dithered background. The outer region scrolls when content is tall.
+ */
+function PageContainer({ className, children, ...props }: ComponentProps<"div">) {
   return (
     <div
-      className={cn("relative z-10 flex flex-col items-center space-y-8 px-6 mac:pt-16 pt-8 pb-8 h-full", className)}
+      className={cn("relative z-10 h-full overflow-y-auto px-6 pb-8 pt-8 mac:pt-16", className)}
       {...props}
-    />
+    >
+      <div className="mx-auto flex min-h-full w-full max-w-[760px] items-center justify-center">
+        <div className="flex w-full flex-col items-center space-y-8 rounded-3xl border border-border bg-background px-6 py-10 sm:px-14 sm:py-12">
+          {children}
+        </div>
+      </div>
+    </div>
   );
 }
 

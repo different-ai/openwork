@@ -5,6 +5,15 @@ import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises"
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  desktopBootstrapPath as resolveDesktopBootstrapPath,
+  globalOpencodeConfigDir,
+  legacyDesktopBootstrapPath as resolveLegacyDesktopBootstrapPath,
+  openworkEnvStorePath,
+  openworkServerConfigPath as resolveOpenworkServerConfigPath,
+  opencodeCacheDirs as resolveOpencodeCacheDirs,
+  opencodeDataDirs as resolveOpencodeDataDirs,
+} from "@openwork/paths";
 
 const BROWSER_SESSION_PARTITION = "persist:openwork-browser";
 const NUKE_PARTITIONS = ["default", BROWSER_SESSION_PARTITION];
@@ -18,11 +27,39 @@ const OPENWORK_CONFIG_FILENAMES = [
   "runtime-opencode-config.json",
   "tokens.json",
   "env.json",
+  "connect-state.json",
+  "legacy-sweep-state.json",
 ];
+const USERDATA_WORKSPACE_FILENAMES = [
+  "openwork-workspaces.json",
+  "workspace-state.json",
+  "openwork-server-tokens.json",
+  "openwork-server-state.json",
+];
+const LEGACY_ORCHESTRATOR_DIR_NAME = ["openwork", "orchestrator"].join("-");
 const SHIP_IT_CACHE_DOMAIN = "com.differentai.openwork.ShipIt";
 const NUKE_WORKER_FILENAME = "nuke-worker.mjs";
 const NUKE_WORKER_DEADLINE_MS = 60_000;
 const NUKE_WORKER_PARENT_WAIT_MS = 30_000;
+// Env overrides that move a profile's storage off the default locations.
+// Stripping them yields the paths the default (production) profile owns.
+const PROFILE_SCOPED_ENV_KEYS = [
+  "OPENCODE_CONFIG_DIR",
+  "OPENCODE_DB",
+  "OPENWORK_DATA_DIR",
+  "OPENWORK_DESKTOP_BOOTSTRAP_PATH",
+  "OPENWORK_DEV_MODE",
+  "OPENWORK_ELECTRON_APP_IDENTIFIER",
+  "OPENWORK_ELECTRON_USERDATA",
+  "OPENWORK_ENV_STORE",
+  "OPENWORK_RUNTIME_DB",
+  "OPENWORK_SERVER_CONFIG",
+  "OPENWORK_TOKEN_STORE",
+  "XDG_CACHE_HOME",
+  "XDG_CONFIG_HOME",
+  "XDG_DATA_HOME",
+  "XDG_STATE_HOME",
+];
 const NUKE_WORKER_ENV_KEYS = [
   "APPDATA",
   "LOCALAPPDATA",
@@ -54,6 +91,17 @@ function envValue(env, key) {
 
 function isTruthyDevMode(env) {
   return envValue(env, "OPENWORK_DEV_MODE") === "1";
+}
+
+// A profile is "isolated" when it was launched with its own storage identity:
+// dev mode, an explicit userData directory, or a non-default app identifier.
+// Nuking such a profile must never reach into the default (production) profile.
+function isIsolatedProfile(env) {
+  return (
+    isTruthyDevMode(env) ||
+    envValue(env, "OPENWORK_ELECTRON_APP_IDENTIFIER") !== "" ||
+    envValue(env, "OPENWORK_ELECTRON_USERDATA") !== ""
+  );
 }
 
 function normalizePlatform(value) {
@@ -102,25 +150,12 @@ function desktopConfigHome(env, homedir, platform, paths) {
   return paths.join(homedir, ".config");
 }
 
-function appDataHome(env, homedir, platform, paths) {
-  const appData = envValue(env, "APPDATA");
-  return appData || paths.join(homedir, "AppData", "Roaming");
-}
-
 function openworkServerConfigPath(env, homedir, platform, paths) {
-  const override = envValue(env, "OPENWORK_SERVER_CONFIG");
-  if (override) return paths.resolve(override);
-  if (platform === "win32") return paths.join(appDataHome(env, homedir, platform, paths), "openwork", "server.json");
-  const xdgConfigHome = envValue(env, "XDG_CONFIG_HOME");
-  const root = xdgConfigHome || paths.join(homedir, ".config");
-  return paths.join(root, "openwork", "server.json");
+  return resolveOpenworkServerConfigPath({ env, homeDir: homedir, platform });
 }
 
 function envStorePath(env, homedir, platform, paths) {
-  const override = envValue(env, "OPENWORK_ENV_STORE");
-  if (override) return paths.resolve(override);
-  if (platform === "win32") return paths.join(appDataHome(env, homedir, platform, paths), "openwork", "env.json");
-  return paths.join(homedir, ".config", "openwork", "env.json");
+  return openworkEnvStorePath({ env, homeDir: homedir, platform });
 }
 
 function tokenStorePath(env, serverConfigPath, homedir, paths) {
@@ -138,54 +173,59 @@ function runtimeDbPath(env, serverConfigPath, homedir, paths) {
 }
 
 function desktopBootstrapPath(env, homedir, platform, paths, userDataPath) {
-  const override = envValue(env, "OPENWORK_DESKTOP_BOOTSTRAP_PATH");
-  if (override) return override;
-  if (isTruthyDevMode(env)) {
-    return paths.join(userDataPath, "openwork-dev-data", "home", ".config", "openwork", "desktop-bootstrap.json");
-  }
-  return paths.join(desktopConfigHome(env, homedir, platform, paths), "openwork", "desktop-bootstrap.json");
+  return resolveDesktopBootstrapPath({ env, homeDir: homedir, platform, userDataDir: userDataPath });
 }
 
-function legacyDesktopBootstrapPath(homedir, paths) {
-  return paths.join(homedir, ".config", "openwork", "desktop-bootstrap.json");
-}
-
-function globalOpencodeConfigHome(env, homedir, platform, paths) {
-  const xdgConfigHome = envValue(env, "XDG_CONFIG_HOME");
-  if (xdgConfigHome) return xdgConfigHome;
-  if (platform === "win32") return appDataHome(env, homedir, platform, paths);
-  return paths.join(homedir, ".config");
+function legacyDesktopBootstrapPath(homedir, platform) {
+  return resolveLegacyDesktopBootstrapPath({ env: {}, homeDir: homedir, platform });
 }
 
 function opencodeDataDirs(env, homedir, platform, paths) {
-  const dirs = [];
-  const xdgDataHome = envValue(env, "XDG_DATA_HOME");
-  if (xdgDataHome) dirs.push(paths.join(xdgDataHome, "opencode"));
-  dirs.push(paths.join(homedir, ".local", "share", "opencode"));
-  if (platform === "darwin") dirs.push(paths.join(homedir, "Library", "Application Support", "opencode"));
-  if (platform === "win32") dirs.push(paths.join(appDataHome(env, homedir, platform, paths), "opencode"));
-  return dirs;
+  return resolveOpencodeDataDirs({ env, homeDir: homedir, platform });
 }
 
 function opencodeConfigDirs(env, homedir, platform, paths) {
-  const dirs = [paths.join(globalOpencodeConfigHome(env, homedir, platform, paths), "opencode")];
-  const opencodeConfigDir = envValue(env, "OPENCODE_CONFIG_DIR");
-  if (opencodeConfigDir) dirs.push(opencodeConfigDir);
-  return dirs;
+  return [globalOpencodeConfigDir({ env, homeDir: homedir, platform })];
 }
 
-function opencodeCacheDirs(env, homedir, paths) {
+function opencodeCacheDirs(env, homedir, platform) {
+  return resolveOpencodeCacheDirs({ env, homeDir: homedir, platform });
+}
+
+function opencodeStateDirs(env, homedir, platform, paths) {
   const dirs = [];
-  const xdgCacheHome = envValue(env, "XDG_CACHE_HOME");
-  if (xdgCacheHome) dirs.push(paths.join(xdgCacheHome, "opencode"));
-  dirs.push(paths.join(homedir, ".cache", "opencode"));
+  const xdgStateHome = envValue(env, "XDG_STATE_HOME");
+  if (xdgStateHome) dirs.push(paths.join(xdgStateHome, "opencode"));
+  dirs.push(paths.join(homedir, ".local", "state", "opencode"));
+  if (platform === "win32") {
+    const localAppData = envValue(env, "LOCALAPPDATA");
+    dirs.push(paths.join(localAppData || paths.join(homedir, "AppData", "Local"), "opencode"));
+  }
   return dirs;
 }
 
 function orchestratorDataDir(env, homedir, paths) {
   const override = envValue(env, "OPENWORK_DATA_DIR");
   if (override) return override;
-  return paths.join(homedir, ".openwork", "openwork-orchestrator");
+  return paths.join(homedir, ".openwork", LEGACY_ORCHESTRATOR_DIR_NAME);
+}
+
+function serverDataDir(env, homedir, paths) {
+  const override = envValue(env, "OPENWORK_DATA_DIR");
+  if (override) return override;
+  return paths.join(homedir, ".openwork", "openwork-server");
+}
+
+/** Workspace-local state OpenWork owns; the rest of the workspace folder is the user's. */
+function workspaceOpenworkStatePaths(workspacePaths, paths) {
+  const output = [];
+  for (const workspacePath of workspacePaths) {
+    const value = String(workspacePath ?? "").trim();
+    if (!value) continue;
+    const opencodeDir = paths.join(paths.resolve(value), ".opencode");
+    output.push(paths.join(opencodeDir, "openwork"), paths.join(opencodeDir, "openwork.json"));
+  }
+  return output;
 }
 
 function opencodeDbOverridePaths(env, dataDirs, paths) {
@@ -227,6 +267,26 @@ function uniquePaths(rawPaths, paths, platform) {
   return output;
 }
 
+// Paths the default profile owns. Resolved by replanning with every
+// profile-shaping env override stripped, so the two plans can never disagree
+// about which locations are shared with production.
+function defaultProfileDeletePaths(input) {
+  const env = { ...input.env };
+  for (const key of PROFILE_SCOPED_ENV_KEYS) delete env[key];
+  return resolveNukePlan({ ...input, env, scopeToProfile: false }).manifest.deletePaths;
+}
+
+function profileScopedDeletePaths(deletePaths, sharedPaths, profileRoot, paths, platform) {
+  return deletePaths.filter((targetPath) => {
+    if (sameOrInside(targetPath, profileRoot, paths, platform)) return true;
+    return !sharedPaths.some(
+      (sharedPath) =>
+        sameOrInside(targetPath, sharedPath, paths, platform) ||
+        sameOrInside(sharedPath, targetPath, paths, platform),
+    );
+  });
+}
+
 function addOpenworkConfigFiles(deletePaths, roots, paths) {
   for (const root of roots) {
     if (!root) continue;
@@ -241,7 +301,7 @@ function resolveNukePlan(input) {
   const { env, homedir, platform, paths, userDataPath } = resolved;
   const bootstrapPath = desktopBootstrapPath(env, homedir, platform, paths, userDataPath);
   const preserveBootstrapPath = input.preserveBootstrap === false ? null : bootstrapPath;
-  const legacyBootstrapPath = legacyDesktopBootstrapPath(homedir, paths);
+  const legacyBootstrapPath = legacyDesktopBootstrapPath(homedir, platform);
   const serverConfig = openworkServerConfigPath(env, homedir, platform, paths);
   const runtimeDb = runtimeDbPath(env, serverConfig, homedir, paths);
   const envStore = envStorePath(env, homedir, platform, paths);
@@ -262,8 +322,15 @@ function resolveNukePlan(input) {
     ...dataDirs,
     ...opencodeDbOverridePaths(env, dataDirs, paths),
     ...opencodeConfigDirs(env, homedir, platform, paths),
-    ...opencodeCacheDirs(env, homedir, paths),
+    ...opencodeCacheDirs(env, homedir, platform),
+    ...opencodeStateDirs(env, homedir, platform, paths),
     orchestratorDataDir(env, homedir, paths),
+    serverDataDir(env, homedir, paths),
+    ...USERDATA_WORKSPACE_FILENAMES.map((filename) => paths.join(userDataPath, filename)),
+    ...workspaceOpenworkStatePaths(
+      Array.isArray(input.workspacePaths) ? input.workspacePaths : [],
+      paths,
+    ),
   ];
 
   const openworkConfigRoots = [
@@ -283,17 +350,29 @@ function resolveNukePlan(input) {
   const filteredDeletePaths = deletePaths.filter(
     (targetPath) => !shouldSkipDeletePath(targetPath, preserveBootstrapPath, homedir, paths, platform),
   );
+  const scopeToProfile = input.scopeToProfile !== false && isIsolatedProfile(input.env ?? {});
+  const sharedPaths = scopeToProfile ? defaultProfileDeletePaths(input) : [];
+  const scopeDeletePaths = (candidates) =>
+    scopeToProfile
+      ? profileScopedDeletePaths(candidates, sharedPaths, userDataPath, paths, platform)
+      : candidates;
   const manifest = {
-    deletePaths: uniquePaths(filteredDeletePaths, paths, platform),
+    deletePaths: uniquePaths(scopeDeletePaths(filteredDeletePaths), paths, platform),
     bootstrapPath,
     preserveBootstrapPath: preserveBootstrapPath || null,
     partitions: [...NUKE_PARTITIONS],
   };
-  const pendingPath = paths.join(desktopConfigHome(env, homedir, platform, paths), "openwork", PENDING_NUKE_FILENAME);
+  // Isolated profiles keep the sentinel in their own userData so another
+  // profile's next launch can never pick up and replay their cleanup.
+  const pendingPath = scopeToProfile
+    ? paths.join(userDataPath, PENDING_NUKE_FILENAME)
+    : paths.join(desktopConfigHome(env, homedir, platform, paths), "openwork", PENDING_NUKE_FILENAME);
 
   return {
     manifest,
     pendingPath,
+    scopeToProfile,
+    scopeDeletePaths,
     preservePaths: uniquePaths([preserveBootstrapPath, paths.join(homedir, ".opencode", "bin")], paths, platform),
     legacyBootstrapPath: paths.resolve(legacyBootstrapPath) === paths.resolve(bootstrapPath) ? null : legacyBootstrapPath,
     platform,
@@ -316,6 +395,9 @@ export function buildNukeWorkerNukeInput(input) {
     platform: normalizePlatform(input.platform),
     preserveBootstrap: input.preserveBootstrap !== false,
     userDataPath: String(input.userDataPath ?? ""),
+    workspacePaths: (Array.isArray(input.workspacePaths) ? input.workspacePaths : [])
+      .map((entry) => String(entry ?? "").trim())
+      .filter(Boolean),
   };
 }
 
@@ -650,11 +732,17 @@ async function bestEffort(errors, label, task, timeoutMs) {
   }
 }
 
-async function quiesceForNuke({ runtimeManager, uiControlServer, removeWindowsBrandShortcut }, errors) {
+async function quiesceForNuke({ runtimeManager, uiControlServer, removeWindowsBrandShortcut }, errors, options = {}) {
   await bestEffort(errors, "ui-control-server", () => uiControlServer.stop(), 3000);
   await bestEffort(errors, "runtime-dispose", () => runtimeManager.dispose(), 12_000);
   await bestEffort(errors, "packaged-sidecar-reaper", () => runtimeManager.prepareFreshRuntime(), 16_000);
-  await bestEffort(errors, "sandbox-docker-cleanup", () => runtimeManager.sandboxCleanupOpenworkContainers(), 24_000);
+  // Container cleanup matches on name prefix across the whole Docker host, so it
+  // cannot tell this profile's containers from another profile's. Only the
+  // default profile may run it; isolated profiles leave containers alone rather
+  // than force-removing production's.
+  if (!options.scopeToProfile) {
+    await bestEffort(errors, "sandbox-docker-cleanup", () => runtimeManager.sandboxCleanupOpenworkContainers(), 24_000);
+  }
   await bestEffort(errors, "windows-brand-shortcut", removeWindowsBrandShortcut, 5000);
 }
 
@@ -680,9 +768,13 @@ export async function runPendingNukeCleanup(input, options = {}) {
   }
   const pending = pendingFile.ok ? pendingFile.value : null;
   const plan = resolveNukePlan({ ...input, preserveBootstrap: pending?.preserveBootstrap !== false });
-  const paths = Array.isArray(pending?.paths)
-    ? pending.paths.filter((entry) => typeof entry === "string" && entry.trim()).map((entry) => entry.trim())
-    : [];
+  // Re-scope on replay: a sentinel written by a different profile (or an older
+  // build) must not be able to reach outside this profile's own storage.
+  const paths = plan.scopeDeletePaths(
+    Array.isArray(pending?.paths)
+      ? pending.paths.filter((entry) => typeof entry === "string" && entry.trim()).map((entry) => entry.trim())
+      : [],
+  );
   if (paths.length === 0) {
     await rm(plan.pendingPath, { force: true });
     return pendingCleanupResult({ ran: false });
@@ -714,7 +806,9 @@ export async function executeNukeFreshStart({ app, session, runtimeManager, uiCo
   const plan = resolveNukePlan(input);
   const phaseErrors = [];
 
-  await quiesceForNuke({ runtimeManager, uiControlServer, removeWindowsBrandShortcut }, phaseErrors);
+  await quiesceForNuke({ runtimeManager, uiControlServer, removeWindowsBrandShortcut }, phaseErrors, {
+    scopeToProfile: plan.scopeToProfile,
+  });
   await bestEffort(phaseErrors, "chromium-storage", () => clearChromiumStorage(session), 8000);
   const preservedBootstrap = await sanitizeDesktopBootstrapOnDisk(plan).catch((error) => {
     phaseErrors.push(receiptError(plan.manifest.preserveBootstrapPath ?? "desktop-bootstrap", error));

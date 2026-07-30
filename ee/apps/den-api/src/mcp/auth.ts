@@ -1,6 +1,6 @@
 import * as crypto from "node:crypto"
-import { and, eq, gt, isNull, lt, lte } from "@openwork-ee/den-db/drizzle"
-import { AuthSessionTable, MemberTable, OAuthAccessTokenTable } from "@openwork-ee/den-db/schema"
+import { and, eq, isNull } from "@openwork-ee/den-db/drizzle"
+import { MemberTable, OAuthAccessTokenTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { verifyJwsAccessToken } from "better-auth/oauth2"
 import {
@@ -17,10 +17,11 @@ import {
 import { db } from "../db.js"
 import { env } from "../env.js"
 import { publicRequestUrl } from "../request-url.js"
-import { getDenSessionExpiresAt, getDenSessionRefreshCutoff } from "../session-lifetime.js"
 import { DEN_JWT_SIGNING_ALGORITHM, getDenAuthIssuer } from "./jwt-policy.js"
 import { mcpProtectedResourceMetadataUrl, mcpRouteResource, resolveMcpResourceFromRequest, type McpResourceRoute } from "./resource.js"
 import { DEN_MCP_REQUESTED_SCOPE } from "./scopes.js"
+import { getMcpSessionLiveness } from "./session-liveness.js"
+export { hasActiveMcpSession } from "./session-liveness.js"
 
 export type McpPrincipal = {
   userId: string
@@ -195,8 +196,10 @@ function mcpJsonResponse(
   status: number,
   body: { error: string; message: string; referenceId: string; oauthError?: "invalid_token" | "insufficient_scope"; scope?: string },
   challenge?: string,
+  extraHeaders?: HeadersInit,
 ) {
-  const headers = new Headers({ "content-type": "application/json" })
+  const headers = new Headers(extraHeaders)
+  headers.set("content-type", "application/json")
   if (challenge) headers.set("www-authenticate", challenge)
   return new Response(JSON.stringify(body), { status, headers })
 }
@@ -270,46 +273,6 @@ export async function hasActiveMcpMembership(input: { userId: string; organizati
     .limit(1)
 
   return rows.length > 0
-}
-
-export async function hasActiveMcpSession(sessionId: string, now = new Date()) {
-  try {
-    const normalizedSessionId = normalizeDenTypeId("session", sessionId)
-    const nextExpiresAt = getDenSessionExpiresAt(now)
-
-    // MCP clients can be the only active surface for days at a time. Apply
-    // the same rolling-session policy used by desktop bearer requests so a
-    // regularly used, rotating OAuth grant does not die at the original
-    // seven-day browser-session boundary. The active-session predicate keeps
-    // this update from ever resurrecting an expired or explicitly deleted
-    // session, and the expiry guard prevents concurrent touches from
-    // shortening a session another request already renewed.
-    await db
-      .update(AuthSessionTable)
-      .set({
-        expiresAt: nextExpiresAt,
-        updatedAt: now,
-      })
-      .where(and(
-        eq(AuthSessionTable.id, normalizedSessionId),
-        gt(AuthSessionTable.expiresAt, now),
-        lte(AuthSessionTable.expiresAt, getDenSessionRefreshCutoff(now)),
-        lt(AuthSessionTable.expiresAt, nextExpiresAt),
-      ))
-
-    const rows = await db
-      .select({ id: AuthSessionTable.id })
-      .from(AuthSessionTable)
-      .where(and(
-        eq(AuthSessionTable.id, normalizedSessionId),
-        gt(AuthSessionTable.expiresAt, now),
-      ))
-      .limit(1)
-
-    return rows.length > 0
-  } catch {
-    return false
-  }
 }
 
 async function getJwks() {
@@ -445,7 +408,16 @@ export async function verifyMcpRequest(headers: Headers, optionsInput?: string |
     }, bearerChallenge({ metadataUrl: options.metadataUrl, error: "invalid_token", message }))
   }
 
-  if (!(await hasActiveMcpSession(sessionId))) {
+  const sessionLiveness = await getMcpSessionLiveness(sessionId)
+  if (sessionLiveness === "check_failed") {
+    return mcpJsonResponse(503, {
+      error: "mcp_session_check_unavailable",
+      message: "OpenWork could not verify the token session. Retry shortly.",
+      referenceId,
+    }, undefined, { "retry-after": "10" })
+  }
+
+  if (sessionLiveness === "missing") {
     const message = "The MCP bearer token session is missing, expired, or revoked."
     return mcpJsonResponse(401, {
       error: "mcp_session_revoked",

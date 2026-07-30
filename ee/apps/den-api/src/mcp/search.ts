@@ -33,6 +33,10 @@ export type CapabilityMatch = {
   hasBody: boolean
   /** Exact OpenAPI JSON schema for `body`, present only for JSON mutations. */
   bodySchema?: unknown
+  /** Exact MCP arguments schema returned by a live MCP tool list. */
+  argumentsSchema?: unknown
+  /** Tells generic execute callers where MCP arguments must be supplied. */
+  invocation?: { argumentsField: "body" }
 }
 
 export function compareCapabilityMatches(a: CapabilityMatch, b: CapabilityMatch): number {

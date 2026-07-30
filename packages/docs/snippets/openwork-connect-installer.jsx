@@ -12,10 +12,10 @@ opencode mcp auth openwork`;
     {
       id: "cursor",
       label: "Cursor",
-      eyebrow: "Cursor Web/Agents HTTPS callback",
-      helper: "Setup-only for Cursor Web/Agents with its HTTPS OAuth callback. Cursor Desktop OAuth uses cursor://anysphere.cursor-mcp/oauth/callback, which OpenWork's MCP profile intentionally rejects.",
+      eyebrow: "Cursor Desktop and Web/Agents",
+      helper: "Setup-only for Cursor Desktop and Cursor Web/Agents. Cursor Desktop's OAuth callback cursor://anysphere.cursor-mcp/oauth/callback is accepted with PKCE S256 enforced.",
       supportStatus: "Setup only",
-      supportExplanation: "Setup guide only: use Cursor Web/Agents with its HTTPS OAuth callback. Cursor Desktop OAuth uses cursor://anysphere.cursor-mcp/oauth/callback, which OpenWork's MCP profile intentionally rejects.",
+      supportExplanation: "Setup guide only: paste the server URL into Cursor and start OAuth. Cursor Desktop's cursor://anysphere.cursor-mcp/oauth/callback callback is accepted through an exact allowlist with PKCE S256 enforced. Native proof is not complete.",
       copyText: MCP_SERVER_URL,
     },
     {

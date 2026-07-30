@@ -220,6 +220,9 @@ test("single-org bootstrap adopts a pending invitation instead of creating a dup
     role: "member",
     email: invitedEmail.toUpperCase(),
   })
+  if (!member) {
+    throw new Error("bootstrap membership was not created")
+  }
   expect(member.organizationId).toBe(organizationId)
 
   const relatedMembers = (await membersForOrganization(organizationId))
@@ -243,6 +246,9 @@ test("single-org bootstrap without a pending invitation keeps the default member
     role: "member",
     email: noInviteEmail,
   })
+  if (!member) {
+    throw new Error("bootstrap membership was not created")
+  }
   expect(member.organizationId).toBe(organizationId)
 
   const rows = (await membersForOrganization(organizationId)).filter((member) => member.userId === noInviteUserId)
@@ -387,8 +393,11 @@ test("acceptInvitation merges an existing member with the invitation placeholder
     email: mergeEmail,
     invitationId,
   })
+  if (!accepted || accepted.status !== "accepted") {
+    throw new Error("invite was not accepted")
+  }
 
-  expect(accepted?.member.id).toBe(existingMemberId)
+  expect(accepted.member.id).toBe(existingMemberId)
   const relatedMembers = (await membersForOrganization(organizationId))
     .filter((member) => member.userId === mergeUserId || member.inviteId === invitationId)
   expect(relatedMembers).toHaveLength(1)
@@ -428,8 +437,11 @@ test("acceptInvitation does not downgrade an existing owner while removing the p
     email: ownerMergeEmail,
     invitationId,
   })
+  if (!accepted || accepted.status !== "accepted") {
+    throw new Error("invite was not accepted")
+  }
 
-  expect(accepted?.member.id).toBe(ownerMemberToMergeId)
+  expect(accepted.member.id).toBe(ownerMemberToMergeId)
   const relatedMembers = (await membersForOrganization(organizationId))
     .filter((member) => member.userId === ownerMergeUserId || member.inviteId === invitationId)
   expect(relatedMembers).toHaveLength(1)
@@ -460,6 +472,9 @@ test("acceptInvitationForUser returns the existing member when bootstrap already
     role: "member",
     email: acceptedInviteEmail,
   })
+  if (!bootstrapMember) {
+    throw new Error("bootstrap membership was not created")
+  }
   await expect(invitationStatus(invitationId)).resolves.toBe("accepted")
 
   const accepted = await orgs.acceptInvitationForUser({
@@ -467,9 +482,12 @@ test("acceptInvitationForUser returns the existing member when bootstrap already
     email: acceptedInviteEmail,
     invitationId,
   })
+  if (!accepted || accepted.status !== "accepted") {
+    throw new Error("invite was not accepted")
+  }
 
-  expect(accepted?.invitation.id).toBe(invitationId)
-  expect(accepted?.member.id).toBe(bootstrapMember.id)
+  expect(accepted.invitation.id).toBe(invitationId)
+  expect(accepted.member.id).toBe(bootstrapMember.id)
 })
 
 test("bootstrap ignores expired, non-matching, and other-org invitations", async () => {

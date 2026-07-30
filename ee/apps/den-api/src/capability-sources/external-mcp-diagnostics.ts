@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto"
+import { isEnterpriseMcpLifecycleDeadline } from "@openwork/enterprise-mcp-client"
 import { PrivateUrlError } from "./url-guard.js"
 
 export const EXTERNAL_MCP_DIAGNOSTIC_PHASES = [
@@ -648,7 +649,9 @@ function safeBaseMessageFor(input: {
   providerErrorMessage?: string
 }): string {
   if (input.code === "MCP_LIFECYCLE_DEADLINE") {
-    return "The MCP lifecycle exceeded OpenWork's bounded diagnostic deadline."
+    return input.phase === "MCP_TOOL_EXECUTION"
+      ? "The capability did not finish within the time OpenWork allows a single tool call."
+      : "The MCP lifecycle exceeded OpenWork's bounded diagnostic deadline."
   }
   if (input.code === "MCP_REQUEST_TIMEOUT") {
     return "The MCP server did not answer the current protocol request within its bounded timeout."
@@ -1042,14 +1045,18 @@ function classifyByCode(code: string): Classification | null {
 }
 
 function classifyError(error: unknown, fallbackPhase: ExternalMcpDiagnosticPhase): Classification {
-  if (error instanceof ExternalMcpLifecycleDeadlineError) {
+  // The enterprise client aborts with a RequestTimeout MCP error of its own, so
+  // check for our marker before any JSON-RPC code is read as the provider's.
+  if (error instanceof ExternalMcpLifecycleDeadlineError || isEnterpriseMcpLifecycleDeadline(error)) {
     return {
       phase: fallbackPhase,
       category: "lifecycle_deadline",
       code: "MCP_LIFECYCLE_DEADLINE",
       retryable: true,
       actionOwner: "provider_admin",
-      operatorAction: "Reduce provider latency or catalog pagination so the complete MCP lifecycle finishes within the bounded deadline, then retry.",
+      operatorAction: fallbackPhase === "MCP_TOOL_EXECUTION"
+        ? "Retry the capability, and reduce provider latency for this tool if it keeps running past the bounded deadline."
+        : "Reduce provider latency or catalog pagination so the complete MCP lifecycle finishes within the bounded deadline, then retry.",
     }
   }
   if (error instanceof ExternalMcpResponseBodyLimitError) {

@@ -36,19 +36,34 @@ function auth(token: string) {
 }
 
 function startMockOpencode(input?: { invalidList?: boolean; holdCommand?: Promise<void> }) {
-  const requests: Array<{ pathname: string; search: string; directory: string | null }> = [];
+  const requests: Array<{ pathname: string; search: string; directory: string | null; method: string; body?: unknown }> = [];
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
     async fetch(request) {
       const url = new URL(request.url);
-      requests.push({
+      const record: { pathname: string; search: string; directory: string | null; method: string; body?: unknown } = {
         pathname: url.pathname,
         search: url.search,
         directory: request.headers.get("x-opencode-directory"),
-      });
+        method: request.method,
+      };
+      if (request.method === "POST") record.body = await request.json();
+      requests.push(record);
 
       if (url.pathname === "/session") {
+        if (request.method === "POST") {
+          const title = typeof record.body === "object" && record.body !== null
+            ? Reflect.get(record.body, "title")
+            : undefined;
+          return Response.json({
+            id: "ses_created",
+            title: typeof title === "string" ? title : "New session",
+            slug: "created-session",
+            directory: request.headers.get("x-opencode-directory"),
+            time: { created: 300, updated: 300 },
+          });
+        }
         if (input?.invalidList) {
           return Response.json({ nope: true });
         }
@@ -99,6 +114,10 @@ function startMockOpencode(input?: { invalidList?: boolean; holdCommand?: Promis
         ]);
       }
 
+      if (url.pathname === "/session/ses_created/prompt_async" && request.method === "POST") {
+        return new Response(null, { status: 204 });
+      }
+
       if (url.pathname === "/session/ses_1/todo") {
         return Response.json([
           {
@@ -121,7 +140,7 @@ function startMockOpencode(input?: { invalidList?: boolean; holdCommand?: Promis
   return { server, requests };
 }
 
-async function startOpenworkServer(input: { workspaceRoot: string; opencodeBaseUrl: string }) {
+async function startOpenworkServer(input: { workspaceRoot: string; opencodeBaseUrl: string; readOnly?: boolean }) {
   const config: ServerConfig = {
     host: "127.0.0.1",
     port: 0,
@@ -140,7 +159,7 @@ async function startOpenworkServer(input: { workspaceRoot: string; opencodeBaseU
       },
     ],
     authorizedRoots: [input.workspaceRoot],
-    readOnly: true,
+    readOnly: input.readOnly ?? true,
     startedAt: Date.now(),
     tokenSource: "cli",
     hostTokenSource: "cli",
@@ -169,6 +188,33 @@ async function waitUntil(predicate: () => boolean) {
 }
 
 describe("workspace session read APIs", () => {
+  test("creates a session and starts its prompt without UI navigation", async () => {
+    const workspaceRoot = await createWorkspaceRoot();
+    const mock = startMockOpencode();
+    const openwork = await startOpenworkServer({
+      workspaceRoot,
+      opencodeBaseUrl: `http://127.0.0.1:${mock.server.port}`,
+      readOnly: false,
+    });
+
+    const response = await fetch(`http://127.0.0.1:${openwork.server.port}/workspace/ws_1/sessions`, {
+      method: "POST",
+      headers: { ...auth(openwork.token), "Content-Type": "application/json" },
+      body: JSON.stringify({ title: "Look into dolphins", prompt: "Research dolphins." }),
+    });
+
+    expect(response.status).toBe(201);
+    await expect(response.json()).resolves.toMatchObject({
+      item: { id: "ses_created", title: "Look into dolphins", directory: workspaceRoot },
+      started: true,
+    });
+    const createRequest = mock.requests.find((request) => request.pathname === "/session" && request.method === "POST");
+    expect(createRequest?.body).toEqual({ title: "Look into dolphins" });
+    const promptRequest = mock.requests.find((request) => request.pathname === "/session/ses_created/prompt_async");
+    expect(promptRequest?.body).toEqual({ parts: [{ type: "text", text: "Research dolphins." }] });
+    expect(promptRequest?.directory).toBe(workspaceRoot);
+  });
+
   test("lists sessions and returns session details, messages, and snapshot", async () => {
     const workspaceRoot = await createWorkspaceRoot();
     const mock = startMockOpencode();

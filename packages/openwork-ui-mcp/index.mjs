@@ -3,7 +3,8 @@
 /**
  * openwork-ui-mcp
  *
- * MCP server that exposes OpenWork's UI control surface as MCP tools.
+ * MCP server that exposes OpenWork's semantic app context and UI control
+ * surface as an MCP resource and tools.
  * Speaks MCP stdio and proxies to the OpenWork desktop bridge HTTP API.
  *
  * Requires OpenWork desktop running with the local UI control bridge active.
@@ -156,8 +157,39 @@ function formatExecutionResult(actionId, result) {
 
 const server = new McpServer({
   name: "openwork-ui",
-  version: "0.1.0",
+  version: "0.2.0",
 });
+
+// ── openwork://context/current ──
+server.resource(
+  "current_openwork_context",
+  "openwork://context/current",
+  async (uri) => {
+    const result = await bridgeRequest("/context");
+    const context = result.context ?? result;
+    return {
+      contents: [{
+        uri: uri.href,
+        mimeType: "application/json",
+        text: JSON.stringify(context, null, 2),
+      }],
+    };
+  },
+);
+
+// ── ui.context ──
+server.tool(
+  "ui_context",
+  "Read OpenWork's semantic app context: current screen, all open conversation tabs, split-screen layout, focused pane, sidebar, side panel, settings, and currently available queries and commands. Reads app state without focusing the window.",
+  {},
+  async () => {
+    const result = await bridgeRequest("/context");
+    if (!result.ok && result.error) {
+      return { content: [{ type: "text", text: `Error: ${result.error}` }], isError: true };
+    }
+    return { content: [{ type: "text", text: JSON.stringify(result.context ?? result, null, 2) }] };
+  },
+);
 
 // ── ui.snapshot ──
 server.tool(
@@ -207,7 +239,7 @@ server.tool(
 // ── ui.execute_action ──
 server.tool(
   "ui_execute_action",
-  "Execute an OpenWork UI action by its id. Use ui_list_actions first to see available actions and their required arguments.",
+  "Execute an OpenWork UI action by its id without activating the desktop window. Use ui_list_actions first to see available actions and their required arguments.",
   {
     actionId: z.string().describe("The action id from ui_list_actions, e.g. 'session.create_task' or 'composer.set_text'"),
     args: z.record(z.unknown()).optional().describe("JSON arguments for the action, if required"),
@@ -222,6 +254,48 @@ server.tool(
     }
     return { content: [{ type: "text", text: formatExecutionResult(actionId, result) }] };
   }
+);
+
+// ── ui.query ──
+server.tool(
+  "ui_query",
+  "Run a side-effect-free OpenWork query by id. Use ui_context to inspect currently available queries. Queries never focus or navigate the app.",
+  {
+    id: z.string().describe("Query id from ui_context, such as 'session.list_sessions' or 'notifications.list'"),
+    args: z.record(z.unknown()).optional().describe("JSON arguments for the query, if required"),
+  },
+  async ({ id, args }) => {
+    const result = await bridgeRequest("/query", {
+      method: "POST",
+      body: { id, args: args ?? {} },
+    });
+    if (!result.ok && result.error) {
+      return { content: [{ type: "text", text: `Error querying ${id}: ${result.error}` }], isError: true };
+    }
+    return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+  },
+);
+
+// ── ui.command ──
+server.tool(
+  "ui_command",
+  "Execute a semantic OpenWork command by id while OpenWork remains in the background. Use ui_context first and pass its revision to prevent acting on stale UI state.",
+  {
+    id: z.string().describe("Command id from ui_context"),
+    args: z.record(z.unknown()).optional().describe("JSON arguments for the command, if required"),
+    expectedRevision: z.number().int().nonnegative().optional().describe("Revision returned by ui_context"),
+    actor: z.string().optional().describe("Optional agent or client id for serialized-command attribution"),
+  },
+  async ({ id, args, expectedRevision, actor }) => {
+    const result = await bridgeRequest("/command", {
+      method: "POST",
+      body: { id, args: args ?? {}, expectedRevision, actor },
+    });
+    if (!result.ok && result.error) {
+      return { content: [{ type: "text", text: `Error executing ${id}: ${result.error}` }], isError: true };
+    }
+    return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+  },
 );
 
 // ── ui.status ──

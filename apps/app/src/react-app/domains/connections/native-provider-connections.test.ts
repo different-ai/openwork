@@ -3,13 +3,36 @@ declare const test: (name: string, fn: () => void) => void;
 declare const expect: (value: unknown) => { toBe: (expected: unknown) => void; toEqual: (expected: unknown) => void };
 
 import {
+  canDisconnectMemberConnection,
   canDisconnectNativeProviderAccount,
+  canMemberAuthorizeConnection,
+  connectionNeedsAdminRepair,
   isNativeProviderConnectionId,
+  type MemberLifecycleConnection,
 } from "./native-provider-connections";
 import { resolveOrgMcpConnectionCardState } from "./use-org-mcp-connections";
 import { resolveConnectionRowGroup } from "../settings/connect-cloud-readiness";
 
 describe("native provider connections", () => {
+  const lifecycleConnection = (
+    id: string,
+    authType: MemberLifecycleConnection["authType"],
+    credentialMode: MemberLifecycleConnection["credentialMode"],
+    connectedForMe: boolean,
+    reconnectActionOwner?: MemberLifecycleConnection["reconnectActionOwner"],
+    needsReconnect?: boolean,
+  ): MemberLifecycleConnection => {
+    const connection: MemberLifecycleConnection = {
+      id,
+      authType,
+      credentialMode,
+      connectedForMe,
+    };
+    if (reconnectActionOwner !== undefined) connection.reconnectActionOwner = reconnectActionOwner;
+    if (needsReconnect !== undefined) connection.needsReconnect = needsReconnect;
+    return connection;
+  };
+
   test("recognizes native provider ids", () => {
     expect(isNativeProviderConnectionId("google-workspace")).toBe(true);
     expect(isNativeProviderConnectionId("microsoft-365")).toBe(true);
@@ -21,6 +44,33 @@ describe("native provider connections", () => {
     expect(canDisconnectNativeProviderAccount({ id: "microsoft-365", connectedForMe: true })).toBe(true);
     expect(canDisconnectNativeProviderAccount({ id: "google-workspace", connectedForMe: false })).toBe(false);
     expect(canDisconnectNativeProviderAccount({ id: "emc_google_workspace", connectedForMe: true })).toBe(false);
+  });
+
+  test("allows members to disconnect their own per-member account", () => {
+    const googleWorkspace = lifecycleConnection("google-workspace", "oauth", "per_member", true);
+    const externalMcp = lifecycleConnection("emc_google_workspace", "oauth", "per_member", true);
+    expect(canDisconnectMemberConnection(googleWorkspace)).toBe(true);
+    expect(canDisconnectMemberConnection(externalMcp)).toBe(true);
+    expect(canDisconnectMemberConnection(lifecycleConnection("shared", "oauth", "shared", true))).toBe(false);
+    expect(canDisconnectMemberConnection(lifecycleConnection("not-connected", "oauth", "per_member", false))).toBe(false);
+  });
+
+  test("allows members to authorize per-member OAuth connections unless admin repair owns it", () => {
+    expect(canMemberAuthorizeConnection(lifecycleConnection("not-connected", "oauth", "per_member", false))).toBe(true);
+    expect(canMemberAuthorizeConnection(lifecycleConnection("connected", "oauth", "per_member", true))).toBe(true);
+    expect(canMemberAuthorizeConnection(lifecycleConnection("shared", "oauth", "shared", false))).toBe(false);
+    expect(canMemberAuthorizeConnection(lifecycleConnection("apikey", "apikey", "per_member", false))).toBe(false);
+    expect(canMemberAuthorizeConnection(lifecycleConnection("admin-repair", "oauth", "per_member", true, "organization_admin", true))).toBe(false);
+    expect(canMemberAuthorizeConnection(lifecycleConnection("member-repair", "oauth", "per_member", true, "member", true))).toBe(true);
+    expect(canMemberAuthorizeConnection(lifecycleConnection("unset-repair", "oauth", "per_member", true, undefined, true))).toBe(true);
+  });
+
+  test("detects administrator-owned repair", () => {
+    expect(connectionNeedsAdminRepair({ needsReconnect: true, reconnectActionOwner: "organization_admin" })).toBe(true);
+    expect(connectionNeedsAdminRepair({ needsReconnect: true, reconnectActionOwner: "member" })).toBe(false);
+    expect(connectionNeedsAdminRepair({ needsReconnect: true, reconnectActionOwner: null })).toBe(false);
+    expect(connectionNeedsAdminRepair({ needsReconnect: true })).toBe(false);
+    expect(connectionNeedsAdminRepair({ needsReconnect: false, reconnectActionOwner: "organization_admin" })).toBe(false);
   });
 
   test("projects connected native providers with missing scopes as reconnectable", () => {

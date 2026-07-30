@@ -10,10 +10,13 @@ import {
 } from "@openwork/types/den/desktop-policies";
 import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
 
+export type DenDesktopPolicyRole = "owner" | "admin" | "member";
+
 export type DenDesktopPolicyAssignment = {
   id: string;
   orgMemberId: string | null;
   teamId: string | null;
+  role: DenDesktopPolicyRole | null;
   createdAt: string | null;
 };
 
@@ -28,6 +31,7 @@ export type DenDesktopPolicy = {
   createdByOrgMemberId: string;
   createdAt: string | null;
   updatedAt: string | null;
+  roles: DenDesktopPolicyRole[];
   assignments: DenDesktopPolicyAssignment[];
 };
 
@@ -38,7 +42,10 @@ export type DesktopPolicyPayload = {
   isEnabled?: boolean;
   memberIds?: string[];
   teamIds?: string[];
+  roles?: DenDesktopPolicyRole[];
 };
+
+export const DESKTOP_POLICY_ENTERPRISE_PLAN_ERROR = "Desktop policies require an Enterprise plan";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -50,6 +57,20 @@ function asString(value: unknown): string | null {
 
 function asIsoString(value: unknown): string | null {
   return typeof value === "string" ? value : null;
+}
+
+function asRole(value: unknown): DenDesktopPolicyRole | null {
+  if (value === "owner" || value === "admin" || value === "member") return value;
+  return null;
+}
+
+function asRoleList(value: unknown): DenDesktopPolicyRole[] {
+  if (!Array.isArray(value)) return [];
+  return value.map(asRole).filter((entry): entry is DenDesktopPolicyRole => entry !== null);
+}
+
+function uniqueRoles(values: DenDesktopPolicyRole[]) {
+  return [...new Set(values)];
 }
 
 function isDesktopPolicyKey(value: string | null): value is DesktopPolicyDefinition["id"] {
@@ -68,6 +89,7 @@ function asAssignment(value: unknown): DenDesktopPolicyAssignment | null {
     id,
     orgMemberId: asString(value.orgMemberId),
     teamId: asString(value.teamId),
+    role: asRole(value.role),
     createdAt: asIsoString(value.createdAt),
   };
 }
@@ -97,6 +119,10 @@ function asDesktopPolicy(value: unknown): DenDesktopPolicy | null {
   const policyName = asString(value.policyName);
   const createdByOrgMemberId = asString(value.createdByOrgMemberId);
   if (!id || !organizationId || !policyName || !createdByOrgMemberId) return null;
+  const assignments = Array.isArray(value.assignments)
+    ? value.assignments.map(asAssignment).filter((entry): entry is DenDesktopPolicyAssignment => entry !== null)
+    : [];
+  const roles = asRoleList(value.roles);
   return {
     id,
     organizationId,
@@ -108,9 +134,10 @@ function asDesktopPolicy(value: unknown): DenDesktopPolicy | null {
     createdByOrgMemberId,
     createdAt: asIsoString(value.createdAt),
     updatedAt: asIsoString(value.updatedAt),
-    assignments: Array.isArray(value.assignments)
-      ? value.assignments.map(asAssignment).filter((entry): entry is DenDesktopPolicyAssignment => entry !== null)
-      : [],
+    roles: roles.length > 0
+      ? uniqueRoles(roles)
+      : uniqueRoles(assignments.flatMap((assignment) => (assignment.role ? [assignment.role] : []))),
+    assignments,
   };
 }
 
@@ -170,6 +197,7 @@ export async function createDesktopPolicy(input: DesktopPolicyPayload) {
     body: JSON.stringify(input),
   }, 12000);
   if (!response.ok) {
+    if (response.status === 402) throw new Error(DESKTOP_POLICY_ENTERPRISE_PLAN_ERROR);
     throw getRequestError(payload, response, `Failed to create desktop policy (${response.status}).`);
   }
 }
@@ -181,6 +209,7 @@ export async function updateDesktopPolicy(policyId: string, input: DesktopPolicy
     body: JSON.stringify(input),
   }, 12000);
   if (!response.ok) {
+    if (response.status === 402) throw new Error(DESKTOP_POLICY_ENTERPRISE_PLAN_ERROR);
     throw getRequestError(payload, response, `Failed to update desktop policy (${response.status}).`);
   }
 }

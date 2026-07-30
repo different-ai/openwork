@@ -23,8 +23,8 @@ src/
 └── react-app/
     ├── shell/                 Bootstrap, providers composition, routes (session-route,
     │                          settings-route), command palette, menus, boot/loading states
-    ├── kernel/                App-wide state + provider stack (server → global-sdk →
-    │                          global-sync → local), zustand store, platform
+    ├── kernel/                Provider stack (server → global-sdk → global-sync →
+    │                          local), platform, notifications, system state
     ├── infra/                 React-only runtime infra (query-client, provider-list-query)
     ├── design-system/         Reusable presentational primitives
     └── domains/               Feature-scoped code, one folder per product domain
@@ -73,8 +73,10 @@ src/index.react.tsx                       React entry
 
 ## State ownership
 
-- `react-app/kernel/store.ts`: app-wide Zustand store; domain selectors in
-  `kernel/selectors.ts`.
+- `react-app/kernel/server-provider-state.ts` and
+  `react-app/kernel/system-state.ts`: shell-level server, reload, and reset state.
+- `react-app/kernel/notification-store.ts`: persistent notification-center
+  Zustand store.
 - `react-app/infra/query-client.ts`: TanStack Query singleton.
   `react-app/infra/provider-list-query.ts`: shared provider-list cache used by
   kernel, shell, and connections.
@@ -123,6 +125,57 @@ Practical examples:
   session list.
 - Creating a new task in a workspace navigates to
   `/workspace/<workspace-id>/session/<new-session-id>`.
+
+## Agent-readable workbench state
+
+The URL remains authoritative for the active workspace and primary session.
+`domains/session/chat/workbench-store.ts` owns the additional workbench state
+that a URL cannot represent: retained conversation tabs, the secondary split
+session, and which pane is focused. It is process memory so this state survives
+temporary navigation to Settings, but it does not replace route identity.
+
+`shell/openwork-context-projector.ts` combines route state, the workbench store,
+UI chrome state, and panel-tab state into the shared
+`OpenworkContextSnapshot` contract. `OpenworkContextPublisher` publishes that
+snapshot through `window.__openworkControl`; the desktop loopback bridge and
+`openwork-ui-mcp` expose the same contract without requiring every element to
+be mounted or visible.
+
+Control registrations have semantic metadata:
+
+- `kind: "query"` is a concurrent, side-effect-free read and must not focus the
+  desktop window.
+- `kind: "command"` can change UI, durable data, or an external system.
+  Commands are serialized and may use `expectedRevision` to reject stale work.
+- `effects`, `confirmation`, `availability`, and `executor` let agents choose
+  behavior from data instead of relying on a large steering prompt.
+
+Do not register backend reads as pretend navigation actions. Add an explicit
+query, keep UI commands outcome-oriented, and scope session operations by ID so
+split-screen sessions cannot be confused.
+
+## Sidebar lanes
+
+The sidebar has two vertical rails, defined once in
+`domains/session/sidebar/sidebar-lanes.tsx`:
+
+- **glyph lane, 20px** — activity dot-matrix, chevrons, row icons, and the
+  top-level `WORKSPACES` label.
+- **label lane, 44px** — every row title: workspace names, session titles,
+  group labels (`TO DO`, `PINNED`, `ARCHIVED`), empty/loading placeholders, and
+  the account name in the footer.
+
+Rules when adding a sidebar row:
+
+1. Compose the row with `SIDEBAR_ROW_LANE` / `sidebarRowPaddingInlineStart(depth)`
+   (12px base + 16px per depth level) instead of ad-hoc `ps-*`.
+2. Render `SidebarGlyphSlot` as the first child even when there is no glyph, so
+   the title never shifts when an indicator appears.
+3. Style section labels with `SIDEBAR_SECTION_LABEL`; put them on the glyph lane
+   only when they are top-level.
+
+`evals/flows/sidebar-lanes.flow.mjs` asserts every rendered row lands on one of
+the two rails, so a new row with its own padding fails the flow.
 
 ## Testing
 
