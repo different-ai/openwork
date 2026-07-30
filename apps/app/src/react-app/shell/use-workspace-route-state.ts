@@ -6,7 +6,7 @@
 // session-route.tsx as the final step of its decomposition; the route keeps
 // composition, handlers, and JSX.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import type { Session } from "@opencode-ai/sdk/v2/client";
 
 import {
@@ -63,6 +63,7 @@ import {
   preserveWorkspaceRouteSession,
   removeWorkspaceRouteSession,
   sessionIdForLegacyWorkspaceInference,
+  workspaceExtensionsRoute,
   workspaceSessionRoute,
 } from "./workspace-routes";
 
@@ -105,11 +106,19 @@ function withRouteRefreshTimeout<T>(promise: Promise<T>, label: string): Promise
 export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
   const { developerMode, onServerSettingsChanged, onHostInfo } = input;
   const navigate = useNavigate();
+  const location = useLocation();
   const local = useLocal();
   const denAuth = useDenAuth();
   const params = useParams<{ workspaceId?: string; sessionId?: string }>();
   const routeWorkspaceId = params.workspaceId?.trim() || "";
   const selectedSessionId = params.sessionId?.trim() || null;
+  const extensionsRouteActive = /^\/(?:workspace\/[^/]+\/)?extensions(?:\/|$)/.test(location.pathname);
+  const extensionsRoutePath = extensionsRouteActive
+    ? location.pathname
+      .replace(/^\/workspace\/[^/]+\/extensions\/?/, "")
+      .replace(/^\/extensions\/?/, "")
+      .replace(/^\/+|\/+$/g, "")
+    : "";
   const workspaceInferenceSessionId = sessionIdForLegacyWorkspaceInference(routeWorkspaceId, selectedSessionId);
   const navigateToWorkspaceSession = useCallback((workspaceId: string, sessionId?: string | null, options?: { replace?: boolean }) => {
     const id = workspaceId.trim();
@@ -754,16 +763,27 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
         ? legacySelectedWorkspaceId
         : workspaces[0]?.id || "";
       if (fallbackWorkspaceId) {
-        navigateToWorkspaceSession(fallbackWorkspaceId, selectedSessionId, { replace: true });
+        if (extensionsRouteActive) {
+          navigate(workspaceExtensionsRoute(fallbackWorkspaceId, extensionsRoutePath), { replace: true });
+        } else {
+          navigateToWorkspaceSession(fallbackWorkspaceId, selectedSessionId, { replace: true });
+        }
       }
       return;
     }
     if (!routeWorkspaceId && selectedWorkspaceId) {
-      navigateToWorkspaceSession(selectedWorkspaceId, selectedSessionId, { replace: true });
+      if (extensionsRouteActive) {
+        navigate(workspaceExtensionsRoute(selectedWorkspaceId, extensionsRoutePath), { replace: true });
+      } else {
+        navigateToWorkspaceSession(selectedWorkspaceId, selectedSessionId, { replace: true });
+      }
     }
   }, [
+    extensionsRouteActive,
+    extensionsRoutePath,
     loading,
     legacySelectedWorkspaceId,
+    navigate,
     navigateToWorkspaceSession,
     routeWorkspaceId,
     selectedSessionId,

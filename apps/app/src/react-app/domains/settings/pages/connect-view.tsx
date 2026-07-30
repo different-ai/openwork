@@ -100,7 +100,7 @@ export function buildConnectRows(input: {
 export function ConnectView() {
   const navigate = useNavigate();
   useEffect(() => {
-    navigate("/settings/extensions", { replace: true });
+    navigate("/extensions", { replace: true });
   }, [navigate]);
   return null;
 }

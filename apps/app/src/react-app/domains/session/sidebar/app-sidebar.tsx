@@ -846,6 +846,7 @@ export type AppSidebarProps = {
   onStartResize?: React.PointerEventHandler<HTMLButtonElement>;
   onOpenAccountSettings?: () => void;
   onOpenExtensions: () => void;
+  extensionsActive?: boolean;
   /** Live app status, shown inside the footer account menu. */
   status: Omit<AccountStatusMenuProps, "onOpenAccountSettings">;
 };
@@ -1105,7 +1106,7 @@ export function AppSidebar(props: AppSidebarProps) {
               </SidebarMenuItem>
             ) : null}
             <SidebarDestination
-              active={false}
+              active={props.extensionsActive === true}
               icon={Puzzle}
               label={t("settings.tab_extensions")}
               onSelect={props.onOpenExtensions}

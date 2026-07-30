@@ -8,7 +8,6 @@ import {
   LifeBuoy,
   MessageCircle,
   Paintbrush,
-  Puzzle,
   RefreshCcw,
   ShieldCheck,
   Sparkles,
@@ -36,7 +35,6 @@ type SettingsCardDefinition = { tab: SettingsTab; icon: typeof Sparkles } & (
 const workspaceCards: SettingsCardDefinition[] = [
   { tab: "preferences", icon: Cog, title: "Preferences", desc: "Default model, reasoning, and compaction." },
   { tab: "permissions", icon: FolderLock, title: "Permissions", desc: "Authorized folders and file access." },
-  { tab: "extensions", icon: Puzzle, titleKey: "settings.tab_extensions", descKey: "settings.tab_description_extensions" },
   { tab: "advanced", icon: Wrench, title: "Advanced", desc: "Runtime, engine, and developer options." },
 ];
 

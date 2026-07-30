@@ -89,6 +89,8 @@ export type CommandPaletteProps = {
   onCreateNewSession: () => void;
   /** Called when "Open settings" is chosen. Accepts an optional route to jump straight to a tab. */
   onOpenSettings: (route?: string) => void;
+  /** Called when the first-class Extensions page is chosen. */
+  onOpenExtensions: () => void;
   /** Optional: open the full default-model picker. */
   onOpenModelPicker?: () => void;
   selectedModelLabel?: string;
@@ -266,13 +268,13 @@ export function CommandPalette(props: CommandPaletteProps) {
       },
     },
     {
-      id: "settings-extensions",
+      id: "open-extensions",
       title: t("settings.tab_extensions"),
       detail: t("settings.tab_description_extensions"),
-      meta: t("session.cmd_settings_meta"),
+      meta: t("settings.tab_extensions"),
       action: () => {
         props.onClose();
-        props.onOpenSettings("/settings/extensions");
+        props.onOpenExtensions();
       },
     },
     {

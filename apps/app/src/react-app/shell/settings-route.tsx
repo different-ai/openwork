@@ -108,6 +108,7 @@ import { useDenSession } from "@/react-app/domains/settings/cloud/use-den-sessio
 import { useControlAction, type OpenworkControlAction } from "./control/control-provider";
 import { useBootState } from "./boot-state";
 import { SettingsShell } from "@/react-app/domains/settings/shell/settings-shell";
+import { SettingsContent } from "@/react-app/domains/settings/shell/panel";
 import { createExtensionsStore, useExtensionsStoreSnapshot } from "@/react-app/domains/settings/state/extensions-store";
 import { usePlatform } from "@/react-app/kernel/platform";
 import { useLocal } from "@/react-app/kernel/local-provider";
@@ -174,7 +175,12 @@ import { useCommandPaletteShortcut } from "./use-shell-shortcuts";
 import { buildFeedbackUrl } from "@/app/lib/feedback";
 import { getDenInferenceUrl, type DenSettings } from "@/app/lib/den";
 import { readActiveWorkspaceId, writeActiveWorkspaceId } from "./session-memory";
-import { workspaceSessionRoute, workspaceSettingsRoute } from "./workspace-routes";
+import {
+  globalExtensionsRoute,
+  workspaceExtensionsRoute,
+  workspaceSessionRoute,
+  workspaceSettingsRoute,
+} from "./workspace-routes";
 import { getReactQueryClient } from "@/react-app/infra/query-client";
 import { refreshProviderListQueries } from "@/react-app/infra/provider-list-query";
 import {
@@ -331,6 +337,14 @@ export function parseSettingsPath(pathname: string): {
   }
 }
 
+export function parseExtensionsPath(pathname: string): ReturnType<typeof parseSettingsPath> {
+  const extensionPath = pathname
+    .replace(/^\/workspace\/[^/]+\/extensions\/?/, "")
+    .replace(/^\/extensions\/?/, "")
+    .replace(/^\/+|\/+$/g, "");
+  return parseSettingsPath(`/settings/extensions${extensionPath ? `/${extensionPath}` : ""}`);
+}
+
 function readStoredBoolean(key: string, fallback: boolean) {
   if (typeof window === "undefined") return fallback;
   try {
@@ -390,8 +404,19 @@ function settingsPathForRoute(route: ReturnType<typeof parseSettingsPath>) {
   return route.tab;
 }
 
+function extensionsPathForRoute(route: ReturnType<typeof parseSettingsPath>) {
+  if (route.extensionDetailId) {
+    return encodeURIComponent(route.extensionDetailId);
+  }
+  if (route.extensionsSection && route.extensionsSection !== "all") {
+    return route.extensionsSection;
+  }
+  return "";
+}
+
 export type SettingsSurfaceProps = {
   embedded?: boolean;
+  standaloneExtensions?: boolean;
   initialPath?: string;
   workspaceId?: string;
   onClose?: () => void;
@@ -410,7 +435,11 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const desktopConfig = useDesktopConfig();
   const reloadCoordinator = useReloadCoordinator();
   const [embeddedPath, setEmbeddedPath] = useState(props.initialPath ?? "general");
-  const route = props.embedded ? parseSettingsPath(`/settings/${embeddedPath}`) : parseSettingsPath(location.pathname);
+  const route = props.embedded
+    ? parseSettingsPath(`/settings/${embeddedPath}`)
+    : props.standaloneExtensions
+      ? parseExtensionsPath(location.pathname)
+      : parseSettingsPath(location.pathname);
   const navigationWorkspaceId = readNavigationWorkspaceId(location.state);
   const navigationSessionId = readNavigationSessionId(location.state);
 
@@ -432,8 +461,17 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       setEmbeddedPath(path);
       return;
     }
+    if (props.standaloneExtensions) {
+      const extensionPath = path.replace(/^extensions\/?/, "");
+      navigate(
+        selectedWorkspaceId
+          ? workspaceExtensionsRoute(selectedWorkspaceId, extensionPath)
+          : globalExtensionsRoute(extensionPath),
+      );
+      return;
+    }
     navigate(selectedWorkspaceId ? workspaceSettingsRoute(selectedWorkspaceId, path) : `/settings/${path}`);
-  }, [navigate, props.embedded, selectedWorkspaceId]);
+  }, [navigate, props.embedded, props.standaloneExtensions, selectedWorkspaceId]);
   const [baseUrl, setBaseUrl] = useState("");
   const [token, setToken] = useState("");
   const [openworkClient, setOpenworkClient] = useState<OpenworkServerClient | null>(null);
@@ -2006,8 +2044,13 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       void workspaceSetSelected(workspaceId).catch(() => undefined);
       void workspaceSetRuntimeActive(workspaceId).catch(() => undefined);
     }
-    navigate(workspaceSettingsRoute(workspaceId, settingsPathForRoute(route)), { state: location.state });
-  }, [location, navigate, route, selectedWorkspaceId, workspaceServerClientResolver, workspaces]);
+    navigate(
+      props.standaloneExtensions
+        ? workspaceExtensionsRoute(workspaceId, extensionsPathForRoute(route))
+        : workspaceSettingsRoute(workspaceId, settingsPathForRoute(route)),
+      { state: location.state },
+    );
+  }, [location, navigate, props.standaloneExtensions, route, selectedWorkspaceId, workspaceServerClientResolver, workspaces]);
 
   const handleOpenRenameWorkspace = useCallback((workspaceId: string) => {
     const workspace = workspaces.find((item) => item.id === workspaceId);
@@ -2159,15 +2202,30 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     }
   };
 
-  if (route.redirectPath && !props.embedded) {
+  if (!props.embedded && !props.standaloneExtensions && route.tab === "extensions") {
+    const extensionPath = extensionsPathForRoute(route);
     const target = selectedWorkspaceId
-      ? workspaceSettingsRoute(selectedWorkspaceId, route.redirectPath)
-      : `/settings/${route.redirectPath}`;
+      ? workspaceExtensionsRoute(selectedWorkspaceId, extensionPath)
+      : globalExtensionsRoute(extensionPath);
+    return <Navigate to={target} replace state={location.state} />;
+  }
+
+  if (route.redirectPath && !props.embedded) {
+    const target = props.standaloneExtensions
+      ? selectedWorkspaceId
+        ? workspaceExtensionsRoute(selectedWorkspaceId, extensionsPathForRoute(route))
+        : globalExtensionsRoute(extensionsPathForRoute(route))
+      : selectedWorkspaceId
+        ? workspaceSettingsRoute(selectedWorkspaceId, route.redirectPath)
+        : `/settings/${route.redirectPath}`;
     return <Navigate to={target} replace state={location.state} />;
   }
 
   if (!props.embedded && !routeWorkspaceId && selectedWorkspaceId) {
-    return <Navigate to={workspaceSettingsRoute(selectedWorkspaceId, settingsPathForRoute(route))} replace state={location.state} />;
+    const target = props.standaloneExtensions
+      ? workspaceExtensionsRoute(selectedWorkspaceId, extensionsPathForRoute(route))
+      : workspaceSettingsRoute(selectedWorkspaceId, settingsPathForRoute(route));
+    return <Navigate to={target} replace state={location.state} />;
   }
 
   const openCloudAccountSettings = () => {
@@ -2534,22 +2592,28 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
 
   return (
     <>
-      <SettingsShell
-        activeTab={route.tab}
-        onSelectTab={(tab) => navigateSettingsPath(tab)}
-        developerMode={developerMode}
-        selectedWorkspaceId={selectedWorkspaceId}
-        selectedWorkspaceName={selectedWorkspaceName}
-        selectedWorkspaceColor={selectedWorkspaceColor}
-        workspaces={workspaceOptions}
-        onSelectWorkspace={handleSelectSettingsWorkspace}
-        headerStatus={routeOpenworkStatus}
-        busyHint={loading ? t("session.loading_detail") : busyLabel}
-        onClose={props.onClose ?? (() => navigate(selectedWorkspaceId ? workspaceSessionRoute(selectedWorkspaceId) : "/session"))}
-        compact={props.embedded}
-      >
-        {settingsView}
-      </SettingsShell>
+      {props.standaloneExtensions ? (
+        <div data-extensions-main-surface className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-background">
+          <SettingsContent>{settingsView}</SettingsContent>
+        </div>
+      ) : (
+        <SettingsShell
+          activeTab={route.tab}
+          onSelectTab={(tab) => navigateSettingsPath(tab)}
+          developerMode={developerMode}
+          selectedWorkspaceId={selectedWorkspaceId}
+          selectedWorkspaceName={selectedWorkspaceName}
+          selectedWorkspaceColor={selectedWorkspaceColor}
+          workspaces={workspaceOptions}
+          onSelectWorkspace={handleSelectSettingsWorkspace}
+          headerStatus={routeOpenworkStatus}
+          busyHint={loading ? t("session.loading_detail") : busyLabel}
+          onClose={props.onClose ?? (() => navigate(selectedWorkspaceId ? workspaceSessionRoute(selectedWorkspaceId) : "/session"))}
+          compact={props.embedded}
+        >
+          {settingsView}
+        </SettingsShell>
+      )}
 
       <CommandPalette
         open={commandPaletteOpen}
@@ -2559,7 +2623,22 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
           navigate(workspaceSessionRoute(workspaceId, sessionId));
         }}
         onOpenSettings={(path = "/settings/general") => {
-          navigateSettingsPath(path.replace(/^\/settings\//, ""));
+          const settingsPath = path.replace(/^\/settings\//, "");
+          if (props.standaloneExtensions) {
+            navigate(
+              selectedWorkspaceId
+                ? workspaceSettingsRoute(selectedWorkspaceId, settingsPath)
+                : `/settings/${settingsPath}`,
+            );
+            return;
+          }
+          navigateSettingsPath(settingsPath);
+        }}
+        onOpenExtensions={() => {
+          const target = selectedWorkspaceId
+            ? workspaceExtensionsRoute(selectedWorkspaceId)
+            : globalExtensionsRoute();
+          navigate(target);
         }}
         onOpenModelPicker={() => {
           modelPicker.setQuery("");

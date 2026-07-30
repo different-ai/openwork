@@ -19,8 +19,8 @@ const EXTENSIONS_SIDEBAR_DESTINATION = `(() => {
   };
 })()`;
 
-function settingsPrefix(route: string): string {
-  const workspace = route.match(/^(\/workspace\/[^/]+)\/(?:session|settings(?:\/.*)?)$/);
+function appPrefix(route: string): string {
+  const workspace = route.match(/^(\/workspace\/[^/]+)\/(?:session(?:\/.*)?|extensions(?:\/.*)?|settings(?:\/.*)?)$/);
   return workspace ? workspace[1] : "";
 }
 
@@ -37,7 +37,7 @@ export default defineFlow({
           action: async () => {
             await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 60_000, label: "control API" });
             const route = String(await ctx.eval("window.__openworkControl.snapshot().route || ''"));
-            const prefix = settingsPrefix(route);
+            const prefix = appPrefix(route);
             const sessionRoute = `${prefix}/session`;
 
             await ctx.navigateHash(sessionRoute);
@@ -92,15 +92,15 @@ export default defineFlow({
       },
     },
     {
-      name: "Extensions header survives reload and history",
+      name: "Extensions opens as a main page and survives reload and history",
       run: async (ctx) => {
-        await ctx.prove("Opening Extensions keeps one correct page heading through reload and history", {
+        await ctx.prove("Opening Extensions uses the main content area with one correct heading through reload and history", {
           voiceover: vo[1],
           action: async () => {
             const route = String(await ctx.eval("window.__openworkControl.snapshot().route || ''"));
-            const prefix = settingsPrefix(route);
-            const extensionsRoute = `${prefix}/settings/extensions`;
-            const generalRoute = `${prefix}/settings/general`;
+            const prefix = appPrefix(route);
+            const extensionsRoute = `${prefix}/extensions`;
+            const sessionRoute = `${prefix}/session`;
             const clicked = await ctx.eval(`(() => {
               const sidebar = document.querySelector('[data-sidebar="sidebar"]');
               const destination = [...(sidebar?.querySelectorAll("a,button") || [])]
@@ -140,25 +140,30 @@ export default defineFlow({
               });
             }
 
-            await ctx.navigateHash(generalRoute);
-            await ctx.waitForRoute(generalRoute, { timeoutMs: 20_000 });
+            await ctx.navigateHash(sessionRoute);
+            await ctx.waitForRoute(sessionRoute, { timeoutMs: 20_000 });
             await ctx.eval("history.back()");
             await ctx.waitForRoute(extensionsRoute, { timeoutMs: 20_000 });
           },
           assert: async () => {
             const route = String(await ctx.eval("window.__openworkControl.snapshot().route || ''"));
-            ctx.assert(route.endsWith("/settings/extensions"), `Expected Extensions route, got ${route}.`);
+            ctx.assert(route.endsWith("/extensions"), `Expected main Extensions route, got ${route}.`);
             const headings = await ctx.eval(`([...document.querySelectorAll("h1")]
               .filter((entry) => (entry.textContent || "").trim() === "Extensions").length)`);
             ctx.assert(headings === 1, `Expected one Extensions page header, found ${JSON.stringify(headings)}.`);
             const destination = await ctx.eval(EXTENSIONS_SIDEBAR_DESTINATION);
-            ctx.assert(Boolean(destination), "Extensions must remain represented in the settings sidebar.");
+            ctx.assert(Boolean(destination), "Extensions must remain represented in the main sidebar.");
             const measured = destination as { active: boolean };
-            ctx.assert(measured.active, "Extensions sidebar destination must expose its active state.");
+            ctx.assert(measured.active, "Main Extensions destination must expose its active state.");
+            const mainSurface = await ctx.eval("Boolean(document.querySelector('[data-extensions-main-surface]'))");
+            ctx.assert(mainSurface === true, "Extensions must render in the main content surface.");
+            const settingsHeading = await ctx.eval(`([...document.querySelectorAll("h1")]
+              .some((entry) => (entry.textContent || "").trim() === "Settings"))`);
+            ctx.assert(settingsHeading === false, "Extensions must not render inside the Settings page.");
           },
           screenshot: {
             name: "extensions-page-header",
-            requireText: ["Extensions", "Browse the skills and MCPs available to your agent."],
+            requireText: ["Extensions", "Everything your agent can use in one place.", "Refresh"],
             rejectText: ["Preparing workspace", "Failed to fetch", "Something went wrong"],
           },
         });

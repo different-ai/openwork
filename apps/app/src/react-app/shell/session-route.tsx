@@ -6,7 +6,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { toast } from "@/components/ui/sonner";
 import type {
   AgentPartInput,
@@ -198,7 +198,13 @@ import {
 } from "./cloud-workspace-status";
 import { getReactQueryClient } from "@/react-app/infra/query-client";
 import { useSessionControlActions } from "@/react-app/domains/session/control/session-control-actions";
-import { legacySessionRoute, workspaceSessionRoute, workspaceSettingsRoute } from "./workspace-routes";
+import {
+  globalExtensionsRoute,
+  legacySessionRoute,
+  workspaceExtensionsRoute,
+  workspaceSessionRoute,
+  workspaceSettingsRoute,
+} from "./workspace-routes";
 import { WorkspaceProvider } from "./workspace-provider";
 import type { OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
 import { SettingsSurface } from "./settings-route";
@@ -450,6 +456,7 @@ function singlePickedDirectory(selection: string | string[] | null) {
 
 export function SessionRoute() {
   const navigate = useNavigate();
+  const location = useLocation();
   const platform = usePlatform();
   const denAuth = useDenAuth();
   const { config: shellConfig } = useShellConfig();
@@ -1103,6 +1110,22 @@ export function SessionRoute() {
     navigate(target, { state: { workspaceId, sessionId } });
   }, [navigate, selectedSessionId, sidebarActiveWorkspaceId]);
 
+  const handleOpenExtensions = useCallback((path = "", workspaceId = sidebarActiveWorkspaceId) => {
+    const sessionId = workspaceId === sidebarActiveWorkspaceId ? selectedSessionId : null;
+    const extensionPath = path
+      .replace(/^\/settings\/extensions\/?/, "")
+      .replace(/^\/extensions\/?/, "")
+      .replace(/^\/+|\/+$/g, "")
+      .replace(/^mcp$/, "mcps");
+    const target = workspaceId
+      ? workspaceExtensionsRoute(workspaceId, extensionPath)
+      : globalExtensionsRoute(extensionPath);
+    writeActiveWorkspaceId(workspaceId || null);
+    navigate(target, { state: { workspaceId, sessionId } });
+  }, [navigate, selectedSessionId, sidebarActiveWorkspaceId]);
+
+  const extensionsMainOpen = /^\/(?:workspace\/[^/]+\/)?extensions(?:\/|$)/.test(location.pathname);
+
   const surfaceProps = useMemo(() => {
     if (!client || !selectedWorkspaceId || !selectedSessionId || !opencodeBaseUrl || !token || !opencodeClient) {
       return null;
@@ -1168,7 +1191,11 @@ export function SessionRoute() {
       },
       providerConnectedCount: hasUsableModel ? 1 : providerConnectedIds.length,
       onOpenSettingsSection: (section: "commands" | "skills" | "mcps" | "plugins" | "extensions" | "providers") => {
-        handleOpenSettings(section === "skills" ? "/settings/extensions/skills" : section === "mcps" ? "/settings/extensions/mcp" : section === "plugins" ? "/settings/extensions/plugins" : section === "providers" ? "/settings/ai" : "/settings/extensions");
+        if (section === "providers") {
+          handleOpenSettings("/settings/ai");
+          return;
+        }
+        handleOpenExtensions(section === "skills" ? "skills" : section === "mcps" ? "mcps" : section === "plugins" ? "plugins" : "");
       },
       onSendDraft: async (draft: ComposerDraft, sessionId: string): Promise<CloudMcpSubmissionResult> => {
         const targetSessionId = sessionId.trim() || selectedSessionId;
@@ -1266,7 +1293,7 @@ export function SessionRoute() {
       },
       cloudMcpSubmissionState: effectiveCloudMcpSubmissionState,
       onRetryCloudConnection: sessionMcpMaintenance.retry,
-      onOpenConnect: () => navigate("/settings/extensions"),
+      onOpenConnect: () => handleOpenExtensions(),
       onDraftChange: () => {
         // Draft persistence will be wired once the full React shell owns session state.
       },
@@ -1353,6 +1380,7 @@ export function SessionRoute() {
   }, [
     client,
     modelPicker.compactOpen,
+    handleOpenExtensions,
     handleOpenSettings,
     hasUsableModel,
     handleApplyEnvironmentChanges,
@@ -1467,14 +1495,15 @@ export function SessionRoute() {
         ? effectiveCloudMcpSubmissionState
         : IDLE_CLOUD_MCP_SUBMISSION_GATE_STATE,
       onRetryCloudConnection: sessionMcpMaintenance.retry,
-      onOpenConnect: () => navigate("/settings/extensions"),
+      onOpenConnect: () => handleOpenExtensions(),
       onOpenSettingsSection: (section: "commands" | "skills" | "mcps" | "plugins" | "extensions") => {
-        handleOpenSettings(section === "skills" ? "/settings/extensions/skills" : section === "mcps" ? "/settings/extensions/mcp" : section === "plugins" ? "/settings/extensions/plugins" : "/settings/extensions");
+        handleOpenExtensions(section === "skills" ? "skills" : section === "mcps" ? "mcps" : section === "plugins" ? "plugins" : "");
       },
     };
   }, [
     client,
     effectiveCloudMcpSubmissionState,
+    handleOpenExtensions,
     handleOpenSettings,
     listAgents,
     listSlashCommands,
@@ -2424,7 +2453,7 @@ export function SessionRoute() {
         );
       }}
       onOpenSettings={() => handleOpenSettings("/settings/general")}
-      onOpenExtensions={() => handleOpenSettings("/settings/extensions")}
+      onOpenExtensions={() => handleOpenExtensions()}
       onOpenProviderAuth={handleOpenProviderAuth}
       onChatFirstTask={handleChatFirstTask}
       chatFirstBusy={createWorkspaceBusy}
@@ -2693,7 +2722,16 @@ export function SessionRoute() {
         openWorkConnectState: sessionMcpMaintenance,
       }}
       notFoundMessage={gatedRouteNotFoundMessage}
-      mainContentTakeover={cloudWorkspaceMainContentTakeover}
+      mainContentTakeover={
+        extensionsMainOpen ? (
+          <SettingsSurface
+            standaloneExtensions
+            workspaceId={selectedWorkspaceId || undefined}
+          />
+        ) : cloudWorkspaceMainContentTakeover
+      }
+      mainContentTitle={extensionsMainOpen ? t("settings.tab_extensions") : undefined}
+      extensionsActive={extensionsMainOpen}
       onAccessibleTargetsChange={setPaletteAccessibleTargets}
     />
     <CreateWorkspaceModal
@@ -2750,6 +2788,7 @@ export function SessionRoute() {
       }}
       onOpenSession={(workspaceId, sessionId) => navigateToWorkspaceSession(workspaceId, sessionId)}
       onOpenSettings={(route) => handleOpenSettings(route ?? "/settings/general")}
+      onOpenExtensions={() => handleOpenExtensions()}
       onOpenModelPicker={() => {
         modelPicker.setQuery("");
         modelPicker.setRecentProviderIds(new Set());

@@ -164,7 +164,7 @@ export type McpViewProps = {
   disconnectOrgMcp?: (connectionId: string) => void;
   initialFilter?: ExtensionInventoryFilter;
   onFilterChange?: (filter: ExtensionInventoryFilter) => void;
-  /** Stable extension detail id from `/settings/extensions/:id`. */
+  /** Stable extension detail id from `/extensions/:id`. */
   detailId?: string | null;
   /** Navigate when detail opens/closes. When set, detail renders as a page. */
   onDetailIdChange?: (id: string | null) => void;

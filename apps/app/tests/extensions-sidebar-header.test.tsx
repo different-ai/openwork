@@ -6,10 +6,16 @@ import { Puzzle } from "lucide-react";
 
 import { SidebarProvider, SidebarMenu } from "../src/components/ui/sidebar";
 import { SidebarDestination } from "../src/react-app/domains/session/sidebar/sidebar-destination";
-import { SettingsPageHeading } from "../src/react-app/domains/settings/shell/settings-page";
+import { getWorkspaceSettingsTabs } from "../src/react-app/domains/settings/shell/settings-page";
 
 const appSidebarPath = fileURLToPath(
   new URL("../src/react-app/domains/session/sidebar/app-sidebar.tsx", import.meta.url),
+);
+const sessionPagePath = fileURLToPath(
+  new URL("../src/react-app/domains/session/chat/session-page.tsx", import.meta.url),
+);
+const generalSettingsPath = fileURLToPath(
+  new URL("../src/react-app/domains/settings/pages/general-view.tsx", import.meta.url),
 );
 
 describe("Extensions sidebar destination", () => {
@@ -49,12 +55,14 @@ describe("Extensions sidebar destination", () => {
   });
 });
 
-describe("Extensions page header", () => {
-  test("renders one correctly named page heading", () => {
-    const html = renderToStaticMarkup(<SettingsPageHeading activeTab="extensions" />);
+describe("Extensions main page", () => {
+  test("uses the main content header and is absent from Settings navigation", () => {
+    const sessionPageSource = readFileSync(sessionPagePath, "utf8");
+    const generalSettingsSource = readFileSync(generalSettingsPath, "utf8");
 
-    expect(html.match(/<h1/g)).toHaveLength(1);
-    expect(html).toContain(">Extensions</h1>");
-    expect(html).not.toContain("<h2");
+    expect(sessionPageSource).toContain("props.mainContentTitle");
+    expect(sessionPageSource).toContain("<h1");
+    expect(getWorkspaceSettingsTabs()).not.toContain("extensions");
+    expect(generalSettingsSource).not.toContain('{ tab: "extensions"');
   });
 });

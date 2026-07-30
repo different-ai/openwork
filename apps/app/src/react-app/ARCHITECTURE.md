@@ -92,7 +92,7 @@ Canonical workspace-scoped routes:
 - `/workspace/:workspaceId/session`
 - `/workspace/:workspaceId/session/:sessionId`
 - `/workspace/:workspaceId/settings/:tab`
-- `/workspace/:workspaceId/settings/extensions/:section`
+- `/workspace/:workspaceId/extensions/:section`
 
 Use `react-app/shell/workspace-routes.ts` to build these paths. Do not
 hand-build `/session/...` or `/settings/...` URLs for workspace-scoped flows.
