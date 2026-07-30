@@ -1,9 +1,17 @@
 import { ensureSessionWorkspace } from "./lib/session-workspace.mjs";
 
 const READ_CHOOSER = `(() => {
-  const panel = [...document.querySelectorAll('aside, [role="complementary"], main + div, [data-side-panel]')]
-    .find((entry) => /choose|open in (the )?side panel|side panel/i.test(entry.textContent || ''));
+  const heading = [...document.querySelectorAll('h1, h2, h3')]
+    .find((entry) => /choose a destination/i.test(entry.textContent || ''));
+  const panel = heading?.parentElement;
   if (!(panel instanceof HTMLElement)) return null;
+  let panelFrame = panel;
+  for (let candidate = panel; candidate instanceof HTMLElement; candidate = candidate.parentElement) {
+    if (candidate.querySelector('button[aria-label="Close side panel"]')) {
+      panelFrame = candidate;
+      break;
+    }
+  }
   const actions = [...panel.querySelectorAll('button, a')]
     .filter((entry) => !entry.hasAttribute('disabled'))
     .map((entry) => ({
@@ -14,7 +22,7 @@ const READ_CHOOSER = `(() => {
   return {
     text: (panel.textContent || '').trim(),
     actions,
-    width: Math.round(panel.getBoundingClientRect().width),
+    width: Math.round(panelFrame.getBoundingClientRect().width),
   };
 })()`;
 
