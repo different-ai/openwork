@@ -5,7 +5,7 @@ import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import { env } from "../../env.js"
-import { jsonValidator, orgMemberRoute, paramValidator, queryValidator } from "../../middleware/index.js"
+import { cloudTransportRoute, jsonValidator, orgMemberRoute, paramValidator, queryValidator } from "../../middleware/index.js"
 import { invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import { buildGmailDraftRaw, readGmailDraftIds } from "../../capability-sources/gmail.js"
 import type { GmailDraftAttachment } from "../../capability-sources/gmail.js"
@@ -542,7 +542,7 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
         502: jsonResponse("Google rejected the request.", upstreamErrorSchema),
       },
     }),
-    orgMemberRoute(),
+    cloudTransportRoute(),
     bodyLimit({
       maxSize: DIRECT_UPLOAD_BODY_MAX_BYTES,
       onError: (c) => c.json({ error: "invalid_request", message: "Direct upload request is too large." }, 413),
@@ -619,7 +619,7 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
         502: jsonResponse("Google rejected the request.", upstreamErrorSchema),
       },
     }),
-    orgMemberRoute(),
+    cloudTransportRoute(),
     bodyLimit({
       maxSize: DIRECT_UPLOAD_BODY_MAX_BYTES,
       onError: (c) => c.json({ error: "invalid_request", message: "Direct upload request is too large." }, 413),

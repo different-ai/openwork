@@ -13,6 +13,7 @@ const accessPolicyMarkers = [
   "adminRoute",
   "signedWebhookRoute",
   "tokenRoute",
+  "cloudTransportRoute",
   "delegatedRoute",
 ]
 

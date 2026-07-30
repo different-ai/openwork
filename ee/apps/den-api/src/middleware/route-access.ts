@@ -1,4 +1,8 @@
 import type { MiddlewareHandler } from "hono"
+import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import { getMcpResourceContext, verifyMcpRequest } from "../mcp/auth.js"
+import { DEN_MCP_WRITE_SCOPE } from "../mcp/scopes.js"
+import { getOrganizationContextForUser } from "../orgs.js"
 import { organizationRoleValueSatisfies } from "../organization-role-hierarchy.js"
 import type { AuthContextVariables } from "../session.js"
 import { requireAdminMiddleware } from "./admin.js"
@@ -13,11 +17,39 @@ type OrgRoleContext = {
 
 type RouteAccessVariables = AuthContextVariables & Partial<OrganizationContextVariables> & Partial<UserOrganizationsContext>
 
+const cloudTransportRouteHandler: MiddlewareHandler<{ Variables: OrganizationContextVariables }> = async (c, next) => {
+  const principal = await verifyMcpRequest(
+    c.req.raw.headers,
+    getMcpResourceContext(c.req.raw, "agent"),
+  )
+  if (principal instanceof Response) {
+    return principal
+  }
+  if (!principal.scopes.has(DEN_MCP_WRITE_SCOPE)) {
+    return c.json({
+      error: "insufficient_mcp_scope",
+      requiredScope: DEN_MCP_WRITE_SCOPE,
+    }, 403)
+  }
+
+  const organizationContext = await getOrganizationContextForUser({
+    userId: normalizeDenTypeId("user", principal.userId),
+    organizationId: normalizeDenTypeId("organization", principal.organizationId),
+  })
+  if (!organizationContext) {
+    return c.json({ error: "mcp_membership_revoked" }, 403)
+  }
+
+  c.set("organizationContext", organizationContext)
+  await next()
+}
+
 const explicitAuthGuardHandlers = new WeakSet<object>([
   requireAdminMiddleware,
   requireUserMiddleware,
   resolveOrganizationContextMiddleware,
   resolveUserOrganizationsMiddleware,
+  cloudTransportRouteHandler,
 ])
 
 /**
@@ -50,6 +82,10 @@ export const signedWebhookRoute: MiddlewareHandler = async (_c, next) => {
 
 export const tokenRoute: MiddlewareHandler = async (_c, next) => {
   await next()
+}
+
+export function cloudTransportRoute(): typeof cloudTransportRouteHandler {
+  return cloudTransportRouteHandler
 }
 
 export const delegatedRoute: MiddlewareHandler = async (_c, next) => {

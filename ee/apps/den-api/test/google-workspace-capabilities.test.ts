@@ -340,6 +340,9 @@ let searchCapabilities: typeof import("../src/mcp/search.js").searchCapabilities
 const userId = createDenTypeId("user")
 const organizationId = createDenTypeId("organization")
 const memberId = createDenTypeId("member")
+const authSessionId = createDenTypeId("session")
+const authSessionToken = `gws-caps-session-${authSessionId}`
+let directUploadMcpToken = ""
 
 async function seedConnectedAccount(scopes: string[] | null = FULL_SCOPES) {
   await upsertConnectedAccount({
@@ -379,7 +382,7 @@ function request(path: string, init?: { method?: string; body?: unknown }) {
 function requestForm(path: string, form: FormData) {
   return app.request(`http://den-api.local${path}`, {
     method: "POST",
-    headers: authHeaders(),
+    headers: { authorization: `Bearer ${directUploadMcpToken}` },
     body: form,
   })
 }
@@ -427,6 +430,24 @@ beforeAll(async () => {
     userId,
     role: "member",
   })
+  await db.insert(schema.AuthSessionTable).values({
+    id: authSessionId,
+    userId,
+    activeOrganizationId: organizationId,
+    token: authSessionToken,
+    expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+  })
+  const tokenResponse = await app.request("http://den-api.local/v1/mcp/token", {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${authSessionToken}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ scopes: ["mcp:write"] }),
+  })
+  expect(tokenResponse.status).toBe(200)
+  const tokenBody: unknown = await tokenResponse.json()
+  directUploadMcpToken = expectString(expectRecord(tokenBody, "MCP token response").token, "MCP upload token")
 })
 
 beforeEach(async () => {
@@ -437,6 +458,8 @@ beforeEach(async () => {
 
 afterAll(async () => {
   await db.delete(schema.ConnectedAccountTable).where(drizzle.eq(schema.ConnectedAccountTable.organizationId, organizationId))
+  await db.delete(schema.OAuthAccessTokenTable).where(drizzle.eq(schema.OAuthAccessTokenTable.referenceId, organizationId))
+  await db.delete(schema.AuthSessionTable).where(drizzle.eq(schema.AuthSessionTable.id, authSessionId))
   await db.delete(schema.MemberTable).where(drizzle.eq(schema.MemberTable.organizationId, organizationId))
   await db.delete(schema.OrganizationRoleTable).where(drizzle.eq(schema.OrganizationRoleTable.organizationId, organizationId))
   await db.delete(schema.OrganizationTable).where(drizzle.eq(schema.OrganizationTable.id, organizationId))
