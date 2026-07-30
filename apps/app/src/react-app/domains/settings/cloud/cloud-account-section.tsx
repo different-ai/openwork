@@ -1,7 +1,10 @@
 /** @jsxImportSource react */
 import { ArrowUpRight, Building2, Check, LogOut, Loader2 } from "lucide-react";
 
-import type { DenOrgSummary } from "../../../../app/lib/den";
+import {
+  formatDenOrgRoleLabel,
+  type DenOrgSummary,
+} from "../../../../app/lib/den";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -24,19 +27,6 @@ export interface CloudAccountSectionProps {
   onOpenDashboard: () => void;
   onRefreshOrgs: () => void | Promise<void>;
   onSignOut: () => void | Promise<void>;
-}
-
-function organizationRoleLabel(role: DenOrgSummary["role"]) {
-  switch (role) {
-    case "super-admin":
-      return "Super admin";
-    case "owner":
-      return "Owner";
-    case "admin":
-      return "Admin";
-    case "member":
-      return "Member";
-  }
 }
 
 export function CloudAccountSection({
@@ -131,7 +121,7 @@ function ConnectedOrg({ org }: { org: DenOrgSummary }) {
       <div className="min-w-0 flex-1">
         <div className="text-sm font-medium text-dls-text">{org.name}</div>
         <div className="text-xs text-dls-secondary">
-          {organizationRoleLabel(org.role)} &middot; Connected
+          {formatDenOrgRoleLabel(org.role)} &middot; Connected
         </div>
       </div>
       <Check size={16} className="shrink-0 text-green-11" />
@@ -215,7 +205,7 @@ function OrgPicker({
             <div className="min-w-0 flex-1">
               <div className="text-sm font-medium text-dls-text">{org.name}</div>
               <div className="text-xs text-dls-secondary">
-                {organizationRoleLabel(org.role)}
+                {formatDenOrgRoleLabel(org.role)}
               </div>
             </div>
           </button>

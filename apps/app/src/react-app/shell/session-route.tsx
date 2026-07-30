@@ -180,6 +180,7 @@ import { useReactRenderWatchdog } from "./react-render-watchdog";
 
 import {
   createDenClient,
+  isDenOrgAdminRole,
   readDenSettings,
   type DenOrgRole,
 } from "@/app/lib/den";
@@ -863,11 +864,7 @@ export function SessionRoute() {
     await refreshOrganizationModelAccess();
   }, [refreshOrganizationModelAccess]);
   const organizationModelsSettingsUrl = useMemo(() => {
-    if (
-      activeOrganizationRole !== "super-admin" &&
-      activeOrganizationRole !== "owner" &&
-      activeOrganizationRole !== "admin"
-    ) {
+    if (!isDenOrgAdminRole(activeOrganizationRole)) {
       return undefined;
     }
     return new URL("/dashboard/custom-llm-providers", readDenSettings().baseUrl).toString();

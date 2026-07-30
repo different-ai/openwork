@@ -139,7 +139,8 @@ export type DenBootstrapConfig = DenBaseUrls & {
 
 export type DenDesktopConfig = SharedDesktopConfig;
 
-export type DenOrgRole = "super-admin" | "owner" | "admin" | "member";
+export type DenCanonicalOrgRole = "super-admin" | "owner" | "admin" | "member";
+export type DenOrgRole = string;
 
 export type DenOrgSummary = {
   id: string;
@@ -147,6 +148,57 @@ export type DenOrgSummary = {
   slug: string;
   role: DenOrgRole;
 };
+
+function normalizeDenCanonicalOrgRole(role: string): DenCanonicalOrgRole | null {
+  const normalized = role.trim().toLowerCase().replace(/[\s_]+/g, "-");
+  if (normalized === "super-admin") return "super-admin";
+  if (normalized === "owner") return "owner";
+  if (normalized === "admin") return "admin";
+  if (normalized === "member") return "member";
+  return null;
+}
+
+function denCanonicalOrgRoles(roleValue: string) {
+  const roles = new Set<DenCanonicalOrgRole>();
+  for (const role of roleValue.split(",")) {
+    const canonicalRole = normalizeDenCanonicalOrgRole(role);
+    if (canonicalRole) roles.add(canonicalRole);
+  }
+  return roles;
+}
+
+export function getDenCanonicalOrgRole(roleValue: string): DenCanonicalOrgRole {
+  const roles = denCanonicalOrgRoles(roleValue);
+  if (roles.has("owner")) return "owner";
+  if (roles.has("super-admin")) return "super-admin";
+  if (roles.has("admin")) return "admin";
+  return "member";
+}
+
+export function isDenOrgAdminRole(roleValue: string | null | undefined) {
+  if (!roleValue) return false;
+  return getDenCanonicalOrgRole(roleValue) !== "member";
+}
+
+export function formatDenOrgRoleLabel(roleValue: string) {
+  return roleValue
+    .split(",")
+    .map((role) => role.trim())
+    .filter(Boolean)
+    .map((role) => {
+      const canonicalRole = normalizeDenCanonicalOrgRole(role);
+      if (canonicalRole === "super-admin") return "Super admin";
+      if (canonicalRole === "owner") return "Owner";
+      if (canonicalRole === "admin") return "Admin";
+      if (canonicalRole === "member") return "Member";
+      return role
+        .split(/[-_\s]+/)
+        .filter(Boolean)
+        .map((part) => `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`)
+        .join(" ");
+    })
+    .join(", ");
+}
 
 export type DenWorkerSummary = {
   workerId: string;
@@ -1130,12 +1182,8 @@ function getOrgList(payload: unknown): DenOrgSummary[] {
       typeof entry.id !== "string" ||
       typeof entry.name !== "string" ||
       typeof entry.slug !== "string" ||
-      (
-        entry.role !== "super-admin" &&
-        entry.role !== "owner" &&
-        entry.role !== "admin" &&
-        entry.role !== "member"
-      )
+      typeof entry.role !== "string" ||
+      !entry.role.trim()
     ) {
       return [];
     }
@@ -1145,7 +1193,7 @@ function getOrgList(payload: unknown): DenOrgSummary[] {
         id: entry.id,
         name: entry.name,
         slug: entry.slug,
-        role: entry.role,
+        role: entry.role.trim(),
       } satisfies DenOrgSummary,
     ];
   });
