@@ -21,6 +21,8 @@ catalogs:
     react-dom: 18.2.0
 linkWorkspacePackages: true
 preferWorkspacePackages: true
+overrides:
+  baseline-browser-mapping: 2.11.5
 allowBuilds:
   "@sentry/cli": true
   "@whiskeysockets/baileys": true
