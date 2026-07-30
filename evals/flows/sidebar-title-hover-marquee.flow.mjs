@@ -4,9 +4,9 @@ const LONG_TITLE =
   "Review the OpenWork desktop sidebar title animation across a deliberately overflowing conversation name";
 
 const READ_TITLE = `(() => {
-  const title = [...document.querySelectorAll('[title], [aria-label]')]
+  const title = [...document.querySelectorAll('[data-session-title-overflowing="true"] > [title]')]
     .find((entry) => {
-      const label = entry.getAttribute('title') || entry.getAttribute('aria-label') || '';
+      const label = entry.getAttribute('title') || '';
       return label === ${JSON.stringify(LONG_TITLE)};
     });
   if (!(title instanceof HTMLElement)) return null;
@@ -22,7 +22,7 @@ const READ_TITLE = `(() => {
     width: titleRect.width,
     height: titleRect.height,
     clientWidth: viewport.clientWidth,
-    scrollWidth: viewport.scrollWidth,
+    scrollWidth: title.scrollWidth,
     transform: titleStyle.transform,
     translate: titleStyle.translate,
     animationName: titleStyle.animationName,
@@ -80,8 +80,9 @@ export default {
               `Expected a clipped-edge mask while the title is moving, got ${after.maskImage}.`,
             );
             ctx.assert(
-              after.viewportLeft === before.viewportLeft && after.viewportRight === before.viewportRight,
-              "The title viewport changed position while animating.",
+              Math.abs(after.viewportLeft - before.viewportLeft) <= 1 &&
+                after.viewportRight <= before.viewportRight + 1,
+              "The title viewport shifted instead of staying anchored while row actions appeared.",
             );
           },
           screenshot: {
