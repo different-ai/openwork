@@ -21,6 +21,9 @@ const READ_SHORTCUT_TARGETS = `(() => [...document.querySelectorAll('[data-sideb
       ? [{ digit: Number(match[1]), sessionId }]
       : [];
   }))()`;
+const READ_VISIBLE_SHORTCUT_BADGES =
+  `(() => [...document.querySelectorAll('[data-session-shortcut-badge]')]
+    .filter((entry) => entry.getClientRects().length > 0).length)()`;
 const vo = await loadVoiceoverParagraphs("sidebar-session-number-shortcuts");
 
 async function dispatchKey(ctx, payload) {
@@ -214,6 +217,61 @@ export default {
           },
           screenshot: {
             name: "sidebar-session-number-shortcuts-select",
+            requireText: ["Shortcut proof chat"],
+            hashIncludes: "/session/",
+          },
+        });
+
+        await ctx.prove("A later unmodified pointer event clears a missed modifier release", {
+          voiceover: vo[3],
+          action: async () => {
+            await activateDifferentVisibleSession(ctx, modifier);
+            await dispatchKey(ctx, {
+              type: "keyDown",
+              key: modifier.key,
+              code: modifier.code,
+              modifiers: modifier.modifiers,
+            });
+            await ctx.waitFor(`${READ_VISIBLE_SHORTCUT_BADGES} >= 3`, {
+              timeoutMs: 20_000,
+              label: "numbered badges after the simulated missed release",
+            });
+            await ctx.eval(`(() => {
+              const modifierKey = ${JSON.stringify(modifier.key)};
+              document.addEventListener("keyup", (event) => {
+                if (event.key === modifierKey) event.stopPropagation();
+              }, { capture: true, once: true });
+              return true;
+            })()`);
+            await dispatchKey(ctx, {
+              type: "keyUp",
+              key: modifier.key,
+              code: modifier.code,
+            });
+            await ctx.waitFor(`${READ_VISIBLE_SHORTCUT_BADGES} >= 3`, {
+              timeoutMs: 5_000,
+              label: "stale badges after the app misses the release event",
+            });
+            await ctx.client.send("Input.dispatchMouseEvent", {
+              type: "mouseMoved",
+              x: 120,
+              y: 120,
+              modifiers: 0,
+            });
+            await ctx.waitFor(`${READ_VISIBLE_SHORTCUT_BADGES} === 0`, {
+              timeoutMs: 10_000,
+              label: "numbered badges to clear from unmodified pointer state",
+            });
+          },
+          assert: async () => {
+            const visibleBadges = await ctx.eval(READ_VISIBLE_SHORTCUT_BADGES);
+            ctx.assert(
+              visibleBadges === 0,
+              `Expected no stale shortcut badges, found ${visibleBadges}.`,
+            );
+          },
+          screenshot: {
+            name: "sidebar-session-number-shortcuts-missed-keyup-recovered",
             requireText: ["Shortcut proof chat"],
             hashIncludes: "/session/",
           },

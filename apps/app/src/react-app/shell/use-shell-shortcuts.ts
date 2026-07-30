@@ -7,6 +7,7 @@ import {
   getSessionNumberShortcutIntent,
   hasSessionNumberShortcutOwner,
   isSessionNumberModifierKey,
+  isSessionNumberModifierPressed,
   nextSessionNumberModifierHeld,
   readVisibleSessionNumberShortcutTargets,
   resolveSessionNumberShortcutOs,
@@ -53,6 +54,7 @@ export function useShellShortcuts(input: UseShellShortcutsInput) {
   const [sessionNumberModifierHeld, setSessionNumberModifierHeld] = useState(false);
   const [sessionNumberTargets, setSessionNumberTargets] = useState<SessionNumberShortcutTarget[]>([]);
   const sessionNumberCancelledRef = useRef(false);
+  const sessionNumberModifierHeldRef = useRef(false);
   const sessionNumberOs: SessionNumberShortcutOs = resolveSessionNumberShortcutOs(
     platform.os,
     typeof navigator === "undefined" ? "" : navigator.platform,
@@ -63,7 +65,9 @@ export function useShellShortcuts(input: UseShellShortcutsInput) {
     transition: SessionNumberShortcutTransition,
   ) => {
     sessionNumberCancelledRef.current = cancelUntilRelease;
-    setSessionNumberModifierHeld(nextSessionNumberModifierHeld(transition));
+    const modifierHeld = nextSessionNumberModifierHeld(transition);
+    sessionNumberModifierHeldRef.current = modifierHeld;
+    setSessionNumberModifierHeld(modifierHeld);
     setSessionNumberTargets((current) => current.length === 0 ? current : []);
   });
 
@@ -73,7 +77,8 @@ export function useShellShortcuts(input: UseShellShortcutsInput) {
       return [];
     }
     const targets = readVisibleSessionNumberShortcutTargets(document);
-    setSessionNumberModifierHeld(nextSessionNumberModifierHeld("modifier-down"));
+    sessionNumberModifierHeldRef.current = true;
+    setSessionNumberModifierHeld(true);
     setSessionNumberTargets((current) => (
       sameSessionNumberShortcutTargets(current, targets) ? current : targets
     ));
@@ -133,6 +138,12 @@ export function useShellShortcuts(input: UseShellShortcutsInput) {
   });
 
   const handleSessionNumberKeyDown = useEffectEvent((event: KeyboardEvent) => {
+    if (
+      sessionNumberModifierHeldRef.current &&
+      !isSessionNumberModifierPressed(event, sessionNumberOs)
+    ) {
+      clearSessionNumberShortcuts(false, "modifier-mismatch");
+    }
     const intent = getSessionNumberShortcutIntent(event, sessionNumberOs, {
       ownerActive: hasSessionNumberShortcutOwner(document),
       cancelled: sessionNumberCancelledRef.current,
@@ -161,6 +172,15 @@ export function useShellShortcuts(input: UseShellShortcutsInput) {
     clearSessionNumberShortcuts(false, "modifier-up");
   });
 
+  const handleSessionNumberMouseMove = useEffectEvent((event: MouseEvent) => {
+    if (
+      sessionNumberModifierHeldRef.current &&
+      !isSessionNumberModifierPressed(event, sessionNumberOs)
+    ) {
+      clearSessionNumberShortcuts(false, "modifier-mismatch");
+    }
+  });
+
   useEffect(() => {
     const handler = (event: KeyboardEvent) => handleGlobalShortcut(event);
     window.addEventListener("keydown", handler);
@@ -170,8 +190,10 @@ export function useShellShortcuts(input: UseShellShortcutsInput) {
   useEffect(() => {
     const keyDown = (event: KeyboardEvent) => handleSessionNumberKeyDown(event);
     const keyUp = (event: KeyboardEvent) => handleSessionNumberKeyUp(event);
+    const mouseMove = (event: MouseEvent) => handleSessionNumberMouseMove(event);
     const loseOwnership = () => clearSessionNumberShortcuts(true, "owner-change");
     const blur = () => clearSessionNumberShortcuts(true, "blur");
+    const focus = () => clearSessionNumberShortcuts(true, "focus");
     const visibilityChange = () => {
       if (document.visibilityState !== "visible") {
         clearSessionNumberShortcuts(true, "visibility-hidden");
@@ -183,7 +205,7 @@ export function useShellShortcuts(input: UseShellShortcutsInput) {
       }
     };
     const observer = new MutationObserver(() => {
-      if (!sessionNumberModifierHeld) return;
+      if (!sessionNumberModifierHeldRef.current) return;
       if (hasSessionNumberShortcutOwner(document)) {
         loseOwnership();
       } else {
@@ -195,19 +217,24 @@ export function useShellShortcuts(input: UseShellShortcutsInput) {
     // the global session jump before the shell sees it.
     window.addEventListener("keydown", keyDown, true);
     window.addEventListener("keyup", keyUp);
+    window.addEventListener("mousemove", mouseMove, { passive: true });
     window.addEventListener("blur", blur);
+    window.addEventListener("focus", focus);
     document.addEventListener("visibilitychange", visibilityChange);
     document.addEventListener("focusin", focusIn);
     observer.observe(document.body, { childList: true, subtree: true, attributes: true });
     return () => {
       window.removeEventListener("keydown", keyDown, true);
       window.removeEventListener("keyup", keyUp);
+      window.removeEventListener("mousemove", mouseMove);
       window.removeEventListener("blur", blur);
+      window.removeEventListener("focus", focus);
       document.removeEventListener("visibilitychange", visibilityChange);
       document.removeEventListener("focusin", focusIn);
+      sessionNumberModifierHeldRef.current = false;
       observer.disconnect();
     };
-  }, [sessionNumberModifierHeld]);
+  }, []);
 
   return {
     commandPaletteOpen,

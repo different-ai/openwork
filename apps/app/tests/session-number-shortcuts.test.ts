@@ -6,6 +6,7 @@ import {
   getSessionNumberShortcutIntent,
   isSessionNumberShortcutBlockingOwner,
   isSessionNumberModifierKey,
+  isSessionNumberModifierPressed,
   nextSessionNumberModifierHeld,
   resolveSessionNumberShortcutOs,
   sessionNumberAriaKeyShortcut,
@@ -71,7 +72,9 @@ describe("session number shortcut keyboard ownership", () => {
     expect(nextSessionNumberModifierHeld("modifier-down")).toBe(true);
     const cleanupTransitions: SessionNumberShortcutTransition[] = [
       "modifier-up",
+      "modifier-mismatch",
       "blur",
+      "focus",
       "visibility-hidden",
       "owner-change",
       "unmount",
@@ -81,6 +84,15 @@ describe("session number shortcut keyboard ownership", () => {
     }
     expect(isSessionNumberModifierKey("Meta", "macos")).toBe(true);
     expect(isSessionNumberModifierKey("Control", "windows")).toBe(true);
+  });
+
+  test("reconciles held state from later keyboard and pointer modifier flags", () => {
+    expect(isSessionNumberModifierPressed(macModifier, "macos")).toBe(true);
+    expect(isSessionNumberModifierPressed({ metaKey: false, ctrlKey: false }, "macos")).toBe(false);
+    expect(isSessionNumberModifierPressed({ metaKey: false, ctrlKey: true }, "windows")).toBe(true);
+    expect(isSessionNumberModifierPressed({ metaKey: false, ctrlKey: false }, "windows")).toBe(false);
+    expect(nextSessionNumberModifierHeld("modifier-mismatch")).toBe(false);
+    expect(nextSessionNumberModifierHeld("focus")).toBe(false);
   });
 
   test("activates digits globally but still yields to modal owners", () => {

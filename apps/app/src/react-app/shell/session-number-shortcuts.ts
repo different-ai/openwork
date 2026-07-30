@@ -42,7 +42,9 @@ type SessionNumberShortcutIntentOptions = {
 export type SessionNumberShortcutTransition =
   | "modifier-down"
   | "modifier-up"
+  | "modifier-mismatch"
   | "blur"
+  | "focus"
   | "visibility-hidden"
   | "owner-change"
   | "unmount";
@@ -133,7 +135,7 @@ export function getSessionNumberShortcutIntent(
   options: SessionNumberShortcutIntentOptions,
 ): SessionNumberShortcutIntent {
   const modifierKey = os === "macos" ? "Meta" : "Control";
-  const modifierPressed = os === "macos" ? event.metaKey : event.ctrlKey;
+  const modifierPressed = isSessionNumberModifierPressed(event, os);
   const oppositeModifierPressed = os === "macos" ? event.ctrlKey : event.metaKey;
   if (event.key === modifierKey) {
     return options.ownerActive ? { type: "ignore" } : { type: "hold" };
@@ -154,6 +156,13 @@ export function getSessionNumberShortcutIntent(
 
 export function isSessionNumberModifierKey(key: string, os: SessionNumberShortcutOs) {
   return key === (os === "macos" ? "Meta" : "Control");
+}
+
+export function isSessionNumberModifierPressed(
+  event: Pick<SessionNumberShortcutEvent, "metaKey" | "ctrlKey">,
+  os: SessionNumberShortcutOs,
+) {
+  return os === "macos" ? event.metaKey : event.ctrlKey;
 }
 
 export function nextSessionNumberModifierHeld(
