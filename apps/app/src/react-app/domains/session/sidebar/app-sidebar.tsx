@@ -1087,9 +1087,9 @@ export function AppSidebar(props: AppSidebarProps) {
             </Button>
           </div>
         ) : null}
-        {props.onOpenSessionSearch ? (
-          <SidebarHeader className="pb-0 pe-0">
-            <SidebarMenu>
+        <SidebarHeader className="pb-0 pe-0">
+          <SidebarMenu>
+            {props.onOpenSessionSearch ? (
               <SidebarMenuItem>
                 <SidebarMenuButton
                   onClick={props.onOpenSessionSearch}
@@ -1103,9 +1103,15 @@ export function AppSidebar(props: AppSidebarProps) {
                   </kbd>
                 </SidebarMenuButton>
               </SidebarMenuItem>
-            </SidebarMenu>
-          </SidebarHeader>
-        ) : null}
+            ) : null}
+            <SidebarDestination
+              active={false}
+              icon={Puzzle}
+              label={t("settings.tab_extensions")}
+              onSelect={props.onOpenExtensions}
+            />
+          </SidebarMenu>
+        </SidebarHeader>
         <SidebarSplitPill
           workspaceSessionGroups={props.workspaceSessionGroups}
           selectedWorkspaceId={props.selectedWorkspaceId}
@@ -1161,14 +1167,6 @@ export function AppSidebar(props: AppSidebarProps) {
         </LazyMotion>
 
         <SidebarFooter className="border-t border-sidebar-border/60 p-1.5 pe-0">
-          <SidebarMenu>
-            <SidebarDestination
-              active={false}
-              icon={Puzzle}
-              label={t("settings.tab_extensions")}
-              onSelect={props.onOpenExtensions}
-            />
-          </SidebarMenu>
           <AccountStatusMenu {...props.status} onOpenAccountSettings={props.onOpenAccountSettings} />
         </SidebarFooter>
 
