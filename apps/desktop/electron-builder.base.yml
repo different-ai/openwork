@@ -91,7 +91,27 @@ win:
         - versions.json
         - versions.json-aarch64-pc-windows-msvc.exe
         - versions.json-x86_64-pc-windows-msvc.exe
+  requestedExecutionLevel: asInvoker
+  verifyUpdateCodeSignature: true
+  rfc3161TimeStampServer: "http://timestamp.digicert.com"
   target:
-    - nsis
+    - target: nsis
+      arch:
+        - x64
+        - arm64
+    - target: zip
+      arch:
+        - x64
+        - arm64
+  artifactName: "${productName}-${os}-${arch}-${version}-Setup.${ext}"
 nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+  shortcutName: "OpenWork"
+  uninstallDisplayName: "OpenWork"
+  installerIcon: "resources/icons/icon.ico"
+  uninstallerIcon: "resources/icons/icon.ico"
   include: build/installer.nsh
