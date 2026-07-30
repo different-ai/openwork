@@ -15,25 +15,31 @@
   },
   "providers": {
     "allowed": [
-      "openrouter"
+      "badlands"
     ],
     "models": [
-      "anthropic/",
-      "openai/",
-      "minimax/",
-      "z-ai/"
+      "@preset/auto",
+      "claude-sonnet-5",
+      "minimax-m3"
     ],
+    "modelNames": {
+      "@preset/auto": "Auto",
+      "claude-sonnet-5": "Anthropic Sonnet 5",
+      "minimax-m3": "MiniMax M3"
+    },
     "default": {
-      "providerID": "openrouter",
-      "modelID": "anthropic/claude-sonnet-4.5",
+      "providerID": "badlands",
+      "modelID": "@preset/auto",
       "displayName": "Auto",
+      "name": "Badlands Gateway (Anthropic dialect)",
+      "npm": "@ai-sdk/anthropic",
       "baseURL": "https://api.badlandslabs.com/v1"
     },
-    "modelsCatalogUrl": "https://api.badlandslabs.com/",
+    "modelsCatalogUrl": null,
     "keyCard": {
       "label": "Badlands Labs",
       "keysUrl": null,
-      "validateUrl": "https://api.badlandslabs.com/v1/key",
+      "validateUrl": null,
       "keyPrefix": null
     }
   },

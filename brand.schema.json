@@ -175,12 +175,25 @@
           "description": "Optional model whitelist within the allowed providers. An entry ending in '/' is a vendor prefix that matches every model of that vendor (e.g. 'anthropic/', 'openai/', 'minimax/', 'z-ai/'); any other entry matches a model id exactly (e.g. 'anthropic/claude-sonnet-5'). Empty/omitted = all models of allowed providers.",
           "items": { "type": "string" }
         },
+        "modelNames": {
+          "type": "object",
+          "description": "Friendly model labels keyed by exact model id. Custom providers use these labels when generating their model catalog.",
+          "additionalProperties": { "type": "string" }
+        },
         "default": {
           "type": "object",
           "additionalProperties": false,
           "properties": {
             "providerID": { "type": "string" },
             "modelID": { "type": "string" },
+            "name": {
+              "type": "string",
+              "description": "Custom provider display name written to the OpenCode provider config."
+            },
+            "npm": {
+              "type": "string",
+              "description": "AI SDK package for a custom provider. The package selects the provider wire protocol (for example, @ai-sdk/anthropic for Anthropic /v1/messages)."
+            },
             "displayName": {
               "type": "string",
               "description": "Friendly label rendered instead of the raw model id (e.g. \"Clinic AI\")."

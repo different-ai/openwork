@@ -222,6 +222,7 @@ export function loadConfig() {
     providers: {
       allowed: raw.providers?.allowed ?? [],
       models: raw.providers?.models ?? [],
+      modelNames: raw.providers?.modelNames ?? {},
       default: raw.providers?.default
         ? {
             ...raw.providers.default,

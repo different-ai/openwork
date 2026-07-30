@@ -1,22 +1,7 @@
 {
-  "apps/app/src/react-app/domains/session/chat/session-page.tsx": {
-    "Add an AI model provider so your tasks can run.": "添加一个AI模型提供商，任务即可运行。",
-    "Try one of these to get started:": "试试以下操作开始：",
+  "apps/app/src/react-app/domains/session/chat/session-empty-hero.tsx": {
     "Connect a model provider": "连接模型提供商",
-    "Add an API key for Anthropic, OpenAI, Google, or other providers": "添加你的模型提供商API密钥即可开始",
-    "aria-label=\"Find in conversation\"": "aria-label=\"在对话中查找\"",
-    "<TooltipContent>Find in conversation (⌘F)</TooltipContent>": "<TooltipContent>在对话中查找 (⌘F)</TooltipContent>",
-    "title={split ? \"Close split\" : \"Open in split view\"}": "title={split ? \"关闭分屏\" : \"打开分屏视图\"}",
-    "aria-label={split ? \"Close split\" : \"Open in split view\"}": "aria-label={split ? \"关闭分屏\" : \"打开分屏视图\"}",
-    "title=\"Close tab\"": "title=\"关闭标签页\"",
-    "aria-label=\"Close tab\"": "aria-label=\"关闭标签页\"",
-    "title=\"Browser\"": "title=\"浏览器\"",
-    "aria-label=\"Browser\"": "aria-label=\"浏览器\"",
-    "title=\"Voice Mode\"": "title=\"语音模式\"",
-    "aria-label=\"Voice Mode\"": "aria-label=\"语音模式\"",
-    "`Artifacts (${artifactTargetCount})` : \"No artifacts yet\"}": "`产出物 (${artifactTargetCount})` : \"暂无产出物\"}",
-    "title=\"Extensions\"": "title=\"扩展\"",
-    "aria-label=\"Extensions\"": "aria-label=\"扩展\""
+    "Add an API key for Anthropic, OpenAI, Google, or other providers so tasks can run.": "添加你的模型提供商 API 密钥即可开始运行任务。"
   },
   "apps/app/src/components/chat/task-suggestions.tsx": {
     "Connect a model provider to get started:": "连接模型提供商即可开始：",
@@ -93,7 +78,6 @@
   },
   "apps/app/src/react-app/domains/settings/pages/mcp-view.tsx": {
     "placeholder=\"Search extensions...\"": "placeholder=\"搜索扩展…\"",
-    "{f === \"all\" ? \"All\" : f === \"mcp\" ? \"MCPs\" : \"Skills\"}": "{f === \"all\" ? \"全部\" : f === \"mcp\" ? \"MCP\" : \"技能\"}",
     "{showHidden ? \"Showing hidden\" : hiddenOrPolicyCount > 0 ? `Show hidden (${hiddenOrPolicyCount})` : \"Show hidden\"}": "{showHidden ? \"已显示隐藏项\" : hiddenOrPolicyCount > 0 ? `显示隐藏项 (${hiddenOrPolicyCount})` : \"显示隐藏项\"}",
     "From GitHub": "从GitHub",
     "\"View details\"": "\"查看详情\""
@@ -106,10 +90,7 @@
     "description: \"Automate the built-in browser panel that stays visible inside {BRAND}.\",": "description: \"自动执行内置浏览器面板中的操作，该面板会一直在{BRAND}中保持可见。\",",
     "name: \"Computer Use\",": "name: \"电脑控制\",",
     "description: \"Mac only: control Mac apps through semantic accessibility refs, screenshots, background-safe clicks, keyboard input, and strict mode.\",": "description: \"仅限Mac：通过语义化的辅助功能引用、截图、后台安全点击、键盘输入和严格模式来控制Mac应用。\",",
-    "name: \"OpenAI Image Gen\",": "name: \"OpenAI 图像生成\",",
-    "description: \"Generate image artifacts with gpt-image-2.\",": "description: \"使用gpt-image-2生成图像产出物。\",",
     "name: \"Voice Mode\",": "name: \"语音模式\",",
-    "description: \"Talk to {BRAND} through a Realtime voice panel that drives the same semantic UI controls as {BRAND} UI MCP.\",": "description: \"通过实时语音面板与{BRAND}对话，该面板驱动的语义化界面控件与{BRAND} UI MCP相同。\",",
-    "description: \"Let {BRAND} help with meetings, selected Drive files, and Gmail drafts.\",": "description: \"让{BRAND}协助处理会议、选定的Drive文件和Gmail草稿。\","
+    "description: \"Talk to {BRAND} through a Realtime voice panel that drives the same semantic UI controls as {BRAND} UI MCP.\",": "description: \"通过实时语音面板与{BRAND}对话，该面板驱动的语义化界面控件与{BRAND} UI MCP相同。\","
   }
 }

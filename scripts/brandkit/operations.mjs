@@ -146,6 +146,16 @@ export function buildOperations(config) {
       replace: displayName,
       signature: displayName,
     },
+    {
+      id: "brand-name:desktop-distribution",
+      feature: "brandName",
+      type: "replaceAll",
+      target: "apps/desktop/electron/desktop-distribution.mjs",
+      pattern: "\\bOpenWork\\b",
+      flags: "g",
+      replace: displayName,
+      signature: displayName,
+    },
     // Built-in extension catalog: names/descriptions/setup copy reference
     // "OpenWork" in prose (e.g. "stays visible inside OpenWork"). The `\bOpenWork\b`
     // word boundary already skips the TypeScript type names in this same file
@@ -193,7 +203,7 @@ export function buildOperations(config) {
       id: "pkg:icon-resource",
       feature: "assets",
       type: "injectBefore",
-      target: "apps/desktop/electron-builder.yml",
+      target: "apps/desktop/electron-builder.base.yml",
       marker: "brandkit:icon-resource",
       anchor: "  - from: ../app/dist",
       block:
@@ -227,7 +237,7 @@ export function buildOperations(config) {
       id: "pkg:mac-hardened-runtime",
       feature: "desktopIdentity",
       type: "replaceString",
-      target: "apps/desktop/electron-builder.yml",
+      target: "apps/desktop/electron-builder.base.yml",
       find: "hardenedRuntime: true",
       replace: "hardenedRuntime: false # brandkit: unsigned build (no notarization)",
     },
@@ -260,11 +270,11 @@ export function buildOperations(config) {
       id: "runtime:scheme",
       feature: "desktopIdentity",
       type: "replaceAll",
-      target: "apps/desktop/electron/main.mjs",
-      pattern: rx('openwork://'),
+      target: "apps/desktop/electron/desktop-distribution.mjs",
+      pattern: rx('protocolScheme: "openwork"'),
       flags: "g",
-      replace: `${desktop.deepLinkScheme}://`,
-      signature: `${desktop.deepLinkScheme}://`,
+      replace: `protocolScheme: ${JSON.stringify(desktop.deepLinkScheme)}`,
+      signature: `protocolScheme: ${JSON.stringify(desktop.deepLinkScheme)}`,
     },
     // ---- Own data dir: without this the branded app reads/writes the SAME
     // %APPDATA%/com.differentai.openwork state as a stock OpenWork install on
@@ -272,10 +282,12 @@ export function buildOperations(config) {
     {
       id: "runtime:app-identifier",
       feature: "desktopIdentity",
-      type: "replaceString",
-      target: "apps/desktop/electron/main.mjs",
-      find: 'const TAURI_APP_IDENTIFIER = "com.differentai.openwork";',
-      replace: `const TAURI_APP_IDENTIFIER = ${JSON.stringify(desktop.appId)}; /* brandkit:app-identifier */`,
+      type: "replaceAll",
+      target: "apps/desktop/electron/desktop-distribution.mjs",
+      pattern: rx('appIdentifier: "com.differentai.openwork"'),
+      flags: "g",
+      replace: `appIdentifier: ${JSON.stringify(desktop.appId)}`,
+      signature: `appIdentifier: ${JSON.stringify(desktop.appId)}`,
     },
     // ---- Own install dir: electron-builder derives the NSIS/appImage install
     // folder from package.json `name` ("@openwork/desktop" → "@openworkdesktop"),
@@ -286,7 +298,7 @@ export function buildOperations(config) {
       id: "pkg:install-dir",
       feature: "desktopIdentity",
       type: "injectBefore",
-      target: "apps/desktop/electron-builder.yml",
+      target: "apps/desktop/electron-builder.base.yml",
       marker: "brandkit:install-dir",
       anchor: "asar: true",
       block:
@@ -304,7 +316,7 @@ export function buildOperations(config) {
             id: "pkg:update-feed",
             feature: "desktopIdentity",
             type: "replaceAll",
-            target: "apps/desktop/electron-builder.yml",
+            target: "apps/desktop/electron-builder.base.yml",
             // EOL-agnostic (\s+) — CI checks out LF, Windows trees are CRLF.
             pattern: "owner: different-ai\\s+    repo: openwork",
             flags: "g",
@@ -331,9 +343,9 @@ export function buildOperations(config) {
             id: "providers:models-catalog-url",
             feature: "providers",
             type: "replaceString",
-            target: "apps/server/src/embedded.ts",
-            find: ': "https://models.openworklabs.com/";',
-            replace: `: ${JSON.stringify(providers.modelsCatalogUrl)};`,
+            target: "apps/server/src/opencode-models-url.ts",
+            find: 'const PRODUCTION_MODELS_URL = "https://models.openworklabs.com/";',
+            replace: `const PRODUCTION_MODELS_URL = ${JSON.stringify(providers.modelsCatalogUrl)};`,
           },
         ]
       : []),
@@ -378,6 +390,7 @@ export function buildOperations(config) {
       find: [
         "  return memoryEnabled ? [...CLOUD_SETTINGS_TABS, \"memory\"] : CLOUD_SETTINGS_TABS;",
         "  return memoryEnabled ? [\"cloud-account\", \"memory\", \"connect\"] : CLOUD_SETTINGS_TABS;",
+        "  return memoryEnabled ? [\"cloud-account\", \"memory\"] : CLOUD_SETTINGS_TABS;",
       ],
       replace: "  return []; /* brandkit:hide-cloud */",
     },
@@ -422,20 +435,6 @@ export function buildOperations(config) {
       find: '<SidebarGroupLabel>{t("settings.group_cloud")}</SidebarGroupLabel>',
       replace: "{null /* brandkit:hide-cloud */}",
     },
-    // Remove the "Display cloud sign-in" toggle from the Customization tab so
-    // users can't re-enable the login prompt.
-    {
-      id: "cloud:customization-signin-toggle",
-      feature: "cloudHide",
-      type: "replaceAll",
-      target: "apps/app/src/react-app/domains/settings/pages/shell-view.tsx",
-      // EOL-agnostic: the block spans lines, and CI runners check out LF
-      // while a Windows working tree is CRLF — match whitespace generically.
-      pattern: '<ToggleRow\\s+label="Display cloud sign-in"[\\s\\S]*?/>',
-      flags: "g",
-      replace: "{null /* brandkit:hide-cloud — no cloud sign-in toggle */}",
-      signature: "brandkit:hide-cloud — no cloud sign-in toggle",
-    },
     // A workspace already of type "remote" (e.g. carried over from before the
     // remote-create entry point was hidden) can still render Recover / Test
     // connection / Edit connection actions in its sidebar row menu. Null that
@@ -470,8 +469,7 @@ export function buildOperations(config) {
     // ---- Settings surface: trim to the essentials ---------------------------
     // Keep only: Preferences, Permissions, Extensions (workspace group) and
     // AI Providers, Appearance, Environment (global group). Hide Advanced,
-    // Customization (shell), Updates, Recovery, the overview "Help" block, and
-    // the Extensions "Marketplace" (toggle + connect hints). The two tab
+    // Updates, Recovery, Debug, and the overview "Help" block. The two tab
     // functions are the single source of truth for BOTH nav surfaces (settings
     // sidebar + compact section menu).
     {
@@ -488,9 +486,12 @@ export function buildOperations(config) {
       feature: "trim",
       type: "replaceString",
       target: "apps/app/src/react-app/domains/settings/shell/settings-page.tsx",
-      find: '  const tabs: SettingsTab[] = ["ai", "shell", "appearance", "environment", "updates", "recovery"];',
+      find: [
+        "  const tabs: SettingsTab[] = [\"ai\", \"appearance\", \"environment\"];\n  if (capabilities.autoUpdate) tabs.push(\"updates\");\n  if (capabilities.localRuntimeControl) tabs.push(\"recovery\");\n  if (developerMode) tabs.push(\"debug\");\n  return tabs;",
+        "  const tabs: SettingsTab[] = [\"ai\", \"appearance\", \"environment\"];\r\n  if (capabilities.autoUpdate) tabs.push(\"updates\");\r\n  if (capabilities.localRuntimeControl) tabs.push(\"recovery\");\r\n  if (developerMode) tabs.push(\"debug\");\r\n  return tabs;",
+      ],
       replace:
-        '  const tabs: SettingsTab[] = ["ai", "appearance", "environment"]; /* brandkit:trim-settings */',
+        '  return ["ai", "appearance", "environment"]; /* brandkit:trim-settings */',
     },
     // Keep the overview (General) grid in sync with the trimmed nav so hidden
     // tabs aren't reachable from the cards. Filter at render time (leaves the
@@ -525,38 +526,6 @@ export function buildOperations(config) {
       flags: "g",
       replace: "{null /* brandkit:hide-help */}",
       signature: "brandkit:hide-help",
-    },
-    // Extensions "Marketplace": force the pane gate false so the toggle never
-    // renders and `activeView` stays "my"; the separate connect hint is nulled
-    // below. The candidate anchors cover the current upstream shape and the
-    // immediately preceding shape so a PR merge can still be built cleanly.
-    {
-      id: "settings:extensions-marketplace-pane",
-      feature: "trim",
-      type: "replaceString",
-      target: "apps/app/src/react-app/domains/settings/pages/extensions-view.tsx",
-      find: [
-        "  const connectEnabled = useConnectEnabled();\n  const showMarketplacePane = shouldShowExtensionsMarketplacePane(connectEnabled);",
-        "  const connectEnabled = useConnectEnabled();\r\n  const showMarketplacePane = shouldShowExtensionsMarketplacePane(connectEnabled);",
-        "  const showMarketplacePane = shouldShowExtensionsMarketplacePane();",
-        "  const showMarketplacePane = shouldShowExtensionsMarketplacePane();\r\n",
-      ],
-      replace: "  const showMarketplacePane = false; /* brandkit:hide-marketplace */",
-    },
-    {
-      id: "settings:extensions-connect-hint",
-      feature: "trim",
-      type: "replaceAll",
-      target: "apps/app/src/react-app/domains/settings/pages/extensions-view.tsx",
-      // The `) : ( <div class="flex flex-col gap-2 …"> … </div> )}` else branch of
-      // the marketplace toggle. Anchor the div by its (unique-in-context)
-      // className and stop at the first `</div>` before `)}` — avoids the `")}"`
-      // that appears inside the `t(...)` calls.
-      pattern:
-        '\\) : \\(\\s*<div className="flex flex-col gap-2 rounded-xl border border-dls-border bg-dls-surface px-4 py-3 text-sm text-dls-secondary sm:flex-row sm:items-center sm:justify-between">[\\s\\S]*?</div>\\s*\\)\\}',
-      flags: "g",
-      replace: ") : null /* brandkit:hide-marketplace */}",
-      signature: "brandkit:hide-marketplace",
     },
     // Drop the Docs + Feedback status-bar buttons.
     {
@@ -621,7 +590,8 @@ export function buildOperations(config) {
     },
     // Replace the stock "Browse the web → search Craigslist for couches" example
     // task (prompt + card copy) with a professional, business-oriented one.
-    // Present in two surfaces: the task-suggestions component and session-page.
+    // Present in the legacy task-suggestions component and the current
+    // empty-session hero.
     {
       id: "example:browser-prompt-suggestions",
       feature: "trim",
@@ -642,7 +612,7 @@ export function buildOperations(config) {
       id: "example:browser-prompt-session",
       feature: "trim",
       type: "replaceString",
-      target: "apps/app/src/react-app/domains/session/chat/session-page.tsx",
+      target: "apps/app/src/react-app/domains/session/chat/session-empty-hero.tsx",
       find: '"Open craigslist.org in the browser and search for couches for sale. Show me the top 5 results with prices."',
       replace: '"Open a company\'s website in the browser and summarize what they do, their products, and key details."',
     },
@@ -650,9 +620,9 @@ export function buildOperations(config) {
       id: "example:browser-desc-session",
       feature: "trim",
       type: "replaceString",
-      target: "apps/app/src/react-app/domains/session/chat/session-page.tsx",
-      find: "Search Craigslist for couches and list the results",
-      replace: "Research a company and summarize its site",
+      target: "apps/app/src/react-app/domains/session/chat/session-empty-hero.tsx",
+      find: 'description: "Use the built-in browser for repetitive steps.",',
+      replace: 'description: "Research a company and summarize its website.",',
     },
   ];
 
@@ -664,13 +634,16 @@ export function buildOperations(config) {
   if (providers.default?.providerID && providers.default?.modelID) {
     const d = providers.default;
     const defaultModel = `${d.providerID}/${d.modelID}`;
+    const providerModels = renderProviderModels(providers);
     // Inject a provider override into the PACKAGED runtime (which ships the
-    // compiled server, not opencode.json): baseURL reroutes requests through a
-    // branded gateway, displayName renders a friendly model label instead of the
-    // raw id. Merges with any existing runtimeConfig.provider rather than clobbering.
+    // compiled server, not opencode.json): npm selects the wire protocol,
+    // baseURL reroutes requests, and models defines the curated labels. Merge
+    // with any existing runtimeConfig.provider rather than clobbering it.
     const providerBody = [
+      d.npm ? `npm: ${JSON.stringify(d.npm)}` : null,
+      d.name ? `name: ${JSON.stringify(d.name)}` : null,
       d.baseURL ? `options: { baseURL: ${JSON.stringify(d.baseURL)} }` : null,
-      d.displayName ? `models: { ${JSON.stringify(d.modelID)}: { name: ${JSON.stringify(d.displayName)} } }` : null,
+      Object.keys(providerModels).length > 0 ? `models: ${JSON.stringify(providerModels)}` : null,
     ].filter(Boolean).join(", ");
     const providerOverride = providerBody
       ? `provider: { ...((runtimeConfig as { provider?: Record<string, unknown> }).provider ?? {}), ${JSON.stringify(d.providerID)}: { ${providerBody} } }, `
@@ -709,7 +682,7 @@ export function buildOperations(config) {
     // description, icon initials) with the connector brand — distinct from the
     // model's own label (d.displayName, e.g. "Auto"). The provider brand comes
     // from keyCard.label (e.g. "Badlands Labs"), falling back to displayName.
-    // opencode's raw catalog name ("OpenRouter") would otherwise leak upstream.
+    // opencode's raw provider name would otherwise leak into branded surfaces.
     const providerLabel = providers.keyCard?.label ?? d.displayName;
     if (d.displayName) {
       ops.push(
@@ -756,12 +729,13 @@ export function buildOperations(config) {
         {
           id: "providers:icon-initials",
           feature: "providers",
-          type: "replaceString",
+          type: "injectBefore",
           target: "apps/app/src/react-app/design-system/provider-icon.tsx",
-          find: `if (normalizedId === "${d.providerID}") return "OR";`,
-          replace: `if (normalizedId === ${JSON.stringify(d.providerID)}) return ${JSON.stringify(
+          marker: "brandkit:provider-initials",
+          anchor: 'if (normalizedId === "openrouter") return "OR";',
+          block: `if (normalizedId === ${JSON.stringify(d.providerID)}) return ${JSON.stringify(
             providerLabel.split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase(),
-          )};`,
+          )}; /* brandkit:provider-initials */\r\n    `,
         },
       );
     }
@@ -1003,15 +977,35 @@ function renderOpencodeJson(providers) {
   const d = providers.default;
   if (d?.providerID && d?.modelID) {
     doc.model = `${d.providerID}/${d.modelID}`;
-    // Merge provider overrides: baseURL reroutes requests through a branded
-    // gateway (options.baseURL), displayName surfaces a friendly model label so
-    // the picker never shows the raw upstream id. opencode merges with the catalog.
+    // Custom providers need the matching AI SDK package to select the wire
+    // protocol. Other fields also work as overlays for catalog providers.
     const entry = {};
+    if (d.npm) entry.npm = d.npm;
+    if (d.name) entry.name = d.name;
     if (d.baseURL) entry.options = { baseURL: d.baseURL };
-    if (d.displayName) entry.models = { [d.modelID]: { name: d.displayName } };
+    const providerModels = renderProviderModels(providers);
+    if (Object.keys(providerModels).length > 0) entry.models = providerModels;
     if (Object.keys(entry).length > 0) doc.provider = { [d.providerID]: entry };
   }
   return `${JSON.stringify(doc, null, 2)}\n`;
+}
+
+function renderProviderModels(providers) {
+  const d = providers.default;
+  if (!d?.modelID) return {};
+  const configuredIds = d.npm
+    ? providers.models.filter((modelId) => !modelId.endsWith("/"))
+    : [d.modelID];
+  const modelIds = [...new Set([d.modelID, ...configuredIds])];
+  return Object.fromEntries(modelIds.map((modelId) => [
+    modelId,
+    {
+      name:
+        providers.modelNames?.[modelId] ??
+        (modelId === d.modelID ? d.displayName : null) ??
+        modelId,
+    },
+  ]));
 }
 
 /** The brand-owned welcome page, generated from the `welcome` config block. */
