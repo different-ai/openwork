@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto"
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { ErrorCode, McpError, type ToolAnnotations } from "@modelcontextprotocol/sdk/types.js"
 import { StreamableHTTPTransport } from "@hono/mcp"
@@ -21,6 +22,18 @@ import { resolvePublicOrigin } from "../capability-sources/generic-oauth.js"
 import { env } from "../env.js"
 import { isPlatformAdminUserId } from "../middleware/admin.js"
 import { executeAvailableAdminCapability, parseAdminCapabilityName, searchAvailableAdminCapabilities } from "./admin-capabilities.js"
+import { readUiArtifactPreferences } from "../ui-artifact-preferences.js"
+import {
+  appendUiArtifactSuggestion,
+  executeUiArtifactCapability,
+  searchUiArtifactCapabilities,
+  suggestUiArtifactForCapability,
+} from "./ui-artifacts.js"
+import {
+  UI_ARTIFACT_KINDS,
+  UI_ARTIFACT_SCHEMA_VERSION,
+  type UiArtifactPreferences,
+} from "@openwork/types/ui-artifact"
 import {
   executeBuiltinSkillCapability,
   listBuiltinSkillDescriptors,
@@ -109,7 +122,7 @@ const externalCapabilityErrorPayloadSchema = z.object({
   schemaGuidance: z.unknown().optional(),
 })
 
-export const AGENT_MCP_INSTRUCTIONS = [
+const BASE_AGENT_MCP_INSTRUCTIONS = [
   "This OpenWork Cloud connection intentionally exposes exactly two tools: search_capabilities and execute_capability.",
   "Capabilities include native Google Workspace operations (Gmail read/search, Calendar list/create, Drive search/read, and Gmail draft creation) executed with the signed-in member's organization credentials, plus any MCP connections the organization has added.",
   "Allowlisted platform admins can also discover namespaced OpenWork Admin capabilities through this same connection; other members cannot discover or execute them.",
@@ -125,7 +138,9 @@ export const AGENT_MCP_INSTRUCTIONS = [
   "If the provider returns invalid_capability_arguments, correct the listed issues and retry once with changed arguments; never retry the same arguments unchanged. If it returns unknown_capability, call search_capabilities again before retrying.",
   "When a match has kind connection_status, name connectionStatus.connectionName and relay connectionStatus.action exactly. Distinguish the member's Your Connections page, the organization Connections dashboard, and the provider's own admin console.",
   "Connection probes are live. After the requested human fixes that connector, search again in the same task; otherwise do not retry unchanged or improvise workarounds through other tools.",
-].join("\n")
+]
+
+export const AGENT_MCP_INSTRUCTIONS = BASE_AGENT_MCP_INSTRUCTIONS.join("\n")
 
 async function mcpRequestMethod(request: Request): Promise<string | null> {
   if (request.method.toUpperCase() !== "POST") return null
@@ -167,6 +182,7 @@ const EXECUTE_CAPABILITY_TIMEOUT_MESSAGE = `The capability call exceeded ${EXECU
 export type ExecuteCapabilityToolResult = {
   isError?: boolean
   content: { text: string; type: "text" }[]
+  structuredContent?: Record<string, unknown>
 }
 
 function textContent(text: string): { text: string; type: "text" }[] {
@@ -380,6 +396,10 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
     if (principal instanceof Response) {
       return principal
     }
+    const uiArtifactStateSession = createHash("sha256")
+      .update(c.req.raw.headers.get("authorization") ?? "missing")
+      .digest("hex")
+      .slice(0, 32)
 
     const preflightResponse = await preflightMcpJsonRpcRequest(c.req.raw, requestId)
     if (preflightResponse) {
@@ -421,6 +441,15 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
       ]
         .sort((a, b) => a.name.localeCompare(b.name) || a.capability.localeCompare(b.capability))
     }
+    const uiArtifactPreferences = method === "tools/call" && memberIdentity
+      ? await readUiArtifactPreferences(memberIdentity.orgMembershipId)
+      : {
+          protocol: "openwork.ui-artifact-preferences" as const,
+          schemaVersion: UI_ARTIFACT_SCHEMA_VERSION,
+          enabled: false,
+          enabledArtifactIds: [...UI_ARTIFACT_KINDS],
+          updatedAt: null,
+        } satisfies UiArtifactPreferences
     const server = createAgentMcpServer()
     if (method === "initialize" || method === "resources/list" || method === "resources/read") {
       registerAgentSkillResources({
@@ -457,6 +486,9 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
         const sourceFilter = searchCapabilitySourceFilter(type)
         const marketplaceObjectTypes = type === "skills" ? skillMarketplaceObjectTypes : undefined
         const restMatches = sourceFilter.api ? searchCapabilities(catalog, query, boundedLimit) : []
+        const uiArtifactMatches = sourceFilter.api
+          ? searchUiArtifactCapabilities(query, boundedLimit, uiArtifactPreferences)
+          : []
         const adminMatches = sourceFilter.admin
           ? await searchAvailableAdminCapabilities(await resolvePlatformAdmin(), query, boundedLimit)
           : []
@@ -490,7 +522,7 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
             enabled: externalMcpConnectionsEnabled,
           })
           : []
-        const matches = [...restMatches, ...adminMatches, ...builtinSkillMatches, ...externalMatches, ...marketplaceMatches]
+        const matches = [...restMatches, ...uiArtifactMatches, ...adminMatches, ...builtinSkillMatches, ...externalMatches, ...marketplaceMatches]
           .sort(compareCapabilityMatches)
           .slice(0, boundedLimit)
         return capabilitySearchToolResult(matches, externalCoverageHint)
@@ -518,9 +550,20 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
         }),
       },
       async ({ name, schemaDigest, path, query, body }) => {
-        return executeCapabilityWithBudget({
+        const result = await executeCapabilityWithBudget({
           capability: name,
           invoke: async (): Promise<ExecuteCapabilityToolResult> => {
+            const uiArtifactResult = executeUiArtifactCapability({
+              name,
+              body: normalizeToolBody(body),
+              preferences: uiArtifactPreferences,
+              stateScope: [
+                memberIdentity?.orgMembershipId ?? `${principal.organizationId}:${principal.userId}`,
+                uiArtifactStateSession,
+              ].join(":"),
+            })
+            if (uiArtifactResult) return uiArtifactResult
+
             const adminResult = parseAdminCapabilityName(name)
               ? await executeAvailableAdminCapability(await resolvePlatformAdmin(), name, body)
               : null
@@ -602,6 +645,16 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
             })
           },
         })
+        const operation = catalog.find((candidate) => candidate.name === name)
+        return appendUiArtifactSuggestion(result, suggestUiArtifactForCapability({
+          capability: name,
+          ...(operation?.operation.summary ? { title: operation.operation.summary } : {}),
+          ...(operation?.operation.description ? { description: operation.operation.description } : {}),
+          path,
+          query,
+          body: normalizeToolBody(body),
+          preferences: uiArtifactPreferences,
+        }))
       },
     )
 

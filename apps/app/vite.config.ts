@@ -123,6 +123,10 @@ export default defineConfig({
     },
     tailwindcss(),
     react({
+      // The artifact frame is loaded as a standalone worker asset inside an
+      // opaque srcdoc iframe. Leave it to Vite's TSX transform so development
+      // output never depends on the host page's React Refresh globals.
+      exclude: /dynamic-artifact-frame-runtime\.tsx$/,
       babel: {
         plugins: [["babel-plugin-react-compiler", { compilationMode: "annotation" }]],
       },
@@ -131,6 +135,12 @@ export default defineConfig({
   server: {
     port: devPort,
     strictPort: true,
+    // Dynamic artifact previews run in opaque srcdoc frames. Vite serves the
+    // development-only runtime as an ES module graph, so the null-origin frame
+    // needs CORS access to both fresh and 304 module responses. This applies
+    // only to the local development server; production uses one exact bundled
+    // runtime asset and does not inherit this policy.
+    cors: true,
     ...(allowedHosts.size > 0 ? { allowedHosts: Array.from(allowedHosts) } : {}),
   },
   build: {

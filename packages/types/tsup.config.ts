@@ -7,6 +7,7 @@ export default defineConfig({
     "openwork-affordance": "src/openwork-affordance.ts",
     "openwork-context": "src/openwork-context.ts",
     "openwork-provider": "src/openwork-provider.ts",
+    "ui-artifact-project": "src/ui-artifact-project.ts",
     "den/desktop-app-restrictions": "src/den/desktop-app-restrictions.ts",
     "den/desktop-policies": "src/den/desktop-policies.ts",
     "den/connect-diagnostics": "src/den/connect-diagnostics.ts",

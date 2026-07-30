@@ -2,6 +2,10 @@ import { eq } from "@openwork-ee/den-db/drizzle"
 import { AuthAccountTable, AuthUserTable, RateLimitTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { desktopConfigSchema } from "@openwork/types/den/desktop-policies"
+import {
+  uiArtifactPreferencesSchema,
+  uiArtifactPreferencesUpdateSchema,
+} from "@openwork/types/ui-artifact"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
@@ -16,6 +20,10 @@ import type { AuthContextVariables } from "../../session.js"
 import { calculateDesktopPolicyForOrgMember } from "../../desktop-policies.js"
 import { memberFacingMcpConnectionsEnabled } from "../../capability-sources/external-mcp-rollout.js"
 import { DenEmailSendError, sendEmail } from "../../utils/email/send-email.js"
+import {
+  readUiArtifactPreferences,
+  writeUiArtifactPreferences,
+} from "../../ui-artifact-preferences.js"
 
 const DOWNLOAD_LINK_RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000
 const DOWNLOAD_LINK_RATE_LIMIT_MAX = 5
@@ -36,6 +44,10 @@ const meOrganizationsResponseSchema = z.object({
 
 const meDesktopConfigResponseSchema = desktopConfigSchema.meta({
   ref: "CurrentUserDesktopConfigResponse",
+})
+
+const meUiArtifactPreferencesResponseSchema = uiArtifactPreferencesSchema.meta({
+  ref: "CurrentUserUiArtifactPreferencesResponse",
 })
 
 const sendDownloadLinkResponseSchema = z.object({
@@ -393,6 +405,44 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
           ? { brandAccentColor: metadata.brandAccentColor }
           : {}),
       })
+    },
+  )
+
+  app.get(
+    "/v1/me/ui-artifacts",
+    describeRoute({
+      tags: ["Users"],
+      summary: "Get current user's UI artifact preferences",
+      description: "Returns the UI artifact alpha state used by the desktop renderer and the OpenWork Cloud capability executor.",
+      responses: {
+        200: jsonResponse("UI artifact preferences returned successfully.", meUiArtifactPreferencesResponseSchema),
+        401: jsonResponse("The caller must be signed in to read UI artifact preferences.", unauthorizedSchema),
+      },
+    }),
+    orgMemberRoute(),
+    async (c) => {
+      const currentMember = c.get("organizationContext").currentMember
+      return c.json(await readUiArtifactPreferences(currentMember.id))
+    },
+  )
+
+  app.put(
+    "/v1/me/ui-artifacts",
+    describeRoute({
+      tags: ["Users"],
+      summary: "Update current user's UI artifact preferences",
+      description: "Updates the UI artifact alpha state used by the desktop renderer and the OpenWork Cloud capability executor.",
+      responses: {
+        200: jsonResponse("UI artifact preferences updated successfully.", meUiArtifactPreferencesResponseSchema),
+        400: jsonResponse("The UI artifact preference update was invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to update UI artifact preferences.", unauthorizedSchema),
+      },
+    }),
+    orgMemberRoute(),
+    jsonValidator(uiArtifactPreferencesUpdateSchema),
+    async (c) => {
+      const currentMember = c.get("organizationContext").currentMember
+      return c.json(await writeUiArtifactPreferences(currentMember.id, c.req.valid("json")))
     },
   )
 }

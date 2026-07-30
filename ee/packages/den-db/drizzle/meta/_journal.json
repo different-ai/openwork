@@ -344,6 +344,13 @@
       "when": 1784998956602,
       "tag": "0049_third_caretaker",
       "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "5",
+      "when": 1785240356970,
+      "tag": "0050_oval_longshot",
+      "breakpoints": true
     }
   ]
 }

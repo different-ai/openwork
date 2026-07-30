@@ -1,0 +1,230 @@
+---
+title: "Build reusable React artifacts"
+description: "Ask an agent to create an interactive UI that stays editable and reusable"
+---
+
+<Warning>
+Dynamic React artifacts are an alpha feature. Their project and runtime contracts can still change.
+</Warning>
+
+OpenWork can turn a description into a compact interactive React component, render it as a bounded card in chat, and keep its source in your workspace so you or an agent can enhance it later.
+
+To start:
+
+1. Open **Settings > Preferences** and turn on **UI artifacts (Alpha)**.
+2. Open the **UI Artifacts** tab.
+3. In **Generated projects**, enable the **Artifact Builder skill** for this workspace.
+
+The first switch exposes the artifact experience in the app. The second is the agent-authoring permission: it injects the managed `openwork-react-artifact-builder` skill and artifact affordances into agents working in this workspace. It is off by default.
+
+Turning the builder skill off removes those instructions and affordances and blocks new builds and publishes. It does not delete source projects, state, or immutable builds, and pinned artifacts already in chat continue to render.
+
+Try asking:
+
+> Build a launch radar that shows each release, its risk, its owner, and the next milestone. Let me mark launches I want to watch, and save it as a reusable artifact.
+
+The agent works in code mode. It can delegate a bounded component implementation to a subagent when delegation is available, then reviews the files, builds an immutable revision, and attaches that exact build to the conversation. Select **Open editor** on the attachment to inspect or change the artifact in the UI Artifacts tab.
+
+You can also select **Create artifact** in **Generated projects** to create a complete five-file starter without writing code first. Give it a name and purpose, choose **Create and edit**, and OpenWork opens the project in the editor.
+
+## Manage the lifecycle
+
+**Generated projects** is the workspace library for every dynamic artifact. From there you can:
+
+- list and reopen projects across conversations;
+- create a safe starter project;
+- enable or disable agent building at the workspace level;
+- enable or disable each project independently;
+- edit a disabled project without allowing it to build or publish;
+- rebuild an enabled project after editing; and
+- reopen an immutable chat attachment without silently upgrading it.
+
+New projects are enabled by default. Disabling one project blocks new builds and publishes for that project, while its source stays editable and older pinned chat attachments keep working. Re-enable it when you want an agent or the editor to produce a new revision.
+
+The workspace skill setting and project overrides are revisioned together. Concurrent settings changes use an expected revision so one window cannot silently overwrite another.
+
+## The project contract
+
+Every dynamic artifact is a filesystem project with exactly these five files:
+
+```text
+.opencode/openwork/artifacts/<slug>/
+├── artifact.json
+├── src/
+│   └── App.tsx
+├── styles.css
+├── data.json
+└── data.schema.json
+```
+
+`<slug>` uses lowercase kebab-case, such as `launch-radar`. Keeping source, styles, data, and the data contract in separate files makes the artifact understandable to people and agents without putting JSX or datasets into tool arguments.
+
+### `artifact.json`
+
+The manifest declares the component entry point, its data files, presentation preferences, and every host interaction it may request.
+
+```json
+{
+  "protocol": "openwork.ui-artifact-project",
+  "schemaVersion": 2,
+  "apiVersion": 1,
+  "slug": "launch-radar",
+  "title": "Launch radar",
+  "description": "Track release readiness and the launches I am watching.",
+  "runtime": {
+    "kind": "react",
+    "entry": "src/App.tsx",
+    "styles": "styles.css"
+  },
+  "data": {
+    "value": "data.json",
+    "schema": "data.schema.json"
+  },
+  "presentation": {
+    "placement": "both",
+    "shape": "collection"
+  },
+  "intents": [
+    {
+      "id": "draft-launch-update",
+      "title": "Draft a launch update",
+      "description": "Prepare a prompt for an update about one declared launch.",
+      "arguments": [
+        {
+          "name": "launchId",
+          "type": "string",
+          "required": true,
+          "description": "The launch id from data.json."
+        }
+      ],
+      "effects": {
+        "data": "none",
+        "ui": "focus",
+        "external": false
+      },
+      "confirmation": "always"
+    }
+  ]
+}
+```
+
+The shape is a hard host-owned presentation budget, not a resize hint:
+
+| Shape | Fixed frame | Content budget | Use it for |
+| --- | --- | --- | --- |
+| `metric` | 160px high, up to 480px wide | One result, up to four short values, one action | Status, KPI, balance, progress |
+| `summary` | 240px high, up to 640px wide | Up to four compact blocks and two actions | Briefs, recommendations, comparisons |
+| `collection` | 360px high, up to 720px wide | Up to five visible rows and two actions | Agendas, inboxes, task lists |
+
+An artifact is not a web page. OpenWork already renders its title, description, revision, refresh control, and editor control around the isolated component. Generated JSX should not add navigation, a sidebar, page chrome, a hero section, or a second artifact title. The component root must fill the fixed frame and hide overflow. Long text is truncated or clamped, and collections render at most the shape budget plus a `+ N more` summary; the card never grows into a scrolling mini-site. The sandbox exposes the declared value as `data-openwork-artifact-shape` on its document and React roots when shape-specific CSS density is useful.
+
+An intent is prompt-only. Calling it asks the OpenWork host to prepare a visible prompt for the user; it does not give the artifact a tool handle or let it silently perform the action. Undeclared intent IDs are rejected.
+
+### `src/App.tsx`
+
+The entry file default-exports a React component that receives only `data`, `state`, and `runtime`.
+
+```tsx
+type Launch = {
+  id: string
+  name: string
+  risk: "low" | "medium" | "high"
+}
+
+type ArtifactProps = {
+  data: { launches: Launch[] }
+  state: { watched?: string[] }
+  runtime: {
+    replaceState(next: { watched: string[] }): void
+    invoke(
+      intentId: string,
+      payload: Record<string, unknown>,
+    ): Promise<{ prompt: string; requiresConfirmation: boolean }>
+  }
+}
+
+export default function App({ data, state, runtime }: ArtifactProps) {
+  const watched = state.watched ?? []
+  const visible = data.launches.slice(0, 5)
+  const remaining = data.launches.length - visible.length
+
+  function toggleWatched(id: string) {
+    runtime.replaceState({
+      watched: watched.includes(id)
+        ? watched.filter((item) => item !== id)
+        : [...watched, id],
+    })
+  }
+
+  return (
+    <main className="radar">
+      {visible.map((launch) => (
+        <article key={launch.id} className={`launch risk-${launch.risk}`}>
+          <strong>{launch.name}</strong>
+          <button type="button" onClick={() => toggleWatched(launch.id)}>
+            {watched.includes(launch.id) ? "Watching" : "Watch launch"}
+          </button>
+          <button
+            type="button"
+            onClick={() =>
+              runtime.invoke("draft-launch-update", { launchId: launch.id })
+            }
+          >
+            Draft update
+          </button>
+        </article>
+      ))}
+      {remaining > 0 ? <p className="remainder">+ {remaining} more</p> : null}
+    </main>
+  )
+}
+```
+
+Use `runtime.replaceState(next)` for bounded, persisted local interaction state. Use `runtime.invoke(intentId, payload)` only with an intent declared in `artifact.json`.
+
+The corresponding stylesheet should make `.radar` exactly `width: 100%; height: 100%; overflow: hidden`. Avoid viewport units, nested scroll regions, and content-driven minimum heights.
+
+### `styles.css`, `data.json`, and `data.schema.json`
+
+- `styles.css` owns the component's visual design.
+- `data.json` contains the current input data.
+- `data.schema.json` is the JSON Schema contract for that data.
+
+The build validates the project and data contract before it produces a renderable revision. Keeping data outside the component lets a later agent update content without rewriting the UI.
+
+## Architecture boundaries
+
+The implementation is adapter-based so OpenWork owns the artifact contract without coupling source projects to one compiler or renderer implementation.
+
+| Boundary | Owns | Does not receive |
+| --- | --- | --- |
+| Filesystem project adapter | The five editable source files and optimistic project revision | Chat transcripts, credentials, or renderer authority |
+| Compiler and data-validator ports | Static JSX checks, TypeScript compilation, diagnostics, and JSON Schema validation | Workspace or UI state |
+| Immutable build store | Revision-pinned bundle, manifest, styles, data, schema, and digest | Mutable source dependencies |
+| OpenCode provider adapter | Managed skill injection and semantic list/read/build/publish affordances | Renderer internals or direct intent execution |
+| OpenWork client adapter | Typed server calls and digest verification | Raw server tokens inside generated code |
+| Sandbox renderer adapter | React, Suspense, error containment, state, and declared-intent messages | Network, filesystem, same-origin DOM, arbitrary tools, or provider capabilities |
+
+This keeps the source/build, agent, host UI, and generated-component trust boundaries independently replaceable. The standard v1 artifact renderer remains a separate adapter and contract.
+
+## Builds, revisions, and later enhancements
+
+Source projects are forever editable; builds are immutable and stored separately from mutable source. A successful build records the source revision and a content digest. A chat attachment points to that exact build, so later edits, a disabled project, or even a missing source directory cannot silently change an earlier conversation.
+
+To enhance an artifact, describe the change in chat or edit its files in the Artifacts panel. OpenWork creates a new project revision and build. Publish the new revision when you want it attached to chat; older attachments remain pinned. Because projects live in the workspace, they remain available in the Artifacts library after you reload or start another conversation in that workspace.
+
+## Safety boundary
+
+Dynamic artifacts render inside an opaque-origin iframe with Suspense and error boundaries around the generated component.
+
+- The iframe does not receive same-origin access, network access, filesystem access, host DOM access, provider credentials, or OpenWork tokens.
+- Source code and data stay in workspace files; chat receives a small pinned attachment, not raw JSX, bundles, tokens, or provider output.
+- Messages across the host boundary are versioned, instance-scoped, size-bounded, and validated.
+- The runtime accepts persisted state replacement and declared prompt-only intents. It does not expose arbitrary tools or capabilities.
+- A component failure is contained to that artifact and shows a recoverable error state instead of breaking the conversation.
+
+The alpha treats agent-authored project code as trusted workspace code. The compiler rejects obvious unbounded loop forms, but the iframe is a capability boundary, not a complete CPU or memory quota: other pathological code can still consume renderer resources. Do not use this alpha to execute untrusted third-party JSX.
+
+Artifact authoring also follows OpenWork's local-workspace trust model. The filesystem adapter rejects path traversal and symlinks present during access, but it is not a hostile-process filesystem sandbox: a different process running as the same OS user could race path validation by replacing a checked directory. Keep artifact projects in a workspace you trust. This limitation does not grant generated components filesystem access.
+
+This v2 dynamic-project alpha is separate from v1 UI Artifacts. V1 artifacts remain built-in, schema-backed cards rendered by OpenWork. Opting into dynamic projects does not turn v1 cards into arbitrary React or expand their tool surface.

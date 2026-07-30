@@ -4,6 +4,10 @@ import { homedir, platform } from "node:os";
 import { z } from "zod";
 import type { OpenworkAffordanceEffects } from "@openwork/types/openwork-affordance";
 import {
+  uiArtifactAgentSkillSchema,
+  type UiArtifactAgentSkill,
+} from "@openwork/types/ui-artifact-project";
+import {
   combineInstructionSections,
   composeAgentInstructions,
   createInstructionSection,
@@ -76,6 +80,22 @@ const sessionCreateArgsSchema = z.object({
     prompt: z.string().trim().min(1).max(100_000).describe("Self-contained task to start in the new session."),
   })).min(1).describe("One entry per new session to create and start."),
   workspaceId: z.string().trim().optional().describe("Optional OpenWork workspace id/name. Defaults to the workspace containing the current session."),
+});
+
+const artifactWorkspaceArgsSchema = z.object({
+  workspaceId: z.string().trim().optional().describe("Optional OpenWork workspace id/name. Defaults to the workspace containing the current session."),
+});
+
+const artifactReadArgsSchema = artifactWorkspaceArgsSchema.extend({
+  artifactId: z.string().trim().min(1).describe("Reusable artifact slug from artifact.list or artifact.json."),
+});
+
+const artifactBuildArgsSchema = artifactReadArgsSchema.extend({
+  expectedProjectRevision: z.string().trim().optional().describe("Optional sha256 project revision used to reject a stale build."),
+});
+
+const artifactPublishArgsSchema = artifactBuildArgsSchema.extend({
+  instanceId: z.string().trim().optional().describe("Optional existing artifact instance to reuse deliberately."),
 });
 
 const workspaceSchema = z.object({
@@ -336,6 +356,35 @@ async function serverGet(path: string): Promise<unknown> {
   return payload;
 }
 
+async function readManagedArtifactSkill(
+  context: OpenCodeContext,
+  workspaceId?: string,
+): Promise<UiArtifactAgentSkill | null> {
+  try {
+    const workspace = await resolveContextWorkspace(workspaceId, context);
+    const parsed = uiArtifactAgentSkillSchema.safeParse(
+      await serverGet(
+        `/workspace/${encodeURIComponent(workspace.id)}/ui-artifacts/agent-skill`,
+      ),
+    );
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
+}
+
+async function requireManagedArtifactSkill(
+  id: string,
+  context: OpenCodeContext,
+  workspaceId?: string,
+): Promise<UiArtifactAgentSkill | ReturnType<typeof unavailableAffordance>> {
+  const skill = await readManagedArtifactSkill(context, workspaceId);
+  return skill ?? unavailableAffordance(
+    id,
+    "The managed React Artifact Builder skill is disabled for this workspace.",
+  );
+}
+
 async function readConnectSkillDescriptors(): Promise<ConnectSkillDescriptor[]> {
   try {
     const parsed = connectSkillsEnvelopeSchema.safeParse(
@@ -370,13 +419,17 @@ async function readEngineMcpDescriptors(
 async function readOpenworkAgentContext(
   engineMcpStatusClient: OpenWorkEngineMcpStatusClient | undefined,
   engineMcpStatusDirectory: string | undefined,
+  context: OpenCodeContext,
 ): Promise<Record<string, unknown>> {
-  const [uiResult, skills, mcps] = await Promise.all([
+  const [uiResult, skills, mcps, artifactSkill] = await Promise.all([
     uiBridgeRequest("/context"),
     readConnectSkillDescriptors(),
     readEngineMcpDescriptors(engineMcpStatusClient, engineMcpStatusDirectory),
+    readManagedArtifactSkill(context),
   ]);
-  const contributions = buildOpenworkProviderContributions(skills, mcps);
+  const contributions = buildOpenworkProviderContributions(skills, mcps, {
+    artifactsEnabled: artifactSkill !== null,
+  });
   const providerAffordances = contributions.flatMap((contribution) => contribution.affordances);
   const uiContext = isRecord(uiResult) && isRecord(uiResult.context) ? uiResult.context : null;
   if (!uiContext) {
@@ -386,6 +439,11 @@ async function readOpenworkAgentContext(
       ui: uiResult,
       availableAffordances: providerAffordances,
       contributions,
+      managedSkills: artifactSkill ? [{
+        name: artifactSkill.name,
+        description: artifactSkill.description,
+        settingsRevision: artifactSkill.settingsRevision,
+      }] : [],
     };
   }
   const uiAffordances = Array.isArray(uiContext.availableAffordances)
@@ -397,12 +455,44 @@ async function readOpenworkAgentContext(
       ...uiContext,
       availableAffordances: [...uiAffordances, ...providerAffordances],
       contributions,
+      managedSkills: artifactSkill ? [{
+        name: artifactSkill.name,
+        description: artifactSkill.description,
+        settingsRevision: artifactSkill.settingsRevision,
+      }] : [],
     },
   };
 }
 
-async function queryOpenworkAffordance(rawArgs: unknown): Promise<unknown> {
+async function queryOpenworkAffordance(
+  rawArgs: unknown,
+  context: OpenCodeContext,
+): Promise<unknown> {
   const request = openworkAffordanceRequestSchema.parse(rawArgs);
+  if (request.id === "artifact.list") {
+    const args = artifactWorkspaceArgsSchema.parse(request.args ?? {});
+    const skill = await requireManagedArtifactSkill(request.id, context, args.workspaceId);
+    if (!("content" in skill)) return skill;
+    const workspace = await resolveContextWorkspace(args.workspaceId, context);
+    return affordanceResult(
+      request.id,
+      await serverGet(`/workspace/${encodeURIComponent(workspace.id)}/ui-artifacts`),
+      affordanceReadEffects,
+    );
+  }
+  if (request.id === "artifact.read") {
+    const args = artifactReadArgsSchema.parse(request.args ?? {});
+    const skill = await requireManagedArtifactSkill(request.id, context, args.workspaceId);
+    if (!("content" in skill)) return skill;
+    const workspace = await resolveContextWorkspace(args.workspaceId, context);
+    return affordanceResult(
+      request.id,
+      await serverGet(
+        `/workspace/${encodeURIComponent(workspace.id)}/ui-artifacts/${encodeURIComponent(args.artifactId)}`,
+      ),
+      affordanceReadEffects,
+    );
+  }
   if (request.id === "session.search") {
     return affordanceResult(
       request.id,
@@ -446,6 +536,47 @@ async function executeOpenworkAffordance(
   context: OpenCodeContext,
 ): Promise<unknown> {
   const request = openworkAffordanceRequestSchema.parse(rawArgs);
+  if (request.id === "artifact.build") {
+    const args = artifactBuildArgsSchema.parse(request.args ?? {});
+    const skill = await requireManagedArtifactSkill(request.id, context, args.workspaceId);
+    if (!("content" in skill)) return skill;
+    const workspace = await resolveContextWorkspace(args.workspaceId, context);
+    return affordanceResult(
+      request.id,
+      await postJson(
+        `/workspace/${encodeURIComponent(workspace.id)}/ui-artifacts/${encodeURIComponent(args.artifactId)}/build`,
+        args.expectedProjectRevision
+          ? { expectedProjectRevision: args.expectedProjectRevision }
+          : {},
+      ),
+      affordanceWriteEffects,
+    );
+  }
+  if (request.id === "artifact.publish") {
+    const args = artifactPublishArgsSchema.parse(request.args ?? {});
+    const skill = await requireManagedArtifactSkill(request.id, context, args.workspaceId);
+    if (!("content" in skill)) return skill;
+    const workspace = await resolveContextWorkspace(args.workspaceId, context);
+    return affordanceResult(
+      request.id,
+      await postJson(
+        `/workspace/${encodeURIComponent(workspace.id)}/ui-artifacts/${encodeURIComponent(args.artifactId)}/publish`,
+        {
+          ...(args.expectedProjectRevision
+            ? { expectedProjectRevision: args.expectedProjectRevision }
+            : {}),
+          ...(args.instanceId ? { instanceId: args.instanceId } : {}),
+          provenance: {
+            createdBy: "agent",
+            agent: context.agent,
+            sessionId: context.sessionID,
+            messageId: context.messageID,
+          },
+        },
+      ),
+      affordanceWriteEffects,
+    );
+  }
   if (request.id === "session.create") {
     return affordanceResult(
       request.id,
@@ -867,12 +998,14 @@ export const OpenWorkExtensionsPreview = async (factoryInput?: unknown) => {
   return {
   "experimental.chat.system.transform": async (input: unknown, output: { system: string[] }) => {
     const mergedInput = mergeTransformInputWithFactoryContext(input, factoryContext);
-    const [extensionInstruction, skillInstruction] = await Promise.all([
+    const mergedContext = normalizeOpenCodeContext(mergedInput);
+    const [extensionInstruction, skillInstruction, artifactSkill] = await Promise.all([
       resolveOpenWorkExtensionDiscoveryInstruction(mergedInput, fetch, {
         client: engineMcpStatusClient,
         directory: engineMcpStatusDirectory,
       }),
       resolveOpenWorkConnectSkillInstruction(mergedInput, fetch),
+      readManagedArtifactSkill(mergedContext),
     ]);
     const skillAuthoring = composeSkillAuthoringInstruction(extensionInstruction);
     if (process.env.OPENWORK_DEV_MODE === "1") {
@@ -887,6 +1020,7 @@ export const OpenWorkExtensionsPreview = async (factoryInput?: unknown) => {
     const sections = combineInstructionSections(
       createInstructionSection("routing", extensionInstruction),
       createInstructionSection("agent-surface", OPENWORK_AGENT_SURFACE_INSTRUCTION),
+      createInstructionSection("artifact-authoring", artifactSkill?.content ?? ""),
       createInstructionSection("skill-authoring", skillAuthoring.prompt),
       createInstructionSection("connect-skills", skillInstruction),
       createInstructionSection("browser", OPENWORK_BROWSER_INSTRUCTION),
@@ -897,9 +1031,17 @@ export const OpenWorkExtensionsPreview = async (factoryInput?: unknown) => {
     openwork_context: {
       description: "Read one semantic snapshot of OpenWork: current screen, retained conversation tabs, split view and focused pane, sidebar and side panel state, settings panel, provider contributions, remote skill guidance, and available affordances with explicit effects and executors.",
       args: {},
-      async execute() {
+      async execute(_rawArgs?: unknown, context?: OpenCodeContext) {
+        const mergedContext = {
+          ...factoryContext,
+          ...normalizeOpenCodeContext(context),
+        };
         return JSON.stringify(
-          await readOpenworkAgentContext(engineMcpStatusClient, engineMcpStatusDirectory),
+          await readOpenworkAgentContext(
+            engineMcpStatusClient,
+            engineMcpStatusDirectory,
+            mergedContext,
+          ),
           null,
           2,
         );
@@ -908,14 +1050,15 @@ export const OpenWorkExtensionsPreview = async (factoryInput?: unknown) => {
     openwork_query: {
       description: "Run a side-effect-free OpenWork affordance whose executor is OpenWork. Use the exact id and arguments from openwork_context. This reads backend or app state without navigation or window focus.",
       args: openworkAffordanceRequestSchema.shape,
-      async execute(rawArgs: unknown) {
-        return JSON.stringify(await queryOpenworkAffordance(rawArgs), null, 2);
+      async execute(rawArgs: unknown, context?: OpenCodeContext) {
+        const mergedContext = { ...factoryContext, ...normalizeOpenCodeContext(context) };
+        return JSON.stringify(await queryOpenworkAffordance(rawArgs, mergedContext), null, 2);
       },
     },
     openwork_execute: {
       description: "Execute an OpenWork command whose executor is OpenWork without activating the desktop window. Use the exact id and arguments from openwork_context, and pass expectedRevision for UI commands to prevent stale writes. If the descriptor names another executor tool, call that tool instead.",
       args: openworkAffordanceRequestSchema.shape,
-      async execute(rawArgs: unknown, context: OpenCodeContext) {
+      async execute(rawArgs: unknown, context?: OpenCodeContext) {
         const mergedContext = { ...factoryContext, ...normalizeOpenCodeContext(context) };
         return JSON.stringify(await executeOpenworkAffordance(rawArgs, mergedContext), null, 2);
       },

@@ -150,6 +150,67 @@ function extensionContribution(): OpenworkFeatureContribution {
   };
 }
 
+function artifactContribution(): OpenworkFeatureContribution {
+  const provider: OpenworkProviderRef = { id: "openwork-artifacts", kind: "builtin" };
+  return {
+    featureId: "artifacts",
+    provider,
+    affordances: [
+      affordance({
+        id: "artifact.list",
+        kind: "query",
+        title: "List reusable artifacts",
+        description: "List workspace-persisted React artifact projects and their latest immutable builds.",
+        provider,
+        arguments: [
+          argument("workspaceId", "string", false, "Optional workspace id or name."),
+        ],
+        effects: readEffects,
+      }),
+      affordance({
+        id: "artifact.read",
+        kind: "query",
+        title: "Read a reusable artifact",
+        description: "Read one artifact manifest, source files, data contract, and current revision.",
+        provider,
+        arguments: [
+          argument("artifactId", "string", true, "Artifact slug from artifact.list."),
+          argument("workspaceId", "string", false, "Optional workspace id or name."),
+        ],
+        effects: readEffects,
+      }),
+      affordance({
+        id: "artifact.build",
+        kind: "command",
+        title: "Build a reusable artifact",
+        description: "Validate and compile the current filesystem project into an immutable pinned build.",
+        provider,
+        arguments: [
+          argument("artifactId", "string", true, "Artifact slug from its artifact.json manifest."),
+          argument("workspaceId", "string", false, "Optional workspace id or name."),
+          argument("expectedProjectRevision", "string", false, "Optional sha256 project revision to prevent a stale build."),
+        ],
+        effects: writeEffects,
+      }),
+      affordance({
+        id: "artifact.publish",
+        kind: "command",
+        title: "Publish a reusable artifact to chat",
+        description: "Build a workspace artifact, initialize or reuse its state, and return a small pinned chat attachment.",
+        provider,
+        arguments: [
+          argument("artifactId", "string", true, "Artifact slug from its artifact.json manifest."),
+          argument("workspaceId", "string", false, "Optional workspace id or name."),
+          argument("instanceId", "string", false, "Optional prior instance id when deliberately evolving the same stateful artifact."),
+          argument("expectedProjectRevision", "string", false, "Optional sha256 project revision to prevent a stale publish."),
+        ],
+        effects: writeEffects,
+      }),
+    ],
+    guidance: [],
+  };
+}
+
 function connectContribution(
   skills: ConnectSkillDescriptor[],
   cloudMcp: EngineMcpDescriptor | undefined,
@@ -214,12 +275,14 @@ function mcpContribution(mcp: EngineMcpDescriptor): OpenworkFeatureContribution 
 export function buildOpenworkProviderContributions(
   skills: ConnectSkillDescriptor[],
   mcps: EngineMcpDescriptor[] = [],
+  options: { artifactsEnabled?: boolean } = {},
 ): OpenworkFeatureContribution[] {
   const cloudMcp = mcps.find((mcp) => mcp.name === "openwork-cloud");
   const connect = connectContribution(skills, cloudMcp);
   return [
     sessionContribution(),
     extensionContribution(),
+    ...(options.artifactsEnabled ? [artifactContribution()] : []),
     ...mcps
       .filter((mcp) => mcp.name !== "openwork-cloud")
       .map(mcpContribution),

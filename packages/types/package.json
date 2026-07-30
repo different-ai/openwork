@@ -74,6 +74,18 @@
       "development": "./src/desktop-ipc.ts",
       "default": "./src/desktop-ipc.ts"
     },
+    "./ui-artifact": {
+      "types": "./src/ui-artifact.ts",
+      "development": "./src/ui-artifact.ts",
+      "default": "./src/ui-artifact.ts"
+    },
+    "./ui-artifact-project": {
+      "types": "./src/ui-artifact-project.ts",
+      "development": "./src/ui-artifact-project.ts",
+      "browser": "./src/ui-artifact-project.ts",
+      "bun": "./src/ui-artifact-project.ts",
+      "default": "./dist/ui-artifact-project.js"
+    },
     "./connect-link": {
       "types": "./src/connect-link.ts",
       "development": "./src/connect-link.ts",

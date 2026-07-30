@@ -14,7 +14,7 @@ export const DEFAULT_WORKSPACE_RIGHT_SIDEBAR_EXPANDED_WIDTH = 520;
 export const MIN_WORKSPACE_RIGHT_SIDEBAR_WIDTH = 320;
 export const MAX_WORKSPACE_RIGHT_SIDEBAR_WIDTH = 960;
 
-export const SIDE_PANEL_ITEMS = ["panel", "extensions", "voice"] as const;
+export const SIDE_PANEL_ITEMS = ["panel", "extensions", "ui-artifacts", "voice"] as const;
 export type SidePanelItem = (typeof SIDE_PANEL_ITEMS)[number];
 export type SidePanelState = Record<string, SidePanelItem | null>;
 

@@ -30,6 +30,7 @@ on:
       - "packages/email/**"
       - "packages/types/**"
       - "packages/ui/**"
+      - "packages/ui-artifact-mcp/**"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
       - "package.json"

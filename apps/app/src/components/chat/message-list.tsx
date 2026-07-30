@@ -39,6 +39,8 @@ import { OpenWorkSessionCreateTool } from "@/components/tools/openwork-session-c
 import { QuestionTool } from "@/components/tools/question"
 import { SkillTool } from "@/components/tools/skill"
 import { TodoWriteTool } from "@/components/tools/todowrite"
+import { UiArtifactCard } from "@/components/tools/ui-artifact"
+import { DynamicUiArtifactCard } from "@/components/tools/dynamic-ui-artifact"
 import { WebfetchTool } from "@/components/tools/webfetch"
 import { WebsearchTool } from "@/components/tools/websearch"
 import { useMessageList, useSessionErrorMessage } from "@/components/chat/message-list-provider"
@@ -107,7 +109,15 @@ import {
 import { faviconUrlForHref } from "@/lib/favicon"
 import { cn } from "@/lib/utils"
 import { groupMessages, isMessageGroup, getLastTextPart, getAggregateOnlyParts, getAssistantRenderGroups, getFileTitle, getMediaBadge, getMessageCompleted, getMessageCreated, formatMessageTimestamp, splitTurnAtAnswer, type UIMessageWithIndex, getMessagesText, getSafeFileDownloadUrl, getSafeFileRevealPath } from "./utils"
+import { useUiArtifactPreferencesSnapshot } from "@/react-app/domains/settings/state/feature-flags-preferences"
+import {
+  buildUiArtifactDecisionPrompt,
+  isUiArtifactRenderInvocation,
+  parseUiArtifactRenderResult,
+  reconcileUiArtifactMessages,
+} from "@/lib/ui-artifacts"
 import type { AnyToolPart } from "@/lib/tool-aggregate"
+import { parseUiArtifactAttachment } from "@/react-app/domains/session/ui-artifacts/dynamic-artifact-attachment"
 
 const SEARCH_HIGHLIGHT_MARK_CLASS = "rounded px-0.5 bg-amber-4/70 text-current"
 
@@ -164,7 +174,35 @@ class ToolMessage extends React.Component<ToolMessageProps, { failed: boolean }>
 }
 
 const ToolMessageInner = ({ part }: ToolMessageProps) => {
-  const { onMcpReconnect, onMcpReopenAuthorization, onMcpRetry } = useMessageList()
+  const { onMcpReconnect, onMcpReopenAuthorization, onMcpRetry, setPrompt } = useMessageList()
+  const { uiArtifactsEnabled, enabledUiArtifactIds } = useUiArtifactPreferencesSnapshot()
+
+  if (
+    part.type === "dynamic-tool" &&
+    part.state === "output-available"
+  ) {
+    const attachment = parseUiArtifactAttachment(part.output)
+    if (attachment) {
+      return <DynamicUiArtifactCard attachment={attachment} />
+    }
+  }
+
+  if (
+    uiArtifactsEnabled &&
+    part.type === "dynamic-tool" &&
+    part.state === "output-available" &&
+    isUiArtifactRenderInvocation(part.toolName, part.input)
+  ) {
+    const result = parseUiArtifactRenderResult(part.output)
+    if (result && enabledUiArtifactIds.includes(result.artifact.artifactId)) {
+      return (
+        <UiArtifactCard
+          result={result}
+          onRequestDecision={(action) => setPrompt(buildUiArtifactDecisionPrompt(action))}
+        />
+      )
+    }
+  }
 
   if (isBashToolPart(part)) {
     return <BashTool part={part} />
@@ -1144,17 +1182,22 @@ export function shouldShowMessageListLoading(status: ThreadStatus, messageCount:
 
 export function MessageList({ messages, status, retryStatus }: MessageListProps) {
   const isStreaming = status === "streaming" || status === "retrying"
+  const { uiArtifactsEnabled } = useUiArtifactPreferencesSnapshot()
+  const visibleMessages = React.useMemo(
+    () => uiArtifactsEnabled ? reconcileUiArtifactMessages(messages) : messages,
+    [messages, uiArtifactsEnabled],
+  )
   const showLoading = shouldShowMessageListLoading(status, messages.length)
-  const items = React.useMemo(() => groupMessages(messages, status), [messages, status]);
+  const items = React.useMemo(() => groupMessages(visibleMessages, status), [visibleMessages, status]);
   const error = useSessionErrorMessage();
-  const hasSessionErrorMessage = React.useMemo(() => messages.some(isSessionErrorMessage), [messages])
+  const hasSessionErrorMessage = React.useMemo(() => visibleMessages.some(isSessionErrorMessage), [visibleMessages])
   const liveActionLabel = isStreaming
-    ? getActiveToolLabel(collectToolParts(messages))
+    ? getActiveToolLabel(collectToolParts(visibleMessages))
     : null
 
   return (
     <div className={cn("flex flex-col gap-2 @container/message-list")}>
-      {messages.length === 0 && <TaskSuggestions className="mx-auto w-full max-w-3xl shrink-0 px-3 pb-3 md:px-5 md:pb-5 grow" />}
+      {visibleMessages.length === 0 && <TaskSuggestions className="mx-auto w-full max-w-3xl shrink-0 px-3 pb-3 md:px-5 md:pb-5 grow" />}
 
       {items.map((item) => {
         if (isMessageGroup(item)) {
@@ -1162,15 +1205,15 @@ export function MessageList({ messages, status, retryStatus }: MessageListProps)
             <MessageGroup
               key={item.messages[0]?.message.id ?? "empty-assistant-group"}
               items={item.messages}
-              messages={messages}
+              messages={visibleMessages}
               isStreaming={isStreaming}
             />
           )
         }
 
-        const isLastMessage = item.index === messages.length - 1
+        const isLastMessage = item.index === visibleMessages.length - 1
         const isLastStep =
-          !messages[item.index + 1] || messages[item.index + 1].role !== item.message.role
+          !visibleMessages[item.index + 1] || visibleMessages[item.index + 1].role !== item.message.role
 
         return (
           <div key={item.message.id}>

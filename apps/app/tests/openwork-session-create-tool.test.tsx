@@ -4,10 +4,12 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { MemoryRouter } from "react-router-dom";
 import type { DynamicToolUIPart } from "ai";
 
+import { createOpenworkServerClient } from "../src/app/lib/openwork-server";
 import { MessageListProvider } from "../src/components/chat/message-list-provider";
 import { OpenWorkSessionCreateTool } from "../src/components/tools/openwork-session-create";
 
 const noop = () => {};
+const client = createOpenworkServerClient({ baseUrl: "http://127.0.0.1:1" });
 
 function sessionCreatePart(): DynamicToolUIPart {
   return {
@@ -41,6 +43,7 @@ describe("OpenWorkSessionCreateTool", () => {
     const html = renderToStaticMarkup(
       <MemoryRouter>
         <MessageListProvider
+          client={client}
           workspaceId="workspace-a"
           sessionId="session-origin"
           showThinking={false}
@@ -49,6 +52,7 @@ describe("OpenWorkSessionCreateTool", () => {
           providerConnectedCount={1}
           dispatchAction={noop}
           setPrompt={noop}
+          stagePrompt={noop}
           onRevertToUserMessage={noop}
           onForkAtMessage={noop}
           onEditUserMessage={noop}

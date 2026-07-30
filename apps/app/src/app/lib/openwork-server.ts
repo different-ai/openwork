@@ -6,6 +6,24 @@ import {
   type AgentContextDiagnosticsRequest,
 } from "@openwork/types/agent-context-diagnostics";
 import { normalizeBaseUrl } from "@openwork/types/url";
+import type {
+  UiArtifactBuild,
+  UiArtifactBuildRequest,
+  UiArtifactAgentSkill,
+  UiArtifactInstanceState,
+  UiArtifactIntentRequest,
+  UiArtifactIntentResult,
+  UiArtifactPinnedBuild,
+  UiArtifactProjectFileUpdate,
+  UiArtifactProjectSnapshot,
+  UiArtifactProjectSummary,
+  UiArtifactProjectUpdate,
+  UiArtifactPublishReceipt,
+  UiArtifactPublishRequest,
+  UiArtifactSettings,
+  UiArtifactSettingsUpdate,
+  UiArtifactStateUpdate,
+} from "@openwork/types/ui-artifact-project";
 import {
   AGENT_CONTEXT_DIAGNOSTICS_REQUEST_TIMEOUT_MS,
   requestAgentContextDiagnosticsPayload,
@@ -16,6 +34,25 @@ import { isDesktopRuntime } from "./runtime-env";
 import type { ExecResult, OpencodeConfigFile, WorkspaceInfo, WorkspaceList } from "./desktop";
 import type { DenOrgMarketplace, DenOrgPluginResolved, DenResourceSnapshot } from "./den-types";
 import type { CloudImportedMarketplace, CloudImportedPlugin } from "../cloud/import-state";
+
+export type {
+  UiArtifactBuild,
+  UiArtifactBuildRequest,
+  UiArtifactAgentSkill,
+  UiArtifactInstanceState,
+  UiArtifactIntentRequest,
+  UiArtifactIntentResult,
+  UiArtifactPinnedBuild,
+  UiArtifactProjectFileUpdate,
+  UiArtifactProjectSnapshot,
+  UiArtifactProjectSummary,
+  UiArtifactProjectUpdate,
+  UiArtifactPublishReceipt,
+  UiArtifactPublishRequest,
+  UiArtifactSettings,
+  UiArtifactSettingsUpdate,
+  UiArtifactStateUpdate,
+} from "@openwork/types/ui-artifact-project";
 
 export type OpenworkServerCapabilities = {
   skills: { read: boolean; write: boolean; source: "openwork" | "opencode" };
@@ -2021,6 +2058,123 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         baseUrl,
         `/workspace/${encodeURIComponent(workspaceId)}/files/raw?path=${encodeURIComponent(path)}`,
         { token, hostToken, timeoutMs: timeouts.binary },
+      ),
+
+    listUiArtifactProjects: (workspaceId: string) =>
+      requestJson<{ items: UiArtifactProjectSummary[] }>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/ui-artifacts`,
+        { token, hostToken },
+      ),
+
+    getUiArtifactSettings: (workspaceId: string) =>
+      requestJson<UiArtifactSettings>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/ui-artifacts/settings`,
+        { token, hostToken },
+      ),
+
+    updateUiArtifactSettings: (workspaceId: string, update: UiArtifactSettingsUpdate) =>
+      requestJson<UiArtifactSettings>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/ui-artifacts/settings`,
+        { token, hostToken, method: "PUT", body: update },
+      ),
+
+    getUiArtifactAgentSkill: (workspaceId: string) =>
+      requestJson<UiArtifactAgentSkill>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/ui-artifacts/agent-skill`,
+        { token, hostToken },
+      ),
+
+    getUiArtifactProject: (workspaceId: string, slug: string) =>
+      requestJson<UiArtifactProjectSnapshot>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/ui-artifacts/${encodeURIComponent(slug)}`,
+        { token, hostToken },
+      ),
+
+    putUiArtifactProject: (
+      workspaceId: string,
+      slug: string,
+      update: UiArtifactProjectUpdate,
+    ) =>
+      requestJson<UiArtifactProjectSnapshot>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/ui-artifacts/${encodeURIComponent(slug)}`,
+        { token, hostToken, method: "PUT", body: update, timeoutMs: timeouts.binary },
+      ),
+
+    putUiArtifactProjectFile: (
+      workspaceId: string,
+      slug: string,
+      update: UiArtifactProjectFileUpdate,
+    ) =>
+      requestJson<UiArtifactProjectSnapshot>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/ui-artifacts/${encodeURIComponent(slug)}/files`,
+        { token, hostToken, method: "PUT", body: update },
+      ),
+
+    buildUiArtifactProject: (
+      workspaceId: string,
+      slug: string,
+      request: UiArtifactBuildRequest = {},
+    ) =>
+      requestJson<UiArtifactBuild>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/ui-artifacts/${encodeURIComponent(slug)}/build`,
+        { token, hostToken, method: "POST", body: request, timeoutMs: timeouts.binary },
+      ),
+
+    publishUiArtifactProject: (
+      workspaceId: string,
+      slug: string,
+      request: UiArtifactPublishRequest = {},
+    ) =>
+      requestJson<UiArtifactPublishReceipt>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/ui-artifacts/${encodeURIComponent(slug)}/publish`,
+        { token, hostToken, method: "POST", body: request, timeoutMs: timeouts.binary },
+      ),
+
+    getUiArtifactBuild: (workspaceId: string, slug: string, projectRevision: string) =>
+      requestJson<UiArtifactPinnedBuild>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/ui-artifacts/${encodeURIComponent(slug)}/builds/${encodeURIComponent(projectRevision)}`,
+        { token, hostToken },
+      ),
+
+    getUiArtifactInstanceState: (workspaceId: string, slug: string, instanceId: string) =>
+      requestJson<UiArtifactInstanceState>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/ui-artifacts/${encodeURIComponent(slug)}/instances/${encodeURIComponent(instanceId)}/state`,
+        { token, hostToken },
+      ),
+
+    updateUiArtifactInstanceState: (
+      workspaceId: string,
+      slug: string,
+      instanceId: string,
+      update: UiArtifactStateUpdate,
+    ) =>
+      requestJson<UiArtifactInstanceState>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/ui-artifacts/${encodeURIComponent(slug)}/instances/${encodeURIComponent(instanceId)}/state`,
+        { token, hostToken, method: "PUT", body: update },
+      ),
+
+    stageUiArtifactIntent: (
+      workspaceId: string,
+      slug: string,
+      instanceId: string,
+      request: UiArtifactIntentRequest,
+    ) =>
+      requestJson<UiArtifactIntentResult>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/ui-artifacts/${encodeURIComponent(slug)}/instances/${encodeURIComponent(instanceId)}/intents`,
+        { token, hostToken, method: "POST", body: request },
       ),
 
     listArtifacts: (workspaceId: string) =>

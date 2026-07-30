@@ -73,6 +73,24 @@ describe("OpenWork context projector", () => {
     expect(context.sidePanel.tabs).toEqual([]);
     expect(context.sidePanel.activeTabId).toBeNull();
   });
+
+  test("projects the UI artifact catalog as an agent-visible side panel", () => {
+    const context = buildOpenworkContext({
+      ...baseInput,
+      ui: {
+        ...baseInput.ui,
+        sidePanelState: { "session-b": "ui-artifacts" },
+      },
+    });
+
+    expect(context.sidePanel).toEqual({
+      open: true,
+      ownerSessionId: "session-b",
+      kind: "ui-artifacts",
+      tabs: [],
+      activeTabId: null,
+    });
+  });
 });
 
 const splitWorkbench: WorkbenchSnapshot = {

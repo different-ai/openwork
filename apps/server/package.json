@@ -9,8 +9,8 @@
   "scripts": {
     "dev": "OPENWORK_DEV_MODE=1 bun src/cli.ts",
     "test": "bun test",
-    "test:artifacts": "bun test src/artifact-files.e2e.test.ts src/workspace-init.test.ts src/server.normalizeWorkspaceRelativePath.test.ts",
-    "build": "tsc -p tsconfig.json && bun build src/opencode-plugins/openwork-extensions-preview.ts src/opencode-plugins/openwork-capabilities-knowledge.ts src/opencode-plugins/openwork-office-attachments.ts src/opencode-plugins/openwork-anthropic-adaptive-thinking.ts src/opencode-plugins/openwork-anthropic-tool-schema.ts --outdir dist/opencode-plugins --target node --format esm",
+    "test:artifacts": "bun test src/artifact-files.e2e.test.ts src/workspace-init.test.ts src/server.normalizeWorkspaceRelativePath.test.ts src/ui-artifacts/ui-artifacts.test.ts",
+    "build": "pnpm --filter @openwork/types build && tsc -p tsconfig.json && bun build src/opencode-plugins/openwork-extensions-preview.ts src/opencode-plugins/openwork-capabilities-knowledge.ts src/opencode-plugins/openwork-office-attachments.ts src/opencode-plugins/openwork-anthropic-adaptive-thinking.ts src/opencode-plugins/openwork-anthropic-tool-schema.ts --outdir dist/opencode-plugins --target node --format esm",
     "build:bin": "bun build --compile src/cli.ts --outfile dist/bin/openwork-server",
     "build:bin:all": "bun ./script/build.ts --outdir dist/bin --target bun-darwin-arm64 --target bun-darwin-x64 --target bun-linux-x64 --target bun-linux-arm64 --target bun-windows-x64 --target bun-windows-arm64",
     "publish:npm": "pnpm build:bin && node scripts/publish-npm.mjs",
@@ -48,21 +48,21 @@
   },
   "dependencies": {
     "@opencode-ai/sdk": "^1.17.11",
+    "@openwork/types": "workspace:*",
     "better-sqlite3": "^11.10.0",
     "drizzle-orm": "^0.45.1",
     "jsonc-parser": "^3.2.1",
     "minimatch": "^10.0.1",
+    "typescript": "^5.6.3",
     "yaml": "^2.6.1",
     "zod": "^4.3.6"
   },
   "devDependencies": {
     "@openwork/paths": "workspace:*",
-    "@openwork/types": "workspace:*",
     "@types/better-sqlite3": "^7.6.13",
     "@types/minimatch": "^5.1.2",
     "@types/node": "^22.10.2",
-    "bun-types": "^1.3.6",
-    "typescript": "^5.6.3"
+    "bun-types": "^1.3.6"
   },
   "packageManager": "pnpm@10.27.0"
 }

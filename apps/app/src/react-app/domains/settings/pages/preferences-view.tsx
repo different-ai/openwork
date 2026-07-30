@@ -8,6 +8,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import {
+  type UiArtifactKind,
+} from "@openwork/types/ui-artifact";
+import { STANDARD_UI_ARTIFACTS } from "@/lib/ui-artifact-catalog";
 
 import { t } from "@/i18n";
 import {
@@ -42,6 +46,10 @@ export type PreferencesViewProps = {
   onDesktopNotificationsChange: (value: DesktopNotificationPreference) => void;
   memoryEnabled: boolean;
   onToggleMemory: () => void;
+  uiArtifactsEnabled: boolean;
+  enabledUiArtifactIds: UiArtifactKind[];
+  onToggleUiArtifacts: () => void;
+  onToggleUiArtifact: (artifactId: UiArtifactKind) => void;
 };
 
 function desktopNotificationPreferenceLabel(value: DesktopNotificationPreference) {
@@ -187,6 +195,45 @@ export function PreferencesView(props: PreferencesViewProps) {
             </LayoutSectionItemHeaderActions>
           </LayoutSectionItemHeader>
         </LayoutSectionItem>
+      </LayoutSection>
+
+      <LayoutSection>
+        <LayoutSectionHeader>
+          <LayoutSectionTitle>{t("ui_artifacts.preferences_title")}</LayoutSectionTitle>
+          <LayoutSectionDescription>{t("ui_artifacts.preferences_section_desc")}</LayoutSectionDescription>
+        </LayoutSectionHeader>
+
+        <LayoutSectionItem>
+          <LayoutSectionItemHeader>
+            <LayoutSectionItemTitle>{t("ui_artifacts.preferences_toggle")}</LayoutSectionItemTitle>
+            <LayoutSectionItemDescription>{t("ui_artifacts.preferences_toggle_desc")}</LayoutSectionItemDescription>
+            <LayoutSectionItemHeaderActions>
+              <Switch
+                aria-label={t("ui_artifacts.preferences_toggle")}
+                checked={props.uiArtifactsEnabled}
+                disabled={props.busy}
+                onCheckedChange={props.onToggleUiArtifacts}
+              />
+            </LayoutSectionItemHeaderActions>
+          </LayoutSectionItemHeader>
+        </LayoutSectionItem>
+
+        {props.uiArtifactsEnabled ? STANDARD_UI_ARTIFACTS.map((definition) => (
+          <LayoutSectionItem key={definition.artifactId}>
+            <LayoutSectionItemHeader>
+              <LayoutSectionItemTitle>{t(definition.labelKey)}</LayoutSectionItemTitle>
+              <LayoutSectionItemDescription>{t(definition.descriptionKey)}</LayoutSectionItemDescription>
+              <LayoutSectionItemHeaderActions>
+                <Switch
+                  aria-label={t(definition.labelKey)}
+                  checked={props.enabledUiArtifactIds.includes(definition.artifactId)}
+                  disabled={props.busy}
+                  onCheckedChange={() => props.onToggleUiArtifact(definition.artifactId)}
+                />
+              </LayoutSectionItemHeaderActions>
+            </LayoutSectionItemHeader>
+          </LayoutSectionItem>
+        )) : null}
       </LayoutSection>
     </LayoutStack>
   );

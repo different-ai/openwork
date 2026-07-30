@@ -69,6 +69,22 @@ describe("Den DB migration readiness wiring", () => {
     assert.ok(denDbBuildIndex < denApiBuildIndex, "den-db dist assets are built before den-api")
   })
 
+  test("Dockerfile.den packages and builds every UI artifact MCP workspace dependency", () => {
+    const dockerfile = readRepoFile("packaging/docker/Dockerfile.den")
+    const publishWorkflow = readRepoFile(".github/workflows/publish-ee-images.yml")
+    const uiArtifactBuildIndex = dockerfile.indexOf("RUN pnpm --dir /app/packages/ui-artifact-mcp run build")
+    const denApiBuildIndex = dockerfile.indexOf("pnpm --dir /app/ee/apps/den-api run build")
+
+    assert.match(
+      dockerfile,
+      /COPY packages\/ui-artifact-mcp\/package\.json \/app\/packages\/ui-artifact-mcp\/package\.json/,
+    )
+    assert.match(dockerfile, /COPY packages\/ui-artifact-mcp \/app\/packages\/ui-artifact-mcp/)
+    assert.notEqual(uiArtifactBuildIndex, -1, "Dockerfile.den builds @openwork/ui-artifact-mcp")
+    assert.ok(uiArtifactBuildIndex < denApiBuildIndex, "ui-artifact-mcp is built before den-api")
+    assert.match(publishWorkflow, /- "packages\/ui-artifact-mcp\/\*\*"/)
+  })
+
   test("hosted Den API build includes den-db assets but start does not run migrations", () => {
     const denApiPackage = readRepoFile("ee/apps/den-api/package.json")
     const denApiBuild = readRepoFile("ee/apps/den-api/scripts/build.mjs")

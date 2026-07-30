@@ -106,7 +106,7 @@ test("executeCapabilityWithBudget swallows late rejections after timeout", async
   }
 })
 
-test("agent MCP server exposes steering instructions during initialize", async () => {
+test("agent MCP server keeps UI artifact steering out of the default initialize prompt", async () => {
   const server = agentModule.createAgentMcpServer()
   const client = new Client({ name: "test-client", version: "1.0.0" })
   const transports = createMemoryTransportPair()
@@ -130,6 +130,9 @@ test("agent MCP server exposes steering instructions during initialize", async (
   expect(client.getInstructions()).toContain("connectionStatus.connectionName")
   expect(client.getInstructions()).toContain("schemaGuidance is advisory")
   expect(client.getInstructions()).toContain("always attempts the downstream provider call")
+  expect(client.getInstructions()).not.toContain("UI Artifacts")
+  expect(client.getInstructions()).not.toContain("uiArtifactSuggestions")
+  expect(client.getInstructions()).not.toContain("openwork.ui_artifacts")
   expect(client.getInstructions()).toContain("invalid_capability_arguments")
   expect(client.getInstructions()).toContain("never retry the same arguments unchanged")
 

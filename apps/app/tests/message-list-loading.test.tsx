@@ -16,8 +16,22 @@ const userMessage: UIMessage = {
   parts: [{ type: "text", text: "Send this", state: "done" }],
 };
 
+function withoutWindow<T>(run: () => T): T {
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, "window");
+  if (descriptor?.configurable) {
+    Reflect.deleteProperty(globalThis, "window");
+  }
+  try {
+    return run();
+  } finally {
+    if (descriptor?.configurable) {
+      Object.defineProperty(globalThis, "window", descriptor);
+    }
+  }
+}
+
 function renderList(messages: UIMessage[], status: ThreadStatus) {
-  return renderToStaticMarkup(
+  return withoutWindow(() => renderToStaticMarkup(
     <MessageListProvider
       workspaceId="ws"
       sessionId="session"
@@ -36,7 +50,7 @@ function renderList(messages: UIMessage[], status: ThreadStatus) {
     >
       <MessageList messages={messages} status={status} />
     </MessageListProvider>,
-  );
+  ));
 }
 
 describe("message-list loading feedback", () => {

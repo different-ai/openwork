@@ -66,6 +66,7 @@ import { addRoute, matchRoute, type AuthMode, type RequestContext, type Route } 
 import { registerSessionRoutes } from "./routes/sessions.js";
 import { registerWorkspaceRoutes } from "./routes/workspaces.js";
 import { registerCloudMcpRoutes } from "./routes/cloud-mcp.js";
+import { registerUiArtifactRoutes } from "./routes/ui-artifacts.js";
 import {
   markOpenworkCloudMcpStale,
   reconcilePersistedOpenworkCloudMcp,
@@ -1606,6 +1607,16 @@ function createRoutes(
         engineMcpServerState,
       ),
     serverMetadata: { serverVersion: SERVER_VERSION, expectedOpencodeVersion: OPENCODE_VERSION },
+  });
+
+  registerUiArtifactRoutes({
+    routes,
+    config,
+    jsonResponse,
+    ensureWritable,
+    requireClientScope,
+    requireApproval,
+    resolveWorkspace,
   });
 
   addRoute(routes, "POST", "/workspace/:id/diagnostics/agent-context", "client", async (ctx) => {

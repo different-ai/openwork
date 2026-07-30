@@ -76,7 +76,8 @@ async function transformedSystem(plugin: Awaited<ReturnType<typeof OpenWorkExten
   return output.system.join("\n");
 }
 
-function startFakeOpenWorkServer() {
+function startFakeOpenWorkServer(options: { artifactSkillEnabled?: boolean } = {}) {
+  const artifactSkillEnabled = options.artifactSkillEnabled ?? true;
   const requests: Array<{ pathname: string; search: string; authorization: string | null; method: string; body?: unknown }> = [];
 
   const workspaceOne = { id: "ws_1", name: "Main", path: "/tmp/main" };
@@ -141,6 +142,23 @@ function startFakeOpenWorkServer() {
         return Response.json({ items: [workspaceOne, workspaceTwo], workspaces: [workspaceOne, workspaceTwo] });
       }
 
+      if (url.pathname === "/workspace/ws_2/ui-artifacts/agent-skill") {
+        if (!artifactSkillEnabled) {
+          return Response.json({
+            code: "ui_artifact_builder_skill_disabled",
+            message: "The managed React Artifact Builder skill is disabled",
+          }, { status: 404 });
+        }
+        return Response.json({
+          protocol: "openwork.ui-artifact-agent-skill",
+          schemaVersion: 2,
+          name: "openwork-react-artifact-builder",
+          description: "Build and evolve reusable React artifacts.",
+          content: "---\nname: openwork-react-artifact-builder\n---\n\n# React Artifact Builder\n\nUse artifact.list before artifact.publish.",
+          settingsRevision: "a".repeat(64),
+        });
+      }
+
       if (url.pathname === "/workspace/ws_1/sessions") {
         return Response.json({ items: [sessionAlpha, sessionBeta] });
       }
@@ -157,6 +175,57 @@ function startFakeOpenWorkServer() {
           }, { status: 201 });
         }
         return Response.json({ items: [sessionArchive] });
+      }
+
+      if (url.pathname === "/workspace/ws_2/ui-artifacts" && request.method === "GET") {
+        return Response.json({
+          items: [{
+            artifactId: "launch-radar",
+            title: "Launch radar",
+            projectRevision: "sha256:project",
+            latestBuildId: "sha256:build",
+          }],
+        });
+      }
+
+      if (url.pathname === "/workspace/ws_2/ui-artifacts/launch-radar" && request.method === "GET") {
+        return Response.json({
+          manifest: {
+            protocol: "openwork.artifact-project",
+            schemaVersion: "1",
+            artifactId: "launch-radar",
+            title: "Launch radar",
+          },
+          projectRevision: "sha256:project",
+          files: {},
+        });
+      }
+
+      if (url.pathname === "/workspace/ws_2/ui-artifacts/launch-radar/build" && request.method === "POST") {
+        return Response.json({
+          protocol: "openwork.ui-artifact-build",
+          schemaVersion: 2,
+          status: "ready",
+          slug: "launch-radar",
+          projectRevision: "sha256:project",
+          buildDigest: "sha256:build",
+        });
+      }
+
+      if (url.pathname === "/workspace/ws_2/ui-artifacts/launch-radar/publish" && request.method === "POST") {
+        return Response.json({
+          protocol: "openwork.ui-artifact-publish-receipt",
+          schemaVersion: 2,
+          attachment: {
+            protocol: "openwork.ui-artifact-attachment",
+            schemaVersion: 2,
+            slug: "launch-radar",
+            instanceId: "artifact-instance-1",
+            projectRevision: "sha256:project",
+            buildDigest: "sha256:build",
+            title: "Launch radar",
+          },
+        });
       }
 
       if (url.pathname === "/workspace/ws_1/sessions/ses_alpha") return Response.json({ item: sessionAlpha });
@@ -212,6 +281,7 @@ describe("OpenWorkExtensionsPreview session tools", () => {
   test("projects built-in, extension, and Connect providers into one agent context", async () => {
     startFakeOpenWorkServer();
     const plugin = await OpenWorkExtensionsPreview({
+      directory: "/tmp/archive",
       client: {
         mcp: {
           status: async () => ({
@@ -254,6 +324,7 @@ describe("OpenWorkExtensionsPreview session tools", () => {
     expect(contributions.map((contribution) => contribution.featureId)).toEqual([
       "sessions",
       "extensions",
+      "artifacts",
       "mcp:notion",
       "connect",
     ]);
@@ -445,6 +516,96 @@ describe("OpenWorkExtensionsPreview session tools", () => {
     ]));
   });
 
+  test("routes artifact code-mode queries and publish commands through the current workspace", async () => {
+    const fake = startFakeOpenWorkServer();
+    const plugin = await OpenWorkExtensionsPreview({ directory: "/tmp/archive" });
+
+    const listed = z.object({}).passthrough().parse(JSON.parse(
+      await plugin.tool.openwork_query.execute({
+        id: "artifact.list",
+        args: {},
+      }, { sessionID: "ses_origin" }),
+    ));
+    const published = z.object({}).passthrough().parse(JSON.parse(
+      await plugin.tool.openwork_execute.execute({
+        id: "artifact.publish",
+        args: {
+          artifactId: "launch-radar",
+          expectedProjectRevision: "sha256:project",
+        },
+      }, {
+        sessionID: "ses_origin",
+        messageID: "msg_origin",
+        agent: "build",
+      }),
+    ));
+
+    expect(listed).toMatchObject({
+      ok: true,
+      id: "artifact.list",
+      result: {
+        items: [{ artifactId: "launch-radar" }],
+      },
+      effects: { data: "read", ui: "none", external: false },
+    });
+    expect(published).toMatchObject({
+      ok: true,
+      id: "artifact.publish",
+      result: {
+        protocol: "openwork.ui-artifact-publish-receipt",
+        schemaVersion: 2,
+        attachment: {
+          protocol: "openwork.ui-artifact-attachment",
+          slug: "launch-radar",
+        },
+      },
+      effects: { data: "write", ui: "none", external: false },
+    });
+
+    const publishRequest = fake.requests.find((request) => (
+      request.pathname === "/workspace/ws_2/ui-artifacts/launch-radar/publish"
+    ));
+    expect(publishRequest).toMatchObject({
+      method: "POST",
+      authorization: "Bearer test-token",
+      body: {
+        expectedProjectRevision: "sha256:project",
+        provenance: {
+          createdBy: "agent",
+          agent: "build",
+          sessionId: "ses_origin",
+          messageId: "msg_origin",
+        },
+      },
+    });
+  });
+
+  test("removes artifact guidance and affordances when the managed builder skill is disabled", async () => {
+    startFakeOpenWorkServer({ artifactSkillEnabled: false });
+    const plugin = await OpenWorkExtensionsPreview({ directory: "/tmp/archive" });
+    const system = await transformedSystem(plugin);
+    const context = JSON.parse(await plugin.tool.openwork_context.execute()) as {
+      context?: { contributions?: Array<{ featureId: string }>; managedSkills?: unknown[] };
+      contributions?: Array<{ featureId: string }>;
+      managedSkills?: unknown[];
+    };
+    const queried = JSON.parse(await plugin.tool.openwork_query.execute({
+      id: "artifact.list",
+      args: {},
+    }, { directory: "/tmp/archive" })) as Record<string, unknown>;
+    const contributions = context.context?.contributions ?? context.contributions ?? [];
+    const managedSkills = context.context?.managedSkills ?? context.managedSkills ?? [];
+
+    expect(system).not.toContain("React Artifact Builder");
+    expect(contributions.some((contribution) => contribution.featureId === "artifacts")).toBe(false);
+    expect(managedSkills).toEqual([]);
+    expect(queried).toMatchObject({
+      ok: false,
+      id: "artifact.list",
+      code: "unavailable",
+    });
+  });
+
   test("creates more than twenty sessions in one tool call", async () => {
     const fake = startFakeOpenWorkServer();
     const plugin = await OpenWorkExtensionsPreview({ directory: "/tmp/archive" });
@@ -468,7 +629,8 @@ describe("OpenWorkExtensionsPreview session tools", () => {
 
 describe("OpenWorkExtensionsPreview semantic tool surface", () => {
   test("exposes only the three semantic tools", async () => {
-    const plugin = await OpenWorkExtensionsPreview();
+    startFakeOpenWorkServer();
+    const plugin = await OpenWorkExtensionsPreview({ directory: "/tmp/archive" });
     const tools = Object.keys(plugin.tool).sort();
 
     expect(tools).toEqual(["openwork_context", "openwork_execute", "openwork_query"]);
@@ -483,5 +645,7 @@ describe("OpenWorkExtensionsPreview semantic tool surface", () => {
     expect(system).toContain("Use openwork_context");
     expect(system).toContain("session.search");
     expect(system).toContain("browser.open_url");
+    expect(system).toContain("# React Artifact Builder");
+    expect(system).toContain("artifact.publish");
   });
 });

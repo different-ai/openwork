@@ -4,12 +4,13 @@ import { openworkFeatureContributionSchema } from "@openwork/types/openwork-prov
 import { buildOpenworkProviderContributions } from "./openwork-provider-adapters.js";
 
 describe("OpenWork provider adapters", () => {
-  test("normalizes sessions and extensions into semantic contributions", () => {
-    const contributions = buildOpenworkProviderContributions([]);
+  test("normalizes sessions, extensions, and artifact projects into semantic contributions", () => {
+    const contributions = buildOpenworkProviderContributions([], [], { artifactsEnabled: true });
 
     expect(contributions.map((contribution) => contribution.featureId)).toEqual([
       "sessions",
       "extensions",
+      "artifacts",
     ]);
     expect(
       contributions.flatMap((contribution) => contribution.affordances)
@@ -19,9 +20,29 @@ describe("OpenWork provider adapters", () => {
       effects: { data: "read", ui: "none", external: false },
       executor: { kind: "openwork" },
     });
+    expect(
+      contributions.flatMap((contribution) => contribution.affordances)
+        .find((affordance) => affordance.id === "artifact.publish"),
+    ).toMatchObject({
+      kind: "command",
+      effects: { data: "write", ui: "none", external: false },
+      executor: { kind: "openwork" },
+    });
     for (const contribution of contributions) {
       expect(openworkFeatureContributionSchema.safeParse(contribution).success).toBe(true);
     }
+  });
+
+  test("only contributes artifact affordances when the managed builder skill is enabled", () => {
+    const disabled = buildOpenworkProviderContributions([]);
+    const enabled = buildOpenworkProviderContributions([], [], { artifactsEnabled: true });
+
+    expect(disabled.some((contribution) => contribution.featureId === "artifacts")).toBe(false);
+    expect(enabled.find((contribution) => contribution.featureId === "artifacts")?.affordances)
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: "artifact.list" }),
+        expect.objectContaining({ id: "artifact.publish" }),
+      ]));
   });
 
   test("keeps known Connect skills direct and search available for unknown capabilities", () => {
@@ -63,19 +84,20 @@ describe("OpenWork provider adapters", () => {
     const contributions = buildOpenworkProviderContributions([], [
       { name: "notion", status: "connected" },
       { name: "openwork-cloud", status: "connected" },
-    ]);
+    ], { artifactsEnabled: true });
 
     expect(contributions.map((contribution) => contribution.featureId)).toEqual([
       "sessions",
       "extensions",
+      "artifacts",
       "mcp:notion",
       "connect",
     ]);
-    expect(contributions[2]).toMatchObject({
+    expect(contributions[3]).toMatchObject({
       provider: { id: "notion", kind: "mcp" },
       affordances: [],
     });
-    expect(contributions[3]?.affordances.map((affordance) => affordance.id)).toEqual([
+    expect(contributions[4]?.affordances.map((affordance) => affordance.id)).toEqual([
       "connect.capabilities.search",
       "connect.capability.execute",
     ]);

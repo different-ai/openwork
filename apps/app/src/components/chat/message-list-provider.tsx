@@ -1,6 +1,7 @@
 "use memo";
 
 import { useSessionActivityStore } from "@/react-app/domains/session/status/session-activity-store"
+import type { OpenworkServerClient } from "@/app/lib/openwork-server"
 import type {
   ChatToolReconnectAction,
   ChatToolReconnectProgress,
@@ -9,6 +10,7 @@ import type {
 import * as React from "react"
 
 interface MessageListContextValue {
+  client: OpenworkServerClient
   workspaceId: string
   sessionId: string
   showThinking: boolean
@@ -18,6 +20,7 @@ interface MessageListContextValue {
   providerConnectedCount: number
   dispatchAction: (action: DispatchAction) => void
   setPrompt: (prompt: string) => void
+  stagePrompt: (prompt: string) => void
   onRevertToUserMessage: (messageId: string) => void
   onForkAtMessage: (messageId: string) => void
   onEditUserMessage: (messageId: string, text: string) => void
@@ -33,6 +36,7 @@ const MessageListContext = React.createContext<MessageListContextValue | null>(n
 
 interface MessageListProviderProps {
   children: React.ReactNode
+  client: OpenworkServerClient
   workspaceId: string
   sessionId: string
   showThinking: boolean
@@ -51,6 +55,7 @@ interface MessageListProviderProps {
   providerConnectedCount: number
   dispatchAction: (action: DispatchAction) => void
   setPrompt: (prompt: string) => void
+  stagePrompt: (prompt: string) => void
 }
 
 export interface DispatchAction {
@@ -61,6 +66,7 @@ export interface DispatchAction {
 
 export function MessageListProvider({
   children,
+  client,
   workspaceId,
   sessionId,
   showThinking,
@@ -70,6 +76,7 @@ export function MessageListProvider({
   providerConnectedCount,
   dispatchAction,
   setPrompt,
+  stagePrompt,
   onRevertToUserMessage,
   onForkAtMessage,
   onEditUserMessage,
@@ -79,6 +86,7 @@ export function MessageListProvider({
 }: MessageListProviderProps) {
   const value = React.useMemo(
     () => ({
+      client,
       workspaceId,
       sessionId,
       showThinking,
@@ -88,6 +96,7 @@ export function MessageListProvider({
       providerConnectedCount,
       dispatchAction,
       setPrompt,
+      stagePrompt,
       onRevertToUserMessage,
       onForkAtMessage,
       onEditUserMessage,
@@ -96,6 +105,7 @@ export function MessageListProvider({
       onMcpRetry,
     }),
     [
+      client,
       workspaceId,
       sessionId,
       showThinking,
@@ -105,6 +115,7 @@ export function MessageListProvider({
       providerConnectedCount,
       dispatchAction,
       setPrompt,
+      stagePrompt,
       onRevertToUserMessage,
       onForkAtMessage,
       onEditUserMessage,

@@ -18,6 +18,10 @@ import {
   isDesktopNotificationPreference,
   type DesktopNotificationPreference,
 } from "./desktop-notification-preferences";
+import {
+  UI_ARTIFACT_KINDS,
+  type UiArtifactKind,
+} from "@openwork/types/ui-artifact";
 import { LOCAL_PREFERENCES_KEY } from "./local-preferences-storage";
 import {
   readStoredDefaultModel,
@@ -54,6 +58,14 @@ export type LocalPreferences = {
      * stay callable (owner-scoped + authz'd). Off by default — opt-in preview.
      */
     memory: boolean;
+    /**
+     * Chat-native UI artifact alpha. This local value is a render cache of the
+     * Den member preference; the capability executor reads the same cloud row.
+     */
+    uiArtifacts: boolean;
+  };
+  uiArtifacts: {
+    enabledArtifactIds: UiArtifactKind[];
   };
   /**
    * Set to true after the user completes the welcome/onboarding flow
@@ -93,7 +105,8 @@ const INITIAL_PREFS: LocalPreferences = {
   defaultModel: null,
   selectedAgent: null,
   releaseChannel: "stable",
-  featureFlags: { microsandboxCreateSandbox: true, memory: false },
+  featureFlags: { microsandboxCreateSandbox: true, memory: false, uiArtifacts: false },
+  uiArtifacts: { enabledArtifactIds: [...UI_ARTIFACT_KINDS] },
   hasCompletedOnboarding: false,
   analyticsEnabled: true,
   desktopNotifications: DEFAULT_DESKTOP_NOTIFICATION_PREFERENCE,
@@ -225,8 +238,12 @@ export function LocalProvider({ children }: LocalProviderProps) {
   return <LocalContext.Provider value={value}>{children}</LocalContext.Provider>;
 }
 
+export function useOptionalLocal(): LocalContextValue | undefined {
+  return use(LocalContext);
+}
+
 export function useLocal(): LocalContextValue {
-  const context = use(LocalContext);
+  const context = useOptionalLocal();
   if (!context) {
     throw new Error("Local context is missing");
   }

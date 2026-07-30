@@ -2,6 +2,11 @@ import {
   normalizeDesktopConfig,
   type DesktopConfig as SharedDesktopConfig,
 } from "@openwork/types/den/desktop-policies";
+import {
+  uiArtifactPreferencesSchema,
+  type UiArtifactPreferences,
+  type UiArtifactPreferencesUpdate,
+} from "@openwork/types/ui-artifact";
 
 // Re-export the shared schema under the local alias so React consumers
 // (e.g. the cloud domain's desktop-config provider) can import it alongside
@@ -2226,6 +2231,28 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
         organizationId: orgId,
       });
       return normalizeDenDesktopConfig(payload);
+    },
+
+    async getUiArtifactPreferences(orgId: string): Promise<UiArtifactPreferences> {
+      const payload = await requestJson<unknown>(baseUrls, "/v1/me/ui-artifacts", {
+        method: "GET",
+        token,
+        organizationId: orgId,
+      });
+      return uiArtifactPreferencesSchema.parse(payload);
+    },
+
+    async updateUiArtifactPreferences(
+      orgId: string,
+      update: UiArtifactPreferencesUpdate,
+    ): Promise<UiArtifactPreferences> {
+      const payload = await requestJson<unknown>(baseUrls, "/v1/me/ui-artifacts", {
+        method: "PUT",
+        token,
+        organizationId: orgId,
+        body: update,
+      });
+      return uiArtifactPreferencesSchema.parse(payload);
     },
 
     async getResourceSnapshot(orgId?: string | null): Promise<DenResourceSnapshot> {
