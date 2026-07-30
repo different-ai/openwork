@@ -1,6 +1,9 @@
 minimumReleaseAge: 4320
 minimumReleaseAgeExclude:
   - "@opencode-ai/sdk"
+  - "acorn"
+  - "enhanced-resolve"
+  - "postcss"
 
 packages:
   - "apps/*"
