@@ -21,6 +21,18 @@ const INITIAL_STATE: SessionTitleMarqueeState = {
   overflowing: false,
 };
 
+export function resolveSessionTitleTooltip({
+  overflowing,
+  reducedMotion,
+  tooltip,
+}: {
+  overflowing: boolean;
+  reducedMotion: boolean;
+  tooltip: string;
+}) {
+  return overflowing && !reducedMotion ? undefined : tooltip;
+}
+
 function usePrefersReducedMotion() {
   const [reducedMotion, setReducedMotion] = React.useState(false);
 
@@ -72,6 +84,12 @@ export function SessionTitle({ intent, title, tooltip }: SessionTitleProps) {
     controllerRef.current?.setIntent(intent);
   }, [intent]);
 
+  const nativeTooltip = resolveSessionTitleTooltip({
+    overflowing: state.overflowing,
+    reducedMotion,
+    tooltip,
+  });
+
   return (
     <span
       ref={viewportRef}
@@ -87,7 +105,8 @@ export function SessionTitle({ intent, title, tooltip }: SessionTitleProps) {
         ref={textRef}
         aria-hidden="true"
         className="inline-block"
-        title={tooltip}
+        data-session-title-text
+        title={nativeTooltip}
         style={{
           transform: `translateX(-${state.offsetPx}px)`,
           transitionDuration: `${state.durationMs}ms`,

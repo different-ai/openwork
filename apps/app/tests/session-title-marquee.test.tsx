@@ -2,7 +2,10 @@
 import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { SessionTitle } from "../src/react-app/domains/session/sidebar/session-title";
+import {
+  resolveSessionTitleTooltip,
+  SessionTitle,
+} from "../src/react-app/domains/session/sidebar/session-title";
 import {
   createSessionTitleMarqueeController,
   SESSION_TITLE_HOVER_DELAY_MS,
@@ -130,7 +133,7 @@ describe("session title marquee", () => {
     expect(subject.latest()).toMatchObject({ moving: true, offsetPx: 80 });
   });
 
-  test("keeps the full accessible row name and existing title tooltip", () => {
+  test("keeps the full accessible row name and fitting-title tooltip", () => {
     const markup = renderToStaticMarkup(
       <button aria-label="A complete title, unread">
         <SessionTitle intent={null} title="A complete title" tooltip="A complete title — Workspace" />
@@ -138,7 +141,27 @@ describe("session title marquee", () => {
     );
 
     expect(markup).toContain('aria-label="A complete title, unread"');
-    expect(markup).toContain('aria-hidden="true" class="inline-block" title="A complete title — Workspace"');
+    expect(markup).toContain(
+      'aria-hidden="true" class="inline-block" data-session-title-text="true" title="A complete title — Workspace"',
+    );
     expect(markup).not.toContain("ow-session-title-moving");
+  });
+
+  test("suppresses the native tooltip while overflow is revealed", () => {
+    expect(resolveSessionTitleTooltip({
+      overflowing: true,
+      reducedMotion: false,
+      tooltip: "A complete title — Workspace",
+    })).toBeUndefined();
+    expect(resolveSessionTitleTooltip({
+      overflowing: false,
+      reducedMotion: false,
+      tooltip: "A complete title — Workspace",
+    })).toBe("A complete title — Workspace");
+    expect(resolveSessionTitleTooltip({
+      overflowing: true,
+      reducedMotion: true,
+      tooltip: "A complete title — Workspace",
+    })).toBe("A complete title — Workspace");
   });
 });
