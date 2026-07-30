@@ -13,7 +13,6 @@ import {
   Users,
   Webhook,
 } from "lucide-react";
-import { StaticSeededGradient } from "@openwork/ui/react";
 import { UnderlineTabs } from "../../_components/ui/tabs";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
 import { DenInput } from "../../_components/ui/input";
@@ -26,6 +25,7 @@ import {
   getPluginPartsSummary,
   usePlugins,
 } from "./plugin-data";
+import { CatalogColorRail, catalogCardClassName } from "./catalog-card-surface";
 
 type PluginView = "plugins" | "agents" | "commands" | "hooks" | "mcps";
 
@@ -199,32 +199,25 @@ export function PluginsScreen() {
               <Link
                 key={plugin.id}
                 href={getPluginRoute(orgSlug, plugin.id)}
-                className="group block overflow-hidden rounded-2xl border border-gray-100 bg-white transition hover:-translate-y-0.5 hover:border-gray-200 hover:shadow-[0_8px_24px_-12px_rgba(15,23,42,0.12)]"
+                className={catalogCardClassName}
               >
                 <div className="flex items-stretch">
-                  <div className="relative w-[68px] shrink-0 overflow-hidden">
-                    <StaticSeededGradient seed={plugin.id} className="absolute inset-0" />
-                    <div className="relative flex h-full items-center justify-center">
-                      <div className="flex h-10 w-10 items-center justify-center rounded-[12px] border border-white/60 bg-white shadow-[0_8px_20px_-8px_rgba(15,23,42,0.3)]">
-                        <Puzzle className="h-4 w-4 text-gray-700" aria-hidden />
-                      </div>
-                    </div>
-                  </div>
+                  <CatalogColorRail itemId={plugin.id} itemName={plugin.name} size="card" />
 
-                  <div className="min-w-0 flex-1 px-5 py-4">
+                  <div className="min-w-0 flex-1 px-5 py-2">
                     <div className="flex items-start justify-between gap-2">
                       <h2 className="truncate text-[14px] font-semibold tracking-[-0.01em] text-gray-900">
                         {plugin.name}
                       </h2>
                     </div>
                     {plugin.description ? (
-                      <p className="mt-0.5 line-clamp-2 text-[12.5px] leading-[1.55] text-gray-500">
+                      <p className="mt-0.5 line-clamp-2 text-[12.5px] leading-[1.4] text-gray-500">
                         {plugin.description}
                       </p>
                     ) : null}
 
                     {(plugin.marketplaces ?? []).length > 0 ? (
-                      <div className="mt-2.5 flex flex-wrap gap-1.5">
+                      <div className="mt-2 flex flex-wrap gap-1.5">
                         {(plugin.marketplaces ?? []).map((marketplace) => (
                           <span
                             key={marketplace.id}
@@ -237,7 +230,7 @@ export function PluginsScreen() {
                       </div>
                     ) : null}
 
-                    <p className="mt-3 text-[11.5px] text-gray-400">
+                    <p className="mt-2 text-[11.5px] text-gray-400">
                       {getPluginPartsSummary(plugin)}
                     </p>
                   </div>

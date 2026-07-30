@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { Cable, Loader2, Plus, Search, Store } from "lucide-react";
-import { StaticSeededGradient } from "@openwork/ui/react";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
 import { DenInput } from "../../_components/ui/input";
 import { buttonVariants, DenButton } from "../../_components/ui/button";
@@ -17,7 +16,7 @@ import {
   useCreateMarketplace,
   useMarketplaces,
 } from "./marketplace-data";
-import { MarketplaceLogo } from "./marketplace-logo";
+import { CatalogColorRail, catalogCardClassName } from "./catalog-card-surface";
 
 export function MarketplacesScreen() {
   const { orgContext, orgSlug } = useOrgDashboard();
@@ -97,24 +96,12 @@ export function MarketplacesScreen() {
             <Link
               key={marketplace.id}
               href={getMarketplaceRoute(orgSlug, marketplace.id)}
-              className="group block overflow-hidden rounded-2xl border border-gray-100 bg-white transition hover:-translate-y-0.5 hover:border-gray-200 hover:shadow-[0_8px_24px_-12px_rgba(15,23,42,0.12)]"
+              className={catalogCardClassName}
             >
               <div className="flex items-stretch">
-                <div className="relative w-[68px] shrink-0 overflow-hidden">
-                  <StaticSeededGradient seed={marketplace.id} className="absolute inset-0" />
-                  <div className="relative flex h-full items-center justify-center">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-[12px] border border-white/60 bg-white shadow-[0_8px_20px_-8px_rgba(15,23,42,0.3)]">
-                      <MarketplaceLogo
-                        logoUrl={marketplace.logoUrl}
-                        name={marketplace.name}
-                        imgClassName="h-6 w-6"
-                        iconClassName="h-4 w-4"
-                      />
-                    </div>
-                  </div>
-                </div>
+                <CatalogColorRail itemId={marketplace.id} itemName={marketplace.name} size="card" />
 
-                <div className="min-w-0 flex-1 px-5 py-4">
+                <div className="min-w-0 flex-1 px-5 py-3.5">
                   <div className="flex items-start justify-between gap-3">
                     <h2 className="truncate text-[14px] font-semibold tracking-[-0.01em] text-gray-900">
                       {marketplace.name}
@@ -128,7 +115,7 @@ export function MarketplacesScreen() {
                       {marketplace.description}
                     </p>
                   ) : null}
-                  <p className="mt-3 text-[11.5px] text-gray-400">
+                  <p className="mt-2.5 text-[11.5px] text-gray-400">
                     Added {formatMarketplaceTimestamp(marketplace.createdAt)}
                   </p>
                 </div>

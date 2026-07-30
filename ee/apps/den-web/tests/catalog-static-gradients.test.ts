@@ -3,10 +3,14 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "bun:test";
 
 const components = [
+  "github-integration-screen.tsx",
+];
+
+const flatCatalogComponents = [
   "plugins-screen.tsx",
+  "plugin-detail-screen.tsx",
   "marketplaces-screen.tsx",
   "marketplace-detail-screen.tsx",
-  "github-integration-screen.tsx",
 ];
 
 const staticGradientPath = fileURLToPath(
@@ -24,9 +28,7 @@ describe("catalog list gradient surfaces", () => {
   });
 
   test("high-cardinality list screens do not instantiate Paper shaders", () => {
-    const listComponents = components.filter((component) => component !== "marketplace-detail-screen.tsx");
-
-    for (const component of listComponents) {
+    for (const component of components) {
       const path = fileURLToPath(
         new URL(`../app/(den)/dashboard/_components/${component}`, import.meta.url),
       );
@@ -36,14 +38,15 @@ describe("catalog list gradient surfaces", () => {
     }
   });
 
-  test("marketplace detail retains one bounded hero shader", () => {
+  test.each(flatCatalogComponents)("%s uses the shared flat catalog rail", (component) => {
     const path = fileURLToPath(
-      new URL("../app/(den)/dashboard/_components/marketplace-detail-screen.tsx", import.meta.url),
+      new URL(`../app/(den)/dashboard/_components/${component}`, import.meta.url),
     );
     const source = readFileSync(path, "utf8");
-    const shaderInstances = source.match(/<PaperMeshGradient/g) ?? [];
 
-    expect(shaderInstances).toHaveLength(1);
+    expect(source).toContain("CatalogColorRail");
+    expect(source).not.toContain("StaticSeededGradient");
+    expect(source).not.toContain("PaperMeshGradient");
   });
 
   test("CSS-only surfaces expose a stable runtime proof marker", () => {

@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useRef, useState, useEffect } from "react";
 import { ArrowLeft, Check, ChevronDown, GitBranch, Github, Globe, Loader2, MoreHorizontal, Pencil, Plug, Plus, Puzzle, Trash2, Users, X } from "lucide-react";
-import { PaperMeshGradient, StaticSeededGradient } from "@openwork/ui/react";
 import { buttonVariants, DenButton } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
 import { DenSelect } from "../../_components/ui/select";
@@ -46,8 +45,8 @@ import {
   pluginSetupSuccessCopy,
   serviceNameForRequirement,
 } from "./marketplace-mcp-setup";
-import { MarketplaceLogo } from "./marketplace-logo";
 import { useMcpAccountAuthorization } from "./use-mcp-account-authorization";
+import { CatalogColorRail, catalogCardClassName } from "./catalog-card-surface";
 
 const COMPONENT_TYPE_LABELS: Record<string, { singular: string; plural: string }> = {
   skill: { singular: "skill", plural: "skills" },
@@ -222,25 +221,11 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
         ) : null}
       </div>
 
-      <article className="overflow-hidden rounded-2xl border border-gray-100 bg-white">
+      <article className="overflow-hidden rounded-2xl border border-[var(--dls-border)] bg-[var(--dls-surface)]">
         <div className="flex items-stretch">
-          <div className="relative w-[96px] shrink-0 overflow-hidden">
-            <div className="absolute inset-0">
-              <PaperMeshGradient seed={marketplace.id} speed={0} />
-            </div>
-            <div className="relative flex h-full items-center justify-center">
-              <div className="flex h-14 w-14 items-center justify-center rounded-[16px] border border-white/60 bg-white shadow-[0_10px_24px_-10px_rgba(15,23,42,0.3)]">
-                <MarketplaceLogo
-                  logoUrl={marketplace.logoUrl}
-                  name={marketplace.name}
-                  imgClassName="h-9 w-9"
-                  iconClassName="h-6 w-6"
-                />
-              </div>
-            </div>
-          </div>
+          <CatalogColorRail itemId={marketplace.id} itemName={marketplace.name} size="detail" />
 
-          <div className="min-w-0 flex-1 px-6 py-5">
+          <div className="min-w-0 flex-1 px-6 py-4">
             <div className="flex flex-wrap items-center gap-2">
               <h1 className="truncate text-[18px] font-semibold tracking-[-0.02em] text-gray-950">
                 {marketplace.name}
@@ -1017,18 +1002,11 @@ function MarketplacePluginCard({
     .sort((a, b) => b[1] - a[1]);
 
   return (
-    <div id={`plugin-${plugin.id}`} className="group block self-start scroll-mt-6 overflow-hidden rounded-2xl border border-gray-100 bg-white transition hover:-translate-y-0.5 hover:border-gray-200 hover:shadow-[0_8px_24px_-12px_rgba(15,23,42,0.12)]">
+    <div id={`plugin-${plugin.id}`} className={`${catalogCardClassName} self-start scroll-mt-6 focus-within:ring-2 focus-within:ring-[var(--dls-accent)] focus-within:ring-offset-2`}>
       <div className="flex items-stretch">
-        <div className="relative w-[64px] shrink-0 overflow-hidden">
-          <StaticSeededGradient seed={plugin.id} className="absolute inset-0" />
-          <div className="relative flex h-full items-center justify-center">
-            <div className="flex h-9 w-9 items-center justify-center rounded-[12px] border border-white/60 bg-white shadow-[0_8px_20px_-8px_rgba(15,23,42,0.3)]">
-              <Puzzle className="h-4 w-4 text-gray-700" aria-hidden />
-            </div>
-          </div>
-        </div>
+        <CatalogColorRail itemId={plugin.id} itemName={plugin.name} size="compact" />
         <div className="min-w-0 flex-1 px-4 py-3">
-          <Link href={getPluginRoute(orgSlug, plugin.id)} className="block transition hover:text-gray-700">
+          <Link href={getPluginRoute(orgSlug, plugin.id)} className="block rounded-sm transition hover:text-gray-700 focus-visible:outline-none">
             <p className="truncate text-[14px] font-semibold tracking-[-0.01em] text-gray-900">
               {plugin.name}
             </p>

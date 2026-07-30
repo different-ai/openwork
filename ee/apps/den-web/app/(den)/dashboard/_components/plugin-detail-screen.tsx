@@ -3,8 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { Archive, ArrowLeft, FileText, MoreHorizontal, Pencil, Plus, Puzzle, Server, Store, Terminal, Users, Webhook } from "lucide-react";
-import { PaperMeshGradient } from "@openwork/ui/react";
+import { Archive, ArrowLeft, FileText, MoreHorizontal, Pencil, Plus, Server, Store, Terminal, Users, Webhook } from "lucide-react";
 
 import { getNewPluginSkillRoute, getOrgAccessFlags, getPluginSkillRoute, getPluginsRoute } from "../../_lib/den-org";
 import { buttonVariants, DenButton } from "../../_components/ui/button";
@@ -23,6 +22,7 @@ import {
   usePlugin,
   useUpdatePlugin,
 } from "./plugin-data";
+import { CatalogColorRail } from "./catalog-card-surface";
 
 export function PluginDetailScreen({ pluginId }: { pluginId: string }) {
   const router = useRouter();
@@ -150,20 +150,11 @@ export function PluginDetailScreen({ pluginId }: { pluginId: string }) {
         ) : null}
       </div>
 
-      <article className="overflow-hidden rounded-2xl border border-gray-100 bg-white">
+      <article className="overflow-hidden rounded-2xl border border-[var(--dls-border)] bg-[var(--dls-surface)]">
         <div className="flex items-stretch">
-          <div className="relative w-[96px] shrink-0 overflow-hidden">
-            <div className="absolute inset-0">
-              <PaperMeshGradient seed={plugin.id} speed={0} />
-            </div>
-            <div className="relative flex h-full items-center justify-center">
-              <div className="flex h-14 w-14 items-center justify-center rounded-[16px] border border-white/60 bg-white shadow-[0_10px_24px_-10px_rgba(15,23,42,0.3)]">
-                <Puzzle className="h-6 w-6 text-gray-700" aria-hidden />
-              </div>
-            </div>
-          </div>
+          <CatalogColorRail itemId={plugin.id} itemName={plugin.name} size="detail" />
 
-          <div className="min-w-0 flex-1 px-6 py-5">
+          <div className="min-w-0 flex-1 px-6 py-4">
             <div className="flex flex-wrap items-center gap-2">
               <h1 className="truncate text-[18px] font-semibold tracking-[-0.02em] text-gray-950">
                 {plugin.name}
