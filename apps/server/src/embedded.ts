@@ -196,9 +196,15 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
 
   // The runtime config file above only covers workspaces[0]. Push every
   // workspace's runtime-DB MCPs into the engine so they aren't invisible
-  // until a manual reload. Best-effort.
+  // until a manual reload. Best-effort. Workspaces[0]'s MCPs are already in
+  // the OPENCODE_CONFIG file the engine loaded at spawn, so only entries the
+  // file does not contain are registered explicitly — re-POSTing every entry
+  // would spawn a duplicate, idle process tree per server (see #3325).
   if (managedOpencode) {
-    void syncAllWorkspacesRuntimeMcpToEngine(config);
+    const managedWorkspace = findManagedEngineWorkspace(config.workspaces);
+    void syncAllWorkspacesRuntimeMcpToEngine(config, {
+      configCoveredWorkspaceId: managedWorkspace?.id,
+    });
   }
 
   return {

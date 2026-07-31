@@ -37,6 +37,7 @@ const logger = createServerLogger(config);
 const serverUrl = `http://${config.host === "0.0.0.0" ? "127.0.0.1" : config.host}:${config.port}`;
 let managedOpencode: ManagedOpencodeServer | null = null;
 let managedOpencodeIdentity: string | null = null;
+let configCoveredWorkspaceId: string | undefined;
 
 if (!config.readOnly) {
   await ensureLocalWorkspaceFiles(config.workspaces);
@@ -45,6 +46,9 @@ if (!config.readOnly) {
 if (!config.opencodeBaseUrl && process.env.OPENWORK_MANAGE_OPENCODE === "1") {
   const workspace = findManagedEngineWorkspace(config.workspaces);
   if (workspace) {
+    // The runtime config file covers this workspace, so its runtime MCPs are
+    // loaded by the engine at spawn (see the startup sync below).
+    configCoveredWorkspaceId = workspace.id;
     // Server-managed config file: the engine re-reads it from disk on every
     // instance rebuild, and keepOpenworkRuntimeConfigFileFresh synchronizes it
     // on every runtime-DB write — so disposes always pick up current state.
@@ -95,11 +99,14 @@ if (!config.opencodeBaseUrl && process.env.OPENWORK_MANAGE_OPENCODE === "1") {
 const server = await startServer(config);
 const workerActivityHeartbeat = startWorkerActivityHeartbeat(config, logger);
 
-// The runtime config file above only covers workspaces[0]. Push every
-// workspace's runtime-DB MCPs into the engine so they aren't invisible
-// until a manual reload. Best-effort.
+// The runtime config file above only covers the managed engine's workspace.
+// Push every workspace's runtime-DB MCPs into the engine so they aren't
+// invisible until a manual reload. Best-effort. The covered workspace's MCPs
+// are already in the OPENCODE_CONFIG file the engine loaded at spawn, so only
+// entries the file does not contain are registered explicitly — re-POSTing
+// every entry would spawn a duplicate, idle process tree per server (#3325).
 if (managedOpencode) {
-  void syncAllWorkspacesRuntimeMcpToEngine(config);
+  void syncAllWorkspacesRuntimeMcpToEngine(config, { configCoveredWorkspaceId });
 }
 
 const url = `http://${config.host}:${server.port}`;
