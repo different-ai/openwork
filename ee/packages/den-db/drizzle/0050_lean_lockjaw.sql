@@ -1,0 +1,1 @@
+ALTER TABLE `config_object` MODIFY COLUMN `search_text` mediumtext;

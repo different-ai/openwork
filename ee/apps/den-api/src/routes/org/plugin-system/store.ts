@@ -28,6 +28,7 @@ import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { hasSkillFrontmatterName, parseSkillMarkdown } from "@openwork-ee/utils"
 import type { PluginArchActorContext, PluginArchResourceKind, PluginArchRole } from "./access.js"
 import { requirePluginArchResourceRole, resolvePluginArchResourceRole } from "./access.js"
+import { configObjectInputMaxPayloadBytes } from "./schemas.js"
 import {
   buildGithubAppInstallUrl,
   createGithubInstallStateToken,
@@ -346,6 +347,22 @@ function normalizeOptionalString(value: string | null | undefined) {
   return trimmed ? trimmed : null
 }
 
+// config_object.title is varchar(255); derived titles (an unclamped "<plugin> / <server>" name, or the
+// first line of an arbitrary connector file) must be clamped rather than fail the insert.
+const CONFIG_OBJECT_TITLE_MAX_LENGTH = 255
+
+function clampConfigObjectTitle(value: string) {
+  return value.length > CONFIG_OBJECT_TITLE_MAX_LENGTH ? value.slice(0, CONFIG_OBJECT_TITLE_MAX_LENGTH) : value
+}
+
+// search_text is a lossy search index that also ships inside list responses, so hold it to the same
+// budget the authored payload honors instead of letting an oversized source file grow the payload.
+function clampSearchProjection(value: string) {
+  if (Buffer.byteLength(value, "utf8") <= configObjectInputMaxPayloadBytes) return value
+  const clamped = Buffer.from(value, "utf8").subarray(0, configObjectInputMaxPayloadBytes)
+  return new TextDecoder("utf-8").decode(clamped).replace(/\uFFFD$/, "")
+}
+
 function firstTextLine(value: string) {
   return value
     .split(/\r?\n/g)
@@ -563,6 +580,14 @@ function deriveSkillProjection(value: ConfigObjectInput) {
       "Skill components require rawSourceText containing the complete SKILL.md.",
     )
   }
+  // Imported and connector-synced skills bypass the request-level payload cap, so enforce it here too.
+  if (Buffer.byteLength(rawSourceText, "utf8") > configObjectInputMaxPayloadBytes) {
+    throw new PluginArchRouteFailure(
+      400,
+      "skill_source_too_large",
+      `SKILL.md must be at most ${configObjectInputMaxPayloadBytes} bytes (1 MiB) after UTF-8 encoding.`,
+    )
+  }
 
   const parsed = parseSkillMarkdown(rawSourceText)
   if (!parsed.hasFrontmatter) {
@@ -650,11 +675,12 @@ function deriveProjection(input: { objectType: ConfigObjectRow["objectType"]; va
       : null,
   ].find((value) => Boolean(normalizeOptionalString(value ?? undefined)))
 
-  const title = normalizeOptionalString(titleCandidate ?? undefined)
-    ?? `${input.objectType.charAt(0).toUpperCase()}${input.objectType.slice(1)} ${new Date().toISOString()}`
+  const title = clampConfigObjectTitle(normalizeOptionalString(titleCandidate ?? undefined)
+    ?? `${input.objectType.charAt(0).toUpperCase()}${input.objectType.slice(1)} ${new Date().toISOString()}`)
 
   const description = normalizeOptionalString(descriptionCandidate ?? undefined)
-  const searchText = [title, description, rawSourceText].filter(Boolean).join("\n") || null
+  const joinedSearchText = [title, description, rawSourceText].filter(Boolean).join("\n")
+  const searchText = joinedSearchText ? clampSearchProjection(joinedSearchText) : null
 
   return {
     description,

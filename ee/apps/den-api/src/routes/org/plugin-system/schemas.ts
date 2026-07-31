@@ -23,7 +23,7 @@ const cursorSchema = z.string().trim().min(1).max(255)
 const jsonObjectSchema = z.object({}).passthrough()
 // MEDIUMTEXT allows ~12.58 MB of encrypted plaintext; 1 MiB stays safely below storage
 // while still ~40x the largest real skill document, yielding a clean 400 instead of a 500.
-const configObjectInputMaxPayloadBytes = 1_048_576
+export const configObjectInputMaxPayloadBytes = 1_048_576
 const rawSourceTextSchema = z.string().trim().min(1).refine(
   (value) => Buffer.byteLength(value, "utf8") <= configObjectInputMaxPayloadBytes,
   { message: `rawSourceText must be at most ${configObjectInputMaxPayloadBytes} bytes (1 MiB) after UTF-8 encoding.` },
@@ -486,7 +486,8 @@ export const configObjectSchema = z.object({
   sourceMode: configObjectSourceModeSchema,
   title: z.string().trim().min(1).max(255),
   description: nullableStringSchema,
-  searchText: z.string().trim().min(1).max(65535).nullable(),
+  // search_text is MEDIUMTEXT and the projection is clamped to the same budget as the authored payload.
+  searchText: z.string().trim().min(1).max(configObjectInputMaxPayloadBytes).nullable(),
   currentFileName: z.string().trim().min(1).max(255).nullable(),
   currentFileExtension: z.string().trim().min(1).max(32).nullable(),
   currentRelativePath: z.string().trim().min(1).max(255).nullable(),

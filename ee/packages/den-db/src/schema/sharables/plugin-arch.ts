@@ -3,6 +3,7 @@ import {
   boolean,
   index,
   json,
+  mediumtext,
   mysqlEnum,
   mysqlTable,
   text,
@@ -47,7 +48,9 @@ export const ConfigObjectTable = mysqlTable(
     sourceMode: mysqlEnum("source_mode", configObjectSourceModeValues).notNull(),
     title: varchar("title", { length: 255 }).notNull(),
     description: text("description"),
-    searchText: text("search_text"),
+    // The skill projection carries the whole SKILL.md body, which outgrows TEXT (65,535 bytes) the
+    // same way config_object_version payloads did before migration 0048.
+    searchText: mediumtext("search_text"),
     currentFileName: varchar("current_file_name", { length: 255 }),
     currentFileExtension: varchar("current_file_extension", { length: 64 }),
     currentRelativePath: varchar("current_relative_path", { length: 255 }),
