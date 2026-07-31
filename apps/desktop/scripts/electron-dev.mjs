@@ -2,6 +2,7 @@ import { spawn, spawnSync } from "node:child_process";
 import net from "node:net";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createRuntimeManager } from "../electron/runtime.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const desktopRoot = resolve(__dirname, "..");
@@ -16,6 +17,35 @@ const defaultDevDataDir = resolve(
 
 const pnpmCmd = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
 const nodeCmd = process.execPath;
+
+const mockApp = {
+  getPath: (name) => {
+    if (name === "userData") {
+      return defaultDevDataDir;
+    }
+    if (name === "home") {
+      return process.env.HOME ?? process.env.USERPROFILE ?? repoRoot;
+    }
+    if (name === "exe") {
+      return process.execPath;
+    }
+    return "";
+  },
+  isPackaged: false,
+};
+
+const runtime = createRuntimeManager({
+  app: mockApp,
+  desktopRoot,
+  listLocalWorkspacePaths: async () => [],
+});
+
+// Clean up any stale sidecar processes from prior dev runs before preparing or starting
+try {
+  await runtime.prepareFreshRuntime();
+} catch (e) {
+  // ignore
+}
 
 async function findFreeTcpPort() {
   return new Promise((resolvePort, rejectPort) => {
