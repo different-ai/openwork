@@ -48,7 +48,7 @@
   },
   "dependencies": {
     "@opencode-ai/sdk": "^1.17.11",
-    "better-sqlite3": "^11.10.0",
+    "better-sqlite3": "^12.11.1",
     "drizzle-orm": "^0.45.1",
     "jsonc-parser": "^3.2.1",
     "minimatch": "^10.2.5",
