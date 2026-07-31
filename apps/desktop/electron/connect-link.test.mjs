@@ -190,6 +190,24 @@ test("startup branding applies a saved icon and skips an absent one", async () =
   assert.deepEqual(applied, ["https://assets.acme.example.com/icon.png"]);
 });
 
+test("startup branding propagates icon failures to its caller", async () => {
+  // applyBrandIconUrl fetches the icon over the network, so an offline start or
+  // an expired branding URL rejects here. Startup awaits this before the window
+  // exists, so the caller has to catch it or the app never shows any UI.
+  const applyBrandIconUrl = async () => {
+    throw new Error("net::ERR_INTERNET_DISCONNECTED");
+  };
+
+  await assert.rejects(
+    () =>
+      applyDesktopBootstrapBrandIcon(
+        { brandIconUrl: "https://assets.acme.example.com/icon.png" },
+        applyBrandIconUrl,
+      ),
+    /ERR_INTERNET_DISCONNECTED/,
+  );
+});
+
 test("fails closed for ambiguous, insecure, mismatched, expired, and replayed exchanges", async () => {
   const code = "abcdefghijklmnopqrstuvwxyz123456";
   const apiBaseUrl = "https://api.openwork.acme.example.com";
