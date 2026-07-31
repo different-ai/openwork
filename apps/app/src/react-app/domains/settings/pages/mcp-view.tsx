@@ -1603,7 +1603,7 @@ function McpConfiguredServerDetails(props: Parameters<typeof McpConfiguredServer
           <ChevronDown size={10} className="transition-transform group-open:rotate-180" />
         </summary>
         <div className="mt-1.5 break-all rounded-lg bg-dls-hover px-3 py-2 font-mono text-[11px] text-dls-secondary">
-          {props.entry.config.type === "remote" ? props.entry.config.url : props.entry.config.command?.join(" ")}
+          {props.entry.config.type === "remote" ? props.entry.config.url : (Array.isArray(props.entry.config.command) ? props.entry.config.command.join(" ") : props.entry.config.command)}
         </div>
       </details>
       <McpConfiguredServerAuthActions {...props} />

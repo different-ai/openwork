@@ -317,7 +317,8 @@ export type McpServerSource = "config.project" | "config.global" | "config.remot
 export type McpServerConfig = {
   type: "remote" | "local";
   url?: string;
-  command?: string[];
+  command?: string | string[];
+  args?: string[];
   enabled?: boolean;
   headers?: Record<string, string>;
   environment?: Record<string, string>;
