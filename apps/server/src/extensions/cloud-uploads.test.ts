@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -145,5 +145,28 @@ test("direct upload rejects files above the deployed 4 MiB transport ceiling bef
       },
     },
   )).rejects.toMatchObject({ status: 413, code: "file_too_large" });
+  expect(fetchCalled).toBe(false);
+});
+
+test("direct upload rejects symlinks that resolve outside authorized roots", async () => {
+  const root = await tempRoot();
+  const outside = await tempRoot();
+  await writeFile(join(outside, "secret.txt"), "private");
+  await symlink(join(outside, "secret.txt"), join(root, "linked.txt"));
+  let fetchCalled = false;
+
+  await expect(callOpenWorkCloudUploadAction(
+    testConfig(root),
+    "drive_upload_file",
+    { path: "linked.txt" },
+    { directory: root },
+    {
+      readCloudMcp: async () => cloudMcp(),
+      fetchImpl: async () => {
+        fetchCalled = true;
+        return new Response();
+      },
+    },
+  )).rejects.toMatchObject({ status: 404, code: "file_not_found" });
   expect(fetchCalled).toBe(false);
 });

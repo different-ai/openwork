@@ -1,4 +1,4 @@
-import { readFile, stat } from "node:fs/promises";
+import { readFile, realpath, stat } from "node:fs/promises";
 import { basename, isAbsolute, relative, resolve } from "node:path";
 
 import { readConnectCloudMcp } from "../connect-state.js";
@@ -112,13 +112,23 @@ function searchRoots(config: ServerConfig, context: Record<string, unknown>, roo
 async function resolveAuthorizedFile(config: ServerConfig, context: Record<string, unknown>, requested: string) {
   const roots = allowedRoots(config);
   if (!roots.length) throw new ApiError(400, "invalid_payload", "No authorized workspace roots are available.");
+  const realRoots: string[] = [];
+  for (const root of roots) {
+    try {
+      pushUniqueResolvedPath(realRoots, await realpath(root));
+    } catch (error) {
+      if (!isRecord(error) || error.code !== "ENOENT") throw error;
+    }
+  }
   const candidates = isAbsolute(requested)
     ? [resolve(requested)]
     : searchRoots(config, context, roots).map((root) => resolve(root, requested));
   for (const candidate of candidates) {
     if (!roots.some((root) => isWithinRoot(candidate, root))) continue;
     try {
-      const info = await stat(candidate);
+      const realCandidate = await realpath(candidate);
+      if (!realRoots.some((root) => isWithinRoot(realCandidate, root))) continue;
+      const info = await stat(realCandidate);
       if (!info.isFile()) continue;
       if (info.size < 1 || info.size > DIRECT_UPLOAD_MAX_BYTES) {
         throw new ApiError(413, "file_too_large", `Direct uploads support files up to ${DIRECT_UPLOAD_MAX_BYTES} bytes.`, {
@@ -126,7 +136,7 @@ async function resolveAuthorizedFile(config: ServerConfig, context: Record<strin
           maxBytes: DIRECT_UPLOAD_MAX_BYTES,
         });
       }
-      return candidate;
+      return realCandidate;
     } catch (error) {
       if (isRecord(error) && error.code === "ENOENT") continue;
       throw error;
