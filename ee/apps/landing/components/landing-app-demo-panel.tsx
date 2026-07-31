@@ -48,18 +48,18 @@ export function LandingAppDemoPanel(props: Props) {
                   key={flow.id}
                   type="button"
                   onClick={() => props.onSelectFlow(flow.id)}
-                  className={`flex items-center justify-between rounded-xl px-3 py-2.5 text-left text-[13px] transition-colors ${
-                      isActive ? "bg-[var(--lp-tonal)]" : "hover:bg-[var(--lp-tonal)]"
+                  className={`flex items-center justify-between gap-2 rounded-xl px-3 py-2.5 text-left text-[13px] transition-colors ${
+                    isActive ? "bg-[var(--lp-tonal)]" : "hover:bg-[var(--lp-tonal)]"
                   }`}
                 >
                   <span
-                    className={`mr-2 truncate ${
+                    className={`min-w-0 flex-1 truncate ${
                       isActive ? "font-medium text-[var(--lp-ink)]" : "text-[var(--lp-body)]"
                     }`}
                   >
                     {flow.tabLabel}
                   </span>
-                  <span className="whitespace-nowrap text-[var(--lp-muted)]">
+                  <span className="shrink-0 whitespace-nowrap text-[var(--lp-muted)]">
                     {timesById[flow.id] ?? "Now"}
                   </span>
                 </button>
