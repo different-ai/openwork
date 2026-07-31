@@ -189,6 +189,7 @@ export const SETTINGS_TAB_VALUES = [
   "skills",
   "memory",
   "extensions",
+  "apps",
   "environment",
   "advanced",
   "appearance",

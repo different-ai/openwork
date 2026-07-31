@@ -2,6 +2,24 @@ import { spawn } from "node:child_process";
 
 const DEFAULT_TIMEOUT_MS = 4000;
 
+/**
+ * Schemes it is safe to hand to the OS opener.
+ *
+ * `shell.openExternal` launches whatever handler is registered for a scheme, and
+ * the Windows fallback below passes the string to `rundll32`. Some callers pass
+ * URLs that came from a remote document or an app manifest, so the allowlist
+ * belongs here rather than at each call site.
+ */
+const OPENABLE_SCHEMES = new Set(["http:", "https:", "mailto:"]);
+
+function isOpenableUrl(url) {
+  try {
+    return OPENABLE_SCHEMES.has(new URL(url).protocol);
+  } catch {
+    return false;
+  }
+}
+
 function describeError(error) {
   if (error instanceof Error && error.message.trim()) return error.message;
   return String(error ?? "unknown error");
@@ -21,6 +39,12 @@ export async function openExternalUrl(url, deps = {}) {
     const message = "simulated failure";
     // why: enables evals to prove the failure UX without breaking a real machine.
     console.error("[shell] openExternal failed:", message);
+    return { ok: false, error: message };
+  }
+
+  if (!isOpenableUrl(url)) {
+    const message = "refused to open a URL with an unsupported scheme";
+    console.error("[shell] openExternal refused:", message);
     return { ok: false, error: message };
   }
 

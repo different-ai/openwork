@@ -1,0 +1,117 @@
+{
+  "$id": "https://openwork.dev/schema/openwork-package.v1.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "META-INF/openwork-package.json inside a .owapp archive.",
+  "properties": {
+    "app_id": {
+      "maxLength": 128,
+      "minLength": 3,
+      "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$",
+      "type": "string"
+    },
+    "app_version": {
+      "type": "string"
+    },
+    "created_with": {
+      "additionalProperties": false,
+      "properties": {
+        "tool": {
+          "maxLength": 64,
+          "minLength": 1,
+          "type": "string"
+        },
+        "version": {
+          "maxLength": 32,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "tool",
+        "version"
+      ],
+      "type": "object"
+    },
+    "files": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "digest": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "path": {
+            "maxLength": 255,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9._-]+(?:\\/[A-Za-z0-9._-]+)*$",
+            "type": "string"
+          },
+          "size": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "path",
+          "size",
+          "digest"
+        ],
+        "type": "object"
+      },
+      "maxItems": 5000,
+      "minItems": 1,
+      "type": "array"
+    },
+    "files_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "manifest_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "package_format_version": {
+      "const": 1,
+      "type": "number"
+    },
+    "source": {
+      "additionalProperties": false,
+      "properties": {
+        "commit": {
+          "pattern": "^[0-9a-f]{40}$",
+          "type": "string"
+        },
+        "release_tag": {
+          "maxLength": 128,
+          "minLength": 1,
+          "type": "string"
+        },
+        "repository": {
+          "maxLength": 255,
+          "pattern": "^https:\\/\\/github\\.com\\/[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\\/[A-Za-z0-9._-]{1,100}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "repository",
+        "release_tag",
+        "commit"
+      ],
+      "type": "object"
+    }
+  },
+  "required": [
+    "package_format_version",
+    "app_id",
+    "app_version",
+    "manifest_digest",
+    "created_with",
+    "source",
+    "files",
+    "files_digest"
+  ],
+  "title": "OpenWork App package metadata",
+  "type": "object"
+}

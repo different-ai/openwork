@@ -48,6 +48,8 @@
   },
   "dependencies": {
     "@opencode-ai/sdk": "^1.17.11",
+    "@openwork/app-contract": "workspace:*",
+    "@openwork/app-tools": "workspace:*",
     "better-sqlite3": "^11.10.0",
     "drizzle-orm": "^0.45.1",
     "jsonc-parser": "^3.2.1",

@@ -117,6 +117,22 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # The manifest validator and the .owapp reader decide what authority an
+      # installed app gets, so their suites gate every change like any other.
+      - name: Run app contract unit tests
+        run: pnpm --filter @openwork/app-contract test
+
+      - name: Run app packaging unit tests
+        run: pnpm --filter @openwork/app-tools test
+
+      # The published JSON Schema is generated from the same Zod source. Editing a
+      # schema without regenerating it ships an editor hint that disagrees with the
+      # validator, which is how a manifest passes review tooling and fails install.
+      - name: Check the app manifest JSON Schema is in sync
+        run: |
+          pnpm --filter @openwork/app-contract run schema
+          git diff --exit-code packages/app-contract/schema
+
       - name: Install eval workspace
         run: pnpm --dir evals install --frozen-lockfile
 

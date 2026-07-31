@@ -98,6 +98,8 @@ import { useFeatureFlagsPreferences } from "@/react-app/domains/settings/state/f
 import { DebugView } from "@/react-app/domains/settings/pages/debug-view";
 import { EnvironmentView } from "@/react-app/domains/settings/pages/environment-view";
 import { ExtensionsView, type ExtensionsSection } from "@/react-app/domains/settings/pages/extensions-view";
+import { AppsView } from "@/react-app/domains/apps/apps-view";
+import { createAppsClient } from "@/react-app/domains/apps/apps-client";
 import { McpView } from "@/react-app/domains/settings/pages/mcp-view";
 import { RecoveryView } from "@/react-app/domains/settings/pages/recovery-view";
 import { UpdatesView } from "@/react-app/domains/settings/pages/updates-view";
@@ -298,6 +300,7 @@ export function parseSettingsPath(pathname: string): {
     case "permissions":
     case "advanced":
     case "appearance":
+    case "apps":
     case "environment":
     case "updates":
     case "recovery":
@@ -2550,6 +2553,24 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             dockerCleanupBusy={false}
             dockerCleanupResult={null}
             onCleanupOpenworkDockerContainers={() => {}}
+          />
+        );
+      case "apps":
+        return (
+          <AppsView
+            client={createAppsClient({
+              request: async (path, init) => {
+                const client = openworkServerSnapshot.openworkServerClient;
+                if (!client) throw new Error("OpenWork server is not connected.");
+                return client.requestAppRoute(path, init);
+              },
+            })}
+            // Sends the user to the environment editor rather than asking an
+            // app for a secret. The host owns the value; the app is only ever
+            // told whether it is configured.
+            onEditEnvironment={() => {
+              navigateSettingsPath("environment");
+            }}
           />
         );
       case "environment":

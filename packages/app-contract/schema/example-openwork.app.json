@@ -1,0 +1,176 @@
+{
+  "manifest_version": 1,
+  "id": "com.openworklabs.station",
+  "name": "OpenWork Station",
+  "description": "An ambient assistant. While listening is on, Station notices what you are working on, prepares useful context at the edge of your screen, and hands it to OpenWork when you accept it.",
+  "version": "0.1.0",
+  "publisher": {
+    "name": "OpenWork Labs",
+    "url": "https://openworklabs.com"
+  },
+  "repository": "https://github.com/different-ai/openwork-station",
+  "license": "MIT",
+  "icons": {
+    "default": "assets/icon.svg"
+  },
+  "engines": {
+    "openwork": { "min": "0.1.0" },
+    "app_api": { "min": "1.0.0", "max_exclusive": "2.0.0" }
+  },
+  "platforms": [
+    { "os": "darwin", "arch": ["arm64", "x64"] }
+  ],
+  "distribution": {
+    "type": "github-release",
+    "repository": "https://github.com/different-ai/openwork-station",
+    "asset": "openwork-station-{version}.owapp"
+  },
+  "entrypoints": {
+    "background": "dist/background.js",
+    "surfaces": {
+      "station": "dist/station/index.html"
+    }
+  },
+  "contributions": [
+    {
+      "type": "surface",
+      "id": "station",
+      "entrypoint": "station",
+      "presentation": "floating",
+      "default_size": { "width": 380, "height": 240 },
+      "min_size": { "width": 280, "height": 160 },
+      "anchor": "right-center"
+    },
+    {
+      "type": "right_sidebar_item",
+      "id": "station-rail",
+      "label": "Station",
+      "surface": "station",
+      "icon": "assets/icon.svg",
+      "tooltip": "Ambient context at the edge of your screen",
+      "order": 200
+    },
+    {
+      "type": "status",
+      "id": "station-status",
+      "target": "station-rail",
+      "display": "dot"
+    },
+    {
+      "type": "background",
+      "id": "station-agent",
+      "entrypoint": "background"
+    },
+    {
+      "type": "command",
+      "id": "toggle-active",
+      "title": "Toggle Station listening",
+      "description": "Start or stop microphone capture and ambient context."
+    },
+    {
+      "type": "shortcut",
+      "id": "toggle-active-shortcut",
+      "command": "toggle-active",
+      "global": true
+    },
+    {
+      "type": "setting",
+      "kind": "boolean",
+      "id": "show-transcript",
+      "label": "Show live transcript",
+      "description": "Display what Station is hearing. Turning this off does not disable Station's cards.",
+      "default": false
+    },
+    {
+      "type": "setting",
+      "kind": "boolean",
+      "id": "attach-transcript",
+      "label": "Offer to attach a transcript excerpt",
+      "description": "When you start a thread, ask whether to include the relevant excerpt. Never attaches the whole session.",
+      "default": true
+    }
+  ],
+  "permissions": [
+    {
+      "id": "runtime.background.continuous",
+      "reason": "Notice opportunities while you work, instead of only when a window is open."
+    },
+    {
+      "id": "audio.microphone",
+      "reason": "Transcribe what you say while listening is switched on."
+    },
+    {
+      "id": "ai.realtime",
+      "reason": "Stream speech to a realtime transcription model."
+    },
+    {
+      "id": "ai.inference.transient",
+      "reason": "Decide whether a moment is worth researching, and draft the suggestion."
+    },
+    {
+      "id": "openwork.connect.read",
+      "reason": "Find the messages, mail, and calendar events that make a suggestion actually useful.",
+      "scopes": ["slack.search", "gmail.search", "calendar.events.read"]
+    },
+    {
+      "id": "openwork.threads.start",
+      "reason": "Hand a prepared goal to OpenWork when you accept a suggestion."
+    },
+    {
+      "id": "openwork.attachments.create",
+      "reason": "Attach the relevant transcript excerpt to that thread, if you choose to include it."
+    },
+    {
+      "id": "desktop.globalShortcut",
+      "reason": "Start and stop listening without leaving the app you are in.",
+      "shortcuts": [
+        { "id": "toggle-active-shortcut", "default_accelerator": "CommandOrControl+Shift+Space" }
+      ]
+    },
+    {
+      "id": "desktop.floatingSurface",
+      "reason": "Keep a small island at the edge of the screen, above other windows.",
+      "always_on_top": true
+    },
+    {
+      "id": "network.host",
+      "reason": "Reach the OpenAI realtime endpoint for transcription.",
+      "hosts": ["api.openai.com"]
+    },
+    {
+      "id": "storage.app",
+      "reason": "Remember dismissed cards and your transcript preference between sessions.",
+      "quota_bytes": 1048576
+    }
+  ],
+  "environment": {
+    "required": [
+      {
+        "key": "OPENAI_API_KEY",
+        "label": "OpenAI API key",
+        "description": "OpenWork uses this to mint short-lived realtime credentials. Station never receives the key itself.",
+        "docs_url": "https://platform.openai.com/api-keys"
+      }
+    ],
+    "optional": []
+  },
+  "privacy": {
+    "summary": "Audio is transcribed only while listening is on, and is never written to disk. Transcript text leaves Station only when you start a thread and choose to include an excerpt.",
+    "data_handled": ["microphone-audio", "transcripts", "connected-source-content", "thread-content"],
+    "retention": {
+      "policy": "session",
+      "description": "Transcripts and cards are held in memory for the listening session and dropped when you stop. Only your dismissed-card list and transcript preference persist, in app storage."
+    },
+    "third_parties": [
+      {
+        "name": "OpenAI",
+        "host": "api.openai.com",
+        "purpose": "Realtime speech transcription and structured decisions about what is worth surfacing."
+      }
+    ]
+  },
+  "update": {
+    "channel": "github-release",
+    "rollback_supported": true
+  }
+}

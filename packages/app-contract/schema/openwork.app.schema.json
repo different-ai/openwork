@@ -1,0 +1,1133 @@
+{
+  "$id": "https://openwork.dev/schema/openwork.app.v1.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Root openwork.app.json manifest for an OpenWork App.",
+  "properties": {
+    "contributions": {
+      "default": [],
+      "items": {
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "anchor": {
+                "enum": [
+                  "right-center",
+                  "right-top",
+                  "right-bottom",
+                  "left-center",
+                  "top-center",
+                  "bottom-center"
+                ],
+                "type": "string"
+              },
+              "default_size": {
+                "additionalProperties": false,
+                "properties": {
+                  "height": {
+                    "maximum": 2000,
+                    "minimum": 80,
+                    "type": "integer"
+                  },
+                  "width": {
+                    "maximum": 2000,
+                    "minimum": 120,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "width",
+                  "height"
+                ],
+                "type": "object"
+              },
+              "entrypoint": {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              "id": {
+                "maxLength": 64,
+                "minLength": 1,
+                "pattern": "^[a-z0-9]+(?:[-.][a-z0-9]+)*$",
+                "type": "string"
+              },
+              "min_size": {
+                "additionalProperties": false,
+                "properties": {
+                  "height": {
+                    "maximum": 2000,
+                    "minimum": 80,
+                    "type": "integer"
+                  },
+                  "width": {
+                    "maximum": 2000,
+                    "minimum": 120,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "width",
+                  "height"
+                ],
+                "type": "object"
+              },
+              "presentation": {
+                "enum": [
+                  "panel",
+                  "floating"
+                ],
+                "type": "string"
+              },
+              "type": {
+                "const": "surface",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "id",
+              "entrypoint",
+              "presentation",
+              "default_size"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "icon": {
+                "maxLength": 255,
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9._-]+(?:\\/[A-Za-z0-9._-]+)*$",
+                "type": "string"
+              },
+              "id": {
+                "maxLength": 64,
+                "minLength": 1,
+                "pattern": "^[a-z0-9]+(?:[-.][a-z0-9]+)*$",
+                "type": "string"
+              },
+              "label": {
+                "maxLength": 48,
+                "minLength": 1,
+                "type": "string"
+              },
+              "order": {
+                "maximum": 10000,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "surface": {
+                "maxLength": 64,
+                "minLength": 1,
+                "pattern": "^[a-z0-9]+(?:[-.][a-z0-9]+)*$",
+                "type": "string"
+              },
+              "tooltip": {
+                "maxLength": 280,
+                "minLength": 1,
+                "type": "string"
+              },
+              "type": {
+                "const": "right_sidebar_item",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "id",
+              "label",
+              "surface",
+              "icon"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "description": {
+                "maxLength": 280,
+                "minLength": 1,
+                "type": "string"
+              },
+              "id": {
+                "maxLength": 64,
+                "minLength": 1,
+                "pattern": "^[a-z0-9]+(?:[-.][a-z0-9]+)*$",
+                "type": "string"
+              },
+              "title": {
+                "maxLength": 48,
+                "minLength": 1,
+                "type": "string"
+              },
+              "type": {
+                "const": "command",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "id",
+              "title"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "command": {
+                "maxLength": 64,
+                "minLength": 1,
+                "pattern": "^[a-z0-9]+(?:[-.][a-z0-9]+)*$",
+                "type": "string"
+              },
+              "global": {
+                "default": false,
+                "type": "boolean"
+              },
+              "id": {
+                "maxLength": 64,
+                "minLength": 1,
+                "pattern": "^[a-z0-9]+(?:[-.][a-z0-9]+)*$",
+                "type": "string"
+              },
+              "type": {
+                "const": "shortcut",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "id",
+              "command"
+            ],
+            "type": "object"
+          },
+          {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "default": {
+                    "type": "boolean"
+                  },
+                  "description": {
+                    "maxLength": 280,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "id": {
+                    "maxLength": 64,
+                    "minLength": 1,
+                    "pattern": "^[a-z0-9]+(?:[-.][a-z0-9]+)*$",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "boolean",
+                    "type": "string"
+                  },
+                  "label": {
+                    "maxLength": 48,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "type": {
+                    "const": "setting",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "kind",
+                  "id",
+                  "label",
+                  "default"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "default": {
+                    "maxLength": 256,
+                    "type": "string"
+                  },
+                  "description": {
+                    "maxLength": 280,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "id": {
+                    "maxLength": 64,
+                    "minLength": 1,
+                    "pattern": "^[a-z0-9]+(?:[-.][a-z0-9]+)*$",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "string",
+                    "type": "string"
+                  },
+                  "label": {
+                    "maxLength": 48,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "max_length": {
+                    "maximum": 2048,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "type": {
+                    "const": "setting",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "kind",
+                  "id",
+                  "label",
+                  "default"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "default": {
+                    "maxLength": 64,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "description": {
+                    "maxLength": 280,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "id": {
+                    "maxLength": 64,
+                    "minLength": 1,
+                    "pattern": "^[a-z0-9]+(?:[-.][a-z0-9]+)*$",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "select",
+                    "type": "string"
+                  },
+                  "label": {
+                    "maxLength": 48,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "options": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "label": {
+                          "maxLength": 48,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "value": {
+                          "maxLength": 64,
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "value",
+                        "label"
+                      ],
+                      "type": "object"
+                    },
+                    "maxItems": 24,
+                    "minItems": 2,
+                    "type": "array"
+                  },
+                  "type": {
+                    "const": "setting",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "kind",
+                  "id",
+                  "label",
+                  "options",
+                  "default"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "entrypoint": {
+                "const": "background",
+                "type": "string"
+              },
+              "id": {
+                "maxLength": 64,
+                "minLength": 1,
+                "pattern": "^[a-z0-9]+(?:[-.][a-z0-9]+)*$",
+                "type": "string"
+              },
+              "type": {
+                "const": "background",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "id",
+              "entrypoint"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "display": {
+                "enum": [
+                  "badge",
+                  "dot",
+                  "text"
+                ],
+                "type": "string"
+              },
+              "id": {
+                "maxLength": 64,
+                "minLength": 1,
+                "pattern": "^[a-z0-9]+(?:[-.][a-z0-9]+)*$",
+                "type": "string"
+              },
+              "target": {
+                "maxLength": 64,
+                "minLength": 1,
+                "pattern": "^[a-z0-9]+(?:[-.][a-z0-9]+)*$",
+                "type": "string"
+              },
+              "type": {
+                "const": "status",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "id",
+              "target",
+              "display"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "maxItems": 64,
+      "type": "array"
+    },
+    "description": {
+      "maxLength": 500,
+      "minLength": 1,
+      "type": "string"
+    },
+    "distribution": {
+      "additionalProperties": false,
+      "properties": {
+        "asset": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9._{}-]+\\.owapp$",
+          "type": "string"
+        },
+        "repository": {
+          "maxLength": 255,
+          "pattern": "^https:\\/\\/github\\.com\\/[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\\/[A-Za-z0-9._-]{1,100}$",
+          "type": "string"
+        },
+        "type": {
+          "const": "github-release",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "repository",
+        "asset"
+      ],
+      "type": "object"
+    },
+    "engines": {
+      "additionalProperties": false,
+      "properties": {
+        "app_api": {
+          "additionalProperties": false,
+          "properties": {
+            "max_exclusive": {
+              "type": "string"
+            },
+            "min": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "min"
+          ],
+          "type": "object"
+        },
+        "openwork": {
+          "additionalProperties": false,
+          "properties": {
+            "max_exclusive": {
+              "type": "string"
+            },
+            "min": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "min"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "openwork",
+        "app_api"
+      ],
+      "type": "object"
+    },
+    "entrypoints": {
+      "additionalProperties": false,
+      "properties": {
+        "background": {
+          "maxLength": 255,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9._-]+(?:\\/[A-Za-z0-9._-]+)*$",
+          "type": "string"
+        },
+        "surfaces": {
+          "additionalProperties": {
+            "maxLength": 255,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9._-]+(?:\\/[A-Za-z0-9._-]+)*$",
+            "type": "string"
+          },
+          "default": {},
+          "propertyNames": {
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[a-z0-9]+(?:[-_][a-z0-9]+)*$",
+            "type": "string"
+          },
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
+    "environment": {
+      "additionalProperties": false,
+      "default": {
+        "optional": [],
+        "required": []
+      },
+      "properties": {
+        "optional": {
+          "default": [],
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "description": {
+                "maxLength": 280,
+                "minLength": 1,
+                "type": "string"
+              },
+              "docs_url": {
+                "maxLength": 255,
+                "pattern": "^https:\\/\\/[^\\s]+$",
+                "type": "string"
+              },
+              "key": {
+                "maxLength": 128,
+                "minLength": 1,
+                "pattern": "^[A-Z][A-Z0-9_]*$",
+                "type": "string"
+              },
+              "label": {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "key",
+              "label"
+            ],
+            "type": "object"
+          },
+          "maxItems": 16,
+          "type": "array"
+        },
+        "required": {
+          "default": [],
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "description": {
+                "maxLength": 280,
+                "minLength": 1,
+                "type": "string"
+              },
+              "docs_url": {
+                "maxLength": 255,
+                "pattern": "^https:\\/\\/[^\\s]+$",
+                "type": "string"
+              },
+              "key": {
+                "maxLength": 128,
+                "minLength": 1,
+                "pattern": "^[A-Z][A-Z0-9_]*$",
+                "type": "string"
+              },
+              "label": {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "key",
+              "label"
+            ],
+            "type": "object"
+          },
+          "maxItems": 16,
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "icons": {
+      "additionalProperties": false,
+      "properties": {
+        "dark": {
+          "maxLength": 255,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9._-]+(?:\\/[A-Za-z0-9._-]+)*$",
+          "type": "string"
+        },
+        "default": {
+          "maxLength": 255,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9._-]+(?:\\/[A-Za-z0-9._-]+)*$",
+          "type": "string"
+        },
+        "light": {
+          "maxLength": 255,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9._-]+(?:\\/[A-Za-z0-9._-]+)*$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "default"
+      ],
+      "type": "object"
+    },
+    "id": {
+      "maxLength": 128,
+      "minLength": 3,
+      "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$",
+      "type": "string"
+    },
+    "license": {
+      "maxLength": 64,
+      "minLength": 1,
+      "type": "string"
+    },
+    "manifest_version": {
+      "const": 1,
+      "type": "number"
+    },
+    "name": {
+      "maxLength": 64,
+      "minLength": 1,
+      "type": "string"
+    },
+    "permissions": {
+      "default": [],
+      "items": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "const": "runtime.background.continuous",
+                "type": "string"
+              },
+              "reason": {
+                "maxLength": 280,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "reason"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "const": "audio.microphone",
+                "type": "string"
+              },
+              "reason": {
+                "maxLength": 280,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "reason"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "const": "ai.realtime",
+                "type": "string"
+              },
+              "reason": {
+                "maxLength": 280,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "reason"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "const": "ai.inference.transient",
+                "type": "string"
+              },
+              "reason": {
+                "maxLength": 280,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "reason"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "const": "openwork.connect.read",
+                "type": "string"
+              },
+              "reason": {
+                "maxLength": 280,
+                "minLength": 1,
+                "type": "string"
+              },
+              "scopes": {
+                "items": {
+                  "enum": [
+                    "slack.search",
+                    "slack.channel.history",
+                    "gmail.search",
+                    "gmail.message.read",
+                    "calendar.events.read"
+                  ],
+                  "type": "string"
+                },
+                "maxItems": 5,
+                "minItems": 1,
+                "type": "array"
+              }
+            },
+            "required": [
+              "id",
+              "reason",
+              "scopes"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "const": "openwork.threads.start",
+                "type": "string"
+              },
+              "reason": {
+                "maxLength": 280,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "reason"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "const": "openwork.attachments.create",
+                "type": "string"
+              },
+              "reason": {
+                "maxLength": 280,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "reason"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "const": "desktop.globalShortcut",
+                "type": "string"
+              },
+              "reason": {
+                "maxLength": 280,
+                "minLength": 1,
+                "type": "string"
+              },
+              "shortcuts": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "default_accelerator": {
+                      "maxLength": 64,
+                      "minLength": 1,
+                      "pattern": "^(?:(?:CommandOrControl|Command|Control|Cmd|Ctrl|Alt|Option|Shift|Super)\\+)*[A-Za-z0-9]+$",
+                      "type": "string"
+                    },
+                    "id": {
+                      "maxLength": 64,
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "default_accelerator"
+                  ],
+                  "type": "object"
+                },
+                "maxItems": 8,
+                "minItems": 1,
+                "type": "array"
+              }
+            },
+            "required": [
+              "id",
+              "reason",
+              "shortcuts"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "always_on_top": {
+                "type": "boolean"
+              },
+              "id": {
+                "const": "desktop.floatingSurface",
+                "type": "string"
+              },
+              "reason": {
+                "maxLength": 280,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "reason",
+              "always_on_top"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "hosts": {
+                "items": {
+                  "maxLength": 253,
+                  "minLength": 1,
+                  "pattern": "^(?=.{1,253}$)(?!-)[a-z0-9-]{1,63}(?<!-)(?:\\.(?!-)[a-z0-9-]{1,63}(?<!-))+$",
+                  "type": "string"
+                },
+                "maxItems": 16,
+                "minItems": 1,
+                "type": "array"
+              },
+              "id": {
+                "const": "network.host",
+                "type": "string"
+              },
+              "reason": {
+                "maxLength": 280,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "reason",
+              "hosts"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "const": "storage.app",
+                "type": "string"
+              },
+              "quota_bytes": {
+                "exclusiveMinimum": 0,
+                "maximum": 268435456,
+                "type": "integer"
+              },
+              "reason": {
+                "maxLength": 280,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "reason",
+              "quota_bytes"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "maxItems": 22,
+      "type": "array"
+    },
+    "platforms": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "arch": {
+            "items": {
+              "enum": [
+                "x64",
+                "arm64"
+              ],
+              "type": "string"
+            },
+            "minItems": 1,
+            "type": "array"
+          },
+          "os": {
+            "enum": [
+              "darwin",
+              "linux",
+              "win32"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "os",
+          "arch"
+        ],
+        "type": "object"
+      },
+      "maxItems": 3,
+      "minItems": 1,
+      "type": "array"
+    },
+    "privacy": {
+      "additionalProperties": false,
+      "properties": {
+        "data_handled": {
+          "items": {
+            "enum": [
+              "microphone-audio",
+              "transcripts",
+              "connected-source-content",
+              "thread-content",
+              "usage-telemetry",
+              "none"
+            ],
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "retention": {
+          "additionalProperties": false,
+          "properties": {
+            "description": {
+              "maxLength": 500,
+              "minLength": 1,
+              "type": "string"
+            },
+            "policy": {
+              "enum": [
+                "none",
+                "session",
+                "persistent"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "policy",
+            "description"
+          ],
+          "type": "object"
+        },
+        "summary": {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        },
+        "third_parties": {
+          "default": [],
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "host": {
+                "maxLength": 253,
+                "minLength": 1,
+                "type": "string"
+              },
+              "name": {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              "purpose": {
+                "maxLength": 280,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "host",
+              "purpose"
+            ],
+            "type": "object"
+          },
+          "maxItems": 8,
+          "type": "array"
+        }
+      },
+      "required": [
+        "summary",
+        "data_handled",
+        "retention"
+      ],
+      "type": "object"
+    },
+    "publisher": {
+      "additionalProperties": false,
+      "properties": {
+        "contact": {
+          "format": "email",
+          "maxLength": 160,
+          "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+          "type": "string"
+        },
+        "name": {
+          "maxLength": 96,
+          "minLength": 1,
+          "type": "string"
+        },
+        "url": {
+          "maxLength": 255,
+          "pattern": "^https:\\/\\/[^\\s]+$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "repository": {
+      "maxLength": 255,
+      "pattern": "^https:\\/\\/github\\.com\\/[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\\/[A-Za-z0-9._-]{1,100}$",
+      "type": "string"
+    },
+    "update": {
+      "additionalProperties": false,
+      "properties": {
+        "channel": {
+          "const": "github-release",
+          "type": "string"
+        },
+        "rollback_supported": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "channel",
+        "rollback_supported"
+      ],
+      "type": "object"
+    },
+    "version": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "manifest_version",
+    "id",
+    "name",
+    "description",
+    "version",
+    "publisher",
+    "repository",
+    "license",
+    "icons",
+    "engines",
+    "platforms",
+    "distribution",
+    "entrypoints",
+    "privacy",
+    "update"
+  ],
+  "title": "OpenWork App manifest",
+  "type": "object"
+}

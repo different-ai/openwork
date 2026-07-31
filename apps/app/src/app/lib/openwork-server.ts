@@ -2096,6 +2096,24 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         { token, hostToken, timeoutMs: timeouts.config },
       ),
 
+    /**
+     * Generic passthrough for the OpenWork Apps host routes.
+     *
+     * These are host-authenticated management routes, not a surface an app can
+     * reach: an installed app talks to the capability broker, which is a
+     * different and much narrower channel. One method rather than a dozen keeps
+     * the app-platform client typed in its own module instead of spreading
+     * route strings through here.
+     */
+    requestAppRoute: <T>(path: string, init?: { method?: string; body?: unknown }) =>
+      requestJson<T>(baseUrl, path, {
+        token,
+        hostToken,
+        method: init?.method ?? "GET",
+        ...(init?.body === undefined ? {} : { body: init.body }),
+        timeoutMs: 120_000,
+      }),
+
     upsertUserEnv: (entries: Array<{ key: string; value: string }>) =>
       requestJson<{ ok: true; count: number }>(baseUrl, "/env", {
         token,

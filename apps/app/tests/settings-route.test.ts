@@ -15,7 +15,10 @@ describe("settings route parsing", () => {
     expect(parseExtensionsPath(pathname)).toEqual(route);
     expect(isSettingsTabActive(route.tab, "extensions")).toBe(true);
     expect(isSettingsTabActive(route.tab, "general")).toBe(false);
-    expect(getWorkspaceSettingsTabs()).toEqual(["preferences", "permissions", "advanced"]);
+    // Extensions is its own first-class route now, so it is deliberately absent
+    // here; Apps is a workspace tab because installing one is a trust decision
+    // that belongs in settings.
+    expect(getWorkspaceSettingsTabs()).toEqual(["preferences", "permissions", "apps", "advanced"]);
   });
 
   test("preserves top-level Extensions section and detail deep links", () => {

@@ -66,6 +66,21 @@ import { addRoute, matchRoute, type AuthMode, type RequestContext, type Route } 
 import { registerSessionRoutes } from "./routes/sessions.js";
 import { registerWorkspaceRoutes } from "./routes/workspaces.js";
 import { registerCloudMcpRoutes } from "./routes/cloud-mcp.js";
+import { CandidateStore } from "./apps/candidates.js";
+import { AppInstaller } from "./apps/installer.js";
+import { registerAppRoutes } from "./apps/routes.js";
+import { GithubSource } from "./apps/source-github.js";
+import { InstalledAppStore } from "./apps/store.js";
+
+type AppPlatform = {
+  installer: AppInstaller;
+  store: InstalledAppStore;
+  onLifecycleChange: (
+    appId: string,
+    reason: "disabled" | "revoked" | "uninstalled" | "updated",
+  ) => void;
+};
+import { INSTALL_CANDIDATE_TTL_MS, PACKAGE_LIMITS } from "@openwork/app-contract";
 import {
   markOpenworkCloudMcpStale,
   reconcilePersistedOpenworkCloudMcp,
@@ -841,7 +856,47 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
   const reloadEvents = new ReloadEventStore();
   const tokens = new TokenService(config);
   const env = new EnvService();
+  // The OpenWork Apps platform. Long-lived alongside the other services: the
+  // installed registry, the candidate cache, and the GitHub source adapter all
+  // outlive any single request.
+  const appStore = new InstalledAppStore();
+  const appCandidates = new CandidateStore();
+  // Every preview writes an archive into the candidate cache. Without a sweep on
+  // a timer those archives are never reclaimed, so a few previews of a large app
+  // leave hundreds of megabytes behind for the lifetime of the process. Unref'd
+  // so it never holds the process open on its own.
+  const appCandidateSweep = setInterval(
+    () => {
+      void appCandidates.sweep().catch(() => {});
+    },
+    INSTALL_CANDIDATE_TTL_MS,
+  );
+  appCandidateSweep.unref?.();
+  const appInstaller = new AppInstaller({
+    store: appStore,
+    candidates: appCandidates,
+    source: new GithubSource({
+      fetch: (url, init) => externalFetch(url, init),
+      maxAssetBytes: PACKAGE_LIMITS.maxArchiveBytes,
+    }),
+    host: {
+      openworkVersion: SERVER_VERSION,
+      os: process.platform === "win32" ? "win32" : process.platform === "linux" ? "linux" : "darwin",
+      arch: process.arch === "x64" ? "x64" : "arm64",
+    },
+    // Only the key names cross this boundary. Values never leave EnvService.
+    listEnvKeys: async () => (await env.list()).map((entry) => entry.key),
+  });
   const logger = createServerLogger(config);
+  // The desktop shell owns the app runtime, so the server announces that an app
+  // should stop rather than assuming it has. Teardown is the shell's job; this
+  // is the signal that it is required.
+  const onAppLifecycleChange = (
+    appId: string,
+    reason: "disabled" | "revoked" | "uninstalled" | "updated",
+  ) => {
+    logger.log("info", "openwork app lifecycle change", { appId, reason });
+  };
   let watcherHandle = startReloadWatchers({ config, reloadEvents, logger });
   const refreshWorkspaceReloadBaseline = (workspaceId: string, reasons?: ReloadReason[]) =>
     watcherHandle.refreshWorkspace(workspaceId, reasons);
@@ -859,6 +914,7 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
     restartReloadWatchers,
     engineMcpServerState,
     logger,
+    { installer: appInstaller, store: appStore, onLifecycleChange: onAppLifecycleChange },
   );
 
   const serverOptions: {
@@ -1042,6 +1098,7 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
     stop: async () => {
       invalidateEngineMcpServerState(config, engineMcpServerState);
       watcherHandle.close();
+      clearInterval(appCandidateSweep);
       reloadBaselineRefreshers.delete(config);
       await server.stop();
     },
@@ -1528,6 +1585,7 @@ function createRoutes(
   onWorkspacesChanged: () => void,
   engineMcpServerState: EngineMcpServerState,
   logger: ServerLogger,
+  apps: AppPlatform,
 ): Route[] {
   const routes: Route[] = [];
   registerCoreRoutes({
@@ -1606,6 +1664,15 @@ function createRoutes(
         engineMcpServerState,
       ),
     serverMetadata: { serverVersion: SERVER_VERSION, expectedOpencodeVersion: OPENCODE_VERSION },
+  });
+
+  registerAppRoutes({
+    routes,
+    jsonResponse,
+    readJsonBody,
+    installer: apps.installer,
+    store: apps.store,
+    onLifecycleChange: apps.onLifecycleChange,
   });
 
   addRoute(routes, "POST", "/workspace/:id/diagnostics/agent-context", "client", async (ctx) => {
