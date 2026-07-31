@@ -184,6 +184,7 @@ describe("agent-configurable org connections policy", () => {
     expect(searchCapabilitySourceFilter()).toEqual({
       api: true,
       admin: true,
+      cli: true,
       mcp: true,
       marketplace: true,
       skills: true,
@@ -191,6 +192,7 @@ describe("agent-configurable org connections policy", () => {
     expect(searchCapabilitySourceFilter("skills")).toEqual({
       api: false,
       admin: false,
+      cli: false,
       mcp: false,
       marketplace: true,
       skills: true,
@@ -198,6 +200,7 @@ describe("agent-configurable org connections policy", () => {
     expect(searchCapabilitySourceFilter("admin")).toEqual({
       api: false,
       admin: true,
+      cli: false,
       mcp: false,
       marketplace: false,
       skills: false,

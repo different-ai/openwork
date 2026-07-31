@@ -26,9 +26,10 @@ import {
   listBuiltinSkillDescriptors,
   searchBuiltinSkillCapabilities,
 } from "./builtin-skills.js"
+import { executeCliCapability, parseCliCapabilityName, searchCliCapabilities } from "./cli-capabilities.js"
 
 export const EXECUTE_CAPABILITY_TOOL_NAME = "execute_capability"
-const searchCapabilityTypeSchema = z.enum(["all", "api", "admin", "mcp", "marketplace", "skills"])
+const searchCapabilityTypeSchema = z.enum(["all", "api", "admin", "cli", "mcp", "marketplace", "skills"])
 const skillMarketplaceObjectTypes: MarketplaceCapabilityObjectType[] = ["skill"]
 export const EXECUTE_CAPABILITY_TIMEOUT_MS = 180_000
 export const SEARCH_CAPABILITIES_ANNOTATIONS: ToolAnnotations = {
@@ -111,7 +112,7 @@ const externalCapabilityErrorPayloadSchema = z.object({
 
 export const AGENT_MCP_INSTRUCTIONS = [
   "This OpenWork Cloud connection intentionally exposes exactly two tools: search_capabilities and execute_capability.",
-  "Capabilities include native Google Workspace operations (Gmail read/search, Calendar list/create, Drive search/read, and Gmail draft creation) executed with the signed-in member's organization credentials, plus any MCP connections the organization has added.",
+  "Capabilities include native Google Workspace operations, reviewed hosted CLI connectors, and any MCP connections the organization has added.",
   "Allowlisted platform admins can also discover namespaced OpenWork Admin capabilities through this same connection; other members cannot discover or execute them.",
   "Always call search_capabilities first with 2-4 keyword variants before concluding something is unavailable. Use execute_capability only with exact names returned by search_capabilities.",
   "Built-in remote skills create-skill, share-plugin, add-to-marketplace, and add-user-to-marketplace are always listed in the skill index. Retrieve and follow the matching one by executing its exact capability; do not invent a local copy to access them.",
@@ -439,7 +440,7 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
         description: [
           "Search for a capability by keyword. This connection only exposes this tool and execute_capability —",
           "there is no list of individually-named tools to browse. Always search first.",
-          "Search covers native Google Workspace capabilities (Gmail, Calendar, Drive, Gmail drafts), org-connected external MCPs, and namespaced OpenWork Admin tools for allowlisted platform admins.",
+          "Search covers native Google Workspace capabilities, reviewed hosted CLI connectors, org-connected external MCPs, and namespaced OpenWork Admin tools for allowlisted platform admins.",
           "Try 2-4 keyword variants before deciding a capability is unavailable.",
           "Native API matches include pathParams, queryParams, hasBody, and bodySchema. External MCP matches include argumentsSchema, schemaDigest, and invocation.argumentsField.",
           "Built-in and marketplace skill matches return SKILL.md content when executed.",
@@ -448,7 +449,7 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
         inputSchema: z.object({
           query: z.string().min(1).describe("Keywords describing the capability you need, e.g. \"create organization\" or \"list workers\"."),
           limit: z.number().int().min(1).max(20).optional().describe("Max number of matches to return. Defaults to 5."),
-          type: searchCapabilityTypeSchema.optional().describe("Optional source filter. all searches every available source; api searches Den API capabilities; admin searches allowlisted platform-admin tools; mcp searches connected external MCP tools; marketplace searches marketplace plugin capabilities; skills searches built-in and marketplace skills. Defaults to all."),
+          type: searchCapabilityTypeSchema.optional().describe("Optional source filter. all searches every available source; api searches Den API capabilities; admin searches allowlisted platform-admin tools; cli searches reviewed hosted CLI connectors; mcp searches connected external MCP tools; marketplace searches marketplace plugin capabilities; skills searches built-in and marketplace skills. Defaults to all."),
         }),
         outputSchema: SEARCH_CAPABILITIES_OUTPUT_SCHEMA,
       },
@@ -462,6 +463,15 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
           : []
         const builtinSkillMatches = sourceFilter.skills
           ? searchBuiltinSkillCapabilities(query, boundedLimit)
+          : []
+        const cliMatches = sourceFilter.cli
+          ? await searchCliCapabilities({
+            organizationId: principal.organizationId,
+            member: memberIdentity,
+            query,
+            limit: boundedLimit,
+            enabled: externalMcpConnectionsEnabled,
+          })
           : []
         // Merged in from each connected External MCP Connection's live
         // tools/list (capability-sources/external-mcp-client.ts) — a
@@ -490,7 +500,7 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
             enabled: externalMcpConnectionsEnabled,
           })
           : []
-        const matches = [...restMatches, ...adminMatches, ...builtinSkillMatches, ...externalMatches, ...marketplaceMatches]
+        const matches = [...restMatches, ...adminMatches, ...builtinSkillMatches, ...cliMatches, ...externalMatches, ...marketplaceMatches]
           .sort(compareCapabilityMatches)
           .slice(0, boundedLimit)
         return capabilitySearchToolResult(matches, externalCoverageHint)
@@ -511,7 +521,7 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
         annotations: EXECUTE_CAPABILITY_ANNOTATIONS,
         inputSchema: z.object({
           name: z.string().min(1).describe("The exact tool name returned by search_capabilities."),
-          schemaDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/).optional().describe("For an external MCP match, copy the exact schemaDigest returned by search_capabilities so schema drift can be reported as advisory guidance without blocking the provider call."),
+          schemaDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/).optional().describe("Copy the exact schemaDigest returned by search_capabilities. External MCP drift is advisory; hosted CLI manifest drift fails closed."),
           path: z.union([z.record(z.string(), z.unknown()), z.string()]).optional().describe("Path parameters, only if the match's pathParams is non-empty."),
           query: z.union([z.record(z.string(), z.unknown()), z.string()]).optional().describe("Query parameters, only if the match's queryParams is non-empty."),
           body: z.unknown().optional().describe("For native API capabilities, the JSON body. For external MCP capabilities, the arguments object matching argumentsSchema."),
@@ -529,6 +539,29 @@ export function registerAgentMcpRoutes<T extends { Variables: Record<string, unk
             const builtinSkill = executeBuiltinSkillCapability(name)
             if (builtinSkill) {
               return { content: textContent(JSON.stringify(builtinSkill, null, 2)) }
+            }
+
+            const cli = parseCliCapabilityName(name)
+            if (cli) {
+              const result = await executeCliCapability({
+                organizationId: principal.organizationId,
+                member: memberIdentity,
+                connectionId: cli.connectionId,
+                commandId: cli.commandId,
+                body,
+                schemaDigest,
+                enabled: externalMcpConnectionsEnabled,
+              })
+              return result.ok
+                ? { content: textContent(JSON.stringify(result.result, null, 2)) }
+                : {
+                    isError: true,
+                    content: textContent(JSON.stringify({
+                      error: result.error,
+                      message: result.message,
+                      ...(result.referenceId ? { referenceId: result.referenceId } : {}),
+                    })),
+                  }
             }
 
             const external = parseExternalCapabilityName(name)

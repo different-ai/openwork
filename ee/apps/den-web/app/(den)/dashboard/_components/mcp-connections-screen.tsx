@@ -47,9 +47,11 @@ import {
   type UpdateMcpConnectionInput,
   formatMcpConnectedTimestamp,
   mcpConnectionQueryKeys,
+  useCliConnections,
   useCreateMcpConnection,
   useDeleteMcpConnection,
   useDisconnectMcpConnection,
+  useEnableCliConnector,
   useDiscoverMcpConnectionRequirements,
   useMcpConnectionPresets,
   useMcpConnections,
@@ -76,6 +78,7 @@ import { getPluginPartsSummary, pluginQueryKeys, usePlugins } from "./plugin-dat
 import { TelegramDialog } from "./telegram-dialog";
 import {
   ConnectorQuickAddGrid,
+  GITHUB_CLI_DEMO_QUICK_ADD_ID,
   GOOGLE_WORKSPACE_QUICK_ADD_ID,
   MICROSOFT_365_QUICK_ADD_ID,
   TELEGRAM_QUICK_ADD_ID,
@@ -89,6 +92,10 @@ const MCP_REQUIREMENTS_DISCOVERY_DELAY_MS = 500;
 const SMART_RESOLVE_DELAY_MS = 800;
 const MCP_TOOL_PAGE_SIZE = 50;
 const MCP_OAUTH_REDIRECT_DOCS_URL = "https://openworklabs.com/docs/cloud/share-with-your-team/shared-mcp-connections#oauth-redirect-url";
+
+function connectorErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : "Failed to load CLI connectors.";
+}
 
 function isDiscoverableMcpUrl(value: string): boolean {
   try {
@@ -252,7 +259,9 @@ export function McpConnectionsScreen() {
   const searchParams = useSearchParams();
   const { orgContext, orgSlug } = useOrgDashboard();
   const { data: connections = [], isLoading, error, refetch } = useMcpConnections();
+  const { data: cliConnections = [], isLoading: cliConnectionsLoading, error: cliConnectionsError } = useCliConnections();
   const { data: presets = [] } = useMcpConnectionPresets();
+  const enableCliConnector = useEnableCliConnector();
   const createConnection = useCreateMcpConnection();
   const updateConnection = useUpdateMcpConnection();
   const startOAuth = useStartMcpConnectionOAuth();
@@ -281,6 +290,10 @@ export function McpConnectionsScreen() {
   const handledQuickAddId = useRef<string | null>(null);
 
   function openQuickAdd(id: string) {
+    if (id === GITHUB_CLI_DEMO_QUICK_ADD_ID) {
+      enableCliConnector.mutate();
+      return;
+    }
     if (id === GOOGLE_WORKSPACE_QUICK_ADD_ID) {
       setGoogleDialogOpen(true);
       return;
@@ -306,6 +319,7 @@ export function McpConnectionsScreen() {
     const isKnownTarget = quickAddId === GOOGLE_WORKSPACE_QUICK_ADD_ID
       || quickAddId === MICROSOFT_365_QUICK_ADD_ID
       || quickAddId === TELEGRAM_QUICK_ADD_ID
+      || quickAddId === GITHUB_CLI_DEMO_QUICK_ADD_ID
       || presets.some((preset) => preset.presetId === quickAddId);
     if (!isKnownTarget) return;
     handledQuickAddId.current = quickAddId;
@@ -474,7 +488,7 @@ export function McpConnectionsScreen() {
       icon={Plug}
       title="Connectors"
       badgeLabel="Beta"
-      description="Connectors is where you can add MCP servers that your whole team can use."
+      description="Connectors is where you can add MCP servers and hosted CLI tools that your whole team can use."
       colors={["#E2E8F0", "#020617", "#0F172A", "#94A3B8"]}
     >
       {showStagingBanner ? (
@@ -489,6 +503,12 @@ export function McpConnectionsScreen() {
       {error ? (
         <div className="mb-6 rounded-[24px] border border-red-200 bg-red-50 px-5 py-4 text-[14px] text-red-700">
           {error instanceof Error ? error.message : "Failed to load MCP connectors."}
+        </div>
+      ) : null}
+
+      {cliConnectionsError || enableCliConnector.error ? (
+        <div className="mb-6 rounded-[24px] border border-red-200 bg-red-50 px-5 py-4 text-[14px] text-red-700" role="alert">
+          {connectorErrorMessage(cliConnectionsError ?? enableCliConnector.error)}
         </div>
       ) : null}
 
@@ -523,21 +543,42 @@ export function McpConnectionsScreen() {
           connections={connections}
           presets={presets}
           telegramConnected={Boolean(telegramConnection.data)}
+          cliDemoEnabled={cliConnections.some((connection) => connection.catalogKey === GITHUB_CLI_DEMO_QUICK_ADD_ID && connection.readiness === "ready")}
+          cliDemoPending={enableCliConnector.isPending}
           onSelect={openQuickAdd}
         />
       </div>
 
       <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-400">Your connectors</h3>
-      {isLoading ? (
+      {isLoading || cliConnectionsLoading ? (
         <div className="rounded-[28px] border border-gray-200 bg-white px-6 py-10 text-[15px] text-gray-500">
-          Loading MCP connectors…
+          Loading connectors…
         </div>
-      ) : connections.length === 0 ? (
+      ) : connections.length === 0 && cliConnections.length === 0 ? (
         <div className="rounded-[28px] border border-gray-200 bg-white px-6 py-10 text-center text-[14px] text-gray-500">
-          No MCP connectors yet.
+          No connectors yet.
         </div>
       ) : (
         <div className="divide-y divide-gray-100 rounded-2xl border border-gray-100 bg-white">
+          {cliConnections.map((connection) => (
+            <div key={connection.id} data-testid="cli-connector-row" className="flex items-center justify-between gap-4 px-5 py-4">
+              <div className="flex min-w-0 items-center gap-3">
+                <IntegrationIcon name={connection.name} simpleIconSlug="github" />
+                <div className="min-w-0">
+                  <p className="truncate text-[14px] font-semibold text-gray-900">{connection.name}</p>
+                  <p className="mt-1 text-[12px] text-gray-500">
+                    Hosted CLI · Read ({connection.commandSummary.read}) · Manifest {connection.manifestVersion}
+                  </p>
+                </div>
+              </div>
+              <span className={connection.readiness === "ready"
+                ? "rounded-full bg-emerald-50 px-3 py-1 text-[11px] font-semibold text-emerald-700"
+                : "rounded-full bg-amber-50 px-3 py-1 text-[11px] font-semibold text-amber-700"}
+              >
+                {connection.readiness === "ready" ? "Ready" : "Needs admin setup"}
+              </span>
+            </div>
+          ))}
           {connections.map((connection) => {
             const connectAttemptRequiresConfiguration = oauthClientConfigurationRequiredIds.includes(connection.id);
             const needsOAuthClientConfiguration = connectionNeedsOAuthClientConfiguration(

@@ -17,7 +17,7 @@ import { getJsonRequestBodySchema, getParameters, hasJsonRequestBody, pathParame
  */
 
 export const SEARCH_CAPABILITIES_TOOL_NAME = "search_capabilities"
-export type SearchCapabilityType = "all" | "api" | "admin" | "mcp" | "marketplace" | "skills"
+export type SearchCapabilityType = "all" | "api" | "admin" | "cli" | "mcp" | "marketplace" | "skills"
 
 export type CapabilityMatch = {
   name: string
@@ -50,6 +50,7 @@ export function searchCapabilitySourceFilter(type?: SearchCapabilityType) {
   return {
     api: capabilityType === "all" || capabilityType === "api",
     admin: capabilityType === "all" || capabilityType === "admin",
+    cli: capabilityType === "all" || capabilityType === "cli",
     mcp: capabilityType === "all" || capabilityType === "mcp",
     marketplace: capabilityType === "all" || capabilityType === "marketplace" || capabilityType === "skills",
     skills: capabilityType === "all" || capabilityType === "skills",
