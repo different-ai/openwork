@@ -213,6 +213,17 @@ export const initLocale = (): Language => {
     console.warn("Failed to read language preference:", e);
   }
 
+  // When no stored preference exists, follow the system language:
+  // Chinese systems default to Simplified Chinese, everything else to English.
+  const browserLang = (typeof navigator !== "undefined" ? navigator.language || "" : "").toLowerCase();
+  if (browserLang.startsWith("zh")) {
+    localeValue = "zh";
+    if (typeof document !== "undefined") {
+      document.documentElement.setAttribute("lang", "zh");
+    }
+    return "zh";
+  }
+
   if (typeof document !== "undefined") {
     document.documentElement.setAttribute("lang", "en");
   }
