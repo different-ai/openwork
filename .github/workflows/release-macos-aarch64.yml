@@ -656,7 +656,12 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-electron-pnpm-
 
-      - name: Install dependencies
+      - name: Install dependencies (macOS)
+        if: matrix.os_type == 'macos'
+        run: pnpm --filter @openwork/desktop... --filter @openwork/app... --filter openwork-server... install --frozen-lockfile --prefer-offline --cpu=arm64 --cpu=x64
+
+      - name: Install dependencies (Linux and Windows)
+        if: matrix.os_type != 'macos'
         run: pnpm --filter @openwork/desktop... --filter @openwork/app... --filter openwork-server... install --frozen-lockfile --prefer-offline
 
       # The repo commits a permanent 0.0.0-dev placeholder; the release
