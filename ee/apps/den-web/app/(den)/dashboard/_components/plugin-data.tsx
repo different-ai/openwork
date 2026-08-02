@@ -156,6 +156,16 @@ export function formatPluginTimestamp(value: string | null): string {
   }).format(date);
 }
 
+export function getPluginComponentCount(plugin: DenPlugin): number {
+  return (
+    plugin.skills.length +
+    plugin.hooks.length +
+    plugin.mcps.length +
+    plugin.agents.length +
+    plugin.commands.length
+  );
+}
+
 export function getPluginPartsSummary(plugin: DenPlugin): string {
   const parts: string[] = [];
   if (plugin.skills.length > 0) {

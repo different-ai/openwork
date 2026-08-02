@@ -22,7 +22,7 @@ import {
   usePlugin,
   useUpdatePlugin,
 } from "./plugin-data";
-import { CatalogColorRail } from "./catalog-card-surface";
+import { CatalogIdentityTile } from "./catalog-identity-tile";
 
 export function PluginDetailScreen({ pluginId }: { pluginId: string }) {
   const router = useRouter();
@@ -150,43 +150,34 @@ export function PluginDetailScreen({ pluginId }: { pluginId: string }) {
         ) : null}
       </div>
 
-      <article className="overflow-hidden rounded-2xl border border-[var(--dls-border)] bg-[var(--dls-surface)]">
-        <div className="flex items-stretch">
-          <CatalogColorRail itemId={plugin.id} itemName={plugin.name} size="detail" />
-
-          <div className="min-w-0 flex-1 px-6 py-4">
-            <div className="flex flex-wrap items-center gap-2">
-              <h1 className="truncate text-[18px] font-semibold tracking-[-0.02em] text-gray-950">
-                {plugin.name}
-              </h1>
-              {plugin.version ? (
-                <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500">
-                  v{plugin.version}
-                </span>
-              ) : null}
-            </div>
-            {plugin.description ? (
-              <p className="mt-1 text-[13px] leading-[1.55] text-gray-500">{plugin.description}</p>
+      <article className="flex items-start gap-4">
+        <CatalogIdentityTile name={plugin.name} size="lg" />
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="truncate text-[18px] font-semibold tracking-[-0.02em] text-gray-950">
+              {plugin.name}
+            </h1>
+            {plugin.version ? (
+              <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500">
+                v{plugin.version}
+              </span>
             ) : null}
-
-            {marketplaces.length > 0 ? (
-              <div className="mt-3 flex flex-wrap gap-1.5">
-                {marketplaces.map((marketplace) => (
-                  <span
-                    key={marketplace.id}
-                    className="inline-flex items-center gap-1 rounded-full bg-gray-50 px-2 py-0.5 text-[11px] text-gray-600"
-                  >
-                    <Store className="h-3 w-3 text-gray-400" aria-hidden />
-                    <span className="truncate">{marketplace.name}</span>
-                  </span>
-                ))}
-              </div>
-            ) : null}
-
-            <p className="mt-3 text-[11.5px] text-gray-400">
-              Updated {formatPluginTimestamp(plugin.updatedAt)}
-            </p>
           </div>
+          {plugin.description ? (
+            <p className="mt-1 text-[13px] leading-[1.55] text-gray-500">{plugin.description}</p>
+          ) : null}
+          <p className="mt-1.5 flex flex-wrap items-center gap-x-1.5 text-[11.5px] text-gray-400">
+            {marketplaces.length > 0 ? (
+              <>
+                <Store className="h-3 w-3" aria-hidden />
+                <span className="truncate">
+                  {marketplaces.map((marketplace) => marketplace.name).join(" · ")}
+                </span>
+                <span>·</span>
+              </>
+            ) : null}
+            <span>Updated {formatPluginTimestamp(plugin.updatedAt)}</span>
+          </p>
         </div>
       </article>
 

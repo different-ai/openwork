@@ -4,10 +4,9 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, test } from "bun:test";
 import {
-  CatalogColorRail,
-  catalogCardSwatches,
-  getCatalogCardSwatch,
-} from "../app/(den)/dashboard/_components/catalog-card-surface";
+  CatalogIdentityTile,
+  getCatalogMonogram,
+} from "../app/(den)/dashboard/_components/catalog-identity-tile";
 
 function readDashboardComponent(name: string) {
   return readFileSync(
@@ -16,53 +15,48 @@ function readDashboardComponent(name: string) {
   );
 }
 
-describe("Den catalog card colors", () => {
-  test("selects a deterministic workspace swatch from the stable item id", () => {
-    const first = getCatalogCardSwatch("plugin-stable-id", "Unmapped plugin");
-    const second = getCatalogCardSwatch("plugin-stable-id", "Unmapped plugin");
-
-    expect(second).toBe(first);
-    expect(catalogCardSwatches).toContain(first);
-
-    const varied = new Set(
-      Array.from({ length: 24 }, (_, index) =>
-        getCatalogCardSwatch(`plugin-${index}`, `Plugin ${index}`),
-      ),
-    );
-    expect(varied.size).toBeGreaterThan(1);
+describe("Den catalog identity", () => {
+  test("derives a monogram from the first alphanumeric character", () => {
+    expect(getCatalogMonogram("Engineering Marketplace")).toBe("E");
+    expect(getCatalogMonogram("test")).toBe("T");
+    expect(getCatalogMonogram("  ben private")).toBe("B");
+    expect(getCatalogMonogram("4-day sprint")).toBe("4");
+    expect(getCatalogMonogram("···")).toBe("?");
   });
 
-  test("keeps the named reference assignments", () => {
-    expect(getCatalogCardSwatch("posthog-id", "PostHog Attribution & WAU")).toBe("#2563eb");
-    expect(getCatalogCardSwatch("posthog-id", "PostHog Plugin")).toBe("#2563eb");
-    expect(getCatalogCardSwatch("ben-id", "Ben Private Marketplace")).toBe("#5a67d8");
-    expect(getCatalogCardSwatch("plan-id", "Plan My Day")).toBe("#5a67d8");
-    expect(getCatalogCardSwatch("review-id", "Review Missed Messages")).toBe("#f97316");
-  });
-
-  test("renders the same flat rail in directory and detail contexts without an identity icon", () => {
-    const directory = renderToStaticMarkup(
-      createElement(CatalogColorRail, {
-        itemId: "shared-plugin-id",
-        itemName: "Shared plugin",
-        size: "card",
+  test("renders the real logo when the marketplace has one", () => {
+    const markup = renderToStaticMarkup(
+      createElement(CatalogIdentityTile, {
+        name: "Engineering Marketplace",
+        logoUrl: "https://example.test/logo.png",
       }),
+    );
+
+    expect(markup).toContain('src="https://example.test/logo.png"');
+    expect(markup).toContain('alt="Engineering Marketplace logo"');
+  });
+
+  test("falls back to a monogram when there is no logo", () => {
+    const markup = renderToStaticMarkup(
+      createElement(CatalogIdentityTile, { name: "Engineering Marketplace" }),
+    );
+
+    expect(markup).not.toContain("<img");
+    expect(markup).toContain(">E<");
+  });
+
+  test("keeps the same tile geometry across directory and detail sizes", () => {
+    const directory = renderToStaticMarkup(
+      createElement(CatalogIdentityTile, { name: "Shared plugin", size: "sm" }),
     );
     const detail = renderToStaticMarkup(
-      createElement(CatalogColorRail, {
-        itemId: "shared-plugin-id",
-        itemName: "Shared plugin",
-        size: "detail",
-      }),
+      createElement(CatalogIdentityTile, { name: "Shared plugin", size: "lg" }),
     );
-    const swatch = getCatalogCardSwatch("shared-plugin-id", "Shared plugin");
 
-    expect(directory).toContain(`data-catalog-card-swatch="${swatch}"`);
-    expect(detail).toContain(`data-catalog-card-swatch="${swatch}"`);
-    expect(directory).not.toContain("<svg");
-    expect(detail).not.toContain("<svg");
-    expect(directory).not.toContain("<img");
-    expect(detail).not.toContain("<img");
+    expect(directory).toContain("h-10 w-10");
+    expect(detail).toContain("h-12 w-12");
+    expect(directory).toContain(">S<");
+    expect(detail).toContain(">S<");
   });
 
   test("preserves card content, relationships, actions, and navigation on all four surfaces", () => {
@@ -82,13 +76,23 @@ describe("Den catalog card colors", () => {
 
     expect(marketplaceDetail).toContain("getPluginRoute(orgSlug, plugin.id)");
     expect(marketplaceDetail).toContain("orderedCountEntries");
-    expect(marketplaceDetail).toContain("cloudReadinessLabel(plugin.cloudReadiness.state)");
-    expect(marketplaceDetail).toContain('return "Cloud ready"');
+    expect(marketplaceDetail).toContain("cloudReadinessLabel(readiness.state)");
     expect(marketplaceDetail).toContain("data-testid=\"marketplace-actions-trigger\"");
 
     expect(pluginDetail).toContain("plugin.version");
-    expect(pluginDetail).toContain("plugin.marketplaces");
+    expect(pluginDetail).toContain("marketplaces.map((marketplace) => marketplace.name)");
     expect(pluginDetail).toContain("getPluginsRoute(orgSlug)");
     expect(pluginDetail).toContain("data-testid=\"plugin-actions-trigger\"");
+  });
+
+  test("cloud readiness stays silent when nothing needs a human", () => {
+    const source = readDashboardComponent("marketplace-detail-screen.tsx");
+
+    // Every plugin on Den is cloud ready, so the badge must not announce it.
+    expect(source).toContain('readiness.state === "ready"');
+    expect(source).toContain("return undefined");
+    // The two states that need action must no longer be excluded from render.
+    expect(source).not.toContain('plugin.cloudReadiness.state !== "needs_admin_setup"');
+    expect(source).not.toContain('plugin.cloudReadiness.state !== "needs_signin"');
   });
 });

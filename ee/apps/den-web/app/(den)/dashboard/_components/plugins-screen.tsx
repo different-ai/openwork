@@ -21,11 +21,14 @@ import { getIntegrationsRoute, getNewPluginRoute, getPluginRoute } from "../../_
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { useHasAnyIntegration } from "./integration-data";
 import {
+  type DenPlugin,
   getPluginCategoryLabel,
+  getPluginComponentCount,
   getPluginPartsSummary,
   usePlugins,
 } from "./plugin-data";
-import { CatalogColorRail, catalogCardClassName } from "./catalog-card-surface";
+import { DenCatalogList, DenCatalogRow } from "../../_components/ui/catalog-row";
+import { CatalogIdentityTile } from "./catalog-identity-tile";
 
 type PluginView = "plugins" | "agents" | "commands" | "hooks" | "mcps";
 
@@ -133,6 +136,14 @@ export function PluginsScreen() {
     );
   }, [normalizedQuery, allCommands]);
 
+  const tabCounts: Record<PluginView, number> = {
+    plugins: plugins.length,
+    agents: allAgents.length,
+    commands: allCommands.length,
+    hooks: allHooks.length,
+    mcps: allMcps.length,
+  };
+
   const searchPlaceholder =
     activeView === "plugins"
       ? "Search plugins..."
@@ -154,7 +165,12 @@ export function PluginsScreen() {
     >
       <div className="mb-8 flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
         <div className="flex flex-col gap-4">
-          <UnderlineTabs tabs={PLUGIN_TABS} activeTab={activeView} onChange={setActiveView} />
+          <UnderlineTabs
+            tabs={PLUGIN_TABS.map((tab) => ({ ...tab, count: tabCounts[tab.value] }))}
+            activeTab={activeView}
+            onChange={setActiveView}
+            showZeroCounts
+          />
           <div>
             <DenInput
               type="search"
@@ -194,50 +210,29 @@ export function PluginsScreen() {
             }
           />
         ) : (
-          <div className="grid gap-3 md:grid-cols-2">
-            {filteredPlugins.map((plugin) => (
-              <Link
-                key={plugin.id}
-                href={getPluginRoute(orgSlug, plugin.id)}
-                className={catalogCardClassName}
-              >
-                <div className="flex items-stretch">
-                  <CatalogColorRail itemId={plugin.id} itemName={plugin.name} size="card" />
-
-                  <div className="min-w-0 flex-1 px-5 py-2">
-                    <div className="flex items-start justify-between gap-2">
-                      <h2 className="truncate text-[14px] font-semibold tracking-[-0.01em] text-gray-900">
-                        {plugin.name}
-                      </h2>
-                    </div>
-                    {plugin.description ? (
-                      <p className="mt-0.5 line-clamp-2 text-[12.5px] leading-[1.4] text-gray-500">
-                        {plugin.description}
-                      </p>
-                    ) : null}
-
-                    {(plugin.marketplaces ?? []).length > 0 ? (
-                      <div className="mt-2 flex flex-wrap gap-1.5">
-                        {(plugin.marketplaces ?? []).map((marketplace) => (
-                          <span
-                            key={marketplace.id}
-                            className="inline-flex items-center gap-1 rounded-full bg-gray-50 px-2 py-0.5 text-[11px] text-gray-600"
-                          >
-                            <Store className="h-3 w-3 text-gray-400" aria-hidden />
-                            <span className="truncate">{marketplace.name}</span>
-                          </span>
-                        ))}
-                      </div>
-                    ) : null}
-
-                    <p className="mt-2 text-[11.5px] text-gray-400">
-                      {getPluginPartsSummary(plugin)}
-                    </p>
-                  </div>
-                </div>
-              </Link>
-            ))}
-          </div>
+          <DenCatalogList
+            label={describePluginScope(filteredPlugins)}
+            valueLabel="Components"
+            valueWidth="150px"
+          >
+            {filteredPlugins.map((plugin) => {
+              const componentCount = getPluginComponentCount(plugin);
+              return (
+                <DenCatalogRow
+                  key={plugin.id}
+                  href={getPluginRoute(orgSlug, plugin.id)}
+                  leading={<CatalogIdentityTile name={plugin.name} />}
+                  title={plugin.name}
+                  description={plugin.description}
+                  meta={(plugin.marketplaces ?? []).map((marketplace) => marketplace.name).join(" · ")}
+                  value={String(componentCount)}
+                  valueMuted={componentCount === 0}
+                  valueCaption={componentCount > 0 ? getPluginPartsSummary(plugin) : undefined}
+                  valueWidth="150px"
+                />
+              );
+            })}
+          </DenCatalogList>
         )
       ) : activeView === "agents" ? (
         <PrimitiveList
@@ -306,6 +301,15 @@ export function PluginsScreen() {
       )}
     </DashboardPageTemplate>
   );
+}
+
+function describePluginScope(plugins: DenPlugin[]): string {
+  const marketplaceCount = new Set(
+    plugins.flatMap((plugin) => (plugin.marketplaces ?? []).map((marketplace) => marketplace.id)),
+  ).size;
+  const pluginLabel = `${plugins.length} plugin${plugins.length === 1 ? "" : "s"}`;
+  if (marketplaceCount === 0) return pluginLabel;
+  return `${pluginLabel} across ${marketplaceCount} marketplace${marketplaceCount === 1 ? "" : "s"}`;
 }
 
 function EmptyState({ title, description }: { title: string; description: string }) {
