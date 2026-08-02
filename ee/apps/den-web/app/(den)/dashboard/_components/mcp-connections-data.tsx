@@ -26,6 +26,19 @@ export type ExternalMcpAuthType = "oauth" | "apikey" | "none";
 export type ExternalMcpCredentialMode = "shared" | "per_member";
 export type ExternalMcpConnectionScope = "usable" | "manageable";
 
+export type CliConnectorConnection = {
+  id: string;
+  catalogKey: "github-cli-demo";
+  name: string;
+  manifestVersion: string;
+  manifestDigest: string | null;
+  enabled: boolean;
+  readiness: "ready" | "needs_admin_setup";
+  commandSummary: { read: number };
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type ExternalMcpAccessSummary = {
   orgWide: boolean;
   memberIds: string[];
@@ -235,6 +248,7 @@ export const mcpConnectionQueryKeys = {
   nativeProviderClient: (orgId?: string | null, providerId?: string | null) =>
     [...mcpConnectionQueryKeys.all, "native-provider-client", orgId ?? "none", providerId ?? "none"],
   telegram: (orgId?: string | null) => [...mcpConnectionQueryKeys.all, "telegram", orgId ?? "none"] as const,
+  cliList: (orgId?: string | null) => [...mcpConnectionQueryKeys.all, "cli-list", orgId ?? "none"] as const,
 };
 
 export function useMcpConnectionTools(connectionId: string, enabled: boolean) {
@@ -495,6 +509,89 @@ export function useMcpConnections(scope: ExternalMcpConnectionScope = "manageabl
     queryKey: mcpConnectionQueryKeys.list(orgId, scope),
     queryFn: () => fetchConnections(scope, requireOrgId(orgId)),
   });
+}
+
+export function useCliConnections() {
+  const { orgId } = useOrgDashboard();
+  return useQuery({
+    enabled: Boolean(orgId),
+    queryKey: mcpConnectionQueryKeys.cliList(orgId),
+    queryFn: async (): Promise<CliConnectorConnection[]> => {
+      const { response, payload } = await requestJson(
+        "/v1/cli-connections",
+        { headers: getOrgScopeHeaders(requireOrgId(orgId)) },
+        15000,
+      );
+      if (!response.ok) {
+        throw getRequestError(payload, response, `Failed to load CLI connectors (${response.status}).`);
+      }
+      if (!isRecord(payload) || !Array.isArray(payload.connections)) {
+        throw new Error("CLI connector list response was incomplete.");
+      }
+      return payload.connections.map(parseCliConnectorConnection);
+    },
+  });
+}
+
+export function useEnableCliConnector() {
+  const queryClient = useQueryClient();
+  const { orgId, runReauthableAction } = useOrgDashboard();
+  return useMutation({
+    mutationFn: async (): Promise<CliConnectorConnection> => {
+      let connection: CliConnectorConnection | null = null;
+      await runReauthableAction("enable-cli-connector", async () => {
+        const { response, payload } = await requestJson(
+          "/v1/cli-connections",
+          {
+            method: "POST",
+            headers: getOrgScopeHeaders(requireOrgId(orgId)),
+            body: JSON.stringify({ catalogKey: "github-cli-demo" }),
+          },
+          20000,
+        );
+        if (!response.ok) {
+          throw getRequestError(payload, response, `Failed to enable CLI connector (${response.status}).`);
+        }
+        connection = parseCliConnectorConnection(payload);
+      });
+      if (!connection) throw new Error("Enable CLI connector response was incomplete.");
+      return connection;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: mcpConnectionQueryKeys.cliList(orgId) });
+    },
+  });
+}
+
+function parseCliConnectorConnection(value: unknown): CliConnectorConnection {
+  if (
+    !isRecord(value)
+    || typeof value.id !== "string"
+    || value.catalogKey !== "github-cli-demo"
+    || typeof value.name !== "string"
+    || typeof value.manifestVersion !== "string"
+    || !(typeof value.manifestDigest === "string" || value.manifestDigest === null)
+    || typeof value.enabled !== "boolean"
+    || !(value.readiness === "ready" || value.readiness === "needs_admin_setup")
+    || !isRecord(value.commandSummary)
+    || typeof value.commandSummary.read !== "number"
+    || typeof value.createdAt !== "string"
+    || typeof value.updatedAt !== "string"
+  ) {
+    throw new Error("CLI connector response was incomplete.");
+  }
+  return {
+    id: value.id,
+    catalogKey: value.catalogKey,
+    name: value.name,
+    manifestVersion: value.manifestVersion,
+    manifestDigest: value.manifestDigest,
+    enabled: value.enabled,
+    readiness: value.readiness,
+    commandSummary: { read: value.commandSummary.read },
+    createdAt: value.createdAt,
+    updatedAt: value.updatedAt,
+  };
 }
 
 export function useMcpConnectionPresets() {

@@ -6,16 +6,21 @@ import { IntegrationIcon } from "./integration-icon";
 export const GOOGLE_WORKSPACE_QUICK_ADD_ID = "google-workspace";
 export const MICROSOFT_365_QUICK_ADD_ID = "microsoft-365";
 export const TELEGRAM_QUICK_ADD_ID = "telegram";
+export const GITHUB_CLI_DEMO_QUICK_ADD_ID = "github-cli-demo";
 
 export function ConnectorQuickAddGrid({
   connections,
   presets,
   telegramConnected,
+  cliDemoEnabled = false,
+  cliDemoPending = false,
   onSelect,
 }: {
   connections: ExternalMcpConnection[];
   presets: ExternalMcpPreset[];
   telegramConnected: boolean;
+  cliDemoEnabled?: boolean;
+  cliDemoPending?: boolean;
   onSelect: (id: string) => void;
 }) {
   const googleConfigured = connections.some((connection) => connection.id === GOOGLE_WORKSPACE_QUICK_ADD_ID);
@@ -79,6 +84,27 @@ export function ConnectorQuickAddGrid({
         </div>
         <p className="mt-2 text-[12px] font-medium text-gray-900">
           {telegramConnected ? "Connected — tap to manage" : "Tap to set up"}
+        </p>
+      </button>
+
+      <button
+        type="button"
+        data-testid="quick-add-github-cli-demo"
+        disabled={cliDemoEnabled || cliDemoPending}
+        onClick={() => onSelect(GITHUB_CLI_DEMO_QUICK_ADD_ID)}
+        className="rounded-2xl border border-gray-100 bg-white px-4 py-4 text-left transition hover:border-gray-300 hover:shadow-sm disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        <div className="flex items-start gap-3">
+          <IntegrationIcon name="GitHub CLI Demo" simpleIconSlug="github" />
+          <div className="min-w-0 flex-1">
+            <p className="text-[14px] font-semibold text-gray-900">GitHub CLI Demo</p>
+            <p className="mt-1 text-[12px] leading-[1.5] text-gray-500">
+              Runs a hosted GitHub CLI version check. No credentials required.
+            </p>
+          </div>
+        </div>
+        <p className="mt-2 text-[12px] font-medium text-gray-900">
+          {cliDemoEnabled ? "Ready" : cliDemoPending ? "Enabling…" : "Enable"}
         </p>
       </button>
 
