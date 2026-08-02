@@ -98,6 +98,8 @@ export async function signInInBrowser(
     // Signed in means the outcome page, not a submit in flight ("Working...").
     await waitFor(browser, `(() => {
       const text = document.body?.innerText ?? "";
+      // Plain web sign-in redirects into the dashboard; handoff shows "signed in" or the openwork:// code.
+      if (location.pathname.startsWith("/dashboard")) return true;
       if (/signed in/i.test(text)) return true;
       return [...document.querySelectorAll("input")]
         .some((input) => (input.value ?? "").startsWith("openwork://"));
