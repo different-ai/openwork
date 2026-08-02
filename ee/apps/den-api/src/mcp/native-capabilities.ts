@@ -2,6 +2,7 @@ import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
 import { listNativeProviderUsableEntries, type NativeProviderConnectionEntry } from "../capability-sources/native-provider-connections.js"
 import type { McpPrincipal } from "./auth.js"
+import type { AgentToolContentPart } from "./tool-content.js"
 import {
   getJsonRequestBodySchema,
   getParameters,
@@ -161,7 +162,7 @@ async function resolveNativeCapability(input: {
 
 type NativeCapabilityToolResult = {
   isError?: boolean
-  content: { type: "text"; text: string }[]
+  content: AgentToolContentPart[]
 }
 
 export async function executeNativeCapability(input: {

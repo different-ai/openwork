@@ -27,6 +27,9 @@ import {
   searchBuiltinSkillCapabilities,
 } from "./builtin-skills.js"
 import { executeNativeCapability, searchNativeCapabilities } from "./native-capabilities.js"
+import { externalToolContent, type AgentToolContentPart } from "./tool-content.js"
+
+export { externalToolContent } from "./tool-content.js"
 
 export const EXECUTE_CAPABILITY_TOOL_NAME = "execute_capability"
 const searchCapabilityTypeSchema = z.enum(["all", "api", "admin", "mcp", "marketplace", "skills"])
@@ -167,7 +170,7 @@ const EXECUTE_CAPABILITY_TIMEOUT_MESSAGE = `The capability call exceeded ${EXECU
 
 export type ExecuteCapabilityToolResult = {
   isError?: boolean
-  content: { text: string; type: "text" }[]
+  content: AgentToolContentPart[]
 }
 
 function textContent(text: string): { text: string; type: "text" }[] {
@@ -214,22 +217,6 @@ function unknownCapabilityText(name: string): string {
     error: "unknown_capability",
     message: `No capability named "${name}". Call search_capabilities to find a valid name.`,
   })
-}
-
-function isTextContent(value: unknown): value is { type: "text"; text: string } {
-  return typeof value === "object"
-    && value !== null
-    && "type" in value
-    && value.type === "text"
-    && "text" in value
-    && typeof value.text === "string"
-}
-
-function externalToolContent(result: unknown): { type: "text"; text: string }[] {
-  if (typeof result === "object" && result !== null && "content" in result && Array.isArray(result.content) && result.content.every(isTextContent)) {
-    return result.content
-  }
-  return textContent(JSON.stringify(result))
 }
 
 export function externalCapabilitySuccessToolResult(

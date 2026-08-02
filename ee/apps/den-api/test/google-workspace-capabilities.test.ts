@@ -101,6 +101,7 @@ let calendarCreateCount = 0
 let lastDraftPayload: unknown = null
 let lastGmailThreadUrl: string | null = null
 let forceDriveUploadError = false
+let largeDriveContentHitCount = 0
 
 function resetFakeGoogle() {
   lastAuthorization = null
@@ -120,10 +121,13 @@ function resetFakeGoogle() {
   lastDraftPayload = null
   lastGmailThreadUrl = null
   forceDriveUploadError = false
+  largeDriveContentHitCount = 0
 }
 
 // Trailing high bytes force base64url output ("-"/"_") to differ from standard base64 ("+"/"/").
 const attachmentBytes = Buffer.concat([Buffer.from("%PDF-1.4 fake attachment", "utf8"), Buffer.from([0xfb, 0xef, 0xbe, 0xff])])
+const binaryDriveBytes = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0xfb, 0xef, 0xbe, 0xff]), Buffer.from("binary fixture", "utf8")])
+const dxfDriveText = "0\nSECTION\n2\nHEADER\n0\nENDSEC\n0\nEOF\n"
 
 function gmailMessagePayload() {
   return {
@@ -315,6 +319,56 @@ const fakeGoogleServer = Bun.serve({
         modifiedTime: "2026-07-08T11:00:00Z",
         webViewLink: "https://drive.google.com/file/d/file_1/view",
         size: "42",
+      })
+    }
+    if (url.pathname === "/drive/v3/files/binary_file" && url.searchParams.get("alt") === "media") {
+      return new Response(binaryDriveBytes, { headers: { "content-type": "application/octet-stream" } })
+    }
+    if (url.pathname === "/drive/v3/files/binary_file") {
+      return json({
+        id: "binary_file",
+        name: "fixture.png",
+        mimeType: "application/octet-stream",
+        modifiedTime: "2026-07-08T11:00:00Z",
+        webViewLink: "https://drive.google.com/file/d/binary_file/view",
+        size: String(binaryDriveBytes.byteLength),
+      })
+    }
+    if (url.pathname === "/drive/v3/files/dxf_file" && url.searchParams.get("alt") === "media") {
+      return new Response(dxfDriveText, { headers: { "content-type": "image/vnd.dxf" } })
+    }
+    if (url.pathname === "/drive/v3/files/dxf_file") {
+      return json({
+        id: "dxf_file",
+        name: "drawing.dxf",
+        mimeType: "image/vnd.dxf",
+        modifiedTime: "2026-07-08T11:00:00Z",
+        webViewLink: "https://drive.google.com/file/d/dxf_file/view",
+        size: String(Buffer.byteLength(dxfDriveText)),
+      })
+    }
+    if (url.pathname === "/drive/v3/files/large_file" && url.searchParams.get("alt") === "media") {
+      largeDriveContentHitCount += 1
+      return new Response("should not be fetched")
+    }
+    if (url.pathname === "/drive/v3/files/large_file") {
+      return json({
+        id: "large_file",
+        name: "large.bin",
+        mimeType: "application/octet-stream",
+        modifiedTime: "2026-07-08T11:00:00Z",
+        webViewLink: "https://drive.google.com/file/d/large_file/view",
+        size: "20971520",
+      })
+    }
+    if (url.pathname === "/drive/v3/files/doc_1") {
+      return json({
+        id: "doc_1",
+        name: "Project Doc",
+        mimeType: "application/vnd.google-apps.document",
+        modifiedTime: "2026-07-08T11:00:00Z",
+        webViewLink: "https://docs.google.com/document/d/doc_1/edit",
+        size: null,
       })
     }
     if (url.pathname === "/drive/v3/files/doc_1/export") {
@@ -889,6 +943,62 @@ test("drive search returns mapped files", async () => {
       },
     ],
   })
+})
+
+test("drive file read returns strict UTF-8 text metadata", async () => {
+  const response = await request("/v1/capabilities/google-workspace/drive-file/file_1")
+  expect(response.status).toBe(200)
+  const body: unknown = await response.json()
+  const responseBody = expectRecord(body, "drive text response")
+  expect(responseBody.ok).toBe(true)
+  const file = expectRecord(responseBody.file, "drive text file")
+  expect(file.content).toBe("Drive file text")
+  expect(file.encoding).toBe("text")
+  expect(file.contentBase64).toBeNull()
+  expect(file.contentUnavailableReason).toBeNull()
+})
+
+test("drive file read preserves binary bytes through standard base64", async () => {
+  const response = await request("/v1/capabilities/google-workspace/drive-file/binary_file")
+  expect(response.status).toBe(200)
+  const body: unknown = await response.json()
+  const responseBody = expectRecord(body, "drive binary response")
+  expect(responseBody.ok).toBe(true)
+  const file = expectRecord(responseBody.file, "drive binary file")
+  expect(file.encoding).toBe("base64")
+  expect(file.content).toBeNull()
+  expect(Buffer.compare(Buffer.from(expectString(file.contentBase64, "drive binary content"), "base64"), binaryDriveBytes)).toBe(0)
+})
+
+test("drive file read sniffs text independently of MIME type", async () => {
+  const response = await request("/v1/capabilities/google-workspace/drive-file/dxf_file")
+  expect(response.status).toBe(200)
+  const body: unknown = await response.json()
+  const file = expectRecord(expectRecord(body, "drive DXF response").file, "drive DXF file")
+  expect(file.encoding).toBe("text")
+  expect(file.content).toBe(dxfDriveText)
+})
+
+test("drive file read skips content fetch when metadata exceeds the binary limit", async () => {
+  const response = await request("/v1/capabilities/google-workspace/drive-file/large_file")
+  expect(response.status).toBe(200)
+  const body: unknown = await response.json()
+  const file = expectRecord(expectRecord(body, "large drive response").file, "large drive file")
+  expect(file.contentUnavailableReason).toBe("file_too_large")
+  expect(file.encoding).toBe("none")
+  expect(file.content).toBeNull()
+  expect(file.contentBase64).toBeNull()
+  expect(file.truncated).toBe(false)
+  expect(largeDriveContentHitCount).toBe(0)
+})
+
+test("drive file read keeps the Google Apps text export branch", async () => {
+  const response = await request("/v1/capabilities/google-workspace/drive-file/doc_1")
+  expect(response.status).toBe(200)
+  const body: unknown = await response.json()
+  const file = expectRecord(expectRecord(body, "Google Apps response").file, "Google Apps file")
+  expect(file.encoding).toBe("text")
+  expect(file.content).toBe("Exported doc text")
 })
 
 test("drive upload stores decoded bytes as multipart and returns the user-facing Drive link", async () => {

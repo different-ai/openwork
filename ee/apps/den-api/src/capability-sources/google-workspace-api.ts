@@ -1,3 +1,7 @@
+import { truncateText } from "./binary-content.js"
+
+export { truncateText } from "./binary-content.js"
+
 export type GoogleWorkspaceAttachment = {
   attachmentId: string
   filename: string
@@ -213,13 +217,6 @@ export function extractGmailThreadQuoteInput(json: unknown): { from: string; dat
     date: headers.get("date") ?? "",
     body: state.plain,
   }
-}
-
-export function truncateText(text: string, maxCharacters: number): { text: string; truncated: boolean } {
-  if (text.length <= maxCharacters) {
-    return { text, truncated: false }
-  }
-  return { text: text.slice(0, maxCharacters), truncated: true }
 }
 
 export function buildDriveSearchQuery(text: string): string {

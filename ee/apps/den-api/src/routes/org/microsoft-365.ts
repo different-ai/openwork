@@ -143,9 +143,11 @@ const driveFileResponseSchema = z.object({
   ok: z.literal(true),
   file: driveItemSchema.extend({
     content: z.string().nullable(),
+    contentBase64: z.string().nullable().describe("Standard base64-encoded file bytes for binary files; decode locally."),
+    encoding: z.enum(["text", "base64", "none"]),
     contentType: z.string().nullable(),
     truncated: z.boolean(),
-    contentUnavailableReason: z.enum(["folder", "file_too_large", "unsupported_content_type"]).nullable(),
+    contentUnavailableReason: z.enum(["folder", "file_too_large"]).nullable(),
   }),
 }).meta({ ref: "Microsoft365DriveFileResponse" })
 
@@ -478,8 +480,8 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
     "/v1/capabilities/microsoft-365/drive-file/:itemId",
     describeRoute({
       tags: ["Capability Sources"],
-      summary: "Read a OneDrive text file as the calling member",
-      description: "Returns OneDrive metadata, source link, and bounded UTF-8 text content. Folders, large files, and binary Office files return metadata with an explicit contentUnavailableReason instead of decoding unsafe binary data.",
+      summary: "Read a OneDrive text or binary file as the calling member",
+      description: "Returns OneDrive metadata and content using strict-UTF-8 content sniffing: text is returned regardless of MIME type, while binary files are returned as standard base64 up to 10 MiB. Folders and oversized files return metadata with an explicit contentUnavailableReason.",
       responses: {
         200: jsonResponse("OneDrive file returned.", driveFileResponseSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),

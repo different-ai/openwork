@@ -3,6 +3,7 @@ import { createInternalCapabilityConnectorHeader, createInternalMcpPrincipalHead
 import type { McpPrincipal } from "./auth.js"
 import type { McpToolOperation } from "./catalog.js"
 import { requiredScopeForMethod } from "./policy.js"
+import { buildRestToolContent } from "./tool-content.js"
 
 type ToolInput = {
   path?: Record<string, unknown>
@@ -141,10 +142,9 @@ export async function invokeMcpOperation(input: {
   const response = await input.app.fetch(request, input.env)
   const contentType = response.headers.get("content-type") ?? ""
   const payload = contentType.includes("application/json") ? await response.json() : await response.text()
-  const text = typeof payload === "string" ? payload : JSON.stringify(payload, null, 2)
 
   return {
     isError: response.status >= 400,
-    content: [{ type: "text" as const, text }],
+    content: await buildRestToolContent(payload),
   }
 }

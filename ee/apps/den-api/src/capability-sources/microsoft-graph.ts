@@ -1,6 +1,8 @@
+import { decodeFileContent, truncateText } from "./binary-content.js"
+
 const DEFAULT_GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0"
 const DEFAULT_TIMEOUT_MS = 30_000
-const DEFAULT_MAX_DOWNLOAD_BYTES = 5_000_000
+const DEFAULT_MAX_DOWNLOAD_BYTES = 10 * 1024 * 1024
 const DEFAULT_MAX_JSON_RESPONSE_BYTES = 5_000_000
 const DEFAULT_MAX_CONTENT_CHARACTERS = 200_000
 
@@ -56,9 +58,11 @@ export type Microsoft365DriveItem = {
 
 export type Microsoft365DriveItemWithContent = Microsoft365DriveItem & {
   content: string | null
+  contentBase64: string | null
+  encoding: "text" | "base64" | "none"
   contentType: string | null
   truncated: boolean
-  contentUnavailableReason: "folder" | "file_too_large" | "unsupported_content_type" | null
+  contentUnavailableReason: "folder" | "file_too_large" | null
 }
 
 export type Microsoft365TeamsChat = {
@@ -133,15 +137,8 @@ function readEmailAddresses(record: Record<string, unknown>, key: string): Micro
   return addresses
 }
 
-function truncateText(text: string, maxCharacters: number): { text: string; truncated: boolean } {
-  if (text.length <= maxCharacters) {
-    return { text, truncated: false }
-  }
-  return { text: text.slice(0, maxCharacters), truncated: true }
-}
-
-async function readTextWithByteLimit(response: Response, maxBytes: number): Promise<{ text: string; limitExceeded: boolean }> {
-  if (!response.body) return { text: "", limitExceeded: false }
+async function readBytesWithByteLimit(response: Response, maxBytes: number): Promise<{ bytes: Uint8Array; limitExceeded: boolean }> {
+  if (!response.body) return { bytes: new Uint8Array(), limitExceeded: false }
 
   const reader = response.body.getReader()
   const chunks: Uint8Array[] = []
@@ -168,7 +165,7 @@ async function readTextWithByteLimit(response: Response, maxBytes: number): Prom
     bytes.set(chunk, offset)
     offset += chunk.byteLength
   }
-  return { text: new TextDecoder().decode(bytes), limitExceeded }
+  return { bytes, limitExceeded }
 }
 
 function extractMailMessage(value: unknown): Microsoft365MailMessage {
@@ -335,16 +332,6 @@ export function extractMicrosoftTeamsMessages(json: unknown): Microsoft365TeamsM
     .filter((message) => Boolean(message.id))
 }
 
-function isTextContentType(contentType: string): boolean {
-  const normalized = contentType.split(";", 1)[0]?.trim().toLowerCase() ?? ""
-  return normalized.startsWith("text/")
-    || normalized === "application/json"
-    || normalized === "application/xml"
-    || normalized === "application/yaml"
-    || normalized === "application/x-yaml"
-    || normalized === "application/javascript"
-}
-
 function escapeGraphSearch(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')
 }
@@ -404,21 +391,21 @@ export class MicrosoftGraphClient {
       signal: init?.signal ?? AbortSignal.timeout(this.timeoutMs),
     })
     if (!response.ok) {
-      const responseBody = await readTextWithByteLimit(response, this.maxJsonResponseBytes)
+      const responseBody = await readBytesWithByteLimit(response, this.maxJsonResponseBytes)
       const suffix = responseBody.limitExceeded ? " [response truncated]" : ""
-      throw new MicrosoftGraphRequestError(operation, response.status, `${responseBody.text}${suffix}`)
+      throw new MicrosoftGraphRequestError(operation, response.status, `${new TextDecoder().decode(responseBody.bytes)}${suffix}`)
     }
     return response
   }
 
   private async requestJson(operation: string, url: URL, init?: RequestInit): Promise<unknown> {
     const response = await this.request(operation, url, init)
-    const responseBody = await readTextWithByteLimit(response, this.maxJsonResponseBytes)
+    const responseBody = await readBytesWithByteLimit(response, this.maxJsonResponseBytes)
     if (responseBody.limitExceeded) {
       throw new MicrosoftGraphRequestError(operation, 502, `Microsoft Graph response exceeded ${this.maxJsonResponseBytes} bytes.`)
     }
     try {
-      const body: unknown = JSON.parse(responseBody.text)
+      const body: unknown = JSON.parse(new TextDecoder().decode(responseBody.bytes))
       return body
     } catch {
       throw new MicrosoftGraphRequestError(operation, 502, "Microsoft Graph returned invalid JSON.")
@@ -523,13 +510,10 @@ export class MicrosoftGraphClient {
   async getDriveItemWithContent(itemId: string): Promise<Microsoft365DriveItemWithContent> {
     const item = await this.getDriveItem(itemId)
     if (item.kind === "folder") {
-      return { ...item, content: null, contentType: null, truncated: false, contentUnavailableReason: "folder" }
+      return { ...item, content: null, contentBase64: null, encoding: "none", contentType: null, truncated: false, contentUnavailableReason: "folder" }
     }
     if (item.size !== null && item.size > this.maxDownloadBytes) {
-      return { ...item, content: null, contentType: item.mimeType || null, truncated: false, contentUnavailableReason: "file_too_large" }
-    }
-    if (item.mimeType && !isTextContentType(item.mimeType)) {
-      return { ...item, content: null, contentType: item.mimeType, truncated: false, contentUnavailableReason: "unsupported_content_type" }
+      return { ...item, content: null, contentBase64: null, encoding: "none", contentType: item.mimeType || null, truncated: false, contentUnavailableReason: "file_too_large" }
     }
 
     const contentUrl = this.url(`me/drive/items/${encodeURIComponent(itemId)}/content`)
@@ -537,20 +521,36 @@ export class MicrosoftGraphClient {
     const contentType = response.headers.get("content-type")?.split(";", 1)[0]?.trim() || item.mimeType || null
     const contentLength = Number(response.headers.get("content-length"))
     if (Number.isFinite(contentLength) && contentLength > this.maxDownloadBytes) {
-      return { ...item, content: null, contentType, truncated: false, contentUnavailableReason: "file_too_large" }
-    }
-    if (contentType && !isTextContentType(contentType)) {
-      return { ...item, content: null, contentType, truncated: false, contentUnavailableReason: "unsupported_content_type" }
+      return { ...item, content: null, contentBase64: null, encoding: "none", contentType, truncated: false, contentUnavailableReason: "file_too_large" }
     }
 
-    const downloaded = await readTextWithByteLimit(response, this.maxDownloadBytes)
+    const downloaded = await readBytesWithByteLimit(response, this.maxDownloadBytes)
     if (downloaded.limitExceeded) {
-      return { ...item, content: null, contentType, truncated: false, contentUnavailableReason: "file_too_large" }
+      return { ...item, content: null, contentBase64: null, encoding: "none", contentType, truncated: false, contentUnavailableReason: "file_too_large" }
     }
-    const content = truncateText(downloaded.text, this.maxContentCharacters)
+    const content = decodeFileContent(downloaded.bytes, {
+      maxTextCharacters: this.maxContentCharacters,
+      maxBinaryBytes: this.maxDownloadBytes,
+    })
+    if (content.kind === "too_large") {
+      return { ...item, content: null, contentBase64: null, encoding: "none", contentType, truncated: false, contentUnavailableReason: "file_too_large" }
+    }
+    if (content.kind === "binary") {
+      return {
+        ...item,
+        content: null,
+        contentBase64: content.contentBase64,
+        encoding: "base64",
+        contentType,
+        truncated: false,
+        contentUnavailableReason: null,
+      }
+    }
     return {
       ...item,
-      content: content.text,
+      content: content.content,
+      contentBase64: null,
+      encoding: "text",
       contentType,
       truncated: content.truncated,
       contentUnavailableReason: null,
