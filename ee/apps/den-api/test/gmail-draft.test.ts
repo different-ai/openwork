@@ -26,15 +26,33 @@ function decodeRawBody(raw: string): string {
   return Buffer.from(encoded.replace(/\r\n/g, ""), "base64").toString("utf8")
 }
 
+function decodeAlternativeBodies(raw: string): { plain: string; html: string } {
+  const decoded = decodeRaw(raw)
+  const parts = [...decoded.matchAll(/Content-Type: text\/(plain|html); charset="UTF-8"\r\nContent-Transfer-Encoding: base64\r\n\r\n([A-Za-z0-9+/=\r\n]+)/g)]
+  const decodePart = (kind: string) => {
+    const encoded = parts.find((part) => part[1] === kind)?.[2] ?? ""
+    return Buffer.from(encoded.replace(/\r\n/g, ""), "base64").toString("utf8")
+  }
+  return { plain: decodePart("plain"), html: decodePart("html") }
+}
+
+function expectFoldedBase64Payloads(decoded: string) {
+  const payloads = [...decoded.matchAll(/Content-Transfer-Encoding: base64\r\n\r\n([A-Za-z0-9+/=\r\n]+)/g)]
+  expect(payloads.length).toBeGreaterThan(0)
+  for (const payload of payloads) {
+    expect(payload[1]!.split("\r\n").every((line) => line.length <= 76)).toBe(true)
+  }
+}
+
 describe("buildGmailDraftRaw", () => {
-  test("encodes a plain-ASCII draft as base64url RFC 822 with the body base64-encoded", () => {
+  test("encodes a plain-ASCII draft as base64url multipart/alternative", () => {
     const raw = gmail.buildGmailDraftRaw({ to: "sam@acme.test", subject: "Follow up", body: "Hello Sam" })
     const decoded = Buffer.from(raw, "base64url").toString("utf8")
     expect(decoded).toContain("To: sam@acme.test\r\n")
     expect(decoded).toContain("Subject: Follow up\r\n")
-    expect(decoded).toContain('Content-Type: text/plain; charset="UTF-8"')
-    const bodyPart = decoded.split("\r\n\r\n")[1]
-    expect(Buffer.from(bodyPart, "base64").toString("utf8")).toBe("Hello Sam")
+    expect(decoded).toContain("Content-Type: multipart/alternative;")
+    expect(decoded.indexOf('Content-Type: text/plain; charset="UTF-8"')).toBeLessThan(decoded.indexOf('Content-Type: text/html; charset="UTF-8"'))
+    expect(decodeAlternativeBodies(raw)).toEqual({ plain: "Hello Sam", html: "<div>Hello Sam</div>" })
     // base64url alphabet only — Gmail rejects standard base64 for `raw`.
     expect(raw).not.toMatch(/[+/=]/)
   })
@@ -45,18 +63,17 @@ describe("buildGmailDraftRaw", () => {
     const subjectLine = decoded.split("\r\n").find((line) => line.startsWith("Subject: "))
     expect(subjectLine).toMatch(/^Subject: =\?UTF-8\?B\?[A-Za-z0-9+/=]+\?=$/)
     expect(Buffer.from(subjectLine!.slice("Subject: =?UTF-8?B?".length, -2), "base64").toString("utf8")).toBe("Résumé — próxima reunión")
-    const bodyPart = decoded.split("\r\n\r\n")[1]
-    expect(Buffer.from(bodyPart, "base64").toString("utf8")).toBe("Grüße aus Zürich ✅")
+    expect(decodeAlternativeBodies(raw)).toEqual({ plain: "Grüße aus Zürich ✅", html: "<div>Grüße aus Zürich ✅</div>" })
   })
 
-  test("unwraps hard-wrapped prose without changing paragraphs, short breaks, or lists", () => {
+  test("unwraps long prose and preserves blank lines, lists, and escaped text in equivalent alternatives", () => {
     const body = [
       "Thanks again for the conversation today. As promised, I have attached",
       "a revised indicative pricing proposal for the air-gapped on-premises",
       "deployment, covering both the minimal self-managed path and a",
       "full-support option.",
       "",
-      "Options:",
+      "Options for <Sam> & team:",
       "- Self-managed deployment",
       "- Full-support deployment",
       "",
@@ -64,19 +81,23 @@ describe("buildGmailDraftRaw", () => {
       "",
       "Ben",
     ].join("\n")
-    const decoded = decodeRaw(gmail.buildGmailDraftRaw({ to: "sam@acme.test", subject: "Follow up", body }))
-    const bodyPart = decoded.split("\r\n\r\n")[1]
-    expect(Buffer.from(bodyPart, "base64").toString("utf8")).toBe([
+    const raw = gmail.buildGmailDraftRaw({ to: "sam@acme.test", subject: "Follow up", body })
+    const expectedPlain = [
       "Thanks again for the conversation today. As promised, I have attached a revised indicative pricing proposal for the air-gapped on-premises deployment, covering both the minimal self-managed path and a full-support option.",
       "",
-      "Options:",
+      "Options for <Sam> & team:",
       "- Self-managed deployment",
       "- Full-support deployment",
       "",
       "Thanks again!",
       "",
       "Ben",
-    ].join("\n"))
+    ].join("\n")
+    expect(decodeAlternativeBodies(raw)).toEqual({
+      plain: expectedPlain,
+      html: "<div>Thanks again for the conversation today. As promised, I have attached a revised indicative pricing proposal for the air-gapped on-premises deployment, covering both the minimal self-managed path and a full-support option.</div><div><br></div><div>Options for &lt;Sam&gt; &amp; team:</div><div>- Self-managed deployment</div><div>- Full-support deployment</div><div><br></div><div>Thanks again!</div><div><br></div><div>Ben</div>",
+    })
+    expectFoldedBase64Payloads(decodeRaw(raw))
   })
 
   test("strips conservative markdown from prose while preserving structure", () => {
@@ -113,17 +134,12 @@ describe("buildGmailDraftRaw", () => {
     ].join("\n"))
   })
 
-  test("keeps legacy draft output unchanged when optional fields are absent", () => {
+  test("closes the top-level alternative boundary when optional fields are absent", () => {
     const raw = gmail.buildGmailDraftRaw({ to: "sam@acme.test", subject: "Follow up", body: "Hello Sam" })
-    expect(decodeRaw(raw)).toBe([
-      "To: sam@acme.test",
-      "Subject: Follow up",
-      "MIME-Version: 1.0",
-      'Content-Type: text/plain; charset="UTF-8"',
-      "Content-Transfer-Encoding: base64",
-      "",
-      Buffer.from("Hello Sam", "utf8").toString("base64"),
-    ].join("\r\n"))
+    const decoded = decodeRaw(raw)
+    const boundary = decoded.match(/Content-Type: multipart\/alternative; boundary="([^"]+)"/)?.[1]
+    expect(boundary).toStartWith("openwork-alternative-")
+    expect(decoded).toEndWith(`--${boundary}--\r\n`)
   })
 
   test("emits Cc and Bcc header lines exactly when provided", () => {
@@ -186,12 +202,15 @@ describe("buildGmailDraftRaw", () => {
       }],
     }))
     const boundary = decoded.match(/boundary="([^"]+)"/)?.[1]
-    expect(boundary).toStartWith("openwork-")
+    expect(boundary).toStartWith("openwork-mixed-")
     expect(decoded).toContain("Content-Type: multipart/mixed;")
+    expect(decoded).toMatch(/Content-Type: multipart\/mixed;[^]*?\r\n\r\n--openwork-mixed-[^\r\n]+\r\nContent-Type: multipart\/alternative;/)
+    expect(decoded.indexOf('Content-Type: text/plain; charset="UTF-8"')).toBeLessThan(decoded.indexOf('Content-Type: text/html; charset="UTF-8"'))
     expect(decoded).toContain('Content-Type: application/pdf; name="invoice \\"final\\".pdf"')
     expect(decoded).toContain('Content-Disposition: attachment; filename="invoice \\"final\\".pdf"')
     expect(decoded).toContain(Buffer.from("%PDF attachment bytes", "utf8").toString("base64"))
     expect(decoded).toContain(`--${boundary}--\r\n`)
+    expectFoldedBase64Payloads(decoded)
   })
 })
 

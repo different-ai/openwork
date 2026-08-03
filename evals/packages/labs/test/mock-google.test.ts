@@ -152,6 +152,24 @@ async function userinfo(google: MockGoogleHandle, accessToken: string): Promise<
   return body;
 }
 
+async function submitDraft(
+  google: MockGoogleHandle,
+  accessToken: string,
+  message: string,
+  threadId?: string,
+): Promise<void> {
+  const requestMessage: { raw: string; threadId?: string } = {
+    raw: Buffer.from(message, "utf8").toString("base64url"),
+  };
+  if (threadId) requestMessage.threadId = threadId;
+  const response = await fetch(`${google.apiUrl}/gmail/v1/users/me/drafts`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${accessToken}`, "content-type": "application/json" },
+    body: JSON.stringify({ message: requestMessage }),
+  });
+  assert.equal(response.status, 200);
+}
+
 async function createDraft(
   google: MockGoogleHandle,
   accessToken: string,
@@ -168,16 +186,7 @@ async function createDraft(
     "",
     Buffer.from(body, "utf8").toString("base64"),
   ].join("\r\n");
-  const requestMessage: { raw: string; threadId?: string } = {
-    raw: Buffer.from(message, "utf8").toString("base64url"),
-  };
-  if (threadId) requestMessage.threadId = threadId;
-  const response = await fetch(`${google.apiUrl}/gmail/v1/users/me/drafts`, {
-    method: "POST",
-    headers: { authorization: `Bearer ${accessToken}`, "content-type": "application/json" },
-    body: JSON.stringify({ message: requestMessage }),
-  });
-  assert.equal(response.status, 200);
+  await submitDraft(google, accessToken, message, threadId);
 }
 
 test("mock Google issues independent account identities and credential fingerprints", async () => {
@@ -226,4 +235,48 @@ test("mock Google attributes drafts to one mailbox and returns an empty mailbox 
     tokenId: tokenFingerprint(tokensA.accessToken),
     at: draftsA[0]?.at,
   });
+});
+
+test("mock Google decodes text/plain nested inside mixed and alternative MIME", async () => {
+  const account = "jordan@acme.test";
+  await using google = await startMockGoogle({ accounts: [account], port: 0, autoApprove: false });
+  await using callback = await startCallbackLab();
+  const tokens = await authorize(google, callback, account, "client-nested-mime");
+  const plainBody = "Nested multipart body marker";
+  const mixedBoundary = "fixture-mixed";
+  const alternativeBoundary = "fixture-alternative";
+  const message = [
+    "To: archive@acme.test",
+    "Subject: Nested MIME witness",
+    "MIME-Version: 1.0",
+    `Content-Type: multipart/mixed; boundary="${mixedBoundary}"`,
+    "",
+    `--${mixedBoundary}`,
+    `Content-Type: multipart/alternative; boundary="${alternativeBoundary}"`,
+    "",
+    `--${alternativeBoundary}`,
+    'Content-Type: text/plain; charset="UTF-8"',
+    "Content-Transfer-Encoding: base64",
+    "",
+    Buffer.from(plainBody, "utf8").toString("base64"),
+    `--${alternativeBoundary}`,
+    'Content-Type: text/html; charset="UTF-8"',
+    "Content-Transfer-Encoding: base64",
+    "",
+    Buffer.from(`<div>${plainBody}</div>`, "utf8").toString("base64"),
+    `--${alternativeBoundary}--`,
+    `--${mixedBoundary}`,
+    'Content-Type: application/octet-stream; name="witness.bin"',
+    'Content-Disposition: attachment; filename="witness.bin"',
+    "Content-Transfer-Encoding: base64",
+    "",
+    Buffer.from("attachment bytes", "utf8").toString("base64"),
+    `--${mixedBoundary}--`,
+    "",
+  ].join("\r\n");
+
+  await submitDraft(google, tokens.accessToken, message);
+
+  const drafts = await google.draftsFor(account);
+  assert.equal(drafts[0]?.body, plainBody);
 });

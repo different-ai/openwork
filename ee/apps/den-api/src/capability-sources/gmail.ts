@@ -29,6 +29,30 @@ function base64MimeContent(content: Buffer): string {
   return content.toString("base64").match(/.{1,76}/g)?.join("\r\n") ?? ""
 }
 
+function escapeHtml(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+}
+
+function draftBodyHtml(body: string): string {
+  return body.split("\n").map((line) => `<div>${line.length === 0 ? "<br>" : escapeHtml(line)}</div>`).join("")
+}
+
+function alternativeMimeParts(boundary: string, body: string): string[] {
+  return [
+    `--${boundary}`,
+    'Content-Type: text/plain; charset="UTF-8"',
+    "Content-Transfer-Encoding: base64",
+    "",
+    base64MimeContent(Buffer.from(body, "utf8")),
+    `--${boundary}`,
+    'Content-Type: text/html; charset="UTF-8"',
+    "Content-Transfer-Encoding: base64",
+    "",
+    base64MimeContent(Buffer.from(draftBodyHtml(body), "utf8")),
+    `--${boundary}--`,
+  ]
+}
+
 // Generated prose is sometimes hard-wrapped before it reaches Gmail. Those
 // literal breaks become visible after send, especially on narrow screens.
 function normalizeDraftBody(body: string): string {
@@ -99,34 +123,34 @@ export function buildGmailDraftRaw(input: { to: string; cc?: string; bcc?: strin
   ].filter((line) => typeof line === "string")
   const attachments = input.attachments ?? []
   const body = normalizeDraftBody(input.body)
+  const alternativeBoundary = `openwork-alternative-${randomUUID()}`
   const message = attachments.length === 0 ? [
     ...headers,
     "MIME-Version: 1.0",
-    'Content-Type: text/plain; charset="UTF-8"',
-    "Content-Transfer-Encoding: base64",
+    `Content-Type: multipart/alternative; boundary="${alternativeBoundary}"`,
     "",
-    Buffer.from(body, "utf8").toString("base64"),
+    ...alternativeMimeParts(alternativeBoundary, body),
+    "",
   ].join("\r\n") : (() => {
-    const boundary = `openwork-${randomUUID()}`
+    const mixedBoundary = `openwork-mixed-${randomUUID()}`
     return [
       ...headers,
       "MIME-Version: 1.0",
-      `Content-Type: multipart/mixed; boundary="${boundary}"`,
+      `Content-Type: multipart/mixed; boundary="${mixedBoundary}"`,
       "",
-      `--${boundary}`,
-      'Content-Type: text/plain; charset="UTF-8"',
-      "Content-Transfer-Encoding: base64",
+      `--${mixedBoundary}`,
+      `Content-Type: multipart/alternative; boundary="${alternativeBoundary}"`,
       "",
-      Buffer.from(body, "utf8").toString("base64"),
+      ...alternativeMimeParts(alternativeBoundary, body),
       ...attachments.flatMap((attachment) => [
-        `--${boundary}`,
+        `--${mixedBoundary}`,
         `Content-Type: ${attachment.mimeType}; name="${encodeMimeParameter(attachment.filename)}"`,
         `Content-Disposition: attachment; filename="${encodeMimeParameter(attachment.filename)}"`,
         "Content-Transfer-Encoding: base64",
         "",
         base64MimeContent(attachment.content),
       ]),
-      `--${boundary}--`,
+      `--${mixedBoundary}--`,
       "",
     ].join("\r\n")
   })()

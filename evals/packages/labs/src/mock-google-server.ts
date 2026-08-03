@@ -409,19 +409,26 @@ function decodeBase64Body(body: string): string {
   }
 }
 
-function draftBody(headers: string, body: string): string {
+function mimeTextBody(headers: string, body: string): string | null {
   const contentType = headerValue(headers, "content-type");
   const boundary = /boundary="?([^";]+)"?/i.exec(contentType)?.[1] ?? null;
   if (boundary) {
-    const firstPart = body.split(`--${boundary}`).find((part) => part.trim() && !part.trim().startsWith("--")) ?? "";
-    const split = splitMessage(firstPart.replace(/^\r?\n/, ""));
-    return headerValue(split.headers, "content-transfer-encoding").toLowerCase() === "base64"
-      ? decodeBase64Body(split.body)
-      : split.body.trimEnd();
+    for (const part of body.split(`--${boundary}`).slice(1)) {
+      if (!part.trim() || part.trim().startsWith("--")) continue;
+      const split = splitMessage(part.replace(/^\r?\n/, ""));
+      const decoded = mimeTextBody(split.headers, split.body);
+      if (decoded !== null) return decoded;
+    }
+    return null;
   }
+  if (contentType && !contentType.toLowerCase().startsWith("text/plain")) return null;
   return headerValue(headers, "content-transfer-encoding").toLowerCase() === "base64"
     ? decodeBase64Body(body)
     : body.trimEnd();
+}
+
+function draftBody(headers: string, body: string): string {
+  return mimeTextBody(headers, body) ?? "";
 }
 
 function draftInput(value: unknown): { raw: string; threadId?: string } {
