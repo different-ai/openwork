@@ -108,6 +108,7 @@ import { useModelBehavior } from "@/react-app/domains/session/surface/use-model-
 import { useSessionFindStore } from "@/react-app/domains/session/surface/find-store";
 import { useModelPicker } from "@/react-app/domains/session/modals/use-model-picker";
 import { getSessionModelSelection, useSessionModelStore } from "@/react-app/domains/session/surface/session-model-store";
+import { getSessionAgent, useSessionAgentStore } from "@/react-app/domains/session/surface/session-agent-store";
 import { openModelPickerEvent, openProviderAuthEvent } from "@/react-app/shell/new-providers-listener";
 import { appMentionInstruction } from "@/react-app/domains/session/surface/composer/app-mentions";
 import { decodeComposerMentionValue } from "@/react-app/domains/session/surface/composer/mention-encoding";
@@ -574,14 +575,24 @@ export function SessionRoute() {
   const effectiveCloudMcpSubmissionState = cloudMcpAppSubmissionBlocked(cloudMcpAppSubmissionState)
     ? cloudMcpAppSubmissionState
     : cloudMcpSubmissionState;
-  // Agent selection is persisted in local prefs (like the model variant) so
-  // it survives reloads instead of silently falling back to "build" (#2101).
-  const selectedAgent = local.prefs.selectedAgent;
+  // Agent selection is per-session (keyed by sessionId in localStorage) so
+  // switching between sessions restores each session's own agent (#3461).
+  // When no session is selected (empty-state new-task composer), fall back to
+  // the global pref so the user's last new-session choice is preserved across
+  // reloads (#2101).
+  const sessionAgentMap = useSessionAgentStore((state) => state.bySessionId);
+  const selectedAgent = selectedSessionId
+    ? (sessionAgentMap[selectedSessionId] ?? null)
+    : local.prefs.selectedAgent;
   const setSelectedAgent = useCallback(
     (agent: string | null) => {
-      local.setPrefs((previous) => ({ ...previous, selectedAgent: agent }));
+      if (selectedSessionId) {
+        useSessionAgentStore.getState().setAgent(selectedSessionId, agent);
+      } else {
+        local.setPrefs((previous) => ({ ...previous, selectedAgent: agent }));
+      }
     },
-    [local.setPrefs],
+    [selectedSessionId, local.setPrefs],
   );
   // One-way latch for "a refreshRouteState is currently running"; prevents
   // overlapping route refreshes from queueing up when the user clicks fast.
