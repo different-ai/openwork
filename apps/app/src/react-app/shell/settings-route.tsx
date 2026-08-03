@@ -328,6 +328,7 @@ export function parseSettingsPath(pathname: string): {
         || tail === "plugins"
         || tail === "needs-sign-in"
         || tail === "needs-admin-setup"
+        || tail === "ready"
       ) {
         return { tab: "extensions", redirectPath: null, extensionsSection: tail };
       }
@@ -1787,7 +1788,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         }]
       : [],
   );
-  const mcpConnectedAppsCount = connectionsSnapshot.mcpServers.length;
   const openworkCloudMcpUrl = connectionsSnapshot.mcpServers.find(
     (server) => server.name === "openwork-cloud",
   )?.config.url ?? null;
@@ -2354,7 +2354,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             accessHint={pluginsAccessHint}
             suggestedPlugins={SUGGESTED_PLUGINS}
             extensions={extensionsStore}
-            mcpConnectedAppsCount={mcpConnectedAppsCount}
             initialSection={route.extensionsSection}
             detailId={route.extensionDetailId ?? null}
             onDetailIdChange={(id) => {
@@ -2443,7 +2442,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                 onStateChange={onStateChange}
                 detailId={detailId}
                 onDetailIdChange={onDetailIdChange}
-                showHeader={false}
               />
             )}
 

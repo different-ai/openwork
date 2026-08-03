@@ -130,7 +130,6 @@ export type McpViewProps = {
   /** Read skill content by name. */
   readSkill?: (name: string) => Promise<{ content: string } | null>;
   readConfigFile?: (scope: "project" | "global") => Promise<OpencodeConfigFile | null>;
-  showHeader?: boolean;
   mcpServers: McpServerEntry[];
   mcpStatus: string | null;
   mcpLastUpdatedAt: number | null;
@@ -347,7 +346,6 @@ function resolveExtensionDetailTarget(
 }
 
 export function McpView(props: McpViewProps) {
-  const showHeader = props.showHeader !== false;
   const skillCount = props.installedSkills?.length ?? 0;
   const useRoutedDetail = typeof props.onDetailIdChange === "function";
   const [detailTarget, setDetailTarget] = useState<ExtensionDetailTarget | null>(null);
@@ -363,6 +361,11 @@ export function McpView(props: McpViewProps) {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<ExtensionInventoryFilter>(props.initialFilter ?? "all");
   const [inventoryState, setInventoryState] = useState<ExtensionInventoryState>(props.initialState ?? "all");
+  const [inventoryStateCounts, setInventoryStateCounts] = useState<InventoryStateCounts>({
+    needs_signin: 0,
+    needs_admin_setup: 0,
+    ready: 0,
+  });
   const [showHidden, setShowHidden] = useState(false);
   const [layout, setLayout] = useState<ExtensionLayout>(readExtensionLayout);
   const [claudeImportOpen, setClaudeImportOpen] = useState(false);
@@ -657,9 +660,6 @@ export function McpView(props: McpViewProps) {
     return resolved?.status ?? "disconnected";
   };
 
-  const connectedCount = props.mcpServers.filter(
-    (entry) => resolveStatus(entry) === "connected",
-  ).length;
   const hiddenCount = quickConnectList.filter((entry) => isOpenWorkExtensionHidden(entry)).length +
     (props.installedSkills ?? []).filter((skill) => isOpenWorkExtensionHidden(getSkillHiddenId(skill))).length +
     (props.installedPlugins ?? []).filter((plugin) => isOpenWorkExtensionHidden(`plugin:${plugin.pluginId}`)).length;
@@ -667,11 +667,6 @@ export function McpView(props: McpViewProps) {
     ? quickConnectList.filter((entry) => isBuiltInOpenWorkExtension(entry) && !isOpenWorkExtensionHidden(entry)).length
     : 0;
   const hiddenOrPolicyCount = hiddenCount + policyHiddenBuiltInCount;
-  const inventoryStateCounts = countInventoryStates(
-    availableConnectMcpServers,
-    props.availableConnectMcpStatuses ?? {},
-    orgMcpItems,
-  );
 
   const requestLogout = (name: string) => {
     if (!name.trim()) return;
@@ -931,10 +926,6 @@ export function McpView(props: McpViewProps) {
 
   return (
     <section className="space-y-8 max-w-3xl w-full animate-in fade-in duration-300">
-      {showHeader ? (
-        <McpViewHeader connectedCount={connectedCount} />
-      ) : null}
-
       {props.mcpStatus ? (
         <div className="whitespace-pre-wrap wrap-break-word rounded-xl border border-dls-border bg-dls-hover px-4 py-3 text-xs text-dls-secondary">
           {props.mcpStatus}
@@ -951,6 +942,7 @@ export function McpView(props: McpViewProps) {
         state={inventoryState}
         needsSigninCount={inventoryStateCounts.needs_signin}
         needsAdminSetupCount={inventoryStateCounts.needs_admin_setup}
+        readyCount={inventoryStateCounts.ready}
         onChange={setInventoryStateFilter}
       />
 
@@ -1032,6 +1024,7 @@ export function McpView(props: McpViewProps) {
         layout={layout}
         filter={filter}
         state={inventoryState}
+        onStateCountsChange={setInventoryStateCounts}
         installedPlugins={
           installedPlugins.filter((plugin) => {
             if (!showHidden && isOpenWorkExtensionHidden(`plugin:${plugin.pluginId}`)) return false;
@@ -1182,23 +1175,6 @@ export function McpView(props: McpViewProps) {
   );
 }
 
-function McpViewHeader(props: { connectedCount: number }) {
-  return (
-    <div>
-      <h2 className="text-3xl font-semibold text-dls-text">{t("mcp.apps_title")}</h2>
-      <p className="mt-1.5 text-sm text-dls-secondary">{t("mcp.apps_subtitle")}</p>
-      {props.connectedCount > 0 ? (
-        <div className="mt-3 inline-flex items-center gap-2 rounded-full bg-green-3 px-3 py-1">
-          <div className="size-2 rounded-full bg-green-9" />
-          <span className="text-xs font-medium text-green-11">
-            {props.connectedCount} {props.connectedCount === 1 ? t("mcp.app_connected") : t("mcp.apps_connected")}
-          </span>
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
 const inventoryGroupOrder: ExtensionInventoryGroup[] = [
   "needs_signin",
   "needs_admin_setup",
@@ -1226,30 +1202,28 @@ function connectMcpInventoryGroup(entry: McpServerEntry, statuses: McpStatusMap)
   return statuses[entry.id ?? entry.name]?.status === "connected" ? "ready" : "needs_signin";
 }
 
-function countInventoryStates(
-  connectMcps: McpServerEntry[],
-  statuses: McpStatusMap,
-  orgMcpItems: ExtensionItem[],
-) {
-  let needsSignin = 0;
-  let needsAdminSetup = 0;
-  const countGroup = (group: ExtensionInventoryGroup) => {
-    if (group === "needs_signin") needsSignin += 1;
-    if (group === "needs_admin_setup") needsAdminSetup += 1;
+type InventoryStateCounts = Record<Exclude<ExtensionInventoryState, "all">, number>;
+
+export function countInventoryCardGroups(groups: ExtensionInventoryGroup[]): InventoryStateCounts {
+  return {
+    needs_signin: groups.filter((group) => group === "needs_signin").length,
+    needs_admin_setup: groups.filter((group) => group === "needs_admin_setup").length,
+    ready: groups.filter((group) => group === "ready").length,
   };
-
-  connectMcps.forEach((entry) => countGroup(connectMcpInventoryGroup(entry, statuses)));
-  orgMcpItems.filter(isOrgMcpConnectionItem).forEach((item) => {
-    countGroup(resolveExtensionInventoryGroup(item));
-  });
-
-  return { needs_signin: needsSignin, needs_admin_setup: needsAdminSetup };
 }
 
-function ExtensionStateTabs(props: {
+export function filterInventoryCardsByState<T extends { group: ExtensionInventoryGroup }>(
+  cards: T[],
+  state: Exclude<ExtensionInventoryState, "all">,
+) {
+  return cards.filter((card) => card.group === state);
+}
+
+export function ExtensionStateTabs(props: {
   state: ExtensionInventoryState;
   needsSigninCount: number;
   needsAdminSetupCount: number;
+  readyCount: number;
   onChange: (state: ExtensionInventoryState) => void;
 }) {
   const tabs = [
@@ -1265,6 +1239,12 @@ function ExtensionStateTabs(props: {
       label: t("extensions.state_needs_admin_setup"),
       count: props.needsAdminSetupCount,
       countClassName: "bg-red-3 text-red-11",
+    },
+    {
+      state: "ready",
+      label: t("connect.group_ready"),
+      count: props.readyCount,
+      countClassName: "bg-gray-3 text-gray-11",
     },
   ] satisfies Array<{
     state: ExtensionInventoryState;
@@ -1359,6 +1339,7 @@ function McpQuickConnectSection(props: {
   layout: ExtensionLayout;
   filter: ExtensionInventoryFilter;
   state: ExtensionInventoryState;
+  onStateCountsChange: (counts: InventoryStateCounts) => void;
   installedPlugins?: CloudImportedPlugin[];
   orgMcpItems?: ExtensionItem[];
   organizationName?: string | null;
@@ -1540,12 +1521,17 @@ function McpQuickConnectSection(props: {
     });
   }
 
+  const stateCounts = countInventoryCardGroups(cards.map((card) => card.group));
+  useEffect(() => {
+    props.onStateCountsChange(stateCounts);
+  }, [props.onStateCountsChange, stateCounts.needs_signin, stateCounts.needs_admin_setup, stateCounts.ready]);
+
   const grouped = inventoryGroupOrder
     .map((group) => ({ group, cards: cards.filter((card) => card.group === group) }))
     .filter((entry) => entry.cards.length > 0);
   const stateCards = props.state === "all"
     ? []
-    : cards.filter((card) => card.group === props.state);
+    : filterInventoryCardsByState(cards, props.state);
   const hasCards = props.state === "all" ? grouped.length > 0 : stateCards.length > 0;
   const organizationName = props.organizationName?.trim() || "your organization";
   const stateCaption = props.state === "needs_signin"
