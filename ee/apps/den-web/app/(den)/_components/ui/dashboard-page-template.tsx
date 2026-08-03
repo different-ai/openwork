@@ -27,6 +27,8 @@ export type DashboardPageTemplateProps = {
   }>;
   /** Short label rendered as a frosted pill badge beside the title. Omit to hide. */
   badgeLabel?: string;
+  /** Optional content rendered beside the badge inside the gradient band. */
+  badgeCompanion?: ReactNode;
   /** Page heading rendered large inside the card */
   title: string;
   /** One-liner rendered in gray below the card, above children */
@@ -45,6 +47,7 @@ export type DashboardPageTemplateProps = {
 
 export function DashboardPageTemplate({
   badgeLabel,
+  badgeCompanion,
   title,
   description,
   colors,
@@ -88,6 +91,7 @@ export function DashboardPageTemplate({
               {badgeLabel}
             </span>
           ) : null}
+          {badgeCompanion}
         </div>
       </div>
 
