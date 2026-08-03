@@ -33,6 +33,8 @@ Useful environment overrides:
 - `TENKI_PREVIEW_SLUG` - optional stable slug for the preview URL.
 - `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `OPENROUTER_API_KEY` - forwarded into the server environment when set, so the managed OpenCode engine can run prompts.
 
+Security note: the server runs with `OPENWORK_APPROVAL_MODE=auto`, so anyone holding the client token gets auto-approved command execution inside the sandbox - including use of any forwarded provider keys. The preview URL is publicly reachable; treat the printed tokens as secrets (for example, don't run this in CI where stdout is a public log).
+
 ## Typecheck
 
 ```bash

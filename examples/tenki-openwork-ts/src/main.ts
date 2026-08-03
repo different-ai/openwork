@@ -2,7 +2,12 @@ import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { setTimeout as sleep } from "node:timers/promises";
 
-import { TenkiSandbox, type ProcessRunHandle, type Session } from "@tenkicloud/sandbox";
+import {
+  TenkiSandbox,
+  WaitReadyFailedError,
+  type ProcessRunHandle,
+  type Session,
+} from "@tenkicloud/sandbox";
 
 // Guest layout. Tenki sandboxes run as the `tenki` user with this home directory.
 const GUEST_HOME = "/home/tenki";
@@ -34,12 +39,22 @@ async function resolveConfig(): Promise<Config> {
   return {
     serverVersion: process.env.OPENWORK_SERVER_VERSION?.trim() || "latest",
     opencodeVersion: process.env.OPENCODE_VERSION?.trim() || (await repoOpencodeVersion()),
-    port: Number(process.env.OPENWORK_PORT ?? "8787"),
+    port: resolvePort(),
     clientToken: process.env.OPENWORK_TOKEN?.trim() || randomUUID(),
     hostToken: process.env.OPENWORK_HOST_TOKEN?.trim() || randomUUID(),
     keepAlive: process.env.OPENWORK_TENKI_KEEP_ALIVE === "1",
     previewSlug: process.env.TENKI_PREVIEW_SLUG?.trim() || undefined,
   };
+}
+
+function resolvePort(): number {
+  const raw = process.env.OPENWORK_PORT?.trim();
+  if (!raw) return 8787;
+  const port = Number(raw);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error(`invalid OPENWORK_PORT: "${raw}"`);
+  }
+  return port;
 }
 
 /** Default OpenCode version comes from the repo-root constants.json pin. */
@@ -73,18 +88,37 @@ function request(url: string, init?: RequestInit): Promise<Response> {
   return fetch(url, { ...init, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
 }
 
+/**
+ * Local deadline for guest commands: @tenkicloud/sandbox 0.5.4 declares
+ * ExecOptions.timeoutMs but does not apply it, so we enforce one here. On
+ * timeout the guest process may keep running, which is fine because the
+ * sandbox is terminated right after.
+ */
+async function withDeadline<T>(work: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms} ms`)), ms);
+  });
+  try {
+    return await Promise.race([work, deadline]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function provisionScript(config: Config): string {
   return `
 set -eu
 mkdir -p '${GUEST_DIR}/bin' '${WORKSPACE_DIR}'
-npm install --prefix '${GUEST_DIR}' --no-fund --no-audit 'openwork-server@${config.serverVersion}'
 arch="$(uname -m)"
-case "$arch" in
-  x86_64) asset="opencode-linux-x64-baseline.tar.gz" ;;
-  aarch64) asset="opencode-linux-arm64.tar.gz" ;;
-  *) echo "unsupported architecture: $arch" >&2; exit 1 ;;
-esac
+if [ "$arch" != "x86_64" ]; then
+  # The published openwork-server npm package ships a single x86_64 binary.
+  echo "unsupported architecture: $arch" >&2
+  exit 1
+fi
+npm install --prefix '${GUEST_DIR}' --no-fund --no-audit 'openwork-server@${config.serverVersion}'
 tmpdir="$(mktemp -d)"
+asset="opencode-linux-x64-baseline.tar.gz"
 curl -fsSL "https://github.com/anomalyco/opencode/releases/download/${config.opencodeVersion}/$asset" -o "$tmpdir/$asset"
 tar -xzf "$tmpdir/$asset" -C "$tmpdir"
 binary="$(find "$tmpdir" -type f -name opencode | head -n 1)"
@@ -121,14 +155,20 @@ function streamLogs(handle: ProcessRunHandle): void {
   const pump = async (stream: ReadableStream<Uint8Array>, sink: NodeJS.WriteStream): Promise<void> => {
     const decoder = new TextDecoder();
     const reader = stream.getReader();
+    let pending = "";
+    const emit = (line: string): void => {
+      if (line.trim().length > 0) sink.write(`[openwork] ${line}\n`);
+    };
     try {
       for (;;) {
         const { done, value } = await reader.read();
         if (done) break;
-        for (const line of decoder.decode(value).split("\n")) {
-          if (line.trim().length > 0) sink.write(`[openwork] ${line}\n`);
-        }
+        pending += decoder.decode(value, { stream: true });
+        const lines = pending.split("\n");
+        pending = lines.pop() ?? "";
+        for (const line of lines) emit(line);
       }
+      emit(pending + decoder.decode());
     } finally {
       reader.releaseLock();
     }
@@ -201,28 +241,30 @@ async function main(): Promise<void> {
   const config = await resolveConfig();
   const sandbox = new TenkiSandbox(); // reads TENKI_API_KEY / TENKI_AUTH_TOKEN
 
-  const startedAt = Date.now();
-  console.log("Creating Tenki sandbox...");
-  const session: Session = await sandbox.create({
-    name: "openwork-example",
-    cpuCores: 2,
-    memoryMb: 4096,
-    diskSizeGb: 10,
-    allowInbound: true,
-    allowOutbound: true,
-    maxDurationMs: (config.keepAlive ? 120 : 30) * 60 * 1000,
-    idleTimeoutMinutes: config.keepAlive ? 60 : 15,
-    tags: ["openwork-example"],
-  });
-  const sandboxReadyMs = Date.now() - startedAt;
-  console.log(`Sandbox ${session.id} running (${sandboxReadyMs} ms).`);
-
+  let pendingCreate: Promise<Session> | undefined;
+  let session: Session | undefined;
   let serverHandle: ProcessRunHandle | undefined;
-  const shutdown = async (): Promise<void> => {
-    await serverHandle?.kill().catch(() => undefined);
-    await session.closeIfOpen();
-    console.log(`Sandbox ${session.id} terminated.`);
+  let shuttingDown = false;
+
+  // Memoized so the signal handlers and the finally block never double-terminate.
+  let shutdownPromise: Promise<void> | undefined;
+  const shutdown = (): Promise<void> => {
+    shutdownPromise ??= (async () => {
+      shuttingDown = true;
+      if (serverHandle) await serverHandle.kill().catch(() => undefined);
+      const active = session ?? (await pendingCreate?.then(
+        (created) => created,
+        () => undefined,
+      ));
+      if (active) {
+        await active.closeIfOpen();
+        console.log(`Sandbox ${active.id} terminated.`);
+      }
+    })();
+    return shutdownPromise;
   };
+
+  // Installed before create() so Ctrl+C during sandbox creation still cleans up.
   process.once("SIGINT", () => {
     console.log("\nInterrupted; terminating sandbox...");
     void shutdown().finally(() => process.exit(130));
@@ -232,15 +274,43 @@ async function main(): Promise<void> {
   });
 
   try {
+    const startedAt = Date.now();
+    console.log("Creating Tenki sandbox...");
+    pendingCreate = sandbox.create({
+      name: "openwork-example",
+      cpuCores: 2,
+      memoryMb: 4096,
+      diskSizeGb: 10,
+      allowInbound: true,
+      allowOutbound: true,
+      maxDurationMs: (config.keepAlive ? 120 : 30) * 60 * 1000,
+      idleTimeoutMinutes: config.keepAlive ? 60 : 15,
+      tags: ["openwork-example"],
+    });
+    try {
+      session = await pendingCreate;
+    } catch (error) {
+      // A readiness-wait failure still carries a live session; terminate it.
+      if (error instanceof WaitReadyFailedError && error.session) {
+        await error.session.closeIfOpen().catch(() => undefined);
+      }
+      throw error;
+    }
+    const sandboxReadyMs = Date.now() - startedAt;
+    console.log(`Sandbox ${session.id} running (${sandboxReadyMs} ms).`);
+
     console.log(`Installing openwork-server@${config.serverVersion} and OpenCode ${config.opencodeVersion}...`);
     const provisionStartedAt = Date.now();
-    const provision = await session.exec("bash", {
-      args: ["-c", provisionScript(config)],
-      timeoutMs: PROVISION_TIMEOUT_MS,
-      onOutput: (output) => {
-        (output.isStderr ? process.stderr : process.stdout).write(output.data);
-      },
-    });
+    const provision = await withDeadline(
+      session.exec("bash", {
+        args: ["-c", provisionScript(config)],
+        onOutput: (output) => {
+          (output.isStderr ? process.stderr : process.stdout).write(output.data);
+        },
+      }),
+      PROVISION_TIMEOUT_MS,
+      "provisioning",
+    );
     if (provision.exitCode !== 0) {
       throw new Error(`provisioning failed with exit code ${provision.exitCode}`);
     }
@@ -249,8 +319,21 @@ async function main(): Promise<void> {
     console.log("Starting OpenWork server...");
     const serverStartedAt = Date.now();
     serverHandle = session.run([SERVER_BIN, "--verbose"], { env: serverEnv(config) });
-    void Promise.resolve(serverHandle).catch(() => undefined);
     streamLogs(serverHandle);
+
+    // Surfaces a crashed or terminated server instead of hanging on health
+    // polls (or forever in keep-alive mode). Quiet once shutdown started.
+    const serverExitMessage: Promise<string> = Promise.resolve(serverHandle).then(
+      (result) => `openwork-server exited early with code ${result.exitCode}${result.reason ? ` (${result.reason})` : ""}`,
+      (error) => `openwork-server run stream failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    const failOnServerExit = <T>(work: Promise<T>): Promise<T> => {
+      const failure = serverExitMessage.then(async (message) => {
+        if (shuttingDown) return new Promise<never>(() => {});
+        throw new Error(message);
+      });
+      return Promise.race([work, failure]);
+    };
 
     const exposed = await session.exposePort(config.port, {
       ...(config.previewSlug ? { slug: config.previewSlug } : {}),
@@ -258,10 +341,10 @@ async function main(): Promise<void> {
     const baseUrl = exposed.previewUrl.replace(/\/+$/, "");
     console.log(`Port ${config.port} exposed at ${baseUrl}`);
 
-    await waitForHealth(baseUrl);
+    await failOnServerExit(waitForHealth(baseUrl));
     const serverReadyMs = Date.now() - serverStartedAt;
 
-    await runSmokeChecks(baseUrl, config.clientToken);
+    await failOnServerExit(runSmokeChecks(baseUrl, config.clientToken));
     const totalMs = Date.now() - startedAt;
 
     console.log("");
@@ -279,9 +362,11 @@ async function main(): Promise<void> {
     if (config.keepAlive) {
       console.log("");
       console.log("Keep-alive mode: press Ctrl+C to terminate the sandbox.");
-      await new Promise<never>(() => {
-        // Resolved never; SIGINT/SIGTERM handlers terminate the sandbox.
-      });
+      await failOnServerExit(
+        new Promise<never>(() => {
+          // Resolved never; SIGINT/SIGTERM handlers terminate the sandbox.
+        }),
+      );
     }
   } finally {
     await shutdown();
