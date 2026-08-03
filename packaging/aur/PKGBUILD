@@ -10,10 +10,10 @@ options=(!strip)
 
 # Architecture-specific sources and checksums
 source_x86_64=("${pkgname}-${pkgver}-x64.tar.gz::${url}/releases/download/v${pkgver}/openwork-linux-x64-${pkgver}.tar.gz")
-sha256sums_x86_64=('c2a578f59219ed0afcc2927e3f7d3941b0b1a320b7e0e76364b6e4e90a1dc941')
+sha256sums_x86_64=('424ea956286a3a055125aff3e8b35f3f6b8201d3bdda2e8f9f92f4c49c4a250e')
 
 source_aarch64=("${pkgname}-${pkgver}-arm64.tar.gz::${url}/releases/download/v${pkgver}/openwork-linux-arm64-${pkgver}.tar.gz")
-sha256sums_aarch64=('47599cfcff65c288292c6f6d31b539fd328b668d435ff63f3c2c21ffee7c85c6')
+sha256sums_aarch64=('8228ae62da22dde794d726b787c9fedefb53e807424ae38b7f80c6fb01775d71')
 
 package() {
   cd "${srcdir}"
