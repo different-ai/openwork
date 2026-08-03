@@ -14,9 +14,7 @@ const appSidebarPath = fileURLToPath(
 const sessionPagePath = fileURLToPath(
   new URL("../src/react-app/domains/session/chat/session-page.tsx", import.meta.url),
 );
-const generalSettingsPath = fileURLToPath(
-  new URL("../src/react-app/domains/settings/pages/general-view.tsx", import.meta.url),
-);
+
 
 describe("Extensions sidebar destination", () => {
   test("exposes its label, keyboard button, and active page state", () => {
@@ -59,13 +57,13 @@ describe("Extensions sidebar destination", () => {
 });
 
 describe("Extensions main page", () => {
-  test("uses the main content header and is absent from Settings navigation", () => {
+  test("uses the main content header and is listed in Settings navigation", () => {
     const sessionPageSource = readFileSync(sessionPagePath, "utf8");
-    const generalSettingsSource = readFileSync(generalSettingsPath, "utf8");
 
     expect(sessionPageSource).toContain("props.mainContentTitle");
     expect(sessionPageSource).toContain("<h1");
-    expect(getWorkspaceSettingsTabs()).not.toContain("extensions");
-    expect(generalSettingsSource).not.toContain('{ tab: "extensions"');
+    // The Library is intentionally reachable both standalone and inside the
+    // Settings pane (feat: Library inside the Settings pane).
+    expect(getWorkspaceSettingsTabs()).toContain("extensions");
   });
 });
