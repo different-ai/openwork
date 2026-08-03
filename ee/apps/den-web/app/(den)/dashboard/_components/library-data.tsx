@@ -38,6 +38,7 @@ export type LibraryConnectionItem = {
   type: "connection";
   id: string;
   name: string;
+  url: string;
   description: string | null;
   transport: "mcp" | "native";
   provider: string | null;
@@ -170,6 +171,7 @@ function parsePlugin(value: Record<string, unknown>): LibraryPluginItem | null {
 function parseConnection(value: Record<string, unknown>): LibraryConnectionItem | null {
   const id = readString(value.id);
   const name = readString(value.name);
+  const url = readString(value.url);
   const description = readNullableString(value.description);
   const transport = readTransport(value.transport);
   const provider = readNullableString(value.provider);
@@ -179,6 +181,7 @@ function parseConnection(value: Record<string, unknown>): LibraryConnectionItem 
   if (
     !id
     || !name
+    || !url
     || description === undefined
     || !transport
     || provider === undefined
@@ -192,6 +195,7 @@ function parseConnection(value: Record<string, unknown>): LibraryConnectionItem 
     type: "connection",
     id,
     name,
+    url,
     description,
     transport,
     provider,

@@ -736,6 +736,7 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
             marketplaceId: body.marketplaceId,
             name: body.name,
             orgWide: body.orgWide,
+            sourceRepositoryUrl: body.sourceRepositoryUrl,
           }),
         }, 201)
       } catch (error) {

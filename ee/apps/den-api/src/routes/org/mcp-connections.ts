@@ -1052,6 +1052,7 @@ async function toConnectionResponse(
 export type MemberUsableConnectionFacts = {
   id: string
   name: string
+  url: string
   nativeProviderKey: string | null
   credentialMode: "shared" | "per_member"
   connected: boolean

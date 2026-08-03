@@ -2438,6 +2438,7 @@ export async function listMeLibraryConnectionItems(input: {
       type: "connection",
       id: connection.id,
       name: connection.name,
+      url: connection.url,
       description: null,
       transport: connection.nativeProviderKey !== null ? "native" : "mcp",
       provider: connection.nativeProviderKey,
@@ -2598,6 +2599,7 @@ export async function createPluginBundle(input: {
   marketplaceId?: MarketplaceId
   name: string
   orgWide?: boolean
+  sourceRepositoryUrl?: string | null
 }) {
   if (input.orgWide === true && !isPluginArchOrgAdmin(input.context)) {
     throw new PluginArchAuthorizationError(403, "forbidden", "Only organization owners and admins can create org-wide plugins.")
@@ -2612,7 +2614,7 @@ export async function createPluginBundle(input: {
     await ensureEditableMarketplace(input.context, input.marketplaceId)
   }
 
-  const plugin = await createPlugin({ context: input.context, description: input.description, name: input.name })
+  const plugin = await createPlugin({ context: input.context, description: input.description, name: input.name, sourceRepositoryUrl: input.sourceRepositoryUrl })
 
   for (const component of input.components ?? []) {
     const configObject = await createConfigObject({

@@ -178,6 +178,7 @@ test.skipIf(!apiUrl || !webUrl)(title, async () => {
     },
     body: JSON.stringify({
       name: pluginName,
+      sourceRepositoryUrl: "https://github.com/anthropics/knowledge-work-plugins",
       components: [{ type: "skill", input: { rawSourceText } }],
     }),
   });
@@ -321,6 +322,7 @@ test.skipIf(!apiUrl || !webUrl)(title, async () => {
            && text.includes(${JSON.stringify(pluginName)})
            && Boolean(connectionRow)
            && tabs.some((label) => label.startsWith("Needs your sign-in"))
+           && tabs.some((label) => label.startsWith("Ready to use"))
            && signInCaption?.textContent?.trim() === "NEEDS YOUR SIGN-IN"
            && fromFacet
            && [...document.querySelectorAll("[data-library-source]")].some((entry) =>
@@ -360,6 +362,7 @@ test.skipIf(!apiUrl || !webUrl)(title, async () => {
     const filters = document.querySelector('[aria-label="Library filters"]');
     return tabs.some((label) => label === "All")
       && tabs.some((label) => label.startsWith("Needs your sign-in"))
+      && tabs.some((label) => label.startsWith("Ready to use"))
       && !tabs.some((label) => label === "Mine" || label === "Shared with me")
       && Boolean(filters && (filters.textContent ?? "").includes("From ·"));
   })()`);
@@ -395,6 +398,20 @@ test.skipIf(!apiUrl || !webUrl)(title, async () => {
       && pluginChipCount === 1;
   })()`);
   expect(absorbedBoilerplateAndChipLanes).toBe(true);
+  await waitFor(browser, `(() => {
+    const pluginRow = [...document.querySelectorAll('[data-library-item-type="plugin"]')]
+      .find((entry) => (entry.textContent ?? "").includes(${JSON.stringify(pluginName)}));
+    return Boolean(pluginRow && [...pluginRow.querySelectorAll('img')]
+      .some((image) => image.src.includes("github.com/anthropics.png")));
+  })()`, { timeoutMs: 30_000, label: "GitHub owner avatar on the spec plugin row" });
+  const pluginChipIsNeutral = await evalIn(browser, `(() => {
+    const pluginRow = [...document.querySelectorAll('[data-library-item-type="plugin"]')]
+      .find((entry) => (entry.textContent ?? "").includes(${JSON.stringify(pluginName)}));
+    const kindChip = pluginRow?.querySelector('[data-library-chip]');
+    return kindChip instanceof HTMLElement
+      && getComputedStyle(kindChip).backgroundColor !== "rgb(254, 243, 199)";
+  })()`);
+  expect(pluginChipIsNeutral).toBe(true);
 
   const needsSignInTabClicked = await evalIn(browser, `(() => {
     const tab = [...document.querySelectorAll('[role="tab"]')]
@@ -425,6 +442,34 @@ test.skipIf(!apiUrl || !webUrl)(title, async () => {
     label: "ready plugin rows after returning to the All state tab",
   });
 
+  const readyTabClicked = await evalIn(browser, `(() => {
+    const tab = [...document.querySelectorAll('[role="tab"]')]
+      .find((entry) => (entry.textContent ?? "").trim().startsWith("Ready to use"));
+    if (!(tab instanceof HTMLElement)) return false;
+    tab.click();
+    return true;
+  })()`);
+  expect(readyTabClicked).toBe(true);
+  await waitFor(browser, `(() => {
+    const rows = [...document.querySelectorAll('[data-library-item-type]')];
+    return rows.length > 0
+      && Boolean(document.querySelector('[data-library-item-type="plugin"]'))
+      && !rows.some((entry) => entry.getAttribute("data-library-item-state") === "needs_signin");
+  })()`, { timeoutMs: 60_000, label: "only ready rows after selecting the ready-to-use state tab" });
+  const allTabRestored = await evalIn(browser, `(() => {
+    const tab = [...document.querySelectorAll('[role="tab"]')]
+      .find((entry) => (entry.textContent ?? "").trim() === "All");
+    if (!(tab instanceof HTMLElement)) return false;
+    tab.click();
+    return true;
+  })()`);
+  expect(allTabRestored).toBe(true);
+  await waitFor(browser, `Boolean([...document.querySelectorAll('[data-library-item-type="connection"]')]
+    .find((entry) => (entry.textContent ?? "").includes(${JSON.stringify(connection.name)})))`, {
+    timeoutMs: 60_000,
+    label: "needs-sign-in connection after returning to All",
+  });
+
   const mcpFilterClicked = await evalIn(browser, `(() => {
     const filter = [...document.querySelectorAll('[aria-label="Library filters"] button')]
       .find((entry) => /^MCPs · \\d+$/.test((entry.textContent ?? "").trim()));
@@ -450,7 +495,7 @@ test.skipIf(!apiUrl || !webUrl)(title, async () => {
   expect(connectionScrolledIntoView).toBe(true);
   await new Promise((resolve) => setTimeout(resolve, 250));
 
-  await using roll = photoRoll("library-f16");
+  await using roll = photoRoll("library-logos");
   await evalIn(browser, `document.querySelector("[data-dashboard-hero]")?.scrollIntoView({ block: "start" })`);
   await new Promise((resolve) => setTimeout(resolve, 250));
   const desktopHeaderShot = await screenshot(browser);
@@ -466,7 +511,7 @@ test.skipIf(!apiUrl || !webUrl)(title, async () => {
   await new Promise((resolve) => setTimeout(resolve, 250));
   const desktopShot = await screenshot(browser);
   const desktopSeen = await validate(desktopShot, [
-    "Rows form aligned lanes with a single kind chip each and a quiet right-hand source column",
+    "Rows show logo or monogram tiles in aligned lanes with neutral kind chips and a quiet right-hand source column",
     "An amber needs-sign-in row shows a dark Sign in button under a NEEDS YOUR SIGN-IN caption",
   ]);
   await roll.add(desktopShot, desktopSeen);

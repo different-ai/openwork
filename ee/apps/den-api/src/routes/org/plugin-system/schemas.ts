@@ -226,6 +226,7 @@ export const pluginCreateComponentSchema = z.object({
 export const pluginCreateSchema = z.object({
   name: z.string().trim().min(1).max(255),
   description: nullableStringSchema.optional(),
+  sourceRepositoryUrl: z.string().trim().min(1).max(1024).optional(),
   components: z.array(pluginCreateComponentSchema).max(100).optional(),
   orgWide: z.boolean().optional(),
   marketplaceId: marketplaceIdSchema.optional(),
@@ -541,6 +542,7 @@ export const libraryItemSchema = z.discriminatedUnion("type", [
     type: z.literal("connection"),
     id: z.string().trim().min(1),
     name: z.string().trim().min(1).max(255),
+    url: z.string(),
     description: nullableStringSchema,
     transport: z.enum(["mcp", "native"]),
     provider: z.string().trim().min(1).nullable(),

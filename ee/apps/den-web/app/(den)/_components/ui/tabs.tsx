@@ -7,6 +7,7 @@ export type TabItem<T extends string> = {
   label: string;
   icon?: ElementType<{ className?: string }>;
   count?: number;
+  countClassName?: string;
 };
 
 type UnderlineTabsProps<T extends string> = {
@@ -28,7 +29,7 @@ export function UnderlineTabs<T extends string>({
   return (
     <div className={`border-b border-gray-200 ${className}`}>
       <nav className="-mb-px flex flex-wrap gap-6" role="tablist">
-        {tabs.map(({ value, label, icon: Icon, count }) => {
+        {tabs.map(({ value, label, icon: Icon, count, countClassName }) => {
           const selected = activeTab === value;
           return (
             <button
@@ -53,7 +54,7 @@ export function UnderlineTabs<T extends string>({
                       : selected
                         ? "bg-gray-100 text-gray-600"
                         : "bg-gray-100 text-gray-400"
-                  }`}
+                  } ${countClassName ?? ""}`}
                 >
                   {count}
                 </span>

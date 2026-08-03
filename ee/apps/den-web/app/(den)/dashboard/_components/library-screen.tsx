@@ -5,6 +5,7 @@ import { type ReactNode, useMemo, useState } from "react";
 import { LibraryBig, Search } from "lucide-react";
 
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
+import { DenBrandMark } from "../../_components/ui/brand-mark";
 import { DenInput } from "../../_components/ui/input";
 import { DenNotice } from "../../_components/ui/notice";
 import { type TabItem, UnderlineTabs } from "../../_components/ui/tabs";
@@ -17,8 +18,8 @@ import {
   useLibrary,
 } from "./library-data";
 
-type LibraryStateTab = "all" | "needs_signin" | "needs_admin_setup";
-type LibrarySectionState = Exclude<LibraryStateTab, "all"> | "ready";
+type LibraryStateTab = "all" | "needs_signin" | "needs_admin_setup" | "ready";
+type LibrarySectionState = Exclude<LibraryStateTab, "all">;
 type KindFilter = "all" | "connections" | "skills" | "mcps" | "plugins";
 type FromFilter = "anyone" | "mine" | "shared" | "team" | "everyone";
 type RowKind = "connection" | "skill" | "plugin";
@@ -81,15 +82,8 @@ function getRowKind(item: LibraryItem): RowKind {
   return hasComponentKind(item, "skill") ? "skill" : "plugin";
 }
 
-function getTileClasses(kind: RowKind): string {
-  if (kind === "skill") return "border-[#f5e6bd] bg-[#fff8e6] text-[#b45309]";
-  if (kind === "plugin") return "border-[#e4d9fb] bg-[#f5f0ff] text-[#7c3aed]";
-  return "border-[#dbe6fb] bg-[#eef4ff] text-[#3e63dd]";
-}
-
 function getKindChipClasses(kind: RowKind): string {
-  if (kind === "skill") return "bg-[#fef3c7] text-[#b45309]";
-  if (kind === "plugin") return "bg-[#f5f0ff] text-[#7c3aed]";
+  if (kind === "skill" || kind === "plugin") return "bg-[#f3f4f6] text-[#4b5563]";
   return "bg-[#dbeafe] text-[#1d4ed8]";
 }
 
@@ -170,15 +164,41 @@ function getReadyCatalogCaption(items: LibraryItem[]): string | null {
   return null;
 }
 
+function getGitHubOwnerAvatar(sourceRepositoryUrl: string | null): string | undefined {
+  if (!sourceRepositoryUrl) return undefined;
+  try {
+    const url = new URL(sourceRepositoryUrl);
+    if (url.hostname !== "github.com" && url.hostname !== "www.github.com") return undefined;
+    const owner = url.pathname.split("/").filter(Boolean)[0];
+    return owner ? `https://github.com/${encodeURIComponent(owner)}.png?size=80` : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function LibraryRowContent({ item, orgName, action }: { item: LibraryItem; orgName: string; action: ReactNode }) {
   const rowKind = getRowKind(item);
   const source = getSource(item, orgName);
+  const iconUrl = item.type === "connection" && item.provider === "google-workspace"
+    ? "/integrations/google.svg"
+    : item.type === "plugin"
+      ? getGitHubOwnerAvatar(item.sourceRepositoryUrl)
+      : undefined;
+  const simpleIconSlug = item.type === "connection" && item.provider === "microsoft-365"
+    ? "microsoft"
+    : undefined;
+  const serviceUrl = item.type === "connection" && item.transport === "mcp" ? item.url : undefined;
 
   return (
     <div className="flex h-full min-w-0 items-center overflow-hidden pl-[10px] pr-[12px]">
-      <div className={`flex h-[32px] w-[32px] shrink-0 items-center justify-center rounded-[8px] border text-[13px] font-semibold ${getTileClasses(rowKind)}`}>
-        {item.name.trim().charAt(0).toUpperCase()}
-      </div>
+      <DenBrandMark
+        name={item.name}
+        iconUrl={iconUrl}
+        simpleIconSlug={simpleIconSlug}
+        serviceUrl={serviceUrl}
+        className="h-[32px] w-[32px] rounded-[8px] border-[#e1e4e8] bg-[#f7f8fa]"
+        imageClassName="h-[32px] w-[32px] rounded-[8px] object-cover"
+      />
       <div className="ml-2 w-[88px] shrink-0 truncate text-[13.5px] font-semibold text-[#1c2024] sm:w-[190px]">
         {item.name}
       </div>
@@ -357,18 +377,31 @@ export function LibraryScreen() {
   const stateTabs = useMemo(() => {
     const tabs: TabItem<LibraryStateTab>[] = [{ value: "all", label: "All" }];
     if (stateCounts.needs_signin > 0) {
-      tabs.push({ value: "needs_signin", label: "Needs your sign-in", count: stateCounts.needs_signin });
+      tabs.push({
+        value: "needs_signin",
+        label: "Needs your sign-in",
+        count: stateCounts.needs_signin,
+        countClassName: "!bg-[#fef3c7] !text-[#b45309]",
+      });
     }
     if (stateCounts.needs_admin_setup > 0) {
-      tabs.push({ value: "needs_admin_setup", label: "Needs admin setup", count: stateCounts.needs_admin_setup });
+      tabs.push({
+        value: "needs_admin_setup",
+        label: "Needs admin setup",
+        count: stateCounts.needs_admin_setup,
+        countClassName: "!bg-[#fee2e2] !text-[#b91c1c]",
+      });
+    }
+    if (stateCounts.ready > 0) {
+      tabs.push({
+        value: "ready",
+        label: "Ready to use",
+        count: stateCounts.ready,
+        countClassName: "!bg-[#f0f1f3] !text-[#4b5563]",
+      });
     }
     return tabs;
   }, [stateCounts]);
-  const stateTabToneClasses = stateCounts.needs_signin > 0 && stateCounts.needs_admin_setup > 0
-    ? "[&_[role=tab]:nth-child(2)>span]:!bg-[#fef3c7] [&_[role=tab]:nth-child(2)>span]:!text-[#b45309] [&_[role=tab]:nth-child(3)>span]:!bg-[#fee2e2] [&_[role=tab]:nth-child(3)>span]:!text-[#b91c1c]"
-    : stateCounts.needs_signin > 0
-      ? "[&_[role=tab]:nth-child(2)>span]:!bg-[#fef3c7] [&_[role=tab]:nth-child(2)>span]:!text-[#b45309]"
-      : "[&_[role=tab]:nth-child(2)>span]:!bg-[#fee2e2] [&_[role=tab]:nth-child(2)>span]:!text-[#b91c1c]";
   const visibleItems = useMemo(
     () => items.filter((item) => {
       if (!matchesState(item, activeState)) return false;
@@ -411,7 +444,7 @@ export function LibraryScreen() {
     >
       <div className="mb-5 overflow-x-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         <UnderlineTabs
-          className={`min-w-max [&>nav]:flex-nowrap [&_[role=tab]]:!pb-2.5 [&_[role=tab]]:!text-[13px] [&_[role=tab]]:!font-medium [&_[role=tab]]:!text-[#60646c] [&_[role=tab][aria-selected=true]]:!border-[#1c2024] [&_[role=tab][aria-selected=true]]:!font-semibold [&_[role=tab][aria-selected=true]]:!text-[#1c2024] [&_[role=tab]>span]:inline-flex [&_[role=tab]>span]:h-[18px] [&_[role=tab]>span]:items-center [&_[role=tab]>span]:text-[11px] [&_[role=tab]>span]:font-semibold ${stateTabToneClasses}`}
+          className="min-w-max [&>nav]:flex-nowrap [&_[role=tab]]:!pb-2.5 [&_[role=tab]]:!text-[13px] [&_[role=tab]]:!font-medium [&_[role=tab]]:!text-[#60646c] [&_[role=tab][aria-selected=true]]:!border-[#1c2024] [&_[role=tab][aria-selected=true]]:!font-semibold [&_[role=tab][aria-selected=true]]:!text-[#1c2024] [&_[role=tab]>span]:inline-flex [&_[role=tab]>span]:h-[18px] [&_[role=tab]>span]:items-center [&_[role=tab]>span]:text-[11px] [&_[role=tab]>span]:font-semibold"
           tabs={stateTabs}
           activeTab={activeState}
           onChange={setActiveState}

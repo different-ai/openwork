@@ -241,6 +241,7 @@ test("the member library unifies sorted plugin and connection items", async () =
   const response = await app.fetch(new Request(`${API_ORIGIN}/v1/me/library`))
   expect(response.status).toBe(200)
   const body = meLibraryListResponseSchema.parse(await response.json())
+  expect(body.items.filter((item) => item.type === "connection").every((item) => typeof item.url === "string")).toBe(true)
 
   expect(body).toEqual({
     items: [
@@ -248,6 +249,7 @@ test("the member library unifies sorted plugin and connection items", async () =
         type: "connection",
         id: nativeConnectionId,
         name: "Alpha Google",
+        url: "https://workspace.google.com",
         description: null,
         transport: "native",
         provider: "google-workspace",
@@ -274,6 +276,7 @@ test("the member library unifies sorted plugin and connection items", async () =
         type: "connection",
         id: mcpConnectionId,
         name: "Charlie MCP",
+        url: "https://library-mcp.example.test/mcp",
         description: null,
         transport: "mcp",
         provider: null,
