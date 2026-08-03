@@ -1264,5 +1264,6 @@ export default {
   "extensions.plugin_count_other": "{count} плагинов",
   "extensions.plugins_opencode_header": "Плагины (OpenCode)",
   "extensions.subtitle": "Навыки, подключения и инструменты, которые может использовать ваш агент.",
+  "extensions.open_in_den": "Открыть в Den",
   "extensions.title": "Библиотека",
 } as const;

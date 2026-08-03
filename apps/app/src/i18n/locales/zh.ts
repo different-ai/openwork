@@ -307,6 +307,7 @@ export default {
   "extensions.plugin_count": "{count}个插件",
   "extensions.plugins_opencode_header": "插件（OpenCode）",
   "extensions.subtitle": "智能体可使用的技能、连接和工具。",
+  "extensions.open_in_den": "在 Den 中打开",
   "extensions.title": "资料库",
   "mcp.add_modal_subtitle": "通过URL或本地命令连接自定义MCP服务器。",
   "mcp.add_modal_title": "添加自定义应用",

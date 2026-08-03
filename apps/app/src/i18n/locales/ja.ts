@@ -303,6 +303,7 @@ export default {
   "extensions.plugin_count": "{count}件のプラグイン",
   "extensions.plugins_opencode_header": "プラグイン（OpenCode）",
   "extensions.subtitle": "エージェントが使用できるスキル、接続、ツール。",
+  "extensions.open_in_den": "Den で開く",
   "extensions.title": "ライブラリ",
   "mcp.add_modal_subtitle": "URLまたはローカルコマンドでカスタムMCPサーバーを接続します。",
   "mcp.add_modal_title": "カスタムアプリを追加",

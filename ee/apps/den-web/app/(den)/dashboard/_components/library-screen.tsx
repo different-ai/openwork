@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { type ReactNode, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { LibraryBig, Search } from "lucide-react";
 
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
@@ -222,11 +223,12 @@ function LibraryRowContent({ item, orgName, action }: { item: LibraryItem; orgNa
   );
 }
 
-function LibraryRow({ item, isAdmin, orgName, orgSlug }: { item: LibraryItem; isAdmin: boolean; orgName: string; orgSlug: string | null }) {
+function LibraryRow({ item, isAdmin, isFocused, orgName, orgSlug }: { item: LibraryItem; isAdmin: boolean; isFocused: boolean; orgName: string; orgSlug: string | null }) {
   const sectionState = getSectionState(item);
-  const rowClassName = sectionState === "ready"
+  const rowClassName = `${sectionState === "ready"
     ? "block h-[52px] border-b border-[#f0f1f3] bg-transparent"
-    : "block h-[52px] rounded-[10px] border border-[#fde9c3] bg-[#fffbeb]";
+    : "block h-[52px] rounded-[10px] border border-[#fde9c3] bg-[#fffbeb]"} ${isFocused ? "ring-2 ring-blue-300 ring-offset-2 transition-shadow" : ""}`;
+  const rowKey = `${item.type}-${item.id}`;
   const connectionHref = item.type === "connection"
     ? `${getYourConnectionsRoute(orgSlug)}?connectionId=${encodeURIComponent(item.id)}`
     : null;
@@ -251,6 +253,8 @@ function LibraryRow({ item, isAdmin, orgName, orgSlug }: { item: LibraryItem; is
         href={getPluginRoute(orgSlug, item.id)}
         className={`${rowClassName} hover:bg-gray-50`}
         data-library-item-type={item.type}
+        data-library-item-key={rowKey}
+        data-library-focused={isFocused ? "" : undefined}
       >
         <LibraryRowContent item={item} orgName={orgName} action={action} />
       </Link>
@@ -262,6 +266,8 @@ function LibraryRow({ item, isAdmin, orgName, orgSlug }: { item: LibraryItem; is
       className={rowClassName}
       data-library-item-type={item.type}
       data-library-item-state={item.type === "connection" ? item.state : undefined}
+      data-library-item-key={rowKey}
+      data-library-focused={isFocused ? "" : undefined}
     >
       <LibraryRowContent item={item} orgName={orgName} action={action} />
     </div>
@@ -280,6 +286,7 @@ function LibrarySection({
   isAdmin,
   orgName,
   orgSlug,
+  focusedKey,
   onToggle,
 }: {
   state: LibrarySectionState;
@@ -288,6 +295,7 @@ function LibrarySection({
   isAdmin: boolean;
   orgName: string;
   orgSlug: string | null;
+  focusedKey: string | null;
   onToggle: () => void;
 }) {
   const visibleItems = expanded ? items : items.slice(0, 6);
@@ -313,6 +321,7 @@ function LibrarySection({
             key={`${item.type}-${item.id}`}
             item={item}
             isAdmin={isAdmin}
+            isFocused={focusedKey === `${item.type}-${item.id}`}
             orgName={orgName}
             orgSlug={orgSlug}
           />
@@ -334,10 +343,13 @@ function LibrarySection({
 export function LibraryScreen() {
   const { orgContext, orgSlug } = useOrgDashboard();
   const { data: items = [], isLoading, error } = useLibrary();
+  const searchParams = useSearchParams();
   const [activeState, setActiveState] = useState<LibraryStateTab>("all");
   const [activeKind, setActiveKind] = useState<KindFilter>("all");
   const [activeFrom, setActiveFrom] = useState<FromFilter>("anyone");
   const [query, setQuery] = useState("");
+  const [focusedKey, setFocusedKey] = useState<string | null>(null);
+  const handledFocusRef = useRef<string | null>(null);
   const [expandedSections, setExpandedSections] = useState<Record<LibrarySectionState, boolean>>({
     needs_signin: false,
     needs_admin_setup: false,
@@ -349,6 +361,31 @@ export function LibraryScreen() {
     orgContext?.roles,
   );
   const orgName = orgContext?.organization.name ?? "your organization";
+  const requestedFocus = searchParams.get("focus");
+
+  useEffect(() => {
+    if (!requestedFocus || handledFocusRef.current === requestedFocus) return;
+    if (!/^(plugin|connection)-.+$/.test(requestedFocus)) return;
+    const item = items.find((candidate) => `${candidate.type}-${candidate.id}` === requestedFocus);
+    if (!item) return;
+    handledFocusRef.current = requestedFocus;
+    setActiveState("all");
+    setActiveKind("all");
+    setActiveFrom("anyone");
+    setQuery("");
+    setExpandedSections((current) => ({ ...current, [getSectionState(item)]: true }));
+    setFocusedKey(requestedFocus);
+  }, [items, requestedFocus]);
+
+  useEffect(() => {
+    if (!focusedKey) return;
+    const row = [...document.querySelectorAll<HTMLElement>("[data-library-item-key]")]
+      .find((candidate) => candidate.dataset.libraryItemKey === focusedKey);
+    if (!row) return;
+    row.scrollIntoView({ block: "center" });
+    const timeout = window.setTimeout(() => setFocusedKey(null), 2_000);
+    return () => window.clearTimeout(timeout);
+  }, [focusedKey]);
   const normalizedQuery = query.trim().toLowerCase();
   const kindCounts = useMemo(() => {
     const counts: Record<Exclude<KindFilter, "all">, number> = {
@@ -531,6 +568,7 @@ export function LibraryScreen() {
                 isAdmin={access.isAdmin}
                 orgName={orgName}
                 orgSlug={orgSlug}
+                focusedKey={focusedKey}
                 onToggle={() => setExpandedSections((current) => ({ ...current, [state]: !current[state] }))}
               />
             ) : null

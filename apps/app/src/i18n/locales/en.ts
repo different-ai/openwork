@@ -648,6 +648,7 @@ export default {
   "extensions.state_needs_signin": "Needs your sign-in",
   "extensions.state_needs_signin_caption": "These come from {org} — connect your own account to use them.",
   "extensions.subtitle": "Skills, connections, and tools your agent can use.",
+  "extensions.open_in_den": "Open in Den",
   "extensions.title": "Library",
   "extensions.update_all_button": "Update all",
   "extensions.update_all_progress": "Updating {current} of {total}...",

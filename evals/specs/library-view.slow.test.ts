@@ -534,4 +534,13 @@ test.skipIf(!apiUrl || !webUrl)(title, async () => {
   ]);
   await roll.add(mobileShot, mobileSeen);
   expect(mobileSeen.ok, mobileSeen.why).toBe(true);
+
+  await navigate(browser.client, `${webUrl}/dashboard/library?focus=${encodeURIComponent(`connection-${connection.id}`)}`);
+  await waitFor(browser, `(() => {
+    const row = document.querySelector('[data-library-focused][data-library-item-type="connection"]');
+    return Boolean(row && (row.textContent ?? "").includes(${JSON.stringify(connection.name)}));
+  })()`, {
+    timeoutMs: 60_000,
+    label: "focused connection row from the library deep link",
+  });
 });

@@ -304,6 +304,7 @@ export default {
   "extensions.plugin_count": "{count} plugins",
   "extensions.plugins_opencode_header": "Plugins (OpenCode)",
   "extensions.subtitle": "Kỹ năng, kết nối và công cụ mà agent của bạn có thể sử dụng.",
+  "extensions.open_in_den": "Mở trong Den",
   "extensions.title": "Thư viện",
   "mcp.add_modal_subtitle": "Kết nối MCP server tùy chỉnh bằng URL hoặc lệnh nội bộ.",
   "mcp.add_modal_title": "Thêm ứng dụng tùy chỉnh",

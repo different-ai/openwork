@@ -2,6 +2,7 @@
 import { useEffect, useReducer, useRef, useState, type ReactNode, type SetStateAction } from "react";
 import {
   BookOpen,
+  ArrowUpRight,
   CheckCircle2,
   ChevronDown,
   ChevronLeft,
@@ -50,11 +51,13 @@ import {
 import { SettingsGroupHeader } from "../settings-section";
 import { SettingsListSearchInput } from "../settings-list";
 import {
+  openDesktopUrl,
   openDesktopPath,
   readOpencodeConfig,
   revealDesktopItemInDir,
   type OpencodeConfigFile,
 } from "../../../../app/lib/desktop";
+import { readDenSettings } from "../../../../app/lib/den";
 import {
   getMcpIdentityKey,
   normalizeMcpSlug,
@@ -88,6 +91,12 @@ import {
   type ConfigScope,
   type McpViewLocalState,
 } from "./mcp-view-state";
+import { useCloudSession } from "../cloud/cloud-session-provider";
+import {
+  openInDenLibraryUrl,
+  shouldShowOpenInDenAction,
+  type DenLibraryTarget,
+} from "../open-in-den";
 
 export type ReactMcpStatus =
   | "connected"
@@ -346,6 +355,8 @@ function resolveExtensionDetailTarget(
 }
 
 export function McpView(props: McpViewProps) {
+  const cloudSession = useCloudSession();
+  const denBaseUrl = readDenSettings().baseUrl;
   const skillCount = props.installedSkills?.length ?? 0;
   const useRoutedDetail = typeof props.onDetailIdChange === "function";
   const [detailTarget, setDetailTarget] = useState<ExtensionDetailTarget | null>(null);
@@ -413,6 +424,22 @@ export function McpView(props: McpViewProps) {
   const installedPlugins = props.installedPlugins ?? [];
   const orgMcpItems = props.orgMcpItems ?? [];
   const detailPresentation = useRoutedDetail ? "page" : "dialog";
+  const openInDenAction = (target: DenLibraryTarget): ReactNode => {
+    if (!shouldShowOpenInDenAction(denBaseUrl, cloudSession.isSignedIn, target)) return null;
+    const url = openInDenLibraryUrl(denBaseUrl, target);
+    if (!url) return null;
+    return (
+      <Button
+        variant="outline"
+        size="sm"
+        className="w-fit"
+        onClick={() => void openDesktopUrl(url)}
+      >
+        {t("extensions.open_in_den")}
+        <ArrowUpRight size={13} />
+      </Button>
+    );
+  };
   const setInventoryFilter = (nextFilter: ExtensionInventoryFilter) => {
     setFilter(nextFilter);
     props.onFilterChange?.(nextFilter);
@@ -801,6 +828,7 @@ export function McpView(props: McpViewProps) {
             path={detailSkill.origin === "openwork-connect" ? undefined : detailSkill.path}
             trigger={detailSkill.trigger}
             contentPreview={detailSkillContent ?? undefined}
+            configSlot={openInDenAction({ id: detailSkill.path })}
             onReveal={detailSkill.path && detailSkill.origin !== "openwork-connect" ? () => {
               void revealDesktopItemInDir(detailSkill.path);
             } : undefined}
@@ -835,6 +863,7 @@ export function McpView(props: McpViewProps) {
           url={detailConnectMcp.config.type === "remote" ? detailConnectMcp.config.url : undefined}
           oauth={detailConnectMcp.config.type === "remote"}
           showEnablementCard
+          configSlot={openInDenAction({ id: detailConnectMcp.id ?? detailConnectMcp.name })}
         />
       ) : null}
 
@@ -851,6 +880,7 @@ export function McpView(props: McpViewProps) {
             taxonomy="plugin"
             connected={true}
             hidden={hidden}
+            configSlot={openInDenAction({ id: `marketplace:installed:${detailPlugin.pluginId}`, pluginId: detailPlugin.pluginId })}
             onUninstall={props.removeCloudPlugin ? () => {
               void props.removeCloudPlugin?.(detailPlugin.pluginId);
               closeDetail();
@@ -893,9 +923,12 @@ export function McpView(props: McpViewProps) {
             closeOnUninstall={false}
             showEnablementCard={false}
             configSlot={(
-              <div className="flex flex-wrap gap-2">
-                <span className="rounded-full border border-dls-border bg-dls-hover px-2 py-1 text-xs text-dls-secondary">Shared by your organization</span>
-                <span className="rounded-full border border-dls-border bg-dls-hover px-2 py-1 text-xs text-dls-secondary">{connection.credentialMode === "shared" ? "Org account" : "Your account"}</span>
+              <div className="flex flex-col gap-3">
+                <div className="flex flex-wrap gap-2">
+                  <span className="rounded-full border border-dls-border bg-dls-hover px-2 py-1 text-xs text-dls-secondary">Shared by your organization</span>
+                  <span className="rounded-full border border-dls-border bg-dls-hover px-2 py-1 text-xs text-dls-secondary">{connection.credentialMode === "shared" ? "Org account" : "Your account"}</span>
+                </div>
+                {openInDenAction({ id: detailOrgMcpItem.id })}
               </div>
             )}
           />

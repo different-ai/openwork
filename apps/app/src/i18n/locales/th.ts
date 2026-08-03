@@ -304,6 +304,7 @@ export default {
   "extensions.plugin_count": "{count} ปลั๊กอิน",
   "extensions.plugins_opencode_header": "Plugins (OpenCode)",
   "extensions.subtitle": "ทักษะ การเชื่อมต่อ และเครื่องมือที่เอเจนต์ของคุณใช้ได้",
+  "extensions.open_in_den": "เปิดใน Den",
   "extensions.title": "ไลบรารี",
   "mcp.add_modal_subtitle": "เชื่อมต่อ MCP server กำหนดเองด้วย URL หรือคำสั่งภายในเครื่อง",
   "mcp.add_modal_title": "เพิ่มแอปกำหนดเอง",

@@ -310,6 +310,7 @@ export default {
   "extensions.plugin_count_other": "{count} plugins",
   "extensions.plugins_opencode_header": "Plugins (OpenCode)",
   "extensions.subtitle": "Skills, connexions i eines que el teu agent pot utilitzar.",
+  "extensions.open_in_den": "Obre a Den",
   "extensions.title": "Biblioteca",
   "mcp.add_modal_subtitle": "Connecta un servidor MCP personalitzat mitjançant una URL o una comanda local.",
   "mcp.add_modal_title": "Afegeix una aplicació personalitzada",
