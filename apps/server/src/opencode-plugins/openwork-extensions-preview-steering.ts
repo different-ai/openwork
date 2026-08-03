@@ -138,7 +138,7 @@ export const OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION =
   "If the user asks for something you cannot do with obvious built-in tools, check OpenWork extensions before saying the capability is unavailable. Use openwork_query with id extension.actions to inspect available extension actions, then openwork_execute with id extension.call for the matching action.";
 
 export const OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION =
-  "Skill creation: Cloud. When the user asks to create a skill, retrieve and follow the listed create-skill remote skill by calling openwork-cloud_execute_capability with its exact <capability>. Create the skill in OpenWork Cloud as a private plugin, not in the workspace. For later steps, use add-to-marketplace or add-user-to-marketplace only when the user asks. Use a workspace-local skill only when the user explicitly requests one. Do not create both copies.";
+  "Skill creation: Cloud. When the user asks to create a skill, retrieve and follow the listed create-skill remote skill by calling openwork-cloud_execute_capability with its exact <capability>. Create the skill in OpenWork Cloud as a private plugin, not in the workspace. For later steps, use share-plugin when the user wants a specific person or team to use a skill, and use add-to-marketplace or add-user-to-marketplace only when the user asks. Use a workspace-local skill only when the user explicitly requests one. Do not create both copies.";
 
 export const OPENWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION =
   "Skill creation: Local. Create or update a workspace-local skill only when the user requests one. Keep one skill in .opencode/skills/<skill-name>/SKILL.md, validate it, and re-read it after writing. Do not create a Cloud copy.";

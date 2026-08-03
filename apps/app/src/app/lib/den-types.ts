@@ -117,7 +117,7 @@ export type DenOrgPluginResolved = {
 
 export type DenAssignedMarketplaceCapability = {
   configObjectId: string;
-  marketplaceId: string;
+  marketplaceId: string | null;
   objectType: DenPluginConfigObjectType;
   pluginId: string;
 };

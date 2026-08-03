@@ -46,8 +46,10 @@ import {
   type UpdatedMcpConnection,
   type UpdateMcpConnectionInput,
   formatMcpConnectedTimestamp,
+  isNativeProviderConnectionId,
   mcpConnectionQueryKeys,
   useCreateMcpConnection,
+  useCreateNativeProviderConnection,
   useDeleteMcpConnection,
   useDisconnectMcpConnection,
   useDiscoverMcpConnectionRequirements,
@@ -252,8 +254,10 @@ export function McpConnectionsScreen() {
   const searchParams = useSearchParams();
   const { orgContext, orgSlug } = useOrgDashboard();
   const { data: connections = [], isLoading, error, refetch } = useMcpConnections();
+  const { data: usableConnections = [], isLoading: usableConnectionsLoading } = useMcpConnections("usable");
   const { data: presets = [] } = useMcpConnectionPresets();
   const createConnection = useCreateMcpConnection();
+  const createNativeConnection = useCreateNativeProviderConnection();
   const updateConnection = useUpdateMcpConnection();
   const startOAuth = useStartMcpConnectionOAuth();
   const disconnectConnection = useDisconnectMcpConnection();
@@ -267,7 +271,7 @@ export function McpConnectionsScreen() {
   const [configuringOAuthClient, setConfiguringOAuthClient] = useState(false);
   const [issuerReviewConnection, setIssuerReviewConnection] = useState<ExternalMcpConnection | null>(null);
   const [issuerReviewPreview, setIssuerReviewPreview] = useState<McpIssuerReview | null>(null);
-  const [googleDialogOpen, setGoogleDialogOpen] = useState(false);
+  const [googleDialogMode, setGoogleDialogMode] = useState<"create" | "legacy" | null>(null);
   const [microsoftDialogOpen, setMicrosoftDialogOpen] = useState(false);
   const [telegramDialogOpen, setTelegramDialogOpen] = useState(false);
   const telegramConnection = useTelegramConnection(true);
@@ -282,7 +286,8 @@ export function McpConnectionsScreen() {
 
   function openQuickAdd(id: string) {
     if (id === GOOGLE_WORKSPACE_QUICK_ADD_ID) {
-      setGoogleDialogOpen(true);
+      createNativeConnection.reset();
+      setGoogleDialogMode("create");
       return;
     }
     if (id === MICROSOFT_365_QUICK_ADD_ID) {
@@ -317,6 +322,11 @@ export function McpConnectionsScreen() {
       if (pollTimer.current) clearInterval(pollTimer.current);
     };
   }, []);
+
+  const legacyGoogleConnection = usableConnections.find((connection) => connection.id === GOOGLE_WORKSPACE_QUICK_ADD_ID);
+  const listedConnections = legacyGoogleConnection && !connections.some((connection) => connection.id === legacyGoogleConnection.id)
+    ? [legacyGoogleConnection, ...connections]
+    : connections;
 
   function stopPolling() {
     if (pollTimer.current) {
@@ -528,17 +538,17 @@ export function McpConnectionsScreen() {
       </div>
 
       <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-400">Your connectors</h3>
-      {isLoading ? (
+      {isLoading || usableConnectionsLoading ? (
         <div className="rounded-[28px] border border-gray-200 bg-white px-6 py-10 text-[15px] text-gray-500">
           Loading MCP connectors…
         </div>
-      ) : connections.length === 0 ? (
+      ) : listedConnections.length === 0 ? (
         <div className="rounded-[28px] border border-gray-200 bg-white px-6 py-10 text-center text-[14px] text-gray-500">
           No MCP connectors yet.
         </div>
       ) : (
         <div className="divide-y divide-gray-100 rounded-2xl border border-gray-100 bg-white">
-          {connections.map((connection) => {
+          {listedConnections.map((connection) => {
             const connectAttemptRequiresConfiguration = oauthClientConfigurationRequiredIds.includes(connection.id);
             const needsOAuthClientConfiguration = connectionNeedsOAuthClientConfiguration(
               connection,
@@ -557,6 +567,11 @@ export function McpConnectionsScreen() {
               connecting={startOAuth.isPending && startOAuth.variables === connection.id}
               errorMessage={connectionActionError?.connectionId === connection.id ? connectionActionError.message : null}
               onEdit={() => {
+                if (connection.id === GOOGLE_WORKSPACE_QUICK_ADD_ID) {
+                  saveNativeClient.reset();
+                  setGoogleDialogMode("legacy");
+                  return;
+                }
                 updateConnection.reset();
                 setConfiguringOAuthClient(false);
                 setEditingConnection(connection);
@@ -620,13 +635,26 @@ export function McpConnectionsScreen() {
       />
 
       <GoogleWorkspaceDialog
-        open={googleDialogOpen}
-        submitting={saveNativeClient.isPending}
-        error={saveNativeClient.error}
-        onClose={() => setGoogleDialogOpen(false)}
-        onSubmit={async (input) => {
+        open={googleDialogMode !== null}
+        mode={googleDialogMode ?? "create"}
+        submitting={googleDialogMode === "legacy" ? saveNativeClient.isPending : createNativeConnection.isPending}
+        error={googleDialogMode === "legacy" ? saveNativeClient.error : createNativeConnection.error}
+        onClose={() => setGoogleDialogMode(null)}
+        onCreate={async (input) => {
+          await createNativeConnection.mutateAsync({
+            nativeProviderKey: "google-workspace",
+            name: input.name,
+            oauthClient: {
+              clientId: input.clientId,
+              clientSecret: input.clientSecret,
+              features: input.features,
+            },
+          });
+          setGoogleDialogMode(null);
+        }}
+        onSaveLegacy={async (input) => {
           await saveNativeClient.mutateAsync({ providerId: "google-workspace", ...input });
-          setGoogleDialogOpen(false);
+          setGoogleDialogMode(null);
         }}
       />
 
@@ -978,18 +1006,23 @@ function ImportPluginConnectionDialog({
 
 function GoogleWorkspaceDialog({
   open,
+  mode,
   submitting,
   error,
   onClose,
-  onSubmit,
+  onCreate,
+  onSaveLegacy,
 }: {
   open: boolean;
+  mode: "create" | "legacy";
   submitting: boolean;
   error: unknown;
   onClose: () => void;
-  onSubmit: (input: { clientId?: string; clientSecret?: string; features: string[] }) => void;
+  onCreate: (input: { name: string; clientId: string; clientSecret: string; features: string[] }) => void;
+  onSaveLegacy: (input: { clientId?: string; clientSecret?: string; features: string[] }) => void;
 }) {
   const clientConfig = useNativeProviderClient("google-workspace", open);
+  const [name, setName] = useState("Google Workspace");
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
   const [features, setFeatures] = useState<string[]>([]);
@@ -999,33 +1032,36 @@ function GoogleWorkspaceDialog({
 
   useEffect(() => {
     if (!open) return;
+    setName("Google Workspace");
     setClientId("");
     setClientSecret("");
     setFeatures(GOOGLE_WORKSPACE_DEFAULT_FEATURES);
     setCopiedRedirectUri(false);
     setReplacingCredentials(false);
     featuresPrefilled.current = false;
-  }, [open]);
+  }, [mode, open]);
 
   useEffect(() => {
-    if (!open || featuresPrefilled.current || !clientConfig.isSuccess || clientConfig.isFetching) return;
+    if (mode !== "legacy" || !open || featuresPrefilled.current || !clientConfig.isSuccess || clientConfig.isFetching) return;
     setFeatures(clientConfig.data.features);
     featuresPrefilled.current = true;
-  }, [open, clientConfig.isSuccess, clientConfig.isFetching, clientConfig.data?.features]);
+  }, [mode, open, clientConfig.isSuccess, clientConfig.isFetching, clientConfig.data?.features]);
 
   if (!open) {
     return null;
   }
 
-  const configured = clientConfig.data?.configured ?? false;
+  const configured = mode === "legacy" && (clientConfig.data?.configured ?? false);
   const savedClientId = clientConfig.data?.clientId;
   const redirectUri = clientConfig.data?.redirectUri ?? "";
   const loadingConfig = clientConfig.isLoading;
   const formError = error ?? clientConfig.error;
+  const trimmedName = name.trim();
   const trimmedClientId = clientId.trim();
   const trimmedClientSecret = clientSecret.trim();
   const showCredentialFields = !loadingConfig && (!configured || replacingCredentials);
-  const saveDisabled = loadingConfig || (showCredentialFields && (!trimmedClientId || !trimmedClientSecret));
+  const saveDisabled = loadingConfig || (mode === "create" && !trimmedName)
+    || (showCredentialFields && (!trimmedClientId || !trimmedClientSecret));
 
   function toggleFeature(feature: string) {
     setFeatures((current) => current.includes(feature) ? current.filter((entry) => entry !== feature) : [...current, feature]);
@@ -1049,13 +1085,27 @@ function GoogleWorkspaceDialog({
         onClick={(event) => event.stopPropagation()}
       >
         <h2 className="text-[18px] font-semibold tracking-[-0.02em] text-gray-950">
-          {configured ? "Update Google Workspace" : "Set up Google Workspace"}
+          {mode === "legacy" ? "Update Google Workspace" : "Add Google Workspace"}
         </h2>
         <p className="mt-1 text-[13px] leading-6 text-gray-600">
-          Use one Google OAuth web app for your org. Members then connect their own Google account from Your Connections — sign-ins stay in your org&apos;s cloud.
+          Use a Google OAuth web app for this connector. Members then connect their own Google account from Your Connections — sign-ins stay in your org&apos;s cloud.
         </p>
 
         <div className="mt-5 space-y-4">
+          {mode === "create" ? (
+            <div>
+              <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Name</label>
+              <DenInput
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                placeholder="Google Workspace"
+                required
+              />
+              <p className="mt-1.5 text-[12px] leading-5 text-gray-500">
+                Name it so people recognize it — e.g. Acme Labs.
+              </p>
+            </div>
+          ) : null}
           <div className="rounded-2xl border border-gray-100 bg-gray-50 p-4">
             <p className="text-[13px] font-semibold text-gray-900">How to set it up</p>
             <ol className="mt-2 list-decimal space-y-2 pl-4 text-[12px] leading-5 text-gray-600">
@@ -1186,12 +1236,29 @@ function GoogleWorkspaceDialog({
             variant="primary"
             loading={submitting}
             disabled={saveDisabled}
-            onClick={() => onSubmit({
-              ...(showCredentialFields ? { clientId: trimmedClientId, clientSecret: trimmedClientSecret } : {}),
-              features,
-            })}
+            onClick={() => {
+              if (mode === "create") {
+                onCreate({
+                  name: trimmedName,
+                  clientId: trimmedClientId,
+                  clientSecret: trimmedClientSecret,
+                  features,
+                });
+                return;
+              }
+              onSaveLegacy({
+                ...(showCredentialFields ? { clientId: trimmedClientId, clientSecret: trimmedClientSecret } : {}),
+                features,
+              });
+            }}
           >
-            {configured && !replacingCredentials ? "Save permissions" : replacingCredentials ? "Save new credentials" : "Save setup"}
+            {mode === "create"
+              ? "Add connector"
+              : configured && !replacingCredentials
+                ? "Save permissions"
+                : replacingCredentials
+                  ? "Save new credentials"
+                  : "Save setup"}
           </DenButton>
         </div>
       </div>
@@ -1360,15 +1427,17 @@ function ConnectionRow({
   onToggleTools: () => void;
 }) {
   const isPerMember = connection.credentialMode === "per_member";
+  const isNativeProvider = isNativeProviderConnectionId(connection.id, connection.nativeProviderKey);
+  const isLegacyGoogleConnection = connection.id === GOOGLE_WORKSPACE_QUICK_ADD_ID;
   const creatorAttribution = formatConnectionCreatorAttribution(connection.createdByName);
   const [actionsOpen, setActionsOpen] = useState(false);
   const actionsMenuRef = useRef<HTMLDivElement>(null);
   const actionsTriggerRef = useRef<HTMLButtonElement>(null);
   const setupRequired = needsPluginSetup || needsOAuthClientConfiguration;
   const displayedConnected = connection.connected && !setupRequired;
-  const canConnectOAuth = !setupRequired && !connection.issuerReviewRequired && connection.authType === "oauth"
+  const canConnectOAuth = !isLegacyGoogleConnection && !setupRequired && !connection.issuerReviewRequired && connection.authType === "oauth"
     && (isPerMember ? !connection.connectedForMe : !connection.connected);
-  const canInspectTools = !setupRequired && !connection.issuerReviewRequired
+  const canInspectTools = !isNativeProvider && !setupRequired && !connection.issuerReviewRequired
     && (connection.credentialMode === "shared" ? connection.connected : connection.connectedForMe);
 
   useEffect(() => {
@@ -1440,7 +1509,7 @@ function ConnectionRow({
             <p className="mt-0.5 truncate text-[12px] text-gray-500">
               {connection.url}{setupRequired ? "" : ` · ${formatMcpConnectedTimestamp(connection.connectedAt)}`}{creatorAttribution ? ` · ${creatorAttribution}` : ""}
             </p>
-            {connection.authType === "oauth" ? (
+            {connection.authType === "oauth" && !isNativeProvider ? (
               <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-gray-500">
                 {connection.authorizationServerIssuer ? <span className="max-w-full truncate">Issuer: {connection.authorizationServerIssuer}</span> : null}
                 {(connection.requestedScopes?.length ?? 0) > 0 ? <span>Scopes: {connection.requestedScopes?.join(", ")}</span> : null}
@@ -1476,7 +1545,7 @@ function ConnectionRow({
               Connect
             </DenButton>
           ) : null}
-          {displayedConnected ? (
+          {displayedConnected && !isLegacyGoogleConnection ? (
             <DenButton
               variant="secondary"
               size="sm"
@@ -1514,7 +1583,7 @@ function ConnectionRow({
                     setActionsOpen(false);
                     onEdit();
                   }}
-                  disabled={!connection.updatedAt}
+                  disabled={!connection.updatedAt && !isLegacyGoogleConnection}
                   className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-gray-600 transition hover:bg-gray-50 hover:text-gray-900 disabled:cursor-not-allowed disabled:opacity-50"
                   aria-label={`Edit ${connection.name}`}
                   data-testid={`edit-mcp-connection-${connection.id}`}
@@ -1536,21 +1605,25 @@ function ConnectionRow({
                   {toolsOpen ? <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" /> : <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />}
                   {toolsOpen ? "Hide tools" : "View tools"}
                 </button>
-                <div className="my-1 border-t border-gray-100" />
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    setActionsOpen(false);
-                    onRemove();
-                  }}
-                  disabled={removing}
-                  className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-red-600 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
-                  aria-label={`Remove ${connection.name}`}
-                >
-                  {removing ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />}
-                  Remove
-                </button>
+                {!isLegacyGoogleConnection ? (
+                  <>
+                    <div className="my-1 border-t border-gray-100" />
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setActionsOpen(false);
+                        onRemove();
+                      }}
+                      disabled={removing}
+                      className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-red-600 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+                      aria-label={`Remove ${connection.name}`}
+                    >
+                      {removing ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />}
+                      Remove
+                    </button>
+                  </>
+                ) : null}
               </div>
             ) : null}
           </div>

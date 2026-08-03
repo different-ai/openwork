@@ -248,7 +248,7 @@ async function defaultAccessTokenResolver(input: {
   }
   let token: Awaited<ReturnType<typeof getValidAccessToken>>
   try {
-    token = await getValidAccessToken({ provider, ...input })
+    token = await getValidAccessToken({ provider, credentialProviderId: provider.providerId, ...input })
   } catch (error) {
     return { kind: "microsoft_graph_error", message: error instanceof Error ? error.message : "Microsoft OAuth token refresh failed." }
   }

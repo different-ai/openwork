@@ -101,6 +101,7 @@ export const PluginTable = mysqlTable(
     organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
     name: varchar("name", { length: 255 }).notNull(),
     description: text("description"),
+    sourceRepositoryUrl: varchar("source_repository_url", { length: 1024 }),
     status: mysqlEnum("status", pluginStatusValues).notNull().default("active"),
     createdByOrgMembershipId: denTypeIdColumn("member", "created_by_org_membership_id").notNull(),
     createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),

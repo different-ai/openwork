@@ -23,6 +23,7 @@ export function SidebarDestination({ active, icon: Icon, label, labelContent, on
         aria-current={active ? "page" : undefined}
         aria-label={label}
         tooltip={label}
+        className="text-sidebar-foreground/70"
         onClick={onSelect}
       >
         <Icon />

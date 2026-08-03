@@ -92,6 +92,8 @@ import {
   marketplacePluginParamsSchema,
   marketplacePluginWriteSchema,
   marketplaceUpdateSchema,
+  meLibraryListResponseSchema,
+  mePluginAccessListResponseSchema,
   pluginAccessGrantParamsSchema,
   pluginCreateSchema,
   pluginDetailResponseSchema,
@@ -106,11 +108,13 @@ import {
   pluginParamsSchema,
   pluginUpdateSchema,
   resourceAccessGrantWriteSchema,
+  teamParamsSchema,
+  teamPluginAccessListResponseSchema,
 } from "./schemas.js"
-import { requirePluginArchCapability, type PluginArchActorContext, PluginArchAuthorizationError } from "./access.js"
+import { isPluginArchOrgAdmin, requirePluginArchCapability, type PluginArchActorContext, PluginArchAuthorizationError } from "./access.js"
 import { pluginArchRoutePaths } from "./contracts.js"
 import { ensureOrganizationAdmin, orgAccessFailureStatus } from "../shared.js"
-import { isAgentOAuthClientConnection } from "../mcp-connections.js"
+import { isAgentOAuthClientConnection, listMemberUsableConnectionFacts } from "../mcp-connections.js"
 import {
   PluginArchRouteFailure,
   addPluginMembership,
@@ -151,9 +155,13 @@ import {
   listGithubRepositories,
   listMarketplaceMemberships,
   listMarketplaces,
+  listMeLibraryConnectionItems,
+  listMeLibraryPluginItems,
+  listMeEffectivePluginAccess,
   listPluginMemberships,
   listPlugins,
   listResourceAccess,
+  listTeamEffectivePluginAccess,
   attachPluginToMarketplace,
   completeGithubConnectorInstall,
   applyGithubConnectorDiscovery,
@@ -713,6 +721,9 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
         const context = actorContext(c)
         await requirePluginArchCapability(context, "plugin.create")
         const body = validJson<PluginCreateBody>(c)
+        if (body.orgWide === true && !isPluginArchOrgAdmin(context)) {
+          throw new PluginArchAuthorizationError(403, "forbidden", "Only organization owners and admins can create org-wide plugins.")
+        }
         if ((body.components?.length ?? 0) > 0) {
           await requirePluginArchCapability(context, "config_object.create")
         }
@@ -993,6 +1004,79 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
       try {
         const params = validParam<any>(c)
         return c.json(await listResourceAccess({ context: actorContext(c), resourceId: params.pluginId, resourceKind: "plugin" }))
+      } catch (error) {
+        return routeErrorResponse(c, error)
+      }
+    })
+
+  withPluginArchOrgContext(app, "get", pluginArchRoutePaths.mePluginAccess,
+    describeRoute({
+      tags: ["Plugins"],
+      summary: "List my effective plugin access",
+      description: "Lists active plugins in the caller's organization library and every access edge that applies to the caller.",
+      responses: {
+        200: jsonResponse("Effective member plugin access returned successfully.", mePluginAccessListResponseSchema),
+        401: jsonResponse("The caller must be signed in to view plugin access.", unauthorizedSchema),
+      },
+    }),
+    async (c: OrgContext) => {
+      try {
+        return c.json(await listMeEffectivePluginAccess({ context: actorContext(c) }))
+      } catch (error) {
+        return routeErrorResponse(c, error)
+      }
+    })
+
+  withPluginArchOrgContext(app, "get", pluginArchRoutePaths.meLibrary,
+    describeRoute({
+      tags: ["Plugins"],
+      summary: "List my library",
+      description: "Lists the active plugins and connections the caller can use, with every applicable access edge.",
+      responses: {
+        200: jsonResponse("Effective member library returned successfully.", meLibraryListResponseSchema),
+        401: jsonResponse("The caller must be signed in to view their library.", unauthorizedSchema),
+      },
+    }),
+    async (c: OrgContext) => {
+      try {
+        const context = actorContext(c)
+        const [pluginItems, connections] = await Promise.all([
+          listMeLibraryPluginItems({ context }),
+          listMemberUsableConnectionFacts({ context }),
+        ])
+        const connectionItems = await listMeLibraryConnectionItems({ connections, context })
+        const items = [...pluginItems, ...connectionItems]
+        items.sort((left, right) => {
+          const byName = left.name.localeCompare(right.name)
+          return byName !== 0 ? byName : left.id.localeCompare(right.id)
+        })
+        return c.json({ items })
+      } catch (error) {
+        return routeErrorResponse(c, error)
+      }
+    })
+
+  withPluginArchOrgContext(app, "get", pluginArchRoutePaths.teamPluginAccess,
+    paramValidator(teamParamsSchema),
+    describeRoute({
+      tags: ["Plugins"],
+      summary: "List effective team plugin access",
+      description: "Lists plugins available to a team through direct grants, marketplace grants, and organization-wide grants.",
+      responses: {
+        200: jsonResponse("Effective team plugin access returned successfully.", teamPluginAccessListResponseSchema),
+        400: jsonResponse("The team access path parameters were invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to view team plugin access.", unauthorizedSchema),
+        403: jsonResponse("The caller lacks permission to view this team's plugin access.", forbiddenSchema),
+        404: jsonResponse("The team could not be found.", notFoundSchema),
+      },
+    }),
+    async (c: OrgContext) => {
+      try {
+        const params = validParam<z.infer<typeof teamParamsSchema>>(c)
+        return c.json(await listTeamEffectivePluginAccess({
+          context: actorContext(c),
+          teamId: normalizeDenTypeId("team", params.teamId),
+        }))
       } catch (error) {
         return routeErrorResponse(c, error)
       }

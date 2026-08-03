@@ -5,10 +5,18 @@ import { Cpu } from "lucide-react";
 import { t } from "../../../../i18n";
 import { Button } from "@/components/ui/button";
 
-import type { ExtensionInventoryFilter } from "../extension-taxonomy";
+import type { ExtensionInventoryFilter, ExtensionInventoryState } from "../extension-taxonomy";
 import { PluginsView, type PluginsExtensionsStore } from "./plugins-view";
 
-export type ExtensionsSection = "all" | "apps" | "connections" | "mcps" | "skills" | "plugins";
+export type ExtensionsSection =
+  | "all"
+  | "apps"
+  | "connections"
+  | "mcps"
+  | "skills"
+  | "plugins"
+  | "needs-sign-in"
+  | "needs-admin-setup";
 
 /** Sections are the URL spelling of the inventory filters. */
 function filterForSection(section: ExtensionsSection | undefined): ExtensionInventoryFilter {
@@ -45,6 +53,16 @@ function sectionForFilter(filter: ExtensionInventoryFilter): ExtensionsSection {
   }
 }
 
+function stateForSection(section: ExtensionsSection | undefined): ExtensionInventoryState {
+  if (section === "needs-sign-in") return "needs_signin";
+  if (section === "needs-admin-setup") return "needs_admin_setup";
+  return "all";
+}
+
+function sectionForState(state: Exclude<ExtensionInventoryState, "all">): ExtensionsSection {
+  return state === "needs_signin" ? "needs-sign-in" : "needs-admin-setup";
+}
+
 type SuggestedPlugin = {
   name: string;
   packageName: string;
@@ -76,6 +94,8 @@ export type ExtensionsViewProps = {
   mcpView: (routing: {
     initialFilter: ExtensionInventoryFilter;
     onFilterChange: (filter: ExtensionInventoryFilter) => void;
+    initialState: ExtensionInventoryState;
+    onStateChange: (state: ExtensionInventoryState, filter: ExtensionInventoryFilter) => void;
     detailId: string | null;
     onDetailIdChange?: (id: string | null) => void;
   }) => ReactNode;
@@ -93,13 +113,20 @@ export function ExtensionsView(props: ExtensionsViewProps) {
     [props.extensions],
   );
   const initialFilter = filterForSection(props.initialSection);
+  const initialState = stateForSection(props.initialSection);
   const setFilterRoute = (filter: ExtensionInventoryFilter) => {
+    if (initialState !== "all") return;
     props.setSectionRoute?.(sectionForFilter(filter));
+  };
+  const setStateRoute = (state: ExtensionInventoryState, filter: ExtensionInventoryFilter) => {
+    props.setSectionRoute?.(state === "all" ? sectionForFilter(filter) : sectionForState(state));
   };
   const detailId = props.detailId ?? null;
   const mcpRouting = {
     initialFilter,
     onFilterChange: setFilterRoute,
+    initialState,
+    onStateChange: setStateRoute,
     detailId,
     onDetailIdChange: props.onDetailIdChange,
   };
@@ -133,7 +160,7 @@ export function ExtensionsView(props: ExtensionsViewProps) {
       {props.mcpView(mcpRouting)}
 
       {/* OpenCode plugins -- advanced, collapsed */}
-      {pluginCount > 0 ? (
+      {pluginCount > 0 && initialState === "all" ? (
         <details className="group" open={props.initialSection === "plugins"}>
           <summary className="flex cursor-pointer items-center gap-2 rounded-lg px-1 py-2 text-sm font-medium text-dls-secondary transition-colors hover:text-dls-text">
             <Cpu size={14} />

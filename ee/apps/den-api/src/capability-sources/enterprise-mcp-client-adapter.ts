@@ -36,6 +36,9 @@ function toEnterpriseConnection(
   connection: ExternalMcpConnectionRow,
   member?: ExternalMcpMemberContext,
 ): EnterpriseMcpConnection {
+  if (connection.kind !== "external_mcp") {
+    throw new Error("Native provider connectors do not expose an MCP server.")
+  }
   if (connection.authType === "oauth") {
     const metadataUrl = externalMcpClientMetadataUrl()
     return {

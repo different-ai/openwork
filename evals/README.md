@@ -45,7 +45,7 @@ separately:
 pnpm --dir evals install           # required once (and in CI) before the commands below
 pnpm --dir evals run test          # node:test unit tests (runner + packages)
 pnpm --dir evals run spec          # vitest spec lane, pr project
-pnpm --dir evals run spec:nightly  # includes *.slow.test.ts
+pnpm --dir evals run spec:stack  # includes *.slow.test.ts
 ```
 
 The layers live in [`packages/`](./packages) and are consumable independently of
@@ -148,6 +148,20 @@ is skipped when already up. It signs in as the seeded demo owner
 `OPENWORK_EVAL_DEN_TOKEN`, so the env-gated cloud flows run with zero manual
 setup. Requires Docker. The MySQL volume survives `--stack-down`, so
 subsequent runs skip schema push and seeding.
+
+For a standalone, isolated den-api (without Electron or den-web), use the dev
+Den script. It creates a separate database, uses `db:push` (not the migration
+chain), waits for health, and prints the eval URL exports and teardown command:
+
+```bash
+pnpm --dir evals dev:den -- up --port 8891 --database openwork_den_my_eval --seed
+pnpm --dir evals dev:den -- down --port 8891 --drop-database
+```
+
+The port and database are generated when omitted. The script starts MySQL via
+the repository's Docker Compose setup and deliberately adds the printed
+`OPENWORK_EVAL_DEN_WEB_URL` to `DEN_BETTER_AUTH_TRUSTED_ORIGINS`; without that
+origin, Better Auth rejects eval sign-in with `403 INVALID_ORIGIN`.
 
 The markdown specs below remain the source narrative; when codifying a flow,
 link the spec via the flow's `spec` field.

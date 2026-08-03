@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { captureScreenshot, evaluate } from "@openwork/cdp";
 import type { Surface } from "@openwork/cdp";
+import { currentTape } from "./ambient.ts";
 
 export interface Shot {
   png: Buffer;
@@ -24,11 +25,13 @@ export async function screenshot(app: Surface): Promise<Shot> {
   if (!isRecord(page) || typeof page.route !== "string" || typeof page.visibleText !== "string") {
     throw new Error("CDP did not return the current route and visible text for the screenshot.");
   }
-  return {
+  const shot: Shot = {
     png,
     hash: createHash("sha256").update(png).digest("hex"),
     route: page.route,
     visibleText: page.visibleText,
     at,
   };
+  currentTape()?.recordTake(shot);
+  return shot;
 }

@@ -110,7 +110,8 @@ describe("google-workspace native provider scopes", () => {
       redirectUri: "http://127.0.0.1:8790/v1/oauth-providers/google-workspace/connect/callback",
       codeChallenge: "pkce-challenge",
     })
-    const scopes = new URL(authorizeUrl).searchParams.get("scope")?.split(" ") ?? []
+    const authorizeParams = new URL(authorizeUrl).searchParams
+    const scopes = authorizeParams.get("scope")?.split(" ") ?? []
 
     expect(scopes).toEqual([
       ...GOOGLE_WORKSPACE_IDENTITY_SCOPES,
@@ -121,5 +122,6 @@ describe("google-workspace native provider scopes", () => {
       "https://www.googleapis.com/auth/calendar.events",
     ])
     expect(scopes).toHaveLength(8)
+    expect(authorizeParams.get("prompt")).toBe("consent select_account")
   })
 })

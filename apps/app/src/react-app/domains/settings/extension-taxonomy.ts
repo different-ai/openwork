@@ -12,6 +12,10 @@ export type ExtensionTaxonomy = "app" | "connection" | "mcp" | "skill" | "plugin
 
 export type ExtensionInventoryFilter = "all" | ExtensionTaxonomy;
 
+export type ExtensionTransport = "mcp" | "native" | null;
+
+export type ExtensionInventoryState = "all" | "needs_signin" | "needs_admin_setup";
+
 export const extensionInventoryFilters: ExtensionInventoryFilter[] = [
   "all",
   "app",
@@ -27,8 +31,12 @@ export function taxonomyForDirectoryEntry(entry: McpDirectoryInfo): ExtensionTax
   return "mcp";
 }
 
-export function matchesExtensionFilter(filter: ExtensionInventoryFilter, taxonomy: ExtensionTaxonomy) {
-  return filter === "all" || filter === taxonomy;
+export function matchesExtensionFilter(
+  filter: ExtensionInventoryFilter,
+  taxonomy: ExtensionTaxonomy,
+  transport: ExtensionTransport = null,
+) {
+  return filter === "all" || filter === taxonomy || (filter === "mcp" && transport === "mcp");
 }
 
 export function extensionFilterLabel(filter: ExtensionInventoryFilter) {

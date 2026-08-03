@@ -59,6 +59,7 @@ const EnvSchema = z.object({
   DEN_GATEWAY_ORIGIN: z.string().optional(),
   DEN_GOOGLE_OAUTH_AUTHORIZE_URL: z.string().optional(),
   DEN_GOOGLE_OAUTH_TOKEN_URL: z.string().optional(),
+  DEN_GOOGLE_OAUTH_USERINFO_URL: z.string().optional(),
   DEN_GOOGLE_API_BASE_URL: z.string().optional(),
   DEN_MICROSOFT_OAUTH_AUTHORIZE_URL: z.string().optional(),
   DEN_MICROSOFT_OAUTH_TOKEN_URL: z.string().optional(),
@@ -514,6 +515,7 @@ export const env = {
   // production so Google, Microsoft Entra, and Graph use their public APIs.
   googleOAuthAuthorizeUrl: optionalString(parsed.DEN_GOOGLE_OAUTH_AUTHORIZE_URL),
   googleOAuthTokenUrl: optionalString(parsed.DEN_GOOGLE_OAUTH_TOKEN_URL),
+  googleOAuthUserinfoUrl: optionalString(parsed.DEN_GOOGLE_OAUTH_USERINFO_URL),
   googleApiBaseUrl: optionalString(parsed.DEN_GOOGLE_API_BASE_URL),
   microsoftOAuthAuthorizeUrl: optionalString(parsed.DEN_MICROSOFT_OAUTH_AUTHORIZE_URL),
   microsoftOAuthTokenUrl: optionalString(parsed.DEN_MICROSOFT_OAUTH_TOKEN_URL),

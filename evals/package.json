@@ -4,17 +4,24 @@
   "type": "module",
   "scripts": {
     "spec": "vitest run --config vitest.config.ts --project pr",
-    "spec:nightly": "vitest run --config vitest.config.ts",
+    "spec:stack": "vitest run --config vitest.config.ts",
+    "roll": "node packages/evidence/bin/roll.mjs",
+    "publish:pr": "node packages/evidence/bin/publish-pr.mjs",
+    "dev:den": "node scripts/dev-den.ts",
+    "fraimz:publish": "node packages/evidence/bin/publish-pr.mjs",
+    "provision:org-connector-two-members": "node scripts/provision-org-connector-two-members.ts",
     "test": "node --test runner/*.test.ts packages/*/test/*.test.ts",
     "typecheck": "tsc -p ."
   },
   "dependencies": {
     "@openwork/behaviors": "workspace:*",
     "@openwork/cdp": "workspace:*",
+    "@openwork/evidence": "workspace:*",
     "@openwork/fraimz": "workspace:*",
     "@openwork/hosts": "workspace:*",
     "@openwork/labs": "workspace:*",
-    "@openwork/matchers": "workspace:*"
+    "@openwork/matchers": "workspace:*",
+    "@openwork/testkit": "workspace:*"
   },
   "devDependencies": {
     "vitest": "^3.2.4"

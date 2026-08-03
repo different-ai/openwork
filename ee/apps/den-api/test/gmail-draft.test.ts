@@ -261,3 +261,19 @@ describe("readGmailDraftIds", () => {
     expect(gmail.readGmailDraftIds(JSON.stringify([1, 2]))).toEqual({ draftId: null, messageId: null })
   })
 })
+
+describe("Gmail web links", () => {
+  test("targets the connected account when its email is known", () => {
+    expect(gmail.gmailDraftUrl("draft id", "user+work@example.com")).toBe(
+      "https://mail.google.com/mail/u/?authuser=user%2Bwork%40example.com#drafts?compose=draft%20id",
+    )
+    expect(gmail.gmailThreadUrl("thread/id", "user+work@example.com")).toBe(
+      "https://mail.google.com/mail/u/?authuser=user%2Bwork%40example.com#all/thread%2Fid",
+    )
+  })
+
+  test("keeps the legacy u/0 links when the account email is unknown", () => {
+    expect(gmail.gmailDraftUrl("draft id")).toBe("https://mail.google.com/mail/u/0/#drafts?compose=draft%20id")
+    expect(gmail.gmailThreadUrl("thread/id")).toBe("https://mail.google.com/mail/u/0/#all/thread%2Fid")
+  })
+})

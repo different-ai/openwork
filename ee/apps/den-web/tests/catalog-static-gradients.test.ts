@@ -38,13 +38,13 @@ describe("catalog list gradient surfaces", () => {
     }
   });
 
-  test.each(flatCatalogComponents)("%s uses the shared flat catalog rail", (component) => {
+  test.each(flatCatalogComponents)("%s uses the shared catalog identity tile", (component) => {
     const path = fileURLToPath(
       new URL(`../app/(den)/dashboard/_components/${component}`, import.meta.url),
     );
     const source = readFileSync(path, "utf8");
 
-    expect(source).toContain("CatalogColorRail");
+    expect(source).toContain("CatalogIdentityTile");
     expect(source).not.toContain("StaticSeededGradient");
     expect(source).not.toContain("PaperMeshGradient");
   });

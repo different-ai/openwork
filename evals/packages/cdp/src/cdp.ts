@@ -34,6 +34,9 @@ export interface EvaluateOptions {
   timeoutMs?: number;
 }
 
+/** Cheap DOM/CDP probes should fail quickly enough for their caller to retry. */
+export const DEFAULT_CDP_PROBE_TIMEOUT_MS = 8_000;
+
 interface PendingCallbacks {
   resolve(value: unknown): void;
   reject(error: Error): void;
@@ -74,16 +77,24 @@ function messageText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-export async function listTargets(baseUrl: string): Promise<CdpTarget[]> {
-  const response = await fetch(`${baseUrl.replace(/\/$/, "")}/json/list`);
+export async function listTargets(
+  baseUrl: string,
+  { timeoutMs = DEFAULT_CDP_PROBE_TIMEOUT_MS }: { timeoutMs?: number } = {},
+): Promise<CdpTarget[]> {
+  const response = await fetch(`${baseUrl.replace(/\/$/, "")}/json/list`, {
+    signal: AbortSignal.timeout(timeoutMs),
+  });
   if (!response.ok) {
     throw new Error(`Could not list CDP targets at ${baseUrl}: ${response.status}`);
   }
   return parseTargets(await response.json());
 }
 
-export async function pickAppTarget(baseUrl: string): Promise<CdpTarget> {
-  const targets = await listTargets(baseUrl);
+export async function pickAppTarget(
+  baseUrl: string,
+  { timeoutMs = DEFAULT_CDP_PROBE_TIMEOUT_MS }: { timeoutMs?: number } = {},
+): Promise<CdpTarget> {
+  const targets = await listTargets(baseUrl, { timeoutMs });
   const pages = targets.filter((target) => target.type === "page" && target.webSocketDebuggerUrl);
   const target =
     pages.find((page) => page.title === "OpenWork") ??
@@ -154,18 +165,16 @@ export function connect(
     let opened = false;
     let settled = false;
 
-    const connectTimer = connectTimeoutMs > 0
-      ? setTimeout(() => {
-        if (opened) return;
-        settled = true;
-        try {
-          socket.close();
-        } catch {
-          // Socket may already be in a closing state.
-        }
-        reject(new Error(`CDP connect timed out after ${connectTimeoutMs}ms: ${webSocketDebuggerUrl}`));
-      }, connectTimeoutMs)
-      : null;
+    const connectTimer = setTimeout(() => {
+      if (opened) return;
+      settled = true;
+      try {
+        socket.close();
+      } catch {
+        // Socket may already be in a closing state.
+      }
+      reject(new Error(`CDP connect timed out after ${connectTimeoutMs}ms: ${webSocketDebuggerUrl}`));
+    }, connectTimeoutMs);
 
     const rejectPending = (error: Error) => {
       for (const callbacks of pending.values()) {
@@ -187,12 +196,17 @@ export function connect(
           const id = nextId;
           nextId += 1;
           return new Promise((innerResolve, innerReject) => {
-            const timer = timeoutMs > 0
-              ? setTimeout(() => {
-                pending.delete(id);
-                innerReject(new Error(`CDP call ${method} timed out after ${timeoutMs}ms.`));
-              }, timeoutMs)
-              : null;
+            // Name WHAT timed out. The rejection fires from a timer, so the
+            // caller's stack is gone by then: "CDP call Runtime.evaluate timed
+            // out" alone cannot tell you which of a spec's dozens of
+            // evaluations blocked, which turns a one-line fix into a hunt.
+            const subject = typeof params.expression === "string"
+              ? ` evaluating: ${params.expression.replace(/\s+/g, " ").trim().slice(0, 160)}`
+              : "";
+            const timer = setTimeout(() => {
+              pending.delete(id);
+              innerReject(new Error(`CDP call ${method} timed out after ${timeoutMs}ms.${subject}`));
+            }, timeoutMs);
             pending.set(id, { resolve: innerResolve, reject: innerReject, timer });
             try {
               socket.send(JSON.stringify({ id, method, params }));
@@ -242,7 +256,7 @@ export function connect(
 export async function evaluate(
   client: CdpClient,
   expression: string,
-  { awaitPromise = false, timeoutMs }: EvaluateOptions = {},
+  { awaitPromise = false, timeoutMs = DEFAULT_CDP_PROBE_TIMEOUT_MS }: EvaluateOptions = {},
 ): Promise<unknown> {
   const payload = await client.send("Runtime.evaluate", {
     expression,
@@ -260,6 +274,10 @@ export async function evaluate(
   }
   const result = payload.result;
   return isRecord(result) ? result.value : undefined;
+}
+
+export async function navigate(client: CdpClient, url: string): Promise<void> {
+  await client.send("Page.navigate", { url });
 }
 
 export async function captureScreenshot(client: CdpClient): Promise<Buffer> {

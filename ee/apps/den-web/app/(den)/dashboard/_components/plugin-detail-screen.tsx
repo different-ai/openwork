@@ -22,12 +22,15 @@ import {
   usePlugin,
   useUpdatePlugin,
 } from "./plugin-data";
-import { CatalogColorRail } from "./catalog-card-surface";
+import { CatalogIdentityTile } from "./catalog-identity-tile";
+import { type PluginAccessGrant, usePluginAccess } from "./plugin-access-data";
+import { PluginAccessSection } from "./plugin-access-section";
 
 export function PluginDetailScreen({ pluginId }: { pluginId: string }) {
   const router = useRouter();
   const { orgContext, orgSlug } = useOrgDashboard();
   const { data: plugin, isLoading, error, refetch } = usePlugin(pluginId);
+  const pluginAccessQuery = usePluginAccess(pluginId);
   const archivePlugin = useArchivePlugin();
   const [actionsOpen, setActionsOpen] = useState(false);
   const [editPlugin, setEditPlugin] = useState<{ name: string; description: string } | null>(null);
@@ -71,6 +74,12 @@ export function PluginDetailScreen({ pluginId }: { pluginId: string }) {
   }
 
   const marketplaces = plugin.marketplaces ?? [];
+  const creator = orgContext?.members.find((member) => member.id === plugin.createdByOrgMembershipId) ?? null;
+  const accessBlastRadius = getPluginAccessBlastRadius(
+    pluginAccessQuery.data ?? [],
+    orgContext?.teams ?? [],
+    orgContext?.currentMember.id ?? null,
+  );
   const missingLabels: string[] = [];
   if (plugin.agents.length === 0) missingLabels.push("agents");
   if (plugin.commands.length === 0) missingLabels.push("commands");
@@ -150,47 +159,48 @@ export function PluginDetailScreen({ pluginId }: { pluginId: string }) {
         ) : null}
       </div>
 
-      <article className="overflow-hidden rounded-2xl border border-[var(--dls-border)] bg-[var(--dls-surface)]">
-        <div className="flex items-stretch">
-          <CatalogColorRail itemId={plugin.id} itemName={plugin.name} size="detail" />
-
-          <div className="min-w-0 flex-1 px-6 py-4">
-            <div className="flex flex-wrap items-center gap-2">
-              <h1 className="truncate text-[18px] font-semibold tracking-[-0.02em] text-gray-950">
-                {plugin.name}
-              </h1>
-              {plugin.version ? (
-                <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500">
-                  v{plugin.version}
-                </span>
-              ) : null}
-            </div>
-            {plugin.description ? (
-              <p className="mt-1 text-[13px] leading-[1.55] text-gray-500">{plugin.description}</p>
+      <article className="flex items-start gap-4">
+        <CatalogIdentityTile name={plugin.name} size="lg" />
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="truncate text-[18px] font-semibold tracking-[-0.02em] text-gray-950">
+              {plugin.name}
+            </h1>
+            {plugin.version ? (
+              <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500">
+                v{plugin.version}
+              </span>
             ) : null}
-
-            {marketplaces.length > 0 ? (
-              <div className="mt-3 flex flex-wrap gap-1.5">
-                {marketplaces.map((marketplace) => (
-                  <span
-                    key={marketplace.id}
-                    className="inline-flex items-center gap-1 rounded-full bg-gray-50 px-2 py-0.5 text-[11px] text-gray-600"
-                  >
-                    <Store className="h-3 w-3 text-gray-400" aria-hidden />
-                    <span className="truncate">{marketplace.name}</span>
-                  </span>
-                ))}
-              </div>
-            ) : null}
-
-            <p className="mt-3 text-[11.5px] text-gray-400">
-              Updated {formatPluginTimestamp(plugin.updatedAt)}
-            </p>
           </div>
+          {plugin.description ? (
+            <p className="mt-1 text-[13px] leading-[1.55] text-gray-500">{plugin.description}</p>
+          ) : null}
+          <p className="mt-1.5 text-[11.5px] text-gray-400">
+            Added by {creator?.user.name ?? "Unknown member"} · {formatPluginTimestamp(plugin.createdAt)}
+          </p>
+          <p className="mt-1.5 flex flex-wrap items-center gap-x-1.5 text-[11.5px] text-gray-400">
+            {marketplaces.length > 0 ? (
+              <>
+                <Store className="h-3 w-3" aria-hidden />
+                <span className="truncate">
+                  {marketplaces.map((marketplace) => marketplace.name).join(" · ")}
+                </span>
+                <span>·</span>
+              </>
+            ) : null}
+            <span>Updated {formatPluginTimestamp(plugin.updatedAt)}</span>
+          </p>
         </div>
       </article>
 
       <div className="mt-6 space-y-6">
+        <PluginAccessSection
+          pluginId={plugin.id}
+          pluginCreatedByOrgMembershipId={plugin.createdByOrgMembershipId}
+          grants={pluginAccessQuery.data ?? []}
+          isLoading={pluginAccessQuery.isLoading}
+          error={pluginAccessQuery.error}
+        />
         <SkillsSection orgSlug={orgSlug} plugin={plugin} />
         <PrimitiveSection icon={Users} label="Agents" items={plugin.agents} render={renderAgentRow} />
         <PrimitiveSection icon={Terminal} label="Commands" items={plugin.commands} render={renderCommandRow} />
@@ -219,6 +229,8 @@ export function PluginDetailScreen({ pluginId }: { pluginId: string }) {
       <ArchivePluginDialog
         open={archiveOpen}
         pluginName={plugin.name}
+        affectedPeopleCount={accessBlastRadius.peopleCount}
+        affectedTeamCount={accessBlastRadius.teamCount}
         busy={archivePlugin.isPending}
         error={archivePlugin.error}
         onClose={() => {
@@ -324,6 +336,8 @@ function EditPluginDialog({
 function ArchivePluginDialog({
   open,
   pluginName,
+  affectedPeopleCount,
+  affectedTeamCount,
   busy,
   error,
   onClose,
@@ -331,6 +345,8 @@ function ArchivePluginDialog({
 }: {
   open: boolean;
   pluginName: string;
+  affectedPeopleCount: number;
+  affectedTeamCount: number;
   busy: boolean;
   error: unknown;
   onClose: () => void;
@@ -354,6 +370,11 @@ function ArchivePluginDialog({
         <p id="archive-plugin-description" className="mt-2 text-[13px] leading-6 text-gray-500">
           This removes the plugin from active Den lists without deleting its historical skills, marketplace relationships, or audit trail.
         </p>
+        {affectedPeopleCount > 0 ? (
+          <p className="mt-3 text-[12.5px] font-medium text-amber-700">
+            This removes it for {affectedPeopleCount} people across {affectedTeamCount} {affectedTeamCount === 1 ? "team" : "teams"}.
+          </p>
+        ) : null}
         {error ? (
           <p className="mt-3 text-[12.5px] text-red-600">
             {error instanceof Error ? error.message : "Failed to archive plugin."}
@@ -370,6 +391,29 @@ function ArchivePluginDialog({
       </div>
     </div>
   );
+}
+
+function getPluginAccessBlastRadius(
+  grants: PluginAccessGrant[],
+  teams: Array<{ id: string; memberIds: string[] }>,
+  currentMemberId: string | null,
+) {
+  const people = new Set<string>();
+  const teamIds = new Set<string>();
+  const teamsById = new Map(teams.map((team) => [team.id, team]));
+
+  for (const grant of grants) {
+    if (grant.orgMembershipId) people.add(grant.orgMembershipId);
+    if (grant.teamId) teamIds.add(grant.teamId);
+  }
+  for (const teamId of teamIds) {
+    for (const memberId of teamsById.get(teamId)?.memberIds ?? []) {
+      people.add(memberId);
+    }
+  }
+  if (currentMemberId) people.delete(currentMemberId);
+
+  return { peopleCount: people.size, teamCount: teamIds.size };
 }
 
 function formatMissingList(labels: string[]) {

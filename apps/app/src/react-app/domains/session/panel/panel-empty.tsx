@@ -52,7 +52,7 @@ export function getPanelDestinations(
   if (actions.onOpenExtensions) {
     destinations.push({
       id: "extensions",
-      label: "Extensions",
+      label: "Library",
       description: "Browse the skills and connections available to your agent.",
       icon: <Puzzle aria-hidden="true" />,
       activate: actions.onOpenExtensions,

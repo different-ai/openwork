@@ -37,13 +37,15 @@ describe("native provider connections", () => {
     expect(isNativeProviderConnectionId("google-workspace")).toBe(true);
     expect(isNativeProviderConnectionId("microsoft-365")).toBe(true);
     expect(isNativeProviderConnectionId("emc_google_workspace")).toBe(false);
+    expect(isNativeProviderConnectionId("emc_google_workspace", "google-workspace")).toBe(true);
   });
 
   test("shows disconnect only for the connected calling member", () => {
     expect(canDisconnectNativeProviderAccount({ id: "google-workspace", connectedForMe: true })).toBe(true);
     expect(canDisconnectNativeProviderAccount({ id: "microsoft-365", connectedForMe: true })).toBe(true);
     expect(canDisconnectNativeProviderAccount({ id: "google-workspace", connectedForMe: false })).toBe(false);
-    expect(canDisconnectNativeProviderAccount({ id: "emc_google_workspace", connectedForMe: true })).toBe(false);
+    expect(canDisconnectNativeProviderAccount({ id: "emc_google_workspace", nativeProviderKey: "google-workspace", connectedForMe: true })).toBe(true);
+    expect(canDisconnectNativeProviderAccount({ id: "emc_external", nativeProviderKey: null, connectedForMe: true })).toBe(false);
   });
 
   test("allows members to disconnect their own per-member account", () => {

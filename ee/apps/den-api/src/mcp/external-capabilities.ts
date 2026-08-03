@@ -192,6 +192,13 @@ export type ExternalConnectionStatus = {
   }
 }
 
+type ConnectionStatusIdentity = {
+  id: string
+  name: string
+  authType: ExternalConnectionStatus["authType"]
+  credentialMode: ExternalConnectionStatus["credentialMode"]
+}
+
 const ERROR_MESSAGE_LIMIT = 300
 const LIVE_PROBE_HINT = "This is a live probe, not a cached result — repeating the same search without changing anything will return the same error."
 const INVALID_REFRESH_TOKEN_PATTERN = /\binvalid[ _-]?refresh[ _-]?token\b/i
@@ -413,7 +420,7 @@ function providerAuthorizationConnectionStatus(input: {
 }
 
 export function buildExternalConnectionStatus(input: {
-  connection: Pick<ExternalMcpConnectionRow, "id" | "name" | "authType" | "credentialMode">
+  connection: ConnectionStatusIdentity
   state: ExternalConnectionStatus["state"]
   errorCode: ExternalConnectionStatus["errorCode"]
   message: string
@@ -970,6 +977,9 @@ export async function executeExternalCapability(input: {
   }
   if (!connection) {
     return { ok: false, error: "unknown_capability", message: `No external MCP connection "${input.connectionId}" in this organization.` }
+  }
+  if (connection.kind !== "external_mcp") {
+    return { ok: false, error: "unknown_capability", message: `Connection "${input.connectionId}" is a native provider connector and does not expose MCP tools.` }
   }
 
   const canUse = await memberCanUseExternalMcpConnection({

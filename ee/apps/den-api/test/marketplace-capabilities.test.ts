@@ -637,7 +637,7 @@ describe("marketplace capabilities source", () => {
       marketplace: "Team Marketplace",
       name: "Renewal Playbook",
       content: "# Renewal Playbook\n\nAlways mention expansion risk.",
-      provenance: "Content from marketplace plugin Revenue Ops Plugin in your organization's library.",
+      provenance: "Content from plugin Revenue Ops Plugin in your organization's library.",
     })
   })
 

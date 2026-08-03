@@ -29,7 +29,7 @@ test.skipIf(!appSpecsEnabled)(title, async () => {
   const workspace = await createAndSelectWorkspace(app, { path: repoRoot });
 
   const capabilities = await readComposerCapabilities(app);
-  expect(capabilities.sections).toEqual(["Agents", "Commands", "Skills", "Extensions"]);
+  expect(capabilities.sections).toEqual(["Agents", "Commands", "Skills", "Library"]);
   {
     // KNOWN PRODUCT DEFECT (observed 2026-07-31, repo workspace): a long
     // command list makes the popover extend under the window header, visually
@@ -38,7 +38,7 @@ test.skipIf(!appSpecsEnabled)(title, async () => {
     // claim asserts what is actually visible until the popover is fixed.
     const shot = await screenshot(app);
     const seen = await validate(shot, [
-      "The composer capability menu is open with Skills and Extensions sections visible",
+      "The composer capability menu is open with Skills and Library sections visible",
       "No loading failure or 'Something went wrong' crash message is visible",
     ]);
     expect(seen.ok, seen.why).toBe(true);
@@ -71,7 +71,7 @@ test.skipIf(!appSpecsEnabled)(title, async () => {
   {
     const shot = await screenshot(app);
     const seen = await validate(shot, [
-      "The Extensions list visibly includes OpenWork Browser",
+      "The Library list visibly includes OpenWork Browser",
       "No Loading commands state or 'Something went wrong' crash message is visible",
     ]);
     expect(seen.ok, seen.why).toBe(true);

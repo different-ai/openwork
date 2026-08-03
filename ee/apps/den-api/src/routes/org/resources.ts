@@ -56,7 +56,7 @@ const resourceSnapshotResponseSchema = z.object({
 const assignedMarketplaceCapabilitiesResponseSchema = z.object({
   items: z.array(z.object({
     configObjectId: z.string(),
-    marketplaceId: z.string(),
+    marketplaceId: z.string().nullable(),
     objectType: z.string(),
     pluginId: z.string(),
   })),

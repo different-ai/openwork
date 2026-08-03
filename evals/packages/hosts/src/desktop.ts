@@ -1,5 +1,5 @@
 import { timed } from "@openwork/timeline";
-import { attachSurface, describeAppState, isInteractive, probeAppState } from "@openwork/cdp";
+import { attachSurface, describeAppState, dumpScreenState, isInteractive, probeAppState } from "@openwork/cdp";
 import { resolveHost } from "./resolve.ts";
 import type { AppStateProbe, AppSurfaceState, AttachedSurface, Surface, SurfaceHandle } from "@openwork/cdp";
 import type { Host } from "./types.ts";
@@ -20,6 +20,13 @@ function logCleanupError(name: string, error: unknown): void {
 export interface DesktopOptions {
   name?: string;
   mode?: "spawn" | "attach";
+  /**
+   * Where this desktop runs. Defaults to the ambient host (`resolveHost()`).
+   * Pass one from `localHost()` / `daytonaSandbox(id)` to place it explicitly —
+   * that is the only way a spec can put two desktops in two sandboxes, or the
+   * app and the browser in different places.
+   */
+  host?: Host;
   bootstrap?: {
     baseUrl: string;
     apiBaseUrl?: string;
@@ -37,6 +44,13 @@ export interface AppReadiness {
 
 export interface DesktopHandle extends AttachedSurface {
   readiness: AppReadiness;
+  /**
+   * The workspace root on the host running THIS app — use it for workspace
+   * paths instead of `process.cwd()`, which is the driver's filesystem and may
+   * not exist where the app runs. Null only in `mode: "attach"`, where the
+   * host is unknown.
+   */
+  workspaceRoot: string | null;
   stop(): Promise<void>;
 }
 
@@ -44,20 +58,21 @@ async function waitForReadiness(app: Surface, timeoutMs: number): Promise<AppRea
   const deadline = Date.now() + timeoutMs;
   // Short per-probe timeout so a briefly-busy renderer is retried rather than
   // consuming the whole readiness budget in one stuck call.
-  const probeTimeoutMs = Math.min(timeoutMs, 15_000);
   let last: AppStateProbe = { controlReady: false, transitional: null, surface: null, workspaceId: null, route: "", text: "" };
   while (Date.now() < deadline) {
     try {
-      last = await probeAppState(app.client, { timeoutMs: probeTimeoutMs });
+      last = await probeAppState(app.client, { timeoutMs: Math.min(8_000, Math.max(0, deadline - Date.now())) });
       if (isInteractive(last) && last.surface) {
         return { state: last.surface, workspaceId: last.workspaceId, route: last.route };
       }
     } catch {
       // Navigations briefly destroy the execution context while the app boots.
     }
-    await sleep(POLL_INTERVAL_MS);
+    await sleep(Math.min(POLL_INTERVAL_MS, Math.max(0, deadline - Date.now())));
   }
-  throw new Error(`OpenWork desktop did not become ready after ${timeoutMs}ms: ${describeAppState(last)}`);
+  throw new Error(
+    `OpenWork desktop did not become ready after ${timeoutMs}ms: ${describeAppState(last)} On screen: ${await dumpScreenState(app)}.`,
+  );
 }
 
 async function closeSpawnedSurface(
@@ -90,7 +105,7 @@ export async function desktop(opts: DesktopOptions = {}): Promise<DesktopHandle>
       cdpUrl,
     };
   } else {
-    host = await resolveHost();
+    host = opts.host ?? await resolveHost();
     handle = await host.spawnElectron(opts.name ?? "spec", {
       profile: "fresh",
       bootstrap: opts.bootstrap,
@@ -116,6 +131,7 @@ export async function desktop(opts: DesktopOptions = {}): Promise<DesktopHandle>
       handle: attached.handle,
       client: attached.client,
       readiness,
+      workspaceRoot: host?.workspaceRoot ?? null,
       stop,
       [Symbol.asyncDispose]: dispose,
     };

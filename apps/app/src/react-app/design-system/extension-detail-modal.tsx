@@ -223,7 +223,7 @@ export function ExtensionDetailModal({
   showEnablementCard = true,
   size = "default",
   presentation = "dialog",
-  backLabel = "Extensions",
+  backLabel = "Library",
 }: ExtensionDetailModalProps) {
   "use memo";
   const resolvedIconSrc = resolveExtensionIconUrl({ iconSrc, iconSlug, serviceUrl: url });

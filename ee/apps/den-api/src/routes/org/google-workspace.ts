@@ -1,4 +1,5 @@
 import type { Hono } from "hono"
+import { contextStorage, getContext } from "hono/context-storage"
 import { randomUUID } from "node:crypto"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
@@ -6,9 +7,10 @@ import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import { env } from "../../env.js"
 import { jsonValidator, orgMemberRoute, paramValidator, queryValidator } from "../../middleware/index.js"
 import { invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
-import { buildGmailDraftRaw, readGmailDraftIds } from "../../capability-sources/gmail.js"
+import { buildGmailDraftRaw, gmailDraftUrl, gmailThreadUrl, readGmailDraftIds } from "../../capability-sources/gmail.js"
 import type { GmailDraftAttachment } from "../../capability-sources/gmail.js"
 import { getValidAccessToken } from "../../capability-sources/generic-oauth.js"
+import { listNativeProviderUsableEntries, resolveDefaultNativeProviderCredentialId } from "../../capability-sources/native-provider-connections.js"
 import {
   buildDriveMultipartUpload,
   buildDriveSearchQuery,
@@ -26,6 +28,8 @@ import {
 } from "../../capability-sources/google-workspace-api.js"
 import type { ConnectedAccountRow } from "../../capability-sources/oauth-credentials.js"
 import { getNativeOAuthProvider } from "../../capability-sources/provider-registry.js"
+import { listTeamsForMember } from "../../orgs.js"
+import { readInternalCapabilityConnectorId } from "../../session.js"
 import type { OrgRouteVariables } from "./shared.js"
 
 const GMAIL_READ_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
@@ -98,14 +102,6 @@ const upstreamErrorSchema = z.object({
   error: z.literal("google_api_error"),
   message: z.string(),
 }).meta({ ref: "GoogleWorkspaceUpstreamError" })
-
-function gmailDraftUrl(messageId: string | null): string | null {
-  return messageId ? `https://mail.google.com/mail/u/0/#drafts?compose=${encodeURIComponent(messageId)}` : null
-}
-
-function gmailThreadUrl(threadId: string | undefined): string | null {
-  return threadId ? `https://mail.google.com/mail/u/0/#all/${encodeURIComponent(threadId)}` : null
-}
 
 const gmailMessagesQuerySchema = z.object({
   q: z.string().trim().min(1).max(1_000).optional().describe("Optional Gmail search query, using Gmail's search syntax."),
@@ -362,9 +358,36 @@ async function googleWorkspaceToken(input: {
   if (!provider) {
     return { kind: "google_api_error", message: "google-workspace provider is not registered." }
   }
+  const memberTeams = await listTeamsForMember({
+    organizationId: input.organizationId,
+    memberId: input.orgMembershipId,
+  })
+  const teamIds = memberTeams.map((team) => team.id)
+  const requestedConnectorId = readInternalCapabilityConnectorId(getContext().req.raw.headers)
+  let credentialProviderId: string | null
+  if (requestedConnectorId) {
+    const entries = await listNativeProviderUsableEntries({
+      organizationId: input.organizationId,
+      orgMembershipId: input.orgMembershipId,
+      teamIds,
+    })
+    const selected = entries.find((entry) => entry.id === requestedConnectorId)
+    credentialProviderId = selected?.nativeProviderKey === provider.providerId ? selected.id : null
+  } else {
+    credentialProviderId = await resolveDefaultNativeProviderCredentialId({
+      organizationId: input.organizationId,
+      orgMembershipId: input.orgMembershipId,
+      nativeProviderKey: provider.providerId,
+      teamIds,
+    })
+  }
+  if (!credentialProviderId) {
+    return { kind: "needs_connection", message: CONNECT_GOOGLE_ACCOUNT_MESSAGE }
+  }
 
   const token = await getValidAccessToken({
     provider,
+    credentialProviderId,
     organizationId: input.organizationId,
     orgMembershipId: input.orgMembershipId,
   })
@@ -425,6 +448,7 @@ function buildCalendarConferenceData(): CalendarConferenceData {
  * them — the agent path needs no MCP server and no extra wiring.
  */
 export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
+  app.use("/v1/capabilities/google-workspace/*", contextStorage())
   app.get(
     "/v1/capabilities/google-workspace/gmail-messages",
     describeRoute({
@@ -1142,8 +1166,8 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
         ok: true,
         draftId,
         messageId,
-        draftUrl: gmailDraftUrl(messageId),
-        threadUrl: gmailThreadUrl(threadId),
+        draftUrl: gmailDraftUrl(messageId, token.account.externalAccountId ?? undefined),
+        threadUrl: gmailThreadUrl(threadId, token.account.externalAccountId ?? undefined),
         to,
         subject,
         threadId: threadId ?? null,

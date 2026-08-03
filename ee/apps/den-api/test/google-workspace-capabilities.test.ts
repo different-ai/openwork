@@ -346,7 +346,7 @@ async function seedConnectedAccount(scopes: string[] | null = FULL_SCOPES) {
     organizationId,
     orgMembershipId: memberId,
     providerId: "google-workspace",
-    externalAccountId: "google-user-1",
+    externalAccountId: "google-user-1@example.com",
     scopes,
     accessToken: "gws-token",
     refreshToken: "gws-refresh-token",
@@ -638,7 +638,7 @@ test("gmail plain draft supports cc without requiring a thread", async () => {
     ok: true,
     draftId: "draft_1",
     messageId: "draft_msg_1",
-    draftUrl: "https://mail.google.com/mail/u/0/#drafts?compose=draft_msg_1",
+    draftUrl: "https://mail.google.com/mail/u/?authuser=google-user-1%40example.com#drafts?compose=draft_msg_1",
     threadUrl: null,
     to,
     subject,
@@ -719,8 +719,8 @@ test("gmail threaded reply draft reads thread metadata and sends reply headers",
   const body: unknown = await response.json()
   const responseBody = expectRecord(body, "threaded draft response")
   expect(responseBody.threadId).toBe("thread_1")
-  expect(responseBody.draftUrl).toBe("https://mail.google.com/mail/u/0/#drafts?compose=draft_msg_1")
-  expect(responseBody.threadUrl).toBe("https://mail.google.com/mail/u/0/#all/thread_1")
+  expect(responseBody.draftUrl).toBe("https://mail.google.com/mail/u/?authuser=google-user-1%40example.com#drafts?compose=draft_msg_1")
+  expect(responseBody.threadUrl).toBe("https://mail.google.com/mail/u/?authuser=google-user-1%40example.com#all/thread_1")
   expect(responseBody.quotedHistoryIncluded).toBe(true)
 })
 

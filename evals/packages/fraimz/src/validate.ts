@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { currentTape } from "./ambient.ts";
 import type { Shot } from "./screenshot.ts";
 
 const REPO_ROOT = fileURLToPath(new URL("../../../..", import.meta.url));
@@ -217,9 +218,10 @@ export async function validate(
     .update(shot.hash + JSON.stringify(expectations) + model)
     .digest("hex");
   const cachePath = join(CACHE_DIR, `${key}.json`);
+  let facts: SeenFacts | null = null;
   try {
     const cached = JSON.parse(await readFile(cachePath, "utf8"));
-    return parseCachedFacts(cached, expectations, model);
+    facts = parseCachedFacts(cached, expectations, model);
   } catch (error) {
     if (isRecord(error) && error.code === "ENOENT") {
       // Cache miss: perform the two independent model requests below.
@@ -227,36 +229,38 @@ export async function validate(
       throw error;
     }
   }
-
-  const description = parseDescription(await ask({
-    prompt: [
-      "Objectively describe only what is visibly present in this screenshot.",
-      "Do not infer hidden state, correctness, intent, or expected behavior.",
-      "Return only JSON matching: {\"description\":\"concise visible description\"}",
-    ].join("\n"),
-    png: shot.png,
-    model,
-  }));
-  const results = parseVerdict(await ask({
-    prompt: [
-      "Judge each expectation against the screenshot and the expectation-free description below.",
-      `Independent description: ${JSON.stringify(description)}`,
-      `Expectations: ${JSON.stringify(expectations)}`,
-      "Return only JSON matching: {\"results\":[{\"expectation\":\"exact expectation text\",\"passed\":true,\"evidence\":\"short visible quote or observation\"}]}",
-      "Return exactly one result per expectation, in the same order. Treat negative expectations literally and do not assume success.",
-    ].join("\n"),
-    png: shot.png,
-    model,
-  }), expectations);
-  const facts: SeenFacts = {
-    ok: results.every((result) => result.passed),
-    description,
-    results,
-    why: failureSummary(results),
-    model,
-    cached: false,
-  };
-  await mkdir(CACHE_DIR, { recursive: true });
-  await writeFile(cachePath, `${JSON.stringify(facts, null, 2)}\n`, "utf8");
+  if (!facts) {
+    const description = parseDescription(await ask({
+      prompt: [
+        "Objectively describe only what is visibly present in this screenshot.",
+        "Do not infer hidden state, correctness, intent, or expected behavior.",
+        "Return only JSON matching: {\"description\":\"concise visible description\"}",
+      ].join("\n"),
+      png: shot.png,
+      model,
+    }));
+    const results = parseVerdict(await ask({
+      prompt: [
+        "Judge each expectation against the screenshot and the expectation-free description below.",
+        `Independent description: ${JSON.stringify(description)}`,
+        `Expectations: ${JSON.stringify(expectations)}`,
+        "Return only JSON matching: {\"results\":[{\"expectation\":\"exact expectation text\",\"passed\":true,\"evidence\":\"short visible quote or observation\"}]}",
+        "Return exactly one result per expectation, in the same order. Treat negative expectations literally and do not assume success.",
+      ].join("\n"),
+      png: shot.png,
+      model,
+    }), expectations);
+    facts = {
+      ok: results.every((result) => result.passed),
+      description,
+      results,
+      why: failureSummary(results),
+      model,
+      cached: false,
+    };
+    await mkdir(CACHE_DIR, { recursive: true });
+    await writeFile(cachePath, `${JSON.stringify(facts, null, 2)}\n`, "utf8");
+  }
+  currentTape()?.claim(shot.hash, facts);
   return facts;
 }

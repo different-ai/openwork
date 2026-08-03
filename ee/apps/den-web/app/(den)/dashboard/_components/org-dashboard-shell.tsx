@@ -10,6 +10,7 @@ import {
   FileText,
   Globe,
   Home,
+  LibraryBig,
   LogOut,
   Menu,
   MessageSquare,
@@ -36,6 +37,7 @@ import {
   getOrgAccessFlags,
   getIntegrationsRoute,
   getInferenceRoute,
+  getLibraryRoute,
   getMcpConnectionsRoute,
   getManagedBrandIconUrl,
   getMembersRoute,
@@ -267,6 +269,9 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
   if (pathname.startsWith(getWebRoute(orgSlug))) {
     return "Web";
   }
+  if (pathname.startsWith(getLibraryRoute(orgSlug))) {
+    return "Library";
+  }
   if (pathname.startsWith(getPluginsRoute(orgSlug))) {
     return "Plugins";
   }
@@ -359,7 +364,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
   // both config and org context load.
   const showWeb = runtimeConfigLoaded && orgContext?.capabilities.cloud === true;
 
-  // Top-level rows: Dashboard, optional Your Connections, Extensions, Models,
+  // Top-level rows: Dashboard, Library, optional Your Connections, Extensions, Models,
   // Members, Analytics, Settings. Everything tool-shaped groups under
   // Extensions starts with the Marketplace, followed by its source and
   // management surfaces; model config groups under
@@ -426,6 +431,11 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
       href: activeOrg ? getOrgDashboardRoute(activeOrg.slug) : "#",
       label: "Dashboard",
       icon: Home,
+    },
+    {
+      href: activeOrg ? getLibraryRoute(activeOrg.slug) : "#",
+      label: "Library",
+      icon: LibraryBig,
     },
     ...(mcpConnectionsEnabled
       ? [{

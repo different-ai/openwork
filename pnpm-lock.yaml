@@ -140,6 +140,9 @@ importers:
       jsonc-parser:
         specifier: ^3.2.1
         version: 3.3.1
+      katex:
+        specifier: ^0.18.1
+        version: 0.18.1
       lexical:
         specifier: ^0.35.0
         version: 0.35.0
@@ -152,6 +155,9 @@ importers:
       marked-emoji:
         specifier: ^2.0.3
         version: 2.0.3(marked@17.0.1)
+      marked-katex-extension:
+        specifier: ^5.1.10
+        version: 5.1.10(katex@0.18.1)(marked@17.0.1)
       marked-shiki:
         specifier: ^1.2.1
         version: 1.2.1(marked@17.0.1)(shiki@4.0.2)
@@ -5877,6 +5883,10 @@ packages:
     resolution: {integrity: sha512-P0CysNDQ7rtVw4QIQtm+MRxV66vKFSvlsQvGYXZWR3qFU0jlMKHZZZgw8e+8DSah4UDKMqnknRDQz+xuQXQ/Zg==}
     engines: {node: '>= 6'}
 
+  commander@8.3.0:
+    resolution: {integrity: sha512-OkTL9umf+He2DZkUq8f8J9of7yL6RJKI24dVITBmNfZBmri9zYZQrKkuXiKhyfPSu8tUhnVBB1iKXevvnlR4Ww==}
+    engines: {node: '>= 12'}
+
   commander@9.5.0:
     resolution: {integrity: sha512-KRs7WVDKg86PWiuAqhDrAQnTXZKraVcCc6vFdL14qrZ/DcWwuRo7VoiYXalXO7S5GKpqYiVEwCbgFDfxNHKJBQ==}
     engines: {node: ^12.20.0 || >=14}
@@ -7099,6 +7109,10 @@ packages:
   jszip@3.10.1:
     resolution: {integrity: sha512-xXDvecyTpGLrqFrvkrUSoxxfJI5AH7U8zxxtVclpsUtMCq4JQ290LY8AW5c7Ggnr/Y/oK+bQMbqK2qmtk3pN4g==}
 
+  katex@0.18.1:
+    resolution: {integrity: sha512-Td8GCYSxDAoMhHOlKmCFMJ/hz5qlAAb71n66Dryw9nfCVfumLo7nhuotbvKom/XPADmrYC3O5QR71EPq4DarJQ==}
+    hasBin: true
+
   keyv@4.5.4:
     resolution: {integrity: sha512-oxVHkHR/EJf2CNXnWxRLW6mg7JyCCUcG0DtEGmL2ctUo1PNTin1PUil+r/+4r5MpVgC/fn1kjsx7mjSujKqIpw==}
 
@@ -7296,6 +7310,12 @@ packages:
   marked-emoji@2.0.3:
     resolution: {integrity: sha512-fChW/AfUqCHgoEC1nFDgiw3OR/qsi71/QXH/HTo05yd6B5+T+VHh1SqCpn/HpeGLDxkA+MK4+hr4eULB2/A8Jw==}
     peerDependencies:
+      marked: '>=4 <19'
+
+  marked-katex-extension@5.1.10:
+    resolution: {integrity: sha512-TuqrzguLeXXm6iBaf16leL3+dVmMj8KrBdunMVVzxMS/bwcjtQ0YG0sNytl1j7uUo8yClsXJqBbVjH1yOPurwQ==}
+    peerDependencies:
+      katex: '>=0.16 <0.18'
       marked: '>=4 <19'
 
   marked-shiki@1.2.1:
@@ -14266,6 +14286,8 @@ snapshots:
 
   commander@5.1.0: {}
 
+  commander@8.3.0: {}
+
   commander@9.5.0:
     optional: true
 
@@ -15570,6 +15592,10 @@ snapshots:
       readable-stream: 2.3.8
       setimmediate: 1.0.5
 
+  katex@0.18.1:
+    dependencies:
+      commander: 8.3.0
+
   keyv@4.5.4:
     dependencies:
       json-buffer: 3.0.1
@@ -15715,6 +15741,11 @@ snapshots:
 
   marked-emoji@2.0.3(marked@17.0.1):
     dependencies:
+      marked: 17.0.1
+
+  marked-katex-extension@5.1.10(katex@0.18.1)(marked@17.0.1):
+    dependencies:
+      katex: 0.18.1
       marked: 17.0.1
 
   marked-shiki@1.2.1(marked@17.0.1)(shiki@4.0.2):

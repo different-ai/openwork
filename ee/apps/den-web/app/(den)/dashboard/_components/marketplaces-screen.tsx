@@ -16,7 +16,8 @@ import {
   useCreateMarketplace,
   useMarketplaces,
 } from "./marketplace-data";
-import { CatalogColorRail, catalogCardClassName } from "./catalog-card-surface";
+import { DenCatalogList, DenCatalogRow } from "../../_components/ui/catalog-row";
+import { CatalogIdentityTile } from "./catalog-identity-tile";
 
 export function MarketplacesScreen() {
   const { orgContext, orgSlug } = useOrgDashboard();
@@ -33,9 +34,17 @@ export function MarketplacesScreen() {
 
   const normalizedQuery = query.trim().toLowerCase();
   const filtered = useMemo(() => {
-    if (!normalizedQuery) return marketplaces;
-    return marketplaces.filter((marketplace) =>
-      `${marketplace.name}\n${marketplace.description ?? ""}`.toLowerCase().includes(normalizedQuery),
+    const matches = normalizedQuery
+      ? marketplaces.filter((marketplace) =>
+          `${marketplace.name}\n${marketplace.description ?? ""}`.toLowerCase().includes(normalizedQuery),
+        )
+      : marketplaces;
+
+    // The API returns newest first, which buries a stocked catalogue under an
+    // empty one somebody just created. Lead with the marketplaces that have
+    // something in them.
+    return [...matches].sort(
+      (a, b) => b.pluginCount - a.pluginCount || a.name.localeCompare(b.name),
     );
   }, [marketplaces, normalizedQuery]);
 
@@ -91,38 +100,27 @@ export function MarketplacesScreen() {
           }
         />
       ) : (
-        <div className="grid gap-3 md:grid-cols-2">
+        <DenCatalogList
+          label={`${filtered.length} marketplace${filtered.length === 1 ? "" : "s"}`}
+          valueLabel="Plugins"
+        >
           {filtered.map((marketplace) => (
-            <Link
+            <DenCatalogRow
               key={marketplace.id}
               href={getMarketplaceRoute(orgSlug, marketplace.id)}
-              className={catalogCardClassName}
-            >
-              <div className="flex items-stretch">
-                <CatalogColorRail itemId={marketplace.id} itemName={marketplace.name} size="card" />
-
-                <div className="min-w-0 flex-1 px-5 py-3.5">
-                  <div className="flex items-start justify-between gap-3">
-                    <h2 className="truncate text-[14px] font-semibold tracking-[-0.01em] text-gray-900">
-                      {marketplace.name}
-                    </h2>
-                    <span className="shrink-0 rounded-full bg-gray-50 px-2 py-0.5 text-[11px] text-gray-500">
-                      {marketplace.pluginCount} plugin{marketplace.pluginCount === 1 ? "" : "s"}
-                    </span>
-                  </div>
-                  {marketplace.description ? (
-                    <p className="mt-0.5 line-clamp-2 text-[12.5px] leading-[1.55] text-gray-500">
-                      {marketplace.description}
-                    </p>
-                  ) : null}
-                  <p className="mt-2.5 text-[11.5px] text-gray-400">
-                    Added {formatMarketplaceTimestamp(marketplace.createdAt)}
-                  </p>
-                </div>
-              </div>
-            </Link>
+              leading={
+                <CatalogIdentityTile name={marketplace.name} logoUrl={marketplace.logoUrl} />
+              }
+              title={marketplace.name}
+              description={
+                marketplace.description ?? <span className="text-gray-400">No description yet</span>
+              }
+              value={String(marketplace.pluginCount)}
+              valueMuted={marketplace.pluginCount === 0}
+              valueCaption={`Added ${formatMarketplaceTimestamp(marketplace.createdAt)}`}
+            />
           ))}
-        </div>
+        </DenCatalogList>
       )}
       {access.isAdmin ? (
         <CreateMarketplaceDialog

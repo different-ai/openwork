@@ -27,6 +27,7 @@ DEN_WEB_PUBLIC_HOST="${DEN_WEB_PUBLIC_HOST#https://}"
 DEN_WEB_PUBLIC_HOST="${DEN_WEB_PUBLIC_HOST%%/*}"
 
 export OPENWORK_DEV_MODE="${OPENWORK_DEV_MODE:-1}"
+export DEN_ORG_MODE="${DEN_ORG_MODE:-multi_org}"
 export DATABASE_URL="${DATABASE_URL:-mysql://root:password@127.0.0.1:3306/openwork_den}"
 export DEN_DB_ENCRYPTION_KEY="${DEN_DB_ENCRYPTION_KEY:-daytona-den-db-encryption-key-please-change-1234567890}"
 export BETTER_AUTH_SECRET="${BETTER_AUTH_SECRET:-daytona-den-auth-secret-please-change-1234567890}"
@@ -136,12 +137,45 @@ nohup env \
   PROVISIONER_MODE="$DEN_PROVISIONER_MODE" \
   WORKER_URL_TEMPLATE="$DEN_WORKER_URL_TEMPLATE" \
   DAYTONA_WORKER_PROXY_BASE_URL="$DAYTONA_WORKER_PROXY_BASE_URL" \
-  DEN_ORG_MODE="${DEN_ORG_MODE:-multi_org}" \
+  DEN_ORG_MODE="$DEN_ORG_MODE" \
   OPENWORK_DEV_MODE="$OPENWORK_DEV_MODE" \
   NODE_OPTIONS="--conditions=development" \
   pnpm --filter @openwork-ee/den-api exec tsx watch src/main.ts > /tmp/den-api.log 2>&1 &
 
 wait_for_http "http://127.0.0.1:$DEN_API_PORT/health" "Den API" 180
+
+if [ "${RUN_SEED:-0}" = "1" ]; then
+  demo_email="${DEN_DEMO_OWNER_EMAIL:-alex@acme.test}"
+  demo_password="${DEN_DEMO_OWNER_PASSWORD:-OpenWorkDemo123!}"
+  signin_ok() {
+    curl -sf -o /dev/null -X POST "http://127.0.0.1:$DEN_API_PORT/api/auth/sign-in/email" \
+      -H 'content-type: application/json' \
+      -d "{\"email\":\"$demo_email\",\"password\":\"$demo_password\"}"
+  }
+  if signin_ok; then
+    echo "==> Demo org already present ($demo_email)"
+  else
+    echo "==> Seeding demo org..."
+    (cd ee/apps/den-api && env \
+      DATABASE_URL="$DATABASE_URL" \
+      DEN_DB_ENCRYPTION_KEY="$DEN_DB_ENCRYPTION_KEY" \
+      BETTER_AUTH_SECRET="$BETTER_AUTH_SECRET" \
+      BETTER_AUTH_URL="$BETTER_AUTH_URL" \
+      DEN_API_PUBLIC_URL="$DEN_API_PUBLIC_URL" \
+      DEN_ORG_MODE="$DEN_ORG_MODE" \
+      OPENWORK_DEV_MODE="$OPENWORK_DEV_MODE" \
+      DEN_DEMO_SEED_FETCH_GITHUB="${DEN_DEMO_SEED_FETCH_GITHUB:-0}" \
+      node --conditions=development --import tsx scripts/seed-demo-org.ts) > /tmp/den-seed.log 2>&1
+    if signin_ok; then
+      echo "==> Demo org seeded ($demo_email)"
+    else
+      echo "ERROR: seed completed but $demo_email cannot sign in. See /tmp/den-seed.log" >&2
+      tail -40 /tmp/den-seed.log >&2 || true
+      exit 1
+    fi
+  fi
+  echo "DEMO_OWNER_READY=$demo_email"
+fi
 
 echo "==> Starting worker proxy on :$DEN_WORKER_PROXY_PORT..."
 pkill -f "tsx watch src/server.ts" >/dev/null 2>&1 || true
@@ -189,7 +223,7 @@ nohup env \
   NEXT_PUBLIC_OPENWORK_AUTH_CALLBACK_URL="$NEXT_PUBLIC_OPENWORK_AUTH_CALLBACK_URL" \
   NEXT_PUBLIC_POSTHOG_KEY= \
   NEXT_PUBLIC_POSTHOG_API_KEY= \
-  DEN_ORG_MODE="${DEN_ORG_MODE:-multi_org}" \
+  DEN_ORG_MODE="$DEN_ORG_MODE" \
   OPENWORK_DEV_MODE="$OPENWORK_DEV_MODE" \
   DEN_WEB_ALLOWED_DEV_ORIGINS="$DEN_WEB_ALLOWED_DEV_ORIGINS" \
   pnpm --filter @openwork-ee/den-web exec next dev --hostname 0.0.0.0 --port "$DEN_WEB_PORT" > /tmp/den-web.log 2>&1 &

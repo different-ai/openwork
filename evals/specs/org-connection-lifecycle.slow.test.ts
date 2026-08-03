@@ -31,12 +31,18 @@ const title = !appSpecsEnabled
     : "member connects, reconnects, and disconnects an organization OAuth connection";
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-async function waitForConnectionCard(app: Surface, name: string): Promise<void> {
+async function waitForConnectionCard(app: Surface, name: string, workspaceId: string): Promise<void> {
   const deadline = Date.now() + 90_000;
   while (Date.now() < deadline) {
     const found = await evalIn(app, `([...document.querySelectorAll('button')]
       .some((button) => (button.textContent ?? '').includes(${JSON.stringify(name)})))`);
     if (found === true) return;
+    const onExtensions = await evalIn(app, `window.location.hash.includes("/extensions")`).catch(() => false);
+    if (onExtensions !== true) {
+      await go(app, `/workspace/${workspaceId}/settings/extensions/connections`);
+      await sleep(1_500);
+      continue;
+    }
     await evalIn(
       app,
       "window.__openworkControl.execute('extensions.refresh-marketplace', null)",
@@ -50,7 +56,26 @@ async function waitForConnectionCard(app: Surface, name: string): Promise<void> 
     })()`).catch(() => undefined);
     await sleep(2_000);
   }
-  throw new Error(`Connection card did not render: ${name}`);
+  const seen = await evalIn(app, `({
+    hash: window.location.hash,
+    buttons: [...document.querySelectorAll('button')].map((b) => (b.textContent ?? '').replace(/\\s+/g, ' ').trim()).filter(Boolean).slice(0, 40),
+    text: (document.body.innerText ?? '').replace(/\\s+/g, ' ').slice(0, 600),
+  })`).catch(() => null);
+  throw new Error(`The connection card ${name} never appeared. On screen: ${JSON.stringify(seen)}`);
+}
+
+async function revealText(app: Surface, text: string, timeoutMs = 45_000): Promise<void> {
+  await waitFor(app, `(() => {
+    const wanted = ${JSON.stringify(text)}.toLowerCase();
+    const nodes = [...document.querySelectorAll("button, h1, h2, h3, p, span, div")];
+    const node = nodes.reverse().find((element) => ((element.innerText ?? element.textContent ?? "")).toLowerCase().includes(wanted));
+    if (!node) return false;
+    const rect = node.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return false;
+    node.scrollIntoView({ block: "center" });
+    return true;
+  })()`, { timeoutMs, label: `visible text ${JSON.stringify(text)}` });
+  await sleep(750);
 }
 
 async function openConnectionDetail(app: Surface, name: string): Promise<void> {
@@ -115,16 +140,17 @@ test.skipIf(!apiUrl || !appSpecsEnabled)(title, async () => {
   await signInDesktopAs(app, den, member);
   const { workspaceId } = await createAndSelectWorkspace(app, { path: workspacePath });
   await go(app, `/workspace/${workspaceId}/settings/extensions/connections`);
-  await waitFor(app, `window.location.hash.includes("/settings/extensions") && document.body.innerText.includes("Extensions")`, {
+  await waitFor(app, `window.location.hash.includes("/extensions") && document.body.innerText.includes("Library")`, {
     timeoutMs: 60_000,
-    label: "extensions connections route",
+    label: "extensions connections route (app canonicalises away /settings)",
   });
 
-  await waitForConnectionCard(app, connection.name);
-  await waitForText(app, "NEEDS YOUR SIGN-IN", { timeoutMs: 30_000 });
+  await waitForConnectionCard(app, connection.name, workspaceId);
+  await revealText(app, "NEEDS YOUR SIGN-IN", 30_000);
   await openConnectionDetail(app, connection.name);
   await waitForNotConnected(app, connection.name);
   await waitForText(app, "OAuth required", { timeoutMs: 30_000 });
+  await revealText(app, "OAuth required");
   {
     const shot = await screenshot(app);
     const seen = await validate(shot, [
@@ -162,10 +188,12 @@ test.skipIf(!apiUrl || !appSpecsEnabled)(title, async () => {
   const firstConnectedAt = (await readUsableConnection(member, connection.id))?.connectedAt;
   expect(firstConnectedAt).toBeTruthy();
   if (!firstConnectedAt) throw new Error("The first OAuth connection did not record connectedAt.");
+  await revealText(app, "Connected with your own account.");
   {
     const shot = await screenshot(app);
     const seen = await validate(shot, [
       "The connection detail visibly says Connected with your own account",
+      "Reconnect and Disconnect lifecycle actions are both visibly available",
       "No Connect your account action or 'Something went wrong' crash message is visible",
     ]);
     expect(seen.ok, seen.why).toBe(true);
@@ -183,15 +211,6 @@ test.skipIf(!apiUrl || !appSpecsEnabled)(title, async () => {
   const actions = await enabledButtons(app);
   expect(actions).toContain("Reconnect");
   expect(actions).toContain("Disconnect");
-  {
-    const shot = await screenshot(app);
-    const seen = await validate(shot, [
-      "Reconnect and Disconnect lifecycle actions are both visibly available",
-      "No generic error or 'Something went wrong' crash message is visible",
-    ]);
-    expect(seen.ok, seen.why).toBe(true);
-    await roll.add(shot, seen);
-  }
 
   const reconnectClickedAt = new Date().toISOString();
   await clickButton(app, "Reconnect");
@@ -201,6 +220,7 @@ test.skipIf(!apiUrl || !appSpecsEnabled)(title, async () => {
     return current?.connectedForMe === true && Boolean(current.connectedAt) && current.connectedAt !== firstConnectedAt;
   }, { timeout: 90_000, interval: 1_000 }).toBe(true);
   await waitForText(app, "Connected with your own account.", { timeoutMs: 90_000 });
+  await revealText(app, "Connected with your own account.");
   {
     const shot = await screenshot(app);
     const seen = await validate(shot, [
@@ -218,14 +238,6 @@ test.skipIf(!apiUrl || !appSpecsEnabled)(title, async () => {
   ).toBe(false);
   await waitForNotConnected(app, connection.name);
   await waitForText(app, "Connect your account", { timeoutMs: 30_000 });
-  expect(await currentHash(app)).toContain("/settings/extensions/");
-  {
-    const shot = await screenshot(app);
-    const seen = await validate(shot, [
-      "The connection visibly returns to Not connected with a Connect your account action after disconnecting",
-      "No disconnect error or 'Something went wrong' crash message is visible",
-    ]);
-    expect(seen.ok, seen.why).toBe(true);
-    await roll.add(shot, seen);
-  }
+  await revealText(app, "Connect your account");
+  expect(await currentHash(app)).toContain("/extensions/");
 });

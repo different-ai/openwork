@@ -16,6 +16,8 @@ import { bundledLanguages, codeToHtml } from "shiki";
 
 import { faviconUrlForHref } from "@/lib/favicon";
 
+import { markdownMath } from "./markdown-math";
+
 export type MarkdownPresentation = "chat" | "surface";
 type RawHtmlMode = "passthrough" | "shiki-only";
 type ShikiThemeConfig =
@@ -166,9 +168,14 @@ function sanitizeMarkdownHtml(value: string) {
   }
 
   return DOMPurify.sanitize(value, {
+    // KaTeX wraps its MathML branch in <semantics>/<annotation>, neither of which is
+    // in DOMPurify's default MathML allowlist. Without these the accessible MathML
+    // (and copy-as-TeX) half of every formula is stripped.
+    ADD_TAGS: ["annotation", "semantics"],
     ADD_ATTR: [
       "checked",
       "class",
+      "data-openwork-math-error",
       "data-openwork-code-block",
       "data-openwork-code-copy",
       "data-openwork-code-copy-check-icon",
@@ -364,12 +371,16 @@ function createMarkdownParsers(presentation: MarkdownPresentation) {
       emojis: emojiAliases,
       renderer: (token) => escapeHtml(token.emoji),
     }),
+    markdownMath(),
   );
+  // Math must be registered on both parsers, otherwise formulas would flicker away
+  // when a message containing a fenced code block upgrades to the Shiki render.
   const highlightedMarkdownParser = new Marked<string, string>(createMarkedOptions(profile, true)).use(
     markedEmoji({
       emojis: emojiAliases,
       renderer: (token) => escapeHtml(token.emoji),
     }),
+    markdownMath(),
     markedShiki({
       async highlight(code, lang, props) {
         const language = parseShikiLanguage(lang);

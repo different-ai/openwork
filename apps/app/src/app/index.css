@@ -7,6 +7,8 @@
 
 @import "shadcn/tailwind.css";
 
+@import "katex/dist/katex.min.css";
+
 @import "@fontsource-variable/geist";
 
 @import "@fontsource-variable/ibm-plex-sans";
@@ -222,6 +224,25 @@ body {
   font-style: var(--shiki-dark-font-style) !important;
   font-weight: var(--shiki-dark-font-weight) !important;
   text-decoration: var(--shiki-dark-text-decoration) !important;
+}
+
+/* KaTeX sets its own absolute font-size; keep formulas at the surrounding text size
+   so inline math does not tower over the sentence it sits in. */
+.markdown-content .katex {
+  font-size: 1.1em;
+  color: inherit;
+}
+
+/* Long formulas scroll instead of overflowing the message bubble. */
+.markdown-content .katex-display {
+  margin: 1rem 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.25rem 0;
+}
+
+.markdown-content [data-openwork-math-error] {
+  color: var(--color-red-11, inherit);
 }
 
 .ow-soft-shell {

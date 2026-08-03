@@ -1,5 +1,6 @@
 export type NativeProviderDisconnectableConnection = {
   id: string;
+  nativeProviderKey?: string | null;
   connectedForMe: boolean;
 };
 
@@ -22,12 +23,12 @@ export function connectionNeedsReconnect(connection: ReconnectableConnection): b
   return connection.needsReconnect === true || (connection.missingFeatures?.length ?? 0) > 0;
 }
 
-export function isNativeProviderConnectionId(id: string): boolean {
-  return id === "google-workspace" || id === "microsoft-365";
+export function isNativeProviderConnectionId(id: string, nativeProviderKey?: string | null): boolean {
+  return nativeProviderKey != null || id === "google-workspace" || id === "microsoft-365";
 }
 
 export function canDisconnectNativeProviderAccount(connection: NativeProviderDisconnectableConnection): boolean {
-  return connection.connectedForMe && isNativeProviderConnectionId(connection.id);
+  return connection.connectedForMe && isNativeProviderConnectionId(connection.id, connection.nativeProviderKey);
 }
 
 /** Reconnect/repair is owned by an org admin, not the member. */

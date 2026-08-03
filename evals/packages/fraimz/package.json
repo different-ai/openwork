@@ -5,9 +5,14 @@
   "type": "module",
   "exports": {
     ".": {
-      "types": "./src/index.ts",
-      "development": "./src/index.ts",
-      "default": "./src/index.ts"
+      "types": "./src/compat.ts",
+      "development": "./src/compat.ts",
+      "default": "./src/compat.ts"
+    },
+    "./vitest": {
+      "types": "./src/vitest.ts",
+      "development": "./src/vitest.ts",
+      "default": "./src/vitest.ts"
     }
   },
   "dependencies": {

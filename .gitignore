@@ -71,3 +71,6 @@ transcript-analysis
 evals/results/
 .playwright-mcp/
 .vscode/
+
+# Warden local run logs
+.warden/logs/

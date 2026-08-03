@@ -1,7 +1,10 @@
 ---
 name: run-evals
-description: do e2e tests, run e2e, validate feature, prove it works, PR proof, frame proof, pnpm evals. Launches OpenWork on Daytona or local Electron and runs the coded eval flows via CDP. Launch + run mechanics; the proof loop itself is the fraimz skill.
+description: DEPRECATED legacy flow runner (pnpm fraimz --flow, evals/flows). For new work use the run-tests skill (@openwork/testkit specs). Load this only to run an EXISTING evals/flows/*.flow file.
 ---
+
+> New tests use `evals/specs` with `@openwork/testkit`; see `write-a-spec` and
+> `run-tests`. The flow-based process below is legacy.
 
 # Skill: Run Evals
 

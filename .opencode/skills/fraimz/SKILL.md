@@ -1,7 +1,10 @@
 ---
 name: fraimz
-description: create a fraimz, make fraimz, prove it works, frame proof, PR proof, validate experience, e2e evidence, fraimz.html. The full fraimz loop — frame the claim, drive the real app via CDP, validate/repair, output fraimz.html. Use whenever a task ends with "please create a fraimz" or any change needs end-to-end proof.
+description: DEPRECATED legacy flow loop (evals/flows). For new end-to-end proof use the write-a-spec and run-tests skills (@openwork/testkit specs + ambient evidence tape) and publish-evidence for the PR comment. Load this only to maintain an EXISTING evals/flows/*.flow file.
 ---
+
+> New tests use `evals/specs` with `@openwork/testkit`; see `write-a-spec` and
+> `run-tests`. The flow-based process below is legacy.
 
 # Skill: fraimz
 

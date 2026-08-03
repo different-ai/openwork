@@ -29,12 +29,16 @@ async function openAuthorizationUrl(url: string) {
   }
 }
 
-async function disconnectMemberAccount(client: DenClient, orgId: string, connectionId: string): Promise<void> {
-  if (isNativeProviderConnectionId(connectionId)) {
-    await client.disconnectOauthProviderAccount(orgId, connectionId);
+async function disconnectMemberAccount(
+  client: DenClient,
+  orgId: string,
+  connection: Pick<DenExternalMcpConnection, "id" | "nativeProviderKey">,
+): Promise<void> {
+  if (isNativeProviderConnectionId(connection.id, connection.nativeProviderKey)) {
+    await client.disconnectOauthProviderAccount(orgId, connection.id);
     return;
   }
-  await client.disconnectMyMcpConnectionAccount(orgId, connectionId);
+  await client.disconnectMyMcpConnectionAccount(orgId, connection.id);
 }
 
 export type OrgMcpConnectionCardState = {
@@ -213,7 +217,7 @@ export function useOrgMcpConnections() {
     try {
       const client = createDenClient({ baseUrl: settings.baseUrl, token });
       if (options?.forceFreshAuthorization === true && previous?.connectedForMe) {
-        await disconnectMemberAccount(client, orgId, connectionId);
+        await disconnectMemberAccount(client, orgId, previous);
         if (!isActionScopeCurrent(pollScope)) return;
       }
       const result = await client.startMcpConnectionConnect(orgId, connectionId);
@@ -295,7 +299,8 @@ export function useOrgMcpConnections() {
     setError(null);
     try {
       const client = createDenClient({ baseUrl: settings.baseUrl, token });
-      await disconnectMemberAccount(client, orgId, connectionId);
+      const connection = connectionsRef.current.find((entry) => entry.id === connectionId);
+      await disconnectMemberAccount(client, orgId, connection ?? { id: connectionId });
       if (!isActionScopeCurrent(actionScope)) return;
       await refresh(actionScope);
       if (!isActionScopeCurrent(actionScope)) return;

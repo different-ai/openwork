@@ -77,6 +77,18 @@ export function readGmailDraftIds(text: string): { draftId: string | null; messa
   }
 }
 
+export function gmailDraftUrl(messageId: string | null, accountEmail?: string): string | null {
+  if (!messageId) return null
+  const mailbox = accountEmail ? `u/?authuser=${encodeURIComponent(accountEmail)}` : "u/0/"
+  return `https://mail.google.com/mail/${mailbox}#drafts?compose=${encodeURIComponent(messageId)}`
+}
+
+export function gmailThreadUrl(threadId: string | undefined, accountEmail?: string): string | null {
+  if (!threadId) return null
+  const mailbox = accountEmail ? `u/?authuser=${encodeURIComponent(accountEmail)}` : "u/0/"
+  return `https://mail.google.com/mail/${mailbox}#all/${encodeURIComponent(threadId)}`
+}
+
 export function buildGmailDraftRaw(input: { to: string; cc?: string; bcc?: string; subject: string; body: string; headers?: { name: string; value: string }[]; attachments?: GmailDraftAttachment[] }): string {
   const headers = [
     `To: ${input.to}`,

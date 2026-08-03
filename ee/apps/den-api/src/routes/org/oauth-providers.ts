@@ -1,13 +1,14 @@
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
-import type { DenTypeId } from "@openwork-ee/utils/typeid"
+import { normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { env } from "../../env.js"
 import {
   jsonValidator,
   orgMemberRoute,
   paramValidator,
   publicRoute,
+  resolveMemberTeamsMiddleware,
 } from "../../middleware/index.js"
 import { emptyResponse, forbiddenSchema, htmlResponse, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import {
@@ -39,6 +40,10 @@ import {
   upsertOrgOAuthClient,
 } from "../../capability-sources/oauth-credentials.js"
 import { normalizeEntraTenantId, readProviderTenantId } from "../../capability-sources/oauth-tenant.js"
+import { getExternalMcpConnection, listUsableNativeProviderConnections } from "../../capability-sources/external-mcp-connections.js"
+import { resolveDefaultNativeProviderCredentialId, resolveManageableNativeProviderCredentialId } from "../../capability-sources/native-provider-connections.js"
+import { listTeamsForMember } from "../../orgs.js"
+import type { MemberTeamSummary } from "../../orgs.js"
 import { CONNECTIONS_READ_SESSION_MAX_AGE_MS, ensureOrganizationAdmin, orgAccessFailureStatus } from "./shared.js"
 import type { OrgRouteVariables } from "./shared.js"
 
@@ -92,6 +97,68 @@ const oauthStatusResponseSchema = z.object({
   scopes: z.array(z.string()).nullable(),
 }).meta({ ref: "OAuthProviderStatusResponse" })
 
+const nativeOAuthIdentitySchema = z.object({
+  email: z.string().trim().email().max(320),
+})
+const NATIVE_OAUTH_USERINFO_TIMEOUT_MS = 5_000
+
+function emailFromIdToken(idToken: string | undefined): string | null {
+  const segments = idToken?.split(".")
+  if (segments?.length !== 3) return null
+  const encodedPayload = segments[1]
+  if (!encodedPayload) return null
+  try {
+    // Identity hint only: the token came directly from the configured token
+    // endpoint over TLS and is never used here for authentication or authorization.
+    const payload: unknown = JSON.parse(Buffer.from(encodedPayload, "base64url").toString("utf8"))
+    const parsed = nativeOAuthIdentitySchema.safeParse(payload)
+    return parsed.success ? parsed.data.email : null
+  } catch {
+    return null
+  }
+}
+
+async function resolveExternalAccountId(input: {
+  provider: NativeOAuthProviderConfig
+  accessToken: string
+  idToken?: string
+  requestId: string
+}): Promise<string | null> {
+  const idTokenEmail = emailFromIdToken(input.idToken)
+  if (idTokenEmail) return idTokenEmail
+  if (!input.provider.userinfoUrl) return null
+
+  try {
+    const response = await fetch(input.provider.userinfoUrl, {
+      headers: { authorization: `Bearer ${input.accessToken}` },
+      signal: AbortSignal.timeout(NATIVE_OAUTH_USERINFO_TIMEOUT_MS),
+    })
+    if (!response.ok) {
+      console.warn("native_oauth_identity_resolution_failed", {
+        requestId: input.requestId,
+        providerId: input.provider.providerId,
+        status: response.status,
+      })
+      return null
+    }
+    const body: unknown = await response.json()
+    const parsed = nativeOAuthIdentitySchema.safeParse(body)
+    if (parsed.success) return parsed.data.email
+    console.warn("native_oauth_identity_resolution_failed", {
+      requestId: input.requestId,
+      providerId: input.provider.providerId,
+      code: "invalid_userinfo_response",
+    })
+  } catch (error) {
+    console.warn("native_oauth_identity_resolution_failed", {
+      requestId: input.requestId,
+      providerId: input.provider.providerId,
+      errorName: error instanceof Error ? error.name : "UnknownError",
+    })
+  }
+  return null
+}
+
 function callbackRedirectUri(request: Request, providerId: string) {
   const origin = resolvePublicOrigin(request, env.apiPublicUrl)
   return `${origin}/v1/oauth-providers/${encodeURIComponent(providerId)}/connect/callback`
@@ -104,11 +171,28 @@ const nativeConnectStartResponseSchema = z.object({
 
 type OrgIds = { organizationId: DenTypeId<"organization">; orgMembershipId: DenTypeId<"member"> }
 
-async function beginNativeProviderConnect(input: OrgIds & {
+export async function beginNativeProviderConnect(input: OrgIds & {
   provider: NativeOAuthProviderConfig
+  credentialProviderId: string
   request: Request
-}): Promise<{ authorizeUrl: string } | { error: "client_not_configured" | "client_configuration_invalid"; message?: string }> {
-  const client = await getOrgOAuthClient(input.organizationId, input.provider.providerId)
+  teamIds: DenTypeId<"team">[]
+}): Promise<{ authorizeUrl: string } | { error: "client_not_configured" | "client_configuration_invalid" | "forbidden"; message?: string }> {
+  // The literal registry key is the legacy no-row alias and intentionally
+  // remains implicitly org-wide. Connector rows always require a grant.
+  if (input.credentialProviderId !== input.provider.providerId) {
+    const usableConnections = await listUsableNativeProviderConnections({
+      organizationId: input.organizationId,
+      orgMembershipId: input.orgMembershipId,
+      teamIds: input.teamIds,
+    })
+    const canUse = usableConnections.some((connection) => (
+      connection.id === input.credentialProviderId
+      && connection.nativeProviderKey === input.provider.providerId
+    ))
+    if (!canUse) return { error: "forbidden" }
+  }
+
+  const client = await getOrgOAuthClient(input.organizationId, input.credentialProviderId)
   if (!client) {
     return { error: "client_not_configured" }
   }
@@ -117,7 +201,8 @@ async function beginNativeProviderConnect(input: OrgIds & {
   const state = createOAuthStateToken({
     organizationId: input.organizationId,
     orgMembershipId: input.orgMembershipId,
-    providerId: input.provider.providerId,
+    providerId: input.credentialProviderId,
+    binding: input.provider.providerId,
     secret: env.betterAuthSecret,
   })
 
@@ -140,10 +225,64 @@ async function beginNativeProviderConnect(input: OrgIds & {
   await upsertConnectedAccount({
     organizationId: input.organizationId,
     orgMembershipId: input.orgMembershipId,
-    providerId: input.provider.providerId,
+    providerId: input.credentialProviderId,
     pendingCodeVerifier: verifier,
   })
   return { authorizeUrl }
+}
+
+async function resolveNativeProviderCredential(input: {
+  organizationId: DenTypeId<"organization">
+  providerOrConnectionId: string
+}): Promise<{ provider: NativeOAuthProviderConfig; credentialProviderId: string } | null> {
+  const registeredProvider = getNativeOAuthProvider(input.providerOrConnectionId)
+  if (registeredProvider) {
+    const credentialProviderId = await resolveManageableNativeProviderCredentialId({
+      organizationId: input.organizationId,
+      nativeProviderKey: registeredProvider.providerId,
+    })
+    return { provider: registeredProvider, credentialProviderId: credentialProviderId ?? registeredProvider.providerId }
+  }
+
+  let connectionId: DenTypeId<"externalMcpConnection">
+  try {
+    connectionId = normalizeDenTypeId("externalMcpConnection", input.providerOrConnectionId)
+  } catch {
+    return null
+  }
+  const connection = await getExternalMcpConnection({ organizationId: input.organizationId, connectionId })
+  if (connection?.kind !== "native_provider" || !connection.nativeProviderKey) return null
+  const provider = getNativeOAuthProvider(connection.nativeProviderKey)
+  return provider ? { provider, credentialProviderId: connection.id } : null
+}
+
+async function resolveMemberNativeProviderCredential(input: {
+  organizationId: DenTypeId<"organization">
+  orgMembershipId: DenTypeId<"member">
+  providerOrConnectionId: string
+  teamIds: DenTypeId<"team">[]
+}): Promise<Awaited<ReturnType<typeof resolveNativeProviderCredential>> | "forbidden"> {
+  const registeredProvider = getNativeOAuthProvider(input.providerOrConnectionId)
+  if (registeredProvider) {
+    const credentialProviderId = await resolveDefaultNativeProviderCredentialId({
+      organizationId: input.organizationId,
+      orgMembershipId: input.orgMembershipId,
+      nativeProviderKey: registeredProvider.providerId,
+      teamIds: input.teamIds,
+    })
+    return { provider: registeredProvider, credentialProviderId: credentialProviderId ?? registeredProvider.providerId }
+  }
+
+  const resolved = await resolveNativeProviderCredential(input)
+  if (!resolved) return null
+  const usableConnections = await listUsableNativeProviderConnections({
+    organizationId: input.organizationId,
+    orgMembershipId: input.orgMembershipId,
+    teamIds: input.teamIds,
+  })
+  return usableConnections.some((connection) => connection.id === resolved.credentialProviderId)
+    ? resolved
+    : "forbidden"
 }
 
 /**
@@ -181,13 +320,17 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
       if (!admin.ok) return c.json(admin.response, orgAccessFailureStatus(admin.response))
 
       const { providerId } = c.req.valid("param")
-      const provider = getNativeOAuthProvider(providerId)
-      if (!provider) {
+      const resolved = await resolveNativeProviderCredential({
+        organizationId: payload.organization.id,
+        providerOrConnectionId: providerId,
+      })
+      if (!resolved) {
         return c.json({ error: "unknown_oauth_provider", message: `"${providerId}" is not a known native OAuth provider.` }, 404)
       }
+      const { provider, credentialProviderId } = resolved
 
       const body = c.req.valid("json")
-      const existing = await getOrgOAuthClient(payload.organization.id, providerId)
+      const existing = await getOrgOAuthClient(payload.organization.id, credentialProviderId)
       if (!existing && !body.clientId) {
         return c.json({ error: "invalid_request", message: "clientId is required for first-time setup." }, 400)
       }
@@ -235,13 +378,13 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
         previousTenantId,
         nextTenantId: tenantId,
         organizationId: payload.organization.id,
-        providerId,
+        providerId: credentialProviderId,
         revoke: disconnectProviderAccountsForOrganization,
       })
 
       const saved = await upsertOrgOAuthClient({
         organizationId: payload.organization.id,
-        providerId,
+        providerId: credentialProviderId,
         clientId,
         ...(body.clientSecret !== undefined ? { clientSecret: body.clientSecret } : {}),
         ...((body.features !== undefined || provider.tenantIdExtraKey) ? { extra } : {}),
@@ -283,12 +426,16 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
       if (!admin.ok) return c.json(admin.response, orgAccessFailureStatus(admin.response))
 
       const { providerId } = c.req.valid("param")
-      const provider = getNativeOAuthProvider(providerId)
-      if (!provider) {
+      const resolved = await resolveNativeProviderCredential({
+        organizationId: payload.organization.id,
+        providerOrConnectionId: providerId,
+      })
+      if (!resolved) {
         return c.json({ error: "unknown_oauth_provider", message: `"${providerId}" is not a known native OAuth provider.` }, 404)
       }
+      const { provider, credentialProviderId } = resolved
 
-      const client = await getOrgOAuthClient(payload.organization.id, providerId)
+      const client = await getOrgOAuthClient(payload.organization.id, credentialProviderId)
       const features = clientSelectedFeatures(provider, client?.extra ?? null)
       return c.json({
         providerId,
@@ -296,7 +443,7 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
         clientId: client?.clientId ?? null,
         features,
         scopes: resolveProviderScopes(provider, features),
-        redirectUri: callbackRedirectUri(c.req.raw, providerId),
+        redirectUri: callbackRedirectUri(c.req.raw, provider.providerId),
         tenantId: provider.tenantIdExtraKey ? readProviderTenantId(client?.extra ?? null, provider.tenantIdExtraKey) : null,
       })
     },
@@ -316,22 +463,37 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
       },
     }),
     orgMemberRoute(),
+    resolveMemberTeamsMiddleware,
     paramValidator(providerParamsSchema),
     async (c) => {
       const payload = c.get("organizationContext")
       const { providerId } = c.req.valid("param")
-      const provider = getNativeOAuthProvider(providerId)
-      if (!provider) {
+      const memberTeams: MemberTeamSummary[] = c.get("memberTeams") ?? []
+      const resolved = await resolveMemberNativeProviderCredential({
+        organizationId: payload.organization.id,
+        orgMembershipId: payload.currentMember.id,
+        providerOrConnectionId: providerId,
+        teamIds: memberTeams.map((team) => team.id),
+      })
+      if (!resolved) {
         return c.json({ error: "unknown_oauth_provider", message: `"${providerId}" is not a known native OAuth provider.` }, 404)
+      }
+      if (resolved === "forbidden") {
+        return c.json({ error: "forbidden", message: "You have not been granted access to this connection." }, 403)
       }
 
       const started = await beginNativeProviderConnect({
-        provider,
+        provider: resolved.provider,
+        credentialProviderId: resolved.credentialProviderId,
         organizationId: payload.organization.id,
         orgMembershipId: payload.currentMember.id,
         request: c.req.raw,
+        teamIds: memberTeams.map((team) => team.id),
       })
       if ("error" in started) {
+        if (started.error === "forbidden") {
+          return c.json({ error: "forbidden", message: "You have not been granted access to this connection." }, 403)
+        }
         if (started.error === "client_configuration_invalid") {
           return c.json({ error: "invalid_request", message: started.message ?? "OAuth client configuration is incomplete." }, 400)
         }
@@ -363,15 +525,28 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
         },
       }),
       orgMemberRoute(),
+      resolveMemberTeamsMiddleware,
       async (c) => {
         const payload = c.get("organizationContext")
+        const memberTeams: MemberTeamSummary[] = c.get("memberTeams") ?? []
+        const credentialProviderId = await resolveDefaultNativeProviderCredentialId({
+          organizationId: payload.organization.id,
+          orgMembershipId: payload.currentMember.id,
+          nativeProviderKey: provider.providerId,
+          teamIds: memberTeams.map((team) => team.id),
+        }) ?? provider.providerId
         const started = await beginNativeProviderConnect({
           provider,
+          credentialProviderId,
           organizationId: payload.organization.id,
           orgMembershipId: payload.currentMember.id,
           request: c.req.raw,
+          teamIds: memberTeams.map((team) => team.id),
         })
         if ("error" in started) {
+          if (started.error === "forbidden") {
+            return c.json({ error: "forbidden", message: "You have not been granted access to this connection." }, 403)
+          }
           if (started.error === "client_configuration_invalid") {
             return c.json({ error: "invalid_request", message: started.message ?? "OAuth client configuration is incomplete." }, 400)
           }
@@ -410,15 +585,33 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
       }
 
       const statePayload = verifyOAuthStateToken({ token: state, secret: env.betterAuthSecret })
-      if (!statePayload || statePayload.providerId !== providerId) {
+      if (!statePayload || (
+        statePayload.binding !== providerId
+        && !(statePayload.binding === undefined && statePayload.providerId === providerId)
+      )) {
         return c.json({ error: "invalid_request", message: "Invalid or expired state." }, 400)
       }
 
-      const client = await getOrgOAuthClient(statePayload.organizationId, providerId)
+      const memberTeams = await listTeamsForMember({
+        organizationId: statePayload.organizationId,
+        memberId: statePayload.orgMembershipId,
+      })
+      const resolved = await resolveMemberNativeProviderCredential({
+        organizationId: statePayload.organizationId,
+        orgMembershipId: statePayload.orgMembershipId,
+        providerOrConnectionId: statePayload.providerId,
+        teamIds: memberTeams.map((team) => team.id),
+      })
+      if (!resolved || resolved === "forbidden" || resolved.provider.providerId !== providerId || resolved.credentialProviderId !== statePayload.providerId) {
+        return c.json({ error: "invalid_request", message: "Invalid or expired state." }, 400)
+      }
+      const credentialProviderId = resolved.credentialProviderId
+
+      const client = await getOrgOAuthClient(statePayload.organizationId, credentialProviderId)
       const pending = await getConnectedAccount({
         organizationId: statePayload.organizationId,
         orgMembershipId: statePayload.orgMembershipId,
-        providerId,
+        providerId: credentialProviderId,
       })
       if (!client || !pending?.pendingCodeVerifier) {
         return c.json({ error: "invalid_request", message: "No pending connection for this state." }, 400)
@@ -432,13 +625,20 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
           redirectUri: callbackRedirectUri(c.req.raw, providerId),
           codeVerifier: pending.pendingCodeVerifier,
         })
+        const externalAccountId = await resolveExternalAccountId({
+          provider,
+          accessToken: tokens.access_token,
+          idToken: tokens.id_token,
+          requestId: c.get("requestId"),
+        })
 
         const saved = await completeConnectedAccountForActiveMember({
           organizationId: statePayload.organizationId,
           orgMembershipId: statePayload.orgMembershipId,
-          providerId,
+          providerId: credentialProviderId,
           expectedAccountId: pending.id,
           expectedPendingCodeVerifier: pending.pendingCodeVerifier,
+          externalAccountId,
           accessToken: tokens.access_token,
           refreshToken: tokens.refresh_token ?? null,
           tokenType: tokens.token_type ?? null,
@@ -505,18 +705,29 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
       },
     }),
     orgMemberRoute(),
+    resolveMemberTeamsMiddleware,
     paramValidator(providerParamsSchema),
     async (c) => {
       const payload = c.get("organizationContext")
       const { providerId } = c.req.valid("param")
-      if (!getNativeOAuthProvider(providerId)) {
+      const memberTeams: MemberTeamSummary[] = c.get("memberTeams") ?? []
+      const resolved = await resolveMemberNativeProviderCredential({
+        organizationId: payload.organization.id,
+        orgMembershipId: payload.currentMember.id,
+        providerOrConnectionId: providerId,
+        teamIds: memberTeams.map((team) => team.id),
+      })
+      if (!resolved) {
         return c.json({ error: "unknown_oauth_provider", message: `"${providerId}" is not a known native OAuth provider.` }, 404)
+      }
+      if (resolved === "forbidden") {
+        return c.json({ error: "forbidden", message: "You have not been granted access to this connection." }, 403)
       }
 
       const account = await getConnectedAccount({
         organizationId: payload.organization.id,
         orgMembershipId: payload.currentMember.id,
-        providerId,
+        providerId: resolved.credentialProviderId,
       })
       return c.json({
         providerId,
@@ -540,14 +751,28 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
       },
     }),
     orgMemberRoute(),
+    resolveMemberTeamsMiddleware,
     paramValidator(providerParamsSchema),
     async (c) => {
       const payload = c.get("organizationContext")
       const { providerId } = c.req.valid("param")
+      const memberTeams: MemberTeamSummary[] = c.get("memberTeams") ?? []
+      const resolved = await resolveMemberNativeProviderCredential({
+        organizationId: payload.organization.id,
+        orgMembershipId: payload.currentMember.id,
+        providerOrConnectionId: providerId,
+        teamIds: memberTeams.map((team) => team.id),
+      })
+      if (!resolved) {
+        return c.json({ error: "unknown_oauth_provider", message: `"${providerId}" is not a known native OAuth provider.` }, 404)
+      }
+      if (resolved === "forbidden") {
+        return c.json({ error: "forbidden", message: "You have not been granted access to this connection." }, 403)
+      }
       const removed = await disconnectAccount({
         organizationId: payload.organization.id,
         orgMembershipId: payload.currentMember.id,
-        providerId,
+        providerId: resolved.credentialProviderId,
       })
       if (!removed) {
         return c.json({ error: "not_found", message: "Nothing was connected." }, 404)

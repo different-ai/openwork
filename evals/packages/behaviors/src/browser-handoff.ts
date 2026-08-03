@@ -47,7 +47,7 @@ export async function captureOpenedUrls(): Promise<UrlCapture> {
         seen = await opened();
         const hit = seen.find((url) => match(url));
         if (hit) return hit;
-        await new Promise((resolve) => setTimeout(resolve, 500));
+        await new Promise((resolve) => setTimeout(resolve, Math.min(500, Math.max(0, deadline - Date.now()))));
       }
       throw new Error(`The app never asked to open a matching URL within ${timeoutMs}ms. Opened: ${seen.join(", ") || "<none>"}`);
     },
@@ -98,6 +98,8 @@ export async function signInInBrowser(
     // Signed in means the outcome page, not a submit in flight ("Working...").
     await waitFor(browser, `(() => {
       const text = document.body?.innerText ?? "";
+      // Plain web sign-in redirects into the dashboard; handoff shows "signed in" or the openwork:// code.
+      if (location.pathname.startsWith("/dashboard")) return true;
       if (/signed in/i.test(text)) return true;
       return [...document.querySelectorAll("input")]
         .some((input) => (input.value ?? "").startsWith("openwork://"));
@@ -115,7 +117,7 @@ export async function signInInBrowser(
  * copy-paste into the app. Reading that input keeps the grant the real one
  * Den issued for this session.
  */
-export async function readHandoffDeepLink(browser: Surface, { timeoutMs = 120_000 } = {}): Promise<string> {
+export async function readHandoffDeepLink(browser: Surface, { timeoutMs = 60_000 } = {}): Promise<string> {
   const found = await waitFor(browser, `(() => {
     const fromInput = [...document.querySelectorAll("input")]
       .map((input) => input.value)

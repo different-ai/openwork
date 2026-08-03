@@ -293,6 +293,8 @@ export type DenExternalMcpConnection = {
   externalAccountId?: string | null;
   grantedScopes?: string[];
   tenantId?: string | null;
+  /** Which service a native connector fronts (e.g. "google-workspace"); null/absent for external MCP connections. */
+  nativeProviderKey?: string | null;
 };
 
 export type DenMcpConnectionConnectStart = {
@@ -1430,6 +1432,7 @@ function parseDenExternalMcpConnection(value: unknown): DenExternalMcpConnection
     ...(typeof value.externalAccountId === "string" || value.externalAccountId === null ? { externalAccountId: value.externalAccountId } : {}),
     ...(Array.isArray(value.grantedScopes) ? { grantedScopes: readStringArray(value.grantedScopes) } : {}),
     ...(typeof value.tenantId === "string" || value.tenantId === null ? { tenantId: value.tenantId } : {}),
+    ...(typeof value.nativeProviderKey === "string" || value.nativeProviderKey === null ? { nativeProviderKey: value.nativeProviderKey } : {}),
   };
 }
 
@@ -1920,7 +1923,7 @@ function getAssignedMarketplaceCapabilities(payload: unknown): DenAssignedMarket
     if (
       !isRecord(item)
       || typeof item.configObjectId !== "string"
-      || typeof item.marketplaceId !== "string"
+      || (item.marketplaceId !== null && typeof item.marketplaceId !== "string")
       || typeof item.objectType !== "string"
       || typeof item.pluginId !== "string"
     ) {

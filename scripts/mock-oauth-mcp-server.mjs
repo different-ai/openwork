@@ -406,9 +406,28 @@ async function issueToken(req, res, entry) {
 
 function isAuthorized(req) {
   if (allowUnauthenticatedMcp) return true;
+  const token = bearerToken(req);
+  return Boolean(token && tokens.has(token));
+}
+
+/** Linear-time bearer parse — `\s+(.+)` backtracks polynomially on header spam. */
+function bearerToken(req) {
   const header = req.headers.authorization || "";
-  const match = header.match(/^Bearer\s+(.+)$/i);
-  return Boolean(match && tokens.has(match[1]));
+  if (!/^bearer /i.test(header)) return null;
+  return header.slice("bearer ".length).trim() || null;
+}
+
+/**
+ * A stable, non-secret fingerprint of the caller's bearer token.
+ *
+ * Per-member credential modes issue a DIFFERENT token per person, so distinct
+ * fingerprints are how a spec proves one member's credential was not reused for
+ * another. Never log the token itself.
+ */
+function tokenFingerprint(req) {
+  const token = bearerToken(req);
+  if (!token) return null;
+  return createHash("sha256").update(token).digest("hex").slice(0, 12);
 }
 
 function mcpResult(message) {
@@ -542,6 +561,17 @@ async function handleMcp(req, res) {
     entry.toolNames = messages
       .filter((message) => message && typeof message === "object" && message.method === "tools/call" && typeof message.params?.name === "string")
       .map((message) => message.params.name);
+    // Arguments + a token fingerprint make the connector the AUTHORITY on who
+    // called it: a spec can prove two members each invoked a tool with their own
+    // credential, without trusting the app's own UI state.
+    entry.tokenId = tokenFingerprint(req);
+    entry.toolCalls = messages
+      .filter((message) => message && typeof message === "object" && message.method === "tools/call" && typeof message.params?.name === "string")
+      .map((message) => ({
+        name: message.params.name,
+        args: message.params.arguments ?? message.params.args ?? {},
+        tokenId: entry.tokenId,
+      }));
   }
   const responses = messages.flatMap((message) => {
     if (!message || typeof message !== "object" || message.id === undefined) return [];

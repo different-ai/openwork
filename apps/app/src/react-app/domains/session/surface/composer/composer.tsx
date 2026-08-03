@@ -1418,7 +1418,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                             ["agents", t("composer.agents_label")],
                             ["commands", t("dashboard.commands")],
                             ["skills", t("dashboard.skills")],
-                            ["extensions", "Extensions"],
+                            ["extensions", "Library"],
                           ] as const).map(([section, label]) => (
                             <button
                               key={section}
@@ -1614,7 +1614,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                                 <div className="px-3 py-2 text-xs text-gray-10">
                                   {!mcpLoaded && mcpLoading
                                     ? t("composer.loading_commands")
-                                    : (mcpStatus ?? "No extensions enabled. Open Extensions to enable them.")}
+                                    : (mcpStatus ?? "No library items enabled. Open Library to enable them.")}
                                 </div>
                               ) : null}
                             </>

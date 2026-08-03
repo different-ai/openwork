@@ -349,6 +349,7 @@ test("SurfaceRegistry is idempotent, adopts manifest surfaces, and disposes only
   let spawnCount = 0;
   const fakeHost: Host = {
     kind: "fake",
+    workspaceRoot: "/workspace",
     async spawnElectron(name: string): Promise<SurfaceHandle> {
       spawnCount += 1;
       return { name, kind: "electron", hostKind: "fake", cdpUrl: spawnedCdp.url };

@@ -1,4 +1,4 @@
-import { readActiveWorkspaceId } from "@openwork/cdp";
+import { dumpScreenState, readActiveWorkspaceId } from "@openwork/cdp";
 import type { Surface } from "@openwork/cdp";
 import type { DenRef, DenSession } from "./den.ts";
 import { createDesktopHandoffGrant } from "./den.ts";
@@ -61,7 +61,7 @@ export async function signInDesktopAs(app: Surface, den: DenRef, member: DenSess
 
 async function completeOrganizationOnboarding(app: Surface): Promise<void> {
   const deadline = Date.now() + 120_000;
-  while ((await currentHash(app)).includes("/onboarding") && Date.now() < deadline) {
+  while (Date.now() < deadline && (await currentHash(app)).includes("/onboarding")) {
     const label = await evalIn(app, `(() => {
       const labels = [...document.querySelectorAll("button")]
         .filter((button) => !button.disabled)
@@ -72,10 +72,10 @@ async function completeOrganizationOnboarding(app: Surface): Promise<void> {
     if (typeof label === "string" && label) {
       await clickButton(app, label);
     }
-    await sleep(750);
+    await sleep(Math.min(750, Math.max(0, deadline - Date.now())));
   }
   if ((await currentHash(app)).includes("/onboarding")) {
-    throw new Error("Organization onboarding did not reach the workspace route.");
+    throw new Error(`Organization onboarding did not reach the workspace route. On screen: ${await dumpScreenState(app)}.`);
   }
 }
 
@@ -141,7 +141,9 @@ export async function createAndSelectWorkspace(
         timeoutMs: 60_000,
         label: "workspace.create enabled",
       });
-      await control(app, "workspace.create", input);
+      // Cold first action: engine spawn + Vite compile can exceed the default
+      // evaluate bound, and this proved flaky at 8s (passed on rerun).
+      await control(app, "workspace.create", input, { timeoutMs: 60_000 });
       // The app does not always put a new workspace in the hash, so wait for its
       // own active-workspace state to settle instead of matching a route shape.
       await waitFor(app, `Boolean(localStorage.getItem("openwork.react.activeWorkspace"))

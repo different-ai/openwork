@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 
-import { parseExtensionsPath, parseSettingsPath } from "../src/react-app/shell/settings-route";
+import {
+  extensionsPathForRoute,
+  parseExtensionsPath,
+  parseSettingsPath,
+  settingsPathForRoute,
+} from "../src/react-app/shell/settings-route";
 import {
   getWorkspaceSettingsTabs,
   isSettingsTabActive,
@@ -48,6 +53,20 @@ describe("settings route parsing", () => {
     expect(parseSettingsPath("/settings/extensions/mcps")).toEqual({ tab: "extensions", redirectPath: null, extensionsSection: "mcps" });
     expect(parseSettingsPath("/settings/extensions/skills")).toEqual({ tab: "extensions", redirectPath: null, extensionsSection: "skills" });
     expect(parseSettingsPath("/settings/extensions/plugins")).toEqual({ tab: "extensions", redirectPath: null, extensionsSection: "plugins" });
+  });
+
+  test("round-trips Library state sections through settings and first-class route writers", () => {
+    const sections: Array<"needs-sign-in" | "needs-admin-setup"> = ["needs-sign-in", "needs-admin-setup"];
+    for (const section of sections) {
+      const settingsRoute = parseSettingsPath(`/settings/extensions/${section}`);
+      expect(settingsRoute).toEqual({ tab: "extensions", redirectPath: null, extensionsSection: section });
+      expect(settingsPathForRoute(settingsRoute)).toBe(`extensions/${section}`);
+      expect(parseSettingsPath(`/settings/${settingsPathForRoute(settingsRoute)}`)).toEqual(settingsRoute);
+
+      const extensionsRoute = parseExtensionsPath(`/extensions/${section}`);
+      expect(extensionsPathForRoute(extensionsRoute)).toBe(section);
+      expect(parseExtensionsPath(`/extensions/${extensionsPathForRoute(extensionsRoute)}`)).toEqual(extensionsRoute);
+    }
   });
 
   test("redirects the old mcp section to the MCPs filter", () => {

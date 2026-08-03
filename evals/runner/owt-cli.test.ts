@@ -105,6 +105,7 @@ test("owt manifest lifecycle writes fake surfaces, shares links, and tolerates E
   delete process.env.OPENWORK_EVAL_DEN_TOKEN;
   const host: Host = {
     kind: "fake-local",
+    workspaceRoot: "/workspace",
     async spawnElectron(surfaceName, opts) {
       bootstraps.push(opts?.bootstrap?.baseUrl ?? "none");
       return fakeSurface(surfaceName, "electron");
@@ -160,6 +161,7 @@ test("owt up adopts existing Daytona surfaces without spawning", async () => {
   let spawnCount = 0;
   const host: Host = {
     kind: "fake-daytona",
+    workspaceRoot: "/workspace",
     async previewUrl(port) {
       return `https://preview-${port}.example.test`;
     },

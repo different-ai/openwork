@@ -31,7 +31,7 @@ describe("right panel empty state", () => {
     expect(html).toContain("Choose a destination");
     expect(html).toContain("Browser");
     expect(html).toContain("Files &amp; artifacts");
-    expect(html).toContain("Extensions");
+    expect(html).toContain("Library");
     expect(html).toContain("Voice Mode");
     expect(html).toContain('aria-label="Panel destinations"');
     expect(html.match(/<button/g)).toHaveLength(4);
@@ -45,7 +45,7 @@ describe("right panel empty state", () => {
 
     expect(html).toContain("Files &amp; artifacts");
     expect(html).not.toContain("Browser");
-    expect(html).not.toContain("Extensions");
+    expect(html).not.toContain("Library");
     expect(html).not.toContain("Voice Mode");
     expect(html.match(/<button/g)).toHaveLength(1);
   });

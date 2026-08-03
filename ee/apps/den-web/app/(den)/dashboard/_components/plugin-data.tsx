@@ -112,6 +112,8 @@ export type DenPlugin = {
   mcps: PluginMcp[];
   agents: PluginAgent[];
   commands: PluginCommand[];
+  createdAt: string;
+  createdByOrgMembershipId: string | null;
   updatedAt: string;
   /**
    * Opt-in gating: which connected integration provider exposes this plugin.
@@ -154,6 +156,16 @@ export function formatPluginTimestamp(value: string | null): string {
     day: "numeric",
     year: "numeric",
   }).format(date);
+}
+
+export function getPluginComponentCount(plugin: DenPlugin): number {
+  return (
+    plugin.skills.length +
+    plugin.hooks.length +
+    plugin.mcps.length +
+    plugin.agents.length +
+    plugin.commands.length
+  );
 }
 
 export function getPluginPartsSummary(plugin: DenPlugin): string {
@@ -224,6 +236,8 @@ const MOCK_PLUGINS: DenPlugin[] = [
     commands: [
       { id: "cmd_gh_pr", name: "/gh:pr", description: "Create a pull request from the current branch." },
     ],
+    createdAt: "2026-04-10T12:00:00Z",
+    createdByOrgMembershipId: null,
     updatedAt: "2026-04-10T12:00:00Z",
     requiresProvider: "github",
   },
@@ -250,6 +264,8 @@ const MOCK_PLUGINS: DenPlugin[] = [
       { id: "cmd_cc_push", name: "/push", description: "Push current branch and track upstream." },
       { id: "cmd_cc_pr", name: "/pr", description: "Open a pull request." },
     ],
+    createdAt: "2026-04-07T09:00:00Z",
+    createdByOrgMembershipId: null,
     updatedAt: "2026-04-07T09:00:00Z",
     requiresProvider: "any",
   },
@@ -284,6 +300,8 @@ const MOCK_PLUGINS: DenPlugin[] = [
     ],
     agents: [],
     commands: [],
+    createdAt: "2026-03-28T16:45:00Z",
+    createdByOrgMembershipId: null,
     updatedAt: "2026-03-28T16:45:00Z",
     requiresProvider: "any",
   },
@@ -317,6 +335,8 @@ const MOCK_PLUGINS: DenPlugin[] = [
     commands: [
       { id: "cmd_lin_new", name: "/linear:new", description: "File a new issue from the current context." },
     ],
+    createdAt: "2026-04-02T18:12:00Z",
+    createdByOrgMembershipId: null,
     updatedAt: "2026-04-02T18:12:00Z",
     requiresProvider: "any",
   },
@@ -350,6 +370,8 @@ const MOCK_PLUGINS: DenPlugin[] = [
     commands: [
       { id: "cmd_ow_release", name: "/release", description: "Run the standardized release workflow." },
     ],
+    createdAt: "2026-04-14T08:30:00Z",
+    createdByOrgMembershipId: null,
     updatedAt: "2026-04-14T08:30:00Z",
     requiresProvider: "github",
   },
@@ -379,6 +401,8 @@ const MOCK_PLUGINS: DenPlugin[] = [
     ],
     agents: [],
     commands: [],
+    createdAt: "2026-03-20T11:00:00Z",
+    createdByOrgMembershipId: null,
     updatedAt: "2026-03-20T11:00:00Z",
     requiresProvider: "any",
   },
@@ -405,6 +429,8 @@ const MOCK_PLUGINS: DenPlugin[] = [
     mcps: [],
     agents: [],
     commands: [],
+    createdAt: "2026-03-12T14:22:00Z",
+    createdByOrgMembershipId: null,
     updatedAt: "2026-03-12T14:22:00Z",
     requiresProvider: "any",
   },
@@ -608,6 +634,8 @@ async function fetchResolvedPlugin(id: string): Promise<DenPlugin | null> {
     author: "Connected repository",
     category: derivePluginCategory({ agents, commands, hooks, mcps, skills }),
     commands,
+    createdAt: asString(pluginItem.createdAt) ?? new Date().toISOString(),
+    createdByOrgMembershipId: asString(pluginItem.createdByOrgMembershipId),
     description: asString(pluginItem.description) ?? "Imported from a connected repository.",
     hooks,
     id: pluginId,

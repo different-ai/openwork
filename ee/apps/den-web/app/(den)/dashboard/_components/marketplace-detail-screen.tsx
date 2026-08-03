@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useRef, useState, useEffect } from "react";
-import { ArrowLeft, Check, ChevronDown, GitBranch, Github, Globe, Loader2, MoreHorizontal, Pencil, Plug, Plus, Puzzle, Trash2, Users, X } from "lucide-react";
+import { ArrowLeft, Check, ChevronDown, GitBranch, Github, Globe, Loader2, MoreHorizontal, Pencil, Plug, Plus, Puzzle, Store, Trash2, Users, X } from "lucide-react";
 import { buttonVariants, DenButton } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
 import { DenSelect } from "../../_components/ui/select";
@@ -20,6 +20,7 @@ import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import {
   formatMarketplaceTimestamp,
   type ConfiguredPluginMcpConnection,
+  type MarketplacePluginCloudReadiness,
   type MarketplacePluginCloudReadinessConnection,
   type MarketplacePluginCloudReadinessState,
   type MarketplacePluginSummary,
@@ -46,7 +47,8 @@ import {
   serviceNameForRequirement,
 } from "./marketplace-mcp-setup";
 import { useMcpAccountAuthorization } from "./use-mcp-account-authorization";
-import { CatalogColorRail, catalogCardClassName } from "./catalog-card-surface";
+import { DenCatalogList, DenCatalogRow } from "../../_components/ui/catalog-row";
+import { CatalogIdentityTile } from "./catalog-identity-tile";
 
 const COMPONENT_TYPE_LABELS: Record<string, { singular: string; plural: string }> = {
   skill: { singular: "skill", plural: "skills" },
@@ -154,8 +156,9 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
     }
   }
   const tabs: readonly TabItem<MarketplaceDetailTab>[] = [
-    { value: "plugins", label: "Plugins", icon: Puzzle },
+    { value: "plugins", label: "Plugins", icon: Puzzle, count: plugins.length },
     { value: "members", label: "Members", icon: Users },
+
     { value: "configure", label: "Configure", icon: Plug, count: configurationTargets.length },
   ];
 
@@ -221,26 +224,25 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
         ) : null}
       </div>
 
-      <article className="overflow-hidden rounded-2xl border border-[var(--dls-border)] bg-[var(--dls-surface)]">
-        <div className="flex items-stretch">
-          <CatalogColorRail itemId={marketplace.id} itemName={marketplace.name} size="detail" />
-
-          <div className="min-w-0 flex-1 px-6 py-4">
-            <div className="flex flex-wrap items-center gap-2">
-              <h1 className="truncate text-[18px] font-semibold tracking-[-0.02em] text-gray-950">
-                {marketplace.name}
-              </h1>
-              <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500">
-                {plugins.length} plugin{plugins.length === 1 ? "" : "s"}
-              </span>
-            </div>
-            {marketplace.description ? (
-              <p className="mt-1 text-[13px] leading-[1.55] text-gray-500">{marketplace.description}</p>
-            ) : null}
-            <p className="mt-3 text-[11.5px] text-gray-400">
-              Added {formatMarketplaceTimestamp(marketplace.createdAt)}
-            </p>
-          </div>
+      <article className="flex items-start gap-4">
+        <CatalogIdentityTile
+          name={marketplace.name}
+          logoUrl={marketplace.logoUrl}
+          builtIn={marketplace.canDelete === false}
+          builtInIcon={Store}
+          size="lg"
+        />
+        <div className="min-w-0 flex-1">
+          <h1 className="truncate text-[18px] font-semibold tracking-[-0.02em] text-gray-950">
+            {marketplace.name}
+          </h1>
+          {marketplace.description ? (
+            <p className="mt-1 text-[13px] leading-[1.55] text-gray-500">{marketplace.description}</p>
+          ) : null}
+          <p className="mt-1.5 text-[11.5px] text-gray-400">
+            {plugins.length} plugin{plugins.length === 1 ? "" : "s"} · Added{" "}
+            {formatMarketplaceTimestamp(marketplace.createdAt)}
+          </p>
         </div>
       </article>
 
@@ -286,14 +288,16 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
             ) : null}
 
             <section>
-              <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-                <h2 className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">
-                  Plugins
-                </h2>
-                <div className="flex items-center gap-3">
-                  <p className="text-[11px] text-gray-400">
-                    {plugins.length} plugin{plugins.length === 1 ? "" : "s"}
+              <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
+                <div>
+                  <h2 className="text-[14px] font-semibold tracking-[-0.01em] text-gray-900">
+                    Plugins in this marketplace
+                  </h2>
+                  <p className="mt-0.5 text-[12.5px] text-gray-500">
+                    Everyone with access to this marketplace gets these in the desktop app.
                   </p>
+                </div>
+                <div className="flex items-center gap-3">
                   {access.isAdmin ? (
                     <Link
                       href={`${getNewPluginRoute(orgSlug)}?marketplaceId=${encodeURIComponent(marketplace.id)}`}
@@ -316,11 +320,15 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
                   </p>
                 </div>
               ) : (
-                <div className="grid items-start gap-3 md:grid-cols-2">
+                <DenCatalogList
+                  label={`${plugins.length} plugin${plugins.length === 1 ? "" : "s"}`}
+                  valueLabel="Components"
+                  valueWidth="150px"
+                >
                   {plugins.map((plugin) => (
-                    <MarketplacePluginCard key={plugin.id} orgSlug={orgSlug} plugin={plugin} />
+                    <MarketplacePluginRow key={plugin.id} orgSlug={orgSlug} plugin={plugin} />
                   ))}
-                </div>
+                </DenCatalogList>
               )}
             </section>
           </div>
@@ -990,7 +998,7 @@ function MarketplaceConfigureSection({
   );
 }
 
-function MarketplacePluginCard({
+function MarketplacePluginRow({
   orgSlug,
   plugin,
 }: {
@@ -1000,57 +1008,45 @@ function MarketplacePluginCard({
   const orderedCountEntries = Object.entries(plugin.componentCounts)
     .filter(([, count]) => count > 0)
     .sort((a, b) => b[1] - a[1]);
+  const componentCount = orderedCountEntries.reduce((total, [, count]) => total + count, 0);
+  const breakdown = orderedCountEntries
+    .map(([type, count]) => `${count} ${componentTypeLabel(type, count)}`)
+    .join(" · ");
+
+  const fallbackCaption =
+    plugin.memberCount > 0
+      ? `${plugin.memberCount} imported object${plugin.memberCount === 1 ? "" : "s"}`
+      : plugin.sourceFormat === "openwork-builtin"
+        ? "Built into the desktop app"
+        : "Not imported yet";
 
   return (
-    <div id={`plugin-${plugin.id}`} className={`${catalogCardClassName} self-start scroll-mt-6 focus-within:ring-2 focus-within:ring-[var(--dls-accent)] focus-within:ring-offset-2`}>
-      <div className="flex items-stretch">
-        <CatalogColorRail itemId={plugin.id} itemName={plugin.name} size="compact" />
-        <div className="min-w-0 flex-1 px-4 py-3">
-          <Link href={getPluginRoute(orgSlug, plugin.id)} className="block rounded-sm transition hover:text-gray-700 focus-visible:outline-none">
-            <p className="truncate text-[14px] font-semibold tracking-[-0.01em] text-gray-900">
-              {plugin.name}
-            </p>
-          </Link>
-          {plugin.description ? (
-            <p className="mt-0.5 line-clamp-2 text-[12.5px] leading-[1.55] text-gray-500">
-              {plugin.description}
-            </p>
-          ) : null}
+    <DenCatalogRow
+      id={`plugin-${plugin.id}`}
+      href={getPluginRoute(orgSlug, plugin.id)}
+      leading={<CatalogIdentityTile name={plugin.name} />}
+      title={plugin.name}
+      badge={renderCloudReadinessBadge(plugin.cloudReadiness)}
+      description={plugin.description}
+      value={String(componentCount)}
+      valueMuted={componentCount === 0}
+      valueCaption={breakdown || fallbackCaption}
+      valueWidth="150px"
+    />
+  );
+}
 
-          {orderedCountEntries.length > 0 ? (
-            <div className="mt-2.5 flex flex-wrap gap-1.5 border-t border-gray-50 pt-2.5">
-              {orderedCountEntries.map(([type, count]) => (
-                <span
-                  key={type}
-                  className="inline-flex items-center gap-1 rounded-full bg-gray-50 px-2 py-0.5 text-[11.5px] text-gray-600"
-                >
-                  <span className="font-semibold text-gray-900">{count}</span>
-                  <span className="text-gray-500">{componentTypeLabel(type, count)}</span>
-                </span>
-              ))}
-            </div>
-          ) : plugin.memberCount > 0 ? (
-            <p className="mt-2 text-[11.5px] text-gray-400">
-              {plugin.memberCount} imported object{plugin.memberCount === 1 ? "" : "s"}
-            </p>
-          ) : (
-            <p className="mt-2 text-[11.5px] text-gray-400">
-              {plugin.sourceFormat === "openwork-builtin"
-                ? "Built into the OpenWork desktop app"
-                : "Content imports when the source repository is connected"}
-            </p>
-          )}
+/**
+ * Every plugin on Den is cloud ready, so saying so is noise. The badge only
+ * appears for the states an administrator or member has to act on.
+ */
+function renderCloudReadinessBadge(readiness?: MarketplacePluginCloudReadiness) {
+  if (!readiness || readiness.state === "ready" || readiness.state === "desktop_only") return undefined;
 
-          {plugin.cloudReadiness && plugin.cloudReadiness.state !== "needs_admin_setup" && plugin.cloudReadiness.state !== "needs_signin" ? (
-            <div className="mt-3 border-t border-gray-50 pt-3">
-              <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ${plugin.cloudReadiness.state === "ready" ? "bg-emerald-50 text-emerald-700" : "bg-gray-50 text-gray-600"}`}>
-                {cloudReadinessLabel(plugin.cloudReadiness.state)}
-              </span>
-            </div>
-          ) : null}
-        </div>
-      </div>
-    </div>
+  return (
+    <span className="inline-flex rounded-full bg-amber-50 px-2 py-0.5 text-[10.5px] font-semibold uppercase tracking-[0.06em] text-amber-800">
+      {cloudReadinessLabel(readiness.state)}
+    </span>
   );
 }
 

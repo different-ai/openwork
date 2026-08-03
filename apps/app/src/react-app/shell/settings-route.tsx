@@ -320,7 +320,15 @@ export function parseSettingsPath(pathname: string): {
       return { tab: "cloud-account", redirectPath: "cloud-account" };
     case "extensions":
       if (tail === "mcp") return { tab: "extensions", redirectPath: "extensions/mcps", extensionsSection: "mcps" };
-      if (tail === "apps" || tail === "connections" || tail === "mcps" || tail === "skills" || tail === "plugins") {
+      if (
+        tail === "apps"
+        || tail === "connections"
+        || tail === "mcps"
+        || tail === "skills"
+        || tail === "plugins"
+        || tail === "needs-sign-in"
+        || tail === "needs-admin-setup"
+      ) {
         return { tab: "extensions", redirectPath: null, extensionsSection: tail };
       }
       if (tail) {
@@ -394,7 +402,7 @@ function findSessionWorkspaceId(
   return entries.find((entry) => entry.sessions.some((session) => session?.id === id))?.workspaceId ?? null;
 }
 
-function settingsPathForRoute(route: ReturnType<typeof parseSettingsPath>) {
+export function settingsPathForRoute(route: ReturnType<typeof parseSettingsPath>) {
   if (route.tab === "extensions" && route.extensionDetailId) {
     return `extensions/${encodeURIComponent(route.extensionDetailId)}`;
   }
@@ -404,7 +412,7 @@ function settingsPathForRoute(route: ReturnType<typeof parseSettingsPath>) {
   return route.tab;
 }
 
-function extensionsPathForRoute(route: ReturnType<typeof parseSettingsPath>) {
+export function extensionsPathForRoute(route: ReturnType<typeof parseSettingsPath>) {
   if (route.extensionDetailId) {
     return encodeURIComponent(route.extensionDetailId);
   }
@@ -2368,7 +2376,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
               void orgMcpConnections.refresh();
               void refreshConnectCapabilities({ force: true });
             }}
-            mcpView={({ initialFilter, onFilterChange, detailId, onDetailIdChange }) => (
+            mcpView={({ initialFilter, onFilterChange, initialState, onStateChange, detailId, onDetailIdChange }) => (
               <McpView
                 busy={busy}
                 selectedWorkspaceRoot={selectedWorkspaceRoot}
@@ -2418,6 +2426,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                 inventoryLoading={connectCapabilitiesLoading || (orgMcpConnections.loading && !orgMcpConnections.loaded)}
                 installedPlugins={extensionItems.installedCloudPlugins}
                 orgMcpItems={orgMcpConnectionItems}
+                organizationName={cloudSession.activeOrgName}
                 uninstallSkill={(name) => { void extensionsStore.uninstallSkill(name); }}
                 removeCloudPlugin={(pluginId) => { void extensionsStore.removeCloudOrgPlugin(pluginId); }}
                 orgMcpConnectingId={orgMcpConnections.connectingId}
@@ -2430,6 +2439,8 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                 installClaudePlugin={(url) => extensionsStore.installClaudePlugin(url)}
                 initialFilter={initialFilter}
                 onFilterChange={onFilterChange}
+                initialState={initialState}
+                onStateChange={onStateChange}
                 detailId={detailId}
                 onDetailIdChange={onDetailIdChange}
                 showHeader={false}

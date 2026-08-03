@@ -36,11 +36,11 @@ test("photo roll writes distinct shots, verdicts, and idempotent indexes", async
     const roll = photoRoll("unit roll", { outDir: dir });
     const firstPath = await roll.add(shot("first"), seen("First caption", true));
     const secondPath = await roll.add(shot("second"), seen("Second caption", false));
-    await stat(firstPath);
-    await stat(secondPath);
 
     const firstClose = await roll.close();
     const secondClose = await roll.close();
+    await stat(firstPath);
+    await stat(secondPath);
     assert.equal(firstClose, join(dir, "index.html"));
     assert.equal(secondClose, firstClose);
 

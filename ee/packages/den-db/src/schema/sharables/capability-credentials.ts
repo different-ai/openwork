@@ -112,6 +112,9 @@ export const ConnectedAccountTable = mysqlTable(
 export const externalMcpAuthTypeValues = ["oauth", "apikey", "none"] as const
 export type ExternalMcpAuthType = (typeof externalMcpAuthTypeValues)[number]
 
+export const externalMcpConnectionKindValues = ["external_mcp", "native_provider"] as const
+export type ExternalMcpConnectionKind = (typeof externalMcpConnectionKindValues)[number]
+
 export const externalMcpCredentialModeValues = ["shared", "per_member"] as const
 export type ExternalMcpCredentialMode = (typeof externalMcpCredentialModeValues)[number]
 
@@ -160,6 +163,21 @@ export const ExternalMcpConnectionTable = mysqlTable(
     name: varchar("name", { length: 255 }).notNull(),
     url: varchar("url", { length: 2048 }).notNull(),
     authType: mysqlEnum("auth_type", externalMcpAuthTypeValues).notNull(),
+    /**
+     * How Den supplies the connection's capabilities. "external_mcp" rows
+     * are discovered dynamically and handshake over MCP; "native_provider"
+     * rows carry credentials for a capability set Den implements itself, so
+     * they never perform a tools/list handshake. `native_provider_key` points
+     * at the NATIVE_OAUTH_PROVIDERS registry entry in
+     * ee/apps/den-api/src/capability-sources/provider-registry.ts and is NULL
+     * for external MCP rows.
+     */
+    kind: mysqlEnum("kind", externalMcpConnectionKindValues).notNull().default("external_mcp"),
+    /**
+     * Stable registry key selecting the native OAuth provider implementation.
+     * Only populated when kind = "native_provider".
+     */
+    nativeProviderKey: varchar("native_provider_key", { length: 64 }),
     /**
      * Versioned OAuth policy for this MCP resource. Existing rows remain null
      * and are classified lazily so manually registered legacy callbacks keep

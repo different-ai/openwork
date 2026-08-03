@@ -56,7 +56,7 @@ function messageText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function defaultDaytonaExec(args: string[], opts: { input?: string; timeoutMs?: number } = {}): Promise<DaytonaExecResult> {
+export function defaultDaytonaExec(args: string[], opts: { input?: string; timeoutMs?: number } = {}): Promise<DaytonaExecResult> {
   return new Promise((resolve, reject) => {
     const child = spawn("daytona", args, { stdio: ["pipe", "pipe", "pipe"] });
     let stdout = "";
@@ -214,7 +214,7 @@ async function orgModeOrDefault(webUrl: string, log: (msg: string) => void): Pro
   }
 }
 
-async function checkedExec(exec: DaytonaExec, args: string[], context: string, opts: { input?: string; timeoutMs?: number } = {}): Promise<DaytonaExecResult> {
+export async function checkedExec(exec: DaytonaExec, args: string[], context: string, opts: { input?: string; timeoutMs?: number } = {}): Promise<DaytonaExecResult> {
   const result = await exec(args, opts);
   if (result.code !== 0) {
     const details = (result.stderr || result.stdout).trim();
@@ -318,6 +318,40 @@ function portSet(values: number[] | undefined): Set<number> {
   return ports;
 }
 
+/**
+ * Ports already listening INSIDE the sandbox.
+ *
+ * The local host finds a free port by binding one; this host cannot, because the
+ * port has to be free on a different machine. Allocating from a local counter
+ * alone silently collides: the OpenCode sidecar picks its own port at boot and
+ * was observed holding 9825 — the CDP primary — so Electron's debugger never
+ * bound and the preview URL timed out after 180s with no hint of the cause.
+ */
+async function sandboxListeningPorts(exec: DaytonaExec, sandbox: string): Promise<Set<number>> {
+  const result = await exec(["exec", sandbox, "--", "bash -lc 'ss -ltn 2>/dev/null || netstat -ltn 2>/dev/null'"], { timeoutMs: 30_000 });
+  const ports = new Set<number>();
+  if (result.code !== 0) return ports;
+  for (const line of result.stdout.split(/\r?\n/)) {
+    // Match the local-address column's :PORT, e.g. "127.0.0.1:9825" or "*:3005".
+    const match = /[:.](\d{2,5})\s+\S+\s*$/.exec(line.trim()) ?? /[:.](\d{2,5})\s/.exec(line.trim());
+    if (!match) continue;
+    const port = Number.parseInt(match[1] ?? "", 10);
+    if (Number.isInteger(port) && port > 0 && port <= 65_535) ports.add(port);
+  }
+  return ports;
+}
+
+/** Allocate a port that is free in the sandbox, not merely unused by this host. */
+async function allocateSandboxPort(allocation: PortAllocation, exec: DaytonaExec, sandbox: string): Promise<number> {
+  const taken = await sandboxListeningPorts(exec, sandbox);
+  for (let attempt = 0; attempt < 64; attempt += 1) {
+    const port = allocatePort(allocation);
+    if (!taken.has(port)) return port;
+    // Keep it marked used so we never hand it out again this session.
+  }
+  throw new Error(`Could not find a port free inside sandbox ${sandbox} after 64 attempts.`);
+}
+
 function appendExtraEnv(assignments: Map<string, string>, env: Record<string, string> | undefined): void {
   if (!env) return;
   for (const [name, value] of Object.entries(env).sort(([left], [right]) => left.localeCompare(right))) {
@@ -362,7 +396,7 @@ export function createDaytonaHost(options: DaytonaHostOptions): DaytonaHost {
     const profileRoot = `/workspace/.openwork-daytona/profiles/${safeName}-${spawnStamp}`;
     const profileDir = `${profileRoot}/electron-userdata`;
     const bootstrapPath = `${profileRoot}/bootstrap.json`;
-    const port = allocatePort(electronPorts);
+    const port = await allocateSandboxPort(electronPorts, exec, sandbox);
     // Per-spawn log so the integrity check below can never read a previous
     // run's lines.
     const logPath = `/tmp/electron-${safeName}-${spawnStamp}.log`;
@@ -445,7 +479,7 @@ export function createDaytonaHost(options: DaytonaHostOptions): DaytonaHost {
   async function spawnChrome(name: string, opts: ChromeSurfaceOptions = {}): Promise<SurfaceHandle> {
     const sandbox = requireSandbox();
     const safeName = sanitizeName(name);
-    const port = allocatePort(chromePorts);
+    const port = await allocateSandboxPort(chromePorts, exec, sandbox);
     const profileDir = `/tmp/daytona-chrome-${safeName}`;
     const logPath = `/tmp/daytona-chrome-${safeName}.log`;
     const startUrl = opts.startUrl?.trim() || "about:blank";
@@ -609,6 +643,7 @@ export function createDaytonaHost(options: DaytonaHostOptions): DaytonaHost {
 
   return {
     kind: "daytona",
+    workspaceRoot: "/workspace",
     previewUrl,
     spawnElectron,
     spawnChrome,

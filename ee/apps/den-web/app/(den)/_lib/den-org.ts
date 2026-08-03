@@ -519,6 +519,10 @@ export function getMembersRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/members`;
 }
 
+export function getTeamRoute(orgSlug: string | null | undefined, teamId: string): string {
+  return `${getMembersRoute(orgSlug)}/teams/${encodeURIComponent(teamId)}`;
+}
+
 export function getBackgroundAgentsRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/background-agents`;
 }
@@ -641,6 +645,10 @@ export function getMcpConnectionsRoute(orgSlug?: string | null): string {
 
 export function getYourConnectionsRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/your-connections`;
+}
+
+export function getLibraryRoute(orgSlug?: string | null): string {
+  return `${getOrgDashboardRoute(orgSlug)}/library`;
 }
 
 export function getGithubIntegrationSetupRoute(orgSlug: string | null | undefined, connectorInstanceId: string): string {

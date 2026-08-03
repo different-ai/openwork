@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { electronProfilePaths, electronSurfaceEnv, resolveChromeBinary } from "../src/local.ts";
+import { allocateFreePort } from "@openwork/cdp";
+import { electronProfilePaths, electronSurfaceEnv, freePort, resolveChromeBinary } from "../src/local.ts";
 
 const ENV_KEYS = [
   "APPDATA",
@@ -121,5 +124,38 @@ test("resolveChromeBinary finds Linux Chrome on PATH and reports a helpful error
     );
   } finally {
     await rm(binDir, { recursive: true, force: true });
+  }
+});
+
+test("freePort kills a real child listener and releases its port", {
+  skip: process.platform !== "darwin" && process.platform !== "linux",
+}, async () => {
+  const port = await allocateFreePort();
+  const child = spawn(process.execPath, [
+    "-e",
+    "require('node:net').createServer().listen(Number(process.argv[1]), '127.0.0.1', () => process.stdout.write('ready\\n'))",
+    String(port),
+  ], { detached: true, stdio: ["ignore", "pipe", "inherit"] });
+  const logs: string[] = [];
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`Listener child did not bind port ${port}.`)), 5_000);
+      child.once("error", reject);
+      child.stdout?.once("data", () => {
+        clearTimeout(timer);
+        resolve();
+      });
+    });
+
+    await freePort(port, { log: (message) => logs.push(message) });
+
+    assert(logs.some((message) => message.includes(`Port ${port}`) && message.includes(String(child.pid))));
+    await new Promise<void>((resolve, reject) => {
+      const probe = createServer();
+      probe.once("error", reject);
+      probe.listen(port, "127.0.0.1", () => probe.close((error) => error ? reject(error) : resolve()));
+    });
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
   }
 });
