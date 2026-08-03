@@ -379,6 +379,11 @@ test.skipIf(!apiUrl || !webUrl)(title, async () => {
     return Boolean(signIn?.getAttribute("href")?.includes("your-connections"));
   })()`);
   expect(connectionHasSignInLink).toBe(true);
+  const needsSignInRowIsInsideList = await evalIn(
+    browser,
+    `Boolean(document.querySelector('[data-library-list] [data-library-item-state="needs_signin"]'))`,
+  );
+  expect(needsSignInRowIsInsideList).toBe(true);
   const catalogNameOccurrenceCount = await evalIn(
     browser,
     `document.body.innerText.split(${JSON.stringify(catalogName)}).length - 1`,
@@ -390,12 +395,16 @@ test.skipIf(!apiUrl || !webUrl)(title, async () => {
       .find((entry) => (entry.textContent ?? "").includes(${JSON.stringify(connection.name)}));
     const pluginRow = [...document.querySelectorAll('[data-library-item-type="plugin"]')]
       .find((entry) => (entry.textContent ?? "").includes(${JSON.stringify(pluginName)}));
-    const connectionChipCount = connectionRow?.querySelectorAll('[data-library-chip]').length ?? 0;
-    const pluginChipCount = pluginRow?.querySelectorAll('[data-library-chip]').length ?? 0;
+    const connectionChips = [...(connectionRow?.querySelectorAll('[data-library-chip]') ?? [])]
+      .map((entry) => (entry.textContent ?? "").trim());
+    const pluginChips = [...(pluginRow?.querySelectorAll('[data-library-chip]') ?? [])]
+      .map((entry) => (entry.textContent ?? "").trim());
     return caption?.textContent?.trim() === "NEEDS YOUR SIGN-IN"
-      && connectionChipCount > 0
-      && connectionChipCount <= 2
-      && pluginChipCount === 1;
+      && connectionChips.length > 0
+      && connectionChips.length <= 3
+      && connectionChips.includes("MCP")
+      && pluginChips.some((label) => label === "Skill" || label === "Plugin")
+      && pluginChips.length <= 2;
   })()`);
   expect(absorbedBoilerplateAndChipLanes).toBe(true);
   await waitFor(browser, `(() => {
@@ -495,7 +504,7 @@ test.skipIf(!apiUrl || !webUrl)(title, async () => {
   expect(connectionScrolledIntoView).toBe(true);
   await new Promise((resolve) => setTimeout(resolve, 250));
 
-  await using roll = photoRoll("library-logos");
+  await using roll = photoRoll("library-connector-ui");
   await evalIn(browser, `document.querySelector("[data-dashboard-hero]")?.scrollIntoView({ block: "start" })`);
   await new Promise((resolve) => setTimeout(resolve, 250));
   const desktopHeaderShot = await screenshot(browser);
@@ -511,7 +520,7 @@ test.skipIf(!apiUrl || !webUrl)(title, async () => {
   await new Promise((resolve) => setTimeout(resolve, 250));
   const desktopShot = await screenshot(browser);
   const desktopSeen = await validate(desktopShot, [
-    "Rows show logo or monogram tiles in aligned lanes with neutral kind chips and a quiet right-hand source column",
+    "Rows show a logo tile, a title with chips beside it, and one meta line inside a hairline-divided card",
     "An amber needs-sign-in row shows a dark Sign in button under a NEEDS YOUR SIGN-IN caption",
   ]);
   await roll.add(desktopShot, desktopSeen);

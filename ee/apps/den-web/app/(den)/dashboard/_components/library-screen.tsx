@@ -1,13 +1,15 @@
 "use client";
 
-import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
-import { LibraryBig, Search } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ChevronRight, LibraryBig, Search } from "lucide-react";
 
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
 import { DenBrandMark } from "../../_components/ui/brand-mark";
+import { DenButton } from "../../_components/ui/button";
+import { DenChip } from "../../_components/ui/chip";
 import { DenInput } from "../../_components/ui/input";
+import { DenList, DenListRow } from "../../_components/ui/list-row";
 import { DenNotice } from "../../_components/ui/notice";
 import { type TabItem, UnderlineTabs } from "../../_components/ui/tabs";
 import { getOrgAccessFlags, getPluginRoute, getYourConnectionsRoute } from "../../_lib/den-org";
@@ -83,11 +85,6 @@ function getRowKind(item: LibraryItem): RowKind {
   return hasComponentKind(item, "skill") ? "skill" : "plugin";
 }
 
-function getKindChipClasses(kind: RowKind): string {
-  if (kind === "skill" || kind === "plugin") return "bg-[#f3f4f6] text-[#4b5563]";
-  return "bg-[#dbeafe] text-[#1d4ed8]";
-}
-
 function getKindLabel(kind: RowKind): string {
   if (kind === "skill") return "Skill";
   if (kind === "plugin") return "Plugin";
@@ -96,26 +93,17 @@ function getKindLabel(kind: RowKind): string {
 
 function KindChip({ kind }: { kind: RowKind }) {
   return (
-    <span
-      data-library-chip
-      className={`inline-flex h-[20px] items-center rounded-full px-2 text-[11px] font-semibold ${getKindChipClasses(kind)}`}
-    >
+    <DenChip data-library-chip="" tone={kind === "connection" ? "info" : "neutral"}>
       {getKindLabel(kind)}
-    </span>
+    </DenChip>
   );
 }
 
 function TransportChip({ transport }: { transport: LibraryConnectionItem["transport"] }) {
   return (
-    <span
-      data-library-chip
-      className={`inline-flex h-[20px] items-center rounded-full px-2 text-[11px] font-semibold ${transport === "mcp"
-        ? "bg-[#f3f4f6] text-[#4b5563]"
-        : "bg-[#ccfbf1] text-[#0f766e]"
-      }`}
-    >
+    <DenChip data-library-chip="" tone={transport === "mcp" ? "neutral" : "teal"}>
       {transport === "mcp" ? "MCP" : "Native"}
-    </span>
+    </DenChip>
   );
 }
 
@@ -124,7 +112,7 @@ function firstName(name: string | null): string {
   return name.trim().split(/\s+/)[0] ?? "someone";
 }
 
-function getSource(item: LibraryItem, orgName: string): { label: string; isPerson: boolean } {
+function getSource(item: LibraryItem, orgName: string): { label: string; isPerson: boolean } | null {
   for (const edge of item.edges) {
     if (edge.kind === "person") {
       return { label: `Shared by ${firstName(edge.sharedBy?.name ?? null)}`, isPerson: true };
@@ -139,7 +127,7 @@ function getSource(item: LibraryItem, orgName: string): { label: string; isPerso
   for (const edge of item.edges) {
     if (edge.kind === "org_wide") return { label: orgName, isPerson: false };
   }
-  return { label: "Yours", isPerson: false };
+  return null;
 }
 
 function getReadyCatalogCaption(items: LibraryItem[]): string | null {
@@ -177,9 +165,15 @@ function getGitHubOwnerAvatar(sourceRepositoryUrl: string | null): string | unde
   }
 }
 
-function LibraryRowContent({ item, orgName, action }: { item: LibraryItem; orgName: string; action: ReactNode }) {
+function LibraryRow({ item, isAdmin, isFocused, orgName, orgSlug }: { item: LibraryItem; isAdmin: boolean; isFocused: boolean; orgName: string; orgSlug: string | null }) {
+  const sectionState = getSectionState(item);
   const rowKind = getRowKind(item);
   const source = getSource(item, orgName);
+  const rowKey = `${item.type}-${item.id}`;
+  const connectionHref = item.type === "connection"
+    ? `${getYourConnectionsRoute(orgSlug)}?connectionId=${encodeURIComponent(item.id)}`
+    : undefined;
+  const rowHref = item.type === "plugin" && isAdmin ? getPluginRoute(orgSlug, item.id) : undefined;
   const iconUrl = item.type === "connection" && item.provider === "google-workspace"
     ? "/integrations/google.svg"
     : item.type === "plugin"
@@ -189,88 +183,73 @@ function LibraryRowContent({ item, orgName, action }: { item: LibraryItem; orgNa
     ? "microsoft"
     : undefined;
   const serviceUrl = item.type === "connection" && item.transport === "mcp" ? item.url : undefined;
-
-  return (
-    <div className="flex h-full min-w-0 items-center overflow-hidden pl-[10px] pr-[12px]">
-      <DenBrandMark
-        name={item.name}
-        iconUrl={iconUrl}
-        simpleIconSlug={simpleIconSlug}
-        serviceUrl={serviceUrl}
-        className="h-[32px] w-[32px] rounded-[8px] border-[#e1e4e8] bg-[#f7f8fa]"
-        imageClassName="h-[32px] w-[32px] rounded-[8px] object-cover"
-      />
-      <div className="ml-2 w-[88px] shrink-0 truncate text-[13.5px] font-semibold text-[#1c2024] sm:w-[190px]">
-        {item.name}
-      </div>
-      <div className="flex w-[112px] shrink-0 items-center gap-1 sm:w-[158px]">
-        <KindChip kind={rowKind} />
-        {item.type === "connection" ? <TransportChip transport={item.transport} /> : null}
-      </div>
-      <p className="hidden min-w-0 flex-1 truncate text-[12.5px] font-normal text-[#6b7280] sm:block">
-        {item.description ?? ""}
-      </p>
-      <div data-library-source className={`hidden w-[120px] shrink-0 truncate text-right text-[12px] sm:block ${source.isPerson
-        ? "font-medium text-[#1d4ed8]"
-        : "font-normal text-[#9ca3af]"
-      }`}>
-        {source.label}
-      </div>
-      <div className="ml-2 flex w-[68px] shrink-0 justify-end">
-        {action}
-      </div>
-    </div>
-  );
-}
-
-function LibraryRow({ item, isAdmin, isFocused, orgName, orgSlug }: { item: LibraryItem; isAdmin: boolean; isFocused: boolean; orgName: string; orgSlug: string | null }) {
-  const sectionState = getSectionState(item);
-  const rowClassName = `${sectionState === "ready"
-    ? "block h-[52px] border-b border-[#f0f1f3] bg-transparent"
-    : "block h-[52px] rounded-[10px] border border-[#fde9c3] bg-[#fffbeb]"} ${isFocused ? "ring-2 ring-blue-300 ring-offset-2 transition-shadow" : ""}`;
-  const rowKey = `${item.type}-${item.id}`;
-  const connectionHref = item.type === "connection"
-    ? `${getYourConnectionsRoute(orgSlug)}?connectionId=${encodeURIComponent(item.id)}`
-    : null;
   const action = sectionState === "needs_signin" && connectionHref ? (
-    <Link
+    <DenButton
       href={connectionHref}
-      className="inline-flex h-[28px] items-center rounded-[8px] bg-[#1c2024] px-3 text-[12px] font-semibold text-white"
+      size="xs"
+      variant="primary"
     >
       Sign in
-    </Link>
+    </DenButton>
   ) : sectionState === "needs_admin_setup" && connectionHref ? (
-    <Link href={connectionHref} className="text-[12px] font-medium text-[#6b7280] hover:text-[#1c2024]">
+    <DenButton href={connectionHref} size="xs" variant="ghost">
       Details
-    </Link>
+    </DenButton>
   ) : (
-    <span aria-hidden className="text-[14px] font-normal text-[#c3c7cd]">›</span>
+    <ChevronRight aria-hidden className="h-4 w-4 text-gray-400" />
   );
-
-  if (item.type === "plugin" && isAdmin) {
-    return (
-      <Link
-        href={getPluginRoute(orgSlug, item.id)}
-        className={`${rowClassName} hover:bg-gray-50`}
-        data-library-item-type={item.type}
-        data-library-item-key={rowKey}
-        data-library-focused={isFocused ? "" : undefined}
-      >
-        <LibraryRowContent item={item} orgName={orgName} action={action} />
-      </Link>
-    );
-  }
+  const nonPersonSource = source && !source.isPerson ? source : null;
 
   return (
-    <div
-      className={rowClassName}
-      data-library-item-type={item.type}
-      data-library-item-state={item.type === "connection" ? item.state : undefined}
-      data-library-item-key={rowKey}
-      data-library-focused={isFocused ? "" : undefined}
-    >
-      <LibraryRowContent item={item} orgName={orgName} action={action} />
-    </div>
+    <DenListRow
+      leading={(
+        <DenBrandMark
+          name={item.name}
+          iconUrl={iconUrl}
+          simpleIconSlug={simpleIconSlug}
+          serviceUrl={serviceUrl}
+          className="h-10 w-10 rounded-[12px] border border-gray-100 bg-white"
+        />
+      )}
+      title={item.name}
+      chips={(
+        <>
+          <KindChip kind={rowKind} />
+          {item.type === "connection" ? <TransportChip transport={item.transport} /> : null}
+          {sectionState !== "ready" ? (
+            <DenChip data-library-chip="" tone="warning">
+              {sectionState === "needs_signin" ? "Connect your account" : "Waiting on your admin"}
+            </DenChip>
+          ) : null}
+          {source?.isPerson ? (
+            <DenChip data-library-chip="" data-library-source="" tone="info">
+              {source.label}
+            </DenChip>
+          ) : null}
+        </>
+      )}
+      meta={item.description || nonPersonSource ? (
+        <>
+          {item.description}
+          {nonPersonSource ? (
+            <>
+              {item.description ? <span aria-hidden> · </span> : null}
+              <span data-library-source>{nonPersonSource.label}</span>
+            </>
+          ) : null}
+        </>
+      ) : undefined}
+      action={action}
+      href={rowHref}
+      tone={sectionState === "ready" ? "default" : "warning"}
+      focused={isFocused}
+      dataAttributes={{
+        "data-library-item-type": item.type,
+        "data-library-item-state": item.type === "connection" ? item.state : undefined,
+        "data-library-item-key": rowKey,
+        "data-library-focused": isFocused ? "" : undefined,
+      }}
+    />
   );
 }
 
@@ -308,34 +287,36 @@ function LibrarySection({
 
   return (
     <section data-library-section={state}>
-      <div className="mb-2 flex min-w-0 items-baseline gap-2 overflow-hidden whitespace-nowrap">
-        <h2 className="shrink-0 text-[11px] font-semibold tracking-[0.07em] text-[#6b7280]">
+      <div className="mb-3 flex min-w-0 items-baseline gap-2 overflow-hidden whitespace-nowrap">
+        <h2 className="shrink-0 text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-400">
           {SECTION_TITLES[state]}
         </h2>
-        <span className="shrink-0 text-[11px] font-medium text-[#9ca3af]">{items.length}</span>
-        {caption ? <span className="min-w-0 truncate text-[12px] font-normal tracking-normal text-[#9ca3af]">— {caption}</span> : null}
+        <span className="shrink-0 text-[11px] font-semibold text-gray-400">{items.length}</span>
+        {caption ? <span className="min-w-0 truncate text-[12px] text-gray-400">— {caption}</span> : null}
       </div>
-      <div className={state === "ready" ? "flex flex-col" : "flex flex-col gap-2"}>
-        {visibleItems.map((item) => (
-          <LibraryRow
-            key={`${item.type}-${item.id}`}
-            item={item}
-            isAdmin={isAdmin}
-            isFocused={focusedKey === `${item.type}-${item.id}`}
-            orgName={orgName}
-            orgSlug={orgSlug}
-          />
-        ))}
+      <div data-library-list>
+        <DenList className="[&_[data-library-focused]]:relative [&_[data-library-focused]]:z-10 [&_[data-library-focused]]:ring-2 [&_[data-library-focused]]:ring-inset [&_[data-library-focused]]:ring-blue-300 [&_[data-library-focused]]:transition-shadow">
+          {visibleItems.map((item) => (
+            <LibraryRow
+              key={`${item.type}-${item.id}`}
+              item={item}
+              isAdmin={isAdmin}
+              isFocused={focusedKey === `${item.type}-${item.id}`}
+              orgName={orgName}
+              orgSlug={orgSlug}
+            />
+          ))}
+          {items.length > 6 ? (
+            <button
+              type="button"
+              onClick={onToggle}
+              className="w-full bg-gray-50/40 px-6 py-3 text-center text-[12.5px] font-medium text-gray-500 hover:text-gray-900"
+            >
+              {expanded ? "Show less" : `Show ${hiddenCount} more`}
+            </button>
+          ) : null}
+        </DenList>
       </div>
-      {items.length > 6 ? (
-        <button
-          type="button"
-          onClick={onToggle}
-          className="flex h-[40px] w-full items-center justify-center text-[12.5px] font-medium text-[#4b5563] hover:text-[#1c2024]"
-        >
-          {expanded ? "Show less" : `Show ${hiddenCount} more`}
-        </button>
-      ) : null}
     </section>
   );
 }
@@ -418,7 +399,7 @@ export function LibraryScreen() {
         value: "needs_signin",
         label: "Needs your sign-in",
         count: stateCounts.needs_signin,
-        countClassName: "!bg-[#fef3c7] !text-[#b45309]",
+        countTone: "warning",
       });
     }
     if (stateCounts.needs_admin_setup > 0) {
@@ -426,7 +407,7 @@ export function LibraryScreen() {
         value: "needs_admin_setup",
         label: "Needs admin setup",
         count: stateCounts.needs_admin_setup,
-        countClassName: "!bg-[#fee2e2] !text-[#b91c1c]",
+        countTone: "danger",
       });
     }
     if (stateCounts.ready > 0) {
@@ -434,7 +415,7 @@ export function LibraryScreen() {
         value: "ready",
         label: "Ready to use",
         count: stateCounts.ready,
-        countClassName: "!bg-[#f0f1f3] !text-[#4b5563]",
+        countTone: "neutral",
       });
     }
     return tabs;
@@ -469,9 +450,9 @@ export function LibraryScreen() {
       icon={LibraryBig}
       badgeLabel="Member library"
       badgeCompanion={(
-        <span className="inline-flex h-[22px] shrink-0 items-center rounded-full bg-[rgba(236,253,243,0.92)] px-2.5 text-[11px] font-semibold text-[#15803d]">
+        <DenChip tone="success">
           {stateCounts.ready} ready to use
-        </span>
+        </DenChip>
       )}
       title="Library"
       description="Everything you can use in chat — yours, shared with you, from your teams, and org-wide."
@@ -481,7 +462,7 @@ export function LibraryScreen() {
     >
       <div className="mb-5 overflow-x-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         <UnderlineTabs
-          className="min-w-max [&>nav]:flex-nowrap [&_[role=tab]]:!pb-2.5 [&_[role=tab]]:!text-[13px] [&_[role=tab]]:!font-medium [&_[role=tab]]:!text-[#60646c] [&_[role=tab][aria-selected=true]]:!border-[#1c2024] [&_[role=tab][aria-selected=true]]:!font-semibold [&_[role=tab][aria-selected=true]]:!text-[#1c2024] [&_[role=tab]>span]:inline-flex [&_[role=tab]>span]:h-[18px] [&_[role=tab]>span]:items-center [&_[role=tab]>span]:text-[11px] [&_[role=tab]>span]:font-semibold"
+          className="min-w-max [&>nav]:flex-nowrap [&_[role=tab]]:!pb-2.5 [&_[role=tab]]:!text-[13px] [&_[role=tab]]:!font-medium [&_[role=tab]]:!text-gray-500 [&_[role=tab][aria-selected=true]]:!border-gray-900 [&_[role=tab][aria-selected=true]]:!font-semibold [&_[role=tab][aria-selected=true]]:!text-gray-900"
           tabs={stateTabs}
           activeTab={activeState}
           onChange={setActiveState}
@@ -508,15 +489,15 @@ export function LibraryScreen() {
               aria-pressed={selected}
               onClick={() => setActiveKind(filter.value)}
               className={`inline-flex h-[26px] items-center rounded-full border px-3 text-[12px] font-medium transition-colors ${selected
-                ? "border-[#1c2024] bg-[#1c2024] text-white"
-                : "border-[#e1e4e8] bg-white text-[#4b5563] hover:border-[#c3c7cd] hover:text-[#1c2024]"
+                ? "border-gray-900 bg-gray-900 text-white"
+                : "border-gray-200 bg-white text-gray-500 hover:border-gray-400 hover:text-gray-900"
               }`}
             >
               {kindFilterLabel(filter, kindCounts)}
             </button>
           );
         })}
-        <label className="inline-flex h-[26px] items-center rounded-full border border-[#e1e4e8] bg-white pl-3 pr-2 text-[12px] font-medium text-[#4b5563]">
+        <label className="inline-flex h-[26px] items-center rounded-full border border-gray-200 bg-white pl-3 pr-2 text-[12px] font-medium text-gray-500">
           <span className="shrink-0">From ·</span>
           <select
             aria-label="Library source"
@@ -530,7 +511,7 @@ export function LibraryScreen() {
                   : event.target.value === "everyone"
                     ? "everyone"
                     : "anyone")}
-            className="h-[24px] max-w-[116px] appearance-none bg-transparent pl-1 pr-0 text-[12px] font-medium text-[#4b5563] outline-none"
+            className="h-[24px] max-w-[116px] appearance-none bg-transparent pl-1 pr-0 text-[12px] font-medium text-gray-500 outline-none"
           >
             {FROM_FILTERS.map((filter) => <option key={filter.value} value={filter.value}>{filter.label}</option>)}
           </select>
@@ -557,7 +538,7 @@ export function LibraryScreen() {
           </p>
         </div>
       ) : (
-        <div data-library-list className="flex flex-col gap-7">
+        <div className="flex flex-col gap-7">
           {(["needs_signin", "needs_admin_setup", "ready"] satisfies LibrarySectionState[]).map((state) => (
             sectionItems[state].length > 0 ? (
               <LibrarySection
