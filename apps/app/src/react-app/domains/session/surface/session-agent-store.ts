@@ -1,7 +1,8 @@
 // Per-conversation agent memory. Each session can pick its own agent from
 // the composer; the choice is remembered in localStorage so returning to a
-// conversation restores the agent it last used. Sessions without a remembered
-// choice fall back to the global default agent preference.
+// conversation restores the agent it last used. A session with no stored
+// choice has no entry here and falls back to the default agent. The global
+// agent preference is only used outside of any session (the new-task composer).
 import { create } from "zustand";
 
 const STORAGE_KEY = "openwork.sessionAgents.v1";
@@ -68,7 +69,3 @@ export const useSessionAgentStore = create<SessionAgentStore>((set) => ({
       return { bySessionId };
     }),
 }));
-
-export function getSessionAgent(sessionId: string): string | null {
-  return useSessionAgentStore.getState().bySessionId[sessionId] ?? null;
-}
