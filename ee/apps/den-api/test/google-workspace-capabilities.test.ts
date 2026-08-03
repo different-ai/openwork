@@ -394,6 +394,9 @@ let searchCapabilities: typeof import("../src/mcp/search.js").searchCapabilities
 const userId = createDenTypeId("user")
 const organizationId = createDenTypeId("organization")
 const memberId = createDenTypeId("member")
+const authSessionId = createDenTypeId("session")
+const authSessionToken = `gws-caps-session-${authSessionId}`
+let directUploadMcpToken = ""
 
 async function seedConnectedAccount(scopes: string[] | null = FULL_SCOPES) {
   await upsertConnectedAccount({
@@ -427,6 +430,14 @@ function request(path: string, init?: { method?: string; body?: unknown }) {
     method: init?.method ?? "GET",
     headers,
     body: body === undefined ? undefined : JSON.stringify(body),
+  })
+}
+
+function requestForm(path: string, form: FormData) {
+  return app.request(`http://den-api.local${path}`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${directUploadMcpToken}` },
+    body: form,
   })
 }
 
@@ -473,6 +484,24 @@ beforeAll(async () => {
     userId,
     role: "member",
   })
+  await db.insert(schema.AuthSessionTable).values({
+    id: authSessionId,
+    userId,
+    activeOrganizationId: organizationId,
+    token: authSessionToken,
+    expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+  })
+  const tokenResponse = await app.request("http://den-api.local/v1/mcp/token", {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${authSessionToken}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ scopes: ["mcp:write"] }),
+  })
+  expect(tokenResponse.status).toBe(200)
+  const tokenBody: unknown = await tokenResponse.json()
+  directUploadMcpToken = expectString(expectRecord(tokenBody, "MCP token response").token, "MCP upload token")
 })
 
 beforeEach(async () => {
@@ -483,6 +512,8 @@ beforeEach(async () => {
 
 afterAll(async () => {
   await db.delete(schema.ConnectedAccountTable).where(drizzle.eq(schema.ConnectedAccountTable.organizationId, organizationId))
+  await db.delete(schema.OAuthAccessTokenTable).where(drizzle.eq(schema.OAuthAccessTokenTable.referenceId, organizationId))
+  await db.delete(schema.AuthSessionTable).where(drizzle.eq(schema.AuthSessionTable.id, authSessionId))
   await db.delete(schema.MemberTable).where(drizzle.eq(schema.MemberTable.organizationId, organizationId))
   await db.delete(schema.OrganizationRoleTable).where(drizzle.eq(schema.OrganizationRoleTable.organizationId, organizationId))
   await db.delete(schema.OrganizationTable).where(drizzle.eq(schema.OrganizationTable.id, organizationId))
@@ -701,21 +732,16 @@ test("gmail plain draft supports cc without requiring a thread", async () => {
   })
 })
 
-test("gmail plain draft attaches active workspace file bytes with filename and MIME type", async () => {
+test("direct Gmail upload attaches exact workspace bytes without model-facing base64", async () => {
   const attachmentBytes = Buffer.from("%PDF-1.4\nworkspace invoice\n", "utf8")
-  const response = await request("/v1/capabilities/google-workspace/gmail-drafts", {
-    method: "POST",
-    body: {
-      to: "accounts@acme.test",
-      subject: "Workspace invoice",
-      body: "Please see the attached invoice.",
-      attachments: [{
-        filename: "invoice-2026.pdf",
-        mimeType: "application/pdf",
-        dataBase64: attachmentBytes.toString("base64"),
-      }],
-    },
-  })
+  const form = new FormData()
+  form.append("payload", JSON.stringify({
+    to: "accounts@acme.test",
+    subject: "Workspace invoice",
+    body: "Please see the attached invoice.",
+  }))
+  form.append("file", new File([attachmentBytes], "invoice-2026.pdf", { type: "application/pdf" }))
+  const response = await requestForm("/v1/direct-uploads/google-workspace/gmail-drafts", form)
   expect(response.status).toBe(200)
   expect(googleCallCount).toBe(1)
   const decoded = decodeDraftRaw()
@@ -731,22 +757,17 @@ test("gmail plain draft attaches active workspace file bytes with filename and M
   }])
 })
 
-test("gmail threaded reply draft reads thread metadata and sends reply headers", async () => {
-  const response = await request("/v1/capabilities/google-workspace/gmail-drafts", {
-    method: "POST",
-    body: {
-      to: "sam@acme.test",
-      cc: "ada@acme.test",
-      subject: "Quarterly plan",
-      threadId: "thread_1",
-      body: "Reply body",
-      attachments: [{
-        filename: "notes.txt",
-        mimeType: "text/plain",
-        dataBase64: Buffer.from("workspace notes", "utf8").toString("base64"),
-      }],
-    },
-  })
+test("direct Gmail upload keeps threaded reply metadata and attachment bytes", async () => {
+  const form = new FormData()
+  form.append("payload", JSON.stringify({
+    to: "sam@acme.test",
+    cc: "ada@acme.test",
+    subject: "Quarterly plan",
+    threadId: "thread_1",
+    body: "Reply body",
+  }))
+  form.append("file", new File([Buffer.from("workspace notes", "utf8")], "notes.txt", { type: "text/plain" }))
+  const response = await requestForm("/v1/direct-uploads/google-workspace/gmail-drafts", form)
   expect(response.status).toBe(200)
   expect(googleCallCount).toBe(2)
   const firstUrl = new URL(expectString(googleCallUrls[0], "first Google URL"))
@@ -796,64 +817,18 @@ test("gmail reply-looking draft requires threadId before calling Google", async 
   })
 })
 
-test("gmail draft rejects invalid attachment encoding and MIME type without calling Google", async () => {
-  for (const attachment of [
-    { filename: "invoice.pdf", mimeType: "application/pdf", dataBase64: "not base64!" },
-    { filename: "invoice.pdf", mimeType: "invalid mime type", dataBase64: "aW52b2ljZQ==" },
-    { filename: "invoice.pdf\r\nBcc: attacker@acme.test", mimeType: "application/pdf", dataBase64: "aW52b2ljZQ==" },
-  ]) {
-    resetFakeGoogle()
-    const response = await request("/v1/capabilities/google-workspace/gmail-drafts", {
-      method: "POST",
-      body: {
-        to: "sam@acme.test",
-        subject: "Quarterly plan",
-        body: "Draft body",
-        attachments: [attachment],
-      },
-    })
-    expect(response.status).toBe(400)
-    expect(googleCallCount).toBe(0)
-    const body: unknown = await response.json()
-    expect(expectRecord(body, "invalid attachment response").error).toBe("invalid_request")
-  }
-})
-
-test("gmail draft rejects attachments over per-file and aggregate size limits without calling Google", async () => {
-  const overPerFile = Buffer.alloc((10 * 1024 * 1024) + 1).toString("base64")
-  const aggregateFiles = Array.from({ length: 3 }, (_, index) => ({
-    filename: `part-${index}.bin`,
-    mimeType: "application/octet-stream",
-    dataBase64: Buffer.alloc(7 * 1024 * 1024).toString("base64"),
-  }))
-  for (const attachments of [
-    [{ filename: "large.bin", mimeType: "application/octet-stream", dataBase64: overPerFile }],
-    aggregateFiles,
-  ]) {
-    resetFakeGoogle()
-    const response = await request("/v1/capabilities/google-workspace/gmail-drafts", {
-      method: "POST",
-      body: { to: "sam@acme.test", subject: "Quarterly plan", body: "Draft body", attachments },
-    })
-    expect(response.status).toBe(400)
-    expect(googleCallCount).toBe(0)
-  }
-})
-
-test("gmail draft rejects empty and excessive attachment lists without calling Google", async () => {
-  for (const attachments of [[], Array.from({ length: 11 }, (_, index) => ({
-    filename: `file-${index}.txt`,
-    mimeType: "text/plain",
-    dataBase64: "ZmlsZQ==",
-  }))]) {
-    resetFakeGoogle()
-    const response = await request("/v1/capabilities/google-workspace/gmail-drafts", {
-      method: "POST",
-      body: { to: "sam@acme.test", subject: "Quarterly plan", body: "Draft body", attachments },
-    })
-    expect(response.status).toBe(400)
-    expect(googleCallCount).toBe(0)
-  }
+test("Gmail JSON capability rejects legacy inline attachment bytes", async () => {
+  const response = await request("/v1/capabilities/google-workspace/gmail-drafts", {
+    method: "POST",
+    body: {
+      to: "sam@acme.test",
+      subject: "Quarterly plan",
+      body: "Draft body",
+      attachments: [{ filename: "file.txt", mimeType: "text/plain", dataBase64: "ZmlsZQ==" }],
+    },
+  })
+  expect(response.status).toBe(400)
+  expect(googleCallCount).toBe(0)
 })
 
 test("gmail threaded reply draft requires Gmail read scope before calling Google", async () => {
@@ -1001,19 +976,14 @@ test("drive file read keeps the Google Apps text export branch", async () => {
   expect(file.content).toBe("Exported doc text")
 })
 
-test("drive upload stores decoded bytes as multipart and returns the user-facing Drive link", async () => {
+test("direct Drive upload preserves exact multipart bytes and returns the user-facing link", async () => {
   await seedConnectedAccount([DRIVE_FILE_SCOPE])
   resetFakeGoogle()
   const uploadBytes = Buffer.from("%PDF-1.4\nDrive upload bytes\n", "utf8")
-  const response = await request("/v1/capabilities/google-workspace/drive-files", {
-    method: "POST",
-    body: {
-      filename: "plan.pdf",
-      mimeType: "application/pdf",
-      dataBase64: uploadBytes.toString("base64"),
-      folderId: "folder_1",
-    },
-  })
+  const form = new FormData()
+  form.append("file", new File([uploadBytes], "plan.pdf", { type: "application/pdf" }))
+  form.append("folderId", "folder_1")
+  const response = await requestForm("/v1/direct-uploads/google-workspace/drive-files", form)
   expect(response.status).toBe(200)
   expect(lastAuthorization).toBe("Bearer gws-token")
   const contentType = expectString(lastDriveUploadContentType, "drive upload content type")
@@ -1045,14 +1015,9 @@ test("drive upload stores decoded bytes as multipart and returns the user-facing
 test("drive upload requires Drive write scope before calling Google", async () => {
   await seedConnectedAccount([DRIVE_READ_SCOPE])
   resetFakeGoogle()
-  const response = await request("/v1/capabilities/google-workspace/drive-files", {
-    method: "POST",
-    body: {
-      filename: "plan.pdf",
-      mimeType: "application/pdf",
-      dataBase64: Buffer.from("drive bytes", "utf8").toString("base64"),
-    },
-  })
+  const form = new FormData()
+  form.append("file", new File([Buffer.from("drive bytes", "utf8")], "plan.pdf", { type: "application/pdf" }))
+  const response = await requestForm("/v1/direct-uploads/google-workspace/drive-files", form)
   expect(response.status).toBe(409)
   expect(googleCallCount).toBe(0)
   const body: unknown = await response.json()
@@ -1106,14 +1071,9 @@ test("drive upload returns google_api_error when Google rejects the upload", asy
   await seedConnectedAccount([DRIVE_FILE_SCOPE])
   resetFakeGoogle()
   forceDriveUploadError = true
-  const response = await request("/v1/capabilities/google-workspace/drive-files", {
-    method: "POST",
-    body: {
-      filename: "plan.pdf",
-      mimeType: "application/pdf",
-      dataBase64: Buffer.from("drive bytes", "utf8").toString("base64"),
-    },
-  })
+  const form = new FormData()
+  form.append("file", new File([Buffer.from("drive bytes", "utf8")], "plan.pdf", { type: "application/pdf" }))
+  const response = await requestForm("/v1/direct-uploads/google-workspace/drive-files", form)
   expect(response.status).toBe(502)
   expect(googleCallCount).toBe(1)
   const body: unknown = await response.json()
@@ -1172,16 +1132,16 @@ test("Google Workspace capability tools are discoverable and keep readable names
   const driveMatch = searchCapabilities(catalog, "drive files", 10)[0]
   expect(driveMatch?.name).toBe("getCapabilitiesGoogleWorkspaceDriveFiles")
   expect(driveMatch?.queryParams).toEqual(["query", "maxResults"])
-  expect(searchCapabilities(catalog, "drive upload", 10)[0]?.name).toBe("postCapabilitiesGoogleWorkspaceDriveFiles")
+  expect(catalog.some((tool) => tool.name === "postCapabilitiesGoogleWorkspaceDriveFiles")).toBe(false)
+  expect(catalog.some((tool) => tool.name.includes("DirectUploads"))).toBe(false)
   expect(searchCapabilities(catalog, "share drive file", 10)[0]?.name).toBe("postCapabilitiesGoogleWorkspaceDriveFileShare")
   const gmailMatch = searchCapabilities(catalog, "gmail search read messages", 10)[0]
   expect(gmailMatch?.name).toBe("getCapabilitiesGoogleWorkspaceGmailMessages")
   expect(gmailMatch?.queryParams).toEqual(["q", "maxResults"])
   expect(searchCapabilities(catalog, "outlook mail messages", 20).find((match) => match.name === "getCapabilitiesMicrosoft365MailMessages")?.queryParams).toEqual(["search", "maxResults"])
-  const draftMatch = searchCapabilities(catalog, "gmail draft workspace attachment", 10)[0]
+  const draftMatch = searchCapabilities(catalog, "gmail draft without attachments", 10)[0]
   expect(draftMatch?.name).toBe("postCapabilitiesGoogleWorkspaceGmailDrafts")
-  expect(draftMatch?.summary).toContain("attachments: [{ filename, mimeType, dataBase64 }]")
-  expect(draftMatch?.summary).toContain("standard base64")
+  expect(draftMatch?.summary).toContain("without attachments")
   expect(searchCapabilities(catalog, "download gmail attachment bytes", 10)[0]?.name).toBe("getCapabilitiesGoogleWorkspaceGmailAttachment")
 
   const expectedNames = [
@@ -1192,7 +1152,6 @@ test("Google Workspace capability tools are discoverable and keep readable names
     "postCapabilitiesGoogleWorkspaceCalendarEvents",
     "patchCapabilitiesGoogleWorkspaceCalendarEvent",
     "getCapabilitiesGoogleWorkspaceDriveFiles",
-    "postCapabilitiesGoogleWorkspaceDriveFiles",
     "getCapabilitiesGoogleWorkspaceDriveFile",
     "postCapabilitiesGoogleWorkspaceDriveFileShare",
     "postCapabilitiesGoogleWorkspaceGmailDrafts",

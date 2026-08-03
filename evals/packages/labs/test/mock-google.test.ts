@@ -280,3 +280,59 @@ test("mock Google decodes text/plain nested inside mixed and alternative MIME", 
   const drafts = await google.draftsFor(account);
   assert.equal(drafts[0]?.body, plainBody);
 });
+
+test("mock Google witnesses exact Gmail attachment and Drive upload bytes", async () => {
+  const account = "jordan@acme.test";
+  const fixture = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0xff, 0x80, 0x13, 0x0a]);
+  await using google = await startMockGoogle({ accounts: [account], port: 0, autoApprove: false });
+  await using callback = await startCallbackLab();
+  const tokens = await authorize(google, callback, account, "client-binary-witness");
+
+  const mixedBoundary = "fixture-mixed-binary";
+  const message = [
+    "To: archive@acme.test",
+    "Subject: Binary witness",
+    "MIME-Version: 1.0",
+    `Content-Type: multipart/mixed; boundary="${mixedBoundary}"`,
+    "",
+    `--${mixedBoundary}`,
+    'Content-Type: text/plain; charset="UTF-8"',
+    "Content-Transfer-Encoding: base64",
+    "",
+    Buffer.from("Binary body", "utf8").toString("base64"),
+    `--${mixedBoundary}`,
+    'Content-Type: image/png; name="witness.png"',
+    'Content-Disposition: attachment; filename="witness.png"',
+    "Content-Transfer-Encoding: base64",
+    "",
+    fixture.toString("base64"),
+    `--${mixedBoundary}--`,
+    "",
+  ].join("\r\n");
+  await submitDraft(google, tokens.accessToken, message);
+  const drafts = await google.draftsFor(account, { atLeast: 1, timeoutMs: 2_000 });
+  assert.equal(drafts[0]?.attachments?.[0]?.filename, "witness.png");
+  assert.equal(drafts[0]?.attachments?.[0]?.mimeType, "image/png");
+  assert.deepEqual(drafts[0]?.attachments?.[0]?.content, fixture);
+
+  const driveBoundary = "fixture-drive-binary";
+  const metadata = Buffer.from(`--${driveBoundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n{"name":"witness.png"}\r\n`, "utf8");
+  const contentHeader = Buffer.from(`--${driveBoundary}\r\nContent-Type: image/png\r\n\r\n`, "utf8");
+  const footer = Buffer.from(`\r\n--${driveBoundary}--\r\n`, "utf8");
+  const uploadBody = Buffer.concat([metadata, contentHeader, fixture, footer]);
+  const uploadBytes = new Uint8Array(uploadBody.byteLength);
+  uploadBytes.set(uploadBody);
+  const response = await fetch(`${google.apiUrl}/upload/drive/v3/files?uploadType=multipart`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${tokens.accessToken}`,
+      "content-type": `multipart/related; boundary=${driveBoundary}`,
+    },
+    body: uploadBytes,
+  });
+  assert.equal(response.status, 200);
+  const uploads = await google.driveUploadsFor(account, { atLeast: 1, timeoutMs: 2_000 });
+  assert.equal(uploads[0]?.filename, "witness.png");
+  assert.equal(uploads[0]?.mimeType, "image/png");
+  assert.deepEqual(uploads[0]?.content, fixture);
+});

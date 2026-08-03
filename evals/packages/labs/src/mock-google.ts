@@ -5,6 +5,20 @@ export interface MockGoogleDraft {
   to: string;
   body: string;
   threadId?: string;
+  attachments?: MockGoogleAttachment[];
+  /** Which credential created it — the isolation witness. */
+  tokenId: string;
+  at: string;
+}
+
+export interface MockGoogleAttachment {
+  filename: string;
+  mimeType: string;
+  size: number;
+  content: Buffer;
+}
+
+export interface MockGoogleDriveUpload extends MockGoogleAttachment {
   /** Which credential created it — the isolation witness. */
   tokenId: string;
   at: string;
@@ -21,6 +35,8 @@ export interface MockGoogleHandle {
   chooseAccount(email: string, opts?: { timeoutMs?: number }): Promise<void>;
   /** Drafts attributed to ONE mailbox. Must be able to return [] as a real negative assertion. */
   draftsFor(email: string, opts?: { since?: string; timeoutMs?: number; atLeast?: number }): Promise<MockGoogleDraft[]>;
+  /** Drive uploads attributed to ONE account, including provider-observed bytes. */
+  driveUploadsFor(email: string, opts?: { since?: string; timeoutMs?: number; atLeast?: number }): Promise<MockGoogleDriveUpload[]>;
   authorizeRequestSince(iso: string, opts?: { timeoutMs?: number }): Promise<{ params: URLSearchParams }>;
   stop(): Promise<void>;
   [Symbol.asyncDispose](): Promise<void>;
@@ -105,7 +121,36 @@ export async function startMockGoogle(options: StartMockGoogleOptions): Promise<
       at: value.at,
     };
     if (typeof value.threadId === "string") draft.threadId = value.threadId;
+    if (Array.isArray(value.attachments)) {
+      const attachments = value.attachments.flatMap((entry) => {
+        const attachment = parseAttachment(entry);
+        return attachment ? [attachment] : [];
+      });
+      if (attachments.length > 0) draft.attachments = attachments;
+    }
     return draft;
+  }
+
+  function parseAttachment(value: unknown): MockGoogleAttachment | null {
+    if (!isRecord(value)
+      || typeof value.filename !== "string"
+      || typeof value.mimeType !== "string"
+      || typeof value.size !== "number"
+      || typeof value.dataBase64 !== "string") return null;
+    const content = Buffer.from(value.dataBase64, "base64");
+    if (content.byteLength !== value.size) return null;
+    return {
+      filename: value.filename,
+      mimeType: value.mimeType,
+      size: value.size,
+      content,
+    };
+  }
+
+  function parseDriveUpload(value: unknown): MockGoogleDriveUpload | null {
+    const attachment = parseAttachment(value);
+    if (!attachment || !isRecord(value) || typeof value.tokenId !== "string" || typeof value.at !== "string") return null;
+    return { ...attachment, tokenId: value.tokenId, at: value.at };
   }
 
   async function readDrafts(email: string, since: string | undefined, timeoutMs: number): Promise<MockGoogleDraft[]> {
@@ -117,6 +162,32 @@ export async function startMockGoogle(options: StartMockGoogleOptions): Promise<
       const draft = parseDraft(value);
       return draft && (!since || draft.at >= since) ? [draft] : [];
     });
+  }
+
+  async function readDriveUploads(email: string, since: string | undefined, timeoutMs: number): Promise<MockGoogleDriveUpload[]> {
+    const endpoint = new URL("/__mock-google/drive-uploads", url);
+    endpoint.searchParams.set("email", email.trim().toLowerCase());
+    const body = await json(endpoint.toString(), timeoutMs);
+    if (!isRecord(body) || !Array.isArray(body.uploads)) return [];
+    return body.uploads.flatMap((value) => {
+      const upload = parseDriveUpload(value);
+      return upload && (!since || upload.at >= since) ? [upload] : [];
+    });
+  }
+
+  async function pollForAtLeast<T>(
+    read: (timeoutMs: number) => Promise<T[]>,
+    atLeast: number | undefined,
+    timeoutMs: number,
+  ): Promise<T[]> {
+    if (atLeast === undefined || atLeast <= 0) return read(timeoutMs);
+    const deadline = Date.now() + timeoutMs;
+    let values = await read(Math.max(1, deadline - Date.now()));
+    while (values.length < atLeast && Date.now() < deadline) {
+      await sleep(250);
+      values = await read(Math.max(1, deadline - Date.now()));
+    }
+    return values;
   }
 
   const stop = async (): Promise<void> => {
@@ -160,16 +231,19 @@ export async function startMockGoogle(options: StartMockGoogleOptions): Promise<
     },
     async draftsFor(email, opts = {}) {
       const timeoutMs = opts.timeoutMs ?? 120_000;
-      if (opts.atLeast === undefined || opts.atLeast <= 0) {
-        return readDrafts(email, opts.since, timeoutMs);
-      }
-      const deadline = Date.now() + timeoutMs;
-      let drafts = await readDrafts(email, opts.since, Math.max(1, deadline - Date.now()));
-      while (drafts.length < opts.atLeast && Date.now() < deadline) {
-        await sleep(250);
-        drafts = await readDrafts(email, opts.since, Math.max(1, deadline - Date.now()));
-      }
-      return drafts;
+      return pollForAtLeast(
+        (remainingMs) => readDrafts(email, opts.since, remainingMs),
+        opts.atLeast,
+        timeoutMs,
+      );
+    },
+    async driveUploadsFor(email, opts = {}) {
+      const timeoutMs = opts.timeoutMs ?? 120_000;
+      return pollForAtLeast(
+        (remainingMs) => readDriveUploads(email, opts.since, remainingMs),
+        opts.atLeast,
+        timeoutMs,
+      );
     },
     async authorizeRequestSince(iso, opts = {}) {
       const deadline = Date.now() + (opts.timeoutMs ?? 60_000);

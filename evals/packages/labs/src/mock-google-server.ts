@@ -53,6 +53,19 @@ interface RecordedDraft {
   to: string;
   body: string;
   threadId?: string;
+  attachments?: RecordedAttachment[];
+  tokenId: string;
+  at: string;
+}
+
+interface RecordedAttachment {
+  filename: string;
+  mimeType: string;
+  size: number;
+  dataBase64: string;
+}
+
+interface RecordedDriveUpload extends RecordedAttachment {
   tokenId: string;
   at: string;
 }
@@ -72,6 +85,7 @@ interface MockGoogleState {
   accessTokens: Map<string, Account>;
   refreshTokens: Map<string, RefreshCredential>;
   drafts: Map<string, RecordedDraft[]>;
+  driveUploads: Map<string, RecordedDriveUpload[]>;
   keys: SigningKeys;
 }
 
@@ -158,7 +172,7 @@ function requestUrl(request: IncomingMessage, baseUrl: string): URL {
   return new URL(request.url ?? "/", baseUrl);
 }
 
-async function requestBody(request: IncomingMessage): Promise<string> {
+async function requestBuffer(request: IncomingMessage): Promise<Buffer> {
   const chunks: Buffer[] = [];
   for await (const chunk of request) {
     if (typeof chunk === "string") {
@@ -169,7 +183,11 @@ async function requestBody(request: IncomingMessage): Promise<string> {
       chunks.push(Buffer.from(String(chunk)));
     }
   }
-  return Buffer.concat(chunks).toString("utf8");
+  return Buffer.concat(chunks);
+}
+
+async function requestBody(request: IncomingMessage): Promise<string> {
+  return (await requestBuffer(request)).toString("utf8");
 }
 
 async function formBody(request: IncomingMessage): Promise<URLSearchParams> {
@@ -431,6 +449,37 @@ function draftBody(headers: string, body: string): string {
   return mimeTextBody(headers, body) ?? "";
 }
 
+function unquoteMimeParameter(value: string): string {
+  return value.replace(/\\([\\"])/g, "$1");
+}
+
+function mimeParameter(value: string, name: string): string {
+  const quoted = new RegExp(`${name}="((?:\\\\.|[^"\\\\])*)"`, "i").exec(value)?.[1];
+  if (quoted !== undefined) return unquoteMimeParameter(quoted);
+  return new RegExp(`${name}=([^;\\s]+)`, "i").exec(value)?.[1] ?? "";
+}
+
+function mimeAttachments(headers: string, body: string): RecordedAttachment[] {
+  const contentType = headerValue(headers, "content-type");
+  const boundary = mimeParameter(contentType, "boundary");
+  if (boundary) {
+    return body.split(`--${boundary}`).slice(1).flatMap((part) => {
+      if (!part.trim() || part.trim().startsWith("--")) return [];
+      const split = splitMessage(part.replace(/^\r?\n/, ""));
+      return mimeAttachments(split.headers, split.body);
+    });
+  }
+
+  const disposition = headerValue(headers, "content-disposition");
+  if (!/^attachment(?:;|$)/i.test(disposition)) return [];
+  const filename = mimeParameter(disposition, "filename") || mimeParameter(contentType, "name");
+  const mimeType = contentType.split(";", 1)[0]?.trim() || "application/octet-stream";
+  const content = headerValue(headers, "content-transfer-encoding").toLowerCase() === "base64"
+    ? Buffer.from(body.replace(/\s+/g, ""), "base64")
+    : Buffer.from(body.replace(/\r?\n$/, ""), "utf8");
+  return [{ filename, mimeType, size: content.byteLength, dataBase64: content.toString("base64") }];
+}
+
 function draftInput(value: unknown): { raw: string; threadId?: string } {
   if (!isRecord(value) || !isRecord(value.message)) return { raw: "" };
   const raw = typeof value.message.raw === "string" ? value.message.raw : "";
@@ -455,6 +504,8 @@ async function createDraft(state: MockGoogleState, request: IncomingMessage, res
     at: new Date().toISOString(),
   };
   if (input.threadId) draft.threadId = input.threadId;
+  const attachments = mimeAttachments(split.headers, split.body);
+  if (attachments.length > 0) draft.attachments = attachments;
   const mailbox = state.drafts.get(account.email) ?? [];
   mailbox.push(draft);
   state.drafts.set(account.email, mailbox);
@@ -462,6 +513,71 @@ async function createDraft(state: MockGoogleState, request: IncomingMessage, res
   sendJson(response, 200, {
     id: `draft-${randomUUID()}`,
     message: { id: `msg-${randomUUID()}`, threadId },
+  });
+}
+
+function requestHeader(request: IncomingMessage, name: string): string {
+  const value = request.headers[name.toLowerCase()];
+  return Array.isArray(value) ? value[0] ?? "" : value ?? "";
+}
+
+function parseDriveMultipart(body: Buffer, contentType: string): RecordedAttachment | null {
+  const boundary = mimeParameter(contentType, "boundary");
+  if (!boundary) return null;
+  const partBoundary = Buffer.from(`\r\n--${boundary}\r\n`, "utf8");
+  const firstHeaderEnd = body.indexOf(Buffer.from("\r\n\r\n", "utf8"));
+  const secondPart = body.indexOf(partBoundary);
+  if (firstHeaderEnd < 0 || secondPart < 0 || secondPart <= firstHeaderEnd) return null;
+
+  const metadataText = body.subarray(firstHeaderEnd + 4, secondPart).toString("utf8");
+  let metadata: unknown;
+  try {
+    metadata = JSON.parse(metadataText);
+  } catch {
+    return null;
+  }
+  const filename = isRecord(metadata) && typeof metadata.name === "string" ? metadata.name : "";
+  if (!filename) return null;
+
+  const secondHeaderStart = secondPart + partBoundary.byteLength;
+  const secondHeaderEnd = body.indexOf(Buffer.from("\r\n\r\n", "utf8"), secondHeaderStart);
+  const footer = Buffer.from(`\r\n--${boundary}--`, "utf8");
+  const contentEnd = body.lastIndexOf(footer);
+  if (secondHeaderEnd < 0 || contentEnd < 0 || contentEnd < secondHeaderEnd) return null;
+  const headers = body.subarray(secondHeaderStart, secondHeaderEnd).toString("utf8");
+  const mimeType = headerValue(headers, "content-type") || "application/octet-stream";
+  const content = body.subarray(secondHeaderEnd + 4, contentEnd);
+  return { filename, mimeType, size: content.byteLength, dataBase64: content.toString("base64") };
+}
+
+async function createDriveUpload(state: MockGoogleState, request: IncomingMessage, response: ServerResponse): Promise<void> {
+  const account = accountForRequest(state, request);
+  const accessToken = bearerToken(request);
+  if (!account || !accessToken) {
+    sendJson(response, 401, { error: { code: 401, message: "Invalid Credentials" } });
+    return;
+  }
+  const upload = parseDriveMultipart(await requestBuffer(request), requestHeader(request, "content-type"));
+  if (!upload) {
+    sendJson(response, 400, { error: { code: 400, message: "Invalid multipart upload" } });
+    return;
+  }
+  const recorded: RecordedDriveUpload = {
+    ...upload,
+    tokenId: tokenId(accessToken),
+    at: new Date().toISOString(),
+  };
+  const uploads = state.driveUploads.get(account.email) ?? [];
+  uploads.push(recorded);
+  state.driveUploads.set(account.email, uploads);
+  const id = `drive-${randomUUID()}`;
+  sendJson(response, 200, {
+    id,
+    name: upload.filename,
+    mimeType: upload.mimeType,
+    modifiedTime: recorded.at,
+    webViewLink: `https://drive.google.test/file/d/${id}/view`,
+    size: String(upload.size),
   });
 }
 
@@ -503,6 +619,10 @@ async function handleRequest(state: MockGoogleState, request: IncomingMessage, r
     sendJson(response, 200, { drafts: state.drafts.get((url.searchParams.get("email") ?? "").toLowerCase()) ?? [] });
     return;
   }
+  if (requestMethod === "GET" && url.pathname === "/__mock-google/drive-uploads") {
+    sendJson(response, 200, { uploads: state.driveUploads.get((url.searchParams.get("email") ?? "").toLowerCase()) ?? [] });
+    return;
+  }
   if (requestMethod === "GET" && url.pathname === "/authorize") {
     authorize(state, url, response);
     return;
@@ -542,6 +662,10 @@ async function handleRequest(state: MockGoogleState, request: IncomingMessage, r
   }
   if (requestMethod === "POST" && url.pathname === "/gmail/v1/users/me/drafts") {
     await createDraft(state, request, response);
+    return;
+  }
+  if (requestMethod === "POST" && url.pathname === "/upload/drive/v3/files") {
+    await createDriveUpload(state, request, response);
     return;
   }
   sendJson(response, 404, { error: "not_found" });
@@ -586,6 +710,7 @@ export async function startMockGoogleServer(options: MockGoogleServerOptions): P
     accessTokens: new Map(),
     refreshTokens: new Map(),
     drafts: new Map(),
+    driveUploads: new Map(),
     keys: createSigningKeys(),
   };
   const server = createServer((request, response) => {

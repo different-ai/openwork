@@ -186,9 +186,10 @@ async function expectLegacyCallPassesThrough(base: string) {
 }
 
 function expectAllActions(actions: ActionItem[]) {
-  expect(actions).toHaveLength(16);
+  expect(actions).toHaveLength(18);
   expect(actions.filter((action) => action.extensionId === "google-workspace")).toHaveLength(14);
   expect(actions.filter((action) => action.extensionId === "openai-image-generation")).toHaveLength(2);
+  expect(actions.filter((action) => action.extensionId === "openwork-cloud-uploads")).toHaveLength(2);
 }
 
 beforeEach(() => {
@@ -262,6 +263,8 @@ describe("Connect-aware legacy extension gating", () => {
       "google-workspace/status",
       "openai-image-generation/image_generate",
       "openai-image-generation/status",
+      "openwork-cloud-uploads/drive_upload_file",
+      "openwork-cloud-uploads/gmail_create_draft_with_attachments",
     ]);
 
     const gated = await callCalendarListEvents(base);
