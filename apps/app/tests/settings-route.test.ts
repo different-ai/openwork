@@ -7,6 +7,7 @@ import {
   settingsPathForRoute,
 } from "../src/react-app/shell/settings-route";
 import {
+  getSettingsTabLabel,
   getWorkspaceSettingsTabs,
   isSettingsTabActive,
 } from "../src/react-app/domains/settings/shell/settings-page";
@@ -20,7 +21,6 @@ describe("settings route parsing", () => {
     expect(parseExtensionsPath(pathname)).toEqual(route);
     expect(isSettingsTabActive(route.tab, "extensions")).toBe(true);
     expect(isSettingsTabActive(route.tab, "general")).toBe(false);
-    expect(getWorkspaceSettingsTabs()).toEqual(["preferences", "permissions", "advanced"]);
   });
 
   test("preserves top-level Extensions section and detail deep links", () => {
@@ -95,5 +95,12 @@ describe("settings route parsing", () => {
       extensionsSection: "all",
       extensionDetailId: "skill:briefing",
     });
+  });
+});
+
+describe("settings navigation", () => {
+  test("includes Library in workspace settings", () => {
+    expect(getWorkspaceSettingsTabs()).toEqual(["preferences", "permissions", "extensions", "advanced"]);
+    expect(getSettingsTabLabel("extensions")).toBe("Library");
   });
 });
