@@ -932,6 +932,44 @@ test("drive upload stores decoded bytes as multipart and returns the user-facing
   })
 })
 
+test("drive upload converts an Office file to a native Google editor file", async () => {
+  await seedConnectedAccount([DRIVE_FILE_SCOPE])
+  resetFakeGoogle()
+  const uploadBytes = Buffer.from("docx bytes", "utf8")
+  const response = await request("/v1/capabilities/google-workspace/drive-files", {
+    method: "POST",
+    body: {
+      filename: "plan.docx",
+      mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      dataBase64: uploadBytes.toString("base64"),
+      convertTo: "document",
+    },
+  })
+  expect(response.status).toBe(200)
+  const contentType = expectString(lastDriveUploadContentType, "drive upload content type")
+  const boundary = contentType.match(/boundary=(.+)$/)?.[1]
+  if (!boundary || !lastDriveUploadBody) {
+    throw new Error("Expected drive upload multipart body")
+  }
+  expect(lastDriveUploadBody.includes(Buffer.from('{"name":"plan.docx","mimeType":"application/vnd.google-apps.document"}', "utf8"))).toBe(true)
+  expect(lastDriveUploadBody.includes(Buffer.from(`Content-Type: application/vnd.openxmlformats-officedocument.wordprocessingml.document\r\n\r\n`, "utf8"))).toBe(true)
+  expect(lastDriveUploadBody.includes(uploadBytes)).toBe(true)
+})
+
+test("drive upload rejects an invalid conversion target without calling Google", async () => {
+  const response = await request("/v1/capabilities/google-workspace/drive-files", {
+    method: "POST",
+    body: {
+      filename: "plan.docx",
+      mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      dataBase64: Buffer.from("docx bytes", "utf8").toString("base64"),
+      convertTo: "pdf",
+    },
+  })
+  expect(response.status).toBe(400)
+  expect(googleCallCount).toBe(0)
+})
+
 test("drive upload requires Drive write scope before calling Google", async () => {
   await seedConnectedAccount([DRIVE_READ_SCOPE])
   resetFakeGoogle()

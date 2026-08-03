@@ -42,6 +42,12 @@ const GOOGLE_WORKSPACE_API_TIMEOUT_MS = 30_000
 const MAX_GMAIL_ATTACHMENT_BYTES = 10 * 1024 * 1024
 const MAX_GMAIL_ATTACHMENTS_TOTAL_BYTES = 20 * 1024 * 1024
 const MAX_GMAIL_ATTACHMENT_BASE64_LENGTH = Math.ceil(MAX_GMAIL_ATTACHMENT_BYTES / 3) * 4
+const uploadDriveFileConversionSchema = z.enum(["document", "spreadsheet", "presentation"])
+const DRIVE_CONVERSION_MIME_TYPES: Record<z.infer<typeof uploadDriveFileConversionSchema>, string> = {
+  document: "application/vnd.google-apps.document",
+  spreadsheet: "application/vnd.google-apps.spreadsheet",
+  presentation: "application/vnd.google-apps.presentation",
+}
 const GMAIL_REPLY_SUBJECT_RE = /^\s*(re|fwd?)\s*:/i
 
 const CONNECT_GOOGLE_ACCOUNT_MESSAGE = "Connect your Google account first: open Settings > Connect and use Connect your account on the Google Workspace row, or connect from the OpenWork Cloud dashboard."
@@ -49,7 +55,7 @@ const CONNECT_GOOGLE_ACCOUNT_MESSAGE = "Connect your Google account first: open 
 const gmailDraftAttachmentSchema = z.object({
   filename: z.string().trim().min(1).max(255).refine((value) => !/[\r\n]/.test(value), "Filename must not contain line breaks.").describe("Filename to show in Gmail."),
   mimeType: z.string().trim().regex(/^[!#$%&'*+.^_`|~0-9A-Za-z-]+\/[!#$%&'*+.^_`|~0-9A-Za-z-]+$/).describe("Attachment MIME type."),
-  dataBase64: z.string().min(1).max(MAX_GMAIL_ATTACHMENT_BASE64_LENGTH).regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/).describe("File bytes encoded as standard base64. Read the file from the active workspace and base64-encode it. Maximum decoded size: 10 MiB per file and 20 MiB total."),
+  dataBase64: z.string().min(1).max(MAX_GMAIL_ATTACHMENT_BASE64_LENGTH).regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/).describe("File bytes encoded as standard base64. Inline bytes are practical only for small files (roughly a few hundred KB), because the base64 must pass through the agent's context window; large files will fail before the request is sent. Maximum decoded size: 10 MiB per file and 20 MiB total (server ceiling, not a practical inline limit)."),
 }).strict()
 
 const createDraftBodySchema = z.object({
@@ -228,8 +234,9 @@ const driveFilesQuerySchema = z.object({
 const uploadDriveFileBodySchema = z.object({
   filename: z.string().trim().min(1).max(255).refine((value) => !/[\r\n]/.test(value), "Filename must not contain line breaks.").describe("Filename to create in Google Drive."),
   mimeType: z.string().trim().regex(/^[!#$%&'*+.^_`|~0-9A-Za-z-]+\/[!#$%&'*+.^_`|~0-9A-Za-z-]+$/).describe("File MIME type."),
-  dataBase64: z.string().min(1).max(MAX_GMAIL_ATTACHMENT_BASE64_LENGTH).regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/).describe("File bytes as standard base64. The gmail-attachment capability returns dataBase64 in this exact encoding — pass it through directly to save an email attachment to Drive. Maximum decoded size: 10 MiB."),
+  dataBase64: z.string().min(1).max(MAX_GMAIL_ATTACHMENT_BASE64_LENGTH).regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/).describe("File bytes as standard base64. Inline bytes are practical only for small files (roughly a few hundred KB), because the base64 must pass through the agent's context window; large files will fail before the request is sent. The gmail-attachment capability returns dataBase64 in this exact encoding for direct passthrough to Drive. Maximum decoded size: 10 MiB (server ceiling, not a practical inline limit)."),
   folderId: z.string().trim().min(1).max(512).optional().describe("Optional Google Drive parent folder id."),
+  convertTo: uploadDriveFileConversionSchema.optional().describe("Optional. Convert the uploaded file into a native Google editor file so it can be edited and commented on in the browser: \"document\" for a Google Doc (from .docx), \"spreadsheet\" for a Google Sheet (from .xlsx), \"presentation\" for Google Slides (from .pptx). Omit to store the file as-is."),
 }).strict().superRefine((input, context) => {
   if (Buffer.byteLength(input.dataBase64, "base64") > MAX_GMAIL_ATTACHMENT_BYTES) {
     context.addIssue({
@@ -853,7 +860,7 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
     describeRoute({
       tags: ["Capability Sources"],
       summary: "Upload file bytes to Google Drive as the calling member",
-      description: "Creates a file in the calling member's Google Drive using standard base64 bytes. The gmail-attachment capability returns dataBase64 in this exact encoding — pass it through directly to save an email attachment to Drive. The response file.webViewLink is the user-facing link — share it with the user.",
+      description: "Creates a file in the calling member's Google Drive using standard base64 bytes, optionally converting Office files to native Google editor files. The gmail-attachment capability returns dataBase64 in this exact encoding — pass it through directly to save an email attachment to Drive. The response file.webViewLink is the user-facing link — share it with the user.",
       responses: {
         200: jsonResponse("Google Drive file uploaded. The file.webViewLink is the user-facing link — share it with the user.", uploadDriveFileResponseSchema),
         400: jsonResponse("The upload request was invalid.", invalidRequestSchema),
@@ -881,9 +888,12 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
       }
 
       const input = c.req.valid("json")
-      const metadata: { name: string; parents?: string[] } = { name: input.filename }
+      const metadata: { name: string; parents?: string[]; mimeType?: string } = { name: input.filename }
       if (input.folderId) {
         metadata.parents = [input.folderId]
+      }
+      if (input.convertTo) {
+        metadata.mimeType = DRIVE_CONVERSION_MIME_TYPES[input.convertTo]
       }
       const boundary = `openwork-${randomUUID()}`
       const url = new URL(`${driveApiBase()}/upload/drive/v3/files`)

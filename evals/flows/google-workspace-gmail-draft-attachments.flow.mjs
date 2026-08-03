@@ -74,7 +74,7 @@ export default {
               route.includes("body.attachments: [{ filename, mimeType, dataBase64 }]") ,
               "The searchable operation summary exposes the exact attachment body shape",
             );
-            witness(ctx, route.includes("Read the file from the active workspace and base64-encode it"), "The data field directs the agent to the active workspace file");
+            witness(ctx, route.includes("Inline bytes are practical only for small files (roughly a few hundred KB)"), "The data field honestly describes the practical inline file limit");
             witness(ctx, route.includes("attachments: z.array(gmailDraftAttachmentSchema).min(1).max(10).optional()"), "The draft body accepts an optional bounded attachment list");
             ctx.output("discoverable Gmail-draft contract", [
               snippet(route, "const gmailDraftAttachmentSchema", 20),
