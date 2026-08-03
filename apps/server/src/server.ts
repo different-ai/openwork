@@ -4283,23 +4283,32 @@ function logPersistedCloudMcpReconcileError(input: {
   );
 }
 
+type SyncAllWorkspacesRuntimeMcpOptions = {
+  skipRuntimeMcpWorkspaceIds?: ReadonlySet<string>;
+};
+
 // Re-push every workspace's runtime-DB MCPs into the engine. Used at startup:
-// the runtime config file injected via OPENCODE_CONFIG covers workspaces[0]
-// only, so other workspaces' runtime MCPs are invisible to the engine until
-// something re-syncs them. Best-effort.
-export async function syncAllWorkspacesRuntimeMcpToEngine(config: ServerConfig): Promise<void> {
+// the runtime config file injected via OPENCODE_CONFIG covers the managed
+// engine workspace only, so other workspaces' runtime MCPs are invisible to
+// the engine until something re-syncs them. Best-effort.
+export async function syncAllWorkspacesRuntimeMcpToEngine(
+  config: ServerConfig,
+  options: SyncAllWorkspacesRuntimeMcpOptions = {},
+): Promise<void> {
   const serverState = activeEngineMcpServerState(config) ?? null;
   for (const workspace of config.workspaces) {
-    try {
-      await syncRuntimeMcpToOpencodeEngine(
-        config,
-        workspace,
-        undefined,
-        undefined,
-        serverState,
-      );
-    } catch (error) {
-      logRuntimeMcpSyncError({ config, workspace, trigger: "startup", error });
+    if (!options.skipRuntimeMcpWorkspaceIds?.has(workspace.id)) {
+      try {
+        await syncRuntimeMcpToOpencodeEngine(
+          config,
+          workspace,
+          undefined,
+          undefined,
+          serverState,
+        );
+      } catch (error) {
+        logRuntimeMcpSyncError({ config, workspace, trigger: "startup", error });
+      }
     }
     try {
       const health = await reconcilePersistedOpenworkCloudMcp({
