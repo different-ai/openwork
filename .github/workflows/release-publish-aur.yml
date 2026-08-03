@@ -1,0 +1,84 @@
+name: Publish Release AUR
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag (vX.Y.Z)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-aur-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  publish-aur:
+    name: Verify and publish merged AUR files
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ inputs.tag }}
+      AUR_REPO: ${{ vars.AUR_REPO || 'openwork' }}
+    steps:
+      - name: Checkout exact merged release tag
+        uses: actions/checkout@v6
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Verify merged packaging against immutable release assets
+        id: verify
+        run: scripts/aur/verify-aur-assets.sh "$RELEASE_TAG"
+
+      - name: Require AUR publication credentials
+        env:
+          AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+        run: |
+          if [ -z "${AUR_SSH_PRIVATE_KEY:-}" ]; then
+            echo "Missing required secret: AUR_SSH_PRIVATE_KEY" >&2
+            exit 1
+          fi
+
+      - name: Publish merged packaging files to AUR
+        id: publish
+        env:
+          AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          AUR_SKIP_UPDATE: "1"
+        run: |
+          scripts/aur/publish-aur.sh "$RELEASE_TAG"
+          echo "action=published-or-verified-current" >> "$GITHUB_OUTPUT"
+
+      - name: Summarize AUR publication
+        if: always()
+        env:
+          VERIFY_OUTCOME: ${{ steps.verify.outcome }}
+          PUBLISH_ACTION: ${{ steps.publish.outputs.action }}
+        run: |
+          {
+            echo "## AUR publication: $RELEASE_TAG"
+            echo
+            echo "- Input: merged \`packaging/aur/PKGBUILD\` and \`.SRCINFO\` at \`$RELEASE_TAG\`"
+            echo "- Packaging/asset verification: ${VERIFY_OUTCOME:-not run}"
+            echo "- AUR action: ${PUBLISH_ACTION:-not verified}"
+            if [ -n "$PUBLISH_ACTION" ]; then
+              echo "- Verified destination: https://aur.archlinux.org/packages/$AUR_REPO"
+            fi
+            echo
+            echo "Retry only AUR publication:"
+            echo '\`\`\`sh'
+            echo "gh workflow run release-publish-aur.yml --repo $GITHUB_REPOSITORY -f tag=$RELEASE_TAG"
+            echo '\`\`\`'
+          } >> "$GITHUB_STEP_SUMMARY"

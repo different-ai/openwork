@@ -215,11 +215,12 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Redeploy den-api so the new pin takes effect
+        id: redeploy
         # Render does not redeploy services when an env group value changes, so
         # den-api keeps serving the previous DAYTONA_SNAPSHOT until it redeploys.
         # Without this the pin moves but `latestVersion` stays stale and no
         # sandbox ever recycles - observed for real on v0.18.11.
-        if: steps.pin.outcome == 'success'
+        if: steps.pin.outcome == 'success' && vars.DAYTONA_CLOUD_ENV_GROUP_ID != ''
         shell: bash
         env:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
@@ -227,9 +228,13 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [ -z "${RENDER_DEN_SERVICE_ID:-}" ] || [ -z "${RENDER_API_KEY:-}" ]; then
-            echo "::notice::Render den-api credentials unavailable; skipping redeploy. The pin will take effect on the next den-api deploy."
-            exit 0
+          if [ -z "${RENDER_DEN_SERVICE_ID:-}" ]; then
+            echo "Missing required secret: RENDER_DEN_CONTROL_PLANE_SERVICE_ID" >&2
+            exit 1
+          fi
+          if [ -z "${RENDER_API_KEY:-}" ]; then
+            echo "Missing required secret: RENDER_API_KEY" >&2
+            exit 1
           fi
 
           response="$(curl -s -w '\n%{http_code}' -X POST \
@@ -247,4 +252,33 @@ jobs:
           {
             echo
             echo "Triggered a den-api deploy so the new pin takes effect."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Summarize Daytona publication
+        if: always()
+        env:
+          RELEASE_TAG: ${{ steps.resolve.outputs.release_tag }}
+          SNAPSHOT_NAME: ${{ steps.resolve.outputs.snapshot_name }}
+          SNAPSHOT_REGION: ${{ steps.resolve.outputs.snapshot_region }}
+          PUBLISH_OUTCOME: ${{ steps.publish.outcome }}
+          PIN_OUTCOME: ${{ steps.pin.outcome }}
+          REDEPLOY_OUTCOME: ${{ steps.redeploy.outcome }}
+        run: |
+          {
+            echo "## Daytona snapshot publication: $RELEASE_TAG"
+            echo
+            echo "- Input: exact tag \`$RELEASE_TAG\`"
+            echo "- Snapshot publication: ${PUBLISH_OUTCOME:-not run}"
+            if [ "$PUBLISH_OUTCOME" = "success" ]; then
+              echo "- Verified snapshot name: \`$SNAPSHOT_NAME\`"
+            fi
+            echo "- Region: \`${SNAPSHOT_REGION:-default}\`"
+            echo "- Production pin: ${PIN_OUTCOME:-not run}"
+            echo "- den-api redeploy: ${REDEPLOY_OUTCOME:-not run}"
+            echo "- Workflow: https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo
+            echo "Retry only Daytona publication:"
+            echo '\`\`\`sh'
+            echo "gh workflow run release-daytona-snapshot.yml --repo $GITHUB_REPOSITORY -f tag=$RELEASE_TAG"
+            echo '\`\`\`'
           } >> "$GITHUB_STEP_SUMMARY"

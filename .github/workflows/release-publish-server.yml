@@ -1,0 +1,114 @@
+name: Publish Release Server
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag (vX.Y.Z)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-server-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  publish-server:
+    name: Publish openwork-server
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ inputs.tag }}
+    steps:
+      - name: Checkout exact release tag
+        uses: actions/checkout@v6
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+          fetch-depth: 0
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.4.0
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.10
+
+      - name: Verify tag versions
+        run: node scripts/release/verify-tag.mjs --tag "$RELEASE_TAG"
+
+      - name: Resolve idempotent npm publication
+        id: npm
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          stdout="$RUNNER_TEMP/npm-view.out"
+          stderr="$RUNNER_TEMP/npm-view.err"
+          set +e
+          pnpm view "openwork-server@$version" version --json > "$stdout" 2> "$stderr"
+          status=$?
+          set -e
+          decision="$(node scripts/release/npm-publication.mjs \
+            --version "$version" --status "$status" --stdout "$stdout" --stderr "$stderr")"
+          if [ "$decision" = "keep" ]; then
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "action=verified-already-published" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ -z "${NPM_TOKEN:-}" ]; then
+            echo "Missing required secret: NPM_TOKEN" >&2
+            exit 1
+          fi
+          printf '//registry.npmjs.org/:_authToken=%s\n' "$NPM_TOKEN" > "$HOME/.npmrc"
+          chmod 600 "$HOME/.npmrc"
+          echo "publish=true" >> "$GITHUB_OUTPUT"
+          echo "action=confirmed-absent-404" >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies
+        if: steps.npm.outputs.publish == 'true'
+        run: pnpm install --frozen-lockfile --prefer-offline
+
+      - name: Publish openwork-server
+        id: publish
+        if: steps.npm.outputs.publish == 'true'
+        run: |
+          pnpm --filter openwork-server publish:npm --access public
+          echo "action=published" >> "$GITHUB_OUTPUT"
+
+      - name: Summarize server publication
+        if: always()
+        env:
+          LOOKUP_ACTION: ${{ steps.npm.outputs.action }}
+          PUBLISH_ACTION: ${{ steps.publish.outputs.action }}
+        run: |
+          {
+            echo "## Server publication: $RELEASE_TAG"
+            echo
+            echo "- Input: exact tag \`$RELEASE_TAG\`"
+            echo "- Registry lookup: ${LOOKUP_ACTION:-not verified}"
+            echo "- Publish action: ${PUBLISH_ACTION:-not required or not verified}"
+            if [ "$LOOKUP_ACTION" = "verified-already-published" ] || [ "$PUBLISH_ACTION" = "published" ]; then
+              echo "- Verified destination: https://www.npmjs.com/package/openwork-server/v/${RELEASE_TAG#v}"
+            fi
+            echo
+            echo "Retry only server publication:"
+            echo '\`\`\`sh'
+            echo "gh workflow run release-publish-server.yml --repo $GITHUB_REPOSITORY -f tag=$RELEASE_TAG"
+            echo '\`\`\`'
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,277 +1,37 @@
-name: Release App
+name: Stage Release Desktop Artifacts
 
 on:
-  push:
-    tags:
-      - "v*"
-  workflow_dispatch:
+  workflow_call:
     inputs:
-      tag:
-        description: "Tag to release (e.g., v0.1.2). Leave empty to use current ref."
-        required: false
+      source_sha:
+        description: Exact signed release source commit to build
+        required: true
         type: string
-      release_name:
-        description: "Release title (defaults to OpenWork <tag>)"
-        required: false
-        type: string
-      release_body:
-        description: "Release notes body in Markdown (defaults to a short placeholder)"
-        required: false
-        type: string
-      draft:
-        description: "Create the GitHub Release as a draft"
-        required: false
-        type: boolean
-        default: false
-      prerelease:
-        description: "Mark the GitHub Release as a prerelease"
-        required: false
-        type: boolean
-        default: false
       notarize:
-        description: "Notarize macOS builds (requires Apple team configured)"
-        required: false
+        description: Sign and notarize macOS artifacts
+        required: true
         type: boolean
-        default: true
-      publish_npm:
-        description: "Publish openwork-server to npm if its version changed"
-        required: false
-        type: boolean
-        default: true
-      publish_daytona_snapshot:
-        description: "Build + push Daytona worker snapshot"
-        required: false
-        type: boolean
-        default: true
-      build_electron:
-        description: "Build + publish Electron desktop artifacts (macOS/Linux/Windows)"
-        required: false
-        type: boolean
-        default: true
       sign_windows:
-        description: "Sign Windows Electron installer with SignPath"
-        required: false
+        description: Sign Windows installers with SignPath
+        required: true
         type: boolean
-        default: false
 
 permissions:
   actions: read
-  contents: write
-  pull-requests: write
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  contents: read
 
 jobs:
-  resolve-release:
-    name: Resolve Release Metadata
-    # SignPath trusted builds require every job leading to the Windows signing
-    # request to use GitHub-hosted runners.
-    runs-on: ubuntu-latest
-    outputs:
-      release_tag: ${{ steps.resolve.outputs.release_tag }}
-      release_name: ${{ steps.resolve.outputs.release_name }}
-      release_body: ${{ steps.resolve.outputs.release_body }}
-      draft: ${{ steps.resolve.outputs.draft }}
-      prerelease: ${{ steps.resolve.outputs.prerelease }}
-      notarize: ${{ steps.resolve.outputs.notarize }}
-      build_electron: ${{ steps.resolve.outputs.build_electron }}
-      sign_windows: ${{ steps.resolve.outputs.sign_windows }}
-      publish_npm: ${{ steps.resolve.outputs.publish_npm }}
-      publish_daytona_snapshot: ${{ steps.resolve.outputs.publish_daytona_snapshot }}
-    steps:
-      - name: Resolve metadata
-        id: resolve
-        shell: bash
-        env:
-          INPUT_TAG: ${{ github.event.inputs.tag }}
-          INPUT_RELEASE_NAME: ${{ github.event.inputs.release_name }}
-          INPUT_RELEASE_BODY: ${{ github.event.inputs.release_body }}
-          INPUT_DRAFT: ${{ github.event.inputs.draft }}
-          INPUT_PRERELEASE: ${{ github.event.inputs.prerelease }}
-          INPUT_NOTARIZE: ${{ github.event.inputs.notarize }}
-          INPUT_BUILD_ELECTRON: ${{ github.event.inputs.build_electron }}
-          INPUT_SIGN_WINDOWS: ${{ github.event.inputs.sign_windows }}
-          INPUT_PUBLISH_NPM: ${{ github.event.inputs.publish_npm }}
-          INPUT_PUBLISH_DAYTONA_SNAPSHOT: ${{ github.event.inputs.publish_daytona_snapshot }}
-          DEFAULT_PUBLISH_NPM: ${{ vars.RELEASE_PUBLISH_NPM }}
-          DEFAULT_PUBLISH_DAYTONA_SNAPSHOT: ${{ vars.RELEASE_PUBLISH_DAYTONA_SNAPSHOT }}
-          DEFAULT_NOTARIZE: ${{ vars.MACOS_NOTARIZE }}
-          DEFAULT_BUILD_ELECTRON: ${{ vars.RELEASE_PUBLISH_ELECTRON }}
-          DEFAULT_SIGN_WINDOWS: ${{ vars.RELEASE_SIGN_WINDOWS }}
-        run: |
-          set -euo pipefail
-
-          TAG_INPUT="${INPUT_TAG:-}"
-          if [ -n "$TAG_INPUT" ]; then
-            if [[ "$TAG_INPUT" == v* ]]; then
-              TAG="$TAG_INPUT"
-            else
-              TAG="v$TAG_INPUT"
-            fi
-          else
-            TAG="${GITHUB_REF_NAME}"
-          fi
-
-          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
-            echo "Invalid release tag: $TAG (expected vX.Y.Z)" >&2
-            exit 1
-          fi
-
-          RELEASE_NAME_INPUT="${INPUT_RELEASE_NAME:-}"
-          if [ -n "$RELEASE_NAME_INPUT" ]; then
-            RELEASE_NAME="$RELEASE_NAME_INPUT"
-          else
-            RELEASE_NAME="OpenWork $TAG"
-          fi
-
-          RELEASE_BODY_INPUT="${INPUT_RELEASE_BODY:-}"
-          if [ -n "$RELEASE_BODY_INPUT" ]; then
-            RELEASE_BODY="$RELEASE_BODY_INPUT"
-          else
-            printf -v RELEASE_BODY '%s\n\nOpenWork %s desktop release.\n\n%s\n%s\n%s\n%s' \
-              "## What's new" \
-              "$TAG" \
-              "- Public artifacts use the openwork-* naming convention." \
-              "- Cloud artifacts use openwork-cloud-* and require sign-in without enterprise activation." \
-              "- Enterprise artifacts use openwork-enterprise-* while retaining the standard OpenWork app identity." \
-              "- Public, Cloud, and enterprise Electron builds use separate updater manifests on this release."
-          fi
-
-          draft="${INPUT_DRAFT:-}"
-          if [ -z "$draft" ]; then
-            if [ "${GITHUB_EVENT_NAME}" = "push" ]; then
-              # Keep tag-triggered releases out of /releases/latest until assets + latest.json are ready.
-              draft="true"
-            else
-              draft="false"
-            fi
-          fi
-          prerelease="${INPUT_PRERELEASE:-false}"
-          notarize="${INPUT_NOTARIZE:-}"
-          if [ -z "$notarize" ]; then
-            notarize="${DEFAULT_NOTARIZE:-true}"
-          fi
-
-          build_electron="${INPUT_BUILD_ELECTRON:-}"
-          if [ -z "$build_electron" ]; then
-            build_electron="${DEFAULT_BUILD_ELECTRON:-true}"
-          fi
-
-          sign_windows="${INPUT_SIGN_WINDOWS:-}"
-          if [ -z "$sign_windows" ]; then
-            sign_windows="${DEFAULT_SIGN_WINDOWS:-false}"
-          fi
-
-          if [ "$sign_windows" = "true" ]; then
-            SIGNPATH_RELEASE_NOTE='*Windows Build free code signing provided by [SignPath.io](https://about.signpath.io), certificate by [SignPath Foundation](https://signpath.org)*'
-            printf -v RELEASE_BODY '%s\n\n%s' "$RELEASE_BODY" "$SIGNPATH_RELEASE_NOTE"
-          else
-            WINDOWS_UNSIGNED_NOTE='*Windows installer is temporarily unsigned while production code signing is being finalized.*'
-            printf -v RELEASE_BODY '%s\n\n%s' "$RELEASE_BODY" "$WINDOWS_UNSIGNED_NOTE"
-          fi
-
-          publish_npm="${INPUT_PUBLISH_NPM:-}"
-          if [ -z "$publish_npm" ]; then
-            publish_npm="${DEFAULT_PUBLISH_NPM:-true}"
-          fi
-
-          publish_daytona_snapshot="${INPUT_PUBLISH_DAYTONA_SNAPSHOT:-}"
-          if [ -z "$publish_daytona_snapshot" ]; then
-            publish_daytona_snapshot="${DEFAULT_PUBLISH_DAYTONA_SNAPSHOT:-true}"
-          fi
-
-          TAG="${TAG//$'\n'/}"
-          TAG="${TAG//$'\r'/}"
-          RELEASE_NAME="${RELEASE_NAME//$'\n'/ }"
-          RELEASE_NAME="${RELEASE_NAME//$'\r'/ }"
-
-          echo "release_tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "release_name=$RELEASE_NAME" >> "$GITHUB_OUTPUT"
-          echo "draft=$draft" >> "$GITHUB_OUTPUT"
-          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
-          echo "notarize=$notarize" >> "$GITHUB_OUTPUT"
-          echo "build_electron=$build_electron" >> "$GITHUB_OUTPUT"
-          echo "sign_windows=$sign_windows" >> "$GITHUB_OUTPUT"
-          echo "publish_npm=$publish_npm" >> "$GITHUB_OUTPUT"
-          echo "publish_daytona_snapshot=$publish_daytona_snapshot" >> "$GITHUB_OUTPUT"
-          {
-            echo "release_body<<__OPENWORK_RELEASE_BODY_EOF__"
-            printf '%s\n' "$RELEASE_BODY"
-            echo "__OPENWORK_RELEASE_BODY_EOF__"
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Create release if missing
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-
-          BODY_FILE="$RUNNER_TEMP/release_body.md"
-          printf '%s\n' "${{ steps.resolve.outputs.release_body }}" > "$BODY_FILE"
-
-          if gh release view "${{ steps.resolve.outputs.release_tag }}" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "Release ${{ steps.resolve.outputs.release_tag }} already exists; skipping create."
-            exit 0
-          fi
-
-          PRERELEASE_FLAG=""
-          if [ "${{ steps.resolve.outputs.prerelease }}" = "true" ]; then
-            PRERELEASE_FLAG="--prerelease"
-          fi
-
-          # A new release must never be public while its artifacts are still
-          # building. The final publish-release job is the only place that
-          # removes draft status, after every required asset has been checked.
-          gh release create "${{ steps.resolve.outputs.release_tag }}" \
-            --repo "$GITHUB_REPOSITORY" \
-            --title "${{ steps.resolve.outputs.release_name }}" \
-            --notes-file "$BODY_FILE" \
-            --draft $PRERELEASE_FLAG
-
-  verify-release:
-    name: Verify Release Versions
-    needs: resolve-release
-    # SignPath trusted builds require every job leading to the Windows signing
-    # request to use GitHub-hosted runners.
-    runs-on: ubuntu-latest
-    env:
-      RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ env.RELEASE_TAG }}
-          fetch-depth: 0
-
-      - name: Setup Node
-        uses: actions/setup-node@v6
-        with:
-          node-version: 24
-
-      - name: Verify tag matches app versions
-        run: node scripts/release/verify-tag.mjs --tag "$RELEASE_TAG"
-
-      - name: Release review (strict)
-        run: node scripts/release/review.mjs --strict
-
-  publish-electron:
-    name: Build + publish Electron (${{ matrix.artifact }})
-    needs: [resolve-release, verify-release]
-    if: needs.resolve-release.outputs.build_electron == 'true'
+  stage-electron:
+    name: Stage Electron (${{ matrix.artifact }})
     runs-on: ${{ matrix.platform }}
     timeout-minutes: 120
     env:
-      RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
-      MACOS_NOTARIZE: ${{ needs.resolve-release.outputs.notarize }}
-      SIGN_WINDOWS: ${{ needs.resolve-release.outputs.sign_windows }}
+      MACOS_NOTARIZE: ${{ inputs.notarize }}
+      SIGN_WINDOWS: ${{ inputs.sign_windows }}
       SIGNPATH_ORGANIZATION_ID: ${{ secrets.SIGNPATH_ORGANIZATION_ID || vars.SIGNPATH_ORGANIZATION_ID }}
       SIGNPATH_PROJECT_SLUG: ${{ secrets.SIGNPATH_PROJECT_SLUG || vars.SIGNPATH_PROJECT_SLUG }}
       SIGNPATH_SIGNING_POLICY_SLUG: ${{ secrets.SIGNPATH_SIGNING_POLICY_SLUG || vars.SIGNPATH_SIGNING_POLICY_SLUG }}
       SIGNPATH_ARTIFACT_CONFIGURATION_SLUG: ${{ secrets.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG || vars.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG }}
-
     strategy:
       fail-fast: false
       matrix:
@@ -422,11 +182,22 @@ jobs:
             target_triple: aarch64-pc-windows-msvc
 
     steps:
-      - name: Checkout
+      - name: Checkout signed release source
         uses: actions/checkout@v6
         with:
-          ref: ${{ env.RELEASE_TAG }}
+          ref: ${{ inputs.source_sha }}
           fetch-depth: 0
+
+      - name: Verify exact build source
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || [ "$(git rev-parse HEAD)" != "$SOURCE_SHA" ]; then
+            echo "Desktop build did not checkout exact source SHA $SOURCE_SHA." >&2
+            exit 1
+          fi
 
       - name: Enable git long paths (Windows)
         if: matrix.os_type == 'windows'
@@ -446,7 +217,6 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          # Bun >= 1.3.10 is required by the server build and package-time helpers.
           bun-version: 1.3.10
 
       - name: Get pnpm store path
@@ -474,79 +244,52 @@ jobs:
           APPLE_NOTARY_API_ISSUER_ID: ${{ secrets.APPLE_NOTARY_API_ISSUER_ID }}
           APPLE_CODESIGN_CERT_P12_BASE64: ${{ secrets.APPLE_CODESIGN_CERT_P12_BASE64 }}
           APPLE_CODESIGN_CERT_PASSWORD: ${{ secrets.APPLE_CODESIGN_CERT_PASSWORD }}
-        run: |
-          set -euo pipefail
-
-          missing=()
-          for name in \
-            APPLE_NOTARY_API_KEY_P8_BASE64 \
-            APPLE_NOTARY_API_KEY_ID \
-            APPLE_NOTARY_API_ISSUER_ID \
-            APPLE_CODESIGN_CERT_P12_BASE64 \
-            APPLE_CODESIGN_CERT_PASSWORD; do
-            if [ -z "${!name:-}" ]; then
-              missing+=("$name")
-            fi
-          done
-          if [ "${#missing[@]}" -gt 0 ]; then
-            printf 'Missing Electron macOS notarization/signing secrets: %s\n' "${missing[*]}" >&2
-            exit 1
-          fi
-
-          NOTARY_KEY_PATH="$RUNNER_TEMP/AuthKey.p8"
-          printf '%s' "$APPLE_NOTARY_API_KEY_P8_BASE64" | base64 --decode > "$NOTARY_KEY_PATH"
-          chmod 600 "$NOTARY_KEY_PATH"
-
-          echo "NOTARY_KEY_PATH=$NOTARY_KEY_PATH" >> "$GITHUB_ENV"
-
-      - name: Reject unnotarized macOS Electron release
-        if: matrix.os_type == 'macos' && env.MACOS_NOTARIZE != 'true'
         shell: bash
         run: |
-          echo "macOS Electron release assets must be notarized. Re-run with notarize=true or set MACOS_NOTARIZE=true." >&2
+          set -euo pipefail
+          missing=()
+          for name in APPLE_NOTARY_API_KEY_P8_BASE64 APPLE_NOTARY_API_KEY_ID APPLE_NOTARY_API_ISSUER_ID APPLE_CODESIGN_CERT_P12_BASE64 APPLE_CODESIGN_CERT_PASSWORD; do
+            if [ -z "${!name:-}" ]; then missing+=("$name"); fi
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            printf 'Missing Electron macOS signing secrets: %s\n' "${missing[*]}" >&2
+            exit 1
+          fi
+          key_path="$RUNNER_TEMP/AuthKey.p8"
+          printf '%s' "$APPLE_NOTARY_API_KEY_P8_BASE64" | base64 --decode > "$key_path"
+          chmod 600 "$key_path"
+          echo "NOTARY_KEY_PATH=$key_path" >> "$GITHUB_ENV"
+
+      - name: Require notarized macOS release artifacts
+        if: matrix.os_type == 'macos' && env.MACOS_NOTARIZE != 'true'
+        run: |
+          echo "Stable macOS release assets must be notarized." >&2
           exit 1
 
       - name: Build Electron app
         shell: bash
         env:
-          # TARGET tells prepare-sidecar.mjs which architecture's opencode binary
-          # to download (critical for cross-arch builds like x64 on arm64 mac).
           TARGET: ${{ matrix.target_triple }}
         run: pnpm --filter @openwork/desktop build:electron
 
-      - name: Package Electron (macOS, signed + notarized)
-        if: matrix.os_type == 'macos' && env.MACOS_NOTARIZE == 'true'
+      - name: Package Electron (macOS)
+        if: matrix.os_type == 'macos'
         env:
           CSC_LINK: ${{ secrets.APPLE_CODESIGN_CERT_P12_BASE64 }}
           CSC_KEY_PASSWORD: ${{ secrets.APPLE_CODESIGN_CERT_PASSWORD }}
           APPLE_API_KEY: ${{ secrets.APPLE_NOTARY_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_NOTARY_API_ISSUER_ID }}
           APPLE_API_KEY_PATH: ${{ env.NOTARY_KEY_PATH }}
-        run: |
-          set -euo pipefail
-          pnpm --dir apps/desktop exec electron-builder \
-            --config ${{ matrix.builder_config }} \
-            ${{ matrix.electron_args }} \
-            --publish never
+        run: pnpm --dir apps/desktop exec electron-builder --config ${{ matrix.builder_config }} ${{ matrix.electron_args }} --publish never
 
       - name: Package Electron (Linux)
         if: matrix.os_type == 'linux'
-        run: |
-          set -euo pipefail
-          pnpm --dir apps/desktop exec electron-builder \
-            --config ${{ matrix.builder_config }} \
-            ${{ matrix.electron_args }} \
-            --publish never
+        run: pnpm --dir apps/desktop exec electron-builder --config ${{ matrix.builder_config }} ${{ matrix.electron_args }} --publish never
 
       - name: Package Electron (Windows)
         if: matrix.os_type == 'windows'
         shell: bash
-        run: |
-          set -euo pipefail
-          pnpm --dir apps/desktop exec electron-builder \
-            --config ${{ matrix.builder_config }} \
-            ${{ matrix.electron_args }} \
-            --publish never
+        run: pnpm --dir apps/desktop exec electron-builder --config ${{ matrix.builder_config }} ${{ matrix.electron_args }} --publish never
 
       - name: Validate SignPath configuration (Windows)
         if: matrix.os_type == 'windows' && env.SIGN_WINDOWS == 'true'
@@ -555,18 +298,10 @@ jobs:
           SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
         run: |
           set -euo pipefail
-
           missing=()
-          for name in \
-            SIGNPATH_API_TOKEN \
-            SIGNPATH_ORGANIZATION_ID \
-            SIGNPATH_PROJECT_SLUG \
-            SIGNPATH_SIGNING_POLICY_SLUG; do
-            if [ -z "${!name:-}" ]; then
-              missing+=("$name")
-            fi
+          for name in SIGNPATH_API_TOKEN SIGNPATH_ORGANIZATION_ID SIGNPATH_PROJECT_SLUG SIGNPATH_SIGNING_POLICY_SLUG; do
+            if [ -z "${!name:-}" ]; then missing+=("$name"); fi
           done
-
           if [ "${#missing[@]}" -gt 0 ]; then
             printf 'Missing Windows SignPath configuration: %s\n' "${missing[*]}" >&2
             exit 1
@@ -577,13 +312,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
           mkdir -p "$RUNNER_TEMP/signpath-unsigned"
           shopt -s nullglob
           installers=(apps/desktop/dist-electron/${{ matrix.asset_prefix }}-win-*.exe)
           if [ "${#installers[@]}" -ne 1 ]; then
-            printf 'Expected exactly one unsigned Windows installer, found %s.\n' "${#installers[@]}" >&2
-            printf '%s\n' "${installers[@]}" >&2
+            echo "Expected exactly one unsigned Windows installer." >&2
             exit 1
           fi
           cp "${installers[0]}" "$RUNNER_TEMP/signpath-unsigned/"
@@ -628,16 +361,11 @@ jobs:
         shell: bash
         run: node scripts/release/apply-signpath-windows-artifact.mjs "$RUNNER_TEMP/signpath-signed" apps/desktop/dist-electron
 
-      - name: Use unsigned Windows installer fallback
+      - name: Record unsigned Windows installer
         if: matrix.os_type == 'windows' && env.SIGN_WINDOWS != 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo "::warning::Publishing unsigned Windows installer because SIGN_WINDOWS is not enabled."
+        run: echo "::warning::Staging an unsigned Windows installer because sign_windows=false."
 
-      # electron-builder may still emit latest*.yml for a custom distribution.
-      # Normalize each non-public feed so it cannot update into another flavor.
-      - name: Normalize custom distribution updater manifests
+      - name: Normalize custom updater manifests
         if: matrix.asset_prefix != 'openwork'
         shell: bash
         run: |
@@ -648,323 +376,50 @@ jobs:
           channel="${channel#openwork-}"
           for manifest in latest*.yml; do
             target="${channel}${manifest#latest}"
-            if [ -e "$target" ]; then
-              rm -f "$manifest"
-            else
-              mv "$manifest" "$target"
-            fi
+            if [ -e "$target" ]; then rm -f "$manifest"; else mv "$manifest" "$target"; fi
           done
           manifests=("${channel}"*.yml)
-          if [ ${#manifests[@]} -eq 0 ]; then
+          if [ "${#manifests[@]}" -eq 0 ]; then
             echo "${channel} build produced no updater manifest." >&2
             exit 1
           fi
-          printf '%s\n' "${manifests[@]}"
 
-      - name: Upload Electron release assets
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Assemble immutable desktop stage
         shell: bash
         run: |
           set -euo pipefail
           shopt -s nullglob
+          stage="$RUNNER_TEMP/release-stage"
+          mkdir -p "$stage/assets" "$stage/manifests"
           assets=(apps/desktop/dist-electron/${{ matrix.asset_prefix }}-*)
-          if [ ${#assets[@]} -eq 0 ]; then
-            echo "No Electron release assets found in apps/desktop/dist-electron" >&2
+          manifests=(apps/desktop/dist-electron/${{ matrix.manifest_pattern }})
+          if [ "${#assets[@]}" -eq 0 ] || [ "${#manifests[@]}" -eq 0 ]; then
+            echo "Expected release assets and updater manifests." >&2
             exit 1
           fi
-          gh release upload "$RELEASE_TAG" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --clobber
+          cp "${assets[@]}" "$stage/assets/"
+          cp "${manifests[@]}" "$stage/manifests/"
 
-      - name: Upload Electron updater manifest artifact
+      - name: Record and validate immutable stage identity
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./apps/app/package.json').version")"
+          node scripts/release/artifact-contract.mjs stage \
+            --directory "$RUNNER_TEMP/release-stage" \
+            --stage-id "${{ matrix.artifact }}" \
+            --version "$version" \
+            --source-sha "$SOURCE_SHA" \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --artifact-name "release-desktop-${{ matrix.artifact }}-attempt-$GITHUB_RUN_ATTEMPT"
+
+      - name: Upload immutable desktop stage
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact }}
-          path: apps/desktop/dist-electron/${{ matrix.manifest_pattern }}
+          name: release-desktop-${{ matrix.artifact }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/release-stage
           if-no-files-found: error
-
-  publish-electron-assets:
-    name: Publish Electron Assets
-    needs: [resolve-release, verify-release, publish-electron]
-    if: |
-      always() &&
-      needs.resolve-release.outputs.build_electron == 'true' &&
-      needs.resolve-release.result == 'success' &&
-      needs.verify-release.result == 'success' &&
-      needs.publish-electron.result == 'success'
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    env:
-      RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          # Dispatch-based release recovery uses the workflow ref so fixes to
-          # release asset publishing can run without moving an already-shipped tag.
-          ref: ${{ github.event_name == 'workflow_dispatch' && github.ref_name || env.RELEASE_TAG }}
-          fetch-depth: 0
-
-      - name: Setup Node
-        uses: actions/setup-node@v6
-        with:
-          node-version: 24
-
-      - name: Download Electron updater manifest artifacts
-        uses: actions/download-artifact@v4
-        with:
-          pattern: electron-*
-          path: ${{ runner.temp }}/electron-dist
-
-      - name: Upload merged updater manifests
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: node scripts/release/publish-electron-assets.mjs --manifests-only "${{ runner.temp }}/electron-dist" "$RELEASE_TAG"
-
-  publish-npm:
-    name: Publish openwork-server
-    needs: [resolve-release, verify-release]
-    if: |
-      always() &&
-      needs.resolve-release.result == 'success' &&
-      needs.verify-release.result == 'success' &&
-      needs.resolve-release.outputs.publish_npm == 'true'
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    env:
-      RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          # Dispatch-based release recovery uses the workflow ref so fixes to
-          # npm release automation can run without moving an already-shipped tag.
-          ref: ${{ github.event_name == 'workflow_dispatch' && github.ref_name || env.RELEASE_TAG }}
-          fetch-depth: 0
-
-      - name: Setup Node
-        uses: actions/setup-node@v6
-        with:
-          node-version: 24
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 11.4.0
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v1
-        with:
-          # Bun builds the openwork-server executable before npm publish.
-          bun-version: "1.3.10"
-
-      - name: Get pnpm store path
-        id: pnpm-store
-        shell: bash
-        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
-
-      - name: Cache pnpm store
-        uses: actions/cache@v5
-        continue-on-error: true
-        with:
-          path: ${{ steps.pnpm-store.outputs.path }}
-          key: ubuntu-pnpm-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: |
-            ubuntu-pnpm-
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile --prefer-offline
-
-      - name: Resolve package versions
-        id: package-versions
-        shell: bash
-        run: |
-          node -e "const fs=require('fs'); const server=JSON.parse(fs.readFileSync('apps/server/package.json','utf8')); console.log('server=' + server.version);" >> "$GITHUB_OUTPUT"
-
-      - name: Check npm versions
-        id: npm-versions
-        shell: bash
-        env:
-          SERVER_VERSION: ${{ steps.package-versions.outputs.server }}
-        run: |
-          set -euo pipefail
-          # npm view exits non-zero for packages that don't exist yet (404).
-          # Treat missing packages as "not published" so release can publish them.
-          server_current="$(npm view openwork-server version 2>/dev/null || true)"
-
-          if [ "$server_current" = "$SERVER_VERSION" ]; then
-            echo "publish_server=false" >> "$GITHUB_OUTPUT"
-            echo "publish_any=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "publish_server=true" >> "$GITHUB_OUTPUT"
-            echo "publish_any=true" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Ensure npm auth
-        id: npm-auth
-        shell: bash
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-          PUBLISH_ANY: ${{ steps.npm-versions.outputs.publish_any }}
-        run: |
-          set -euo pipefail
-
-          if [ "${PUBLISH_ANY}" != "true" ]; then
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          if [ -z "${NPM_TOKEN:-}" ]; then
-            echo "NPM_TOKEN not set; skipping npm publish."
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          npm config set //registry.npmjs.org/:_authToken "$NPM_TOKEN"
-          echo "enabled=true" >> "$GITHUB_OUTPUT"
-
-      - name: Publish openwork-server
-        if: steps.npm-auth.outputs.enabled == 'true' && steps.npm-versions.outputs.publish_server == 'true'
-        run: pnpm --filter openwork-server publish:npm --access public
-
-  publish-daytona-snapshot:
-    name: Build + Push Daytona Snapshot
-    needs: [resolve-release, verify-release, publish-npm]
-    if: |
-      always() &&
-      needs.resolve-release.result == 'success' &&
-      needs.verify-release.result == 'success' &&
-      (needs.publish-npm.result == 'success' || needs.publish-npm.result == 'skipped') &&
-      needs.resolve-release.outputs.publish_daytona_snapshot == 'true'
-    uses: ./.github/workflows/release-daytona-snapshot.yml
-    with:
-      tag: ${{ needs.resolve-release.outputs.release_tag }}
-    secrets: inherit
-
-  aur-publish:
-    name: Publish AUR
-    needs: [resolve-release, publish-electron, publish-release]
-    if: |
-      always() &&
-      needs.resolve-release.result == 'success' &&
-      needs.publish-electron.result == 'success' &&
-      needs.publish-release.result == 'success'
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    permissions:
-      contents: write
-    env:
-      RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
-    steps:
-      - name: Checkout dev
-        uses: actions/checkout@v6
-        with:
-          ref: dev
-          fetch-depth: 0
-
-      - name: Update AUR packaging files
-        run: scripts/aur/update-aur.sh "$RELEASE_TAG"
-
-      - name: Open packaging update PR
-        id: aur-packaging-pr
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-
-          if ! git status --porcelain -- packaging/aur/PKGBUILD packaging/aur/.SRCINFO | grep -q .; then
-            echo "AUR packaging already up to date in dev."
-            echo "created=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          version="${RELEASE_TAG#v}"
-          branch="automation/aur-${version}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          git add packaging/aur/PKGBUILD packaging/aur/.SRCINFO
-          git -c user.name="OpenWork Release Bot" \
-              -c user.email="release-bot@users.noreply.github.com" \
-              commit -m "chore(aur): update PKGBUILD for ${version}"
-          git push origin "HEAD:${branch}"
-
-          body_file="$RUNNER_TEMP/aur-pr-body.md"
-          cat > "$body_file" <<EOF
-          Updates AUR packaging files for ${RELEASE_TAG}.
-
-          This PR is opened by the release workflow instead of pushing directly
-          to dev because dev requires PR review, signed protected-branch commits,
-          linear history, resolved conversations, and no bypasses.
-
-          After this PR is reviewed and squash/rebase-merged, rerun the Release
-          App workflow with tag=${RELEASE_TAG} so the AUR publish step can run.
-          EOF
-
-          pr_url="$(gh pr create \
-            --repo "$GITHUB_REPOSITORY" \
-            --base dev \
-            --head "$branch" \
-            --title "chore(aur): update PKGBUILD for ${version}" \
-            --body-file "$body_file")"
-
-          echo "created=true" >> "$GITHUB_OUTPUT"
-          echo "url=$pr_url" >> "$GITHUB_OUTPUT"
-          {
-            echo "### AUR packaging PR opened"
-            echo
-            echo "$pr_url"
-            echo
-            echo "Merge this PR through the protected-branch review flow, then rerun Release App with tag=${RELEASE_TAG}."
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Publish to AUR
-        if: steps.aur-packaging-pr.outputs.created != 'true'
-        env:
-          AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
-          AUR_REPO: ${{ vars.AUR_REPO || 'openwork' }}
-          AUR_SKIP_UPDATE: "1"
-        run: |
-          set -euo pipefail
-          if [ -z "${AUR_SSH_PRIVATE_KEY:-}" ]; then
-            echo "AUR_SSH_PRIVATE_KEY not set; skipping publish to AUR."
-            exit 0
-          fi
-          scripts/aur/publish-aur.sh "$RELEASE_TAG"
-
-  publish-release:
-    name: Publish GitHub Release
-    needs:
-      - resolve-release
-      - verify-release
-      - publish-electron
-      - publish-electron-assets
-      - publish-npm
-      - publish-daytona-snapshot
-    if: |
-      always() &&
-      needs.resolve-release.result == 'success' &&
-      needs.verify-release.result == 'success' &&
-      (needs.publish-electron.result == 'success' || needs.publish-electron.result == 'skipped') &&
-      (needs.publish-electron-assets.result == 'success' || needs.publish-electron-assets.result == 'skipped') &&
-      (needs.publish-npm.result == 'success' || needs.publish-npm.result == 'skipped') &&
-      (needs.publish-daytona-snapshot.result == 'success' || needs.publish-daytona-snapshot.result == 'skipped')
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    env:
-      RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
-      RELEASE_PRERELEASE: ${{ needs.resolve-release.outputs.prerelease }}
-    steps:
-      - name: Publish release after assets are ready
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-
-          # Dispatch-based recovery runs default draft=false but may target a
-          # draft release created by an earlier tag push; always flip drafts
-          # here so AUR and updater feeds see public download URLs.
-          is_draft="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft -q .isDraft)"
-          if [ "$is_draft" != "true" ]; then
-            echo "Release $RELEASE_TAG is already published; nothing to do."
-            exit 0
-          fi
-
-          if [ "${RELEASE_PRERELEASE}" = "true" ]; then
-            gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease
-          else
-            gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
-          fi
+          retention-days: 90

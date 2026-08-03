@@ -1,21 +1,18 @@
 ---
-description: Run the OpenWork release flow
+description: Prepare a one-review OpenWork release
 ---
 
-You are running the OpenWork release flow in this repo.
+Dispatch the protected composable release flow. Arguments: `$ARGUMENTS`.
 
-Arguments: `$ARGUMENTS`
-- If empty, default to a patch release.
-- If set to `minor` or `major`, use that bump type.
-
-Do the following, in order, and stop on any failure:
-
-1. Sync `dev` and ensure the working tree is clean.
-2. Bump app/desktop versions using `pnpm bump:$ARGUMENTS` (or `pnpm bump:patch` if empty).
-3. If any dependencies were pinned or changed, run `pnpm install --lockfile-only`.
-4. Run `pnpm release:review` and resolve any mismatches.
-5. Tag and push: `git tag vX.Y.Z` and `git push origin vX.Y.Z`, then `git push origin dev`.
-6. Watch the Release App GitHub Actions workflow to completion.
-7. If the `openwork-server` version changed, publish that package.
-
-Report what you changed, the tag created, and the GHA status.
+- Accept only `patch`, `minor`, or `major`; default to `patch`.
+- Run `pnpm release:prepare -- <bump> --watch`.
+- Stop and report the setup blocker if the dedicated release GitHub App
+  (`RELEASE_APP_ID`, `RELEASE_APP_PRIVATE_KEY`, exact `RELEASE_APP_LOGIN`, and
+  `v*` tag-creation-only ruleset bypass) is not configured.
+- Do not edit versions locally, create a tag, push `dev`, or bypass review.
+- Report the Prepare Release run and its final release PR. That single PR already
+  contains the version changes and AUR checksums from immutable staged artifacts.
+- After the human approves it, auto-merge and the merge continuation perform the
+  release. Do not ask whether it merged and do not manually rerun the whole release.
+- If a post-merge stage fails, use the exact stage-only retry printed in the
+  continuation summary.

@@ -1,26 +1,19 @@
 #!/usr/bin/env node
-import { spawnSync } from "node:child_process";
 import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, extname, join, resolve } from "node:path";
 
 const args = process.argv.slice(2);
-const manifestsOnly = args.includes("--manifests-only");
-const positional = args.filter((arg) => arg !== "--manifests-only");
-const [distRootArg, releaseTag] = positional;
+const prepareManifests = args.includes("--prepare-manifests");
+const positional = args.filter((arg) => arg !== "--prepare-manifests");
+const [distRootArg, outputDirArg] = positional;
 
-if (!distRootArg || !releaseTag) {
-  console.error("Usage: node scripts/release/publish-electron-assets.mjs [--manifests-only] <dist-root> <release-tag>");
-  process.exit(2);
-}
-
-const repo = process.env.GITHUB_REPOSITORY;
-if (!repo) {
-  console.error("GITHUB_REPOSITORY is required.");
+if (!prepareManifests || !distRootArg || !outputDirArg) {
+  console.error("Usage: node scripts/release/publish-electron-assets.mjs --prepare-manifests <dist-root> <output-dir>");
   process.exit(2);
 }
 
 const distRoot = resolve(distRootArg);
-const outputDir = resolve(process.env.RUNNER_TEMP || ".", "openwork-electron-manifests");
+const outputDir = resolve(outputDirArg);
 mkdirSync(outputDir, { recursive: true });
 
 function walk(dir) {
@@ -36,17 +29,6 @@ function walk(dir) {
 
 function isUpdaterManifest(path) {
   return /^(?:latest|cloud|enterprise).*\.ya?ml$/.test(basename(path));
-}
-
-function isReleaseAsset(path) {
-  if (isUpdaterManifest(path)) return false;
-  if (!basename(path).startsWith("openwork-")) return false;
-  return /\.(AppImage|blockmap|dmg|exe|rpm|zip)$/i.test(path) || /\.tar\.gz$/i.test(path);
-}
-
-function runGh(args) {
-  const result = spawnSync("gh", args, { stdio: "inherit", encoding: "utf8" });
-  if (result.status !== 0) process.exit(result.status ?? 1);
 }
 
 function parseManifest(path) {
@@ -200,7 +182,6 @@ function validateManifest(name, manifest) {
 }
 
 const files = walk(distRoot);
-const releaseAssets = files.filter(isReleaseAsset);
 const manifestsByName = new Map();
 
 for (const path of files.filter(isUpdaterManifest)) {
@@ -210,18 +191,9 @@ for (const path of files.filter(isUpdaterManifest)) {
   manifestsByName.set(name, current);
 }
 
-if (!manifestsOnly && releaseAssets.length === 0) {
-  console.error(`No Electron release assets found under ${distRoot}`);
-  process.exit(1);
-}
-
 if (manifestsByName.size === 0) {
   console.error(`No Electron updater manifests found under ${distRoot}`);
   process.exit(1);
-}
-
-if (!manifestsOnly) {
-  runGh(["release", "upload", releaseTag, ...releaseAssets, "--repo", repo, "--clobber"]);
 }
 
 for (const [name, paths] of [...manifestsByName.entries()].sort()) {
@@ -230,5 +202,5 @@ for (const [name, paths] of [...manifestsByName.entries()].sort()) {
   const outputPath = join(outputDir, name);
   mkdirSync(dirname(outputPath), { recursive: true });
   writeFileSync(outputPath, stringifyManifest(manifest), "utf8");
-  runGh(["release", "upload", releaseTag, `${outputPath}#${name}`, "--repo", repo, "--clobber"]);
+  console.log(outputPath);
 }

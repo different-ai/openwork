@@ -1,0 +1,346 @@
+name: Continue Merged Release
+
+on:
+  pull_request_target:
+    branches: [dev]
+    types: [closed]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag from a merged release PR (vX.Y.Z)
+        required: true
+        type: string
+      stage:
+        description: Stage to retry
+        required: true
+        type: choice
+        options: [all, tag, desktop, server, snapshot, aur]
+        default: all
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: continue-release-${{ github.event.pull_request.number || inputs.tag }}-${{ inputs.stage || 'all' }}
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    name: Resolve reviewed release tree
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.pull_request.merged == true &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      startsWith(github.event.pull_request.head.ref, 'release/v'))
+    runs-on: ubuntu-latest
+    outputs:
+      pr_number: ${{ steps.merge.outputs.pr_number }}
+      pr_url: ${{ steps.merge.outputs.pr_url }}
+      merge_sha: ${{ steps.merge.outputs.merge_sha }}
+      tag: ${{ steps.metadata.outputs.tag }}
+      version: ${{ steps.metadata.outputs.version }}
+      branch: ${{ steps.metadata.outputs.branch }}
+      prepare_run_id: ${{ steps.metadata.outputs.prepare_run_id }}
+      prepare_run_attempt: ${{ steps.metadata.outputs.prepare_run_attempt }}
+      build_source_sha: ${{ steps.metadata.outputs.build_source_sha }}
+      prerelease: ${{ steps.metadata.outputs.prerelease }}
+      publish_server: ${{ steps.metadata.outputs.publish_server }}
+      publish_snapshot: ${{ steps.metadata.outputs.publish_snapshot }}
+      stage: ${{ steps.stage.outputs.stage }}
+    steps:
+      - name: Require exact release App configuration
+        env:
+          RELEASE_APP_ID: ${{ secrets.RELEASE_APP_ID }}
+          RELEASE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          RELEASE_APP_LOGIN: ${{ vars.RELEASE_APP_LOGIN }}
+          COMMIT_SIGNING_KEY: ${{ secrets.COMMIT_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          missing=()
+          for name in RELEASE_APP_ID RELEASE_APP_PRIVATE_KEY RELEASE_APP_LOGIN COMMIT_SIGNING_KEY; do
+            if [ -z "${!name:-}" ]; then missing+=("$name"); fi
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            printf 'Missing required release App configuration: %s\n' "${missing[*]}" >&2
+            exit 1
+          fi
+
+      - name: Checkout trusted resolver from dev
+        uses: actions/checkout@v6
+        with:
+          ref: dev
+          fetch-depth: 1
+
+      - name: List merged PR candidates for manual retry
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --paginate --slurp \
+            "repos/$GITHUB_REPOSITORY/pulls?state=closed&base=dev&per_page=100" \
+            > "$RUNNER_TEMP/release-prs.json"
+
+      - name: Resolve trusted merge only
+        id: merge
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          RELEASE_APP_LOGIN: ${{ vars.RELEASE_APP_LOGIN }}
+          RELEASE_PR_CANDIDATES_PATH: ${{ runner.temp }}/release-prs.json
+        run: node scripts/release/resolve-merge.mjs
+
+      - name: Checkout exact reviewed merge tree
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ steps.merge.outputs.merge_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify exact merge and fetch reviewed PR head
+        env:
+          MERGE_SHA: ${{ steps.merge.outputs.merge_sha }}
+          PR_NUMBER: ${{ steps.merge.outputs.pr_number }}
+        run: |
+          set -euo pipefail
+          if [ "$(git rev-parse HEAD)" != "$MERGE_SHA" ]; then
+            echo "Continuation checkout does not match reviewed merge SHA." >&2
+            exit 1
+          fi
+          git fetch origin "refs/pull/$PR_NUMBER/head:refs/remotes/origin/release-pr-head"
+          git fetch origin dev:refs/remotes/origin/dev
+          git merge-base --is-ancestor "$MERGE_SHA" origin/dev
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.4.0
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Install trusted release tooling
+        run: pnpm install --frozen-lockfile --prefer-offline
+
+      - name: Read and validate committed release metadata
+        id: metadata
+        env:
+          EXPECTED_TAG: ${{ steps.merge.outputs.tag }}
+          EXPECTED_BRANCH: ${{ steps.merge.outputs.branch }}
+        run: |
+          node scripts/release/release-metadata.mjs outputs \
+            ".github/releases/$EXPECTED_TAG/release.json" \
+            ".github/releases/$EXPECTED_TAG/artifacts.json"
+
+      - name: Verify merged release versions and build-source tree boundary
+        env:
+          COMMIT_SIGNING_KEY: ${{ secrets.COMMIT_SIGNING_KEY }}
+          TAG: ${{ steps.metadata.outputs.tag }}
+          SOURCE_SHA: ${{ steps.metadata.outputs.build_source_sha }}
+          PR_HEAD: refs/remotes/origin/release-pr-head
+          MERGE_SHA: ${{ steps.merge.outputs.merge_sha }}
+        run: |
+          set -euo pipefail
+          node scripts/release/verify-tag.mjs --tag "$TAG"
+          git merge-base --is-ancestor "$SOURCE_SHA" "$PR_HEAD"
+          pr_head_sha="$(git rev-parse "$PR_HEAD")"
+          scripts/release/verify-signed-release-branch.sh "$SOURCE_SHA" "$pr_head_sha" "$TAG"
+          if ! git diff --quiet "$PR_HEAD^{tree}" "$MERGE_SHA^{tree}"; then
+            echo "Reviewed release branch tree does not exactly match the squash merge tree." >&2
+            exit 1
+          fi
+          if [ "$(git rev-parse "$SOURCE_SHA^")" != "$(git rev-parse "$MERGE_SHA^")" ]; then
+            echo "dev changed after desktop build source; refusing to tag artifacts from a different tree." >&2
+            exit 1
+          fi
+          while IFS= read -r path; do
+            case "$path" in
+              packaging/aur/PKGBUILD|packaging/aur/.SRCINFO|.github/releases/"$TAG"/*) ;;
+              *)
+                echo "Merged release tree differs from desktop build source at $path." >&2
+                exit 1
+                ;;
+            esac
+          done < <(git diff --name-only "$SOURCE_SHA..$MERGE_SHA")
+
+      - name: Resolve requested stage
+        id: stage
+        env:
+          INPUT_STAGE: ${{ inputs.stage }}
+        run: echo "stage=${INPUT_STAGE:-all}" >> "$GITHUB_OUTPUT"
+
+  tag:
+    name: Create exact merge tag once
+    needs: resolve
+    runs-on: ubuntu-latest
+    outputs:
+      action: ${{ steps.tag.outputs.action }}
+    steps:
+      - name: Checkout exact merge commit without persisted credentials
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.resolve.outputs.merge_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Verify merged versions again
+        env:
+          TAG: ${{ needs.resolve.outputs.tag }}
+        run: node scripts/release/verify-tag.mjs --tag "$TAG"
+
+      - name: Mint release App tag-only token
+        id: release-app-tag
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+
+      - name: Create or verify immutable tag as release App
+        id: tag
+        env:
+          RELEASE_APP_TOKEN: ${{ steps.release-app-tag.outputs.token }}
+          RELEASE_APP_SLUG: ${{ steps.release-app-tag.outputs.app-slug }}
+          RELEASE_APP_LOGIN: ${{ vars.RELEASE_APP_LOGIN }}
+          TAG: ${{ needs.resolve.outputs.tag }}
+          MERGE_SHA: ${{ needs.resolve.outputs.merge_sha }}
+        run: |
+          set -euo pipefail
+          actual="${RELEASE_APP_SLUG}[bot]"
+          if [ "$actual" != "$RELEASE_APP_LOGIN" ]; then
+            echo "Tag token actor $actual does not match RELEASE_APP_LOGIN=$RELEASE_APP_LOGIN." >&2
+            exit 1
+          fi
+          existing=""
+          if git show-ref --verify --quiet "refs/tags/$TAG"; then
+            existing="$(git rev-list -n 1 "$TAG")"
+          fi
+          decision="$(EXISTING_SHA="$existing" TARGET_SHA="$MERGE_SHA" node --input-type=module <<'NODE'
+          import { decideTagAction } from "./scripts/release/release-plan.mjs"
+          console.log(decideTagAction(process.env.EXISTING_SHA, process.env.TARGET_SHA))
+          NODE
+          )"
+          if [ "$decision" = "keep" ]; then
+            echo "action=kept" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git tag "$TAG" "$MERGE_SHA"
+          remote="https://x-access-token:${RELEASE_APP_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          action=created
+          if ! git push "$remote" "refs/tags/$TAG"; then
+            if ! git fetch origin "refs/tags/$TAG:refs/remotes/release-tags/$TAG"; then
+              echo "Release App could not create protected tag $TAG. Configure it only as a v* tag-creation ruleset bypass actor; do not bypass dev." >&2
+              exit 1
+            fi
+            existing="$(git rev-list -n 1 "refs/remotes/release-tags/$TAG")"
+            if [ "$existing" != "$MERGE_SHA" ]; then
+              echo "Concurrent protected tag $TAG targets $existing, not $MERGE_SHA." >&2
+              exit 1
+            fi
+            action=verified-concurrent
+          fi
+          echo "action=$action" >> "$GITHUB_OUTPUT"
+
+  desktop:
+    name: Desktop stage
+    needs: [resolve, tag]
+    if: needs.resolve.outputs.stage == 'all' || needs.resolve.outputs.stage == 'desktop'
+    permissions:
+      actions: read
+      contents: write
+    uses: ./.github/workflows/release-publish-desktop.yml
+    with:
+      tag: ${{ needs.resolve.outputs.tag }}
+    secrets: inherit
+
+  server:
+    name: Server stage
+    needs: [resolve, tag]
+    if: >-
+      needs.resolve.outputs.stage == 'server' ||
+      (needs.resolve.outputs.stage == 'all' && needs.resolve.outputs.publish_server == 'true')
+    uses: ./.github/workflows/release-publish-server.yml
+    with:
+      tag: ${{ needs.resolve.outputs.tag }}
+    secrets: inherit
+
+  snapshot:
+    name: Daytona stage
+    needs: [resolve, tag]
+    if: >-
+      needs.resolve.outputs.stage == 'snapshot' ||
+      (needs.resolve.outputs.stage == 'all' && needs.resolve.outputs.publish_snapshot == 'true')
+    uses: ./.github/workflows/release-daytona-snapshot.yml
+    with:
+      tag: ${{ needs.resolve.outputs.tag }}
+    secrets: inherit
+
+  aur:
+    name: AUR stage
+    needs: [resolve, tag, desktop]
+    if: >-
+      always() && needs.tag.result == 'success' &&
+      (needs.resolve.outputs.stage == 'aur' ||
+      (needs.resolve.outputs.stage == 'all' && needs.desktop.result == 'success'))
+    uses: ./.github/workflows/release-publish-aur.yml
+    with:
+      tag: ${{ needs.resolve.outputs.tag }}
+    secrets: inherit
+
+  summary:
+    name: Release stage dashboard
+    needs: [resolve, tag, desktop, server, snapshot, aur]
+    if: always() && needs.resolve.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Write failure-safe release dashboard
+        env:
+          TAG: ${{ needs.resolve.outputs.tag }}
+          PREPARE_RUN_ID: ${{ needs.resolve.outputs.prepare_run_id }}
+          PREPARE_RUN_ATTEMPT: ${{ needs.resolve.outputs.prepare_run_attempt }}
+          MERGE_SHA: ${{ needs.resolve.outputs.merge_sha }}
+          PR_URL: ${{ needs.resolve.outputs.pr_url }}
+          TAG_RESULT: ${{ needs.tag.result }}
+          TAG_ACTION: ${{ needs.tag.outputs.action }}
+          DESKTOP_RESULT: ${{ needs.desktop.result }}
+          SERVER_RESULT: ${{ needs.server.result }}
+          SNAPSHOT_RESULT: ${{ needs.snapshot.result }}
+          AUR_RESULT: ${{ needs.aur.result }}
+        run: |
+          status() {
+            case "$1" in success) echo passed ;; failure|cancelled) echo failed ;; skipped) echo waiting ;; *) echo pending ;; esac
+          }
+          {
+            echo "## Release dashboard: $TAG"
+            echo
+            echo "- Reviewed release PR: $PR_URL"
+            echo "- Exact merge SHA: \`$MERGE_SHA\`"
+            echo "- Committed artifact identity: run $PREPARE_RUN_ID attempt $PREPARE_RUN_ATTEMPT"
+            echo "- This continuation: https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo
+            echo "| Stage | Status | Verified action/result |"
+            echo "| --- | --- | --- |"
+            echo "| Tag | $(status "$TAG_RESULT") | ${TAG_ACTION:-not verified} |"
+            echo "| Desktop | $(status "$DESKTOP_RESULT") | inspect desktop stage summary |"
+            echo "| Server | $(status "$SERVER_RESULT") | inspect server stage summary |"
+            echo "| Daytona | $(status "$SNAPSHOT_RESULT") | inspect snapshot stage summary |"
+            echo "| AUR | $(status "$AUR_RESULT") | inspect AUR stage summary |"
+            echo
+            echo "### Exact retries (committed metadata remains authoritative)"
+            echo '\`\`\`sh'
+            echo "gh workflow run release-continue.yml --repo $GITHUB_REPOSITORY -f tag=$TAG -f stage=tag"
+            echo "gh workflow run release-publish-desktop.yml --repo $GITHUB_REPOSITORY -f tag=$TAG"
+            echo "gh workflow run release-publish-server.yml --repo $GITHUB_REPOSITORY -f tag=$TAG"
+            echo "gh workflow run release-daytona-snapshot.yml --repo $GITHUB_REPOSITORY -f tag=$TAG"
+            echo "gh workflow run release-publish-aur.yml --repo $GITHUB_REPOSITORY -f tag=$TAG"
+            echo '\`\`\`'
+          } >> "$GITHUB_STEP_SUMMARY"

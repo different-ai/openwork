@@ -1,0 +1,209 @@
+name: Publish Staged Desktop Release
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag with committed artifact identity (vX.Y.Z)
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: write
+
+concurrency:
+  group: publish-desktop-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  publish-desktop:
+    name: Publish immutable desktop assets
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ inputs.tag }}
+    steps:
+      - name: Checkout exact release tag
+        uses: actions/checkout@v6
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+          fetch-depth: 0
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.4.0
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Install trusted release tooling
+        run: pnpm install --frozen-lockfile --prefer-offline
+
+      - name: Read authoritative committed release metadata
+        id: metadata
+        env:
+          EXPECTED_TAG: ${{ inputs.tag }}
+          EXPECTED_BRANCH: release/${{ inputs.tag }}
+        run: |
+          node scripts/release/release-metadata.mjs outputs \
+            ".github/releases/$RELEASE_TAG/release.json" \
+            ".github/releases/$RELEASE_TAG/artifacts.json"
+
+      - name: Verify prepare run identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREPARE_RUN_ID: ${{ steps.metadata.outputs.prepare_run_id }}
+          PREPARE_RUN_ATTEMPT: ${{ steps.metadata.outputs.prepare_run_attempt }}
+        run: |
+          set -euo pipefail
+          attempt_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$PREPARE_RUN_ID/attempts/$PREPARE_RUN_ATTEMPT")"
+          conclusion="$(jq -r .conclusion <<<"$attempt_json")"
+          workflow="$(jq -r .path <<<"$attempt_json")"
+          returned_run_id="$(jq -r .id <<<"$attempt_json")"
+          returned_attempt="$(jq -r .run_attempt <<<"$attempt_json")"
+          if [ "$returned_run_id" != "$PREPARE_RUN_ID" ] \
+            || [ "$returned_attempt" != "$PREPARE_RUN_ATTEMPT" ] \
+            || [ "$conclusion" != "success" ] \
+            || [ "$workflow" != ".github/workflows/release-prepare.yml" ]; then
+            echo "Committed run $PREPARE_RUN_ID attempt $PREPARE_RUN_ATTEMPT is not the exact successful Prepare Release attempt." >&2
+            exit 1
+          fi
+
+      - name: Verify tag versions
+        run: node scripts/release/verify-tag.mjs --tag "$RELEASE_TAG"
+
+      - name: Download exactly the committed 18-stage attempt
+        uses: actions/download-artifact@v8
+        with:
+          pattern: release-desktop-electron-*-attempt-${{ steps.metadata.outputs.prepare_run_attempt }}
+          run-id: ${{ steps.metadata.outputs.prepare_run_id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/desktop-stage
+
+      - name: Download committed merged manifests
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ steps.metadata.outputs.merged_manifests_artifact_name }}
+          run-id: ${{ steps.metadata.outputs.prepare_run_id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/desktop-stage/${{ steps.metadata.outputs.merged_manifests_artifact_name }}
+
+      - name: Download committed artifact index
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ steps.metadata.outputs.index_artifact_name }}
+          run-id: ${{ steps.metadata.outputs.prepare_run_id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/downloaded-index
+
+      - name: Rebuild and verify complete artifact contract
+        id: validate
+        env:
+          VERSION: ${{ steps.metadata.outputs.version }}
+          SOURCE_SHA: ${{ steps.metadata.outputs.build_source_sha }}
+          PREPARE_RUN_ID: ${{ steps.metadata.outputs.prepare_run_id }}
+          PREPARE_RUN_ATTEMPT: ${{ steps.metadata.outputs.prepare_run_attempt }}
+          MERGED_ARTIFACT: ${{ steps.metadata.outputs.merged_manifests_artifact_name }}
+        run: |
+          set -euo pipefail
+          committed=".github/releases/$RELEASE_TAG/artifacts.json"
+          downloaded="$RUNNER_TEMP/downloaded-index/artifacts.json"
+          rebuilt="$RUNNER_TEMP/rebuilt-artifacts.json"
+          cmp "$committed" "$downloaded"
+          node scripts/release/artifact-contract.mjs index \
+            --root "$RUNNER_TEMP/desktop-stage" \
+            --manifests "$RUNNER_TEMP/desktop-stage/$MERGED_ARTIFACT" \
+            --version "$VERSION" \
+            --source-sha "$SOURCE_SHA" \
+            --run-id "$PREPARE_RUN_ID" \
+            --run-attempt "$PREPARE_RUN_ATTEMPT" \
+            --output "$rebuilt"
+          cmp "$committed" "$rebuilt"
+          echo "action=verified-18-stages-and-index" >> "$GITHUB_OUTPUT"
+
+      - name: Create draft release if missing
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_NAME: ${{ steps.metadata.outputs.release_name }}
+          RELEASE_BODY_BASE64: ${{ steps.metadata.outputs.release_body_base64 }}
+          RELEASE_PRERELEASE: ${{ steps.metadata.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "action=kept-existing-release" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          notes="$RUNNER_TEMP/release-notes.md"
+          RELEASE_BODY_BASE64="$RELEASE_BODY_BASE64" NOTES_PATH="$notes" node --input-type=module <<'NODE'
+          import { writeFileSync } from "node:fs"
+          import { decodeReleaseBody } from "./scripts/release/release-metadata.mjs"
+          writeFileSync(process.env.NOTES_PATH, `${decodeReleaseBody(process.env.RELEASE_BODY_BASE64)}\n`)
+          NODE
+          flags=(--draft)
+          if [ "$RELEASE_PRERELEASE" = "true" ]; then flags+=(--prerelease); fi
+          gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --title "$RELEASE_NAME" --notes-file "$notes" "${flags[@]}"
+          echo "action=created-draft" >> "$GITHUB_OUTPUT"
+
+      - name: Publish only missing or byte-identical indexed assets
+        id: assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/release/staged-assets.mjs "$RUNNER_TEMP/desktop-stage" "$RELEASE_TAG"
+          echo "action=verified-and-uploaded-immutable-assets" >> "$GITHUB_OUTPUT"
+
+      - name: Publish completed GitHub release
+        id: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_PRERELEASE: ${{ steps.metadata.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          is_draft="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft -q .isDraft)"
+          if [ "$is_draft" != "true" ]; then
+            echo "action=verified-already-public" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$RELEASE_PRERELEASE" = "true" ]; then
+            gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease
+          else
+            gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+          fi
+          echo "action=published" >> "$GITHUB_OUTPUT"
+
+      - name: Summarize desktop publication
+        if: always()
+        env:
+          VALIDATION_ACTION: ${{ steps.validate.outputs.action }}
+          RELEASE_ACTION: ${{ steps.release.outputs.action }}
+          ASSET_ACTION: ${{ steps.assets.outputs.action }}
+          PUBLISH_ACTION: ${{ steps.publish.outputs.action }}
+          PREPARE_RUN_ID: ${{ steps.metadata.outputs.prepare_run_id }}
+          PREPARE_RUN_ATTEMPT: ${{ steps.metadata.outputs.prepare_run_attempt }}
+        run: |
+          {
+            echo "## Desktop publication: $RELEASE_TAG"
+            echo
+            echo "- Artifact validation: ${VALIDATION_ACTION:-not verified}"
+            echo "- Release record: ${RELEASE_ACTION:-not verified}"
+            echo "- Asset action: ${ASSET_ACTION:-not verified}"
+            echo "- Public release action: ${PUBLISH_ACTION:-not verified}"
+            if [ -n "$PUBLISH_ACTION" ]; then
+              echo "- Verified destination: https://github.com/$GITHUB_REPOSITORY/releases/tag/$RELEASE_TAG"
+            fi
+            echo
+            echo "Retry only desktop publication:"
+            echo '\`\`\`sh'
+            echo "gh workflow run release-publish-desktop.yml --repo $GITHUB_REPOSITORY -f tag=$RELEASE_TAG"
+            echo '\`\`\`'
+          } >> "$GITHUB_STEP_SUMMARY"

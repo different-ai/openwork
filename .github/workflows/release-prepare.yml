@@ -1,0 +1,529 @@
+name: Prepare Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Stable version bump
+        required: true
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+      release_name:
+        description: Optional GitHub release title
+        required: false
+        type: string
+      release_body:
+        description: Optional GitHub release notes
+        required: false
+        type: string
+      prerelease:
+        description: Mark the GitHub release as a prerelease
+        required: true
+        type: boolean
+        default: false
+      notarize:
+        description: Sign and notarize macOS artifacts
+        required: true
+        type: boolean
+        default: true
+      sign_windows:
+        description: Sign Windows installers with SignPath
+        required: true
+        type: boolean
+        default: false
+      publish_server:
+        description: Publish openwork-server after merge
+        required: true
+        type: boolean
+        default: true
+      publish_daytona_snapshot:
+        description: Publish the Daytona snapshot after merge
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  actions: read
+  contents: write
+
+concurrency:
+  group: stable-release-prepare
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    name: Plan or resume signed release source
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+      tag: ${{ steps.plan.outputs.tag }}
+      branch: ${{ steps.plan.outputs.branch }}
+      source_sha: ${{ steps.source.outputs.source_sha }}
+    steps:
+      - name: Checkout dev
+        uses: actions/checkout@v6
+        with:
+          ref: dev
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Require release App and commit signing configuration
+        env:
+          RELEASE_APP_ID: ${{ secrets.RELEASE_APP_ID }}
+          RELEASE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          RELEASE_APP_LOGIN: ${{ vars.RELEASE_APP_LOGIN }}
+          COMMIT_SIGNING_KEY: ${{ secrets.COMMIT_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          missing=()
+          for name in RELEASE_APP_ID RELEASE_APP_PRIVATE_KEY RELEASE_APP_LOGIN COMMIT_SIGNING_KEY; do
+            if [ -z "${!name:-}" ]; then missing+=("$name"); fi
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            printf 'Missing required release configuration: %s\n' "${missing[*]}" >&2
+            exit 1
+          fi
+          if [[ ! "$RELEASE_APP_LOGIN" =~ ^[A-Za-z0-9-]+\[bot\]$ ]]; then
+            echo "RELEASE_APP_LOGIN must be the exact installation bot login ending in [bot]." >&2
+            exit 1
+          fi
+          echo "::warning::External setup blocker: $RELEASE_APP_LOGIN must be the narrowly scoped bypass actor for v* tag creation only, and must not bypass dev. The workflow cannot safely grant or verify that repository ruleset setting."
+
+      - name: Mint release App source-branch token
+        id: release-app-preflight
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+
+      - name: Verify exact release App identity
+        env:
+          RELEASE_APP_SLUG: ${{ steps.release-app-preflight.outputs.app-slug }}
+          RELEASE_APP_LOGIN: ${{ vars.RELEASE_APP_LOGIN }}
+        run: |
+          set -euo pipefail
+          actual="${RELEASE_APP_SLUG}[bot]"
+          if [ "$actual" != "$RELEASE_APP_LOGIN" ]; then
+            echo "Release App token actor $actual does not match RELEASE_APP_LOGIN=$RELEASE_APP_LOGIN." >&2
+            exit 1
+          fi
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.4.0
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Install release tooling
+        run: pnpm install --frozen-lockfile --prefer-offline
+
+      - name: Resolve deterministic release plan
+        id: plan
+        env:
+          BUMP: ${{ inputs.bump }}
+        run: |
+          set -euo pipefail
+          current="$(node -p "require('./apps/app/package.json').version")"
+          plan="$(node scripts/release/release-plan.mjs --current "$current" --bump "$BUMP")"
+          version="$(jq -r .version <<<"$plan")"
+          tag="$(jq -r .tag <<<"$plan")"
+          branch="$(jq -r .branch <<<"$plan")"
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
+            echo "Release tag $tag already exists; retry only the failed publication stage." >&2
+            exit 1
+          fi
+          resume=false
+          if git ls-remote --exit-code --heads origin "refs/heads/$branch" >/dev/null 2>&1; then
+            resume=true
+            git fetch origin "refs/heads/$branch:refs/remotes/origin/$branch"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+          echo "resume=$resume" >> "$GITHUB_OUTPUT"
+
+      - name: Bump app, desktop, server, and generated versions
+        if: steps.plan.outputs.resume != 'true'
+        env:
+          VERSION: ${{ steps.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          pnpm bump:set -- "$VERSION"
+          pnpm install --lockfile-only
+          node scripts/release/review.mjs --strict
+
+      - name: Create signed release source commit
+        if: steps.plan.outputs.resume != 'true'
+        id: commit
+        env:
+          BRANCH: ${{ steps.plan.outputs.branch }}
+          COMMIT_SIGNING_KEY: ${{ secrets.COMMIT_SIGNING_KEY }}
+          RELEASE_APP_TOKEN: ${{ steps.release-app-preflight.outputs.token }}
+          TAG: ${{ steps.plan.outputs.tag }}
+        run: |
+          set -euo pipefail
+          signing_key="$RUNNER_TEMP/commit-signing-key"
+          trap 'rm -f "$signing_key"' EXIT
+          umask 077
+          printf '%s\n' "$COMMIT_SIGNING_KEY" > "$signing_key"
+          chmod 600 "$signing_key"
+          git config --local user.email "11430621+benjaminshafii@users.noreply.github.com"
+          git config --local user.name "benjaminshafii"
+          git config --local gpg.format ssh
+          git config --local user.signingkey "$signing_key"
+          git switch -c "$BRANCH"
+          git add apps/app/package.json apps/desktop/package.json apps/server/package.json \
+            ee/apps/den-api/src/generated/desktop-versions.ts pnpm-lock.yaml
+          git commit -S -m "chore(release): $TAG"
+          remote="https://x-access-token:${RELEASE_APP_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git push "$remote" "HEAD:refs/heads/$BRANCH"
+          echo "source_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Validate and reuse existing signed release branch
+        if: steps.plan.outputs.resume == 'true'
+        id: resume
+        env:
+          COMMIT_SIGNING_KEY: ${{ secrets.COMMIT_SIGNING_KEY }}
+          TAG: ${{ steps.plan.outputs.tag }}
+          BRANCH: ${{ steps.plan.outputs.branch }}
+          METADATA_PATH: .github/releases/${{ steps.plan.outputs.tag }}/release.json
+          INDEX_PATH: .github/releases/${{ steps.plan.outputs.tag }}/artifacts.json
+        run: |
+          set -euo pipefail
+          git switch -C "$BRANCH" "origin/$BRANCH"
+          head_sha="$(git rev-parse HEAD)"
+          metadata_path=".github/releases/$TAG/release.json"
+          index_path=".github/releases/$TAG/artifacts.json"
+          if [ -f "$metadata_path" ] || [ -f "$index_path" ]; then
+            if [ ! -f "$metadata_path" ] || [ ! -f "$index_path" ]; then
+              echo "Existing release branch has incomplete committed metadata." >&2
+              exit 1
+            fi
+            source_sha="$(EXPECTED_TAG="$TAG" EXPECTED_BRANCH="$BRANCH" node --input-type=module <<'NODE'
+          import { validateReleaseTree } from "./scripts/release/release-metadata.mjs"
+          const { metadata } = validateReleaseTree({
+            metadataPath: process.env.METADATA_PATH,
+            indexPath: process.env.INDEX_PATH,
+            expectedTag: process.env.EXPECTED_TAG,
+            expectedBranch: process.env.EXPECTED_BRANCH,
+          })
+          process.stdout.write(metadata.buildSourceSha)
+          NODE
+            )"
+          else
+            source_sha="$head_sha"
+          fi
+          if [ "$(git rev-parse "$source_sha^")" != "$(git rev-parse origin/dev)" ]; then
+            echo "Existing release source is not based on current origin/dev." >&2
+            exit 1
+          fi
+          scripts/release/verify-signed-release-branch.sh "$source_sha" "$head_sha" "$TAG"
+          git switch --detach "$source_sha"
+          node scripts/release/verify-tag.mjs --tag "$TAG"
+          node scripts/release/review.mjs --strict
+          echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve exact build source
+        id: source
+        env:
+          FRESH_SOURCE: ${{ steps.commit.outputs.source_sha }}
+          RESUMED_SOURCE: ${{ steps.resume.outputs.source_sha }}
+          COMMIT_SIGNING_KEY: ${{ secrets.COMMIT_SIGNING_KEY }}
+          TAG: ${{ steps.plan.outputs.tag }}
+        run: |
+          set -euo pipefail
+          source_sha="${FRESH_SOURCE:-$RESUMED_SOURCE}"
+          if [[ ! "$source_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Could not resolve exact signed build source." >&2
+            exit 1
+          fi
+          scripts/release/verify-signed-release-branch.sh "$source_sha" "$source_sha" "$TAG"
+          echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
+
+  stage-desktop:
+    name: Build immutable desktop stage
+    needs: plan
+    uses: ./.github/workflows/release-macos-aarch64.yml
+    with:
+      source_sha: ${{ needs.plan.outputs.source_sha }}
+      notarize: ${{ inputs.notarize }}
+      sign_windows: ${{ inputs.sign_windows }}
+    secrets: inherit
+
+  finalize:
+    name: Finalize one-review release PR
+    needs: [plan, stage-desktop]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout deterministic release branch
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.plan.outputs.branch }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.4.0
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Install release tooling
+        run: pnpm install --frozen-lockfile --prefer-offline
+
+      - name: Verify all reused release commits and paths
+        env:
+          COMMIT_SIGNING_KEY: ${{ secrets.COMMIT_SIGNING_KEY }}
+          SOURCE_SHA: ${{ needs.plan.outputs.source_sha }}
+          TAG: ${{ needs.plan.outputs.tag }}
+        run: scripts/release/verify-signed-release-branch.sh "$SOURCE_SHA" "$(git rev-parse HEAD)" "$TAG"
+
+      - name: Download exactly this attempt's 18 desktop stages
+        uses: actions/download-artifact@v8
+        with:
+          pattern: release-desktop-electron-*-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/desktop-stage
+
+      - name: Merge manifests, validate all stages, and update AUR
+        env:
+          TAG: ${{ needs.plan.outputs.tag }}
+          SOURCE_SHA: ${{ needs.plan.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          shopt -s globstar nullglob
+          version="${TAG#v}"
+          mkdir -p "$RUNNER_TEMP/merged-manifests" "$RUNNER_TEMP/aur-assets" "$RUNNER_TEMP/release-index"
+          node scripts/release/publish-electron-assets.mjs \
+            --prepare-manifests "$RUNNER_TEMP/desktop-stage" "$RUNNER_TEMP/merged-manifests"
+          node scripts/release/artifact-contract.mjs index \
+            --root "$RUNNER_TEMP/desktop-stage" \
+            --manifests "$RUNNER_TEMP/merged-manifests" \
+            --version "$version" \
+            --source-sha "$SOURCE_SHA" \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --output "$RUNNER_TEMP/release-index/artifacts.json"
+          x64=("$RUNNER_TEMP"/desktop-stage/**/assets/openwork-linux-x64-"$version".tar.gz)
+          arm64=("$RUNNER_TEMP"/desktop-stage/**/assets/openwork-linux-arm64-"$version".tar.gz)
+          if [ "${#x64[@]}" -ne 1 ] || [ "${#arm64[@]}" -ne 1 ]; then
+            echo "Artifact index did not yield exactly one public Linux tarball per architecture." >&2
+            exit 1
+          fi
+          cp "${x64[0]}" "${arm64[0]}" "$RUNNER_TEMP/aur-assets/"
+          scripts/aur/update-aur.sh "$TAG" --assets-dir "$RUNNER_TEMP/aur-assets"
+
+      - name: Write and validate reviewed release metadata tree
+        env:
+          VERSION: ${{ needs.plan.outputs.version }}
+          BUILD_SOURCE_SHA: ${{ needs.plan.outputs.source_sha }}
+          RELEASE_NAME: ${{ inputs.release_name || format('OpenWork {0}', needs.plan.outputs.tag) }}
+          RELEASE_BODY: ${{ inputs.release_body || format('OpenWork {0} desktop release.', needs.plan.outputs.tag) }}
+          INPUT_PRERELEASE: ${{ inputs.prerelease }}
+          INPUT_NOTARIZE: ${{ inputs.notarize }}
+          INPUT_SIGN_WINDOWS: ${{ inputs.sign_windows }}
+          INPUT_PUBLISH_SERVER: ${{ inputs.publish_server }}
+          INPUT_PUBLISH_SNAPSHOT: ${{ inputs.publish_daytona_snapshot }}
+          TAG: ${{ needs.plan.outputs.tag }}
+        run: |
+          set -euo pipefail
+          release_dir=".github/releases/$TAG"
+          mkdir -p "$release_dir"
+          cp "$RUNNER_TEMP/release-index/artifacts.json" "$release_dir/artifacts.json"
+          node scripts/release/release-metadata.mjs write \
+            "$release_dir/release.json" "$release_dir/artifacts.json"
+          EXPECTED_TAG="$TAG" EXPECTED_BRANCH="release/$TAG" GITHUB_OUTPUT="$RUNNER_TEMP/metadata-outputs" \
+            node scripts/release/release-metadata.mjs outputs \
+            "$release_dir/release.json" "$release_dir/artifacts.json"
+
+      - name: Upload exact-attempt merged manifests
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-desktop-manifests-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/merged-manifests
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Upload exact-attempt artifact index
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-artifact-index-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/release-index/artifacts.json
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Mint release App metadata-branch token
+        id: release-app-branch
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+
+      - name: Verify metadata-branch token identity
+        env:
+          RELEASE_APP_SLUG: ${{ steps.release-app-branch.outputs.app-slug }}
+          RELEASE_APP_LOGIN: ${{ vars.RELEASE_APP_LOGIN }}
+        run: |
+          set -euo pipefail
+          actual="${RELEASE_APP_SLUG}[bot]"
+          if [ "$actual" != "$RELEASE_APP_LOGIN" ]; then
+            echo "Release branch token actor $actual does not match RELEASE_APP_LOGIN=$RELEASE_APP_LOGIN." >&2
+            exit 1
+          fi
+
+      - name: Sign reviewed AUR and release metadata commit
+        env:
+          COMMIT_SIGNING_KEY: ${{ secrets.COMMIT_SIGNING_KEY }}
+          RELEASE_APP_TOKEN: ${{ steps.release-app-branch.outputs.token }}
+          TAG: ${{ needs.plan.outputs.tag }}
+          BRANCH: ${{ needs.plan.outputs.branch }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- packaging/aur/PKGBUILD packaging/aur/.SRCINFO ".github/releases/$TAG"; then
+            echo "Full prepare attempt produced no reviewed metadata change." >&2
+            exit 1
+          fi
+          signing_key="$RUNNER_TEMP/commit-signing-key"
+          trap 'rm -f "$signing_key"' EXIT
+          umask 077
+          printf '%s\n' "$COMMIT_SIGNING_KEY" > "$signing_key"
+          chmod 600 "$signing_key"
+          git config --local user.email "11430621+benjaminshafii@users.noreply.github.com"
+          git config --local user.name "benjaminshafii"
+          git config --local gpg.format ssh
+          git config --local user.signingkey "$signing_key"
+          git add packaging/aur/PKGBUILD packaging/aur/.SRCINFO ".github/releases/$TAG"
+          git commit -S -m "chore(release): stage immutable metadata for $TAG"
+          scripts/release/verify-signed-release-branch.sh "${{ needs.plan.outputs.source_sha }}" "$(git rev-parse HEAD)" "$TAG"
+          remote="https://x-access-token:${RELEASE_APP_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git push "$remote" "HEAD:refs/heads/$BRANCH"
+
+      - name: Mint least-privilege release App PR token
+        id: release-app-pr
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Open final release PR and enable auto-merge as release App
+        id: pr
+        env:
+          GH_TOKEN: ${{ steps.release-app-pr.outputs.token }}
+          RELEASE_APP_SLUG: ${{ steps.release-app-pr.outputs.app-slug }}
+          RELEASE_APP_LOGIN: ${{ vars.RELEASE_APP_LOGIN }}
+          TAG: ${{ needs.plan.outputs.tag }}
+          BRANCH: ${{ needs.plan.outputs.branch }}
+          SOURCE_SHA: ${{ needs.plan.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          actual="${RELEASE_APP_SLUG}[bot]"
+          if [ "$actual" != "$RELEASE_APP_LOGIN" ]; then
+            echo "Release PR token actor $actual does not match $RELEASE_APP_LOGIN." >&2
+            exit 1
+          fi
+          body_file="$RUNNER_TEMP/release-pr.md"
+          cat > "$body_file" <<EOF
+          ## Release $TAG
+
+          One human review approves the version bump, immutable artifact index,
+          and AUR checksums calculated from the exact staged Linux files.
+
+          - Prepare run: https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
+          - Artifact identity: run $GITHUB_RUN_ID, attempt $GITHUB_RUN_ATTEMPT
+          - Exact desktop build source: \`$SOURCE_SHA\`
+          - Authoritative metadata: \`.github/releases/$TAG/release.json\`
+          - Reviewed artifact index: \`.github/releases/$TAG/artifacts.json\`
+
+          The PR body is informational. Continuation trusts only the merged files.
+          EOF
+          pr_json="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$BRANCH" --state all \
+            --limit 1 --json url,state,author)"
+          pr_url="$(jq -r '.[0].url // empty' <<<"$pr_json")"
+          pr_state="$(jq -r '.[0].state // empty' <<<"$pr_json")"
+          pr_author="$(jq -r '.[0].author.login // empty' <<<"$pr_json")"
+          if [ -z "$pr_url" ]; then
+            pr_url="$(gh pr create --repo "$GITHUB_REPOSITORY" --base dev --head "$BRANCH" \
+              --title "chore(release): $TAG" --body-file "$body_file")"
+          elif [ "$pr_author" != "$RELEASE_APP_LOGIN" ]; then
+            echo "Existing release PR author $pr_author is not trusted release App $RELEASE_APP_LOGIN." >&2
+            exit 1
+          elif [ "$pr_state" = "OPEN" ]; then
+            gh pr edit "$pr_url" --repo "$GITHUB_REPOSITORY" \
+              --title "chore(release): $TAG" --body-file "$body_file"
+          fi
+          verified_author="$(gh pr view "$pr_url" --repo "$GITHUB_REPOSITORY" --json author --jq .author.login)"
+          if [ "$verified_author" != "$RELEASE_APP_LOGIN" ]; then
+            echo "Release PR author $verified_author does not match $RELEASE_APP_LOGIN." >&2
+            exit 1
+          fi
+          if [ "$pr_state" != "MERGED" ]; then
+            gh pr merge "$pr_url" --repo "$GITHUB_REPOSITORY" --auto --squash --delete-branch
+          fi
+          echo "url=$pr_url" >> "$GITHUB_OUTPUT"
+
+      - name: Summarize prepared release
+        env:
+          TAG: ${{ needs.plan.outputs.tag }}
+          PR_URL: ${{ steps.pr.outputs.url }}
+        run: |
+          {
+            echo "## Release prepared: $TAG"
+            echo
+            echo "- Verified 18 exact-source stages from run $GITHUB_RUN_ID attempt $GITHUB_RUN_ATTEMPT."
+            echo "- Reviewed metadata and AUR checksums: $PR_URL"
+            echo "- Protected-branch review: waiting; auto-merge requested by ${{ vars.RELEASE_APP_LOGIN }}."
+            echo
+            echo "Retry the full prepare before merge (attempts are never mixed):"
+            echo '\`\`\`sh'
+            echo "gh run rerun $GITHUB_RUN_ID --repo $GITHUB_REPOSITORY"
+            echo '\`\`\`'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  dashboard:
+    name: Prepare stage dashboard
+    needs: [plan, stage-desktop, finalize]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Write failure-safe prepare dashboard
+        env:
+          TAG: ${{ needs.plan.outputs.tag }}
+          PLAN_RESULT: ${{ needs.plan.result }}
+          DESKTOP_RESULT: ${{ needs.stage-desktop.result }}
+          FINALIZE_RESULT: ${{ needs.finalize.result }}
+        run: |
+          status() {
+            case "$1" in success) echo passed ;; failure|cancelled) echo failed ;; skipped) echo waiting ;; *) echo pending ;; esac
+          }
+          {
+            echo "## Prepare dashboard: ${TAG:-unresolved release}"
+            echo
+            echo "| Stage | Status | Verified result |"
+            echo "| --- | --- | --- |"
+            echo "| Signed source | $(status "$PLAN_RESULT") | ${{ needs.plan.outputs.source_sha }} |"
+            echo "| Exact 18-stage build | $(status "$DESKTOP_RESULT") | run $GITHUB_RUN_ID attempt $GITHUB_RUN_ATTEMPT |"
+            echo "| Metadata, AUR, and final PR | $(status "$FINALIZE_RESULT") | inspect job before treating output as published |"
+            echo
+            echo "Full prepare retry only:"
+            echo '\`\`\`sh'
+            echo "gh run rerun $GITHUB_RUN_ID --repo $GITHUB_REPOSITORY"
+            echo '\`\`\`'
+          } >> "$GITHUB_STEP_SUMMARY"

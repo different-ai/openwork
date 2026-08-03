@@ -35,14 +35,13 @@ KEY_PATH="${TMP_DIR}/aur.key"
 printf '%s\n' "$AUR_SSH_PRIVATE_KEY" > "$KEY_PATH"
 chmod 600 "$KEY_PATH"
 
-mkdir -p "$HOME/.ssh"
-touch "$HOME/.ssh/known_hosts"
+SCAN_PATH="${TMP_DIR}/aur-host-keys"
+KNOWN_HOSTS_PATH="${TMP_DIR}/known_hosts"
+ssh-keyscan -t rsa,ecdsa,ed25519 aur.archlinux.org > "$SCAN_PATH" 2>/dev/null
+node "${ROOT_DIR}/scripts/aur/pin-host-keys.mjs" "$SCAN_PATH" "$KNOWN_HOSTS_PATH"
+chmod 600 "$KNOWN_HOSTS_PATH"
 
-if ! ssh-keygen -F aur.archlinux.org >/dev/null 2>&1; then
-  ssh-keyscan -t rsa,ecdsa,ed25519 aur.archlinux.org >> "$HOME/.ssh/known_hosts" 2>/dev/null
-fi
-
-export GIT_SSH_COMMAND="ssh -i $KEY_PATH -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes"
+export GIT_SSH_COMMAND="ssh -i $KEY_PATH -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$KNOWN_HOSTS_PATH"
 
 git clone "$AUR_REMOTE" "$TMP_DIR/aur"
 

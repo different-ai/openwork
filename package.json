@@ -71,13 +71,14 @@
     "release:review": "node scripts/release/review.mjs",
     "release:prepare": "node scripts/release/prepare.mjs",
     "release:prepare:dry": "node scripts/release/prepare.mjs --dry-run",
-    "release:ship": "node scripts/release/ship.mjs",
-    "release:ship:watch": "node scripts/release/ship.mjs --watch"
+    "release:prepare:watch": "node scripts/release/prepare.mjs --watch",
+    "release:test": "node --test scripts/release/*.test.mjs scripts/aur/*.test.mjs"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
     "turbo": "^2.5.5",
-    "typescript": "^5.9.0"
+    "typescript": "^5.9.0",
+    "yaml": "^2.6.1"
   },
   "packageManager": "pnpm@11.4.0"
 }

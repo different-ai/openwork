@@ -52,16 +52,6 @@ on:
         description: "Optional explicit public URL for x86_64 Electron tarball"
         required: false
         type: string
-      push_to_aur:
-        description: "Push validated PKGBUILD/.SRCINFO to AUR"
-        required: false
-        type: boolean
-        default: false
-      aur_repo:
-        description: "AUR repo name"
-        required: false
-        type: string
-        default: openwork
 
   workflow_call:
     inputs:
@@ -97,17 +87,6 @@ on:
       asset_url_x86_64:
         required: false
         type: string
-      push_to_aur:
-        required: false
-        type: boolean
-        default: false
-      aur_repo:
-        required: false
-        type: string
-        default: openwork
-    secrets:
-      AUR_SSH_PRIVATE_KEY:
-        required: false
 
 permissions:
   contents: read
@@ -132,8 +111,6 @@ jobs:
       INPUT_ASSET_URL_X86_64: ${{ inputs.asset_url_x86_64 }}
       INPUT_ARTIFACT_RUN_ID: ${{ inputs.artifact_run_id }}
       INPUT_ARTIFACT_NAME: ${{ inputs.artifact_name || 'openwork-electron-linux-x64' }}
-      PUSH_TO_AUR: ${{ inputs.push_to_aur && 'true' || 'false' }}
-      AUR_REPO: ${{ inputs.aur_repo || 'openwork' }}
     steps:
       - name: Validate workflow inputs
         shell: bash
@@ -157,11 +134,6 @@ jobs:
 
           if [ "${ARTIFACT_SOURCE}" = "local-build-artifact" ] && [ -z "${INPUT_ASSET_URL_X86_64:-}" ] && [ -z "${INPUT_ARTIFACT_RUN_ID:-}" ]; then
             echo "artifact_run_id is required when artifact_source=local-build-artifact and asset_url_x86_64 is empty" >&2
-            exit 1
-          fi
-
-          if [ "${PUSH_TO_AUR}" = "true" ] && [ "${ARTIFACT_SOURCE}" = "local-build-artifact" ] && [ -z "${INPUT_ASSET_URL_X86_64:-}" ]; then
-            echo "For push_to_aur with local-build-artifact, set asset_url_x86_64 to a public URL (or use artifact_source=release)." >&2
             exit 1
           fi
 
@@ -407,55 +379,3 @@ jobs:
           else
             echo "No runnable desktop binary found; install sanity check passed." 
           fi
-
-      - name: Publish to AUR
-        if: env.PUSH_TO_AUR == 'true'
-        env:
-          AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
-          RELEASE_TAG: v${{ steps.resolve.outputs.version }}
-          AUR_SKIP_UPDATE: "1"
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          if [ -z "${AUR_SSH_PRIVATE_KEY:-}" ]; then
-            echo "AUR_SSH_PRIVATE_KEY not set; cannot push to AUR." >&2
-            exit 1
-          fi
-
-          mkdir -p "$HOME/.ssh"
-          touch "$HOME/.ssh/known_hosts"
-          ssh-keygen -R aur.archlinux.org >/dev/null 2>&1 || true
-          ssh-keyscan -t rsa,ecdsa,ed25519 aur.archlinux.org >> "$HOME/.ssh/known_hosts" 2>/dev/null
-
-          tmp_dir="$(mktemp -d)"
-          trap 'rm -rf "$tmp_dir"' EXIT
-
-          key_path="$tmp_dir/aur.key"
-          printf '%s\n' "$AUR_SSH_PRIVATE_KEY" > "$key_path"
-          chmod 600 "$key_path"
-
-          aur_remote="ssh://aur@aur.archlinux.org/${AUR_REPO}.git"
-          export GIT_SSH_COMMAND="ssh -i $key_path -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
-
-          git clone "$aur_remote" "$tmp_dir/aur"
-          cp packaging/aur/PKGBUILD "$tmp_dir/aur/PKGBUILD"
-          cp packaging/aur/.SRCINFO "$tmp_dir/aur/.SRCINFO"
-
-          cd "$tmp_dir/aur"
-          if git diff --quiet -- PKGBUILD .SRCINFO; then
-            echo "AUR already up to date for ${AUR_REPO}."
-            exit 0
-          fi
-
-          git add PKGBUILD .SRCINFO
-          git -c user.name="OpenWork Release Bot" \
-              -c user.email="release-bot@users.noreply.github.com" \
-              commit -m "chore(aur): update PKGBUILD for ${RELEASE_TAG#v}"
-
-          current_branch="$(git symbolic-ref --short HEAD 2>/dev/null || true)"
-          if [ -z "$current_branch" ]; then
-            current_branch="master"
-          fi
-
-          git push origin "HEAD:${current_branch}"
