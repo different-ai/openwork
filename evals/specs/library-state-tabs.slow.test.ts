@@ -46,6 +46,11 @@ test.skipIf(!appSpecsEnabled)(title, async () => {
     return /apps? connected/i.test(description?.parentElement?.textContent ?? "");
   })()`);
   expect(headerHasConnectedCount).toBe(false);
+  const descriptionRenderedOnce = await evalIn(
+    app,
+    `document.body.innerText.split("Skills, connections, and tools your agent can use.").length - 1`,
+  );
+  expect(descriptionRenderedOnce).toBe(1);
 
   const clickedReady = await evalIn(app, `(() => {
     const tab = [...document.querySelectorAll('[role="tab"]')]

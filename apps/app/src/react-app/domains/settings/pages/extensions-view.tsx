@@ -86,6 +86,8 @@ type SuggestedPlugin = {
 
 export type ExtensionsViewProps = {
   busy: boolean;
+  /** Hide the view's own description line (the settings shell already shows the tab description in-pane). */
+  hideDescription?: boolean;
   selectedWorkspaceRoot: string;
   isRemoteWorkspace: boolean;
   canEditPlugins: boolean;
@@ -141,11 +143,13 @@ export function ExtensionsView(props: ExtensionsViewProps) {
   return (
     <section className="space-y-6 max-w-3xl w-full animate-in fade-in duration-300">
       <div className="flex items-center justify-between">
-        <div className="flex min-w-0 flex-col gap-1">
-          <p className="text-sm text-dls-secondary">
-            {t("extensions.inventory_description")}
-          </p>
-        </div>
+        {props.hideDescription === true ? <div /> : (
+          <div className="flex min-w-0 flex-col gap-1">
+            <p className="text-sm text-dls-secondary">
+              {t("extensions.inventory_description")}
+            </p>
+          </div>
+        )}
         <Button variant="outline" onClick={props.onRefresh}>
           {t("common.refresh")}
         </Button>
