@@ -371,6 +371,29 @@ export async function openConnectionsSurface(app: Surface, workspaceId: string):
   throw new Error(`The extensions connections surface never settled. On screen: ${JSON.stringify(seen)}`);
 }
 
+export async function openCloudProvidersSurface(app: Surface, workspaceId: string): Promise<void> {
+  const deadline = Date.now() + 60_000;
+  while (Date.now() < deadline) {
+    const settled = await evalIn(
+      app,
+      `window.location.hash.includes("/settings/cloud-providers") && document.body.innerText.includes("Cloud providers")`,
+      { timeoutMs: 8_000 },
+    ).catch(() => false);
+    if (settled === true) return;
+    await go(app, `/workspace/${workspaceId}/settings/cloud-providers`).catch(() => undefined);
+    await new Promise((resolve) => setTimeout(resolve, 1_500));
+  }
+  // Say what WAS on screen: a bare timeout cannot distinguish a route that
+  // never rewrote from a shell the app steered somewhere else entirely.
+  const seen = await evalIn(app, `({
+    hash: window.location.hash,
+    title: document.title,
+    buttons: [...document.querySelectorAll('button')].map((b) => (b.textContent ?? '').replace(/\\s+/g, ' ').trim()).filter(Boolean).slice(0, 30),
+    text: (document.body.innerText ?? '').replace(/\\s+/g, ' ').slice(0, 500),
+  })`, { timeoutMs: 10_000 }).catch(() => null);
+  throw new Error(`The cloud providers surface never settled. On screen: ${JSON.stringify(seen)}`);
+}
+
 export async function currentHash(app: Surface): Promise<string> {
   const hash = await resilientRead(app, "window.location.hash", { label: "location hash" });
   if (typeof hash !== "string") throw new Error("CDP did not return window.location.hash as a string.");

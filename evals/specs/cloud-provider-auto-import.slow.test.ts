@@ -5,6 +5,7 @@ import {
   denFetch,
   evalIn,
   go,
+  openCloudProvidersSurface,
   readAvailableModels,
   readCurrentOrganizationMemberId,
   selectModel,
@@ -122,7 +123,8 @@ test(title, async ({ evidence, place }) => {
   await using den = await server({ place });
   await selectOrganization(den.admin);
   await deleteProofProviders(den.admin);
-  onTestFinished(async () => deleteProofProviders(den.admin));
+  // Local server() Dens may be disposed first; reused Dens are cleaned here, and stale rows are also deleted up front.
+  onTestFinished(async () => deleteProofProviders(den.admin).catch(() => undefined));
 
   const adminMemberId = await readCurrentOrganizationMemberId(den.admin);
   const created = record(await denRequest(den.admin, "/v1/llm-providers", {
@@ -146,10 +148,9 @@ test(title, async ({ evidence, place }) => {
   expect(providerId, "The assigned organization provider was not created.").not.toBe("");
 
   await using desktopApp = await app({ den, as: "admin", place });
-  const settingsPath = `/workspace/${desktopApp.workspaceId}/settings/cloud-providers`;
 
   // Frame 2: opening settings is the import action; there is nothing to click.
-  await go(desktopApp, settingsPath);
+  await openCloudProvidersSurface(desktopApp, desktopApp.workspaceId);
   await waitForText(desktopApp, providerName, { timeoutMs: 120_000 });
   await waitFor(desktopApp, importedProviderExpression(), {
     timeoutMs: 120_000,
@@ -204,7 +205,7 @@ test(title, async ({ evidence, place }) => {
     }),
   });
 
-  await go(desktopApp, settingsPath);
+  await openCloudProvidersSurface(desktopApp, desktopApp.workspaceId);
   await clickButton(desktopApp, "Refresh");
   await waitFor(
     desktopApp,
@@ -229,11 +230,20 @@ test(title, async ({ evidence, place }) => {
   await go(desktopApp, `/workspace/${desktopApp.workspaceId}/session`);
   await waitForSelectableModel(desktopApp, addedModelId);
   const finalModels = await readAvailableModels(desktopApp);
-  expect(finalModels.some((model) => model.id === addedModelId && model.selectable)).toBe(true);
+  const addedSelectable = finalModels.some((model) => model.id === addedModelId && model.selectable);
+  evidence.fact(
+    "The newly added organization model became selectable without any manual action",
+    `Available after refresh: ${JSON.stringify(finalModels.map((model) => model.id))}`,
+    addedSelectable,
+  );
+  expect(addedSelectable).toBe(true);
+  const selectedAdded = await selectModel(desktopApp, addedModelId);
+  expect(selectedAdded.id).toBe(addedModelId);
+  expect(selectedAdded.selected).toBe(true);
   {
     const shot = await screenshot(desktopApp);
     const seen = await validate(shot, [
-      "The newly added organization model gpt-5.4-mini is visibly selectable in the model picker",
+      "The composer is visibly ready with a model selected",
       "No manual Sync prompt or 'Something went wrong' crash message is visible",
     ]);
     expect(seen.ok, seen.why).toBe(true);

@@ -525,7 +525,7 @@ export default {
   "den.cloud_provider_detail": "{count} models · {source} provider",
   "den.cloud_provider_removed_detail": "This imported provider is no longer in cloud. Uninstall the local {providerId} config.",
   "den.cloud_provider_sync_detail": "Cloud provider changed. Sync the {count} model {source} config into this workspace.",
-  "den.cloud_providers_hint": "Import managed LLM providers into this workspace and use the org credential.",
+  "den.cloud_providers_hint": "Providers your organization manages are imported into this workspace automatically using the org credential.",
   "den.cloud_providers_title": "Cloud providers",
   "den.cloud_section_desc": "Sign in and pick an organization to access OpenWork Cloud.",
   "den.cloud_section_title": "OpenWork Cloud",
