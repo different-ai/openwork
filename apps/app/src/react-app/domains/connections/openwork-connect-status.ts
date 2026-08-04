@@ -2,7 +2,7 @@ import type { SessionCloudMcpMaintenanceState } from "./use-session-mcp-maintena
 
 export type OpenWorkConnectStatus = {
   state: "checking" | "ready" | "needs_attention";
-  label: "Checking" | "Ready" | "Needs attention";
+  label: "Connected" | "Checking" | "Ready" | "Needs attention";
   description: string;
 };
 
@@ -16,10 +16,16 @@ export function resolveOpenWorkConnectStatus(
 ): OpenWorkConnectStatus | null {
   if (!signedIn) return null;
 
-  // Maintenance is workspace-scoped. With no usable workspace (including a
-  // transient startup failure), the hook stays idle and no check is running.
-  // Hiding the signal is more accurate than showing an endless "Checking".
-  if (!maintenance || maintenance.status === "idle") return null;
+  // Den authentication is ready, but maintenance itself is workspace-scoped.
+  // When there is no active workspace, report the verified Cloud connection
+  // without claiming that connected-service delivery was checked.
+  if (!maintenance || maintenance.status === "idle") {
+    return {
+      state: "ready",
+      label: "Connected",
+      description: "Signed in to OpenWork Cloud. Connected service tools will be checked when a workspace is active.",
+    };
+  }
 
   if (maintenance.status === "ready") {
     return {

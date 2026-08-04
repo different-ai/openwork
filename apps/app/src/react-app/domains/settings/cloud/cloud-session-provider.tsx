@@ -6,12 +6,26 @@ import {
   DEFAULT_DEN_BASE_URL,
   DenClient,
   readDenSettings,
+  type DenSettings,
   type DenOrgSummary,
   type DenUser,
 } from "../../../../app/lib/den";
 import { denSettingsChangedEvent } from "../../../../app/lib/den-session-events";
 
-type CloudActiveOrganization = Pick<DenOrgSummary, "id" | "name" | "role" | "slug">;
+export type CloudActiveOrganization = Pick<DenOrgSummary, "id" | "name" | "role" | "slug">;
+
+export function cloudSessionOrganizationFromSettings(
+  settings: Pick<DenSettings, "activeOrgId" | "activeOrgName" | "activeOrgSlug">,
+): CloudActiveOrganization | null {
+  const id = settings.activeOrgId?.trim() ?? "";
+  if (!id) return null;
+  return {
+    id,
+    name: settings.activeOrgName?.trim() ?? "",
+    role: "member",
+    slug: settings.activeOrgSlug?.trim() ?? "",
+  };
+}
 
 type CloudSessionContextValue = {
   client: DenClient;
@@ -46,17 +60,7 @@ export function CloudSessionProvider({ children }: CloudSessionProviderProps) {
   const [user, setUser] = React.useState<DenUser | null>(null);
   const [statusMessage, setStatusMessage] = React.useState<string | null>(null);
   const [activeOrganization, setActiveOrganization] =
-    React.useState<CloudActiveOrganization | null>(() => {
-      const id = initial.activeOrgId?.trim();
-      if (!id) return null;
-
-      return {
-        id,
-        name: initial.activeOrgName?.trim() || "",
-        role: "member",
-        slug: initial.activeOrgSlug?.trim() || "",
-      };
-    });
+    React.useState<CloudActiveOrganization | null>(() => cloudSessionOrganizationFromSettings(initial));
   const activeOrgName = activeOrganization?.name ?? "";
   const hasActiveOrg = Boolean(activeOrganization);
 
@@ -64,7 +68,10 @@ export function CloudSessionProvider({ children }: CloudSessionProviderProps) {
     if (typeof window === "undefined") return;
 
     const handleSettingsChanged = () => {
-      setBaseUrl(readDenSettings().baseUrl || DEFAULT_DEN_BASE_URL);
+      const settings = readDenSettings();
+      setBaseUrl(settings.baseUrl || DEFAULT_DEN_BASE_URL);
+      setAuthToken(settings.authToken?.trim() || "");
+      setActiveOrganization(cloudSessionOrganizationFromSettings(settings));
     };
 
     window.addEventListener(denSettingsChangedEvent, handleSettingsChanged);

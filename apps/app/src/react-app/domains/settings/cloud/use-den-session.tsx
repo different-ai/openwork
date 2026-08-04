@@ -29,7 +29,10 @@ import {
 import { t } from "@/i18n";
 import { useDenAuth } from "../../cloud/den-auth-provider";
 import { tryOpenBrowserAuthUrl } from "../../cloud/open-browser-auth";
-import { useCloudSession } from "./cloud-session-provider";
+import {
+  cloudSessionOrganizationFromSettings,
+  useCloudSession,
+} from "./cloud-session-provider";
 import { defaultControlPlaneUrl, saveControlPlaneUrl } from "./control-plane-url";
 
 type SettingsTone = "ready" | "warning" | "neutral" | "error";
@@ -455,12 +458,19 @@ export function useDenSession({
         event.detail?.baseUrl?.trim() || nextSettings.baseUrl || DEFAULT_DEN_BASE_URL;
       const nextToken =
         event.detail?.token?.trim() || nextSettings.authToken?.trim() || "";
+      if (event.detail?.status === "success") {
+        // Clear the pre-handoff snapshot before restoring the newly persisted
+        // organization. Clearing afterward used to erase activeOrgId and let
+        // the org refresh persist a blank selection for multi-org users.
+        clearSessionState();
+      }
       setBaseUrl(nextBaseUrl);
       setBaseUrlDraft(nextBaseUrl);
       setAuthToken(nextToken);
       setActiveOrgId(nextSettings.activeOrgId?.trim() || "");
+      const nextOrganization = cloudSessionOrganizationFromSettings(nextSettings);
+      if (nextOrganization) setActiveOrganization(nextOrganization);
       if (event.detail?.status === "success") {
-        clearSessionState();
         setSigninFallbackUrl(null);
         if (event.detail.user) {
           setUser(event.detail.user);
@@ -479,7 +489,7 @@ export function useDenSession({
 
     window.addEventListener(denSessionUpdatedEvent, handler);
     return () => window.removeEventListener(denSessionUpdatedEvent, handler);
-  }, [clearSessionState, setAuthToken, setBaseUrl]);
+  }, [clearSessionState, setActiveOrganization, setAuthToken, setBaseUrl, setStatusMessage, setUser]);
 
   const submitManualAuth = React.useCallback(async (input: string) => {
     const parsed = parseManualAuthInput(input);
