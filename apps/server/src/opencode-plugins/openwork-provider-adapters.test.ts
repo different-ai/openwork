@@ -9,6 +9,7 @@ describe("OpenWork provider adapters", () => {
 
     expect(contributions.map((contribution) => contribution.featureId)).toEqual([
       "sessions",
+      "scheduled-tasks",
       "extensions",
     ]);
     expect(
@@ -22,6 +23,16 @@ describe("OpenWork provider adapters", () => {
     for (const contribution of contributions) {
       expect(openworkFeatureContributionSchema.safeParse(contribution).success).toBe(true);
     }
+    const scheduledTaskDraft = contributions.flatMap((contribution) => contribution.affordances)
+      .find((affordance) => affordance.id === "scheduled-task.propose-draft");
+    expect(scheduledTaskDraft).toMatchObject({
+      kind: "command",
+      confirmation: "never",
+      effects: { data: "write", ui: "none", external: false },
+      executor: { kind: "openwork" },
+    });
+    expect(scheduledTaskDraft?.arguments.find((argument) => argument.name === "schedule")?.description)
+      .toContain("daysOfWeek uses 0=Sunday through 6=Saturday");
   });
 
   test("keeps known Connect skills direct and search available for unknown capabilities", () => {
@@ -67,15 +78,16 @@ describe("OpenWork provider adapters", () => {
 
     expect(contributions.map((contribution) => contribution.featureId)).toEqual([
       "sessions",
+      "scheduled-tasks",
       "extensions",
       "mcp:notion",
       "connect",
     ]);
-    expect(contributions[2]).toMatchObject({
+    expect(contributions[3]).toMatchObject({
       provider: { id: "notion", kind: "mcp" },
       affordances: [],
     });
-    expect(contributions[3]?.affordances.map((affordance) => affordance.id)).toEqual([
+    expect(contributions[4]?.affordances.map((affordance) => affordance.id)).toEqual([
       "connect.capabilities.search",
       "connect.capability.execute",
     ]);

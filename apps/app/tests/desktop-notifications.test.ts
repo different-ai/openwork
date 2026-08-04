@@ -92,6 +92,26 @@ describe("desktop notifications", () => {
     });
   });
 
+  test("important sends Scheduled Task attention with its repair detail", async () => {
+    setPreference("important");
+
+    notifyDesktopEvent({
+      type: "scheduled-task.needs-attention",
+      taskName: "Daily report",
+      detail: "Review workspace write access.",
+    });
+    await Promise.resolve();
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      command: "desktopNotificationShow",
+      args: [{
+        title: "Daily report needs attention",
+        body: "Review workspace write access.",
+      }],
+    });
+  });
+
   test("focused app suppresses native popups", () => {
     setPreference("all");
     installRuntime({ focused: true });

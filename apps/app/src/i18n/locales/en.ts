@@ -1,9 +1,12 @@
+import { scheduledTasksEnglish } from "./scheduled-tasks";
+
 /**
  * English translations
  * Professional terms (Skills, Plugins, Commands, Sessions, OpenCode, OpenPackage, OpenWork) are NOT translated
  */
 
 export default {
+  ...scheduledTasksEnglish,
   "account.mcp_connected_one": "{count} MCP server",
   "account.mcp_connected_other": "{count} MCP servers",
   "account.providers_connected_one": "{count} model provider",
@@ -1442,7 +1445,6 @@ export default {
   "settings.recovery_requires_desktop": "These actions require the desktop app.",
   "settings.recovery_requires_desktop_title": "Desktop app required",
   "settings.reveal_config_requires_desktop": "Only available in the desktop app",
-  "settings.scheduler_plugin_unavailable": "Scheduler plugin install is not yet available.",
   "settings.server_endpoints_api": "API endpoint",
   "settings.server_endpoints_bootstrap_hint": "Bootstrap file: {path}",
   "settings.server_endpoints_cloud_mcp": "Cloud agent (MCP)",

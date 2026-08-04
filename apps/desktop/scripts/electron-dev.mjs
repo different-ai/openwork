@@ -1,4 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
+import { existsSync, rmSync } from "node:fs";
 import net from "node:net";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,6 +14,12 @@ const defaultDevDataDir = resolve(
   ".openwork",
   "openwork-server-dev",
 );
+const devDataDir = process.env.OPENWORK_DATA_DIR ?? defaultDevDataDir;
+const managedRelaunchSentinel = resolve(
+  devDataDir,
+  ".electron-eval-relaunch-request",
+);
+rmSync(managedRelaunchSentinel, { force: true });
 
 const pnpmCmd = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
 const nodeCmd = process.execPath;
@@ -225,6 +232,14 @@ if (process.env.OPENWORK_ELECTRON_SKIP_SHARED_PREPARE !== "1") {
   runSync(nodeCmd, [resolve(__dirname, "prepare-computer-use-helper.mjs"), "--force", "--outdir", electronHelperDir], { cwd: desktopRoot });
 }
 
+// The server imports runtime contracts from the shared types and Scheduled
+// Tasks packages. Build those Node entry points before the server so Electron
+// never resolves a raw TypeScript export (or a missing package dist file) in
+// its in-process Node runtime.
+console.log("[electron-dev] Building shared runtime contracts...");
+runSync(pnpmCmd, ["--filter", "@openwork/types", "build"], { cwd: repoRoot });
+runSync(pnpmCmd, ["--filter", "@openwork/scheduled-tasks", "build"], { cwd: repoRoot });
+
 // Build the server TS → JS so Electron can import it in-process
 console.log("[electron-dev] Building openwork-server (tsc)...");
 runSync(pnpmCmd, ["--filter", "openwork-server", "build"], { cwd: repoRoot });
@@ -254,7 +269,7 @@ if (!viteReady) {
       ...process.env,
       PORT: String(devPort),
       OPENWORK_DEV_MODE: process.env.OPENWORK_DEV_MODE ?? "1",
-      OPENWORK_DATA_DIR: process.env.OPENWORK_DATA_DIR ?? defaultDevDataDir,
+      OPENWORK_DATA_DIR: devDataDir,
     },
   });
 }
@@ -272,22 +287,32 @@ runSync(pnpmCmd, ["--filter", "@openwork/desktop", "run", "rebuild:electron-nati
 const cdpPortRaw = process.env.OPENWORK_ELECTRON_REMOTE_DEBUG_PORT?.trim() ?? "";
 const cdpPort = cdpPortRaw === "" || cdpPortRaw === "0" ? "" : cdpPortRaw;
 
-electronChild = run(pnpmCmd, ["exec", "electron", "./electron/main.mjs"], {
-  cwd: desktopRoot,
-  env: {
-    ...process.env,
-    OPENWORK_DEV_MODE: process.env.OPENWORK_DEV_MODE ?? "1",
-    OPENWORK_DATA_DIR: process.env.OPENWORK_DATA_DIR ?? defaultDevDataDir,
-    OPENWORK_ELECTRON_START_URL: resolvedStartUrl,
-    ...(cdpPort ? { OPENWORK_ELECTRON_REMOTE_DEBUG_PORT: cdpPort } : {}),
-  },
-});
+function startElectron() {
+  const child = run(pnpmCmd, ["exec", "electron", "./electron/main.mjs"], {
+    cwd: desktopRoot,
+    env: {
+      ...process.env,
+      OPENWORK_DEV_MODE: process.env.OPENWORK_DEV_MODE ?? "1",
+      OPENWORK_DATA_DIR: devDataDir,
+      OPENWORK_ELECTRON_START_URL: resolvedStartUrl,
+      OPENWORK_ELECTRON_MANAGED_RELAUNCH_SENTINEL: managedRelaunchSentinel,
+      ...(cdpPort ? { OPENWORK_ELECTRON_REMOTE_DEBUG_PORT: cdpPort } : {}),
+    },
+  });
+  child.on("exit", (code) => {
+    if (stopping) return;
+    if (existsSync(managedRelaunchSentinel)) {
+      rmSync(managedRelaunchSentinel, { force: true });
+      electronChild = startElectron();
+      return;
+    }
+    void stopAll(code ?? 0);
+  });
+  return child;
+}
+
+electronChild = startElectron();
 
 if (cdpPort) {
   console.log(`[openwork] Electron CDP exposed at http://127.0.0.1:${cdpPort}`);
 }
-
-electronChild.on("exit", (code) => {
-  if (stopping) return;
-  void stopAll(code ?? 0);
-});

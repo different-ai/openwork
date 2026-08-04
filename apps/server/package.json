@@ -57,6 +57,7 @@
   },
   "devDependencies": {
     "@openwork/paths": "workspace:*",
+    "@openwork/scheduled-tasks": "workspace:*",
     "@openwork/types": "workspace:*",
     "@types/better-sqlite3": "^7.6.13",
     "@types/minimatch": "^5.1.2",

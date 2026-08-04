@@ -38,6 +38,12 @@ describe("OpenWork capabilities knowledge plugin", () => {
     expect(knowledge).toContain("Settings > Extensions");
     expect(knowledge).toContain("Settings > Debug");
     expect(knowledge).toContain("custom or local MCP server");
+    expect(knowledge).toContain("Scheduled Tasks run only while OpenWork is running");
+    expect(knowledge).toContain("scheduled-task.propose-draft");
+    expect(knowledge).toContain('{ kind: "weekly", timezone, daysOfWeek, hour, minute }');
+    expect(knowledge).toContain("weekdays use 0=Sunday through 6=Saturday");
+    expect(knowledge).toContain("cannot approve its authority grant or enable it");
+    expect(knowledge).not.toContain("Scheduled Tasks run while OpenWork is closed");
     expect(knowledge).not.toContain("Access tokens are opaque");
     expect(knowledge).not.toContain("https://api.openworklabs.com/mcp`");
     expect(knowledge).not.toContain("openwork-ui-mcp");

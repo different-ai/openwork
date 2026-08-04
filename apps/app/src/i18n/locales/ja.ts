@@ -1,8 +1,11 @@
+import { scheduledTasksEnglish } from "./scheduled-tasks";
+
 /**
  * Japanese translations (日本語)
  */
 
 export default {
+  ...scheduledTasksEnglish,
   "app.compact_command_desc": "このセッションを要約してコンテキストサイズを削減します。",
   "app.error_audit_load": "監査ログの読み込みに失敗しました。",
   "app.error_auth_failed": "認証に失敗しました",

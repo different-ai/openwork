@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { z } from "zod";
 
+import { SCHEDULED_TASK_SAFE_WRITE_TOOL_ID } from "../scheduled-tasks/execution.js";
 import { OpenWorkExtensionsPreview } from "./openwork-extensions-preview.js";
 import * as OpenWorkExtensionsPreviewEntry from "./openwork-extensions-preview.js";
 import {
@@ -12,6 +16,7 @@ import {
 const originalServerUrl = process.env.OPENWORK_SERVER_URL;
 const originalServerToken = process.env.OPENWORK_SERVER_TOKEN;
 const stops: Array<() => void> = [];
+const temporaryDirectories: string[] = [];
 
 const searchResultSchema = z.object({
   ok: z.literal(true),
@@ -51,6 +56,21 @@ const createResultSchema = z.object({
   })),
 });
 
+const scheduledTaskProposalResultSchema = z.object({
+  ok: z.literal(true),
+  taskId: z.string(),
+  revisionId: z.string(),
+  revision: z.number(),
+  workspaceId: z.string(),
+  name: z.string(),
+  prompt: z.string(),
+  state: z.literal("draft"),
+  enabled: z.literal(false),
+  reviewed: z.literal(false),
+  limitation: z.literal("Scheduled tasks run while the OpenWork app is open."),
+  route: z.string(),
+});
+
 const affordanceResultSchema = <T extends z.ZodTypeAny>(id: string, result: T) => z.object({
   ok: z.literal(true),
   id: z.literal(id),
@@ -62,8 +82,13 @@ const affordanceResultSchema = <T extends z.ZodTypeAny>(id: string, result: T) =
   }),
 });
 
-afterEach(() => {
+afterEach(async () => {
   while (stops.length) stops.pop()?.();
+  await Promise.all(
+    temporaryDirectories.splice(0).map((directory) =>
+      rm(directory, { recursive: true, force: true }),
+    ),
+  );
   if (originalServerUrl === undefined) delete process.env.OPENWORK_SERVER_URL;
   else process.env.OPENWORK_SERVER_URL = originalServerUrl;
   if (originalServerToken === undefined) delete process.env.OPENWORK_SERVER_TOKEN;
@@ -157,6 +182,27 @@ function startFakeOpenWorkServer() {
           }, { status: 201 });
         }
         return Response.json({ items: [sessionArchive] });
+      }
+      if (url.pathname === "/workspace/ws_2/scheduled-tasks" && request.method === "POST") {
+        const body = z.object({
+          name: z.string(),
+          prompt: z.string(),
+          workspaceId: z.literal("ws_2"),
+          overlapPolicy: z.literal("skip"),
+        }).passthrough().parse(record.body);
+        return Response.json({
+          task: {
+            id: "task_created_1",
+            workspaceId: body.workspaceId,
+            state: "draft",
+            enabled: false,
+          },
+          revision: {
+            id: "revision_created_1",
+            revision: 1,
+            definition: body,
+          },
+        }, { status: 201 });
       }
 
       if (url.pathname === "/workspace/ws_1/sessions/ses_alpha") return Response.json({ item: sessionAlpha });
@@ -253,6 +299,7 @@ describe("OpenWorkExtensionsPreview session tools", () => {
 
     expect(contributions.map((contribution) => contribution.featureId)).toEqual([
       "sessions",
+      "scheduled-tasks",
       "extensions",
       "mcp:notion",
       "connect",
@@ -464,14 +511,66 @@ describe("OpenWorkExtensionsPreview session tools", () => {
     expect(parsed.result.failures).toEqual([]);
     expect(fake.requests.filter((request) => request.pathname === "/workspace/ws_2/sessions" && request.method === "POST")).toHaveLength(21);
   });
+
+  test("proposes only a disabled scheduled task draft through OpenWork", async () => {
+    const fake = startFakeOpenWorkServer();
+    const plugin = await OpenWorkExtensionsPreview({ directory: "/tmp/archive" });
+
+    const output = await plugin.tool.openwork_execute.execute({
+      id: "scheduled-task.propose-draft",
+      args: {
+        name: "Daily archive summary",
+        description: "Summarize new archive decisions.",
+        prompt: "Review new decisions and write reports/archive-summary.md.",
+        schedule: {
+          kind: "daily",
+          timezone: "Europe/Berlin",
+          hour: 9,
+          minute: 0,
+        },
+      },
+    }, { sessionID: "ses_origin" });
+    const parsed = affordanceResultSchema(
+      "scheduled-task.propose-draft",
+      scheduledTaskProposalResultSchema,
+    ).parse(JSON.parse(output));
+
+    expect(parsed.result).toMatchObject({
+      taskId: "task_created_1",
+      revisionId: "revision_created_1",
+      workspaceId: "ws_2",
+      state: "draft",
+      enabled: false,
+      reviewed: false,
+      limitation: "Scheduled tasks run while the OpenWork app is open.",
+      route: "/scheduled-tasks/ws_2/task_created_1",
+    });
+    const request = fake.requests.find((candidate) => (
+      candidate.pathname === "/workspace/ws_2/scheduled-tasks"
+      && candidate.method === "POST"
+    ));
+    expect(request?.body).toMatchObject({
+      workspaceId: "ws_2",
+      overlapPolicy: "skip",
+      retryPolicy: { maximumAttempts: 1, delayMs: 0 },
+      missedRunPolicy: { kind: "skip", maximumRecoverableOccurrences: 1 },
+    });
+    expect(request?.body).not.toHaveProperty("grant");
+    expect(request?.body).not.toHaveProperty("enabled");
+  });
 });
 
 describe("OpenWorkExtensionsPreview semantic tool surface", () => {
-  test("exposes only the three semantic tools", async () => {
+  test("exposes semantic tools plus the bounded workspace writer", async () => {
     const plugin = await OpenWorkExtensionsPreview();
     const tools = Object.keys(plugin.tool).sort();
 
-    expect(tools).toEqual(["openwork_context", "openwork_execute", "openwork_query"]);
+    expect(tools).toEqual([
+      "openwork_context",
+      "openwork_execute",
+      "openwork_query",
+      SCHEDULED_TASK_SAFE_WRITE_TOOL_ID,
+    ]);
 
     const system = await transformedSystem(plugin);
     expect(system).not.toContain("## Default Skill: skill-creator");
@@ -483,5 +582,68 @@ describe("OpenWorkExtensionsPreview semantic tool surface", () => {
     expect(system).toContain("Use openwork_context");
     expect(system).toContain("session.search");
     expect(system).toContain("browser.open_url");
+  });
+
+  test("bounds Scheduled Task writes to ordinary workspace files", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "openwork-bounded-write-"));
+    temporaryDirectories.push(directory);
+    const plugin = await OpenWorkExtensionsPreview({ directory });
+    const tool = plugin.tool.openwork_workspace_write_file;
+    const permissionRequests: unknown[] = [];
+    const context = {
+      directory,
+      ask: async (input: unknown) => {
+        permissionRequests.push(input);
+      },
+    };
+
+    const result = JSON.parse(await tool.execute(
+      { path: "status.md", content: "bounded report" },
+      context,
+    ));
+    expect(result).toEqual({
+      ok: true,
+      path: "status.md",
+      bytes: 14,
+    });
+    expect(await readFile(join(directory, "status.md"), "utf8")).toBe(
+      "bounded report",
+    );
+    expect(permissionRequests).toEqual([{
+      permission: SCHEDULED_TASK_SAFE_WRITE_TOOL_ID,
+      patterns: ["status.md"],
+      always: [],
+      metadata: { path: "status.md", bytes: 14 },
+    }]);
+
+    await expect(
+      tool.execute({ path: "../outside.md", content: "no" }, context),
+    ).rejects.toThrow("traverse");
+    await expect(
+      tool.execute({ path: ".opencode/config.json", content: "no" }, context),
+    ).rejects.toThrow("control directories");
+  });
+
+  test("uses the session directory instead of a broader engine worktree", async () => {
+    const worktree = await mkdtemp(join(tmpdir(), "openwork-bounded-worktree-"));
+    temporaryDirectories.push(worktree);
+    const directory = join(worktree, "nested-workspace");
+    await mkdir(directory);
+    const plugin = await OpenWorkExtensionsPreview({ directory: worktree, worktree });
+    const tool = plugin.tool.openwork_workspace_write_file;
+
+    await tool.execute(
+      { path: "status.md", content: "nested report" },
+      {
+        directory,
+        worktree,
+        ask: async () => {},
+      },
+    );
+
+    expect(await readFile(join(directory, "status.md"), "utf8")).toBe(
+      "nested report",
+    );
+    await expect(readFile(join(worktree, "status.md"), "utf8")).rejects.toThrow();
   });
 });

@@ -19,6 +19,7 @@ interface RegisterWorkspaceRoutesOptions {
   routes: Route[];
   config: ServerConfig;
   onWorkspacesChanged: () => void;
+  onWorkspaceRemoved?: (workspaceId: string) => void | Promise<void>;
   jsonResponse: JsonResponse;
   readJsonBody: ReadJsonBody;
   readOptionalJsonBody: ReadJsonBody;
@@ -239,6 +240,7 @@ export function registerWorkspaceRoutes(options: RegisterWorkspaceRoutesOptions)
     routes,
     config,
     onWorkspacesChanged,
+    onWorkspaceRemoved,
     jsonResponse,
     readJsonBody,
     readOptionalJsonBody,
@@ -484,6 +486,7 @@ export function registerWorkspaceRoutes(options: RegisterWorkspaceRoutesOptions)
     ensureWritable(config);
 
     const workspace = await resolveWorkspaceForRegistry(ctx.params.id);
+    await onWorkspaceRemoved?.(workspace.id);
 
     const before = config.workspaces.length;
     config.workspaces = config.workspaces.filter((entry) => entry.id !== workspace.id);

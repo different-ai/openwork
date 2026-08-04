@@ -117,6 +117,39 @@ function sessionContribution(): OpenworkFeatureContribution {
   };
 }
 
+function scheduledTasksContribution(): OpenworkFeatureContribution {
+  const provider: OpenworkProviderRef = { id: "openwork-scheduled-tasks", kind: "builtin" };
+  return {
+    featureId: "scheduled-tasks",
+    provider,
+    affordances: [
+      affordance({
+        id: "scheduled-task.propose-draft",
+        kind: "command",
+        title: "Propose a scheduled task draft",
+        description: "Create a disabled Scheduled Task draft for the user to review. This cannot approve authority or enable execution.",
+        provider,
+        arguments: [
+          argument("name", "string", true, "Short name shown in Scheduled Tasks."),
+          argument("prompt", "string", true, "Exact self-contained prompt the scheduled run would receive."),
+          argument("description", "string", false, "Optional explanation of the recurring outcome."),
+          argument("workspaceId", "string", false, "Optional workspace id or name. Defaults to the current workspace."),
+          argument(
+            "schedule",
+            "object",
+            false,
+            "Optional schedule. Use { kind: \"manual\", timezone }, { kind: \"daily\", timezone, hour, minute }, or { kind: \"weekly\", timezone, daysOfWeek, hour, minute }. hour is 0-23, minute is 0-59, and daysOfWeek uses 0=Sunday through 6=Saturday.",
+          ),
+          argument("model", "object", false, "Optional providerId, modelId, and agent selection."),
+          argument("maximumRuntimeMs", "number", false, "Optional runtime ceiling in milliseconds."),
+        ],
+        effects: writeEffects,
+      }),
+    ],
+    guidance: [],
+  };
+}
+
 function extensionContribution(): OpenworkFeatureContribution {
   const provider: OpenworkProviderRef = { id: "openwork-extensions", kind: "extension" };
   return {
@@ -219,6 +252,7 @@ export function buildOpenworkProviderContributions(
   const connect = connectContribution(skills, cloudMcp);
   return [
     sessionContribution(),
+    scheduledTasksContribution(),
     extensionContribution(),
     ...mcps
       .filter((mcp) => mcp.name !== "openwork-cloud")

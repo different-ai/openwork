@@ -182,5 +182,36 @@ describe("OpenWork context projector", () => {
       kind: "settings",
       panel: "extensions",
     });
+    expect(screenFromRoute("/workspace/workspace-a/scheduled-tasks/task-a")).toEqual({
+      kind: "scheduled-tasks",
+      route: "/workspace/workspace-a/scheduled-tasks/task-a",
+      workspaceId: "workspace-a",
+      taskId: "task-a",
+    });
+    expect(screenFromRoute("/scheduled-tasks/workspace-a/task-a")).toEqual({
+      kind: "scheduled-tasks",
+      route: "/scheduled-tasks/workspace-a/task-a",
+      workspaceId: "workspace-a",
+      taskId: "task-a",
+    });
+  });
+
+  test("projects a Scheduled Task as an OpenWork-owned resource", () => {
+    const context = contextForRoute(
+      "/scheduled-tasks/workspace-a/task-a",
+    );
+
+    expect(context.screen).toMatchObject({
+      kind: "scheduled-tasks",
+      workspaceId: "workspace-a",
+      taskId: "task-a",
+    });
+    expect(
+      context.resources.find((resource) => resource.ref === "scheduled-task:task-a"),
+    ).toMatchObject({
+      kind: "scheduled-task",
+      title: "task-a",
+      state: { taskId: "task-a", workspaceId: "workspace-a" },
+    });
   });
 });

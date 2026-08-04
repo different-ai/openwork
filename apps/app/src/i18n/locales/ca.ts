@@ -1,9 +1,12 @@
+import { scheduledTasksEnglish } from "./scheduled-tasks";
+
 /**
  * Catalan translations (Català)
  * Professional terms (Skills, Plugins, Commands, Sessions, OpenCode, OpenPackage, OpenWork) are NOT translated
  */
 
 export default {
+  ...scheduledTasksEnglish,
   "app.compact_command_desc": "Resumeix aquesta sessió per reduir la mida del context.",
   "app.error_audit_load": "No s'ha pogut carregar el registre d'auditoria.",
   "app.error_auth_failed": "L'autenticació ha fallat",

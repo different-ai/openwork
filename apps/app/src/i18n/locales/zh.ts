@@ -1,3 +1,5 @@
+import { scheduledTasksEnglish } from "./scheduled-tasks";
+
 /**
  * 中文（简体）翻译
  * 产品名称保留英文：OpenCode、OpenPackage、OpenWork
@@ -7,6 +9,7 @@
  */
 
 export default {
+  ...scheduledTasksEnglish,
   "app.compact_command_desc": "压缩此会话以减少上下文大小。",
   "app.error_audit_load": "加载审计日志失败。",
   "app.error_auth_failed": "认证失败",

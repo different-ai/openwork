@@ -10,6 +10,18 @@ import {
   AGENT_CONTEXT_DIAGNOSTICS_REQUEST_TIMEOUT_MS,
   requestAgentContextDiagnosticsPayload,
 } from "./agent-context-diagnostics-transport";
+import type {
+  CreateScheduledTaskDraft,
+  ReviewScheduledTaskGrant,
+  ScheduledTask,
+  ScheduledTaskGrant,
+  ScheduledTaskRevision,
+  ScheduledTaskRun,
+  ScheduledTaskRunReceipt,
+  ScheduledTaskSchedule,
+  ScheduledTaskSchedulePreview,
+  UpdateScheduledTaskDraft,
+} from "@openwork/types/scheduled-tasks";
 import { desktopFetch, desktopFetchAgentContextDiagnostics } from "./desktop";
 import { isOpenworkGatewayRuntime } from "./gateway-runtime";
 import { isDesktopRuntime } from "./runtime-env";
@@ -23,6 +35,12 @@ export type OpenworkServerCapabilities = {
   mcp: { read: boolean; write: boolean };
   commands: { read: boolean; write: boolean };
   config: { read: boolean; write: boolean };
+  scheduledTasks?: {
+    read: boolean;
+    write: boolean;
+    execute: boolean;
+    mode: "running-app";
+  };
   sandbox?: { enabled: boolean; backend: "none" | "docker" | "container" };
   proxy?: { opencode: boolean };
   toolProviders?: {
@@ -2051,6 +2069,183 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         baseUrl,
         `/workspace/${encodeURIComponent(workspaceId)}/artifacts/${encodeURIComponent(artifactId)}`,
         { token, hostToken, timeoutMs: timeouts.binary },
+      ),
+
+    listScheduledTasks: (workspaceId: string) =>
+      requestJson<{
+        items: Array<{
+          task: ScheduledTask;
+          revision: ScheduledTaskRevision;
+          grant?: ScheduledTaskGrant | null;
+          latestRun?: ScheduledTaskRun | null;
+        }>;
+      }>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/scheduled-tasks`,
+        { token, hostToken, timeoutMs: timeouts.sessionRead },
+      ),
+
+    getScheduledTask: (workspaceId: string, taskId: string) =>
+      requestJson<{
+        task: ScheduledTask;
+        draftRevision: ScheduledTaskRevision;
+        activeRevision: ScheduledTaskRevision | null;
+        grant: ScheduledTaskGrant | null;
+        runs: ScheduledTaskRun[];
+      }>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/scheduled-tasks/${encodeURIComponent(taskId)}`,
+        { token, hostToken, timeoutMs: timeouts.sessionRead },
+      ),
+
+    createScheduledTaskDraft: (workspaceId: string, payload: CreateScheduledTaskDraft) =>
+      requestJson<{ task: ScheduledTask; revision: ScheduledTaskRevision }>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/scheduled-tasks`,
+        { token, hostToken, method: "POST", body: payload, timeoutMs: timeouts.config },
+      ),
+
+    updateScheduledTaskDraft: (
+      workspaceId: string,
+      taskId: string,
+      payload: UpdateScheduledTaskDraft,
+    ) =>
+      requestJson<{ task: ScheduledTask; revision: ScheduledTaskRevision }>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/scheduled-tasks/${encodeURIComponent(taskId)}`,
+        { token, hostToken, method: "PATCH", body: payload, timeoutMs: timeouts.config },
+      ),
+
+    previewScheduledTaskSchedule: (
+      workspaceId: string,
+      payload: { schedule: ScheduledTaskSchedule; after?: number },
+    ) =>
+      requestJson<{ preview: ScheduledTaskSchedulePreview }>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/scheduled-tasks/preview`,
+        { token, hostToken, method: "POST", body: payload, timeoutMs: timeouts.config },
+      ),
+
+    reviewScheduledTaskGrant: (
+      workspaceId: string,
+      taskId: string,
+      payload: ReviewScheduledTaskGrant,
+    ) =>
+      requestJson<{
+        task: ScheduledTask;
+        revision: ScheduledTaskRevision;
+        grant: ScheduledTaskGrant;
+      }>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/scheduled-tasks/${encodeURIComponent(taskId)}/review`,
+        { token, hostToken, method: "POST", body: payload, timeoutMs: timeouts.config },
+      ),
+
+    revokeScheduledTaskGrant: (workspaceId: string, taskId: string, reason?: string) =>
+      requestJson<{ task: ScheduledTask; grant: ScheduledTaskGrant }>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/scheduled-tasks/${encodeURIComponent(taskId)}/revoke`,
+        {
+          token,
+          hostToken,
+          method: "POST",
+          body: reason?.trim() ? { reason: reason.trim() } : {},
+          timeoutMs: timeouts.config,
+        },
+      ),
+
+    enableScheduledTask: (workspaceId: string, taskId: string) =>
+      requestJson<{ task: ScheduledTask }>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/scheduled-tasks/${encodeURIComponent(taskId)}/enable`,
+        { token, hostToken, method: "POST", body: {}, timeoutMs: timeouts.config },
+      ),
+
+    pauseScheduledTask: (workspaceId: string, taskId: string) =>
+      requestJson<{ task: ScheduledTask }>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/scheduled-tasks/${encodeURIComponent(taskId)}/pause`,
+        { token, hostToken, method: "POST", body: {}, timeoutMs: timeouts.config },
+      ),
+
+    resumeScheduledTask: (workspaceId: string, taskId: string) =>
+      requestJson<{ task: ScheduledTask }>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/scheduled-tasks/${encodeURIComponent(taskId)}/resume`,
+        { token, hostToken, method: "POST", body: {}, timeoutMs: timeouts.config },
+      ),
+
+    runScheduledTaskOnce: (workspaceId: string, taskId: string) =>
+      requestJson<{ run: ScheduledTaskRun }>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/scheduled-tasks/${encodeURIComponent(taskId)}/run`,
+        { token, hostToken, method: "POST", body: {}, timeoutMs: timeouts.config },
+      ),
+
+    duplicateScheduledTask: (workspaceId: string, taskId: string, name?: string) =>
+      requestJson<{ task: ScheduledTask; revision: ScheduledTaskRevision }>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/scheduled-tasks/${encodeURIComponent(taskId)}/duplicate`,
+        {
+          token,
+          hostToken,
+          method: "POST",
+          body: name?.trim() ? { name: name.trim() } : {},
+          timeoutMs: timeouts.config,
+        },
+      ),
+
+    deleteScheduledTask: (workspaceId: string, taskId: string) =>
+      requestJson<{ task: ScheduledTask }>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/scheduled-tasks/${encodeURIComponent(taskId)}`,
+        { token, hostToken, method: "DELETE", timeoutMs: timeouts.config },
+      ),
+
+    listScheduledTaskRuns: (workspaceId: string, taskId: string) =>
+      requestJson<{ items: ScheduledTaskRun[] }>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/scheduled-tasks/${encodeURIComponent(taskId)}/runs`,
+        { token, hostToken, timeoutMs: timeouts.sessionRead },
+      ),
+
+    getScheduledTaskRunReceipt: (workspaceId: string, taskId: string, runId: string) =>
+      requestJson<ScheduledTaskRunReceipt>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/scheduled-tasks/${encodeURIComponent(taskId)}/runs/${encodeURIComponent(runId)}`,
+        { token, hostToken, timeoutMs: timeouts.sessionRead },
+      ),
+
+    downloadScheduledTaskArtifact: (
+      workspaceId: string,
+      taskId: string,
+      runId: string,
+      artifactId: string,
+    ) =>
+      requestBinary(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/scheduled-tasks/${encodeURIComponent(taskId)}/runs/${encodeURIComponent(runId)}/artifacts/${encodeURIComponent(artifactId)}`,
+        { token, hostToken, timeoutMs: timeouts.binary },
+      ),
+
+    cancelScheduledTaskRun: (workspaceId: string, taskId: string, runId: string) =>
+      requestJson<{ run: ScheduledTaskRun }>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/scheduled-tasks/${encodeURIComponent(taskId)}/runs/${encodeURIComponent(runId)}/cancel`,
+        { token, hostToken, method: "POST", body: {}, timeoutMs: timeouts.config },
+      ),
+
+    tickScheduledTaskScheduler: (workspaceId: string, now?: number) =>
+      requestJson<{ processedAt: number; claimedRunIds: string[] }>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/scheduled-tasks/scheduler/tick`,
+        {
+          token,
+          hostToken,
+          method: "POST",
+          body: typeof now === "number" ? { now } : {},
+          timeoutMs: timeouts.config,
+        },
       ),
 
     // User-level env vars (host-auth only — desktop shell is the sole caller).

@@ -112,6 +112,12 @@ export interface Capabilities {
   mcp: { read: boolean; write: boolean };
   commands: { read: boolean; write: boolean };
   config: { read: boolean; write: boolean };
+  scheduledTasks: {
+    read: boolean;
+    write: boolean;
+    execute: boolean;
+    mode: "running-app";
+  };
 
   approvals: { mode: ApprovalMode; timeoutMs: number };
   sandbox: { enabled: boolean; backend: SandboxBackend };

@@ -29,6 +29,14 @@
       "development": "./src/openwork-provider.ts",
       "default": "./src/openwork-provider.ts"
     },
+    "./scheduled-tasks": {
+      "types": "./src/scheduled-tasks.ts",
+      "bun": "./src/scheduled-tasks.ts",
+      "browser": "./src/scheduled-tasks.ts",
+      "node": "./dist/scheduled-tasks.js",
+      "development": "./src/scheduled-tasks.ts",
+      "default": "./dist/scheduled-tasks.js"
+    },
     "./den/desktop-app-restrictions": {
       "types": "./src/den/desktop-app-restrictions.ts",
       "development": "./src/den/desktop-app-restrictions.ts",

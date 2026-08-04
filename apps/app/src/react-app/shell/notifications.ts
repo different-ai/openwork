@@ -15,6 +15,7 @@ import {
   useNotificationStore,
   type NotificationInput,
 } from "@/react-app/kernel/notification-store";
+import { notifyDesktopEvent } from "./desktop-notifications";
 
 /** Window event that asks the notification bell to open its panel. */
 export const openNotificationCenterEvent = "openwork-open-notification-center";
@@ -60,6 +61,50 @@ export function drainPendingMarketplacePlugin(): string | null {
 
 export function notifyEvent(input: NotificationInput): void {
   useNotificationStore.getState().add(input);
+}
+
+export function notifyScheduledTask(input: {
+  workspaceId: string;
+  taskId: string;
+  runId: string;
+  taskName: string;
+  status: "completed" | "failed" | "needs-attention";
+  detail?: string;
+}): void {
+  const severity = input.status === "completed" ? "success" : "error";
+  const title = input.status === "completed"
+    ? t("scheduled_tasks.notification_completed", { name: input.taskName })
+    : input.status === "failed"
+      ? t("scheduled_tasks.notification_failed", { name: input.taskName })
+      : t("scheduled_tasks.notification_attention", { name: input.taskName });
+  notifyEvent({
+    kind: "scheduled-task",
+    severity,
+    title,
+    body: input.detail,
+    dedupeKey: `scheduled-task:${input.taskId}:${input.runId}:${input.status}`,
+    action: {
+      type: "open-scheduled-task",
+      workspaceId: input.workspaceId,
+      taskId: input.taskId,
+    },
+    actionLabel: t("notifications.view"),
+  });
+  if (input.status === "completed") {
+    notifyDesktopEvent({ type: "scheduled-task.completed", taskName: input.taskName });
+  } else if (input.status === "failed") {
+    notifyDesktopEvent({
+      type: "scheduled-task.failed",
+      taskName: input.taskName,
+      errorText: input.detail,
+    });
+  } else {
+    notifyDesktopEvent({
+      type: "scheduled-task.needs-attention",
+      taskName: input.taskName,
+      detail: input.detail,
+    });
+  }
 }
 
 const ALERT_TOAST_ID = "openwork-notification-alert";

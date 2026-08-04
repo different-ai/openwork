@@ -15,6 +15,29 @@ export function workspaceSettingsRoute(
   return `/workspace/${encodeURIComponent(workspaceId.trim())}/settings/${tab}`;
 }
 
+export function workspaceScheduledTasksRoute(workspaceId: string, taskId?: string | null) {
+  const workspace = encodeURIComponent(workspaceId.trim());
+  const task = taskId?.trim();
+  return task
+    ? `/workspace/${workspace}/scheduled-tasks/${encodeURIComponent(task)}`
+    : `/workspace/${workspace}/scheduled-tasks`;
+}
+
+export function scheduledTasksRoute(workspaceId?: string | null, taskId?: string | null) {
+  const workspace = workspaceId?.trim();
+  const task = taskId?.trim();
+  return workspace && task
+    ? `/scheduled-tasks/${encodeURIComponent(workspace)}/${encodeURIComponent(task)}`
+    : "/scheduled-tasks";
+}
+
+export function scheduledTasksCreateRoute(workspaceId?: string | null, template?: string | null) {
+  const params = new URLSearchParams({ create: "1" });
+  if (workspaceId?.trim()) params.set("workspace", workspaceId.trim());
+  if (template?.trim()) params.set("template", template.trim());
+  return `${scheduledTasksRoute()}?${params.toString()}`;
+}
+
 export function globalSettingsRoute(tab: SettingsTab) {
   return `/settings/${tab}`;
 }

@@ -49,6 +49,12 @@ export type LocalPreferences = {
   featureFlags: {
     microsandboxCreateSandbox: boolean;
     /**
+     * Scheduled Tasks preview. Client-only and per-device. This gates every
+     * Scheduled Tasks affordance, route, notification listener, and control
+     * action until the user explicitly opts into the preview.
+     */
+    scheduledTasks: boolean;
+    /**
      * Memory Bank preview. Client-only, per-device, never synced. Gates desktop
      * UI surfacing (the management panel + copy-prompt affordance); the routes
      * stay callable (owner-scoped + authz'd). Off by default — opt-in preview.
@@ -93,7 +99,7 @@ const INITIAL_PREFS: LocalPreferences = {
   defaultModel: null,
   selectedAgent: null,
   releaseChannel: "stable",
-  featureFlags: { microsandboxCreateSandbox: true, memory: false },
+  featureFlags: { microsandboxCreateSandbox: true, scheduledTasks: false, memory: false },
   hasCompletedOnboarding: false,
   analyticsEnabled: true,
   desktopNotifications: DEFAULT_DESKTOP_NOTIFICATION_PREFERENCE,

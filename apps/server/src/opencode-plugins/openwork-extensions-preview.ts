@@ -1,8 +1,24 @@
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import {
+  lstat,
+  open,
+  readFile,
+  realpath,
+  rename,
+  rm,
+} from "node:fs/promises";
+import {
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+  sep,
+} from "node:path";
 import { homedir, platform } from "node:os";
 import { z } from "zod";
 import type { OpenworkAffordanceEffects } from "@openwork/types/openwork-affordance";
+import { proposeScheduledTaskDraftSchema } from "@openwork/types/scheduled-tasks";
+import { SCHEDULED_TASK_SAFE_WRITE_TOOL_ID } from "../scheduled-tasks/execution.js";
 import {
   combineInstructionSections,
   composeAgentInstructions,
@@ -76,6 +92,32 @@ const sessionCreateArgsSchema = z.object({
     prompt: z.string().trim().min(1).max(100_000).describe("Self-contained task to start in the new session."),
   })).min(1).describe("One entry per new session to create and start."),
   workspaceId: z.string().trim().optional().describe("Optional OpenWork workspace id/name. Defaults to the workspace containing the current session."),
+});
+
+const scheduledTaskDraftEnvelopeSchema = z.object({
+  task: z.object({
+    id: z.string(),
+    workspaceId: z.string(),
+    state: z.literal("draft"),
+    enabled: z.literal(false),
+  }).passthrough(),
+  revision: z.object({
+    id: z.string(),
+    revision: z.number().int().positive(),
+    definition: z.object({
+      name: z.string(),
+      prompt: z.string(),
+    }).passthrough(),
+  }).passthrough(),
+}).passthrough();
+
+const workspaceWriteFileArgsSchema = z.object({
+  path: z.string().trim().min(1).max(4_096).describe(
+    "Workspace-relative path for one UTF-8 text artifact.",
+  ),
+  content: z.string().max(1_000_000).describe(
+    "Complete UTF-8 text content to create or replace.",
+  ),
 });
 
 const workspaceSchema = z.object({
@@ -450,6 +492,13 @@ async function executeOpenworkAffordance(
     return affordanceResult(
       request.id,
       await createOpenWorkSessions(request.args ?? {}, context),
+      affordanceWriteEffects,
+    );
+  }
+  if (request.id === "scheduled-task.propose-draft") {
+    return affordanceResult(
+      request.id,
+      await proposeScheduledTaskDraft(request.args ?? {}, context),
       affordanceWriteEffects,
     );
   }
@@ -832,6 +881,44 @@ async function createOpenWorkSessions(rawArgs: unknown, context: OpenCodeContext
   };
 }
 
+async function proposeScheduledTaskDraft(rawArgs: unknown, context: OpenCodeContext): Promise<object> {
+  const args = proposeScheduledTaskDraftSchema.parse(rawArgs);
+  const workspace = await resolveContextWorkspace(args.workspaceId, context);
+  const payload = scheduledTaskDraftEnvelopeSchema.parse(await postJson(
+    `/workspace/${encodeURIComponent(workspace.id)}/scheduled-tasks`,
+    {
+      name: args.name,
+      description: args.description,
+      prompt: args.prompt,
+      workspaceId: workspace.id,
+      schedule: args.schedule ?? { kind: "manual", timezone: "UTC" },
+      model: args.model ?? { providerId: null, modelId: null, agent: null },
+      maximumRuntimeMs: args.maximumRuntimeMs ?? 30 * 60 * 1_000,
+      overlapPolicy: "skip",
+      retryPolicy: { maximumAttempts: 1, delayMs: 0 },
+      missedRunPolicy: {
+        kind: "skip",
+        graceMs: 60_000,
+        maximumRecoverableOccurrences: 1,
+      },
+    },
+  ));
+  return {
+    ok: true,
+    taskId: payload.task.id,
+    revisionId: payload.revision.id,
+    revision: payload.revision.revision,
+    workspaceId: payload.task.workspaceId,
+    name: payload.revision.definition.name,
+    prompt: payload.revision.definition.prompt,
+    state: payload.task.state,
+    enabled: payload.task.enabled,
+    reviewed: false,
+    limitation: "Scheduled tasks run while the OpenWork app is open.",
+    route: `/scheduled-tasks/${encodeURIComponent(payload.task.workspaceId)}/${encodeURIComponent(payload.task.id)}`,
+  };
+}
+
 async function postJson(path: string, body: ExtensionActionPayload | Record<string, unknown>): Promise<unknown> {
   const { url, token } = requireOpenWorkServer();
   const response = await fetch(url + path, {
@@ -844,7 +931,7 @@ async function postJson(path: string, body: ExtensionActionPayload | Record<stri
   });
   const payload = await parseResponse(response);
   if (!response.ok) {
-    throw new Error(errorMessage(payload, "OpenWork extension call failed"));
+    throw new Error(errorMessage(payload, "OpenWork server request failed"));
   }
   return payload;
 }
@@ -857,6 +944,107 @@ function contextPayload(context: OpenCodeContext) {
     workspaceId: context.workspaceId ?? context.workspaceID,
     directory: context.directory,
     worktree: context.worktree,
+  };
+}
+
+function pathIsInside(root: string, candidate: string): boolean {
+  const child = relative(root, candidate);
+  return child !== ""
+    && child !== ".."
+    && !child.startsWith(`..${sep}`)
+    && !isAbsolute(child);
+}
+
+async function writeWorkspaceTextArtifact(
+  rawArgs: unknown,
+  context: OpenCodeContext,
+  factoryContext: OpenCodeContext,
+) {
+  const args = workspaceWriteFileArgsSchema.parse(rawArgs);
+  const mergedContext = {
+    ...factoryContext,
+    ...normalizeOpenCodeContext(context),
+  };
+  const directory = mergedContext.directory?.trim()
+    || mergedContext.worktree?.trim();
+  if (!directory) throw new Error("The workspace directory is unavailable.");
+
+  const normalized = args.path.replace(/\\/gu, "/");
+  if (
+    normalized.includes("\u0000")
+    || normalized.startsWith("/")
+    || /^[A-Za-z]:\//u.test(normalized)
+  ) {
+    throw new Error("The artifact path must be workspace-relative.");
+  }
+  const segments = normalized.split("/").filter(Boolean);
+  if (
+    segments.length === 0
+    || segments.some((segment) => segment === "." || segment === "..")
+  ) {
+    throw new Error("The artifact path must not traverse the workspace.");
+  }
+  const reservedRoot = segments[0]!.toLowerCase();
+  if (
+    reservedRoot === ".git"
+    || reservedRoot === ".opencode"
+    || reservedRoot === ".openwork"
+  ) {
+    throw new Error("Scheduled tasks cannot modify workspace control directories.");
+  }
+
+  const canonicalRoot = await realpath(directory);
+  const candidate = resolve(canonicalRoot, ...segments);
+  const canonicalParent = await realpath(dirname(candidate));
+  if (
+    canonicalParent !== canonicalRoot
+    && !pathIsInside(canonicalRoot, canonicalParent)
+  ) {
+    throw new Error("The artifact path escapes the workspace.");
+  }
+  const target = resolve(canonicalParent, segments.at(-1)!);
+  const existing = await lstat(target).catch(() => null);
+  if (existing && !existing.isFile() && !existing.isSymbolicLink()) {
+    throw new Error("The artifact target is not a regular workspace file.");
+  }
+
+  if (!context.ask) {
+    throw new Error("The OpenCode permission boundary is unavailable.");
+  }
+  const artifactPath = segments.join("/");
+  const bytes = new TextEncoder().encode(args.content).byteLength;
+  await context.ask({
+    permission: SCHEDULED_TASK_SAFE_WRITE_TOOL_ID,
+    patterns: [artifactPath],
+    always: [],
+    metadata: { path: artifactPath, bytes },
+  });
+
+  const temporaryPath = resolve(
+    canonicalParent,
+    `.openwork-write-${crypto.randomUUID()}.tmp`,
+  );
+  let temporaryCreated = false;
+  try {
+    const handle = await open(temporaryPath, "wx", 0o600);
+    temporaryCreated = true;
+    try {
+      await handle.writeFile(args.content, { encoding: "utf8" });
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    await rename(temporaryPath, target);
+    temporaryCreated = false;
+  } finally {
+    if (temporaryCreated) {
+      await rm(temporaryPath, { force: true }).catch(() => undefined);
+    }
+  }
+  return {
+    ok: true,
+    path: artifactPath,
+    bytes,
   };
 }
 
@@ -918,6 +1106,18 @@ export const OpenWorkExtensionsPreview = async (factoryInput?: unknown) => {
       async execute(rawArgs: unknown, context: OpenCodeContext) {
         const mergedContext = { ...factoryContext, ...normalizeOpenCodeContext(context) };
         return JSON.stringify(await executeOpenworkAffordance(rawArgs, mergedContext), null, 2);
+      },
+    },
+    [SCHEDULED_TASK_SAFE_WRITE_TOOL_ID]: {
+      description:
+        "Create or replace one UTF-8 text artifact inside the current workspace. This bounded Scheduled Tasks write tool cannot delete or move files, follow symlinks, escape the workspace, or modify workspace control directories.",
+      args: workspaceWriteFileArgsSchema.shape,
+      async execute(rawArgs: unknown, context: OpenCodeContext) {
+        return JSON.stringify(
+          await writeWorkspaceTextArtifact(rawArgs, context, factoryContext),
+          null,
+          2,
+        );
       },
     },
   },

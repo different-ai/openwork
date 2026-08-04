@@ -1,5 +1,6 @@
 import { desktopNotificationShow } from "@/app/lib/desktop";
 import { isDesktopRuntime } from "@/app/utils";
+import { t } from "@/i18n";
 import {
   DEFAULT_DESKTOP_NOTIFICATION_PREFERENCE,
   isDesktopNotificationPreference,
@@ -14,7 +15,10 @@ export type DesktopNotificationEvent =
   | { type: "task.completed"; sessionId: string }
   | { type: "task.failed"; sessionId: string; errorText?: string }
   | { type: "permission.asked"; sessionId: string; detail?: string }
-  | { type: "question.asked"; sessionId: string; question?: string };
+  | { type: "question.asked"; sessionId: string; question?: string }
+  | { type: "scheduled-task.completed"; taskName: string }
+  | { type: "scheduled-task.failed"; taskName: string; errorText?: string }
+  | { type: "scheduled-task.needs-attention"; taskName: string; detail?: string };
 
 type NotificationCopy = {
   title: string;
@@ -83,6 +87,24 @@ function copyForEvent(event: DesktopNotificationEvent): NotificationCopy {
       return {
         title: "Question needs your answer",
         body: event.question?.trim() || "A session is waiting for your answer.",
+        importance: "important",
+      };
+    case "scheduled-task.completed":
+      return {
+        title: t("scheduled_tasks.notification_completed", { name: event.taskName }),
+        body: t("scheduled_tasks.notification_completed_body"),
+        importance: "routine",
+      };
+    case "scheduled-task.failed":
+      return {
+        title: t("scheduled_tasks.notification_failed", { name: event.taskName }),
+        body: event.errorText?.trim() || t("scheduled_tasks.notification_failed_body"),
+        importance: "important",
+      };
+    case "scheduled-task.needs-attention":
+      return {
+        title: t("scheduled_tasks.notification_attention", { name: event.taskName }),
+        body: event.detail?.trim() || t("scheduled_tasks.notification_attention_body"),
         importance: "important",
       };
   }

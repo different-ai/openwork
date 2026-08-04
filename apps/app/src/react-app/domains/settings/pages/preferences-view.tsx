@@ -42,6 +42,8 @@ export type PreferencesViewProps = {
   onDesktopNotificationsChange: (value: DesktopNotificationPreference) => void;
   memoryEnabled: boolean;
   onToggleMemory: () => void;
+  scheduledTasksEnabled: boolean;
+  onToggleScheduledTasks: () => void;
 };
 
 function desktopNotificationPreferenceLabel(value: DesktopNotificationPreference) {
@@ -183,6 +185,28 @@ export function PreferencesView(props: PreferencesViewProps) {
                 checked={props.memoryEnabled}
                 disabled={props.busy}
                 onCheckedChange={props.onToggleMemory}
+              />
+            </LayoutSectionItemHeaderActions>
+          </LayoutSectionItemHeader>
+        </LayoutSectionItem>
+      </LayoutSection>
+
+      <LayoutSection>
+        <LayoutSectionHeader>
+          <LayoutSectionTitle>{t("scheduled_tasks.preferences_title")}</LayoutSectionTitle>
+          <LayoutSectionDescription>{t("scheduled_tasks.preferences_section_desc")}</LayoutSectionDescription>
+        </LayoutSectionHeader>
+
+        <LayoutSectionItem>
+          <LayoutSectionItemHeader>
+            <LayoutSectionItemTitle>{t("scheduled_tasks.preferences_toggle")}</LayoutSectionItemTitle>
+            <LayoutSectionItemDescription>{t("scheduled_tasks.preferences_toggle_desc")}</LayoutSectionItemDescription>
+            <LayoutSectionItemHeaderActions>
+              <Switch
+                aria-label={t("scheduled_tasks.preferences_toggle")}
+                checked={props.scheduledTasksEnabled}
+                disabled={props.busy}
+                onCheckedChange={props.onToggleScheduledTasks}
               />
             </LayoutSectionItemHeaderActions>
           </LayoutSectionItemHeader>

@@ -57,6 +57,27 @@ describe("notification store", () => {
     expect(notifications[0].count).toBe(2);
   });
 
+  test("keeps a Scheduled Task destination with its durable notification", () => {
+    useNotificationStore.getState().add({
+      kind: "scheduled-task",
+      title: "Daily report completed",
+      action: {
+        type: "open-scheduled-task",
+        workspaceId: "workspace-a",
+        taskId: "task-a",
+      },
+    });
+
+    expect(useNotificationStore.getState().notifications[0]).toMatchObject({
+      kind: "scheduled-task",
+      action: {
+        type: "open-scheduled-task",
+        workspaceId: "workspace-a",
+        taskId: "task-a",
+      },
+    });
+  });
+
   test("read entries do not absorb new events", () => {
     const { add, markAllRead } = useNotificationStore.getState();
     add({ kind: "providers", title: "1 new provider available", dedupeKey: "new-providers" });
