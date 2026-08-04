@@ -1,3 +1,5 @@
+import { createConnection } from "node:net";
+import type { Socket } from "node:net";
 import { expect } from "vitest";
 import { createOrgConnection, denFetch } from "@openwork/behaviors";
 import type { DenSession } from "@openwork/behaviors";
@@ -16,21 +18,44 @@ import type {
   Place,
 } from "@openwork/testkit";
 
-const externalDen = Boolean(process.env.OPENWORK_EVAL_DEN_API_URL?.trim());
+async function mysqlIsReachable(): Promise<boolean> {
+  return new Promise((resolve) => {
+    let socket: Socket | undefined;
+    try {
+      const connectedSocket = createConnection({ host: "127.0.0.1", port: 3306 });
+      socket = connectedSocket;
+      let settled = false;
+      const finish = (reachable: boolean) => {
+        if (settled) return;
+        settled = true;
+        connectedSocket.destroy();
+        resolve(reachable);
+      };
+      connectedSocket.setTimeout(750);
+      connectedSocket.once("data", () => finish(true));
+      connectedSocket.once("timeout", () => finish(false));
+      connectedSocket.once("error", () => finish(false));
+    } catch {
+      socket?.destroy();
+      resolve(false);
+    }
+  });
+}
+
+const denApiUrl = process.env.OPENWORK_EVAL_DEN_API_URL?.trim() ?? "";
+const externalDen = Boolean(denApiUrl);
+const mysqlReachable = await mysqlIsReachable();
 const externalMockRequirement = externalDen ? ["OPENWORK_EVAL_CONNECTOR_MOCK_PUBLIC_URL"] : [];
 const requirements: NeedsSpec = { env: externalMockRequirement };
 const missingRequirements = unmetNeeds(requirements, process.env);
-const title = missingRequirements.length > 0
+const title = !denApiUrl && !mysqlReachable
+  ? "org connector session reuse skipped — needs: OPENWORK_EVAL_DEN_API_URL or local MySQL on 127.0.0.1:3306"
+  : missingRequirements.length > 0
   ? `org connector session reuse skipped — needs: ${missingRequirements.join(", ")}`
   : "organization connector sessions are reused, isolated, rotated, and recovered through Den";
 
-const killSwitchRequirements: NeedsSpec = {
-  env: externalMockRequirement,
-  ...(externalDen ? { optIn: ["OPENWORK_EVAL_SESSION_REUSE_OFF"] } : {}),
-};
-const missingKillSwitchRequirements = unmetNeeds(killSwitchRequirements, process.env);
-const killSwitchTitle = missingKillSwitchRequirements.length > 0
-  ? `org connector session reuse kill switch skipped — needs: ${missingKillSwitchRequirements.join(", ")}`
+const killSwitchTitle = !mysqlReachable
+  ? "org connector session reuse kill switch skipped — needs: local MySQL on 127.0.0.1:3306 (boots its own Den to control the reuse flag)"
   : "DEN_EXTERNAL_MCP_SESSION_REUSE=0 opens a fresh connector session for every downstream operation";
 
 let requestId = 0;
@@ -197,7 +222,7 @@ async function bootDen(place: Place, sessionReuse: "0" | "1", orgName: string): 
     place,
     mocks: {
       connector: mcpMock({
-        publicUrl: process.env.OPENWORK_EVAL_CONNECTOR_MOCK_PUBLIC_URL?.trim() || undefined,
+        publicUrl: sessionReuse === "1" ? process.env.OPENWORK_EVAL_CONNECTOR_MOCK_PUBLIC_URL?.trim() || undefined : undefined,
       }),
     },
     org: {
@@ -208,13 +233,17 @@ async function bootDen(place: Place, sessionReuse: "0" | "1", orgName: string): 
       },
     },
   });
-  if (externalDen) return boot();
+  if (externalDen && sessionReuse === "1") return boot();
 
+  const previousDenApiUrl = process.env.OPENWORK_EVAL_DEN_API_URL;
   const previous = process.env.DEN_EXTERNAL_MCP_SESSION_REUSE;
+  delete process.env.OPENWORK_EVAL_DEN_API_URL;
   process.env.DEN_EXTERNAL_MCP_SESSION_REUSE = sessionReuse;
   try {
     return await boot();
   } finally {
+    if (previousDenApiUrl === undefined) delete process.env.OPENWORK_EVAL_DEN_API_URL;
+    else process.env.OPENWORK_EVAL_DEN_API_URL = previousDenApiUrl;
     if (previous === undefined) delete process.env.DEN_EXTERNAL_MCP_SESSION_REUSE;
     else process.env.DEN_EXTERNAL_MCP_SESSION_REUSE = previous;
   }
@@ -232,7 +261,7 @@ async function noAdditionalHandshake(
   return connector.handshakes({ sinceIso, atLeast: expectedCount + 1, timeoutMs: 1_500 });
 }
 
-test(title, async ({ evidence, place }) => {
+test.skipIf(!denApiUrl && !mysqlReachable)(title, async ({ evidence, place }) => {
   // Direct Den capability calls have no model or UI surface. The mock connector
   // is the sole witness, so this server-only spec intentionally has no fraimz.
   needs(requirements);
@@ -413,10 +442,8 @@ test(title, async ({ evidence, place }) => {
   expect(recoveryProven).toBe(true);
 });
 
-test(killSwitchTitle, async ({ evidence, place }) => {
-  // With an externally managed Den, the explicit opt-in asserts that reviewers
-  // booted it with DEN_EXTERNAL_MCP_SESSION_REUSE=0; local server() receives it directly.
-  needs(killSwitchRequirements);
+test.skipIf(!mysqlReachable)(killSwitchTitle, async ({ evidence, place }) => {
+  // This test always boots its own local Den because an external Den cannot let it control DEN_EXTERNAL_MCP_SESSION_REUSE.
   const orgName = `Session Reuse Off Spec ${Date.now()}`;
   const runStartedAt = new Date().toISOString();
   await using den = await bootDen(place, "0", orgName);
