@@ -107,14 +107,41 @@ export function AgentAccessCard(props: {
   const context = buildCloudMcpContext(props);
   const userState = context ? readCloudMcpUserState(context) : null;
   const signedIn = cloudSession.isSignedIn && Boolean(cloudSession.authToken.trim());
-  const orgSelected = Boolean(context?.orgId.trim());
-  const summary = cloudMcpDisplaySummary({
-    signedIn,
-    orgSelected,
-    connecting: busy !== null,
-    userState,
-    health,
-  });
+  const orgSelected = Boolean(readDenSettings().activeOrgId?.trim());
+  const missingContextSummary = signedIn && busy === null && !context
+    ? !props.workspaceId?.trim()
+      ? {
+          status: "degraded" as const,
+          statusLabel: "Degraded",
+          tone: "error" as const,
+          stageLabel: "Select a workspace",
+          recommendedAction: "Choose the workspace agents should use.",
+        }
+      : !props.client?.baseUrl.trim()
+        ? {
+            status: "degraded" as const,
+            statusLabel: "Degraded",
+            tone: "error" as const,
+            stageLabel: "Connect the workspace server",
+            recommendedAction: "Restore the workspace server connection.",
+          }
+        : !orgSelected
+          ? {
+              status: "degraded" as const,
+              statusLabel: "Degraded",
+              tone: "error" as const,
+              stageLabel: "Select an organization",
+              recommendedAction: "Choose the organization agents should use.",
+            }
+          : null
+    : null;
+  const summary = missingContextSummary ?? cloudMcpDisplaySummary({
+      signedIn,
+      orgSelected,
+      connecting: busy !== null,
+      userState,
+      health,
+    });
 
   const updateHealth = (next: OpenworkCloudMcpHealth | null) => {
     setHealth(next);

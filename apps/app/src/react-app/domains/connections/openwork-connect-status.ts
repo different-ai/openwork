@@ -2,7 +2,7 @@ import type { SessionCloudMcpMaintenanceState } from "./use-session-mcp-maintena
 
 export type OpenWorkConnectStatus = {
   state: "checking" | "ready" | "needs_attention";
-  label: "Connected" | "Checking" | "Ready" | "Needs attention";
+  label: "Checking" | "Ready" | "Needs attention";
   description: string;
 };
 
@@ -22,7 +22,7 @@ export function resolveOpenWorkConnectStatus(
   if (!maintenance || maintenance.status === "idle") {
     return {
       state: "ready",
-      label: "Connected",
+      label: "Ready",
       description: "Signed in to OpenWork Cloud. Connected service tools will be checked when a workspace is active.",
     };
   }

@@ -38,12 +38,12 @@ describe("OpenWork Connect status", () => {
   test("shows the verified Cloud connection while workspace maintenance is idle", () => {
     expect(resolveOpenWorkConnectStatus(true, undefined)).toEqual({
       state: "ready",
-      label: "Connected",
+      label: "Ready",
       description: "Signed in to OpenWork Cloud. Connected service tools will be checked when a workspace is active.",
     });
     expect(resolveOpenWorkConnectStatus(true, maintenance("idle"))).toMatchObject({
       state: "ready",
-      label: "Connected",
+      label: "Ready",
     });
   });
 
