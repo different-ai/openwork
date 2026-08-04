@@ -71,6 +71,7 @@ import {
   writeWindowsBrandShortcut,
   windowsIconFromNativeImage,
 } from "./brand-icon-windows.mjs";
+import { resetMacDockIcon } from "./brand-icon-darwin.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const APP_ROOT = path.resolve(__dirname, "../../..");
@@ -542,6 +543,20 @@ async function applyAppIconImage(image, { taskbarIconPath = null, taskbarAppId =
 async function applyDefaultAppIconImage(expectedSequence = null) {
   let image = APP_ICON_IMAGE;
   let taskbarIconPath = null;
+  if (process.platform === "darwin") {
+    // Packaged macOS builds have no loose default icon file (APP_ICON_IMAGE
+    // is null), so reset the dock via dock.setIcon(null) to restore the
+    // bundle icon instead of silently leaving the branded icon in place.
+    if (expectedSequence !== null && expectedSequence !== brandIconApplySequence) {
+      return { ok: false, reason: "stale" };
+    }
+    try {
+      const result = resetMacDockIcon(app.dock, image);
+      return result.ok ? result : brandIconFailure(result.reason);
+    } catch (error) {
+      return brandIconFailure("os-apply-failed", error);
+    }
+  }
   if (process.platform === "win32") {
     try {
       await removeWindowsBrandShortcut();
@@ -567,8 +582,8 @@ async function applyDefaultAppIconImage(expectedSequence = null) {
     }
   }
   if (!image || image.isEmpty()) {
-    // Preserve the pre-existing no-op fallback on platforms whose packaged
-    // application icon is managed entirely by the bundle.
+    // Linux: the packaged window/launcher icon is managed by the desktop
+    // integration, so a missing loose icon is a safe no-op.
     return process.platform === "win32" ? brandIconFailure("stock-icon-unavailable") : { ok: true };
   }
   if (process.platform === "win32" && taskbarIconPath) {
