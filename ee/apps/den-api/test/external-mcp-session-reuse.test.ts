@@ -72,6 +72,8 @@ function connectionRow(input: {
     name: "Session reuse MCP",
     url: input.url,
     authType: input.authType ?? "none",
+    kind: "external_mcp",
+    nativeProviderKey: null,
     oauthConfiguration: null,
     credentialMode: input.credentialMode ?? "shared",
     apiKey: input.apiKey ?? null,

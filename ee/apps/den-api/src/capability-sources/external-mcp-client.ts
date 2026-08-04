@@ -1162,6 +1162,7 @@ type ExternalMcpToolCallInput = {
   args: Record<string, unknown>
   member?: ExternalMcpMemberContext
   diagnosticReferenceId?: string
+  lifecycleDeadline?: ExternalMcpLifecycleDeadline
 }
 
 async function runExternalMcpToolCall(
@@ -1171,7 +1172,7 @@ async function runExternalMcpToolCall(
   if (input.connection.kind !== "external_mcp") {
     throw new Error("Native provider connectors do not expose MCP tools.")
   }
-  const deadline = createExternalMcpLifecycleDeadline(EXTERNAL_MCP_TOOL_LIFECYCLE_TIMEOUT_MS)
+  const deadline = input.lifecycleDeadline ?? createExternalMcpLifecycleDeadline(EXTERNAL_MCP_TOOL_LIFECYCLE_TIMEOUT_MS)
   return runExternalMcpSessionOperation({
     connection: input.connection,
     redirectUri: input.redirectUri,
