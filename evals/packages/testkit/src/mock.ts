@@ -3,6 +3,8 @@ import { startMockMcp } from "@openwork/labs";
 import type { MockMcpHandle, StartMockMcpOptions } from "@openwork/labs";
 import type { Place } from "./place.ts";
 
+export type { MockMcpHandshake, MockToolCall } from "@openwork/labs";
+
 export type MockHandle = MockMcpHandle;
 
 export interface MockUrls {
