@@ -29,6 +29,14 @@
       "development": "./src/openwork-provider.ts",
       "default": "./src/openwork-provider.ts"
     },
+    "./automations": {
+      "types": "./src/automations.ts",
+      "bun": "./src/automations.ts",
+      "browser": "./src/automations.ts",
+      "node": "./dist/automations.js",
+      "development": "./src/automations.ts",
+      "default": "./dist/automations.js"
+    },
     "./den/desktop-app-restrictions": {
       "types": "./src/den/desktop-app-restrictions.ts",
       "development": "./src/den/desktop-app-restrictions.ts",

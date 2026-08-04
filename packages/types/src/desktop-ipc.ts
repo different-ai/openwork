@@ -460,6 +460,10 @@ export type DesktopCommandMap = {
 
   // Openwork server sidecar
   openworkServerInfo: { args: []; result: OpenworkServerInfo };
+  automationRunnerConfigure: {
+    args: [configuration: { baseUrl: string; token: string; runnerId: string } | null];
+    result: { connected: boolean };
+  };
   openworkServerRestart: {
     args: [options?: Record<string, unknown>];
     result: OpenworkServerInfo;

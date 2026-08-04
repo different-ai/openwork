@@ -18,17 +18,8 @@ export interface MockToolCall {
   args: Record<string, unknown>;
   /** sha256 prefix of the caller's bearer token — distinct per member credential. */
   tokenId: string | null;
-  /** Streamable HTTP session that served the tool call. */
-  sessionId: string | null;
   /** When the connector served it (the mock's clock). */
   at: string;
-}
-
-/** One MCP initialize request observed by the connector. */
-export interface MockMcpHandshake {
-  atIso: string;
-  tokenId: string | null;
-  sessionId: string | null;
 }
 
 export interface MockMcpHandle {
@@ -46,10 +37,6 @@ export interface MockMcpHandle {
    * calls and returns before this run's calls ever arrive.
    */
   toolCalls(opts?: { name?: string; timeoutMs?: number; atLeast?: number; sinceIso?: string }): Promise<MockToolCall[]>;
-  /** Initialize handshakes, with the same bounded polling and sinceIso contract as toolCalls(). */
-  handshakes(opts?: { timeoutMs?: number; atLeast?: number; sinceIso?: string }): Promise<MockMcpHandshake[]>;
-  /** Make every currently-issued Streamable HTTP session unknown to the mock. */
-  invalidateSessions(): Promise<number>;
   stop(): Promise<void>;
   [Symbol.asyncDispose](): Promise<void>;
 }
@@ -186,29 +173,11 @@ export async function startMockMcp(options: StartMockMcpOptions = {}): Promise<M
           name: call.name,
           args: isRecord(call.args) ? call.args : {},
           tokenId: typeof call.tokenId === "string" ? call.tokenId : null,
-          sessionId: typeof call.sessionId === "string" ? call.sessionId : null,
           at,
         });
       }
     }
     return calls;
-  };
-
-  const readHandshakes = async (sinceIso?: string): Promise<MockMcpHandshake[]> => {
-    const handshakes: MockMcpHandshake[] = [];
-    for (const entry of await rawEntries()) {
-      if (!Array.isArray(entry.handshakes)) continue;
-      for (const handshake of entry.handshakes) {
-        if (!isRecord(handshake) || typeof handshake.atIso !== "string") continue;
-        if (sinceIso && handshake.atIso < sinceIso) continue;
-        handshakes.push({
-          atIso: handshake.atIso,
-          tokenId: typeof handshake.tokenId === "string" ? handshake.tokenId : null,
-          sessionId: typeof handshake.sessionId === "string" ? handshake.sessionId : null,
-        });
-      }
-    }
-    return handshakes;
   };
 
   return {
@@ -227,25 +196,6 @@ export async function startMockMcp(options: StartMockMcpOptions = {}): Promise<M
         calls = await readToolCalls(opts.name, opts.sinceIso);
       }
       return calls;
-    },
-    async handshakes(opts = {}) {
-      const wanted = opts.atLeast ?? 0;
-      if (wanted <= 0) return readHandshakes(opts.sinceIso);
-      const deadline = Date.now() + (opts.timeoutMs ?? 120_000);
-      let handshakes = await readHandshakes(opts.sinceIso);
-      while (handshakes.length < wanted && Date.now() < deadline) {
-        await sleep(1_000);
-        handshakes = await readHandshakes(opts.sinceIso);
-      }
-      return handshakes;
-    },
-    async invalidateSessions() {
-      const response = await fetch(`${url}/admin/invalidate-mcp-sessions`, { method: "POST" });
-      const body: unknown = await response.json().catch(() => null);
-      if (!response.ok || !isRecord(body) || typeof body.invalidated !== "number") {
-        throw new Error(`Mock session invalidation failed: HTTP ${response.status} ${JSON.stringify(body).slice(0, 500)}`);
-      }
-      return body.invalidated;
     },
     async authorizeRequestSince(iso, opts = {}) {
       const deadline = Date.now() + (opts.timeoutMs ?? 60_000);

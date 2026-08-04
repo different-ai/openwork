@@ -101,7 +101,7 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
 
   async function createWorkspaceSession(
     workspace: WorkspaceInfo,
-    input: { title: string; prompt?: string },
+    input: { title: string; prompt?: string; providerId?: string; modelId?: string },
   ) {
     const opencode = createWorkspaceOpencodeClient(config, workspace);
     const session = buildSession(
@@ -114,6 +114,9 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     if (input.prompt) {
       const result = await opencode.session.promptAsync({
         sessionID: session.id,
+        ...(input.providerId && input.modelId
+          ? { model: { providerID: input.providerId, modelID: input.modelId } }
+          : {}),
         parts: [{ type: "text", text: input.prompt }],
       });
       if (result.error !== undefined) {
@@ -219,11 +222,33 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
       throw new ApiError(400, "invalid_payload", "title must be 120 characters or fewer");
     }
     const prompt = optionalStringField(body, "prompt");
+    const providerId = optionalStringField(body, "providerId");
+    const modelId = optionalStringField(body, "modelId");
+    if (Boolean(providerId) !== Boolean(modelId)) {
+      throw new ApiError(400, "invalid_payload", "providerId and modelId must be provided together");
+    }
     if (prompt && prompt.length > 100_000) {
       throw new ApiError(400, "invalid_payload", "prompt must be 100000 characters or fewer");
     }
-    const result = await createWorkspaceSession(workspace, { title, ...(prompt ? { prompt } : {}) });
+    const result = await createWorkspaceSession(workspace, {
+      title,
+      ...(prompt ? { prompt } : {}),
+      ...(providerId && modelId ? { providerId, modelId } : {}),
+    });
     return jsonResponse(result, 201);
+  });
+
+  addRoute(routes, "POST", "/workspace/:id/sessions/:sessionId/abort", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const sessionId = ctx.params.sessionId?.trim();
+    if (!sessionId) throw new ApiError(400, "invalid_payload", "sessionId is required");
+    const result = await createWorkspaceOpencodeClient(config, workspace).session.abort({ sessionID: sessionId });
+    if (result.error !== undefined) {
+      throw new ApiError(502, "opencode_request_failed", "OpenCode abort failed");
+    }
+    return jsonResponse({ ok: true });
   });
 
   addRoute(routes, "GET", "/workspace/:id/sessions", "client", async (ctx) => {

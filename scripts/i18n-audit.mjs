@@ -48,12 +48,49 @@ const shouldRun = (...modes) => (isAll && !modes.some((m) => EXCLUDED_FROM_ALL.h
 // Helpers
 // ---------------------------------------------------------------------------
 
+function importedConstBindings(content, filePath) {
+  const bindings = new Map();
+  for (const match of content.matchAll(/import\s+\{([^}]+)\}\s+from\s+["'](\.[^"']+)["'];?/g)) {
+    const source = match[2].endsWith(".ts") ? match[2] : `${match[2]}.ts`;
+    const sourcePath = resolve(dirname(filePath), source);
+    for (const specifier of match[1].split(",")) {
+      const parts = specifier.trim().split(/\s+as\s+/);
+      const imported = parts[0]?.trim();
+      const local = parts[1]?.trim() ?? imported;
+      if (!imported || !local || imported.startsWith("type ")) continue;
+      bindings.set(local, { imported, sourcePath });
+    }
+  }
+  return bindings;
+}
+
+function parseExportedConst(filePath, exportName) {
+  const content = readFileSync(filePath, "utf-8");
+  const escapedName = exportName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = content.match(
+    new RegExp(`export\\s+const\\s+${escapedName}\\s*=\\s*\\{([\\s\\S]*?)\\}\\s+as\\s+const;`),
+  );
+  if (!match) throw new Error(`Could not parse imported const ${exportName} from ${filePath}`);
+  return new Function(`return {${match[1]}}`)();
+}
+
 /** Parse a locale .ts file into a JS object via eval. */
 function parseLocale(filePath) {
   const content = readFileSync(filePath, "utf-8");
   const match = content.match(/export default \{([\s\S]*?)\} as const;/);
   if (!match) throw new Error(`Could not parse ${filePath}`);
-  return new Function(`return {${match[1]}}`)();
+
+  const imported = importedConstBindings(content, filePath);
+  const spreadNames = [...match[1].matchAll(/\.\.\.([A-Za-z_$][\w$]*)/g)]
+    .map((spread) => spread[1]);
+  const bindings = new Map();
+  for (const name of spreadNames) {
+    const source = imported.get(name);
+    if (!source) continue;
+    bindings.set(name, parseExportedConst(source.sourcePath, source.imported));
+  }
+
+  return new Function(...bindings.keys(), `return {${match[1]}}`)(...bindings.values());
 }
 
 /** Extract translation keys from a locale .ts file (as a Set). */

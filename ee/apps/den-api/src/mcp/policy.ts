@@ -20,6 +20,7 @@ const SAFE_INCLUDED_TAGS = new Set([
   "Desktop Policies",
   "GitHub",
   "Capability Sources",
+  "Automations",
 ])
 
 const BLOCKED_OPERATION_IDS = new Set([
@@ -34,6 +35,7 @@ const BLOCKED_OPERATION_IDS = new Set([
   "postV1WorkersByWorkerIdTokens",
   "postOauthProvidersByProviderIdDisconnect",
   "postV1OauthProvidersByProviderIdDisconnect",
+  "mintAutomationRunnerToken",
 ])
 
 export type OpenApiOperation = {

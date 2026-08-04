@@ -42,6 +42,8 @@ export type PreferencesViewProps = {
   onDesktopNotificationsChange: (value: DesktopNotificationPreference) => void;
   memoryEnabled: boolean;
   onToggleMemory: () => void;
+  automationsEnabled: boolean;
+  onToggleAutomations: () => void;
 };
 
 function desktopNotificationPreferenceLabel(value: DesktopNotificationPreference) {
@@ -183,6 +185,28 @@ export function PreferencesView(props: PreferencesViewProps) {
                 checked={props.memoryEnabled}
                 disabled={props.busy}
                 onCheckedChange={props.onToggleMemory}
+              />
+            </LayoutSectionItemHeaderActions>
+          </LayoutSectionItemHeader>
+        </LayoutSectionItem>
+      </LayoutSection>
+
+      <LayoutSection>
+        <LayoutSectionHeader>
+          <LayoutSectionTitle>{t("automations.preferences_title")}</LayoutSectionTitle>
+          <LayoutSectionDescription>{t("automations.preferences_section_desc")}</LayoutSectionDescription>
+        </LayoutSectionHeader>
+
+        <LayoutSectionItem>
+          <LayoutSectionItemHeader>
+            <LayoutSectionItemTitle>{t("automations.preferences_toggle")}</LayoutSectionItemTitle>
+            <LayoutSectionItemDescription>{t("automations.preferences_toggle_desc")}</LayoutSectionItemDescription>
+            <LayoutSectionItemHeaderActions>
+              <Switch
+                aria-label={t("automations.preferences_toggle")}
+                checked={props.automationsEnabled}
+                disabled={props.busy}
+                onCheckedChange={props.onToggleAutomations}
               />
             </LayoutSectionItemHeaderActions>
           </LayoutSectionItemHeader>

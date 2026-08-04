@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { StreamableHTTPTransport } from "@hono/mcp"
 import type { Hono } from "hono"
+import type { RequestIdVariables } from "hono/request-id"
 import { z } from "zod"
 import { env } from "../env.js"
 import { publicRoute, tokenRoute } from "../middleware/index.js"
@@ -55,7 +56,7 @@ export function protectedResourceMetadata(request: Request, route: "mcp" | "agen
   }
 }
 
-export function registerMcpRoutes<T extends { Variables: Record<string, unknown> }>(app: Hono<T>) {
+export function registerMcpRoutes<T extends { Variables: RequestIdVariables & Record<string, unknown> }>(app: Hono<T>) {
   app.get("/.well-known/oauth-protected-resource", publicRoute, (c) => c.json(protectedResourceMetadata(c.req.raw)))
   app.get("/.well-known/oauth-protected-resource/mcp", publicRoute, (c) => c.json(protectedResourceMetadata(c.req.raw)))
   app.get("/mcp/.well-known/oauth-protected-resource", publicRoute, (c) => c.json(protectedResourceMetadata(c.req.raw)))

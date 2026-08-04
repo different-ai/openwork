@@ -1,9 +1,12 @@
+import { automationsEnglish } from "./automations";
+
 /**
  * Tiếng Việt translations
  * Thuật ngữ chuyên môn KHÔNG dịch: Skills, Plugins, Commands, Sessions, OpenCode, OpenPackage, OpenWork, MCPs, OAuth, MCP
  */
 
 export default {
+  ...automationsEnglish,
   "app.compact_command_desc": "Tóm tắt phiên này để giảm kích thước ngữ cảnh.",
   "app.error_audit_load": "Tải nhật ký kiểm toán thất bại.",
   "app.error_auth_failed": "Xác thực thất bại",

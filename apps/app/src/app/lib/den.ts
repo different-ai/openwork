@@ -2,6 +2,16 @@ import {
   normalizeDesktopConfig,
   type DesktopConfig as SharedDesktopConfig,
 } from "@openwork/types/den/desktop-policies";
+import type {
+  AutomationDetail,
+  AutomationDesktopRunnerRegistration,
+  AutomationList,
+  AutomationRun,
+  AutomationRunReceipt,
+  AutomationRunnerTokenResponse,
+  CreateAutomation,
+  UpdateAutomation,
+} from "@openwork/types/automations";
 
 // Re-export the shared schema under the local alias so React consumers
 // (e.g. the cloud domain's desktop-config provider) can import it alongside
@@ -2369,6 +2379,125 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
         organizationId: orgId,
       });
       return getDenOrgLlmProviders(payload);
+    },
+
+    async listAutomations(
+      orgId: string,
+      options: { cursor?: string; limit?: number } = {},
+    ): Promise<AutomationList> {
+      const params = new URLSearchParams();
+      if (options.cursor) params.set("cursor", options.cursor);
+      if (options.limit) params.set("limit", String(options.limit));
+      const query = params.size > 0 ? `?${params.toString()}` : "";
+      return requestJson<AutomationList>(baseUrls, `/v1/automations${query}`, {
+        method: "GET",
+        token,
+        organizationId: orgId,
+      });
+    },
+
+    async mintAutomationRunnerToken(orgId: string, registration: AutomationDesktopRunnerRegistration): Promise<AutomationRunnerTokenResponse> {
+      return requestJson<AutomationRunnerTokenResponse>(baseUrls, "/v1/automation-runners/token", {
+        method: "POST",
+        token,
+        organizationId: orgId,
+        body: registration,
+      });
+    },
+
+    async createAutomation(orgId: string, input: CreateAutomation): Promise<AutomationDetail> {
+      return requestJson<AutomationDetail>(baseUrls, "/v1/automations", {
+        method: "POST",
+        token,
+        organizationId: orgId,
+        body: input,
+      });
+    },
+
+    async getAutomation(orgId: string, automationId: string): Promise<AutomationDetail> {
+      return requestJson<AutomationDetail>(
+        baseUrls,
+        `/v1/automations/${encodeURIComponent(automationId)}`,
+        { method: "GET", token, organizationId: orgId },
+      );
+    },
+
+    async updateAutomation(
+      orgId: string,
+      automationId: string,
+      input: UpdateAutomation,
+    ): Promise<AutomationDetail> {
+      return requestJson<AutomationDetail>(
+        baseUrls,
+        `/v1/automations/${encodeURIComponent(automationId)}`,
+        { method: "PATCH", token, organizationId: orgId, body: input },
+      );
+    },
+
+    async activateAutomation(orgId: string, automationId: string): Promise<AutomationDetail> {
+      return requestJson<AutomationDetail>(
+        baseUrls,
+        `/v1/automations/${encodeURIComponent(automationId)}/activate`,
+        { method: "POST", token, organizationId: orgId, body: {} },
+      );
+    },
+
+    async deactivateAutomation(orgId: string, automationId: string): Promise<AutomationDetail> {
+      return requestJson<AutomationDetail>(
+        baseUrls,
+        `/v1/automations/${encodeURIComponent(automationId)}/deactivate`,
+        { method: "POST", token, organizationId: orgId, body: {} },
+      );
+    },
+
+    async archiveAutomation(orgId: string, automationId: string): Promise<AutomationDetail> {
+      return requestJson<AutomationDetail>(
+        baseUrls,
+        `/v1/automations/${encodeURIComponent(automationId)}`,
+        { method: "DELETE", token, organizationId: orgId },
+      );
+    },
+
+    async runAutomationNow(orgId: string, automationId: string): Promise<AutomationRun> {
+      const payload = await requestJson<{ run: AutomationRun }>(
+        baseUrls,
+        `/v1/automations/${encodeURIComponent(automationId)}/run`,
+        { method: "POST", token, organizationId: orgId, body: {} },
+      );
+      return payload.run;
+    },
+
+    async listAutomationRuns(
+      orgId: string,
+      automationId: string,
+      options: { cursor?: string; limit?: number } = {},
+    ): Promise<{ items: AutomationRun[]; nextCursor: string | null }> {
+      const params = new URLSearchParams();
+      if (options.cursor) params.set("cursor", options.cursor);
+      if (options.limit) params.set("limit", String(options.limit));
+      const query = params.size > 0 ? `?${params.toString()}` : "";
+      return requestJson<{ items: AutomationRun[]; nextCursor: string | null }>(
+        baseUrls,
+        `/v1/automations/${encodeURIComponent(automationId)}/runs${query}`,
+        { method: "GET", token, organizationId: orgId },
+      );
+    },
+
+    async getAutomationRun(orgId: string, runId: string): Promise<AutomationRunReceipt> {
+      return requestJson<AutomationRunReceipt>(
+        baseUrls,
+        `/v1/automation-runs/${encodeURIComponent(runId)}`,
+        { method: "GET", token, organizationId: orgId },
+      );
+    },
+
+    async cancelAutomationRun(orgId: string, runId: string): Promise<AutomationRun> {
+      const payload = await requestJson<{ run: AutomationRun }>(
+        baseUrls,
+        `/v1/automation-runs/${encodeURIComponent(runId)}/cancel`,
+        { method: "POST", token, organizationId: orgId, body: {} },
+      );
+      return payload.run;
     },
 
     async getOrgLlmProviderConnection(orgId: string, llmProviderId: string): Promise<DenOrgLlmProviderConnection> {

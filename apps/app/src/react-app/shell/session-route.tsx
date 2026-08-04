@@ -6,7 +6,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { useLocation, useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { toast } from "@/components/ui/sonner";
 import type {
   AgentPartInput,
@@ -92,6 +92,7 @@ import {
 import { useLocal } from "@/react-app/kernel/local-provider";
 import { usePlatform } from "@/react-app/kernel/platform";
 import { SessionPage, type OpenSessionTab } from "@/react-app/domains/session/chat/session-page";
+import { AutomationsPage } from "@/react-app/domains/automations/automations-page";
 import type { NewTaskComposerContext } from "@/react-app/domains/session/chat/new-task-composer";
 import { isDesktopProviderBlocked } from "@/app/cloud/desktop-app-restrictions";
 import { useCheckDesktopRestriction } from "@/react-app/domains/cloud/desktop-config-provider";
@@ -199,6 +200,7 @@ import { useSessionControlActions } from "@/react-app/domains/session/control/se
 import {
   globalExtensionsRoute,
   legacySessionRoute,
+  automationsRoute,
   workspaceExtensionsRoute,
   workspaceSessionRoute,
   workspaceSettingsRoute,
@@ -455,16 +457,54 @@ function singlePickedDirectory(selection: string | string[] | null) {
 export function SessionRoute() {
   const navigate = useNavigate();
   const location = useLocation();
+  const automationsRouteRequested = /^\/automations(?:\/|$)/.test(location.pathname);
   const platform = usePlatform();
   const denAuth = useDenAuth();
   const { config: shellConfig } = useShellConfig();
   const local = useLocal();
+  const automationsEnabled = local.prefs.featureFlags?.automations === true;
+  const automationsRouteActive = automationsEnabled && automationsRouteRequested;
+  const denSettings = readDenSettings();
+  const [automationsSupported, setAutomationsSupported] = useState(false);
+  useEffect(() => {
+    if (!automationsRouteRequested || automationsEnabled) return;
+    navigate("/", { replace: true });
+  }, [automationsEnabled, automationsRouteRequested, navigate]);
+  useEffect(() => {
+    const authToken = denSettings.authToken?.trim();
+    const organizationId = denSettings.activeOrgId?.trim();
+    if (!automationsEnabled || !denAuth.isSignedIn || !authToken || !organizationId) {
+      setAutomationsSupported(false);
+      return;
+    }
+    let cancelled = false;
+    void createDenClient({ baseUrl: denSettings.baseUrl, token: authToken })
+      .listAutomations(organizationId, { limit: 1 })
+      .then(() => {
+        if (!cancelled) setAutomationsSupported(true);
+      })
+      .catch(() => {
+        if (!cancelled) setAutomationsSupported(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    automationsEnabled,
+    denAuth.isSignedIn,
+    denAuth.status,
+    denSettings.activeOrgId,
+    denSettings.authToken,
+    denSettings.baseUrl,
+  ]);
+  const automationsNavigationAvailable = automationsEnabled && automationsSupported;
   const reloadCoordinator = useReloadCoordinator();
   const checkDesktopRestriction = useCheckDesktopRestriction();
   const restrictionNotice = useRestrictionNotice();
   const [activeOrganizationRole, setActiveOrganizationRole] = useState<DenOrgRole | null>(null);
   const [openworkServerHostInfoState, setOpenworkServerHostInfoState] = useState<OpenworkServerInfo | null>(null);
   const [openworkServerSettingsVersion, setOpenworkServerSettingsVersion] = useState(0);
+
   const [developerMode, setDeveloperMode] = useState(() => {
     if (typeof window === "undefined") return false;
     return window.localStorage.getItem("openwork.developerMode") === "1";
@@ -519,6 +559,7 @@ export function SessionRoute() {
     runRemoteWorkspaceConnectionCheck,
   } = useWorkspaceRouteState({
     developerMode,
+    workspaceRoute: automationsRouteActive ? "automations" : "session",
     onServerSettingsChanged: () => setOpenworkServerSettingsVersion((value) => value + 1),
     onHostInfo: setOpenworkServerHostInfoState,
   });
@@ -635,7 +676,6 @@ export function SessionRoute() {
       }),
     [selectedWorkspaceId, sessionsByWorkspaceId],
   );
-
   const remoteAccessRestart = useRemoteAccessRestart({
     isEnabled: () => openworkServerSettings.remoteAccessEnabled === true,
     onHostInfo: setOpenworkServerHostInfoState,
@@ -2478,6 +2518,10 @@ export function SessionRoute() {
           }}
         />
       }
+      primaryTitle={automationsRouteActive ? "Automations" : undefined}
+      primarySlot={automationsRouteActive ? (
+        <AutomationsPage />
+      ) : undefined}
       terminalOpen={terminalOpen}
       onTerminalOpenChange={setTerminalOpen}
       onSessionTabsChange={(tabs) => {
@@ -2494,6 +2538,12 @@ export function SessionRoute() {
         newTaskDisabled: !canCreateTask,
         sidebarHydratedFromCache: Object.values(sessionsByWorkspaceId).some((list) => list.length > 0),
         startupPhase: effectiveLoading ? "nativeInit" : "ready",
+        automationsActive: automationsRouteActive,
+        onOpenAutomations: automationsNavigationAvailable
+          ? () => {
+              navigate(automationsRoute());
+            }
+          : undefined,
         onSelectWorkspace: async (workspaceId) => {
           if (workspaceId === selectedWorkspaceId) return true;
           setLegacySelectedWorkspaceId(workspaceId);

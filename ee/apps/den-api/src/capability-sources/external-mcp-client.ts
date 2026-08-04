@@ -40,13 +40,6 @@ import {
   withExternalMcpToolCallInspection,
   type ExternalMcpToolCallInspector,
 } from "./external-mcp-tool-inspection.js"
-import {
-  acquireExternalMcpSession,
-  buildExternalMcpSessionPoolKey,
-  invalidateExternalMcpSessions,
-  type ExternalMcpSessionLease,
-  type ExternalMcpSessionLeaseSlot,
-} from "./external-mcp-session-pool.js"
 
 /**
  * Real MCP client for "add any MCP server" (External MCP Connections) —
@@ -190,9 +183,8 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
   private readonly redirectUri: string
   private readonly signedState?: string
   private readonly member?: ExternalMcpMemberContext
-  private readonly fallbackDiagnostic: ExternalMcpDiagnosticTracker
-  private readonly fallbackLifecycleDeadline?: ExternalMcpLifecycleDeadline
-  private readonly leaseSlot?: ExternalMcpSessionLeaseSlot
+  private readonly diagnostic: ExternalMcpDiagnosticTracker
+  private readonly lifecycleDeadline?: ExternalMcpLifecycleDeadline
   private tokenExchangeCodeVerifier: string | null = null
   /** Captured by redirectToAuthorization so the HTTP route can hand it back to the admin's browser instead of actually redirecting anything server-side. */
   lastAuthorizeUrl: string | null = null
@@ -204,26 +196,16 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
     member: ExternalMcpMemberContext | undefined,
     diagnostic: ExternalMcpDiagnosticTracker,
     lifecycleDeadline?: ExternalMcpLifecycleDeadline,
-    leaseSlot?: ExternalMcpSessionLeaseSlot,
   ) {
     this.connection = connection
     this.redirectUri = redirectUri
     this.signedState = signedState
     this.member = member
-    this.fallbackDiagnostic = diagnostic
-    this.fallbackLifecycleDeadline = lifecycleDeadline
-    this.leaseSlot = leaseSlot
+    this.diagnostic = diagnostic
+    this.lifecycleDeadline = lifecycleDeadline
     if (connection.credentialMode === "per_member" && connection.authType === "oauth" && !member) {
       throw new Error(`Connection "${connection.id}" uses per-member credentials; a member context is required.`)
     }
-  }
-
-  private get diagnostic(): ExternalMcpDiagnosticTracker {
-    return this.leaseSlot?.current?.diagnostic ?? this.fallbackDiagnostic
-  }
-
-  private get lifecycleDeadline(): ExternalMcpLifecycleDeadline | undefined {
-    return this.leaseSlot?.current?.deadline ?? this.fallbackLifecycleDeadline
   }
 
   private get isPerMember(): boolean {
@@ -351,7 +333,6 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
       })
       if (!saved) throw new Error("The external MCP connection identity changed during token persistence.")
       this.tokenExchangeCodeVerifier = null
-      await invalidateExternalMcpSessions(this.connection.id, this.member.orgMembershipId)
       this.diagnostic.passed("AUTH_TOKEN_ACQUISITION")
       return
     }
@@ -374,7 +355,6 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
       connectionId: this.connection.id,
     })
     if (refreshed) this.connection = refreshed
-    await invalidateExternalMcpSessions(this.connection.id)
     this.diagnostic.passed("AUTH_TOKEN_ACQUISITION")
   }
 
@@ -398,7 +378,6 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
           },
         })
         if (!cleared) throw new Error("The external MCP connection identity changed during credential invalidation.")
-        await invalidateExternalMcpSessions(this.connection.id, this.member.orgMembershipId)
       } else {
         const cleared = await clearExternalMcpTokensForIdentity(this.connection)
         if (!cleared) throw new Error("The external MCP connection identity changed during credential invalidation.")
@@ -407,7 +386,6 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
           connectionId: this.connection.id,
         })
         if (refreshed) this.connection = refreshed
-        await invalidateExternalMcpSessions(this.connection.id)
       }
     }
     if ((scope === "all" || scope === "verifier") && !this.isPerMember) {
@@ -471,36 +449,29 @@ function buildTransport(
   diagnosticReferenceId?: string,
   lifecycleDeadline?: ExternalMcpLifecycleDeadline,
   toolCallInspector?: ExternalMcpToolCallInspector,
-  leaseSlot?: ExternalMcpSessionLeaseSlot,
 ) {
   if (connection.kind !== "external_mcp") {
     throw new Error("Native provider connectors do not expose an MCP server.")
   }
-  const diagnostic = buildDiagnostic(connection, diagnosticReferenceId)
+  const diagnostic = new ExternalMcpDiagnosticTracker(diagnosticReferenceId ?? randomUUID(), {
+    authType: connection.authType,
+    credentialMode: connection.credentialMode,
+  })
   const provider = connection.authType === "oauth"
-    ? new ExternalMcpOAuthProvider(connection, redirectUri, signedState, member, diagnostic, lifecycleDeadline, leaseSlot)
+    ? new ExternalMcpOAuthProvider(connection, redirectUri, signedState, member, diagnostic, lifecycleDeadline)
     : undefined
   const guardedFetch = env.allowPrivateMcpUrls ? createRealmSafeFetch() : createGuardedFetch()
-  const fetchWithLease = async (url: string | URL, init?: RequestInit): Promise<Response> => {
-    const current = leaseSlot?.current
-    const currentDiagnostic = current?.diagnostic ?? diagnostic
-    const currentDeadline = current?.deadline ?? lifecycleDeadline
-    const currentInspector = current?.toolCallInspector ?? toolCallInspector
-    const lifecycleFetch = currentDeadline
-      ? bindExternalMcpFetchToLifecycle(guardedFetch, currentDeadline, currentDiagnostic)
-      : guardedFetch
-    const diagnosticFetch = createExternalMcpDiagnosticFetch({ fetch: lifecycleFetch, endpoint: connection.url, tracker: currentDiagnostic })
-    return currentInspector
-      ? currentInspector.observeFetch(diagnosticFetch)(url, init)
-      : diagnosticFetch(url, init)
-  }
+  const lifecycleFetch = lifecycleDeadline
+    ? bindExternalMcpFetchToLifecycle(guardedFetch, lifecycleDeadline, diagnostic)
+    : guardedFetch
+  const diagnosticFetch = createExternalMcpDiagnosticFetch({ fetch: lifecycleFetch, endpoint: connection.url, tracker: diagnostic })
   const transport = new StreamableHTTPClientTransport(new URL(connection.url), {
     authProvider: provider,
     // SSRF guard: every outbound request (the MCP endpoint itself, but also
     // discovery documents and token endpoints the SDK follows to OTHER
     // hosts) is checked against private/reserved address ranges at request
     // time. Hosted-deployment protection; self-hosted/dev opt out via env.
-    fetch: fetchWithLease,
+    fetch: toolCallInspector ? toolCallInspector.observeFetch(diagnosticFetch) : diagnosticFetch,
     requestInit: connection.authType === "apikey" && connection.apiKey
       ? { headers: { authorization: `Bearer ${connection.apiKey}` } }
       : undefined,
@@ -510,87 +481,6 @@ function buildTransport(
 
 function buildClient() {
   return new Client({ name: "openwork-den", version: "1.0.0" }, { capabilities: {} })
-}
-
-function buildDiagnostic(connection: ExternalMcpConnectionRow, diagnosticReferenceId?: string) {
-  return new ExternalMcpDiagnosticTracker(diagnosticReferenceId ?? randomUUID(), {
-    authType: connection.authType,
-    credentialMode: connection.credentialMode,
-  })
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null
-}
-
-function errorProperty(value: unknown, key: string): unknown {
-  return isRecord(value) ? value[key] : undefined
-}
-
-function errorMessage(value: unknown): string {
-  const message = errorProperty(value, "message")
-  return typeof message === "string" ? message : ""
-}
-
-function errorName(value: unknown): string {
-  const name = errorProperty(value, "name")
-  return typeof name === "string" ? name : ""
-}
-
-function errorCode(value: unknown): string | undefined {
-  const code = errorProperty(value, "code")
-  return typeof code === "string" ? code : undefined
-}
-
-function errorStatus(value: unknown): number | undefined {
-  const diagnostic = value instanceof ExternalMcpDiagnosticError ? value.diagnostic : null
-  if (diagnostic?.httpStatus !== undefined) return diagnostic.httpStatus
-  const status = errorProperty(value, "status") ?? errorProperty(value, "statusCode") ?? errorProperty(value, "httpStatus")
-  return typeof status === "number" ? status : undefined
-}
-
-function errorCauses(error: unknown): unknown[] {
-  const causes: unknown[] = []
-  let current: unknown = error
-  for (let depth = 0; depth < 6 && current; depth += 1) {
-    causes.push(current)
-    current = errorProperty(current, "cause")
-  }
-  return causes
-}
-
-function isTransportLevelError(error: unknown): boolean {
-  const transportCodes = new Set([
-    "ECONNRESET",
-    "EPIPE",
-    "ETIMEDOUT",
-    "UND_ERR_SOCKET",
-    "UND_ERR_CONNECT_TIMEOUT",
-    "UND_ERR_HEADERS_TIMEOUT",
-    "UND_ERR_BODY_TIMEOUT",
-  ])
-  return errorCauses(error).some((cause) => {
-    const name = errorName(cause)
-    if (name === "TypeError" || name === "FetchError") return true
-    const code = errorCode(cause)
-    return code ? transportCodes.has(code) : false
-  })
-}
-
-function shouldRetryReusedSessionError(error: unknown): boolean {
-  if (error instanceof ExternalMcpDiagnosticError && error.diagnostic.code === "MCP_LIFECYCLE_DEADLINE") return false
-  if (errorCauses(error).some((cause) => cause instanceof UnauthorizedError)) return true
-  if (error instanceof ExternalMcpDiagnosticError) {
-    if (error.diagnostic.code === "MCP_SESSION_NOT_FOUND") return true
-    if (error.diagnostic.category === "mcp_session_expired") return true
-    if (error.diagnostic.httpStatus === 401) return true
-  }
-  const message = errorCauses(error).map(errorMessage).join(" ").toLowerCase()
-  const sessionStatus = errorCauses(error).map(errorStatus).find((value) => value === 400 || value === 404)
-  if (sessionStatus !== undefined && message.includes("session")) return true
-  const authStatus = errorCauses(error).map(errorStatus).find((value) => value === 401)
-  if (authStatus !== undefined) return true
-  return isTransportLevelError(error)
 }
 
 type ExternalMcpToolPage = Awaited<ReturnType<Client["listTools"]>>
@@ -1032,104 +922,6 @@ export async function abandonExternalMcpAuth(
   if (!cleared) throw new Error("The external MCP connection identity changed during authorization cleanup.")
 }
 
-class ReusedExternalMcpSessionRetry extends Error {
-  readonly originalError: unknown
-
-  constructor(error: unknown) {
-    super("Retrying external MCP operation with a fresh session.")
-    this.name = "ReusedExternalMcpSessionRetry"
-    this.originalError = error
-  }
-}
-
-async function initializeExternalMcpSession(input: {
-  session: ExternalMcpSessionLease
-  diagnostic: ExternalMcpDiagnosticTracker
-  deadline: ExternalMcpLifecycleDeadline
-}): Promise<void> {
-  if (input.session.reused) return
-  await runExternalMcpRequestWithinDeadline({
-    deadline: input.deadline,
-    diagnostic: input.diagnostic,
-    phase: "MCP_INITIALIZE",
-    operation: (options) => input.session.client.connect(input.session.transport, options),
-  })
-  input.diagnostic.passed("MCP_INITIALIZED", "protocol_ready")
-}
-
-async function runExternalMcpSessionOperation<T>(input: {
-  connection: ExternalMcpConnectionRow
-  redirectUri: string
-  member?: ExternalMcpMemberContext
-  diagnosticReferenceId?: string
-  deadline: ExternalMcpLifecycleDeadline
-  toolCallInspector?: ExternalMcpToolCallInspector
-  operation: (client: Client, diagnostic: ExternalMcpDiagnosticTracker) => Promise<T>
-}): Promise<T> {
-  const diagnostic = buildDiagnostic(input.connection, input.diagnosticReferenceId)
-  let key: Awaited<ReturnType<typeof buildExternalMcpSessionPoolKey>>
-  try {
-    key = await buildExternalMcpSessionPoolKey({ connection: input.connection, member: input.member })
-  } catch (error) {
-    throw diagnostic.error(error, "CONFIGURATION")
-  }
-
-  const factory = async (leaseSlot: ExternalMcpSessionLeaseSlot) => {
-    const client = buildClient()
-    const { transport } = buildTransport(
-      input.connection,
-      input.redirectUri,
-      undefined,
-      input.member,
-      undefined,
-      input.deadline,
-      input.toolCallInspector,
-      leaseSlot,
-    )
-    return { client, transport }
-  }
-
-  const runAttempt = async (fresh: boolean): Promise<T> => {
-    const session = await acquireExternalMcpSession({
-      key,
-      lease: {
-        deadline: input.deadline,
-        diagnostic,
-        ...(input.toolCallInspector ? { toolCallInspector: input.toolCallInspector } : {}),
-      },
-      factory,
-      fresh,
-    })
-    let operationError: unknown
-    try {
-      await initializeExternalMcpSession({ session, diagnostic, deadline: input.deadline })
-      return await input.operation(session.client, diagnostic)
-    } catch (error) {
-      operationError = error
-      const diagnosticError = diagnostic.error(error)
-      if (session.reused && shouldRetryReusedSessionError(diagnosticError)) {
-        await session.evict()
-        throw new ReusedExternalMcpSessionRetry(diagnosticError)
-      }
-      if (!session.reused && session.pooled) await session.evict()
-      throw diagnosticError
-    } finally {
-      try {
-        await session.release()
-      } catch (error) {
-        if (!operationError) throw diagnostic.error(error, "SHUTDOWN")
-      }
-    }
-  }
-
-  try {
-    return await runAttempt(false)
-  } catch (error) {
-    if (error instanceof ReusedExternalMcpSessionRetry) return await runAttempt(true)
-    throw error
-  }
-}
-
 export async function listExternalMcpTools(
   connection: ExternalMcpConnectionRow,
   redirectUri: string,
@@ -1140,19 +932,40 @@ export async function listExternalMcpTools(
   if (connection.kind !== "external_mcp") {
     throw new Error("Native provider connectors do not expose an MCP tool catalog.")
   }
+  const client = buildClient()
   const deadline = lifecycleDeadline ?? createExternalMcpLifecycleDeadline()
-  return runExternalMcpSessionOperation({
+  const { transport, diagnostic } = buildTransport(
     connection,
     redirectUri,
+    undefined,
     member,
     diagnosticReferenceId,
     deadline,
-    operation: (client, diagnostic) => collectExternalMcpToolPages({
+  )
+  let operationError: unknown
+  try {
+    await runExternalMcpRequestWithinDeadline({
+      deadline,
+      diagnostic,
+      phase: "MCP_INITIALIZE",
+      operation: (options) => client.connect(transport, options),
+    })
+    diagnostic.passed("MCP_INITIALIZED", "protocol_ready")
+    return await collectExternalMcpToolPages({
       diagnostic,
       deadline,
       listPage: (cursor, options) => client.listTools(cursor ? { cursor } : undefined, options),
-    }),
-  })
+    })
+  } catch (error) {
+    operationError = error
+    throw diagnostic.error(error)
+  } finally {
+    try {
+      await client.close()
+    } catch (error) {
+      if (!operationError) throw diagnostic.error(error, "SHUTDOWN")
+    }
+  }
 }
 
 type ExternalMcpToolCallInput = {
@@ -1162,7 +975,6 @@ type ExternalMcpToolCallInput = {
   args: Record<string, unknown>
   member?: ExternalMcpMemberContext
   diagnosticReferenceId?: string
-  lifecycleDeadline?: ExternalMcpLifecycleDeadline
 }
 
 async function runExternalMcpToolCall(
@@ -1172,30 +984,49 @@ async function runExternalMcpToolCall(
   if (input.connection.kind !== "external_mcp") {
     throw new Error("Native provider connectors do not expose MCP tools.")
   }
-  const deadline = input.lifecycleDeadline ?? createExternalMcpLifecycleDeadline(EXTERNAL_MCP_TOOL_LIFECYCLE_TIMEOUT_MS)
-  return runExternalMcpSessionOperation({
-    connection: input.connection,
-    redirectUri: input.redirectUri,
-    member: input.member,
-    diagnosticReferenceId: input.diagnosticReferenceId,
+  const client = buildClient()
+  const deadline = createExternalMcpLifecycleDeadline(EXTERNAL_MCP_TOOL_LIFECYCLE_TIMEOUT_MS)
+  const { transport, diagnostic } = buildTransport(
+    input.connection,
+    input.redirectUri,
+    undefined,
+    input.member,
+    input.diagnosticReferenceId,
     deadline,
     toolCallInspector,
-    operation: async (client, diagnostic) => {
-      diagnostic.begin("MCP_TOOL_EXECUTION")
-      const result = await runExternalMcpRequestWithinDeadline({
-        deadline,
-        diagnostic,
-        phase: "MCP_TOOL_EXECUTION",
-        requestTimeoutMs: EXTERNAL_MCP_TOOL_CALL_TIMEOUT_MS,
-        operation: (options) => client.callTool({ name: input.toolName, arguments: input.args }, undefined, options),
-      })
-      if (result.isError) {
-        throw providerToolDiagnosticError({ tracker: diagnostic, result })
-      }
-      diagnostic.passed("PROVIDER_EXECUTION", "operation_ready")
-      return result
-    },
-  })
+  )
+  let operationError: unknown
+  try {
+    await runExternalMcpRequestWithinDeadline({
+      deadline,
+      diagnostic,
+      phase: "MCP_INITIALIZE",
+      operation: (options) => client.connect(transport, options),
+    })
+    diagnostic.passed("MCP_INITIALIZED", "protocol_ready")
+    diagnostic.begin("MCP_TOOL_EXECUTION")
+    const result = await runExternalMcpRequestWithinDeadline({
+      deadline,
+      diagnostic,
+      phase: "MCP_TOOL_EXECUTION",
+      requestTimeoutMs: EXTERNAL_MCP_TOOL_CALL_TIMEOUT_MS,
+      operation: (options) => client.callTool({ name: input.toolName, arguments: input.args }, undefined, options),
+    })
+    if (result.isError) {
+      throw providerToolDiagnosticError({ tracker: diagnostic, result })
+    }
+    diagnostic.passed("PROVIDER_EXECUTION", "operation_ready")
+    return result
+  } catch (error) {
+    operationError = error
+    throw diagnostic.error(error)
+  } finally {
+    try {
+      await client.close()
+    } catch (error) {
+      if (!operationError) throw diagnostic.error(error, "SHUTDOWN")
+    }
+  }
 }
 
 export function callExternalMcpTool(input: ExternalMcpToolCallInput) {

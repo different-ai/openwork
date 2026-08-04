@@ -42,6 +42,8 @@
 #                           — standard OpenTelemetry sampler controls
 #   SENTRY_DSN / SENTRY_TRACES_SAMPLE_RATE / SENTRY_ENVIRONMENT / SENTRY_RELEASE / SENTRY_DIST
 #                           — optional Sentry runtime settings (source-map upload is build-time only)
+#   DEN_AUTOMATIONS_POLL_INTERVAL_MS and friends
+#                           — tune Den's always-on in-process Automation loop
 
 x-shared: &shared
   restart: unless-stopped
@@ -143,6 +145,12 @@ services:
       DAYTONA_API_KEY: ${DAYTONA_API_KEY:-}
       DAYTONA_TARGET: ${DAYTONA_TARGET:-}
       DAYTONA_SNAPSHOT: ${DAYTONA_SNAPSHOT:-}
+      DEN_AUTOMATIONS_POLL_INTERVAL_MS: ${DEN_AUTOMATIONS_POLL_INTERVAL_MS:-15000}
+      DEN_AUTOMATIONS_BATCH_SIZE: ${DEN_AUTOMATIONS_BATCH_SIZE:-25}
+      DEN_AUTOMATIONS_MAX_CONCURRENCY: ${DEN_AUTOMATIONS_MAX_CONCURRENCY:-4}
+      DEN_AUTOMATIONS_LEASE_MS: ${DEN_AUTOMATIONS_LEASE_MS:-60000}
+      DEN_AUTOMATIONS_RUN_TIMEOUT_MS: ${DEN_AUTOMATIONS_RUN_TIMEOUT_MS:-900000}
+      DEN_AUTOMATIONS_RUNNER_CLAIM_DEADLINE_MS: ${DEN_AUTOMATIONS_RUNNER_CLAIM_DEADLINE_MS:-60000}
 
   web:
     <<: *shared

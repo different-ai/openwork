@@ -38,8 +38,6 @@ const tokens = new Set();
 const refreshTokens = new Set();
 const requests = [];
 const drafts = [];
-const mcpSessions = new Set();
-let mcpSessionSequence = 0;
 
 const gmailThreadId = "thread-q3-launch";
 
@@ -432,11 +430,6 @@ function tokenFingerprint(req) {
   return createHash("sha256").update(token).digest("hex").slice(0, 12);
 }
 
-function mcpSessionId(req) {
-  const value = req.headers["mcp-session-id"];
-  return typeof value === "string" && value.trim() ? value.trim() : null;
-}
-
 function mcpResult(message) {
   switch (message.method) {
     case "initialize":
@@ -572,43 +565,11 @@ function mcpResponse(message) {
 }
 
 async function handleMcp(req, res) {
-  const body = await readJson(req).catch(() => ({}));
-  const messages = Array.isArray(body) ? body : [body];
-  const entry = requests[requests.length - 1];
   const authorized = isAuthorized(req);
-  const tokenId = tokenFingerprint(req);
-  const receivedSessionId = mcpSessionId(req);
-  const initializeMessages = messages.filter((message) => message && typeof message === "object" && message.method === "initialize");
-  const issuedSessionId = authorized && initializeMessages.length > 0
-    ? `mock-session-${++mcpSessionSequence}`
-    : null;
-  if (issuedSessionId) mcpSessions.add(issuedSessionId);
-  if (entry) {
-    entry.authorized = authorized;
-    entry.rpcMethods = messages
-      .filter((message) => message && typeof message === "object" && typeof message.method === "string")
-      .map((message) => message.method);
-    entry.handshakes = initializeMessages.map(() => ({
-      atIso: entry.at,
-      tokenId,
-      sessionId: issuedSessionId,
-    }));
-  }
   if (!authorized) {
     json(res, 401, { error: "missing_mcp_token" }, {
       "www-authenticate": `Bearer resource_metadata="${issuer}/.well-known/oauth-protected-resource"`,
     });
-    return;
-  }
-
-  if (req.method === "DELETE") {
-    if (receivedSessionId && !mcpSessions.has(receivedSessionId)) {
-      json(res, 404, { error: "unknown_mcp_session" });
-      return;
-    }
-    if (receivedSessionId) mcpSessions.delete(receivedSessionId);
-    res.writeHead(204, { "access-control-allow-origin": "*" });
-    res.end();
     return;
   }
 
@@ -617,26 +578,27 @@ async function handleMcp(req, res) {
     return;
   }
 
-  if (initializeMessages.length === 0 && receivedSessionId && !mcpSessions.has(receivedSessionId)) {
-    json(res, 404, { error: "unknown_mcp_session" });
-    return;
-  }
-
+  const body = await readJson(req).catch(() => ({}));
+  const messages = Array.isArray(body) ? body : [body];
+  const entry = requests[requests.length - 1];
   if (entry) {
+    entry.authorized = authorized;
+    entry.rpcMethods = messages
+      .filter((message) => message && typeof message === "object" && typeof message.method === "string")
+      .map((message) => message.method);
     entry.toolNames = messages
       .filter((message) => message && typeof message === "object" && message.method === "tools/call" && typeof message.params?.name === "string")
       .map((message) => message.params.name);
     // Arguments + a token fingerprint make the connector the AUTHORITY on who
     // called it: a spec can prove two members each invoked a tool with their own
     // credential, without trusting the app's own UI state.
-    entry.tokenId = tokenId;
+    entry.tokenId = tokenFingerprint(req);
     entry.toolCalls = messages
       .filter((message) => message && typeof message === "object" && message.method === "tools/call" && typeof message.params?.name === "string")
       .map((message) => ({
         name: message.params.name,
         args: message.params.arguments ?? message.params.args ?? {},
         tokenId: entry.tokenId,
-        sessionId: receivedSessionId,
       }));
   }
   const responses = messages.flatMap((message) => {
@@ -650,12 +612,7 @@ async function handleMcp(req, res) {
     return;
   }
 
-  json(
-    res,
-    200,
-    Array.isArray(body) ? responses : responses[0],
-    issuedSessionId ? { "mcp-session-id": issuedSessionId } : {},
-  );
+  json(res, 200, Array.isArray(body) ? responses : responses[0]);
 }
 
 const server = http.createServer(async (req, res) => {
@@ -734,15 +691,6 @@ const server = http.createServer(async (req, res) => {
       tokens.clear();
       refreshTokens.clear();
       json(res, 200, { expiredAccessTokens, expiredRefreshTokens });
-      return;
-    }
-
-    // Test hook: make every currently-issued Streamable HTTP session unknown.
-    // The next request carrying one of those ids receives the spec's 404 path.
-    if (url.pathname === "/admin/invalidate-mcp-sessions" && req.method === "POST") {
-      const invalidated = mcpSessions.size;
-      mcpSessions.clear();
-      json(res, 200, { invalidated });
       return;
     }
 

@@ -6,6 +6,7 @@ import { OrganizationTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { openworkCloudMcpConnectionActionSchema } from "@openwork/types/den/mcp-connection-action"
 import type { Hono } from "hono"
+import type { RequestIdVariables } from "hono/request-id"
 import { z } from "zod"
 import { memberFacingMcpConnectionsEnabled } from "../capability-sources/external-mcp-rollout.js"
 import { publicRoute, tokenRoute } from "../middleware/index.js"
@@ -352,7 +353,7 @@ export function registerAgentSkillResources(input: {
  * these two tools; the other ~127 operations are not individually callable
  * on this endpoint.
  */
-export function registerAgentMcpRoutes<T extends { Variables: Record<string, unknown> }>(app: Hono<T>) {
+export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables & Record<string, unknown> }>(app: Hono<T>) {
   app.get("/.well-known/oauth-protected-resource/mcp/agent", publicRoute, (c) =>
     c.json(protectedResourceMetadata(c.req.raw, "agent")))
   app.get("/mcp/agent/.well-known/oauth-protected-resource", publicRoute, (c) =>

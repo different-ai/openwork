@@ -1,0 +1,309 @@
+import { z } from "zod"
+
+const idSchema = z.string().trim().min(1).max(160)
+const timestampSchema = z.number().int().nonnegative()
+const nullableTimestampSchema = timestampSchema.nullable()
+const timezoneSchema = z.string().trim().min(1).max(120).refine((timezone) => {
+  try {
+    new Intl.DateTimeFormat("en", { timeZone: timezone }).format(new Date(0))
+    return true
+  } catch {
+    return false
+  }
+}, "Expected a valid IANA timezone")
+
+export const automationStateSchema = z.enum(["active", "inactive", "needs_attention", "archived"])
+export type AutomationState = z.infer<typeof automationStateSchema>
+
+export const automationRunStatusSchema = z.enum([
+  "queued", "claimed", "running", "succeeded", "failed", "cancelled", "skipped",
+])
+export type AutomationRunStatus = z.infer<typeof automationRunStatusSchema>
+
+export const automationRunTriggerSchema = z.enum(["scheduled", "recovery", "manual"])
+export type AutomationRunTrigger = z.infer<typeof automationRunTriggerSchema>
+
+export const automationScheduleSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("once"), timezone: timezoneSchema, at: timestampSchema }),
+  z.object({
+    kind: z.literal("daily"),
+    timezone: timezoneSchema,
+    hour: z.number().int().min(0).max(23),
+    minute: z.number().int().min(0).max(59),
+  }),
+  z.object({
+    kind: z.literal("weekly"),
+    timezone: timezoneSchema,
+    daysOfWeek: z.array(z.number().int().min(0).max(6)).min(1).max(7)
+      .transform((days) => [...new Set(days)].sort((left, right) => left - right)),
+    hour: z.number().int().min(0).max(23),
+    minute: z.number().int().min(0).max(59),
+  }),
+])
+export type AutomationSchedule = z.infer<typeof automationScheduleSchema>
+
+export const automationModelSchema = z.object({ providerId: idSchema, modelId: idSchema })
+export type AutomationModel = z.infer<typeof automationModelSchema>
+
+/**
+ * Canonical identity for the free Automation starter model. Runtime provider
+ * configuration belongs to the desktop's OpenCode installation, not Den.
+ */
+export const AUTOMATION_FREE_MODEL = {
+  providerId: "opencode",
+  modelId: "big-pickle",
+  providerName: "OpenCode Zen",
+  modelName: "Big Pickle",
+} as const
+
+export const automationNeedsAttentionReasonSchema = z.object({
+  code: z.enum([
+    "owner_membership_lost",
+    "model_access_lost",
+    "provider_unavailable",
+    "connect_access_unavailable",
+    "execution_runtime_unavailable",
+  ]),
+  message: z.string().trim().min(1).max(2_000),
+  occurredAt: timestampSchema,
+})
+export type AutomationNeedsAttentionReason = z.infer<typeof automationNeedsAttentionReasonSchema>
+
+export const automationSchema = z.object({
+  id: idSchema,
+  organizationId: idSchema,
+  ownerMemberId: idSchema,
+  name: z.string().trim().min(1).max(120),
+  state: automationStateSchema,
+  currentRevisionId: idSchema,
+  nextDueAt: nullableTimestampSchema,
+  latestRunAt: nullableTimestampSchema,
+  needsAttentionReason: automationNeedsAttentionReasonSchema.nullable(),
+  createdAt: timestampSchema,
+  updatedAt: timestampSchema,
+  archivedAt: nullableTimestampSchema,
+})
+export type Automation = z.infer<typeof automationSchema>
+
+export const automationRevisionSchema = z.object({
+  id: idSchema,
+  automationId: idSchema,
+  version: z.number().int().positive(),
+  instructions: z.string().trim().min(1).max(100_000),
+  schedule: automationScheduleSchema,
+  model: automationModelSchema,
+  executionTarget: z.literal("desktop"),
+  maximumRuntimeMs: z.number().int().min(10_000).max(60 * 60 * 1_000),
+  digest: z.string().trim().min(16).max(128),
+  createdAt: timestampSchema,
+})
+export type AutomationRevision = z.infer<typeof automationRevisionSchema>
+
+export const automationErrorSchema = z.object({
+  code: z.enum([
+    "owner_membership_lost",
+    "model_access_lost",
+    "provider_unavailable",
+    "connect_access_unavailable",
+    "execution_runtime_unavailable",
+    "execution_failed",
+    "execution_timed_out",
+    "runner_unavailable",
+    "cancelled",
+    "lease_lost",
+    "internal_error",
+  ]),
+  message: z.string().trim().min(1).max(2_000),
+  retryable: z.boolean(),
+})
+export type AutomationError = z.infer<typeof automationErrorSchema>
+
+export const automationUsageSchema = z.object({
+  inputTokens: z.number().int().nonnegative().nullable(),
+  outputTokens: z.number().int().nonnegative().nullable(),
+  costMicros: z.number().int().nonnegative().nullable(),
+})
+export type AutomationUsage = z.infer<typeof automationUsageSchema>
+
+export const automationExecutionThreadSchema = z.object({
+  id: idSchema,
+  threadKind: z.literal("automation"),
+  executionLocation: z.literal("desktop"),
+  automationId: idSchema,
+  automationRunId: idSchema,
+  engineKind: idSchema,
+})
+export type AutomationExecutionThread = z.infer<typeof automationExecutionThreadSchema>
+
+/**
+ * Execution targets are intentionally a protocol seam. Desktop is the only
+ * implemented target; a future sandbox target can be added without moving
+ * scheduling out of Den.
+ */
+export const automationExecutionTargetSchema = z.literal("desktop")
+export type AutomationExecutionTarget = z.infer<typeof automationExecutionTargetSchema>
+
+export const automationDesktopRunnerRegistrationSchema = z.object({
+  runnerId: idSchema.min(8),
+  protocolVersion: z.literal(1),
+  supportedExecutionTargets: z.array(automationExecutionTargetSchema).length(1),
+  appVersion: z.string().trim().min(1).max(80),
+  platform: z.enum(["darwin", "win32", "linux"]),
+  concurrency: z.number().int().min(1).max(4),
+})
+export type AutomationDesktopRunnerRegistration = z.infer<typeof automationDesktopRunnerRegistrationSchema>
+
+export const automationRunnerNotificationSchema = z.object({
+  type: z.enum(["automation_work_available", "automation_cancellation_available"]),
+  cursor: z.string().trim().min(1).max(40),
+}).strict()
+export type AutomationRunnerNotification = z.infer<typeof automationRunnerNotificationSchema>
+
+export const automationRunnerWorkItemSchema = z.object({
+  runId: idSchema,
+  executionTarget: automationExecutionTargetSchema,
+})
+export const automationRunnerWorkResponseSchema = z.object({
+  items: z.array(automationRunnerWorkItemSchema).max(4),
+})
+export type AutomationRunnerWorkResponse = z.infer<typeof automationRunnerWorkResponseSchema>
+
+export const automationDesktopRunnerAssignmentSchema = z.object({
+  executionTarget: automationExecutionTargetSchema,
+  runId: idSchema,
+  automationId: idSchema,
+  automationName: z.string().trim().min(1).max(120),
+  instructions: z.string().trim().min(1).max(100_000),
+  model: automationModelSchema,
+  timeoutMs: z.number().int().min(10_000).max(60 * 60 * 1_000),
+  leaseExpiresAt: timestampSchema,
+  attempt: z.number().int().positive(),
+})
+export type AutomationDesktopRunnerAssignment = z.infer<typeof automationDesktopRunnerAssignmentSchema>
+
+export const automationDesktopRunnerResultSchema = z.object({
+  attempt: z.number().int().positive(),
+  status: z.enum(["succeeded", "failed", "cancelled"]),
+  sessionId: z.string().trim().min(1).max(240).nullable(),
+  workspaceId: z.string().trim().min(1).max(240).nullable(),
+  resultSummary: z.string().max(20_000).nullable(),
+  usage: automationUsageSchema,
+  error: automationErrorSchema.nullable(),
+})
+export type AutomationDesktopRunnerResult = z.infer<typeof automationDesktopRunnerResultSchema>
+
+export const automationRunnerHeartbeatRequestSchema = z.object({ attempt: z.number().int().positive() })
+export const automationRunnerHeartbeatResponseSchema = z.object({
+  attempt: z.number().int().positive(),
+  leaseValid: z.literal(true),
+  cancelRequested: z.boolean(),
+  leaseExpiresAt: timestampSchema,
+})
+export const automationRunnerEventRequestSchema = z.object({
+  attempt: z.number().int().positive(),
+  sequence: z.number().int().positive(),
+  type: z.enum(["user", "assistant", "capability_search", "capability_execution", "usage", "warning", "terminal"]),
+  payload: z.record(z.string(), z.unknown()),
+  createdAt: timestampSchema,
+})
+export const automationRunnerLeaseRejectionSchema = z.object({
+  error: z.literal("runner_lease_lost"),
+})
+export const automationRunnerUnavailableOutcomeSchema = z.object({
+  status: z.literal("skipped"),
+  reason: z.literal("runner_unavailable"),
+  executionTarget: automationExecutionTargetSchema,
+})
+
+export const automationRunnerTokenResponseSchema = z.object({
+  token: z.string().trim().min(32).max(512),
+  expiresAt: timestampSchema,
+  eventsPath: z.literal("/v1/automation-runners/events"),
+})
+export type AutomationRunnerTokenResponse = z.infer<typeof automationRunnerTokenResponseSchema>
+
+export const automationRunSchema = z.object({
+  id: idSchema,
+  automationId: idSchema,
+  revisionId: idSchema,
+  trigger: automationRunTriggerSchema,
+  scheduledFor: nullableTimestampSchema,
+  idempotencyKey: z.string().trim().min(1).max(512),
+  status: automationRunStatusSchema,
+  leaseOwner: z.string().trim().min(1).max(240).nullable(),
+  leaseExpiresAt: nullableTimestampSchema,
+  heartbeatAt: nullableTimestampSchema,
+  attemptCount: z.number().int().min(0).max(2),
+  executionTarget: automationExecutionTargetSchema,
+  executionThread: automationExecutionThreadSchema.nullable(),
+  providerId: idSchema,
+  modelId: idSchema,
+  startedAt: nullableTimestampSchema,
+  finishedAt: nullableTimestampSchema,
+  error: automationErrorSchema.nullable(),
+  resultSummary: z.string().max(20_000).nullable(),
+  usage: automationUsageSchema,
+  createdAt: timestampSchema,
+  updatedAt: timestampSchema,
+})
+export type AutomationRun = z.infer<typeof automationRunSchema>
+
+export const automationRunEventTypeSchema = z.enum([
+  "user", "assistant", "capability_search", "capability_execution", "usage", "warning", "terminal",
+])
+export type AutomationRunEventType = z.infer<typeof automationRunEventTypeSchema>
+
+export const automationRunEventSchema = z.object({
+  id: idSchema,
+  runId: idSchema,
+  attempt: z.number().int().positive(),
+  sequence: z.number().int().positive(),
+  type: automationRunEventTypeSchema,
+  payload: z.record(z.string(), z.unknown()),
+  createdAt: timestampSchema,
+})
+export type AutomationRunEvent = z.infer<typeof automationRunEventSchema>
+
+export const createAutomationSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  instructions: z.string().trim().min(1).max(100_000),
+  schedule: automationScheduleSchema,
+  model: automationModelSchema,
+})
+export type CreateAutomation = z.infer<typeof createAutomationSchema>
+
+export const updateAutomationSchema = createAutomationSchema.partial().refine(
+  (input) => Object.keys(input).length > 0,
+  "At least one behavior-changing field is required",
+)
+export type UpdateAutomation = z.infer<typeof updateAutomationSchema>
+
+export const automationListSchema = z.object({
+  items: z.array(z.object({
+    automation: automationSchema,
+    revision: automationRevisionSchema,
+    latestRun: automationRunSchema.nullable(),
+  })),
+  nextCursor: z.string().nullable(),
+})
+export type AutomationList = z.infer<typeof automationListSchema>
+
+export const automationDetailSchema = z.object({
+  automation: automationSchema,
+  revision: automationRevisionSchema,
+  latestRun: automationRunSchema.nullable(),
+})
+export type AutomationDetail = z.infer<typeof automationDetailSchema>
+
+export const automationRunReceiptSchema = z.object({
+  run: automationRunSchema,
+  automation: automationSchema,
+  revision: automationRevisionSchema,
+  events: z.array(automationRunEventSchema),
+})
+export type AutomationRunReceipt = z.infer<typeof automationRunReceiptSchema>
+
+export const AUTOMATION_MAXIMUM_ATTEMPTS = 2
+export const AUTOMATION_RETRY_DELAY_MS = 30_000
+export const AUTOMATION_DEFAULT_MAXIMUM_RUNTIME_MS = 15 * 60_000
+export const AUTOMATION_MAXIMUM_RUNTIME_MS = 60 * 60_000

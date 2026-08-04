@@ -63,12 +63,14 @@ import {
   preserveWorkspaceRouteSession,
   removeWorkspaceRouteSession,
   sessionIdForLegacyWorkspaceInference,
+  automationsRoute,
   workspaceExtensionsRoute,
   workspaceSessionRoute,
 } from "./workspace-routes";
 
 export type UseWorkspaceRouteStateInput = {
   developerMode: boolean;
+  workspaceRoute?: "session" | "automations";
   /** Invoked when the openwork-server settings-changed event fires (the route bumps its settings version). */
   onServerSettingsChanged: () => void;
   /** Receives the local openwork-server host info discovered during refresh. */
@@ -104,7 +106,7 @@ function withRouteRefreshTimeout<T>(promise: Promise<T>, label: string): Promise
 }
 
 export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
-  const { developerMode, onServerSettingsChanged, onHostInfo } = input;
+  const { developerMode, onServerSettingsChanged, onHostInfo, workspaceRoute = "session" } = input;
   const navigate = useNavigate();
   const location = useLocation();
   const local = useLocal();
@@ -128,6 +130,18 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
     }
     navigate(workspaceSessionRoute(id, sessionId), options);
   }, [navigate]);
+  const normalizeWorkspaceRoute = useCallback((workspaceId: string, sessionId?: string | null, options?: { replace?: boolean }) => {
+    if (extensionsRouteActive) {
+      navigate(workspaceExtensionsRoute(workspaceId, extensionsRoutePath), options);
+      return;
+    }
+    if (workspaceRoute === "automations") {
+      if (/^\/automations(?:\/|$)/.test(location.pathname)) return;
+      navigate(automationsRoute(), options);
+      return;
+    }
+    navigateToWorkspaceSession(workspaceId, sessionId, options);
+  }, [extensionsRouteActive, extensionsRoutePath, location.pathname, navigate, navigateToWorkspaceSession, workspaceRoute]);
 
   const { markRouteReady: markBootRouteReady } = useBootState();
   const [loading, setLoading] = useState(true);
@@ -763,28 +777,19 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
         ? legacySelectedWorkspaceId
         : workspaces[0]?.id || "";
       if (fallbackWorkspaceId) {
-        if (extensionsRouteActive) {
-          navigate(workspaceExtensionsRoute(fallbackWorkspaceId, extensionsRoutePath), { replace: true });
-        } else {
-          navigateToWorkspaceSession(fallbackWorkspaceId, selectedSessionId, { replace: true });
-        }
+        normalizeWorkspaceRoute(fallbackWorkspaceId, selectedSessionId, { replace: true });
       }
       return;
     }
     if (!routeWorkspaceId && selectedWorkspaceId) {
-      if (extensionsRouteActive) {
-        navigate(workspaceExtensionsRoute(selectedWorkspaceId, extensionsRoutePath), { replace: true });
-      } else {
-        navigateToWorkspaceSession(selectedWorkspaceId, selectedSessionId, { replace: true });
-      }
+      normalizeWorkspaceRoute(selectedWorkspaceId, selectedSessionId, { replace: true });
     }
   }, [
     extensionsRouteActive,
     extensionsRoutePath,
     loading,
     legacySelectedWorkspaceId,
-    navigate,
-    navigateToWorkspaceSession,
+    normalizeWorkspaceRoute,
     routeWorkspaceId,
     selectedSessionId,
     selectedWorkspaceId,

@@ -8,11 +8,13 @@ import { startCloudIdleStopLoop } from "./workers/cloud-lifecycle.js"
 import { startWorkerProvisioningReconcileLoop } from "./workers/reconciler.js"
 import { startTelegramUpdateDispatcher } from "./capability-sources/telegram-dispatcher.js"
 import { externalMcpClientRuntimeName } from "./capability-sources/external-mcp-client-runtime.js"
+import { startAutomationSchedulerLoop } from "./automations/scheduler-loop.js"
 
 const stopScimMaintenanceLoop = startScimMaintenanceLoop()
 const stopCloudIdleStopLoop = startCloudIdleStopLoop()
 const stopWorkerProvisioningReconcileLoop = startWorkerProvisioningReconcileLoop()
 const stopTelegramUpdateDispatcher = startTelegramUpdateDispatcher()
+const automationScheduler = startAutomationSchedulerLoop()
 
 appLogger.info("external mcp implementation selected", { component: "server", runtime: externalMcpClientRuntimeName })
 
@@ -75,6 +77,7 @@ async function stopBackgroundLoops() {
     stopCloudIdleStopLoop(),
     stopWorkerProvisioningReconcileLoop(),
     stopTelegramUpdateDispatcher(),
+    automationScheduler.stop(),
   ])
 
   for (const result of results) {
