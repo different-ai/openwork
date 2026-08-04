@@ -111,17 +111,17 @@ export function AgentAccessCard(props: {
   const missingContextSummary = signedIn && busy === null && !context
     ? !props.workspaceId?.trim()
       ? {
-          status: "degraded" as const,
-          statusLabel: "Degraded",
-          tone: "error" as const,
+          status: "not_checked" as const,
+          statusLabel: "Not checked",
+          tone: "neutral" as const,
           stageLabel: "Select a workspace",
           recommendedAction: "Choose the workspace agents should use.",
         }
       : !props.client?.baseUrl.trim()
         ? {
-            status: "degraded" as const,
-            statusLabel: "Degraded",
-            tone: "error" as const,
+            status: "not_checked" as const,
+            statusLabel: "Not checked",
+            tone: "neutral" as const,
             stageLabel: "Connect the workspace server",
             recommendedAction: "Restore the workspace server connection.",
           }
