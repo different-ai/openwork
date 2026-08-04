@@ -150,4 +150,32 @@ describe("workspace route list merging", () => {
     expect(result.workspaces).toEqual(previouslyKnownWorkspaces);
     expect(result.error).toBeInstanceOf(Error);
   });
+
+  test("retries transient workspace-list failures during startup", async () => {
+    let attempts = 0;
+    const waits: number[] = [];
+    const result = await refreshRouteWorkspaceListState({
+      load: async () => {
+        attempts += 1;
+        if (attempts < 3) throw new Error("Failed to fetch");
+        return { items: previouslyKnownWorkspaces, activeId: previouslyKnownWorkspaces[0]?.id };
+      },
+      desktopWorkspaces,
+      previousWorkspaces: [],
+      orderIds: [],
+      retryDelaysMs: [250, 750, 1_500],
+      wait: async (delayMs) => {
+        waits.push(delayMs);
+      },
+    });
+
+    expect(attempts).toBe(3);
+    expect(waits).toEqual([250, 750]);
+    expect(result.error).toBeNull();
+    expect(result.usable).toBe(true);
+    expect(result.workspaces.map((workspace) => workspace.id)).toEqual([
+      "workspace-known",
+      "workspace-desktop",
+    ]);
+  });
 });

@@ -35,11 +35,12 @@ describe("OpenWork Connect status", () => {
     expect(resolveOpenWorkConnectStatus(false, maintenance("ready"))).toBeNull();
   });
 
-  test("maps the shared lifecycle to checking, ready, and needs attention", () => {
-    expect(resolveOpenWorkConnectStatus(true, undefined)).toMatchObject({
-      state: "checking",
-      label: "Checking",
-    });
+  test("hides the workspace-scoped signal until maintenance can actually run", () => {
+    expect(resolveOpenWorkConnectStatus(true, undefined)).toBeNull();
+    expect(resolveOpenWorkConnectStatus(true, maintenance("idle"))).toBeNull();
+  });
+
+  test("maps the active lifecycle to checking, ready, and needs attention", () => {
     expect(resolveOpenWorkConnectStatus(true, maintenance("checking"))).toMatchObject({
       state: "checking",
       label: "Checking",

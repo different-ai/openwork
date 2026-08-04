@@ -457,6 +457,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
         desktopWorkspaces,
         previousWorkspaces: workspacesRef.current,
         orderIds: workspaceOrderIdsRef.current,
+        retryDelaysMs: [250, 750, 1_500],
       });
       if (!workspaceListState.usable || workspaceListState.error) {
         const message = workspaceListState.error

@@ -16,7 +16,12 @@ export function resolveOpenWorkConnectStatus(
 ): OpenWorkConnectStatus | null {
   if (!signedIn) return null;
 
-  if (maintenance?.status === "ready") {
+  // Maintenance is workspace-scoped. With no usable workspace (including a
+  // transient startup failure), the hook stays idle and no check is running.
+  // Hiding the signal is more accurate than showing an endless "Checking".
+  if (!maintenance || maintenance.status === "idle") return null;
+
+  if (maintenance.status === "ready") {
     return {
       state: "ready",
       label: "Ready",
@@ -24,7 +29,7 @@ export function resolveOpenWorkConnectStatus(
     };
   }
 
-  if (maintenance?.status === "failed" || maintenance?.status === "skipped") {
+  if (maintenance.status === "failed" || maintenance.status === "skipped") {
     return {
       state: "needs_attention",
       label: "Needs attention",
@@ -36,7 +41,7 @@ export function resolveOpenWorkConnectStatus(
   return {
     state: "checking",
     label: "Checking",
-    description: maintenance?.status === "retrying"
+    description: maintenance.status === "retrying"
       ? `Restoring connected service tools (${maintenance.attempt}/${maintenance.maxAttempts}).`
       : "Checking connected service tools in the background.",
   };

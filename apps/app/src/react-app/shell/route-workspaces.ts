@@ -154,22 +154,38 @@ export async function refreshRouteWorkspaceListState(input: {
   desktopWorkspaces: RouteWorkspace[];
   previousWorkspaces: RouteWorkspace[];
   orderIds: string[];
+  /** Optional startup backoff. Route callers opt in when their local server
+   * can briefly accept connections before its workspace API is ready. */
+  retryDelaysMs?: readonly number[];
+  wait?: (delayMs: number) => Promise<void>;
 }): Promise<RouteWorkspaceListState> {
-  try {
-    return resolveRouteWorkspaceListState({
-      list: await input.load(),
-      desktopWorkspaces: input.desktopWorkspaces,
-      previousWorkspaces: input.previousWorkspaces,
-      orderIds: input.orderIds,
-    });
-  } catch (error) {
-    const state = resolveRouteWorkspaceListState({
-      list: null,
-      desktopWorkspaces: input.desktopWorkspaces,
-      previousWorkspaces: input.previousWorkspaces,
-      orderIds: input.orderIds,
-    });
-    return { ...state, error };
+  const retryDelaysMs = input.retryDelaysMs ?? [];
+  const wait = input.wait ?? ((delayMs: number) => new Promise<void>((resolve) => {
+    window.setTimeout(resolve, delayMs);
+  }));
+
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return resolveRouteWorkspaceListState({
+        list: await input.load(),
+        desktopWorkspaces: input.desktopWorkspaces,
+        previousWorkspaces: input.previousWorkspaces,
+        orderIds: input.orderIds,
+      });
+    } catch (error) {
+      const retryDelayMs = retryDelaysMs[attempt];
+      if (retryDelayMs !== undefined && isTransientStartupError(describeRouteError(error))) {
+        await wait(retryDelayMs);
+        continue;
+      }
+      const state = resolveRouteWorkspaceListState({
+        list: null,
+        desktopWorkspaces: input.desktopWorkspaces,
+        previousWorkspaces: input.previousWorkspaces,
+        orderIds: input.orderIds,
+      });
+      return { ...state, error };
+    }
   }
 }
 
