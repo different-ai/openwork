@@ -63,6 +63,7 @@ const PROVIDER_DOMAINS: Record<string, string> = {
   opencode: "opencode.ai",
   openwork: "openworklabs.com",
   abacus: "abacus.ai",
+  nexforce: "router.nexforce.ai",
 };
 
 /**

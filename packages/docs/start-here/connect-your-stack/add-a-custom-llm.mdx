@@ -52,4 +52,36 @@ Pull the model first with `ollama pull qwen3:8b`, then make sure the Ollama serv
 
 Open your desktop, change the provider name and voila! You have an fully local LLM running in your machine.
 
+### Functional example: Nexforce Router
+
+[Nexforce Router](https://router.nexforce.ai/docs) is Latin America's largest AI inference router — one OpenAI-compatible endpoint that routes to Anthropic, OpenAI, Google, DeepSeek, Moonshot, Zhipu, and Cloudflare Workers AI models, with per-key fallback chains and per-key cost control. Grab a key from the [API Keys dashboard](https://marketplace.nexforce.ai/workspace/ai-gateway/ai-gateway-keys) and set it as `NEXFORCE_API_KEY` in your environment.
+
+```
+{
+  "provider": {
+    "nexforce": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Nexforce Router",
+      "options": {
+        "baseURL": "https://router.nexforce.ai/v1",
+        "apiKey": "{env:NEXFORCE_API_KEY}"
+      },
+      "models": {
+        "nexforce/smart-route": {
+          "name": "Nexforce Smart Route"
+        },
+        "anthropic/claude-sonnet-4-6": {
+          "name": "Claude Sonnet 4.6"
+        },
+        "deepseek/deepseek-v4-flash": {
+          "name": "DeepSeek V4 Flash"
+        }
+      }
+    }
+  }
+}
+```
+
+Reload the config and pick a Nexforce model from the model picker. `nexforce/smart-route` lets the router pick an equivalent model per request while preserving required capabilities.
+
 For teams, you can manage the provider in OpenWork Cloud under [LLM Providers](/cloud/share-with-your-team/managed-llm-provider), then import it into each workspace from `Settings -> Cloud`.

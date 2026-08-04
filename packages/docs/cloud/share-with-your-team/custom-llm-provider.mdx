@@ -132,6 +132,80 @@ Pick the model and it's live in the session footer:
 
 Add more entries under `models` to expose other routes the gateway supports (e.g. `openai/gpt-5.4`, `google/gemini-2.5-flash`).
 
+### Functional example: Nexforce Router
+
+[Nexforce Router](https://router.nexforce.ai/docs) is Latin America's largest AI inference router: one OpenAI-compatible endpoint that routes to Anthropic, OpenAI, Google, DeepSeek, Moonshot, Zhipu, and Cloudflare Workers AI models, with per-key fallback chains and per-key cost control. Fallbacks, rate limits, and spend caps are configured per API key, and response headers `X-Nexforce-Requested-Model` / `X-Nexforce-Served-Model` disclose exactly which model served each request.
+
+Grab a key from the [API Keys dashboard](https://marketplace.nexforce.ai/workspace/ai-gateway/ai-gateway-keys). If you don't have an account yet, sign up at [marketplace.nexforce.ai](https://marketplace.nexforce.ai).
+
+Paste the key into `API key / credential` and use this JSON:
+
+```json
+{
+  "id": "nexforce",
+  "name": "Nexforce Router",
+  "npm": "@ai-sdk/openai-compatible",
+  "env": [
+    "NEXFORCE_API_KEY"
+  ],
+  "doc": "https://router.nexforce.ai/docs",
+  "api": "https://router.nexforce.ai/v1",
+  "models": [
+    {
+      "id": "nexforce/smart-route",
+      "name": "Nexforce Smart Route",
+      "attachment": true,
+      "reasoning": true,
+      "tool_call": true,
+      "structured_output": true,
+      "temperature": true,
+      "modalities": {
+        "input": ["text", "image"],
+        "output": ["text"]
+      }
+    },
+    {
+      "id": "anthropic/claude-sonnet-4-6",
+      "name": "Claude Sonnet 4.6",
+      "attachment": true,
+      "reasoning": true,
+      "tool_call": true,
+      "structured_output": true,
+      "temperature": true,
+      "limit": {
+        "context": 1000000,
+        "input": 1000000,
+        "output": 128000
+      },
+      "modalities": {
+        "input": ["text", "image", "pdf"],
+        "output": ["text"]
+      }
+    },
+    {
+      "id": "deepseek/deepseek-v4-flash",
+      "name": "DeepSeek V4 Flash",
+      "reasoning": true,
+      "tool_call": true,
+      "structured_output": true,
+      "temperature": true,
+      "open_weights": true,
+      "limit": {
+        "context": 1000000,
+        "input": 1000000,
+        "output": 384000
+      },
+      "modalities": {
+        "input": ["text"],
+        "output": ["text"]
+      }
+    }
+  ]
+}
+```
+
+`nexforce/smart-route` lets the router pick an equivalent model per request while preserving required capabilities — a good default entry that keeps working as Nexforce's catalog grows. Add more entries under `models` (e.g. `openai/gpt-5.4`, `google/gemini-3.6-flash`, `z-ai/glm-5`) to expose other routes.
+
 ## When to use a cloud provider
 
 Use a Cloud provider when the setup is meant to be shared across an org or team. For solo use, configuring it directly in the desktop app is simpler.
