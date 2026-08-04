@@ -117,6 +117,23 @@ export async function executeDesktopAutomation(assignment, options) {
   }
 }
 
+/**
+ * The runner sends its bearer token to whatever base URL it is configured
+ * with, and the configuration arrives over IPC from the renderer. A
+ * compromised renderer must not be able to point the token at an arbitrary
+ * endpoint: only https origins are accepted, with plain http reserved for
+ * loopback development hosts.
+ */
+export function normalizeRunnerBaseUrl(value) {
+  let parsed
+  try { parsed = new URL(String(value)) } catch { return null }
+  const loopback = ["localhost", "127.0.0.1", "::1", "[::1]"].includes(parsed.hostname)
+    || parsed.hostname.endsWith(".localhost")
+  if (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && loopback)) return null
+  if (parsed.username || parsed.password) return null
+  return `${parsed.origin}${parsed.pathname}`.replace(/\/+$/, "")
+}
+
 export function createDesktopAutomationRunner(options) {
   const fetchImpl = options.fetchImpl ?? fetch
   let configuration = null
@@ -278,8 +295,9 @@ export function createDesktopAutomationRunner(options) {
 
   return {
     configure(next) {
-      const normalized = next?.baseUrl && next?.token && next?.runnerId
-        ? { baseUrl: String(next.baseUrl).replace(/\/+$/, ""), token: String(next.token), runnerId: String(next.runnerId) }
+      const baseUrl = next ? normalizeRunnerBaseUrl(next.baseUrl) : null
+      const normalized = baseUrl && next?.token && next?.runnerId
+        ? { baseUrl, token: String(next.token), runnerId: String(next.runnerId) }
         : null
       if (configuration?.baseUrl === normalized?.baseUrl && configuration?.token === normalized?.token) {
         return { connected: Boolean(connectionController && !connectionController.signal.aborted) }

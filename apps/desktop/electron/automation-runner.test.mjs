@@ -1,7 +1,39 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-import { executeDesktopAutomation } from "./automation-runner.mjs"
+import {
+  createDesktopAutomationRunner,
+  executeDesktopAutomation,
+  normalizeRunnerBaseUrl,
+} from "./automation-runner.mjs"
+
+test("runner base URLs are restricted to https or loopback http", () => {
+  assert.equal(normalizeRunnerBaseUrl("https://den.example.com"), "https://den.example.com")
+  assert.equal(normalizeRunnerBaseUrl("https://den.example.com/api/"), "https://den.example.com/api")
+  assert.equal(normalizeRunnerBaseUrl("http://127.0.0.1:8788"), "http://127.0.0.1:8788")
+  assert.equal(normalizeRunnerBaseUrl("http://localhost:8788"), "http://localhost:8788")
+  assert.equal(normalizeRunnerBaseUrl("http://den.localhost:8788"), "http://den.localhost:8788")
+  assert.equal(normalizeRunnerBaseUrl("http://attacker.example.com"), null)
+  assert.equal(normalizeRunnerBaseUrl("ftp://den.example.com"), null)
+  assert.equal(normalizeRunnerBaseUrl("https://user:pass@den.example.com"), null)
+  assert.equal(normalizeRunnerBaseUrl("not a url"), null)
+  assert.equal(normalizeRunnerBaseUrl(undefined), null)
+})
+
+test("a renderer-supplied non-https base URL never receives the runner token", async () => {
+  const attempted = []
+  const runner = createDesktopAutomationRunner({
+    getLocalRuntime: async () => ({ baseUrl: "http://127.0.0.1:3000", token: "local" }),
+    fetchImpl: async (url) => {
+      attempted.push(String(url))
+      throw new Error("no network in test")
+    },
+  })
+  runner.configure({ baseUrl: "http://attacker.example.com", token: "runner-token", runnerId: "runner-1" })
+  await new Promise((resolve) => setTimeout(resolve, 25))
+  runner.stop()
+  assert.deepEqual(attempted, [])
+})
 
 test("desktop Automation execution creates a normal visible local OpenWork thread", async () => {
   const requests = []
