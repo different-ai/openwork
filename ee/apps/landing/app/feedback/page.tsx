@@ -20,12 +20,14 @@ export const metadata = {
   }
 };
 
+type SearchParams = Record<string, string | string[] | undefined>;
+
 type PageProps = {
-  searchParams?: Record<string, string | string[] | undefined>;
+  searchParams?: Promise<SearchParams>;
 };
 
 function readSearchParam(
-  searchParams: PageProps["searchParams"],
+  searchParams: SearchParams | undefined,
   key: string,
 ): string {
   const raw = searchParams?.[key];
@@ -33,17 +35,18 @@ function readSearchParam(
   return typeof value === "string" ? value.trim().slice(0, 240) : "";
 }
 
-export default function FeedbackPage({ searchParams }: PageProps) {
+export default async function FeedbackPage({ searchParams }: PageProps) {
+  const resolvedSearchParams = await searchParams;
   const prefill: AppFeedbackPrefill = {
-    source: readSearchParam(searchParams, "source") || "openwork-app",
-    entrypoint: readSearchParam(searchParams, "entrypoint") || "unknown",
-    deployment: readSearchParam(searchParams, "deployment") || "desktop",
-    appVersion: readSearchParam(searchParams, "appVersion"),
-    openworkServerVersion: readSearchParam(searchParams, "openworkServerVersion"),
-    opencodeVersion: readSearchParam(searchParams, "opencodeVersion"),
-    osName: readSearchParam(searchParams, "osName"),
-    osVersion: readSearchParam(searchParams, "osVersion"),
-    platform: readSearchParam(searchParams, "platform"),
+    source: readSearchParam(resolvedSearchParams, "source") || "openwork-app",
+    entrypoint: readSearchParam(resolvedSearchParams, "entrypoint") || "unknown",
+    deployment: readSearchParam(resolvedSearchParams, "deployment") || "desktop",
+    appVersion: readSearchParam(resolvedSearchParams, "appVersion"),
+    openworkServerVersion: readSearchParam(resolvedSearchParams, "openworkServerVersion"),
+    opencodeVersion: readSearchParam(resolvedSearchParams, "opencodeVersion"),
+    osName: readSearchParam(resolvedSearchParams, "osName"),
+    osVersion: readSearchParam(resolvedSearchParams, "osVersion"),
+    platform: readSearchParam(resolvedSearchParams, "platform"),
   };
 
   return (

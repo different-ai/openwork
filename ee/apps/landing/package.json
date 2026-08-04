@@ -16,7 +16,7 @@
     "botid": "^1.5.11",
     "framer-motion": "^12.35.1",
     "lucide-react": "^0.577.0",
-    "next": "14.2.35",
+    "next": "15.5.21",
     "react": "catalog:react18",
     "react-dom": "catalog:react18"
   },
