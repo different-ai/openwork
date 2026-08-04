@@ -1027,6 +1027,8 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
     });
   } catch (error) {
     invalidateEngineMcpServerState(config, engineMcpServerState);
+    watcherHandle.close();
+    reloadBaselineRefreshers.delete(config);
     throw error;
   }
 

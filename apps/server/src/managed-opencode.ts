@@ -100,32 +100,58 @@ export async function createManagedOpencodeServer(options: {
     child.once("exit", () => resolve());
   });
 
-  const url = await new Promise<string>((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error(`Timeout waiting for OpenCode server after ${options.timeoutMs ?? 15000}ms`)), options.timeoutMs ?? 15000);
-    let output = "";
-    const done = (value: string) => {
-      clearTimeout(timeout);
-      resolve(value);
-    };
-    const fail = (error: Error) => {
-      clearTimeout(timeout);
-      reject(error);
-    };
-    child.stdout?.on("data", (chunk) => {
-      output += chunk.toString();
-      for (const line of output.split("\n")) {
-        if (!line.startsWith("opencode server listening")) continue;
-        const match = line.match(/on\s+(https?:\/\/[^\s]+)/);
-        if (!match?.[1]) return fail(new Error(`Failed to parse OpenCode server URL from: ${line}`));
-        done(match[1]);
+  const close = (): Promise<void> => {
+    closePromise ??= (async () => {
+      if (child.exitCode !== null) return;
+      if (!child.killed) child.kill("SIGTERM");
+      const timeout = new Promise<void>((resolve) => {
+        setTimeout(() => resolve(), 1000);
+      });
+      await Promise.race([exited, timeout]);
+      if (child.exitCode === null) {
+        try {
+          child.kill("SIGKILL");
+        } catch {
+          // Process already exited.
+        }
+        await Promise.race([exited, new Promise<void>((resolve) => setTimeout(() => resolve(), 500))]);
       }
+    })();
+    return closePromise;
+  };
+
+  let url: string;
+  try {
+    url = await new Promise<string>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error(`Timeout waiting for OpenCode server after ${options.timeoutMs ?? 15000}ms`)), options.timeoutMs ?? 15000);
+      let output = "";
+      const done = (value: string) => {
+        clearTimeout(timeout);
+        resolve(value);
+      };
+      const fail = (error: Error) => {
+        clearTimeout(timeout);
+        reject(error);
+      };
+      child.stdout?.on("data", (chunk) => {
+        output += chunk.toString();
+        for (const line of output.split("\n")) {
+          if (!line.startsWith("opencode server listening")) continue;
+          const match = line.match(/on\s+(https?:\/\/[^\s]+)/);
+          if (!match?.[1]) return fail(new Error(`Failed to parse OpenCode server URL from: ${line}`));
+          done(match[1]);
+        }
+      });
+      child.stderr?.on("data", (chunk) => {
+        output += chunk.toString();
+      });
+      child.once("error", fail);
+      child.once("exit", (code) => fail(new Error(`OpenCode server exited with code ${code}${output.trim() ? `\n${output}` : ""}`)));
     });
-    child.stderr?.on("data", (chunk) => {
-      output += chunk.toString();
-    });
-    child.once("error", fail);
-    child.once("exit", (code) => fail(new Error(`OpenCode server exited with code ${code}${output.trim() ? `\n${output}` : ""}`)));
-  });
+  } catch (error) {
+    await close();
+    throw error;
+  }
 
   return {
     url,
@@ -141,24 +167,6 @@ export async function createManagedOpencodeServer(options: {
     isAlive() {
       return child.exitCode === null && child.signalCode === null && !child.killed;
     },
-    close() {
-      closePromise ??= (async () => {
-        if (child.exitCode !== null) return;
-        if (!child.killed) child.kill("SIGTERM");
-        const timeout = new Promise<void>((resolve) => {
-          setTimeout(() => resolve(), 1000);
-        });
-        await Promise.race([exited, timeout]);
-        if (child.exitCode === null) {
-          try {
-            child.kill("SIGKILL");
-          } catch {
-            // Process already exited.
-          }
-          await Promise.race([exited, new Promise<void>((resolve) => setTimeout(() => resolve(), 500))]);
-        }
-      })();
-      return closePromise;
-    },
+    close,
   };
 }

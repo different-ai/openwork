@@ -53,92 +53,155 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
   // Spawn managed OpenCode if requested and no explicit base URL was provided.
   let managedOpencode: ManagedOpencodeServer | null = null;
   let managedOpencodeIdentity: string | null = null;
+  let stopRuntimeConfigFileRefresh: (() => void) | null = null;
+  let server: ServeResult | null = null;
+  let stopPromise: Promise<void> | null = null;
 
-  if (!config.readOnly) {
-    await ensureLocalWorkspaceFiles(config.workspaces);
-  }
+  const releaseResources = async (): Promise<void> => {
+    const errors: unknown[] = [];
 
-  if (!config.opencodeBaseUrl && options.manageOpencode) {
-    const workspace = findManagedEngineWorkspace(config.workspaces);
-    if (workspace) {
-      // Server-managed config file: the engine re-reads it from disk on every
-      // instance rebuild, and keepOpenworkRuntimeConfigFileFresh synchronizes it
-      // on every runtime-DB write — so disposes always pick up current state.
-      const { path: runtimeConfigPath } = await writeOpenworkRuntimeConfigFile(config, workspace.id);
-      keepOpenworkRuntimeConfigFileFresh(config, workspace.id);
-      const cwd = options.opencodeCwd
-        || process.env.OPENWORK_MANAGED_OPENCODE_CWD?.trim()
-        || workspace.path;
-      await mkdir(cwd, { recursive: true });
-      await sweepLegacyOpenCodeConfig(config).catch(() => undefined);
-      const opencodeModelsUrl = await resolveOpencodeModelsUrl();
-
-      managedOpencode = await createManagedOpencodeServer({
-        bin: options.opencodeBin || process.env.OPENWORK_OPENCODE_BIN,
-        cwd,
-        excludedPorts: [config.port],
-        env: {
-          ...(process.env.OPENWORK_DEV_MODE ? { OPENWORK_DEV_MODE: process.env.OPENWORK_DEV_MODE } : {}),
-          ...(process.env.OPENWORK_UI_CONTROL_DISCOVERY ? { OPENWORK_UI_CONTROL_DISCOVERY: process.env.OPENWORK_UI_CONTROL_DISCOVERY } : {}),
-          OPENWORK_SERVER_URL: serverUrl,
-          OPENWORK_SERVER_TOKEN: config.token,
-          OPENCODE_CONFIG: runtimeConfigPath,
-          OPENCODE_MODELS_URL: opencodeModelsUrl,
-        },
-      });
-
-      config.opencodeBaseUrl = managedOpencode.url;
-      config.opencodeUsername = managedOpencode.username;
-      config.opencodePassword = managedOpencode.password;
-      for (const entry of config.workspaces) {
-        if (entry.workspaceType === "remote") {
-          entry.baseUrl ??= managedOpencode.url;
-          entry.opencodeUsername ??= managedOpencode.username;
-          entry.opencodePassword ??= managedOpencode.password;
-          entry.directory ??= entry.path;
-          continue;
-        }
-        entry.baseUrl = managedOpencode.url;
-        entry.opencodeUsername = managedOpencode.username;
-        entry.opencodePassword = managedOpencode.password;
-        entry.directory = entry.path;
+    const identity = managedOpencodeIdentity;
+    managedOpencodeIdentity = null;
+    if (identity) {
+      try {
+        clearTrustedOpencodeProcess(config, identity);
+      } catch (error) {
+        errors.push(error);
       }
-      managedOpencodeIdentity = [
-        managedOpencode.pid ?? "unknown",
-        managedOpencode.username,
-        managedOpencode.password,
-      ].join(":");
-      registerTrustedOpencodeProcess(config, {
-        baseUrl: managedOpencode.url,
-        identity: managedOpencodeIdentity,
-        isAlive: managedOpencode.isAlive,
-      });
     }
-  }
 
-  const server = await startServer(config);
-
-  // The runtime config file above only covers workspaces[0]. Push every
-  // workspace's runtime-DB MCPs into the engine so they aren't invisible
-  // until a manual reload. Best-effort.
-  if (managedOpencode) {
-    void syncAllWorkspacesRuntimeMcpToEngine(config);
-  }
-
-  return {
-    port: server.port,
-    url: `http://${config.host === "0.0.0.0" ? "127.0.0.1" : config.host}:${server.port}`,
-    config,
-    managedOpencodeExecution: managedOpencode?.execution ?? null,
-    managedOpencode: managedOpencode
-      ? { pid: managedOpencode.pid ?? null, isAlive: managedOpencode.isAlive }
-      : null,
-    async stop() {
-      if (managedOpencodeIdentity) {
-        clearTrustedOpencodeProcess(config, managedOpencodeIdentity);
+    const opencode = managedOpencode;
+    managedOpencode = null;
+    if (opencode) {
+      try {
+        await opencode.close();
+      } catch (error) {
+        errors.push(error);
       }
-      await managedOpencode?.close();
-      await server.stop();
-    },
+    }
+
+    const httpServer = server;
+    server = null;
+    if (httpServer) {
+      try {
+        await httpServer.stop();
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+
+    const unsubscribe = stopRuntimeConfigFileRefresh;
+    stopRuntimeConfigFileRefresh = null;
+    if (unsubscribe) {
+      try {
+        unsubscribe();
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+
+    if (errors.length === 1) throw errors[0];
+    if (errors.length > 1) {
+      throw new AggregateError(errors, "Failed to stop embedded OpenWork server");
+    }
   };
+
+  const stop = (): Promise<void> => {
+    stopPromise ??= releaseResources();
+    return stopPromise;
+  };
+
+  try {
+    if (!config.readOnly) {
+      await ensureLocalWorkspaceFiles(config.workspaces);
+    }
+
+    if (!config.opencodeBaseUrl && options.manageOpencode) {
+      const workspace = findManagedEngineWorkspace(config.workspaces);
+      if (workspace) {
+        // Server-managed config file: the engine re-reads it from disk on every
+        // instance rebuild, and keepOpenworkRuntimeConfigFileFresh synchronizes it
+        // on every runtime-DB write — so disposes always pick up current state.
+        const { path: runtimeConfigPath } = await writeOpenworkRuntimeConfigFile(config, workspace.id);
+        stopRuntimeConfigFileRefresh = keepOpenworkRuntimeConfigFileFresh(config, workspace.id);
+        const cwd = options.opencodeCwd
+          || process.env.OPENWORK_MANAGED_OPENCODE_CWD?.trim()
+          || workspace.path;
+        await mkdir(cwd, { recursive: true });
+        await sweepLegacyOpenCodeConfig(config).catch(() => undefined);
+        const opencodeModelsUrl = await resolveOpencodeModelsUrl();
+
+        managedOpencode = await createManagedOpencodeServer({
+          bin: options.opencodeBin || process.env.OPENWORK_OPENCODE_BIN,
+          cwd,
+          excludedPorts: [config.port],
+          env: {
+            ...(process.env.OPENWORK_DEV_MODE ? { OPENWORK_DEV_MODE: process.env.OPENWORK_DEV_MODE } : {}),
+            ...(process.env.OPENWORK_UI_CONTROL_DISCOVERY ? { OPENWORK_UI_CONTROL_DISCOVERY: process.env.OPENWORK_UI_CONTROL_DISCOVERY } : {}),
+            OPENWORK_SERVER_URL: serverUrl,
+            OPENWORK_SERVER_TOKEN: config.token,
+            OPENCODE_CONFIG: runtimeConfigPath,
+            OPENCODE_MODELS_URL: opencodeModelsUrl,
+          },
+        });
+
+        config.opencodeBaseUrl = managedOpencode.url;
+        config.opencodeUsername = managedOpencode.username;
+        config.opencodePassword = managedOpencode.password;
+        for (const entry of config.workspaces) {
+          if (entry.workspaceType === "remote") {
+            entry.baseUrl ??= managedOpencode.url;
+            entry.opencodeUsername ??= managedOpencode.username;
+            entry.opencodePassword ??= managedOpencode.password;
+            entry.directory ??= entry.path;
+            continue;
+          }
+          entry.baseUrl = managedOpencode.url;
+          entry.opencodeUsername = managedOpencode.username;
+          entry.opencodePassword = managedOpencode.password;
+          entry.directory = entry.path;
+        }
+        managedOpencodeIdentity = [
+          managedOpencode.pid ?? "unknown",
+          managedOpencode.username,
+          managedOpencode.password,
+        ].join(":");
+        registerTrustedOpencodeProcess(config, {
+          baseUrl: managedOpencode.url,
+          identity: managedOpencodeIdentity,
+          isAlive: managedOpencode.isAlive,
+        });
+      }
+    }
+
+    server = await startServer(config);
+
+    // The runtime config file above only covers workspaces[0]. Push every
+    // workspace's runtime-DB MCPs into the engine so they aren't invisible
+    // until a manual reload. Best-effort.
+    if (managedOpencode) {
+      void syncAllWorkspacesRuntimeMcpToEngine(config);
+    }
+
+    return {
+      port: server.port,
+      url: `http://${config.host === "0.0.0.0" ? "127.0.0.1" : config.host}:${server.port}`,
+      config,
+      managedOpencodeExecution: managedOpencode?.execution ?? null,
+      managedOpencode: managedOpencode
+        ? { pid: managedOpencode.pid ?? null, isAlive: managedOpencode.isAlive }
+        : null,
+      stop,
+    };
+  } catch (startupError) {
+    try {
+      await stop();
+    } catch (cleanupError) {
+      throw new AggregateError(
+        [startupError, cleanupError],
+        "Embedded OpenWork server startup failed and cleanup was incomplete",
+      );
+    }
+    throw startupError;
+  }
 }
