@@ -11,6 +11,7 @@ import {
   getGithubRepositoryTextFile,
   GithubConnectorRequestError,
   listGithubInstallationRepositories,
+  normalizeGithubBranchRef,
   normalizeGithubPrivateKey,
   validateGithubInstallationTarget,
   verifyGithubInstallStateToken,
@@ -36,6 +37,18 @@ describe("github connector app helpers", () => {
     expect(JSON.parse(Buffer.from(payloadSegment, "base64url").toString("utf8"))).toMatchObject({
       iss: "123456",
     })
+  })
+
+  test("normalizes bare GitHub branch refs to canonical head refs", () => {
+    expect(normalizeGithubBranchRef({ branch: "main", ref: "main" })).toEqual({
+      branch: "main",
+      ref: "refs/heads/main",
+    })
+    expect(normalizeGithubBranchRef({ branch: "refs/heads/main", ref: "refs/heads/main" })).toEqual({
+      branch: "main",
+      ref: "refs/heads/main",
+    })
+    expect(normalizeGithubBranchRef({ branch: "main", ref: "refs/heads/dev" })).toBeNull()
   })
 
   test("lists repositories through the GitHub installation token flow", async () => {
@@ -231,7 +244,7 @@ describe("github connector app helpers", () => {
     expect(parallel[0]).toEqual({ rawSourceText: "content of skills/skill-0/SKILL.md", status: "fetched" })
   })
 
-  test("validates repository identity and branch existence against GitHub", async () => {
+  test("validates repository identity and accepts a bare branch ref", async () => {
     const result = await validateGithubInstallationTarget({
       branch: "main",
       config: { appId: "123456", privateKey: privateKeyPem },
@@ -255,7 +268,7 @@ describe("github connector app helpers", () => {
         return new Response(JSON.stringify({ message: "not found" }), { status: 404 })
       },
       installationId: 777,
-      ref: "refs/heads/main",
+      ref: "main",
       repositoryFullName: "different-ai/openwork",
       repositoryId: 42,
     })
