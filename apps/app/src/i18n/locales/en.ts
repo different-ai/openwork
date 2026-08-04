@@ -929,6 +929,8 @@ export default {
   "welcome.folder_write": "Create and edit files for you",
   "welcome.folder_anything": "Work with spreadsheets, docs, images \u2014 anything in the folder",
   "welcome.folder_drop_hint": "Drop files in anytime and OpenWork can pick them up.",
+  "welcome.daytona_folder_path": "Daytona folder path",
+  "welcome.use_this_folder": "Use this folder",
   "join_org.connect_button": "Connect",
   "join_org.connecting": "Connecting you to {clientName} ({host})…",
   "join_org.connecting_button": "Connecting…",

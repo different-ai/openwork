@@ -824,6 +824,8 @@ export default {
   "welcome.folder_write": "Создавать и редактировать файлы для вас",
   "welcome.folder_anything": "Работать с таблицами, документами, изображениями — с чем угодно в папке",
   "welcome.folder_drop_hint": "Перетаскивайте файлы в любое время, и OpenWork сможет их подхватить.",
+  "welcome.daytona_folder_path": "Путь к папке в Daytona",
+  "welcome.use_this_folder": "Использовать эту папку",
   "welcome.creating_workspace": "Создание рабочего пространства…",
   "welcome.join_org": "Присоединиться к вашей организации",
   "welcome.join_org_subtitle": "Вставьте ссылку-приглашение или установки",
