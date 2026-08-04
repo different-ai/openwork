@@ -10,6 +10,7 @@ import {
 import type { CloudMcpLiveStatusObserver } from "../cloud-mcp-health.js";
 import { readOpenWorkConnectSkillCatalog, renderOpenWorkConnectSkillInstruction } from "../connect-skill-catalog.js";
 import { EnvStoreReadError, InvalidEnvKeyError, isValidEnvKey, type EnvService } from "../env-file.js";
+import { syncManagedProviderAuth } from "../managed-provider-auth.js";
 import { ApiError } from "../errors.js";
 import {
   createGoogleWorkspaceConnectFlowManager,
@@ -62,6 +63,10 @@ interface RegisterCoreRoutesOptions {
   resolveToyUiEnabled: () => boolean;
   resolveDevLogPath: () => string | null;
   createOpenAiRealtimeVoiceSession: (env: EnvService, input: unknown) => Promise<unknown>;
+  managedProviderAuthLogger?: {
+    warn: (message: string, attributes?: Record<string, unknown>) => void;
+    error: (message: string, attributes?: Record<string, unknown>) => void;
+  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -120,6 +125,7 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
     resolveToyUiEnabled,
     resolveDevLogPath,
     createOpenAiRealtimeVoiceSession,
+    managedProviderAuthLogger,
   } = options;
   const googleWorkspaceConnectFlows = createGoogleWorkspaceConnectFlowManager(config);
   const envPendingChangesByRuntime = new Map<string, boolean>();
@@ -549,6 +555,9 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
       }
       throw error;
     }
+    // A stored credential is useless until the engine holds it: deliver it now
+    // rather than waiting for the next engine start.
+    await syncManagedProviderAuth({ config, env, logger: managedProviderAuthLogger }).catch(() => undefined);
     return jsonResponse({ ok: true, count: entries.length });
   });
 

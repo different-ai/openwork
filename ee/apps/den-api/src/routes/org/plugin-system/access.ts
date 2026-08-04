@@ -98,7 +98,10 @@ export function isPluginArchOrgAdmin(context: PluginArchActorContext) {
   return context.organizationContext.currentMember.isOwner || memberHasRole(context.organizationContext.currentMember.role, "admin")
 }
 
-export function hasPluginArchCapability(context: PluginArchActorContext, _capability: PluginArchCapability) {
+export function hasPluginArchCapability(context: PluginArchActorContext, capability: PluginArchCapability) {
+  if (capability === "plugin.create" || capability === "config_object.create") {
+    return true
+  }
   return isPluginArchOrgAdmin(context)
 }
 

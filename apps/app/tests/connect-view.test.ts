@@ -141,6 +141,9 @@ describe("Connect cloud-readiness row resolution", () => {
     expect(resolveConnectRowGroup({ state: "needs_signin", hasInstructional: false, connections: [] }, "member")).toBe("needs_signin");
     expect(resolveConnectRowGroup({ state: "ready", hasInstructional: true, connections: [] }, "member")).toBe("ready");
     expect(resolveConnectRowGroup({ state: "needs_admin_setup", hasInstructional: false, connections: [] }, "admin")).toBe("needs_admin_setup");
+    expect(resolveConnectRowGroup({ state: "needs_admin_setup", hasInstructional: false, connections: [] }, "super-admin")).toBe("needs_admin_setup");
+    expect(resolveConnectRowGroup({ state: "needs_admin_setup", hasInstructional: false, connections: [] }, "qa-reviewer, super-admin")).toBe("needs_admin_setup");
+    expect(resolveConnectRowGroup({ state: "needs_admin_setup", hasInstructional: false, connections: [] }, "qa-reviewer")).toBe("excluded");
   });
 
   test("hides admin setup, desktop-only, and not-synced rows from non-admin Connect", () => {

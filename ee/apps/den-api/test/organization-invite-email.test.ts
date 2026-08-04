@@ -14,7 +14,7 @@ test("organization invitation HTML focuses on joining without desktop download p
   const text = htmlText(html)
 
   expect(text).toContain("Join Acme Robotics")
-  expect(text).toContain("Riley (riley@example.test) invited you to join Acme Robotics as a member.")
+  expect(text).toContain("Riley (riley@example.test) invited you to join the Acme Robotics workspace as a member.")
   expect(text).toContain("Accept invite")
   expect(html).toContain(inviteLink)
   expect(html).not.toContain("Download the desktop app")

@@ -18,7 +18,6 @@ export function ConnectorQuickAddGrid({
   telegramConnected: boolean;
   onSelect: (id: string) => void;
 }) {
-  const googleConfigured = connections.some((connection) => connection.id === GOOGLE_WORKSPACE_QUICK_ADD_ID);
   const microsoftConfigured = connections.some((connection) => connection.id === MICROSOFT_365_QUICK_ADD_ID);
 
   return (
@@ -37,9 +36,7 @@ export function ConnectorQuickAddGrid({
             </p>
           </div>
         </div>
-        <p className="mt-2 text-[12px] font-medium text-gray-900">
-          {googleConfigured ? "Configured — tap to update" : "Tap to set up"}
-        </p>
+        <p className="mt-2 text-[12px] font-medium text-gray-900">Tap to add</p>
       </button>
 
       <button

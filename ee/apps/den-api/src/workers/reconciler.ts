@@ -40,6 +40,7 @@ async function reconcileWorker(worker: ProvisioningWorker) {
 
   await continueCloudProvisioning({
     workerId: worker.id,
+    orgId: worker.org_id,
     name: worker.name,
     hostToken,
     clientToken,

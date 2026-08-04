@@ -62,7 +62,7 @@ describe("openwork runtime config file", () => {
       mcp: { posthog: { type: "remote", url: "https://mcp.posthog.com/mcp", enabled: true } },
     }));
 
-    const path = await writeOpenworkRuntimeConfigFile(config, "ws_1");
+    const { path } = await writeOpenworkRuntimeConfigFile(config, "ws_1");
     expect(path).toBe(openworkRuntimeConfigFilePath(config));
 
     const parsed = await readConfigFile(config);

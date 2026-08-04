@@ -88,7 +88,9 @@ export function applyTextHighlights(root: HTMLElement, query: string) {
         return NodeFilter.FILTER_REJECT;
       }
 
-      if (parent.closest("pre, code")) {
+      // `.katex` is excluded because injecting <mark> into rendered math corrupts
+      // KaTeX's layout spans, and its MathML branch duplicates the visible text.
+      if (parent.closest("pre, code, .katex")) {
         return NodeFilter.FILTER_REJECT;
       }
 

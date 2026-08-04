@@ -1,0 +1,188 @@
+{{- include "openwork-ee.customCa.validate" . }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "openwork-ee.fullname" . }}-env-probe
+  labels:
+    {{- include "openwork-ee.componentLabels" (dict "root" . "component" "env-probe") | nindent 4 }}
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 120
+  template:
+    metadata:
+      labels:
+        {{- include "openwork-ee.componentSelectorLabels" (dict "root" . "component" "env-probe") | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.customCa.enabled }}
+      volumes:
+        {{- include "openwork-ee.customCa.volume" . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: env-probe
+          image: "{{ .Values.denApi.image.repository }}:{{ default .Values.image.tag .Values.denApi.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- if .Values.customCa.enabled }}
+          volumeMounts:
+            {{- include "openwork-ee.customCa.volumeMount" . | nindent 12 }}
+          {{- end }}
+          command:
+            - node
+          args:
+            - -e
+            - |
+              const fs = require("node:fs");
+              const tls = require("node:tls");
+
+              const expected = new Map([
+                ["DB_MODE", process.env.OPENWORK_ENV_PROBE_EXPECTED_DB_MODE],
+                ["DEN_ORG_MODE", process.env.OPENWORK_ENV_PROBE_EXPECTED_DEN_ORG_MODE],
+                ["PROVISIONER_MODE", process.env.OPENWORK_ENV_PROBE_EXPECTED_PROVISIONER_MODE],
+                ["OPENWORK_DEV_MODE", process.env.OPENWORK_ENV_PROBE_EXPECTED_OPENWORK_DEV_MODE],
+                ["BETTER_AUTH_URL", process.env.OPENWORK_ENV_PROBE_EXPECTED_BETTER_AUTH_URL],
+                ["DEN_API_PUBLIC_URL", process.env.OPENWORK_ENV_PROBE_EXPECTED_DEN_API_PUBLIC_URL],
+                ["DEN_AUTH_ORIGIN", process.env.OPENWORK_ENV_PROBE_EXPECTED_DEN_AUTH_ORIGIN],
+                ["PORT", process.env.OPENWORK_ENV_PROBE_EXPECTED_PORT],
+                ["NODE_OPTIONS", process.env.OPENWORK_ENV_PROBE_EXPECTED_NODE_OPTIONS],
+                ["DEN_API_NODE_OPTIONS", process.env.OPENWORK_ENV_PROBE_EXPECTED_NODE_OPTIONS],
+              ]);
+              const required = [
+                "DATABASE_URL",
+                "DEN_DB_ENCRYPTION_KEY",
+                "BETTER_AUTH_SECRET",
+                "BETTER_AUTH_URL",
+                "DB_MODE",
+                "DEN_ORG_MODE",
+                "PROVISIONER_MODE",
+                "DEN_API_PUBLIC_URL",
+                "CORS_ORIGINS",
+                "DEN_BETTER_AUTH_TRUSTED_ORIGINS",
+                "DEN_API_BASE",
+                "DEN_AUTH_FALLBACK_BASE",
+                "DEN_AUTH_ORIGIN",
+                "OPENWORK_DEV_MODE",
+                "PORT",
+                "NODE_OPTIONS",
+              ];
+              const secretPattern = /(SECRET|PASSWORD|PRIVATE|TOKEN|KEY|DATABASE_URL)/;
+              const failures = [];
+
+              function compactPem(value) {
+                return value.replace(/\s+/g, "");
+              }
+
+              function display(name, value) {
+                if (value === undefined) return "<missing>";
+                if (secretPattern.test(name)) return value ? "<set>" : "<empty>";
+                return JSON.stringify(value);
+              }
+
+              for (const name of required) {
+                if (process.env[name] === undefined) {
+                  failures.push(`${name}: expected present, actual <missing>`);
+                }
+              }
+              for (const [name, expectedValue] of expected) {
+                if (expectedValue === undefined) continue;
+                const actual = process.env[name];
+                if (actual !== expectedValue) {
+                  failures.push(`${name}: expected ${display(name, expectedValue)}, actual ${display(name, actual)}`);
+                }
+              }
+
+              if (process.env.OPENWORK_ENV_PROBE_EXPECTED_CUSTOM_CA === "1") {
+                const expectedCaPath = process.env.OPENWORK_ENV_PROBE_EXPECTED_NODE_EXTRA_CA_CERTS;
+                if (process.env.NODE_EXTRA_CA_CERTS !== expectedCaPath) {
+                  failures.push(`NODE_EXTRA_CA_CERTS: expected ${display("NODE_EXTRA_CA_CERTS", expectedCaPath)}, actual ${display("NODE_EXTRA_CA_CERTS", process.env.NODE_EXTRA_CA_CERTS)}`);
+                } else {
+                  try {
+                    const bundle = fs.readFileSync(expectedCaPath, "utf8");
+                    const certs = bundle.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g) || [];
+                    if (certs.length === 0) {
+                      failures.push(`NODE_EXTRA_CA_CERTS: ${expectedCaPath} did not contain a PEM certificate`);
+                    } else if (typeof tls.getCACertificates !== "function") {
+                      failures.push("NODE_EXTRA_CA_CERTS: node does not expose tls.getCACertificates; cannot prove runtime trust");
+                    } else {
+                      const extra = tls.getCACertificates("extra").map(compactPem);
+                      const trusted = certs.some((cert) => extra.includes(compactPem(cert)));
+                      if (!trusted) {
+                        failures.push(`NODE_EXTRA_CA_CERTS: ${expectedCaPath} was mounted but did not appear in node's extra CA trust store`);
+                      }
+                    }
+                  } catch (error) {
+                    failures.push(`NODE_EXTRA_CA_CERTS: could not read ${expectedCaPath}: ${error instanceof Error ? error.message : String(error)}`);
+                  }
+                }
+              }
+
+              if (failures.length > 0) {
+                console.error("OpenWork Helm env probe failed:");
+                for (const failure of failures) console.error(`- ${failure}`);
+                console.error("Observed runtime env:");
+                for (const name of [...required, "DEN_API_NODE_OPTIONS", "NODE_EXTRA_CA_CERTS"].sort()) {
+                  console.error(`  ${name}: ${display(name, process.env[name])}`);
+                }
+                process.exit(1);
+              }
+
+              console.log("OpenWork Helm env probe passed.");
+              console.log(`DEN_ORG_MODE=${process.env.DEN_ORG_MODE}; PROVISIONER_MODE=${process.env.PROVISIONER_MODE}; NODE_OPTIONS=${JSON.stringify(process.env.NODE_OPTIONS || "")}`);
+              if (process.env.NODE_EXTRA_CA_CERTS) console.log(`NODE_EXTRA_CA_CERTS=${process.env.NODE_EXTRA_CA_CERTS} is loaded by node.`);
+          envFrom:
+            - configMapRef:
+                name: {{ include "openwork-ee.configName" . }}
+            - secretRef:
+                name: {{ include "openwork-ee.secretName" . }}
+          env:
+            - name: PORT
+              value: {{ .Values.denApi.containerPort | quote }}
+            {{- if not (hasKey .Values.denApi.env "NODE_OPTIONS") }}
+            - name: NODE_OPTIONS
+              value: {{ .Values.config.denApiNodeOptions | quote }}
+            {{- end }}
+            {{- if .Values.installerArtifacts.enabled }}
+            - name: OPENWORK_INSTALLER_ARTIFACTS_DIR
+              value: {{ .Values.installerArtifacts.mountPath | quote }}
+            {{- end }}
+            {{- if .Values.customCa.enabled }}
+            {{- include "openwork-ee.customCa.env" . | nindent 12 }}
+            {{- end }}
+            {{- if eq (include "openwork-ee.allowPrivateMcpUrls" .) "1" }}
+            - name: DEN_ALLOW_PRIVATE_MCP_URLS
+              value: "1"
+            {{- end }}
+            {{- range $key, $value := .Values.denApi.env }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+            - name: OPENWORK_ENV_PROBE_EXPECTED_DB_MODE
+              value: {{ .Values.config.databaseMode | quote }}
+            - name: OPENWORK_ENV_PROBE_EXPECTED_DEN_ORG_MODE
+              value: {{ .Values.config.tenancy.mode | quote }}
+            - name: OPENWORK_ENV_PROBE_EXPECTED_PROVISIONER_MODE
+              value: {{ .Values.config.provisioner.mode | quote }}
+            - name: OPENWORK_ENV_PROBE_EXPECTED_OPENWORK_DEV_MODE
+              value: {{ .Values.config.openworkDevMode | quote }}
+            - name: OPENWORK_ENV_PROBE_EXPECTED_BETTER_AUTH_URL
+              value: {{ .Values.config.public.webOrigin | quote }}
+            - name: OPENWORK_ENV_PROBE_EXPECTED_DEN_API_PUBLIC_URL
+              value: {{ .Values.config.public.apiOrigin | quote }}
+            - name: OPENWORK_ENV_PROBE_EXPECTED_DEN_AUTH_ORIGIN
+              value: {{ .Values.config.public.webOrigin | quote }}
+            - name: OPENWORK_ENV_PROBE_EXPECTED_PORT
+              value: {{ .Values.denApi.containerPort | quote }}
+            - name: OPENWORK_ENV_PROBE_EXPECTED_NODE_OPTIONS
+              value: {{ if hasKey .Values.denApi.env "NODE_OPTIONS" }}{{ index .Values.denApi.env "NODE_OPTIONS" | quote }}{{ else }}{{ .Values.config.denApiNodeOptions | quote }}{{ end }}
+            - name: OPENWORK_ENV_PROBE_EXPECTED_CUSTOM_CA
+              value: {{ ternary "1" "0" .Values.customCa.enabled | quote }}
+            {{- if .Values.customCa.enabled }}
+            - name: OPENWORK_ENV_PROBE_EXPECTED_NODE_EXTRA_CA_CERTS
+              value: {{ include "openwork-ee.customCa.filePath" . | quote }}
+            {{- end }}

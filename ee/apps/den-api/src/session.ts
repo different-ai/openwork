@@ -19,6 +19,7 @@ export type AuthContextVariables = {
 
 const INTERNAL_MCP_PRINCIPAL_HEADER = "x-den-internal-mcp-principal"
 const INTERNAL_MCP_PRINCIPAL_TTL_MS = 60_000
+export const INTERNAL_CAPABILITY_CONNECTOR_HEADER = "x-den-internal-capability-connector"
 
 // Per-process secret used exclusively to sign the internal MCP principal header.
 // It is generated fresh at startup, lives only in memory, and is never derived
@@ -33,8 +34,30 @@ type InternalMcpPrincipal = {
   expiresAt: number
 }
 
+type InternalCapabilityConnector = InternalMcpPrincipal & {
+  connectorId: string
+}
+
+function isInternalCapabilityConnector(value: unknown): value is InternalCapabilityConnector {
+  return typeof value === "object"
+    && value !== null
+    && "userId" in value
+    && typeof value.userId === "string"
+    && "organizationId" in value
+    && typeof value.organizationId === "string"
+    && "connectorId" in value
+    && typeof value.connectorId === "string"
+    && value.connectorId.length > 0
+    && "expiresAt" in value
+    && typeof value.expiresAt === "number"
+}
+
 function signPrincipalPayload(payload: string) {
   return createHmac("sha256", INTERNAL_MCP_PRINCIPAL_SECRET).update(payload).digest("base64url")
+}
+
+function signCapabilityConnectorPayload(payload: string) {
+  return createHmac("sha256", INTERNAL_MCP_PRINCIPAL_SECRET).update(`capability-connector:${payload}`).digest("base64url")
 }
 
 function verifySignature(payload: string, signature: string) {
@@ -52,6 +75,21 @@ export function createInternalMcpPrincipalHeader(input: { userId: string; organi
   }
   const payload = Buffer.from(JSON.stringify(principal), "utf8").toString("base64url")
   return `${payload}.${signPrincipalPayload(payload)}`
+}
+
+export function createInternalCapabilityConnectorHeader(input: {
+  userId: string
+  organizationId: string
+  connectorId: string
+}) {
+  const connector: InternalCapabilityConnector = {
+    userId: normalizeDenTypeId("user", input.userId),
+    organizationId: normalizeDenTypeId("organization", input.organizationId),
+    connectorId: input.connectorId,
+    expiresAt: Date.now() + INTERNAL_MCP_PRINCIPAL_TTL_MS,
+  }
+  const payload = Buffer.from(JSON.stringify(connector), "utf8").toString("base64url")
+  return `${payload}.${signCapabilityConnectorPayload(payload)}`
 }
 
 // Verifies and parses the internal MCP principal header WITHOUT any DB access.
@@ -80,6 +118,32 @@ export function verifyInternalMcpPrincipalHeader(header: string | null): Interna
   }
 
   return parsed
+}
+
+export function readInternalCapabilityConnectorId(headers: Headers): string | null {
+  const principal = verifyInternalMcpPrincipalHeader(headers.get(INTERNAL_MCP_PRINCIPAL_HEADER))
+  const header = headers.get(INTERNAL_CAPABILITY_CONNECTOR_HEADER)
+  if (!principal || !header) return null
+  const [payload, signature] = header.split(".")
+  if (!payload || !signature) return null
+  const expected = signCapabilityConnectorPayload(payload)
+  const expectedBuffer = new Uint8Array(Buffer.from(expected))
+  const receivedBuffer = new Uint8Array(Buffer.from(signature))
+  if (expectedBuffer.length !== receivedBuffer.length || !timingSafeEqual(expectedBuffer, receivedBuffer)) return null
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"))
+  } catch {
+    return null
+  }
+  if (!isInternalCapabilityConnector(parsed)
+    || parsed.expiresAt < Date.now()
+    || parsed.userId !== principal.userId
+    || parsed.organizationId !== principal.organizationId) {
+    return null
+  }
+  return parsed.connectorId
 }
 
 async function getSessionFromInternalMcpPrincipal(headers: Headers): Promise<(AuthSessionValue & { activeOrganizationId: string }) | null> {

@@ -1,30 +1,13 @@
-# den-gateway — OpenWork in the browser at one address, with the machine invisible
+# den-gateway — Cloud workspace overlay
 
-web.openworklabs.com is served by den-gateway: it signs the user in, routes them
-to their own instance, and injects that instance's credentials server-side. The
-browser never holds an instance token, never sees a machine name, and never
-learns which compute vendor is behind it. den-api remains the only thing that
-talks to Daytona.
+1. I'm working in OpenWork in my browser. In the corner there's a quiet pill: "Cloud · v0.18.8". That's my workspace — healthy, current, out of my way.
 
-1. I go to web.openworklabs.com and get a sign-in page. Nothing is running for me
-   yet, and there is nothing to install.
+2. I click it. A small panel: Connected · v0.18.8 (latest) · Backups on, and Sign out. Nothing to configure; it's just the truth about my machine.
 
-2. I sign in with my work account and land in OpenWork with the cursor already
-   in the composer.
+3. A teammate is on an older workspace. Their pill says "Update available". The panel shows v0.18.2 -> v0.18.8 and one button: "Update now — takes about 30 seconds. Your files and sessions come along."
 
-3. My workspace is mine. A teammate signing in gets their own, and neither of us
-   can see the other's sessions or files.
+4. They click it. The pill becomes "Updating your workspace…". The page never goes blank, never bounces them somewhere else.
 
-4. I ask what's on my calendar and it answers. My organization's connections are
-   already wired in — I never pasted a key.
+5. Half a minute later: "Cloud · v0.18.8". Files exactly where they left them — same workspace, newer machine.
 
-5. I ask it to save a summary to a file, and the file appears in my workspace.
-
-6. The address bar says web.openworklabs.com and nothing else — no tokens, no
-   machine names, nothing I'd think twice about screen-sharing.
-
-7. I close the tab and come back the next morning from a different laptop. The
-   same address opens my workspace with that file still in it.
-
-8. I sign out and reload. It asks me to sign in again — my workspace is not
-   reachable without my account.
+6. And when something's genuinely wrong, the pill turns amber: "Workspace needs attention" — with Retry and Sign out right there. No more silent redirect loops; the worst case is now a labeled state with an exit.

@@ -1,8 +1,9 @@
-import type {
-  DenExternalMcpConnection,
-  DenOrgPlugin,
-  DenOrgSummary,
-  DenPluginCloudReadiness,
+import {
+  isDenOrgAdminRole,
+  type DenExternalMcpConnection,
+  type DenOrgPlugin,
+  type DenOrgSummary,
+  type DenPluginCloudReadiness,
 } from "@/app/lib/den";
 import { t } from "@/i18n";
 import { connectionNeedsReconnect } from "@/react-app/domains/connections/native-provider-connections";
@@ -14,7 +15,7 @@ const instructionalTypes = new Set(["agent", "command", "context", "custom", "sk
 const desktopInstallTypes = new Set(["hook", "tool"]);
 
 export function isConnectAdminRole(role: ConnectOrgRole) {
-  return role === "owner" || role === "admin";
+  return isDenOrgAdminRole(role);
 }
 
 export function pluginHasInstructionalComponents(componentCounts: Record<string, number>) {

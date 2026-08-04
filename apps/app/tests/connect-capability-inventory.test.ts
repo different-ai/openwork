@@ -9,6 +9,20 @@ describe("assigned OpenWork Connect capability inventory", () => {
     const inventory = await listAssignedConnectCapabilities({
       organizationId: "org_1",
       client: {
+        listAssignedMarketplaceCapabilities: async () => [
+          {
+            marketplaceId: "marketplace_1",
+            pluginId: "plugin_1",
+            configObjectId: "skill_1",
+            objectType: "skill",
+          },
+          {
+            marketplaceId: "marketplace_1",
+            pluginId: "plugin_1",
+            configObjectId: "mcp_1",
+            objectType: "mcp",
+          },
+        ],
         listOrgMarketplaces: async () => [
           {
             id: "marketplace_1",
@@ -146,6 +160,14 @@ describe("assigned OpenWork Connect capability inventory", () => {
     const inventory = await listAssignedConnectCapabilities({
       organizationId: "org_1",
       client: {
+        listAssignedMarketplaceCapabilities: async () => [
+          {
+            marketplaceId: "marketplace_active",
+            pluginId: "plugin_1",
+            configObjectId: "skill_inactive",
+            objectType: "skill",
+          },
+        ],
         listOrgMarketplaces: async () => [
           {
             id: "marketplace_active",
@@ -248,6 +270,20 @@ describe("assigned OpenWork Connect capability inventory", () => {
     const inventory = await listAssignedConnectCapabilities({
       organizationId: "org_1",
       client: {
+        listAssignedMarketplaceCapabilities: async () => [
+          {
+            marketplaceId: "marketplace_1",
+            pluginId: "plugin_1",
+            configObjectId: "skill_win",
+            objectType: "skill",
+          },
+          {
+            marketplaceId: "marketplace_1",
+            pluginId: "plugin_1",
+            configObjectId: "skill_nomatch",
+            objectType: "skill",
+          },
+        ],
         listOrgMarketplaces: async () => [marketplace],
         getOrgMarketplaceResolved: async () => ({
           marketplace,

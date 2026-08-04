@@ -114,6 +114,26 @@ export const encryptedMediumTextColumn = (columnName: string) =>
     deserialize: (value) => value,
   })
 
+/**
+ * Drizzle's `json()` returns whatever the driver produced: MySQL's native
+ * JSON type arrives pre-parsed, but MariaDB aliases JSON to LONGTEXT and
+ * mysql2 hands back the raw string. Parse strings on read so both engines
+ * produce the declared shape.
+ */
+export const compatJsonColumn = <TData>(columnName: string) =>
+  customType<{ data: TData; driverData: TData | string }>({
+    dataType() {
+      return "json"
+    },
+    toDriver(value) {
+      return JSON.stringify(value)
+    },
+    fromDriver(value) {
+      if (typeof value === "string") return JSON.parse(value)
+      return value
+    },
+  })(columnName)
+
 export const mediumBlobColumn = (columnName: string) =>
   customType<{ data: Uint8Array; driverData: Uint8Array }>({
     dataType() {

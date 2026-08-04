@@ -658,7 +658,7 @@ function buildFixtureUser(index: number, includeBilling: boolean): AdminUser {
       subscriptionStatus: target ? "active" : null,
       currentPeriodEnd: target ? "2026-08-01T00:00:00.000Z" : null,
       source: "subscription",
-      note: target ? "Covered by an active Stripe organization subscription." : "No cached Stripe organization subscription covers this user."
+      note: target ? "Covered by an active organization subscription." : "No cached organization subscription covers this user."
     } : null,
     organizations: [{
       id: organizationId,

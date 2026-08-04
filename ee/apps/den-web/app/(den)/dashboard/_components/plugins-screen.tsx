@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import {
   Cable,
-  FileText,
   Plus,
   Puzzle,
   Search,
@@ -14,7 +13,6 @@ import {
   Users,
   Webhook,
 } from "lucide-react";
-import { StaticSeededGradient } from "@openwork/ui/react";
 import { UnderlineTabs } from "../../_components/ui/tabs";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
 import { DenInput } from "../../_components/ui/input";
@@ -23,16 +21,19 @@ import { getIntegrationsRoute, getNewPluginRoute, getPluginRoute } from "../../_
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { useHasAnyIntegration } from "./integration-data";
 import {
+  type DenPlugin,
   getPluginCategoryLabel,
+  getPluginComponentCount,
   getPluginPartsSummary,
   usePlugins,
 } from "./plugin-data";
+import { DenCatalogList, DenCatalogRow } from "../../_components/ui/catalog-row";
+import { CatalogIdentityTile } from "./catalog-identity-tile";
 
-type PluginView = "plugins" | "skills" | "agents" | "commands" | "hooks" | "mcps";
+type PluginView = "plugins" | "agents" | "commands" | "hooks" | "mcps";
 
 const PLUGIN_TABS = [
   { value: "plugins" as const, label: "Plugins", icon: Puzzle },
-  { value: "skills" as const, label: "Skills", icon: FileText },
   { value: "agents" as const, label: "Agents", icon: Users },
   { value: "commands" as const, label: "Commands", icon: Terminal },
   { value: "hooks" as const, label: "Hooks", icon: Webhook },
@@ -62,14 +63,6 @@ export function PluginsScreen() {
       );
     });
   }, [normalizedQuery, plugins]);
-
-  const allSkills = useMemo(
-    () =>
-      plugins.flatMap((plugin) =>
-        plugin.skills.map((skill) => ({ ...skill, pluginId: plugin.id, pluginName: plugin.name })),
-      ),
-    [plugins],
-  );
 
   const allHooks = useMemo(
     () =>
@@ -102,16 +95,6 @@ export function PluginsScreen() {
       ),
     [plugins],
   );
-
-  const filteredSkills = useMemo(() => {
-    if (!normalizedQuery) return allSkills;
-    return allSkills.filter(
-      (skill) =>
-        skill.name.toLowerCase().includes(normalizedQuery) ||
-        skill.description.toLowerCase().includes(normalizedQuery) ||
-        skill.pluginName.toLowerCase().includes(normalizedQuery),
-    );
-  }, [normalizedQuery, allSkills]);
 
   const filteredHooks = useMemo(() => {
     if (!normalizedQuery) return allHooks;
@@ -153,12 +136,18 @@ export function PluginsScreen() {
     );
   }, [normalizedQuery, allCommands]);
 
+  const tabCounts: Record<PluginView, number> = {
+    plugins: plugins.length,
+    agents: allAgents.length,
+    commands: allCommands.length,
+    hooks: allHooks.length,
+    mcps: allMcps.length,
+  };
+
   const searchPlaceholder =
     activeView === "plugins"
       ? "Search plugins..."
-      : activeView === "skills"
-        ? "Search skills..."
-        : activeView === "agents"
+      : activeView === "agents"
           ? "Search agents..."
           : activeView === "commands"
             ? "Search commands..."
@@ -176,7 +165,12 @@ export function PluginsScreen() {
     >
       <div className="mb-8 flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
         <div className="flex flex-col gap-4">
-          <UnderlineTabs tabs={PLUGIN_TABS} activeTab={activeView} onChange={setActiveView} />
+          <UnderlineTabs
+            tabs={PLUGIN_TABS.map((tab) => ({ ...tab, count: tabCounts[tab.value] }))}
+            activeTab={activeView}
+            onChange={setActiveView}
+            showZeroCounts
+          />
           <div>
             <DenInput
               type="search"
@@ -212,77 +206,34 @@ export function PluginsScreen() {
             description={
               plugins.length === 0
                 ? "Imported plugins and connected integration plugins will show up here when they are available."
-                : "Try a different search term or browse the skills, hooks, or MCPs tabs."
+                : "Try a different search term or browse the hooks or MCPs tabs."
             }
           />
         ) : (
-          <div className="grid gap-3 md:grid-cols-2">
-            {filteredPlugins.map((plugin) => (
-              <Link
-                key={plugin.id}
-                href={getPluginRoute(orgSlug, plugin.id)}
-                className="group block overflow-hidden rounded-2xl border border-gray-100 bg-white transition hover:-translate-y-0.5 hover:border-gray-200 hover:shadow-[0_8px_24px_-12px_rgba(15,23,42,0.12)]"
-              >
-                <div className="flex items-stretch">
-                  <div className="relative w-[68px] shrink-0 overflow-hidden">
-                    <StaticSeededGradient seed={plugin.id} className="absolute inset-0" />
-                    <div className="relative flex h-full items-center justify-center">
-                      <div className="flex h-10 w-10 items-center justify-center rounded-[12px] border border-white/60 bg-white shadow-[0_8px_20px_-8px_rgba(15,23,42,0.3)]">
-                        <Puzzle className="h-4 w-4 text-gray-700" aria-hidden />
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="min-w-0 flex-1 px-5 py-4">
-                    <div className="flex items-start justify-between gap-2">
-                      <h2 className="truncate text-[14px] font-semibold tracking-[-0.01em] text-gray-900">
-                        {plugin.name}
-                      </h2>
-                    </div>
-                    {plugin.description ? (
-                      <p className="mt-0.5 line-clamp-2 text-[12.5px] leading-[1.55] text-gray-500">
-                        {plugin.description}
-                      </p>
-                    ) : null}
-
-                    {(plugin.marketplaces ?? []).length > 0 ? (
-                      <div className="mt-2.5 flex flex-wrap gap-1.5">
-                        {(plugin.marketplaces ?? []).map((marketplace) => (
-                          <span
-                            key={marketplace.id}
-                            className="inline-flex items-center gap-1 rounded-full bg-gray-50 px-2 py-0.5 text-[11px] text-gray-600"
-                          >
-                            <Store className="h-3 w-3 text-gray-400" aria-hidden />
-                            <span className="truncate">{marketplace.name}</span>
-                          </span>
-                        ))}
-                      </div>
-                    ) : null}
-
-                    <p className="mt-3 text-[11.5px] text-gray-400">
-                      {getPluginPartsSummary(plugin)}
-                    </p>
-                  </div>
-                </div>
-              </Link>
-            ))}
-          </div>
+          <DenCatalogList
+            label={describePluginScope(filteredPlugins)}
+            valueLabel="Components"
+            valueWidth="150px"
+          >
+            {filteredPlugins.map((plugin) => {
+              const componentCount = getPluginComponentCount(plugin);
+              return (
+                <DenCatalogRow
+                  key={plugin.id}
+                  href={getPluginRoute(orgSlug, plugin.id)}
+                  leading={<CatalogIdentityTile name={plugin.name} />}
+                  title={plugin.name}
+                  description={plugin.description}
+                  meta={(plugin.marketplaces ?? []).map((marketplace) => marketplace.name).join(" · ")}
+                  value={String(componentCount)}
+                  valueMuted={componentCount === 0}
+                  valueCaption={componentCount > 0 ? getPluginPartsSummary(plugin) : undefined}
+                  valueWidth="150px"
+                />
+              );
+            })}
+          </DenCatalogList>
         )
-      ) : activeView === "skills" ? (
-        <PrimitiveList
-          icon={FileText}
-          emptyLabel="No skills in this catalog yet."
-          emptyDescriptionEmpty="Once plugins contribute skills, they will show up here."
-          emptyDescriptionFiltered="No skills match that search."
-          unfilteredCount={allSkills.length}
-          rows={filteredSkills.map((skill) => ({
-            id: skill.id,
-            title: skill.name,
-            description: skill.description,
-            pluginName: skill.pluginName,
-            href: getPluginRoute(orgSlug, skill.pluginId),
-          }))}
-        />
       ) : activeView === "agents" ? (
         <PrimitiveList
           icon={Users}
@@ -350,6 +301,15 @@ export function PluginsScreen() {
       )}
     </DashboardPageTemplate>
   );
+}
+
+function describePluginScope(plugins: DenPlugin[]): string {
+  const marketplaceCount = new Set(
+    plugins.flatMap((plugin) => (plugin.marketplaces ?? []).map((marketplace) => marketplace.id)),
+  ).size;
+  const pluginLabel = `${plugins.length} plugin${plugins.length === 1 ? "" : "s"}`;
+  if (marketplaceCount === 0) return pluginLabel;
+  return `${pluginLabel} across ${marketplaceCount} marketplace${marketplaceCount === 1 ? "" : "s"}`;
 }
 
 function EmptyState({ title, description }: { title: string; description: string }) {

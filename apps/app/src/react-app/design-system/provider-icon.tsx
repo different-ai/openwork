@@ -1,4 +1,7 @@
 /** @jsxImportSource react */
+import { useEffect, useState } from "react";
+
+import { providerLogoCandidates } from "./provider-logo-src";
 
 export type ProviderIconProps = {
   providerId?: string | null;
@@ -9,6 +12,8 @@ export type ProviderIconProps = {
    * providers by cloud id") so the icon still resolves by family.
    */
   providerName?: string | null;
+  /** Configured provider base URL, used as a favicon source for custom providers. */
+  baseUrl?: string | null;
   className?: string;
   size?: number;
 };
@@ -23,6 +28,20 @@ export function ProviderIcon(props: ProviderIconProps) {
   const isAnthropic = hasProviderFamily("anthropic");
   const isOpenAI = hasProviderFamily("openai");
   const isOpenCode = hasProviderFamily("opencode");
+  const hasInlineMark = isAnthropic || isOpenAI || isOpenCode;
+
+  // Remote logos are walked in order and each failure advances one step, so a
+  // provider only falls back to its monogram once every source is exhausted.
+  const candidates = hasInlineMark
+    ? []
+    : providerLogoCandidates({ providerId: props.providerId, baseUrl: props.baseUrl });
+  const [candidateIndex, setCandidateIndex] = useState(0);
+
+  useEffect(() => {
+    setCandidateIndex(0);
+  }, [normalizedId, props.baseUrl]);
+
+  const logoUrl = candidates[candidateIndex];
 
   const fallbackLetters = (() => {
     if (normalizedId === "openrouter") return "OR";
@@ -78,6 +97,17 @@ export function ProviderIcon(props: ProviderIconProps) {
           <path d="M2 17l10 5 10-5" />
           <path d="M2 12l10 5 10-5" />
         </svg>
+      ) : logoUrl ? (
+        <img
+          src={logoUrl}
+          alt=""
+          loading="lazy"
+          width={size}
+          height={size}
+          className="object-contain"
+          style={{ width: `${size}px`, height: `${size}px` }}
+          onError={() => setCandidateIndex((index) => index + 1)}
+        />
       ) : (
         <div
           className="flex h-full w-full items-center justify-center rounded bg-gray-3 text-[10px] font-bold tracking-tight text-gray-11"

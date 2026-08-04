@@ -32,16 +32,18 @@ the reusable `openwork-eval-artifacts` volume at `/daytona-artifacts`, starts a
 static download server, and prints its Daytona preview URL. Capture screenshot
 checkpoints with `daytona exec <sandbox> -- 'bash .devcontainer/capture-daytona-screenshot.sh'`.
 
-For repeatable PR evidence, prefer coded flows under `evals/flows/`:
+For repeatable PR verdict evidence, run an app-driving testkit spec (or use
+`write-a-spec` to add new coverage under `evals/specs/`):
 
 ```bash
-pnpm evals --list
-pnpm evals --flow <flow-id> --cdp-url <printed-electron-cdp-url>
+OPENWORK_EVAL_APP_SPECS=1 OPENWORK_EVAL_DAYTONA=1 \
+  pnpm --dir evals exec vitest run --config vitest.config.ts \
+  --project stack specs/<slug>.slow.test.ts
 ```
 
-The runner writes `evals/results/<run-id>/report.md` and a frame-by-frame
-`index.html` with screenshots captured by `ctx.screenshot(...)`. Use the manual
-CDP snippets below for debugging or for flows that have not been codified yet.
+The `@openwork/testkit` ambient tape binds observable assertions to validated
+takes. Use the manual CDP snippets below only for debugging; custom screenshots
+and recordings are supplementary rather than verdict evidence.
 
 To record the Electron display, pass `--record-video`:
 

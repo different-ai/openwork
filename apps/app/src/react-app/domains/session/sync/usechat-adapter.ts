@@ -201,10 +201,14 @@ function mapSnapshotToolParts(part: ToolPart): UIMessage["parts"] {
 export function snapshotToUIMessages(snapshot: OpenworkSessionSnapshot): UIMessage[] {
   return snapshot.messages.flatMap((message) => {
     const created = message.info.time?.created;
+    const time = message.info.time;
+    const completed = time && "completed" in time ? time.completed : undefined;
     const uiMessage = {
       id: message.info.id,
       role: message.info.role,
-      ...(typeof created === "number" ? { metadata: { opencode: { created } } } : {}),
+      ...(typeof created === "number"
+        ? { metadata: { opencode: { created, ...(typeof completed === "number" ? { completed } : {}) } } }
+        : {}),
       parts: message.parts.flatMap<UIMessage["parts"][number]>((part) => {
         if (part.type === "text") {
           if (part.synthetic || part.ignored) return [];

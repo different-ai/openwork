@@ -1,6 +1,58 @@
 ---
 title: "Changelog"
 ---
+<Update label="August 3rd" tags={["🚀 New Features", "🐛 Bug Fixes"]}>
+
+  ## [v0.18.13](https://github.com/different-ai/openwork/compare/v0.18.12...v0.18.13): Extensions becomes the Library and skill sharing opens up
+
+  - Extensions is now the Library — one place for everything your org can use, with tabs for what's ready, needs sign-in, or needs admin setup, on desktop and web.
+  - Any organization member can now create plugins and cloud skills and share them straight from chat; access panels show who can use what, team by team.
+  - Organizations can add multiple named Google Workspace connectors — each member signs in once per connector and agents pick the right account by name.
+  - Chat now renders LaTeX math, shows immediate feedback while submitting, and adds number shortcuts to jump between visible sessions.
+  - Recycled cloud sandboxes keep their chat history, and the artifact panel refreshes when the agent edits the open file.
+
+</Update>
+
+<Update label="July 30th" tags={["🐛 Bug Fixes"]}>
+
+  ## [v0.18.12](https://github.com/different-ai/openwork/compare/v0.18.11...v0.18.12): Managed provider credentials reach the engine
+
+  - Fixed managed cloud provider credentials so they reach the engine's auth API and org-approved models authenticate right after connecting.
+  - Fixed the release pipeline to redeploy den-api when the sandbox snapshot pin changes.
+
+</Update>
+
+<Update label="July 29th" tags={["🐛 Bug Fixes", "🚀 New Features"]}>
+
+  ## [v0.18.11](https://github.com/different-ai/openwork/compare/v0.18.10...v0.18.11): Live agent runs stop getting interrupted
+
+  - Credential changes and background provider updates no longer tear down the agent event stream mid-run.
+  - Composer skills, MCPs, and extensions load instantly from local data while cloud results land live.
+  - Hardened Den organization lifecycles: invitations, re-invites, team cleanup, and legacy SSO/SCIM migration.
+  - A malformed workspace list can no longer make the app unloadable.
+
+</Update>
+
+<Update label="July 29th" tags={["🚀 New Features", "🐛 Bug Fixes"]}>
+
+  ## [v0.18.10](https://github.com/different-ai/openwork/compare/v0.18.9...v0.18.10): Org connections come to the desktop and cloud providers get dependable
+
+  - Connect, reconnect, and disconnect organization connections directly from the desktop app.
+  - Cloud LLM providers are now set up server-side and reach the engine globally, so org-approved models just work.
+  - Cloud workspaces show status and version with a one-click update, and boot states replace stale error flashes.
+  - Fixed organization invite lifecycles and redesigned the bring-your-own-key provider editor.
+
+</Update>
+
+<Update label="July 28th" tags={["🐛 Bug Fixes"]}>
+
+  ## [v0.18.9](https://github.com/different-ai/openwork/compare/v0.18.8...v0.18.9): Linux installs repair themselves
+
+  - Linux AppImages now integrate with the desktop, and the launcher repairs itself silently after updates — even on slow networks.
+  - Den workers adopt an existing Daytona sandbox instead of getting stuck provisioning forever.
+
+</Update>
+
 <Update label="June 21st" tags={["🚀 New Features"]}>
 
   ## GLM 5.2, now in the API — with 2x usage

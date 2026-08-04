@@ -9,6 +9,7 @@ import {
   isConnectAdminRole,
   resolveConnectRowGroup,
   resolveConnectionRowGroup,
+  type ConnectOrgRole,
   type ConnectRowGroup,
 } from "@/react-app/domains/settings/connect-cloud-readiness";
 import type { ExtensionItem } from "@/react-app/domains/settings/extension-items";
@@ -61,7 +62,7 @@ type ConnectOrganizationRow =
 export function buildConnectRows(input: {
   connections: DenExternalMcpConnection[];
   items: ExtensionItem[];
-  role: "owner" | "admin" | "member" | null | undefined;
+  role: ConnectOrgRole;
 }) {
   const marketplaceItems = input.items.filter(isCloudMarketplaceItem);
   const pluginConnectionIds = new Set(
@@ -100,7 +101,7 @@ export function buildConnectRows(input: {
 export function ConnectView() {
   const navigate = useNavigate();
   useEffect(() => {
-    navigate("/settings/extensions", { replace: true });
+    navigate("/extensions", { replace: true });
   }, [navigate]);
   return null;
 }

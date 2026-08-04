@@ -703,7 +703,9 @@ export function useControlActions(actions: readonly OpenworkControlAction[]) {
 
 import { SETTINGS_TAB_VALUES } from "../../../app/types";
 
-const SETTINGS_TABS: ReadonlySet<string> = new Set<string>(SETTINGS_TAB_VALUES);
+const SETTINGS_TABS: ReadonlySet<string> = new Set<string>(
+  SETTINGS_TAB_VALUES.filter((tab) => tab !== "extensions"),
+);
 
 export function OpenworkRouteControlActions() {
   const navigate = useNavigate();
@@ -724,11 +726,11 @@ export function OpenworkRouteControlActions() {
       execute: () => navigate("/settings/general"),
     },
     {
-      id: "route.settings.skills",
+      id: "route.extensions.skills",
       label: "Open extensions",
       description: "Browse the skills and MCPs available to this agent.",
       sideEffect: "navigation",
-      execute: () => navigate("/settings/extensions/skills"),
+      execute: () => navigate("/extensions/skills"),
     },
     {
       id: "route.settings.providers",
@@ -763,7 +765,7 @@ export function OpenworkRouteControlActions() {
           type: "string",
           required: true,
           description:
-            "Settings tab: general | ai | preferences | permissions | shell | extensions | environment | advanced | appearance | updates | recovery | debug | cloud-account | cloud-providers",
+            "Settings tab: general | ai | preferences | permissions | shell | environment | advanced | appearance | updates | recovery | debug | cloud-account | cloud-providers",
         },
       ],
       previewArgs: { panel: "ai" },
@@ -805,7 +807,7 @@ export function OpenworkRouteControlActions() {
         capabilities: [
           { id: "browse", label: "Browse the web", description: "Control a browser to navigate, scrape, and automate web tasks." },
           { id: "providers", label: "AI model providers", description: "Connect Anthropic, OpenAI, Google, OpenRouter, Ollama, or other LLM providers." },
-          { id: "extensions", label: "Extensions", description: "Browse the skills and MCPs available to your agent." },
+          { id: "extensions", label: "Library", description: "Skills, connections, and tools your agent can use." },
           { id: "voice", label: "Voice mode", description: "Talk to OpenWork with real-time voice using OpenAI Realtime." },
           { id: "files", label: "File management", description: "Read, write, and organize files in your workspace." },
           { id: "code", label: "Write and run code", description: "Generate, edit, and execute code with full tool access." },
@@ -814,7 +816,7 @@ export function OpenworkRouteControlActions() {
           { id: "automations", label: "Automations", description: "Schedule recurring tasks and background agents." },
           { id: "sharing", label: "Share sessions", description: "Share workspace sessions with collaborators via OpenWork Cloud." },
         ],
-        hint: "Use settings.panel.open to configure any of these. For example: settings.panel.open({panel:'ai'}) for providers, settings.panel.open({panel:'extensions'}) for skills and MCPs.",
+        hint: "Use settings.panel.open for settings such as AI providers, and route.extensions.skills to browse Library.",
       }),
     },
   ], [navigate]);

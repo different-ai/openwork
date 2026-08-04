@@ -17,6 +17,7 @@ export type NativeOAuthProviderConfig = {
   displayName: string
   authorizeUrl: string
   tokenUrl: string
+  userinfoUrl?: string
   /** Display-only endpoint shown on connection cards. */
   websiteUrl: string
   defaultScopes: string[]
@@ -38,6 +39,7 @@ export const NATIVE_OAUTH_PROVIDERS: Record<string, NativeOAuthProviderConfig> =
     displayName: "Google Workspace",
     authorizeUrl: env.googleOAuthAuthorizeUrl ?? "https://accounts.google.com/o/oauth2/v2/auth",
     tokenUrl: env.googleOAuthTokenUrl ?? "https://oauth2.googleapis.com/token",
+    userinfoUrl: env.googleOAuthUserinfoUrl ?? "https://www.googleapis.com/oauth2/v3/userinfo",
     websiteUrl: "https://workspace.google.com",
     defaultScopes: [
       "openid",
@@ -62,7 +64,7 @@ export const NATIVE_OAUTH_PROVIDERS: Record<string, NativeOAuthProviderConfig> =
     usesPkce: true,
     extraAuthorizeParams: {
       access_type: "offline",
-      prompt: "consent",
+      prompt: "consent select_account",
     },
   },
   "microsoft-365": {
@@ -70,6 +72,7 @@ export const NATIVE_OAUTH_PROVIDERS: Record<string, NativeOAuthProviderConfig> =
     displayName: "Microsoft 365",
     authorizeUrl: env.microsoftOAuthAuthorizeUrl ?? "https://login.microsoftonline.com/{tenantId}/oauth2/v2.0/authorize",
     tokenUrl: env.microsoftOAuthTokenUrl ?? "https://login.microsoftonline.com/{tenantId}/oauth2/v2.0/token",
+    userinfoUrl: "https://graph.microsoft.com/oidc/userinfo",
     websiteUrl: "https://www.microsoft.com/microsoft-365",
     defaultScopes: ["openid", "profile", "email", "offline_access", "User.Read"],
     defaultFeatures: [...MICROSOFT_365_DEFAULT_FEATURES],

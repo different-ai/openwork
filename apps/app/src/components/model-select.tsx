@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { ChevronDown, ChevronRight, Settings2, Sparkles } from "lucide-react";
+import { ChevronDown, Settings2 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
 import type { ModelOption, ModelRef } from "@/app/types";
@@ -44,8 +44,15 @@ import {
   CommandItem,
   CommandList,
 } from "@/components/ui/command";
-import { openModelPickerEvent } from "@/react-app/shell/new-providers-listener";
+import { openModelPickerEvent, openProviderAuthEvent } from "@/react-app/shell/new-providers-listener";
 import { newProvidersEvent } from "@/app/lib/provider-events";
+
+/** Shown with their logos when no keys are connected yet. */
+const SUGGESTED_KEY_PROVIDERS = [
+  { id: "anthropic", name: "Anthropic" },
+  { id: "openai", name: "OpenAI" },
+  { id: "google", name: "Google" },
+];
 
 function getProviderDisplayName(providerId: string) {
   return providerId
@@ -181,6 +188,7 @@ function isSameModel(a: ModelRef, b: ModelRef) {
 interface ModelSelectProps {
   open: boolean;
   value: ModelRef;
+  hideValue?: boolean;
   onOpenChange: (open: boolean) => void;
   onChange: (model: ModelRef) => void;
   disabled?: boolean;
@@ -193,6 +201,7 @@ interface ModelSelectProps {
 export function ModelSelect({
   open,
   value,
+  hideValue = false,
   onOpenChange,
   onChange,
   disabled = false,
@@ -207,6 +216,8 @@ export function ModelSelect({
   const navigate = useNavigate();
   const platform = usePlatform();
   const openWorkModelsPromoEligible = useOpenWorkModelsPromoEligibility();
+  const checkDesktopRestriction = useCheckDesktopRestriction();
+  const canAddProviders = !checkDesktopRestriction({ restriction: "allowCustomProviders" });
 
   React.useEffect(() => {
     const handlePromoChanged = () => setPromoHidden(isOpenWorkModelsPromoHidden());
@@ -285,6 +296,30 @@ export function ModelSelect({
     setPromoHidden(true);
   }, []);
 
+  // Providers the user connected with their own key — OpenCode Zen and
+  // OpenWork Models are managed for them, so they never count as "your keys".
+  const keyProviders = React.useMemo(() => {
+    const seen = new Map<string, string>();
+    for (const option of modelOptions) {
+      const id = option.providerID.trim().toLowerCase();
+      if (!id || id === "opencode" || id === OPENWORK_MODELS_PROVIDER_ID) continue;
+      if (seen.has(id)) continue;
+      seen.set(id, option.description ?? getProviderDisplayName(option.providerID));
+    }
+    return [...seen].map(([id, name]) => ({ id, name }));
+  }, [modelOptions]);
+
+  const hasKeyProviders = keyProviders.length > 0;
+  const keyProviderPreview = hasKeyProviders
+    ? keyProviders.slice(0, 3)
+    : SUGGESTED_KEY_PROVIDERS;
+
+  const handleConnectProvider = React.useCallback(() => {
+    onOpenChange(false);
+    setSearch("");
+    window.dispatchEvent(new Event(openProviderAuthEvent));
+  }, [onOpenChange]);
+
   return (
     <Popover
       open={open}
@@ -309,7 +344,7 @@ export function ModelSelect({
           }
         >
           <span className="max-w-48 truncate">
-            {selectedOption?.title ?? value.modelID ?? "Select model"}
+            {hideValue ? "Select model" : (selectedOption?.title ?? value.modelID ?? "Select model")}
           </span>
           <ChevronDown className="h-3 w-3" />
         </TooltipTrigger>
@@ -354,16 +389,22 @@ export function ModelSelect({
                 key={group.value}
                 items={group.items}
               >
-                <CommandGroupLabel className={group.promo ? "flex items-center gap-1.5 text-foreground" : undefined}>
-                  {group.promo ? <Sparkles className="size-3 text-blue-11" /> : null}
-                  {group.value}
+                <CommandGroupLabel className={group.promo ? "flex items-baseline justify-between gap-2" : undefined}>
+                  {group.promo ? (
+                    <>
+                      <span>{group.value}</span>
+                      <span className="shrink-0 font-normal text-muted-foreground">hosted · no API keys</span>
+                    </>
+                  ) : (
+                    group.value
+                  )}
                 </CommandGroupLabel>
                 <CommandCollection>
                   {(item: ModelSelectItem) => {
                     if (item.kind === "openwork") {
                       return (
                         <CommandItem
-                          className="gap-2 border border-blue-6/50 bg-blue-2/40 data-highlighted:bg-blue-3"
+                          className="gap-2"
                           key={item.id}
                           value={`${OPENWORK_MODELS_PROVIDER_NAME} ${item.title} ${item.id} sign in subscribe`}
                           onClick={handleOpenWorkModels}
@@ -371,21 +412,14 @@ export function ModelSelect({
                           <ProviderIcon
                             providerId={OPENWORK_MODELS_PROVIDER_ID}
                             providerName={OPENWORK_MODELS_PROVIDER_NAME}
-                            className="size-3.5 text-blue-11"
+                            className="size-3.5 opacity-70"
                             size={14}
                           />
                           <span className="min-w-0 flex-1">
                             <span className="block truncate text-foreground">
                               {item.title}
                             </span>
-                            <span className="block truncate text-xs text-muted-foreground">
-                              {item.subtitle} - {denAuth.isSignedIn ? "Subscribe to add this model" : "Sign in to unlock"}
-                            </span>
                           </span>
-                          <span className="shrink-0 rounded-full border border-blue-6 bg-blue-3 px-1.5 py-0.5 text-[10px] font-medium text-blue-11">
-                            {denAuth.isSignedIn ? "Subscribe" : "Sign in"}
-                          </span>
-                          <ChevronRight className="size-3.5 text-blue-11" />
                         </CommandItem>
                       );
                     }
@@ -418,9 +452,56 @@ export function ModelSelect({
                     );
                   }}
                 </CommandCollection>
+                {group.promo ? (
+                  <button
+                    type="button"
+                    className="mx-1 mb-1.5 mt-1 flex w-[calc(100%-0.5rem)] items-center gap-2 rounded-md bg-blue-2 px-3 py-2 text-left transition-colors hover:bg-blue-3"
+                    onClick={handleOpenWorkModels}
+                  >
+                    <span className="min-w-0 flex-1 text-xs leading-4 text-foreground">
+                      One subscription unlocks these in every workspace.
+                    </span>
+                    <span className="shrink-0 text-xs font-semibold text-blue-11">
+                      {denAuth.isSignedIn ? "Enable →" : "Sign in →"}
+                    </span>
+                  </button>
+                ) : null}
               </CommandGroup>
             )}
           </CommandList>
+          {/* Your API keys → provider configuration. One slot, one action: the
+              label reflects whether any keys are connected yet. */}
+          {canAddProviders ? (
+            <div className="border-t border-border p-1">
+              <div className="flex items-baseline px-2 pb-0.5 pt-1 text-xs text-muted-foreground">
+                Your API keys
+              </div>
+              <button
+                type="button"
+                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent hover:text-accent-foreground"
+                onClick={handleConnectProvider}
+              >
+                <span className="flex shrink-0 items-center">
+                  {keyProviderPreview.map((provider, index) => (
+                    <span
+                      key={provider.id}
+                      className="flex size-[18px] items-center justify-center overflow-hidden rounded-[6px] border border-border bg-background"
+                      style={index === 0 ? undefined : { marginLeft: "-5px" }}
+                    >
+                      <ProviderIcon providerId={provider.id} providerName={provider.name} size={12} />
+                    </span>
+                  ))}
+                </span>
+                <span className="min-w-0 flex-1 truncate text-foreground">
+                  {keyProviderPreview.map((provider) => provider.name).join(", ")}
+                  {!hasKeyProviders || keyProviders.length > keyProviderPreview.length ? "…" : ""}
+                </span>
+                <span className="shrink-0 text-xs font-medium text-muted-foreground">
+                  {hasKeyProviders ? "Connect more providers" : "Add your keys"}
+                </span>
+              </button>
+            </div>
+          ) : null}
           {/* Link to full model picker */}
           <div className="border-t border-border px-2 py-1.5">
             <div className="flex items-center gap-1">

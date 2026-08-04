@@ -25,6 +25,11 @@ import {
 } from "@/components/ui/command";
 import { Button } from "@/components/ui/button";
 import { BrainCircuit, Check, ChevronLeftIcon, FileText, FolderInput, Globe, Zap } from "lucide-react";
+import { usePlatform } from "../kernel/platform";
+import {
+  resolveSessionNumberShortcutOs,
+  sessionNumberShortcutHelp,
+} from "./session-number-shortcuts";
 
 export type PaletteItem = {
   id: string;
@@ -89,6 +94,8 @@ export type CommandPaletteProps = {
   onCreateNewSession: () => void;
   /** Called when "Open settings" is chosen. Accepts an optional route to jump straight to a tab. */
   onOpenSettings: (route?: string) => void;
+  /** Called when the first-class Extensions page is chosen. */
+  onOpenExtensions: () => void;
   /** Optional: open the full default-model picker. */
   onOpenModelPicker?: () => void;
   selectedModelLabel?: string;
@@ -118,6 +125,7 @@ export type CommandPaletteProps = {
  * - Sessions submode: fuzzy list of every session across workspaces.
  */
 export function CommandPalette(props: CommandPaletteProps) {
+  const platform = usePlatform();
   const [mode, setMode] = useState<PaletteMode>("root");
   const [agents, setAgents] = useState<Agent[]>([]);
 
@@ -155,6 +163,14 @@ export function CommandPalette(props: CommandPaletteProps) {
   const accessibleTargetCount = props.accessibleTargets?.length ?? 0;
   const sessionGroupCount = props.sessionGroups?.length ?? 0;
   const canMoveCurrentSessionToGroup = Boolean(props.currentSessionForGroupMove && props.onMoveCurrentSessionToGroup);
+  const sessionNumberOs = resolveSessionNumberShortcutOs(
+    platform.os,
+    typeof navigator === "undefined" ? "" : navigator.platform,
+  );
+  const sessionNumberHelp = useMemo(
+    () => sessionNumberShortcutHelp(sessionNumberOs),
+    [sessionNumberOs],
+  );
 
   const rootItems = useMemo<PaletteItem[]>(() => [
     {
@@ -174,6 +190,13 @@ export function CommandPalette(props: CommandPaletteProps) {
         count: props.sessions.length.toLocaleString(),
       }),
       meta: t("session.cmd_sessions_meta"),
+      action: () => {
+        setMode("sessions");
+      },
+    },
+    {
+      id: "session-number-shortcuts",
+      ...sessionNumberHelp,
       action: () => {
         setMode("sessions");
       },
@@ -266,13 +289,13 @@ export function CommandPalette(props: CommandPaletteProps) {
       },
     },
     {
-      id: "settings-extensions",
+      id: "open-extensions",
       title: t("settings.tab_extensions"),
       detail: t("settings.tab_description_extensions"),
-      meta: t("session.cmd_settings_meta"),
+      meta: t("settings.tab_extensions"),
       action: () => {
         props.onClose();
-        props.onOpenSettings("/settings/extensions");
+        props.onOpenExtensions();
       },
     },
     {
@@ -305,7 +328,7 @@ export function CommandPalette(props: CommandPaletteProps) {
         props.onOpenSettings("/settings/updates");
       },
     },
-  ], [accessibleTargetCount, canMoveCurrentSessionToGroup, props, sessionGroupCount]);
+  ], [accessibleTargetCount, canMoveCurrentSessionToGroup, props, sessionGroupCount, sessionNumberHelp]);
 
   const sessionItems = useMemo<PaletteItem[]>(
     () =>

@@ -15,6 +15,9 @@ const sharedDitherShellPath = fileURLToPath(
 const joinOrgSuccessPath = fileURLToPath(
   new URL("../app/(den)/_components/join-org-success.tsx", import.meta.url),
 );
+const onboardingCardPath = fileURLToPath(
+  new URL("../app/(den)/_components/onboarding-card.tsx", import.meta.url),
+);
 const installScreenPath = fileURLToPath(
   new URL("../app/(den)/_components/install-screen.tsx", import.meta.url),
 );
@@ -61,16 +64,26 @@ describe("join organization invite clean layout contract", () => {
     expect(source).toContain('data-shader-speed={shaderSpeed}');
   });
 
-  test("removes stacked frames while keeping a compact centered hierarchy", () => {
+  test("removes stacked frames while using the shared wide welcome card hierarchy", () => {
     const source = readJoinOrgScreenSource();
     const shellSource = readOnboardingShellSource();
     const denShellSource = readFileSync(onboardingShellPath, "utf8");
+    const cardSource = readFileSync(onboardingCardPath, "utf8");
+    const cardUsages = source.match(/<OnboardingCard\b/g) ?? [];
+    const wideShellUsages = source.match(/width="wide"/g) ?? [];
 
     expect(source).not.toContain("den-frame");
     expect(source).not.toContain("den-frame-inset");
     expect(shellSource).toContain('compact: "max-w-md"');
     expect(shellSource).toContain('rootTestId = "join-org-root"');
     expect(denShellSource).toContain("<DitheredOnboardingShell");
+    expect(cardUsages.length).toBeGreaterThanOrEqual(8);
+    expect(wideShellUsages.length).toBeGreaterThanOrEqual(8);
+    expect(cardSource).toContain("rounded-[1.75rem] border border-slate-200/80 bg-white p-6 sm:p-8 md:p-10");
+    expect(cardSource).toContain("/openwork-mark.svg");
+    expect(cardSource).toContain("OpenWork Cloud");
+    expect(cardSource).toContain("OrganizationBrandIdentity");
+    expect(source).toContain("text-[30px] font-semibold leading-[38px] tracking-[-0.03em]");
     expect(source).toContain('data-testid="join-org-invitation-details"');
     expect(source).toContain('data-testid="join-org-actions"');
     expect(source).toContain('data-testid="join-org-auth"');
@@ -109,11 +122,33 @@ describe("join organization invite clean layout contract", () => {
     expect(source).toContain("statusMessage(preview)");
     expect(source).toContain("handleSwitchAccount");
     expect(source).toContain("window.sessionStorage.setItem(PENDING_ORG_INVITATION_STORAGE_KEY, invitationId);");
+    expect(source).toContain("acceptedInvitationResolutionRef");
+    expect(source).toContain('preview.invitation.status !== "accepted"');
+    expect(source).toContain("acceptedInvitationResolutionRef.current = acceptedInvitationId;");
+    expect(source).toContain('getStringProperty(payload, "error") === "membership_removed"');
+    expect(source).toContain("Your access was removed.");
+    expect(source).toContain("Ask a workspace admin for a new invite.");
+    expect(source).toContain("router.replace(getOrgDashboardRoute(nextJoinedOrg.slug));");
+    expect(source).toContain("Opening your workspace.");
+    expect(source).toContain("You've already joined ${preview.organization.name}.");
+    expect(source).toContain("This invite was already accepted. Sign in as ${preview.invitation.email} to open your workspace.");
+    expect(source).toContain('initialMode="sign-in"');
+    expect(source).toContain('initialMode="sign-up"');
     expect(source).toContain("This invite needs a different email domain.");
     expect(source).toContain("This invite is for");
     expect(source).toContain("Use a different account");
     expect(source).toContain("Log out");
     expect(source).toContain("Join ${preview.organization.name}");
+  });
+
+  test("resolves an invite accepted during sign-in before showing it as already used", () => {
+    const source = readJoinOrgScreenSource();
+
+    expect(source).toContain('preview.invitation.status !== "accepted"');
+    expect(source).toContain("acceptedInvitationResolutionRef.current === acceptedInvitationId");
+    expect(source).toContain("resolveAcceptedInvitation");
+    expect(source).toContain("Opening your workspace.");
+    expect(source).toContain('reason: "membership_removed" | "unknown"');
   });
 
   test("carries explicit organization branding through the invitation preview", () => {
@@ -177,6 +212,9 @@ describe("join organization invite clean layout contract", () => {
     expect(successSource).toContain("Email me the download link");
     expect(successSource).not.toContain("capabilities");
     expect(successSource).not.toContain("Open OpenWork");
+    expect(successSource).toContain("<OnboardingCard organization={{ name: organizationName, brand }}>");
+    expect(successSource).toContain("text-[30px] font-semibold leading-[38px] tracking-[-0.03em]");
+    expect(successSource).toContain("den-button-primary min-h-12 w-full");
     expect(successSource).toContain("<span>You&apos;re in, welcome to</span>");
     expect(successSource).toContain('className="whitespace-nowrap">&apos;s {brand.appName}</span>');
     expect(installSource).toContain("DownloadPlatformGrid");

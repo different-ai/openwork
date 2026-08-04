@@ -7,6 +7,10 @@ function seedRequiredEnv() {
   process.env.DEN_DB_ENCRYPTION_KEY = process.env.DEN_DB_ENCRYPTION_KEY ?? "x".repeat(32)
   process.env.BETTER_AUTH_SECRET = process.env.BETTER_AUTH_SECRET ?? "y".repeat(32)
   process.env.BETTER_AUTH_URL = process.env.BETTER_AUTH_URL ?? "http://127.0.0.1:8790"
+  delete process.env.LINEAR_API_KEY
+  delete process.env.LINEAR_COMPLIANCE_TEAM_ID
+  delete process.env.LINEAR_API_BASE
+  delete process.env.LINEAR_COMPLIANCE_COMPLETED_STATE_ID
 }
 
 type RecordedOperation = {
@@ -28,10 +32,14 @@ const telegramConnectionId = createDenTypeId("telegramConnection")
 const memoryId = createDenTypeId("memory")
 const llmProviderId = createDenTypeId("llmProvider")
 const organizationName = "Acme Robotics"
+const organizationCreatedAt = new Date("2026-02-03T04:05:06.789Z")
+const linearIssueId = "linear_issue_123"
 
 const operations: RecordedOperation[] = []
 const callOrder: string[] = []
 const cancelledOrganizationIds: string[] = []
+const linearCreatedIssues: { title: string; description: string }[] = []
+const linearCompletedIssueIds: string[] = []
 
 let role = "member"
 let isOwner = false
@@ -55,6 +63,8 @@ function selectRows(table: unknown): unknown[] {
   switch (tableName(table)) {
     case "member":
       return [{ id: memberId, userId }]
+    case "organization":
+      return [{ id: organizationId, name: organizationName, createdAt: organizationCreatedAt }]
     case "apikey":
       return [{ id: "den_test_key", referenceId: userId, metadata: JSON.stringify({ organizationId, orgMembershipId: memberId }) }]
     case "install_link":
@@ -150,9 +160,23 @@ mock.module("../src/orgs.js", () => ({
 }))
 
 let deleteOrganizationModule: typeof import("../src/routes/org/delete-organization.js")
+let linearClientModule: typeof import("../src/linear-client.js")
 
 beforeAll(async () => {
   seedRequiredEnv()
+  linearClientModule = await import("../src/linear-client.js")
+  mock.module("../src/linear.js", () => ({
+    createLinearIssue: (input: { title: string; description: string }) => {
+      callOrder.push("linear:create")
+      linearCreatedIssues.push(input)
+      return Promise.resolve({ id: linearIssueId, identifier: "DEL-1", url: "https://linear.app/openwork/issue/DEL-1" })
+    },
+    completeLinearIssue: (input: { issueId: string }) => {
+      callOrder.push("linear:complete")
+      linearCompletedIssueIds.push(input.issueId)
+      return Promise.resolve(true)
+    },
+  }))
   deleteOrganizationModule = await import("../src/routes/org/delete-organization.js")
   mock.restore()
 })
@@ -161,6 +185,8 @@ beforeEach(() => {
   operations.length = 0
   callOrder.length = 0
   cancelledOrganizationIds.length = 0
+  linearCreatedIssues.length = 0
+  linearCompletedIssueIds.length = 0
   role = "member"
   isOwner = false
   sessionCreatedAt = new Date()
@@ -194,9 +220,15 @@ function createApp() {
   return app
 }
 
-function deleteOrganization() {
-  return createApp().request("http://den.local/v1/org", { method: "DELETE" })
+function deleteOrganization(init: Omit<RequestInit, "method"> = {}) {
+  return createApp().request("http://den.local/v1/org", { ...init, method: "DELETE" })
 }
+
+test("Linear helpers no-op without credentials", async () => {
+  const config = { apiBase: "https://api.linear.app/graphql" }
+  await expect(linearClientModule.createLinearIssue({ title: "Noop", description: "No Linear credentials" }, config)).resolves.toBeNull()
+  await expect(linearClientModule.completeLinearIssue({ issueId: linearIssueId }, config)).resolves.toBe(false)
+})
 
 test("organization delete denies non-owners", async () => {
   role = "member"
@@ -208,6 +240,8 @@ test("organization delete denies non-owners", async () => {
   await expect(response.json()).resolves.toEqual({ error: "forbidden" })
   expect(cancelledOrganizationIds).toEqual([])
   expect(callOrder).toEqual([])
+  expect(linearCreatedIssues).toEqual([])
+  expect(linearCompletedIssueIds).toEqual([])
 })
 
 test("organization delete requires a fresh owner session", async () => {
@@ -221,19 +255,45 @@ test("organization delete requires a fresh owner session", async () => {
   await expect(response.json()).resolves.toMatchObject({ error: "reauth", reason: "fresh_auth_required" })
   expect(cancelledOrganizationIds).toEqual([])
   expect(callOrder).toEqual([])
+  expect(linearCreatedIssues).toEqual([])
+  expect(linearCompletedIssueIds).toEqual([])
 })
 
-test("organization delete cancels subscriptions before purging org scoped rows", async () => {
+test("organization delete tracks Linear ticket around purging org scoped rows", async () => {
   role = "owner"
   isOwner = true
   sessionCreatedAt = new Date()
 
-  const response = await deleteOrganization()
+  const response = await deleteOrganization({
+    headers: {
+      "content-type": "application/json",
+      "x-forwarded-for": "203.0.113.9",
+      "cf-ipcountry": "GB",
+    },
+    body: JSON.stringify({ confirmation: organizationName }),
+  })
 
   expect(response.status).toBe(200)
   await expect(response.json()).resolves.toEqual({ ok: true, organization: { id: organizationId, name: organizationName } })
   expect(cancelledOrganizationIds).toEqual([organizationId])
-  expect(callOrder).toEqual(["cancel", "transaction"])
+  expect(callOrder).toEqual(["linear:create", "cancel", "transaction", "linear:complete"])
+  expect(linearCompletedIssueIds).toEqual([linearIssueId])
+  expect(linearCreatedIssues).toHaveLength(1)
+  expect(linearCreatedIssues[0]?.title).toBe(`[ACCOUNT DELETION]: ${organizationId}`)
+  const description = linearCreatedIssues[0]?.description ?? ""
+  expect(description).toContain("Request source: self serve request")
+  expect(description).toContain("Request ID: req_")
+  expect(description).toContain(`Requester user ID: ${userId}`)
+  expect(description).toContain("Requester email: owner@acme.test")
+  expect(description).toContain("Requester name: Owner")
+  expect(description).toContain(`Database user id: ${userId}`)
+  expect(description).toContain(`Organization ID: ${organizationId}`)
+  expect(description).toContain(`Organization name: ${organizationName}`)
+  expect(description).toContain("Number of members: 1")
+  expect(description).toContain(`Organization creation date: ${organizationCreatedAt.toISOString()}`)
+  expect(description).toContain(`Confirmation string: ${organizationName}`)
+  expect(description).toContain("x-forwarded-for: 203.0.113.9")
+  expect(description).toContain("country: GB")
 
   const deletedTables = operations
     .filter((operation) => operation.kind === "delete")

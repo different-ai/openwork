@@ -8,7 +8,9 @@ import {
   Copy,
   Download,
   FileIcon,
+  FolderOpen,
   LoaderCircle,
+  MoreHorizontal,
   Pencil,
   Split,
   Undo2,
@@ -22,7 +24,8 @@ import {
   type UIMessage,
 } from "ai"
 import type { SessionStatus } from "@opencode-ai/sdk/v2/client"
-import { openDesktopUrl } from "@/app/lib/desktop"
+import { openDesktopUrl, revealDesktopItemInDir } from "@/app/lib/desktop"
+import { isElectronRuntime } from "@/app/lib/runtime-env"
 import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "@/app/types"
 import { ApplyPatchTool } from "@/components/tools/apply-patch"
 import { BashTool } from "@/components/tools/bash"
@@ -48,6 +51,12 @@ import {
   DescriptiveButtonTitle,
 } from "@/components/descriptive-button"
 import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import {
   ContextMenu,
   ContextMenuContent,
@@ -97,7 +106,7 @@ import {
 } from "@/lib/tool-activity"
 import { faviconUrlForHref } from "@/lib/favicon"
 import { cn } from "@/lib/utils"
-import { groupMessages, isMessageGroup, getLastTextPart, getAggregateOnlyParts, getAssistantRenderGroups, getFileTitle, getMediaBadge, getMessageCreated, formatMessageTimestamp, type UIMessageWithIndex, getMessagesText, getSafeFileDownloadUrl } from "./utils"
+import { groupMessages, isMessageGroup, getLastTextPart, getAggregateOnlyParts, getAssistantRenderGroups, getFileTitle, getMediaBadge, getMessageCompleted, getMessageCreated, formatMessageTimestamp, splitTurnAtAnswer, type UIMessageWithIndex, getMessagesText, getSafeFileDownloadUrl, getSafeFileRevealPath } from "./utils"
 import type { AnyToolPart } from "@/lib/tool-aggregate"
 
 const SEARCH_HIGHLIGHT_MARK_CLASS = "rounded px-0.5 bg-amber-4/70 text-current"
@@ -266,6 +275,8 @@ function FileMessage({ part, tone }: FileMessageProps) {
   const badge = getMediaBadge(part)
   const isImage = part.mediaType.startsWith("image/") && Boolean(part.url)
   const downloadUrl = getSafeFileDownloadUrl(part)
+  const revealPath = getSafeFileRevealPath(part)
+  const canReveal = isElectronRuntime() && Boolean(revealPath)
 
   const handleDownload = React.useCallback(() => {
     if (!downloadUrl) return
@@ -277,6 +288,11 @@ function FileMessage({ part, tone }: FileMessageProps) {
     anchor.click()
     anchor.remove()
   }, [downloadUrl, title])
+
+  const handleReveal = React.useCallback(() => {
+    if (!revealPath) return
+    void revealDesktopItemInDir(revealPath)
+  }, [revealPath])
 
   if (isImage && tone === "user") {
     return <ImageAttachmentBadge src={part.url} alt={title} />
@@ -311,17 +327,35 @@ function FileMessage({ part, tone }: FileMessageProps) {
           ) : null}
         </DescriptiveButtonContent>
       </div>
-      {downloadUrl ? (
-        <Button
-          type="button"
-          variant="outline"
-          size="xs"
-          onClick={handleDownload}
-          aria-label={`Download ${title}`}
-        >
-          <Download className="size-3" />
-          Download
-        </Button>
+      {downloadUrl || canReveal ? (
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                aria-label={`More actions for ${title}`}
+              >
+                <MoreHorizontal />
+              </Button>
+            }
+          />
+          <DropdownMenuContent align="end" className="min-w-44">
+            {downloadUrl ? (
+              <DropdownMenuItem onClick={handleDownload}>
+                <Download />
+                Download
+              </DropdownMenuItem>
+            ) : null}
+            {canReveal ? (
+              <DropdownMenuItem onClick={handleReveal}>
+                <FolderOpen />
+                Reveal in Finder
+              </DropdownMenuItem>
+            ) : null}
+          </DropdownMenuContent>
+        </DropdownMenu>
       ) : null}
     </div>
   )
@@ -922,18 +956,24 @@ function MessageGroup({
   while (stepCount < items.length && !getRenderableMessage(items[stepCount].message)) {
     stepCount += 1
   }
-  const stepItems = items.slice(0, stepCount)
-  const proseItems = items.slice(stepCount)
-  // How long the turn spent working, from the first step to the message
-  // carrying the answer. Server timestamps, so this survives a reload.
+  let stepItems = items.slice(0, stepCount)
+  let proseItems = items.slice(stepCount)
+  // OpenCode delivers a whole turn as one assistant message with steps and
+  // the answer interleaved in its parts. Split the first prose message so
+  // its leading steps fold with the rest instead of pinning the run open.
+  const firstProse = proseItems[0]
+  if (firstProse && firstProse.message.role === "assistant" && !isSessionErrorMessage(firstProse.message)) {
+    const split = splitTurnAtAnswer(firstProse.message)
+    if (split) {
+      stepItems = [...stepItems, { index: firstProse.index, message: split.steps }]
+      proseItems = [{ index: firstProse.index, message: split.answer }, ...proseItems.slice(1)]
+    }
+  }
+  // How long the turn spent working, from the first step to when the answer
+  // finished (or started, for older history without a completed timestamp).
+  // Server timestamps, so this survives a reload.
   const stepsStartedAt = stepItems.length > 0 ? getMessageCreated(stepItems[0].message) : null
-  const stepsEndedAt = getMessageCreated(lastItem.message)
-  const stepRunLabel =
-    stepsStartedAt !== null && stepsEndedAt !== null && stepsEndedAt > stepsStartedAt
-      ? `Worked for ${formatToolCallDuration(stepsEndedAt - stepsStartedAt)}`
-      : stepItems.length === 1
-        ? "1 step"
-        : `${stepItems.length} steps`
+  const stepsEndedAt = getMessageCompleted(lastItem.message) ?? getMessageCreated(lastItem.message)
 
   // The answer message's own thinking belongs to the work, not the answer, so
   // a collapsed run shows it and the message below renders text only.
@@ -946,15 +986,26 @@ function MessageGroup({
       )
       : []
   )
+  // An aggregate line counts each call it absorbed: it reads as one row but
+  // stands for that much work, and folding should key off the work done.
   const stepRowCount =
     stepItems.reduce(
       (total, item) =>
         total +
         (item.message.role === "assistant" && !isSessionErrorMessage(item.message)
-          ? getAssistantRenderGroups(item.message.parts, showThinking).length
+          ? getAssistantRenderGroups(item.message.parts, showThinking).reduce(
+            (rows, group) => rows + (group.kind === "tool-aggregate" ? group.parts.length : 1),
+            0
+          )
           : 1),
       0
     ) + proseReasoning.length
+  const stepRunLabel =
+    stepsStartedAt !== null && stepsEndedAt !== null && stepsEndedAt > stepsStartedAt
+      ? `Worked for ${formatToolCallDuration(stepsEndedAt - stepsStartedAt)}`
+      : stepRowCount === 1
+        ? "1 step"
+        : `${stepRowCount} steps`
   // A short finished run reads fine as a list, so only long ones fold away.
   const collapseSteps =
     !isLiveGroup && stepItems.length > 0 && stepRowCount > COLLAPSED_STEP_RUN_MIN_ROWS
@@ -1087,8 +1138,13 @@ interface MessageListProps {
   retryStatus?: RetryStatus | null
 }
 
+export function shouldShowMessageListLoading(status: ThreadStatus, messageCount: number) {
+  return status === "streaming" || (status === "submitted" && messageCount > 0)
+}
+
 export function MessageList({ messages, status, retryStatus }: MessageListProps) {
   const isStreaming = status === "streaming" || status === "retrying"
+  const showLoading = shouldShowMessageListLoading(status, messages.length)
   const items = React.useMemo(() => groupMessages(messages, status), [messages, status]);
   const error = useSessionErrorMessage();
   const hasSessionErrorMessage = React.useMemo(() => messages.some(isSessionErrorMessage), [messages])
@@ -1129,7 +1185,7 @@ export function MessageList({ messages, status, retryStatus }: MessageListProps)
         )
       })}
 
-      {status === "streaming" && <LoadingMessage label={liveActionLabel ?? undefined} />}
+      {showLoading && <LoadingMessage label={liveActionLabel ?? undefined} />}
       {retryStatus ? <RetryMessage status={retryStatus} /> : null}
       {error && !hasSessionErrorMessage ? <ErrorMessage error={error} /> : null}
     </div>

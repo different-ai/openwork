@@ -4,6 +4,7 @@ import type { UiState } from "../src/react-app/shell/ui-state-store";
 
 const PERSISTED_UI_STATE_KEY = "openwork:ui-state:v1";
 const originalWindow = globalThis.window;
+const originalLocalStorage = globalThis.localStorage;
 
 function memoryStorage(): Storage {
   const map = new Map<string, string>();
@@ -62,10 +63,15 @@ Object.defineProperty(globalThis, "window", {
     localStorage: storage,
   },
 });
+Object.defineProperty(globalThis, "localStorage", {
+  configurable: true,
+  value: storage,
+});
 
 const { persistUiState, toggleSidePanelState, useUiStateStore } = await import(
   "../src/react-app/shell/ui-state-store"
 );
+const { usePanelTabStore } = await import("../src/react-app/domains/session/panel/panel-tab-store");
 
 const importedSidePanelState = useUiStateStore.getState().sidePanelState;
 const importedWorkspaceRightSidebarExpanded = useUiStateStore.getState().workspaceRightSidebarExpanded;
@@ -74,6 +80,10 @@ afterAll(() => {
   Object.defineProperty(globalThis, "window", {
     configurable: true,
     value: originalWindow,
+  });
+  Object.defineProperty(globalThis, "localStorage", {
+    configurable: true,
+    value: originalLocalStorage,
   });
 });
 
@@ -94,6 +104,7 @@ describe("ui state store", () => {
     const parsed = requireJsonObject(storage.getItem(PERSISTED_UI_STATE_KEY));
     expect("sidePanelState" in parsed).toBe(false);
     expect(objectValue(parsed, "workspaceRightSidebarExpanded")).toBe(true);
+    expect(objectValue(parsed, "workspaceRightSidebarExpandedWidth")).toBe(520);
   });
 
   test("ignores legacy persisted side panel state on startup", () => {
@@ -117,5 +128,24 @@ describe("ui state store", () => {
 
     const closed = toggleSidePanelState(opened, "ses_1", "extensions");
     expect(closed.sidePanelState).toEqual({ ses_1: null });
+  });
+
+  test("preserves active panel content while the panel closes and reopens", () => {
+    usePanelTabStore.getState().openTab("ses_preserve", {
+      id: "file:report.md",
+      type: "artifact",
+      label: "report.md",
+      preview: "markdown",
+    });
+
+    const closed = toggleSidePanelState({
+      ...useUiStateStore.getState(),
+      sidePanelState: { ses_preserve: "panel" },
+    }, "ses_preserve", "panel");
+    const reopened = toggleSidePanelState(closed, "ses_preserve", "panel");
+
+    expect(reopened.sidePanelState.ses_preserve).toBe("panel");
+    expect(usePanelTabStore.getState().sessions.ses_preserve?.activeTabId).toBe("file:report.md");
+    usePanelTabStore.getState().clearSession("ses_preserve");
   });
 });

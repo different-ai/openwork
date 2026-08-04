@@ -125,6 +125,34 @@ function connectDotVariant(status: OpenWorkConnectStatus): StatusDotVariant {
   return "disconnected";
 }
 
+/**
+ * Non-developer mode shows one status row: the runtime status, unless
+ * OpenWork Connect needs attention (or is the only signal available).
+ * Developer mode keeps the two separate rows.
+ */
+export function resolveCollapsedStatus(
+  runtime: RuntimeStatus | null,
+  connect: OpenWorkConnectStatus | null,
+): RuntimeStatus | null {
+  if (runtime && runtime.variant !== "connected") return runtime;
+  if (connect && connect.state === "needs_attention") {
+    return {
+      variant: "disconnected",
+      label: `OpenWork Connect: ${connect.label}`,
+      detail: connect.description,
+    };
+  }
+  if (runtime) return runtime;
+  if (connect) {
+    return {
+      variant: connectDotVariant(connect),
+      label: `OpenWork Connect: ${connect.label}`,
+      detail: connect.description,
+    };
+  }
+  return null;
+}
+
 function accountInitials(name: string | null, email: string) {
   const source = name?.trim() || email;
   const parts = source.split(/[\s@._-]+/).filter(Boolean);
@@ -253,6 +281,7 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
     props.openWorkConnectState,
   );
   const connectNeedsAttention = connectStatus?.state === "needs_attention";
+  const collapsedStatus = resolveCollapsedStatus(runtimeStatus, connectStatus);
   const showStatus = shellConfig.statusBar && (runtimeStatus !== null || connectStatus !== null);
 
   const openSignIn = () => {
@@ -322,42 +351,60 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
 
         {showStatus ? (
           <div className="mx-1 mb-1 flex flex-col gap-2 rounded-lg bg-muted/50 p-2">
-            {runtimeStatus ? (
-              <div className="flex items-start gap-2">
+            {props.developerMode ? (
+              <>
+                {runtimeStatus ? (
+                  <div className="flex items-start gap-2">
+                    <span className="mt-1">
+                      <StatusDot variant={runtimeStatus.variant} />
+                    </span>
+                    <div className="min-w-0">
+                      <div className="text-[11.5px] font-medium text-foreground">{runtimeStatus.label}</div>
+                      {runtimeStatus.detail ? (
+                        <div className="text-[10.5px] leading-tight text-muted-foreground">
+                          {runtimeStatus.detail}
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                ) : null}
+                {connectStatus ? (
+                  <div data-testid="openwork-connect-status" className="flex items-start gap-2">
+                    <span className="mt-1">
+                      <StatusDot variant={connectDotVariant(connectStatus)} />
+                    </span>
+                    <div className="min-w-0">
+                      <div className="text-[11.5px] font-medium text-foreground">
+                        {`OpenWork Connect: ${connectStatus.label}`}
+                      </div>
+                      <div className="text-[10.5px] leading-tight text-muted-foreground">
+                        {connectStatus.description}
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
+              </>
+            ) : collapsedStatus ? (
+              <div data-testid="collapsed-status" className="flex items-start gap-2">
                 <span className="mt-1">
-                  <StatusDot variant={runtimeStatus.variant} />
+                  <StatusDot variant={collapsedStatus.variant} />
                 </span>
                 <div className="min-w-0">
-                  <div className="text-[11.5px] font-medium text-foreground">{runtimeStatus.label}</div>
-                  {runtimeStatus.detail ? (
+                  <div className="text-[11.5px] font-medium text-foreground">{collapsedStatus.label}</div>
+                  {collapsedStatus.detail ? (
                     <div className="text-[10.5px] leading-tight text-muted-foreground">
-                      {runtimeStatus.detail}
+                      {collapsedStatus.detail}
                     </div>
                   ) : null}
                 </div>
               </div>
             ) : null}
-            {connectStatus ? (
-              <div data-testid="openwork-connect-status" className="flex items-start gap-2">
-                <span className="mt-1">
-                  <StatusDot variant={connectDotVariant(connectStatus)} />
-                </span>
-                <div className="min-w-0">
-                  <div className="text-[11.5px] font-medium text-foreground">
-                    {`OpenWork Connect: ${connectStatus.label}`}
-                  </div>
-                  <div className="text-[10.5px] leading-tight text-muted-foreground">
-                    {connectStatus.description}
-                  </div>
-                </div>
-              </div>
-            ) : null}
-            {props.showConnectionStatus ? (
+            {props.showConnectionStatus && props.developerMode ? (
               <div className="text-[10.5px] leading-tight text-muted-foreground">
                 {t("account.providers_connected", { count: props.providerConnectedIds.length })}
                 {" · "}
                 {t("account.mcp_connected", { count: props.mcpConnectedCount })}
-                {props.developerMode ? ` · ${t("status.developer_mode")}` : ""}
+                {` · ${t("status.developer_mode")}`}
               </div>
             ) : null}
           </div>

@@ -5,6 +5,7 @@ import type { OrganizationContext } from "../src/orgs.js"
 import type { OrgRouteVariables } from "../src/routes/org/shared.js"
 
 type CloudWorkerStatus = "provisioning" | "healthy" | "failed" | "stopped"
+type CloudInstanceStatus = "provisioning" | "waking" | "ready" | "failed"
 type CloudRoutesModule = typeof import("../src/routes/cloud/index.js")
 type CloudRouteOptions = NonNullable<Parameters<CloudRoutesModule["registerCloudRoutes"]>[1]>
 type CloudWorkerStore = NonNullable<CloudRouteOptions["cloudWorkerStore"]>
@@ -24,6 +25,7 @@ function seedRequiredEnv() {
   process.env.BETTER_AUTH_URL = process.env.BETTER_AUTH_URL ?? "http://127.0.0.1:8790"
   process.env.CORS_ORIGINS = process.env.CORS_ORIGINS ?? "http://127.0.0.1:8790"
   process.env.PROVISIONER_MODE = "stub"
+  process.env.DAYTONA_SNAPSHOT = "openwork-0.18.8"
 }
 
 let routes: typeof import("../src/routes/cloud/index.js")
@@ -112,6 +114,26 @@ function fakeSandbox() {
   }
 }
 
+function fakeSandboxWithId(sandboxId: string) {
+  return {
+    ...fakeSandbox(),
+    sandbox_id: sandboxId,
+  }
+}
+
+function expectedCloudInstance(input: {
+  status: CloudInstanceStatus
+  url: string | null
+  imageVersion?: string | null
+}) {
+  return {
+    status: input.status,
+    url: input.url,
+    imageVersion: input.imageVersion ?? null,
+    latestVersion: "openwork-0.18.8",
+  }
+}
+
 function fakeWorker(status: CloudWorkerStatus) {
   return {
     id: createDenTypeId("worker"),
@@ -155,6 +177,7 @@ function makeCloudWorkerStore(input: {
   const deletedWorkerIds: StoredCloudWorker["id"][] = []
   const deletedTokenWorkerIds: StoredCloudWorker["id"][] = []
   let claimAttempts = 0
+  let recycleClaimAttempts = 0
   let healthyFailures = 0
   let provisioningFailures = 0
   const store: CloudWorkerStore = {
@@ -203,6 +226,16 @@ function makeCloudWorkerStore(input: {
       worker.status = "provisioning"
       return true
     },
+    async claimRecycleWorker(workerId) {
+      recycleClaimAttempts += 1
+      const worker = workers.find((entry) => entry.id === workerId)
+      if (!worker || (worker.status !== "healthy" && worker.status !== "stopped")) {
+        return false
+      }
+
+      worker.status = "provisioning"
+      return true
+    },
     async getActiveTokens(workerId) {
       return tokens.filter((entry) => entry.workerId === workerId)
     },
@@ -230,6 +263,9 @@ function makeCloudWorkerStore(input: {
     deletedTokenWorkerIds,
     get claimAttempts() {
       return claimAttempts
+    },
+    get recycleClaimAttempts() {
+      return recycleClaimAttempts
     },
     get healthyFailures() {
       return healthyFailures
@@ -339,6 +375,22 @@ describe("Cloud gateway resolve route", () => {
     await expect(response.json()).resolves.toEqual({ error: "cloud_not_found" })
   })
 
+  test("returns 404 when the gateway key header is missing", async () => {
+    const app = new Hono<{ Variables: OrgRouteVariables }>()
+    routes.registerCloudRoutes(app, {
+      memberRoute: contextMiddleware(organizationContext(JSON.stringify({ capabilities: { cloud: true } }))),
+      orgMode: "multi_org",
+      provisionerMode: "daytona",
+      daytonaApiKey: "daytona-test-key",
+      gatewayKey: "gateway-secret",
+    })
+
+    const response = await app.request("http://den.local/v1/cloud/gateway/resolve")
+
+    expect(response.status).toBe(404)
+    await expect(response.json()).resolves.toEqual({ error: "cloud_not_found" })
+  })
+
   test("returns 404 when the Cloud capability is off", async () => {
     const app = new Hono<{ Variables: OrgRouteVariables }>()
     routes.registerCloudRoutes(app, {
@@ -357,7 +409,7 @@ describe("Cloud gateway resolve route", () => {
     await expect(response.json()).resolves.toEqual({ error: "cloud_not_found" })
   })
 
-  test("returns the client token only when the instance is ready", async () => {
+  test("returns the gateway tokens only when the instance is ready", async () => {
     const provisioningWorker = fakeWorker("provisioning")
     const provisioningApp = new Hono<{ Variables: OrgRouteVariables }>()
     routes.registerCloudRoutes(provisioningApp, {
@@ -375,10 +427,10 @@ describe("Cloud gateway resolve route", () => {
     })
 
     expect(provisioning.status).toBe(200)
-    await expect(provisioning.json()).resolves.toEqual({ status: "provisioning", url: null, clientToken: null })
+    await expect(provisioning.json()).resolves.toEqual({ status: "provisioning", url: null, clientToken: null, hostToken: null })
 
     const readyWorker = fakeWorker("healthy")
-    const store = makeCloudWorkerStore({ tokens: [makeToken(readyWorker.id, "client")] })
+    const store = makeCloudWorkerStore({ tokens: [makeToken(readyWorker.id, "host"), makeToken(readyWorker.id, "client")] })
     const readyApp = new Hono<{ Variables: OrgRouteVariables }>()
     routes.registerCloudRoutes(readyApp, {
       memberRoute: contextMiddleware(organizationContext(JSON.stringify({ capabilities: { cloud: true } }))),
@@ -390,6 +442,7 @@ describe("Cloud gateway resolve route", () => {
       cloudWorkerStore: store.store,
       getSandboxRecord: async () => fakeSandbox(),
       probeSignedPreview: async () => true,
+      materializeProviders: async () => ({ ok: true, status: "noop", fingerprint: "owp:v1:test", providers: 0 }),
     })
 
     const ready = await readyApp.request("http://den.local/v1/cloud/gateway/resolve", {
@@ -401,11 +454,223 @@ describe("Cloud gateway resolve route", () => {
       status: "ready",
       url: "https://preview.example.test",
       clientToken: "client-token",
+      hostToken: "host-token",
+    })
+  })
+
+  test("does not expose the host token on the member instance response", async () => {
+    const readyWorker = fakeWorker("healthy")
+    const store = makeCloudWorkerStore({ tokens: [makeToken(readyWorker.id, "host"), makeToken(readyWorker.id, "client")] })
+    const app = new Hono<{ Variables: OrgRouteVariables }>()
+    routes.registerCloudRoutes(app, {
+      memberRoute: contextMiddleware(organizationContext(JSON.stringify({ capabilities: { cloud: true } }))),
+      orgMode: "multi_org",
+      provisionerMode: "daytona",
+      daytonaApiKey: "daytona-test-key",
+      ensureCloudWorker: async () => readyWorker,
+      cloudWorkerStore: store.store,
+      getSandboxRecord: async () => fakeSandbox(),
+      probeSignedPreview: async () => true,
+    })
+
+    const response = await app.request("http://den.local/v1/cloud/instance")
+    const payload = await response.json()
+
+    expect(response.status).toBe(200)
+    // The member payload may gain additive fields (imageVersion, latestVersion);
+    // this test's contract is only that tokens never serialize here.
+    expect(payload).toMatchObject({ status: "ready", url: "https://preview.example.test" })
+    expect(payload).not.toHaveProperty("hostToken")
+    expect(payload).not.toHaveProperty("clientToken")
+  })
+
+  test("does not add instanceName to the gateway resolve response", async () => {
+    const readyWorker = fakeWorker("healthy")
+    const store = makeCloudWorkerStore({ tokens: [makeToken(readyWorker.id, "host"), makeToken(readyWorker.id, "client")] })
+    const app = new Hono<{ Variables: OrgRouteVariables }>()
+    routes.registerCloudRoutes(app, {
+      memberRoute: contextMiddleware(organizationContext(JSON.stringify({ capabilities: { cloud: true } }))),
+      orgMode: "multi_org",
+      provisionerMode: "daytona",
+      daytonaApiKey: "daytona-test-key",
+      gatewayKey: "gateway-secret",
+      ensureCloudWorker: async () => readyWorker,
+      cloudWorkerStore: store.store,
+      getSandboxRecord: async () => fakeSandboxWithId("den-daytona-worker-cloud-test"),
+      probeSignedPreview: async () => true,
+      materializeProviders: async () => ({ ok: true, status: "noop", fingerprint: "owp:v1:test", providers: 0 }),
+    })
+
+    const response = await app.request("http://den.local/v1/cloud/gateway/resolve", {
+      headers: { "X-OpenWork-Gateway-Key": "gateway-secret" },
+    })
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toEqual({
+      status: "ready",
+      url: "https://preview.example.test",
+      clientToken: "client-token",
+      hostToken: "host-token",
+    })
+  })
+
+  test("surfaces degraded provider materialization failures without leaking provider keys", async () => {
+    const readyWorker = fakeWorker("healthy")
+    const store = makeCloudWorkerStore({ tokens: [makeToken(readyWorker.id, "host"), makeToken(readyWorker.id, "client")] })
+    const app = new Hono<{ Variables: OrgRouteVariables }>()
+    const secret = "sk-secret-never"
+
+    routes.registerCloudRoutes(app, {
+      memberRoute: contextMiddleware(organizationContext(JSON.stringify({ capabilities: { cloud: true } }))),
+      orgMode: "multi_org",
+      provisionerMode: "daytona",
+      daytonaApiKey: "daytona-test-key",
+      gatewayKey: "gateway-secret",
+      ensureCloudWorker: async () => readyWorker,
+      cloudWorkerStore: store.store,
+      getSandboxRecord: async () => fakeSandbox(),
+      probeSignedPreview: async () => true,
+      materializeProviders: async () => ({
+        ok: false,
+        status: "failed",
+        error: "provider_materialization_failed",
+        reason: "runtime_config_patch_failed_500",
+        message: `runtime_config_patch_failed_500 ${secret}`,
+        fingerprint: "owp:v1:redacted",
+        providers: 1,
+      }),
+    })
+
+    const response = await app.request("http://den.local/v1/cloud/gateway/resolve", {
+      headers: { "X-OpenWork-Gateway-Key": "gateway-secret" },
+    })
+    const body = await response.text()
+
+    expect(response.status).toBe(200)
+    expect(JSON.parse(body)).toEqual({
+      status: "ready",
+      url: "https://preview.example.test",
+      clientToken: "client-token",
+      hostToken: "host-token",
+      providerSync: { status: "degraded" },
+    })
+    expect(body).not.toContain(secret)
+  })
+
+  test("surfaces unsupported provider materialization as degraded provider sync", async () => {
+    const readyWorker = fakeWorker("healthy")
+    const store = makeCloudWorkerStore({ tokens: [makeToken(readyWorker.id, "host"), makeToken(readyWorker.id, "client")] })
+    const app = new Hono<{ Variables: OrgRouteVariables }>()
+
+    routes.registerCloudRoutes(app, {
+      memberRoute: contextMiddleware(organizationContext(JSON.stringify({ capabilities: { cloud: true } }))),
+      orgMode: "multi_org",
+      provisionerMode: "daytona",
+      daytonaApiKey: "daytona-test-key",
+      gatewayKey: "gateway-secret",
+      ensureCloudWorker: async () => readyWorker,
+      cloudWorkerStore: store.store,
+      getSandboxRecord: async () => fakeSandbox(),
+      probeSignedPreview: async () => true,
+      materializeProviders: async () => ({
+        ok: false,
+        status: "unsupported",
+        error: "provider_materialization_unsupported",
+        reason: "runtime_provider_patch_failed_404",
+        message: "runtime_provider_patch_failed_404",
+        fingerprint: "owp:v1:redacted",
+        providers: 1,
+      }),
+    })
+
+    const response = await app.request("http://den.local/v1/cloud/gateway/resolve", {
+      headers: { "X-OpenWork-Gateway-Key": "gateway-secret" },
+    })
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toEqual({
+      status: "ready",
+      url: "https://preview.example.test",
+      clientToken: "client-token",
+      hostToken: "host-token",
+      providerSync: { status: "degraded", reason: "unsupported" },
     })
   })
 })
 
 describe("Cloud instance route lifecycle states", () => {
+  test("returns the Daytona sandbox identifier on the member instance response", async () => {
+    const worker = { ...fakeWorker("healthy"), image_version: "openwork-0.18.7" }
+    const app = new Hono<{ Variables: OrgRouteVariables }>()
+
+    routes.registerCloudRoutes(app, {
+      memberRoute: contextMiddleware(organizationContext(JSON.stringify({ capabilities: { cloud: true } }))),
+      orgMode: "multi_org",
+      provisionerMode: "daytona",
+      daytonaApiKey: "daytona-test-key",
+      ensureCloudWorker: async () => worker,
+      getSandboxRecord: async () => fakeSandboxWithId("den-daytona-worker-cloud-test"),
+      probeSignedPreview: async () => true,
+    })
+
+    const response = await app.request("http://den.local/v1/cloud/instance")
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toEqual({
+      ...expectedCloudInstance({
+        status: "ready",
+        url: "https://preview.example.test",
+        imageVersion: "openwork-0.18.7",
+      }),
+      instanceName: "den-daytona-worker-cloud-test",
+    })
+  })
+
+  test("omits instanceName on the member instance response without a sandbox record", async () => {
+    const worker = fakeWorker("provisioning")
+    const app = new Hono<{ Variables: OrgRouteVariables }>()
+
+    routes.registerCloudRoutes(app, {
+      memberRoute: contextMiddleware(organizationContext(JSON.stringify({ capabilities: { cloud: true } }))),
+      orgMode: "multi_org",
+      provisionerMode: "daytona",
+      daytonaApiKey: "daytona-test-key",
+      ensureCloudWorker: async () => worker,
+      getSandboxRecord: async () => null,
+    })
+
+    const response = await app.request("http://den.local/v1/cloud/instance")
+    const payload = await response.json()
+
+    expect(response.status).toBe(200)
+    expect(payload).toEqual(expectedCloudInstance({ status: "provisioning", url: null }))
+    expect(payload).not.toHaveProperty("instanceName")
+  })
+
+  test("returns worker and latest image versions on the member instance response", async () => {
+    const worker = { ...fakeWorker("healthy"), image_version: "openwork-0.18.7" }
+    const app = new Hono<{ Variables: OrgRouteVariables }>()
+
+    routes.registerCloudRoutes(app, {
+      memberRoute: contextMiddleware(organizationContext(JSON.stringify({ capabilities: { cloud: true } }))),
+      orgMode: "multi_org",
+      provisionerMode: "daytona",
+      daytonaApiKey: "daytona-test-key",
+      ensureCloudWorker: async () => worker,
+      getSandboxRecord: async () => fakeSandbox(),
+      probeSignedPreview: async () => true,
+    })
+
+    const response = await app.request("http://den.local/v1/cloud/instance")
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toEqual(expectedCloudInstance({
+      status: "ready",
+      url: "https://preview.example.test",
+      imageVersion: "openwork-0.18.7",
+    }))
+  })
+
   test("returns waking and starts one wake for concurrent stopped-worker requests", async () => {
     const worker = fakeWorker("stopped")
     const app = new Hono<{ Variables: OrgRouteVariables }>()
@@ -436,8 +701,8 @@ describe("Cloud instance route lifecycle states", () => {
 
     expect(first.status).toBe(200)
     expect(second.status).toBe(200)
-    await expect(first.json()).resolves.toEqual({ status: "waking", url: null })
-    await expect(second.json()).resolves.toEqual({ status: "waking", url: null })
+    await expect(first.json()).resolves.toEqual(expectedCloudInstance({ status: "waking", url: null }))
+    await expect(second.json()).resolves.toEqual(expectedCloudInstance({ status: "waking", url: null }))
     expect(wakeExecutions).toBe(1)
 
     wakeHold.resolve()
@@ -464,8 +729,73 @@ describe("Cloud instance route lifecycle states", () => {
     const response = await app.request("http://den.local/v1/cloud/instance")
 
     expect(response.status).toBe(200)
-    await expect(response.json()).resolves.toEqual({ status: "waking", url: null })
+    await expect(response.json()).resolves.toEqual(expectedCloudInstance({ status: "waking", url: null }))
     expect(wakeExecutions).toBe(0)
+  })
+
+  test("claims and wakes a stale stopped sandbox without checkpoint probing on resolve", async () => {
+    const worker = { ...storedWorker({ status: "healthy" }), image_version: "openwork-0.18.7" }
+    const store = makeCloudWorkerStore({ initialWorkers: [worker] })
+    const app = new Hono<{ Variables: OrgRouteVariables }>()
+    let wakeCalls = 0
+    let probes = 0
+
+    routes.registerCloudRoutes(app, {
+      memberRoute: contextMiddleware(organizationContext(JSON.stringify({ capabilities: { cloud: true } }))),
+      orgMode: "multi_org",
+      provisionerMode: "daytona",
+      daytonaApiKey: "daytona-test-key",
+      ensureCloudWorker: async () => worker,
+      cloudWorkerStore: store.store,
+      getSandboxRecord: async () => fakeSandbox(),
+      inspectSandbox: async () => ({ state: "stopped" }),
+      probeSignedPreview: async () => {
+        probes += 1
+        return true
+      },
+      wakeCloudWorker: async () => {
+        wakeCalls += 1
+      },
+    })
+
+    const response = await app.request("http://den.local/v1/cloud/instance")
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toEqual(expectedCloudInstance({ status: "waking", url: null, imageVersion: "openwork-0.18.7" }))
+    expect(store.recycleClaimAttempts).toBe(1)
+    expect(worker.status).toBe("provisioning")
+    expect(wakeCalls).toBe(1)
+    expect(probes).toBe(0)
+  })
+
+  test("does not inspect the sandbox for an up-to-date stopped worker wake", async () => {
+    const worker = { ...fakeWorker("stopped"), image_version: "openwork-0.18.8" }
+    const app = new Hono<{ Variables: OrgRouteVariables }>()
+    let wakeCalls = 0
+    let inspectCalls = 0
+
+    routes.registerCloudRoutes(app, {
+      memberRoute: contextMiddleware(organizationContext(JSON.stringify({ capabilities: { cloud: true } }))),
+      orgMode: "multi_org",
+      provisionerMode: "daytona",
+      daytonaApiKey: "daytona-test-key",
+      ensureCloudWorker: async () => worker,
+      getSandboxRecord: async () => fakeSandbox(),
+      inspectSandbox: async () => {
+        inspectCalls += 1
+        return { state: "stopped" }
+      },
+      wakeCloudWorker: async () => {
+        wakeCalls += 1
+      },
+    })
+
+    const response = await app.request("http://den.local/v1/cloud/instance")
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toEqual(expectedCloudInstance({ status: "waking", url: null, imageVersion: "openwork-0.18.8" }))
+    expect(inspectCalls).toBe(0)
+    expect(wakeCalls).toBe(1)
   })
 
   test("keeps first provisioning without a sandbox row as provisioning", async () => {
@@ -488,8 +818,141 @@ describe("Cloud instance route lifecycle states", () => {
     const response = await app.request("http://den.local/v1/cloud/instance")
 
     expect(response.status).toBe(200)
-    await expect(response.json()).resolves.toEqual({ status: "provisioning", url: null })
+    await expect(response.json()).resolves.toEqual(expectedCloudInstance({ status: "provisioning", url: null }))
     expect(wakeExecutions).toBe(0)
+  })
+})
+
+describe("Cloud instance update route", () => {
+  test("flushes and stops a running stale sandbox", async () => {
+    const orgId = createDenTypeId("organization")
+    const userId = createDenTypeId("user")
+    const worker = { ...storedWorker({ orgId, userId, status: "healthy" }), image_version: "openwork-0.18.7" }
+    const store = makeCloudWorkerStore({ initialWorkers: [worker] })
+    const app = new Hono<{ Variables: OrgRouteVariables }>()
+    const flushCalls: StoredCloudWorker["id"][] = []
+    const stopCalls: StoredCloudWorker["id"][] = []
+
+    routes.registerCloudRoutes(app, {
+      memberRoute: contextMiddleware(organizationContext(JSON.stringify({ capabilities: { cloud: true } }), { orgId, userId })),
+      orgMode: "multi_org",
+      provisionerMode: "daytona",
+      daytonaApiKey: "daytona-test-key",
+      cloudWorkerStore: store.store,
+      getSandboxRecord: async () => fakeSandbox(),
+      inspectSandbox: async () => ({ state: "running" }),
+      flushWorkerCheckpoint: async (workerId) => {
+        flushCalls.push(workerId)
+        return true
+      },
+      stopCloudWorker: async (workerId) => {
+        stopCalls.push(workerId)
+      },
+    })
+
+    const response = await app.request("http://den.local/v1/cloud/instance/update", { method: "POST" })
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toEqual({ ok: true, status: "update_requested" })
+    expect(flushCalls).toEqual([worker.id])
+    expect(stopCalls).toEqual([worker.id])
+  })
+
+  test("no-ops for a stopped stale sandbox", async () => {
+    const orgId = createDenTypeId("organization")
+    const userId = createDenTypeId("user")
+    const worker = { ...storedWorker({ orgId, userId, status: "healthy" }), image_version: "openwork-0.18.7" }
+    const store = makeCloudWorkerStore({ initialWorkers: [worker] })
+    const app = new Hono<{ Variables: OrgRouteVariables }>()
+    let flushCalls = 0
+    let stopCalls = 0
+
+    routes.registerCloudRoutes(app, {
+      memberRoute: contextMiddleware(organizationContext(JSON.stringify({ capabilities: { cloud: true } }), { orgId, userId })),
+      orgMode: "multi_org",
+      provisionerMode: "daytona",
+      daytonaApiKey: "daytona-test-key",
+      cloudWorkerStore: store.store,
+      getSandboxRecord: async () => fakeSandbox(),
+      inspectSandbox: async () => ({ state: "stopped" }),
+      flushWorkerCheckpoint: async () => {
+        flushCalls += 1
+        return true
+      },
+      stopCloudWorker: async () => {
+        stopCalls += 1
+      },
+    })
+
+    const response = await app.request("http://den.local/v1/cloud/instance/update", { method: "POST" })
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toEqual({ ok: true, status: "update_requested" })
+    expect(flushCalls).toBe(0)
+    expect(stopCalls).toBe(0)
+  })
+
+  test("refuses to stop an already-current worker", async () => {
+    const orgId = createDenTypeId("organization")
+    const userId = createDenTypeId("user")
+    const worker = { ...storedWorker({ orgId, userId, status: "healthy" }), image_version: "openwork-0.18.8" }
+    const store = makeCloudWorkerStore({ initialWorkers: [worker] })
+    const app = new Hono<{ Variables: OrgRouteVariables }>()
+    let inspectCalls = 0
+    let stopCalls = 0
+
+    routes.registerCloudRoutes(app, {
+      memberRoute: contextMiddleware(organizationContext(JSON.stringify({ capabilities: { cloud: true } }), { orgId, userId })),
+      orgMode: "multi_org",
+      provisionerMode: "daytona",
+      daytonaApiKey: "daytona-test-key",
+      cloudWorkerStore: store.store,
+      getSandboxRecord: async () => fakeSandbox(),
+      inspectSandbox: async () => {
+        inspectCalls += 1
+        return { state: "running" }
+      },
+      flushWorkerCheckpoint: async () => true,
+      stopCloudWorker: async () => {
+        stopCalls += 1
+      },
+    })
+
+    const response = await app.request("http://den.local/v1/cloud/instance/update", { method: "POST" })
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toEqual({ ok: false, error: "already_current" })
+    expect(inspectCalls).toBe(0)
+    expect(stopCalls).toBe(0)
+  })
+
+  test("leaves a running sandbox up when checkpoint flush fails", async () => {
+    const orgId = createDenTypeId("organization")
+    const userId = createDenTypeId("user")
+    const worker = { ...storedWorker({ orgId, userId, status: "healthy" }), image_version: "openwork-0.18.7" }
+    const store = makeCloudWorkerStore({ initialWorkers: [worker] })
+    const app = new Hono<{ Variables: OrgRouteVariables }>()
+    let stopCalls = 0
+
+    routes.registerCloudRoutes(app, {
+      memberRoute: contextMiddleware(organizationContext(JSON.stringify({ capabilities: { cloud: true } }), { orgId, userId })),
+      orgMode: "multi_org",
+      provisionerMode: "daytona",
+      daytonaApiKey: "daytona-test-key",
+      cloudWorkerStore: store.store,
+      getSandboxRecord: async () => fakeSandbox(),
+      inspectSandbox: async () => ({ state: "running" }),
+      flushWorkerCheckpoint: async () => false,
+      stopCloudWorker: async () => {
+        stopCalls += 1
+      },
+    })
+
+    const response = await app.request("http://den.local/v1/cloud/instance/update", { method: "POST" })
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toEqual({ ok: false, error: "flush_failed" })
+    expect(stopCalls).toBe(0)
   })
 })
 
@@ -525,11 +988,11 @@ describe("Cloud instance per-user workers", () => {
     const userTwoApp = appForUser(userTwo, "grace@example.com")
 
     await expect(userOneApp.request("http://den.local/v1/cloud/instance").then((response) => response.json()))
-      .resolves.toEqual({ status: "provisioning", url: null })
+      .resolves.toEqual(expectedCloudInstance({ status: "provisioning", url: null }))
     await expect(userOneApp.request("http://den.local/v1/cloud/instance").then((response) => response.json()))
-      .resolves.toEqual({ status: "provisioning", url: null })
+      .resolves.toEqual(expectedCloudInstance({ status: "provisioning", url: null }))
     await expect(userTwoApp.request("http://den.local/v1/cloud/instance").then((response) => response.json()))
-      .resolves.toEqual({ status: "provisioning", url: null })
+      .resolves.toEqual(expectedCloudInstance({ status: "provisioning", url: null }))
 
     expect(store.workers.filter((worker) => !store.deletedWorkerIds.includes(worker.id))).toHaveLength(2)
     expect(new Set(store.workers.map((worker) => worker.userId)).size).toBe(2)
@@ -564,7 +1027,7 @@ describe("Cloud instance per-user workers", () => {
     const response = await app.request("http://den.local/v1/cloud/instance")
 
     expect(response.status).toBe(200)
-    await expect(response.json()).resolves.toEqual({ status: "provisioning", url: null })
+    await expect(response.json()).resolves.toEqual(expectedCloudInstance({ status: "provisioning", url: null }))
     const activeWorkers = store.workers.filter((worker) => !store.deletedWorkerIds.includes(worker.id))
     expect(activeWorkers).toHaveLength(1)
     expect(activeWorkers[0]?.name).toBe("Cloud — Canonical")
@@ -603,6 +1066,49 @@ describe("Cloud instance per-user workers", () => {
 })
 
 describe("Cloud instance failed self-heal", () => {
+  test("adopts an existing stopped sandbox for a failed worker instead of provisioning a duplicate", async () => {
+    const worker = storedWorker({ status: "failed" })
+    const store = makeCloudWorkerStore({
+      initialWorkers: [worker],
+      tokens: [makeToken(worker.id, "host"), makeToken(worker.id, "client"), makeToken(worker.id, "activity")],
+    })
+    const app = new Hono<{ Variables: OrgRouteVariables }>()
+    let provisionCalls = 0
+    let wakeCalls = 0
+
+    routes.registerCloudRoutes(app, {
+      memberRoute: contextMiddleware(organizationContext(JSON.stringify({ capabilities: { cloud: true } }))),
+      orgMode: "multi_org",
+      provisionerMode: "daytona",
+      daytonaApiKey: "daytona-test-key",
+      ensureCloudWorker: async () => worker,
+      cloudWorkerStore: store.store,
+      getSandboxRecord: async () => fakeSandbox(),
+      inspectSandbox: async () => ({ state: "stopped" }),
+      probeSignedPreview: async () => true,
+      continueProvisioning: async () => {
+        provisionCalls += 1
+      },
+      wakeCloudWorker: async () => {
+        wakeCalls += 1
+        worker.status = "healthy"
+      },
+    })
+
+    const first = await app.request("http://den.local/v1/cloud/instance")
+    expect(first.status).toBe(200)
+    await expect(first.json()).resolves.toEqual(expectedCloudInstance({ status: "waking", url: null }))
+    await flushMicrotasks()
+
+    expect(store.claimAttempts).toBe(1)
+    expect(provisionCalls).toBe(0)
+    expect(wakeCalls).toBe(1)
+    expect(worker.status).not.toBe("failed")
+
+    await expect(app.request("http://den.local/v1/cloud/instance").then((response) => response.json()))
+      .resolves.toEqual(expectedCloudInstance({ status: "ready", url: "https://preview.example.test" }))
+  })
+
   test("claims a failed worker, kicks provisioning, then throttles another failed GET for 60 seconds", async () => {
     const worker = storedWorker({ status: "failed" })
     const store = makeCloudWorkerStore({
@@ -629,7 +1135,7 @@ describe("Cloud instance failed self-heal", () => {
 
     const first = await app.request("http://den.local/v1/cloud/instance")
     expect(first.status).toBe(200)
-    await expect(first.json()).resolves.toEqual({ status: "provisioning", url: null })
+    await expect(first.json()).resolves.toEqual(expectedCloudInstance({ status: "provisioning", url: null }))
     await flushMicrotasks()
     expect(store.claimAttempts).toBe(1)
     expect(provisionCalls).toBe(1)
@@ -638,7 +1144,7 @@ describe("Cloud instance failed self-heal", () => {
     now += 10_000
     const second = await app.request("http://den.local/v1/cloud/instance")
     expect(second.status).toBe(200)
-    await expect(second.json()).resolves.toEqual({ status: "failed", url: null })
+    await expect(second.json()).resolves.toEqual(expectedCloudInstance({ status: "failed", url: null }))
     await flushMicrotasks()
     expect(store.claimAttempts).toBe(1)
     expect(provisionCalls).toBe(1)
@@ -673,8 +1179,8 @@ describe("Cloud instance failed self-heal", () => {
     ])
     const payloads = await Promise.all([first.json(), second.json()])
 
-    expect(payloads).toContainEqual({ status: "provisioning", url: null })
-    expect(payloads).toContainEqual({ status: "failed", url: null })
+    expect(payloads).toContainEqual(expectedCloudInstance({ status: "provisioning", url: null }))
+    expect(payloads).toContainEqual(expectedCloudInstance({ status: "failed", url: null }))
     await flushMicrotasks()
     expect(store.claimAttempts).toBe(1)
     expect(provisionCalls).toBe(1)
@@ -709,7 +1215,7 @@ describe("Cloud instance ready liveness", () => {
     const response = await app.request("http://den.local/v1/cloud/instance")
 
     expect(response.status).toBe(200)
-    await expect(response.json()).resolves.toEqual({ status: "waking", url: null })
+    await expect(response.json()).resolves.toEqual(expectedCloudInstance({ status: "waking", url: null }))
     expect(probes).toBe(1)
     expect(wakeCalls).toBe(1)
   })
@@ -742,7 +1248,7 @@ describe("Cloud instance ready liveness", () => {
     const response = await app.request("http://den.local/v1/cloud/instance")
 
     expect(response.status).toBe(200)
-    await expect(response.json()).resolves.toEqual({ status: "waking", url: null })
+    await expect(response.json()).resolves.toEqual(expectedCloudInstance({ status: "waking", url: null }))
     await flushMicrotasks()
     expect(store.healthyFailures).toBe(1)
     expect(store.claimAttempts).toBe(1)
@@ -770,10 +1276,10 @@ describe("Cloud instance ready liveness", () => {
     })
 
     await expect(app.request("http://den.local/v1/cloud/instance").then((response) => response.json()))
-      .resolves.toEqual({ status: "ready", url: "https://preview.example.test" })
+      .resolves.toEqual(expectedCloudInstance({ status: "ready", url: "https://preview.example.test" }))
     now += 1_000
     await expect(app.request("http://den.local/v1/cloud/instance").then((response) => response.json()))
-      .resolves.toEqual({ status: "ready", url: "https://preview.example.test" })
+      .resolves.toEqual(expectedCloudInstance({ status: "ready", url: "https://preview.example.test" }))
 
     expect(probes).toBe(1)
   })

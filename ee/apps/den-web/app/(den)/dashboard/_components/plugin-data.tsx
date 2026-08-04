@@ -1,7 +1,8 @@
 "use client";
 
-import { useQuery, type QueryClient } from "@tanstack/react-query";
-import { getErrorMessage, requestJson } from "../../_lib/den-flow";
+import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
+import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import {
   type ConnectedIntegration,
   integrationQueryKeys,
@@ -104,12 +105,15 @@ export type DenPlugin = {
   category: PluginCategory;
   installed: boolean;
   source: PluginSource;
+  status?: "active" | "archived";
   marketplaces?: PluginMarketplaceRef[];
   skills: PluginSkill[];
   hooks: PluginHook[];
   mcps: PluginMcp[];
   agents: PluginAgent[];
   commands: PluginCommand[];
+  createdAt: string;
+  createdByOrgMembershipId: string | null;
   updatedAt: string;
   /**
    * Opt-in gating: which connected integration provider exposes this plugin.
@@ -152,6 +156,16 @@ export function formatPluginTimestamp(value: string | null): string {
     day: "numeric",
     year: "numeric",
   }).format(date);
+}
+
+export function getPluginComponentCount(plugin: DenPlugin): number {
+  return (
+    plugin.skills.length +
+    plugin.hooks.length +
+    plugin.mcps.length +
+    plugin.agents.length +
+    plugin.commands.length
+  );
 }
 
 export function getPluginPartsSummary(plugin: DenPlugin): string {
@@ -222,6 +236,8 @@ const MOCK_PLUGINS: DenPlugin[] = [
     commands: [
       { id: "cmd_gh_pr", name: "/gh:pr", description: "Create a pull request from the current branch." },
     ],
+    createdAt: "2026-04-10T12:00:00Z",
+    createdByOrgMembershipId: null,
     updatedAt: "2026-04-10T12:00:00Z",
     requiresProvider: "github",
   },
@@ -248,6 +264,8 @@ const MOCK_PLUGINS: DenPlugin[] = [
       { id: "cmd_cc_push", name: "/push", description: "Push current branch and track upstream." },
       { id: "cmd_cc_pr", name: "/pr", description: "Open a pull request." },
     ],
+    createdAt: "2026-04-07T09:00:00Z",
+    createdByOrgMembershipId: null,
     updatedAt: "2026-04-07T09:00:00Z",
     requiresProvider: "any",
   },
@@ -282,6 +300,8 @@ const MOCK_PLUGINS: DenPlugin[] = [
     ],
     agents: [],
     commands: [],
+    createdAt: "2026-03-28T16:45:00Z",
+    createdByOrgMembershipId: null,
     updatedAt: "2026-03-28T16:45:00Z",
     requiresProvider: "any",
   },
@@ -315,6 +335,8 @@ const MOCK_PLUGINS: DenPlugin[] = [
     commands: [
       { id: "cmd_lin_new", name: "/linear:new", description: "File a new issue from the current context." },
     ],
+    createdAt: "2026-04-02T18:12:00Z",
+    createdByOrgMembershipId: null,
     updatedAt: "2026-04-02T18:12:00Z",
     requiresProvider: "any",
   },
@@ -348,6 +370,8 @@ const MOCK_PLUGINS: DenPlugin[] = [
     commands: [
       { id: "cmd_ow_release", name: "/release", description: "Run the standardized release workflow." },
     ],
+    createdAt: "2026-04-14T08:30:00Z",
+    createdByOrgMembershipId: null,
     updatedAt: "2026-04-14T08:30:00Z",
     requiresProvider: "github",
   },
@@ -377,6 +401,8 @@ const MOCK_PLUGINS: DenPlugin[] = [
     ],
     agents: [],
     commands: [],
+    createdAt: "2026-03-20T11:00:00Z",
+    createdByOrgMembershipId: null,
     updatedAt: "2026-03-20T11:00:00Z",
     requiresProvider: "any",
   },
@@ -403,6 +429,8 @@ const MOCK_PLUGINS: DenPlugin[] = [
     mcps: [],
     agents: [],
     commands: [],
+    createdAt: "2026-03-12T14:22:00Z",
+    createdByOrgMembershipId: null,
     updatedAt: "2026-03-12T14:22:00Z",
     requiresProvider: "any",
   },
@@ -606,6 +634,8 @@ async function fetchResolvedPlugin(id: string): Promise<DenPlugin | null> {
     author: "Connected repository",
     category: derivePluginCategory({ agents, commands, hooks, mcps, skills }),
     commands,
+    createdAt: asString(pluginItem.createdAt) ?? new Date().toISOString(),
+    createdByOrgMembershipId: asString(pluginItem.createdByOrgMembershipId),
     description: asString(pluginItem.description) ?? "Imported from a connected repository.",
     hooks,
     id: pluginId,
@@ -619,6 +649,7 @@ async function fetchResolvedPlugin(id: string): Promise<DenPlugin | null> {
     source: marketplaces[0]
       ? { type: "marketplace", marketplace: marketplaces[0].name }
       : { type: "github", repo: "Connected repository" },
+    status: asString(pluginItem.status) === "archived" ? "archived" : "active",
     updatedAt: asString(pluginItem.updatedAt) ?? new Date().toISOString(),
     version: null,
   } satisfies DenPlugin;
@@ -650,5 +681,58 @@ export function usePlugin(id: string) {
     queryKey: pluginQueryKeys.detail(id),
     queryFn: async () => fetchResolvedPlugin(id),
     enabled: Boolean(id),
+  });
+}
+
+export function useUpdatePlugin() {
+  const queryClient = useQueryClient();
+  const { runReauthableAction } = useOrgDashboard();
+
+  return useMutation({
+    mutationFn: async (input: { pluginId: string; name: string; description: string | null }) => {
+      await runReauthableAction("update-plugin", async () => {
+        const { response, payload } = await requestJson(
+          `/v1/plugins/${encodeURIComponent(input.pluginId)}`,
+          {
+            method: "PATCH",
+            body: JSON.stringify({ name: input.name, description: input.description }),
+          },
+          15000,
+        );
+        if (!response.ok) {
+          throw getRequestError(payload, response, `Failed to update plugin (${response.status}).`);
+        }
+      });
+      return input.pluginId;
+    },
+    onSuccess: (pluginId) => {
+      queryClient.invalidateQueries({ queryKey: pluginQueryKeys.detail(pluginId) });
+      queryClient.invalidateQueries({ queryKey: pluginQueryKeys.list() });
+    },
+  });
+}
+
+export function useArchivePlugin() {
+  const queryClient = useQueryClient();
+  const { runReauthableAction } = useOrgDashboard();
+
+  return useMutation({
+    mutationFn: async (pluginId: string) => {
+      await runReauthableAction("archive-plugin", async () => {
+        const { response, payload } = await requestJson(
+          `/v1/plugins/${encodeURIComponent(pluginId)}/archive`,
+          { method: "POST" },
+          15000,
+        );
+        if (!response.ok) {
+          throw getRequestError(payload, response, `Failed to archive plugin (${response.status}).`);
+        }
+      });
+      return pluginId;
+    },
+    onSuccess: (pluginId) => {
+      queryClient.removeQueries({ queryKey: pluginQueryKeys.detail(pluginId) });
+      queryClient.invalidateQueries({ queryKey: pluginQueryKeys.list() });
+    },
   });
 }

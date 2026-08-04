@@ -23,6 +23,16 @@ async function freePort(): Promise<number> {
   return reservation.port
 }
 
+async function freePortExcept(excluded: number): Promise<number> {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const port = await freePort()
+    if (port !== excluded) {
+      return port
+    }
+  }
+  throw new Error("Could not allocate a distinct free port")
+}
+
 async function isPortOpen(port: number): Promise<boolean> {
   return await new Promise<boolean>((resolve) => {
     const socket = createConnection({ host: "127.0.0.1", port })
@@ -176,7 +186,7 @@ describe("package-backed Enterprise Mock Lab", () => {
       profileId: "servicenow-inbound-quickstart",
     })).rejects.toMatchObject({ code: "conflict" })
 
-    const incompatiblePort = await freePort()
+    const incompatiblePort = await freePortExcept(reservedPort)
     await expect(reservedLab.create({
       clientSecret: CLIENT_SECRET,
       displayName: "Incompatible profile fault",

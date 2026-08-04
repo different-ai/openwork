@@ -2,7 +2,7 @@
 // fed by a latest-values ref, lifecycle (start/dispose), Zen-restriction sync,
 // workspace-change resync, the post-onboarding auto-open latch, and cloud
 // provider auto-sync. Extracted verbatim from session-route.tsx.
-import { useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { ProviderListResponse } from "@opencode-ai/sdk/v2/client";
 
 import type { Client, ProviderListItem, WorkspaceDisplay } from "@/app/types";
@@ -169,6 +169,15 @@ export function useSessionProviderAuth(input: UseSessionProviderAuthInput) {
       ? completedCloudProviderSync
       : null;
   const cloudProviderSyncReady = Boolean(currentCloudProviderSync);
+  const loadCloudProviderSync = useCallback(async (reason: "app_launch" | "manual") => {
+    await store.runCloudProviderSync(reason);
+    return store.refreshProviders({ force: true });
+  }, [store]);
+  const refreshCloudProviderSync = useCallback(async (reason: "manual") => {
+    const providerList = await loadCloudProviderSync(reason);
+    setCompletedCloudProviderSync({ context: cloudProviderSyncContext, providerList });
+    return providerList;
+  }, [cloudProviderSyncContext, loadCloudProviderSync]);
 
   useEffect(() => {
     store.start();
@@ -250,17 +259,15 @@ export function useSessionProviderAuth(input: UseSessionProviderAuthInput) {
     ) return;
 
     let cancelled = false;
-    void (async () => {
-      await store.runCloudProviderSync("app_launch");
-      const providerList = await store.refreshProviders({ force: true });
+    void loadCloudProviderSync("app_launch").then((providerList) => {
       if (!cancelled) {
         setCompletedCloudProviderSync({ context: cloudProviderSyncContext, providerList });
       }
-    })();
+    });
     return () => {
       cancelled = true;
     };
-  }, [cloudProviderSyncContext, store]);
+  }, [cloudProviderSyncContext, loadCloudProviderSync]);
 
   // After onboarding, auto-open the provider modal if no providers are connected.
   // The welcome route appends ?onboarding=1 to the session URL after workspace creation.
@@ -290,5 +297,6 @@ export function useSessionProviderAuth(input: UseSessionProviderAuthInput) {
     snapshot,
     cloudProviderSyncReady,
     cloudProviderList: currentCloudProviderSync?.providerList ?? null,
+    refreshCloudProviderSync,
   };
 }

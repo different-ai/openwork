@@ -74,6 +74,9 @@ const llmProviderWriteSchema = z.object({
   apiKeys: z.record(z.string().trim().min(1).max(255), z.string().trim().max(65535)).optional(),
   memberIds: z.array(denTypeIdSchema("member")).max(500).optional().default([]),
   teamIds: z.array(denTypeIdSchema("team")).max(500).optional().default([]),
+  // Grants the whole organization (current and future members) access via a
+  // single org-wide access row instead of materialized member ids.
+  allMembers: z.boolean().optional().default(false),
 }).superRefine((value, ctx) => {
   if (value.source === "models_dev") {
     if (!value.providerId) {
@@ -208,18 +211,19 @@ async function listAccessibleProviderAccess(input: {
   memberTeams: Array<{ id: TeamId }>
 }) {
   const teamIds = input.memberTeams.map((team) => team.id)
-  const accessWhere = teamIds.length > 0
-    ? and(
-        eq(LlmProviderTable.organizationId, input.organizationId),
-        or(
-          eq(LlmProviderAccessTable.orgMembershipId, input.currentMemberId),
-          inArray(LlmProviderAccessTable.teamId, teamIds),
-        ),
-      )
-    : and(
-        eq(LlmProviderTable.organizationId, input.organizationId),
-        eq(LlmProviderAccessTable.orgMembershipId, input.currentMemberId),
-      )
+  // A row with neither member nor team is an org-wide ("everyone") grant.
+  const everyoneGrant = and(
+    isNull(LlmProviderAccessTable.orgMembershipId),
+    isNull(LlmProviderAccessTable.teamId),
+  )
+  const accessWhere = and(
+    eq(LlmProviderTable.organizationId, input.organizationId),
+    or(
+      eq(LlmProviderAccessTable.orgMembershipId, input.currentMemberId),
+      ...(teamIds.length > 0 ? [inArray(LlmProviderAccessTable.teamId, teamIds)] : []),
+      everyoneGrant,
+    ),
+  )
 
   return db
     .select({
@@ -505,6 +509,19 @@ async function loadLlmProviders(input: {
     teamAccessByProviderId.set(row.access.llmProviderId, existing)
   }
 
+  // Org-wide grants: one access row per provider with neither member nor team.
+  const everyoneAccessRows = await db
+    .select({
+      llmProviderId: LlmProviderAccessTable.llmProviderId,
+    })
+    .from(LlmProviderAccessTable)
+    .where(and(
+      inArray(LlmProviderAccessTable.llmProviderId, providerIds),
+      isNull(LlmProviderAccessTable.orgMembershipId),
+      isNull(LlmProviderAccessTable.teamId),
+    ))
+  const everyoneProviderIds = new Set(everyoneAccessRows.map((row) => row.llmProviderId))
+
   const accessibleViaByProviderId = new Map<LlmProviderId, { orgMembershipIds: MemberId[]; teamIds: TeamId[] }>()
   for (const row of accessibleAccess) {
     const existing = accessibleViaByProviderId.get(row.llmProviderId) ?? { orgMembershipIds: [], teamIds: [] }
@@ -530,6 +547,7 @@ async function loadLlmProviders(input: {
       }))
       .sort((left, right) => left.name.localeCompare(right.name)),
     access: {
+      allMembers: everyoneProviderIds.has(provider.id),
       members: (memberAccessByProviderId.get(provider.id) ?? []).map((row) => {
         const email = row.user?.email ?? row.invitation?.email ?? "invited@example.com"
         return {
@@ -856,7 +874,25 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
             )
           }
 
-          const accessRows = [
+          const accessRows = input.allMembers
+            ? [
+                // One org-wide grant plus the creator's protected direct row.
+                {
+                  id: createDenTypeId("llmProviderAccess"),
+                  llmProviderId,
+                  orgMembershipId: null,
+                  teamId: null,
+                  createdAt: now,
+                },
+                {
+                  id: createDenTypeId("llmProviderAccess"),
+                  llmProviderId,
+                  orgMembershipId: payload.currentMember.id,
+                  teamId: null,
+                  createdAt: now,
+                },
+              ]
+            : [
             ...protectedMemberIds.map((orgMembershipId) => ({
               id: createDenTypeId("llmProviderAccess"),
               llmProviderId,
@@ -1002,7 +1038,25 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
             )
           }
 
-          const accessRows = [
+          const accessRows = input.allMembers
+            ? [
+                // One org-wide grant plus the creator's protected direct row.
+                {
+                  id: createDenTypeId("llmProviderAccess"),
+                  llmProviderId: provider.id,
+                  orgMembershipId: null,
+                  teamId: null,
+                  createdAt: updatedAt,
+                },
+                {
+                  id: createDenTypeId("llmProviderAccess"),
+                  llmProviderId: provider.id,
+                  orgMembershipId: provider.createdByOrgMembershipId,
+                  teamId: null,
+                  createdAt: updatedAt,
+                },
+              ]
+            : [
             ...protectedMemberIds.map((orgMembershipId) => ({
               id: createDenTypeId("llmProviderAccess"),
               llmProviderId: provider.id,

@@ -87,6 +87,8 @@ import {
   marketplacePluginParamsSchema,
   marketplacePluginWriteSchema,
   marketplaceUpdateSchema,
+  meLibraryListResponseSchema,
+  mePluginAccessListResponseSchema,
   pluginAccessGrantParamsSchema,
   pluginConfigObjectParamsSchema,
   pluginCreateSchema,
@@ -102,10 +104,12 @@ import {
   pluginParamsSchema,
   pluginUpdateSchema,
   resourceAccessGrantWriteSchema,
+  teamParamsSchema,
+  teamPluginAccessListResponseSchema,
 } from "./schemas.js"
 
 type EndpointMethod = "DELETE" | "GET" | "PATCH" | "POST"
-type EndpointAudience = "admin" | "public_webhook"
+type EndpointAudience = "admin" | "member" | "public_webhook"
 type EndpointTag = "Config Objects" | "Plugins" | "Marketplaces" | "Connectors" | "GitHub" | "Webhooks"
 
 type EndpointContract = {
@@ -167,6 +171,9 @@ export const pluginArchRoutePaths = {
   pluginReleases: `${orgBasePath}/plugins/:pluginId/releases`,
   pluginAccess: `${orgBasePath}/plugins/:pluginId/access`,
   pluginAccessGrant: `${orgBasePath}/plugins/:pluginId/access/:grantId`,
+  meLibrary: `${orgBasePath}/me/library`,
+  mePluginAccess: `${orgBasePath}/me/plugin-access`,
+  teamPluginAccess: `${orgBasePath}/teams/:teamId/plugin-access`,
   pluginGithubMcpImportPreview: `${orgBasePath}/plugins/import-mcps-from-github-url/preview`,
   pluginGithubMcpImport: `${orgBasePath}/plugins/import-mcps-from-github-url`,
   marketplaces: `${orgBasePath}/marketplaces`,
@@ -233,7 +240,7 @@ export const pluginArchEndpointContracts: Record<string, EndpointContract> = {
     tag: "Config Objects",
   },
   createConfigObject: {
-    audience: "admin",
+    audience: "member",
     description: "Create a cloud or imported config object and optionally attach it to plugins.",
     method: "POST",
     path: pluginArchRoutePaths.configObjects,
@@ -377,7 +384,7 @@ export const pluginArchEndpointContracts: Record<string, EndpointContract> = {
     tag: "Plugins",
   },
   createPlugin: {
-    audience: "admin",
+    audience: "member",
     description: "Create a private-by-default plugin, optionally bundled with components, org-wide sharing, and marketplace publishing.",
     method: "POST",
     path: pluginArchRoutePaths.plugins,
@@ -464,6 +471,31 @@ export const pluginArchEndpointContracts: Record<string, EndpointContract> = {
     path: pluginArchRoutePaths.pluginAccess,
     request: { params: pluginParamsSchema },
     response: { description: "Plugin access grants.", schema: accessGrantListResponseSchema, status: 200 },
+    tag: "Plugins",
+  },
+  listMePluginAccess: {
+    audience: "member",
+    description: "List the caller's effective plugin library with all applicable access edges.",
+    method: "GET",
+    path: pluginArchRoutePaths.mePluginAccess,
+    response: { description: "Effective member plugin access.", schema: mePluginAccessListResponseSchema, status: 200 },
+    tag: "Plugins",
+  },
+  listMeLibrary: {
+    audience: "member",
+    description: "List the plugins and connections the caller can use with all applicable access edges.",
+    method: "GET",
+    path: pluginArchRoutePaths.meLibrary,
+    response: { description: "Effective member library.", schema: meLibraryListResponseSchema, status: 200 },
+    tag: "Plugins",
+  },
+  listTeamPluginAccess: {
+    audience: "member",
+    description: "List the plugins a team can use through direct, marketplace, and organization-wide access.",
+    method: "GET",
+    path: pluginArchRoutePaths.teamPluginAccess,
+    request: { params: teamParamsSchema },
+    response: { description: "Effective plugin access for the team.", schema: teamPluginAccessListResponseSchema, status: 200 },
     tag: "Plugins",
   },
   grantPluginAccess: {

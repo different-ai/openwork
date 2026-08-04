@@ -519,6 +519,10 @@ export function getMembersRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/members`;
 }
 
+export function getTeamRoute(orgSlug: string | null | undefined, teamId: string): string {
+  return `${getMembersRoute(orgSlug)}/teams/${encodeURIComponent(teamId)}`;
+}
+
 export function getBackgroundAgentsRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/background-agents`;
 }
@@ -531,8 +535,8 @@ export function getInferenceRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/inference`;
 }
 
-export function getCloudRoute(orgSlug?: string | null): string {
-  return `${getOrgDashboardRoute(orgSlug)}/cloud`;
+export function getWebRoute(orgSlug?: string | null): string {
+  return `${getOrgDashboardRoute(orgSlug)}/web`;
 }
 
 export function getLlmProvidersRoute(orgSlug?: string | null): string {
@@ -599,6 +603,18 @@ export function getPluginRoute(orgSlug: string | null | undefined, pluginId: str
   return `${getPluginsRoute(orgSlug)}/${encodeURIComponent(pluginId)}`;
 }
 
+export function getPluginSkillRoute(orgSlug: string | null | undefined, pluginId: string, skillId: string): string {
+  return `${getPluginRoute(orgSlug, pluginId)}/skills/${encodeURIComponent(skillId)}`;
+}
+
+export function getNewPluginSkillRoute(orgSlug: string | null | undefined, pluginId: string): string {
+  return `${getPluginRoute(orgSlug, pluginId)}/skills/new`;
+}
+
+export function getEditPluginSkillRoute(orgSlug: string | null | undefined, pluginId: string, skillId: string): string {
+  return `${getPluginSkillRoute(orgSlug, pluginId, skillId)}/edit`;
+}
+
 export function getNewPluginRoute(orgSlug?: string | null): string {
   return `${getPluginsRoute(orgSlug)}/new`;
 }
@@ -629,6 +645,10 @@ export function getMcpConnectionsRoute(orgSlug?: string | null): string {
 
 export function getYourConnectionsRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/your-connections`;
+}
+
+export function getLibraryRoute(orgSlug?: string | null): string {
+  return `${getOrgDashboardRoute(orgSlug)}/library`;
 }
 
 export function getGithubIntegrationSetupRoute(orgSlug: string | null | undefined, connectorInstanceId: string): string {

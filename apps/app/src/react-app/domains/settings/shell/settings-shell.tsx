@@ -101,7 +101,7 @@ export function SettingsShell(props: SettingsShellProps) {
 
   return (
     <div className="flex h-dvh min-h-screen w-full overflow-hidden">
-      <SidebarProvider open={true} className="relative min-h-0 flex-1">
+      <SidebarProvider defaultOpen className="relative min-h-0 flex-1">
         <SettingsSidebar
           activeTab={props.activeTab}
           onSelectTab={props.onSelectTab}
@@ -119,7 +119,7 @@ export function SettingsShell(props: SettingsShellProps) {
               <div className="flex min-w-0 items-center gap-3">
                 <SidebarTrigger className="mac:titlebar-no-drag md:hidden" />
                 {props.headerLeadingSlot}
-                <h1 className="truncate text-[15px] font-semibold text-dls-text">{title}</h1>
+                <div className="truncate text-[15px] font-semibold text-dls-text">{title}</div>
                 <span className="hidden truncate text-[13px] text-dls-secondary lg:inline">
                   {props.selectedWorkspaceName}
                 </span>

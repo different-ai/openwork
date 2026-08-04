@@ -67,6 +67,7 @@ import { QueuedMessagesPanel } from "@/react-app/domains/session/modals/queued-m
 import { deriveOpenTargets, selectAutoOpenTarget, type OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
 import { usePanelTabStore } from "@/react-app/domains/session/panel/panel-tab-store";
 import {
+  markSessionSnapshotFetchStart,
   seedSessionState,
   snapshotKey as reactSnapshotKey,
   statusKey as reactStatusKey,
@@ -102,10 +103,12 @@ import {
   type ApplyEnvironmentChangesResult,
 } from "@/react-app/domains/settings/pages/environment-variable-provider";
 import {
-  EMPTY_CONNECT_CAPABILITY_INVENTORY,
-  listAssignedConnectCapabilities,
-  type ConnectCapabilityInventory,
-} from "./connect-capability-inventory";
+  clearCloudInventoryCache,
+  loadSessionConnectCapabilities,
+  readCachedConnectCapabilities,
+  readCloudInventoryScope,
+} from "@/react-app/domains/connections/cloud-inventory-cache";
+import { EMPTY_CONNECT_CAPABILITY_INVENTORY } from "@/react-app/domains/session/surface/connect-capability-inventory";
 import { consumeComposerAutoSend } from "./composer-auto-send";
 
 const EMPTY_TRANSCRIPT: UIMessage[] = [];
@@ -122,6 +125,27 @@ console.log(pipeline);
 \`\`\`
 
 Search token: markdown-primitive-highlight.`;
+/**
+ * Staged so each proof frame adds visibly new content: inline math, then the
+ * display equations, then the malformed-input and currency edge cases.
+ */
+const MARKDOWN_MATH_EVAL_STAGES = [
+  `# Schrodinger proof heading
+
+The time-independent form is $E\\psi = \\hat{H}\\psi$, and models often write the
+same inline math as \\(i\\hbar \\frac{\\partial}{\\partial t}\\Psi\\) instead.`,
+  `$$
+\\hat{H} = -\\frac{\\hbar^2}{2m}\\nabla^2 + V(\\mathbf{r})
+$$
+
+The quadratic formula arrives as display math too:
+
+\\[
+x = \\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}
+\\]`,
+  `Malformed input like $\\frac{1}{$ must not break this paragraph, and prices such
+as $5 and $10 stay plain text.`,
+];
 
 type SessionError = {
   message: string;
@@ -146,6 +170,32 @@ function createMarkdownPrimitiveEvalMessages(sessionId: string) {
       id: assistantMessageId,
       role: "assistant",
       parts: [{ type: "text", text: MARKDOWN_PRIMITIVE_EVAL_TEXT }],
+      metadata: { opencode: { created: Date.now() + 1 } },
+    },
+  ];
+
+  return { messages, assistantMessageId };
+}
+
+/**
+ * Dev-only deterministic transcript covering every LaTeX delimiter the renderer
+ * supports, plus the malformed-input and currency cases it must leave alone.
+ */
+function createMarkdownMathEvalMessages(sessionId: string, stage: number) {
+  const assistantMessageId = `${sessionId}:eval-math-assistant`;
+  const text = MARKDOWN_MATH_EVAL_STAGES.slice(0, Math.max(1, Math.min(stage, MARKDOWN_MATH_EVAL_STAGES.length)))
+    .join("\n\n");
+  const messages: UIMessage[] = [
+    {
+      id: `${sessionId}:eval-math-user`,
+      role: "user",
+      parts: [{ type: "text", text: "Show the LaTeX math proof message." }],
+      metadata: { opencode: { created: Date.now() } },
+    },
+    {
+      id: assistantMessageId,
+      role: "assistant",
+      parts: [{ type: "text", text }],
       metadata: { opencode: { created: Date.now() + 1 } },
     },
   ];
@@ -232,7 +282,9 @@ function createChatTranscriptEvalMessages(sessionId: string) {
           text: "Your plan is drafted — details in [OpenWork](https://openworklabs.com). Search token: chat-transcript-proof.",
         },
       ],
-      metadata: { opencode: { created: now + 1 } },
+      // `completed` makes the finished turn fold behind a real
+      // "Worked for 1m 35s" line, like server-synced turns do.
+      metadata: { opencode: { created: now + 1, completed: now + 95_001 } },
     },
   ];
 
@@ -254,6 +306,7 @@ export type SessionSurfaceProps = {
   modelPickerOpen: boolean;
   modelUnavailable?: boolean;
   modelUnavailableMessage?: string | null;
+  organizationModelsEmpty?: boolean;
   selectedModel: ModelRef;
   /** providerID → modelID → provider model, for per-session variant options. */
   providerCatalog?: ProviderCatalog;
@@ -292,7 +345,7 @@ export type SessionSurfaceProps = {
   onChangeModel?: (model: { providerID: string; modelID: string }) => void;
   onUploadInboxFiles?: ((files: File[], options?: { notify?: boolean }) => void | Promise<unknown>) | null;
   providerConnectedCount?: number;
-  onOpenSettingsSection?: ((section: "commands" | "skills" | "mcps" | "plugins" | "providers") => void) | undefined;
+  onOpenSettingsSection?: ((section: "commands" | "skills" | "mcps" | "plugins" | "extensions" | "providers") => void) | undefined;
   onRevertToMessage?: (messageId: string, sessionId: string) => Promise<boolean>;
   onForkAtMessage?: (messageId: string | null, sessionId: string) => void;
   onOpenTarget?: (target: OpenTarget, options?: OpenTargetOptions, sessionId?: string) => void;
@@ -657,11 +710,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const [toolMcpStatus, setToolMcpStatus] = useState<string | null>(null);
   const [toolMcpStatuses, setToolMcpStatuses] = useState<McpStatusMap>({});
   const [toolImportedPlugins, setToolImportedPlugins] = useState<CloudImportedPlugin[]>([]);
+  const skillsConnectPushRef = useRef(0);
+  const mcpConnectPushRef = useRef(0);
   const [steering, setSteering] = useState(false);
-  const connectInventoryCacheRef = useRef<{
-    scope: string;
-    promise: Promise<ConnectCapabilityInventory>;
-  } | null>(null);
   const [verifiedOpenTargets, setVerifiedOpenTargets] = useState<OpenTarget[]>([]);
   const [cloudQueueRetryVersion, setCloudQueueRetryVersion] = useState(0);
   const sending = props.cloudMcpSubmissionState.status === "sending";
@@ -691,7 +742,12 @@ export function SessionSurface(props: SessionSurfaceProps) {
   );
   const snapshotQuery = useQuery<OpenworkSessionSnapshot>({
     queryKey: snapshotQueryKey,
-    queryFn: async () => (await props.client.getSessionSnapshot(props.workspaceId, props.sessionId, { limit: 140 })).item,
+    queryFn: async () => {
+      const startedAt = Date.now();
+      const item = (await props.client.getSessionSnapshot(props.workspaceId, props.sessionId, { limit: 140 })).item;
+      markSessionSnapshotFetchStart(item, startedAt);
+      return item;
+    },
     staleTime: 500,
   });
 
@@ -844,6 +900,30 @@ export function SessionSurface(props: SessionSurfaceProps) {
     };
   }, [props.sessionId]);
   useControlAction(props.isControlTarget ? seedMarkdownPrimitiveControlAction : null);
+  const seedMarkdownMathControlAction = useMemo<OpenworkControlAction | null>(() => {
+    if (!import.meta.env.DEV) return null;
+
+    return {
+      id: "eval.markdown_math.seed_chat",
+      label: "Seed markdown math chat proof",
+      description: "Dev-only eval hook that renders deterministic LaTeX math in the active conversation.",
+      sideEffect: "mutation",
+      disabled: !props.sessionId,
+      execute: (args) => {
+        const stage = typeof args === "object" && args !== null && "stage" in args && typeof args.stage === "number"
+          ? args.stage
+          : MARKDOWN_MATH_EVAL_STAGES.length;
+        const seeded = createMarkdownMathEvalMessages(props.sessionId, stage);
+        setEvalMarkdownMessages(seeded.messages);
+        return {
+          ok: true,
+          assistantMessageId: seeded.assistantMessageId,
+          messageCount: seeded.messages.length,
+        };
+      },
+    };
+  }, [props.sessionId]);
+  useControlAction(props.isControlTarget ? seedMarkdownMathControlAction : null);
   const seedChatTranscriptControlAction = useMemo<OpenworkControlAction | null>(() => {
     if (!import.meta.env.DEV) return null;
 
@@ -1420,37 +1500,12 @@ export function SessionSurface(props: SessionSurfaceProps) {
   }), [chatStreaming, handleAbort]);
   useControlAction(props.isControlTarget ? composerStopControlAction : null);
 
-  const loadConnectCapabilityInventory = async (): Promise<ConnectCapabilityInventory> => {
-    const settings = readDenSettings();
-    const token = settings.authToken?.trim() ?? "";
-    const organizationId = settings.activeOrgId?.trim() ?? "";
-    if (!token || !organizationId) return EMPTY_CONNECT_CAPABILITY_INVENTORY;
-
-    const scope = `${settings.baseUrl}\n${organizationId}`;
-    if (connectInventoryCacheRef.current?.scope === scope) {
-      try {
-        return await connectInventoryCacheRef.current.promise;
-      } catch {
-        connectInventoryCacheRef.current = null;
-        return EMPTY_CONNECT_CAPABILITY_INVENTORY;
-      }
-    }
-
-    const client = createDenClient({ baseUrl: settings.baseUrl, token });
-    const promise = listAssignedConnectCapabilities({ client, organizationId });
-    connectInventoryCacheRef.current = { scope, promise };
-    try {
-      return await promise;
-    } catch {
-      if (connectInventoryCacheRef.current?.promise === promise) {
-        connectInventoryCacheRef.current = null;
-      }
-      return EMPTY_CONNECT_CAPABILITY_INVENTORY;
-    }
-  };
-
   const listSkills = async (): Promise<SkillCard[]> => {
-    const connectPromise = loadConnectCapabilityInventory();
+    const pushId = ++skillsConnectPushRef.current;
+    // Paint cached Connect inventory instantly; the fresh fan-out lands live.
+    const scope = readCloudInventoryScope();
+    const cachedConnect = (scope ? readCachedConnectCapabilities(scope) : null) ?? EMPTY_CONNECT_CAPABILITY_INVENTORY;
+    const connectPromise = loadSessionConnectCapabilities();
     const response = await props.client.listSkills(props.workspaceId, { includeGlobal: true });
     const localSkills = (response.items ?? []).map((skill) => ({
       name: skill.name,
@@ -1460,15 +1515,32 @@ export function SessionSurface(props: SessionSurfaceProps) {
       scope: skill.scope,
       origin: "local",
     } satisfies SkillCard));
-    const connect = await connectPromise;
-    const next = [...localSkills, ...connect.skills];
+    void connectPromise.then((connect) => {
+      if (skillsConnectPushRef.current !== pushId) return;
+      setToolSkills([...localSkills, ...connect.skills]);
+    });
+    const next = [...localSkills, ...cachedConnect.skills];
     setToolSkills(next);
     return next;
   };
 
   const listMcp = async (): Promise<{ servers: McpServerEntry[]; statuses: McpStatusMap; status: string | null }> => {
-    const connectPromise = loadConnectCapabilityInventory();
-    const response = await props.client.listMcp(props.workspaceId);
+    const pushId = ++mcpConnectPushRef.current;
+    const scope = readCloudInventoryScope();
+    const cachedConnect = (scope ? readCachedConnectCapabilities(scope) : null) ?? EMPTY_CONNECT_CAPABILITY_INVENTORY;
+    const connectPromise = loadSessionConnectCapabilities();
+    const localMcpPromise = props.client.listMcp(props.workspaceId);
+    const directory = props.workspaceRoot.trim();
+    const localStatusesPromise: Promise<McpStatusMap> = directory
+      ? (async () => {
+        try {
+          return unwrap(await opencodeClient.mcp.status({ directory })) as McpStatusMap;
+        } catch {
+          return {};
+        }
+      })()
+      : Promise.resolve({});
+    const [response, localStatuses] = await Promise.all([localMcpPromise, localStatusesPromise]);
     const localServers = (response.items ?? []).map((entry) => ({
       name: entry.name,
       config: entry.config as McpServerEntry["config"],
@@ -1476,44 +1548,44 @@ export function SessionSurface(props: SessionSurfaceProps) {
       origin: entry.name === "openwork-cloud" ? "openwork-connect" : "local",
     } satisfies McpServerEntry));
 
-    let localStatuses: McpStatusMap = {};
-    try {
-      if (props.workspaceRoot.trim()) {
-        localStatuses = unwrap(await opencodeClient.mcp.status({ directory: props.workspaceRoot.trim() })) as McpStatusMap;
-      }
-    } catch {
-      localStatuses = {};
-    }
+    void connectPromise.then((connect) => {
+      if (mcpConnectPushRef.current !== pushId) return;
+      const freshServers = [...localServers, ...connect.mcpServers];
+      const freshStatuses = { ...connect.mcpStatuses, ...localStatuses };
+      const freshStatus = freshServers.length ? null : "No MCP servers loaded.";
+      setToolMcpServers(freshServers);
+      setToolMcpStatuses(freshStatuses);
+      setToolMcpStatus(freshStatus);
 
-    const connect = await connectPromise;
-    const servers = [...localServers, ...connect.mcpServers];
-    const statuses = { ...connect.mcpStatuses, ...localStatuses };
+      // Quiet self-heal: remote OAuth connectors whose access token expired
+      // show "Sign in needed" even though the stored refresh token still
+      // works. `mcp.connect` retries the refresh grant on a fresh transport
+      // without ever opening a browser; on success the badge flips live.
+      if (directory && localServers.length) {
+        void attemptSilentMcpReauth({
+          client: opencodeClient,
+          directory,
+          servers: localServers,
+          statuses: localStatuses,
+        })
+          .then(async (attempted) => {
+            if (!attempted) return;
+            const healed = unwrap(await opencodeClient.mcp.status({ directory })) as McpStatusMap;
+            if (mcpConnectPushRef.current !== pushId) return;
+            setToolMcpStatuses({ ...connect.mcpStatuses, ...healed });
+          })
+          .catch(() => {
+            // Best-effort; the manual Sign in path is unaffected.
+          });
+      }
+    });
+
+    const servers = [...localServers, ...cachedConnect.mcpServers];
+    const statuses = { ...cachedConnect.mcpStatuses, ...localStatuses };
     const status = servers.length ? null : "No MCP servers loaded.";
     setToolMcpServers(servers);
     setToolMcpStatuses(statuses);
     setToolMcpStatus(status);
-
-    // Quiet self-heal: remote OAuth connectors whose access token expired
-    // show "Sign in needed" even though the stored refresh token still
-    // works. `mcp.connect` retries the refresh grant on a fresh transport
-    // without ever opening a browser; on success the badge flips live.
-    const directory = props.workspaceRoot.trim();
-    if (directory && localServers.length) {
-      void attemptSilentMcpReauth({
-        client: opencodeClient,
-        directory,
-        servers: localServers,
-        statuses: localStatuses,
-      })
-        .then(async (attempted) => {
-          if (!attempted) return;
-          const healed = unwrap(await opencodeClient.mcp.status({ directory })) as McpStatusMap;
-          setToolMcpStatuses({ ...connect.mcpStatuses, ...healed });
-        })
-        .catch(() => {
-          // Best-effort; the manual Sign in path is unaffected.
-        });
-    }
 
     return { servers, statuses, status };
   };
@@ -1603,7 +1675,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   useEffect(() => {
     const resetReconnectState = () => {
       useChatMcpReconnectStore.getState().reset();
-      connectInventoryCacheRef.current = null;
+      clearCloudInventoryCache();
       setToolSkills((current) => current.filter((skill) => skill.origin !== "openwork-connect"));
       setToolMcpServers((current) => current.filter((server) => server.origin !== "openwork-connect"));
       setToolMcpStatuses((current) => Object.fromEntries(
@@ -1985,6 +2057,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         disabled={model.transitionState !== "idle" || Boolean(props.modelUnavailable)}
         modelUnavailable={Boolean(props.modelUnavailable)}
         modelUnavailableMessage={props.modelUnavailableMessage}
+        organizationModelsEmpty={props.organizationModelsEmpty}
         statusLabel={statusLabel(snapshot ?? undefined, chatStreaming)}
         modelPickerOpen={modelPickerOpen}
         selectedModel={sessionModel.selectedModel}

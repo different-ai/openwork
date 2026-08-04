@@ -133,17 +133,36 @@ export function isOrgMcpConnectionReady(connection: Pick<DenExternalMcpConnectio
   return connection.credentialMode === "shared" ? connection.connected : connection.connectedForMe && !connectionNeedsReconnect(connection);
 }
 
-export function orgMcpConnectionDescription(connection: Pick<DenExternalMcpConnection, "credentialMode" | "connectedForMe" | "needsReconnect" | "missingFeatures">) {
-  if (connection.credentialMode === "shared") return "One org account managed by your organization — the AI acts as it.";
-  if (connection.connectedForMe && connectionNeedsReconnect(connection)) return "Reconnect your account to grant newly requested permissions.";
-  if (connection.connectedForMe) return "Connected with your own account.";
-  return "Available from your organization. Connect your own account to use it.";
+/** Human name of the service behind a native connector, so a card named "Acme Labs" still says what it signs in to. */
+export function nativeProviderDisplayName(nativeProviderKey: string | null | undefined): string | null {
+  if (nativeProviderKey === "google-workspace") return "Google Workspace";
+  if (nativeProviderKey === "microsoft-365") return "Microsoft 365";
+  return null;
 }
 
-export function orgMcpConnectionActionLabel(connection: Pick<DenExternalMcpConnection, "credentialMode" | "connected" | "connectedForMe" | "needsReconnect" | "missingFeatures">) {
+export function orgMcpConnectionDescription(connection: Pick<DenExternalMcpConnection, "credentialMode" | "connectedForMe" | "needsReconnect" | "missingFeatures" | "nativeProviderKey" | "externalAccountId">) {
+  const provider = nativeProviderDisplayName(connection.nativeProviderKey);
+  const prefix = provider ? `${provider} — ` : "";
+  if (connection.credentialMode === "shared") return `${prefix}One org account managed by your organization — the AI acts as it.`;
+  if (connection.connectedForMe && connectionNeedsReconnect(connection)) return `${prefix}Reconnect your account to grant newly requested permissions.`;
+  if (connection.connectedForMe) {
+    // Keep the base sentence intact as a prefix: specs and people both read it.
+    const account = connection.externalAccountId;
+    return account
+      ? `${prefix}Connected with your own account. Signed in as ${account}.`
+      : `${prefix}Connected with your own account.`;
+  }
+  return `${prefix}Available from your organization. Connect your own account to use it.`;
+}
+
+export function orgMcpConnectionActionLabel(connection: Pick<DenExternalMcpConnection, "credentialMode" | "connected" | "connectedForMe" | "needsReconnect" | "missingFeatures" | "externalAccountId">) {
   if (connection.credentialMode === "shared") return "Managed by your organization";
   if (connection.connectedForMe && connectionNeedsReconnect(connection)) return "Reconnect";
-  if (connection.connectedForMe) return "Connected";
+  if (connection.connectedForMe) {
+    // Show WHICH account: with several connectors for one service (two Google
+    // domains), a bare "Connected" badge cannot tell the sign-ins apart.
+    return connection.externalAccountId ? `Connected — ${connection.externalAccountId}` : "Connected";
+  }
   return "Connect your account";
 }
 

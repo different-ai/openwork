@@ -81,15 +81,39 @@ export function getSafeFileDownloadUrl(part: Pick<FileUIPart, "url">) {
   }
 }
 
-export function getMessageCreated(message: UIMessage): number | null {
+export function getSafeFileRevealPath(part: Pick<FileUIPart, "url">) {
+  try {
+    const url = new URL(part.url)
+    if (url.protocol !== "file:") return null
+    const pathname = decodeURIComponent(url.pathname)
+    if (!pathname) return null
+    return /^\/[A-Za-z]:\//.test(pathname) ? pathname.slice(1) : pathname
+  } catch {
+    return null
+  }
+}
+
+function getMessageOpencodeMetadata(message: UIMessage): object | null {
   const metadata: unknown = message.metadata
   if (!metadata || typeof metadata !== "object" || !("opencode" in metadata)) return null
 
   const opencode: unknown = metadata.opencode
-  if (!opencode || typeof opencode !== "object" || !("created" in opencode)) return null
+  return opencode && typeof opencode === "object" ? opencode : null
+}
 
+export function getMessageCreated(message: UIMessage): number | null {
+  const opencode = getMessageOpencodeMetadata(message)
+  if (!opencode || !("created" in opencode)) return null
   const created: unknown = opencode.created
   return typeof created === "number" ? created : null
+}
+
+/** When the assistant finished the turn (server timestamp), if known. */
+export function getMessageCompleted(message: UIMessage): number | null {
+  const opencode = getMessageOpencodeMetadata(message)
+  if (!opencode || !("completed" in opencode)) return null
+  const completed: unknown = opencode.completed
+  return typeof completed === "number" ? completed : null
 }
 
 export function formatMessageTimestamp(timestampMs: number): string {
@@ -178,6 +202,36 @@ export function getAggregateOnlyParts(
   return tools.length > 0 ? tools : null
 }
 
+/**
+ * An OpenCode turn usually arrives as ONE assistant message with steps
+ * (reasoning, tool calls, narration) and the final answer interleaved in
+ * `parts`. Split at the last non-empty text part so the step portion can
+ * fold into the "Worked for…" run while the answer stays visible. Returns
+ * null when there is nothing to fold (pure prose, or no work before the
+ * answer).
+ */
+export function splitTurnAtAnswer(message: UIMessage): { steps: UIMessage; answer: UIMessage } | null {
+  const parts = message.parts
+  let answerStart = -1
+  for (let index = parts.length - 1; index >= 0; index -= 1) {
+    const part = parts[index]
+    if (part.type === "text" && part.text.trim()) {
+      answerStart = index
+      break
+    }
+  }
+  if (answerStart <= 0) return null
+
+  const stepParts = parts.slice(0, answerStart)
+  const hasWork = stepParts.some((part) => isToolUIPart(part) || isReasoningUIPart(part))
+  if (!hasWork) return null
+
+  return {
+    steps: { ...message, id: `${message.id}:steps`, parts: stepParts },
+    answer: { ...message, parts: parts.slice(answerStart) },
+  }
+}
+
 export function getAssistantRenderGroups(
   parts: UIMessage["parts"],
   showThinking: boolean
@@ -241,9 +295,12 @@ export function getAssistantRenderGroups(
 
     if (isToolUIPart(part)) {
       // Paper aggregation rule: consecutive command/edit/read/search calls
-      // collapse into one aggregate group; any other part breaks the run.
+      // collapse into one aggregate group. Prose, files, and other tools
+      // break the run; reasoning does not — thinking models emit a
+      // reasoning part before nearly every call, and letting it split the
+      // run degrades every aggregate to a single call.
       if (isAggregatableToolPart(part)) {
-        const previous = groups.at(-1)
+        const previous = groups.findLast((group) => group.kind !== "reasoning")
         if (previous?.kind === "tool-aggregate") {
           previous.parts.push(part)
         } else {

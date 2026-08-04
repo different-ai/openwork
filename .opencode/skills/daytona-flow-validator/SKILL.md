@@ -1,6 +1,6 @@
 ---
 name: daytona-flow-validator
-description: do e2e tests, validate feature, prove it works, pass/fail, frame proof, screenshots, CDP assertions. Daytona validation loop for real app behavior with repair before declaring success.
+description: do e2e tests, validate feature, prove it works, pass/fail, testkit tape, screenshots, CDP assertions. Daytona validation loop for real app behavior with repair before declaring success.
 ---
 
 # Daytona Flow Validator
@@ -23,9 +23,10 @@ action must follow this loop:
 
 If any assertion is missing, the flow is not validated yet.
 
-When a coded eval exists, prefer `pnpm evals --flow <flow-id>` because the runner
-binds assertions, screenshots, and validation metadata into one HTML proof. Use
-manual CDP only to debug or to create a new coded flow.
+Use the relevant `evals/specs/**/*.test.ts` test with `@openwork/testkit` for a
+verdict because it binds assertions and captures into one ambient evidence tape.
+App-driving tests use `.slow.test.ts`. Use manual CDP only to debug; use
+`write-a-spec` for new repeatable coverage and `run-tests` to execute it.
 
 Use `browser_eval`, direct API calls, localStorage writes, filesystem edits, or
 database changes only when a human-visible path is impossible, unavailable in the
@@ -54,12 +55,14 @@ For a UI flow, collect all of these when feasible:
 - App proof: `navigator.userAgent` contains `Electron/` for desktop flows, or does not for standalone Chrome flows.
 - State proof: URL, visible text, selected model/provider, status, or route matches the expected outcome.
 - Backend proof: relevant `daytona exec` process/log/health check for sidecars, Den, worker proxy, or mock servers.
-- Frame-by-frame HTML proof: the default deliverable. Named PNGs for each step served as a browseable HTML index on port 8090. See `daytona-recording-artifacts` for how to produce the index.
-- Video clips: only when a step involves motion (streaming text, loading spinners, animations). Embed clips in the same HTML index alongside the static frames.
+- Testkit tape proof: observable assertions and validated takes for every claim.
+- Custom screenshot indexes: supplementary presentation artifacts only. See
+  `daytona-recording-artifacts`.
+- Video clips: supplementary and only for motion such as streaming, loading, or
+  animation.
 
-Frame proof is the default. Video is the exception for interactions that need
-motion. When the user says "test this on Daytona" and UI is involved, always
-produce frame-by-frame HTML proof unless the user explicitly asks for video.
+The testkit tape determines pass/fail. Custom screenshots and video never
+replace it, even when the user explicitly requests those additional artifacts.
 
 ## Validation Loop Template
 
@@ -243,6 +246,8 @@ For Den Web flows specifically:
 
 Use one of these verdicts:
 
-- `Passed`: every expected outcome has an observable assertion and frame-by-frame proof is published.
+- `Passed`: every expected outcome has an observable assertion in the testkit
+  tape, with every claimed take validated.
 - `Failed`: at least one assertion disproves the expected outcome.
-- `Incomplete`: the sandbox/tooling failed, evidence is missing, or only a recording/screenshot was collected without frame proof.
+- `Incomplete`: the sandbox/tooling failed, tape evidence is missing, or only a
+  custom recording/screenshot was collected.

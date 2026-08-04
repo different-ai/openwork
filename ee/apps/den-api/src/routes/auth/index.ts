@@ -1,4 +1,5 @@
 import { oauthProviderAuthServerMetadata, oauthProviderOpenIdConfigMetadata } from "@better-auth/oauth-provider"
+import { createHash } from "node:crypto"
 import { eq, sql } from "@openwork-ee/den-db/drizzle"
 import { AuthAccountTable, AuthUserTable, OAuthClientTable } from "@openwork-ee/den-db/schema"
 import type { Hono } from "hono"
@@ -6,6 +7,7 @@ import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { auth, DEN_MCP_OAUTH_RESOURCE, normalizeMcpOAuthResource } from "../../auth.js"
 import { normalizeLoginEmail, resolveLoginOptionKind } from "../../auth-login-options.js"
+import { verifyBotProtection } from "../../bot-protection.js"
 import {
   getBreachedPasswordResponse,
   getEmailPasswordLockoutResponse,
@@ -15,7 +17,7 @@ import {
 } from "../../auth-protection.js"
 import { db } from "../../db.js"
 import { env } from "../../env.js"
-import { findEnterpriseAuthRequirementForEmail } from "../../enterprise-auth-requirement.js"
+import { findEnterpriseAuthRequirementForEmailDomain } from "../../enterprise-auth-requirement.js"
 import { getInvalidMcpOAuthRedirectUris, isAllowedMcpOAuthRedirectUri, MCP_OAUTH_REDIRECT_URI_ERROR_DESCRIPTION } from "../../mcp/oauth-client-policy.js"
 import { normalizeMcpOAuthClientScope } from "../../mcp/scopes.js"
 import { publicRoute, queryValidator, tokenRoute } from "../../middleware/index.js"
@@ -24,6 +26,7 @@ import { getSingletonSsoStatus } from "../../orgs.js"
 import { getAuthRequestEmail, getSingleOrgEmailSignupPolicyViolation, type SingleOrgEmailSignupPolicyViolation } from "../../single-org-signup-policy.js"
 import { samlResponsePolicyMiddleware } from "../../sso-saml-response-middleware.js"
 import { revokeBearerSession, type AuthContextVariables } from "../../session.js"
+import { checkRateLimit } from "../../utils/rate-limit.js"
 import { registerDesktopAuthRoutes } from "./desktop-handoff.js"
 import { normalizeOAuthAuthorizeRedirect } from "./oauth-redirect.js"
 import { registerScimAuthRoutes } from "./scim.js"
@@ -460,6 +463,48 @@ const loginOptionsResponseSchema = z.object({
   signInUrl: z.string().url().optional(),
 }).meta({ ref: "AuthLoginOptionsResponse" })
 
+const loginOptionsBotVerificationFailedSchema = z.object({
+  error: z.literal("bot_verification_failed"),
+  message: z.string(),
+}).meta({ ref: "LoginOptionsBotVerificationFailedError" })
+
+const loginOptionsRateLimitedSchema = z.object({
+  error: z.literal("rate_limited"),
+  message: z.string(),
+}).meta({ ref: "LoginOptionsRateLimitedError" })
+
+function readRequestAddress(headers: Headers) {
+  const forwarded = headers.get("x-forwarded-for")?.split(",")[0]?.trim()
+  return forwarded || headers.get("x-real-ip")?.trim() || "unknown"
+}
+
+function sha256Hex(value: string) {
+  return createHash("sha256").update(value).digest("hex")
+}
+
+function readEmailDomain(email: string) {
+  const atIndex = email.lastIndexOf("@")
+  return atIndex > 0 && atIndex < email.length - 1 ? email.slice(atIndex + 1) : "unknown"
+}
+
+async function checkLoginOptionsRateLimit(headers: Headers, email: string) {
+  const now = Date.now()
+  const keys = [
+    `auth-login-options:ip:${sha256Hex(readRequestAddress(headers))}`,
+    `auth-login-options:email:${sha256Hex(email)}`,
+    `auth-login-options:domain:${sha256Hex(readEmailDomain(email))}`,
+  ]
+
+  for (const key of keys) {
+    const retryAfter = await checkRateLimit(key, 20, 60_000, now)
+    if (retryAfter !== null) {
+      return retryAfter
+    }
+  }
+
+  return null
+}
+
 async function getLoginOptionAccounts(email: string) {
   const rows = await db
     .select({
@@ -553,12 +598,31 @@ export function registerAuthRoutes<T extends { Variables: AuthContextVariables }
       responses: {
         200: jsonResponse("Login option resolved successfully.", loginOptionsResponseSchema),
         400: jsonResponse("The login option query parameters were invalid.", z.object({ error: z.literal("invalid_request") })),
+        403: jsonResponse("Bot verification failed.", loginOptionsBotVerificationFailedSchema),
+        429: jsonResponse("Too many login option attempts.", loginOptionsRateLimitedSchema),
       },
     }),
     publicRoute,
     queryValidator(loginOptionsQuerySchema),
     async (c) => {
       const { email } = c.req.valid("query")
+      const botProtection = await verifyBotProtection()
+      if (!botProtection.ok) {
+        return c.json({
+          error: "bot_verification_failed",
+          message: botProtection.message,
+        }, botProtection.status)
+      }
+
+      const retryAfter = await checkLoginOptionsRateLimit(c.req.raw.headers, email)
+      if (retryAfter !== null) {
+        c.header("Retry-After", String(retryAfter))
+        return c.json({
+          error: "rate_limited",
+          message: "Too many sign-in option attempts. Try again later.",
+        }, 429)
+      }
+
       const singletonSsoStatus = env.orgMode === "single_org" ? await getSingletonSsoStatus() : null
       const singletonSsoRequirement = singletonSsoStatus?.configured
         ? {
@@ -566,7 +630,7 @@ export function registerAuthRoutes<T extends { Variables: AuthContextVariables }
             signInPath: singletonSsoStatus.signInPath,
           }
         : null
-      const requirement = singletonSsoRequirement ?? await findEnterpriseAuthRequirementForEmail(email)
+      const requirement = singletonSsoRequirement ?? await findEnterpriseAuthRequirementForEmailDomain(email)
       const accounts = requirement ? [] : await getLoginOptionAccounts(email)
       const allowPublicSignup = env.orgMode !== "single_org" || env.singleOrg.allowPublicSignup
       const nextStep = resolveLoginOptionKind({ requireSso: Boolean(requirement), accounts, allowNewAccount: allowPublicSignup })

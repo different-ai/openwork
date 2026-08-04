@@ -82,11 +82,26 @@ jobs:
           echo "snapshot_name=$snapshot_name" >> "$GITHUB_OUTPUT"
           echo "snapshot_region=$snapshot_region" >> "$GITHUB_OUTPUT"
 
+      - name: Verify release ref is a tag
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ steps.resolve.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+
+          if ! git ls-remote --exit-code --tags \
+            "https://github.com/${GITHUB_REPOSITORY}.git" \
+            "refs/tags/${RELEASE_TAG}" >/dev/null; then
+            echo "::error::Ref ${RELEASE_TAG} does not exist as a tag in ${GITHUB_REPOSITORY}."
+            exit 1
+          fi
+          echo "Verified tag: ${RELEASE_TAG}"
+
       - name: Checkout release source
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          ref: ${{ steps.resolve.outputs.release_tag }}
+          ref: refs/tags/${{ steps.resolve.outputs.release_tag }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -132,6 +147,7 @@ jobs:
           daytona version
 
       - name: Build and push snapshot
+        id: publish
         shell: bash
         env:
           DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
@@ -153,3 +169,82 @@ jobs:
 
           echo "Publishing Daytona snapshot: ${DAYTONA_SNAPSHOT_NAME}"
           ./scripts/create-daytona-openwork-snapshot.sh "${DAYTONA_SNAPSHOT_NAME}"
+
+      - name: Checkout snapshot pin automation
+        if: steps.publish.outcome == 'success' && vars.DAYTONA_CLOUD_ENV_GROUP_ID != ''
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          path: .snapshot-pin-automation
+          sparse-checkout: scripts/update-daytona-snapshot-pin.mjs
+          sparse-checkout-cone-mode: false
+
+      - name: Update production snapshot pin
+        id: pin
+        if: steps.publish.outcome == 'success'
+        shell: bash
+        env:
+          DAYTONA_CLOUD_ENV_GROUP_ID: ${{ vars.DAYTONA_CLOUD_ENV_GROUP_ID }}
+          DAYTONA_SNAPSHOT_NAME: ${{ steps.resolve.outputs.snapshot_name }}
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${DAYTONA_CLOUD_ENV_GROUP_ID:-}" ]; then
+            echo "::notice::DAYTONA_CLOUD_ENV_GROUP_ID is not configured; skipping production snapshot pin update."
+            {
+              echo "### Daytona snapshot pin"
+              echo
+              echo "Skipped: repository variable \`DAYTONA_CLOUD_ENV_GROUP_ID\` is not configured."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if [ -z "${RENDER_API_KEY:-}" ]; then
+            echo "::error::Missing required secret: RENDER_API_KEY"
+            exit 1
+          fi
+
+          result="$(node .snapshot-pin-automation/scripts/update-daytona-snapshot-pin.mjs \
+            --env-group-id "$DAYTONA_CLOUD_ENV_GROUP_ID" \
+            --snapshot "$DAYTONA_SNAPSHOT_NAME")"
+          echo "$result"
+          {
+            echo "### Daytona snapshot pin"
+            echo
+            echo "$result"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Redeploy den-api so the new pin takes effect
+        # Render does not redeploy services when an env group value changes, so
+        # den-api keeps serving the previous DAYTONA_SNAPSHOT until it redeploys.
+        # Without this the pin moves but `latestVersion` stays stale and no
+        # sandbox ever recycles - observed for real on v0.18.11.
+        if: steps.pin.outcome == 'success'
+        shell: bash
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_DEN_SERVICE_ID: ${{ secrets.RENDER_DEN_CONTROL_PLANE_SERVICE_ID }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${RENDER_DEN_SERVICE_ID:-}" ] || [ -z "${RENDER_API_KEY:-}" ]; then
+            echo "::notice::Render den-api credentials unavailable; skipping redeploy. The pin will take effect on the next den-api deploy."
+            exit 0
+          fi
+
+          response="$(curl -s -w '\n%{http_code}' -X POST \
+            "https://api.render.com/v1/services/${RENDER_DEN_SERVICE_ID}/deploys" \
+            -H "Authorization: Bearer $RENDER_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d '{}')"
+          code="$(printf '%s' "$response" | tail -1)"
+          body="$(printf '%s' "$response" | sed '$d')"
+          if [ "$code" -ge 400 ]; then
+            echo "::error::POST /deploys returned HTTP $code: $body"
+            exit 1
+          fi
+
+          {
+            echo
+            echo "Triggered a den-api deploy so the new pin takes effect."
+          } >> "$GITHUB_STEP_SUMMARY"

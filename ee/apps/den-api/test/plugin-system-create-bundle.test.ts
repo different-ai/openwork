@@ -416,6 +416,40 @@ test("createConfigObjectVersion updates a same-name skill without creating a dup
   })
 })
 
+test("createConfigObject atomically persists a skill on its owning plugin", async () => {
+  resetDb()
+  const context = ownerContext()
+  await storeModule.createPluginBundle({ context, name: "Incident response" })
+  const plugin = recordedInserts.find((entry) => entry.table === "plugin")
+  if (!plugin || typeof plugin.value.id !== "string") {
+    throw new Error("expected created plugin")
+  }
+
+  const pluginId = normalizeDenTypeId("plugin", plugin.value.id)
+  const rawSourceText = "---\nname: incident-response\ndescription: Coordinate an incident.\n---\nCapture impact.\n\nAssign owners."
+  const skill = await storeModule.createConfigObject({
+    context,
+    objectType: "skill",
+    pluginIds: [pluginId],
+    sourceMode: "cloud",
+    value: { rawSourceText },
+  })
+
+  expect(skill).toMatchObject({
+    objectType: "skill",
+    organizationId: context.organizationContext.organization.id,
+    latestVersion: { rawSourceText },
+  })
+  expect(recordedInserts).toContainEqual({
+    table: "plugin_config_object",
+    value: expect.objectContaining({
+      configObjectId: skill.id,
+      organizationId: context.organizationContext.organization.id,
+      pluginId,
+    }),
+  })
+})
+
 test("createPluginBundle composes component creation, org-wide grants, and marketplace publishing", async () => {
   const organizationId = createDenTypeId("organization")
   const memberId = createDenTypeId("member")

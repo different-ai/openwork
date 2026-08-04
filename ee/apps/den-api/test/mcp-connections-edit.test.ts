@@ -24,18 +24,26 @@ let fakeServer: ReturnType<typeof Bun.serve> | undefined
 
 const adminUserId = createDenTypeId("user")
 const memberUserId = createDenTypeId("user")
+const peerAdminUserId = createDenTypeId("user")
 const otherAdminUserId = createDenTypeId("user")
+const superAdminUserId = createDenTypeId("user")
 const organizationId = createDenTypeId("organization")
 const otherOrganizationId = createDenTypeId("organization")
 const adminMemberId = createDenTypeId("member")
 const memberId = createDenTypeId("member")
+const peerAdminMemberId = createDenTypeId("member")
 const otherAdminMemberId = createDenTypeId("member")
+const superAdminMemberId = createDenTypeId("member")
 const adminSessionId = createDenTypeId("session")
 const memberSessionId = createDenTypeId("session")
+const peerAdminSessionId = createDenTypeId("session")
 const otherAdminSessionId = createDenTypeId("session")
+const superAdminSessionId = createDenTypeId("session")
 const adminToken = `mcp-edit-admin-${adminSessionId}`
 const memberToken = `mcp-edit-member-${memberSessionId}`
+const peerAdminToken = `mcp-edit-peer-admin-${peerAdminSessionId}`
 const otherAdminToken = `mcp-edit-other-admin-${otherAdminSessionId}`
+const superAdminToken = `mcp-edit-super-admin-${superAdminSessionId}`
 const observedAuthorization: Array<string | null> = []
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -84,7 +92,9 @@ beforeAll(async () => {
   await db.insert(schema.AuthUserTable).values([
     { id: adminUserId, name: "MCP Edit Admin", email: `mcp-edit-admin+${adminUserId}@test.local` },
     { id: memberUserId, name: "MCP Edit Member", email: `mcp-edit-member+${memberUserId}@test.local` },
+    { id: peerAdminUserId, name: "MCP Edit Peer Admin", email: `mcp-edit-peer+${peerAdminUserId}@test.local` },
     { id: otherAdminUserId, name: "Other MCP Edit Admin", email: `mcp-edit-other+${otherAdminUserId}@test.local` },
+    { id: superAdminUserId, name: "MCP Edit Super Admin", email: `mcp-edit-super+${superAdminUserId}@test.local` },
   ])
   await db.insert(schema.OrganizationTable).values([
     { id: organizationId, name: "MCP Edit Org", slug: `mcp-edit-${organizationId}` },
@@ -93,13 +103,17 @@ beforeAll(async () => {
   await db.insert(schema.MemberTable).values([
     { id: adminMemberId, organizationId, userId: adminUserId, role: "admin" },
     { id: memberId, organizationId, userId: memberUserId, role: "member" },
+    { id: peerAdminMemberId, organizationId, userId: peerAdminUserId, role: "admin" },
+    { id: superAdminMemberId, organizationId, userId: superAdminUserId, role: "super-admin" },
     { id: otherAdminMemberId, organizationId: otherOrganizationId, userId: otherAdminUserId, role: "admin" },
   ])
   const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000)
   await db.insert(schema.AuthSessionTable).values([
     { id: adminSessionId, userId: adminUserId, activeOrganizationId: organizationId, token: adminToken, expiresAt },
     { id: memberSessionId, userId: memberUserId, activeOrganizationId: organizationId, token: memberToken, expiresAt },
+    { id: peerAdminSessionId, userId: peerAdminUserId, activeOrganizationId: organizationId, token: peerAdminToken, expiresAt },
     { id: otherAdminSessionId, userId: otherAdminUserId, activeOrganizationId: otherOrganizationId, token: otherAdminToken, expiresAt },
+    { id: superAdminSessionId, userId: superAdminUserId, activeOrganizationId: organizationId, token: superAdminToken, expiresAt },
   ])
 })
 
@@ -132,7 +146,7 @@ afterAll(async () => {
   ))
   await db.delete(schema.AuthSessionTable).where(drizzle.inArray(
     schema.AuthSessionTable.id,
-    [adminSessionId, memberSessionId, otherAdminSessionId],
+    [adminSessionId, memberSessionId, peerAdminSessionId, otherAdminSessionId, superAdminSessionId],
   ))
   await db.delete(schema.MemberTable).where(drizzle.inArray(
     schema.MemberTable.organizationId,
@@ -144,7 +158,7 @@ afterAll(async () => {
   ))
   await db.delete(schema.AuthUserTable).where(drizzle.inArray(
     schema.AuthUserTable.id,
-    [adminUserId, memberUserId, otherAdminUserId],
+    [adminUserId, memberUserId, peerAdminUserId, otherAdminUserId, superAdminUserId],
   ))
   mock.restore()
 })
@@ -202,6 +216,18 @@ function humanRequest(input: {
   }))
 }
 
+function deleteRequest(input: {
+  connectionId: string
+  token?: string
+}) {
+  return app.fetch(new Request(`http://den-api.local/v1/mcp-connections/${input.connectionId}`, {
+    method: "DELETE",
+    headers: {
+      authorization: `Bearer ${input.token ?? adminToken}`,
+    },
+  }))
+}
+
 function updateBody(
   connection: Awaited<ReturnType<typeof currentConnection>>,
   changes: Record<string, unknown> = {},
@@ -246,6 +272,93 @@ function oauthConfigurationInApiOrder(
 }
 
 describe.serial("PUT /v1/mcp-connections/:connectionId", () => {
+  test("members and admins can edit their own connections but not connections created by others", async () => {
+    const own = await createConnection({ name: "Admin-owned edit", authType: "none", credentialMode: "shared" })
+    const ownBefore = await currentConnection(own.id)
+    const ownResponse = await humanRequest({
+      connectionId: own.id,
+      body: updateBody(ownBefore, { name: "Admin-owned edit renamed" }),
+    })
+    expect(ownResponse.status).toBe(200)
+    expect(await currentConnection(own.id)).toMatchObject({ name: "Admin-owned edit renamed" })
+
+    const memberOwned = await createConnection({
+      memberId,
+      name: "Member-owned edit",
+      authType: "none",
+      credentialMode: "shared",
+    })
+    const memberBefore = await currentConnection(memberOwned.id)
+    const memberOwnResponse = await humanRequest({
+      connectionId: memberOwned.id,
+      token: memberToken,
+      body: updateBody(memberBefore, { name: "Member-owned edit renamed" }),
+    })
+    expect(memberOwnResponse.status).toBe(200)
+    expect(await currentConnection(memberOwned.id)).toMatchObject({ name: "Member-owned edit renamed" })
+
+    const peerAdminConnection = await createConnection({
+      memberId: peerAdminMemberId,
+      name: "Peer admin edit target",
+      authType: "none",
+      credentialMode: "shared",
+    })
+    const peerBefore = await currentConnection(peerAdminConnection.id)
+    const denied = await humanRequest({
+      connectionId: peerAdminConnection.id,
+      body: updateBody(peerBefore, { name: "Admin should not rename peer" }),
+    })
+    expect(denied.status).toBe(403)
+    expect(await currentConnection(peerAdminConnection.id)).toMatchObject({ name: "Peer admin edit target" })
+
+    const memberDenied = await humanRequest({
+      connectionId: peerAdminConnection.id,
+      token: memberToken,
+      body: updateBody(peerBefore, { name: "Member should not rename peer" }),
+    })
+    expect(memberDenied.status).toBe(403)
+    expect(await currentConnection(peerAdminConnection.id)).toMatchObject({ name: "Peer admin edit target" })
+
+    const peerOwnResponse = await humanRequest({
+      connectionId: peerAdminConnection.id,
+      token: peerAdminToken,
+      body: updateBody(peerBefore, { name: "Peer admin renamed own" }),
+    })
+    expect(peerOwnResponse.status).toBe(200)
+    expect(await currentConnection(peerAdminConnection.id)).toMatchObject({ name: "Peer admin renamed own" })
+  })
+
+  test("super-admins can edit connections created by other admins", async () => {
+    const adminConnection = await createConnection({ name: "Admin connector for super-admin edit", authType: "none", credentialMode: "shared" })
+    const before = await currentConnection(adminConnection.id)
+    const response = await humanRequest({
+      connectionId: adminConnection.id,
+      token: superAdminToken,
+      body: updateBody(before, { name: "Super-admin renamed admin connector" }),
+    })
+    expect(response.status).toBe(200)
+    expect(await currentConnection(adminConnection.id)).toMatchObject({ name: "Super-admin renamed admin connector" })
+  })
+
+  test("store update keeps the creator guard under the row lock", async () => {
+    const guarded = await createConnection({ name: "Guarded update", authType: "none", credentialMode: "shared" })
+    const before = await currentConnection(guarded.id)
+    const result = await connections.updateExternalMcpConnection({
+      organizationId,
+      connectionId: guarded.id,
+      expectedUpdatedAt: before.updatedAt,
+      name: "Guarded update should not change",
+      url: before.url,
+      authType: before.authType,
+      credentialMode: before.credentialMode,
+      access: { orgWide: true, memberIds: [], teamIds: [] },
+      updatedByOrgMembershipId: peerAdminMemberId,
+      createdByOrgMembershipId: peerAdminMemberId,
+    })
+    expect(result.status).toBe("not_found")
+    expect(await currentConnection(guarded.id)).toMatchObject({ name: "Guarded update" })
+  })
+
   test("rename preserves a connected shared OAuth session and client registration", async () => {
     const created = await createConnection({ name: "Shared OAuth", authType: "oauth", credentialMode: "shared" })
     const connectedAt = new Date()
@@ -710,6 +823,54 @@ describe.serial("PUT /v1/mcp-connections/:connectionId", () => {
       error: "invalid_request",
       message: "This connection changed after authorization started. Start the connection flow again.",
     })
+  })
+})
+
+describe.serial("DELETE /v1/mcp-connections/:connectionId", () => {
+  test("members and admins can delete their own connections but not connections created by others", async () => {
+    const own = await createConnection({ name: "Admin-owned delete", authType: "none", credentialMode: "shared" })
+    const ownResponse = await deleteRequest({ connectionId: own.id })
+    expect(ownResponse.status).toBe(200)
+    expect(await connections.getExternalMcpConnection({ organizationId, connectionId: own.id })).toBeNull()
+
+    const memberOwned = await createConnection({
+      memberId,
+      name: "Member owned connector",
+      authType: "none",
+      credentialMode: "shared",
+    })
+    const memberOwnResponse = await deleteRequest({ connectionId: memberOwned.id, token: memberToken })
+    expect(memberOwnResponse.status).toBe(200)
+    expect(await connections.getExternalMcpConnection({ organizationId, connectionId: memberOwned.id })).toBeNull()
+
+    const otherAdminConnection = await createConnection({
+      memberId: peerAdminMemberId,
+      name: "Peer admin owned connector",
+      authType: "none",
+      credentialMode: "shared",
+    })
+    const denied = await deleteRequest({ connectionId: otherAdminConnection.id })
+    expect(denied.status).toBe(403)
+    expect(await connections.getExternalMcpConnection({ organizationId, connectionId: otherAdminConnection.id })).toMatchObject({
+      id: otherAdminConnection.id,
+    })
+
+    const memberDenied = await deleteRequest({ connectionId: otherAdminConnection.id, token: memberToken })
+    expect(memberDenied.status).toBe(403)
+    expect(await connections.getExternalMcpConnection({ organizationId, connectionId: otherAdminConnection.id })).toMatchObject({
+      id: otherAdminConnection.id,
+    })
+
+    const peerOwnResponse = await deleteRequest({ connectionId: otherAdminConnection.id, token: peerAdminToken })
+    expect(peerOwnResponse.status).toBe(200)
+    expect(await connections.getExternalMcpConnection({ organizationId, connectionId: otherAdminConnection.id })).toBeNull()
+  })
+
+  test("super-admins can delete connections created by other admins", async () => {
+    const adminConnection = await createConnection({ name: "Admin connector for super-admin", authType: "none", credentialMode: "shared" })
+    const response = await deleteRequest({ connectionId: adminConnection.id, token: superAdminToken })
+    expect(response.status).toBe(200)
+    expect(await connections.getExternalMcpConnection({ organizationId, connectionId: adminConnection.id })).toBeNull()
   })
 })
 

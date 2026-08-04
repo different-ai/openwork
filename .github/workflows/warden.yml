@@ -1,0 +1,76 @@
+name: Warden
+
+# Trigger types must stay aligned with the warden.toml trigger actions:
+# an event that runs this workflow but matches no warden trigger would
+# produce findings_count=0 without analysis and wrongly grant clearance.
+# (ready_for_review is deliberately absent — warden does not support it;
+# draft-to-ready PRs get analyzed on their next push.)
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [dev]
+
+permissions:
+  # contents:write is required by GitHub to resolve review threads via
+  # GraphQL; Warden auto-resolves its own findings once fixed, which the
+  # ruleset's required_review_thread_resolution depends on.
+  contents: write
+  pull-requests: write
+  checks: write
+
+concurrency:
+  group: warden-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  WARDEN_MODEL: ${{ secrets.WARDEN_MODEL }}
+  WARDEN_OPENAI_API_KEY: ${{ secrets.WARDEN_OPENAI_API_KEY }}
+
+jobs:
+  warden:
+    # Skip drafts and fork PRs: forks have no secrets, so analysis cannot
+    # run (and clearance is fork-blocked in warden-clearance.yml anyway).
+    if: >-
+      !github.event.pull_request.draft &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Analyze
+        id: analyze
+        uses: getsentry/warden@8759014a14130cd2b82e59d3fb450a7385721221 # v0
+        with:
+          mode: analyze
+
+      - name: Report
+        uses: getsentry/warden@8759014a14130cd2b82e59d3fb450a7385721221 # v0
+        with:
+          mode: report
+          findings-file: ${{ steps.analyze.outputs.findings-file }}
+
+      # Consumed by warden-clearance.yml (workflow_run). The clearance
+      # workflow refuses to act on PRs that touch review machinery, so this
+      # artifact cannot be forged without tripping that guard.
+      - name: Write clearance summary
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          FINDINGS_COUNT: ${{ steps.analyze.outputs.findings-count }}
+          HIGH_COUNT: ${{ steps.analyze.outputs.high-count }}
+        run: |
+          set -euo pipefail
+          jq -n \
+            --arg sha "$HEAD_SHA" \
+            --arg count "$FINDINGS_COUNT" \
+            --arg high "$HIGH_COUNT" \
+            '{head_sha: $sha, findings_count: ($count | tonumber), high_count: ($high | tonumber)}' \
+            > warden-summary.json
+          cat warden-summary.json
+
+      - name: Upload clearance summary
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: warden-summary
+          path: warden-summary.json

@@ -46,7 +46,12 @@ const EnvSchema = z.object({
   SMTP_SECURE: z.string().optional(),
   LOOPS_API_KEY: z.string().optional(),
   LOOPS_MARKETING_ENABLED: z.string().optional(),
+  LINEAR_API_KEY: z.string().optional(),
+  LINEAR_COMPLIANCE_TEAM_ID: z.string().optional(),
+  LINEAR_API_BASE: z.string().optional(),
+  LINEAR_COMPLIANCE_COMPLETED_STATE_ID: z.string().optional(),
   OPENWORK_DEV_MODE: z.string().optional(),
+  DEN_BOTID_PROTECTION_ENABLED: z.string().optional(),
   DEN_ALLOW_PRIVATE_MCP_URLS: z.string().optional(),
   DEN_EXTERNAL_MCP_SESSION_REUSE: z.string().optional(),
   DEN_DIAGNOSTICS_ORIGIN: z.string().optional(),
@@ -55,6 +60,7 @@ const EnvSchema = z.object({
   DEN_GATEWAY_ORIGIN: z.string().optional(),
   DEN_GOOGLE_OAUTH_AUTHORIZE_URL: z.string().optional(),
   DEN_GOOGLE_OAUTH_TOKEN_URL: z.string().optional(),
+  DEN_GOOGLE_OAUTH_USERINFO_URL: z.string().optional(),
   DEN_GOOGLE_API_BASE_URL: z.string().optional(),
   DEN_MICROSOFT_OAUTH_AUTHORIZE_URL: z.string().optional(),
   DEN_MICROSOFT_OAUTH_TOKEN_URL: z.string().optional(),
@@ -145,6 +151,8 @@ const EnvSchema = z.object({
   DAYTONA_DELETE_TIMEOUT_SECONDS: z.string().optional(),
   DAYTONA_STOP_TIMEOUT_SECONDS: z.string().optional(),
   DAYTONA_HEALTHCHECK_TIMEOUT_MS: z.string().optional(),
+  DEN_CKPT_INTERVAL_SECONDS: z.string().optional(),
+  DEN_CKPT_KEEP: z.string().optional(),
   INFERENCE_PROXY_BASE_URL: z.string().optional(),
   OPENROUTER_MANAGEMENT_API_KEY: z.string().optional(),
   OPENROUTER_WORKSPACE_ID: z.string().optional(),
@@ -367,6 +375,7 @@ const mcpConnectionsGatingEnabled =
   (parsed.DEN_MCP_CONNECTIONS_GATING_ENABLED ?? "false").toLowerCase() === "true"
 
 const devMode = (parsed.OPENWORK_DEV_MODE ?? "0").trim() === "1"
+const botIdProtectionEnabled = (parsed.DEN_BOTID_PROTECTION_ENABLED ?? "0").trim() === "1"
 const diagnosticsOrigin = normalizeDiagnosticsOrigin(parsed.DEN_DIAGNOSTICS_ORIGIN, devMode)
 const diagnosticsBearerToken = optionalString(parsed.DEN_DIAGNOSTICS_BEARER_TOKEN)
 if (diagnosticsBearerToken && diagnosticsBearerToken.length < 24) {
@@ -429,6 +438,7 @@ export const env = {
   // are treated as suffix matches, e.g. ".example.com".
   webAppHosts: splitCsv(parsed.DEN_WEB_APP_HOSTS).map((host) => host.toLowerCase()),
   devMode,
+  botIdProtectionEnabled,
   allowPrivateMcpUrls,
   externalMcpSessionReuseEnabled,
   diagnostics: {
@@ -476,6 +486,12 @@ export const env = {
     apiKey: optionalString(parsed.LOOPS_API_KEY),
     marketingEnabled: parsed.LOOPS_MARKETING_ENABLED?.trim() === "1",
   },
+  linear: {
+    apiKey: optionalString(parsed.LINEAR_API_KEY),
+    teamId: optionalString(parsed.LINEAR_COMPLIANCE_TEAM_ID),
+    apiBase: optionalString(parsed.LINEAR_API_BASE) ?? "https://api.linear.app/graphql",
+    completedStateId: optionalString(parsed.LINEAR_COMPLIANCE_COMPLETED_STATE_ID),
+  },
   orgMode,
   singleOrg: {
     name: optionalString(parsed.DEN_SINGLE_ORG_NAME) ?? "OpenWork",
@@ -504,6 +520,7 @@ export const env = {
   // production so Google, Microsoft Entra, and Graph use their public APIs.
   googleOAuthAuthorizeUrl: optionalString(parsed.DEN_GOOGLE_OAUTH_AUTHORIZE_URL),
   googleOAuthTokenUrl: optionalString(parsed.DEN_GOOGLE_OAUTH_TOKEN_URL),
+  googleOAuthUserinfoUrl: optionalString(parsed.DEN_GOOGLE_OAUTH_USERINFO_URL),
   googleApiBaseUrl: optionalString(parsed.DEN_GOOGLE_API_BASE_URL),
   microsoftOAuthAuthorizeUrl: optionalString(parsed.DEN_MICROSOFT_OAUTH_AUTHORIZE_URL),
   microsoftOAuthTokenUrl: optionalString(parsed.DEN_MICROSOFT_OAUTH_TOKEN_URL),
@@ -626,6 +643,8 @@ export const env = {
     healthcheckTimeoutMs: Number(
       parsed.DAYTONA_HEALTHCHECK_TIMEOUT_MS ?? "300000",
     ),
+    checkpointIntervalSeconds: Number(parsed.DEN_CKPT_INTERVAL_SECONDS ?? "300"),
+    checkpointKeep: Number(parsed.DEN_CKPT_KEEP ?? "3"),
     pollIntervalMs: DEN_WORKER_POLL_INTERVAL_MS,
   },
 }

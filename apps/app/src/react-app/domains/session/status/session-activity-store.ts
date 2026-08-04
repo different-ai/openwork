@@ -10,6 +10,7 @@ type SessionMessageRole = "assistant" | "system" | "user";
 type SessionActivityRecord = {
   status: SessionActivityStatus;
   runActive: boolean;
+  runStatusAt: number;
   assistantOutput: boolean;
   errorActive: boolean;
   errorMessage: string | null;
@@ -33,7 +34,13 @@ type SessionActivityStore = {
   getStatus: (workspaceId: string, sessionId: string) => SessionActivityStatus;
   getSessionError: (workspaceId: string, sessionId: string) => string | null;
   seedWorkspaceSessions: (workspaceId: string, sessions: SessionLike[]) => void;
-  seedSessionRun: (workspaceId: string, sessionId: string, status: unknown, assistantOutput: boolean) => void;
+  seedSessionRun: (
+    workspaceId: string,
+    sessionId: string,
+    status: unknown,
+    assistantOutput: boolean | undefined,
+    options?: { snapshotStartedAt?: number },
+  ) => void;
   setRunStatus: (workspaceId: string, sessionId: string, status: unknown) => void;
   markMessageRole: (workspaceId: string, sessionId: string, messageId: string, role: SessionMessageRole) => void;
   markAssistantOutput: (workspaceId: string, sessionId: string, messageId?: string, options?: { allowUnknownMessageRole?: boolean }) => void;
@@ -48,6 +55,7 @@ type SessionActivityStore = {
 const createRecord = (): SessionActivityRecord => ({
   status: "idle",
   runActive: false,
+  runStatusAt: 0,
   assistantOutput: false,
   errorActive: false,
   errorMessage: null,
@@ -185,18 +193,23 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
       return nextState;
     });
   },
-  seedSessionRun: (workspaceId, sessionId, status, assistantOutput) => {
+  seedSessionRun: (workspaceId, sessionId, status, assistantOutput, options) => {
     const workspace = workspaceId.trim();
     const session = sessionId.trim();
     if (!workspace || !session) return;
     set((state) => updateRecord(state, workspace, session, (record) => {
       const normalized = normalizeRunStatus(status);
       const runActive = normalized === "running" || normalized === "retry";
-      if (!runActive && record.status !== "idle") return record;
+      const snapshotStartedAt = options?.snapshotStartedAt;
+      // Order snapshot seeds against live writes so stale idle cannot kill a
+      // live spinner and stale busy cannot resurrect a run that already ended.
+      if (typeof snapshotStartedAt === "number" && snapshotStartedAt < record.runStatusAt) return record;
+      if (typeof snapshotStartedAt !== "number" && !runActive && record.status !== "idle") return record;
       return {
         ...record,
         runActive,
-        assistantOutput: runActive && assistantOutput,
+        runStatusAt: snapshotStartedAt ?? record.runStatusAt,
+        assistantOutput: runActive && (assistantOutput ?? record.assistantOutput),
         errorActive: runActive ? false : record.errorActive,
         errorMessage: runActive ? null : record.errorMessage,
         compacting: runActive ? record.compacting : false,
@@ -215,6 +228,7 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
       return {
         ...record,
         runActive,
+        runStatusAt: Date.now(),
         assistantOutput: runActive && record.runActive ? record.assistantOutput : false,
         errorActive: runActive ? false : record.errorActive,
         errorMessage: runActive ? null : record.errorMessage,
@@ -281,6 +295,7 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
       errorActive: true,
       errorMessage: message ? message : "Session failed",
       runActive: false,
+      runStatusAt: Date.now(),
       assistantOutput: false,
       compacting: false,
     })));

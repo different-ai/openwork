@@ -7,6 +7,7 @@ import {
   BUILTIN_ADD_TO_MARKETPLACE_CAPABILITY,
   BUILTIN_ADD_USER_TO_MARKETPLACE_CAPABILITY,
   BUILTIN_CREATE_SKILL_CAPABILITY,
+  BUILTIN_SHARE_PLUGIN_CAPABILITY,
   BUILTIN_SKILL_DESCRIPTORS,
   executeBuiltinSkillCapability,
   searchBuiltinSkillCapabilities,
@@ -117,6 +118,7 @@ test("agent MCP server exposes steering instructions during initialize", async (
   expect(client.getInstructions()).toBe(agentModule.AGENT_MCP_INSTRUCTIONS)
   expect(client.getInstructions()).toContain("search_capabilities and execute_capability")
   expect(client.getInstructions()).toContain("create-skill")
+  expect(client.getInstructions()).toContain("share-plugin")
   expect(client.getInstructions()).toContain("add-to-marketplace")
   expect(client.getInstructions()).toContain("add-user-to-marketplace")
   expect(client.getInstructions()).toContain("add a public GitHub plugin to an organization marketplace")
@@ -164,6 +166,7 @@ test("agent MCP server exposes a standards-shaped remote skill index", () => {
 
 test("built-in cloud skills are searchable and executable as skill capabilities", () => {
   expect(searchBuiltinSkillCapabilities("create a skill").map((match) => match.name)).toContain(BUILTIN_CREATE_SKILL_CAPABILITY)
+  expect(searchBuiltinSkillCapabilities("share this skill with my team").map((match) => match.name)).toContain(BUILTIN_SHARE_PLUGIN_CAPABILITY)
   expect(searchBuiltinSkillCapabilities("add this to marketplace").map((match) => match.name)).toContain(BUILTIN_ADD_TO_MARKETPLACE_CAPABILITY)
   expect(searchBuiltinSkillCapabilities("add this user to the marketplace").map((match) => match.name)).toContain(BUILTIN_ADD_USER_TO_MARKETPLACE_CAPABILITY)
   expect(searchBuiltinSkillCapabilities("calendar events")).toEqual([])
@@ -176,6 +179,8 @@ test("built-in cloud skills are searchable and executable as skill capabilities"
   })
   expect(createSkill?.content).toContain("name: create-skill")
   expect(createSkill?.content).toContain("postPlugins")
+  expect(createSkill?.content).toContain("409 duplicate_plugin")
+  expect(createSkill?.content).toContain("share-plugin")
   expect(createSkill?.content).toContain("Do not send `marketplaceId` or `orgWide`")
   expect(createSkill?.content).not.toContain("Set organization-wide access or a marketplace")
 
@@ -188,6 +193,12 @@ test("built-in cloud skills are searchable and executable as skill capabilities"
   expect(addUser?.content).toContain("name: add-user-to-marketplace")
   expect(addUser?.content).toContain("postMarketplacesAccess")
   expect(addUser?.content).toContain("orgMembershipId")
+
+  const sharePlugin = executeBuiltinSkillCapability(BUILTIN_SHARE_PLUGIN_CAPABILITY)
+  expect(sharePlugin).toMatchObject({ kind: "skill", name: "Share Plugin" })
+  expect(sharePlugin?.content).toContain("name: share-plugin")
+  expect(sharePlugin?.content).toContain("postPluginsAccess")
+  expect(sharePlugin?.content).toContain('Use `"role": "viewer"` by default')
   expect(executeBuiltinSkillCapability("skill:missing")).toBeNull()
 })
 

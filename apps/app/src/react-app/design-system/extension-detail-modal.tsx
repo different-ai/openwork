@@ -79,10 +79,13 @@ export type ExtensionDetailModalProps = {
   /** Connect handler. */
   onConnect?: () => void;
   connectLabel?: string;
+  onReconnect?: () => void;
+  reconnectLabel?: string;
   connectingLabel?: string;
   /** Uninstall/disconnect handler. Shown when connected. */
   onUninstall?: () => void;
   uninstallLabel?: string;
+  closeOnUninstall?: boolean;
   /** Hide from the normal catalog view. */
   onHide?: () => void;
   /** Show again in the normal catalog view. */
@@ -208,16 +211,19 @@ export function ExtensionDetailModal({
   onReveal,
   onConnect,
   connectLabel = "Connect",
+  onReconnect,
+  reconnectLabel = "Reconnect",
   connectingLabel = "Connecting...",
   onUninstall,
   uninstallLabel,
+  closeOnUninstall = true,
   onHide,
   onShow,
   configSlot,
   showEnablementCard = true,
   size = "default",
   presentation = "dialog",
-  backLabel = "Extensions",
+  backLabel = "Library",
 }: ExtensionDetailModalProps) {
   "use memo";
   const resolvedIconSrc = resolveExtensionIconUrl({ iconSrc, iconSlug, serviceUrl: url });
@@ -520,13 +526,31 @@ export function ExtensionDetailModal({
             Close
           </Button>
         )}
+        {connected && onReconnect ? (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onReconnect}
+            disabled={connecting}
+          >
+            {connecting ? (
+              <>
+                <Loader2 data-icon="inline-start" className="animate-spin" />
+                {connectingLabel}
+              </>
+            ) : (
+              reconnectLabel
+            )}
+          </Button>
+        ) : null}
         {connected && onUninstall ? (
           <Button
             variant="destructive"
             size="sm"
+            disabled={connecting}
             onClick={() => {
               onUninstall();
-              onClose();
+              if (closeOnUninstall) onClose();
             }}
           >
             {uninstallLabel ?? (taxonomy === "skill" ? "Uninstall" : "Disconnect")}

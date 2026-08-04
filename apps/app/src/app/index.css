@@ -1,15 +1,21 @@
-@import "tailwindcss";
-@config "../../tailwind.config.ts";
+@import "tailwindcss" source(none);
 
 @import "../styles/colors.css";
+@import "../styles/tailwind-theme.css";
 
 @import "tw-animate-css";
 
 @import "shadcn/tailwind.css";
 
+@import "katex/dist/katex.min.css";
+
 @import "@fontsource-variable/geist";
 
 @import "@fontsource-variable/ibm-plex-sans";
+
+@source "../../index.html";
+@source "../";
+@source inline("{bg,text,border}-{bronze,gold,brown,orange,tomato,red,ruby,crimson,pink,plum,purple,violet,iris,indigo,blue,cyan,teal,jade,green,grass,sky,mint,lime,yellow,amber,gray,mauve,slate,sage,olive,sand}-{1..12}");
 
 @custom-variant dark (&:is(.dark, .dark *, [data-theme="dark"], [data-theme="dark"] *));
 @custom-variant electron {
@@ -220,6 +226,25 @@ body {
   text-decoration: var(--shiki-dark-text-decoration) !important;
 }
 
+/* KaTeX sets its own absolute font-size; keep formulas at the surrounding text size
+   so inline math does not tower over the sentence it sits in. */
+.markdown-content .katex {
+  font-size: 1.1em;
+  color: inherit;
+}
+
+/* Long formulas scroll instead of overflowing the message bubble. */
+.markdown-content .katex-display {
+  margin: 1rem 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.25rem 0;
+}
+
+.markdown-content [data-openwork-math-error] {
+  color: var(--color-red-11, inherit);
+}
+
 .ow-soft-shell {
   border: 1px solid var(--dls-border);
   background: var(--dls-surface);
@@ -233,6 +258,15 @@ body {
   white-space: nowrap;
   text-overflow: clip;
   mask-image: linear-gradient(to right, black calc(100% - 18px), transparent);
+}
+
+/* Session titles move once from their resting edge; the row and controls stay fixed. */
+.ow-session-title-moving {
+  mask-image: linear-gradient(to right, transparent, black 10px, black calc(100% - 10px), transparent);
+}
+
+.ow-session-title-moving > span {
+  will-change: transform;
 }
 
 .ow-soft-card {
@@ -469,29 +503,51 @@ select:disabled {
    "awaiting first token", and any idle-but-alive hint. */
 @keyframes ow-dot-ticker {
   0% {
-    background-color: rgba(var(--dls-secondary-rgb, 120, 120, 120), 0.22);
-    box-shadow: 0 0 0 rgba(var(--dls-accent-rgb), 0);
+    background-color: rgb(var(--dls-secondary-rgb) / 0.22);
+    box-shadow: 0 0 0 rgb(var(--dls-accent-rgb) / 0);
   }
   20% {
-    background-color: rgba(var(--dls-accent-rgb), 0.95);
-    box-shadow: 0 0 8px rgba(var(--dls-accent-rgb), 0.45);
+    background-color: rgb(var(--dls-accent-rgb) / 0.95);
+    box-shadow: 0 0 8px rgb(var(--dls-accent-rgb) / 0.45);
   }
   55%,
   100% {
-    background-color: rgba(var(--dls-secondary-rgb, 120, 120, 120), 0.22);
-    box-shadow: 0 0 0 rgba(var(--dls-accent-rgb), 0);
+    background-color: rgb(var(--dls-secondary-rgb) / 0.22);
+    box-shadow: 0 0 0 rgb(var(--dls-accent-rgb) / 0);
   }
 }
 
 .ow-dot-ticker {
   animation: ow-dot-ticker 1.4s cubic-bezier(0.4, 0, 0.2, 1) infinite;
-  background-color: rgba(var(--dls-secondary-rgb, 120, 120, 120), 0.22);
+  background-color: rgb(var(--dls-secondary-rgb) / 0.22);
 }
 
 @media (prefers-reduced-motion: reduce) {
   .ow-dot-ticker {
     animation: none;
-    background-color: rgba(var(--dls-accent-rgb), 0.6);
+    background-color: rgb(var(--dls-accent-rgb) / 0.6);
+  }
+}
+
+/* Sweep under the active boot checkpoint. Stays in CSS so the gateway can poll
+   without an endless JS animation competing for the main thread. */
+@keyframes ow-stage-shimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(400%);
+  }
+}
+
+.ow-stage-shimmer {
+  animation: ow-stage-shimmer 1.6s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ow-stage-shimmer {
+    animation: none;
+    transform: translateX(0);
   }
 }
 

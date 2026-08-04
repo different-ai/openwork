@@ -1,5 +1,7 @@
+import { DaytonaConflictError } from "@daytonaio/sdk"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { beforeAll, describe, expect, test } from "bun:test"
+import type { DaytonaProvisioningRuntime, DaytonaSandboxRuntime } from "../src/workers/daytona.js"
 
 type CloudLifecycleModule = typeof import("../src/workers/cloud-lifecycle.js")
 type DaytonaModule = typeof import("../src/workers/daytona.js")
@@ -84,6 +86,87 @@ function makeStore(input: { workers: TestWorker[]; tokens?: TestWorkerToken[] })
   }
 
   return { store, updates }
+}
+
+function makeDaytonaWakeRuntime(input: {
+  startError?: Error
+  refreshStates?: string[]
+} = {}) {
+  let state = "stopped"
+  let startCalls = 0
+  let refreshCalls = 0
+  let healthChecks = 0
+  const sandbox = {
+    id: "sbx_wake_test",
+    get state() {
+      return state
+    },
+    get target() {
+      return "us-test"
+    },
+    async refreshData() {
+      const refreshState = input.refreshStates?.[refreshCalls]
+      refreshCalls += 1
+      if (refreshState !== undefined) {
+        state = refreshState
+      }
+    },
+    async start() {
+      startCalls += 1
+      if (input.startError) {
+        throw input.startError
+      }
+      state = "started"
+    },
+    async delete() {},
+    async getSignedPreviewUrl() {
+      return { url: "https://wake.preview.example.test" }
+    },
+    process: {
+      async createSession() {},
+      async executeSessionCommand() {
+        return { cmdId: "cmd_1" }
+      },
+      async getSessionCommand() {
+        return { exitCode: null }
+      },
+      async getSessionCommandLogs() {
+        return { stdout: "", stderr: "" }
+      },
+    },
+  } satisfies DaytonaSandboxRuntime
+  const runtime = {
+    async getVolume() {
+      return { id: "vol_shared", state: "ready" }
+    },
+    async getSandbox() {
+      return sandbox
+    },
+    async createSandbox() {
+      throw new Error("unexpected sandbox create")
+    },
+    async upsertSandbox() {},
+    async checkpointExists() {
+      return false
+    },
+    async verifyRestoreMarker() {
+      return false
+    },
+    async waitForHealth() {
+      healthChecks += 1
+    },
+  } satisfies DaytonaProvisioningRuntime
+
+  return {
+    runtime,
+    record: { sandbox_id: sandbox.id, workspace_volume_id: "vol_shared", data_volume_id: "vol_shared" },
+    get startCalls() {
+      return startCalls
+    },
+    get healthChecks() {
+      return healthChecks
+    },
+  }
 }
 
 function deferred() {
@@ -238,6 +321,123 @@ describe("cloud lifecycle wake", () => {
     hold.resolve()
     await Promise.all([first, second])
     expect(worker.status).toBe("healthy")
+  })
+
+  test("keeps a worker provisioning while a Daytona start conflict converges healthy", async () => {
+    const worker = makeWorker({ status: "stopped" })
+    const { store, updates } = makeStore({
+      workers: [worker],
+      tokens: [
+        makeToken(worker.id, "host"),
+        makeToken(worker.id, "client"),
+        makeToken(worker.id, "activity"),
+      ],
+    })
+    const wakeRuntime = makeDaytonaWakeRuntime({
+      startError: new DaytonaConflictError("Sandbox state change in progress"),
+      refreshStates: ["stopped", "started"],
+    })
+
+    await lifecycle.wakeCloudWorker(worker.id, {
+      store,
+      wakeWorker: (wakeInput) => daytona.wakeWorkerOnDaytonaWithRuntime(
+        wakeInput,
+        wakeRuntime.runtime,
+        wakeRuntime.record,
+        "openwork-0.18.8",
+      ),
+    })
+
+    expect(worker.status).toBe("healthy")
+    expect(wakeRuntime.startCalls).toBe(1)
+    expect(wakeRuntime.healthChecks).toBe(1)
+    expect(updates.map((update) => update.status)).toEqual(["provisioning", "healthy"])
+  })
+
+  test("writes the image version returned by a successful Daytona wake", async () => {
+    const worker = makeWorker({ status: "stopped" })
+    const { store, updates } = makeStore({
+      workers: [worker],
+      tokens: [
+        makeToken(worker.id, "host"),
+        makeToken(worker.id, "client"),
+        makeToken(worker.id, "activity"),
+      ],
+    })
+
+    await lifecycle.wakeCloudWorker(worker.id, {
+      store,
+      wakeWorker: async () => ({
+        provider: "daytona",
+        url: "https://cloud.example",
+        status: "healthy",
+        imageVersion: "openwork-0.18.8",
+      }),
+    })
+
+    expect(worker.status).toBe("healthy")
+    expect(updates[1]?.status).toBe("healthy")
+    expect(updates[1]?.imageVersion).toBe("openwork-0.18.8")
+  })
+
+  test("marks the worker failed when an existing sandbox cannot be started", async () => {
+    const worker = makeWorker({ status: "stopped" })
+    const { store } = makeStore({
+      workers: [worker],
+      tokens: [
+        makeToken(worker.id, "host"),
+        makeToken(worker.id, "client"),
+        makeToken(worker.id, "activity"),
+      ],
+    })
+    let wakeExecutions = 0
+    let provisionExecutions = 0
+
+    await lifecycle.wakeCloudWorker(worker.id, {
+      store,
+      wakeWorker: async () => {
+        wakeExecutions += 1
+        throw new Error("start failed")
+      },
+      provisionWorker: async () => {
+        provisionExecutions += 1
+        return { provider: "daytona", url: "https://cloud.example", status: "healthy" }
+      },
+    })
+
+    expect(wakeExecutions).toBe(1)
+    expect(provisionExecutions).toBe(0)
+    expect(worker.status).toBe("failed")
+  })
+
+  test("marks the worker failed after bounded Daytona start retries", async () => {
+    const worker = makeWorker({ status: "stopped" })
+    const { store, updates } = makeStore({
+      workers: [worker],
+      tokens: [
+        makeToken(worker.id, "host"),
+        makeToken(worker.id, "client"),
+        makeToken(worker.id, "activity"),
+      ],
+    })
+    const wakeRuntime = makeDaytonaWakeRuntime({
+      startError: new Error("Request failed with status code 502"),
+    })
+
+    await lifecycle.wakeCloudWorker(worker.id, {
+      store,
+      wakeWorker: (wakeInput) => daytona.wakeWorkerOnDaytonaWithRuntime(
+        wakeInput,
+        wakeRuntime.runtime,
+        wakeRuntime.record,
+        "openwork-0.18.8",
+      ),
+    })
+
+    expect(worker.status).toBe("failed")
+    expect(wakeRuntime.startCalls).toBe(3)
+    expect(wakeRuntime.healthChecks).toBe(0)
+    expect(updates.map((update) => update.status)).toEqual(["provisioning", "failed"])
   })
 
   test("falls back to full provisioning when the Daytona sandbox is missing during wake", async () => {

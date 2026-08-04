@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 
-import { getMediaBadge, getSafeFileDownloadUrl } from "../src/components/chat/utils";
+import {
+  getMediaBadge,
+  getSafeFileDownloadUrl,
+  getSafeFileRevealPath,
+} from "../src/components/chat/utils";
 import { getArtifactsFromMessages } from "../src/lib/artifacts";
 
 const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
@@ -22,6 +26,14 @@ describe("Office attachment UI affordances", () => {
     expect(getSafeFileDownloadUrl({ url: "file:///workspace/artifacts/QuarterlyBrief.docx" })).toBeNull();
     expect(getSafeFileDownloadUrl({ url: "https://example.com/QuarterlyBrief.docx" })).toBeNull();
     expect(getSafeFileDownloadUrl({ url: "javascript:alert(1)" })).toBeNull();
+  });
+
+  test("only exposes reveal actions for local file URLs", () => {
+    expect(getSafeFileRevealPath({ url: "file:///workspace/artifacts/Quarterly%20Brief.docx" })).toBe("/workspace/artifacts/Quarterly Brief.docx");
+    expect(getSafeFileRevealPath({ url: "file:///C:/Users/Jalil/Quarterly%20Brief.docx" })).toBe("C:/Users/Jalil/Quarterly Brief.docx");
+    expect(getSafeFileRevealPath({ url: "blob:http://localhost/office-download" })).toBeNull();
+    expect(getSafeFileRevealPath({ url: "https://example.com/QuarterlyBrief.docx" })).toBeNull();
+    expect(getSafeFileRevealPath({ url: "javascript:alert(1)" })).toBeNull();
   });
 
   test("collects DOCX artifacts as document previews", () => {

@@ -54,6 +54,26 @@ function contextMiddleware(context: OrganizationContext): MiddlewareHandler<{ Va
   }
 }
 
+function driveFileApp(graphFetch: typeof fetch): Hono<{ Variables: OrgRouteVariables }> {
+  const app = new Hono<{ Variables: OrgRouteVariables }>()
+  routes.registerMicrosoft365Routes(app, {
+    graphBaseUrl: "https://graph.example.test/v1.0",
+    fetch: graphFetch,
+    memberRoute: contextMiddleware(organizationContext()),
+    resolveAccessToken: async () => ({
+      kind: "ok",
+      accessToken: "delegated-member-token",
+      scopes: ["Files.Read"],
+      enabledFeatures: ["filesRead"],
+    }),
+  })
+  return app
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
 describe("Microsoft 365 injected routes", () => {
   test("maps Graph mail for the calling member and blocks disconnected or under-scoped accounts", async () => {
     const context = organizationContext()
@@ -298,5 +318,122 @@ describe("Microsoft 365 injected routes", () => {
       message: "Your connected Microsoft account is missing the Outlook mail read/write permission. An admin can enable it on the Microsoft 365 connector in OpenWork Cloud -> Connectors; then reconnect your account.",
     })
     expect(graphCalls).toBe(1)
+  })
+
+  test("returns OneDrive binary file bytes as byte-exact base64", async () => {
+    const binary = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0xfb, 0xef, 0xbe, 0xff])
+    const graphFetch: typeof fetch = async (input, init) => {
+      const request = new Request(input, init)
+      const pathname = new URL(request.url).pathname
+      if (pathname.endsWith("/content")) {
+        return new Response(binary, { headers: { "content-type": "application/octet-stream" } })
+      }
+      return Response.json({
+        id: "binary_1",
+        name: "image.png",
+        size: binary.byteLength,
+        file: { mimeType: "application/octet-stream" },
+      })
+    }
+
+    const response = await driveFileApp(graphFetch).request("http://den-api.local/v1/capabilities/microsoft-365/drive-file/binary_1")
+    expect(response.status).toBe(200)
+    const payload: unknown = await response.json()
+    expect(payload).toMatchObject({
+      ok: true,
+      file: {
+        encoding: "base64",
+        content: null,
+        contentUnavailableReason: null,
+      },
+    })
+    if (!isRecord(payload) || !isRecord(payload.file) || typeof payload.file.contentBase64 !== "string") {
+      throw new Error("Expected a base64-encoded file response.")
+    }
+    expect(Buffer.compare(Buffer.from(payload.file.contentBase64, "base64"), binary)).toBe(0)
+  })
+
+  test("returns OneDrive text files with text encoding", async () => {
+    const content = "OneDrive text remains readable."
+    const graphFetch: typeof fetch = async (input, init) => {
+      const pathname = new URL(new Request(input, init).url).pathname
+      if (pathname.endsWith("/content")) {
+        return new Response(content, { headers: { "content-type": "text/plain; charset=utf-8" } })
+      }
+      return Response.json({ id: "text_1", name: "notes.txt", size: content.length, file: { mimeType: "text/plain" } })
+    }
+
+    const response = await driveFileApp(graphFetch).request("http://den-api.local/v1/capabilities/microsoft-365/drive-file/text_1")
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({
+      file: {
+        content,
+        contentBase64: null,
+        encoding: "text",
+        truncated: false,
+        contentUnavailableReason: null,
+      },
+    })
+  })
+
+  test("returns strict UTF-8 text even when the OneDrive MIME type looks binary", async () => {
+    const content = "0\nSECTION\n2\nENTITIES\n0\nEOF\n"
+    const graphFetch: typeof fetch = async (input, init) => {
+      const pathname = new URL(new Request(input, init).url).pathname
+      if (pathname.endsWith("/content")) {
+        return new Response(content, { headers: { "content-type": "image/vnd.dxf" } })
+      }
+      return Response.json({ id: "drawing_1", name: "drawing.dxf", size: content.length, file: { mimeType: "image/vnd.dxf" } })
+    }
+
+    const response = await driveFileApp(graphFetch).request("http://den-api.local/v1/capabilities/microsoft-365/drive-file/drawing_1")
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({
+      file: { content, contentBase64: null, encoding: "text", contentUnavailableReason: null },
+    })
+  })
+
+  test("returns folder metadata with no content encoding", async () => {
+    const graphFetch: typeof fetch = async () => Response.json({ id: "folder_1", name: "Projects", size: 0, folder: {} })
+
+    const response = await driveFileApp(graphFetch).request("http://den-api.local/v1/capabilities/microsoft-365/drive-file/folder_1")
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({
+      file: {
+        content: null,
+        contentBase64: null,
+        encoding: "none",
+        contentUnavailableReason: "folder",
+      },
+    })
+  })
+
+  test("rejects oversized OneDrive metadata without downloading content", async () => {
+    let contentCalls = 0
+    const graphFetch: typeof fetch = async (input, init) => {
+      const pathname = new URL(new Request(input, init).url).pathname
+      if (pathname.endsWith("/content")) {
+        contentCalls += 1
+        return new Response("unexpected")
+      }
+      return Response.json({
+        id: "oversized_1",
+        name: "archive.bin",
+        size: 10 * 1024 * 1024 + 1,
+        file: { mimeType: "application/octet-stream" },
+      })
+    }
+
+    const response = await driveFileApp(graphFetch).request("http://den-api.local/v1/capabilities/microsoft-365/drive-file/oversized_1")
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({
+      file: {
+        content: null,
+        contentBase64: null,
+        encoding: "none",
+        contentUnavailableReason: "file_too_large",
+      },
+    })
+    expect(contentCalls).toBe(0)
   })
 })

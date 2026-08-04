@@ -393,12 +393,15 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
   async function redirectToRequiredSso(trimmedEmail: string) {
     const { response, payload } = await requestJson(`/v1/orgs/sso/resolve?email=${encodeURIComponent(trimmedEmail)}`, { method: "GET" }, 12000);
 
-    if (response.status === 204) {
-      return false;
+    if (!response.ok) {
+      throw new Error(getErrorMessage(payload, response.status === 403 ? "We could not verify this sign-in attempt. Please refresh and try again." : `Could not resolve workspace SSO (${response.status}).`));
     }
 
-    if (!response.ok) {
-      throw new Error(getErrorMessage(payload, `Could not resolve workspace SSO (${response.status}).`));
+    const method = typeof (payload as { method?: unknown } | null)?.method === "string"
+      ? (payload as { method: string }).method
+      : "";
+    if (method !== "sso") {
+      return false;
     }
 
     const signInUrl = typeof (payload as { signInUrl?: unknown } | null)?.signInUrl === "string"

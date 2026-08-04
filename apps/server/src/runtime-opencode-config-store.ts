@@ -16,6 +16,12 @@ export type RuntimeOpencodeConfig = {
   provider?: Record<string, unknown>;
 };
 
+export const ENGINE_GLOBAL_RUNTIME_CONFIG_ID = "__openwork_engine_global__";
+
+export function isEngineGlobalRuntimeConfigId(workspaceId: string): boolean {
+  return workspaceId === ENGINE_GLOBAL_RUNTIME_CONFIG_ID;
+}
+
 function normalizeRuntimeOpencodeConfig(value: unknown): RuntimeOpencodeConfig {
   if (!isRecord(value)) return {};
   const defaultAgent = typeof value.default_agent === "string" ? value.default_agent : undefined;
@@ -80,6 +86,15 @@ export function runtimeMcpMap(config: RuntimeOpencodeConfig): Record<string, Rec
   return isRecord(config.mcp) ? config.mcp as Record<string, Record<string, unknown>> : {};
 }
 
+export function runtimeProviderMap(config: RuntimeOpencodeConfig): Record<string, Record<string, unknown>> {
+  const provider: Record<string, Record<string, unknown>> = {};
+  if (!isRecord(config.provider)) return provider;
+  for (const [providerId, value] of Object.entries(config.provider)) {
+    if (isRecord(value)) provider[providerId] = value;
+  }
+  return provider;
+}
+
 /** Narrow server-owned read port for consumers that need one runtime MCP endpoint. */
 export async function readRuntimeMcpConfig(
   config: ServerConfig,
@@ -118,6 +133,77 @@ export function mergeRuntimeProviderUpdate(
 
 export async function readRuntimeOpencodeConfig(config: ServerConfig, workspaceId: string): Promise<RuntimeOpencodeConfig> {
   return await runtimeOpencodeConfigStore.get(config, workspaceId) ?? {};
+}
+
+export async function readGlobalRuntimeOpencodeConfig(config: ServerConfig): Promise<RuntimeOpencodeConfig> {
+  return await readRuntimeOpencodeConfig(config, ENGINE_GLOBAL_RUNTIME_CONFIG_ID);
+}
+
+export async function writeGlobalRuntimeOpencodeConfig(
+  config: ServerConfig,
+  updater: (current: RuntimeOpencodeConfig) => RuntimeOpencodeConfig,
+): Promise<{ config: RuntimeOpencodeConfig; changed: boolean }> {
+  return await writeRuntimeOpencodeConfig(config, ENGINE_GLOBAL_RUNTIME_CONFIG_ID, updater);
+}
+
+function uniqueStrings(items: string[]): string[] {
+  return items.filter((item, index, list) => list.indexOf(item) === index);
+}
+
+function mergeRuntimeOpencodeConfigLayers(
+  base: RuntimeOpencodeConfig,
+  overlay: RuntimeOpencodeConfig,
+): RuntimeOpencodeConfig {
+  const plugin = uniqueStrings([
+    ...runtimePluginList(base),
+    ...runtimePluginList(overlay),
+  ]);
+  const disabledProviders = uniqueStrings([
+    ...runtimeDisabledProviderList(base),
+    ...runtimeDisabledProviderList(overlay),
+  ]);
+  const mcp = {
+    ...runtimeMcpMap(base),
+    ...runtimeMcpMap(overlay),
+  };
+  const basePermission = isRecord(base.permission) ? base.permission : {};
+  const overlayPermission = isRecord(overlay.permission) ? overlay.permission : {};
+  const externalDirectory = {
+    ...runtimeExternalDirectory(base),
+    ...runtimeExternalDirectory(overlay),
+  };
+  const permission = {
+    ...basePermission,
+    ...overlayPermission,
+    ...(Object.keys(externalDirectory).length ? { external_directory: externalDirectory } : {}),
+  };
+  const provider = {
+    ...runtimeProviderMap(base),
+    ...runtimeProviderMap(overlay),
+  };
+
+  return normalizeRuntimeOpencodeConfig({
+    ...(base.default_agent || overlay.default_agent ? { default_agent: overlay.default_agent ?? base.default_agent } : {}),
+    ...(plugin.length ? { plugin } : {}),
+    ...(disabledProviders.length ? { disabled_providers: disabledProviders } : {}),
+    ...(Object.keys(mcp).length ? { mcp } : {}),
+    ...(Object.keys(permission).length ? { permission } : {}),
+    ...(Object.keys(provider).length ? { provider } : {}),
+  });
+}
+
+export async function readEffectiveRuntimeOpencodeConfig(
+  config: ServerConfig,
+  workspaceId: string,
+): Promise<RuntimeOpencodeConfig> {
+  if (isEngineGlobalRuntimeConfigId(workspaceId)) {
+    return await readRuntimeOpencodeConfig(config, workspaceId);
+  }
+  const [globalRuntime, workspaceRuntime] = await Promise.all([
+    readGlobalRuntimeOpencodeConfig(config),
+    readRuntimeOpencodeConfig(config, workspaceId),
+  ]);
+  return mergeRuntimeOpencodeConfigLayers(globalRuntime, workspaceRuntime);
 }
 
 export type RuntimeOpencodeConfigInspection = {
@@ -305,6 +391,7 @@ export function mergeOpencodeConfigs(
   const persistedExternalDirectory = isRecord(persistedPermission.external_directory)
     ? persistedPermission.external_directory
     : {};
+  const runtimeProvider = runtimeProviderMap(runtime);
   return {
     ...persisted,
     plugin: [
@@ -326,7 +413,7 @@ export function mergeOpencodeConfigs(
         ...runtimeExternalDirectory(runtime),
       },
     },
-    ...(runtime.provider ? { provider: { ...(isRecord(persisted.provider) ? persisted.provider : {}), ...runtime.provider } } : {}),
+    ...(Object.keys(runtimeProvider).length ? { provider: { ...(isRecord(persisted.provider) ? persisted.provider : {}), ...runtimeProvider } } : {}),
     ...(runtime.default_agent ? { default_agent: runtime.default_agent } : {}),
   };
 }

@@ -861,24 +861,59 @@ jobs:
       - name: Update AUR packaging files
         run: scripts/aur/update-aur.sh "$RELEASE_TAG"
 
-      - name: Commit packaging update to dev
+      - name: Open packaging update PR
+        id: aur-packaging-pr
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
 
           if ! git status --porcelain -- packaging/aur/PKGBUILD packaging/aur/.SRCINFO | grep -q .; then
             echo "AUR packaging already up to date in dev."
+            echo "created=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
           version="${RELEASE_TAG#v}"
+          branch="automation/aur-${version}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           git add packaging/aur/PKGBUILD packaging/aur/.SRCINFO
           git -c user.name="OpenWork Release Bot" \
               -c user.email="release-bot@users.noreply.github.com" \
               commit -m "chore(aur): update PKGBUILD for ${version}"
-          git push origin HEAD:dev
+          git push origin "HEAD:${branch}"
+
+          body_file="$RUNNER_TEMP/aur-pr-body.md"
+          cat > "$body_file" <<EOF
+          Updates AUR packaging files for ${RELEASE_TAG}.
+
+          This PR is opened by the release workflow instead of pushing directly
+          to dev because dev requires PR review, signed protected-branch commits,
+          linear history, resolved conversations, and no bypasses.
+
+          After this PR is reviewed and squash/rebase-merged, rerun the Release
+          App workflow with tag=${RELEASE_TAG} so the AUR publish step can run.
+          EOF
+
+          pr_url="$(gh pr create \
+            --repo "$GITHUB_REPOSITORY" \
+            --base dev \
+            --head "$branch" \
+            --title "chore(aur): update PKGBUILD for ${version}" \
+            --body-file "$body_file")"
+
+          echo "created=true" >> "$GITHUB_OUTPUT"
+          echo "url=$pr_url" >> "$GITHUB_OUTPUT"
+          {
+            echo "### AUR packaging PR opened"
+            echo
+            echo "$pr_url"
+            echo
+            echo "Merge this PR through the protected-branch review flow, then rerun Release App with tag=${RELEASE_TAG}."
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Publish to AUR
+        if: steps.aur-packaging-pr.outputs.created != 'true'
         env:
           AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
           AUR_REPO: ${{ vars.AUR_REPO || 'openwork' }}

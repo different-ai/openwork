@@ -19,6 +19,13 @@ COPY packages/connect-link/package.json /app/packages/connect-link/package.json
 # apps/desktop/package.json is copied below for version metadata, and it depends
 # on @openwork/paths, so the package must exist for workspace resolution.
 COPY packages/paths/package.json /app/packages/paths/package.json
+# The root workspace declares the shared evaluator helpers as dev dependencies.
+# Their manifests must be present even though the Den API image does not build
+# or ship their source.
+COPY evals/packages/behaviors/package.json /app/evals/packages/behaviors/package.json
+COPY evals/packages/cdp/package.json /app/evals/packages/cdp/package.json
+COPY evals/packages/labs/package.json /app/evals/packages/labs/package.json
+COPY evals/packages/matchers/package.json /app/evals/packages/matchers/package.json
 COPY ee/packages/utils/package.json /app/ee/packages/utils/package.json
 COPY ee/packages/den-db/package.json /app/ee/packages/den-db/package.json
 COPY ee/apps/den-api/package.json /app/ee/apps/den-api/package.json

@@ -42,6 +42,7 @@ config:
     connectLinkMode: exchange
     connectLinkKeyId: ""
     openworkAppConnectUrl: ""
+    openworkWebUrl: ""
     installerReleaseTag: ""
     installerReleaseRepo: ""
     authCallbackUrl: https://openwork.example.com

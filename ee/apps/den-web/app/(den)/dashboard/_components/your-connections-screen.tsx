@@ -65,14 +65,14 @@ export function YourConnectionsScreen() {
     focusedRowRef.current.focus({ preventScroll: true });
   }, [focusConnectionId, visibleConnections.length]);
 
-  async function handleDisconnectMyAccount(connectionId: string) {
+  async function handleDisconnectMyAccount(connection: ExternalMcpConnection) {
     setRowError(null);
     try {
-      await disconnectProvider.mutateAsync(connectionId);
+      await disconnectProvider.mutateAsync(connection);
       void refetch();
     } catch (disconnectError) {
       setRowError({
-        connectionId,
+        connectionId: connection.id,
         message: disconnectError instanceof Error ? disconnectError.message : "Failed to disconnect account.",
       });
     }
@@ -117,7 +117,7 @@ export function YourConnectionsScreen() {
               rowRef={focusConnectionId === connection.id ? focusedRowRef : undefined}
               polling={authorization.pollingConnectionId === connection.id}
               connecting={authorization.connectingConnectionId === connection.id}
-              disconnecting={disconnectProvider.isPending && disconnectProvider.variables === connection.id}
+              disconnecting={disconnectProvider.isPending && disconnectProvider.variables?.id === connection.id}
               errorMessage={
                 rowError?.connectionId === connection.id
                   ? rowError.message
@@ -126,7 +126,7 @@ export function YourConnectionsScreen() {
                     : null
               }
               onConnect={() => void authorization.connect(connection.id)}
-              onDisconnect={() => void handleDisconnectMyAccount(connection.id)}
+              onDisconnect={() => void handleDisconnectMyAccount(connection)}
             />;
           })}
         </div>
@@ -184,10 +184,11 @@ function YourConnectionRow({
   const needsMyConnect = !needsAdminSetup && !needsAdminRecovery && isPerMember && !connection.connectedForMe;
   const needsAdminConnect = !needsAdminSetup && !needsAdminRecovery && isAdmin && !isPerMember && connection.authType === "oauth" && !connection.connectedForMe;
   const canDisconnect = !needsAdminSetup && canDisconnectMyConnectionAccount(connection);
+  const isNativeProvider = isNativeProviderConnectionId(connection.id, connection.nativeProviderKey);
   const canTestTools = !needsAdminSetup && !needsAdminRecovery && isAdmin
-    && !isNativeProviderConnectionId(connection.id) && connection.connectedForMe && !needsReconnect;
+    && !isNativeProvider && connection.connectedForMe && !needsReconnect;
   const [toolRunnerOpen, setToolRunnerOpen] = useState(false);
-  const microsoftScopes = connection.id === "microsoft-365"
+  const microsoftScopes = (connection.nativeProviderKey === "microsoft-365" || connection.id === "microsoft-365")
     ? (connection.grantedScopes ?? []).filter((scope) => MICROSOFT_365_DISPLAY_SCOPES.has(scope))
     : [];
   const requiredByLabel = formatRequiredBy(connection.requiredBy);
@@ -246,10 +247,13 @@ function YourConnectionRow({
             {requiredByLabel ? (
               <p className="mt-1 text-[12px] font-medium text-gray-700">{requiredByLabel}</p>
             ) : null}
-            {connection.id === "microsoft-365" && connection.tenantId ? (
+            {isNativeProvider && (connection.tenantId || connection.externalAccountId) ? (
               <p className="mt-1 text-[11px] text-gray-500">
-                Tenant <span className="font-mono text-gray-700">{connection.tenantId}</span>
-                {connection.externalAccountId ? <> · {connection.externalAccountId}</> : null}
+                {connection.tenantId ? (
+                  <>Tenant <span className="font-mono text-gray-700">{connection.tenantId}</span>{connection.externalAccountId ? <> · {connection.externalAccountId}</> : null}</>
+                ) : (
+                  <span className="font-mono text-gray-700">{connection.externalAccountId}</span>
+                )}
               </p>
             ) : null}
             {microsoftScopes.length > 0 ? (

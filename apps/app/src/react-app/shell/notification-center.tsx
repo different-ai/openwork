@@ -11,6 +11,7 @@ import {
 
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { SidebarMenuButton } from "@/components/ui/sidebar";
 import { cn } from "@/lib/utils";
 import { t } from "@/i18n";
 import {
@@ -52,11 +53,11 @@ function formatTimeAgo(timestamp: number): string {
 }
 
 /**
- * Notification bell with unread badge + popover panel. Mounted in the
- * session and settings headers; hidden via the `notifications` shell flag.
- * Closing the panel marks everything read.
+ * Notification bell with unread badge + popover panel. Mounted as a labelled
+ * row in the main sidebar and as an icon in the settings header; hidden via
+ * the `notifications` shell flag. Closing the panel marks everything read.
  */
-export function NotificationBell() {
+export function NotificationBell({ variant = "icon" }: { variant?: "icon" | "sidebar-row" }) {
   const { config } = useShellConfig();
   const [open, setOpen] = useState(false);
   const notifications = useNotificationStore((state) => state.notifications);
@@ -90,6 +91,9 @@ export function NotificationBell() {
     () => notifications.filter((notification) => notification.readAt === null).length,
     [notifications],
   );
+  const label = unreadCount > 0
+    ? `${t("notifications.title")} (${unreadCount})`
+    : t("notifications.title");
 
   useEffect(() => {
     const handler = () => setOpen(true);
@@ -116,9 +120,9 @@ export function NotificationBell() {
       } else if (action.type === "reload-engine") {
         void reloadCoordinator.reloadWorkspaceEngine();
       } else if (action.type === "open-extensions-marketplace") {
-        navigate("/settings/extensions");
+        navigate("/extensions");
       } else if (action.type === "install-marketplace-plugin") {
-        navigate("/settings/extensions");
+        navigate("/extensions");
       }
     },
     [markAllRead, navigate, reloadCoordinator],
@@ -130,27 +134,45 @@ export function NotificationBell() {
     <Popover open={open} onOpenChange={handleOpenChange}>
       <PopoverTrigger
         render={
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            className="rounded-xl text-gray-10 transition-colors hover:bg-muted hover:text-foreground"
-            title={t("notifications.title")}
-            aria-label={
-              unreadCount > 0
-                ? `${t("notifications.title")} (${unreadCount})`
-                : t("notifications.title")
-            }
-          >
-            <Bell size={17} />
-            {unreadCount > 0 ? (
-              <span className="absolute right-0.5 top-0.5 flex min-w-3.5 items-center justify-center rounded-full bg-primary px-1 text-[9px] font-semibold leading-3 text-primary-foreground">
-                {unreadCount > 9 ? "9+" : unreadCount}
-              </span>
-            ) : null}
-          </Button>
+          variant === "sidebar-row" ? (
+            <SidebarMenuButton
+              type="button"
+              className="text-sidebar-foreground/70"
+              tooltip={label}
+              aria-label={label}
+            >
+              <Bell />
+              <span className="flex-1 truncate">{t("notifications.title")}</span>
+              {unreadCount > 0 ? (
+                <span className="ml-auto flex min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-semibold leading-4 text-primary-foreground">
+                  {unreadCount > 9 ? "9+" : unreadCount}
+                </span>
+              ) : null}
+            </SidebarMenuButton>
+          ) : (
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="rounded-xl text-gray-10 transition-colors hover:bg-muted hover:text-foreground"
+              title={t("notifications.title")}
+              aria-label={label}
+            >
+              <Bell size={17} />
+              {unreadCount > 0 ? (
+                <span className="absolute right-0.5 top-0.5 flex min-w-3.5 items-center justify-center rounded-full bg-primary px-1 text-[9px] font-semibold leading-3 text-primary-foreground">
+                  {unreadCount > 9 ? "9+" : unreadCount}
+                </span>
+              ) : null}
+            </Button>
+          )
         }
       />
-      <PopoverContent align="end" sideOffset={8} className="w-96 gap-0 p-0">
+      <PopoverContent
+        align={variant === "sidebar-row" ? "start" : "end"}
+        side={variant === "sidebar-row" ? "right" : "bottom"}
+        sideOffset={8}
+        className="w-96 gap-0 p-0"
+      >
         <div className="flex items-center justify-between border-b border-border px-4 py-2.5">
           <p className="text-sm font-semibold">{t("notifications.title")}</p>
           {notifications.length > 0 ? (

@@ -43,7 +43,10 @@ test("org owners and admins get plugin-system capability access", () => {
   expect(accessModule.hasPluginArchCapability(createActorContext({ isOwner: true }), "plugin.create")).toBe(true)
   expect(accessModule.hasPluginArchCapability(createActorContext({ role: "admin" }), "marketplace.create")).toBe(true)
   expect(accessModule.hasPluginArchCapability(createActorContext({ role: "admin" }), "connector_instance.create")).toBe(true)
-  expect(accessModule.hasPluginArchCapability(createActorContext({ role: "member" }), "config_object.create")).toBe(false)
+  expect(accessModule.hasPluginArchCapability(createActorContext({ role: "member" }), "plugin.create")).toBe(true)
+  expect(accessModule.hasPluginArchCapability(createActorContext({ role: "member" }), "config_object.create")).toBe(true)
+  expect(accessModule.hasPluginArchCapability(createActorContext({ role: "member" }), "marketplace.create")).toBe(false)
+  expect(accessModule.hasPluginArchCapability(createActorContext({ role: "member" }), "connector_instance.create")).toBe(false)
 })
 
 test("grant resolution supports direct, team, org-wide, and highest-role precedence", () => {

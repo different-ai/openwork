@@ -10,6 +10,7 @@ import { getErrorMessage, requestJson } from "../_lib/den-flow";
 import { createOrganizationInstallLink } from "../_lib/install-link-data";
 import { isMobileUserAgent } from "../_lib/platform";
 import { useDesktopHandoffStatus } from "../_lib/use-desktop-handoff-status";
+import { OnboardingCard } from "./onboarding-card";
 import { OnboardingShell } from "./onboarding-shell";
 import { OrganizationBrandIdentity, type OrganizationBrand } from "./organization-brand-identity";
 
@@ -167,16 +168,18 @@ export function JoinOrgSuccess({
   return (
     <OnboardingShell state="joined" width="wide">
       <section data-testid="join-org-success">
-        <div className="grid gap-5 rounded-[1.75rem] border border-slate-200/80 bg-white p-6 sm:p-8 md:p-10">
+        <OnboardingCard organization={{ name: organizationName, brand }}>
           <div className="grid gap-3">
-            <h1 className="m-0 grid max-w-full gap-1 text-[2rem] font-semibold leading-[1.03] tracking-[-0.055em] text-slate-950 sm:text-[2.6rem]">
+            <h1 className="m-0 grid max-w-full gap-1 text-[30px] font-semibold leading-[38px] tracking-[-0.03em] text-slate-950 sm:text-[38px] sm:leading-[46px]">
               <span>You&apos;re in, welcome to</span>
-              <span className="flex min-w-0 flex-wrap items-center gap-x-[0.18em] gap-y-1">
+              {/* No horizontal gap: the possessive must hug the org identity
+                  ("Acme Robotics's OpenWork", not "Acme Robotics 's"). */}
+              <span className="flex min-w-0 flex-wrap items-center gap-y-1">
                 <OrganizationBrandIdentity organizationName={organizationName} brand={brand} />
                 <span className="whitespace-nowrap">&apos;s {brand.appName}</span>
               </span>
             </h1>
-            <p className="m-0 max-w-2xl text-sm leading-6 text-slate-600">
+            <p className="m-0 max-w-2xl text-[15px] leading-[23px] text-slate-600">
               {desktopAuthRequested
                 ? "Your team setup is ready. Return to OpenWork to continue where you left off."
                 : "The desktop app is where OpenWork runs on your computer and puts your team's setup to work."}
@@ -195,7 +198,7 @@ export function JoinOrgSuccess({
               </div>
               <button
                 type="button"
-                className="den-button-primary w-full sm:w-fit"
+                className="den-button-primary min-h-12 w-full"
                 onClick={() => void handleEmailDownload()}
                 disabled={emailBusy || emailSent}
                 data-testid="join-org-email-download"
@@ -210,7 +213,7 @@ export function JoinOrgSuccess({
             ) : (
               <button
                 type="button"
-                className="den-button-primary w-full sm:w-fit"
+                className="den-button-primary min-h-12 w-full"
                 onClick={() => void handleReturnToOpenWork()}
                 disabled={handoffBusy}
                 data-testid="join-org-return-openwork"
@@ -221,7 +224,7 @@ export function JoinOrgSuccess({
           ) : (
             <button
               type="button"
-              className="den-button-primary w-full sm:w-fit"
+              className="den-button-primary min-h-12 w-full"
               onClick={() => void handleGetApp()}
               disabled={installBusy}
               data-testid="join-org-get-app"
@@ -232,7 +235,7 @@ export function JoinOrgSuccess({
 
           <button
             type="button"
-            className="w-fit text-sm text-slate-500 underline-offset-4 hover:text-slate-950 hover:underline"
+            className="min-h-12 w-full rounded-full px-3 text-sm font-medium text-slate-500 underline-offset-4 hover:text-slate-950 hover:underline"
             onClick={onContinueInBrowser}
             data-testid="join-org-continue-browser"
           >
@@ -243,13 +246,13 @@ export function JoinOrgSuccess({
             <div className="grid gap-3">
               <div className="den-notice is-error">{actionError}</div>
               {desktopAuthRequested ? null : (
-                <a href={OPENWORK_DOWNLOAD_URL} className="den-button-secondary w-full sm:w-fit">
+                <a href={OPENWORK_DOWNLOAD_URL} className="den-button-secondary min-h-12 w-full">
                   Open the public download page
                 </a>
               )}
             </div>
           ) : null}
-        </div>
+        </OnboardingCard>
       </section>
     </OnboardingShell>
   );

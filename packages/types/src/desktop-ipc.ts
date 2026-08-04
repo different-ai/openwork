@@ -62,6 +62,29 @@ export type DesktopNotificationResult =
   | { ok: true }
   | { ok: false; reason: string };
 
+export type DesktopIntegrationIssue =
+  | "appimage-path"
+  | "desktop-entry"
+  | "icon"
+  | "protocol-handler"
+  | "version";
+
+export type DesktopIntegrationStatus = {
+  supported: boolean;
+  state: "unsupported" | "not_integrated" | "integrated" | "needs_repair" | "managed_externally";
+  ownership: "none" | "openwork" | "external";
+  appImagePath: string | null;
+  desktopEntryPath: string | null;
+  handlerDesktopId: string | null;
+  issues: DesktopIntegrationIssue[];
+};
+
+export type DesktopIntegrationResult = {
+  ok: boolean;
+  status: DesktopIntegrationStatus;
+  error?: string;
+};
+
 export type OpenworkServerInfo = {
   running: boolean;
   remoteAccessEnabled: boolean;
@@ -394,6 +417,12 @@ export type DesktopCommandMap = {
     args: [input: DesktopNotificationInput];
     result: DesktopNotificationResult;
   };
+  desktopIntegrationStatus: { args: []; result: DesktopIntegrationStatus };
+  desktopIntegrationInstall: {
+    args: [options?: { useExternalLauncher?: boolean }];
+    result: DesktopIntegrationResult;
+  };
+  desktopIntegrationRemove: { args: []; result: DesktopIntegrationResult };
   getUiControlBridgeInfo: { args: []; result: UiControlBridgeInfo | null };
   getOpenworkUiMcpCommand: { args: []; result: string[] };
   getComputerUseMcpCommand: { args: []; result: string[] };

@@ -202,7 +202,10 @@ export function registerOrgRoleRoutes<T extends { Variables: OrgRouteVariables }
       const invitations = await db
         .select()
         .from(InvitationTable)
-        .where(eq(InvitationTable.organizationId, payload.organization.id))
+        .where(and(
+          eq(InvitationTable.organizationId, payload.organization.id),
+          eq(InvitationTable.status, "pending"),
+        ))
 
       for (const invitation of invitations) {
         if (!splitRoles(invitation.role).includes(roleRow.role)) {
@@ -298,7 +301,10 @@ export function registerOrgRoleRoutes<T extends { Variables: OrgRouteVariables }
     const invitationsUsingRole = await db
       .select({ role: InvitationTable.role })
       .from(InvitationTable)
-      .where(eq(InvitationTable.organizationId, payload.organization.id))
+      .where(and(
+        eq(InvitationTable.organizationId, payload.organization.id),
+        eq(InvitationTable.status, "pending"),
+      ))
 
     if (invitationsUsingRole.some((invitation) => splitRoles(invitation.role).includes(roleRow.role))) {
       return c.json({

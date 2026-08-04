@@ -344,6 +344,20 @@
       "when": 1784998956602,
       "tag": "0049_third_caretaker",
       "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "5",
+      "when": 1785678687496,
+      "tag": "0050_familiar_vindicator",
+      "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "5",
+      "when": 1785680281912,
+      "tag": "0051_petite_shen",
+      "breakpoints": true
     }
   ]
 }

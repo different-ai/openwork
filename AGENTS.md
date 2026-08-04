@@ -25,38 +25,23 @@ OpenWork is a practical control surface for agentic work:
 
 If you open a PR, you must run tests and report what you ran (commands + result).
 
-To maximize merge speed, include evidence of the end-to-end flow:
-
-* Ideally: attach a short video/screen recording showing the flow running successfully.
-* Otherwise: screenshots are acceptable, but video is preferred.
-
-If you cannot run tests or capture the video, say so explicitly and explain why, and include the exact commands/steps for the reviewer to reproduce.
+For runtime-observable changes, include the `@openwork/testkit` evidence tape.
+Custom screenshots and recordings may supplement that tape, but never determine the
+pass/fail verdict. If validation cannot run, say why and give exact repro steps.
 
 ## Validate Every Experience
 
-Almost everything we change has an effect on the outside world — the
-filesystem, the runtime DB, server API responses, provisioning, sessions,
-or config. So the default is not "write code and hope"; it is **propose a
-flow, then drive it as the end user and validate it against reality until
-it actually holds.**
+Almost everything we change affects the filesystem, runtime DB, server API,
+provisioning, sessions, config, or UI. New executable end-to-end coverage has
+one path: `evals/specs/**/*.test.ts`, with `test` imported from
+`@openwork/testkit`. Specs that drive the app use `.slow.test.ts`.
 
-A change is an *experience*: it might be a persistent feature, a single new
-button, or an entirely new screen. Every experience gets validated the same
-way — by producing **fraimz**, the frame-by-frame proof
-(`evals/results/<run-id>/fraimz.html`) where each frame binds a claim, the user
-action, an observable assertion, and a validated screenshot.
-
-The deliverable and the full loop (frame → coded flow → drive the real app via
-CDP → validate/repair → verdict) live in the **`fraimz` skill** — load it
-whenever a task asks you to "create a fraimz" / "prove it works", or whenever a
-change touches anything observable outside the process. Run it via the
-`/fraimz` command or `pnpm fraimz --flow <id>`.
-
-Report `Passed` only when `fraimz.html` exists and every claim is backed by an
-observable assertion; otherwise `Incomplete` / `Failed`, stated honestly with
-repro steps. Pure docs/comments and types-only changes with no runtime path may
-skip — but say so explicitly. For changes you expect to be inert, the `fraimz`
-skill's canonical core flow proves the core experience is unchanged.
+Use the skills in this order: `write-a-spec` → `run-tests` →
+`diagnose-a-red-run` when failing → `publish-evidence` for an existing ambient
+evidence tape. Evidence is ambient: do not create or pass roll handles. Report
+`Passed` only when every claim has an observable assertion in the tape;
+otherwise report `Incomplete` or `Failed` with repro steps. Pure docs/comments,
+types-only changes, and inert agent config may skip runtime proof, but say so.
 
 ## Demo-Driven Development (the paved path)
 
@@ -64,8 +49,8 @@ Feature work starts with the demo, not a PRD:
 
 1. `/voiceover <feature>` — align on the demo script; **no code until it is approved** (`voiceover` skill).
 2. Build on a fresh worktree/branch (`git worktree add ...`), never on the user's checkout.
-3. Prove it with fraimz until every frame holds (`fraimz` skill).
-4. Open a PR against `dev` and post the proof on it: `pnpm fraimz --flow <id> --pr`.
+3. Translate the approved narration directly into `evals/specs/<slug>.slow.test.ts`, then build and run it until every claim holds.
+4. Open a PR against `dev` and publish the existing testkit evidence tape (`publish-evidence` skill).
 
 ## Coding Guidelines
 

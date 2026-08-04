@@ -473,6 +473,9 @@ function buildTransport(
   toolCallInspector?: ExternalMcpToolCallInspector,
   leaseSlot?: ExternalMcpSessionLeaseSlot,
 ) {
+  if (connection.kind !== "external_mcp") {
+    throw new Error("Native provider connectors do not expose an MCP server.")
+  }
   const diagnostic = buildDiagnostic(connection, diagnosticReferenceId)
   const provider = connection.authType === "oauth"
     ? new ExternalMcpOAuthProvider(connection, redirectUri, signedState, member, diagnostic, lifecycleDeadline, leaseSlot)
@@ -1134,6 +1137,9 @@ export async function listExternalMcpTools(
   diagnosticReferenceId?: string,
   lifecycleDeadline?: ExternalMcpLifecycleDeadline,
 ) {
+  if (connection.kind !== "external_mcp") {
+    throw new Error("Native provider connectors do not expose an MCP tool catalog.")
+  }
   const deadline = lifecycleDeadline ?? createExternalMcpLifecycleDeadline()
   return runExternalMcpSessionOperation({
     connection,
@@ -1162,6 +1168,9 @@ async function runExternalMcpToolCall(
   input: ExternalMcpToolCallInput,
   toolCallInspector?: ExternalMcpToolCallInspector,
 ) {
+  if (input.connection.kind !== "external_mcp") {
+    throw new Error("Native provider connectors do not expose MCP tools.")
+  }
   const deadline = createExternalMcpLifecycleDeadline(EXTERNAL_MCP_TOOL_LIFECYCLE_TIMEOUT_MS)
   return runExternalMcpSessionOperation({
     connection: input.connection,

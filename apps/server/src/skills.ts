@@ -84,15 +84,17 @@ async function parseSkillEntry(
 async function listSkillsInDir(dir: string, scope: "project" | "global"): Promise<SkillItem[]> {
   if (!(await exists(dir))) return [];
   const entries = await readdir(dir, { withFileTypes: true });
-  const items: SkillItem[] = [];
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-    const skillPath = join(dir, entry.name, "SKILL.md");
-    if (await exists(skillPath)) {
-      // Direct skill: <dir>/<name>/SKILL.md
-      const item = await parseSkillEntry(skillPath, entry.name, scope);
-      if (item) items.push(item);
-    } else {
+  const groups = await Promise.all(
+    entries.map(async (entry) => {
+      if (!entry.isDirectory()) return [];
+
+      const skillPath = join(dir, entry.name, "SKILL.md");
+      if (await exists(skillPath)) {
+        // Direct skill: <dir>/<name>/SKILL.md
+        const item = await parseSkillEntry(skillPath, entry.name, scope);
+        return item ? [item] : [];
+      }
+
       // Domain/category folder: <dir>/<domain>/<name>/SKILL.md – scan one level deeper.
       // This supports the convention where global skills are organised as
       //   skills/<domain>/<skill-name>/SKILL.md
@@ -102,28 +104,34 @@ async function listSkillsInDir(dir: string, scope: "project" | "global"): Promis
       try {
         subEntries = await readdir(domainDir, { withFileTypes: true });
       } catch {
-        continue;
+        return [];
       }
-      for (const subEntry of subEntries) {
-        if (!subEntry.isDirectory()) continue;
-        const subSkillPath = join(domainDir, subEntry.name, "SKILL.md");
-        if (!(await exists(subSkillPath))) continue;
-        const item = await parseSkillEntry(subSkillPath, subEntry.name, scope);
-        if (item) items.push(item);
-      }
-    }
-  }
-  return items;
+
+      const subGroups = await Promise.all(
+        subEntries.map(async (subEntry) => {
+          if (!subEntry.isDirectory()) return [];
+
+          const subSkillPath = join(domainDir, subEntry.name, "SKILL.md");
+          if (!(await exists(subSkillPath))) return [];
+
+          const item = await parseSkillEntry(subSkillPath, subEntry.name, scope);
+          return item ? [item] : [];
+        }),
+      );
+      return subGroups.flat();
+    }),
+  );
+  return groups.flat();
 }
 
 export async function listSkills(workspaceRoot: string, includeGlobal: boolean): Promise<SkillItem[]> {
   const roots = await findWorkspaceRoots(workspaceRoot);
-  const items: SkillItem[] = [];
+  const dirs: { dir: string; scope: "project" | "global" }[] = [];
   for (const root of roots) {
     const opencodeDir = join(root, ".opencode", "skills");
     const claudeDir = join(root, ".claude", "skills");
-    items.push(...(await listSkillsInDir(opencodeDir, "project")));
-    items.push(...(await listSkillsInDir(claudeDir, "project")));
+    dirs.push({ dir: opencodeDir, scope: "project" });
+    dirs.push({ dir: claudeDir, scope: "project" });
   }
 
   if (includeGlobal) {
@@ -131,11 +139,14 @@ export async function listSkills(workspaceRoot: string, includeGlobal: boolean):
     const globalClaude = join(homedir(), ".claude", "skills");
     const globalAgents = join(homedir(), ".agents", "skills");
     const globalAgentLegacy = join(homedir(), ".agent", "skills");
-    items.push(...(await listSkillsInDir(globalOpenWork, "global")));
-    items.push(...(await listSkillsInDir(globalClaude, "global")));
-    items.push(...(await listSkillsInDir(globalAgents, "global")));
-    items.push(...(await listSkillsInDir(globalAgentLegacy, "global")));
+    dirs.push({ dir: globalOpenWork, scope: "global" });
+    dirs.push({ dir: globalClaude, scope: "global" });
+    dirs.push({ dir: globalAgents, scope: "global" });
+    dirs.push({ dir: globalAgentLegacy, scope: "global" });
   }
+
+  const groups = await Promise.all(dirs.map(({ dir, scope }) => listSkillsInDir(dir, scope)));
+  const items = groups.flat();
 
   const seen = new Set<string>();
   return items.filter((item) => {

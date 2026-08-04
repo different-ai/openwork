@@ -1,0 +1,1 @@
+ALTER TABLE `plugin` ADD `source_repository_url` varchar(1024);

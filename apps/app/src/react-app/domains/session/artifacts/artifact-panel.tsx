@@ -109,7 +109,7 @@ function ArtifactPanelView({ client, workspaceId, workspaceRoot, isRemoteWorkspa
   });
 
   const { data, error, isError, isLoading } = useQuery<ArtifactQueryState>({
-    queryKey: ["artifact-panel", workspaceId, target.id] as const,
+    queryKey: ["artifact-panel", workspaceId, target.id, target.updatedAt ?? null] as const,
     queryFn: async () => {
       if (target.kind === "url") {
         throw new Error("URLs open in browser tabs.");
@@ -120,7 +120,7 @@ function ArtifactPanelView({ client, workspaceId, workspaceRoot, isRemoteWorkspa
 
       if (isTextContent(target)) {
         const result = await client.readWorkspaceFile(workspaceId, target.value);
-        
+
         return { kind: "text", data: result.content, updatedAt: result.updatedAt ?? null };
       }
 
@@ -131,6 +131,7 @@ function ArtifactPanelView({ client, workspaceId, workspaceRoot, isRemoteWorkspa
     refetchOnReconnect: false,
     refetchOnWindowFocus: false,
     staleTime: Infinity,
+    gcTime: 0,
   });
 
   const [binaryObjectUrl, setBinaryObjectUrl] = useState<string | null>(null);
@@ -175,7 +176,7 @@ function ArtifactPanelView({ client, workspaceId, workspaceRoot, isRemoteWorkspa
     },
     onSuccess: (result, input) => {
       queryClient.setQueryData<ArtifactQueryState>(
-        ["artifact-panel", workspaceId, target.id] as const,
+        ["artifact-panel", workspaceId, target.id, target.updatedAt ?? null] as const,
         input.kind === "text"
           ? { kind: "text", data: input.data, updatedAt: result.updatedAt ?? null }
           : { kind: "binary", data: input.data, contentType: data?.kind === "binary" ? data.contentType : null, updatedAt: result.updatedAt ?? null },

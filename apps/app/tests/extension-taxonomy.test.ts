@@ -29,10 +29,17 @@ describe("extension taxonomy", () => {
     if (notion) expect(taxonomyForDirectoryEntry(notion)).toBe("mcp");
   });
 
-  test("the all filter keeps every taxonomy, others match exactly", () => {
+  test("the all filter keeps every taxonomy and non-MCP filters match exactly", () => {
     expect(matchesExtensionFilter("all", "plugin")).toBe(true);
     expect(matchesExtensionFilter("connection", "connection")).toBe(true);
     expect(matchesExtensionFilter("connection", "mcp")).toBe(false);
     expect(matchesExtensionFilter("skill", "app")).toBe(false);
+    expect(matchesExtensionFilter("skill", "connection", "mcp")).toBe(false);
+  });
+
+  test("the MCP filter includes MCP-backed connections but excludes native connections", () => {
+    expect(matchesExtensionFilter("mcp", "connection", "mcp")).toBe(true);
+    expect(matchesExtensionFilter("mcp", "connection", "native")).toBe(false);
+    expect(matchesExtensionFilter("mcp", "mcp", null)).toBe(true);
   });
 });

@@ -12,6 +12,10 @@ import {
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 
 import { desktopFetch } from "../../app/lib/desktop";
+import {
+  getOpenworkGatewayOrigin,
+  readOpenworkGatewayDenToken,
+} from "../../app/lib/gateway-runtime";
 import { isWebDeployment } from "../../app/lib/openwork-deployment";
 import { normalizeOpenworkServerUrl } from "../../app/lib/openwork-server";
 import { isDesktopRuntime } from "../../app/utils";
@@ -60,6 +64,8 @@ function readStoredActive(): string {
 }
 
 function readOpenworkToken(): string {
+  if (getOpenworkGatewayOrigin()) return readOpenworkGatewayDenToken();
+
   if (typeof window === "undefined") return "";
   try {
     return (window.localStorage.getItem("openwork.server.token") ?? "").trim();
@@ -68,11 +74,14 @@ function readOpenworkToken(): string {
   }
 }
 
+export function buildOpenworkHealthHeaders(url: string): Record<string, string> | undefined {
+  const token = readOpenworkToken();
+  return token && url.includes("/opencode") ? { Authorization: `Bearer ${token}` } : undefined;
+}
+
 async function checkHealth(url: string): Promise<boolean> {
   if (!url) return false;
-  const token = readOpenworkToken();
-  const headers =
-    token && url.includes("/opencode") ? { Authorization: `Bearer ${token}` } : undefined;
+  const headers = buildOpenworkHealthHeaders(url);
   const client = createOpencodeClient({
     baseUrl: url,
     headers,
@@ -98,16 +107,18 @@ export function ServerProvider({ children, defaultUrl }: ServerProviderProps) {
     if (readyRef.current) return;
     if (typeof window === "undefined") return;
 
-    const fallback = normalizeServerUrl(defaultUrl) ?? "";
+    const gatewayOrigin = getOpenworkGatewayOrigin();
+    const fallback = normalizeServerUrl(gatewayOrigin ? `${gatewayOrigin}/opencode` : defaultUrl) ?? "";
 
     // Hosted web deployments served by OpenWork must reuse the OpenCode proxy
     // rather than any persisted localhost target.
     const forceProxy =
-      !isDesktopRuntime() &&
-      isWebDeployment() &&
-      (import.meta.env.PROD ||
-        (typeof import.meta.env?.VITE_OPENWORK_URL === "string" &&
-          import.meta.env.VITE_OPENWORK_URL.trim().length > 0));
+      Boolean(gatewayOrigin) ||
+      (!isDesktopRuntime() &&
+        isWebDeployment() &&
+        (import.meta.env.PROD ||
+          (typeof import.meta.env?.VITE_OPENWORK_URL === "string" &&
+            import.meta.env.VITE_OPENWORK_URL.trim().length > 0)));
 
     if (forceProxy && fallback) {
       dispatchServer({ type: "ready", list: [fallback], active: fallback });

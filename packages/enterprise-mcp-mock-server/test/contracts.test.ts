@@ -146,7 +146,7 @@ test("Work IQ schemas accept current documented inputs and reject the old generi
 
 test("fault definitions are named, phase-specific, applicable, and scenario-bound", () => {
   const faults = listFaultDefinitions()
-  assert.equal(faults.length, 24)
+  assert.equal(faults.length, 32)
   assert.equal(new Set(faults.map((fault) => fault.id)).size, faults.length)
   for (const fault of faults) {
     assert.ok(fault.phase)

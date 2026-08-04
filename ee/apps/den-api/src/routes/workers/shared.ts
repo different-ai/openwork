@@ -19,6 +19,7 @@ import type { UserOrganizationsContext } from "../../middleware/index.js"
 import { denTypeIdSchema } from "../../openapi.js"
 import { appLogger } from "../../observability/logger.js"
 import type { AuthContextVariables } from "../../session.js"
+import { materializeCloudWorkerProviders } from "../../llm/cloud-provider-materialization.js"
 import { deprovisionWorker, provisionWorker } from "../../workers/provisioner.js"
 import { customDomainForWorker } from "../../workers/vanity-domain.js"
 
@@ -66,6 +67,7 @@ type CloudProvisioningStore = {
   updateWorkerStatus: (input: {
     workerId: WorkerId
     status: WorkerStatus
+    imageVersion?: string | null
     onlyWhenStatus?: WorkerStatus
     onlyWhenStatusIn?: WorkerStatus[]
   }) => Promise<void>
@@ -74,6 +76,7 @@ type CloudProvisioningStore = {
 type ContinueCloudProvisioningOptions = {
   provisionWorker?: ProvisionWorker
   store?: CloudProvisioningStore
+  materializeProviders?: typeof materializeCloudWorkerProviders
 }
 
 export const token = () => randomBytes(32).toString("hex")
@@ -88,9 +91,13 @@ const databaseCloudProvisioningStore: CloudProvisioningStore = {
         ? eq(WorkerTable.status, input.onlyWhenStatus)
         : undefined
 
+    const update = input.imageVersion === undefined
+      ? { status: input.status }
+      : { status: input.status, image_version: input.imageVersion }
+
     await db
       .update(WorkerTable)
-      .set({ status: input.status })
+      .set(update)
       .where(statusPredicate
         ? and(eq(WorkerTable.id, input.workerId), statusPredicate)
         : eq(WorkerTable.id, input.workerId))
@@ -369,6 +376,7 @@ export function toWorkerResponse(row: WorkerRow, userId: string) {
 
 async function runCloudProvisioning(input: {
   workerId: WorkerId
+  orgId?: OrgId
   name: string
   hostToken: string
   clientToken: string
@@ -376,6 +384,7 @@ async function runCloudProvisioning(input: {
 }, options: ContinueCloudProvisioningOptions) {
   const provision = options.provisionWorker ?? provisionWorker
   const store = options.store ?? databaseCloudProvisioningStore
+  const materializeProviders = options.materializeProviders ?? materializeCloudWorkerProviders
 
   try {
     const provisioned = await provision({
@@ -386,9 +395,28 @@ async function runCloudProvisioning(input: {
       activityToken: input.activityToken,
     })
 
+    if (provisioned.status === "healthy" && input.orgId) {
+      try {
+        await materializeProviders({
+          organizationId: input.orgId,
+          workerId: input.workerId,
+          instanceUrl: provisioned.url,
+          hostToken: input.hostToken,
+          clientToken: input.clientToken,
+          force: true,
+        })
+      } catch (error) {
+        logger.warn("worker provisioning provider materialization warning", {
+          worker_id: input.workerId,
+          message: error instanceof Error ? error.message : "provider_materialization_failed",
+        })
+      }
+    }
+
     await store.updateWorkerStatus({
       workerId: input.workerId,
       status: provisioned.status,
+      imageVersion: provisioned.imageVersion,
       onlyWhenStatusIn: provisioningSuccessWritableStatuses,
     })
 
@@ -402,6 +430,7 @@ async function runCloudProvisioning(input: {
 
 export async function continueCloudProvisioning(input: {
   workerId: WorkerId
+  orgId?: OrgId
   name: string
   hostToken: string
   clientToken: string

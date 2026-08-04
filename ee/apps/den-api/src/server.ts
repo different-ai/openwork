@@ -16,7 +16,11 @@ const stopTelegramUpdateDispatcher = startTelegramUpdateDispatcher()
 
 appLogger.info("external mcp implementation selected", { component: "server", runtime: externalMcpClientRuntimeName })
 
-const server = serve({ fetch: app.fetch, port: env.port }, (info) => {
+// Optional bind host: eval/testkit servers run in dev mode (unauthenticated
+// dev outbox) and must not be reachable from the LAN; production/default
+// behavior (all interfaces) is unchanged when DEN_BIND_HOST is unset.
+const bindHost = process.env.DEN_BIND_HOST?.trim()
+const server = serve({ fetch: app.fetch, port: env.port, ...(bindHost ? { hostname: bindHost } : {}) }, (info) => {
   appLogger.info("server listening", { component: "server", port: info.port })
 })
 

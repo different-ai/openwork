@@ -12,6 +12,8 @@ import {
   hydrateOpenworkServerSettingsFromEnv,
   readOpenworkServerSettings,
 } from "../src/app/lib/openwork-server";
+import { createOpenworkServerStore } from "../src/react-app/domains/connections/openwork-server-store";
+import { buildOpenworkHealthHeaders } from "../src/react-app/kernel/server-provider";
 import { resolveOpenworkConnection } from "../src/react-app/shell/openwork-connection";
 
 const originalWindow = globalThis.window;
@@ -46,6 +48,25 @@ function getRequestUrl(input: RequestInfo | URL): string {
   if (input instanceof URL) return input.toString();
   if (typeof input === "string") return input;
   return input.url;
+}
+
+function createTestOpenworkServerStore() {
+  return createOpenworkServerStore({
+    startupPreference: () => "server",
+    documentVisible: () => true,
+    developerMode: () => false,
+    runtimeWorkspaceId: () => "workspace_test",
+    activeClient: () => null,
+    selectedWorkspaceDisplay: () => ({
+      id: "workspace_test",
+      name: "Test workspace",
+      path: "/tmp/workspace_test",
+      preset: "default",
+      workspaceType: "local",
+    }),
+    restartLocalServer: async () => false,
+    createRemoteWorkspaceFlow: async () => false,
+  });
 }
 
 function installWindow(options: {
@@ -206,6 +227,67 @@ describe("gateway runtime mode", () => {
     expect(storage.getItem("openwork.server.token")).toBeNull();
     expect(readOpenworkServerSettings().token).toBeUndefined();
   });
+
+  test("uses same-origin and the Den bearer for OpenWork server store env calls behind the gateway", async () => {
+    const storage = installWindow({ origin: "https://gw.example", gateway: true });
+    storage.setItem("openwork.den.authToken", "den-session-token");
+    storage.setItem("openwork.server.urlOverride", "https://direct-instance.example.com");
+    storage.setItem("openwork.server.token", "stale-instance-token");
+    storage.setItem("openwork.server.hostToken", "stale-host-token");
+    const requests: Array<{ url: string; authorization: string | null; hostToken: string | null }> = [];
+    Object.defineProperty(globalThis, "fetch", {
+      configurable: true,
+      value: async (input: RequestInfo | URL, init?: RequestInit) => {
+        const headers = new Headers(init?.headers);
+        requests.push({
+          url: getRequestUrl(input),
+          authorization: headers.get("authorization"),
+          hostToken: headers.get("x-openwork-host-token"),
+        });
+        return new Response(JSON.stringify({ runtimeKey: "runtime-a", pendingChanges: false, ok: true, count: 1 }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      },
+    });
+
+    const store = createTestOpenworkServerStore();
+    const snapshot = store.getSnapshot();
+    const client = snapshot.openworkServerClient;
+    if (!client) throw new Error("Expected a gateway OpenWork server client");
+
+    expect(snapshot.openworkServerBaseUrl).toBe("https://gw.example");
+    expect(snapshot.openworkServerAuth.token).toBe("den-session-token");
+    expect(snapshot.openworkServerAuth.hostToken).toBeUndefined();
+    expect(client.baseUrl).toBe("https://gw.example");
+    expect(client.token).toBe("den-session-token");
+
+    await client.getUserEnvStatus("runtime-a");
+    await client.upsertUserEnv([{ key: "OPENAI_API_KEY", value: "sk-test" }]);
+
+    expect(requests).toEqual([
+      {
+        url: "https://gw.example/env/status?runtimeKey=runtime-a",
+        authorization: "Bearer den-session-token",
+        hostToken: null,
+      },
+      {
+        url: "https://gw.example/env",
+        authorization: "Bearer den-session-token",
+        hostToken: null,
+      },
+    ]);
+  });
+
+  test("uses the Den bearer for same-origin OpenCode health polling behind the gateway", () => {
+    const storage = installWindow({ origin: "https://gw.example", gateway: true });
+    storage.setItem("openwork.den.authToken", "den-session-token");
+    storage.setItem("openwork.server.token", "stale-instance-token");
+
+    expect(buildOpenworkHealthHeaders("https://gw.example/opencode")).toEqual({
+      Authorization: "Bearer den-session-token",
+    });
+  });
 });
 
 describe("non-gateway connection modes", () => {
@@ -253,6 +335,24 @@ describe("non-gateway connection modes", () => {
     expect(connection.resolvedToken).toBe("manual-token");
     expect(connection.resolvedHostToken).toBe("");
     expect(connection.source).toBe("stored-settings");
+
+    const store = createTestOpenworkServerStore();
+    const snapshot = store.getSnapshot();
+
+    expect(snapshot.openworkServerBaseUrl).toBe("https://manual.example.com");
+    expect(snapshot.openworkServerAuth.token).toBe("manual-token");
+    expect(snapshot.openworkServerAuth.hostToken).toBeUndefined();
+    expect(snapshot.openworkServerClient?.baseUrl).toBe("https://manual.example.com");
+    expect(snapshot.openworkServerClient?.token).toBe("manual-token");
+  });
+
+  test("OpenCode health polling still uses the stored instance token without the gateway marker", () => {
+    const storage = installWindow({ origin: "https://instance.example.com" });
+    storage.setItem("openwork.server.token", "instance-token");
+
+    expect(buildOpenworkHealthHeaders("https://instance.example.com/opencode")).toEqual({
+      Authorization: "Bearer instance-token",
+    });
   });
 
   test("plain web Den settings still use a stored custom base URL without the marker", () => {

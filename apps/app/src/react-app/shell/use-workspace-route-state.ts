@@ -6,7 +6,7 @@
 // session-route.tsx as the final step of its decomposition; the route keeps
 // composition, handlers, and JSX.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import type { Session } from "@opencode-ai/sdk/v2/client";
 
 import {
@@ -47,8 +47,8 @@ import {
   describeRouteError,
   isTransientStartupError,
   mapDesktopWorkspace,
-  mergeRouteWorkspaces,
   orderRouteWorkspaces,
+  refreshRouteWorkspaceListState,
   type RouteSession,
   type RouteWorkspace,
 } from "./route-workspaces";
@@ -63,6 +63,7 @@ import {
   preserveWorkspaceRouteSession,
   removeWorkspaceRouteSession,
   sessionIdForLegacyWorkspaceInference,
+  workspaceExtensionsRoute,
   workspaceSessionRoute,
 } from "./workspace-routes";
 
@@ -105,11 +106,19 @@ function withRouteRefreshTimeout<T>(promise: Promise<T>, label: string): Promise
 export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
   const { developerMode, onServerSettingsChanged, onHostInfo } = input;
   const navigate = useNavigate();
+  const location = useLocation();
   const local = useLocal();
   const denAuth = useDenAuth();
   const params = useParams<{ workspaceId?: string; sessionId?: string }>();
   const routeWorkspaceId = params.workspaceId?.trim() || "";
   const selectedSessionId = params.sessionId?.trim() || null;
+  const extensionsRouteActive = /^\/(?:workspace\/[^/]+\/)?extensions(?:\/|$)/.test(location.pathname);
+  const extensionsRoutePath = extensionsRouteActive
+    ? location.pathname
+      .replace(/^\/workspace\/[^/]+\/extensions\/?/, "")
+      .replace(/^\/extensions\/?/, "")
+      .replace(/^\/+|\/+$/g, "")
+    : "";
   const workspaceInferenceSessionId = sessionIdForLegacyWorkspaceInference(routeWorkspaceId, selectedSessionId);
   const navigateToWorkspaceSession = useCallback((workspaceId: string, sessionId?: string | null, options?: { replace?: boolean }) => {
     const id = workspaceId.trim();
@@ -429,11 +438,25 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
         token: resolvedToken,
         hostToken: resolvedHostToken || undefined,
       });
-      const list = await withRouteRefreshTimeout(openworkClient.listWorkspaces(), "Workspace list");
-      const nextWorkspaces = orderRouteWorkspaces(
-        mergeRouteWorkspaces(list.items, desktopWorkspaces),
-        workspaceOrderIdsRef.current,
-      );
+      const workspaceListState = await refreshRouteWorkspaceListState({
+        load: () => withRouteRefreshTimeout(openworkClient.listWorkspaces(), "Workspace list"),
+        desktopWorkspaces,
+        previousWorkspaces: workspacesRef.current,
+        orderIds: workspaceOrderIdsRef.current,
+      });
+      if (!workspaceListState.usable || workspaceListState.error) {
+        const message = workspaceListState.error
+          ? describeRouteError(workspaceListState.error)
+          : "Workspace list response did not include items.";
+        console.warn("[session-route] workspace list degraded", workspaceListState.error ?? message);
+        recordInspectorEvent("route.workspace_list.degraded", {
+          route: "session",
+          message,
+          preservedWorkspaceCount: workspacesRef.current.length,
+        });
+        setRouteError(message);
+      }
+      const nextWorkspaces = workspaceListState.workspaces;
 
       // Preserve any sessions we already have cached so switching routes
       // doesn't erase the sidebar while we refetch.
@@ -454,7 +477,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
           ? persistedActiveId
           : "") ||
         resolveWorkspaceListSelectedId(desktopList) ||
-        list.activeId?.trim() ||
+        workspaceListState.activeId ||
         nextWorkspaces[0]?.id ||
         "";
       if (workspaceInferenceSessionId) {
@@ -494,7 +517,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
       // OpenCode engine bound to it re-reads opencode.jsonc and applies
       // permissions. Fire-and-forget; the route is idempotent and any
       // transport failure is non-fatal. See issue #870.
-      if (nextWorkspaceId && list.activeId !== nextWorkspaceId && !launchActivatedWorkspaceIdsRef.current.has(nextWorkspaceId)) {
+      if (nextWorkspaceId && workspaceListState.activeId !== nextWorkspaceId && !launchActivatedWorkspaceIdsRef.current.has(nextWorkspaceId)) {
         launchActivatedWorkspaceIdsRef.current.add(nextWorkspaceId);
         const nextWorkspace = nextWorkspaces.find((workspace) => workspace.id === nextWorkspaceId) ?? null;
         const nextEndpoint = routeWorkspaceServerClientResolver(nextWorkspace);
@@ -740,16 +763,27 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
         ? legacySelectedWorkspaceId
         : workspaces[0]?.id || "";
       if (fallbackWorkspaceId) {
-        navigateToWorkspaceSession(fallbackWorkspaceId, selectedSessionId, { replace: true });
+        if (extensionsRouteActive) {
+          navigate(workspaceExtensionsRoute(fallbackWorkspaceId, extensionsRoutePath), { replace: true });
+        } else {
+          navigateToWorkspaceSession(fallbackWorkspaceId, selectedSessionId, { replace: true });
+        }
       }
       return;
     }
     if (!routeWorkspaceId && selectedWorkspaceId) {
-      navigateToWorkspaceSession(selectedWorkspaceId, selectedSessionId, { replace: true });
+      if (extensionsRouteActive) {
+        navigate(workspaceExtensionsRoute(selectedWorkspaceId, extensionsRoutePath), { replace: true });
+      } else {
+        navigateToWorkspaceSession(selectedWorkspaceId, selectedSessionId, { replace: true });
+      }
     }
   }, [
+    extensionsRouteActive,
+    extensionsRoutePath,
     loading,
     legacySelectedWorkspaceId,
+    navigate,
     navigateToWorkspaceSession,
     routeWorkspaceId,
     selectedSessionId,
@@ -764,9 +798,9 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
     if (loading) return;
     if (workspaces.length > 0) return;
     if (local.prefs.hasCompletedOnboarding) return;
+    if (denAuth.status === "checking") return;
+    if (denAuth.isSignedIn) return;
     if (isDesktopRuntime()) {
-      if (denAuth.status === "checking") return;
-      if (denAuth.isSignedIn) return;
       if (readDenBootstrapConfig().source !== "default") return;
     }
     navigate("/welcome", { replace: true });

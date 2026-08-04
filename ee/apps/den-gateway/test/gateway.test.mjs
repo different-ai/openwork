@@ -68,6 +68,15 @@ function startDenApi(resolvePayload) {
   return { server, observed }
 }
 
+function readyResolvePayload(url, input = {}) {
+  return {
+    status: "ready",
+    url,
+    clientToken: input.clientToken ?? "client-token",
+    hostToken: input.hostToken ?? "host-token",
+  }
+}
+
 function startPassthroughDenApi() {
   const observed = { requests: [] }
   const encoder = new TextEncoder()
@@ -77,6 +86,7 @@ function startPassthroughDenApi() {
       method: request.method,
       path: `${url.pathname}${url.search}`,
       authorization: request.headers.get("authorization"),
+      hostToken: request.headers.get("x-openwork-host-token"),
       cookie: request.headers.get("cookie"),
       gatewayKey: request.headers.get("x-openwork-gateway-key"),
       forwardedPrefix: request.headers.get("x-forwarded-prefix"),
@@ -122,6 +132,7 @@ function startUpstream() {
       method: request.method,
       path: `${url.pathname}${url.search}`,
       authorization: request.headers.get("authorization"),
+      hostToken: request.headers.get("x-openwork-host-token"),
       cookie: request.headers.get("cookie"),
     })
 
@@ -193,6 +204,7 @@ describe("den-gateway static UI", () => {
     expect(html).toContain("window.__OPENWORK_GATEWAY__ = {\"version\":1}")
     expect(html).not.toContain("__OPENWORK_BOOTSTRAP__")
     expect(html).not.toContain("client-token")
+    expect(html).not.toContain("host-token")
   })
 })
 
@@ -206,6 +218,7 @@ describe("den-gateway proxy", () => {
       method: "POST",
       headers: {
         Authorization: "Bearer den-session",
+        "X-OpenWork-Host-Token": "browser-host-token",
         Cookie: "ow_session=must_not_leak",
         "Content-Type": "application/json",
       },
@@ -219,11 +232,14 @@ describe("den-gateway proxy", () => {
       method: "POST",
       path: "/v1/me?expand=org",
       authorization: "Bearer den-session",
+      hostToken: null,
       cookie: null,
       gatewayKey: null,
       forwardedPrefix: "/api/den",
       body: '{"hello":"world"}',
     })
+    expect(denApi.observed.requests[0].authorization).not.toBe("Bearer host-token")
+    expect(denApi.observed.requests[0].authorization).not.toBe("Bearer client-token")
     expect(upstream.observed.requests).toHaveLength(0)
   })
 
@@ -254,7 +270,7 @@ describe("den-gateway proxy", () => {
 
   test("answers gateway health while /health proxies to the instance", async () => {
     const upstream = startUpstream()
-    const denApi = startDenApi(() => ({ status: "ready", url: serverBase(upstream.server), clientToken: "client-token" }))
+    const denApi = startDenApi(() => readyResolvePayload(serverBase(upstream.server)))
     const gateway = startGateway({ denApiBase: serverBase(denApi.server), gatewayKey: "gateway-secret" })
     const base = serverBase(gateway)
 
@@ -270,14 +286,15 @@ describe("den-gateway proxy", () => {
     expect(denApi.observed.gatewayKey).toBe("gateway-secret")
   })
 
-  test("injects the client token upstream and strips the Den bearer and cookies", async () => {
+  test("injects client and host tokens upstream while stripping browser-supplied credentials", async () => {
     const upstream = startUpstream()
-    const denApi = startDenApi(() => ({ status: "ready", url: serverBase(upstream.server), clientToken: "client-token" }))
+    const denApi = startDenApi(() => readyResolvePayload(serverBase(upstream.server)))
     const gateway = startGateway({ denApiBase: serverBase(denApi.server), gatewayKey: "gateway-secret" })
 
     const response = await fetch(`${serverBase(gateway)}/status`, {
       headers: {
         Authorization: "Bearer den-bearer",
+        "X-OpenWork-Host-Token": "browser-host-token",
         Cookie: "ow_session=must_not_leak",
       },
     })
@@ -285,28 +302,51 @@ describe("den-gateway proxy", () => {
     expect(response.status).toBe(200)
     expect(upstream.observed.requests[0].authorization).toBe("Bearer client-token")
     expect(upstream.observed.requests[0].authorization).not.toBe("Bearer den-bearer")
+    expect(upstream.observed.requests[0].hostToken).toBe("host-token")
+    expect(upstream.observed.requests[0].hostToken).not.toBe("browser-host-token")
     expect(upstream.observed.requests[0].cookie).toBeNull()
   })
 
-  test("caches ready resolution per Den bearer for rapid proxied requests", async () => {
+  test("caches ready resolution per Den bearer until the TTL expires", async () => {
     const upstream = startUpstream()
-    const denApi = startDenApi(() => ({ status: "ready", url: serverBase(upstream.server), clientToken: "client-token" }))
-    const gateway = startGateway({ denApiBase: serverBase(denApi.server), gatewayKey: "gateway-secret" })
+    let now = 1_000
+    let resolveResponses = 0
+    const denApi = startDenApi(() => {
+      resolveResponses += 1
+      return readyResolvePayload(serverBase(upstream.server), {
+        clientToken: `client-token-${resolveResponses}`,
+        hostToken: `host-token-${resolveResponses}`,
+      })
+    })
+    const gateway = startGateway({ denApiBase: serverBase(denApi.server), gatewayKey: "gateway-secret", resolveTtlMs: 1_000, now: () => now })
     const base = serverBase(gateway)
     const headers = { Authorization: "Bearer den-cache" }
 
     const first = await fetch(`${base}/status`, { headers })
     const second = await fetch(`${base}/capabilities`, { headers })
+    now += 1_001
+    const third = await fetch(`${base}/whoami`, { headers })
 
     expect(first.status).toBe(200)
     expect(second.status).toBe(200)
-    expect(denApi.observed.calls).toBe(1)
-    expect(upstream.observed.requests).toHaveLength(2)
+    expect(third.status).toBe(200)
+    expect(denApi.observed.calls).toBe(2)
+    expect(upstream.observed.requests).toHaveLength(3)
+    expect(upstream.observed.requests.map((request) => request.authorization)).toEqual([
+      "Bearer client-token-1",
+      "Bearer client-token-1",
+      "Bearer client-token-2",
+    ])
+    expect(upstream.observed.requests.map((request) => request.hostToken)).toEqual([
+      "host-token-1",
+      "host-token-1",
+      "host-token-2",
+    ])
   })
 
   test("proxies namespaced allowlist subpaths", async () => {
     const upstream = startUpstream()
-    const denApi = startDenApi(() => ({ status: "ready", url: serverBase(upstream.server), clientToken: "client-token" }))
+    const denApi = startDenApi(() => readyResolvePayload(serverBase(upstream.server)))
     const gateway = startGateway({ denApiBase: serverBase(denApi.server), gatewayKey: "gateway-secret" })
     const base = serverBase(gateway)
     const headers = { Authorization: "Bearer den-api", Accept: "application/json" }
@@ -336,7 +376,7 @@ describe("den-gateway proxy", () => {
   test("serves workspace document navigations from the SPA but proxies workspace API calls", async () => {
     const root = await makeWebRoot()
     const upstream = startUpstream()
-    const denApi = startDenApi(() => ({ status: "ready", url: serverBase(upstream.server), clientToken: "client-token" }))
+    const denApi = startDenApi(() => readyResolvePayload(serverBase(upstream.server)))
     const gateway = startGateway({ webRoot: root, denApiBase: serverBase(denApi.server), gatewayKey: "gateway-secret" })
     const base = serverBase(gateway)
 
@@ -356,7 +396,7 @@ describe("den-gateway proxy", () => {
 
   test("proxies workspace opencode SSE without buffering", async () => {
     const upstream = startUpstream()
-    const denApi = startDenApi(() => ({ status: "ready", url: serverBase(upstream.server), clientToken: "client-token" }))
+    const denApi = startDenApi(() => readyResolvePayload(serverBase(upstream.server)))
     const gateway = startGateway({ denApiBase: serverBase(denApi.server), gatewayKey: "gateway-secret" })
     const base = serverBase(gateway)
 
@@ -377,7 +417,7 @@ describe("den-gateway proxy", () => {
   test("keeps /w navigations proxied and non-api navigations on the SPA", async () => {
     const root = await makeWebRoot()
     const upstream = startUpstream()
-    const denApi = startDenApi(() => ({ status: "ready", url: serverBase(upstream.server), clientToken: "client-token" }))
+    const denApi = startDenApi(() => readyResolvePayload(serverBase(upstream.server)))
     const gateway = startGateway({ webRoot: root, denApiBase: serverBase(denApi.server), gatewayKey: "gateway-secret" })
     const base = serverBase(gateway)
 
@@ -398,7 +438,7 @@ describe("den-gateway proxy", () => {
 
   test("returns non-ready JSON status and does not proxy", async () => {
     const upstream = startUpstream()
-    const denApi = startDenApi(() => ({ status: "waking", url: null, clientToken: null }))
+    const denApi = startDenApi(() => ({ status: "waking", url: null, clientToken: null, hostToken: null }))
     const gateway = startGateway({ denApiBase: serverBase(denApi.server), gatewayKey: "gateway-secret" })
 
     const base = serverBase(gateway)
@@ -415,7 +455,7 @@ describe("den-gateway proxy", () => {
 
   test("streams SSE without buffering and strips stale compression headers", async () => {
     const upstream = startUpstream()
-    const denApi = startDenApi(() => ({ status: "ready", url: serverBase(upstream.server), clientToken: "client-token" }))
+    const denApi = startDenApi(() => readyResolvePayload(serverBase(upstream.server)))
     const gateway = startGateway({ denApiBase: serverBase(denApi.server), gatewayKey: "gateway-secret" })
     const base = serverBase(gateway)
 

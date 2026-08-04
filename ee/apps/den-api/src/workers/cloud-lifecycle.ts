@@ -2,6 +2,7 @@ import { and, asc, eq, isNull, lt, or } from "@openwork-ee/den-db/drizzle"
 import { WorkerTable, WorkerTokenTable } from "@openwork-ee/den-db/schema"
 import { db } from "../db.js"
 import { env } from "../env.js"
+import { materializeCloudWorkerProviders } from "../llm/cloud-provider-materialization.js"
 import { appLogger } from "../observability/logger.js"
 import { captureException } from "../observability/runtime.js"
 import { CLOUD_INSTANCE_BACKEND } from "./cloud-constants.js"
@@ -15,7 +16,7 @@ import {
 
 type WorkerId = typeof WorkerTable.$inferSelect.id
 type WorkerStatus = typeof WorkerTable.$inferSelect.status
-type CloudWorker = Pick<typeof WorkerTable.$inferSelect, "id" | "name" | "status" | "last_active_at" | "updated_at">
+type CloudWorker = Pick<typeof WorkerTable.$inferSelect, "id" | "name" | "status" | "last_active_at" | "updated_at"> & Partial<Pick<typeof WorkerTable.$inferSelect, "org_id">>
 type WorkerToken = typeof WorkerTokenTable.$inferSelect
 type WakeWorkerOnDaytona = typeof wakeWorkerOnDaytona
 type ProvisionWorkerOnDaytona = typeof provisionWorkerOnDaytona
@@ -25,13 +26,14 @@ type CloudLifecycleStore = {
   getWorker: (workerId: WorkerId) => Promise<CloudWorker | null>
   getActiveTokens: (workerId: WorkerId) => Promise<WorkerToken[]>
   listIdleWorkers: (input: { idleBefore: Date; limit: number }) => Promise<CloudWorker[]>
-  updateWorkerStatus: (input: { workerId: WorkerId; status: WorkerStatus; onlyWhenStatus?: WorkerStatus }) => Promise<void>
+  updateWorkerStatus: (input: { workerId: WorkerId; status: WorkerStatus; imageVersion?: string | null; onlyWhenStatus?: WorkerStatus }) => Promise<void>
 }
 
 type WakeCloudWorkerOptions = {
   store?: CloudLifecycleStore
   wakeWorker?: WakeWorkerOnDaytona
   provisionWorker?: ProvisionWorkerOnDaytona
+  materializeProviders?: typeof materializeCloudWorkerProviders
 }
 
 type StopIdleCloudWorkersOptions = {
@@ -94,9 +96,13 @@ const databaseCloudLifecycleStore: CloudLifecycleStore = {
       .limit(input.limit)
   },
   async updateWorkerStatus(input) {
+    const update = input.imageVersion === undefined
+      ? { status: input.status }
+      : { status: input.status, image_version: input.imageVersion }
+
     await db
       .update(WorkerTable)
-      .set({ status: input.status })
+      .set(update)
       .where(input.onlyWhenStatus
         ? and(eq(WorkerTable.id, input.workerId), eq(WorkerTable.status, input.onlyWhenStatus))
         : eq(WorkerTable.id, input.workerId))
@@ -127,6 +133,7 @@ async function runWakeCloudWorker(workerId: WorkerId, options: WakeCloudWorkerOp
   const store = options.store ?? databaseCloudLifecycleStore
   const wakeWorker = options.wakeWorker ?? wakeWorkerOnDaytona
   const provisionWorker = options.provisionWorker ?? provisionWorkerOnDaytona
+  const materializeProviders = options.materializeProviders ?? materializeCloudWorkerProviders
 
   try {
     const worker = await store.getWorker(workerId)
@@ -168,7 +175,25 @@ async function runWakeCloudWorker(workerId: WorkerId, options: WakeCloudWorkerOp
       woken = await provisionWorker(wakeInput)
     }
 
-    await store.updateWorkerStatus({ workerId, status: woken.status, onlyWhenStatus: "provisioning" })
+    if (woken.status === "healthy" && worker.org_id) {
+      try {
+        await materializeProviders({
+          organizationId: worker.org_id,
+          workerId,
+          instanceUrl: woken.url,
+          hostToken,
+          clientToken,
+          force: true,
+        })
+      } catch (error) {
+        logger.warn("worker wake provider materialization warning", {
+          worker_id: workerId,
+          message: error instanceof Error ? error.message : "provider_materialization_failed",
+        })
+      }
+    }
+
+    await store.updateWorkerStatus({ workerId, status: woken.status, imageVersion: woken.imageVersion, onlyWhenStatus: "provisioning" })
   } catch (error) {
     await safelyMarkWorkerFailed(store, workerId)
     logger.error("worker wake failed", { worker_id: workerId, error })

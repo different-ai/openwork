@@ -12,6 +12,18 @@ GitHub release.
 Work from latest `origin/dev` with a clean tree (use a fresh worktree/branch,
 e.g. `release/vX.Y.Z`). Confirm dev CI is green.
 
+`dev` is protected. Never push directly to `dev`, force-push it, delete it, or
+use admin bypasses. All release prep changes must land through a PR with the
+normal branch-protection flow:
+
+- at least one approval;
+- code-owner approval where configured;
+- stale approvals dismissed after every new push;
+- latest push approved by someone other than the pusher;
+- all conversations resolved;
+- squash or rebase merge only, so the resulting protected-branch commit is
+  GitHub-created/signed and history stays linear.
+
 ---
 
 ## Bump
@@ -26,8 +38,10 @@ package.json versions, `ee/apps/den-api/src/generated/desktop-versions.ts`
 `v<PUBLISHED_DESKTOP_VERSIONS[0]>`), and `pnpm-lock.yaml`. Revert incidental
 noise (e.g. `*.tsbuildinfo`) before committing.
 
-Commit as `chore(release): vX.Y.Z`, open a PR against `dev`, merge when checks
-pass.
+Commit as `chore(release): vX.Y.Z`, open a PR against `dev`, and merge only
+after the protected-branch requirements above are satisfied. Do not add empty
+status-check/workflow requirements just to block a release; use real checks and
+human review.
 
 ---
 
@@ -53,8 +67,11 @@ gh run watch <run-id> --repo different-ai/openwork --exit-status --interval 90
 The run includes a Windows test job; any test failure blocks publish (the
 release stays draft).
 
-**If the run fails:** land the fix on `dev` via a normal PR, then move the tag
-and let the workflow re-fire — safe only while the release never published:
+**If the run fails before the release is published:** land the fix on `dev` via
+a normal protected-branch PR. Prefer creating a new patch tag if any release
+assets may already have been consumed. Only delete/recreate the tag and draft
+release when you have verified the GitHub Release is still draft-only and no
+published asset was available:
 
 ```bash
 git push --delete origin vX.Y.Z
@@ -67,6 +84,23 @@ git push origin vX.Y.Z
 ```bash
 gh workflow run "Release App" --repo different-ai/openwork -f tag=vX.Y.Z
 ```
+
+The release workflow may open an AUR packaging PR instead of pushing packaging
+updates directly to `dev`. That is expected under branch protection. Get that PR
+reviewed and squash/rebase-merged, then rerun the release workflow with the same
+tag so the AUR publish step can observe that packaging is already up to date.
+
+When the workflow opens an AUR packaging PR, immediately inform the user with
+the PR URL and the next required action. Then use the `question` tool to ask
+exactly:
+
+> Has the PR been merged?
+
+Offer `Yes` and `No` options. Continue the release only when the user answers
+`Yes`. If the user answers `No`, do not proceed; wait a few minutes, check the
+PR merge status with `gh pr view <pr-url> --json merged,state`, and ask the same
+question again. Repeat this sleep/check/question loop until the PR is merged or
+the user explicitly stops the release.
 
 ---
 

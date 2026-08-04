@@ -28,16 +28,18 @@ bash .devcontainer/test-on-daytona.sh [branch-or-commit] --artifacts-volume
 
 It prints the CDP and noVNC URLs at the end. For UI validation, keep
 `--artifacts-volume` on by default so `/daytona-artifacts` is mounted and the
-artifact server on port 8090 is available for frame proof. Then run the coded
-eval runner when a flow exists:
+artifact server on port 8090 is available for supplementary captures. Then load
+`run-tests` and run the relevant app-driving testkit spec:
 
 ```bash
-pnpm evals --flow <flow-id> --cdp-url <printed-electron-cdp-url>
+OPENWORK_EVAL_APP_SPECS=1 OPENWORK_EVAL_DAYTONA=1 \
+  pnpm --dir evals exec vitest run --config vitest.config.ts \
+  --project stack specs/<slug>.slow.test.ts
 ```
 
-Use direct browser tools for exploration/debugging or for UI paths that are not
-codified yet. If the behavior is PR evidence and repeatable, add a flow under
-`evals/flows/*.flow.mjs` and rerun it through `pnpm evals`.
+Use direct browser tools only for exploration and debugging. New repeatable
+verdict coverage belongs in `evals/specs/<slug>.slow.test.ts`, imports `test`
+from `@openwork/testkit`, and records ambient evidence; see `write-a-spec`.
 
 Use `browser_list` to connect when manual inspection is needed.
 Refresh the snapshot with `bash .devcontainer/create-daytona-openwork-snapshot.sh`
@@ -58,8 +60,8 @@ source every `/daytona-secrets/*.env` file before Electron starts.
 - `daytona-chrome-cdp`: standalone Chrome in Daytona for web sign-in and OAuth.
 - `daytona-secrets-volume`: provider keys and eval-only secrets in
   `openwork-eval-secrets:/daytona-secrets`.
-- `daytona-recording-artifacts`: screenshots, recordings, validation artifacts,
-  before/after videos, and PR evidence.
+- `daytona-recording-artifacts`: supplementary screenshots, before/after
+  recordings, and PR presentation artifacts.
 
 ## Daytona Testing Toolbox
 
@@ -73,12 +75,11 @@ source every `/daytona-secrets/*.env` file before Electron starts.
 - **Artifacts volume:** use `openwork-eval-artifacts:/daytona-artifacts` for
   screenshots, validation notes, and recordings that survive sandbox deletion.
 
-Validation standard: use `daytona-flow-validator`. Default proof format is
-frame-by-frame HTML — named PNGs in a browseable index served on port 8090.
-The eval runner writes `evals/results/<run-id>/index.html`; serve that result
-directory or copy it into `/daytona-artifacts/validation/<flow>/` for PR proof.
-Use video only for interactions that need motion (streaming, animations,
-loading states). See `daytona-recording-artifacts` for the frame workflow.
+Validation standard: use `daytona-flow-validator`. The `@openwork/testkit`
+ambient tape and its observable assertions determine the verdict; publish the
+existing tape with `publish-evidence`. Custom screenshot indexes and video are
+supplementary, with video reserved for motion such as streaming or animations.
+See `daytona-recording-artifacts` for those presentation artifacts.
 
 Before sharing screenshot URLs, inspect the saved PNG itself per
 `daytona-flow-validator`. Do not post screenshots that are covered by native

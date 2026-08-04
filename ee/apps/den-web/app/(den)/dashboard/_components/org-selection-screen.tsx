@@ -6,6 +6,7 @@ import { Building2, ChevronRight, LogOut, Plus } from "lucide-react";
 import { useSyncExternalStore } from "react";
 import { formatRoleLabel, type DenOrgSummary } from "../../_lib/den-org";
 import { useOrgListWindow } from "../../_lib/use-org-list-window";
+import { useWebGlSupported } from "../../_lib/use-webgl-supported";
 
 const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
 
@@ -66,6 +67,7 @@ export function OrgSelectionScreen({
     showSearch,
   } = useOrgListWindow(orgs);
   const reducedMotion = useReducedMotion();
+  const webGlSupported = useWebGlSupported();
   const shaderSpeed = reducedMotion ? 0 : 0.01;
 
   return (
@@ -80,17 +82,19 @@ export function OrgSelectionScreen({
         data-shader-speed={shaderSpeed}
         data-testid="org-chooser-background"
       >
-        <Dithering
-          speed={shaderSpeed}
-          shape="warp"
-          type="2x2"
-          size={20.3}
-          scale={1.19}
-          frame={264559.21}
-          colorBack="#00000000"
-          colorFront="#000000"
-          style={{ width: "100%", height: "100%" }}
-        />
+        {webGlSupported ? (
+          <Dithering
+            speed={shaderSpeed}
+            shape="warp"
+            type="2x2"
+            size={20.3}
+            scale={1.19}
+            frame={264559.21}
+            colorBack="#00000000"
+            colorFront="#000000"
+            style={{ width: "100%", height: "100%" }}
+          />
+        ) : null}
       </div>
 
       <div

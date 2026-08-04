@@ -10,10 +10,10 @@ function readDashboardComponent(name: string) {
 }
 
 describe("connector and marketplace polish", () => {
-  test("puts Marketplace first and renames the org connection surface to Connectors beta", () => {
+  test("labels Sources alpha and keeps Marketplace first and Connectors beta", () => {
     const shell = readDashboardComponent("org-dashboard-shell.tsx");
     const marketplaceIndex = shell.indexOf('{ href: getMarketplacesRoute(activeOrg.slug), label: "Marketplace" }');
-    const sourcesIndex = shell.indexOf('{ href: getIntegrationsRoute(activeOrg.slug), label: "Sources" }');
+    const sourcesIndex = shell.indexOf('{ href: getIntegrationsRoute(activeOrg.slug), label: "Sources", badge: "Alpha" }');
     const pluginsIndex = shell.indexOf('{ href: getPluginsRoute(activeOrg.slug), label: "Plugins" }');
     const connectorsIndex = shell.indexOf('{ href: getMcpConnectionsRoute(activeOrg.slug), label: "Connectors", badge: "Beta" }');
 
@@ -21,6 +21,14 @@ describe("connector and marketplace polish", () => {
     expect(marketplaceIndex).toBeLessThan(sourcesIndex);
     expect(sourcesIndex).toBeLessThan(pluginsIndex);
     expect(pluginsIndex).toBeLessThan(connectorsIndex);
+  });
+
+  test("uses the shared page maturity badge to label Sources alpha", () => {
+    const screen = readDashboardComponent("integrations-screen.tsx");
+
+    expect(screen).toContain('title="Sources"');
+    expect(screen).toContain('badgeLabel="Alpha"');
+    expect(screen).not.toContain('badgeLabel="Preview"');
   });
 
   test("uses one Add MCP action and the approved connector copy", () => {

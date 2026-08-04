@@ -1,8 +1,9 @@
 import type { Hono } from "hono"
-import { createInternalMcpPrincipalHeader } from "../session.js"
+import { createInternalCapabilityConnectorHeader, createInternalMcpPrincipalHeader, INTERNAL_CAPABILITY_CONNECTOR_HEADER } from "../session.js"
 import type { McpPrincipal } from "./auth.js"
 import type { McpToolOperation } from "./catalog.js"
 import { requiredScopeForMethod } from "./policy.js"
+import { buildRestToolContent } from "./tool-content.js"
 
 type ToolInput = {
   path?: Record<string, unknown>
@@ -72,6 +73,7 @@ function buildInternalRequest(input: {
   operation: McpToolOperation
   toolInput: ToolInput
   principal: McpPrincipal
+  nativeConnectionId?: string
 }) {
   const path = buildPath(input.operation.path, input.toolInput.path ?? {})
   const url = new URL(path, "http://den-api.local")
@@ -90,6 +92,13 @@ function buildInternalRequest(input: {
       organizationId: input.principal.organizationId,
     }),
   })
+  if (input.nativeConnectionId) {
+    headers.set(INTERNAL_CAPABILITY_CONNECTOR_HEADER, createInternalCapabilityConnectorHeader({
+      userId: input.principal.userId,
+      organizationId: input.principal.organizationId,
+      connectorId: input.nativeConnectionId,
+    }))
+  }
 
   let body: BodyInit | undefined
   if (input.operation.method !== "GET" && input.operation.method !== "HEAD" && input.toolInput.body !== undefined) {
@@ -109,6 +118,7 @@ export async function invokeMcpOperation(input: {
   env: unknown
   operation: McpToolOperation
   principal: McpPrincipal
+  nativeConnectionId?: string
   toolInput: ToolInput
 }) {
   const requiredScope = requiredScopeForMethod(input.operation.method)
@@ -132,10 +142,9 @@ export async function invokeMcpOperation(input: {
   const response = await input.app.fetch(request, input.env)
   const contentType = response.headers.get("content-type") ?? ""
   const payload = contentType.includes("application/json") ? await response.json() : await response.text()
-  const text = typeof payload === "string" ? payload : JSON.stringify(payload, null, 2)
 
   return {
     isError: response.status >= 400,
-    content: [{ type: "text" as const, text }],
+    content: await buildRestToolContent(payload),
   }
 }

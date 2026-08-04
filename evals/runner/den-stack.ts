@@ -37,8 +37,18 @@ const MYSQL_CONTAINER = "openwork-web-local-mysql";
 const MYSQL_STATE_DIR = join(STATE_DIR, "mysql");
 const MYSQL_SOCKET = join(MYSQL_STATE_DIR, "mysql.sock");
 const COMPOSE_ARGS = ["compose", "-p", "openwork-den-local", "-f", "packaging/docker/docker-compose.web-local.yml"];
+const DEFAULT_MOCK_IDP_ISSUER = "http://127.0.0.1:19190";
+const MOCK_IDP_ISSUER = (process.env.OPENWORK_EVAL_MOCK_IDP_ISSUER?.trim() || DEFAULT_MOCK_IDP_ISSUER).replace(/\/+$/, "");
 const DEN_WEB_ORIGIN = (process.env.OPENWORK_EVAL_DEN_WEB_URL ?? "http://localhost:3005").replace(/\/+$/, "");
 const DEN_WEB_PORT = new URL(DEN_WEB_ORIGIN).port || "3005";
+
+function envCsv(name: string): string[] {
+  return (process.env[name] ?? "")
+    .split(",")
+    .map((entry) => entry.trim().replace(/\/+$/, ""))
+    .filter(Boolean);
+}
+
 const DEN_TRUSTED_ORIGINS = [
   DEN_BASE_URL,
   DEN_WEB_ORIGIN,
@@ -46,6 +56,8 @@ const DEN_TRUSTED_ORIGINS = [
   `http://127.0.0.1:${DEN_WEB_PORT}`,
   "http://localhost:5173",
   "http://127.0.0.1:5173",
+  MOCK_IDP_ISSUER,
+  ...envCsv("OPENWORK_EVAL_DEN_EXTRA_TRUSTED_ORIGINS"),
 ].filter((origin, index, origins) => origins.indexOf(origin) === index).join(",");
 
 // Override with OPENWORK_EVAL_DATABASE_URL to isolate a run from the shared
@@ -56,8 +68,14 @@ if (!/^[A-Za-z0-9_]+$/.test(DEN_DATABASE_NAME)) {
   throw new Error(`Unsupported Den database name: ${DEN_DATABASE_NAME}`);
 }
 
-export function denEvalEnvironment(): NodeJS.ProcessEnv {
-  return {
+type DenOrgMode = "single_org" | "multi_org";
+
+interface DenEvalEnvironmentOptions {
+  orgMode?: DenOrgMode;
+}
+
+export function denEvalEnvironment(options: DenEvalEnvironmentOptions = {}): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {
     OPENWORK_DEV_MODE: "1",
     DEN_SINGLE_ORG_ALLOW_PUBLIC_SIGNUP: "true",
     PORT: String(DEN_API_INTERNAL_PORT),
@@ -74,6 +92,8 @@ export function denEvalEnvironment(): NodeJS.ProcessEnv {
     STRIPE_WEBHOOK_SECRET: process.env.STRIPE_WEBHOOK_SECRET ?? "whsec_openwork_eval",
     INFERENCE_PROXY_BASE_URL: process.env.INFERENCE_PROXY_BASE_URL ?? "http://127.0.0.1:8791",
   };
+  if (options.orgMode) env.DEN_ORG_MODE = options.orgMode;
+  return env;
 }
 
 const DEN_ENV = denEvalEnvironment();
@@ -82,6 +102,14 @@ const sleep = (ms: number) => new Promise((resolveSleep) => setTimeout(resolveSl
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function errorCode(error: unknown): string | null {
+  return isRecord(error) && typeof error.code === "string" ? error.code : null;
+}
+
+function isDenOrgMode(value: unknown): value is DenOrgMode {
+  return value === "single_org" || value === "multi_org";
 }
 
 function devUserDataHome(): string {
@@ -102,6 +130,71 @@ async function httpOk(url: string, timeoutMs = 2_500): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+async function runtimeOrgMode(timeoutMs = 2_500): Promise<DenOrgMode | null> {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const response = await fetch(`${DEN_WEB_ORIGIN}/api/runtime-config`, { signal: controller.signal });
+    clearTimeout(timer);
+    if (!response.ok) return null;
+    const payload: unknown = await response.json();
+    return isRecord(payload) && isDenOrgMode(payload.orgMode) ? payload.orgMode : null;
+  } catch {
+    return null;
+  }
+}
+
+function pidIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return errorCode(error) !== "ESRCH";
+  }
+}
+
+async function waitForPidGone(pid: number, timeoutMs: number): Promise<boolean> {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    if (!pidIsAlive(pid)) return true;
+    await sleep(250);
+  }
+  return !pidIsAlive(pid);
+}
+
+async function stopRecordedProcess(name: string, label: string, log: (message: string) => void): Promise<void> {
+  const pidText = await readPidState(name);
+  if (!pidText) return;
+  const pid = Number(pidText);
+  if (!Number.isInteger(pid) || pid <= 0) return;
+  let signaled = false;
+  try {
+    process.kill(-pid, "SIGINT");
+    signaled = true;
+  } catch {
+    // Group may not exist, or this may be Windows.
+  }
+  try {
+    process.kill(pid, "SIGINT");
+    signaled = true;
+  } catch {
+    // Already gone.
+  }
+  if (signaled) log(`Stopped ${label} for orgMode restart (pid ${pid})`);
+  if (await waitForPidGone(pid, 5_000)) return;
+  try {
+    process.kill(-pid, "SIGKILL");
+  } catch {
+    // Group may already be gone.
+  }
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch {
+    // Already gone.
+  }
+  await waitForPidGone(pid, 1_000);
 }
 
 async function hasCdpPageTarget(baseUrl: string): Promise<boolean> {
@@ -430,7 +523,7 @@ async function ensureSchema(log: (message: string) => void): Promise<void> {
   log("Schema pushed");
 }
 
-async function ensureDenApi(log: (message: string) => void): Promise<void> {
+async function ensureDenApi(log: (message: string) => void, orgMode?: DenOrgMode): Promise<void> {
   const publicHealthOk = await httpOk(`${DEN_API_URL}/health`);
   const denWebPathHealthOk = await httpOk(`${DEN_API_URL}/api/den/health`);
   if (publicHealthOk && denWebPathHealthOk) {
@@ -448,7 +541,7 @@ async function ensureDenApi(log: (message: string) => void): Promise<void> {
   const pid = spawnDetached("pnpm", ["exec", "tsx", "src/main.ts"], {
     logName: "den-api",
     cwd: join(REPO_ROOT, "ee", "apps", "den-api"),
-    env: DEN_ENV,
+    env: denEvalEnvironment({ orgMode }),
   });
   await writePidState("den-api.pid", pid);
   for (let attempt = 0; attempt < 30; attempt += 1) {
@@ -460,6 +553,11 @@ async function ensureDenApi(log: (message: string) => void): Promise<void> {
   }
   if (!(await httpOk(`${DEN_API_INTERNAL_URL}/health`))) {
     throw new Error(`den-api did not become healthy on internal :${DEN_API_INTERNAL_PORT} within 60s.`);
+  }
+
+  if (await httpOk(`${DEN_API_URL}/api/den/health`)) {
+    log("den proxy healthy");
+    return;
   }
 
   log(`Starting den proxy on :${DEN_API_PORT} -> :${DEN_API_INTERNAL_PORT}...`);
@@ -488,7 +586,25 @@ export async function clearDenWebBuildCache(
   await rm(join(denWebRoot, ".next"), { recursive: true, force: true });
 }
 
-async function ensureDenWeb(log: (message: string) => void): Promise<void> {
+export async function ensureDenOrgMode(orgMode: DenOrgMode | undefined, log: (message: string) => void): Promise<void> {
+  if (!orgMode) return;
+  const actual = await runtimeOrgMode();
+  if (actual === orgMode) {
+    log(`Den orgMode already ${orgMode}`);
+    return;
+  }
+  if (!actual && !(await httpOk(`${DEN_API_URL}/health`)) && !(await httpOk(`${DEN_WEB_ORIGIN}/api/den/health`))) {
+    return;
+  }
+  const detail = actual ? `reports ${actual}` : "could not be verified from runtime-config";
+  log(`Den orgMode ${detail}; restarting den-api and den-web for ${orgMode}.`);
+  await stopRecordedProcess("den-api.pid", "den-api", log);
+  await stopRecordedProcess("den-web.pid", "den-web", log);
+  await freePorts([DEN_API_PORT, DEN_API_INTERNAL_PORT, Number(DEN_WEB_PORT)].filter((port) => Number.isInteger(port) && port > 0), log, "Den orgMode restart");
+  await clearDenWebBuildCache();
+}
+
+async function ensureDenWeb(log: (message: string) => void, orgMode?: DenOrgMode): Promise<void> {
   if (await httpOk(`${DEN_WEB_ORIGIN}/api/den/health`)) {
     log(`den-web already healthy at ${DEN_WEB_ORIGIN}`);
     return;
@@ -508,17 +624,20 @@ async function ensureDenWeb(log: (message: string) => void): Promise<void> {
       DEN_AUTH_ORIGIN: DEN_WEB_ORIGIN,
       DEN_AUTH_FALLBACK_BASE: DEN_API_URL,
       DEN_WEB_PORT: denWebPort,
+      ...(orgMode ? { DEN_ORG_MODE: orgMode } : {}),
     },
   });
   await writePidState("den-web.pid", pid);
-  for (let attempt = 0; attempt < 45; attempt += 1) {
+  // A clean Daytona checkout can spend more than 90 seconds compiling the
+  // first den-web route even after the process has started successfully.
+  for (let attempt = 0; attempt < 90; attempt += 1) {
     if (await httpOk(`${DEN_WEB_ORIGIN}/api/den/health`)) {
       log("den-web healthy");
       return;
     }
     await sleep(2_000);
   }
-  throw new Error(`den-web did not become healthy at ${DEN_WEB_ORIGIN} within 90s.`);
+  throw new Error(`den-web did not become healthy at ${DEN_WEB_ORIGIN} within 180s.`);
 }
 
 export function denSeedNodeArgs(): string[] {
@@ -546,18 +665,15 @@ async function ensureSeed(log: (message: string) => void): Promise<void> {
   log("Demo org seeded");
 }
 
-async function freeStaleAppPorts(log: (message: string) => void): Promise<void> {
-  // If no app page target is serving but the dev ports are held, a previous
-  // run left a half-dead app behind (e.g. Electron without its renderer).
-  // Clear them so the fresh spawn does not lose the bind race.
-  for (const port of [9823, 5173]) {
+async function freePorts(ports: number[], log: (message: string) => void, reason: string): Promise<void> {
+  for (const port of ports) {
     try {
       const { stdout } = await run("lsof", ["-nP", "-ti", `tcp:${port}`]);
       const pids = stdout.split("\n").map((line) => line.trim()).filter(Boolean);
       for (const pid of pids) {
         try {
           process.kill(Number(pid), "SIGKILL");
-          log(`Cleared stale process ${pid} holding :${port}`);
+          log(`Cleared process ${pid} holding :${port} (${reason})`);
         } catch {
           // Already gone.
         }
@@ -567,6 +683,13 @@ async function freeStaleAppPorts(log: (message: string) => void): Promise<void> 
     }
   }
   await sleep(1_500);
+}
+
+async function freeStaleAppPorts(log: (message: string) => void): Promise<void> {
+  // If no app page target is serving but the dev ports are held, a previous
+  // run left a half-dead app behind (e.g. Electron without its renderer).
+  // Clear them so the fresh spawn does not lose the bind race.
+  await freePorts([9823, 5173], log, "stale app cleanup");
 }
 
 async function ensureApp(log: (message: string) => void, cdpCandidates: string[]): Promise<void> {
@@ -612,14 +735,16 @@ export interface EnsureDenStackOptions {
   log(message: string): void;
   cdpCandidates: string[];
   skipApp?: boolean;
+  orgMode?: DenOrgMode;
 }
 
-export async function ensureDenStack({ log, cdpCandidates, skipApp = false }: EnsureDenStackOptions): Promise<void> {
+export async function ensureDenStack({ log, cdpCandidates, skipApp = false, orgMode }: EnsureDenStackOptions): Promise<void> {
   await mkdir(STATE_DIR, { recursive: true });
   await ensureMysql(log);
   await ensureSchema(log);
-  await ensureDenApi(log);
-  await ensureDenWeb(log);
+  await ensureDenOrgMode(orgMode, log);
+  await ensureDenApi(log, orgMode);
+  await ensureDenWeb(log, orgMode);
   await ensureSeed(log);
   if (skipApp) {
     log("Skipping dev Electron startup — selected eval flow is app-less");

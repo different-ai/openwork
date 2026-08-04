@@ -1,4 +1,4 @@
-import { and, eq, gt, isNull } from "@openwork-ee/den-db/drizzle"
+import { and, eq, gt, isNotNull, isNull } from "@openwork-ee/den-db/drizzle"
 import {
   ConfigObjectAccessGrantTable,
   ConfigObjectTable,
@@ -447,6 +447,7 @@ export function registerBootstrapRoutes<T extends { Variables: AuthContextVariab
             ),
           )
           .limit(1)
+          .for("update")
 
         if (!claim) {
           return null
@@ -457,6 +458,19 @@ export function registerBootstrapRoutes<T extends { Variables: AuthContextVariab
           .from(MemberTable)
           .where(and(eq(MemberTable.organizationId, claim.organizationId), eq(MemberTable.userId, normalizedUserId), isNull(MemberTable.removedAt)))
           .limit(1)
+          .for("update")
+        const [removedMember] = existingMember
+          ? []
+          : await tx
+            .select({ id: MemberTable.id })
+            .from(MemberTable)
+            .where(and(eq(MemberTable.organizationId, claim.organizationId), eq(MemberTable.userId, normalizedUserId), isNotNull(MemberTable.removedAt)))
+            .limit(1)
+            .for("update")
+
+        if (removedMember) {
+          return { status: "membership_removed" as const }
+        }
 
         const memberId = existingMember?.id ?? createDenTypeId("member")
         if (existingMember) {
@@ -493,6 +507,12 @@ export function registerBootstrapRoutes<T extends { Variables: AuthContextVariab
 
       if (!result) {
         return c.json({ error: "claim_not_found", message: "This workspace claim link is missing, expired, or already used." }, 404)
+      }
+      if ("status" in result && result.status === "membership_removed") {
+        return c.json({
+          error: "membership_removed",
+          message: "Your access to this workspace was removed. Ask a workspace admin for a new invite.",
+        }, 403)
       }
 
       if (session?.id) {

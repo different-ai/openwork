@@ -56,6 +56,7 @@ export type ExternalMcpConnection = {
   reconnectActionOwner?: "member" | "organization_admin" | null;
   missingFeatures?: string[];
   externalAccountId?: string | null;
+  nativeProviderKey?: string | null;
   grantedScopes?: string[];
   tenantId?: string | null;
   requiredBy: ExternalMcpRequiredBy[];
@@ -217,12 +218,12 @@ export type CreatedMcpConnection = ExternalMcpConnection & {
   };
 };
 
-export function isNativeProviderConnectionId(id: string): boolean {
-  return id === "google-workspace" || id === "microsoft-365";
+export function isNativeProviderConnectionId(id: string, nativeProviderKey?: string | null): boolean {
+  return nativeProviderKey != null || id === "google-workspace" || id === "microsoft-365";
 }
 
-export function canDisconnectMyConnectionAccount(connection: Pick<ExternalMcpConnection, "id" | "credentialMode" | "connectedForMe">): boolean {
-  return connection.connectedForMe && (isNativeProviderConnectionId(connection.id) || connection.credentialMode === "per_member");
+export function canDisconnectMyConnectionAccount(connection: Pick<ExternalMcpConnection, "id" | "nativeProviderKey" | "credentialMode" | "connectedForMe">): boolean {
+  return connection.connectedForMe && (isNativeProviderConnectionId(connection.id, connection.nativeProviderKey) || connection.credentialMode === "per_member");
 }
 
 export const mcpConnectionQueryKeys = {
@@ -532,6 +533,16 @@ export type CreateMcpConnectionInput = {
   access: McpConnectionAccessInput;
 };
 
+export type CreateNativeProviderConnectionInput = {
+  nativeProviderKey: string;
+  name: string;
+  oauthClient: {
+    clientId: string;
+    clientSecret?: string;
+    features: string[];
+  };
+};
+
 export type UpdateMcpConnectionInput = {
   connectionId: string;
   expectedUpdatedAt: string;
@@ -632,6 +643,37 @@ export function useCreateMcpConnection() {
         created = payload as CreatedMcpConnection;
       });
       if (!created) throw new Error("Create MCP connection response was incomplete.");
+      return created;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: mcpConnectionQueryKeys.all });
+    },
+  });
+}
+
+export function useCreateNativeProviderConnection() {
+  const queryClient = useQueryClient();
+  const { orgId, runReauthableAction } = useOrgDashboard();
+
+  return useMutation({
+    mutationFn: async (input: CreateNativeProviderConnectionInput): Promise<CreatedMcpConnection> => {
+      let created: CreatedMcpConnection | null = null;
+      await runReauthableAction("create-mcp-connection", async () => {
+        const { response, payload } = await requestJson(
+          "/v1/mcp-connections",
+          {
+            method: "POST",
+            headers: getOrgScopeHeaders(requireOrgId(orgId)),
+            body: JSON.stringify({ kind: "native_provider", ...input }),
+          },
+          20000,
+        );
+        if (!response.ok) {
+          throw getRequestError(payload, response, `Failed to add native provider connection (${response.status}).`);
+        }
+        created = payload as CreatedMcpConnection;
+      });
+      if (!created) throw new Error("Create native provider connection response was incomplete.");
       return created;
     },
     onSuccess: () => {
@@ -770,10 +812,10 @@ export function useDisconnectMyProviderAccount() {
   const { orgId } = useOrgDashboard();
 
   return useMutation({
-    mutationFn: async (providerId: string): Promise<string> => {
-      const path = isNativeProviderConnectionId(providerId)
-        ? `/v1/oauth-providers/${encodeURIComponent(providerId)}/disconnect`
-        : `/v1/mcp-connections/${encodeURIComponent(providerId)}/disconnect-my-account`;
+    mutationFn: async (connection: Pick<ExternalMcpConnection, "id" | "nativeProviderKey">): Promise<string> => {
+      const path = isNativeProviderConnectionId(connection.id, connection.nativeProviderKey)
+        ? `/v1/oauth-providers/${encodeURIComponent(connection.id)}/disconnect`
+        : `/v1/mcp-connections/${encodeURIComponent(connection.id)}/disconnect-my-account`;
       const { response, payload } = await requestJson(
         path,
         { method: "POST", headers: getOrgScopeHeaders(requireOrgId(orgId)) },
@@ -782,7 +824,7 @@ export function useDisconnectMyProviderAccount() {
       if (!response.ok) {
         throw getRequestError(payload, response, `Failed to disconnect account (${response.status}).`);
       }
-      return providerId;
+      return connection.id;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: mcpConnectionQueryKeys.all });

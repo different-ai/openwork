@@ -111,7 +111,10 @@ function reconcileOpenArtifactTabs(
 function isSameTranscriptArtifactTargets(left: OpenTarget[], right: OpenTarget[]) {
   return (
     left.length === right.length &&
-    left.every((target, index) => target.id === right[index]?.id)
+    left.every((target, index) => {
+      const other = right[index];
+      return other && target.id === other.id && target.updatedAt === other.updatedAt;
+    })
   );
 }
 

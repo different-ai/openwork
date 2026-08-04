@@ -1,0 +1,193 @@
+name: Changelog
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Stable release tag to document (e.g. v0.18.13)
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: changelog-${{ github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  changelog:
+    if: github.repository == 'different-ai/openwork'
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 30
+    env:
+      BASE_BRANCH: dev
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+      BRANCH_NAME: automation/changelog-${{ github.event.release.tag_name || inputs.tag }}-${{ github.run_id }}
+
+    steps:
+      - name: Validate tag
+        id: guard
+        run: |
+          if [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "stable=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "stable=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping changelog automation because $TAG is not a stable release tag."
+          fi
+
+      - name: Checkout
+        if: steps.guard.outputs.stable == 'true'
+        uses: actions/checkout@v6
+        with:
+          ref: dev
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Skip if already documented
+        if: steps.guard.outputs.stable == 'true'
+        id: dedupe
+        run: |
+          if grep -Fq "[$TAG](https://github.com/different-ai/openwork/compare/" packages/docs/changelog.mdx; then
+            echo "documented=true" >> "$GITHUB_OUTPUT"
+            echo "$TAG is already documented; skipping changelog automation."
+          else
+            echo "documented=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Gather release facts
+        if: steps.guard.outputs.stable == 'true' && steps.dedupe.outputs.documented == 'false'
+        id: facts
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PUBLISHED_AT_EVENT: ${{ github.event.release.published_at }}
+        run: |
+          set -euo pipefail
+
+          if ! git rev-parse --verify "refs/tags/$TAG^{commit}" >/dev/null; then
+            echo "Release tag $TAG does not exist in the fetched repository." >&2
+            exit 1
+          fi
+
+          PREV="$(git tag --list | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | grep -x -B1 "$TAG" | head -n1)"
+          if [[ -z "$PREV" || "$PREV" == "$TAG" ]]; then
+            echo "Could not determine the stable release immediately before $TAG." >&2
+            exit 1
+          fi
+
+          PUBLISHED_AT="$PUBLISHED_AT_EVENT"
+          if [[ -z "$PUBLISHED_AT" ]]; then
+            PUBLISHED_AT="$(gh release view "$TAG" --json publishedAt -q .publishedAt)"
+          fi
+          if [[ -z "$PUBLISHED_AT" ]]; then
+            echo "Could not determine the published-at timestamp for $TAG." >&2
+            exit 1
+          fi
+
+          COMMIT8="$(git rev-list -n1 "$TAG" | cut -c1-8)"
+          SHORTSTAT="$(git diff --shortstat "$PREV".."$TAG")"
+          INSERTIONS="$(grep -oE '[0-9]+ insertion' <<< "$SHORTSTAT" | grep -oE '[0-9]+' || true)"
+          DELETIONS="$(grep -oE '[0-9]+ deletion' <<< "$SHORTSTAT" | grep -oE '[0-9]+' || true)"
+          INSERTIONS="${INSERTIONS:-0}"
+          DELETIONS="${DELETIONS:-0}"
+          TOTAL=$((INSERTIONS + DELETIONS))
+          LOC_LINE="$TOTAL lines changed since \`$PREV\` ($INSERTIONS insertions, $DELETIONS deletions)."
+
+          IFS=$'\t' read -r DATE_LABEL TRACKER_FILE < <(node -e '
+            const publishedAt = new Date(process.argv[1]);
+            if (Number.isNaN(publishedAt.valueOf())) throw new Error("Invalid published-at timestamp");
+            const day = publishedAt.getUTCDate();
+            const mod100 = day % 100;
+            const suffix = mod100 >= 11 && mod100 <= 13 ? "th" : ({ 1: "st", 2: "nd", 3: "rd" }[day % 10] || "th");
+            const month = publishedAt.toLocaleString("en-US", { month: "long", timeZone: "UTC" });
+            const date = publishedAt.toISOString().slice(0, 10);
+            process.stdout.write(month + " " + day + suffix + "\tchangelog/release-tracker-" + date + ".md\n");
+          ' "$PUBLISHED_AT")
+
+          git log --no-merges --format='%h %s' "$PREV".."$TAG" | head -400 > /tmp/commits.txt
+          cat > /tmp/changelog_prompt.txt <<PROMPT_EOF
+          Document OpenWork release $TAG in the changelog. Use these facts exactly; do not invent or recompute any of them.
+
+          - version: $TAG
+          - previous version: $PREV
+          - release commit (short): $COMMIT8
+          - published at (UTC): $PUBLISHED_AT
+          - docs date label: $DATE_LABEL
+          - tracker file: $TRACKER_FILE
+          - loc line (copy verbatim into the tracker): $LOC_LINE
+          - compare url: https://github.com/different-ai/openwork/compare/$PREV...$TAG
+
+          Commits between $PREV and $TAG (hash subject):
+          PROMPT_EOF
+          cat /tmp/commits.txt >> /tmp/changelog_prompt.txt
+          echo "PREV=$PREV" >> "$GITHUB_ENV"
+
+      - name: Setup Node
+        if: steps.guard.outputs.stable == 'true' && steps.dedupe.outputs.documented == 'false'
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Install opencode
+        if: steps.guard.outputs.stable == 'true' && steps.dedupe.outputs.documented == 'false'
+        run: |
+          version="$(node -e "const fs=require('fs'); const parsed=JSON.parse(fs.readFileSync('constants.json','utf8')); process.stdout.write(String(parsed.opencodeVersion||'').trim().replace(/^v/,''));")"
+          curl -fsSL https://opencode.ai/install | bash -s -- --version "$version" --no-modify-path
+
+      - name: Draft changelog entries
+        if: steps.guard.outputs.stable == 'true' && steps.dedupe.outputs.documented == 'false'
+        env:
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+        run: opencode run --agent changelog "$(cat /tmp/changelog_prompt.txt)"
+
+      - name: Discard opencode runtime churn
+        if: steps.guard.outputs.stable == 'true' && steps.dedupe.outputs.documented == 'false'
+        run: |
+          git checkout -- .opencode/
+          git clean -fd .opencode/
+
+      - name: Verify generated output
+        if: steps.guard.outputs.stable == 'true' && steps.dedupe.outputs.documented == 'false'
+        run: node scripts/check-changelog-output.mjs "$TAG" "$PREV"
+
+      - name: Commit release notes
+        if: steps.guard.outputs.stable == 'true' && steps.dedupe.outputs.documented == 'false'
+        env:
+          COMMIT_SIGNING_KEY: ${{ secrets.COMMIT_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+
+          signing_key="$RUNNER_TEMP/commit-signing-key"
+          trap 'rm -f "$signing_key"' EXIT
+          umask 077
+          printf '%s\n' "$COMMIT_SIGNING_KEY" > "$signing_key"
+          chmod 600 "$signing_key"
+
+          git config --local user.email "11430621+benjaminshafii@users.noreply.github.com"
+          git config --local user.name "benjaminshafii"
+          git config --local gpg.format ssh
+          git config --local user.signingkey "$signing_key"
+          git switch -c "$BRANCH_NAME"
+          git add packages/docs/changelog.mdx changelog/
+          git commit -S -m "docs(changelog): release notes for $TAG"
+
+      - name: Open pull request
+        if: steps.guard.outputs.stable == 'true' && steps.dedupe.outputs.documented == 'false'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          git push --set-upstream origin "$BRANCH_NAME"
+          printf '%s\n\n%s\n' \
+            "These release notes were auto-generated from the commits between \`$PREV\` and \`$TAG\` by the changelog agent and verified by \`scripts/check-changelog-output.mjs\`." \
+            "This is a docs-only change with no runtime surface." > /tmp/pr_body.txt
+          pr_url="$(gh pr create \
+            --base "$BASE_BRANCH" \
+            --head "$BRANCH_NAME" \
+            --title "docs(changelog): release notes for $TAG" \
+            --body-file /tmp/pr_body.txt)"
+          gh pr merge "$pr_url" --auto --squash --delete-branch

@@ -80,7 +80,7 @@ export default function StripeCheckingPage() {
   return (
     <DashboardPageTemplate
       icon={CreditCard}
-      title="Confirming Stripe"
+      title="Confirming subscription"
       description="Finishing your checkout and refreshing workspace access."
       colors={["#F5F3FF", "#312E81", "#635BFF", "#C4B5FD"]}
     >
@@ -90,15 +90,15 @@ export default function StripeCheckingPage() {
             <AlertCircle className="h-10 w-10 text-red-500" aria-hidden="true" />
             <p className="text-[17px] font-medium text-gray-950">We couldn&apos;t confirm the subscription yet</p>
             <p className="max-w-[480px] text-[14px] leading-6 text-gray-600">
-              If your payment went through, refresh Stripe from the billing page or contact{" "}
+              If your payment went through, refresh the billing page or contact{" "}
               <a className="font-medium text-blue-600 hover:underline" href="mailto:team@openworklabs.com">team@openworklabs.com</a>.
             </p>
-            <DenButton onClick={() => router.replace(billingRoute)}>Return to Stripe</DenButton>
+            <DenButton onClick={() => router.replace(billingRoute)}>Return to Billing</DenButton>
           </>
         ) : (
           <>
             <Loader2 className="h-9 w-9 animate-spin text-[#635BFF]" aria-hidden="true" />
-            <p className="text-[16px] font-medium text-gray-950">Stripe is confirming your subscription</p>
+            <p className="text-[16px] font-medium text-gray-950">Your subscription is being confirmed</p>
             <p className="max-w-sm text-[13px] leading-6 text-gray-500">This page updates automatically. You&apos;ll return to your workspace as soon as access is ready.</p>
           </>
         )}

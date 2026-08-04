@@ -1,5 +1,6 @@
 import type { CdpClient, CdpTarget } from "./cdp.ts";
 import type { PrettyOptions } from "./pretty.ts";
+import type { Surface, SurfaceFacade } from "./surfaces.ts";
 
 export type { PrettyOptions } from "./pretty.ts";
 
@@ -40,6 +41,7 @@ export interface FrameEvidence extends EvidenceMetadata {
   status: "passed" | "failed";
   file: string;
   name: string;
+  surface?: string | null;
   claim: string | null;
   voiceover: string | null;
   url: unknown;
@@ -126,9 +128,12 @@ export interface FlowContext {
   logs: string[];
   screenshots: string[];
   evidenceFrames: FrameEvidenceInput[];
+  state: Record<string, unknown>;
+  surfaces: SurfaceFacade;
 
   eval(expression: string, options?: EvalOptions): Promise<unknown>;
   assert(condition: unknown, message: string): void;
+  skip(reason: string): void;
   log(message: string): void;
   output(name: string, text: unknown): OutputEvidence;
   prove(name: string, options?: ProveOptions): Promise<void>;
@@ -147,6 +152,7 @@ export interface FlowContext {
   expectNoText(text: string): Promise<AssertionEvidence>;
   expectHashIncludes(fragment: string): Promise<void>;
   screenshot(name: string, options?: ScreenshotOptions): Promise<string>;
+  on<T>(surface: string | Surface, fn: () => Promise<T>): Promise<T>;
   switchToNewTab(options?: SwitchToNewTabOptions): Promise<CdpTarget>;
   switchBack(): Promise<void>;
   reconnect(options?: ReconnectOptions): Promise<CdpTarget>;
@@ -200,6 +206,25 @@ export interface FlowResult {
   evidenceFrames?: FrameEvidenceInput[];
 }
 
+export interface SoakFailure {
+  iteration: number;
+  step: string | null;
+  error: string | null;
+}
+
+export interface SoakSummary {
+  flowId: string;
+  title: string;
+  repeat: number;
+  status: FlowStatus;
+  passed: number;
+  failed: number;
+  skipped: number;
+  durationMs: number;
+  capturedIterations: number[];
+  failures: SoakFailure[];
+}
+
 export interface EvalReport {
   runId: string;
   startedAt: string;
@@ -208,6 +233,7 @@ export interface EvalReport {
   mode: EvalMode;
   flows: FlowResult[];
   summary: Record<FlowStatus, number>;
+  soak?: SoakSummary[];
 }
 
 export function defineFlow(flow: FlowDefinition): FlowDefinition {

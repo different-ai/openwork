@@ -1,11 +1,7 @@
-# google-workspace-gmail-draft-attachments — Attach workspace files to Gmail drafts
+# google-workspace-gmail-draft-attachments — Upload workspace files without model-visible bytes
 
-1. I ask OpenWork to create a Google draft and attach a file from my active workspace.
+1. I give OpenWork a workspace file path for a Drive upload or Gmail draft attachment; the model never has to encode or carry the file bytes.
 
-2. OpenWork finds the requested file and shows that it will be included with the draft, preserving its filename and file type.
+2. OpenWork sends the file directly through an authenticated multipart request and immediately performs the Google operation without staging or storing a copy.
 
-3. OpenWork creates the message as a Gmail draft—it does not send the email—and confirms the recipient, subject, and attachment.
-
-4. In Gmail, I open the draft and see the workspace file attached and ready to review or send.
-
-5. The same attachment flow also works when creating a reply draft in an existing Gmail thread.
+3. The uploaded Drive file or Gmail attachment preserves the workspace bytes, filename, and MIME type, including Office formats, and OpenWork returns the provider result for review.

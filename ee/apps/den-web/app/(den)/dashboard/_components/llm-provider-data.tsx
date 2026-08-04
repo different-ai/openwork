@@ -52,6 +52,7 @@ export type DenLlmProvider = {
   };
   models: DenLlmProviderModel[];
   access: {
+    allMembers: boolean;
     members: DenLlmProviderMemberAccess[];
     teams: DenLlmProviderTeamAccess[];
   };
@@ -213,6 +214,7 @@ function asLlmProvider(value: unknown): DenLlmProvider | null {
       ? value.models.map(asLlmProviderModel).filter((entry): entry is DenLlmProviderModel => entry !== null)
       : [],
     access: {
+      allMembers: value.access.allMembers === true,
       members: Array.isArray(value.access.members)
         ? value.access.members
             .map(asLlmProviderMemberAccess)

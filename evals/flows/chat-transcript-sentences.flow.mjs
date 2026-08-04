@@ -50,6 +50,16 @@ export default {
           { timeoutMs: 30_000, label: "chat transcript seed action" },
         );
         await ctx.control("eval.chat_transcript.seed");
+        // The finished turn folds its steps behind a "Worked for …" line;
+        // expand it so the step-level assertions below can see the run.
+        await ctx.waitForText("Worked for 1m 35s", { timeoutMs: 30_000 });
+        await ctx.waitFor(`(() => {
+          const trigger = [...document.querySelectorAll("button")]
+            .find((node) => node.textContent.includes("Worked for"));
+          if (!trigger) return false;
+          if (trigger.getAttribute("aria-expanded") !== "true") trigger.click();
+          return trigger.getAttribute("aria-expanded") === "true";
+        })()`, { timeoutMs: 15_000, label: "step fold expanded" });
         await ctx.waitForText("Fetched Google Workspace Calendar Events", { timeoutMs: 30_000 });
 
         await ctx.prove("Capability call reads as a sentence; the pasted link gets a favicon", {

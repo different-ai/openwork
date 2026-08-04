@@ -24,7 +24,7 @@ asar: true
 asarUnpack:
   - node_modules/.pnpm/@lydell+node-pty*/**
   - node_modules/node-pty/**
-npmRebuild: false
+npmRebuild: true
 afterPack: scripts/electron-after-pack.cjs
 afterSign: scripts/electron-after-sign.cjs
 publish:
@@ -60,8 +60,13 @@ mac:
     - dmg
     - zip
 linux:
-  icon: resources/icons/icon.png
+  icon: resources/icons/linux
+  syncDesktopName: true
   extraResources:
+    - from: resources/icons/linux
+      to: icons/linux
+      filter:
+        - "*.png"
     - from: resources/sidecars
       to: sidecars
       filter:

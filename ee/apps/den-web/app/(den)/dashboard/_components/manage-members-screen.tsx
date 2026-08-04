@@ -1,10 +1,11 @@
 "use client";
 
+import Link from "next/link";
 import { type ElementType, useEffect, useMemo, useState } from "react";
 import {
   CheckCircle2,
   Circle,
-  Link,
+  Link as LinkIcon,
   Lock,
   MoreHorizontal,
   Pencil,
@@ -24,6 +25,7 @@ import {
   getOrgAccessFlags,
   isAssignableOrgRole,
   getMembersRoute,
+  getTeamRoute,
   splitRoleString,
   type DenOrgMember,
 } from "../../_lib/den-org";
@@ -127,6 +129,7 @@ function SummaryCard({
 export function ManageMembersScreen() {
   const {
     activeOrg,
+    orgSlug,
     orgContext,
     orgBusy,
     orgError,
@@ -786,7 +789,7 @@ export function ManageMembersScreen() {
                   <DenButton
                     data-testid="copy-install-link"
                     variant="secondary"
-                    icon={Link}
+                    icon={LinkIcon}
                     onClick={() => void handleCopyInstallLink()}
                     loading={installLinkBusy || mutationBusy === "copy-install-link"}
                   >
@@ -903,7 +906,7 @@ export function ManageMembersScreen() {
                                 }}
                                 className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-gray-600 transition hover:bg-gray-50"
                               >
-                                <Link className="h-3.5 w-3.5" />
+                                <LinkIcon className="h-3.5 w-3.5" />
                                 Copy invite link
                               </button>
                             ) : null}
@@ -1132,9 +1135,12 @@ export function ManageMembersScreen() {
                 >
                   <div>
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-[13px] font-medium text-gray-900">
+                      <Link
+                        href={getTeamRoute(orgSlug, team.id)}
+                        className="text-[13px] font-medium text-gray-900 hover:underline"
+                      >
                         {team.name}
-                      </span>
+                      </Link>
                       {team.managedByScim ? (
                         <span className="rounded-full bg-cyan-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-cyan-700">
                           Managed by SCIM

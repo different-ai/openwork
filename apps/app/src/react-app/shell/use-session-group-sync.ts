@@ -12,6 +12,7 @@ import {
   type WorkspaceGroupState,
 } from "@/react-app/domains/session/sidebar/session-management-store";
 import type { RouteWorkspace } from "./route-workspaces";
+import { SessionGroupEventPoller } from "./session-group-event-poller";
 
 const MIGRATION_PREFIX = "openwork.sessionGroups.migrated.v2";
 
@@ -86,7 +87,7 @@ export function useSessionGroupSync(input: UseSessionGroupSyncInput): void {
   const { workspaces, endpointForWorkspace } = input;
   const workspacesRef = useRef(workspaces);
   const endpointForWorkspaceRef = useRef(endpointForWorkspace);
-  const eventCursorByWorkspaceRef = useRef<Record<string, number | null>>({});
+  const eventPollerRef = useRef(new SessionGroupEventPoller());
   const pollInFlightRef = useRef(false);
   const groupSyncKey = useMemo(
     () => workspaceEndpointSyncKey(workspaces, endpointForWorkspace),
@@ -149,6 +150,12 @@ export function useSessionGroupSync(input: UseSessionGroupSyncInput): void {
 
   useEffect(() => {
     let cancelled = false;
+    const eventWorkspaceKeys: string[] = [];
+    for (const workspace of workspacesRef.current) {
+      const endpoint = endpointForWorkspaceRef.current(workspace);
+      if (endpoint) eventWorkspaceKeys.push(`${endpoint.baseUrl}:${endpoint.workspaceId}`);
+    }
+    eventPollerRef.current.setWorkspaces(eventWorkspaceKeys);
 
     const syncWorkspace = async (workspace: RouteWorkspace, migrateLocal: boolean) => {
       const endpoint = endpointForWorkspaceRef.current(workspace);
@@ -192,20 +199,13 @@ export function useSessionGroupSync(input: UseSessionGroupSyncInput): void {
           const endpoint = endpointForWorkspaceRef.current(workspace);
           if (!endpoint) continue;
           const key = `${endpoint.baseUrl}:${endpoint.workspaceId}`;
-          const currentCursor = eventCursorByWorkspaceRef.current[key];
           try {
-            const response = await endpoint.client.listSessionGroupEvents(
-              endpoint.workspaceId,
-              typeof currentCursor === "number" ? { since: currentCursor } : undefined,
+            await eventPollerRef.current.poll(
+              key,
+              (options) => endpoint.client.listSessionGroupEvents(endpoint.workspaceId, options),
+              () => syncWorkspace(workspace, false),
             );
             if (cancelled) return;
-            eventCursorByWorkspaceRef.current[key] =
-              typeof response.cursor === "number"
-                ? response.cursor
-                : Math.max(currentCursor ?? 0, ...((response.items ?? []).map((item) => Number(item.seq) || 0)));
-            if (currentCursor === undefined || currentCursor === null) continue;
-            if ((response.items ?? []).length === 0) continue;
-            await syncWorkspace(workspace, false);
           } catch {
             // Best effort: normal workspace/session loading still surfaces connection issues.
           }

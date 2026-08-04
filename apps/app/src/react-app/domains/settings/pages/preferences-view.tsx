@@ -27,6 +27,7 @@ import {
   LayoutSectionTitle,
   LayoutStack,
 } from "../settings-layout";
+import { DesktopIntegrationSection } from "../desktop-integration-section";
 
 export type PreferencesViewProps = {
   busy: boolean;
@@ -141,6 +142,8 @@ export function PreferencesView(props: PreferencesViewProps) {
           </LayoutSectionItemHeader>
         </LayoutSectionItem>
       </LayoutSection>
+
+      <DesktopIntegrationSection />
 
       <LayoutSection>
         <LayoutSectionHeader>

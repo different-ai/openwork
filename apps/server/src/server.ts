@@ -23,6 +23,7 @@ import { ensureDir, exists, hashToken, shortId } from "./utils.js";
 import { defaultWorkspaceOpenworkConfig, ensureWorkspaceFiles, readRawOpencodeConfig } from "./workspace-init.js";
 import { sanitizeCommandName, validateMcpName } from "./validators.js";
 import { TokenService } from "./tokens.js";
+import { resetManagedProviderAuthCache, syncManagedProviderAuth } from "./managed-provider-auth.js";
 import { EnvService } from "./env-file.js";
 import {
   normalizeResourceSnapshot,
@@ -76,10 +77,13 @@ import { sanitizeDiagnosticString } from "./diagnostic-sanitizer.js";
 import {
   mergeOpencodeConfigs,
   mergeRuntimeProviderUpdate,
+  readGlobalRuntimeOpencodeConfig,
   readRuntimeOpencodeConfig,
   runtimeDisabledProviderList,
   runtimeMcpMap,
+  runtimeProviderMap,
   type RuntimeOpencodeConfig,
+  writeGlobalRuntimeOpencodeConfig,
   writeRuntimeOpencodeConfig,
 } from "./runtime-opencode-config-store.js";
 import {
@@ -89,8 +93,9 @@ import {
   seedOpenworkWorkspaceConfigIfEmpty,
   writeOpenworkWorkspaceConfig,
 } from "./openwork-workspace-config-store.js";
-import { buildOpenworkRuntimeConfigObject, openworkRuntimeConfigFilePath } from "./openwork-runtime-config.js";
+import { buildOpenworkRuntimeConfigObject, openworkRuntimeConfigFilePath, writeOpenworkRuntimeConfigFile } from "./openwork-runtime-config.js";
 import { readLegacyConfigSweepState } from "./legacy-config-sweep.js";
+import { findManagedEngineWorkspace } from "./workspaces.js";
 import pkg from "../package.json" with { type: "json" };
 import constants from "../../../constants.json" with { type: "json" };
 
@@ -323,6 +328,30 @@ function parseDisabledProvidersPayload(value: unknown): string[] {
     if (!providers.includes(provider)) providers.push(provider);
   }
   return providers;
+}
+
+function parseRuntimeProviderPatchPayload(body: Record<string, unknown>): Record<string, unknown> {
+  const provider = body.provider;
+  if (!isRecord(provider)) {
+    throw new ApiError(400, "invalid_payload", "provider must be an object");
+  }
+  for (const [providerId, value] of Object.entries(provider)) {
+    if (!providerId.trim()) {
+      throw new ApiError(400, "invalid_payload", "provider keys must be non-empty strings");
+    }
+    if (value !== null && !isRecord(value)) {
+      throw new ApiError(400, "invalid_payload", "provider values must be objects or null");
+    }
+  }
+  return provider;
+}
+
+function resolveEngineRuntimeWorkspace(config: ServerConfig): WorkspaceInfo {
+  const workspace = findManagedEngineWorkspace(config.workspaces) ?? config.workspaces[0];
+  if (!workspace) {
+    throw new ApiError(400, "workspace_missing", "At least one workspace is required for engine runtime config");
+  }
+  return workspace;
 }
 
 function redactBearerTokens(value: string): string {
@@ -656,6 +685,16 @@ type ServerLogger = {
   log: (level: LogLevel, message: string, attributes?: LogAttributes) => void;
 };
 
+/** Adapt the server logger to the warn/error shape helpers expect. */
+function toManagedProviderAuthLogger(logger: ServerLogger) {
+  return {
+    warn: (message: string, attributes?: Record<string, unknown>) =>
+      logger.log("warn", message, attributes as LogAttributes | undefined),
+    error: (message: string, attributes?: Record<string, unknown>) =>
+      logger.log("error", message, attributes as LogAttributes | undefined),
+  };
+}
+
 const LOG_LEVEL_NUMBERS: Record<LogLevel, number> = {
   info: 9,
   warn: 13,
@@ -819,6 +858,7 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
     env,
     restartReloadWatchers,
     engineMcpServerState,
+    logger,
   );
 
   const serverOptions: {
@@ -989,6 +1029,13 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
     invalidateEngineMcpServerState(config, engineMcpServerState);
     throw error;
   }
+
+  // Deliver server-managed provider credentials to the engine on startup. The
+  // engine process receives a fixed env allowlist, so credentials materialized
+  // into the env store only reach it through the engine's auth API. Fire and
+  // forget: a credential problem must never stop the server from serving.
+  resetManagedProviderAuthCache();
+  void syncManagedProviderAuth({ config, env, logger: toManagedProviderAuthLogger(logger) }).catch(() => undefined);
 
   return {
     ...server,
@@ -1480,6 +1527,7 @@ function createRoutes(
   env: EnvService,
   onWorkspacesChanged: () => void,
   engineMcpServerState: EngineMcpServerState,
+  logger: ServerLogger,
 ): Route[] {
   const routes: Route[] = [];
   registerCoreRoutes({
@@ -1487,6 +1535,7 @@ function createRoutes(
     config,
     tokens,
     env,
+    managedProviderAuthLogger: toManagedProviderAuthLogger(logger),
     serverVersion: SERVER_VERSION,
     opencodeVersion: OPENCODE_VERSION,
     jsonResponse,
@@ -1989,6 +2038,43 @@ function createRoutes(
     return jsonResponse({
       ok: true,
       disabledProviders: runtimeDisabledProviderList(result.config),
+    });
+  });
+
+  addRoute(routes, "GET", "/runtime-config/providers", "host-token", async () => {
+    const runtime = await readGlobalRuntimeOpencodeConfig(config);
+    return jsonResponse({ provider: runtimeProviderMap(runtime) });
+  });
+
+  addRoute(routes, "PATCH", "/runtime-config/providers", "host-token", async (ctx) => {
+    ensureWritable(config);
+    const workspace = resolveEngineRuntimeWorkspace(config);
+    const body = await readJsonBody(ctx.request);
+    const providerPatch = parseRuntimeProviderPatchPayload(body);
+    const result = await writeGlobalRuntimeOpencodeConfig(config, (current) => ({
+      ...current,
+      provider: mergeRuntimeProviderUpdate(current.provider, providerPatch),
+    }));
+
+    const fileResult = await writeOpenworkRuntimeConfigFile(config, workspace.id);
+    const shouldReload = result.changed || fileResult.changed;
+    if (shouldReload) {
+      await reloadOpencodeEngine(config, workspace, engineMcpServerState);
+    }
+    // The provider entry only names its credential env vars; the engine needs
+    // the value itself via its auth API.
+    await syncManagedProviderAuth({
+      config,
+      env,
+      logger: toManagedProviderAuthLogger(logger),
+    }).catch(() => undefined);
+
+    return jsonResponse({
+      ok: true,
+      changed: result.changed,
+      provider: runtimeProviderMap(result.config),
+      runtimeConfigPath: openworkRuntimeConfigFilePath(config),
+      reload: shouldReload ? "reloaded" : "skipped",
     });
   });
 

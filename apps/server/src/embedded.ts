@@ -62,9 +62,9 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
     const workspace = findManagedEngineWorkspace(config.workspaces);
     if (workspace) {
       // Server-managed config file: the engine re-reads it from disk on every
-      // instance rebuild, and keepOpenworkRuntimeConfigFileFresh rewrites it
+      // instance rebuild, and keepOpenworkRuntimeConfigFileFresh synchronizes it
       // on every runtime-DB write — so disposes always pick up current state.
-      const runtimeConfigPath = await writeOpenworkRuntimeConfigFile(config, workspace.id);
+      const { path: runtimeConfigPath } = await writeOpenworkRuntimeConfigFile(config, workspace.id);
       keepOpenworkRuntimeConfigFileFresh(config, workspace.id);
       const cwd = options.opencodeCwd
         || process.env.OPENWORK_MANAGED_OPENCODE_CWD?.trim()

@@ -476,7 +476,11 @@ export function LlmProvidersScreen() {
                 </div>
 
                 <div className="mt-5 flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-gray-100 pt-4 text-[13px] text-gray-500">
-                  <span>{memberAccessCount} people · {teamAccessCount} teams</span>
+                  <span>
+                    {provider.access.allMembers
+                      ? "Everyone in the org"
+                      : `${memberAccessCount} people · ${teamAccessCount} teams`}
+                  </span>
                   <span aria-hidden>·</span>
                   <span>{formatProviderTimestamp(provider.updatedAt)}</span>
                 </div>

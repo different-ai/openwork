@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertCircle, CheckCircle2, MessageSquareText, Send } from "lucide-react";
+import { AlertCircle, CheckCircle2, Copy, Mail, MessageSquareText, Send } from "lucide-react";
 import { useMemo, useState } from "react";
 
 export type AppFeedbackPrefill = {
@@ -17,16 +17,20 @@ export type AppFeedbackPrefill = {
 
 type Props = {
   prefill: AppFeedbackPrefill;
+  mode?: "feedback" | "contact";
 };
 
 type SubmitState = "idle" | "loading" | "success" | "error";
 
 const INITIAL_MESSAGE = "";
+const TEAM_EMAIL = "team@openworklabs.com";
 
 export function AppFeedbackForm(props: Props) {
+  const mode = props.mode ?? "feedback";
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [message, setMessage] = useState(INITIAL_MESSAGE);
+  const [emailCopied, setEmailCopied] = useState(false);
   const [website, setWebsite] = useState("");
   const [startedAt, setStartedAt] = useState(() => Date.now());
   const [state, setState] = useState<SubmitState>("idle");
@@ -58,6 +62,12 @@ export function AppFeedbackForm(props: Props) {
     setErrorMessage("");
   };
 
+  const copyTeamEmail = async () => {
+    await navigator.clipboard.writeText(TEAM_EMAIL);
+    setEmailCopied(true);
+    window.setTimeout(() => setEmailCopied(false), 1800);
+  };
+
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const trimmedName = name.trim();
@@ -77,7 +87,11 @@ export function AppFeedbackForm(props: Props) {
 
     if (!trimmed) {
       setState("error");
-      setErrorMessage("Please describe the issue before sending feedback.");
+      setErrorMessage(
+        mode === "contact"
+          ? "Please add your question before sending."
+          : "Please describe the issue before sending feedback.",
+      );
       return;
     }
 
@@ -96,6 +110,7 @@ export function AppFeedbackForm(props: Props) {
           message: trimmed,
           website,
           startedAt,
+          mode,
           context: props.prefill,
         }),
       });
@@ -128,15 +143,18 @@ export function AppFeedbackForm(props: Props) {
       <div className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
         <div className="rounded-[1.5rem] border border-white/70 bg-white/85 p-6 shadow-sm backdrop-blur">
           <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-slate-200/80 bg-slate-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-            <MessageSquareText size={12} />
-            app feedback
+            {mode === "contact" ? <Mail size={12} /> : <MessageSquareText size={12} />}
+            {mode === "contact" ? "contact the team" : "app feedback"}
           </div>
           <h1 className="max-w-2xl text-3xl font-semibold tracking-tight text-[#011627] md:text-4xl">
-            Tell us what broke, felt rough, or needs polish.
+            {mode === "contact"
+              ? "Have questions about OpenWork?"
+              : "Tell us what broke, felt rough, or needs polish."}
           </h1>
           <p className="mt-3 max-w-2xl text-[15px] leading-relaxed text-slate-600">
-            Your note goes to the OpenWork team with your contact details, app
-            version, and runtime context already attached.
+            {mode === "contact"
+              ? "Send the OpenWork team a note about sales, security, support, or anything else you want to ask."
+              : "Your note goes to the OpenWork team with your contact details, app version, and runtime context already attached."}
           </p>
 
           {state === "success" ? (
@@ -144,16 +162,20 @@ export function AppFeedbackForm(props: Props) {
               <div className="flex items-start gap-3">
                 <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0" />
                 <div>
-                  <div className="text-[15px] font-semibold">Feedback sent</div>
+                  <div className="text-[15px] font-semibold">
+                    {mode === "contact" ? "Message sent" : "Feedback sent"}
+                  </div>
                   <p className="mt-1 text-[14px] leading-relaxed text-emerald-800">
-                    Thanks. We received your note and the attached diagnostics.
+                    {mode === "contact"
+                      ? "Thanks. We received your note and will follow up by email."
+                      : "Thanks. We received your note and the attached diagnostics."}
                   </p>
                   <button
                     type="button"
                     onClick={reset}
                     className="mt-4 inline-flex items-center rounded-full border border-emerald-300 bg-white px-4 py-2 text-[13px] font-medium text-emerald-900 transition hover:border-emerald-400 hover:bg-emerald-100"
                   >
-                    Send another message
+                    {mode === "contact" ? "Send another question" : "Send another message"}
                   </button>
                 </div>
               </div>
@@ -207,12 +229,16 @@ export function AppFeedbackForm(props: Props) {
 
               <div>
                 <label className="mb-2 block text-[12px] font-semibold uppercase tracking-[0.16em] text-slate-500">
-                  What happened?
+                  {mode === "contact" ? "How can we help?" : "What happened?"}
                 </label>
                 <textarea
                   value={message}
                   onChange={(event) => setMessage(event.target.value)}
-                  placeholder="What were you trying to do? What did you expect? What actually happened?"
+                  placeholder={
+                    mode === "contact"
+                      ? "Tell us what you are working on or what you would like to know."
+                      : "What were you trying to do? What did you expect? What actually happened?"
+                  }
                   className="min-h-[220px] w-full rounded-[1.5rem] border border-slate-200 bg-white px-4 py-4 text-[15px] leading-relaxed text-[#011627] outline-none transition focus:border-slate-300 focus:ring-4 focus:ring-slate-100"
                   disabled={state === "loading"}
                   required
@@ -232,36 +258,74 @@ export function AppFeedbackForm(props: Props) {
                 className="doc-button inline-flex items-center gap-2 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <Send size={16} />
-                {state === "loading" ? "Sending..." : "Send feedback"}
+                {state === "loading"
+                  ? "Sending..."
+                  : mode === "contact"
+                    ? "Send question"
+                    : "Send feedback"}
               </button>
             </form>
           )}
         </div>
 
         <aside className="rounded-[1.5rem] border border-slate-200/80 bg-[#0b1728] p-5 text-white shadow-sm">
-          <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-200/80">
-            Attached context
-          </div>
-          <p className="mt-3 text-[14px] leading-relaxed text-slate-300">
-            These details are captured from the app link so the team can triage
-            the issue faster.
-          </p>
-
-          <div className="mt-5 grid gap-3">
-            {contextItems.map((item) => (
-              <div
-                key={item.label}
-                className="rounded-[1.15rem] border border-white/10 bg-white/5 px-4 py-3"
-              >
+          {mode === "contact" ? (
+            <>
+              <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-200/80">
+                Prefer to email us instead?
+              </div>
+              <p className="mt-3 text-[14px] leading-relaxed text-slate-300">
+                Send a message directly and we will route it to the right person.
+              </p>
+              <div className="mt-5 rounded-[1.15rem] border border-white/10 bg-white/5 px-4 py-3">
                 <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
-                  {item.label}
+                  Team email
                 </div>
-                <div className="mt-1 break-words font-mono text-[13px] text-white">
-                  {item.value}
+                <div className="mt-2 flex flex-wrap items-center gap-3">
+                  <a
+                    className="font-mono text-[14px] text-white underline-offset-4 hover:underline"
+                    href={`mailto:${TEAM_EMAIL}`}
+                  >
+                    {TEAM_EMAIL}
+                  </a>
+                  <button
+                    type="button"
+                    onClick={() => void copyTeamEmail()}
+                    className="inline-flex items-center gap-1.5 rounded-full border border-white/15 bg-white/10 px-3 py-1.5 text-[12px] font-medium text-white transition hover:bg-white/15"
+                  >
+                    <Copy size={13} />
+                    {emailCopied ? "Copied" : "Copy"}
+                  </button>
                 </div>
               </div>
-            ))}
-          </div>
+            </>
+          ) : (
+            <>
+              <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-200/80">
+                Attached context
+              </div>
+              <p className="mt-3 text-[14px] leading-relaxed text-slate-300">
+                These details are captured from the app link so the team can triage
+                the issue faster.
+              </p>
+
+              <div className="mt-5 grid gap-3">
+                {contextItems.map((item) => (
+                  <div
+                    key={item.label}
+                    className="rounded-[1.15rem] border border-white/10 bg-white/5 px-4 py-3"
+                  >
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+                      {item.label}
+                    </div>
+                    <div className="mt-1 break-words font-mono text-[13px] text-white">
+                      {item.value}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
         </aside>
       </div>
     </section>

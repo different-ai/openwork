@@ -71,10 +71,12 @@ import {
   WorkspaceBootstrapTable,
   WorkspaceClaimTable,
 } from "@openwork-ee/den-db/schema"
+import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { db } from "../../db.js"
+import { completeLinearIssue, createLinearIssue, type LinearIssue } from "../../linear.js"
 import { orgRoleRoute } from "../../middleware/index.js"
 import { denTypeIdSchema, forbiddenSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { appLogger } from "../../observability/logger.js"
@@ -82,11 +84,17 @@ import { cancelOrganizationSubscriptions } from "../../stripe-billing.js"
 import { ensureOwner, orgAccessFailureStatus, type OrgRouteVariables } from "./shared.js"
 
 type OrganizationMemberId = typeof MemberTable.$inferSelect.id
+type OrganizationId = typeof OrganizationTable.$inferSelect.id
 type UserId = typeof MemberTable.$inferSelect.userId
 
 type ParsedApiKeyMetadata = {
   organizationId: string
   orgMembershipId: string
+}
+
+type DeletionRequestSnapshot = {
+  memberCount: number | null
+  organizationCreatedAt: string | null
 }
 
 const logger = appLogger.child({ component: "delete_organization" })
@@ -128,6 +136,192 @@ function parseApiKeyMetadata(value: unknown): ParsedApiKeyMetadata | null {
   return { organizationId, orgMembershipId }
 }
 
+function optionalHeader(headers: Headers, name: string) {
+  const value = headers.get(name)?.trim()
+  return value ? value : undefined
+}
+
+function collectLocationHeaders(headers: Headers) {
+  const country = optionalHeader(headers, "cf-ipcountry")
+    ?? optionalHeader(headers, "x-vercel-ip-country")
+    ?? optionalHeader(headers, "x-country-code")
+  const entries = [
+    { label: "x-forwarded-for", value: optionalHeader(headers, "x-forwarded-for") },
+    { label: "cf-connecting-ip", value: optionalHeader(headers, "cf-connecting-ip") },
+    { label: "x-real-ip", value: optionalHeader(headers, "x-real-ip") },
+    { label: "country", value: country },
+  ]
+
+  const lines: string[] = []
+  for (const entry of entries) {
+    if (entry.value) {
+      lines.push(`${entry.label}: ${entry.value}`)
+    }
+  }
+
+  return lines.length > 0 ? lines.join("\n") : "not provided"
+}
+
+function confirmationStringFromBody(value: unknown): string | null {
+  if (typeof value === "string") {
+    const trimmed = value.trim()
+    return trimmed ? trimmed : null
+  }
+
+  if (!isRecord(value)) {
+    return null
+  }
+
+  for (const key of ["confirmation", "confirmationString", "confirmationText", "confirm", "organizationName"]) {
+    const candidate = value[key]
+    if (typeof candidate === "string" && candidate.trim()) {
+      return candidate
+    }
+  }
+
+  return null
+}
+
+async function readConfirmationString(request: Request) {
+  if (!request.body) {
+    return "not provided by endpoint"
+  }
+
+  let text: string
+  try {
+    text = await request.text()
+  } catch {
+    return "request body present but could not be read"
+  }
+
+  const trimmed = text.trim()
+  if (!trimmed) {
+    return "request body present but no confirmation string found"
+  }
+
+  const contentType = request.headers.get("content-type")?.toLowerCase() ?? ""
+  if (!contentType.includes("application/json")) {
+    return trimmed
+  }
+
+  try {
+    const parsed: unknown = JSON.parse(trimmed)
+    return confirmationStringFromBody(parsed) ?? "request body present but no confirmation string found"
+  } catch {
+    return "request body present but JSON could not be parsed"
+  }
+}
+
+function dateToAuditString(value: Date | string | null | undefined) {
+  if (value instanceof Date) {
+    return value.toISOString()
+  }
+  return typeof value === "string" && value.trim() ? value : null
+}
+
+async function readDeletionRequestSnapshot(organizationId: OrganizationId): Promise<DeletionRequestSnapshot> {
+  try {
+    const memberRows = await db
+      .select({ id: MemberTable.id })
+      .from(MemberTable)
+      .where(eq(MemberTable.organizationId, organizationId))
+    const organizationRows = await db
+      .select({ createdAt: OrganizationTable.createdAt })
+      .from(OrganizationTable)
+      .where(eq(OrganizationTable.id, organizationId))
+
+    return {
+      memberCount: memberRows.length,
+      organizationCreatedAt: dateToAuditString(organizationRows[0]?.createdAt),
+    }
+  } catch (error) {
+    logger.warn("failed to read organization deletion snapshot", { error, organization_id: organizationId })
+    return { memberCount: null, organizationCreatedAt: null }
+  }
+}
+
+function formatNullable(value: string | null | undefined) {
+  return value?.trim() ? value : "not available"
+}
+
+function buildAccountDeletionIssueDescription(input: {
+  timestamp: string
+  requestId: string
+  requesterUserId: string | null | undefined
+  requesterEmail: string | null | undefined
+  requesterName: string | null | undefined
+  orgId: string
+  orgName: string
+  memberCount: number | null
+  organizationCreatedAt: string | null
+  databaseUserId: string | null | undefined
+  confirmationString: string
+  locationHeaders: string
+}) {
+  return [
+    "Account deletion request",
+    "",
+    "Request source: self serve request",
+    `Timestamp: ${input.timestamp}`,
+    `Request ID: ${input.requestId}`,
+    `Requester user ID: ${formatNullable(input.requesterUserId)}`,
+    `Requester email: ${formatNullable(input.requesterEmail)}`,
+    `Requester name: ${formatNullable(input.requesterName)}`,
+    `Database user id: ${formatNullable(input.databaseUserId)}`,
+    `Organization ID: ${input.orgId}`,
+    `Organization name: ${input.orgName}`,
+    `Number of members: ${input.memberCount ?? "not available"}`,
+    `Organization creation date: ${input.organizationCreatedAt ?? "not available"}`,
+    `Confirmation string: ${input.confirmationString}`,
+    "",
+    "Location headers:",
+    input.locationHeaders,
+  ].join("\n")
+}
+
+async function createAccountDeletionIssue(input: {
+  request: Request
+  orgId: OrganizationId
+  orgName: string
+  requesterUserId: string | null | undefined
+  requesterEmail: string | null | undefined
+  requesterName: string | null | undefined
+  databaseUserId: string | null | undefined
+}) {
+  const requestId = createDenTypeId("request")
+  const timestamp = new Date().toISOString()
+  const [confirmationString, snapshot] = await Promise.all([
+    readConfirmationString(input.request),
+    readDeletionRequestSnapshot(input.orgId),
+  ])
+  const issue = await createLinearIssue({
+    title: `[ACCOUNT DELETION]: ${input.orgId}`,
+    description: buildAccountDeletionIssueDescription({
+      timestamp,
+      requestId,
+      requesterUserId: input.requesterUserId,
+      requesterEmail: input.requesterEmail,
+      requesterName: input.requesterName,
+      orgId: input.orgId,
+      orgName: input.orgName,
+      memberCount: snapshot.memberCount,
+      organizationCreatedAt: snapshot.organizationCreatedAt,
+      databaseUserId: input.databaseUserId,
+      confirmationString,
+      locationHeaders: collectLocationHeaders(input.request.headers),
+    }),
+  })
+  return { issue, requestId }
+}
+
+async function completeAccountDeletionIssue(issue: LinearIssue | null) {
+  if (!issue) {
+    return
+  }
+
+  await completeLinearIssue({ issueId: issue.id })
+}
+
 export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   app.delete(
     "/v1/org",
@@ -152,6 +346,16 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
       const payload = c.get("organizationContext")
       const organization = payload.organization
       const organizationId = organization.id
+      const user = c.get("user")
+      const accountDeletionIssue = await createAccountDeletionIssue({
+        request: c.req.raw,
+        orgId: organizationId,
+        orgName: organization.name,
+        requesterUserId: user?.id,
+        requesterEmail: user?.email,
+        requesterName: user?.name,
+        databaseUserId: user?.id ?? payload.currentMember.userId,
+      })
 
       await cancelOrganizationSubscriptions({ organizationId })
 
@@ -339,7 +543,13 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
         organization_name: organization.name,
         actor_org_membership_id: payload.currentMember.id,
         actor_user_id: payload.currentMember.userId,
+        account_deletion_request_id: accountDeletionIssue.requestId,
+        account_deletion_request_type: "self serve request",
+        linear_issue_created: Boolean(accountDeletionIssue.issue),
+        linear_issue_id: accountDeletionIssue.issue?.id,
       })
+
+      await completeAccountDeletionIssue(accountDeletionIssue.issue)
 
       return c.json({ ok: true, organization: { id: organizationId, name: organization.name } })
     },

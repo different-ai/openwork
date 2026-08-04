@@ -279,7 +279,7 @@ export function AuthPanel({
   }, [authMode, isSingleOrgPrivateSignup, setAuthMode]);
 
   useEffect(() => {
-    if (!isSingleOrgSsoMode || pathname === "/") {
+    if (!isSingleOrgSsoMode || pathname === "/" || pathname === "/join-org") {
       return;
     }
 
@@ -370,10 +370,10 @@ export function AuthPanel({
     ? resolvedVerificationContent
     : isPasswordResetRequest
       ? passwordResetContent
-      : emailFirstFlow
-      ? emailFirstContent
-      : isSingleOrgSsoMode
-      ? singleOrgSsoContent
+    : isSingleOrgSsoMode
+    ? singleOrgSsoContent
+    : emailFirstFlow
+    ? emailFirstContent
       : visibleAuthMode === "sign-in"
       ? resolvedSignInContent
       : resolvedSignUpContent;
@@ -457,7 +457,7 @@ export function AuthPanel({
     try {
       const { response, payload } = await requestJson(`/v1/auth/login-options?email=${encodeURIComponent(trimmedEmail)}`, { method: "GET" }, 12000);
       if (!response.ok) {
-        setLoginOptionError(getErrorMessage(payload, `Could not check sign-in options (${response.status}).`));
+        setLoginOptionError(getErrorMessage(payload, response.status === 403 ? "We could not verify this sign-in attempt. Please refresh and try again." : `Could not check sign-in options (${response.status}).`));
         return;
       }
 
@@ -532,7 +532,7 @@ export function AuthPanel({
   // OpenWork button.
   const isSignedInWithDesktopHandoff = Boolean(desktopAuthRequested && user && !authError);
   const signedInEmail = user?.email?.trim() || "";
-  const emailFirstPanelActive = emailFirstFlow && !verificationRequired && !isPasswordResetRequest;
+  const emailFirstPanelActive = emailFirstFlow && !isSingleOrgSsoMode && !verificationRequired && !isPasswordResetRequest;
   const emailFirstFormBusy = loginOptionBusy || authBusy || desktopRedirectBusy;
 
   if (isSignedInWithDesktopHandoff) {

@@ -33,6 +33,7 @@ import {
 import { useControlAction, type OpenworkControlAction } from "../../../shell/control/control-provider";
 import type { OpenTarget } from "../artifacts/open-target";
 import { useSidePanelTabs } from "./use-side-panel-tabs";
+import { handlePanelEscape, PanelEmpty } from "./panel-empty";
 import {
   computeBounds,
   getElectronBrowser,
@@ -48,6 +49,8 @@ type SidePanelProps = {
   workspaceRoot: string;
   isRemoteWorkspace?: boolean;
   onClose: () => void;
+  onOpenExtensions?: () => void;
+  onOpenVoice?: () => void;
 };
 
 // HMR can remount this module without unmounting BrowserPanelContent, leaving
@@ -403,6 +406,8 @@ export function SidePanel({
   workspaceRoot,
   isRemoteWorkspace = false,
   onClose,
+  onOpenExtensions,
+  onOpenVoice,
 }: SidePanelProps) {
   const { tabs } = useSessionPanelState(sessionId);
   const activeTab = useActivePanelTab(sessionId);
@@ -586,7 +591,14 @@ export function SidePanel({
 
   return (
     <TooltipProvider delay={1000}>
-      <div className="flex h-full flex-col">
+      <div
+        className="flex h-full flex-col"
+        onKeyDownCapture={(event) => {
+          if (!handlePanelEscape(event.key, onClose)) return;
+          event.preventDefault();
+          event.stopPropagation();
+        }}
+      >
         <div className="shrink-0 border-b border-border bg-background mac:bg-background/80 mac:backdrop-blur-2xl mac:backdrop-saturate-150">
           <div className="flex h-10 items-center gap-1 border-b border-border/60 px-2">
             <div className="no-scrollbar min-w-0 flex-1 overflow-x-auto">
@@ -605,7 +617,8 @@ export function SidePanel({
                 ))}
               </PanelTabList>
             </div>
-            {isBrowserAvailable ? (
+            {!activeTab ? <span className="sr-only">Panel destinations</span> : null}
+            {activeTab && isBrowserAvailable ? (
               <Tooltip>
                 <TooltipTrigger
                   render={(
@@ -621,11 +634,24 @@ export function SidePanel({
                 />
                 <TooltipContent>New tab</TooltipContent>
               </Tooltip>
+            ) : !activeTab ? (
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={onClose}
+                aria-label="Close panel"
+              >
+                <X />
+              </Button>
             ) : null}
           </div>
         </div>
         {!activeTab ? (
-          <PanelEmpty />
+          <PanelEmpty
+            onOpenBrowser={isBrowserAvailable ? createTab : undefined}
+            onOpenExtensions={onOpenExtensions}
+            onOpenVoice={onOpenVoice}
+          />
         ) : null}
         {activeTab?.type === "browser" ? (
           <BrowserPanelContent tab={activeTab} onClose={onClose} />
@@ -644,13 +670,5 @@ export function SidePanel({
         ) : null}
       </div>
     </TooltipProvider>
-  );
-}
-
-function PanelEmpty() {
-  return (
-    <div className="flex h-full items-center justify-center p-4 text-center">
-      <p className="text-sm text-muted-foreground">Open an artifact or browser tab to get started.</p>
-    </div>
   );
 }

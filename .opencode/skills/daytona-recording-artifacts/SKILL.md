@@ -1,37 +1,32 @@
 ---
 name: daytona-recording-artifacts
-description: frame proof, HTML frames, screenshots, recording, PR proof, e2e evidence, validate visually. Daytona artifacts workflow for validated screenshots and optional videos.
+description: screenshots, recording, presentation artifacts, validate visually. Supplementary Daytona screenshots and optional videos after testkit validation.
 ---
 
 # Daytona Recording Artifacts
 
-Use this skill to collect proof that a Daytona UI flow works.
-Use `daytona-flow-validator` before declaring the flow passed. If the user asks
-to do e2e tests for a feature, frame proof is required unless they explicitly
-ask for non-UI or mock-only validation.
+Use this skill to collect supplementary presentation artifacts for a Daytona UI
+journey. Pass/fail evidence comes from an `@openwork/testkit` spec and its
+ambient tape; use `daytona-flow-validator` and `run-tests` before declaring a
+verdict. Custom screenshots or recordings never replace the tape.
 
-## Default: Frame-by-Frame HTML Proof
+## Default supplementary format: screenshot index
 
-The default proof format is a browseable HTML page with named PNG screenshots
-for each step of the flow. This is faster to produce, easier to review, and
-works on any device.
+For presentation, use a browseable HTML page with named PNG screenshots for
+each step. This is easy to review and works on any device, but is not the
+verdict artifact.
 
 Use video (MP4) only when the proof requires motion: streaming text, loading
 spinners, animations, drag-and-drop, or real-time interactions that a static
 frame cannot capture. When video is used, embed it inside the frame-by-frame
 HTML page alongside the static frames.
 
-When a coded eval exists, prefer the eval runner frame output first:
+First run the relevant `evals/specs/**/*.test.ts` through `run-tests`. The spec
+imports `test` from `@openwork/testkit`; screenshots and validation claims are
+recorded ambiently in its tape. Use `publish-evidence` for that existing tape,
+then create the custom index here only if useful.
 
-```bash
-pnpm evals --flow <flow-id> --cdp-url <printed-electron-cdp-url>
-```
-
-The runner writes `evals/results/<run-id>/index.html` plus validated PNG evidence
-from `ctx.prove(...)` and `ctx.screenshot(...)`. Serve or copy that result
-directory for PR evidence.
-
-### How to produce frame proof
+### How to produce the screenshot index
 
 1. Serve a directory from the sandbox on port 8090:
 
@@ -218,20 +213,19 @@ daytona exec "$SANDBOX" -- 'bash .devcontainer/stop-daytona-recording.sh'
 
 Use these layers in order of priority:
 
-1. **Frame-by-frame HTML proof** (default): named PNGs in a browseable index.
-   This is the primary evidence format for UI flows.
-2. **CDP/browser assertions**: prove URL, text, state, accessibility tree, and
-   process state alongside each frame capture.
-3. **Video clips** (when needed): short MP4s embedded in the frame index for
-   steps that require motion proof (streaming, animations, loading states).
+1. **Testkit evidence tape**: ambient validated takes and observable assertions
+   are the verdict source.
+2. **Custom screenshot index** (optional): named PNGs for presentation after
+   the tape-backed test is complete.
+3. **Video clips** (optional): short MP4s for motion such as streaming,
+   animations, or loading states.
 
-Do not report success from a recording alone. The AI should inspect state with
-browser tools and use screenshots to validate visible behavior before declaring
-the flow passed.
+Do not report success from a recording or custom screenshot alone. The testkit
+tape must contain the assertions and validated takes for the claimed behavior.
 
 Do not use a video as the primary demo if most of the flow happened through
-hidden automation. In that case, mark the run as technical validation only and
-produce a new frame-by-frame proof for human review.
+hidden automation. In that case, mark the artifact as supplementary and rely on
+the tape-backed spec for the verdict.
 
 If you discover invalid evidence after the fact, do not reuse the same URL as
 if it were valid. Produce new frames with new names and explain in the
