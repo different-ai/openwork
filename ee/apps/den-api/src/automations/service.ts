@@ -57,6 +57,9 @@ export class AutomationService {
   async runNow(scope: OwnerScope, automationId: string): Promise<AutomationRun | null> {
     const current = await this.get(scope, automationId)
     if (!current || current.automation.state === "archived") return null
+    // The persisted model selection is only as good as the owner's current
+    // access; a revoked grant must fail the manual run, not dispatch it.
+    await this.requireModel(scope, current.revision.model)
     const claim = await automationRepository.claim({
       automation: { ...current.automation, state: "active" },
       revision: current.revision,
@@ -93,6 +96,14 @@ export class AutomationService {
     for (const item of due) {
       const scheduledFor = item.automation.nextDueAt
       if (scheduledFor === null) continue
+      // Revalidate the owner's model access at dispatch time. The occurrence is
+      // still claimed either way so the schedule advances durably; a failed
+      // check becomes a skipped receipt instead of work for the runner.
+      const access = await resolveAutomationModelAccess({
+        organizationId: item.automation.organizationId,
+        ownerMemberId: item.automation.ownerMemberId,
+        ...item.revision.model,
+      })
       const claim = await automationRepository.claim({
         automation: item.automation,
         revision: item.revision,
@@ -103,9 +114,12 @@ export class AutomationService {
         claimDeadlineMs: env.automations.runnerClaimDeadlineMs,
         now,
       })
-      if (claim.kind === "claimed") {
-        started.push(claim.run.id)
+      if (claim.kind !== "claimed") continue
+      if (!access.ok) {
+        await automationRepository.skipRun({ runId: claim.run.id, code: access.code, message: access.message, now })
+        continue
       }
+      started.push(claim.run.id)
     }
     return started
   }
@@ -140,6 +154,22 @@ export class AutomationService {
       now: Date.now(),
     })
     if (!claimed?.run.leaseExpiresAt) return null
+    // Last gate before the assignment leaves Den: access revoked after the run
+    // was queued must not reach the runner with the stale model selection.
+    const access = await resolveAutomationModelAccess({
+      organizationId: scope.organizationId,
+      ownerMemberId: scope.ownerMemberId,
+      ...claimed.revision.model,
+    })
+    if (!access.ok) {
+      await automationRepository.skipRun({
+        runId: claimed.run.id,
+        code: access.code,
+        message: access.message,
+        now: Date.now(),
+      })
+      return null
+    }
     return {
       executionTarget: "desktop" as const,
       runId: claimed.run.id,

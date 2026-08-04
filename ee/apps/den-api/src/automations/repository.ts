@@ -744,6 +744,27 @@ export class DenAutomationRepository implements AutomationRepository {
     )).orderBy(asc(AutomationRunnerNotificationTable.id)).limit(input.limit)
   }
 
+  /** Durably skips a run that must not execute (e.g. revoked model access). */
+  async skipRun(input: {
+    runId: string
+    code: "owner_membership_lost" | "model_access_lost" | "provider_unavailable"
+    message: string
+    now: number
+  }): Promise<void> {
+    await db.update(AutomationRunTable).set({
+      status: "skipped",
+      error: { code: input.code, message: input.message, retryable: false },
+      result_summary: input.message,
+      lease_owner: null,
+      lease_expires_at: null,
+      finished_at: new Date(input.now),
+      updated_at: new Date(input.now),
+    }).where(and(
+      eq(AutomationRunTable.id, normalizeRunId(input.runId)),
+      inArray(AutomationRunTable.status, ["queued", "running"]),
+    ))
+  }
+
   async expireUnclaimedDesktop(input: { now: number; limit: number }): Promise<string[]> {
     const rows = await db.select().from(AutomationRunTable).where(and(
       eq(AutomationRunTable.status, "queued"),

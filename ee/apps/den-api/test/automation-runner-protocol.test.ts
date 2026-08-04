@@ -140,6 +140,21 @@ test("every runner endpoint re-checks that the token owner is still an active me
   assert.match(sse, /if \(!\(await service\.isActiveRunnerOwner\(identity\)\)\) break/)
 })
 
+test("every dispatch path revalidates the owner's model access", () => {
+  const serviceSource = readFileSync(join(import.meta.dir, "../src/automations/service.ts"), "utf8")
+  const tick = serviceSource.slice(serviceSource.indexOf("async tick"), serviceSource.indexOf("async stop"))
+  assert.match(tick, /resolveAutomationModelAccess\(\{\s*organizationId: item\.automation\.organizationId/)
+  assert.match(tick, /if \(!access\.ok\) \{\s*await automationRepository\.skipRun\(/)
+  const claim = serviceSource.slice(
+    serviceSource.indexOf("async claimDesktopRunner"),
+    serviceSource.indexOf("heartbeatDesktopRunner"),
+  )
+  assert.match(claim, /resolveAutomationModelAccess\(\{\s*organizationId: scope\.organizationId/)
+  assert.match(claim, /if \(!access\.ok\) \{[\s\S]*skipRun\([\s\S]*return null/)
+  const runNow = serviceSource.slice(serviceSource.indexOf("async runNow"), serviceSource.indexOf("listRuns"))
+  assert.match(runNow, /await this\.requireModel\(scope, current\.revision\.model\)/)
+})
+
 test("runner protocol endpoints carry no operation id and stay out of the MCP catalog", () => {
   for (const path of [
     "/v1/automation-runners/events",

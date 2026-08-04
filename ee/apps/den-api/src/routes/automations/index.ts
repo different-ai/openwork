@@ -327,8 +327,14 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
       if (!automationRunnerAuth.hasConnected(owner)) {
         return c.json({ error: "runner_unavailable", message: "No desktop runner is online" }, 409)
       }
-      const run = await service.runNow(owner, c.req.valid("param").id)
-      return run ? c.json({ run }, 202) : c.json({ error: "automation_not_found" }, 404)
+      try {
+        const run = await service.runNow(owner, c.req.valid("param").id)
+        return run ? c.json({ run }, 202) : c.json({ error: "automation_not_found" }, 404)
+      } catch (error) {
+        const mapped = failure(error)
+        if (mapped) return c.json(mapped.body, mapped.status)
+        throw error
+      }
     },
   )
 
