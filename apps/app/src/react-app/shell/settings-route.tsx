@@ -1690,11 +1690,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   useCloudProviderAutoSync(() => connectionsStore.syncCloudControlMcp());
 
   useEffect(() => {
-    if (route.tab !== "cloud-providers") return;
-    void providerAuthStore.runCloudProviderSync("settings_cloud_opened");
-  }, [providerAuthStore, route.tab]);
-
-  useEffect(() => {
     openworkServerStore.syncFromOptions();
     connectionsStore.syncFromOptions();
     providerAuthStore.syncFromOptions();
@@ -2190,13 +2185,13 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
               <CloudProvidersView
                 embedded
                 cloudOrgProviders={providerAuthSnapshot.cloudOrgProviders}
-                connectCloudProvider={providerAuthStore.connectCloudProvider}
                 importedCloudProviders={providerAuthSnapshot.importedCloudProviders}
                 onOpenAccount={openCloudAccountSettings}
                 refreshCloudOrgProviders={providerAuthStore.refreshCloudOrgProviders}
                 refreshImportedCloudProviders={providerAuthStore.refreshImportedCloudProviders}
                 removeCloudProvider={providerAuthStore.removeCloudProvider}
                 session={denSession}
+                syncCloudProviders={providerAuthStore.runCloudProviderSync}
               />
             }
           />
@@ -2344,13 +2339,13 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         return (
           <CloudProvidersView
             cloudOrgProviders={providerAuthSnapshot.cloudOrgProviders}
-            connectCloudProvider={providerAuthStore.connectCloudProvider}
             importedCloudProviders={providerAuthSnapshot.importedCloudProviders}
             onOpenAccount={openCloudAccountSettings}
             refreshCloudOrgProviders={providerAuthStore.refreshCloudOrgProviders}
             refreshImportedCloudProviders={providerAuthStore.refreshImportedCloudProviders}
             removeCloudProvider={providerAuthStore.removeCloudProvider}
             session={denSession}
+            syncCloudProviders={providerAuthStore.runCloudProviderSync}
           />
         );
       case "advanced":

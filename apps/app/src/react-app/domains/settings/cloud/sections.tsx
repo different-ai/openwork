@@ -37,7 +37,7 @@ import {
 import { t } from "@/i18n";
 import { useCloudSession } from "./cloud-session-provider";
 
-type ResourceActionKind = "import" | "remove" | "sync";
+type ResourceActionKind = "remove";
 
 export type CloudProviderRow = {
   key: string;
@@ -154,20 +154,12 @@ interface CloudProviderListItemProps {
   actionId: string | null;
   actionKind: ResourceActionKind | null;
   row: CloudProviderRow;
-  onImport: (cloudProviderId: string, providerName: string) => void | Promise<void>;
   onRemove?: (cloudProviderId: string, providerName: string) => void | Promise<void>;
-  onSync: (cloudProviderId: string, providerName: string) => void | Promise<void>;
 }
 
-function CloudProviderListItem({ actionId, actionKind, row, onImport, onRemove, onSync }: CloudProviderListItemProps) {
+function CloudProviderListItem({ actionId, actionKind, row, onRemove }: CloudProviderListItemProps) {
   const actionBusy = actionId === row.cloudProviderId;
-  const actionLabel = !actionBusy
-    ? null
-    : actionKind === "import"
-      ? t("den.importing")
-      : actionKind === "sync"
-        ? t("den.syncing")
-        : t("den.removing");
+  const actionLabel = actionBusy && actionKind === "remove" ? t("den.removing") : null;
   const source = row.provider?.source === "custom" ? "custom" : "managed";
   const modelCount = row.provider?.models.length ?? 0;
   const cloudProviderDetail = modelCount === 0
@@ -207,26 +199,6 @@ function CloudProviderListItem({ actionId, actionKind, row, onImport, onRemove, 
         </SettingsListItemDescription>
       </SettingsListItemContent>
       <SettingsListItemActions>
-        {row.status === "out_of_sync" && row.provider ? (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => void onSync(row.cloudProviderId, row.name)}
-            disabled={actionId !== null}
-          >
-            {actionBusy && actionKind === "sync" ? t("den.syncing") : t("den.sync")}
-          </Button>
-        ) : null}
-        {row.status === "available" && row.provider ? (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => void onImport(row.cloudProviderId, row.name)}
-            disabled={actionId !== null}
-          >
-            {actionBusy ? actionLabel : t("den.import_provider")}
-          </Button>
-        ) : null}
         {row.status !== "available" && onRemove ? (
           <Button
             variant="destructive"
@@ -387,10 +359,8 @@ export interface CloudProvidersSectionProps {
   actionKind: ResourceActionKind | null;
   busy: boolean;
   rows: CloudProviderRow[];
-  onImport: (cloudProviderId: string, providerName: string) => void | Promise<void>;
   onRefresh: () => void | Promise<void>;
   onRemove?: (cloudProviderId: string, providerName: string) => void | Promise<void>;
-  onSync: (cloudProviderId: string, providerName: string) => void | Promise<void>;
 }
 
 export function CloudProvidersSection({
@@ -399,16 +369,14 @@ export function CloudProvidersSection({
   actionKind,
   busy,
   rows,
-  onImport,
   onRefresh,
   onRemove,
-  onSync,
 }: CloudProvidersSectionProps) {
   const { hasActiveOrg } = useCloudSession();
   const [searchQuery, setSearchQuery] = React.useState("");
   const visibleRows = useSearch({ items: rows, keys: nameSearchKeys, query: searchQuery });
   const providerGroups = [
-    { value: "available", label: "Available", rows: visibleRows.filter((row) => row.status === "available") },
+    { value: "available", label: t("den.importing"), rows: visibleRows.filter((row) => row.status === "available") },
     { value: "out_of_sync", label: t("den.out_of_sync_badge"), rows: visibleRows.filter((row) => row.status === "out_of_sync") },
     { value: "imported", label: t("den.imported_badge"), rows: visibleRows.filter((row) => row.status === "imported") },
     { value: "removed_from_cloud", label: t("den.removed_from_cloud_badge"), rows: visibleRows.filter((row) => row.status === "removed_from_cloud") },
@@ -472,9 +440,7 @@ export function CloudProvidersSection({
                           actionId={actionId}
                           actionKind={actionKind}
                           row={row}
-                          onImport={onImport}
                           onRemove={onRemove}
-                          onSync={onSync}
                         />
                       ))}
                     </SettingsList>

@@ -7,6 +7,7 @@ import type { DenOrgLlmProvider } from "@/app/lib/den";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { t } from "@/i18n";
+import type { CloudProviderSyncOutcome } from "@/react-app/domains/connections/provider-auth/store";
 import { useCloudSession } from "@/react-app/domains/settings/cloud/cloud-session-provider";
 import { CloudProvidersSection, type CloudProviderRow } from "@/react-app/domains/settings/cloud/sections";
 import type { useDenSession } from "@/react-app/domains/settings/cloud/use-den-session";
@@ -16,11 +17,10 @@ type CloudProvidersSession = Pick<
   ReturnType<typeof useDenSession>,
   "syncCurrentDenSettings"
 >;
-type ProviderActionKind = "import" | "remove" | "sync";
+type ProviderActionKind = "remove";
 
 export type CloudProvidersViewProps = {
   cloudOrgProviders: DenOrgLlmProvider[];
-  connectCloudProvider: (cloudProviderId: string) => Promise<string | void>;
   embedded?: boolean;
   importedCloudProviders: Record<string, CloudImportedProvider>;
   onOpenAccount: () => void;
@@ -28,6 +28,7 @@ export type CloudProvidersViewProps = {
   refreshImportedCloudProviders: () => Promise<Record<string, CloudImportedProvider>>;
   removeCloudProvider: (cloudProviderId: string) => Promise<string | void>;
   session: CloudProvidersSession;
+  syncCloudProviders: (reason: "manual") => Promise<CloudProviderSyncOutcome>;
 };
 
 const sortStrings = (values: string[]) => values.toSorted();
@@ -37,7 +38,6 @@ const sameStringList = (a: string[], b: string[]) =>
 
 export function CloudProvidersView({
   cloudOrgProviders,
-  connectCloudProvider,
   embedded = false,
   importedCloudProviders,
   onOpenAccount,
@@ -45,6 +45,7 @@ export function CloudProvidersView({
   refreshImportedCloudProviders,
   removeCloudProvider,
   session,
+  syncCloudProviders,
 }: CloudProvidersViewProps) {
   const { activeOrganization: activeOrg, authToken, isSignedIn, user } = useCloudSession();
   const [busy, setBusy] = React.useState(false);
@@ -52,6 +53,7 @@ export function CloudProvidersView({
   const [actionKind, setActionKind] = React.useState<ProviderActionKind | null>(null);
   const [actionError, setActionError] = React.useState<string | null>(null);
   const activeOrgId = activeOrg?.id ?? "";
+  const autoSyncKey = React.useRef<string | null>(null);
 
   const rows = React.useMemo<CloudProviderRow[]>(() => {
     const nextRows: CloudProviderRow[] = cloudOrgProviders.map((provider) => {
@@ -99,11 +101,12 @@ export function CloudProvidersView({
 
       try {
         session.syncCurrentDenSettings();
-        const [items] = await Promise.all([
-          refreshCloudOrgProviders({ force: !quiet }),
-          refreshImportedCloudProviders(),
-        ]);
-        if (!quiet) {
+        const result = await syncCloudProviders("manual");
+        const items = await refreshCloudOrgProviders({ force: result.outcome === "handled_server_side" });
+        await refreshImportedCloudProviders();
+        if (result.outcome === "failed") {
+          setActionError(result.message);
+        } else if (!quiet) {
           toast.info(
             items.length > 0
               ? `Loaded ${items.length} cloud provider${items.length === 1 ? "" : "s"} for ${activeOrg?.name ?? t("den.active_org_title")}.`
@@ -111,9 +114,7 @@ export function CloudProvidersView({
           );
         }
       } catch (error) {
-        if (!quiet) {
-          setActionError(error instanceof Error ? error.message : "Failed to load cloud providers.");
-        }
+        setActionError(error instanceof Error ? error.message : "Failed to load cloud providers.");
       } finally {
         setBusy(false);
       }
@@ -125,36 +126,17 @@ export function CloudProvidersView({
       activeOrgId,
       authToken,
       session.syncCurrentDenSettings,
+      syncCloudProviders,
     ],
   );
 
   React.useEffect(() => {
     if (!user || !activeOrgId) return;
+    const key = `${user.id}::${activeOrgId}`;
+    if (autoSyncKey.current === key) return;
+    autoSyncKey.current = key;
     void refresh(true);
   }, [activeOrgId, refresh, user]);
-
-  const importProvider = React.useCallback(
-    async (cloudProviderId: string, providerName: string) => {
-      if (actionId) return;
-
-      setActionId(cloudProviderId);
-      setActionKind("import");
-      setActionError(null);
-
-      try {
-        const message = await connectCloudProvider(cloudProviderId);
-        toast.success(message || t("den.imported_provider", { name: providerName }));
-      } catch (error) {
-        setActionError(
-          error instanceof Error ? error.message : t("den.import_provider_failed", { name: providerName }),
-        );
-      } finally {
-        setActionId(null);
-        setActionKind(null);
-      }
-    },
-    [actionId, connectCloudProvider],
-  );
 
   const removeProvider = React.useCallback(
     async (cloudProviderId: string, providerName: string) => {
@@ -177,29 +159,6 @@ export function CloudProvidersView({
       }
     },
     [actionId, removeCloudProvider],
-  );
-
-  const syncProvider = React.useCallback(
-    async (cloudProviderId: string, providerName: string) => {
-      if (actionId) return;
-
-      setActionId(cloudProviderId);
-      setActionKind("sync");
-      setActionError(null);
-
-      try {
-        await connectCloudProvider(cloudProviderId);
-        toast.success(t("den.synced_provider", { name: providerName }));
-      } catch (error) {
-        setActionError(
-          error instanceof Error ? error.message : t("den.sync_provider_failed", { name: providerName }),
-        );
-      } finally {
-        setActionId(null);
-        setActionKind(null);
-      }
-    },
-    [actionId, connectCloudProvider],
   );
 
   if (!isSignedIn) {
@@ -228,10 +187,8 @@ export function CloudProvidersView({
       actionKind={actionKind}
       busy={busy}
       rows={rows}
-      onImport={importProvider}
       onRefresh={refresh}
       onRemove={undefined}
-      onSync={syncProvider}
     />
   );
 

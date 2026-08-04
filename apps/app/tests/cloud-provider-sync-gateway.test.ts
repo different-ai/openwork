@@ -274,8 +274,9 @@ describe("cloud provider sync in gateway mode", () => {
     installProviderSyncFetch(requests);
     const { store, reloadCount } = createProviderAuthTestStore();
 
-    await store.runCloudProviderSync("settings_cloud_opened");
+    const outcome = await store.runCloudProviderSync("settings_cloud_opened");
 
+    expect(outcome).toEqual({ outcome: "synced" });
     const patchRequests = requests.filter(
       (request) => request.method === "PATCH" && request.url === "https://server.example/workspace/ws_1/config",
     );
@@ -286,5 +287,25 @@ describe("cloud provider sync in gateway mode", () => {
     expect(store.getSnapshot().importedCloudProviders.lpr_test?.providerId).toBe("lpr_test");
     expect(store.getSnapshot().providerAuthError).toBeNull();
     expect(reloadCount()).toBe(0);
+  });
+
+  test("returns a failed outcome instead of rejecting when provider sync fails", async () => {
+    const storage = installWindow({ origin: "https://self-hosted.example" });
+    installCloudSession(storage);
+    Object.defineProperty(globalThis, "fetch", {
+      configurable: true,
+      value: async () => {
+        throw new Error("Den provider fetch failed");
+      },
+    });
+    const { store } = createProviderAuthTestStore();
+
+    const outcome = await store.runCloudProviderSync("manual");
+
+    expect(outcome.outcome).toBe("failed");
+    if (outcome.outcome === "failed") {
+      expect(outcome.message.length).toBeGreaterThan(0);
+      expect(outcome.message).toContain("Den provider fetch failed");
+    }
   });
 });

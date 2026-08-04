@@ -100,6 +100,11 @@ type CloudProviderSyncReason =
   | "settings_cloud_opened"
   | "manual";
 
+export type CloudProviderSyncOutcome =
+  | { outcome: "handled_server_side" }
+  | { outcome: "synced" }
+  | { outcome: "failed"; message: string };
+
 let lastGlobalProviderDisposeRefreshAt = 0;
 const globalCloudProviderSyncByContext = new Map<string, Promise<void>>();
 let loggedGatewayCloudProviderSyncSkip = false;
@@ -258,7 +263,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
   let cloudOrgProvidersLoadKey = "";
   let cloudOrgProvidersInFlightKey = "";
   let cloudOrgProvidersInFlight: Promise<DenOrgLlmProvider[]> | null = null;
-  let cloudProviderSyncTail: Promise<void> = Promise.resolve();
+  let cloudProviderSyncTail: Promise<CloudProviderSyncOutcome> = Promise.resolve({ outcome: "synced" });
   let cloudProviderSyncContextKey = "";
 
   const emitChange = () => {
@@ -1745,13 +1750,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       return;
     }
 
-    let importedProviders: Record<string, CloudImportedProvider>;
-    try {
-      importedProviders = await refreshImportedCloudProviders({ strict: true });
-    } catch (error) {
-      logCloudProviderSyncError(reason, error);
-      return;
-    }
+    const importedProviders = await refreshImportedCloudProviders({ strict: true });
     const liveProviders = await refreshCloudOrgProviders({ force: true });
     const liveProviderMap = new Map(liveProviders.map((provider) => [provider.id, provider]));
     const failures: string[] = [];
@@ -1836,7 +1835,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     }
   }
 
-  async function runCloudProviderSync(reason: CloudProviderSyncReason) {
+  async function runCloudProviderSync(reason: CloudProviderSyncReason): Promise<CloudProviderSyncOutcome> {
     if (getOpenworkGatewayOrigin()) {
       if (!loggedGatewayCloudProviderSyncSkip) {
         loggedGatewayCloudProviderSyncSkip = true;
@@ -1855,11 +1854,13 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
           () => performCloudProviderSync(reason),
         ),
       )
-      .catch((error) => {
+      .then<CloudProviderSyncOutcome>(() => ({ outcome: "synced" }))
+      .catch((error): CloudProviderSyncOutcome => {
         const message = logCloudProviderSyncError(reason, error);
         if (reason === "settings_cloud_opened") {
           setStateField("providerAuthError", message);
         }
+        return { outcome: "failed", message };
       });
 
     cloudProviderSyncTail = request;
