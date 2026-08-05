@@ -84,12 +84,12 @@ config:
     # 留空以保持外部 MCP URL 的 SSRF 防护开启；仅对可信内网 MCP 才设 "1"。
     allowPrivateMcpUrls: ""
     mcpClaimNamespace: ""                    # Namespace for plugin MCP claims. 选填。
-    desktopDenBaseUrl: https://mic.example.com            # Base URL the desktop was-installed from.
-    corsOrigins: https://mic.example.com,https://api.mic.example.com
-    betterAuthTrustedOrigins: https://mic.example.com
-    webAppHosts: mic.example.com                         # Allowed host header(s) for the web app.
+    desktopDenBaseUrl: https://micx.example.com            # Base URL the desktop was-installed from.
+    corsOrigins: https://micx.example.com,https://api.micx.example.com
+    betterAuthTrustedOrigins: https://micx.example.com
+    webAppHosts: micx.example.com                         # Allowed host header(s) for the web app.
     # Emails auto-promoted to bootstrap admin. 初始引导管理员邮箱（逗号分隔）。
-    bootstrapAdminEmails: "admin@mic.example.com"
+    bootstrapAdminEmails: "admin@micx.example.com"
     installLinksGatingEnabled: "false"      # Self-host: installer install links open by default.
              # 自托管：默认开放安装器安装链接；设 "true" 需 bootstrap admin 审批。
     connectLinkMode: exchange               # "exchange" or "signed". exchange 无需私钥，默认安全。
@@ -99,7 +99,7 @@ config:
     # Installer artifact release metadata (optional; blank == latest published release).
     installerReleaseTag: ""
     installerReleaseRepo: ""
-    authCallbackUrl: https://mic.example.com                # Post-auth callback origin. 认证回调源。
+    authCallbackUrl: https://micx.example.com                # Post-auth callback origin. 认证回调源。
 
   internal:
     apiBaseUrl: ""                          # Blank: inferred from public.apiOrigin. 留空自动推断。
@@ -244,7 +244,7 @@ secret:
     openRouterManagementApiKey: ""            # Only if the inference service is deployed.
     inferenceAdminToken: ""                   # Only if the inference service is deployed.
     inferenceWebhookSecret: ""                # Only if the inference service is deployed.
-    emailFrom: "noreply@mic.example.com"       # Sender for auth/notification email.
+    emailFrom: "noreply@micx.example.com"       # Sender for auth/notification email.
     smtpHost: "smtp.example-relay.com"         # <FILL_ME> your SMTP relay host.
     smtpPort: "587"
     smtpUser: ""                               # May leave blank if your relay needs no auth.
@@ -383,12 +383,12 @@ ingress:
   className: ""               # e.g. "nginx" or your cloud ingress class.
   annotations: {}             # e.g. cert-manager annotations.
   web:
-    host: mic.example.com
+    host: micx.example.com
     path: /
     pathType: Prefix
   api:
     enabled: true
-    host: api.mic.example.com
+    host: api.micx.example.com
     path: /
     pathType: Prefix
-  tls: []                     # e.g. [{ hosts: [mic.example.com, api.mic.example.com], secretName: mic-tls }]
+  tls: []                     # e.g. [{ hosts: [micx.example.com, api.micx.example.com], secretName: mic-tls }]

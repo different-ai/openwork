@@ -13,9 +13,9 @@
 # Env overrides (via .env or export):
 #   MICX_IMAGE_REPOSITORY — registry override (default: ghcr.io/different-ai)
 #   MICX_IMAGE_TAG        — running tag (default: latest; pin a release in production)
-#   MICX_WEB_PUBLIC_ORIGIN   — browser-facing web origin (default https://mic.example.com)
+#   MICX_WEB_PUBLIC_ORIGIN   — browser-facing web origin (default https://micx.example.com)
 #   MICX_API_PUBLIC_URL      — browser-facing API origin (default http://den-api:8788 internal)
-#   MICX_MCP_RESOURCE_URL    — public MCP resource URL (default https://mic.example.com/mcp)
+#   MICX_MCP_RESOURCE_URL    — public MCP resource URL (default https://micx.example.com/mcp)
 #   MICX_MCP_ADDITIONAL_RESOURCES — extra public MCP resource URLs
 #   MICX_CORS_ORIGINS / MICX_WEB_APP_HOSTS — trusted origins / allowed hosts
 #   MICX_MYSQL_ROOT_PASSWORD — MySQL root password (required)
@@ -104,13 +104,13 @@ services:
       BETTER_AUTH_SECRET: ${MICX_BETTER_AUTH_SECRET:?BETTER_AUTH_SECRET required}
       DEN_DB_ENCRYPTION_KEY: ${MICX_DB_ENCRYPTION_KEY:?DEN_DB_ENCRYPTION_KEY required}
       # Public-facing origins. Self-host example; replace with your real domain.
-      BETTER_AUTH_URL: ${MICX_WEB_PUBLIC_ORIGIN:-https://mic.example.com}
+      BETTER_AUTH_URL: ${MICX_WEB_PUBLIC_ORIGIN:-https://micx.example.com}
       DEN_API_PUBLIC_URL: ${MICX_API_PUBLIC_URL:-http://den-api:8788}
-      DEN_MCP_RESOURCE_URL: ${MICX_MCP_RESOURCE_URL:-https://mic.example.com/mcp}
+      DEN_MCP_RESOURCE_URL: ${MICX_MCP_RESOURCE_URL:-https://micx.example.com/mcp}
       DEN_MCP_ADDITIONAL_RESOURCES: ${MICX_MCP_ADDITIONAL_RESOURCES:-}
-      DEN_BETTER_AUTH_TRUSTED_ORIGINS: ${MICX_WEB_PUBLIC_ORIGIN:-https://mic.example.com}
-      CORS_ORIGINS: ${MICX_CORS_ORIGINS:-https://mic.example.com,http://localhost:3005,http://127.0.0.1:3005}
-      DEN_WEB_APP_HOSTS: ${MICX_WEB_APP_HOSTS:-mic.example.com}
+      DEN_BETTER_AUTH_TRUSTED_ORIGINS: ${MICX_WEB_PUBLIC_ORIGIN:-https://micx.example.com}
+      CORS_ORIGINS: ${MICX_CORS_ORIGINS:-https://micx.example.com,http://localhost:3005,http://127.0.0.1:3005}
+      DEN_WEB_APP_HOSTS: ${MICX_WEB_APP_HOSTS:-micx.example.com}
       # Tenancy: single-org self-host gated to owner emails.
       DEN_ORG_MODE: single_org
       DEN_SINGLE_ORG_NAME: ${MICX_ORG_NAME:-Micx}
@@ -172,9 +172,9 @@ services:
       DEN_API_BASE: http://den-api:8788
       DEN_AUTH_FALLBACK_BASE: http://den-api:8788
       # Browser-facing origins.
-      DEN_AUTH_ORIGIN: ${MICX_WEB_PUBLIC_ORIGIN:-https://mic.example.com}
-      DEN_WEB_PUBLIC_ORIGIN: ${MICX_WEB_PUBLIC_ORIGIN:-https://mic.example.com}
-      DEN_WEB_MICX_AUTH_CALLBACK_URL: ${MICX_WEB_PUBLIC_ORIGIN:-https://mic.example.com}
+      DEN_AUTH_ORIGIN: ${MICX_WEB_PUBLIC_ORIGIN:-https://micx.example.com}
+      DEN_WEB_PUBLIC_ORIGIN: ${MICX_WEB_PUBLIC_ORIGIN:-https://micx.example.com}
+      DEN_WEB_MICX_AUTH_CALLBACK_URL: ${MICX_WEB_PUBLIC_ORIGIN:-https://micx.example.com}
       # Tenancy mirror (same org mode as den-api).
       DEN_ORG_MODE: single_org
       DEN_SINGLE_ORG_NAME: ${MICX_ORG_NAME:-Micx}
