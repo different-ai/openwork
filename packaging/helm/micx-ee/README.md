@@ -9,6 +9,15 @@ Initial Helm chart for the Micx EE Den stack:
 - optional Ingress for web and API hosts
 - pre-install/pre-upgrade migration Job scaffold
 
+## 私有部署 QuickStart / Self-host install
+
+For an end-to-end private-deployment walkthrough, see the
+[自托管安装指南](../../../docs/enterprise/self-hosted-install-guide.md) and the
+[初始化指南](../../../docs/enterprise/initialization-guide.md). Use
+[`values.example.yaml`](values.example.yaml) as the operator reference for a
+self-hosted/air-gapped environment; the sections below are the authoritative
+chart values reference.
+
 ## Install
 
 Published releases are available as an OCI Helm chart:
