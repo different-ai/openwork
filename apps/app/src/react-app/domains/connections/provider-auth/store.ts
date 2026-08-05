@@ -10,6 +10,7 @@ import { t } from "../../../../i18n";
 import {
   createDenClient,
   readDenSettings,
+  resolveDenBaseUrls,
   type DenOrgLlmProvider,
   type DenOrgLlmProviderConnection,
 } from "../../../../app/lib/den";
@@ -50,7 +51,8 @@ export type ProviderAuthOpenworkServer = {
     OpenworkServerStoreSnapshot,
     "openworkServerStatus" | "openworkServerClient"
   > & {
-    openworkServerCapabilities: { config?: { read?: boolean; write?: boolean } } | null;
+    openworkServerAuth?: { token?: string; hostToken?: string };
+    openworkServerCapabilities: { config?: { read?: boolean; write?: boolean }; providerSync?: boolean } | null;
   };
 };
 import {
@@ -268,6 +270,9 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
   let cloudOrgProvidersInFlight: Promise<DenOrgLlmProvider[]> | null = null;
   let cloudProviderSyncTail: Promise<void> = Promise.resolve();
   let cloudProviderSyncContextKey = "";
+  let lastDenSessionPushKey = "";
+  let denSessionPushKey = "";
+  let denSessionPushInFlight: Promise<void> | null = null;
 
   const emitChange = () => {
     for (const listener of listeners) listener();
@@ -340,6 +345,42 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       hasOpenworkTarget,
       canUseOpenworkServer,
     };
+  };
+
+  const serverHandlesProviderSync = () => {
+    const openworkSnapshot = options.openworkServer.getSnapshot();
+    return Boolean(
+      openworkSnapshot.openworkServerStatus === "connected" &&
+      openworkSnapshot.openworkServerCapabilities?.providerSync === true &&
+      openworkSnapshot.openworkServerAuth?.hostToken?.trim() &&
+      openworkSnapshot.openworkServerClient,
+    );
+  };
+
+  const pushDenSession = (force = false): Promise<void> => {
+    const openworkSnapshot = options.openworkServer.getSnapshot();
+    const openworkClient = openworkSnapshot.openworkServerClient;
+    const settings = readDenSettings();
+    const apiBaseUrl = settings.apiBaseUrl ?? resolveDenBaseUrls(settings).apiBaseUrl;
+    const token = settings.authToken?.trim() ?? "";
+    const orgId = settings.activeOrgId?.trim() ?? "";
+    if (!serverHandlesProviderSync() || !openworkClient || !token || !orgId) return Promise.resolve();
+    const key = `${apiBaseUrl}::${orgId}::${token}`;
+    if (!force && key === lastDenSessionPushKey) return Promise.resolve();
+    if (key === denSessionPushKey && denSessionPushInFlight) return denSessionPushInFlight;
+    denSessionPushKey = key;
+    const request = openworkClient.putDenSession({ baseUrl: apiBaseUrl, token, orgId });
+    denSessionPushInFlight = request;
+    request.then(
+      () => { lastDenSessionPushKey = key; },
+      () => undefined,
+    ).finally(() => {
+      if (denSessionPushInFlight === request) {
+        denSessionPushInFlight = null;
+        denSessionPushKey = "";
+      }
+    });
+    return request;
   };
 
   const refreshSnapshot = () => {
@@ -465,6 +506,14 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
 
   const refreshImportedCloudProviders = async (refreshOptions?: { strict?: boolean }) => {
     try {
+      if (serverHandlesProviderSync()) {
+        const openworkClient = options.openworkServer.getSnapshot().openworkServerClient;
+        if (!openworkClient) throw new Error("OpenWork server unavailable.");
+        const status = await openworkClient.getCloudProviderSyncStatus();
+        const next = Object.fromEntries(status.providers.map((provider) => [provider.cloudProviderId, provider]));
+        setStateField("importedCloudProviders", next);
+        return next;
+      }
       const config = await readWorkspaceOpenworkConfigRecord();
       const cloudImports = readWorkspaceCloudImports(config);
       const next = cloudImports.providers;
@@ -1902,6 +1951,38 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       return { outcome: "handled_server_side" };
     }
 
+    if (serverHandlesProviderSync()) {
+      try {
+        const openworkClient = options.openworkServer.getSnapshot().openworkServerClient;
+        if (!openworkClient) throw new Error("OpenWork server unavailable.");
+        let result = await openworkClient.runCloudProviderSyncNow(reason);
+        if (result.status === "no_session") {
+          await pushDenSession(true);
+          result = await openworkClient.runCloudProviderSyncNow(reason);
+        }
+        if (result.status === "failed" || result.status === "no_session") {
+          const message = logCloudProviderSyncError(
+            reason,
+            new Error(result.message ?? "Cloud provider sync failed."),
+          );
+          if (reason === "settings_cloud_opened") {
+            setStateField("providerAuthError", message);
+          }
+          return;
+        }
+        if (result.status === "applied") {
+          await refreshProviders({ force: true });
+        }
+        return { outcome: "handled_server_side" };
+      } catch (error) {
+        const message = logCloudProviderSyncError(reason, error);
+        if (reason === "settings_cloud_opened") {
+          setStateField("providerAuthError", message);
+        }
+        return;
+      }
+    }
+
     const request = cloudProviderSyncTail
       .catch(() => undefined)
       .then(() =>
@@ -2059,6 +2140,13 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       setStateField("lastSyncError", {});
       void refreshImportedCloudProviders();
     }
+    if (serverHandlesProviderSync()) {
+      const nextSyncContextKey = getCloudProviderSyncContextKey();
+      if (nextSyncContextKey === cloudProviderSyncContextKey) return;
+      cloudProviderSyncContextKey = nextSyncContextKey;
+      void pushDenSession().then(() => runCloudProviderSync("app_launch"));
+      return;
+    }
     if (!hasCloudProviderSyncPrerequisites()) {
       cloudProviderSyncContextKey = "";
       return;
@@ -2093,8 +2181,12 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
             providerAuthMethods: {},
             lastSyncError: {},
           }));
-          void runCloudProviderSync("sign_in");
+          void pushDenSession().then(() => runCloudProviderSync("sign_in"));
         } else {
+          if (serverHandlesProviderSync()) {
+            lastDenSessionPushKey = "";
+            void options.openworkServer.getSnapshot().openworkServerClient?.deleteDenSession().catch(() => undefined);
+          }
           // Sign-out or error: remove all cloud-imported providers from the workspace
           // Capture the full import records BEFORE clearing state
           const importedProviders = { ...state.importedCloudProviders };

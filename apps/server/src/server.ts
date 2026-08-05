@@ -96,6 +96,7 @@ import {
 import { buildOpenworkRuntimeConfigObject, openworkRuntimeConfigFilePath, writeOpenworkRuntimeConfigFile } from "./openwork-runtime-config.js";
 import { readLegacyConfigSweepState } from "./legacy-config-sweep.js";
 import { findManagedEngineWorkspace } from "./workspaces.js";
+import { CloudProviderSync, parseCloudProviderDenSession } from "./cloud-provider-sync.js";
 import pkg from "../package.json" with { type: "json" };
 import constants from "../../../constants.json" with { type: "json" };
 
@@ -851,6 +852,12 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
     watcherHandle = startReloadWatchers({ config, reloadEvents, logger });
   };
   const engineMcpServerState = beginEngineMcpServerState(config);
+  const cloudProviderSync = new CloudProviderSync({
+    config,
+    env,
+    reloadEngine: () => reloadOpencodeEngine(config, resolveEngineRuntimeWorkspace(config), engineMcpServerState),
+    logger: toManagedProviderAuthLogger(logger),
+  });
   const routes = createRoutes(
     config,
     approvals,
@@ -859,6 +866,7 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
     restartReloadWatchers,
     engineMcpServerState,
     logger,
+    cloudProviderSync,
   );
 
   const serverOptions: {
@@ -1026,6 +1034,7 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
       idleTimeout: 120,
     });
   } catch (error) {
+    cloudProviderSync.stop();
     invalidateEngineMcpServerState(config, engineMcpServerState);
     watcherHandle.close();
     reloadBaselineRefreshers.delete(config);
@@ -1042,6 +1051,7 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
   return {
     ...server,
     stop: async () => {
+      cloudProviderSync.stop();
       invalidateEngineMcpServerState(config, engineMcpServerState);
       watcherHandle.close();
       reloadBaselineRefreshers.delete(config);
@@ -1277,6 +1287,7 @@ function buildCapabilities(config: ServerConfig): Capabilities {
     schemaVersion,
     serverVersion: SERVER_VERSION,
     opencodeVersion: OPENCODE_VERSION,
+    providerSync: true,
     skills: { read: true, write: writeEnabled, source: "openwork" },
     plugins: { read: true, write: writeEnabled },
     mcp: { read: true, write: writeEnabled },
@@ -1530,6 +1541,7 @@ function createRoutes(
   onWorkspacesChanged: () => void,
   engineMcpServerState: EngineMcpServerState,
   logger: ServerLogger,
+  cloudProviderSync: CloudProviderSync,
 ): Route[] {
   const routes: Route[] = [];
   registerCoreRoutes({
@@ -2046,6 +2058,33 @@ function createRoutes(
   addRoute(routes, "GET", "/runtime-config/providers", "host-token", async () => {
     const runtime = await readGlobalRuntimeOpencodeConfig(config);
     return jsonResponse({ provider: runtimeProviderMap(runtime) });
+  });
+
+  addRoute(routes, "PUT", "/den-session", "host-token", async (ctx) => {
+    ensureWritable(config);
+    const session = parseCloudProviderDenSession(await readJsonBody(ctx.request));
+    if (!session) throw new ApiError(400, "invalid_payload", "baseUrl, token, and orgId are required");
+    cloudProviderSync.setSession(session);
+    return new Response(null, { status: 204 });
+  });
+
+  addRoute(routes, "DELETE", "/den-session", "host-token", async () => {
+    ensureWritable(config);
+    await cloudProviderSync.clearSession();
+    return new Response(null, { status: 204 });
+  });
+
+  addRoute(routes, "POST", "/cloud-provider-sync/run", "host-token", async (ctx) => {
+    ensureWritable(config);
+    const body = await readJsonBody(ctx.request);
+    if (body.reason !== undefined && typeof body.reason !== "string") {
+      throw new ApiError(400, "invalid_payload", "reason must be a string");
+    }
+    return jsonResponse(await cloudProviderSync.run(typeof body.reason === "string" ? body.reason : undefined));
+  });
+
+  addRoute(routes, "GET", "/cloud-provider-sync/status", "client", async () => {
+    return jsonResponse(cloudProviderSync.status());
   });
 
   addRoute(routes, "PATCH", "/runtime-config/providers", "host-token", async (ctx) => {

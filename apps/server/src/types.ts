@@ -107,6 +107,7 @@ export interface Capabilities {
   schemaVersion: number;
   serverVersion: string;
   opencodeVersion: string;
+  providerSync: true;
   skills: { read: boolean; write: boolean; source: "openwork" | "opencode" };
   plugins: { read: boolean; write: boolean };
   mcp: { read: boolean; write: boolean };

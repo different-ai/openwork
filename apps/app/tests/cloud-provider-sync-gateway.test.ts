@@ -108,7 +108,7 @@ function installCloudSession(storage: Storage) {
 }
 
 function createProviderAuthTestStore(
-  configCapabilities: { read: boolean; write: boolean } = { read: true, write: true },
+  configCapabilities: { read: boolean; write: boolean; providerSync?: boolean } = { read: true, write: true },
 ) {
   const opencodeClient = createClient("https://engine.example", "/tmp/workspace_test", {
     token: "engine-token",
@@ -117,6 +117,7 @@ function createProviderAuthTestStore(
   const openworkClient = createOpenworkServerClient({
     baseUrl: "https://server.example",
     token: "server-token",
+    hostToken: "host-token",
   });
   const workspace = {
     id: "workspace_test",
@@ -146,7 +147,11 @@ function createProviderAuthTestStore(
       getSnapshot: () => ({
         openworkServerStatus: "connected",
         openworkServerClient: openworkClient,
-        openworkServerCapabilities: { config: configCapabilities },
+        openworkServerAuth: { token: "server-token", hostToken: "host-token" },
+        openworkServerCapabilities: {
+          config: configCapabilities,
+          providerSync: configCapabilities.providerSync,
+        },
       }),
     },
     setProviders: (value) => {
@@ -174,8 +179,13 @@ function createProviderAuthTestStore(
 
 function installProviderSyncFetch(
   requests: RecordedRequest[],
-  options: { conflict?: boolean } = {},
+  options: {
+    conflict?: boolean;
+    runStatuses?: Array<{ status: "applied" | "noop" | "failed" | "no_session"; message?: string }>;
+    statusProviders?: Array<Record<string, unknown>>;
+  } = {},
 ) {
+  let runIndex = 0;
   Object.defineProperty(globalThis, "fetch", {
     configurable: true,
     value: async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -195,6 +205,18 @@ function installProviderSyncFetch(
       }
       if (url.origin === "https://server.example" && url.pathname === "/workspace/ws_1/config" && method === "GET") {
         return jsonResponse({ opencode: {}, openwork: {} });
+      }
+      if (url.origin === "https://server.example" && url.pathname === "/den-session" && method === "PUT") {
+        return new Response(null, { status: 204 });
+      }
+      if (url.origin === "https://server.example" && url.pathname === "/cloud-provider-sync/run" && method === "POST") {
+        const statuses = options.runStatuses ?? [{ status: "noop" }];
+        const result = statuses[Math.min(runIndex, statuses.length - 1)];
+        runIndex += 1;
+        return jsonResponse(result);
+      }
+      if (url.origin === "https://server.example" && url.pathname === "/cloud-provider-sync/status" && method === "GET") {
+        return jsonResponse({ hasSession: true, lastRun: null, providers: options.statusProviders ?? [] });
       }
       if (url.origin === "https://server.example" && url.pathname === "/workspace/ws_1/config" && method === "PATCH") {
         return jsonResponse({ updatedAt: 1 });
@@ -333,5 +355,103 @@ describe("cloud provider sync in gateway mode", () => {
       (request) => request.url === "https://den.example/api/den/v1/llm-providers/lpr_test/connect",
     ).length;
     expect(secondConnectCount).toBe(firstConnectCount);
+  });
+});
+
+describe("cloud provider sync in server-capability mode", () => {
+  beforeEach(() => {
+    process.env.VITE_OPENWORK_DEPLOYMENT = "web";
+    console.info = () => undefined;
+  });
+
+  afterEach(() => {
+    Object.defineProperty(globalThis, "window", { configurable: true, value: originalWindow });
+    Object.defineProperty(globalThis, "fetch", { configurable: true, value: originalFetch });
+    console.info = originalConsoleInfo;
+    if (originalDeployment === undefined) delete process.env.VITE_OPENWORK_DEPLOYMENT;
+    else process.env.VITE_OPENWORK_DEPLOYMENT = originalDeployment;
+  });
+
+  test("posts run-now without fetching Den providers in the renderer", async () => {
+    const storage = installWindow({ origin: "https://self-hosted.example" });
+    installCloudSession(storage);
+    const requests: RecordedRequest[] = [];
+    installProviderSyncFetch(requests, { runStatuses: [{ status: "applied" }] });
+    const { store } = createProviderAuthTestStore({ read: true, write: true, providerSync: true });
+
+    expect(await store.runCloudProviderSync("settings_cloud_opened")).toEqual({ outcome: "handled_server_side" });
+    expect(requests.filter((request) => new URL(request.url).pathname === "/cloud-provider-sync/run")).toHaveLength(1);
+    expect(requests.filter((request) => request.url.includes("/v1/llm-providers"))).toHaveLength(0);
+  });
+
+  test("resolves noop as handled server-side", async () => {
+    const storage = installWindow({ origin: "https://self-hosted.example" });
+    installCloudSession(storage);
+    const requests: RecordedRequest[] = [];
+    installProviderSyncFetch(requests, { runStatuses: [{ status: "noop" }] });
+    const { store } = createProviderAuthTestStore({ read: true, write: true, providerSync: true });
+
+    expect(await store.runCloudProviderSync("settings_cloud_opened")).toEqual({ outcome: "handled_server_side" });
+  });
+
+  test("exposes server failure in settings", async () => {
+    const storage = installWindow({ origin: "https://self-hosted.example" });
+    installCloudSession(storage);
+    const requests: RecordedRequest[] = [];
+    installProviderSyncFetch(requests, { runStatuses: [{ status: "failed", message: "Provider import failed" }] });
+    const { store } = createProviderAuthTestStore({ read: true, write: true, providerSync: true });
+
+    expect(await store.runCloudProviderSync("settings_cloud_opened")).toBeUndefined();
+    expect(store.getSnapshot().providerAuthError).toContain("Provider import failed");
+  });
+
+  test("pushes the resolved Den API session and retries once when missing", async () => {
+    const storage = installWindow({ origin: "https://self-hosted.example" });
+    installCloudSession(storage);
+    const requests: RecordedRequest[] = [];
+    installProviderSyncFetch(requests, { runStatuses: [{ status: "no_session" }, { status: "noop" }] });
+    const { store } = createProviderAuthTestStore({ read: true, write: true, providerSync: true });
+
+    expect(await store.runCloudProviderSync("settings_cloud_opened")).toEqual({ outcome: "handled_server_side" });
+    const sessionRequests = requests.filter((request) => request.method === "PUT" && new URL(request.url).pathname === "/den-session");
+    expect(sessionRequests).toHaveLength(1);
+    expect(sessionRequests[0]?.body).toBe(JSON.stringify({
+      baseUrl: "https://den.example/api/den",
+      token: "den-token",
+      orgId: "org_test",
+    }));
+    expect(requests.filter((request) => request.method === "POST" && new URL(request.url).pathname === "/cloud-provider-sync/run")).toHaveLength(2);
+  });
+
+  test("maps imported provider status by cloud provider id", async () => {
+    const storage = installWindow({ origin: "https://self-hosted.example" });
+    installCloudSession(storage);
+    const requests: RecordedRequest[] = [];
+    installProviderSyncFetch(requests, {
+      statusProviders: [{
+        cloudProviderId: "cloud_1",
+        providerId: "lpr_cloud_1",
+        sourceProviderId: "openai",
+        name: "Team OpenAI",
+        source: "custom",
+        updatedAt: "2026-08-04T00:00:00.000Z",
+        modelIds: ["gpt-test"],
+        importedAt: 123,
+      }],
+    });
+    const { store } = createProviderAuthTestStore({ read: true, write: true, providerSync: true });
+
+    await store.refreshImportedCloudProviders();
+
+    expect(store.getSnapshot().importedCloudProviders.cloud_1).toEqual({
+      cloudProviderId: "cloud_1",
+      providerId: "lpr_cloud_1",
+      sourceProviderId: "openai",
+      name: "Team OpenAI",
+      source: "custom",
+      updatedAt: "2026-08-04T00:00:00.000Z",
+      modelIds: ["gpt-test"],
+      importedAt: 123,
+    });
   });
 });

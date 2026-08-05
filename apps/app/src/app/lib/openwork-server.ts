@@ -15,7 +15,7 @@ import { isOpenworkGatewayRuntime } from "./gateway-runtime";
 import { isDesktopRuntime } from "./runtime-env";
 import type { ExecResult, OpencodeConfigFile, WorkspaceInfo, WorkspaceList } from "./desktop";
 import type { DenOrgMarketplace, DenOrgPluginResolved, DenResourceSnapshot } from "./den-types";
-import type { CloudImportedMarketplace, CloudImportedPlugin } from "../cloud/import-state";
+import type { CloudImportedMarketplace, CloudImportedPlugin, CloudImportedProvider } from "../cloud/import-state";
 
 export type OpenworkServerCapabilities = {
   skills: { read: boolean; write: boolean; source: "openwork" | "opencode" };
@@ -23,6 +23,7 @@ export type OpenworkServerCapabilities = {
   mcp: { read: boolean; write: boolean };
   commands: { read: boolean; write: boolean };
   config: { read: boolean; write: boolean };
+  providerSync?: boolean;
   sandbox?: { enabled: boolean; backend: "none" | "docker" | "container" };
   proxy?: { opencode: boolean };
   toolProviders?: {
@@ -40,6 +41,69 @@ export type OpenworkServerCapabilities = {
     };
   };
 };
+
+export type OpenworkCloudProviderSyncRun = {
+  status: "applied" | "noop" | "failed" | "no_session";
+  message?: string;
+};
+
+export type OpenworkCloudProviderSyncStatus = {
+  hasSession: boolean;
+  lastRun: { at: string | number; status: OpenworkCloudProviderSyncRun["status"]; message?: string } | null;
+  providers: CloudImportedProvider[];
+};
+
+function parseCloudProviderSyncRun(value: unknown): OpenworkCloudProviderSyncRun {
+  if (!value || typeof value !== "object" || !("status" in value)) throw new Error("Invalid cloud provider sync response.");
+  const status = value.status;
+  if (status !== "applied" && status !== "noop" && status !== "failed" && status !== "no_session") {
+    throw new Error("Invalid cloud provider sync status.");
+  }
+  const message = "message" in value && typeof value.message === "string" ? value.message : undefined;
+  return { status, message };
+}
+
+function parseCloudImportedProvider(value: unknown): CloudImportedProvider | null {
+  if (!value || typeof value !== "object") return null;
+  if (
+    !("cloudProviderId" in value) || typeof value.cloudProviderId !== "string" ||
+    !("providerId" in value) || typeof value.providerId !== "string" ||
+    !("sourceProviderId" in value) || typeof value.sourceProviderId !== "string" ||
+    !("name" in value) || typeof value.name !== "string" ||
+    !("modelIds" in value) || !Array.isArray(value.modelIds) || !value.modelIds.every((item) => typeof item === "string")
+  ) return null;
+  return {
+    cloudProviderId: value.cloudProviderId,
+    providerId: value.providerId,
+    sourceProviderId: value.sourceProviderId,
+    name: value.name,
+    source: "source" in value && typeof value.source === "string" ? value.source : null,
+    updatedAt: "updatedAt" in value && typeof value.updatedAt === "string" ? value.updatedAt : null,
+    modelIds: value.modelIds,
+    importedAt: "importedAt" in value && typeof value.importedAt === "number" ? value.importedAt : null,
+  };
+}
+
+function parseCloudProviderSyncStatus(value: unknown): OpenworkCloudProviderSyncStatus {
+  if (!value || typeof value !== "object" || !("hasSession" in value) || typeof value.hasSession !== "boolean" || !("providers" in value) || !Array.isArray(value.providers)) {
+    throw new Error("Invalid cloud provider sync status response.");
+  }
+  const providers: CloudImportedProvider[] = [];
+  for (const rawProvider of value.providers) {
+    const provider = parseCloudImportedProvider(rawProvider);
+    if (!provider) throw new Error("Invalid cloud provider sync provider response.");
+    providers.push(provider);
+  }
+  let lastRun: OpenworkCloudProviderSyncStatus["lastRun"] = null;
+  if ("lastRun" in value && value.lastRun !== null) {
+    if (!value.lastRun || typeof value.lastRun !== "object" || !("at" in value.lastRun) || (typeof value.lastRun.at !== "string" && typeof value.lastRun.at !== "number")) {
+      throw new Error("Invalid cloud provider sync last-run response.");
+    }
+    const run = parseCloudProviderSyncRun(value.lastRun);
+    lastRun = { at: value.lastRun.at, status: run.status, message: run.message };
+  }
+  return { hasSession: value.hasSession, lastRun, providers };
+}
 
 export type OpenworkServerStatus = "connected" | "disconnected" | "limited";
 
@@ -1334,6 +1398,24 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       const suffix = query.size ? `?${query.toString()}` : "";
       return requestJson<OpenworkConnectState>(baseUrl, `/experimental/connect/state${suffix}`, { token, hostToken, timeoutMs: timeouts.config });
     },
+    putDenSession: async (body: { baseUrl: string; token: string; orgId: string }) => {
+      await requestJson<unknown>(baseUrl, "/den-session", { hostToken, method: "PUT", body, timeoutMs: timeouts.config });
+    },
+    deleteDenSession: async () => {
+      await requestJson<unknown>(baseUrl, "/den-session", { hostToken, method: "DELETE", timeoutMs: timeouts.config });
+    },
+    runCloudProviderSyncNow: async (reason?: string) =>
+      parseCloudProviderSyncRun(await requestJson<unknown>(baseUrl, "/cloud-provider-sync/run", {
+        hostToken,
+        method: "POST",
+        body: reason ? { reason } : {},
+        timeoutMs: timeouts.cloudMcpReconcile,
+      })),
+    getCloudProviderSyncStatus: async () =>
+      parseCloudProviderSyncStatus(await requestJson<unknown>(baseUrl, "/cloud-provider-sync/status", {
+        token,
+        timeoutMs: timeouts.config,
+      })),
     setConnectState: (connectEnabled: boolean) => requestJson<OpenworkConnectState>(baseUrl, "/experimental/connect/state", { token, hostToken, method: "PUT", body: { connectEnabled }, timeoutMs: timeouts.config }),
     callExtensionAction: (payload: OpenworkExtensionActionCall) =>
       requestJson<OpenworkExtensionActionResult>(baseUrl, "/experimental/extensions/call", {
