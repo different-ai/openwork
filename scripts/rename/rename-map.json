@@ -1,0 +1,28 @@
+{
+  "description": "A1 改名映射真源: openwork→micx。den_* 与 typeid 前缀不在其中(保留)。",
+  "map": {
+    "OpenWorklabs": "Micxlabs",
+    "openworklabs": "micxlabs",
+    "OPENWORKLabs": "MICXLABS",
+    "OpenWork": "Micx",
+    "Openwork": "Micx",
+    "openwork-ee": "micx-ee",
+    "@openwork-ee/": "@micx-ee/",
+    "@openwork/": "@micx/",
+    "openwork-server": "micx-server",
+    "openwork-bootstrap": "micx-bootstrap",
+    "openwork-ui-mcp": "micx-ui-mcp",
+    "openwork-cloud": "micx-cloud",
+    "openwork-client": "micx-client",
+    "openwork-connect": "micx-connect",
+    "openwork-request-id": "micx-request-id",
+    "openwork-dev": "micx-dev",
+    "openwork-mark": "micx-mark",
+    "x-openwork-": "x-micx-",
+    "openwork://": "micx://",
+    "OPENWORK_": "MICX_",
+    "OPENWORK": "MICX",
+    "openwork": "micx"
+  },
+  "preserveSubstrings": ["den_", "Den", "DEN_"]
+}
