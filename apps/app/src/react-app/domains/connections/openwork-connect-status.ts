@@ -6,7 +6,7 @@ export type MicxConnectStatus = {
   description: string;
 };
 
-export function openWorkConnectAttentionTitle(description: string): string {
+export function micxWorkConnectAttentionTitle(description: string): string {
   return `One possible issue: ${description}`;
 }
 

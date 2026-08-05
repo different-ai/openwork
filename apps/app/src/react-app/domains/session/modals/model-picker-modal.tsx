@@ -35,7 +35,7 @@ import {
   isMicxModelsPromoHidden,
   MICX_MODELS_PROVIDER_ID,
   MICX_MODELS_PROVIDER_NAME,
-  openWorkModelsPromoChangedEvent,
+  micxWorkModelsPromoChangedEvent,
 } from "../../cloud/micx-models-promo";
 
 export const MODEL_PICKER_DEFAULT_SUBTITLE = "Select a model for this session.";
@@ -62,7 +62,7 @@ export type ModelPickerModalProps = {
   onOpenSettings: () => void;
   onClose: (options?: { restorePromptFocus?: boolean }) => void;
   /** Den entitlement present; used to avoid a false Subscribe CTA while models sync. */
-  openWorkModelsEntitled?: boolean;
+  micxWorkModelsEntitled?: boolean;
   onRefreshMicxModels?: () => void | Promise<void>;
   onRefreshOrganizationModels?: () => void | Promise<void>;
   restrictToCloud?: boolean;
@@ -126,7 +126,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
   const denAuth = useDenAuth();
   const navigate = useNavigate();
   const platform = usePlatform();
-  const openWorkModelsPromoEligible = useMicxModelsPromoEligibility();
+  const micxWorkModelsPromoEligible = useMicxModelsPromoEligibility();
   const organizationModelsSettingsUrl = props.organizationModelsSettingsUrl;
   const organizationProviderLabel = useMemo(
     () => readDenSettings().activeOrgName?.trim() || t("settings.provider_source_organization"),
@@ -147,8 +147,8 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
 
   useEffect(() => {
     const handlePromoChanged = () => setPromoHidden(isMicxModelsPromoHidden());
-    window.addEventListener(openWorkModelsPromoChangedEvent, handlePromoChanged);
-    return () => window.removeEventListener(openWorkModelsPromoChangedEvent, handlePromoChanged);
+    window.addEventListener(micxWorkModelsPromoChangedEvent, handlePromoChanged);
+    return () => window.removeEventListener(micxWorkModelsPromoChangedEvent, handlePromoChanged);
   }, []);
 
   // Focus search
@@ -254,18 +254,18 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
     });
   }, []);
 
-  const openWorkModelsAvailable = useMemo(
+  const micxWorkModelsAvailable = useMemo(
     () => hasMicxModelsProvider(props.options.map((option) => option.providerID)),
     [props.options],
   );
-  const showMicxModelsSyncing = Boolean(props.openWorkModelsEntitled) && !openWorkModelsAvailable;
+  const showMicxModelsSyncing = Boolean(props.micxWorkModelsEntitled) && !micxWorkModelsAvailable;
   const showMicxModelsPromo = useMemo(
     () =>
-      openWorkModelsPromoEligible &&
+      micxWorkModelsPromoEligible &&
       !promoHidden &&
-      !openWorkModelsAvailable &&
-      !props.openWorkModelsEntitled,
-    [openWorkModelsPromoEligible, openWorkModelsAvailable, promoHidden, props.openWorkModelsEntitled],
+      !micxWorkModelsAvailable &&
+      !props.micxWorkModelsEntitled,
+    [micxWorkModelsPromoEligible, micxWorkModelsAvailable, promoHidden, props.micxWorkModelsEntitled],
   );
 
   const openMicxModels = useCallback(() => {

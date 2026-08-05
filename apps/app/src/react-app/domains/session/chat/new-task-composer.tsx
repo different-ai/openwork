@@ -38,7 +38,7 @@ export type NewTaskComposerContext = {
   modelPickerOpen: boolean;
   onModelPickerOpenChange: (open: boolean) => void;
   onModelChange: (model: ModelRef) => void;
-  openWorkModelsEntitled?: boolean;
+  micxWorkModelsEntitled?: boolean;
   modelVariantLabel: string;
   modelVariant: string | null;
   modelBehaviorOptions?: { value: string | null; label: string }[];
@@ -250,7 +250,7 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
       statusLabel=""
       modelPickerOpen={context?.modelPickerOpen ?? false}
       selectedModel={context?.selectedModel ?? FALLBACK_MODEL}
-      openWorkModelsEntitled={context?.openWorkModelsEntitled}
+      micxWorkModelsEntitled={context?.micxWorkModelsEntitled}
       onRefreshOrganizationModels={context?.onRefreshOrganizationModels}
       onModelPickerOpenChange={context?.onModelPickerOpenChange ?? noop}
       onModelChange={context?.onModelChange ?? noop}

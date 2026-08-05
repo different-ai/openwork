@@ -17,7 +17,7 @@ export const MICX_MODELS_PROVIDER_NAME = "Micx Models";
 export const MICX_MODELS_PROMO_HIDDEN_KEY = "micx.micxModelsPromo.hidden";
 export const MICX_MODELS_PROMO_LAST_SHOWN_KEY = "micx.micxModelsPromo.lastShownAt";
 export const MICX_MODELS_STARTUP_PROMO_SHOWN_KEY = "micx.micxModelsPromo.startupShown";
-export const openWorkModelsPromoChangedEvent = "micx-micx-models-promo-changed";
+export const micxWorkModelsPromoChangedEvent = "micx-micx-models-promo-changed";
 export const MICX_MODELS_PROMO_SHOW_DELAY_MS = 4_000;
 export const MICX_MODELS_PROMO_VISIBLE_MS = 14_000;
 export const MICX_MODELS_PROMO_REPEAT_MS = 6 * 60 * 60 * 1000;
@@ -108,7 +108,7 @@ export function hideMicxModelsPromo() {
   if (typeof window === "undefined") return;
   try {
     window.localStorage.setItem(MICX_MODELS_PROMO_HIDDEN_KEY, "1");
-    window.dispatchEvent(new Event(openWorkModelsPromoChangedEvent));
+    window.dispatchEvent(new Event(micxWorkModelsPromoChangedEvent));
   } catch {}
 }
 

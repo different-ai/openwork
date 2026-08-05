@@ -29,7 +29,7 @@ import {
   MICX_MODEL_PREVIEWS,
   MICX_MODELS_PROVIDER_ID,
   MICX_MODELS_PROVIDER_NAME,
-  openWorkModelsPromoChangedEvent,
+  micxWorkModelsPromoChangedEvent,
 } from "@/react-app/domains/cloud/micx-models-promo";
 import { getConnectedProviderItems, useProviderListQuery } from "@/react-app/infra/provider-list-query";
 import { filterEntitledModelOptions } from "@/react-app/domains/connections/provider-auth/provider-policy";
@@ -168,7 +168,7 @@ function groupByProvider(modelOptions: ModelOption[]): ModelSelectGroup[] {
     .sort((a, b) => a.value.localeCompare(b.value));
 }
 
-function openWorkModelsGroup(): ModelSelectGroup {
+function micxWorkModelsGroup(): ModelSelectGroup {
   return {
     value: MICX_MODELS_PROVIDER_NAME,
     promo: true,
@@ -195,7 +195,7 @@ interface ModelSelectProps {
   /** When set, "All models" opens the full picker scoped to this session. */
   sessionId?: string;
   /** Den/import includes Micx Models — never show Subscribe while true. */
-  openWorkModelsEntitled?: boolean;
+  micxWorkModelsEntitled?: boolean;
 }
 
 export function ModelSelect({
@@ -206,7 +206,7 @@ export function ModelSelect({
   onChange,
   disabled = false,
   sessionId,
-  openWorkModelsEntitled = false,
+  micxWorkModelsEntitled = false,
 }: ModelSelectProps) {
   const [search, setSearch] = React.useState("");
   const [promoHidden, setPromoHidden] = React.useState(isMicxModelsPromoHidden);
@@ -215,14 +215,14 @@ export function ModelSelect({
   const denAuth = useDenAuth();
   const navigate = useNavigate();
   const platform = usePlatform();
-  const openWorkModelsPromoEligible = useMicxModelsPromoEligibility();
+  const micxWorkModelsPromoEligible = useMicxModelsPromoEligibility();
   const checkDesktopRestriction = useCheckDesktopRestriction();
   const canAddProviders = !checkDesktopRestriction({ restriction: "allowCustomProviders" });
 
   React.useEffect(() => {
     const handlePromoChanged = () => setPromoHidden(isMicxModelsPromoHidden());
-    window.addEventListener(openWorkModelsPromoChangedEvent, handlePromoChanged);
-    return () => window.removeEventListener(openWorkModelsPromoChangedEvent, handlePromoChanged);
+    window.addEventListener(micxWorkModelsPromoChangedEvent, handlePromoChanged);
+    return () => window.removeEventListener(micxWorkModelsPromoChangedEvent, handlePromoChanged);
   }, []);
 
   const focusSearchInput = React.useCallback(() => {
@@ -253,24 +253,24 @@ export function ModelSelect({
     }),
   );
 
-  const openWorkModelsAvailable = React.useMemo(
+  const micxWorkModelsAvailable = React.useMemo(
     () => hasMicxModelsProvider(modelOptions.map((option) => option.providerID)),
     [modelOptions],
   );
-  const showMicxModelsSyncing = openWorkModelsEntitled && !openWorkModelsAvailable;
+  const showMicxModelsSyncing = micxWorkModelsEntitled && !micxWorkModelsAvailable;
   const showMicxModelsPromo = React.useMemo(
     () =>
-      openWorkModelsPromoEligible &&
+      micxWorkModelsPromoEligible &&
       !promoHidden &&
-      !openWorkModelsAvailable &&
-      !openWorkModelsEntitled,
-    [openWorkModelsAvailable, openWorkModelsEntitled, openWorkModelsPromoEligible, promoHidden],
+      !micxWorkModelsAvailable &&
+      !micxWorkModelsEntitled,
+    [micxWorkModelsAvailable, micxWorkModelsEntitled, micxWorkModelsPromoEligible, promoHidden],
   );
 
   const groups = React.useMemo(() => {
     const providerGroups = groupByProvider(modelOptions);
     return showMicxModelsPromo
-      ? [openWorkModelsGroup(), ...providerGroups]
+      ? [micxWorkModelsGroup(), ...providerGroups]
       : providerGroups;
   }, [modelOptions, showMicxModelsPromo]);
 

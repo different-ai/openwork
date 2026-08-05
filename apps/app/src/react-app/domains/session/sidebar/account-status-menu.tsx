@@ -34,7 +34,7 @@ import {
   readDenSettings,
 } from "../../../../app/lib/den";
 import {
-  openWorkConnectAttentionTitle,
+  micxWorkConnectAttentionTitle,
   resolveMicxConnectStatus,
   type MicxConnectStatus,
 } from "../../connections/micx-connect-status";
@@ -44,7 +44,7 @@ import {
   hasMicxModelsProvider,
   hideMicxModelsPromo,
   isMicxModelsPromoHidden,
-  openWorkModelsPromoChangedEvent,
+  micxWorkModelsPromoChangedEvent,
   useMicxModelsPromoEligibility,
 } from "../../cloud/micx-models-promo";
 
@@ -168,8 +168,8 @@ function useMicxModelsPromoVisible(hasMicxModels: boolean) {
 
   useEffect(() => {
     const sync = () => setHidden(isMicxModelsPromoHidden());
-    window.addEventListener(openWorkModelsPromoChangedEvent, sync);
-    return () => window.removeEventListener(openWorkModelsPromoChangedEvent, sync);
+    window.addEventListener(micxWorkModelsPromoChangedEvent, sync);
+    return () => window.removeEventListener(micxWorkModelsPromoChangedEvent, sync);
   }, []);
 
   return eligible && config.cloudSignin && !hasMicxModels && !hidden;
@@ -186,7 +186,7 @@ export type AccountStatusMenuProps = {
   loading?: boolean;
   reloadBusy?: boolean;
   reloadError?: string | null;
-  openWorkConnectState?: SessionCloudMcpMaintenanceState;
+  micxWorkConnectState?: SessionCloudMcpMaintenanceState;
   showSettingsButton?: boolean;
   onOpenAccountSettings?: () => void;
   onSendFeedback?: () => void;
@@ -278,7 +278,7 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
   const connectStatus = resolveMicxConnectStatus(
     denAuth.isSignedIn
       || (denAuth.status === "checking" && Boolean(readDenSettings().authToken?.trim())),
-    props.openWorkConnectState,
+    props.micxWorkConnectState,
   );
   const connectNeedsAttention = connectStatus?.state === "needs_attention";
   const collapsedStatus = resolveCollapsedStatus(runtimeStatus, connectStatus);
@@ -313,7 +313,7 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
             className="flex w-full items-center gap-2 rounded-lg ps-1.5 pe-2 py-1.5 text-left transition-colors hover:bg-sidebar-accent"
             aria-label={signedIn ? `${user.email} — account and status` : "Account and status"}
             title={connectNeedsAttention
-              ? openWorkConnectAttentionTitle(connectStatus.description)
+              ? micxWorkConnectAttentionTitle(connectStatus.description)
               : connectStatus
                 ? `${runtimeStatus ? `${runtimeStatus.label} · ` : ""}Micx Connect: ${connectStatus.label}`
                 : runtimeStatus?.label}

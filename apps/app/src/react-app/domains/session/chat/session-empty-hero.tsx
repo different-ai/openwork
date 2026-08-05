@@ -11,7 +11,7 @@ import {
   getMicxModelsActionUrl,
   hideMicxModelsPromo,
   isMicxModelsPromoHidden,
-  openWorkModelsPromoChangedEvent,
+  micxWorkModelsPromoChangedEvent,
   useMicxModelsPromoEligibility,
 } from "@/react-app/domains/cloud/micx-models-promo";
 import { usePlatform } from "@/react-app/kernel/platform";
@@ -70,13 +70,13 @@ export function SessionEmptyHero(props: SessionEmptyHeroProps) {
   const canAddProviders = !checkDesktopRestriction({ restriction: "allowCustomProviders" });
   const platform = usePlatform();
   const denAuth = useDenAuth();
-  const openWorkModelsPromoEligible = useMicxModelsPromoEligibility();
+  const micxWorkModelsPromoEligible = useMicxModelsPromoEligibility();
   const [modelsPromoHidden, setModelsPromoHidden] = useState(isMicxModelsPromoHidden);
 
   useEffect(() => {
     const handlePromoChanged = () => setModelsPromoHidden(isMicxModelsPromoHidden());
-    window.addEventListener(openWorkModelsPromoChangedEvent, handlePromoChanged);
-    return () => window.removeEventListener(openWorkModelsPromoChangedEvent, handlePromoChanged);
+    window.addEventListener(micxWorkModelsPromoChangedEvent, handlePromoChanged);
+    return () => window.removeEventListener(micxWorkModelsPromoChangedEvent, handlePromoChanged);
   }, []);
 
   // Quiet inline lead to Micx Models: replaces the old startup dialog
@@ -84,9 +84,9 @@ export function SessionEmptyHero(props: SessionEmptyHeroProps) {
   // (the built-in `opencode` provider) and the hosted offering applies.
   const onFreeStarterModel = props.composer?.selectedModel.providerID === DEFAULT_MODEL.providerID;
   const showModelsHint =
-    openWorkModelsPromoEligible &&
+    micxWorkModelsPromoEligible &&
     !modelsPromoHidden &&
-    !props.composer?.openWorkModelsEntitled &&
+    !props.composer?.micxWorkModelsEntitled &&
     onFreeStarterModel;
 
   const organizationPrompts = orgRestrictions.onboardingPrompts;

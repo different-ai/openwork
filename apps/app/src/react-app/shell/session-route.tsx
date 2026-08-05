@@ -869,7 +869,7 @@ export function SessionRoute() {
   const handleModelPickerOpen = useCallback(() => {
     void sessionProviderAuthStore.runCloudProviderSync("model_picker_open");
   }, [sessionProviderAuthStore]);
-  const openWorkModelsEntitled = useMemo(() => {
+  const micxWorkModelsEntitled = useMemo(() => {
     if (!denAuth.isSignedIn) return false;
     const fromOrg = sessionProviderAuthSnapshot.cloudOrgProviders.some(
       (provider) =>
@@ -1201,7 +1201,7 @@ export function SessionRoute() {
       modelUnavailableMessage,
       organizationModelsEmpty,
       selectedModel: local.prefs.defaultModel ?? { providerID: "", modelID: "" },
-      openWorkModelsEntitled,
+      micxWorkModelsEntitled,
       onRefreshOrganizationModels: refreshOrganizationModelAccess,
       onModelPickerOpenChange: (open: boolean) => {
         modelPicker.setCompactOpen(open);
@@ -1415,7 +1415,7 @@ export function SessionRoute() {
     modelVariantValue,
     navigate,
     providerCatalog,
-    openWorkModelsEntitled,
+    micxWorkModelsEntitled,
     refreshOrganizationModelAccess,
     opencodeBaseUrl,
     opencodeClient,
@@ -1477,7 +1477,7 @@ export function SessionRoute() {
         }));
         modelPicker.setCompactOpen(false);
       },
-      openWorkModelsEntitled,
+      micxWorkModelsEntitled,
       modelVariantLabel,
       modelVariant: modelVariantValue,
       modelBehaviorOptions,
@@ -1521,7 +1521,7 @@ export function SessionRoute() {
     modelVariantLabel,
     modelVariantValue,
     opencodeClient,
-    openWorkModelsEntitled,
+    micxWorkModelsEntitled,
     organizationModelsEmpty,
     refreshOrganizationModelAccess,
     selectedAgent,
@@ -2740,7 +2740,7 @@ export function SessionRoute() {
         loading: showPreparingStatus,
         reloadBusy: reloadCoordinator.reloadBusy,
         reloadError: reloadCoordinator.reloadError,
-        openWorkConnectState: sessionMcpMaintenance,
+        micxWorkConnectState: sessionMcpMaintenance,
       }}
       notFoundMessage={gatedRouteNotFoundMessage}
       mainContentTakeover={
@@ -2914,7 +2914,7 @@ export function SessionRoute() {
         handleOpenSettings("/settings/general");
       }}
       onClose={() => { modelPicker.setOpen(false); modelPicker.setRecentProviderIds(new Set()); }}
-      openWorkModelsEntitled={openWorkModelsEntitled}
+      micxWorkModelsEntitled={micxWorkModelsEntitled}
       onRefreshMicxModels={refreshMicxModels}
       onRefreshOrganizationModels={refreshOrganizationModelAccess}
       restrictToCloud={restrictToCloudProviders}

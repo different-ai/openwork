@@ -15,7 +15,7 @@ const freeStarterModel: AutomationModelOption = {
   accessKind: "free",
 }
 
-function openWorkManagedModels(provider: DenOrgLlmProvider): AutomationModelOption[] {
+function micxWorkManagedModels(provider: DenOrgLlmProvider): AutomationModelOption[] {
   return Object.entries(INFERENCE_MODEL_ALIASES)
     .filter(([, model]) => model.enabled)
     .map(([modelId, model]) => ({
@@ -44,7 +44,7 @@ function authorizedProviderModels(provider: DenOrgLlmProvider): AutomationModelO
  */
 export function automationModelOptions(providers: readonly DenOrgLlmProvider[]): AutomationModelOption[] {
   const managed = providers.flatMap((provider) => provider.source === "micx"
-    ? openWorkManagedModels(provider)
+    ? micxWorkManagedModels(provider)
     : authorizedProviderModels(provider))
 
   return [freeStarterModel, ...managed].sort((left, right) => {

@@ -311,7 +311,7 @@ export type SessionSurfaceProps = {
   /** providerID → modelID → provider model, for per-session variant options. */
   providerCatalog?: ProviderCatalog;
   /** Den/import includes Micx Models for this org member (not just local sync). */
-  openWorkModelsEntitled?: boolean;
+  micxWorkModelsEntitled?: boolean;
   onRefreshOrganizationModels?: () => void | Promise<void>;
   onModelPickerOpenChange: (open: boolean) => void;
   onModelChange: (model: ModelRef) => void;
@@ -2063,7 +2063,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         statusLabel={statusLabel(snapshot ?? undefined, chatStreaming)}
         modelPickerOpen={modelPickerOpen}
         selectedModel={sessionModel.selectedModel}
-        openWorkModelsEntitled={props.openWorkModelsEntitled}
+        micxWorkModelsEntitled={props.micxWorkModelsEntitled}
         onRefreshOrganizationModels={props.onRefreshOrganizationModels}
         onModelPickerOpenChange={handleModelPickerOpenChange}
         onModelChange={handleModelChange}

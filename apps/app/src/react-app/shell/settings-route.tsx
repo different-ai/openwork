@@ -133,7 +133,7 @@ import {
   hideMicxModelsPromo,
   useMicxModelsPromoEligibility,
   isMicxModelsPromoHidden,
-  openWorkModelsPromoChangedEvent,
+  micxWorkModelsPromoChangedEvent,
 } from "@/react-app/domains/cloud/micx-models-promo";
 import {
   isDesktopRuntime,
@@ -851,31 +851,31 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       Object.values(providerAuthSnapshot.importedCloudProviders ?? {}).some(isMicxCloudProvider),
     [providerAuthSnapshot.cloudOrgProviders, providerAuthSnapshot.importedCloudProviders],
   );
-  const [openWorkModelsPromoHidden, setMicxModelsPromoHidden] = useState(isMicxModelsPromoHidden);
-  const openWorkModelsPromoEligible = useMicxModelsPromoEligibility();
+  const [micxWorkModelsPromoHidden, setMicxModelsPromoHidden] = useState(isMicxModelsPromoHidden);
+  const micxWorkModelsPromoEligible = useMicxModelsPromoEligibility();
   // Entitled = Den/import says Micx Models is included. Available = local
   // engine actually exposes selectable micx models.
-  const openWorkModelsEntitled = cloudSession.isSignedIn && hasMicxCloudProvider;
-  const openWorkModelsAvailable = hasMicxModelsAvailable({
+  const micxWorkModelsEntitled = cloudSession.isSignedIn && hasMicxCloudProvider;
+  const micxWorkModelsAvailable = hasMicxModelsAvailable({
     providerConnectedIds,
     providers,
   });
-  const showMicxModelsSyncing = openWorkModelsEntitled && !openWorkModelsAvailable;
+  const showMicxModelsSyncing = micxWorkModelsEntitled && !micxWorkModelsAvailable;
   const showMicxModelsSubscribe =
-    openWorkModelsPromoEligible &&
-    !openWorkModelsEntitled &&
-    !openWorkModelsAvailable &&
-    !openWorkModelsPromoHidden;
+    micxWorkModelsPromoEligible &&
+    !micxWorkModelsEntitled &&
+    !micxWorkModelsAvailable &&
+    !micxWorkModelsPromoHidden;
   const showMicxModelsConnect =
-    openWorkModelsPromoEligible &&
-    !openWorkModelsEntitled &&
-    !openWorkModelsAvailable &&
-    openWorkModelsPromoHidden;
+    micxWorkModelsPromoEligible &&
+    !micxWorkModelsEntitled &&
+    !micxWorkModelsAvailable &&
+    micxWorkModelsPromoHidden;
 
   useEffect(() => {
     const handlePromoChanged = () => setMicxModelsPromoHidden(isMicxModelsPromoHidden());
-    window.addEventListener(openWorkModelsPromoChangedEvent, handlePromoChanged);
-    return () => window.removeEventListener(openWorkModelsPromoChangedEvent, handlePromoChanged);
+    window.addEventListener(micxWorkModelsPromoChangedEvent, handlePromoChanged);
+    return () => window.removeEventListener(micxWorkModelsPromoChangedEvent, handlePromoChanged);
   }, []);
 
   const dismissMicxModelsPromo = useCallback(() => {
@@ -2178,7 +2178,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             organizationName={cloudSession.activeOrgName}
             cloudProviderIds={new Set([
               ...Object.values(providerAuthSnapshot.importedCloudProviders ?? {}).map((p) => p.providerId),
-              ...(openWorkModelsEntitled || openWorkModelsAvailable ? ["micx"] : []),
+              ...(micxWorkModelsEntitled || micxWorkModelsAvailable ? ["micx"] : []),
             ])}
             showMicxModelsSubscribe={showMicxModelsSubscribe}
             showMicxModelsConnect={showMicxModelsConnect}

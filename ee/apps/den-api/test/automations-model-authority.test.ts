@@ -23,7 +23,7 @@ beforeAll(async () => {
 })
 
 const member: AutomationAuthorityMember = { id: createDenTypeId("member") }
-const openWorkProvider: AutomationAuthorityProvider = {
+const micxWorkProvider: AutomationAuthorityProvider = {
   id: createDenTypeId("llmProvider"),
   source: "micx",
   name: "Micx Models",
@@ -41,7 +41,7 @@ const customModel: AutomationAuthorityModel = {
 function authorityStore(overrides: Partial<AutomationModelAuthorityStore> = {}): AutomationModelAuthorityStore {
   return {
     async findActiveMember() { return member },
-    async findMicxProvider() { return openWorkProvider },
+    async findMicxProvider() { return micxWorkProvider },
     async findProvider() { return customProvider },
     async findModel() { return customModel },
     async canAccessProvider() { return true },
@@ -96,7 +96,7 @@ describe("Automation normalized model authority", () => {
       ok: true,
       value: {
         accessKind: "micx_managed",
-        providerRecordId: openWorkProvider.id,
+        providerRecordId: micxWorkProvider.id,
         providerId: "micx",
         modelId: "z-ai/glm-5.2",
       },

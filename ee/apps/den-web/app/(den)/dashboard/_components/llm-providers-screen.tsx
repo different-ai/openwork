@@ -51,7 +51,7 @@ function getProviderSourceLabel(source: DenLlmProviderSource) {
   return source === "custom" ? "Custom" : "Catalog";
 }
 
-const openWorkKeyColumns: readonly DenTableColumn<MicxKeyRow>[] = [
+const micxWorkKeyColumns: readonly DenTableColumn<MicxKeyRow>[] = [
   {
     key: "member",
     header: "Member",
@@ -117,7 +117,7 @@ export function LlmProvidersScreen() {
     setZenAllowed(defaultPolicy?.policy.allowZenModel !== false);
   }, [defaultPolicy, adminExceptionPolicies]);
 
-  const openWorkProviders = useMemo(
+  const micxWorkProviders = useMemo(
     () => llmProviders.filter((provider) => provider.source === "micx"),
     [llmProviders],
   );
@@ -146,8 +146,8 @@ export function LlmProvidersScreen() {
     });
   }, [customProviders, query]);
 
-  const openWorkKeyRows = useMemo(() => {
-    const rows = openWorkProviders.flatMap((provider) =>
+  const micxWorkKeyRows = useMemo(() => {
+    const rows = micxWorkProviders.flatMap((provider) =>
       provider.access.members.map((member) => ({
         id: `${provider.id}:${member.id}`,
         name: member.user.name || member.user.email,
@@ -157,7 +157,7 @@ export function LlmProvidersScreen() {
     );
     rows.sort((a, b) => a.name.localeCompare(b.name));
     return rows;
-  }, [openWorkProviders]);
+  }, [micxWorkProviders]);
 
   const modelNames = useMemo(() => {
     const names = llmProviders.flatMap((provider) =>
@@ -408,14 +408,14 @@ export function LlmProvidersScreen() {
         </div>
       ) : (
       <div className="grid gap-8">
-        {openWorkKeyRows.length > 0 ? (
+        {micxWorkKeyRows.length > 0 ? (
           <section className="overflow-hidden rounded-[28px] border border-gray-200 bg-white">
             <DenSectionHeader
               className="border-b border-gray-100 px-6 py-4"
               title="Micx Model Keys"
               description="Members in this organization with an Micx Models key."
             />
-            <DenTable columns={openWorkKeyColumns} rows={openWorkKeyRows} getRowKey={(row) => row.id} />
+            <DenTable columns={micxWorkKeyColumns} rows={micxWorkKeyRows} getRowKey={(row) => row.id} />
           </section>
         ) : null}
 

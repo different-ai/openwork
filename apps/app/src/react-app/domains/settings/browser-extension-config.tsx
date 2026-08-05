@@ -4,10 +4,10 @@ import { MonitorSmartphone } from "lucide-react";
 import { surfaceCardClass } from "../workspace/modal-styles";
 import { registerExtensionConfig } from "./extension-registry";
 
-const openWorkBrowserConfigFactory = () => <MicxBrowserConfig />;
+const micxWorkBrowserConfigFactory = () => <MicxBrowserConfig />;
 
-registerExtensionConfig("micx.browser.settings", openWorkBrowserConfigFactory);
-registerExtensionConfig("micx-browser", openWorkBrowserConfigFactory);
+registerExtensionConfig("micx.browser.settings", micxWorkBrowserConfigFactory);
+registerExtensionConfig("micx-browser", micxWorkBrowserConfigFactory);
 
 function MicxBrowserConfig() {
   return (

@@ -30,7 +30,7 @@ export type MicxVoiceConfigProps = {
   onTestSession: () => void | Promise<void>;
 };
 
-const openWorkVoiceConfigFactory = (ctx: ExtensionConfigContext) => (
+const micxWorkVoiceConfigFactory = (ctx: ExtensionConfigContext) => (
   <MicxVoiceConfig
     busy={ctx.voiceExtension.busy}
     status={ctx.voiceExtension.status}
@@ -41,8 +41,8 @@ const openWorkVoiceConfigFactory = (ctx: ExtensionConfigContext) => (
   />
 );
 
-registerExtensionConfig("micx.voice.settings", openWorkVoiceConfigFactory);
-registerExtensionConfig("micx-voice", openWorkVoiceConfigFactory);
+registerExtensionConfig("micx.voice.settings", micxWorkVoiceConfigFactory);
+registerExtensionConfig("micx-voice", micxWorkVoiceConfigFactory);
 
 export function MicxVoiceConfig(props: MicxVoiceConfigProps) {
   const [apiKey, setApiKey] = useState("");

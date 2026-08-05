@@ -109,7 +109,7 @@ type StatusBarOverrides = {
   showSettingsButton: boolean;
   reloadBusy: boolean;
   reloadError: string | null;
-  openWorkConnectState: SessionCloudMcpMaintenanceState;
+  micxWorkConnectState: SessionCloudMcpMaintenanceState;
 };
 
 export type SessionPageHistoryControls = {
@@ -1081,7 +1081,7 @@ export function SessionPage(props: SessionPageProps) {
             showSettingsButton: props.statusBar?.showSettingsButton,
             reloadBusy: props.statusBar?.reloadBusy,
             reloadError: props.statusBar?.reloadError,
-            openWorkConnectState: props.statusBar?.openWorkConnectState,
+            micxWorkConnectState: props.statusBar?.micxWorkConnectState,
             onSendFeedback: props.onSendFeedback,
           }}
         />

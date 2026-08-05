@@ -73,7 +73,7 @@ type ComposerProps = {
   selectedModel: ModelRef;
   /** When set, the full model picker opened from here targets this session. */
   sessionId?: string;
-  openWorkModelsEntitled?: boolean;
+  micxWorkModelsEntitled?: boolean;
   onRefreshOrganizationModels?: () => void | Promise<void>;
   onModelPickerOpenChange: (open: boolean) => void;
   onModelChange: (model: ModelRef) => void;
@@ -1732,7 +1732,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                   }}
                   disabled={props.steering}
                   sessionId={props.sessionId}
-                  openWorkModelsEntitled={props.openWorkModelsEntitled}
+                  micxWorkModelsEntitled={props.micxWorkModelsEntitled}
                 />
                 {props.modelUnavailable ? props.onRefreshOrganizationModels ? (
                   <button
