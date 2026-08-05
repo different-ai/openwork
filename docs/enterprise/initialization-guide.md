@@ -181,7 +181,7 @@ Micx 强制这些 SAML 安全默认：
 2. 返回 Den，点击 **打开 Micx**。
 3. 在 App 中确认确切的组织与服务器，再完成正常组织登录。
 
-- `install_link` 与 `desktop_conn_grant` 两张表由 Helm 迁移 Job 自动创建
+- `install_link` 与 `desktop_connect_grant` 两张表由 Helm 迁移 Job 自动创建
   （`migrations.enabled=true`）。
 - 交接模式默认 `exchange`（无密钥）：点击「打开 Micx」时，Den 铸一个**新的** 5 分钟
   单次 use 的 code，只存其 SHA-256 哈希；确认后一次写入 `desktop-bootstrap.json`。
@@ -321,7 +321,7 @@ Micx 强制这些 SAML 安全默认：
 ## 附：引用源文件
 
 - `docs/single-org-mode-plan.md`；`docs/enterprise/self-hosted-install-guide.md`（A2 T1）
-- `ee/apps/den-api/src/orgs.ts`、`org.ts`、`single-org-policy.ts`、`organization-member-guards.ts`、
+- `ee/apps/den-api/src/orgs.ts`、`single-org-policy.ts`、`organization-member-guards.ts`、
   `organization-role-hierarchy.ts`、`routes/auth/index.ts`；`ee/apps/den-api/src/env.ts`
 - `packaging/helm/micx-ee/values.yaml`、`ee/apps/den-api/.env.example`
 - `docs/microsoft-entra-sso-scim.md`、`docs/org-install-links.md`

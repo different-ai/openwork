@@ -51,13 +51,16 @@ member / role / worker / MCP resource 等对象，只是单组织对外不暴露
 
 ## 2. 部署路径（Deployment paths）
 
-生产环境推荐并唯一完整支持的是 **Helm on Kubernetes**。仓库内**没有**生产级
-Compose 文件——见 §2.2 说明。
+生产环境推荐并唯一完整支持的是 **Helm on Kubernetes**。仓库**本 A2 新增**了一份
+单机 Docker Compose 模板（`docker-compose.prod.yml`），它是**新加入的模板**，
+尚**未在真实生产基础设施上充分验证**，应按「best-effort / 待 smoke 测试」对待，
+不宣称已生产验证。详见 §2.2。
 
 | 路径 | 状态 | 适用 |
 |---|---|---|
 | (a) Helm on Kubernetes（OCI chart） | 已实现，推荐生产 | K8s / EKS / AKS / GKE / 私有云 |
-| (b) Docker Compose 单机 | 仅 dev/testability，**不是**生产部署 | 本地联调、验证 Helm 值，不作为生产随带路径 |
+| (b) Docker Compose 单机（生产模板，本 A2 新增） | **新模板，未完全验证**；best-effort / 待 smoke 测试 | 单机 / 自营机房的基础部署，**不**作生产验证保证 |
+| (c) Docker Compose 单机（dev/test） | 仅 dev/testability，**不是**生产部署 | 本地联调、验证 Helm 值 |
 
 ### 2.1 路径 (a)：Helm on Kubernetes（生产推荐）
 
@@ -201,24 +204,28 @@ curl -i https://micx.example.com/api/health
 
 **数据库迁移**：Helm 的 migration Job 以 `pre-install,pre-upgrade` hook 运行，
 空库会打上当前 schema 基线再跑 Drizzle 迁移；还会自动创建
-`install_link` 和 `desktop_conn_grant` 两张表（约 `migrations.enabled=true` 时）。
+`install_link` 和 `desktop_connect_grant` 两张表（约 `migrations.enabled=true` 时）。
 若 `denApi.replicaCount>1`，请确认 worker provisioning 操作幂等或外部选举（见 Chart README 的
 Worker Provisioning Recovery 章节）。
 
-### 2.2 路径 (b)：Docker Compose —— 当前**不是**生产路径
+### 2.2 路径 (b)：Docker Compose —— 单机路径（本 A2 新增生产模板，待验证）
 
-仓库中可用的 Compose 文件（`packaging/docker/`）**全部**属于本地开发 / 测试
-用途，不构成生产部署模板：
+仓库可用的 Compose 文件（`packaging/docker/`）：
 
+- `docker-compose.prod.yml` —— **本 A2 新增**的**面向生产（PRODUCTION-oriented）**
+  单机栈（mysql + den-api + micx-migrate + den-web + 可选 inference）。它是**新模板**，
+  尚未在真实生产基础设施上充分验证；按 **best-effort** 对待，**部署前须自行
+  smoke 测试**，不建议直接当作已生产验证的方案。自托管默认 `single_org`。
 - `docker-compose.den-dev.yml` —— Den 本地**测试性**栈（local testability）。
 - `docker-compose.dev.yml` —— Dev 测试栈（headless，不含 Den 控制面）。
 - `docker-compose.otel-lgtm.yml` —— OTLP 开发后端。
 - `docker-compose.web-local.yml`、`docker-compose.yml` —— 桌面端/预言主机微服务。
 
-因此：**没有**生产级 Docker Compose 模板可用。若要用 Compose 单机跑生产
-Micx EE，当前需要自行拼接 `Dockerfile.den` / `Dockerfile.den-web` 与 MySQL，
-该路径未经过测试，且没有官方模板支持。生产请走 (a) Helm 路径。
-`[planned: A4]` 提供官方单机 / Compose 生产打包。
+说明：**此前**仓库只有 dev/test Compose（不含生产栈）；**本 A2 新增**了这份
+`docker-compose.prod.yml` 作为**生产导向模板**，但它**仍需要真实基础设施验证**，
+不是久经考验的 battle-tested 模板。若要用 Compose 单机跑生产 Micx EE，请先用它
+做 smoke；对已充分验证、可支撑更大规模的部署，生产仍优先走 (a) Helm 路径。
+`[planned: A4]` 提供官方单机 / Compose 生产打包（正式、验证过的发布路径）。
 
 ---
 
@@ -252,7 +259,7 @@ Den 控制面由 `ee/apps/den-api/.env.example` 与 Helm `values.yaml` 定义真
 | `CORS_ORIGINS` / `corsOrigins` | 见 `config.public.corsOrigins` | 逗号分隔的 CORS 与 trusted origins |
 | `DEN_MCP_RESOURCE_URL` | `https://api.micx.example.com/mcp` | 公共 MCP resource URL |
 | `DEN_MCP_ADDITIONAL_RESOURCES` | `""` | 之外的额外公开 MCP resource URLs |
-| `DEN_MCP_CLAIM_NAMESPACE` | 默认 `BETTER_AUTH_URL` | MCP token 的 claim 命名空间；托管默认建议 `https://openworklabs.com` 保留旧 claim |
+| `DEN_MCP_CLAIM_NAMESPACE` | 默认 `BETTER_AUTH_URL`（非域名锚定；见 `ee/apps/den-api/src/env.ts`） | MCP token 的 claim 命名空间 |
 | `config.public.connectLinkMode` | `exchange` | install-link 交接模式（无需密钥）；`signed` 需专用 Ed25519 |
 
 ### 3.3 密钥与邮箱（secret）
@@ -283,7 +290,7 @@ openssl rand -base64 128   # 用于 BETTER_AUTH_SECRET / DEN_DB_ENCRYPTION_KEY
   已配置的继续运行不受影响）。
 - **观察性**：`DEN_OBSERVABILITY_BACKEND=none|otel|sentry`；OTLP 走 HTTP/protobuf，
   端口多为 `4318`（gRPC `4317` 不支持）。详见 `packaging/helm/micx-ee/README.md`。
-- **诊断**：`DEN_DIAGNOSTICS_ORIGIN` 默认 `https://diagnostic.openworklabs.com`（托管默认，自托管可覆盖）。
+- **诊断**：`DEN_DIAGNOSTICS_ORIGIN` 默认 `https://diagnostic.micxlabs.com`（仓库当前默认，见 `ee/apps/den-api/src/env.ts`；自托管可覆盖）。
 
 ---
 
@@ -424,7 +431,7 @@ Den 用 Better Auth 承载 SSO/SCIM 底层协议，再包一层 organization 路
 |---|---|---|
 | 私有模型网关（private model gateway） | `[planned: A4]` | 自托管自行托管推理模型网关（现 `inference` 可选服务，非完整私有模型层）。 |
 | 数据主权（数据驻留 / region pinning / 自管存储） | `[planned: A5]` | 控制面仅用 MySQL；对象存储 / worker 数据层托管方案自建。 |
-| 正式单机生产 Compose | `[planned: A2]` | 目前只有 dev/testability Compose（见 §2.2）。 |
+| 正式单机生产 Compose | `[planned: A2]` | 官方单机 Compose 模板（本 A2 已新增 `docker-compose.prod.yml`，待真实 infra 验证，见 §2.2）。 |
 | worker 生产预置（非 stub） | `[planned: A3]` | `PROVISIONER_MODE=stub/render/daytona` 已实现；本地/私有 sandbox provider 自建 gate。 |
 | 自托管计费（Stripe/Polar 由你引） | `[planned: A5]` | 现在 `polar` 仅 hosted 计费门禁可用。 |
 | 自托管多组织（多租期） | `[planned: A2]` | 代码存在（`DEN_ORG_MODE=multi_org`），但本文档聚焦单组织；托管 Cloud 才用。 |
