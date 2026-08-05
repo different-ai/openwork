@@ -28,7 +28,7 @@
     "@better-auth/scim": "1.6.25",
     "@better-auth/sso": "1.6.11",
     "@daytonaio/sdk": "^0.201.0",
-    "@hono/mcp": "^0.2.5",
+    "@hono/mcp": "^0.3.1",
     "@hono/node-server": "^1.13.8",
     "@hono/otel": "1.1.2",
     "@hono/standard-validator": "^0.2.2",
