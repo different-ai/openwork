@@ -72,7 +72,7 @@ function mapRevision(row: RevisionRow): AutomationRevision {
     version: row.version,
     instructions: row.instructions,
     schedule: row.schedule_config,
-    model: { providerId: row.provider_id, modelId: row.model_id },
+    model: { providerId: row.provider_id, modelId: row.model_id, variant: row.model_variant ?? null },
     executionTarget: row.execution_target,
     maximumRuntimeMs: row.maximum_runtime_ms,
     digest: row.digest,
@@ -104,6 +104,7 @@ function mapRun(row: RunRow): AutomationRun {
     } : null,
     providerId: row.provider_id,
     modelId: row.model_id,
+    modelVariant: row.model_variant ?? null,
     startedAt: ms(row.started_at),
     finishedAt: ms(row.finished_at),
     error: row.error ?? null,
@@ -161,6 +162,7 @@ export class DenAutomationRepository implements AutomationRepository {
         timezone: input.definition.schedule.timezone,
         provider_id: input.definition.model.providerId,
         model_id: input.definition.model.modelId,
+        model_variant: input.definition.model.variant ?? null,
         execution_target: "desktop",
         maximum_runtime_ms: maximumRuntimeMs,
         digest,
@@ -204,7 +206,7 @@ export class DenAutomationRepository implements AutomationRepository {
       if (!current) throw new Error("automation_revision_not_found")
       const instructions = input.changes.instructions ?? current.instructions
       const schedule = input.changes.schedule ?? current.schedule_config
-      const model = input.changes.model ?? { providerId: current.provider_id, modelId: current.model_id }
+      const model = input.changes.model ?? { providerId: current.provider_id, modelId: current.model_id, variant: current.model_variant ?? null }
       const newRevisionId = createDenTypeId("automationRevision")
       const digest = automationRevisionDigest({
         instructions,
@@ -229,6 +231,7 @@ export class DenAutomationRepository implements AutomationRepository {
         timezone: schedule.timezone,
         provider_id: model.providerId,
         model_id: model.modelId,
+        model_variant: model.variant ?? null,
         execution_target: "desktop",
         maximum_runtime_ms: current.maximum_runtime_ms,
         digest,
@@ -354,6 +357,7 @@ export class DenAutomationRepository implements AutomationRepository {
         engine_admitted_at: null,
         provider_id: input.revision.model.providerId,
         model_id: input.revision.model.modelId,
+        model_variant: input.revision.model.variant ?? null,
         finished_at: overlap ? new Date(input.now) : null,
         error: null,
         result_summary: overlap ? "Skipped because another occurrence is already active." : null,

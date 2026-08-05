@@ -86,6 +86,7 @@ export async function executeDesktopAutomation(assignment, options) {
       prompt: assignment.instructions,
       providerId: assignment.model.providerId,
       modelId: assignment.model.modelId,
+      ...(assignment.model.variant ? { variant: assignment.model.variant } : {}),
     },
   })
   const sessionId = typeof created?.item?.id === "string" ? created.item.id : null

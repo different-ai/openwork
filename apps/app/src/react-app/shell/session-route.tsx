@@ -2520,7 +2520,7 @@ export function SessionRoute() {
       }
       primaryTitle={automationsRouteActive ? "Automations" : undefined}
       primarySlot={automationsRouteActive ? (
-        <AutomationsPage />
+        <AutomationsPage providerCatalog={providerCatalog} />
       ) : undefined}
       terminalOpen={terminalOpen}
       onTerminalOpenChange={setTerminalOpen}

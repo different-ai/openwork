@@ -42,7 +42,16 @@ export const automationScheduleSchema = z.discriminatedUnion("kind", [
 ])
 export type AutomationSchedule = z.infer<typeof automationScheduleSchema>
 
-export const automationModelSchema = z.object({ providerId: idSchema, modelId: idSchema })
+/**
+ * `variant` is the model's reasoning/thinking level, the same value the
+ * composer sends as its behavior pill. It is optional because most models
+ * expose no variants, and null means "whatever the provider defaults to".
+ */
+export const automationModelSchema = z.object({
+  providerId: idSchema,
+  modelId: idSchema,
+  variant: z.string().trim().min(1).max(60).nullable().optional(),
+})
 export type AutomationModel = z.infer<typeof automationModelSchema>
 
 /**
@@ -238,6 +247,7 @@ export const automationRunSchema = z.object({
   executionThread: automationExecutionThreadSchema.nullable(),
   providerId: idSchema,
   modelId: idSchema,
+  modelVariant: z.string().trim().min(1).max(60).nullable().default(null),
   startedAt: nullableTimestampSchema,
   finishedAt: nullableTimestampSchema,
   error: automationErrorSchema.nullable(),

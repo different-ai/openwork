@@ -1,6 +1,12 @@
 import type { DenOrgLlmProvider } from "@/app/lib/den"
+import { getModelBehaviorSummary } from "@/app/lib/model-behavior"
+import type { ModelOption, ProviderListItem } from "@/app/types"
+import type { AutomationModel } from "@openwork/types/automations"
 import { AUTOMATION_FREE_MODEL } from "@openwork/types/automations"
 import { INFERENCE_MODEL_ALIASES } from "@openwork/types/den/inference"
+
+/** providerId → modelId → the local runtime's model record. */
+export type AutomationProviderCatalog = Record<string, Record<string, ProviderListItem["models"][string]>>
 
 export type AutomationModelOption = {
   providerId: string
@@ -52,5 +58,76 @@ export function automationModelOptions(providers: readonly DenOrgLlmProvider[]):
     return kindOrder.indexOf(left.accessKind) - kindOrder.indexOf(right.accessKind)
       || left.providerName.localeCompare(right.providerName)
       || left.modelName.localeCompare(right.modelName)
+  })
+}
+
+export function automationProviderCatalog(
+  providers: readonly ProviderListItem[] | undefined,
+): AutomationProviderCatalog {
+  const catalog: AutomationProviderCatalog = {}
+  for (const provider of providers ?? []) catalog[provider.id] = { ...(provider.models ?? {}) }
+  return catalog
+}
+
+export function findAutomationModelOption(
+  options: readonly AutomationModelOption[],
+  model: Pick<AutomationModel, "providerId" | "modelId">,
+) {
+  return options.find((option) =>
+    option.providerId === model.providerId && option.modelId === model.modelId) ?? null
+}
+
+/**
+ * Human label for a stored Automation model. Falls back to the raw identity
+ * only when the model is no longer among the ones this member can use, so a
+ * revoked model stays inspectable instead of rendering as a blank.
+ */
+export function describeAutomationModel(
+  model: AutomationModel,
+  options: readonly AutomationModelOption[],
+) {
+  const option = findAutomationModelOption(options, model)
+  const name = option ? `${option.providerName} · ${option.modelName}` : `${model.providerId}/${model.modelId}`
+  return model.variant ? `${name} · ${model.variant}` : name
+}
+
+/**
+ * Presents the member's authorized Automation models in the shape the shared
+ * model picker renders, so an Automation is configured with the same control
+ * and the same reasoning levels as a chat.
+ *
+ * Reasoning variants are a property of the desktop runtime that will execute
+ * the run, so they come from the local provider catalog. A model Den authorizes
+ * but the local runtime does not know still lists — without variants.
+ */
+export function automationPickerOptions(input: {
+  options: readonly AutomationModelOption[]
+  catalog: AutomationProviderCatalog
+  selected: AutomationModel
+}): ModelOption[] {
+  return input.options.map((option) => {
+    const isSelected = option.providerId === input.selected.providerId
+      && option.modelId === input.selected.modelId
+    const model = input.catalog[option.providerId]?.[option.modelId]
+    const summary = model
+      ? getModelBehaviorSummary(
+        option.providerId,
+        model,
+        isSelected ? input.selected.variant ?? null : null,
+        option.providerName,
+      )
+      : null
+    return {
+      providerID: option.providerId,
+      modelID: option.modelId,
+      title: option.modelName,
+      description: option.providerName,
+      behaviorTitle: summary?.title ?? "Reasoning",
+      behaviorLabel: summary?.label ?? "Default",
+      behaviorDescription: summary?.description ?? "",
+      behaviorValue: summary?.value ?? null,
+      behaviorOptions: summary?.options ?? [],
+      isFree: option.accessKind === "free",
+    }
   })
 }

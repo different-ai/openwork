@@ -47,7 +47,8 @@ import { ConfirmModal } from "@/react-app/design-system/modals/confirm-modal"
 import { AutomationEditor } from "./automation-editor"
 import { automationExecutionThreadRoute, automationExecutionIdentity } from "./automation-cloud-thread"
 import { formatAutomationSchedule, formatAutomationTime } from "./automation-format"
-import { automationModelOptions } from "./automation-model-options"
+import type { AutomationProviderCatalog } from "./automation-model-options"
+import { automationModelOptions, describeAutomationModel } from "./automation-model-options"
 
 const ACTIVE_RUN_STATUSES = new Set<AutomationRun["status"]>(["queued", "claimed", "running"])
 
@@ -127,7 +128,7 @@ function LoadingState() {
   )
 }
 
-export function AutomationsPage() {
+export function AutomationsPage(props: { providerCatalog?: AutomationProviderCatalog } = {}) {
   const denAuth = useDenAuth()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
@@ -270,6 +271,7 @@ export function AutomationsPage() {
         <AutomationEditor
           busy={busyAction === "create"}
           modelOptions={models}
+          providerCatalog={props.providerCatalog}
           submitLabel="Create and activate"
           onCancel={() => openAutomation(null)}
           onSave={async (input) => {
@@ -319,6 +321,7 @@ export function AutomationsPage() {
             initialKey={detail.revision.id}
             busy={busyAction === "update"}
             modelOptions={models}
+            providerCatalog={props.providerCatalog}
             submitLabel="Save changes"
             onCancel={() => setEditing(false)}
             onSave={async (input) => {
@@ -419,10 +422,10 @@ export function AutomationsPage() {
                 <CardDescription>Den keeps the schedule and durable history; your connected desktop runs the task locally.</CardDescription>
               </CardHeader>
               <CardContent className="grid gap-3 text-sm sm:grid-cols-2">
-                <div><span className="text-muted-foreground">Model</span><p>{detail.revision.model.providerId}/{detail.revision.model.modelId}</p></div>
-                <div><span className="text-muted-foreground">Next run</span><p>{formatAutomationTime(task.nextDueAt)}</p></div>
-                <div><span className="text-muted-foreground">Runtime limit</span><p>{Math.round(detail.revision.maximumRuntimeMs / 60_000)} minutes</p></div>
-                <div><span className="text-muted-foreground">Integrations</span><p>Your available OpenWork Connect tools</p></div>
+                <div className="min-w-0"><span className="text-muted-foreground">Model</span><p className="break-words">{describeAutomationModel(detail.revision.model, models)}</p></div>
+                <div className="min-w-0"><span className="text-muted-foreground">Next run</span><p className="break-words">{formatAutomationTime(task.nextDueAt)}</p></div>
+                <div className="min-w-0"><span className="text-muted-foreground">Runtime limit</span><p className="break-words">{Math.round(detail.revision.maximumRuntimeMs / 60_000)} minutes</p></div>
+                <div className="min-w-0"><span className="text-muted-foreground">Integrations</span><p className="break-words">Your available OpenWork Connect tools</p></div>
               </CardContent>
             </Card>
 

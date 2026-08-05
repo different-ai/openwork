@@ -379,6 +379,13 @@
       "when": 1785881659570,
       "tag": "0054_mighty_scarecrow",
       "breakpoints": true
+    },
+    {
+      "idx": 55,
+      "version": "5",
+      "when": 1785920406990,
+      "tag": "0055_thick_chamber",
+      "breakpoints": true
     }
   ]
 }
