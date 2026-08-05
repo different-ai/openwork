@@ -14,12 +14,15 @@ describe("OrgDashboardShell layout", () => {
     expect(source).toMatch(/<main className="[^\"]*\bflex-1\b[^\"]*\boverflow-y-auto\b[^\"]*">/);
   });
 
-  test("bounds the workspace switcher and dismisses it from outside", () => {
+  test("bounds the workspace switcher and dismisses only outside pointer input", () => {
     const source = readFileSync(shellPath, "utf8");
 
     expect(source).toContain("grid-cols-[minmax(0,1fr)]");
     expect(source).toContain("max-w-[calc(100vw-1.5rem)]");
     expect(source).toContain('document.addEventListener("pointerdown", handlePointerDown)');
-    expect(source).toContain("!switcherRef.current?.contains(event.target)");
+    expect(source).toContain('data-workspace-switcher-root=""');
+    expect(source).toContain("event.composedPath().some(");
+    expect(source).toContain('target.hasAttribute("data-workspace-switcher-root")');
+    expect(source).toContain("if (!clickedInsideSwitcher)");
   });
 });

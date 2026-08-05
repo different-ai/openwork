@@ -321,7 +321,6 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [profilePromptDismissed, setProfilePromptDismissed] = useState(false);
-  const switcherRef = useRef<HTMLDivElement>(null);
   const switcherTriggerRef = useRef<HTMLButtonElement>(null);
   const isSingleOrgMode = runtimeConfigLoaded && runtimeConfig.orgMode === "single_org";
   const {
@@ -339,7 +338,10 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
     if (!switcherOpen) return;
 
     function handlePointerDown(event: PointerEvent) {
-      if (event.target instanceof Node && !switcherRef.current?.contains(event.target)) {
+      const clickedInsideSwitcher = event.composedPath().some(
+        (target) => target instanceof Element && target.hasAttribute("data-workspace-switcher-root"),
+      );
+      if (!clickedInsideSwitcher) {
         setSwitcherOpen(false);
       }
     }
@@ -526,7 +528,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
       </button>
     </div>
   ) : (
-    <div ref={switcherRef} className="relative">
+    <div data-workspace-switcher-root="" className="relative">
       <button
         ref={switcherTriggerRef}
         type="button"
