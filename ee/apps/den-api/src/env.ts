@@ -32,6 +32,8 @@ const EnvSchema = z.object({
   GITHUB_SYNC_RETRY_BASE_MS: z.string().optional(),
   GITHUB_SYNC_MAX_ATTEMPTS: z.string().optional(),
   GITHUB_RECONCILE_INTERVAL_MS: z.string().optional(),
+  GITHUB_RECONCILE_BATCH_SIZE: z.string().optional(),
+  GITHUB_RECONCILE_MIN_AGE_MS: z.string().optional(),
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   EMAIL_FROM: z.string().optional(),
@@ -482,6 +484,8 @@ export const env = {
     retryBaseMs: Number(parsed.GITHUB_SYNC_RETRY_BASE_MS ?? "30000"),
     maxAttempts: Number(parsed.GITHUB_SYNC_MAX_ATTEMPTS ?? "5"),
     reconcileIntervalMs: Number(parsed.GITHUB_RECONCILE_INTERVAL_MS ?? "900000"),
+    reconcileBatchSize: Number(parsed.GITHUB_RECONCILE_BATCH_SIZE ?? "25"),
+    reconcileMinAgeMs: Number(parsed.GITHUB_RECONCILE_MIN_AGE_MS ?? "21600000"),
   },
   google: {
     clientId: optionalString(parsed.GOOGLE_CLIENT_ID),

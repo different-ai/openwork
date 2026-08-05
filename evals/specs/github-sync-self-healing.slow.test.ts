@@ -307,6 +307,7 @@ test.skipIf(!localPlacement || !mysqlOpen)(title, async ({ evidence, place }) =>
     GITHUB_SYNC_RETRY_BASE_MS: "500",
     GITHUB_SYNC_MAX_ATTEMPTS: "5",
     GITHUB_RECONCILE_INTERVAL_MS: "2000",
+    GITHUB_RECONCILE_MIN_AGE_MS: "0",
   });
 
   try {

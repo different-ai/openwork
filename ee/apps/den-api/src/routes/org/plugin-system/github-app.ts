@@ -78,8 +78,14 @@ export type GithubInstallStatePayload = {
 }
 
 const GITHUB_API_VERSION = "2022-11-28"
+const GITHUB_INSTALLATION_TOKEN_CACHE_TTL_MS = 55 * 60_000
 const GITHUB_REPOSITORY_MAX_PAGES = 30
 const GITHUB_REPOSITORY_PAGE_SIZE = 100
+const githubInstallationTokenCache = new Map<string, { token: string; expiresAtMs: number }>()
+
+export function clearGithubInstallationTokenCache() {
+  githubInstallationTokenCache.clear()
+}
 
 // Overridable so @openwork/testkit specs can point the connector at a mock GitHub witness.
 function githubApiBase(): string {
@@ -330,8 +336,25 @@ async function createGithubInstallationAccessToken(input: { config: GithubConnec
   return token
 }
 
-export async function getGithubInstallationAccessToken(input: { config: GithubConnectorAppConfig; fetchFn?: GithubFetch; installationId: number }) {
-  return createGithubInstallationAccessToken(input)
+export async function getGithubInstallationAccessToken(input: {
+  config: GithubConnectorAppConfig
+  fetchFn?: GithubFetch
+  installationId: number
+  nowMs?: number
+}) {
+  const nowMs = input.nowMs ?? Date.now()
+  const cacheKey = `${input.config.appId}:${input.installationId}`
+  const cached = githubInstallationTokenCache.get(cacheKey)
+  if (cached && cached.expiresAtMs > nowMs) {
+    return cached.token
+  }
+
+  const token = await createGithubInstallationAccessToken(input)
+  githubInstallationTokenCache.set(cacheKey, {
+    expiresAtMs: nowMs + GITHUB_INSTALLATION_TOKEN_CACHE_TTL_MS,
+    token,
+  })
+  return token
 }
 
 function normalizeGithubRepository(entry: unknown): GithubRepositorySummary | null {
@@ -364,7 +387,7 @@ function normalizeGithubRepository(entry: unknown): GithubRepositorySummary | nu
 }
 
 export async function listGithubInstallationRepositories(input: { config: GithubConnectorAppConfig; fetchFn?: GithubFetch; installationId: number }) {
-  const token = await createGithubInstallationAccessToken(input)
+  const token = await getGithubInstallationAccessToken(input)
   const normalizedRepositories: GithubRepositorySummary[] = []
   for (let page = 1; page <= GITHUB_REPOSITORY_MAX_PAGES; page += 1) {
     const response = await requestGithubJson<{ repositories?: unknown[] }>({
@@ -488,7 +511,7 @@ export async function getGithubRepositoryTextFile(input: {
     throw new GithubConnectorRequestError("GitHub repository full name is invalid.", 400)
   }
 
-  const token = input.token ?? await createGithubInstallationAccessToken(input)
+  const token = input.token ?? await getGithubInstallationAccessToken(input)
   const response = await requestGithubJson<{ content?: string; encoding?: string }>({
     allowStatuses: [404],
     fetchFn: input.fetchFn,
@@ -570,7 +593,7 @@ export async function getGithubRepositoryHeadSha(input: {
     throw new GithubConnectorRequestError("GitHub repository full name is invalid.", 400)
   }
 
-  const token = input.token ?? await createGithubInstallationAccessToken(input)
+  const token = input.token ?? await getGithubInstallationAccessToken(input)
   const commitResponse = await requestGithubJson<{ sha?: string }>({
     fetchFn: input.fetchFn,
     headers: {
@@ -599,7 +622,7 @@ export async function getGithubRepositoryTree(input: {
     throw new GithubConnectorRequestError("GitHub repository full name is invalid.", 400)
   }
 
-  const token = input.token ?? await createGithubInstallationAccessToken(input)
+  const token = input.token ?? await getGithubInstallationAccessToken(input)
   const authHeaders = {
     Authorization: `Bearer ${token}`,
   }
@@ -681,7 +704,7 @@ export async function validateGithubInstallationTarget(input: {
     }
   }
 
-  const token = input.token ?? await createGithubInstallationAccessToken(input)
+  const token = input.token ?? await getGithubInstallationAccessToken(input)
   const authHeaders = {
     Authorization: `Bearer ${token}`,
   }

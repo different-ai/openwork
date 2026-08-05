@@ -1,13 +1,15 @@
-import { describe, expect, test } from "bun:test"
+import { beforeEach, describe, expect, test } from "bun:test"
 import { generateKeyPairSync } from "node:crypto"
 import {
   buildGithubAppInstallUrl,
+  clearGithubInstallationTokenCache,
   createGithubInstallStateToken,
   createGithubAppJwt,
   fetchGithubImportFilesWithRevisionGuard,
   getGithubAppSummary,
   getGithubConnectorAppConfig,
   getGithubInstallationSummary,
+  getGithubInstallationAccessToken,
   getGithubRepositoryTextFile,
   GithubConnectorRequestError,
   listGithubInstallationRepositories,
@@ -20,6 +22,10 @@ const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 })
 const privateKeyPem = privateKey.export({ format: "pem", type: "pkcs8" }).toString()
 
 describe("github connector app helpers", () => {
+  beforeEach(() => {
+    clearGithubInstallationTokenCache()
+  })
+
   test("normalizes escaped private keys and produces a signed app JWT", () => {
     const escapedKey = privateKeyPem.replace(/\n/g, "\\n")
     expect(normalizeGithubPrivateKey(escapedKey)).toBe(privateKeyPem)
@@ -140,6 +146,46 @@ describe("github connector app helpers", () => {
     expect(requestUrls).toContain("https://api.github.com/installation/repositories?per_page=100&page=1")
     expect(requestUrls).toContain("https://api.github.com/installation/repositories?per_page=100&page=2")
     expect(requestUrls).not.toContain("https://api.github.com/installation/repositories?per_page=100&page=3")
+  })
+
+  test("caches installation tokens within the TTL and clears them on demand", async () => {
+    let mintCount = 0
+    const fetchFn: typeof fetch = async () => {
+      mintCount += 1
+      return new Response(JSON.stringify({ token: `installation-token-${mintCount}` }), { status: 201 })
+    }
+    const input = {
+      config: { appId: "123456", privateKey: privateKeyPem },
+      fetchFn,
+      installationId: 777,
+    }
+
+    expect(await getGithubInstallationAccessToken({ ...input, nowMs: 1_000 })).toBe("installation-token-1")
+    expect(await getGithubInstallationAccessToken({ ...input, nowMs: 55 * 60_000 })).toBe("installation-token-1")
+    expect(mintCount).toBe(1)
+
+    clearGithubInstallationTokenCache()
+    expect(await getGithubInstallationAccessToken({ ...input, nowMs: 55 * 60_000 })).toBe("installation-token-2")
+    expect(mintCount).toBe(2)
+  })
+
+  test("expires installation tokens after 55 minutes and isolates installations", async () => {
+    let mintCount = 0
+    const fetchFn: typeof fetch = async () => {
+      mintCount += 1
+      return new Response(JSON.stringify({ token: `installation-token-${mintCount}` }), { status: 201 })
+    }
+    const config = { appId: "123456", privateKey: privateKeyPem }
+
+    expect(await getGithubInstallationAccessToken({ config, fetchFn, installationId: 777, nowMs: 1_000 })).toBe("installation-token-1")
+    expect(await getGithubInstallationAccessToken({ config, fetchFn, installationId: 888, nowMs: 1_000 })).toBe("installation-token-2")
+    expect(await getGithubInstallationAccessToken({
+      config,
+      fetchFn,
+      installationId: 777,
+      nowMs: 1_000 + 55 * 60_000 + 1,
+    })).toBe("installation-token-3")
+    expect(mintCount).toBe(3)
   })
 
   test("builds install URLs and validates signed state tokens", async () => {

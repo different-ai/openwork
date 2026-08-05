@@ -337,8 +337,9 @@ export class PluginArchRouteFailure extends Error {
     readonly status: 400 | 404 | 409 | 502,
     readonly error: string,
     message: string,
+    options?: ErrorOptions,
   ) {
-    super(message)
+    super(message, options)
     this.name = "PluginArchRouteFailure"
   }
 }
@@ -4144,7 +4145,7 @@ function wrapGithubConnectorError(error: unknown): never {
   }
 
   if (error instanceof GithubConnectorRequestError) {
-    throw new PluginArchRouteFailure(409, "github_connector_request_failed", error.message)
+    throw new PluginArchRouteFailure(409, "github_connector_request_failed", error.message, { cause: error })
   }
 
   throw error

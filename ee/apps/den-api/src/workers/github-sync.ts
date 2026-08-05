@@ -19,6 +19,41 @@ import { executeGithubConnectorSyncEvent } from "../routes/org/plugin-system/sto
 
 const logger = appLogger.child({ component: "github_sync_worker" })
 const MAX_BACKOFF_MS = 15 * 60_000
+// This bounds one process; multi-replica dedup/leadership is deliberately deferred to #3568.
+const githubReconcileLastProbedAtMs = new Map<string, number>()
+
+export function resetGithubReconcileProbeStateForTests() {
+  githubReconcileLastProbedAtMs.clear()
+}
+
+export function selectGithubReconcileCandidates(input: {
+  batchSize: number
+  minAgeMs: number
+  now: Date
+  targets: Array<{ targetId: string; createdAtMs: number }>
+  lastProbedAtMs: ReadonlyMap<string, number>
+}): string[] {
+  const nowMs = input.now.getTime()
+  return [...input.targets]
+    .filter((target) => {
+      const lastProbedAtMs = input.lastProbedAtMs.get(target.targetId)
+      return lastProbedAtMs === undefined || nowMs - lastProbedAtMs >= input.minAgeMs
+    })
+    .sort((left, right) => {
+      const leftLastProbedAtMs = input.lastProbedAtMs.get(left.targetId)
+      const rightLastProbedAtMs = input.lastProbedAtMs.get(right.targetId)
+      if (leftLastProbedAtMs === undefined && rightLastProbedAtMs !== undefined) return -1
+      if (leftLastProbedAtMs !== undefined && rightLastProbedAtMs === undefined) return 1
+      if (leftLastProbedAtMs !== undefined && rightLastProbedAtMs !== undefined) {
+        const probedAtOrder = leftLastProbedAtMs - rightLastProbedAtMs
+        if (probedAtOrder !== 0) return probedAtOrder
+      }
+      const createdAtOrder = left.createdAtMs - right.createdAtMs
+      return createdAtOrder || left.targetId.localeCompare(right.targetId)
+    })
+    .slice(0, Math.max(0, Math.floor(input.batchSize)))
+    .map((target) => target.targetId)
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -48,7 +83,11 @@ export function isTransientGithubSyncError(error: unknown) {
   if (error instanceof GithubConnectorRequestError) {
     return error.status === 429 || error.status >= 500
   }
-  return error instanceof TypeError || (error instanceof Error && error.name === "AbortError")
+  if (error instanceof TypeError || (error instanceof Error && error.name === "AbortError")) return true
+  if (error instanceof Error && error.cause !== undefined && error.cause !== error) {
+    return isTransientGithubSyncError(error.cause)
+  }
+  return false
 }
 
 export async function processDueGithubSyncEvents(now = new Date()) {
@@ -187,7 +226,7 @@ export async function reconcileGithubConnectorTargets() {
     ))
     .orderBy(asc(ConnectorTargetTable.createdAt), asc(ConnectorTargetTable.id))
 
-  let enqueued = 0
+  const candidateTargets: typeof targets = []
   for (const row of targets) {
     const activeEvents = await db
       .select({ id: ConnectorSyncEventTable.id })
@@ -199,6 +238,26 @@ export async function reconcileGithubConnectorTargets() {
       .limit(1)
     if (activeEvents[0]) continue
 
+    candidateTargets.push(row)
+  }
+
+  const now = new Date()
+  const selectedTargetIds = selectGithubReconcileCandidates({
+    batchSize: env.githubSync.reconcileBatchSize,
+    lastProbedAtMs: githubReconcileLastProbedAtMs,
+    minAgeMs: env.githubSync.reconcileMinAgeMs,
+    now,
+    targets: candidateTargets.map((row) => ({
+      createdAtMs: row.target.createdAt.getTime(),
+      targetId: row.target.id,
+    })),
+  })
+
+  let enqueued = 0
+  for (const targetId of selectedTargetIds) {
+    const row = candidateTargets.find((candidate) => candidate.target.id === targetId)
+    if (!row) continue
+    githubReconcileLastProbedAtMs.set(row.target.id, now.getTime())
     try {
       const targetConfig = githubTargetConfig(row.target)
       const installationId = githubInstallationId(row.instance, row.account)
@@ -249,7 +308,7 @@ export async function reconcileGithubConnectorTargets() {
     }
   }
 
-  return { checked: targets.length, enqueued }
+  return { checked: selectedTargetIds.length, enqueued }
 }
 
 let workerTickRunning = false
@@ -296,14 +355,18 @@ export function startGithubSyncWorker(
   const reconcileTimer = Number.isFinite(reconcileIntervalMs) && reconcileIntervalMs > 0
     ? setInterval(runReconcile, reconcileIntervalMs)
     : null
+  const reconcileInitialTimer = reconcileTimer
+    ? setTimeout(runReconcile, Math.floor(Math.random() * Math.min(reconcileIntervalMs, 60_000)))
+    : null
   workerTimer?.unref()
   reconcileTimer?.unref()
+  reconcileInitialTimer?.unref()
   if (workerTimer) runWorkerTick()
-  if (reconcileTimer) runReconcile()
 
   return async () => {
     if (workerTimer) clearInterval(workerTimer)
     if (reconcileTimer) clearInterval(reconcileTimer)
+    if (reconcileInitialTimer) clearTimeout(reconcileInitialTimer)
     await Promise.all([workerTickPromise, reconcilePromise])
   }
 }
