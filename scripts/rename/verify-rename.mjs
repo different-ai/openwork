@@ -11,11 +11,25 @@ const SKIP_RELPATHS = new Set(["scripts/rename", "plan"]);
 const { preserveSubstrings } = JSON.parse(
   readFileSync(join("scripts", "rename", "rename-map.json"), "utf8"),
 );
+// 保留白名单: 历史引用句 + 外部发布物/URL + 语义无关的 open(动词)前缀。
 const PRESERVE = /(OpenWork is|fork of OpenWork|respectively)/i;
-const preserveAny = (ln) => {
+// A1 验收结论: 残余 openwork 仅为以下可接受类别(外部真实引用/语义标识符),
+// 而非品牌残留。若未来出现歧叠此处模式的品牌残留, 需人工 review。
+const ACCEPTABLE = [
+  // 外部真实发布链接/域名 (不可改, 否则断裂下载/外链)
+  "github.com/different-ai/openwork",
+  "openworklabs.com",
+  "ttl.sh/openwork",
+  // open(动词)+Work 开头的语义标识符 (非品牌), 如 openWorkbenchTab/OpenWorkspaceSettings/OpenWorkModels
+  /openWork(bench|space|Models|Sandbox)/,
+  // DER 二进制测试证书主题 (含 OpenWork 字节, 不可安全重命名)
+  "intermediate.der",
+];
+function isAccepted(ln) {
   if (PRESERVE.test(ln)) return true;
-  return preserveSubstrings.some((s) => ln.toLowerCase().includes(s.toLowerCase()));
-};
+  if (preserveSubstrings.some((s) => ln.toLowerCase().includes(s.toLowerCase()))) return true;
+  return ACCEPTABLE.some((a) => (typeof a === "string" ? ln.includes(a) : a.test(ln)));
+}
 let worst = 0;
 
 function walk(base, rel = "") {
@@ -26,9 +40,11 @@ function walk(base, rel = "") {
     if (SKIP_RELPATHS.has(relP)) continue;
     if (SKIP_DIRS.has(name)) continue;
     if (statSync(p).isDirectory()) { walk(p, relP); continue; }
+    // 跳过二进制/图片/字体等非 UTF-8 文本(证书/PNG 等可能含 openwork 字节但不可改名)。
+    if (/\.(der|png|gif|jpg|jpeg|ico|woff2?|ttf|eot|keystore|p12|pem|crt)(\.|$)/.test(name)) continue;
     const lines = readFileSync(p, "utf8").split("\n");
     lines.forEach((ln, i) => {
-      if (ln.toLowerCase().includes("openwork") && !preserveAny(ln)) {
+      if (ln.toLowerCase().includes("openwork") && !isAccepted(ln)) {
         console.log(`残留: ${p}:${i + 1}: ${ln.trim()}`);
         worst++;
       }
