@@ -1,5 +1,5 @@
 apiVersion: v2
-name: openwork-ee
+name: micx-ee
 description: Micx EE Den control plane, web app, and optional inference service
 type: application
 version: 0.1.0

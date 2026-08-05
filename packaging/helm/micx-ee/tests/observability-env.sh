@@ -45,7 +45,7 @@ assert_file_not_contains() {
 }
 
 default_rendered="$tmp_dir/default.yaml"
-helm template openwork-ee "$chart_dir" --set inference.enabled=true > "$default_rendered"
+helm template micx-ee "$chart_dir" --set inference.enabled=true > "$default_rendered"
 assert_contains "$default_rendered" 'DEN_API_NODE_OPTIONS: ""'
 assert_count "$default_rendered" 'name: NODE_OPTIONS' 2
 assert_count "$default_rendered" 'valueFrom: null' 1
@@ -82,7 +82,7 @@ denWeb:
   env:
     CUSTOM_DEN_WEB_ENV: web
 YAML
-helm template openwork-ee "$chart_dir" -f "$otel_values" > "$otel_rendered"
+helm template micx-ee "$chart_dir" -f "$otel_values" > "$otel_rendered"
 assert_contains "$otel_rendered" 'DEN_API_NODE_OPTIONS: "--max-old-space-size=4096"'
 assert_contains "$otel_rendered" 'value: "--max-old-space-size=4096"'
 assert_count "$otel_rendered" 'name: DEN_OBSERVABILITY_BACKEND' 2
@@ -107,7 +107,7 @@ denApi:
   env:
     NODE_OPTIONS: --tls-max-v1.2
 YAML
-helm template openwork-ee "$chart_dir" -f "$legacy_values" > "$legacy_rendered"
+helm template micx-ee "$chart_dir" -f "$legacy_values" > "$legacy_rendered"
 assert_count "$legacy_rendered" 'name: NODE_OPTIONS' 2
 assert_contains "$legacy_rendered" 'value: "--tls-max-v1.2"'
 assert_not_contains "$legacy_rendered" 'valueFrom: null'
@@ -129,7 +129,7 @@ observability:
     release: "2026.07.11"
     dist: web
 YAML
-helm template openwork-ee "$chart_dir" -f "$sentry_values" > "$sentry_rendered"
+helm template micx-ee "$chart_dir" -f "$sentry_values" > "$sentry_rendered"
 assert_count "$sentry_rendered" 'name: DEN_OBSERVABILITY_BACKEND' 2
 assert_count "$sentry_rendered" 'value: "sentry"' 2
 assert_count "$sentry_rendered" 'name: SENTRY_DSN' 2
@@ -144,7 +144,7 @@ assert_file_contains "$repo_root/packaging/docker/Dockerfile.den" '/app/ee/apps/
 assert_file_not_contains "$repo_root/packaging/docker/Dockerfile.den" '/app/ee/apps/den-api/dist/server.js'
 assert_file_contains "$repo_root/packaging/docker/docker-compose.den-dev.yml" '/app/ee/apps/den-api/dist/main.js'
 assert_file_not_contains "$repo_root/packaging/docker/docker-compose.den-dev.yml" '/app/ee/apps/den-api/dist/server.js'
-assert_file_contains "$repo_root/.devcontainer/start-daytona-server.sh" 'pnpm --filter @openwork-ee/den-api exec tsx watch src/main.ts'
+assert_file_contains "$repo_root/.devcontainer/start-daytona-server.sh" 'pnpm --filter @micx-ee/den-api exec tsx watch src/main.ts'
 assert_file_not_contains "$repo_root/.devcontainer/start-daytona-server.sh" 'ee/apps/den-api/src/server.ts'
 assert_file_contains "$repo_root/evals/runner/den-stack.ts" '"tsx", "src/main.ts"'
 assert_file_not_contains "$repo_root/evals/runner/den-stack.ts" '"tsx", "src/server.ts"'

@@ -57,7 +57,7 @@ function ensureBuildArtifacts() {
 
   const result = run("pnpm", ["--dir", denDbDir, "run", "build"], { timeout: 240_000 });
   ensureSuccess(result, "pnpm --dir ee/packages/den-db run build");
-  console.log("Built @openwork-ee/den-db migration artifacts");
+  console.log("Built @micx-ee/den-db migration artifacts");
 }
 
 function generateCertificates() {

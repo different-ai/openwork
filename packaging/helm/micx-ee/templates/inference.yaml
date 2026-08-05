@@ -1,11 +1,11 @@
-{{- include "openwork-ee.customCa.validate" . }}
+{{- include "micx-ee.customCa.validate" . }}
 {{- if .Values.inference.enabled }}
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "openwork-ee.inferenceServiceName" . }}
+  name: {{ include "micx-ee.inferenceServiceName" . }}
   labels:
-    {{- include "openwork-ee.componentLabels" (dict "root" . "component" "inference") | nindent 4 }}
+    {{- include "micx-ee.componentLabels" (dict "root" . "component" "inference") | nindent 4 }}
   {{- with .Values.inference.service.annotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
@@ -24,23 +24,23 @@ spec:
       port: {{ .Values.inference.service.port }}
       targetPort: http
   selector:
-    {{- include "openwork-ee.componentSelectorLabels" (dict "root" . "component" "inference") | nindent 4 }}
+    {{- include "micx-ee.componentSelectorLabels" (dict "root" . "component" "inference") | nindent 4 }}
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "openwork-ee.fullname" . }}-inference
+  name: {{ include "micx-ee.fullname" . }}-inference
   labels:
-    {{- include "openwork-ee.componentLabels" (dict "root" . "component" "inference") | nindent 4 }}
+    {{- include "micx-ee.componentLabels" (dict "root" . "component" "inference") | nindent 4 }}
 spec:
   replicas: {{ .Values.inference.replicaCount }}
   selector:
     matchLabels:
-      {{- include "openwork-ee.componentSelectorLabels" (dict "root" . "component" "inference") | nindent 6 }}
+      {{- include "micx-ee.componentSelectorLabels" (dict "root" . "component" "inference") | nindent 6 }}
   template:
     metadata:
       labels:
-        {{- include "openwork-ee.componentSelectorLabels" (dict "root" . "component" "inference") | nindent 8 }}
+        {{- include "micx-ee.componentSelectorLabels" (dict "root" . "component" "inference") | nindent 8 }}
         {{- with .Values.inference.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -57,7 +57,7 @@ spec:
       {{- end }}
       {{- if .Values.customCa.enabled }}
       volumes:
-        {{- include "openwork-ee.customCa.volume" . | nindent 8 }}
+        {{- include "micx-ee.customCa.volume" . | nindent 8 }}
       {{- end }}
       containers:
         - name: inference
@@ -68,18 +68,18 @@ spec:
               containerPort: {{ .Values.inference.containerPort }}
           {{- if .Values.customCa.enabled }}
           volumeMounts:
-            {{- include "openwork-ee.customCa.volumeMount" . | nindent 12 }}
+            {{- include "micx-ee.customCa.volumeMount" . | nindent 12 }}
           {{- end }}
           envFrom:
             - configMapRef:
-                name: {{ include "openwork-ee.configName" . }}
+                name: {{ include "micx-ee.configName" . }}
             - secretRef:
-                name: {{ include "openwork-ee.secretName" . }}
+                name: {{ include "micx-ee.secretName" . }}
           env:
             - name: PORT
               value: {{ .Values.inference.containerPort | quote }}
             {{- if .Values.customCa.enabled }}
-            {{- include "openwork-ee.customCa.env" . | nindent 12 }}
+            {{- include "micx-ee.customCa.env" . | nindent 12 }}
             {{- end }}
             {{- range $key, $value := .Values.inference.env }}
             - name: {{ $key }}

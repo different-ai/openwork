@@ -1,11 +1,11 @@
-{{- include "openwork-ee.customCa.validate" . }}
+{{- include "micx-ee.customCa.validate" . }}
 {{- if .Values.migrations.enabled }}
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: {{ include "openwork-ee.fullname" . }}-migrate
+  name: {{ include "micx-ee.fullname" . }}-migrate
   labels:
-    {{- include "openwork-ee.componentLabels" (dict "root" . "component" "migration") | nindent 4 }}
+    {{- include "micx-ee.componentLabels" (dict "root" . "component" "migration") | nindent 4 }}
   {{- if .Values.migrations.hook }}
   annotations:
     "helm.sh/hook": pre-install,pre-upgrade
@@ -20,7 +20,7 @@ spec:
   template:
     metadata:
       labels:
-        {{- include "openwork-ee.componentSelectorLabels" (dict "root" . "component" "migration") | nindent 8 }}
+        {{- include "micx-ee.componentSelectorLabels" (dict "root" . "component" "migration") | nindent 8 }}
       {{- with .Values.migrations.podAnnotations }}
       annotations:
         {{- toYaml . | nindent 8 }}
@@ -33,7 +33,7 @@ spec:
       {{- end }}
       {{- if .Values.customCa.enabled }}
       volumes:
-        {{- include "openwork-ee.customCa.volume" . | nindent 8 }}
+        {{- include "micx-ee.customCa.volume" . | nindent 8 }}
       {{- end }}
       containers:
         - name: migrate
@@ -41,7 +41,7 @@ spec:
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           {{- if .Values.customCa.enabled }}
           volumeMounts:
-            {{- include "openwork-ee.customCa.volumeMount" . | nindent 12 }}
+            {{- include "micx-ee.customCa.volumeMount" . | nindent 12 }}
           {{- end }}
           command:
             {{- toYaml .Values.migrations.command | nindent 12 }}
@@ -56,7 +56,7 @@ spec:
               {{- else }}
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "openwork-ee.secretName" . }}
+                  name: {{ include "micx-ee.secretName" . }}
                   key: {{ .Values.secret.keys.databaseUrl }}
               {{- end }}
             - name: DEN_DB_ENCRYPTION_KEY
@@ -65,11 +65,11 @@ spec:
               {{- else }}
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "openwork-ee.secretName" . }}
+                  name: {{ include "micx-ee.secretName" . }}
                   key: {{ .Values.secret.keys.denDbEncryptionKey }}
               {{- end }}
             {{- if .Values.customCa.enabled }}
-            {{- include "openwork-ee.customCa.env" . | nindent 12 }}
+            {{- include "micx-ee.customCa.env" . | nindent 12 }}
             {{- end }}
           {{- with .Values.migrations.resources }}
           resources:

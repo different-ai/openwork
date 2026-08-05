@@ -1,10 +1,10 @@
-{{- include "openwork-ee.customCa.validate" . }}
+{{- include "micx-ee.customCa.validate" . }}
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "openwork-ee.denApiServiceName" . }}
+  name: {{ include "micx-ee.denApiServiceName" . }}
   labels:
-    {{- include "openwork-ee.componentLabels" (dict "root" . "component" "den-api") | nindent 4 }}
+    {{- include "micx-ee.componentLabels" (dict "root" . "component" "den-api") | nindent 4 }}
   {{- with .Values.denApi.service.annotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
@@ -23,23 +23,23 @@ spec:
       port: {{ .Values.denApi.service.port }}
       targetPort: http
   selector:
-    {{- include "openwork-ee.componentSelectorLabels" (dict "root" . "component" "den-api") | nindent 4 }}
+    {{- include "micx-ee.componentSelectorLabels" (dict "root" . "component" "den-api") | nindent 4 }}
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "openwork-ee.fullname" . }}-den-api
+  name: {{ include "micx-ee.fullname" . }}-den-api
   labels:
-    {{- include "openwork-ee.componentLabels" (dict "root" . "component" "den-api") | nindent 4 }}
+    {{- include "micx-ee.componentLabels" (dict "root" . "component" "den-api") | nindent 4 }}
 spec:
   replicas: {{ .Values.denApi.replicaCount }}
   selector:
     matchLabels:
-      {{- include "openwork-ee.componentSelectorLabels" (dict "root" . "component" "den-api") | nindent 6 }}
+      {{- include "micx-ee.componentSelectorLabels" (dict "root" . "component" "den-api") | nindent 6 }}
   template:
     metadata:
       labels:
-        {{- include "openwork-ee.componentSelectorLabels" (dict "root" . "component" "den-api") | nindent 8 }}
+        {{- include "micx-ee.componentSelectorLabels" (dict "root" . "component" "den-api") | nindent 8 }}
         {{- with .Values.denApi.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -76,7 +76,7 @@ spec:
           {{- end }}
         {{- end }}
         {{- if .Values.customCa.enabled }}
-        {{- include "openwork-ee.customCa.volume" . | nindent 8 }}
+        {{- include "micx-ee.customCa.volume" . | nindent 8 }}
         {{- end }}
       {{- end }}
       containers:
@@ -94,14 +94,14 @@ spec:
               readOnly: true
             {{- end }}
             {{- if .Values.customCa.enabled }}
-            {{- include "openwork-ee.customCa.volumeMount" . | nindent 12 }}
+            {{- include "micx-ee.customCa.volumeMount" . | nindent 12 }}
             {{- end }}
           {{- end }}
           envFrom:
             - configMapRef:
-                name: {{ include "openwork-ee.configName" . }}
+                name: {{ include "micx-ee.configName" . }}
             - secretRef:
-                name: {{ include "openwork-ee.secretName" . }}
+                name: {{ include "micx-ee.secretName" . }}
           env:
             - name: PORT
               value: {{ .Values.denApi.containerPort | quote }}
@@ -118,13 +118,13 @@ spec:
               value: {{ .Values.installerArtifacts.mountPath | quote }}
             {{- end }}
             {{- if .Values.customCa.enabled }}
-            {{- include "openwork-ee.customCa.env" . | nindent 12 }}
+            {{- include "micx-ee.customCa.env" . | nindent 12 }}
             {{- end }}
-            {{- if eq (include "openwork-ee.allowPrivateMcpUrls" .) "1" }}
+            {{- if eq (include "micx-ee.allowPrivateMcpUrls" .) "1" }}
             - name: DEN_ALLOW_PRIVATE_MCP_URLS
               value: "1"
             {{- end }}
-            {{- include "openwork-ee.observabilityEnv" (dict "root" . "serviceName" .Values.observability.serviceNames.denApi) | nindent 12 }}
+            {{- include "micx-ee.observabilityEnv" (dict "root" . "serviceName" .Values.observability.serviceNames.denApi) | nindent 12 }}
             {{- range $key, $value := .Values.denApi.env }}
             - name: {{ $key }}
               value: {{ $value | quote }}

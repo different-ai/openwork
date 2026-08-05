@@ -14,7 +14,7 @@ Initial Helm chart for the Micx EE Den stack:
 Published releases are available as an OCI Helm chart:
 
 ```bash
-helm upgrade --install openwork-ee oci://ghcr.io/different-ai/charts/openwork-ee \
+helm upgrade --install micx-ee oci://ghcr.io/different-ai/charts/micx-ee \
   --version REPLACE_MICX_VERSION \
   -f values.prod.yaml
 ```
@@ -100,8 +100,8 @@ imagePullSecrets:
 For local development from a repository checkout, render or install directly:
 
 ```bash
-helm template openwork-ee ./packaging/helm/openwork-ee -f values.prod.yaml
-helm upgrade --install openwork-ee ./packaging/helm/openwork-ee -f values.prod.yaml
+helm template micx-ee ./packaging/helm/micx-ee -f values.prod.yaml
+helm upgrade --install micx-ee ./packaging/helm/micx-ee -f values.prod.yaml
 ```
 
 Provider-specific starter guides:
@@ -143,7 +143,7 @@ The chart can create an Opaque Secret from `secret.values`, or consume an existi
 ```yaml
 secret:
   create: false
-  existingSecret: openwork-ee-secrets
+  existingSecret: micx-ee-secrets
 ```
 
 The existing Secret must contain the keys listed under `secret.keys`, especially:
@@ -228,9 +228,9 @@ Secret or ConfigMap and restart the running workloads so Node reloads the CA
 file, for example:
 
 ```bash
-kubectl rollout restart deployment/openwork-ee-den-api --namespace micx
-kubectl rollout restart deployment/openwork-ee-den-web --namespace micx
-kubectl rollout restart deployment/openwork-ee-inference --namespace micx
+kubectl rollout restart deployment/micx-ee-den-api --namespace micx
+kubectl rollout restart deployment/micx-ee-den-web --namespace micx
+kubectl rollout restart deployment/micx-ee-inference --namespace micx
 ```
 
 The next migration hook Job will mount the current CA data; rerun a failed
@@ -341,7 +341,7 @@ For a Collector without authentication, use:
 Install or upgrade Micx with the values file:
 
 ```bash
-helm upgrade --install openwork-ee ./packaging/helm/openwork-ee \
+helm upgrade --install micx-ee ./packaging/helm/micx-ee \
   --namespace micx \
   --create-namespace \
   --values values-observability.yaml
@@ -353,7 +353,7 @@ Secret. Its key is exposed as `OTEL_EXPORTER_OTLP_HEADERS` only on `den-api` and
 
 ### Verify the OpenTelemetry setup
 
-The commands below assume the Helm release is named `openwork-ee`. If you use a
+The commands below assume the Helm release is named `micx-ee`. If you use a
 different release name, run `kubectl get deployments,services --namespace
 micx` to find the generated resource names.
 
@@ -361,16 +361,16 @@ Confirm that the workloads are ready:
 
 ```bash
 kubectl get pods --namespace micx
-kubectl rollout status deployment/openwork-ee-den-api --namespace micx
-kubectl rollout status deployment/openwork-ee-den-web --namespace micx
+kubectl rollout status deployment/micx-ee-den-api --namespace micx
+kubectl rollout status deployment/micx-ee-den-web --namespace micx
 ```
 
 Inspect the rendered environment references without printing the Secret's
 value:
 
 ```bash
-kubectl describe deployment/openwork-ee-den-api --namespace micx
-kubectl describe deployment/openwork-ee-den-web --namespace micx
+kubectl describe deployment/micx-ee-den-api --namespace micx
+kubectl describe deployment/micx-ee-den-web --namespace micx
 ```
 
 Look for `DEN_OBSERVABILITY_BACKEND=otel`, distinct `OTEL_SERVICE_NAME` values,
@@ -380,7 +380,7 @@ the OTLP endpoint, and an `OTEL_EXPORTER_OTLP_HEADERS` reference to
 Generate a request that crosses both services. Keep this port-forward running:
 
 ```bash
-kubectl port-forward service/openwork-ee-den-web 3005:3005 --namespace micx
+kubectl port-forward service/micx-ee-den-web 3005:3005 --namespace micx
 ```
 
 In another terminal:
@@ -412,8 +412,8 @@ and active-request metrics.
   secret controller does not trigger a rollout:
 
   ```bash
-  kubectl rollout restart deployment/openwork-ee-den-api --namespace micx
-  kubectl rollout restart deployment/openwork-ee-den-web --namespace micx
+  kubectl rollout restart deployment/micx-ee-den-api --namespace micx
+  kubectl rollout restart deployment/micx-ee-den-web --namespace micx
   ```
 - For lower production trace volume, use
   `tracesSampler: parentbased_traceidratio` with `tracesSamplerArg: "0.1"` to
@@ -597,9 +597,9 @@ email/password sign-in or sign-up requests are rejected by Den API.
 
 By default, the chart wires internal services through Kubernetes DNS:
 
-- `DEN_API_BASE=http://<release>-openwork-ee-den-api:8788`
-- `DEN_AUTH_FALLBACK_BASE=http://<release>-openwork-ee-den-api:8788`
-- `INFERENCE_PROXY_BASE_URL=http://<release>-openwork-ee-inference:8791` when `inference.enabled=true`
+- `DEN_API_BASE=http://<release>-micx-ee-den-api:8788`
+- `DEN_AUTH_FALLBACK_BASE=http://<release>-micx-ee-den-api:8788`
+- `INFERENCE_PROXY_BASE_URL=http://<release>-micx-ee-inference:8791` when `inference.enabled=true`
 
 Override `config.internal.*` only when routing through a mesh, gateway, or external service.
 

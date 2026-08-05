@@ -1,10 +1,10 @@
-{{- include "openwork-ee.customCa.validate" . }}
+{{- include "micx-ee.customCa.validate" . }}
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: {{ include "openwork-ee.fullname" . }}-env-probe
+  name: {{ include "micx-ee.fullname" . }}-env-probe
   labels:
-    {{- include "openwork-ee.componentLabels" (dict "root" . "component" "env-probe") | nindent 4 }}
+    {{- include "micx-ee.componentLabels" (dict "root" . "component" "env-probe") | nindent 4 }}
   annotations:
     "helm.sh/hook": test
     "helm.sh/hook-delete-policy": before-hook-creation
@@ -14,7 +14,7 @@ spec:
   template:
     metadata:
       labels:
-        {{- include "openwork-ee.componentSelectorLabels" (dict "root" . "component" "env-probe") | nindent 8 }}
+        {{- include "micx-ee.componentSelectorLabels" (dict "root" . "component" "env-probe") | nindent 8 }}
     spec:
       restartPolicy: Never
       {{- with .Values.imagePullSecrets }}
@@ -23,7 +23,7 @@ spec:
       {{- end }}
       {{- if .Values.customCa.enabled }}
       volumes:
-        {{- include "openwork-ee.customCa.volume" . | nindent 8 }}
+        {{- include "micx-ee.customCa.volume" . | nindent 8 }}
       {{- end }}
       containers:
         - name: env-probe
@@ -31,7 +31,7 @@ spec:
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           {{- if .Values.customCa.enabled }}
           volumeMounts:
-            {{- include "openwork-ee.customCa.volumeMount" . | nindent 12 }}
+            {{- include "micx-ee.customCa.volumeMount" . | nindent 12 }}
           {{- end }}
           command:
             - node
@@ -137,9 +137,9 @@ spec:
               if (process.env.NODE_EXTRA_CA_CERTS) console.log(`NODE_EXTRA_CA_CERTS=${process.env.NODE_EXTRA_CA_CERTS} is loaded by node.`);
           envFrom:
             - configMapRef:
-                name: {{ include "openwork-ee.configName" . }}
+                name: {{ include "micx-ee.configName" . }}
             - secretRef:
-                name: {{ include "openwork-ee.secretName" . }}
+                name: {{ include "micx-ee.secretName" . }}
           env:
             - name: PORT
               value: {{ .Values.denApi.containerPort | quote }}
@@ -152,9 +152,9 @@ spec:
               value: {{ .Values.installerArtifacts.mountPath | quote }}
             {{- end }}
             {{- if .Values.customCa.enabled }}
-            {{- include "openwork-ee.customCa.env" . | nindent 12 }}
+            {{- include "micx-ee.customCa.env" . | nindent 12 }}
             {{- end }}
-            {{- if eq (include "openwork-ee.allowPrivateMcpUrls" .) "1" }}
+            {{- if eq (include "micx-ee.allowPrivateMcpUrls" .) "1" }}
             - name: DEN_ALLOW_PRIVATE_MCP_URLS
               value: "1"
             {{- end }}
@@ -184,5 +184,5 @@ spec:
               value: {{ ternary "1" "0" .Values.customCa.enabled | quote }}
             {{- if .Values.customCa.enabled }}
             - name: MICX_ENV_PROBE_EXPECTED_NODE_EXTRA_CA_CERTS
-              value: {{ include "openwork-ee.customCa.filePath" . | quote }}
+              value: {{ include "micx-ee.customCa.filePath" . | quote }}
             {{- end }}

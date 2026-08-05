@@ -41,7 +41,7 @@ assert_failure() {
   local output_file="$tmp_dir/failure-output.yaml"
   local error_file="$tmp_dir/failure-error.txt"
 
-  if helm template openwork-ee "$chart_dir" -f "$values_file" > "$output_file" 2> "$error_file"; then
+  if helm template micx-ee "$chart_dir" -f "$values_file" > "$output_file" 2> "$error_file"; then
     printf 'Expected helm template to fail for %s\n' "$values_file" >&2
     return 1
   fi
@@ -57,8 +57,8 @@ assert_source_contains() {
   local line
 
   while IFS= read -r line; do
-    if [[ "$line" == '# Source: openwork-ee/templates/'* ]]; then
-      if [[ "$line" == "# Source: openwork-ee/templates/$source" ]]; then
+    if [[ "$line" == '# Source: micx-ee/templates/'* ]]; then
+      if [[ "$line" == "# Source: micx-ee/templates/$source" ]]; then
         in_source=1
       else
         in_source=0
@@ -84,8 +84,8 @@ assert_source_not_contains() {
   local line
 
   while IFS= read -r line; do
-    if [[ "$line" == '# Source: openwork-ee/templates/'* ]]; then
-      if [[ "$line" == "# Source: openwork-ee/templates/$source" ]]; then
+    if [[ "$line" == '# Source: micx-ee/templates/'* ]]; then
+      if [[ "$line" == "# Source: micx-ee/templates/$source" ]]; then
         in_source=1
       else
         in_source=0
@@ -99,9 +99,9 @@ assert_source_not_contains() {
 }
 
 default_rendered="$tmp_dir/default.yaml"
-helm template openwork-ee "$chart_dir" > "$default_rendered"
+helm template micx-ee "$chart_dir" > "$default_rendered"
 assert_count "$default_rendered" 'DEN_ALLOW_PRIVATE_MCP_URLS' 0
-assert_not_contains "$default_rendered" 'openwork-ee-den-api-private-mcp-urls'
+assert_not_contains "$default_rendered" 'micx-ee-den-api-private-mcp-urls'
 
 enabled_values="$tmp_dir/enabled-values.yaml"
 enabled_rendered="$tmp_dir/enabled.yaml"
@@ -112,13 +112,13 @@ config:
   public:
     allowPrivateMcpUrls: "1"
 YAML
-helm template openwork-ee "$chart_dir" -f "$enabled_values" > "$enabled_rendered"
+helm template micx-ee "$chart_dir" -f "$enabled_values" > "$enabled_rendered"
 assert_count "$enabled_rendered" 'DEN_ALLOW_PRIVATE_MCP_URLS' 2
 assert_count "$enabled_rendered" 'name: DEN_ALLOW_PRIVATE_MCP_URLS' 2
 assert_count "$enabled_rendered" 'value: "1"' 2
 assert_not_contains "$enabled_rendered" 'key: DEN_ALLOW_PRIVATE_MCP_URLS'
 assert_not_contains "$enabled_rendered" 'configMapKeyRef:'
-assert_not_contains "$enabled_rendered" 'openwork-ee-den-api-private-mcp-urls'
+assert_not_contains "$enabled_rendered" 'micx-ee-den-api-private-mcp-urls'
 assert_source_contains "$enabled_rendered" 'den-api.yaml' 'name: DEN_ALLOW_PRIVATE_MCP_URLS'
 assert_source_contains "$enabled_rendered" 'den-api.yaml' 'value: "1"'
 assert_source_not_contains "$enabled_rendered" 'den-web.yaml' 'DEN_ALLOW_PRIVATE_MCP_URLS'
@@ -131,7 +131,7 @@ config:
   public:
     allowPrivateMcpUrls: "0"
 YAML
-helm template openwork-ee "$chart_dir" -f "$disabled_values" > "$disabled_rendered"
+helm template micx-ee "$chart_dir" -f "$disabled_values" > "$disabled_rendered"
 assert_count "$disabled_rendered" 'DEN_ALLOW_PRIVATE_MCP_URLS' 0
 
 false_values="$tmp_dir/false-values.yaml"
@@ -141,7 +141,7 @@ config:
   public:
     allowPrivateMcpUrls: "false"
 YAML
-helm template openwork-ee "$chart_dir" -f "$false_values" > "$false_rendered"
+helm template micx-ee "$chart_dir" -f "$false_values" > "$false_rendered"
 assert_count "$false_rendered" 'DEN_ALLOW_PRIVATE_MCP_URLS' 0
 
 blank_values="$tmp_dir/blank-values.yaml"
@@ -151,7 +151,7 @@ config:
   public:
     allowPrivateMcpUrls: ""
 YAML
-helm template openwork-ee "$chart_dir" -f "$blank_values" > "$blank_rendered"
+helm template micx-ee "$chart_dir" -f "$blank_values" > "$blank_rendered"
 assert_count "$blank_rendered" 'DEN_ALLOW_PRIVATE_MCP_URLS' 0
 
 invalid_true_values="$tmp_dir/invalid-true-values.yaml"

@@ -1,9 +1,9 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "openwork-ee.configName" . }}
+  name: {{ include "micx-ee.configName" . }}
   labels:
-    {{- include "openwork-ee.labels" . | nindent 4 }}
+    {{- include "micx-ee.labels" . | nindent 4 }}
 data:
   CI: "true"
   NODE_ENV: "production"
@@ -50,12 +50,12 @@ data:
   WORKER_PROVISIONING_RECONCILE_BATCH_SIZE: {{ .Values.config.provisioner.reconcileBatchSize | quote }}
   WORKER_URL_TEMPLATE: {{ .Values.config.provisioner.workerUrlTemplate | quote }}
   {{ if or .Values.inference.enabled .Values.config.internal.inferenceProxyBaseUrl }}
-  INFERENCE_PROXY_BASE_URL: {{ include "openwork-ee.inferenceInternalUrl" . | quote }}
+  INFERENCE_PROXY_BASE_URL: {{ include "micx-ee.inferenceInternalUrl" . | quote }}
   {{ end }}
   POLAR_FEATURE_GATE_ENABLED: {{ .Values.config.polar.featureGateEnabled | quote }}
   DAYTONA_SIGNED_PREVIEW_EXPIRES_SECONDS: {{ .Values.config.daytona.signedPreviewExpiresSeconds | quote }}
-  DEN_API_BASE: {{ include "openwork-ee.denApiInternalUrl" . | quote }}
-  DEN_AUTH_FALLBACK_BASE: {{ include "openwork-ee.authFallbackInternalUrl" . | quote }}
+  DEN_API_BASE: {{ include "micx-ee.denApiInternalUrl" . | quote }}
+  DEN_AUTH_FALLBACK_BASE: {{ include "micx-ee.authFallbackInternalUrl" . | quote }}
   DEN_AUTH_ORIGIN: {{ .Values.config.public.webOrigin | quote }}
   DEN_WEB_PUBLIC_ORIGIN: {{ .Values.config.public.webOrigin | quote }}
   DEN_WEB_MICX_AUTH_CALLBACK_URL: {{ .Values.config.public.authCallbackUrl | quote }}

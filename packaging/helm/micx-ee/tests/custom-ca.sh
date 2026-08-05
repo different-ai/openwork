@@ -41,7 +41,7 @@ assert_failure() {
   local output_file="$tmp_dir/failure-output.yaml"
   local error_file="$tmp_dir/failure-error.txt"
 
-  if helm template openwork-ee "$chart_dir" -f "$values_file" > "$output_file" 2> "$error_file"; then
+  if helm template micx-ee "$chart_dir" -f "$values_file" > "$output_file" 2> "$error_file"; then
     printf 'Expected helm template to fail for %s\n' "$values_file" >&2
     return 1
   fi
@@ -51,7 +51,7 @@ assert_failure() {
 default_rendered="$tmp_dir/default.yaml"
 disabled_values="$tmp_dir/disabled-values.yaml"
 disabled_rendered="$tmp_dir/disabled.yaml"
-helm template openwork-ee "$chart_dir" --set inference.enabled=true > "$default_rendered"
+helm template micx-ee "$chart_dir" --set inference.enabled=true > "$default_rendered"
 cat > "$disabled_values" <<'YAML'
 inference:
   enabled: true
@@ -60,7 +60,7 @@ customCa:
   existingSecret: ignored-ca-secret
   key: ignored.pem
 YAML
-helm template openwork-ee "$chart_dir" -f "$disabled_values" > "$disabled_rendered"
+helm template micx-ee "$chart_dir" -f "$disabled_values" > "$disabled_rendered"
 cmp -s "$default_rendered" "$disabled_rendered"
 assert_not_contains "$default_rendered" 'name: NODE_EXTRA_CA_CERTS'
 assert_not_contains "$default_rendered" '/etc/micx/custom-ca'
@@ -74,7 +74,7 @@ customCa:
   existingSecret: micx-ca-secret
   key: corp-root.pem
 YAML
-helm template openwork-ee "$chart_dir" -f "$secret_values" > "$secret_rendered"
+helm template micx-ee "$chart_dir" -f "$secret_values" > "$secret_rendered"
 assert_count "$secret_rendered" 'name: NODE_EXTRA_CA_CERTS' 4
 assert_count "$secret_rendered" 'value: "/etc/micx/custom-ca/ca-bundle.pem"' 5
 assert_count "$secret_rendered" 'name: custom-ca' 8
@@ -84,7 +84,7 @@ assert_count "$secret_rendered" 'path: ca-bundle.pem' 4
 assert_count "$secret_rendered" 'mountPath: "/etc/micx/custom-ca"' 4
 assert_not_contains "$secret_rendered" 'subPath:'
 assert_not_contains "$secret_rendered" 'name: "micx-ca-config"'
-assert_not_contains "$secret_rendered" 'name: openwork-ee-inference'
+assert_not_contains "$secret_rendered" 'name: micx-ee-inference'
 
 configmap_values="$tmp_dir/configmap-values.yaml"
 configmap_rendered="$tmp_dir/configmap.yaml"
@@ -96,11 +96,11 @@ customCa:
   existingConfigMap: micx-ca-config
   key: ca.crt
 YAML
-helm template openwork-ee "$chart_dir" -f "$configmap_values" > "$configmap_rendered"
-assert_contains "$configmap_rendered" 'name: openwork-ee-den-api'
-assert_contains "$configmap_rendered" 'name: openwork-ee-den-web'
-assert_contains "$configmap_rendered" 'name: openwork-ee-inference'
-assert_contains "$configmap_rendered" 'name: openwork-ee-migrate'
+helm template micx-ee "$chart_dir" -f "$configmap_values" > "$configmap_rendered"
+assert_contains "$configmap_rendered" 'name: micx-ee-den-api'
+assert_contains "$configmap_rendered" 'name: micx-ee-den-web'
+assert_contains "$configmap_rendered" 'name: micx-ee-inference'
+assert_contains "$configmap_rendered" 'name: micx-ee-migrate'
 assert_count "$configmap_rendered" 'name: NODE_EXTRA_CA_CERTS' 5
 assert_count "$configmap_rendered" 'value: "/etc/micx/custom-ca/ca-bundle.pem"' 6
 assert_count "$configmap_rendered" 'name: custom-ca' 10
@@ -121,7 +121,7 @@ installerArtifacts:
   enabled: true
   existingClaim: installer-artifacts-pvc
 YAML
-helm template openwork-ee "$chart_dir" -f "$installer_values" > "$installer_rendered"
+helm template micx-ee "$chart_dir" -f "$installer_values" > "$installer_rendered"
 assert_contains "$installer_rendered" 'name: installer-artifacts'
 assert_contains "$installer_rendered" 'claimName: "installer-artifacts-pvc"'
 assert_contains "$installer_rendered" 'name: MICX_INSTALLER_ARTIFACTS_DIR'

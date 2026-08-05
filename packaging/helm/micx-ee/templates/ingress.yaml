@@ -2,9 +2,9 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: {{ include "openwork-ee.fullname" . }}
+  name: {{ include "micx-ee.fullname" . }}
   labels:
-    {{- include "openwork-ee.labels" . | nindent 4 }}
+    {{- include "micx-ee.labels" . | nindent 4 }}
   {{- with .Values.ingress.annotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
@@ -25,7 +25,7 @@ spec:
             pathType: {{ .Values.ingress.web.pathType }}
             backend:
               service:
-                name: {{ include "openwork-ee.denWebServiceName" . }}
+                name: {{ include "micx-ee.denWebServiceName" . }}
                 port:
                   name: http
     {{- if .Values.ingress.api.enabled }}
@@ -36,7 +36,7 @@ spec:
             pathType: {{ .Values.ingress.api.pathType }}
             backend:
               service:
-                name: {{ include "openwork-ee.denApiServiceName" . }}
+                name: {{ include "micx-ee.denApiServiceName" . }}
                 port:
                   name: http
     {{- end }}
