@@ -474,7 +474,7 @@ export function CloudMarketplacesView({
       {!isSignedIn ? (
         <SettingsNotice>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <span>You can use OpenWork without an account. Sign in to OpenWork Cloud to load the Marketplace, including OpenWork's built-in extensions and any organization marketplaces.</span>
+            <span>{t("marketplace.signin_notice")}</span>
             <Button size="sm" onClick={onOpenAccount}>
               {t("skills.share_team_sign_in")}
             </Button>
@@ -487,7 +487,7 @@ export function CloudMarketplacesView({
       ) : null}
 
       {busy ? (
-        <SettingsNotice>Loading marketplace extensions...</SettingsNotice>
+        <SettingsNotice>{t("marketplace.loading_extensions")}</SettingsNotice>
       ) : null}
 
       {removedUpstreamPlugins.map((plugin) => (
@@ -510,7 +510,7 @@ export function CloudMarketplacesView({
         <SettingsListSearchInput
           value={search}
           onChange={(event) => setSearch(event.currentTarget.value)}
-          placeholder="Search marketplace extensions..."
+          placeholder={t("marketplace.search_placeholder")}
         />
         <div className="flex flex-wrap items-center gap-2">
           {(["all", "available", "installed", "update_available"] as const).map((filter) => (
@@ -520,22 +520,22 @@ export function CloudMarketplacesView({
               size="xs"
               onClick={() => setStatusFilter(filter)}
             >
-              {filter === "all" ? "All" : filter === "update_available" ? "Updates" : filter === "installed" ? "Installed" : "Available"}
+              {filter === "all" ? t("marketplace.filter_all") : filter === "update_available" ? t("marketplace.filter_updates") : filter === "installed" ? t("marketplace.filter_installed") : t("marketplace.filter_available")}
             </Button>
           ))}
           <details className="group relative">
             <summary className="flex h-7 cursor-pointer list-none items-center rounded-md border border-dls-border px-2.5 text-xs font-medium text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text">
-              Filters
+              {t("marketplace.filters")}
             </summary>
             <div className="absolute right-0 z-20 mt-2 w-72 rounded-xl border border-dls-border bg-dls-surface p-3 shadow-[var(--dls-shell-shadow)]">
               <label className="grid gap-1.5 text-xs text-dls-secondary">
-                Marketplace
+                {t("marketplace.marketplace_label")}
                 <select
                   className="rounded-lg border border-dls-border bg-dls-surface px-2 py-1.5 text-xs text-dls-text"
                   value={marketplaceFilter}
                   onChange={(event) => setMarketplaceFilter(event.currentTarget.value)}
                 >
-                  <option value="all">All marketplaces</option>
+                  <option value="all">{t("marketplace.all_marketplaces")}</option>
                   {marketplaceOptions.map((marketplace) => (
                     <option key={marketplace.id} value={marketplace.id}>{marketplace.name}</option>
                   ))}
@@ -553,7 +553,7 @@ export function CloudMarketplacesView({
       ) : null}
 
       {displayRows.length > 0 && visibleRows.length === 0 ? (
-        <SettingsListEmptyState>No marketplace extensions match your search or filters.</SettingsListEmptyState>
+        <SettingsListEmptyState>{t("marketplace.no_match")}</SettingsListEmptyState>
       ) : null}
 
       {visibleRows.length > 0 ? (
@@ -812,12 +812,12 @@ function OrgMcpConnectionDetailModal(props: {
       configSlot={(
         <div className="space-y-4">
           <div className="flex flex-wrap gap-2">
-            <SettingsPill>Shared by your organization</SettingsPill>
-            <SettingsPill>{row.connection.credentialMode === "shared" ? "Org account" : "Your account"}</SettingsPill>
+            <SettingsPill>{t("extensions.shared_by_org")}</SettingsPill>
+            <SettingsPill>{row.connection.credentialMode === "shared" ? t("mcp.org_account") : t("mcp.your_account")}</SettingsPill>
             <SettingsPill>MCP</SettingsPill>
           </div>
           <SettingsNotice>
-            OpenWork stores this sign-in in the organization cloud. Once connected, your desktop agent can use the tools through OpenWork Cloud Control.
+            {t("marketplace.cloud_control_notice")}
           </SettingsNotice>
         </div>
       )}
@@ -910,7 +910,7 @@ function MarketplacePackageDetailModal(props: {
             <SettingsNotice tone="error">{resolveError}</SettingsNotice>
           ) : null}
           {resolving ? (
-            <SettingsNotice>Loading extension contents...</SettingsNotice>
+            <SettingsNotice>{t("marketplace.loading_contents")}</SettingsNotice>
           ) : null}
           {missingImportedConnectionCount > 0 ? (
             <SettingsNotice tone="error">
@@ -975,7 +975,7 @@ function MarketplacePackageDetailModal(props: {
                   </details>
                 );
               }) : (
-                <SettingsNotice>This extension does not expose detailed contents yet.</SettingsNotice>
+                <SettingsNotice>{t("marketplace.no_details")}</SettingsNotice>
               )}
             </div>
           ) : null}

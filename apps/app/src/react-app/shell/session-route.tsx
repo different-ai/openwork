@@ -2856,7 +2856,7 @@ export function SessionRoute() {
 
       query={modelPicker.query}
       setQuery={modelPicker.setQuery}
-      subtitle={selectedModelUnavailable ? MODEL_PICKER_UNAVAILABLE_SUBTITLE : undefined}
+      subtitle={selectedModelUnavailable ? MODEL_PICKER_UNAVAILABLE_SUBTITLE() : undefined}
       target="default"
       current={
         (modelPickerSessionId ? getSessionModelSelection(modelPickerSessionId)?.model : null)

@@ -132,14 +132,14 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
         void connectPromise.then((connect) => {
           if (mcpConnectPushRef.current !== pushId) return;
           const freshServers = [...localServers, ...connect.mcpServers];
-          const freshStatus = freshServers.length ? null : "No MCP servers loaded.";
+          const freshStatus = freshServers.length ? null : "context_panel.no_mcp";
           setMcpServers(freshServers);
           setMcpStatuses(connect.mcpStatuses);
           setMcpStatus(freshStatus);
         });
         const servers = [...localServers, ...cachedConnect.mcpServers];
         const statuses = cachedConnect.mcpStatuses;
-        const status = servers.length ? null : "No MCP servers loaded.";
+        const status = servers.length ? null : "context_panel.no_mcp";
         setMcpServers(servers);
         setMcpStatuses(statuses);
         setMcpStatus(status);

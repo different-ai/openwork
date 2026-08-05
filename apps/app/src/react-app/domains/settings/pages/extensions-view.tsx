@@ -163,7 +163,7 @@ export function ExtensionsView(props: ExtensionsViewProps) {
         <details className="group" open={props.initialSection === "plugins"}>
           <summary className="flex cursor-pointer items-center gap-2 rounded-lg px-1 py-2 text-sm font-medium text-dls-secondary transition-colors hover:text-dls-text">
             <Cpu size={14} />
-            <span>OpenCode Plugins</span>
+            <span>{t("extensions.plugins_section")}</span>
             <span className="text-[11px] text-dls-secondary">({pluginCount})</span>
           </summary>
           <div className="mt-3">

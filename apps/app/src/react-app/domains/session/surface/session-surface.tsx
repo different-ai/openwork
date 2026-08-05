@@ -586,7 +586,7 @@ function SessionErrorCard({ error, onDismiss, onChangeModel, onOpenModelPicker }
                     onDismiss();
                   }}
                 >
-                  Change model
+                  {t("model_picker.change_model")}
                 </button>
               </div>
             ) : null}
@@ -1552,7 +1552,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       if (mcpConnectPushRef.current !== pushId) return;
       const freshServers = [...localServers, ...connect.mcpServers];
       const freshStatuses = { ...connect.mcpStatuses, ...localStatuses };
-      const freshStatus = freshServers.length ? null : "No MCP servers loaded.";
+      const freshStatus = freshServers.length ? null : "context_panel.no_mcp";
       setToolMcpServers(freshServers);
       setToolMcpStatuses(freshStatuses);
       setToolMcpStatus(freshStatus);
@@ -1582,7 +1582,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
 
     const servers = [...localServers, ...cachedConnect.mcpServers];
     const statuses = { ...cachedConnect.mcpStatuses, ...localStatuses };
-    const status = servers.length ? null : "No MCP servers loaded.";
+    const status = servers.length ? null : "context_panel.no_mcp";
     setToolMcpServers(servers);
     setToolMcpStatuses(statuses);
     setToolMcpStatus(status);
@@ -1929,7 +1929,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
             {showDelayedLoading && pendingSessionLoad ? (
               <div className="px-6 py-16">
                 <div className="mx-auto max-w-sm rounded-3xl border border-dls-border bg-dls-hover/60 px-8 py-10 text-center">
-                  <div className="text-sm text-dls-secondary">Opening session…</div>
+                  <div className="text-sm text-dls-secondary">{t("session.opening")}</div>
                 </div>
               </div>
             ) : (snapshotQuery.isError || error) && !snapshot && renderedMessages.length === 0 ? (
@@ -2018,8 +2018,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
             className="mx-3 mb-2 flex w-[calc(100%-1.5rem)] items-center gap-2 rounded-lg border border-amber-7/40 bg-amber-2/30 px-3 py-2 text-left text-xs text-amber-11 transition-colors hover:bg-amber-3/40"
             onClick={() => props.onOpenSettingsSection?.("providers")}
           >
-            <span className="font-medium">No AI model connected.</span>
-            <span className="text-amber-11/70">Add a provider to run tasks.</span>
+            <span className="font-medium">{t("session.no_model_connected")}</span>
+            <span className="text-amber-11/70">{t("session.add_provider")}</span>
           </button>
         ) : null}
         <DevProfiler id="SessionComposer">

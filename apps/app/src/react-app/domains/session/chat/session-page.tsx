@@ -1128,14 +1128,14 @@ export function SessionPage(props: SessionPageProps) {
                         variant="ghost"
                         size="icon-sm"
                         className="rounded-xl text-gray-10 transition-colors hover:bg-muted hover:text-foreground"
-                        aria-label="Find in conversation"
+                        aria-label={t("session.find_in_conversation_short")}
                         onClick={() => useSessionFindStore.getState().openFind({ sessionId: findButtonSessionId })}
                       >
                         <TextSearch size={16} />
                       </Button>
                     }
                   />
-                  <TooltipContent>Find in conversation (⌘F)</TooltipContent>
+                  <TooltipContent>{t("session.find_in_conversation")}</TooltipContent>
                 </Tooltip>
               ) : null}
               <Tooltip>
@@ -1333,7 +1333,7 @@ export function SessionPage(props: SessionPageProps) {
                   {props.notFoundMessage ? (
                     <div className="px-6 py-16 text-center">
                       <div className="mx-auto max-w-md rounded-2xl border border-dls-border bg-dls-card px-5 py-6 shadow-[var(--dls-card-shadow)]">
-                        <h3 className="text-base font-medium text-dls-text">Workspace or session not found</h3>
+                        <h3 className="text-base font-medium text-dls-text">{t("session.not_found")}</h3>
                         <p className="mt-2 text-sm leading-6 text-dls-secondary">{props.notFoundMessage}</p>
                       </div>
                     </div>

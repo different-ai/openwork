@@ -1614,7 +1614,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                                 <div className="px-3 py-2 text-xs text-gray-10">
                                   {!mcpLoaded && mcpLoading
                                     ? t("composer.loading_commands")
-                                    : (mcpStatus ?? "No library items enabled. Open Library to enable them.")}
+                                    : t(mcpStatus ?? "composer.mcp_menu_empty_fallback")}
                                 </div>
                               ) : null}
                             </>

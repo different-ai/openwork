@@ -60,6 +60,7 @@ export type PluginsViewProps = {
 export function PluginsView(props: PluginsViewProps) {
   const { extensions } = props;
   const scope = extensions.pluginScope;
+  const pluginStatus = extensions.pluginStatus();
   return (
     <section className="space-y-6 max-w-3xl w-full">
       <div className="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-4">
@@ -255,8 +256,8 @@ export function PluginsView(props: PluginsViewProps) {
                   {!plugin.removable ? (
                     <div className="mt-1 text-xs text-gray-10">
                       {plugin.source === "dir.global"
-                        ? "Discovered from a global plugin folder."
-                        : "Discovered from the workspace plugin folder."}
+                        ? t("extensions.discovered_global")
+                        : t("extensions.discovered_workspace")}
                     </div>
                   ) : null}
                 </div>
@@ -305,9 +306,9 @@ export function PluginsView(props: PluginsViewProps) {
               {t("plugins.add")}
             </Button>
           </div>
-          {extensions.pluginStatus() ? (
+          {pluginStatus ? (
             <div className="text-xs text-gray-10">
-              {extensions.pluginStatus()}
+              {t(pluginStatus)}
             </div>
           ) : null}
         </div>

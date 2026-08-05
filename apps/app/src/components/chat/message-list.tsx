@@ -16,6 +16,7 @@ import {
   Undo2,
 } from "lucide-react"
 import { PaperGrainGradient } from "@openwork/ui/react"
+import { t } from "@/i18n"
 import {
   DynamicToolUIPart,
   isFileUIPart,
@@ -156,7 +157,7 @@ class ToolMessage extends React.Component<ToolMessageProps, { failed: boolean }>
   render() {
     if (this.state.failed) {
       return (
-        <div className="text-xs text-muted-foreground">Tool step unavailable</div>
+        <div className="text-xs text-muted-foreground">{t("chat.tool_step_unavailable")}</div>
       )
     }
     return <ToolMessageInner part={this.props.part} />
@@ -780,7 +781,7 @@ const LoadingMessage = React.memo(({ label }: { label?: string }) => (
             style={{ backgroundColor: "#818cf8", width: "100%", height: "100%", borderRadius: "50%" }}
           />
         </div>
-        <span>{label ?? "Thinking…"}</span>
+        <span>{label ?? t("session.assistant_thinking")}</span>
       </div>
     </div>
   </Message>

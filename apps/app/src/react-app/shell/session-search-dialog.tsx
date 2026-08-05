@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 import fuzzysort from "fuzzysort";
 import { ClockIcon, Loader2Icon, MessageSquareTextIcon, TypeIcon } from "lucide-react";
+import { t } from "@/i18n";
 
 import {
   Command,
@@ -162,7 +163,7 @@ export function SessionSearchDialog(props: SessionSearchDialogProps) {
           session,
         }));
       return recent.length > 0
-        ? [{ value: "Recent sessions", kind: "recent", items: recent }]
+        ? [{ value: t("search.recent"), kind: "recent", items: recent }]
         : [];
     }
 
@@ -219,18 +220,18 @@ export function SessionSearchDialog(props: SessionSearchDialogProps) {
   const trimmedQuery = query.trim();
   const searching = Boolean(deepQuery) && progress !== null && !progress.done;
   const emptyText = !trimmedQuery
-    ? "No sessions yet."
+    ? t("search.no_sessions_yet")
     : trimmedQuery.length < MIN_QUERY_LENGTH
-      ? "Keep typing to search message content…"
+      ? t("search.keep_typing")
       : searching
-        ? "Searching messages…"
-        : "No sessions or messages match your search.";
+        ? t("search.searching")
+        : t("search.no_match");
 
   const statusText = !trimmedQuery
-    ? "Recent sessions"
+    ? t("search.recent")
     : searching
-      ? `Searching messages… ${progress.scanned}/${progress.total}`
-      : `${resultCount.toLocaleString()} ${resultCount === 1 ? "result" : "results"}`;
+      ? `${t("search.searching")} ${progress.scanned}/${progress.total}`
+      : t("search.results", { count: resultCount });
 
   return (
     <CommandDialog
@@ -240,7 +241,7 @@ export function SessionSearchDialog(props: SessionSearchDialogProps) {
       }}
     >
       <CommandDialogPopup>
-        <CommandDialogTitle>Search sessions</CommandDialogTitle>
+        <CommandDialogTitle>{t("search.title")}</CommandDialogTitle>
         <Command
           items={groups}
           filter={null}
@@ -250,7 +251,7 @@ export function SessionSearchDialog(props: SessionSearchDialogProps) {
           <CommandHeader>
             <CommandInput
               className="w-full"
-              placeholder="Search all sessions and messages…"
+              placeholder={t("search.placeholder")}
             />
           </CommandHeader>
           <CommandPanel>
@@ -310,7 +311,7 @@ export function SessionSearchDialog(props: SessionSearchDialogProps) {
               {searching ? <Loader2Icon className="size-3 animate-spin" /> : null}
               {statusText}
             </span>
-            <span>↑↓ to navigate · ↵ to open</span>
+            <span>{t("search.footer_hint")}</span>
           </CommandFooter>
         </Command>
       </CommandDialogPopup>

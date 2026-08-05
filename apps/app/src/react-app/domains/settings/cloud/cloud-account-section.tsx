@@ -176,15 +176,15 @@ function OrgPicker({
   return (
     <div className="flex flex-col gap-3">
       <div className="text-sm font-medium text-dls-text">
-        Select an organization
+        {t("den.select_org_title")}
       </div>
       <div className="text-xs text-dls-secondary">
-        Choose the organization to use with this workspace. Sign out to switch later.
+        {t("den.select_org_desc")}
       </div>
       {orgs.length > 10 ? (
         <Input
-          aria-label="Search organizations"
-          placeholder="Search organizations..."
+          aria-label={t("den.search_org_aria")}
+          placeholder={t("den.search_org_placeholder")}
           value={query}
           className="h-auto rounded-xl border-dls-border bg-dls-surface px-4 py-2.5 text-sm text-dls-text shadow-none placeholder:text-dls-secondary focus-visible:border-dls-text/30 focus-visible:ring-0 dark:bg-dls-surface"
           onChange={(event) => updateQuery(event.target.value)}
