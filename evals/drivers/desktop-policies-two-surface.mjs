@@ -4,7 +4,7 @@
  * Drives BOTH surfaces of the real flow and captures interleaved frames:
  *   - ADMIN: the Den web dashboard in Chrome (CDP :9224) — real clicks on the
  *     Brand Appearance card and Desktop Policy editor.
- *   - MEMBER: the OpenWork desktop app in Electron (CDP :9823) — signed into
+ *   - MEMBER: the Micx desktop app in Electron (CDP :9823) — signed into
  *     the same org, fetching desktop config from the local Den on its own.
  *
  * Each journey: admin clicks + saves in the web UI → member app fetches the
@@ -31,7 +31,7 @@ const MEMBER_CDP = "http://127.0.0.1:9823";
 const DEN_API = "http://localhost:8790";
 const DEN_WEB = "http://localhost:3005";
 const ADMIN_EMAIL = "alex@acme.test";
-const ADMIN_PASSWORD = "OpenWorkDemo123!";
+const ADMIN_PASSWORD = "MicxDemo123!";
 const GENPACT_LOGO = "https://upload.wikimedia.org/wikipedia/commons/5/50/Genpact_Logo_Black_%283%29.png";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -50,10 +50,10 @@ async function connectTo(baseUrl) {
   return client;
 }
 
-/** Pick the den-web admin page target (title "OpenWork Cloud"). */
+/** Pick the den-web admin page target (title "Micx Cloud"). */
 async function connectAdmin() {
   const targets = await listTargets(ADMIN_CDP);
-  const page = targets.find((t) => t.type === "page" && t.title.includes("OpenWork Cloud"))
+  const page = targets.find((t) => t.type === "page" && t.title.includes("Micx Cloud"))
     ?? targets.find((t) => t.type === "page" && t.url.includes("3005"))
     ?? targets.find((t) => t.type === "page");
   const ws = debuggerUrlFor(ADMIN_CDP, page);
@@ -151,8 +151,8 @@ async function adminEnsureFreshAuth(admin) {
 
 /** Trigger the member app to refresh its desktop config and wait for a DOM condition. */
 async function memberRefreshAndWait(member, condition, label, timeoutMs = 25000) {
-  await evaluate(member, `window.dispatchEvent(new CustomEvent('openwork-den-settings-changed', { detail: {} }))`);
-  await evaluate(member, `window.dispatchEvent(new CustomEvent('openwork-den-session-updated', { detail: {} }))`);
+  await evaluate(member, `window.dispatchEvent(new CustomEvent('micx-den-settings-changed', { detail: {} }))`);
+  await evaluate(member, `window.dispatchEvent(new CustomEvent('micx-den-session-updated', { detail: {} }))`);
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     const ok = await evaluate(member, condition).catch(() => false);
@@ -229,7 +229,7 @@ async function main() {
     } }),
   });
   // Member: light mode + session view + refresh to clear brand.
-  await evaluate(member, `localStorage.setItem('openwork.react.settings.theme-mode','light')`);
+  await evaluate(member, `localStorage.setItem('micx.react.settings.theme-mode','light')`);
   await evaluate(member, `window.location.hash = '#/session'`);
   await memberRefreshAndWait(member, "!document.querySelector('[data-testid=\\\"brand-logo\\\"]')", "no logo (clean)").catch(() => {});
   await sleep(1500);
@@ -310,17 +310,17 @@ async function main() {
   await evaluate(member, `window.location.hash = '#/session'`);
   await sleep(800);
   await evaluate(member, `(() => {
-    const store = window.__openwork?.notificationStore;
+    const store = window.__micx?.notificationStore;
     // Use the public notify path if exposed; otherwise write an unread entry.
     try {
-      const raw = localStorage.getItem('openwork:notifications:v1');
+      const raw = localStorage.getItem('micx:notifications:v1');
       const data = raw ? JSON.parse(raw) : { state: { notifications: [] }, version: 0 };
       data.state.notifications.unshift({
         id: 'accent-demo-' + Date.now(), kind: 'cloud', severity: 'info',
         title: 'Brand updated', body: 'Your organization accent color was applied.',
         count: 1, createdAt: Date.now(), updatedAt: Date.now(), readAt: null,
       });
-      localStorage.setItem('openwork:notifications:v1', JSON.stringify(data));
+      localStorage.setItem('micx:notifications:v1', JSON.stringify(data));
     } catch {}
     return true;
   })()`);
@@ -417,7 +417,7 @@ async function main() {
   // the "Organization policies active" entry is present.
   await memberRefreshAndWait(member,
     `(() => {
-      const raw = localStorage.getItem('openwork:notifications:v1');
+      const raw = localStorage.getItem('micx:notifications:v1');
       if (!raw) return false;
       try { return (JSON.parse(raw)?.state?.notifications ?? []).some(n => n.dedupeKey === 'desktop-policy-active'); }
       catch { return false; }

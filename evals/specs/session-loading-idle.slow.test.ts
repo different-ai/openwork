@@ -1,18 +1,18 @@
 import { createServer } from "node:http";
 import { expect, onTestFinished } from "vitest";
-import { control, createAndSelectWorkspace, evalIn, waitFor, waitForText } from "@openwork/behaviors";
-import { screenshot, validate } from "@openwork/fraimz";
-import { desktop } from "@openwork/hosts";
-import { needs, test } from "@openwork/testkit";
+import { control, createAndSelectWorkspace, evalIn, waitFor, waitForText } from "@micx/behaviors";
+import { screenshot, validate } from "@micx/fraimz";
+import { desktop } from "@micx/hosts";
+import { needs, test } from "@micx/testkit";
 
 const providerId = "session-loading-idle-mock";
 const modelId = "session-loading-idle-model";
 const reply = "session loading idle proof";
 const renamedTitle = "Session loading stays idle";
-const appSpecsEnabled = process.env.OPENWORK_EVAL_APP_SPECS === "1";
+const appSpecsEnabled = process.env.MICX_EVAL_APP_SPECS === "1";
 const title = appSpecsEnabled
   ? "completed session loading stays idle after snapshot refetch and rename"
-  : "session loading idle skipped — needs: set OPENWORK_EVAL_APP_SPECS=1";
+  : "session loading idle skipped — needs: set MICX_EVAL_APP_SPECS=1";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -34,14 +34,14 @@ function indicatorExpression(sessionId: string, present: boolean): string {
 }
 
 const stopDisabledExpression = `(() => {
-  const stop = window.__openworkControl.listActions().find((action) => action.id === "composer.stop");
+  const stop = window.__micxControl.listActions().find((action) => action.id === "composer.stop");
   return Boolean(stop?.disabled);
 })()`;
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 test.skipIf(!appSpecsEnabled)(title, async ({ evidence }) => {
-  needs({ optIn: ["OPENWORK_EVAL_APP_SPECS"] });
+  needs({ optIn: ["MICX_EVAL_APP_SPECS"] });
 
   const mock = createServer((request, response) => {
     const url = request.url ?? "";
@@ -92,12 +92,12 @@ test.skipIf(!appSpecsEnabled)(title, async ({ evidence }) => {
 
   await using app = await desktop({ name: "session-loading-idle" });
   const workspace = await createAndSelectWorkspace(app, {
-    path: `/tmp/openwork-session-loading-idle-${Date.now()}`,
+    path: `/tmp/micx-session-loading-idle-${Date.now()}`,
   });
 
   const configured = await evalIn(app, `(async () => {
-    const port = localStorage.getItem("openwork.server.port");
-    const token = localStorage.getItem("openwork.server.token");
+    const port = localStorage.getItem("micx.server.port");
+    const token = localStorage.getItem("micx.server.token");
     if (!port || !token) return "missing local server credentials";
     const request = async (path, init) => {
       const response = await fetch("http://127.0.0.1:" + port + path, {
@@ -128,18 +128,18 @@ test.skipIf(!appSpecsEnabled)(title, async ({ evidence }) => {
     if (patched !== "ok") return patched;
     const reloaded = await request("/workspace/" + encodeURIComponent(workspaceId) + "/engine/reload", { method: "POST" });
     if (reloaded !== "ok") return reloaded;
-    const raw = localStorage.getItem("openwork.preferences");
+    const raw = localStorage.getItem("micx.preferences");
     let preferences = {};
     try { preferences = raw ? JSON.parse(raw) : {}; } catch { preferences = {}; }
     if (!preferences || typeof preferences !== "object" || Array.isArray(preferences)) preferences = {};
-    localStorage.setItem("openwork.preferences", JSON.stringify({
+    localStorage.setItem("micx.preferences", JSON.stringify({
       ...preferences,
       defaultModel: { providerID: ${JSON.stringify(providerId)}, modelID: ${JSON.stringify(modelId)} },
       modelVariant: null,
       providerStepCompleted: true,
     }));
-    localStorage.setItem("openwork.defaultModel", ${JSON.stringify(`${providerId}/${modelId}`)});
-    localStorage.removeItem("openwork.sessionModels." + workspaceId);
+    localStorage.setItem("micx.defaultModel", ${JSON.stringify(`${providerId}/${modelId}`)});
+    localStorage.removeItem("micx.sessionModels." + workspaceId);
     return "ok";
   })()`, { awaitPromise: true, timeoutMs: 30_000 });
   expect(configured).toBe("ok");
@@ -150,12 +150,12 @@ test.skipIf(!appSpecsEnabled)(title, async ({ evidence }) => {
   const mainSessionId = newestSessionId(await control(app, "session.list_sessions"));
   expect(mainSessionId).not.toBe(parkingSessionId);
 
-  await waitFor(app, `window.__openworkControl.listActions().some((action) => action.id === "composer.set_text" && !action.disabled)`, {
+  await waitFor(app, `window.__micxControl.listActions().some((action) => action.id === "composer.set_text" && !action.disabled)`, {
     timeoutMs: 30_000,
     label: "main session composer text action enabled",
   });
   await control(app, "composer.set_text", { text: `Reply with exactly: ${reply}` });
-  await waitFor(app, `window.__openworkControl.listActions().some((action) => action.id === "composer.send" && !action.disabled)`, {
+  await waitFor(app, `window.__micxControl.listActions().some((action) => action.id === "composer.send" && !action.disabled)`, {
     timeoutMs: 30_000,
     label: "main session composer send action enabled",
   });

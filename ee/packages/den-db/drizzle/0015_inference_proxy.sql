@@ -81,7 +81,7 @@ CREATE TABLE `inference_usage_ledger_entries` (
 	CONSTRAINT `inference_usage_ledger_entries_job_event_type` UNIQUE(`external_job_id`,`event_type`)
 );
 --> statement-breakpoint
-ALTER TABLE `llm_provider` MODIFY COLUMN `source` enum('models_dev','custom','openwork') NOT NULL;--> statement-breakpoint
+ALTER TABLE `llm_provider` MODIFY COLUMN `source` enum('models_dev','custom','micx') NOT NULL;--> statement-breakpoint
 CREATE INDEX `inference_keys_organization_id` ON `inference_keys` (`organization_id`);--> statement-breakpoint
 CREATE INDEX `inference_keys_org_membership_id` ON `inference_keys` (`org_membership_id`);--> statement-breakpoint
 CREATE INDEX `inference_keys_status` ON `inference_keys` (`status`);--> statement-breakpoint

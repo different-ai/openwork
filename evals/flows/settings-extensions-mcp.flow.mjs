@@ -2,7 +2,7 @@
  * The unified Extensions settings view renders the custom-app entry point,
  * skill count, and — regression guard for #2008 — the unconfigured
  * quick-connect directory (Notion/Linear) so MCP discovery works without a
- * cloud sign-in. Inactive built-in OpenWork MCPs are hidden by default and
+ * cloud sign-in. Inactive built-in Micx MCPs are hidden by default and
  * revealed via Show hidden.
  */
 
@@ -24,7 +24,7 @@ export default {
     {
       name: "App booted",
       run: async (ctx) => {
-        await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 30_000 });
+        await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 30_000 });
       },
     },
     {
@@ -69,30 +69,30 @@ export default {
       },
     },
     {
-      name: "Default view keeps directory apps discoverable and hides inactive built-in OpenWork MCPs",
+      name: "Default view keeps directory apps discoverable and hides inactive built-in Micx MCPs",
       run: async (ctx) => {
         const directoryEntry = await ctx.hasText("Notion") ? "Notion" : "Linear";
         const hasDirectoryEntry = await ctx.hasText(directoryEntry);
         ctx.assert(hasDirectoryEntry, "Expected at least one MCP directory entry (Notion/Linear) in quick connect.");
-        await ctx.expectNoText("OpenWork UI Control");
+        await ctx.expectNoText("Micx UI Control");
         await ctx.screenshot("mcp-view-default-hidden", {
-          claim: "Extensions shows public directory apps while inactive built-in OpenWork MCPs are hidden by default.",
+          claim: "Extensions shows public directory apps while inactive built-in Micx MCPs are hidden by default.",
           voiceover: "Settings shows the extension directory with public apps while inactive internal control entries stay out of the default list.",
           requireText: [directoryEntry],
-          rejectText: ["OpenWork UI Control", "Something went wrong"],
+          rejectText: ["Micx UI Control", "Something went wrong"],
           hashIncludes: "/settings/extensions/mcp",
         });
       },
     },
     {
-      name: "Show hidden reveals built-in OpenWork MCPs",
+      name: "Show hidden reveals built-in Micx MCPs",
       run: async (ctx) => {
         await revealHidden(ctx);
-        await ctx.expectText("OpenWork UI Control", { timeoutMs: 15_000 });
+        await ctx.expectText("Micx UI Control", { timeoutMs: 15_000 });
         await ctx.screenshot("mcp-view-built-ins-revealed", {
-          claim: "Show hidden reveals inactive built-in OpenWork MCP entries.",
-          voiceover: "Choosing Show hidden brings back OpenWork UI Control for anyone who wants to manage it.",
-          requireText: ["OpenWork UI Control"],
+          claim: "Show hidden reveals inactive built-in Micx MCP entries.",
+          voiceover: "Choosing Show hidden brings back Micx UI Control for anyone who wants to manage it.",
+          requireText: ["Micx UI Control"],
           rejectText: ["Something went wrong"],
           hashIncludes: "/settings/extensions/mcp",
         });

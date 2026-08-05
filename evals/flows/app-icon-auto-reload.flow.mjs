@@ -7,7 +7,7 @@ const ORG = { id: "org_eval_branding", name: "Acme Robotics", slug: "acme-roboti
 
 function json(response, body) {
   response.writeHead(200, {
-    "access-control-allow-headers": "authorization,content-type,x-openwork-legacy-org-id",
+    "access-control-allow-headers": "authorization,content-type,x-micx-legacy-org-id",
     "access-control-allow-methods": "GET,POST,OPTIONS",
     "access-control-allow-origin": "*",
     "content-type": "application/json",
@@ -21,7 +21,7 @@ async function startBrandingServer(ctx) {
     const requestPath = request.url?.replace(/^\/api\/den/, "") ?? "";
     if (request.method === "OPTIONS") {
       response.writeHead(204, {
-        "access-control-allow-headers": "authorization,content-type,x-openwork-legacy-org-id",
+        "access-control-allow-headers": "authorization,content-type,x-micx-legacy-org-id",
         "access-control-allow-methods": "GET,POST,OPTIONS",
         "access-control-allow-origin": "*",
       });
@@ -86,26 +86,26 @@ async function startBrandingServer(ctx) {
 
 async function seedDesktopSession(ctx) {
   await ctx.eval(`(() => {
-    localStorage.setItem('openwork.den.authToken', 'eval-token');
-    localStorage.setItem('openwork.den.activeOrgId', ${JSON.stringify(ctx.org.id)});
-    localStorage.setItem('openwork.den.activeOrgSlug', ${JSON.stringify(ctx.org.slug)});
-    localStorage.setItem('openwork.den.activeOrgName', ${JSON.stringify(ctx.org.name)});
-    localStorage.removeItem('openwork.den.appliedBrandingFingerprint');
-    localStorage.removeItem('openwork.den.brandingRestartResume');
+    localStorage.setItem('micx.den.authToken', 'eval-token');
+    localStorage.setItem('micx.den.activeOrgId', ${JSON.stringify(ctx.org.id)});
+    localStorage.setItem('micx.den.activeOrgSlug', ${JSON.stringify(ctx.org.slug)});
+    localStorage.setItem('micx.den.activeOrgName', ${JSON.stringify(ctx.org.name)});
+    localStorage.removeItem('micx.den.appliedBrandingFingerprint');
+    localStorage.removeItem('micx.den.brandingRestartResume');
     return true;
   })()`);
   await ctx.control("eval.auth.set-base-url", { baseUrl: ctx.denBaseUrl });
   await ctx.eval("location.hash = '/onboarding'; location.reload()");
-  await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 45_000, label: "control API after onboarding reload" });
+  await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 45_000, label: "control API after onboarding reload" });
   await ctx.eval(`(() => {
-    window.__openworkUpdateDownloadedForOnboarding = false;
-    window.__openworkOnboardingInstallCalled = false;
-    window.__openworkReadDesktopVersionMetadataEval = async () => ({
+    window.__micxUpdateDownloadedForOnboarding = false;
+    window.__micxOnboardingInstallCalled = false;
+    window.__micxReadDesktopVersionMetadataEval = async () => ({
       minAppVersion: '0.17.1',
       latestAppVersion: '0.17.30',
       publishedDesktopVersions: ['0.17.30'],
     });
-    window.__openworkOnboardingUpdaterEvalBridge = {
+    window.__micxOnboardingUpdaterEvalBridge = {
       getChannel: async () => ({ channel: 'stable', feedUrl: 'eval', currentVersion: '0.17.29' }),
       check: async () => ({
         available: true,
@@ -116,16 +116,16 @@ async function seedDesktopSession(ctx) {
       }),
       download: async () => {
         await new Promise((resolve) => setTimeout(resolve, 1500));
-        window.__openworkUpdateDownloadedForOnboarding = true;
+        window.__micxUpdateDownloadedForOnboarding = true;
         return { ok: true };
       },
       installAndRestart: async () => {
-        window.__openworkOnboardingInstallCalled = true;
+        window.__micxOnboardingInstallCalled = true;
         return { ok: true };
       },
     };
-    window.dispatchEvent(new CustomEvent('openwork-den-settings-changed', { detail: {} }));
-    window.dispatchEvent(new CustomEvent('openwork-den-session-updated', { detail: { token: 'eval-token' } }));
+    window.dispatchEvent(new CustomEvent('micx-den-settings-changed', { detail: {} }));
+    window.dispatchEvent(new CustomEvent('micx-den-session-updated', { detail: { token: 'eval-token' } }));
     return true;
   })()`);
 }
@@ -171,7 +171,7 @@ export default {
     {
       name: "Brand identity prepared",
       run: async (ctx) => {
-        await ctx.prove("OpenWork fetches and prepares the selected organization's desktop identity", {
+        await ctx.prove("Micx fetches and prepares the selected organization's desktop identity", {
           voiceover: vo[1],
           action: async () => {
             await ctx.clickText("Continue to workspace", { timeoutMs: 10_000 });
@@ -189,7 +189,7 @@ export default {
             await ctx.expectText("Preparing workspace identity");
             const config = await ctx.eval(`(() => {
               const suffix = '::' + ${JSON.stringify(ctx.org.id)};
-              const key = Object.keys(localStorage).find((candidate) => candidate.startsWith('openwork.den.desktopConfig:') && candidate.endsWith(suffix));
+              const key = Object.keys(localStorage).find((candidate) => candidate.startsWith('micx.den.desktopConfig:') && candidate.endsWith(suffix));
               return JSON.parse(key ? localStorage.getItem(key) ?? '{}' : '{}');
             })()`);
             ctx.assert(config.brandAppName === "Acme Work", "Fresh desktop config did not cache the branded app name.");
@@ -211,12 +211,12 @@ export default {
             await ctx.waitForText("Workspace identity is ready", { timeoutMs: 60_000 });
           },
           assert: async () => {
-            ctx.assert(await ctx.eval("window.__openworkUpdateDownloadedForOnboarding === true"), "The update was not downloaded.");
+            ctx.assert(await ctx.eval("window.__micxUpdateDownloadedForOnboarding === true"), "The update was not downloaded.");
             await ctx.expectText("Application update downloaded");
           },
           screenshot: {
             name: "application-update-downloaded",
-            requireText: ["Application update downloaded", "Restart OpenWork"],
+            requireText: ["Application update downloaded", "Restart Micx"],
           },
         });
       },
@@ -230,13 +230,13 @@ export default {
             await ctx.clickText("Why restart?", { selector: "summary", timeoutMs: 10_000 });
           },
           assert: async () => {
-            await ctx.expectText("Restart OpenWork");
+            await ctx.expectText("Restart Micx");
             await ctx.expectText("Continue without restarting");
             await ctx.expectText("refreshes the workspace name and icon");
           },
           screenshot: {
             name: "one-restart-choice",
-            requireText: ["Restart OpenWork", "Continue without restarting", "refreshes the workspace name and icon"],
+            requireText: ["Restart Micx", "Continue without restarting", "refreshes the workspace name and icon"],
           },
         });
       },
@@ -247,20 +247,20 @@ export default {
         await ctx.prove("The coordinated restart resumes directly into the selected branded workspace", {
           voiceover: vo[4],
           action: async () => {
-            await ctx.clickText("Restart OpenWork", { timeoutMs: 10_000 });
-            await ctx.waitFor("window.__openworkOnboardingInstallCalled === true", {
+            await ctx.clickText("Restart Micx", { timeoutMs: 10_000 });
+            await ctx.waitFor("window.__micxOnboardingInstallCalled === true", {
               timeoutMs: 10_000,
               label: "coordinated updater install",
             });
             await ctx.eval("location.reload()");
-            await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 45_000, label: "app after restart" });
+            await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 45_000, label: "app after restart" });
             await ctx.waitFor("location.hash.includes('/session')", { timeoutMs: 45_000, label: "workspace session route" });
           },
           assert: async () => {
             await ctx.expectNoText("Choose your organization");
             await ctx.expectNoText("Workspace identity is ready");
             ctx.assert(
-              await ctx.eval("localStorage.getItem('openwork.den.brandingRestartResume') === null"),
+              await ctx.eval("localStorage.getItem('micx.den.brandingRestartResume') === null"),
               "The one-shot restart resume marker was not consumed.",
             );
             await new Promise((resolve) => ctx.brandingServer.close(resolve));

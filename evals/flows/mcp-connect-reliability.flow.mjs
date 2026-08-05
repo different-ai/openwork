@@ -4,7 +4,7 @@ import { defineScenario } from "../runner/scenario.mjs";
 import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
 
 const FLOW_ID = "mcp-connect-reliability";
-const REQUIRED_DEN_ENV = ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_WEB_URL"];
+const REQUIRED_DEN_ENV = ["MICX_EVAL_DEN_API_URL", "MICX_EVAL_DEN_WEB_URL"];
 const USABLE_ECHO_TEXT = "ui connected usable proof";
 const RELOAD_ECHO_TEXT = "reload mcp reliability proof";
 const RECONNECT_ECHO_TEXT = "reconnect mcp reliability proof";
@@ -35,12 +35,12 @@ function cleanStamp(value) {
 }
 
 function uniqueOrgName(ctx) {
-  const stamp = ctx.env.OPENWORK_EVAL_RUNSTAMP?.trim() || new Date().toISOString();
+  const stamp = ctx.env.MICX_EVAL_RUNSTAMP?.trim() || new Date().toISOString();
   return `MCP Reliability ${cleanStamp(stamp)}`;
 }
 
 function connectionPrefix(ctx) {
-  const stamp = ctx.env.OPENWORK_EVAL_RUNSTAMP?.trim() || "run";
+  const stamp = ctx.env.MICX_EVAL_RUNSTAMP?.trim() || "run";
   return `reliability-mcp-${cleanStamp(stamp)}`;
 }
 
@@ -52,11 +52,11 @@ function stateString(ctx, key) {
 
 function mockBase(ctx) {
   const fixtureUrl = typeof ctx.state.mockMcpUrl === "string" ? ctx.state.mockMcpUrl : "";
-  return (fixtureUrl || ctx.env.MOCK_OAUTH_MCP_URL?.trim() || ctx.env.OPENWORK_EVAL_MOCK_URL?.trim() || "http://127.0.0.1:3978").replace(/\/+$/, "");
+  return (fixtureUrl || ctx.env.MOCK_OAUTH_MCP_URL?.trim() || ctx.env.MICX_EVAL_MOCK_URL?.trim() || "http://127.0.0.1:3978").replace(/\/+$/, "");
 }
 
 function reconnectMcpUrl(ctx) {
-  const stamp = cleanStamp(ctx.env.OPENWORK_EVAL_RUNSTAMP?.trim() || new Date().toISOString());
+  const stamp = cleanStamp(ctx.env.MICX_EVAL_RUNSTAMP?.trim() || new Date().toISOString());
   return `${mockBase(ctx)}/mcp?reconnect=${encodeURIComponent(stamp)}`;
 }
 
@@ -230,7 +230,7 @@ export default defineScenario({
               await ctx.expectText(connectionName, { timeoutMs: 60_000 });
               await ctx.expectText("Connected", { timeoutMs: 60_000 });
               await scrollConnectionIntoView(ctx, connectionName);
-              if (ctx.env.OPENWORK_EVAL_MCP_RELIABILITY_STOP_AFTER_CONNECT?.trim()) {
+              if (ctx.env.MICX_EVAL_MCP_RELIABILITY_STOP_AFTER_CONNECT?.trim()) {
                 await stopMockFixture(ctx);
               }
               const result = await mcp.expectUsableConnection(ctx, {
@@ -462,9 +462,9 @@ export default defineScenario({
               organizationId: stateString(ctx, "orgId"),
               prefix: connectionPrefix(ctx),
             });
-            const desktopGate = ctx.env.OPENWORK_EVAL_DESKTOP_SURFACE?.trim() ? "requested" : "not requested";
+            const desktopGate = ctx.env.MICX_EVAL_DESKTOP_SURFACE?.trim() ? "requested" : "not requested";
             ctx.skip(`Electron desktop surface ${desktopGate}; ${FLOW_ID} is intentionally web-only.`);
-            ctx.output("desktop-surface-gate", `OPENWORK_EVAL_DESKTOP_SURFACE=${ctx.env.OPENWORK_EVAL_DESKTOP_SURFACE ?? ""}`);
+            ctx.output("desktop-surface-gate", `MICX_EVAL_DESKTOP_SURFACE=${ctx.env.MICX_EVAL_DESKTOP_SURFACE ?? ""}`);
             await stopMockFixture(ctx);
           },
           assert: async () => {

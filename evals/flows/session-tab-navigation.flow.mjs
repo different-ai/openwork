@@ -62,12 +62,12 @@ export default {
           typeof userAgent === "string" && userAgent.includes("Electron/"),
           `Expected Electron userAgent, got: ${userAgent}`,
         );
-        await ctx.waitFor("Boolean(window.__openworkControl)", {
+        await ctx.waitFor("Boolean(window.__micxControl)", {
           timeoutMs: 60_000,
           label: "control API",
         });
         await ctx.waitFor(
-          "window.__openworkControl.listActions().some((a) => a.id === 'session.create_task' && !a.disabled)",
+          "window.__micxControl.listActions().some((a) => a.id === 'session.create_task' && !a.disabled)",
           { timeoutMs: 60_000, label: "enabled task creation action" },
         );
       },
@@ -78,7 +78,7 @@ export default {
         await ctx.control("session.create_task");
         const sessionA = await ctx.waitFor(
           `(() => {
-            const route = window.__openworkControl.snapshot().route;
+            const route = window.__micxControl.snapshot().route;
             const match = new RegExp('session/([^/?#]+)').exec(route);
             return match ? { route, sessionId: decodeURIComponent(match[1]) } : null;
           })()`,
@@ -90,7 +90,7 @@ export default {
         await ctx.control("session.create_task");
         const sessionB = await ctx.waitFor(
           `(() => {
-            const route = window.__openworkControl.snapshot().route;
+            const route = window.__micxControl.snapshot().route;
             const match = new RegExp('session/([^/?#]+)').exec(route);
             if (!match) return null;
             const sessionId = decodeURIComponent(match[1]);
@@ -119,7 +119,7 @@ export default {
                 key: 't', ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true
               }));
               await new Promise(r => setTimeout(r, 500));
-              const route = window.__openworkControl?.snapshot()?.route ?? '';
+              const route = window.__micxControl?.snapshot()?.route ?? '';
               if (new RegExp('session/' + ${JSON.stringify(targetId)} + '([/?#]|$)').test(route)) return true;
             }
             return false;
@@ -144,7 +144,7 @@ export default {
                 key: 't', ctrlKey: true, bubbles: true, cancelable: true
               }));
               await new Promise(r => setTimeout(r, 500));
-              const route = window.__openworkControl?.snapshot()?.route ?? '';
+              const route = window.__micxControl?.snapshot()?.route ?? '';
               if (new RegExp('session/' + ${JSON.stringify(targetId)} + '([/?#]|$)').test(route)) return true;
             }
             return false;
@@ -161,7 +161,7 @@ export default {
     {
       name: "Command palette shows tab items and Previous navigates back",
       run: async (ctx) => {
-        const routeBefore = await ctx.eval("window.__openworkControl.snapshot().route");
+        const routeBefore = await ctx.eval("window.__micxControl.snapshot().route");
         const matchBefore = new RegExp("session/([^/?#]+)").exec(routeBefore);
         const sessionIdBefore = matchBefore ? decodeURIComponent(matchBefore[1]) : null;
         ctx.assert(sessionIdBefore, "No current session before palette click");
@@ -180,7 +180,7 @@ export default {
         await clickCommandItem(ctx, "Previous session tab");
         const changed = await ctx.waitFor(
           `(() => {
-            const route = window.__openworkControl.snapshot().route;
+            const route = window.__micxControl.snapshot().route;
             const match = new RegExp('session/([^/?#]+)').exec(route);
             if (!match) return false;
             const sessionId = decodeURIComponent(match[1]);

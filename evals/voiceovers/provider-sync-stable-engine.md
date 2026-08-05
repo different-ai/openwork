@@ -1,7 +1,7 @@
 # provider-sync-stable-engine — Org providers import once, the engine stays put
 
-Cast is Alex Chen, owner of Acme Robotics, on a fresh OpenWork desktop
-connected to OpenWork Cloud. His org ships a custom LLM provider (Acme Azure
+Cast is Alex Chen, owner of Acme Robotics, on a fresh Micx desktop
+connected to Micx Cloud. His org ships a custom LLM provider (Acme Azure
 Foundry). Before this fix, signing in started an invisible fight: every cloud
 sync erased the provider import baseline, so the app re-imported the provider,
 forced an engine reload, and disposed/re-created the active workspace's
@@ -11,7 +11,7 @@ imports once, stays imported, and the engine stays quiet.
 
 1. Alex starts on a clean workspace, signed out of the cloud — the composer is idle and the status bar is quiet.
 
-2. He signs in to OpenWork Cloud with a pasted sign-in code and lands on the organization picker — he chooses Acme Robotics, the org whose provider used to trigger the loop.
+2. He signs in to Micx Cloud with a pasted sign-in code and lands on the organization picker — he chooses Acme Robotics, the org whose provider used to trigger the loop.
 
 3. Acme's resources come with him: the onboarding summary shows the org's AI provider models, and he continues into the workspace.
 

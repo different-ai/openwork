@@ -49,7 +49,7 @@ function assertEvidence(ctx, condition, assertion, actual) {
 async function activeSessionId(ctx) {
   return ctx.waitFor(
     `(() => {
-      const route = window.__openworkControl.snapshot().route || "";
+      const route = window.__micxControl.snapshot().route || "";
       const match = route.match(/ses_[A-Za-z0-9]+/);
       return match ? match[0] : null;
     })()`,
@@ -88,7 +88,7 @@ function errorMessage(error) {
 }
 
 async function readSandboxFileDigest(ctx, filePath) {
-  const sandbox = ctx.env.OPENWORK_EVAL_DAYTONA_SANDBOX.trim();
+  const sandbox = ctx.env.MICX_EVAL_DAYTONA_SANDBOX.trim();
   const pathBase64 = Buffer.from(filePath, "utf8").toString("base64");
   // The Daytona CLI builds a remote shell command after `--`, so keep the
   // filename out of that shell string. The only interpolated value below is a
@@ -126,15 +126,15 @@ export default {
   id: FLOW_ID,
   title: "Chat attachments are copied into the active worker workspace before send",
   kind: "user-facing",
-  requiredEnv: ["OPENWORK_EVAL_DAYTONA_SANDBOX"],
+  requiredEnv: ["MICX_EVAL_DAYTONA_SANDBOX"],
   precondition: async (ctx) => {
-    await ctx.waitFor("Boolean(window.__openworkControl)", {
+    await ctx.waitFor("Boolean(window.__micxControl)", {
       timeoutMs: 60_000,
       label: "control API",
     });
     const state = await ctx.waitFor(
       `(() => {
-        const control = window.__openworkControl;
+        const control = window.__micxControl;
         const route = control.snapshot().route;
         if (route.startsWith("/welcome") || route.startsWith("/signin")) return "blocked";
         const action = control.listActions().find((item) => item.id === "session.create_task");
@@ -161,7 +161,7 @@ export default {
           },
           assert: async () => {
             await ctx.waitForText(FILENAME, { timeoutMs: 10_000 });
-            const composer = await ctx.eval("window.__openwork?.slice('composer')");
+            const composer = await ctx.eval("window.__micx?.slice('composer')");
             const attached = (composer?.attachments ?? []).some((attachment) => attachment?.name === FILENAME && attachment?.mimeType === "application/pdf");
             assertEvidence(ctx, attached, "Composer inspector shows the PDF as an accepted attachment", JSON.stringify(composer?.attachments ?? []));
           },
@@ -183,7 +183,7 @@ export default {
             await ctx.waitForText(FILENAME, { timeoutMs: 30_000 });
             const transcript = await ctx.control("session.read_transcript", { count: 5 });
             const text = transcriptText(transcript);
-            assertEvidence(ctx, text.includes(".opencode/openwork/inbox/chat-attachments/"), "Transcript contains the workspace inbox path", text);
+            assertEvidence(ctx, text.includes(".opencode/micx/inbox/chat-attachments/"), "Transcript contains the workspace inbox path", text);
             assertEvidence(ctx, !text.includes("data:application/pdf"), "Transcript does not expose the PDF as a data URL fallback", text);
             ctx.output("submitted user turn", text);
           },
@@ -202,11 +202,11 @@ export default {
             const fileUrl = extractAttachmentFileUrl(text);
             assertEvidence(ctx, Boolean(fileUrl), "Submitted turn includes a file:// URL for the uploaded PDF", text);
             const filePath = fileURLToPath(fileUrl);
-            assertEvidence(ctx, filePath.includes(".opencode/openwork/inbox/chat-attachments/"), "File path is inside the worker chat-attachments inbox", filePath);
+            assertEvidence(ctx, filePath.includes(".opencode/micx/inbox/chat-attachments/"), "File path is inside the worker chat-attachments inbox", filePath);
             const digest = await readSandboxFileDigest(ctx, filePath);
             assertEvidence(ctx, digest.bytes === EXPECTED_BYTES.length, "Uploaded PDF byte count matches the image-only PDF fixture", `${digest.bytes} bytes`);
             assertEvidence(ctx, digest.sha256 === EXPECTED_SHA256, "Uploaded PDF sha256 matches the image-only PDF fixture exactly", digest.sha256);
-            assertEvidence(ctx, !text.toLowerCase().includes("ocr complete"), "The prompt does not claim OpenWork performed native OCR", text);
+            assertEvidence(ctx, !text.toLowerCase().includes("ocr complete"), "The prompt does not claim Micx performed native OCR", text);
             ctx.output("Docling-ready path", filePath);
           },
           screenshot: { name: "docling-ready-path", requireText: [FILENAME] },

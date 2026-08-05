@@ -2,7 +2,7 @@ import { defineFlow } from "../runner/flow.ts";
 
 type HandoffCreateResponse = {
   grant?: string;
-  openworkUrl?: string;
+  micxUrl?: string;
 };
 
 type HandoffStatusResponse = {
@@ -12,10 +12,10 @@ type HandoffStatusResponse = {
 
 const state: {
   grant: string;
-  openworkUrl: string;
+  micxUrl: string;
 } = {
   grant: "",
-  openworkUrl: "",
+  micxUrl: "",
 };
 
 function cleanBaseUrl(value: string | undefined) {
@@ -40,7 +40,7 @@ export default defineFlow({
   title: "Enterprise desktop stays locked until a one-time Den activation",
   kind: "user-facing",
   spec: "evals/enterprise-desktop-activation.md",
-  requiredEnv: ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_TOKEN"],
+  requiredEnv: ["MICX_EVAL_DEN_API_URL", "MICX_EVAL_DEN_TOKEN"],
   steps: [
     {
       name: "Fresh enterprise app is locked",
@@ -49,7 +49,7 @@ export default defineFlow({
           timeoutMs: 30_000,
         });
         const distribution = await ctx.eval(
-          "window.__OPENWORK_ELECTRON__?.meta?.distribution ?? null",
+          "window.__MICX_ELECTRON__?.meta?.distribution ?? null",
         ) as { flavor?: string; requireSignin?: boolean } | null;
         ctx.assert(distribution?.flavor === "enterprise", "The running app is not the enterprise distribution.");
         ctx.assert(distribution?.requireSignin === true, "Enterprise distribution does not require sign-in.");
@@ -57,7 +57,7 @@ export default defineFlow({
         await ctx.screenshot("enterprise-activation-required", {
           claim: "A fresh enterprise installation shows only the Den activation gate.",
           requireText: [
-            "OpenWork Enterprise",
+            "Micx Enterprise",
             "Activate this app from your Den portal.",
             "Sign-in stays required",
             "Waiting for an activation link from Den",
@@ -72,7 +72,7 @@ export default defineFlow({
       run: async (ctx) => {
         const result = await ctx.eval(`(async () => {
           try {
-            await window.__OPENWORK_ELECTRON__.invokeDesktop("engineInfo");
+            await window.__MICX_ELECTRON__.invokeDesktop("engineInfo");
             return { rejected: false, message: "" };
           } catch (error) {
             return {
@@ -91,24 +91,24 @@ export default defineFlow({
     {
       name: "Den issues a one-time enterprise handoff",
       run: async (ctx) => {
-        const denApiUrl = cleanBaseUrl(ctx.env.OPENWORK_EVAL_DEN_API_URL);
+        const denApiUrl = cleanBaseUrl(ctx.env.MICX_EVAL_DEN_API_URL);
         const response = await fetch(`${denApiUrl}/v1/auth/desktop-handoff`, {
           method: "POST",
           headers: {
-            authorization: `Bearer ${ctx.env.OPENWORK_EVAL_DEN_TOKEN?.trim() ?? ""}`,
+            authorization: `Bearer ${ctx.env.MICX_EVAL_DEN_TOKEN?.trim() ?? ""}`,
             "content-type": "application/json",
           },
-          body: JSON.stringify({ desktopScheme: "openwork" }),
+          body: JSON.stringify({ desktopScheme: "micx" }),
         });
         const payload = await readJson(response);
         ctx.assert(response.ok, `Handoff create failed: ${response.status} ${payload.text.slice(0, 300)}`);
         const body = payload.body as HandoffCreateResponse;
-        const openworkUrl = typeof body.openworkUrl === "string" ? body.openworkUrl : "";
-        ctx.assert(openworkUrl.length > 0, "Den returned no enterprise deep link.");
-        ctx.assert(openworkUrl.startsWith("openwork:"), "Den returned the wrong desktop scheme.");
-        const parsed = new URL(openworkUrl);
+        const micxUrl = typeof body.micxUrl === "string" ? body.micxUrl : "";
+        ctx.assert(micxUrl.length > 0, "Den returned no enterprise deep link.");
+        ctx.assert(micxUrl.startsWith("micx:"), "Den returned the wrong desktop scheme.");
+        const parsed = new URL(micxUrl);
         state.grant = body.grant ?? parsed.searchParams.get("grant") ?? "";
-        state.openworkUrl = openworkUrl;
+        state.micxUrl = micxUrl;
         ctx.assert(state.grant.length > 0, "Den returned no one-time handoff grant.");
       },
     },
@@ -116,8 +116,8 @@ export default defineFlow({
       name: "Opening the deep link activates and signs in the app",
       run: async (ctx) => {
         await ctx.eval(`(() => {
-          window.dispatchEvent(new CustomEvent("openwork:deep-link-native", {
-            detail: [${JSON.stringify(state.openworkUrl)}],
+          window.dispatchEvent(new CustomEvent("micx:deep-link-native", {
+            detail: [${JSON.stringify(state.micxUrl)}],
           }));
           return true;
         })()`);
@@ -126,14 +126,14 @@ export default defineFlow({
           { timeoutMs: 45_000, label: "enterprise activation gate dismissed" },
         );
         const bootstrap = await ctx.eval(
-          "window.__OPENWORK_ELECTRON__.invokeDesktop('getDesktopBootstrapConfig')",
+          "window.__MICX_ELECTRON__.invokeDesktop('getDesktopBootstrapConfig')",
           { awaitPromise: true },
         ) as {
           baseUrl?: string;
           requireSignin?: boolean;
           enterpriseActivation?: { activatedAt?: string; denBaseUrl?: string } | null;
         };
-        const denApiUrl = cleanBaseUrl(ctx.env.OPENWORK_EVAL_DEN_API_URL);
+        const denApiUrl = cleanBaseUrl(ctx.env.MICX_EVAL_DEN_API_URL);
         ctx.assert(bootstrap.requireSignin === true, "Activation did not preserve required sign-in.");
         ctx.assert(Boolean(bootstrap.enterpriseActivation?.activatedAt), "Activation timestamp was not persisted.");
         ctx.assert(
@@ -153,7 +153,7 @@ export default defineFlow({
     {
       name: "Den records the activation grant as consumed",
       run: async (ctx) => {
-        const denApiUrl = cleanBaseUrl(ctx.env.OPENWORK_EVAL_DEN_API_URL);
+        const denApiUrl = cleanBaseUrl(ctx.env.MICX_EVAL_DEN_API_URL);
         const response = await fetch(`${denApiUrl}/v1/auth/desktop-handoff/status`, {
           method: "POST",
           headers: { "content-type": "application/json" },

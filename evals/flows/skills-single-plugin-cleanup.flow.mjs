@@ -19,9 +19,9 @@ export default {
     {
       name: "App boots and the control API is ready",
       run: async (ctx) => {
-        await ctx.waitFor("Boolean(window.__openworkControl)", {
+        await ctx.waitFor("Boolean(window.__micxControl)", {
           timeoutMs: 60_000,
-          label: "window.__openworkControl",
+          label: "window.__micxControl",
         });
         await ctx.waitFor("document.body.innerText.trim().length > 40", {
           label: "rendered body text",
@@ -44,7 +44,7 @@ export default {
           assert: async () => {
             await ctx.expectText(SKILL_TITLE);
             await ctx.expectNoText("GitHub-backed hubs");
-            await ctx.expectNoText("openwork-hub");
+            await ctx.expectNoText("micx-hub");
             await ctx.expectNoText("Skill hub");
             const filters = await ctx.eval(`(() => {
               const labels = Array.from(document.querySelectorAll("button"))
@@ -60,7 +60,7 @@ export default {
           screenshot: {
             name: "extensions-skills-no-hub",
             requireText: ["Skills", SKILL_TITLE],
-            rejectText: ["GitHub-backed hubs", "openwork-hub", "Skill hub"],
+            rejectText: ["GitHub-backed hubs", "micx-hub", "Skill hub"],
           },
         });
       },

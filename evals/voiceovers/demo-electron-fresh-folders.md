@@ -1,8 +1,8 @@
 # demo-electron-fresh-folders — launch two isolated demos with fresh data
 
-1. I run `pnpm demo:electron`, and two OpenWork demo windows launch together.
+1. I run `pnpm demo:electron`, and two Micx demo windows launch together.
 
-2. Each window uses its own newly created temporary folder, completely separate from the production OpenWork data directory.
+2. Each window uses its own newly created temporary folder, completely separate from the production Micx data directory.
 
 3. The terminal prints both folder paths, making their isolation easy to verify.
 

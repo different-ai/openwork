@@ -11,7 +11,7 @@ import {
 
 const OFFICE_TOOL_CALL_ID = "call_write_office_artifacts";
 const OFFICE_TOOL_NAME = "bash";
-const MATERIALIZED_PREFIX = ".opencode/openwork/inbox/chat-attachments/";
+const MATERIALIZED_PREFIX = ".opencode/micx/inbox/chat-attachments/";
 
 function parseArgs(argv) {
   const args = new Map();
@@ -171,7 +171,7 @@ function countOfficeFileMarkers(value, context = { filename: "", mime: "" }) {
 
 function parseNormalizedAttachment(texts, expected) {
   const block = texts.find((text) => {
-    return text.includes("OpenWork normalized an Office attachment")
+    return text.includes("Micx normalized an Office attachment")
       && text.includes(`filename: ${expected.filename}`)
       && text.includes(`canonical_mime: ${expected.mime}`);
   });

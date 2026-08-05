@@ -30,10 +30,10 @@ describe("release feed URL and filename handling", () => {
       catalog: createReleaseCatalog(["0.17.40"], { platforms: ["win-x64"], distribution: "enterprise" }),
     }).start();
     try {
-      const fileName = "openwork-enterprise-win-x64-0.17.40.exe";
+      const fileName = "micx-enterprise-win-x64-0.17.40.exe";
       assert.equal(
         buildReleaseAssetUrl({ baseUrl: feed.baseUrl, version: "0.17.40", fileName }),
-        `${feed.baseUrl}/different-ai/openwork/releases/download/v0.17.40/openwork-enterprise-win-x64-0.17.40.exe`,
+        `${feed.baseUrl}/different-ai/micx/releases/download/v0.17.40/micx-enterprise-win-x64-0.17.40.exe`,
       );
       const renamed = simulateBrowserRenamedFileName(fileName);
       assert.equal(feed.resolveClientDownloadedAsset("0.17.40", "win-x64", renamed).fileName, fileName);
@@ -111,11 +111,11 @@ describe("release feed fault knobs", () => {
 
 describe("bootstrap precedence helper", () => {
   test("drives workspace-store precedence so an installed organization URL outranks a newer hosted bundle", async () => {
-    const organizationUrl = "https://openwork.organization.internal.example";
+    const organizationUrl = "https://micx.organization.internal.example";
     const result = await resolveBootstrapPrecedence({
       before: {
         serverUrl: organizationUrl,
-        bundleServerUrl: "https://app.openworklabs.com",
+        bundleServerUrl: "https://app.micxlabs.com",
         installedPath: "canonical",
       },
       after: { serverUrl: organizationUrl },

@@ -20,7 +20,7 @@ if (!repo) {
 }
 
 const distRoot = resolve(distRootArg);
-const outputDir = resolve(process.env.RUNNER_TEMP || ".", "openwork-electron-manifests");
+const outputDir = resolve(process.env.RUNNER_TEMP || ".", "micx-electron-manifests");
 mkdirSync(outputDir, { recursive: true });
 
 function walk(dir) {
@@ -40,7 +40,7 @@ function isUpdaterManifest(path) {
 
 function isReleaseAsset(path) {
   if (isUpdaterManifest(path)) return false;
-  if (!basename(path).startsWith("openwork-")) return false;
+  if (!basename(path).startsWith("micx-")) return false;
   return /\.(AppImage|blockmap|dmg|exe|rpm|zip)$/i.test(path) || /\.tar\.gz$/i.test(path);
 }
 
@@ -170,10 +170,10 @@ function validateManifest(name, manifest) {
       : "public";
   const feedName = name.replace(/^(?:cloud|enterprise)(?=\.|-)/, "latest");
   const urls = manifest.files.map((file) => String(file.url || ""));
-  const expectedPrefix = distribution === "public" ? "openwork-" : `openwork-${distribution}-`;
+  const expectedPrefix = distribution === "public" ? "micx-" : `micx-${distribution}-`;
   if (
     urls.some((url) => !url.startsWith(expectedPrefix))
-    || (distribution === "public" && urls.some((url) => /^openwork-(?:cloud|enterprise)-/.test(url)))
+    || (distribution === "public" && urls.some((url) => /^micx-(?:cloud|enterprise)-/.test(url)))
   ) {
     throw new Error(`${name} contains an artifact from a different desktop distribution.`);
   }

@@ -5,17 +5,17 @@ import { denApiFetch, denWebUrl, signInApi } from "./lib/den-web.mjs";
 const FLOW_ID = "join-org-invite-clean";
 const vo = await loadVoiceoverParagraphs(FLOW_ID);
 
-const ADMIN_EMAIL = process.env.OPENWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
-const ADMIN_PASSWORD = process.env.OPENWORK_EVAL_DEMO_PASSWORD?.trim() || "OpenWorkDemo123!";
+const ADMIN_EMAIL = process.env.MICX_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
+const ADMIN_PASSWORD = process.env.MICX_EVAL_DEMO_PASSWORD?.trim() || "MicxDemo123!";
 const DEFAULT_INVITEE_EMAIL = "join-org-invite-clean@acme.test";
 const RUN_TAG = `${Date.now().toString(36)}-${randomBytes(2).toString("hex")}`;
 const FALLBACK_INVITEE_EMAIL = `join-org-invite-clean+${RUN_TAG}@acme.test`;
-const PENDING_INVITE_STORAGE_KEY = "openwork:web:pending-org-invitation";
-const AUTH_TOKEN_STORAGE_KEY = "openwork:web:auth-token";
+const PENDING_INVITE_STORAGE_KEY = "micx:web:pending-org-invitation";
+const AUTH_TOKEN_STORAGE_KEY = "micx:web:auth-token";
 
 const state = {
   adminToken: "",
-  inviteeEmail: process.env.OPENWORK_EVAL_JOIN_ORG_INVITEE_EMAIL?.trim() || DEFAULT_INVITEE_EMAIL,
+  inviteeEmail: process.env.MICX_EVAL_JOIN_ORG_INVITEE_EMAIL?.trim() || DEFAULT_INVITEE_EMAIL,
   invitationId: "",
   inviteToken: "",
   organizationId: "",
@@ -32,8 +32,8 @@ function authHeaders() {
 function orgHeaders() {
   const headers = authHeaders();
   if (state.organizationId) {
-    headers["x-openwork-org-id"] = state.organizationId;
-    headers["x-openwork-legacy-org-id"] = state.organizationId;
+    headers["x-micx-org-id"] = state.organizationId;
+    headers["x-micx-legacy-org-id"] = state.organizationId;
   }
   return headers;
 }
@@ -373,12 +373,12 @@ export default {
   id: FLOW_ID,
   title: "Organization invitations use a compact light Dithering join experience",
   kind: "user-facing",
-  requiredEnv: ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_WEB_URL", "OPENWORK_EVAL_DEN_MULTI_ORG"],
+  requiredEnv: ["MICX_EVAL_DEN_API_URL", "MICX_EVAL_DEN_WEB_URL", "MICX_EVAL_DEN_MULTI_ORG"],
   steps: [
     {
       name: "Setup: real multi-org invitation exists",
       run: async (ctx) => {
-        witness(ctx, denWebUrl().length > 0, "OPENWORK_EVAL_DEN_WEB_URL points at den-web", denWebUrl());
+        witness(ctx, denWebUrl().length > 0, "MICX_EVAL_DEN_WEB_URL points at den-web", denWebUrl());
         await ensureInvitation(ctx);
         ctx.output("join-org-invite-clean-setup", JSON.stringify({
           organizationName: state.organizationName,

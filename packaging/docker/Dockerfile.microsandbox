@@ -1,4 +1,4 @@
-FROM node:22-bookworm-slim AS openwork-builder
+FROM node:22-bookworm-slim AS micx-builder
 
 WORKDIR /src
 
@@ -10,13 +10,13 @@ RUN apt-get update \
 
 COPY . .
 
-RUN pnpm install --frozen-lockfile --trust-lockfile --filter openwork-server... \
-  && pnpm --filter openwork-server build \
-  && pnpm --filter openwork-server build:bin
+RUN pnpm install --frozen-lockfile --trust-lockfile --filter micx-server... \
+  && pnpm --filter micx-server build \
+  && pnpm --filter micx-server build:bin
 
 FROM node:22-bookworm-slim
 
-ARG OPENWORK_SERVER_VERSION
+ARG MICX_SERVER_VERSION
 ARG OPENCODE_VERSION
 ARG OPENCODE_DOWNLOAD_URL=
 
@@ -24,13 +24,13 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates curl tar unzip \
   && rm -rf /var/lib/apt/lists/*
 
-COPY --from=openwork-builder /src/apps/server/dist/bin/openwork-server /usr/local/bin/openwork-server
-COPY --from=openwork-builder /src/apps/server/dist/opencode-plugins /opt/openwork/opencode-plugins
-COPY --from=openwork-builder /src/constants.json /usr/local/constants.json
+COPY --from=micx-builder /src/apps/server/dist/bin/micx-server /usr/local/bin/micx-server
+COPY --from=micx-builder /src/apps/server/dist/opencode-plugins /opt/micx/opencode-plugins
+COPY --from=micx-builder /src/constants.json /usr/local/constants.json
 COPY packaging/docker/microsandbox-entrypoint.sh /usr/local/bin/microsandbox-entrypoint.sh
 
 RUN set -eux; \
-  test -n "$OPENWORK_SERVER_VERSION"; \
+  test -n "$MICX_SERVER_VERSION"; \
   test -n "$OPENCODE_VERSION"; \
   arch="$(dpkg --print-architecture)"; \
   case "$arch" in \
@@ -51,24 +51,24 @@ RUN set -eux; \
   chmod +x /usr/local/bin/microsandbox-entrypoint.sh; \
   rm -rf "$tmpdir"
 
-RUN test -f /opt/openwork/opencode-plugins/openwork-extensions-preview.js \
-  && test -f /opt/openwork/opencode-plugins/openwork-capabilities-knowledge.js \
-  && test -f /opt/openwork/opencode-plugins/openwork-office-attachments.js \
-  && test -f /opt/openwork/opencode-plugins/openwork-anthropic-adaptive-thinking.js \
-  && test -f /opt/openwork/opencode-plugins/openwork-anthropic-tool-schema.js \
-  && test "$(openwork-server --version)" = "$OPENWORK_SERVER_VERSION" \
+RUN test -f /opt/micx/opencode-plugins/micx-extensions-preview.js \
+  && test -f /opt/micx/opencode-plugins/micx-capabilities-knowledge.js \
+  && test -f /opt/micx/opencode-plugins/micx-office-attachments.js \
+  && test -f /opt/micx/opencode-plugins/micx-anthropic-adaptive-thinking.js \
+  && test -f /opt/micx/opencode-plugins/micx-anthropic-tool-schema.js \
+  && test "$(micx-server --version)" = "$MICX_SERVER_VERSION" \
   && opencode --version
 
-ENV OPENWORK_EXTENSIONS_PLUGIN_DIR=/opt/openwork/opencode-plugins
-ENV OPENWORK_DATA_DIR=/data/openwork-server
-ENV OPENWORK_SIDECAR_DIR=/data/sidecars
-ENV OPENWORK_WORKSPACE=/workspace
+ENV MICX_EXTENSIONS_PLUGIN_DIR=/opt/micx/opencode-plugins
+ENV MICX_DATA_DIR=/data/micx-server
+ENV MICX_SIDECAR_DIR=/data/sidecars
+ENV MICX_WORKSPACE=/workspace
 
 EXPOSE 8787
 
 VOLUME ["/workspace", "/data"]
 
 HEALTHCHECK --interval=10s --timeout=5s --start-period=20s --retries=12 \
-  CMD /bin/sh -c 'curl -fsS "http://127.0.0.1:${OPENWORK_PORT:-8787}/health" >/dev/null || exit 1'
+  CMD /bin/sh -c 'curl -fsS "http://127.0.0.1:${MICX_PORT:-8787}/health" >/dev/null || exit 1'
 
 ENTRYPOINT ["/usr/local/bin/microsandbox-entrypoint.sh"]

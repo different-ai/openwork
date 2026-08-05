@@ -4,10 +4,10 @@ description: "Advanced local setup for Slack's MCP server with a pre-registered 
 ---
 
 This is the advanced local setup. For the recommended member experience,
-sign in to OpenWork and start with
+sign in to Micx and start with
 [Connect your services](/start-here/connect-your-stack/connect-services).
 
-Slack's official MCP server does not support automatic OAuth client registration. To connect it as a custom local MCP in OpenWork, ask a Slack admin to create or approve a Slack app for MCP, then add the app's OAuth client credentials in OpenWork.
+Slack's official MCP server does not support automatic OAuth client registration. To connect it as a custom local MCP in Micx, ask a Slack admin to create or approve a Slack app for MCP, then add the app's OAuth client credentials in Micx.
 
 You do not need the old Slack bot tokens (`xoxb-...` or `xapp-...`) for this flow.
 
@@ -24,12 +24,12 @@ Keep the client secret out of chats and source control. Treat it like any other 
 
 ## Create or approve the Slack app
 
-In Slack, an admin should create or approve an app for OpenWork's MCP access.
+In Slack, an admin should create or approve an app for Micx's MCP access.
 
 1. Open [Slack API apps](https://api.slack.com/apps) and create a new app, or open the existing internal app you want to use.
 2. Go to `OAuth & Permissions`.
 3. Add this redirect URL: `http://127.0.0.1:19876/mcp/oauth/callback`.
-4. Add the `User Token Scopes` for the Slack MCP tools your team wants OpenWork to use.
+4. Add the `User Token Scopes` for the Slack MCP tools your team wants Micx to use.
 5. Save the app and install or approve it for the workspace.
 6. Go to `Basic Information` > `App Credentials` and copy the `Client ID` and `Client Secret`.
 
@@ -66,10 +66,10 @@ Use this table to pick scopes by capability:
 
 ## Open Extensions
 
-In OpenWork, open your workspace and go to `Settings` > `Extensions`. Click `Add Custom App`.
+In Micx, open your workspace and go to `Settings` > `Extensions`. Click `Add Custom App`.
 
 <Frame>
-  ![OpenWork Extensions page with Add Custom App button](/images/slack-mcp-extensions-page.png)
+  ![Micx Extensions page with Add Custom App button](/images/slack-mcp-extensions-page.png)
 </Frame>
 
 ## Add the Slack MCP server
@@ -89,7 +89,7 @@ In the Add Custom App dialog:
   ![Add Custom App dialog with Advanced OAuth fields for Slack MCP](/images/slack-mcp-advanced-oauth.png)
 </Frame>
 
-OpenWork writes the MCP entry with the OAuth client credentials, similar to this:
+Micx writes the MCP entry with the OAuth client credentials, similar to this:
 
 ```json
 {
@@ -107,13 +107,13 @@ OpenWork writes the MCP entry with the OAuth client credentials, similar to this
 }
 ```
 
-If you entered scopes, OpenWork also saves them as `oauth.scope`. This is the scope list Slack sees during OAuth consent.
+If you entered scopes, Micx also saves them as `oauth.scope`. This is the scope list Slack sees during OAuth consent.
 
 ## Sign in to Slack
 
-After the MCP app is added, reload the engine if OpenWork asks you to. Then start Slack MCP sign-in from the Slack app card or the MCP auth prompt.
+After the MCP app is added, reload the engine if Micx asks you to. Then start Slack MCP sign-in from the Slack app card or the MCP auth prompt.
 
-Slack opens in your browser and shows the scopes you configured. Approve the Slack app for the workspace you want OpenWork to use, then return to OpenWork when authorization finishes.
+Slack opens in your browser and shows the scopes you configured. Approve the Slack app for the workspace you want Micx to use, then return to Micx when authorization finishes.
 
 ## Troubleshooting
 
@@ -121,6 +121,6 @@ If you see an error like `Incompatible auth server: does not support dynamic cli
 
 If Slack says the redirect URL is invalid, add `http://127.0.0.1:19876/mcp/oauth/callback` to the Slack app's `OAuth & Permissions` redirect URLs.
 
-If Slack says a scope is invalid or unavailable, remove that scope from both the Slack app and OpenWork's `OAuth scopes` field, then retry. Slack workspace policies and plan settings can limit which scopes an app may request.
+If Slack says a scope is invalid or unavailable, remove that scope from both the Slack app and Micx's `OAuth scopes` field, then retry. Slack workspace policies and plan settings can limit which scopes an app may request.
 
-If your Slack workspace blocks app installation, ask a Slack admin to approve the app first. OpenWork cannot bypass Slack workspace approval policies.
+If your Slack workspace blocks app installation, ask a Slack admin to approve the app first. Micx cannot bypass Slack workspace approval policies.

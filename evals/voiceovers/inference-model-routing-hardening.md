@@ -1,6 +1,6 @@
 # inference-model-routing-hardening — Only approved model selections reach OpenRouter
 
-1. An authenticated client sends `POST /api/v1/chat/completions` with an enabled OpenWork model, and it is rewritten and forwarded normally.
+1. An authenticated client sends `POST /api/v1/chat/completions` with an enabled Micx model, and it is rewritten and forwarded normally.
 
 2. Requests containing `models`, `fallbacks`, `preset`, or `route` are rejected before reaching OpenRouter.
 

@@ -6,15 +6,15 @@ import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
 
 const FLOW_ID = "keyless-den-connect";
 const vo = await loadVoiceoverParagraphs(FLOW_ID);
-const DEN_API_URL = clean(process.env.OPENWORK_EVAL_DEN_API_URL);
-const DEN_WEB_URL = clean(process.env.OPENWORK_EVAL_DEN_WEB_URL);
-const WEB_CDP_URL = clean(process.env.OPENWORK_EVAL_WEB_CDP_ADMIN);
-const DEN_TOKEN = process.env.OPENWORK_EVAL_DEN_TOKEN?.trim() || "";
-const ADMIN_EMAIL = process.env.OPENWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
-const ADMIN_PASSWORD = process.env.OPENWORK_EVAL_DEMO_PASSWORD?.trim() || "OpenWorkDemo123!";
+const DEN_API_URL = clean(process.env.MICX_EVAL_DEN_API_URL);
+const DEN_WEB_URL = clean(process.env.MICX_EVAL_DEN_WEB_URL);
+const WEB_CDP_URL = clean(process.env.MICX_EVAL_WEB_CDP_ADMIN);
+const DEN_TOKEN = process.env.MICX_EVAL_DEN_TOKEN?.trim() || "";
+const ADMIN_EMAIL = process.env.MICX_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
+const ADMIN_PASSWORD = process.env.MICX_EVAL_DEMO_PASSWORD?.trim() || "MicxDemo123!";
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const BRANDED_APP_NAME = "Acme Work";
-const BRAND_LOGO_URL = `${DEN_WEB_URL}/openwork-logo-transparent.svg`;
+const BRAND_LOGO_URL = `${DEN_WEB_URL}/micx-logo-transparent.svg`;
 
 const state = {
   desktopClient: null,
@@ -156,29 +156,29 @@ async function openGuideFromDashboard(ctx) {
   await ctx.waitFor("Boolean(document.querySelector('[data-testid=install-guide]'))", { timeoutMs: 30_000, label: "guided installer" });
 }
 
-async function deliverDeepLinkToDesktop(ctx, openworkUrl) {
+async function deliverDeepLinkToDesktop(ctx, micxUrl) {
   await ctx.eval(`(() => {
-    const url = ${JSON.stringify(openworkUrl)};
-    window.__OPENWORK__ = window.__OPENWORK__ || {};
-    const pending = window.__OPENWORK__.deepLinks || [];
-    window.__OPENWORK__.deepLinks = [...pending, url];
-    window.dispatchEvent(new CustomEvent('openwork:deep-link', { detail: { urls: [url] } }));
+    const url = ${JSON.stringify(micxUrl)};
+    window.__MICX__ = window.__MICX__ || {};
+    const pending = window.__MICX__.deepLinks || [];
+    window.__MICX__.deepLinks = [...pending, url];
+    window.dispatchEvent(new CustomEvent('micx:deep-link', { detail: { urls: [url] } }));
     return true;
   })()`);
 }
 
 async function resetDesktopSession(ctx) {
-  await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 60_000, label: "desktop ready" });
+  await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 60_000, label: "desktop ready" });
   await ctx.eval(`(() => {
     document.querySelector('[data-testid=connect-confirm-cancel]')?.click();
     document.querySelector('[data-testid=connect-error-dismiss]')?.click();
     for (const key of [
-      'openwork.den.authToken',
-      'openwork.den.activeOrgId',
-      'openwork.den.activeOrgSlug',
-      'openwork.den.activeOrgName',
+      'micx.den.authToken',
+      'micx.den.activeOrgId',
+      'micx.den.activeOrgSlug',
+      'micx.den.activeOrgName',
     ]) localStorage.removeItem(key);
-    window.dispatchEvent(new CustomEvent('openwork-den-session-updated', { detail: { status: 'signed_out' } }));
+    window.dispatchEvent(new CustomEvent('micx-den-session-updated', { detail: { status: 'signed_out' } }));
     return true;
   })()`);
 }
@@ -196,10 +196,10 @@ export default {
   title: "A Den user installs and connects the standard app without deployment keys",
   kind: "user-facing",
   requiredEnv: [
-    "OPENWORK_EVAL_DEN_API_URL",
-    "OPENWORK_EVAL_DEN_TOKEN",
-    "OPENWORK_EVAL_DEN_WEB_URL",
-    "OPENWORK_EVAL_WEB_CDP_ADMIN",
+    "MICX_EVAL_DEN_API_URL",
+    "MICX_EVAL_DEN_TOKEN",
+    "MICX_EVAL_DEN_WEB_URL",
+    "MICX_EVAL_WEB_CDP_ADMIN",
   ],
   steps: [
     {
@@ -218,15 +218,15 @@ export default {
             })()`);
             witness(ctx, Boolean(state.installToken), "The page came from a real organization install token", "token redacted");
             witness(ctx, state.organizationName === "Acme Robotics", "The guide identifies the exact organization", state.organizationName);
-            await ctx.expectText("Download the OpenWork installer");
+            await ctx.expectText("Download the Micx installer");
             await ctx.expectText("Open the installer and paste this link:");
             await ctx.expectText("Sign in");
-            await ctx.expectNoText("OpenWork Enterprise");
+            await ctx.expectNoText("Micx Enterprise");
           },
           screenshot: {
             name: "keyless-three-step-guide",
-            requireText: ["Download the OpenWork installer", "Open the installer and paste this link:", "Sign in", "Acme Robotics"],
-            rejectText: ["OpenWork Enterprise"],
+            requireText: ["Download the Micx installer", "Open the installer and paste this link:", "Sign in", "Acme Robotics"],
+            rejectText: ["Micx Enterprise"],
           },
         }));
       },
@@ -251,7 +251,7 @@ export default {
             first: { status: first.status, elapsedMs: firstMs },
             repeated: { status: repeated.status, elapsedMs: repeatedMs },
           });
-          witness(ctx, location.includes("github.com/different-ai/openwork/releases/download/"), "The redirect targets the configured standard GitHub release", location);
+          witness(ctx, location.includes("github.com/different-ai/micx/releases/download/"), "The redirect targets the configured standard GitHub release", location);
           witness(ctx, !location.includes(state.installToken), "The organization token is never forwarded to GitHub", location);
           ctx.output("direct standard installer", JSON.stringify({ href, location, firstMs, repeatedMs }, null, 2));
           await clickWithoutFollowing(ctx, "[data-testid=install-download-primary]");
@@ -264,7 +264,7 @@ export default {
         },
         screenshot: {
           name: "standard-installer-no-wait",
-          requireText: ["Download the OpenWork installer", "Open the installer and paste this link:", "keep this page open"],
+          requireText: ["Download the Micx installer", "Open the installer and paste this link:", "keep this page open"],
           rejectText: ["Preparing your", "ZIP"],
         },
       })),
@@ -299,7 +299,7 @@ export default {
           state.connectUrl = await ctx.eval("window.__keylessConnectCapture.connectUrl");
           const connect = new URL(state.connectUrl);
           state.serverHost = new URL(initialConfig.webUrl).host;
-          witness(ctx, connect.protocol === "openwork:" && Boolean(connect.searchParams.get("code")) && !connect.searchParams.has("token"), "The default handoff is a keyless short-lived exchange", state.connectUrl.replace(connect.searchParams.get("code") ?? "", "<redacted>"));
+          witness(ctx, connect.protocol === "micx:" && Boolean(connect.searchParams.get("code")) && !connect.searchParams.has("token"), "The default handoff is a keyless short-lived exchange", state.connectUrl.replace(connect.searchParams.get("code") ?? "", "<redacted>"));
           witness(ctx, initialConfig.connectUrl !== state.connectUrl, "Clicking Open mints a fresh link after the installer wait", {
             initial: "redacted",
             clickTime: "redacted",
@@ -338,7 +338,7 @@ export default {
           assert: async () => {
             await ctx.waitForText(`Welcome to ${BRANDED_APP_NAME}`, { timeoutMs: 45_000 });
             await ctx.expectText(`Sign in to ${BRANDED_APP_NAME}`);
-            const persisted = await ctx.eval("window.__OPENWORK_ELECTRON__.invokeDesktop('getDesktopBootstrapConfig')", { awaitPromise: true });
+            const persisted = await ctx.eval("window.__MICX_ELECTRON__.invokeDesktop('getDesktopBootstrapConfig')", { awaitPromise: true });
             witness(ctx, persisted?.brandAppName === BRANDED_APP_NAME && persisted?.brandLogoUrl === BRAND_LOGO_URL && persisted?.requireSignin === true, "The accepted handoff persisted the organization name, wordmark, and normal sign-in gate", persisted);
             witness(ctx, await ctx.eval(`document.querySelector('img[alt=${JSON.stringify(`${BRANDED_APP_NAME} logo`)}]')?.src === ${JSON.stringify(BRAND_LOGO_URL)}`), "The sign-in screen renders the configured organization wordmark", BRAND_LOGO_URL);
           },
@@ -356,7 +356,7 @@ export default {
         await ctx.prove("A reused or altered exchange is refused and leaves desktop configuration untouched", {
           voiceover: vo[4],
           action: async () => {
-            const before = await ctx.eval("window.__OPENWORK_ELECTRON__.invokeDesktop('getDesktopBootstrapConfig')", { awaitPromise: true });
+            const before = await ctx.eval("window.__MICX_ELECTRON__.invokeDesktop('getDesktopBootstrapConfig')", { awaitPromise: true });
             const exchange = new URL(state.connectUrl);
             const apiBaseUrl = exchange.searchParams.get("apiBaseUrl") ?? "";
             const code = exchange.searchParams.get("code") ?? "";
@@ -368,7 +368,7 @@ export default {
             witness(ctx, replay.status === 409, "The server refuses a second use of the consumed code", replay.status);
             await deliverDeepLinkToDesktop(ctx, tamperExchangeUrl(state.connectUrl));
             await ctx.waitFor("Boolean(document.querySelector('[data-testid=connect-error-message]'))", { timeoutMs: 30_000, label: "tampered link refusal" });
-            const after = await ctx.eval("window.__OPENWORK_ELECTRON__.invokeDesktop('getDesktopBootstrapConfig')", { awaitPromise: true });
+            const after = await ctx.eval("window.__MICX_ELECTRON__.invokeDesktop('getDesktopBootstrapConfig')", { awaitPromise: true });
             witness(ctx, JSON.stringify(after) === JSON.stringify(before), "Refusal leaves every persisted desktop setting untouched", { before, after });
           },
           assert: async () => {
@@ -389,12 +389,12 @@ export default {
           await withWeb(ctx, async () => ctx.prove("Optional signed handoffs use the same standard installer experience", {
             voiceover: vo[5],
             action: async () => {
-              const defaultRender = spawnSync("helm", ["template", "openwork-ee", "packaging/helm/openwork-ee"], {
+              const defaultRender = spawnSync("helm", ["template", "micx-ee", "packaging/helm/micx-ee"], {
                 cwd: REPO_ROOT,
                 encoding: "utf8",
               });
               const signedRender = spawnSync("helm", [
-                "template", "openwork-ee", "packaging/helm/openwork-ee",
+                "template", "micx-ee", "packaging/helm/micx-ee",
                 "--set", "config.public.connectLinkMode=signed",
                 "--set", "config.public.connectLinkKeyId=owc-future",
                 "--set-string", "secret.values.connectLinkPrivateKey=future-private-key",
@@ -417,15 +417,15 @@ export default {
               ].join("\n"));
             },
             assert: async () => {
-              await ctx.expectText("Download the OpenWork installer");
+              await ctx.expectText("Download the Micx installer");
               await ctx.expectText("Open the installer and paste this link:");
               await ctx.expectNoText("custom installer");
-              await ctx.expectNoText("OpenWork Enterprise");
+              await ctx.expectNoText("Micx Enterprise");
             },
             screenshot: {
               name: "same-installer-future-signed-mode",
-              requireText: ["Download the OpenWork installer", "Open the installer and paste this link:", "The installer only continues with a valid link"],
-              rejectText: ["custom installer", "OpenWork Enterprise"],
+              requireText: ["Download the Micx installer", "Open the installer and paste this link:", "The installer only continues with a valid link"],
+              rejectText: ["custom installer", "Micx Enterprise"],
             },
           }));
         } finally {

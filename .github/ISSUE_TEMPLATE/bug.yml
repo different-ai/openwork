@@ -1,5 +1,5 @@
 name: Bug report
-description: Report a problem in OpenWork
+description: Report a problem in Micx
 title: "[Bug]: "
 labels:
   - bug
@@ -49,10 +49,10 @@ body:
     attributes:
       label: OW version & Desktop info (optional) 
       description: |
-        Include OS and OpenWork version if possible.
-        OpenWork version: Settings > General.
+        Include OS and Micx version if possible.
+        Micx version: Settings > General.
       placeholder: |
-        - OpenWork version: [e.g. 0.1.166]
+        - Micx version: [e.g. 0.1.166]
         - OS: [e.g. macOS Tahoe 26.2]
     validations:
       required: false

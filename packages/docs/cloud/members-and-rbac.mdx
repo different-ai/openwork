@@ -3,11 +3,11 @@ title: "Managing members and RBAC"
 description: "Invite teammates, create teams, and control Cloud access with owners, admins, members, and custom roles"
 ---
 
-OpenWork Cloud separates org membership from team assignment. Teams are used for marketplace and provider access; roles control what a person can manage across the org.
+Micx Cloud separates org membership from team assignment. Teams are used for marketplace and provider access; roles control what a person can manage across the org.
 
 ## Default roles
 
-OpenWork Cloud comes with three default roles:
+Micx Cloud comes with three default roles:
 
 - `Owner`: full org control, including member roles and custom roles.
 - `Admin`: can invite people, manage teams, and manage most shared Cloud resources.
@@ -24,16 +24,16 @@ Only `Owner` can change member roles, remove members, or create, edit, and delet
 5. Click `Send invite`.
 
 <Frame>
-  ![Members and RBAC dashboard in OpenWork Cloud](/images/cloud-members-and-rbac-dashboard.png)
+  ![Members and RBAC dashboard in Micx Cloud](/images/cloud-members-and-rbac-dashboard.png)
 </Frame>
 
 Invites are tied to the invited email address.
 
 ## SSO just-in-time provisioning
 
-When SSO just-in-time provisioning adds someone to an organization on first sign-in, OpenWork assigns the baseline `Member` role. IdP attributes such as `role`, `groups`, or `admin` are not used to grant OpenWork organization roles.
+When SSO just-in-time provisioning adds someone to an organization on first sign-in, Micx assigns the baseline `Member` role. IdP attributes such as `role`, `groups`, or `admin` are not used to grant Micx organization roles.
 
-Treat `Admin`, `Owner`, and custom-role elevation as explicit access changes made inside OpenWork. Review those changes in the member list and audit trail instead of relying on unvalidated IdP attributes for authorization.
+Treat `Admin`, `Owner`, and custom-role elevation as explicit access changes made inside Micx. Review those changes in the member list and audit trail instead of relying on unvalidated IdP attributes for authorization.
 
 ## Restrict who can join
 
@@ -44,7 +44,7 @@ If you only want teammates from specific companies or domains to join:
 3. Add each approved domain to the `Domain allowlist`.
 4. Click `Save settings`.
 
-When this is enabled, OpenWork Cloud only lets people join with email addresses from the approved domains. Existing invites still target a specific email address, so both checks apply: the invitee must use the invited email address and that address must match the allowlist.
+When this is enabled, Micx Cloud only lets people join with email addresses from the approved domains. Existing invites still target a specific email address, so both checks apply: the invitee must use the invited email address and that address must match the allowlist.
 
 ## Create teams
 
@@ -58,12 +58,12 @@ You can use teams to control access to marketplaces and LLM providers without as
 
 ### Manage teams with SCIM Groups
 
-Organizations using SCIM can open `SCIM` and enable **Create teams from SCIM groups**. OpenWork then creates a team for each provisioned Group and keeps its membership synchronized from the identity provider. These teams are labeled **Managed by SCIM** and must be changed in the identity provider; manually created teams and memberships remain independent.
+Organizations using SCIM can open `SCIM` and enable **Create teams from SCIM groups**. Micx then creates a team for each provisioned Group and keeps its membership synchronized from the identity provider. These teams are labeled **Managed by SCIM** and must be changed in the identity provider; manually created teams and memberships remain independent.
 
 To connect Microsoft Entra ID, follow
 [Microsoft Entra SCIM provisioning](/cloud/scim-microsoft-entra).
 
-When SCIM deprovisions a user, OpenWork retains a disconnected member record for organization history. The global user is deleted only when they have no other active organization memberships. Reactivate the user through SCIM before they can regain SAML access.
+When SCIM deprovisions a user, Micx retains a disconnected member record for organization history. The global user is deleted only when they have no other active organization memberships. Reactivate the user through SCIM before they can regain SAML access.
 
 ## Use custom roles when needed
 

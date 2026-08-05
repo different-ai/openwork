@@ -4,7 +4,7 @@ set -euo pipefail
 # Build/refresh the reusable Daytona snapshot used by Den server sandboxes.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SNAPSHOT_NAME="${DAYTONA_SERVER_SNAPSHOT:-openwork-server}"
+SNAPSHOT_NAME="${DAYTONA_SERVER_SNAPSHOT:-micx-server}"
 REGION="${DAYTONA_TARGET:-us}"
 
 snapshot_id() {

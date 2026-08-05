@@ -1,7 +1,7 @@
 import { expect, onTestFinished, test } from "vitest";
-import { photoRoll, screenshot, validate } from "@openwork/fraimz";
-import { desktop } from "@openwork/hosts";
-import { startMockGoogle } from "@openwork/labs";
+import { photoRoll, screenshot, validate } from "@micx/fraimz";
+import { desktop } from "@micx/hosts";
+import { startMockGoogle } from "@micx/labs";
 import {
   clickButton,
   clickText,
@@ -29,11 +29,11 @@ import {
   waitForConnectionCard,
   waitForText,
   waitUntilInteractive,
-} from "@openwork/behaviors";
-import type { Surface } from "@openwork/cdp";
-import type { DenRef, DenSession } from "@openwork/behaviors";
-import type { DesktopHandle } from "@openwork/hosts";
-import type { MockGoogleHandle } from "@openwork/labs";
+} from "@micx/behaviors";
+import type { Surface } from "@micx/cdp";
+import type { DenRef, DenSession } from "@micx/behaviors";
+import type { DesktopHandle } from "@micx/hosts";
+import type { MockGoogleHandle } from "@micx/labs";
 
 /**
  * CLAIM: one organization can publish two independently configured Google
@@ -55,29 +55,29 @@ import type { MockGoogleHandle } from "@openwork/labs";
  *    mailbox logs prove Acme Robotics received nothing from that request.
  *  - Start Den with DEN_GOOGLE_API_BASE_URL and the three DEN_GOOGLE_OAUTH_*
  *    endpoint variables pointed at the mock URLs for this spec. If Den is on a
- *    different host, publish the mock and set OPENWORK_EVAL_GOOGLE_MOCK_PUBLIC_URL.
+ *    different host, publish the mock and set MICX_EVAL_GOOGLE_MOCK_PUBLIC_URL.
  */
 
-const apiUrl = process.env.OPENWORK_EVAL_DEN_API_URL?.trim().replace(/\/+$/, "") ?? "";
-const appSpecsEnabled = process.env.OPENWORK_EVAL_APP_SPECS === "1";
-const optedIn = process.env.OPENWORK_EVAL_GOOGLE_MULTI_ACCOUNT_SPEC === "1";
+const apiUrl = process.env.MICX_EVAL_DEN_API_URL?.trim().replace(/\/+$/, "") ?? "";
+const appSpecsEnabled = process.env.MICX_EVAL_APP_SPECS === "1";
+const optedIn = process.env.MICX_EVAL_GOOGLE_MULTI_ACCOUNT_SPEC === "1";
 const title = !appSpecsEnabled || !apiUrl || !optedIn
-  ? "google workspace multi-account skipped: set OPENWORK_EVAL_APP_SPECS=1, OPENWORK_EVAL_DEN_API_URL, and OPENWORK_EVAL_GOOGLE_MULTI_ACCOUNT_SPEC=1"
+  ? "google workspace multi-account skipped: set MICX_EVAL_APP_SPECS=1, MICX_EVAL_DEN_API_URL, and MICX_EVAL_GOOGLE_MULTI_ACCOUNT_SPEC=1"
   : "two Google Workspace connectors keep one member's accounts and drafts isolated";
 
-const password = process.env.OPENWORK_EVAL_DEMO_PASSWORD?.trim() || "OpenWorkDemo123!";
-const adminEmail = process.env.OPENWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
-const memberEmail = process.env.OPENWORK_EVAL_MEMBER_EMAIL?.trim() || "jordan@acme.test";
+const password = process.env.MICX_EVAL_DEMO_PASSWORD?.trim() || "MicxDemo123!";
+const adminEmail = process.env.MICX_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
+const memberEmail = process.env.MICX_EVAL_MEMBER_EMAIL?.trim() || "jordan@acme.test";
 const roboticsEmail = "jordan@acme.test";
 const labsEmail = "jordan@acmelabs.test";
-const modelId = process.env.OPENWORK_EVAL_MODEL?.trim() || "";
+const modelId = process.env.MICX_EVAL_MODEL?.trim() || "";
 
 async function memberDesktop(den: DenRef, member: DenSession): Promise<{ app: DesktopHandle; workspaceId: string }> {
   const app = await desktop({
     name: "google-workspace-multi-account",
     bootstrap: { baseUrl: den.webUrl, apiBaseUrl: den.webUrl, requireSignin: false },
   });
-  const path = `/tmp/openwork-google-workspace-multi-account-${Date.now()}`;
+  const path = `/tmp/micx-google-workspace-multi-account-${Date.now()}`;
   await createAndSelectWorkspace(app, { path });
   await signInDesktopAs(app, den, member);
   const { workspaceId } = await createAndSelectWorkspace(app, { path });
@@ -95,7 +95,7 @@ async function createFreshSession(app: Surface, workspaceId: string): Promise<st
   await control(app, "session.create_task");
   await waitUntilInteractive(app, { timeoutMs: 120_000 });
   const listed = await waitFor(app, `(async () => {
-    const result = await window.__openworkControl.execute("session.list_sessions", null);
+    const result = await window.__micxControl.execute("session.list_sessions", null);
     const sessions = Array.isArray(result?.result) ? result.result : [];
     const withId = sessions.map((entry) => entry?.sessionId).filter((id) => typeof id === "string" && id.startsWith("ses_"));
     return withId.length > 0 ? withId[0] : false;
@@ -117,13 +117,13 @@ async function createFreshSession(app: Surface, workspaceId: string): Promise<st
 test.skipIf(!appSpecsEnabled || !apiUrl || !optedIn)(title, async () => {
   const den: DenRef = {
     apiUrl,
-    webUrl: (process.env.OPENWORK_EVAL_DEN_WEB_URL?.trim() || apiUrl.replace("127.0.0.1", "localhost")).replace(/\/+$/, ""),
+    webUrl: (process.env.MICX_EVAL_DEN_WEB_URL?.trim() || apiUrl.replace("127.0.0.1", "localhost")).replace(/\/+$/, ""),
   };
   await using roll = photoRoll("google-workspace-multi-account");
   await using google = await startMockGoogle({
     accounts: [roboticsEmail, labsEmail],
-    port: Number(process.env.OPENWORK_EVAL_GOOGLE_MOCK_PORT ?? 3980),
-    publicUrl: process.env.OPENWORK_EVAL_GOOGLE_MOCK_PUBLIC_URL?.trim() || undefined,
+    port: Number(process.env.MICX_EVAL_GOOGLE_MOCK_PORT ?? 3980),
+    publicUrl: process.env.MICX_EVAL_GOOGLE_MOCK_PUBLIC_URL?.trim() || undefined,
     autoApprove: false,
   });
 
@@ -132,7 +132,7 @@ test.skipIf(!appSpecsEnabled || !apiUrl || !optedIn)(title, async () => {
     email: memberEmail,
     password,
     name: "Jordan Demo",
-    markVerifiedCmd: process.env.OPENWORK_EVAL_MARK_VERIFIED_CMD?.trim(),
+    markVerifiedCmd: process.env.MICX_EVAL_MARK_VERIFIED_CMD?.trim(),
   });
   await deleteConnectionsNamed(admin, "Acme Robotics");
   await deleteConnectionsNamed(admin, "Acme Labs");
@@ -240,7 +240,7 @@ test.skipIf(!appSpecsEnabled || !apiUrl || !optedIn)(title, async () => {
   {
     const shot = await screenshot(app);
     const seen = await validate(shot, [
-      "OpenWork visibly shows that Acme Labs browser authorization is in progress",
+      "Micx visibly shows that Acme Labs browser authorization is in progress",
       "The app has not silently reported success and no OAuth launch error is visible",
     ]);
     expect(seen.ok, seen.why).toBe(true);

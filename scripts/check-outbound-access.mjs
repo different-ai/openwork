@@ -10,7 +10,7 @@ const scanRoots = [
   "apps/desktop/electron",
   "apps/server/src",
   "apps/app/src",
-  "packages/openwork-bootstrap/bin",
+  "packages/micx-bootstrap/bin",
 ];
 
 const requiredFields = ["host", "kind", "components", "purpose", "requirement", "blockedEffect", "override"];
@@ -62,7 +62,7 @@ function ignoredHostReason(host) {
   }
 
   // Standards/schema identifiers appear in manifests and XML/JSON metadata but
-  // are not fetched by OpenWork at runtime.
+  // are not fetched by Micx at runtime.
   if (
     value === "w3.org" ||
     value.endsWith(".w3.org") ||
@@ -77,7 +77,7 @@ function ignoredHostReason(host) {
   }
 
   // Placeholder used in customer-facing self-hosted examples.
-  if (value === "openwork.yourcompany.com") {
+  if (value === "micx.yourcompany.com") {
     return "customer placeholder hostname";
   }
 

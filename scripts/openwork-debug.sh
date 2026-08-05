@@ -1,29 +1,29 @@
 #!/usr/bin/env bash
 #
-# openwork-debug.sh — one-stop observability + lifecycle control for the
-# OpenWork dev stack.
+# micx-debug.sh — one-stop observability + lifecycle control for the
+# Micx dev stack.
 #
 # Subcommands:
 #   snapshot        (default) processes, ports, health, orphans, sink preview
 #   status          same as snapshot
 #   tail            live tail pnpm dev + the /dev/log sink
 #   sink            print the dev log sink path
-#   kill-orphans    remove orphan openwork/opencode processes (ppid == launchd)
+#   kill-orphans    remove orphan micx/opencode processes (ppid == launchd)
 #   diagnose-hang   classify Electron crash/hang/sidecar/app-state failures
 #   stop            full, layered teardown of the dev stack (no cache wipe)
 #   start           launch pnpm dev in the background with the log sink on
-#   wait-healthy    block until openwork-server reports /health = 200
+#   wait-healthy    block until micx-server reports /health = 200
 #   reset           stop + wipe Vite dep cache + truncate log sink + start
 #   restart         alias for reset
 #
-# Dev app: pnpm --filter @openwork/desktop dev:electron launches the Electron
+# Dev app: pnpm --filter @micx/desktop dev:electron launches the Electron
 # shell with CDP on 127.0.0.1:9823 for chrome-devtools MCP.
 #
 # Teardown ordering:
 #   1. pnpm dev / dev:electron supervisor  (parent supervisor)
 #   2. Electron main+helpers (node_modules/electron/...Electron.app)
 #   3. Vite                (node node_modules/.../vite)
-#   4. opencode sidecars and openwork-server helpers
+#   4. opencode sidecars and micx-server helpers
 #
 # Cache/ephemeral state wiped by `reset`:
 #   - Vite dep pre-bundle cache: apps/app/node_modules/.vite
@@ -31,9 +31,9 @@
 #   - dev log sink file (truncated, not deleted)
 #
 # Explicitly NOT touched by `reset`:
-#   - ~/Library/Application Support/com.differentai.openwork.dev/** (tokens,
+#   - ~/Library/Application Support/com.differentai.micx.dev/** (tokens,
 #     workspaces registry, prefs). Use `reset-webview` for WebKit state.
-#   - /Applications/OpenWork.app (prod build never targeted).
+#   - /Applications/Micx.app (prod build never targeted).
 #
 set -euo pipefail
 
@@ -48,16 +48,16 @@ if [[ -z "$REPO_ROOT" ]]; then
   REPO_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 fi
 
-DEV_LOG_FILE="${OPENWORK_DEV_LOG_FILE:-$HOME/.openwork/debug/openwork-dev.log}"
-PNPM_DEV_LOG="${OPENWORK_PNPM_DEV_LOG:-/tmp/openwork-test/pnpm-dev.log}"
-PNPM_DEV_PID_FILE="${OPENWORK_PNPM_DEV_PID:-/tmp/openwork-test/pnpm-dev.pid}"
-WAIT_HEALTHY_SECS="${OPENWORK_WAIT_HEALTHY_SECS:-90}"
-ELECTRON_CDP_PORT="${OPENWORK_ELECTRON_REMOTE_DEBUG_PORT:-9823}"
+DEV_LOG_FILE="${MICX_DEV_LOG_FILE:-$HOME/.micx/debug/micx-dev.log}"
+PNPM_DEV_LOG="${MICX_PNPM_DEV_LOG:-/tmp/micx-test/pnpm-dev.log}"
+PNPM_DEV_PID_FILE="${MICX_PNPM_DEV_PID:-/tmp/micx-test/pnpm-dev.pid}"
+WAIT_HEALTHY_SECS="${MICX_WAIT_HEALTHY_SECS:-90}"
+ELECTRON_CDP_PORT="${MICX_ELECTRON_REMOTE_DEBUG_PORT:-9823}"
 
 # ---------------------------------------------------------------------------
 # Helpers
 
-log() { printf '[openwork-debug] %s\n' "$*"; }
+log() { printf '[micx-debug] %s\n' "$*"; }
 
 kill_by_pattern() {
   # Sends TERM then KILL to every process whose full command line matches the
@@ -93,9 +93,9 @@ kill_pid_file() {
   fi
 }
 
-discover_openwork_server_port() {
+discover_micx_server_port() {
   ps -Ao command \
-    | grep -E "openwork-server" \
+    | grep -E "micx-server" \
     | grep -v grep \
     | grep -oE '\-\-port [0-9]+' \
     | head -1 \
@@ -105,7 +105,7 @@ discover_openwork_server_port() {
 
 electron_renderer_stats() {
   ps -axo pid,ppid,pcpu,pmem,rss,command \
-    | awk '/Electron Helper \(Renderer\)/ && /com\.differentai\.openwork/ && !/awk/ && !/grep/ {print; found=1} END {exit found ? 0 : 1}' \
+    | awk '/Electron Helper \(Renderer\)/ && /com\.differentai\.micx/ && !/awk/ && !/grep/ {print; found=1} END {exit found ? 0 : 1}' \
     || true
 }
 
@@ -119,7 +119,7 @@ electron_renderer_cpu() {
 
 probe_electron_page_cdp() {
   node <<'NODE'
-const port = process.env.OPENWORK_ELECTRON_REMOTE_DEBUG_PORT || "9823";
+const port = process.env.MICX_ELECTRON_REMOTE_DEBUG_PORT || "9823";
 const controller = new AbortController();
 const fail = (message) => {
   console.error(message);
@@ -179,14 +179,14 @@ NODE
 
 snapshot() {
   echo "=== dev stack processes ==="
-  ps -Ao pid,ppid,command | awk '/node_modules\/electron\/dist\/Electron\.app\/Contents\/MacOS\/Electron|apps\/desktop\/scripts\/electron-dev\.mjs|apps\/desktop\/resources\/sidecars\/opencode( |\/)|openwork-server|vite|pnpm .*dev/ && !/awk/ && !/grep/' | sed -E 's#/Users/[^ ]*/#…/#g' | head -20
+  ps -Ao pid,ppid,command | awk '/node_modules\/electron\/dist\/Electron\.app\/Contents\/MacOS\/Electron|apps\/desktop\/scripts\/electron-dev\.mjs|apps\/desktop\/resources\/sidecars\/opencode( |\/)|micx-server|vite|pnpm .*dev/ && !/awk/ && !/grep/' | sed -E 's#/Users/[^ ]*/#…/#g' | head -20
 
   echo
-  echo "=== openwork-server ==="
+  echo "=== micx-server ==="
   local port
-  port=$(discover_openwork_server_port)
+  port=$(discover_micx_server_port)
   if [[ -z "$port" ]]; then
-    echo "  (no dev openwork-server running)"
+    echo "  (no dev micx-server running)"
   else
     echo "  port=$port  health:"
     curl -sS --max-time 2 "http://127.0.0.1:$port/health" || echo "    unreachable"
@@ -195,7 +195,7 @@ snapshot() {
 
   echo
   echo "=== orphans (parent == 1) ==="
-  ps -Ao pid,ppid,command | awk '$2 == 1 && $3 ~ /openwork-server|opencode( |\/)/' | head
+  ps -Ao pid,ppid,command | awk '$2 == 1 && $3 ~ /micx-server|opencode( |\/)/' | head
 
   echo
   echo "=== dev log sink ==="
@@ -205,7 +205,7 @@ snapshot() {
     echo "  last 5 entries:"
     tail -5 "$DEV_LOG_FILE"
   else
-    echo "  (no sink file yet — run the dev app with OPENWORK_DEV_LOG_FILE set)"
+    echo "  (no sink file yet — run the dev app with MICX_DEV_LOG_FILE set)"
   fi
 }
 
@@ -223,7 +223,7 @@ tail_logs() {
 
 kill_orphans() {
   local pids
-  pids=$(ps -Ao pid,ppid,command | awk '$2 == 1 && $3 ~ /openwork-server|opencode( |\/)/ {print $1}')
+  pids=$(ps -Ao pid,ppid,command | awk '$2 == 1 && $3 ~ /micx-server|opencode( |\/)/ {print $1}')
   if [[ -z "$pids" ]]; then
     log "no orphans"
     return 0
@@ -239,7 +239,7 @@ kill_orphans() {
 diagnose_hang() {
   local now
   now=$(date "+%Y-%m-%dT%H:%M:%S%z")
-  echo "=== openwork hang diagnosis ==="
+  echo "=== micx hang diagnosis ==="
   echo "time=$now"
   echo "repo=$REPO_ROOT"
   echo "cdp=http://127.0.0.1:$ELECTRON_CDP_PORT"
@@ -284,7 +284,7 @@ diagnose_hang() {
   echo "=== page CDP probe ==="
   local page_probe="skipped"
   if [[ "$browser_json" == *"webSocketDebuggerUrl"* && "$target_json" == *"webSocketDebuggerUrl"* ]]; then
-    if page_probe=$(OPENWORK_ELECTRON_REMOTE_DEBUG_PORT="$ELECTRON_CDP_PORT" probe_electron_page_cdp 2>&1); then
+    if page_probe=$(MICX_ELECTRON_REMOTE_DEBUG_PORT="$ELECTRON_CDP_PORT" probe_electron_page_cdp 2>&1); then
       echo "  page: responsive ($page_probe)"
       page_probe="ok"
     else
@@ -332,13 +332,13 @@ diagnose_hang() {
   echo
   echo "=== sidecar health ==="
   local port
-  port=$(discover_openwork_server_port)
+  port=$(discover_micx_server_port)
   if [[ -n "$port" ]]; then
-    echo "  openwork-server port=$port"
+    echo "  micx-server port=$port"
     curl -sS --max-time 2 "http://127.0.0.1:$port/health" || echo "unreachable"
     echo
   else
-    echo "  no openwork-server port discovered"
+    echo "  no micx-server port discovered"
   fi
 
   echo
@@ -364,7 +364,7 @@ diagnose_hang() {
   echo
   echo "=== renderer sample ==="
   if [[ -n "$renderer_pid" && ( "$page_probe" == "failed" || "$high_cpu" == "true" ) ]]; then
-    local sample_file="/tmp/openwork-renderer-${renderer_pid}-$(date +%Y%m%dT%H%M%S).sample.txt"
+    local sample_file="/tmp/micx-renderer-${renderer_pid}-$(date +%Y%m%dT%H%M%S).sample.txt"
     if sample "$renderer_pid" 3 -file "$sample_file" >/dev/null 2>&1; then
       echo "  captured=$sample_file"
       grep -n "Thread_.*CrRendererMain\|Call graph:\|Physical footprint" "$sample_file" | head -20 || true
@@ -372,7 +372,7 @@ diagnose_hang() {
       echo "  sample failed for pid=$renderer_pid"
     fi
   elif [[ -n "$renderer_pid" ]]; then
-    echo "  skipped (renderer responsive and CPU not high). Set OPENWORK_FORCE_SAMPLE=1 not currently supported."
+    echo "  skipped (renderer responsive and CPU not high). Set MICX_FORCE_SAMPLE=1 not currently supported."
   else
     echo "  skipped (no renderer process to sample)."
   fi
@@ -408,7 +408,7 @@ stop() {
   # 5. Long-lived runtime helpers most likely to orphan after an unclean
   #    shutdown.
   kill_by_pattern "apps/desktop/resources/sidecars/opencode( |/)"
-  kill_by_pattern "openwork-server"
+  kill_by_pattern "micx-server"
 
   # Safety net for stragglers we don't own directly.
   kill_orphans
@@ -434,8 +434,8 @@ start() {
   cd "$REPO_ROOT"
   local pid
   log "starting pnpm dev:electron (log sink: $DEV_LOG_FILE, CDP: 127.0.0.1:9823)"
-  env OPENWORK_DEV_LOG_FILE="$DEV_LOG_FILE" \
-    nohup pnpm --filter @openwork/desktop dev:electron >"$PNPM_DEV_LOG" 2>&1 &
+  env MICX_DEV_LOG_FILE="$DEV_LOG_FILE" \
+    nohup pnpm --filter @micx/desktop dev:electron >"$PNPM_DEV_LOG" 2>&1 &
   pid=$!
   disown "$pid" 2>/dev/null || true
   echo "$pid" >"$PNPM_DEV_PID_FILE"
@@ -446,18 +446,18 @@ wait_healthy() {
   local deadline=$((SECONDS + WAIT_HEALTHY_SECS))
   while (( SECONDS < deadline )); do
     local port
-    port=$(discover_openwork_server_port)
+    port=$(discover_micx_server_port)
     if [[ -n "$port" ]]; then
       local code
       code=$(curl -sS --max-time 2 -o /dev/null -w "%{http_code}" "http://127.0.0.1:$port/health" 2>/dev/null || true)
       if [[ "$code" == "200" ]]; then
-        log "openwork-server healthy on :$port"
+        log "micx-server healthy on :$port"
         return 0
       fi
     fi
     sleep 1
   done
-  log "openwork-server did not become healthy within ${WAIT_HEALTHY_SECS}s" >&2
+  log "micx-server did not become healthy within ${WAIT_HEALTHY_SECS}s" >&2
   return 1
 }
 
@@ -489,8 +489,8 @@ reset() {
 reset_webview_state() {
   # Destructive: clears the desktop dev app's WebKit LocalStorage so stale
   # URL overrides / tokens don't leak across code changes. Does NOT touch
-  # the openwork-workspaces.json registry or server-side tokens.
-  local webkit_dir="$HOME/Library/WebKit/com.differentai.openwork.dev"
+  # the micx-workspaces.json registry or server-side tokens.
+  local webkit_dir="$HOME/Library/WebKit/com.differentai.micx.dev"
   if [[ ! -d "$webkit_dir" ]]; then
     log "no dev WebKit dir found at $webkit_dir"
     return 0

@@ -1,13 +1,13 @@
 import { connect, debuggerUrlFor, pickAppTarget } from "./cdp.ts";
 import { firstPageTarget, waitForCdp } from "./targets.ts";
 import type { CdpClient, CdpTarget } from "./cdp.ts";
-import type { Surface } from "@openwork/cdp";
+import type { Surface } from "@micx/cdp";
 import type { EnvManifest } from "./env-manifest.ts";
 import type { ChromeSurfaceOptions, ElectronSurfaceOptions, Host, SurfaceHandle, SurfaceKind } from "./hosts/types.ts";
 
 const SURFACE_CDP_TIMEOUT_MS = 30_000;
 
-export type { Surface } from "@openwork/cdp";
+export type { Surface } from "@micx/cdp";
 
 export interface SurfaceFacade {
   electron(name: string, opts?: ElectronSurfaceOptions): Promise<Surface>;

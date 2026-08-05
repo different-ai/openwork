@@ -12,7 +12,7 @@ export function envText(ctx, name) {
 }
 
 export function enterpriseOrgName(ctx) {
-  return envText(ctx, "OPENWORK_EVAL_ENTERPRISE_ORG_NAME") || "Example Organization";
+  return envText(ctx, "MICX_EVAL_ENTERPRISE_ORG_NAME") || "Example Organization";
 }
 
 export function cleanBase(value) {
@@ -20,14 +20,14 @@ export function cleanBase(value) {
 }
 
 export function denApiBase(ctx) {
-  const value = cleanBase(envText(ctx, "OPENWORK_EVAL_DEN_API_URL"));
-  ctx.assert(Boolean(value), "Missing OPENWORK_EVAL_DEN_API_URL for the enterprise eval flow.");
+  const value = cleanBase(envText(ctx, "MICX_EVAL_DEN_API_URL"));
+  ctx.assert(Boolean(value), "Missing MICX_EVAL_DEN_API_URL for the enterprise eval flow.");
   return value;
 }
 
 export function denWebBase(ctx) {
-  const value = cleanBase(envText(ctx, "OPENWORK_EVAL_DEN_WEB_URL"));
-  ctx.assert(Boolean(value), "Missing OPENWORK_EVAL_DEN_WEB_URL for the enterprise desktop handoff deep link.");
+  const value = cleanBase(envText(ctx, "MICX_EVAL_DEN_WEB_URL"));
+  ctx.assert(Boolean(value), "Missing MICX_EVAL_DEN_WEB_URL for the enterprise desktop handoff deep link.");
   return value;
 }
 
@@ -36,7 +36,7 @@ export function workspaceFolder(ctx, envName, fallback) {
 }
 
 export function timeoutMs(ctx, envName, fallback) {
-  const raw = envText(ctx, envName) || envText(ctx, "OPENWORK_EVAL_ENTERPRISE_TASK_TIMEOUT_MS");
+  const raw = envText(ctx, envName) || envText(ctx, "MICX_EVAL_ENTERPRISE_TASK_TIMEOUT_MS");
   if (!raw) return fallback;
   const value = Number(raw);
   ctx.assert(Number.isFinite(value) && value > 0, `${envName} must be a positive millisecond timeout.`);
@@ -84,7 +84,7 @@ function httpFailureMessage(label, result) {
 export async function signInByEmail(ctx, email) {
   const result = await denApiFetch(ctx, "/api/auth/sign-in/email", {
     method: "POST",
-    body: JSON.stringify({ email, password: envText(ctx, "OPENWORK_EVAL_ENTERPRISE_PASSWORD") || DEFAULT_PASSWORD }),
+    body: JSON.stringify({ email, password: envText(ctx, "MICX_EVAL_ENTERPRISE_PASSWORD") || DEFAULT_PASSWORD }),
   });
   ctx.assert(result.response.ok, httpFailureMessage(`Enterprise sign-in failed for ${email}`, result));
   const token = result.body?.token;
@@ -96,30 +96,30 @@ export async function createDesktopHandoff(ctx, token) {
   const result = await denApiFetch(ctx, "/v1/auth/desktop-handoff", {
     method: "POST",
     headers: { authorization: `Bearer ${token}` },
-    body: JSON.stringify({ desktopScheme: "openwork" }),
+    body: JSON.stringify({ desktopScheme: "micx" }),
   });
   ctx.assert(result.response.ok, httpFailureMessage("Desktop handoff create failed", result));
-  const openworkUrl = result.body?.openworkUrl;
-  ctx.assert(typeof openworkUrl === "string" && openworkUrl.length > 0, "Desktop handoff response did not include openworkUrl.");
-  const url = new URL(openworkUrl);
+  const micxUrl = result.body?.micxUrl;
+  ctx.assert(typeof micxUrl === "string" && micxUrl.length > 0, "Desktop handoff response did not include micxUrl.");
+  const url = new URL(micxUrl);
   url.searchParams.set("denBaseUrl", denWebBase(ctx));
   return url.toString();
 }
 
 export async function configureDesktopForDen(ctx) {
-  await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 120_000, label: "OpenWork control API" });
+  await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 120_000, label: "Micx control API" });
   const apiBase = denApiBase(ctx);
   const webBase = denWebBase(ctx);
   const result = await ctx.eval(`(async () => {
-    const bridge = window.__OPENWORK_ELECTRON__?.invokeDesktop;
+    const bridge = window.__MICX_ELECTRON__?.invokeDesktop;
     if (bridge) {
       await bridge("setDesktopBootstrapConfig", { baseUrl: ${JSON.stringify(webBase)}, apiBaseUrl: ${JSON.stringify(apiBase)}, requireSignin: false, handoff: null });
     }
-    localStorage.setItem("openwork.den.baseUrl", ${JSON.stringify(webBase)});
-    localStorage.setItem("openwork.den.apiBaseUrl", ${JSON.stringify(apiBase)});
+    localStorage.setItem("micx.den.baseUrl", ${JSON.stringify(webBase)});
+    localStorage.setItem("micx.den.apiBaseUrl", ${JSON.stringify(apiBase)});
     let prefs = {};
-    try { prefs = JSON.parse(localStorage.getItem("openwork.preferences") || "{}"); } catch {}
-    localStorage.setItem("openwork.preferences", JSON.stringify({ ...prefs, selectedAgent: "openwork" }));
+    try { prefs = JSON.parse(localStorage.getItem("micx.preferences") || "{}"); } catch {}
+    localStorage.setItem("micx.preferences", JSON.stringify({ ...prefs, selectedAgent: "micx" }));
     return { bridge: Boolean(bridge) };
   })()`, { awaitPromise: true });
   ctx.log(`Configured Den base for desktop (${result?.bridge ? "desktop bridge" : "renderer only"}).`);
@@ -128,25 +128,25 @@ export async function configureDesktopForDen(ctx) {
 export async function resetDesktopDenSession(ctx) {
   await ctx.eval(`(() => {
     for (const key of Object.keys(localStorage)) {
-      if (key.startsWith("openwork.den.mcp")) localStorage.removeItem(key);
+      if (key.startsWith("micx.den.mcp")) localStorage.removeItem(key);
     }
-    for (const key of ["openwork.den.authToken", "openwork.den.activeOrgId", "openwork.den.activeOrgSlug", "openwork.den.activeOrgName"]) {
+    for (const key of ["micx.den.authToken", "micx.den.activeOrgId", "micx.den.activeOrgSlug", "micx.den.activeOrgName"]) {
       localStorage.removeItem(key);
     }
-    window.dispatchEvent(new CustomEvent("openwork-den-session-updated", { detail: { status: "signed_out" } }));
+    window.dispatchEvent(new CustomEvent("micx-den-session-updated", { detail: { status: "signed_out" } }));
     return true;
   })()`);
 }
 
-export async function deliverDesktopDeepLink(ctx, openworkUrl) {
+export async function deliverDesktopDeepLink(ctx, micxUrl) {
   const webBase = denWebBase(ctx);
   await ctx.eval(`(() => {
-    const url = ${JSON.stringify(openworkUrl)};
+    const url = ${JSON.stringify(micxUrl)};
     const redact = (value) => String(value ?? "")
       .replace(/("token"\\s*:\\s*")[^"]+/gi, "$1<redacted>")
       .replace(/Bearer\\s+[A-Za-z0-9._~+/-]+=*/gi, "Bearer <redacted>");
     window.__enterpriseHandoffDiagnostics = { events: [], exchanges: [] };
-    window.addEventListener("openwork-den-session-updated", (event) => {
+    window.addEventListener("micx-den-session-updated", (event) => {
       const detail = event.detail ?? null;
       window.__enterpriseHandoffDiagnostics.events.push(detail?.token ? { ...detail, token: "<redacted>" } : detail);
     });
@@ -166,26 +166,26 @@ export async function deliverDesktopDeepLink(ctx, openworkUrl) {
         return response;
       };
     }
-    window.__OPENWORK__ = window.__OPENWORK__ || {};
-    window.__OPENWORK__.deepLinks = [...(window.__OPENWORK__.deepLinks || []), url];
-    window.dispatchEvent(new CustomEvent("openwork:deep-link", { detail: { urls: [url], denBaseUrl: ${JSON.stringify(webBase)} } }));
+    window.__MICX__ = window.__MICX__ || {};
+    window.__MICX__.deepLinks = [...(window.__MICX__.deepLinks || []), url];
+    window.dispatchEvent(new CustomEvent("micx:deep-link", { detail: { urls: [url], denBaseUrl: ${JSON.stringify(webBase)} } }));
     return true;
   })()`);
 }
 
-async function waitForDesktopDenToken(ctx, openworkUrl) {
+async function waitForDesktopDenToken(ctx, micxUrl) {
   try {
-    await ctx.waitFor("Boolean((localStorage.getItem('openwork.den.authToken') ?? '').trim())", { timeoutMs: 60_000, label: "desktop Den token" });
+    await ctx.waitFor("Boolean((localStorage.getItem('micx.den.authToken') ?? '').trim())", { timeoutMs: 60_000, label: "desktop Den token" });
   } catch (error) {
     const diagnostics = await ctx.eval(`(() => ({
-      authToken: Boolean((localStorage.getItem("openwork.den.authToken") ?? "").trim()),
-      baseUrl: localStorage.getItem("openwork.den.baseUrl") || "",
-      apiBaseUrl: localStorage.getItem("openwork.den.apiBaseUrl") || "",
-      activeOrgId: localStorage.getItem("openwork.den.activeOrgId") || "",
+      authToken: Boolean((localStorage.getItem("micx.den.authToken") ?? "").trim()),
+      baseUrl: localStorage.getItem("micx.den.baseUrl") || "",
+      apiBaseUrl: localStorage.getItem("micx.den.apiBaseUrl") || "",
+      activeOrgId: localStorage.getItem("micx.den.activeOrgId") || "",
       events: window.__enterpriseHandoffDiagnostics?.events ?? [],
       exchanges: window.__enterpriseHandoffDiagnostics?.exchanges ?? [],
     }))()`);
-    const redactedUrl = openworkUrl.replace(/([?&]grant=)[^&]+/, "$1<redacted>");
+    const redactedUrl = micxUrl.replace(/([?&]grant=)[^&]+/, "$1<redacted>");
     throw new Error(`Timed out waiting for desktop Den token after deep-link handoff ${redactedUrl}. Diagnostics: ${JSON.stringify(diagnostics)}. ${error instanceof Error ? error.message : String(error)}`);
   }
 }
@@ -285,7 +285,7 @@ export async function completeEnterpriseOrgOnboarding(ctx) {
       const buttons = [...document.querySelectorAll("button, [role=button]")].map((entry) => (entry.textContent ?? "").replace(/\\s+/g, " ").trim());
       return {
         hash: window.location.hash,
-        activeOrgName: localStorage.getItem("openwork.den.activeOrgName") || "",
+        activeOrgName: localStorage.getItem("micx.den.activeOrgName") || "",
         hasChoose: text.includes("Choose your organization"),
         hasOrgName: text.includes(orgName),
         hasContinueOrg: buttons.some((button) => button.startsWith("Continue with organization")),
@@ -314,26 +314,26 @@ export async function desktopHandoffSignIn(ctx, email) {
   await configureDesktopForDen(ctx);
   await resetDesktopDenSession(ctx);
   const token = await signInByEmail(ctx, email);
-  const openworkUrl = await createDesktopHandoff(ctx, token);
-  await deliverDesktopDeepLink(ctx, openworkUrl);
-  await waitForDesktopDenToken(ctx, openworkUrl);
+  const micxUrl = await createDesktopHandoff(ctx, token);
+  await deliverDesktopDeepLink(ctx, micxUrl);
+  await waitForDesktopDenToken(ctx, micxUrl);
   await completeEnterpriseOrgOnboarding(ctx);
-  await ctx.waitFor("Boolean((localStorage.getItem('openwork.den.activeOrgId') ?? '').trim())", { timeoutMs: 60_000, label: "desktop active organization" });
+  await ctx.waitFor("Boolean((localStorage.getItem('micx.den.activeOrgId') ?? '').trim())", { timeoutMs: 60_000, label: "desktop active organization" });
   return token;
 }
 
 function localServerExpr() {
   return `(() => {
-    const urlOverride = (localStorage.getItem("openwork.server.urlOverride") || "").trim();
-    const port = (localStorage.getItem("openwork.server.port") || "").trim();
-    const token = (localStorage.getItem("openwork.server.token") || "").trim();
-    const hostToken = (localStorage.getItem("openwork.server.hostToken") || "").trim();
+    const urlOverride = (localStorage.getItem("micx.server.urlOverride") || "").trim();
+    const port = (localStorage.getItem("micx.server.port") || "").trim();
+    const token = (localStorage.getItem("micx.server.token") || "").trim();
+    const hostToken = (localStorage.getItem("micx.server.hostToken") || "").trim();
     const base = urlOverride.replace(/\\/+$/, "") || (port ? "http://127.0.0.1:" + port : "");
     return { base, token, hostToken };
   })()`;
 }
 
-export async function waitForOpenWorkConnectReady(ctx, timeout = 90_000) {
+export async function waitForMicxConnectReady(ctx, timeout = 90_000) {
   let last = null;
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
@@ -341,8 +341,8 @@ export async function waitForOpenWorkConnectReady(ctx, timeout = 90_000) {
     if (onboardingClick.clickedContinueOrg || onboardingClick.clickedContinueWorkspace) await sleep(1_000);
     last = await ctx.eval(`(() => {
       const text = document.body.innerText || "";
-      const match = text.match(/OpenWork Connect: (Ready|Checking|Needs attention)/);
-      return { ready: text.includes("OpenWork Connect: Ready"), status: match?.[0] || "", hash: window.location.hash };
+      const match = text.match(/Micx Connect: (Ready|Checking|Needs attention)/);
+      return { ready: text.includes("Micx Connect: Ready"), status: match?.[0] || "", hash: window.location.hash };
     })()`);
     if ((last.hash === "#/onboarding" || last.hash === "#/welcome") && !onboardingClick.hasContinueOrg && !onboardingClick.hasContinueWorkspace) {
       await ctx.eval("window.dispatchEvent(new Event('focus'))").catch(() => undefined);
@@ -353,7 +353,7 @@ export async function waitForOpenWorkConnectReady(ctx, timeout = 90_000) {
     await ctx.eval("window.dispatchEvent(new Event('focus'))").catch(() => undefined);
     await sleep(1_000);
   }
-  throw new Error(`OpenWork Connect did not become Ready in the status bar within ${timeout}ms: ${JSON.stringify(last)}`);
+  throw new Error(`Micx Connect did not become Ready in the status bar within ${timeout}ms: ${JSON.stringify(last)}`);
 }
 
 export async function ensureLocalWorkspaceBeforeConnectPollIfNeeded(ctx, folderPath) {
@@ -369,7 +369,7 @@ export async function ensureLocalWorkspaceBeforeConnectPollIfNeeded(ctx, folderP
 }
 
 export async function ensureLocalWorkspace(ctx, folderPath) {
-  await ctx.waitFor(`(() => { const s = ${localServerExpr()}; return Boolean(s.base && s.token); })()`, { timeoutMs: 60_000, label: "local OpenWork server URL/token" });
+  await ctx.waitFor(`(() => { const s = ${localServerExpr()}; return Boolean(s.base && s.token); })()`, { timeoutMs: 60_000, label: "local Micx server URL/token" });
   let last = null;
   const deadline = Date.now() + 120_000;
   while (Date.now() < deadline) {
@@ -392,7 +392,7 @@ export async function ensureLocalWorkspace(ctx, folderPath) {
 async function clickThroughWorkspaceOnboarding(ctx, folderPath) {
   const onboardingClick = await clickThroughLingeringOnboarding(ctx);
   if (onboardingClick.clickedContinueOrg || onboardingClick.clickedContinueWorkspace) return true;
-  for (const text of ["Skip and use the free model", "Continue without OpenWork Models", "Skip"]) {
+  for (const text of ["Skip and use the free model", "Continue without Micx Models", "Skip"]) {
     if (await clickExactIfVisible(ctx, text, "button, [role=button]")) return true;
   }
   const state = await workspaceSessionState(ctx);
@@ -421,9 +421,9 @@ async function workspaceSessionState(ctx) {
       hasConcreteSession: Boolean(match),
       hasComposer: Boolean(document.querySelector(${JSON.stringify(EDITOR_SELECTOR)})),
       hasFolderInput: Boolean(input && inputRect && inputRect.width > 0 && inputRect.height > 0),
-      hasWelcome: text.includes("Welcome to OpenWork"),
+      hasWelcome: text.includes("Welcome to Micx"),
       workspaceCreateBusy: text.includes("Creating workspace"),
-      hasConnectStatus: /OpenWork Connect: (Ready|Checking|Needs attention)/.test(text),
+      hasConnectStatus: /Micx Connect: (Ready|Checking|Needs attention)/.test(text),
       opencodeUnavailable: text.includes("OpenCode unavailable") || text.includes("opencode_unconfigured") || text.includes("OpenCode base URL is missing"),
       text: text.slice(0, 1_000),
     };
@@ -465,12 +465,12 @@ export async function readTranscriptSnapshot(ctx) {
     const normalize = (value) => String(value ?? "").replace(/\\s+/g, " ").trim();
     const substantive = (value) => {
       const text = normalize(value);
-      return text.length > 0 && text !== "OpenWork";
+      return text.length > 0 && text !== "Micx";
     };
     const bodyText = document.body.innerText || "";
     let transcript = null;
     try {
-      const result = await window.__openworkControl?.execute?.("session.read_transcript", { count: 30 });
+      const result = await window.__micxControl?.execute?.("session.read_transcript", { count: 30 });
       if (result?.ok && result.result?.messages) transcript = result.result;
     } catch {}
     const messages = transcript?.messages ?? [];
@@ -498,7 +498,7 @@ function normalizeSnapshotText(value) {
 
 function isSubstantiveAssistantText(value) {
   const text = normalizeSnapshotText(value);
-  return text.length > 0 && text !== "OpenWork";
+  return text.length > 0 && text !== "Micx";
 }
 
 function hasAssistantAfter(snapshot, initialMessageCount) {
@@ -661,7 +661,7 @@ function normalizeGatewayPrincipal(value) {
 function gatewayLoginUrl(ctx, transcript, desiredUser) {
   const principal = normalizeGatewayPrincipal(desiredUser);
   const fromTranscript = extractLoginUrl(transcript);
-  const gatewayBase = cleanBase(envText(ctx, "OPENWORK_EVAL_ENTERPRISE_GATEWAY_URL"));
+  const gatewayBase = cleanBase(envText(ctx, "MICX_EVAL_ENTERPRISE_GATEWAY_URL"));
   let loginUrl = fromTranscript;
   try {
     if (!loginUrl && gatewayBase) loginUrl = new URL("/login", gatewayBase).toString();
@@ -681,7 +681,7 @@ function gatewayLoginUrl(ctx, transcript, desiredUser) {
 export async function completeGatewayLogin(ctx, email, transcript, gatewayUserEnvName) {
   const desiredUser = normalizeGatewayPrincipal(envText(ctx, gatewayUserEnvName) || email);
   const loginUrl = gatewayLoginUrl(ctx, transcript, desiredUser);
-  ctx.assert(Boolean(loginUrl), "Gateway requested login but no login URL was visible. Set OPENWORK_EVAL_ENTERPRISE_GATEWAY_URL or expose the gateway login link in the transcript.");
+  ctx.assert(Boolean(loginUrl), "Gateway requested login but no login URL was visible. Set MICX_EVAL_ENTERPRISE_GATEWAY_URL or expose the gateway login link in the transcript.");
   const response = await fetch(loginUrl);
   const text = await response.text().catch(() => "");
   ctx.assert(response.status < 400, `Gateway login failed at ${loginUrl}: ${response.status} ${text.slice(0, 300)}`);
@@ -690,7 +690,7 @@ export async function completeGatewayLogin(ctx, email, transcript, gatewayUserEn
 
 export async function retryAfterGatewayLoginIfNeeded(ctx, email, transcript, expectedText, retryPrompt, options = {}) {
   if (transcript.includes(expectedText)) return transcript;
-  const gatewayUserEnvName = options.gatewayUserEnvName ?? "OPENWORK_EVAL_ENTERPRISE_GATEWAY_USER";
+  const gatewayUserEnvName = options.gatewayUserEnvName ?? "MICX_EVAL_ENTERPRISE_GATEWAY_USER";
   const desiredUser = normalizeGatewayPrincipal(envText(ctx, gatewayUserEnvName) || email);
   if (!gatewayLoginUrl(ctx, transcript, desiredUser) && !authNeeded(transcript)) return transcript;
   await completeGatewayLogin(ctx, email, transcript, gatewayUserEnvName);

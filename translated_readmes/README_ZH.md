@@ -2,12 +2,12 @@
 
 [English](../README.md) | 简体中文 | [其他语言](./README.md)
 
-# OpenWork
+# Micx Work
 > 让您的公司提升 1000 倍的生产力。
 
-我们为 AI 智能体配备您团队已经在使用的工具，并让它们从您的行为中学习。您使用 OpenWork 越多，工具之间的连接就越紧密，积累的知识就越多，能够自动化的工作块就越大。
+我们为 AI 智能体配备您团队已经在使用的工具，并让它们从您的行为中学习。您使用 Micx 越多，工具之间的连接就越紧密，积累的知识就越多，能够自动化的工作块就越大。
 
-OpenWork 是 opencode 的最简单界面。双击，选择一个文件夹，即可立即获得三大核心优势：
+Micx 是 opencode 的最简单界面。双击，选择一个文件夹，即可立即获得三大核心优势：
 1. 零摩擦设置 — 您现有的 opencode 配置开箱即用，无需迁移
 2. 聊天集成 — WhatsApp 和 Telegram 即时可用（一个令牌，全部搞定）
 3. 云端就绪 — 每个应用都可以作为客户端；部署到云端，随时随地访问
@@ -22,7 +22,7 @@ OpenWork 是 opencode 的最简单界面。双击，选择一个文件夹，即�
 <img width="1292" height="932" alt="Screenshot 2026-01-31 at 13 43 30" src="https://github.com/user-attachments/assets/6639d1ef-c831-406e-a812-87fde403e6d5" />
 
 
-OpenWork 围绕一个核心理念设计：让您可以轻松地将智能体工作流程作为可重复的、产品化的流程进行交付。
+Micx 围绕一个核心理念设计：让您可以轻松地将智能体工作流程作为可重复的、产品化的流程进行交付。
 
 它是一个原生桌面应用程序，底层运行 **OpenCode**，但将其呈现为简洁的引导式工作流程：
 - 选择工作区
@@ -39,21 +39,21 @@ OpenWork 围绕一个核心理念设计：让您可以轻松地将智能体工�
   - `curl -fsSL https://raw.githubusercontent.com/different-ai/owpenbot/dev/install.sh | bash`
   - 运行 `owpenbot setup`，然后 `owpenbot whatsapp login`，接着 `owpenbot start`
   - 完整设置：https://github.com/different-ai/owpenbot/blob/dev/README.md
-- **OpenWork Server (CLI 主机)**：无需桌面 UI 即可运行 OpenWork 服务器。使用 `npm install -g openwork-server` 安装，然后运行 `openwork-server`。
+- **Micx Server (CLI 主机)**：无需桌面 UI 即可运行 Micx 服务器。使用 `npm install -g micx-server` 安装，然后运行 `micx-server`。
 
 
 ## 快速开始
-在此处下载 dmg：https://github.com/different-ai/openwork/releases（或按照下面的说明从源代码安装）
+在此处下载 dmg：https://github.com/different-ai/micx/releases（或按照下面的说明从源代码安装）
 
-## 为什么选择 OpenWork
+## 为什么选择 Micx
 
 当前 opencode 的 CLI 和 GUI 都以开发者为中心。这意味着专注于文件差异、工具名称，以及在不依赖某种形式的 CLI 的情况下难以扩展的功能。
 
-OpenWork 的设计目标是：
+Micx 的设计目标是：
 - **可扩展**：技能和 opencode 插件是可安装的模块。
 - **可审计**：显示发生了什么、何时发生以及为什么发生。
 - **权限控制**：访问特权流程。
-- **本地/远程**：OpenWork 可以在本地工作，也可以连接到远程服务器。
+- **本地/远程**：Micx 可以在本地工作，也可以连接到远程服务器。
 
 ## 包含的功能
 
@@ -92,7 +92,7 @@ OpenWork 的设计目标是：
 pnpm install
 ```
 
-OpenWork 现在位于 `packages/app`（UI）和 `packages/desktop`（桌面外壳）中。
+Micx 现在位于 `packages/app`（UI）和 `packages/desktop`（桌面外壳）中。
 
 ### 运行（桌面版）
 
@@ -114,11 +114,11 @@ curl -fsSL https://opencode.ai/install | bash -s -- --version "$(node -e "const 
 
 ## 架构（高级）
 
-- 在**主机模式**中，OpenWork 启动：
+- 在**主机模式**中，Micx 启动：
   - `opencode serve --hostname 127.0.0.1 --port <free-port>`
   - 以您选择的项目文件夹作为进程工作目录。
-在主机模式下，OpenWork 直接在您的计算机上后台启动 OpenCode 服务器。
-当您选择项目文件夹时，OpenWork 使用该文件夹在本地运行 OpenCode 并将桌面 UI 连接到它。
+在主机模式下，Micx 直接在您的计算机上后台启动 OpenCode 服务器。
+当您选择项目文件夹时，Micx 使用该文件夹在本地运行 OpenCode 并将桌面 UI 连接到它。
 这允许您完全在您的机器上运行智能体工作流程、发送提示并查看进度，而无需依赖远程服务器。
 
 - UI 使用 `@opencode-ai/sdk/v2/client` 来：
@@ -138,12 +138,12 @@ curl -fsSL https://opencode.ai/install | bash -s -- --version "$(node -e "const 
 
 ## OpenCode 插件
 
-插件是扩展 OpenCode 的**原生**方式。OpenWork 现在通过从技能选项卡读取和写入 `opencode.json` 来管理它们。
+插件是扩展 OpenCode 的**原生**方式。Micx 现在通过从技能选项卡读取和写入 `opencode.json` 来管理它们。
 
 - **项目范围**：`<workspace>/opencode.json`
 - **全局范围**：`~/.config/opencode/opencode.json`（或 `$XDG_CONFIG_HOME/opencode/opencode.json`）
 
-您仍然可以手动编辑 `opencode.json`；OpenWork 使用与 OpenCode CLI 相同的格式：
+您仍然可以手动编辑 `opencode.json`；Micx 使用与 OpenCode CLI 相同的格式：
 
 ```json
 {
@@ -167,19 +167,19 @@ pnpm test:e2e
 
 ### Linux / Wayland (Hyprland)
 
-如果 OpenWork 在启动时因 WebKitGTK 错误（如 `Failed to create GBM buffer`）而崩溃，请在启动前禁用 dmabuf 或合成。尝试以下环境标志之一。
+如果 Micx 在启动时因 WebKitGTK 错误（如 `Failed to create GBM buffer`）而崩溃，请在启动前禁用 dmabuf 或合成。尝试以下环境标志之一。
 
 ```bash
-WEBKIT_DISABLE_DMABUF_RENDERER=1 openwork
+WEBKIT_DISABLE_DMABUF_RENDERER=1 micx
 ```
 
 ```bash
-WEBKIT_DISABLE_COMPOSITING_MODE=1 openwork
+WEBKIT_DISABLE_COMPOSITING_MODE=1 micx
 ```
 
 ## 安全说明
 
-- OpenWork 默认隐藏模型推理和敏感工具元数据。
+- Micx 默认隐藏模型推理和敏感工具元数据。
 - 主机模式默认绑定到 `127.0.0.1`。
 
 ## 贡献
@@ -191,7 +191,7 @@ WEBKIT_DISABLE_COMPOSITING_MODE=1 openwork
 
 ## 面向团队和企业
 
-有兴趣在您的组织中使用 OpenWork？我们很乐意听取您的意见 — 请发送邮件至 [benjamin.shafii@gmail.com](mailto:benjamin.shafii@gmail.com) 与我们讨论您的用例。
+有兴趣在您的组织中使用 Micx？我们很乐意听取您的意见 — 请发送邮件至 [benjamin.shafii@gmail.com](mailto:benjamin.shafii@gmail.com) 与我们讨论您的用例。
 
 ## 许可证
 

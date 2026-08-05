@@ -2,19 +2,19 @@ import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
 import { denWebUrl, signInViaBrowser } from "./lib/den-web.mjs";
 
 // Narration is loaded from the approved script
-// (evals/voiceovers/openwork-models-hidden-single-org-dashboard.md).
+// (evals/voiceovers/micx-models-hidden-single-org-dashboard.md).
 // The runner fails this flow if the narration drifts from that script.
-const FLOW_ID = "openwork-models-hidden-single-org-dashboard";
+const FLOW_ID = "micx-models-hidden-single-org-dashboard";
 const vo = await loadVoiceoverParagraphs(FLOW_ID);
 
 const DEMO_EMAIL = process.env.DEN_DEMO_OWNER_EMAIL ?? "alex@acme.test";
-const DEMO_PASSWORD = process.env.DEN_DEMO_OWNER_PASSWORD ?? "OpenWorkDemo123!";
+const DEMO_PASSWORD = process.env.DEN_DEMO_OWNER_PASSWORD ?? "MicxDemo123!";
 
 export default {
   id: FLOW_ID,
-  title: "Single-org (self-hosted) dashboard hides the OpenWork Models nav and page",
+  title: "Single-org (self-hosted) dashboard hides the Micx Models nav and page",
   kind: "user-facing",
-  requiredEnv: ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_WEB_URL"],
+  requiredEnv: ["MICX_EVAL_DEN_API_URL", "MICX_EVAL_DEN_WEB_URL"],
   steps: [
     {
       name: "Frame 1 — sign in to the self-hosted dashboard",
@@ -43,7 +43,7 @@ export default {
     {
       name: "Frame 2 — Models nav goes straight to LLM Providers",
       run: async (ctx) => {
-        await ctx.prove("The Models nav group contains no OpenWork Models entry and lands on LLM Providers", {
+        await ctx.prove("The Models nav group contains no Micx Models entry and lands on LLM Providers", {
           voiceover: vo[1],
           action: async () => {
             await ctx.waitFor(`(() => {
@@ -66,20 +66,20 @@ export default {
               }));
               return {
                 pathname: window.location.pathname,
-                hasOpenWorkModels: links.some((l) => l.text.includes('OpenWork Models')) || (nav?.innerText ?? '').includes('OpenWork Models'),
+                hasMicxModels: links.some((l) => l.text.includes('Micx Models')) || (nav?.innerText ?? '').includes('Micx Models'),
                 hasInferenceLink: links.some((l) => l.href.includes('/dashboard/inference')),
                 hasLlmProvidersLink: links.some((l) => l.text.includes('LLM Providers')),
               };
             })()`);
             ctx.assert(nav.pathname.includes("custom-llm-providers"), `Models nav should land on LLM Providers, got ${nav.pathname}`);
             ctx.assert(nav.hasLlmProvidersLink, "The Models group should still offer LLM Providers.");
-            ctx.assert(!nav.hasOpenWorkModels, "The navigation must not mention OpenWork Models on a self-hosted deployment.");
+            ctx.assert(!nav.hasMicxModels, "The navigation must not mention Micx Models on a self-hosted deployment.");
             ctx.assert(!nav.hasInferenceLink, "The navigation must not link to /dashboard/inference on a self-hosted deployment.");
           },
           screenshot: {
             name: "single-org-models-nav-llm-providers-only",
             requireText: ["LLM Providers"],
-            rejectText: ["OpenWork Models"],
+            rejectText: ["Micx Models"],
           },
         });
       },
@@ -106,7 +106,7 @@ export default {
           screenshot: {
             name: "single-org-inference-redirected",
             requireText: ["LLM Providers"],
-            rejectText: ["Subscribe with Stripe", "OpenWork Models"],
+            rejectText: ["Subscribe with Stripe", "Micx Models"],
           },
         });
       },

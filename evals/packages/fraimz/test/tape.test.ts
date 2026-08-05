@@ -4,7 +4,7 @@ import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import type { CdpClient, Surface } from "@openwork/cdp";
+import type { CdpClient, Surface } from "@micx/cdp";
 import { withTape } from "../src/ambient.ts";
 import { screenshot } from "../src/screenshot.ts";
 import type { Shot } from "../src/screenshot.ts";
@@ -44,7 +44,7 @@ async function payload(dir: string): Promise<Record<string, unknown>> {
 }
 
 test("tape writes claimed frames, fact frames, failed frames, and unclaimed takes", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "openwork-tape-"));
+  const dir = await mkdtemp(join(tmpdir(), "micx-tape-"));
   try {
     const tape = openTape({ name: "body cam", outDir: dir });
     const passing = shot("passing");
@@ -92,7 +92,7 @@ test("tape writes claimed frames, fact frames, failed frames, and unclaimed take
 });
 
 test("tape accepts unchanged retakes and only lets one claim use their pixel hash", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "openwork-tape-retake-"));
+  const dir = await mkdtemp(join(tmpdir(), "micx-tape-retake-"));
   try {
     const tape = openTape({ name: "retakes", outDir: dir });
     const duplicate = shot("same pixels");
@@ -132,7 +132,7 @@ test("tape accepts unchanged retakes and only lets one claim use their pixel has
 });
 
 test("screenshot automatically records a take in the ambient tape", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "openwork-tape-screenshot-"));
+  const dir = await mkdtemp(join(tmpdir(), "micx-tape-screenshot-"));
   try {
     const png = Buffer.from("ambient screenshot pixels");
     const client: CdpClient = {

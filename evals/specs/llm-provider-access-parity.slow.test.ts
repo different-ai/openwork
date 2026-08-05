@@ -1,7 +1,7 @@
 import { expect } from "vitest";
-import { denFetch } from "@openwork/behaviors";
-import type { DenSession } from "@openwork/behaviors";
-import { needs, server, test } from "@openwork/testkit";
+import { denFetch } from "@micx/behaviors";
+import type { DenSession } from "@micx/behaviors";
+import { needs, server, test } from "@micx/testkit";
 
 const ORGANIZATION_NAME = "LLM Provider Access Parity";
 const REQUEST_TIMEOUT_MS = 10_000;
@@ -69,7 +69,7 @@ async function organizationMemberIdByEmail(session: DenSession, orgId: string, e
   const result = await denFetch(session, "/v1/org", {
     headers: {
       ...auth(session),
-      "x-openwork-org-id": orgId,
+      "x-micx-org-id": orgId,
     },
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
@@ -93,7 +93,7 @@ async function createProvider(
     method: "POST",
     headers: {
       ...auth(admin),
-      "x-openwork-org-id": orgId,
+      "x-micx-org-id": orgId,
     },
     body: JSON.stringify({
       name: input.name,
@@ -152,7 +152,7 @@ test("LLM provider access has list, connect, and resource snapshot parity", asyn
   const list = await denFetch(plain, "/v1/llm-providers", {
     headers: {
       ...auth(plain),
-      "x-openwork-org-id": orgId,
+      "x-micx-org-id": orgId,
     },
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
@@ -174,7 +174,7 @@ test("LLM provider access has list, connect, and resource snapshot parity", asyn
   const sharedConnect = await denFetch(plain, `/v1/llm-providers/${encodeURIComponent(sharedProviderId)}/connect`, {
     headers: {
       ...auth(plain),
-      "x-openwork-org-id": orgId,
+      "x-micx-org-id": orgId,
     },
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
@@ -189,7 +189,7 @@ test("LLM provider access has list, connect, and resource snapshot parity", asyn
   const restrictedConnect = await denFetch(plain, `/v1/llm-providers/${encodeURIComponent(restrictedProviderId)}/connect`, {
     headers: {
       ...auth(plain),
-      "x-openwork-org-id": orgId,
+      "x-micx-org-id": orgId,
     },
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
@@ -203,7 +203,7 @@ test("LLM provider access has list, connect, and resource snapshot parity", asyn
   const resources = await denFetch(plain, "/v1/resources", {
     headers: {
       ...auth(plain),
-      "x-openwork-org-id": orgId,
+      "x-micx-org-id": orgId,
     },
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });

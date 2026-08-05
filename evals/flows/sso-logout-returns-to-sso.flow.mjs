@@ -4,13 +4,13 @@ import { clearOrgSso, configureOrgSso, expectSsoScreenAfterLogout, signInViaSso 
 import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
 
 const FLOW_ID = "sso-logout-returns-to-sso";
-const REQUIRED_DEN_ENV = ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_WEB_URL", "OPENWORK_EVAL_DEN_TOKEN"];
+const REQUIRED_DEN_ENV = ["MICX_EVAL_DEN_API_URL", "MICX_EVAL_DEN_WEB_URL", "MICX_EVAL_DEN_TOKEN"];
 
 const vo = await loadVoiceoverParagraphs(FLOW_ID);
 if (!vo) throw new Error(`Missing approved voice-over script for ${FLOW_ID}.`);
 
 function subjectEmail(ctx) {
-  const suffix = `${ctx.env.OPENWORK_EVAL_RUNSTAMP?.trim() || Date.now()}-${process.pid}`
+  const suffix = `${ctx.env.MICX_EVAL_RUNSTAMP?.trim() || Date.now()}-${process.pid}`
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "") || "run";
@@ -44,7 +44,7 @@ export default defineScenario({
               assert: async () => {
                 await ctx.expectRoute("/dashboard", { timeoutMs: 60_000 });
               },
-              screenshot: { name: "sso-user-dashboard", requireText: ["OpenWork"] },
+              screenshot: { name: "sso-user-dashboard", requireText: ["Micx"] },
             });
           });
 

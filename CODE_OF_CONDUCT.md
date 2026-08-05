@@ -2,7 +2,7 @@
 
 ## Our commitment
 
-We are committed to making participation in the OpenWork community a harassment-free
+We are committed to making participation in the Micx community a harassment-free
 experience for everyone, regardless of age, body size, disability, ethnicity, sex
 characteristics, gender identity and expression, level of experience, education,
 socio-economic status, nationality, personal appearance, race, religion, or sexual
@@ -39,7 +39,7 @@ to behavior they deem inappropriate, threatening, offensive, or harmful.
 ## Scope
 
 This Code of Conduct applies within all community spaces, including GitHub issues,
-pull requests, discussions, and direct interactions in official OpenWork channels.
+pull requests, discussions, and direct interactions in official Micx channels.
 
 ## Reporting
 

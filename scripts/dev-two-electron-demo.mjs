@@ -14,14 +14,14 @@ const desktopRequire = createRequire(path.join(desktopRoot, "package.json"));
 const electronCli = desktopRequire.resolve("electron/cli.js");
 const pnpmCmd = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
 export function resolveDemoRoot(env = process.env) {
-  return env.OPENWORK_ELECTRON_DEMO_ROOT?.trim() || path.join(os.tmpdir(), "openwork-two-electron-demo");
+  return env.MICX_ELECTRON_DEMO_ROOT?.trim() || path.join(os.tmpdir(), "micx-two-electron-demo");
 }
 
 const demoRoot = resolveDemoRoot();
 const appProfiles = {
   admin: {
-    appIdentifier: "com.differentai.openwork.demo.admin",
-    appName: "OpenWork Demo A",
+    appIdentifier: "com.differentai.micx.demo.admin",
+    appName: "Micx Demo A",
     bootstrapName: "admin-bootstrap.json",
     cdpFlag: "--admin-cdp",
     cdpPort: "9923",
@@ -31,8 +31,8 @@ const appProfiles = {
     requireSignin: false,
   },
   consumer: {
-    appIdentifier: "com.differentai.openwork.demo.consumer",
-    appName: "OpenWork Demo B",
+    appIdentifier: "com.differentai.micx.demo.consumer",
+    appName: "Micx Demo B",
     bootstrapName: "consumer-bootstrap.json",
     cdpFlag: "--consumer-cdp",
     cdpPort: "9924",
@@ -50,9 +50,9 @@ function profilePaths(runRoot, profile) {
     bootstrapPath: path.join(root, profile.bootstrapName),
     cacheHome: path.join(root, "xdg-cache"),
     configHome: path.join(root, "xdg-config"),
-    dataDir: path.join(root, "openwork-data"),
+    dataDir: path.join(root, "micx-data"),
     dataHome: path.join(root, "xdg-data"),
-    envStorePath: path.join(root, "openwork-env.json"),
+    envStorePath: path.join(root, "micx-env.json"),
     homeDir: path.join(root, "home"),
     localAppDataDir: path.join(root, "local-appdata"),
     opencodeConfigDir: path.join(root, "opencode-config"),
@@ -322,7 +322,7 @@ function startElectron(profile, env, built, packaged) {
     : built
       ? [
         electronCli,
-        ...(env.OPENWORK_ELECTRON_USE_MOCK_KEYCHAIN === "1" ? ["--use-mock-keychain"] : []),
+        ...(env.MICX_ELECTRON_USE_MOCK_KEYCHAIN === "1" ? ["--use-mock-keychain"] : []),
         "./electron/main.mjs",
       ]
       : ["dev:electron"];
@@ -398,20 +398,20 @@ export function demoEnv(profile, paths, port, cdpPort) {
     APPDATA: paths.appDataDir,
     HOME: paths.homeDir,
     LOCALAPPDATA: paths.localAppDataDir,
-    OPENWORK_DATA_DIR: paths.dataDir,
-    OPENWORK_DESKTOP_BOOTSTRAP_PATH: paths.bootstrapPath,
-    OPENWORK_DESKTOP_DISABLE_WORKSPACE_RECOVERY: "1",
-    OPENWORK_DEV_MODE: "1",
-    OPENWORK_ENV_STORE: paths.envStorePath,
+    MICX_DATA_DIR: paths.dataDir,
+    MICX_DESKTOP_BOOTSTRAP_PATH: paths.bootstrapPath,
+    MICX_DESKTOP_DISABLE_WORKSPACE_RECOVERY: "1",
+    MICX_DEV_MODE: "1",
+    MICX_ENV_STORE: paths.envStorePath,
     OPENCODE_CONFIG_DIR: paths.opencodeConfigDir,
-    VITE_DISABLE_OPENWORK_MODELS: "1",
-    OPENWORK_ELECTRON_APP_IDENTIFIER: profile.appIdentifier,
-    OPENWORK_ELECTRON_APP_NAME: profile.appName,
-    OPENWORK_ELECTRON_DISABLE_PROTOCOL_REGISTRATION: "1",
-    OPENWORK_ELECTRON_REMOTE_DEBUG_PORT: cdpPort,
-    OPENWORK_ELECTRON_SKIP_SHARED_PREPARE: "1",
-    OPENWORK_ELECTRON_USE_MOCK_KEYCHAIN: "1",
-    OPENWORK_ELECTRON_USERDATA: paths.userDataDir,
+    VITE_DISABLE_MICX_MODELS: "1",
+    MICX_ELECTRON_APP_IDENTIFIER: profile.appIdentifier,
+    MICX_ELECTRON_APP_NAME: profile.appName,
+    MICX_ELECTRON_DISABLE_PROTOCOL_REGISTRATION: "1",
+    MICX_ELECTRON_REMOTE_DEBUG_PORT: cdpPort,
+    MICX_ELECTRON_SKIP_SHARED_PREPARE: "1",
+    MICX_ELECTRON_USE_MOCK_KEYCHAIN: "1",
+    MICX_ELECTRON_USERDATA: paths.userDataDir,
     PORT: port,
     XDG_CACHE_HOME: paths.cacheHome,
     XDG_CONFIG_HOME: paths.configHome,
@@ -483,7 +483,7 @@ async function main() {
   await assertDemoPortsAvailable(portEntries);
 
   if (built && !existsSync(path.join(repoRoot, "apps", "app", "dist", "index.html"))) {
-    throw new Error("The desktop renderer is not built. Run pnpm --filter @openwork/desktop build:electron first.");
+    throw new Error("The desktop renderer is not built. Run pnpm --filter @micx/desktop build:electron first.");
   }
 
   const demoRun = requestedRunRoot
@@ -532,14 +532,14 @@ async function main() {
   console.log(`Demo B CDP:    http://127.0.0.1:${consumerCdp}`);
   console.log(`Demo A folder: ${demoRun.admin.root}`);
   console.log(`  Electron:    ${demoRun.admin.userDataDir}`);
-  console.log(`  OpenWork:    ${demoRun.admin.dataDir}`);
+  console.log(`  Micx:    ${demoRun.admin.dataDir}`);
   console.log(`Demo B folder: ${demoRun.consumer.root}`);
   console.log(`  Electron:    ${demoRun.consumer.userDataDir}`);
-  console.log(`  OpenWork:    ${demoRun.consumer.dataDir}`);
+  console.log(`  Micx:    ${demoRun.consumer.dataDir}`);
   const denStartup =
     adminPort === appProfiles.admin.port && consumerPort === appProfiles.consumer.port
       ? "pnpm demo:den"
-      : `OPENWORK_EXTRA_APP_PORTS=${adminPort},${consumerPort} pnpm dev:den`;
+      : `MICX_EXTRA_APP_PORTS=${adminPort},${consumerPort} pnpm dev:den`;
   console.log(`Den startup:   ${denStartup}`);
   console.log("Press Ctrl-C to stop both instances.\n");
 }

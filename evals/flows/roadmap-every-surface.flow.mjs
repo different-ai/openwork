@@ -4,7 +4,7 @@ const FLOW_ID = "roadmap-every-surface";
 const vo = await loadVoiceoverParagraphs(FLOW_ID);
 
 function routeUrl(ctx, path) {
-  return new URL(path, ctx.env.OPENWORK_EVAL_LANDING_URL).toString();
+  return new URL(path, ctx.env.MICX_EVAL_LANDING_URL).toString();
 }
 
 function recordAssertion(ctx, assertion, passed, actual) {
@@ -73,11 +73,11 @@ async function sectionState(ctx, selector) {
 
 export default {
   id: FLOW_ID,
-  title: "The OpenWork roadmap presents desktop as home and the same workspace on every surface",
+  title: "The Micx roadmap presents desktop as home and the same workspace on every surface",
   kind: "user-facing",
   spec: "evals/voiceovers/roadmap-every-surface.md",
   preserveTheme: true,
-  requiredEnv: ["OPENWORK_EVAL_LANDING_URL"],
+  requiredEnv: ["MICX_EVAL_LANDING_URL"],
   steps: [
     {
       name: "Frame 1",
@@ -90,7 +90,7 @@ export default {
           },
           assert: async () => {
             const actual = await ctx.eval(`(() => {
-              const roadmap = document.querySelector('[data-testid="openwork-roadmap"]');
+              const roadmap = document.querySelector('[data-testid="micx-roadmap"]');
               const shell = document.querySelector('[data-testid="roadmap-page-shell"]');
               const text = roadmap?.innerText || "";
               const firstSectionAfterHero = roadmap?.children[1]?.querySelector("#desktop-home");
@@ -163,7 +163,7 @@ export default {
     {
       name: "Frame 3",
       run: async (ctx) => {
-        await ctx.prove("The portability section shows how the desktop setup travels through OpenWork Connect.", {
+        await ctx.prove("The portability section shows how the desktop setup travels through Micx Connect.", {
           voiceover: vo[2],
           action: async () => {
             await scrollTo(ctx, "#setup-follows");
@@ -175,7 +175,7 @@ export default {
               "The Connect section names the supported agents, marketplace controls, authentication modes, and Git sync direction",
               actual.exists === true
                 && actual.text.includes("your setup follows you")
-                && actual.text.includes("OpenWork Connect MCP")
+                && actual.text.includes("Micx Connect MCP")
                 && actual.text.includes("Codex, Claude Code, Cursor, and OpenCode")
                 && actual.text.includes("Organization marketplaces and access controls")
                 && actual.text.includes("Shared and per-user authentication")
@@ -187,7 +187,7 @@ export default {
           },
           screenshot: {
             name: "frame-3-setup-follows",
-            requireText: ["your setup follows you", "OpenWork Connect MCP", "Git-based publishing"],
+            requireText: ["your setup follows you", "Micx Connect MCP", "Git-based publishing"],
             rejectText: ["Something went wrong"],
           },
         });
@@ -277,8 +277,8 @@ export default {
               ctx,
               "Desktop and MCP agents are Live, Slack and mobile are Next, and later surfaces are Exploring",
               actual.exists === true
-                && actual.text.includes("OpenWork on every surface")
-                && actual.text.includes("OpenWork desktop")
+                && actual.text.includes("Micx on every surface")
+                && actual.text.includes("Micx desktop")
                 && actual.text.includes("Existing AI agents through MCP")
                 && actual.text.includes("Slack")
                 && actual.text.includes("Mobile")
@@ -292,7 +292,7 @@ export default {
           },
           screenshot: {
             name: "frame-6-every-surface",
-            requireText: ["OpenWork on every surface", "Slack", "Mobile", "Exploring"],
+            requireText: ["Micx on every surface", "Slack", "Mobile", "Exploring"],
             rejectText: ["Something went wrong"],
           },
         });
@@ -309,7 +309,7 @@ export default {
           },
           assert: async () => {
             const actual = await ctx.eval(`(() => {
-              const roadmap = document.querySelector('[data-testid="openwork-roadmap"]');
+              const roadmap = document.querySelector('[data-testid="micx-roadmap"]');
               const centralManagement = document.querySelector("#central-management");
               const specs = document.querySelector("#specifications");
               const text = roadmap?.innerText || "";

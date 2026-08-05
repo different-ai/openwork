@@ -92,8 +92,8 @@ export default {
             const skillPath = join(ROOT, ".opencode", "skills", "daytona-windows-cert", "SKILL.md");
             const skill = await readFile(skillPath, "utf8");
             const scripts = [
-              "scripts/support/setup-openwork-tls-repro.ps1",
-              "scripts/support/openwork-doctor.ps1",
+              "scripts/support/setup-micx-tls-repro.ps1",
+              "scripts/support/micx-doctor.ps1",
             ];
             for (const script of scripts) {
               witness(ctx, skill.includes(script), `Skill references ${script}`);
@@ -130,8 +130,8 @@ export default {
             const skillPath = join(ROOT, ".opencode", "skills", "daytona-windows-cert", "SKILL.md");
             const skill = await readFile(skillPath, "utf8");
             const commands = [
-              "schtasks /end /tn OpenWorkTlsRepro",
-              "setup-openwork-tls-repro.ps1 -Cleanup",
+              "schtasks /end /tn MicxTlsRepro",
+              "setup-micx-tls-repro.ps1 -Cleanup",
               "daytona sandbox delete <ID>",
               "gh release delete <tag> --yes",
             ];

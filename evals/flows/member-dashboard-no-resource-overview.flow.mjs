@@ -4,12 +4,12 @@ import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
 const FLOW_ID = "member-dashboard-no-resource-overview";
 const vo = await loadVoiceoverParagraphs(FLOW_ID);
 
-const DEN_API_URL = (process.env.OPENWORK_EVAL_DEN_API_URL ?? "").trim().replace(/\/+$/, "");
-const DEN_WEB_URL = (process.env.OPENWORK_EVAL_DEN_WEB_URL ?? "").trim().replace(/\/+$/, "");
-const ADMIN_EMAIL = process.env.OPENWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
-const ADMIN_PASSWORD = process.env.OPENWORK_EVAL_DEMO_PASSWORD?.trim() || "OpenWorkDemo123!";
+const DEN_API_URL = (process.env.MICX_EVAL_DEN_API_URL ?? "").trim().replace(/\/+$/, "");
+const DEN_WEB_URL = (process.env.MICX_EVAL_DEN_WEB_URL ?? "").trim().replace(/\/+$/, "");
+const ADMIN_EMAIL = process.env.MICX_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
+const ADMIN_PASSWORD = process.env.MICX_EVAL_DEMO_PASSWORD?.trim() || "MicxDemo123!";
 const MEMBER_EMAIL = "riley.no-resource-overview@acme.test";
-const MEMBER_PASSWORD = "OpenWorkDemo123!";
+const MEMBER_PASSWORD = "MicxDemo123!";
 
 const state = {
   adminToken: "",
@@ -65,8 +65,8 @@ async function signInApi(email, password) {
 }
 
 function runMysql(sql) {
-  const container = process.env.OPENWORK_EVAL_DEN_MYSQL_CONTAINER?.trim() || "openwork-web-local-mysql";
-  execFileSync("docker", ["exec", container, "mysql", "-uroot", "-ppassword", "openwork_den", "-e", sql], { stdio: "ignore" });
+  const container = process.env.MICX_EVAL_DEN_MYSQL_CONTAINER?.trim() || "micx-web-local-mysql";
+  execFileSync("docker", ["exec", container, "mysql", "-uroot", "-ppassword", "micx_den", "-e", sql], { stdio: "ignore" });
 }
 
 async function ensureAccount(ctx, { email, name, password }) {
@@ -181,7 +181,7 @@ async function readMemberHome(ctx) {
       assignedDirectly: text.includes("Assigned directly to you"),
       yourWorkspace: text.includes("Your workspace"),
       llmProviders: text.includes("LLM providers"),
-      openWorkModels: text.includes("OpenWork Models"),
+      openWorkModels: text.includes("Micx Models"),
       marketplaces: text.includes("Marketplaces"),
       plugins: text.includes("Plugins"),
     };
@@ -192,7 +192,7 @@ export default {
   id: FLOW_ID,
   title: "Member dashboard drops the empty Available resources summary strip",
   kind: "user-facing",
-  requiredEnv: ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_WEB_URL"],
+  requiredEnv: ["MICX_EVAL_DEN_API_URL", "MICX_EVAL_DEN_WEB_URL"],
   steps: [
     {
       name: "Member home has no Available resources strip",
@@ -216,7 +216,7 @@ export default {
           },
           screenshot: {
             name: "member-home-no-overview",
-            requireText: ["Your workspace", "LLM providers", "OpenWork Models", "Marketplaces", "Plugins"],
+            requireText: ["Your workspace", "LLM providers", "Micx Models", "Marketplaces", "Plugins"],
             rejectText: ["Available resources", "Assigned directly to you", "Something went wrong"],
             hashIncludes: "/dashboard",
           },
@@ -244,7 +244,7 @@ export default {
                 availableResources: text.includes("Available resources"),
                 disabledCard: [...document.querySelectorAll('[data-testid="member-resource-card"]')].some((card) => (card.textContent ?? "").includes("Disabled")),
                 llmEmpty: text.includes("No custom providers are available to you yet.") || text.includes("available"),
-                openWorkModels: text.includes("OpenWork Models"),
+                openWorkModels: text.includes("Micx Models"),
                 marketplaces: text.includes("Marketplaces"),
                 plugins: text.includes("Plugins"),
               };
@@ -254,7 +254,7 @@ export default {
           },
           screenshot: {
             name: "member-sections-without-summary",
-            requireText: ["LLM providers", "OpenWork Models"],
+            requireText: ["LLM providers", "Micx Models"],
             rejectText: ["Available resources", "Assigned directly to you", "Something went wrong"],
             hashIncludes: "/dashboard",
           },

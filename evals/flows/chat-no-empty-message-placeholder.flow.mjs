@@ -19,14 +19,14 @@ async function closeStaleDialogs(ctx) {
 }
 
 async function bootPrecondition(ctx) {
-  await ctx.waitFor("Boolean(window.__openworkControl)", {
+  await ctx.waitFor("Boolean(window.__micxControl)", {
     timeoutMs: 60_000,
     label: "control API",
   });
   await closeStaleDialogs(ctx);
   const state = await ctx.waitFor(
     `(() => {
-      const control = window.__openworkControl;
+      const control = window.__micxControl;
       const route = String(control.snapshot().route || "");
       if (route.startsWith("/welcome") || route.startsWith("/signin")) return "blocked";
       const action = control.listActions().find((item) => item.id === "session.create_task");
@@ -43,7 +43,7 @@ async function bootPrecondition(ctx) {
 async function waitForActiveSessionId(ctx) {
   return ctx.waitFor(
     `(() => {
-      const route = String(window.__openworkControl.snapshot().route || "");
+      const route = String(window.__micxControl.snapshot().route || "");
       const match = route.match(/ses_[A-Za-z0-9]+/);
       return match ? match[0] : null;
     })()`,

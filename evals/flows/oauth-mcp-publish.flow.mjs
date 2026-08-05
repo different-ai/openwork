@@ -3,7 +3,7 @@
  * an OAuth MCP with a client id AND client secret.
  *
  * The owner (Alex, Acme Robotics):
- *   1. Signs in to OpenWork Cloud via desktop handoff and creates a workspace.
+ *   1. Signs in to Micx Cloud via desktop handoff and creates a workspace.
  *   2. Installs a skill (laptop-refresh-policy — the customer's first use
  *      case) and connects a custom MCP protected by real OAuth (the repo's
  *      mock OAuth MCP server), configured with clientId + clientSecret.
@@ -18,9 +18,9 @@
  * Pairs with oauth-mcp-install.flow.mjs (member installs on a second app).
  *
  * Required env:
- * - OPENWORK_EVAL_DEN_API_URL  local Den API (e.g. http://127.0.0.1:8790)
+ * - MICX_EVAL_DEN_API_URL  local Den API (e.g. http://127.0.0.1:8790)
  * Prereqs: mock OAuth MCP on :3979 (scripts/mock-oauth-mcp-server.mjs),
- * seeded demo org (alex@acme.test / OpenWorkDemo123!).
+ * seeded demo org (alex@acme.test / MicxDemo123!).
  */
 import { mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -28,7 +28,7 @@ import { join } from "node:path";
 
 export const SHARED = {
   OWNER_EMAIL: "alex@acme.test",
-  PASSWORD: "OpenWorkDemo123!",
+  PASSWORD: "MicxDemo123!",
   SKILL_NAME: "laptop-refresh-policy",
   SKILL_DESCRIPTION: "Check whether a laptop is eligible for refresh per IT policy.",
   MCP_NAME: "acme-servicenow",
@@ -45,8 +45,8 @@ const SKILL_CONTENT = `---\nname: ${SHARED.SKILL_NAME}\ndescription: ${SHARED.SK
 const CLICK_ANY = "button, [role=button], a, div, article, li, label";
 
 async function denFetch(ctx, path, init = {}) {
-  const base = ctx.env.OPENWORK_EVAL_DEN_API_URL.trim().replace(/\/+$/, "");
-  const origin = ctx.env.OPENWORK_EVAL_DEN_ORIGIN?.trim() || base.replace("127.0.0.1", "localhost");
+  const base = ctx.env.MICX_EVAL_DEN_API_URL.trim().replace(/\/+$/, "");
+  const origin = ctx.env.MICX_EVAL_DEN_ORIGIN?.trim() || base.replace("127.0.0.1", "localhost");
   const response = await fetch(`${base}${path}`, {
     ...init,
     headers: { "content-type": "application/json", origin, ...(init.headers ?? {}) },
@@ -75,8 +75,8 @@ async function denAuthed(ctx, token, path, init = {}) {
 }
 
 const serverCallExpr = (pathTemplate, init) => `(async () => {
-  const port = localStorage.getItem("openwork.server.port");
-  const token = localStorage.getItem("openwork.server.token");
+  const port = localStorage.getItem("micx.server.port");
+  const token = localStorage.getItem("micx.server.token");
   if (!port || !token) return { ok: false, error: "no server port/token in localStorage" };
   const base = "http://127.0.0.1:" + port;
   const headers = { Authorization: "Bearer " + token, "Content-Type": "application/json" };
@@ -85,7 +85,7 @@ const serverCallExpr = (pathTemplate, init) => `(async () => {
   const wsPayload = await wsResponse.json();
   const workspaces = Array.isArray(wsPayload) ? wsPayload : wsPayload.items ?? [];
   const fromHash = (window.location.hash.match(/workspace\\/(ws_[a-z0-9]+)/) ?? [])[1];
-  const active = localStorage.getItem("openwork.react.activeWorkspace");
+  const active = localStorage.getItem("micx.react.activeWorkspace");
   const workspace = workspaces.find((entry) => entry.id === (fromHash || active)) ?? workspaces[0];
   if (!workspace) return { ok: false, error: "no workspace" };
   const response = await fetch(base + ${JSON.stringify(pathTemplate)}.replace(":id", workspace.id), {
@@ -148,14 +148,14 @@ export default {
   id: "oauth-mcp-publish",
   title: "Owner exports skill + OAuth MCP (secret redacted) and publishes to a marketplace",
   spec: "apps/server/src/extensions-export.ts",
-  requiredEnv: ["OPENWORK_EVAL_DEN_API_URL"],
+  requiredEnv: ["MICX_EVAL_DEN_API_URL"],
   steps: [
     {
       name: "App A boots; owner signs in via desktop handoff",
       run: async (ctx) => {
-        await ctx.prove("Owner is signed in to OpenWork Cloud", {
+        await ctx.prove("Owner is signed in to Micx Cloud", {
           action: async () => {
-            await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 90_000, label: "control API" });
+            await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 90_000, label: "control API" });
             const status = await authStatus(ctx);
             if (status?.status !== "signed_in") {
               const token = await denSignIn(ctx, SHARED.OWNER_EMAIL);
@@ -164,7 +164,7 @@ export default {
               await ctx.control("auth.exchange-grant", { grant: handoff.payload.grant });
             }
             await ctx.waitFor(
-              "window.__openworkControl.execute('auth.status').then(r => r.result?.status === 'signed_in').catch(() => false)",
+              "window.__micxControl.execute('auth.status').then(r => r.result?.status === 'signed_in').catch(() => false)",
               { timeoutMs: 20_000, label: "auth signed_in" },
             );
             await handleOnboarding(ctx);
@@ -181,7 +181,7 @@ export default {
     {
       name: "Owner has a workspace",
       run: async (ctx) => {
-        const wsPath = join(homedir(), ".openwork", "two-electron-demo", "eval-workspace-a");
+        const wsPath = join(homedir(), ".micx", "two-electron-demo", "eval-workspace-a");
         await mkdir(wsPath, { recursive: true });
         const inWorkspace = await ctx.eval("location.hash.includes('/workspace/')");
         if (!inWorkspace) {

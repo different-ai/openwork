@@ -1,24 +1,24 @@
 services:
-  openwork-host:
+  micx-host:
     build:
       context: .
       dockerfile: Dockerfile
       args:
         # Keep this in sync with apps/server/package.json if you want a pinned release.
-        OPENWORK_SERVER_VERSION: 0.18.4
+        MICX_SERVER_VERSION: 0.18.4
         OPENCODE_VERSION: 1.17.11
     ports:
       - "8787:8787"
     environment:
       # Set these explicitly for stable sharing.
-      # OPENWORK_TOKEN: "..."
-      # OPENWORK_HOST_TOKEN: "..."
-      # Optional: OPENWORK_APPROVAL_MODE: "auto"
-      # Optional: OPENWORK_APPROVAL_TIMEOUT_MS: "30000"
+      # MICX_TOKEN: "..."
+      # MICX_HOST_TOKEN: "..."
+      # Optional: MICX_APPROVAL_MODE: "auto"
+      # Optional: MICX_APPROVAL_TIMEOUT_MS: "30000"
       # Historical path retained so existing ./data volumes keep working.
       # Only a directory name; the orchestrator CLI itself is gone.
-      OPENWORK_DATA_DIR: /data/openwork-orchestrator
-      OPENWORK_SIDECAR_DIR: /data/sidecars
+      MICX_DATA_DIR: /data/micx-orchestrator
+      MICX_SIDECAR_DIR: /data/sidecars
     volumes:
       # Mount an existing project/workspace here.
       - ./workspace:/workspace

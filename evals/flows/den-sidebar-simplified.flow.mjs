@@ -3,7 +3,7 @@
  * sixteen flat rows become seven top-level entries with grouped children.
  *
  * Drives den-web through a Chrome CDP target (like the llm-provider flows):
- * point --cdp-url at a Chrome whose single tab is OPENWORK_EVAL_DEN_WEB_URL.
+ * point --cdp-url at a Chrome whose single tab is MICX_EVAL_DEN_WEB_URL.
  * Setup (member invite) goes through the Den API; every visible claim is
  * asserted in the real UI as Alex (admin) and Jordan (member).
  */
@@ -12,15 +12,15 @@ import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
 
 const vo = await loadVoiceoverParagraphs("den-sidebar-simplified");
 
-const DEN_API_URL = (process.env.OPENWORK_EVAL_DEN_API_URL ?? "").trim().replace(/\/+$/, "");
-const DEN_WEB_URL = (process.env.OPENWORK_EVAL_DEN_WEB_URL ?? "").trim().replace(/\/+$/, "");
-const ADMIN_EMAIL = process.env.OPENWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
-const ADMIN_PASSWORD = process.env.OPENWORK_EVAL_DEMO_PASSWORD?.trim() || "OpenWorkDemo123!";
-const MEMBER_EMAIL = process.env.OPENWORK_EVAL_MEMBER_EMAIL?.trim() || "jordan.demo@acme.test";
-const MEMBER_PASSWORD = process.env.OPENWORK_EVAL_MEMBER_PASSWORD?.trim() || "OpenWorkDemo123!";
+const DEN_API_URL = (process.env.MICX_EVAL_DEN_API_URL ?? "").trim().replace(/\/+$/, "");
+const DEN_WEB_URL = (process.env.MICX_EVAL_DEN_WEB_URL ?? "").trim().replace(/\/+$/, "");
+const ADMIN_EMAIL = process.env.MICX_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
+const ADMIN_PASSWORD = process.env.MICX_EVAL_DEMO_PASSWORD?.trim() || "MicxDemo123!";
+const MEMBER_EMAIL = process.env.MICX_EVAL_MEMBER_EMAIL?.trim() || "jordan.demo@acme.test";
+const MEMBER_PASSWORD = process.env.MICX_EVAL_MEMBER_PASSWORD?.trim() || "MicxDemo123!";
 
 const TOP_LEVEL = ["Dashboard", "Your Connections", "Extensions", "Models", "Members", "Analytics", "Settings"];
-const RETIRED_TOP_LEVEL = ["MCP Connections", "Integrations", "OpenWork Models", "LLM Providers", "Desktop Policies", "API Keys", "SCIM", "SSO", "Billing", "Org Settings"];
+const RETIRED_TOP_LEVEL = ["MCP Connections", "Integrations", "Micx Models", "LLM Providers", "Desktop Policies", "API Keys", "SCIM", "SSO", "Billing", "Org Settings"];
 const NAV_TEXT = "(document.querySelector('nav')?.innerText ?? '')";
 
 function sleep(ms) {
@@ -177,7 +177,7 @@ export default {
   title: "Den sidebar: sixteen rows become seven — tools, models, people, settings",
   kind: "user-facing",
   spec: "evals/voiceovers/den-sidebar-simplified.md",
-  requiredEnv: ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_WEB_URL"],
+  requiredEnv: ["MICX_EVAL_DEN_API_URL", "MICX_EVAL_DEN_WEB_URL"],
   steps: [
     {
       name: "Frame 1",
@@ -265,7 +265,7 @@ export default {
     {
       name: "Frame 4",
       run: async (ctx) => {
-        await ctx.prove("Models holds OpenWork Models and LLM Providers side by side", {
+        await ctx.prove("Models holds Micx Models and LLM Providers side by side", {
           voiceover: vo[3],
           action: async () => {
             await clickNav(ctx, "Models");
@@ -273,13 +273,13 @@ export default {
           assert: async () => {
             await ctx.waitFor("location.pathname.includes('/inference')", { timeoutMs: 15_000, label: "models route" });
             const children = await navChildLabels(ctx);
-            ctx.assert(children.some((label) => label.startsWith("OpenWork Models")), `Models children missing OpenWork Models: ${JSON.stringify(children)}`);
+            ctx.assert(children.some((label) => label.startsWith("Micx Models")), `Models children missing Micx Models: ${JSON.stringify(children)}`);
             ctx.assert(children.some((label) => label.startsWith("LLM Providers")), `Models children missing LLM Providers: ${JSON.stringify(children)}`);
           },
           screenshot: {
             name: "models-group",
-            claim: "The Models group shows OpenWork Models and LLM Providers as siblings.",
-            requireText: ["Models", "OpenWork Models", "LLM Providers"],
+            claim: "The Models group shows Micx Models and LLM Providers as siblings.",
+            requireText: ["Models", "Micx Models", "LLM Providers"],
             rejectText: ["Something went wrong"],
           },
         });

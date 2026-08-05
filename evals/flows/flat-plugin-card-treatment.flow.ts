@@ -6,8 +6,8 @@ const FLOW_ID = "flat-plugin-card-treatment";
 const vo = await loadVoiceoverParagraphs(FLOW_ID);
 if (!vo) throw new Error(`Missing approved voice-over script for ${FLOW_ID}.`);
 
-const EMAIL = process.env.OPENWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
-const PASSWORD = process.env.OPENWORK_EVAL_DEMO_PASSWORD?.trim() || "OpenWorkDemo123!";
+const EMAIL = process.env.MICX_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
+const PASSWORD = process.env.MICX_EVAL_DEMO_PASSWORD?.trim() || "MicxDemo123!";
 const ORGANIZATION_NAME = "Acme Robotics";
 const MARKETPLACE_NAME = "Flat Plugin Card Proof";
 const PLUGIN_NAME = "Flat Surface Proof Plugin";
@@ -143,7 +143,7 @@ export default defineFlow({
   id: FLOW_ID,
   title: "Den and Marketplace Plugin cards use a consistent flat semantic surface",
   kind: "user-facing",
-  requiredEnv: ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_WEB_URL"],
+  requiredEnv: ["MICX_EVAL_DEN_API_URL", "MICX_EVAL_DEN_WEB_URL"],
   preserveTheme: true,
   steps: [
     {

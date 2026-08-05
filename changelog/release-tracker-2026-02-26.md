@@ -78,7 +78,7 @@ Simplifies artifact handling and adds direct worker and plugin actions so common
 885 lines changed since `v0.11.125` (360 insertions, 525 deletions).
 
 #### Release importance
-Minor release: simplifies artifact management and adds faster workspace controls without changing OpenWork's overall workflow model.
+Minor release: simplifies artifact management and adds faster workspace controls without changing Micx's overall workflow model.
 
 #### Major improvements
 True
@@ -123,7 +123,7 @@ Makes worker recovery clearer and preserves existing access, while smoothing Doc
 
 #### Main changes
 - Added a plain-language Get back online action for remote worker recovery.
-- Reused existing OpenWork tokens during sandbox restarts so reconnects keep working.
+- Reused existing Micx tokens during sandbox restarts so reconnects keep working.
 - Updated the legacy Docker dev stack to mount host OpenCode config and auth.
 
 #### Lines of code changed since previous release
@@ -148,7 +148,7 @@ True
 1
 
 #### Major bug fix details
-- Fixed worker recovery so sandbox restarts can reconnect without rotating existing OpenWork tokens.
+- Fixed worker recovery so sandbox restarts can reconnect without rotating existing Micx tokens.
 
 #### Deprecated features
 False
@@ -227,7 +227,7 @@ None.
 Self-serve billing and media-rich messaging
 
 #### One-line summary
-Expands cloud billing into a self-serve management flow and lets Slack and Telegram carry richer OpenWork Router messages.
+Expands cloud billing into a self-serve management flow and lets Slack and Telegram carry richer Micx Router messages.
 
 #### Main changes
 - Added billing plan details, invoices, and subscription actions in the cloud worker dashboard.
@@ -248,7 +248,7 @@ True
 
 #### Major improvement details
 - Added billing subscription controls and invoice history in the web cloud dashboard.
-- Added first-class media transport for Slack and Telegram in OpenWork Router.
+- Added first-class media transport for Slack and Telegram in Micx Router.
 
 #### Major bugs resolved
 True
@@ -283,7 +283,7 @@ Service restarts and steadier local connectivity
 Adds in-app restart controls, makes router startup recover from local port conflicts, and smooths billing returns from checkout.
 
 #### Main changes
-- Added Settings actions to restart orchestrator, OpenCode, OpenWork server, and OpenCodeRouter.
+- Added Settings actions to restart orchestrator, OpenCode, Micx server, and OpenCodeRouter.
 - Moved OpenCodeRouter onto conflict-free localhost health ports and retried startup failures automatically.
 - Restored billing state after checkout returns and dropped Telegram self-echo loops.
 
@@ -345,7 +345,7 @@ Keeps long sessions responsive with virtualized rendering, clearer runtime statu
 1494 lines changed since `v0.11.130` (1134 insertions, 360 deletions).
 
 #### Release importance
-Major release: substantially improves how users run and monitor long OpenWork sessions through rendering, status, and compaction changes across core app surfaces.
+Major release: substantially improves how users run and monitor long Micx sessions through rendering, status, and compaction changes across core app surfaces.
 
 #### Major improvements
 True
@@ -557,7 +557,7 @@ Bundled OpenCode version stays aligned across release paths
 Pins the packaged OpenCode fallback consistently across CI, prerelease, and release builds, with no notable new app workflow changes.
 
 #### Main changes
-Keeps the bundled OpenCode fallback pinned to the same version across CI, prerelease, and release artifacts so packaged builds drift less, without introducing new user-facing OpenWork workflows.
+Keeps the bundled OpenCode fallback pinned to the same version across CI, prerelease, and release artifacts so packaged builds drift less, without introducing new user-facing Micx workflows.
 
 #### Lines of code changed since previous release
 61 lines changed since `v0.11.134` (31 insertions, 30 deletions).
@@ -601,13 +601,13 @@ None.
 `2026-03-10T04:00:32Z`
 
 #### Title
-OpenWork Share turns dropped files into worker packages
+Micx Share turns dropped files into worker packages
 
 #### One-line summary
-Adds a real worker-packaging flow in OpenWork Share, rebuilds the share site on the Next.js App Router, and makes provider connections easier to manage.
+Adds a real worker-packaging flow in Micx Share, rebuilds the share site on the Next.js App Router, and makes provider connections easier to manage.
 
 #### Main changes
-- OpenWork Share now packages dropped skills, agents, commands, and MCP or OpenWork config into worker bundles.
+- Micx Share now packages dropped skills, agents, commands, and MCP or Micx config into worker bundles.
 - The share site moves to the Next.js App Router with refreshed home and bundle pages.
 - Settings now lets users disconnect providers, while OAuth completion and sandbox startup recover more reliably.
 
@@ -624,8 +624,8 @@ True
 3
 
 #### Major improvement details
-- Turned OpenWork Share into a worker packager.
-- Replatformed OpenWork Share onto the Next.js App Router.
+- Turned Micx Share into a worker packager.
+- Replatformed Micx Share onto the Next.js App Router.
 - Added provider disconnect controls in Settings.
 
 #### Major bugs resolved
@@ -774,7 +774,7 @@ Makes shared bundle imports resolve to the exact active or newly created worker 
 460 lines changed since `v0.11.138` (364 insertions, 96 deletions).
 
 #### Release importance
-Minor release: fixes import targeting and worker startup clarity without materially changing OpenWork's overall product shape.
+Minor release: fixes import targeting and worker startup clarity without materially changing Micx's overall product shape.
 
 #### Major improvements
 False
@@ -821,7 +821,7 @@ Keeps launch actions anchored on the new session flow while making oversized-con
 #### Main changes
 - Opening the app or a new worker now stays on the new-session screen instead of jumping away unexpectedly.
 - The todo strip docks to the composer, and HTTP 413 errors now suggest compaction or a fresh session.
-- OpenWork Share adds inline link-success feedback, and the Book a Call form gets clearer topic cards.
+- Micx Share adds inline link-success feedback, and the Book a Call form gets clearer topic cards.
 
 #### Lines of code changed since previous release
 5453 lines changed since `v0.11.140` (3894 insertions, 1559 deletions).
@@ -837,7 +837,7 @@ True
 
 #### Major improvement details
 - Refreshed the Book a Call form with conversation topics and a more usable layout.
-- Added inline success feedback and richer content handling on OpenWork Share surfaces.
+- Added inline success feedback and richer content handling on Micx Share surfaces.
 
 #### Major bugs resolved
 True
@@ -881,7 +881,7 @@ Republishes synchronized desktop, server, orchestrator, and router packages so i
 26 lines changed since `v0.11.141` (13 insertions, 13 deletions).
 
 #### Release importance
-Minor release: keeps release artifacts aligned for distribution without changing how users use OpenWork.
+Minor release: keeps release artifacts aligned for distribution without changing how users use Micx.
 
 #### Major improvements
 False
@@ -1047,7 +1047,7 @@ Adds a protected Den admin panel for support operations, routes enterprise conta
 2493 lines changed since `v0.11.144` (2031 insertions, 462 deletions).
 
 #### Release importance
-Minor release: adds a focused operator capability and several UX improvements without broadly reshaping the OpenWork product.
+Minor release: adds a focused operator capability and several UX improvements without broadly reshaping the Micx product.
 
 #### Major improvements
 True
@@ -1158,7 +1158,7 @@ Also released:
 1727 lines changed since `v0.11.146` (1551 insertions, 176 deletions).
 
 #### Release importance
-Minor release: extends sharing workflows and fixes setup friction without materially changing OpenWork's overall architecture.
+Minor release: extends sharing workflows and fixes setup friction without materially changing Micx's overall architecture.
 
 #### Major improvements
 True
@@ -1168,7 +1168,7 @@ True
 
 #### Major improvement details
 - Added an existing-worker import flow for shared skills.
-- Added a local Docker publisher flow for OpenWork Share.
+- Added a local Docker publisher flow for Micx Share.
 - Bundled OpenCode for Den Render workers so worker provisioning is more self-contained.
 
 #### Major bugs resolved
@@ -1203,18 +1203,18 @@ None.
 Guided Den onboarding and single-skill Share
 
 #### One-line summary
-Turns Den signup into a calmer guided flow with clearer provisioning states while refocusing OpenWork Share on publishing one skill well.
+Turns Den signup into a calmer guided flow with clearer provisioning states while refocusing Micx Share on publishing one skill well.
 
 #### Main changes
 - Rebuilt Den onboarding as a guided flow with clearer naming, intent, loading, and browser-access states.
-- Simplified OpenWork Share to publish a single skill, with cleaner frontmatter and fuller shared previews.
+- Simplified Micx Share to publish a single skill, with cleaner frontmatter and fuller shared previews.
 - Added a polished feedback card and clearer import and status feedback across app surfaces.
 
 #### Lines of code changed since previous release
 4390 lines changed since `v0.11.147` (2764 insertions, 1626 deletions).
 
 #### Release importance
-Major release: substantially changes both Den onboarding and the OpenWork Share publishing flow in ways users will immediately notice.
+Major release: substantially changes both Den onboarding and the Micx Share publishing flow in ways users will immediately notice.
 
 #### Major improvements
 True
@@ -1224,7 +1224,7 @@ True
 
 #### Major improvement details
 - Redesigned Den onboarding into a guided stepper flow.
-- Simplified OpenWork Share to publish a single skill.
+- Simplified Micx Share to publish a single skill.
 - Added a polished feedback entrypoint card in Settings.
 
 #### Major bugs resolved
@@ -1323,7 +1323,7 @@ Prioritizes common providers in new-session setup, reduces inline image churn wh
 342 lines changed since `v0.11.149` (241 insertions, 101 deletions).
 
 #### Release importance
-Minor release: delivers focused session and settings polish without materially changing OpenWork's broader workflows.
+Minor release: delivers focused session and settings polish without materially changing Micx's broader workflows.
 
 #### Major improvements
 False

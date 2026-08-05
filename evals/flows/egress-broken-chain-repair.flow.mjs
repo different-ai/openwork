@@ -81,8 +81,8 @@ function repairProbeScript(url, caPath, disabled) {
     const caPath = ${JSON.stringify(caPath)};
     const rootPem = await readFile(caPath, "utf8");
     const logs = [];
-    const userDataDir = await mkdtemp(path.join(tmpdir(), "openwork-egress-chain-repair-"));
-    const parentEnv = ${disabled ? "{ OPENWORK_DISABLE_CHAIN_REPAIR: '1' }" : "{}"};
+    const userDataDir = await mkdtemp(path.join(tmpdir(), "micx-egress-chain-repair-"));
+    const parentEnv = ${disabled ? "{ MICX_DISABLE_CHAIN_REPAIR: '1' }" : "{}"};
     const caEnv = await resolveSystemCaEnv({
       tlsModule: { getCACertificates() { return []; } },
       userDataDir,
@@ -125,7 +125,7 @@ export default {
         let plain;
         let repaired;
         let disabled;
-        await ctx.prove("Leaf-only TLS chains fail plainly, product repair succeeds, the kill switch fails again, and OpenWork product diagnostics name the chain fault", {
+        await ctx.prove("Leaf-only TLS chains fail plainly, product repair succeeds, the kill switch fails again, and Micx product diagnostics name the chain fault", {
           voiceover: vo[0],
           action: async () => {
             lab = await startEgressLab({ profile: "broken-chain" });
@@ -145,7 +145,7 @@ export default {
               witness(ctx, outputContainsChainError(JSON.stringify(plainJson)), "plain failure names the first-certificate / missing-intermediate error", JSON.stringify(plainJson));
               witness(ctx, repaired.status === 0 && repairedJson?.child?.status === 0, "app-side resolveSystemCaEnv chain repair makes the child fetch succeed", JSON.stringify(repairedJson));
               witness(ctx, repairedJson?.logs?.some((line) => /chain repaired/.test(line)) === true, "repair logs say the AIA intermediate was added", JSON.stringify(repairedJson?.logs));
-              witness(ctx, disabled.status === 0 && disabledJson?.child?.status !== 0, "OPENWORK_DISABLE_CHAIN_REPAIR=1 fails again", JSON.stringify(disabledJson));
+              witness(ctx, disabled.status === 0 && disabledJson?.child?.status !== 0, "MICX_DISABLE_CHAIN_REPAIR=1 fails again", JSON.stringify(disabledJson));
               witness(ctx, outputContainsChainError(JSON.stringify(disabledJson)), "disabled repair preserves the missing-intermediate failure", JSON.stringify(disabledJson));
               await expectRuntimeTrust(ctx, { caPath: lab.caPath });
               await expectVerdictNames(ctx, { lab, expect: "broken-chain" });

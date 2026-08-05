@@ -10,7 +10,7 @@ function testShot(hash: string): Shot {
     png: Buffer.from("canned png"),
     hash,
     route: "#/workspace/ws_test/session",
-    visibleText: "OpenWork composer",
+    visibleText: "Micx composer",
     at: "2026-07-29T12:00:00.000Z",
   };
 }

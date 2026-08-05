@@ -3,8 +3,8 @@ import { denApiFetch, denApiUrl, denWebUrl, signInApi, signInViaBrowser } from "
 
 const FLOW_ID = "delete-custom-marketplace";
 const vo = await loadVoiceoverParagraphs(FLOW_ID);
-const OWNER_EMAIL = process.env.OPENWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
-const OWNER_PASSWORD = process.env.OPENWORK_EVAL_DEMO_PASSWORD?.trim() || "OpenWorkDemo123!";
+const OWNER_EMAIL = process.env.MICX_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
+const OWNER_PASSWORD = process.env.MICX_EVAL_DEMO_PASSWORD?.trim() || "MicxDemo123!";
 const MARKETPLACE_NAME = `Fraimz Custom Marketplace ${Date.now()}`;
 const UPDATED_MARKETPLACE_NAME = `${MARKETPLACE_NAME} Edited`;
 
@@ -48,7 +48,7 @@ export default {
   title: "Admins discreetly edit and safely delete custom marketplaces while managed catalogs stay protected",
   kind: "user-facing",
   preserveTheme: true,
-  requiredEnv: ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_WEB_URL"],
+  requiredEnv: ["MICX_EVAL_DEN_API_URL", "MICX_EVAL_DEN_WEB_URL"],
   steps: [
     {
       name: "Setup",
@@ -78,8 +78,8 @@ export default {
         });
 
         const marketplaces = await denApiFetch("/v1/marketplaces?status=active&limit=100", { headers: authHeaders() });
-        state.builtInMarketplaceId = marketplaces.body?.items?.find((item) => item?.name === "OpenWork Marketplace")?.id ?? "";
-        witness(ctx, state.builtInMarketplaceId.length > 0, "The built-in OpenWork Marketplace is available for the protection check");
+        state.builtInMarketplaceId = marketplaces.body?.items?.find((item) => item?.name === "Micx Marketplace")?.id ?? "";
+        witness(ctx, state.builtInMarketplaceId.length > 0, "The built-in Micx Marketplace is available for the protection check");
 
         await signInViaBrowser(ctx, OWNER_EMAIL, OWNER_PASSWORD);
       },
@@ -186,7 +186,7 @@ export default {
           screenshot: screenshot(
             "custom-marketplace-removed",
             "The deleted custom marketplace is absent from the active marketplace list.",
-            ["Marketplaces", "OpenWork Marketplace"],
+            ["Marketplaces", "Micx Marketplace"],
             [UPDATED_MARKETPLACE_NAME],
           ),
         });
@@ -199,10 +199,10 @@ export default {
           voiceover: vo[4],
           action: async () => {
             await navigateTo(ctx, `/dashboard/marketplaces/${encodeURIComponent(state.builtInMarketplaceId)}`);
-            await ctx.waitForText("OpenWork Marketplace", { timeoutMs: 30_000 });
+            await ctx.waitForText("Micx Marketplace", { timeoutMs: 30_000 });
           },
           assert: async () => {
-            await ctx.expectText("OpenWork Marketplace");
+            await ctx.expectText("Micx Marketplace");
             const actionsTriggerVisible = await ctx.eval(`Boolean(document.querySelector('[data-testid="marketplace-actions-trigger"]'))`);
             witness(ctx, actionsTriggerVisible === false, "The built-in marketplace exposes no edit or delete menu", { actionsTriggerVisible });
             const directDelete = await denApiFetch(`/v1/marketplaces/${encodeURIComponent(state.builtInMarketplaceId)}/delete`, {
@@ -218,7 +218,7 @@ export default {
           screenshot: screenshot(
             "built-in-marketplace-protected",
             "The built-in marketplace remains available without edit or delete controls.",
-            ["OpenWork Marketplace", "Add a plugin"],
+            ["Micx Marketplace", "Add a plugin"],
             ["Edit", "Delete"],
           ),
         });

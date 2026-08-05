@@ -9,10 +9,10 @@ import { createDenTypeId } from "../../ee/packages/utils/src/typeid.js"
 import { db } from "../../ee/apps/den-api/src/db.js"
 
 const organizationSlug = process.env.DEN_DEMO_ORG_SLUG?.trim() || "acme-robotics-demo"
-const workerName = process.env.OPENWORK_EVAL_CLOUD_CONNECT_WORKER_NAME?.trim() || "Cloud Connect Test Worker"
-const workerUrl = process.env.OPENWORK_EVAL_CLOUD_CONNECT_WORKER_URL?.trim() || "http://127.0.0.1:3979/worker"
-const hostToken = process.env.OPENWORK_EVAL_CLOUD_CONNECT_HOST_TOKEN?.trim() || "mock-worker-host-token"
-const clientToken = process.env.OPENWORK_EVAL_CLOUD_CONNECT_CLIENT_TOKEN?.trim() || "mock-worker-client-token"
+const workerName = process.env.MICX_EVAL_CLOUD_CONNECT_WORKER_NAME?.trim() || "Cloud Connect Test Worker"
+const workerUrl = process.env.MICX_EVAL_CLOUD_CONNECT_WORKER_URL?.trim() || "http://127.0.0.1:3979/worker"
+const hostToken = process.env.MICX_EVAL_CLOUD_CONNECT_HOST_TOKEN?.trim() || "mock-worker-host-token"
+const clientToken = process.env.MICX_EVAL_CLOUD_CONNECT_CLIENT_TOKEN?.trim() || "mock-worker-client-token"
 
 async function seed() {
   const organizations = await db

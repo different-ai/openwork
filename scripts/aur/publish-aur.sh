@@ -21,7 +21,7 @@ if [ -z "${AUR_SSH_PRIVATE_KEY:-}" ]; then
 fi
 
 # AUR package repo name (AUR repo = ssh://aur@aur.archlinux.org/<name>.git)
-AUR_REPO="${AUR_REPO:-openwork}"
+AUR_REPO="${AUR_REPO:-micx}"
 AUR_REMOTE="ssh://aur@aur.archlinux.org/${AUR_REPO}.git"
 
 if [ "${AUR_SKIP_UPDATE:-}" != "1" ]; then
@@ -57,7 +57,7 @@ if git diff --quiet -- PKGBUILD .SRCINFO; then
 fi
 
 git add PKGBUILD .SRCINFO
-git -c user.name="OpenWork Release Bot" \
+git -c user.name="Micx Release Bot" \
     -c user.email="release-bot@users.noreply.github.com" \
     commit -m "chore(aur): update PKGBUILD for ${VERSION}"
 

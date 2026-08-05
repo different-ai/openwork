@@ -168,8 +168,8 @@ function withActors(ctx: FlowContext, actors: Record<string, Actor>): ScenarioCo
 
 function denPrecondition(stageDen: DenServiceOptions): (ctx: FlowContext) => Promise<string | false> {
   return async (ctx) => {
-    const apiUrl = ctx.env.OPENWORK_EVAL_DEN_API_URL?.trim();
-    const webUrl = ctx.env.OPENWORK_EVAL_DEN_WEB_URL?.trim();
+    const apiUrl = ctx.env.MICX_EVAL_DEN_API_URL?.trim();
+    const webUrl = ctx.env.MICX_EVAL_DEN_WEB_URL?.trim();
     if (!apiUrl || !webUrl) return NEEDS_DEN_STACK;
     if (!stageDen.orgMode) return false;
     try {
@@ -179,8 +179,8 @@ function denPrecondition(stageDen: DenServiceOptions): (ctx: FlowContext) => Pro
       }
       return false;
     } catch (error) {
-      if (stageDen.orgMode === "multi_org" && ctx.env.OPENWORK_EVAL_DEN_MULTI_ORG?.trim()) {
-        ctx.log(`Runtime config probe failed at ${runtimeConfigUrl(webUrl)}; honoring OPENWORK_EVAL_DEN_MULTI_ORG fallback: ${messageText(error)}`);
+      if (stageDen.orgMode === "multi_org" && ctx.env.MICX_EVAL_DEN_MULTI_ORG?.trim()) {
+        ctx.log(`Runtime config probe failed at ${runtimeConfigUrl(webUrl)}; honoring MICX_EVAL_DEN_MULTI_ORG fallback: ${messageText(error)}`);
         return false;
       }
       return `Scenario needs a Den stack runtime config at ${runtimeConfigUrl(webUrl)}: ${messageText(error)}`;

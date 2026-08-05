@@ -11,38 +11,38 @@ import {
   readDenClientState,
   server,
   test,
-} from "@openwork/testkit";
+} from "@micx/testkit";
 
 const orgsPath = "/api/den/v1/me/orgs";
-const appSpecsEnabled = process.env.OPENWORK_EVAL_APP_SPECS === "1";
-const localPlacement = process.env.OPENWORK_EVAL_DAYTONA !== "1" && !process.env.OPENWORK_EVAL_DEN_API_URL?.trim();
+const appSpecsEnabled = process.env.MICX_EVAL_APP_SPECS === "1";
+const localPlacement = process.env.MICX_EVAL_DAYTONA !== "1" && !process.env.MICX_EVAL_DEN_API_URL?.trim();
 const mysqlOpen = await localMysqlIsRunning();
 const title = !appSpecsEnabled
-  ? "fresh-profile first sign-in healing skipped — needs: set OPENWORK_EVAL_APP_SPECS=1"
+  ? "fresh-profile first sign-in healing skipped — needs: set MICX_EVAL_APP_SPECS=1"
   : !localPlacement
-    ? "fresh-profile first sign-in healing skipped — needs local placement without OPENWORK_EVAL_DEN_API_URL"
+    ? "fresh-profile first sign-in healing skipped — needs local placement without MICX_EVAL_DEN_API_URL"
     : !mysqlOpen
       ? "fresh-profile first sign-in healing skipped — needs MySQL on 127.0.0.1:3306"
       : "fresh-profile first sign-in heals organization and Connect state after transient faults";
 
 test.skipIf(!appSpecsEnabled || !localPlacement || !mysqlOpen)(title, async ({ evidence, place }) => {
-  needs({ optIn: ["OPENWORK_EVAL_APP_SPECS"] });
+  needs({ optIn: ["MICX_EVAL_APP_SPECS"] });
 
   await using den = await server({
     place,
     org: {
       name: "First Signin Heal",
       admin: {
-        email: `first-signin-admin-${Date.now()}@openwork.test`,
+        email: `first-signin-admin-${Date.now()}@micx.test`,
         name: "First Signin Admin",
-        password: "OpenWorkEval123!",
+        password: "MicxEval123!",
       },
     },
   });
   await inviteMember(den, "fresh", {
-    email: `first-signin-member-${Date.now()}@openwork.test`,
+    email: `first-signin-member-${Date.now()}@micx.test`,
     name: "Fresh Profile Member",
-    password: "OpenWorkEval123!",
+    password: "MicxEval123!",
   });
   await using proxy = await faultProxy(den.ref);
   proxy.faults.status(orgsPath, 429, { times: 3 });

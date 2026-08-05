@@ -1,9 +1,9 @@
 import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
 
 const FLOW_ID = "den-download-link-match-allowed-versions";
-const DEN_API_URL = cleanBaseUrl(process.env.OPENWORK_EVAL_DEN_API_URL);
-const DEN_TOKEN = process.env.OPENWORK_EVAL_DEN_TOKEN?.trim() || "";
-const MEMBER_TOKEN = process.env.OPENWORK_EVAL_MEMBER_DEN_TOKEN?.trim() || DEN_TOKEN;
+const DEN_API_URL = cleanBaseUrl(process.env.MICX_EVAL_DEN_API_URL);
+const DEN_TOKEN = process.env.MICX_EVAL_DEN_TOKEN?.trim() || "";
+const MEMBER_TOKEN = process.env.MICX_EVAL_MEMBER_DEN_TOKEN?.trim() || DEN_TOKEN;
 const ALLOWED_VERSIONS = ["0.17.37", "0.17.38"];
 const SELECTED_VERSION = "0.17.38";
 const DISALLOWED_VERSION = "0.17.39";
@@ -143,7 +143,7 @@ export default {
   title: "Organization install links download the highest allowed desktop version",
   kind: "user-facing",
   requiresApp: false,
-  requiredEnv: ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_TOKEN"],
+  requiredEnv: ["MICX_EVAL_DEN_API_URL", "MICX_EVAL_DEN_TOKEN"],
   steps: [
     {
       name: "Frame 1 — Admin restricts desktop versions",
@@ -185,7 +185,7 @@ export default {
     {
       name: "Frame 3 — Download selects the highest allowed version",
       run: async (ctx) => {
-        await ctx.prove("Clicking download returns OpenWork Enterprise 0.17.38 instead of the disallowed 0.17.39 release", {
+        await ctx.prove("Clicking download returns Micx Enterprise 0.17.38 instead of the disallowed 0.17.39 release", {
           voiceover: vo[2],
           action: async () => {
             state.restrictedDownload = await fetchInstallerDownload(state.memberInstallToken);
@@ -211,7 +211,7 @@ export default {
           assert: async () => {
             witness(ctx, state.legacyDownload.status === 302, "The legacy-pinned download redirects to the app artifact", state.legacyDownload);
             witness(ctx, downloadMentionsVersion(state.legacyDownload, LEGACY_SELECTED_VERSION), "The legacy-pinned download uses the highest allowed legacy version", state.legacyDownload);
-            witness(ctx, state.legacyDownload.location?.includes("/openwork-enterprise-win-x64-"), "The legacy-pinned download still selects the enterprise app artifact", state.legacyDownload);
+            witness(ctx, state.legacyDownload.location?.includes("/micx-enterprise-win-x64-"), "The legacy-pinned download still selects the enterprise app artifact", state.legacyDownload);
           },
         });
       },
@@ -228,8 +228,8 @@ export default {
           },
           assert: async () => {
             witness(ctx, state.unrestrictedDownload.status === 302, "The unrestricted download endpoint redirects to GitHub", state.unrestrictedDownload);
-            witness(ctx, state.unrestrictedDownload.location?.includes("/different-ai/openwork/releases/download/"), "The unrestricted download uses the same GitHub release path as the public app", state.unrestrictedDownload);
-            witness(ctx, state.unrestrictedDownload.location?.includes("/openwork-enterprise-win-x64-"), "The unrestricted download selects the enterprise app artifact", state.unrestrictedDownload);
+            witness(ctx, state.unrestrictedDownload.location?.includes("/different-ai/micx/releases/download/"), "The unrestricted download uses the same GitHub release path as the public app", state.unrestrictedDownload);
+            witness(ctx, state.unrestrictedDownload.location?.includes("/micx-enterprise-win-x64-"), "The unrestricted download selects the enterprise app artifact", state.unrestrictedDownload);
             witness(ctx, !state.unrestrictedDownload.location?.includes("opaque-token"), "The release URL does not receive the Den install token", state.unrestrictedDownload);
           },
         });

@@ -1,11 +1,11 @@
 ---
 title: "Cross-chat memory"
-description: "How OpenWork can answer questions about past sessions."
+description: "How Micx can answer questions about past sessions."
 ---
 
-OpenWork's cross-chat memory currently comes from saved session history. It is not a separate long-term memory database, and it does not automatically inject every old chat into every new prompt.
+Micx's cross-chat memory currently comes from saved session history. It is not a separate long-term memory database, and it does not automatically inject every old chat into every new prompt.
 
-When an agent is running inside the OpenWork app, it can use OpenWork's semantic UI actions to look up past chats:
+When an agent is running inside the Micx app, it can use Micx's semantic UI actions to look up past chats:
 
 - `session.list_sessions` lists recent sessions across the workspaces the app knows about.
 - `session.open` opens a matching session by ID.
@@ -26,15 +26,15 @@ That means you can ask things like:
 3. The agent reads the transcript and answers from the returned messages.
 4. If there are multiple likely matches, the agent asks which session you meant.
 
-Because this uses the OpenWork UI, the agent may briefly navigate away from your current session to inspect another one. You can ask it to return to the current session afterward.
+Because this uses the Micx UI, the agent may briefly navigate away from your current session to inspect another one. You can ask it to return to the current session afterward.
 
 ## Current limits
 
-- Session lookup is based on the sessions OpenWork has loaded for the current app and workspace context.
+- Session lookup is based on the sessions Micx has loaded for the current app and workspace context.
 - Transcript reads return a bounded set of recent messages from the opened session. If an older part of a long chat is not returned, the agent should say that instead of guessing.
 - This is not semantic search over every message yet. Clear titles, session IDs, workspace names, or topic clues help the agent find the right chat.
-- The agent can only read sessions available to the current OpenWork app and user.
+- The agent can only read sessions available to the current Micx app and user.
 
 ## How to ask
 
-Give the agent whatever clue you have: a session ID, title, person name, project name, workspace, or rough topic. For example: `Use the OpenWork app UI to find the customer migration chat and tell me what I said about customer references.`
+Give the agent whatever clue you have: a session ID, title, person name, project name, workspace, or rough topic. For example: `Use the Micx app UI to find the customer migration chat and tell me what I said about customer references.`

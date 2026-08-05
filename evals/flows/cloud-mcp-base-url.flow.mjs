@@ -57,7 +57,7 @@ export default {
           voiceover: vo[1],
           assert: async () => {
             const output = run(ctx, "$ den-api MCP resource tests", [
-              "--filter", "@openwork-ee/den-api", "exec", "bun", "test",
+              "--filter", "@micx-ee/den-api", "exec", "bun", "test",
               "test/mcp-resource.test.ts", "test/mcp-resource-url.test.ts",
             ]);
             witness(ctx, output.includes("21 pass"), "All resource derivation and external OAuth regression tests pass", output.split("\n").at(-1) ?? output);
@@ -72,7 +72,7 @@ export default {
           voiceover: vo[2],
           assert: async () => {
             const output = run(ctx, "$ desktop cloud MCP reconciliation test", [
-              "--filter", "@openwork/app", "exec", "bun", "test",
+              "--filter", "@micx/app", "exec", "bun", "test",
               "tests/cloud-mcp-health.test.ts",
               "--test-name-pattern", "uses the minted web proxy resource",
             ]);
@@ -88,14 +88,14 @@ export default {
           voiceover: vo[3],
           assert: async () => {
             const proxyOutput = run(ctx, "$ den-web trusted proxy test", [
-              "--filter", "@openwork-ee/den-web", "exec", "bun", "test",
+              "--filter", "@micx-ee/den-web", "exec", "bun", "test",
               "app/api/_lib/upstream-proxy.test.mjs",
               "--test-name-pattern", "overwrites spoofable forwarded headers",
             ]);
             witness(ctx, proxyOutput.includes("1 pass"), "The web proxy overwrites spoofable forwarding metadata", proxyOutput.split("\n").at(-1) ?? proxyOutput);
 
             const connectOutput = run(ctx, "$ cloud MCP proxy endpoint test", [
-              "--filter", "openwork-server", "exec", "bun", "test",
+              "--filter", "micx-server", "exec", "bun", "test",
               "src/cloud-mcp-reconcile.e2e.test.ts",
               "--test-name-pattern", "normalizes a harmless trailing slash",
             ]);

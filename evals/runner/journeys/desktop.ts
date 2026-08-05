@@ -117,18 +117,18 @@ function normalizeBaseUrl(value: string): string {
 }
 
 async function ensureDesktopControl(ctx: FlowContext, timeoutMs = 60_000): Promise<void> {
-  await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs, label: "desktop control API" });
+  await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs, label: "desktop control API" });
 }
 
 async function ensureDesktopBridge(ctx: FlowContext): Promise<void> {
   await ensureDesktopControl(ctx, 120_000);
-  await ctx.waitFor("Boolean(window.__OPENWORK_ELECTRON__?.invokeDesktop)", { timeoutMs: 60_000, label: "desktop bridge" });
+  await ctx.waitFor("Boolean(window.__MICX_ELECTRON__?.invokeDesktop)", { timeoutMs: 60_000, label: "desktop bridge" });
 }
 
 async function currentRoute(ctx: FlowContext): Promise<string> {
   const route = await ctx.eval(`(() => {
     try {
-      const snapshotRoute = window.__openworkControl?.snapshot?.().route;
+      const snapshotRoute = window.__micxControl?.snapshot?.().route;
       if (typeof snapshotRoute === 'string' && snapshotRoute) return snapshotRoute;
     } catch {}
     return window.location.hash.replace(/^#/, '') || window.location.pathname;
@@ -149,7 +149,7 @@ async function chatFirstSessionReady(ctx: FlowContext): Promise<boolean> {
   // supports chat-first onboarding on /session with a composer before a
   // workspace-scoped route exists; that is a usable first-run desktop surface.
   return Boolean(await ctx.eval(`(() => {
-    const route = window.__openworkControl?.snapshot?.().route || window.location.hash.replace(/^#/, '') || window.location.pathname;
+    const route = window.__micxControl?.snapshot?.().route || window.location.hash.replace(/^#/, '') || window.location.pathname;
     const hasComposer = Boolean(document.querySelector(${JSON.stringify(EDITOR_SELECTOR)}));
     const hasFolderInput = Boolean(document.querySelector('input[placeholder="/workspace/my-project"]'));
     return route === '/session' && hasComposer && !hasFolderInput;
@@ -240,7 +240,7 @@ async function createWorkspaceFromWelcome(ctx: FlowContext, workspacePath: strin
 
     if (!triedControl) {
       triedControl = true;
-      const canControlCreate = await ctx.eval("Boolean(window.__openworkControl?.listActions?.().find((action) => action.id === 'workspace.create' && !action.disabled))").catch(() => false);
+      const canControlCreate = await ctx.eval("Boolean(window.__micxControl?.listActions?.().find((action) => action.id === 'workspace.create' && !action.disabled))").catch(() => false);
       if (canControlCreate) {
         // Provenance: apps/app/src/react-app/shell/session-route.tsx:2260-2277
         // exposes workspace.create; durable-auth-mcp.flow.mjs:282-289 and
@@ -259,7 +259,7 @@ async function createWorkspaceFromWelcome(ctx: FlowContext, workspacePath: strin
 
     const clicked = await clickVisibleButton(ctx, [
       "Continue to workspace",
-      "Continue without OpenWork Models",
+      "Continue without Micx Models",
       "Skip and use the free model",
       "Continue",
       "Skip",
@@ -285,10 +285,10 @@ async function createWorkspaceFromWelcome(ctx: FlowContext, workspacePath: strin
 
 async function getDesktopDenState(ctx: FlowContext): Promise<DesktopDenState> {
   const state = await ctx.eval(`(() => ({
-    token: (localStorage.getItem('openwork.den.authToken') ?? '').trim(),
-    baseUrl: (localStorage.getItem('openwork.den.baseUrl') ?? '').trim(),
-    apiBaseUrl: (localStorage.getItem('openwork.den.apiBaseUrl') ?? '').trim(),
-    activeOrgName: (localStorage.getItem('openwork.den.activeOrgName') ?? '').trim(),
+    token: (localStorage.getItem('micx.den.authToken') ?? '').trim(),
+    baseUrl: (localStorage.getItem('micx.den.baseUrl') ?? '').trim(),
+    apiBaseUrl: (localStorage.getItem('micx.den.apiBaseUrl') ?? '').trim(),
+    activeOrgName: (localStorage.getItem('micx.den.activeOrgName') ?? '').trim(),
   }))()`);
   return desktopDenStateFromUnknown(state);
 }
@@ -304,26 +304,26 @@ async function desktopTokenMatchesActor(ctx: FlowContext, token: string, actor: 
 
 async function writeDesktopBootstrap(ctx: FlowContext, denWebUrlValue: string, denApiUrlValue: string): Promise<void> {
   // Provenance: marketplace-connect-only-delivery.flow.mjs:442-463 writes the
-  // desktop bootstrap through the Electron bridge, mirrors openwork.den.*
+  // desktop bootstrap through the Electron bridge, mirrors micx.den.*
   // localStorage keys, clears stale auth, then reloads before exchange.
   const bootstrap = { baseUrl: denWebUrlValue, apiBaseUrl: denApiUrlValue, requireSignin: false, handoff: null };
   const written = await ctx.eval(`(async () => {
-    const bridge = window.__OPENWORK_ELECTRON__?.invokeDesktop;
+    const bridge = window.__MICX_ELECTRON__?.invokeDesktop;
     if (!bridge) return { ok: false, reason: 'desktop bridge missing' };
     await bridge('setDesktopBootstrapConfig', ${JSON.stringify(bootstrap)});
-    localStorage.setItem('openwork.den.baseUrl', ${JSON.stringify(denWebUrlValue)});
-    localStorage.setItem('openwork.den.apiBaseUrl', ${JSON.stringify(denApiUrlValue)});
+    localStorage.setItem('micx.den.baseUrl', ${JSON.stringify(denWebUrlValue)});
+    localStorage.setItem('micx.den.apiBaseUrl', ${JSON.stringify(denApiUrlValue)});
     for (const key of [
-      'openwork.den.authToken',
-      'openwork.den.activeOrgId',
-      'openwork.den.activeOrgSlug',
-      'openwork.den.activeOrgName',
-      'openwork.den.mcp.sync',
+      'micx.den.authToken',
+      'micx.den.activeOrgId',
+      'micx.den.activeOrgSlug',
+      'micx.den.activeOrgName',
+      'micx.den.mcp.sync',
     ]) localStorage.removeItem(key);
     for (const key of Object.keys(localStorage)) {
-      if (key.startsWith('openwork.den.desktopConfig:')) localStorage.removeItem(key);
+      if (key.startsWith('micx.den.desktopConfig:')) localStorage.removeItem(key);
     }
-    window.dispatchEvent(new CustomEvent('openwork-den-settings-changed', { detail: {} }));
+    window.dispatchEvent(new CustomEvent('micx-den-settings-changed', { detail: {} }));
     return { ok: true };
   })()`, { awaitPromise: true });
   if (!isRecord(written) || written.ok !== true) {
@@ -338,13 +338,13 @@ async function completeDesktopCloudOnboardingIfNeeded(ctx: FlowContext): Promise
   // Provenance: marketplace-connect-only-delivery.flow.mjs:495-520 and
   // first-connection.flow.mjs:851-884 click through org/resource/model gates
   // after Den auth until the workspace/session surface is reachable.
-  const workspacePath = await mkdtemp(join(tmpdir(), "openwork-den-workspace-"));
+  const workspacePath = await mkdtemp(join(tmpdir(), "micx-den-workspace-"));
   for (let attempt = 0; attempt < 8; attempt += 1) {
     if (await workspaceRouteReady(ctx)) return;
     const clicked = await clickVisibleButton(ctx, [
       "Continue with organization",
       "Continue to workspace",
-      "Continue without OpenWork Models",
+      "Continue without Micx Models",
       "Skip and use the free model",
       "Continue",
       "Skip",
@@ -382,7 +382,7 @@ async function createDesktopHandoff(ctx: FlowContext, actor: Actor, denWebUrlVal
   const handoff = await denApiFetch(ctx, "/v1/auth/desktop-handoff", {
     method: "POST",
     headers: new Headers({ authorization: `Bearer ${token}` }),
-    body: JSON.stringify({ desktopScheme: "openwork" }),
+    body: JSON.stringify({ desktopScheme: "micx" }),
   }, { denWebUrl: denWebUrlValue, denApiUrl: denApiUrlValue });
   if (!handoff.response.ok || !isRecord(handoff.body) || typeof handoff.body.grant !== "string") {
     throw new EvalError(`Desktop handoff create failed: ${handoff.response.status} ${handoff.text.slice(0, 300)}`);
@@ -463,7 +463,7 @@ async function waitForAssistantActivity(ctx: FlowContext, timeoutMs: number): Pr
   await ctx.waitFor(`(() => {
     const normalize = (value) => (value ?? '').replace(/\s+/g, ' ').trim();
     const assistant = [...document.querySelectorAll('[data-message-role="assistant"], .markdown-content')]
-      .some((element) => normalize(element.textContent).length > 0 && normalize(element.textContent) !== 'OpenWork');
+      .some((element) => normalize(element.textContent).length > 0 && normalize(element.textContent) !== 'Micx');
     const active = [...document.querySelectorAll('[aria-label]')]
       .some((element) => ['Thinking', 'Responding', 'Waiting', 'Session streaming', 'Session active'].includes(element.getAttribute('aria-label') ?? ''));
     return assistant || active;
@@ -471,7 +471,7 @@ async function waitForAssistantActivity(ctx: FlowContext, timeoutMs: number): Pr
 }
 
 export async function firstBoot(ctx: FlowContext, options: FirstBootOptions): Promise<FirstBootResult> {
-  const workspacePath = options.workspacePath?.trim() || await mkdtemp(join(tmpdir(), "openwork-workspace-"));
+  const workspacePath = options.workspacePath?.trim() || await mkdtemp(join(tmpdir(), "micx-workspace-"));
   await mkdir(workspacePath, { recursive: true });
   await ctx.on(options.surface, async () => {
     await ensureDesktopControl(ctx, options.timeoutMs ?? DEFAULT_FIRST_BOOT_TIMEOUT_MS);
@@ -483,7 +483,7 @@ export async function firstBoot(ctx: FlowContext, options: FirstBootOptions): Pr
     if (route.startsWith("/settings")) {
       await ctx.navigateHash("/session");
       await ctx.waitFor(`(() => {
-        const route = window.__openworkControl?.snapshot?.().route || window.location.hash.replace(/^#/, '') || window.location.pathname;
+        const route = window.__micxControl?.snapshot?.().route || window.location.hash.replace(/^#/, '') || window.location.pathname;
         return route === '/session' && Boolean(document.querySelector(${JSON.stringify(EDITOR_SELECTOR)}));
       })()`, { timeoutMs: 30_000, label: "chat-first session from settings" });
       ctx.log("Desktop returned from settings to the chat-first session route.");
@@ -491,7 +491,7 @@ export async function firstBoot(ctx: FlowContext, options: FirstBootOptions): Pr
     }
     await createWorkspaceFromWelcome(ctx, workspacePath, options.timeoutMs ?? DEFAULT_FIRST_BOOT_TIMEOUT_MS);
     await ctx.waitFor(`(() => {
-      const route = window.__openworkControl?.snapshot?.().route || window.location.hash.replace(/^#/, '') || window.location.pathname;
+      const route = window.__micxControl?.snapshot?.().route || window.location.hash.replace(/^#/, '') || window.location.pathname;
       const hasComposer = Boolean(document.querySelector(${JSON.stringify(EDITOR_SELECTOR)}));
       return window.location.hash.includes('/workspace/') || (route === '/session' && hasComposer);
     })()`, {
@@ -523,12 +523,12 @@ export async function connectDen(ctx: FlowContext, options: ConnectDenOptions): 
 
     await writeDesktopBootstrap(ctx, baseUrl, apiBaseUrl);
     const grant = await createDesktopHandoff(ctx, actor, baseUrl, apiBaseUrl, options.organizationId);
-    await ctx.waitFor("Boolean(window.__openworkControl?.listActions?.().some((action) => action.id === 'auth.exchange-grant' && !action.disabled))", {
+    await ctx.waitFor("Boolean(window.__micxControl?.listActions?.().some((action) => action.id === 'auth.exchange-grant' && !action.disabled))", {
       timeoutMs: 30_000,
       label: "auth.exchange-grant control action",
     });
     await ctx.control("auth.exchange-grant", { grant, baseUrl });
-    await ctx.waitFor("Boolean((localStorage.getItem('openwork.den.authToken') ?? '').trim())", {
+    await ctx.waitFor("Boolean((localStorage.getItem('micx.den.authToken') ?? '').trim())", {
       timeoutMs: 60_000,
       label: "persisted Den auth token",
     });
@@ -556,7 +556,7 @@ export async function runPrompt(ctx: FlowContext, options: RunPromptOptions): Pr
     const submitted = await clickRunOrPressEnter(ctx);
     if (!submitted) throw new EvalError("Could not submit the composer prompt with Run task or Enter.");
     ctx.log(`Submitted prompt via ${submitted}.`);
-    await ctx.waitFor("window.location.hash.includes('/session') || window.__openworkControl?.snapshot?.().route?.includes('/session')", {
+    await ctx.waitFor("window.location.hash.includes('/session') || window.__micxControl?.snapshot?.().route?.includes('/session')", {
       timeoutMs: 60_000,
       label: "session route after prompt submit",
     });
@@ -571,7 +571,7 @@ export async function openSettings(ctx: FlowContext, options: OpenSettingsOption
     const section = options.section?.trim() || "cloud-account";
     const workspaceId = await ctx.eval(`(() => {
       const match = window.location.hash.match(/\/workspace\/([^/]+)/);
-      return match?.[1] || localStorage.getItem('openwork.react.activeWorkspace') || '';
+      return match?.[1] || localStorage.getItem('micx.react.activeWorkspace') || '';
     })()`);
     const route = typeof workspaceId === "string" && workspaceId
       ? `/workspace/${workspaceId}/settings/${section}`

@@ -95,7 +95,7 @@ function denDbEnv(database) {
 }
 
 function runDenDbScript(args, database, options = {}) {
-  return runCommand("pnpm", ["--filter", "@openwork-ee/den-db", ...args], {
+  return runCommand("pnpm", ["--filter", "@micx-ee/den-db", ...args], {
     env: denDbEnv(database),
     timeoutMs: options.timeoutMs ?? 360_000,
     allowFailure: options.allowFailure,

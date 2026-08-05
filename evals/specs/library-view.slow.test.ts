@@ -8,20 +8,20 @@ import {
   evalIn,
   signIn,
   waitFor,
-} from "@openwork/behaviors";
-import type { DenSession } from "@openwork/behaviors";
-import { allocateFreePort, navigate } from "@openwork/cdp";
-import type { Surface } from "@openwork/cdp";
-import { photoRoll, screenshot, validate } from "@openwork/fraimz";
-import { chrome } from "@openwork/hosts";
-import { startMockMcp } from "@openwork/labs";
+} from "@micx/behaviors";
+import type { DenSession } from "@micx/behaviors";
+import { allocateFreePort, navigate } from "@micx/cdp";
+import type { Surface } from "@micx/cdp";
+import { photoRoll, screenshot, validate } from "@micx/fraimz";
+import { chrome } from "@micx/hosts";
+import { startMockMcp } from "@micx/labs";
 
-const apiUrl = process.env.OPENWORK_EVAL_DEN_API_URL?.trim().replace(/\/+$/, "") ?? "";
-const webUrl = process.env.OPENWORK_EVAL_DEN_WEB_URL?.trim().replace(/\/+$/, "") ?? "";
+const apiUrl = process.env.MICX_EVAL_DEN_API_URL?.trim().replace(/\/+$/, "") ?? "";
+const webUrl = process.env.MICX_EVAL_DEN_WEB_URL?.trim().replace(/\/+$/, "") ?? "";
 const title = !apiUrl
-  ? "library view skipped: set OPENWORK_EVAL_DEN_API_URL to a running Den API"
+  ? "library view skipped: set MICX_EVAL_DEN_API_URL to a running Den API"
   : !webUrl
-    ? "library view skipped: set OPENWORK_EVAL_DEN_WEB_URL to a running Den Web"
+    ? "library view skipped: set MICX_EVAL_DEN_WEB_URL to a running Den Web"
     : "members can browse their plugin library and its access provenance";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -60,7 +60,7 @@ async function organizationMemberIdByEmail(session: DenSession, orgId: string, e
   const result = await denFetch(session, "/v1/org", {
     headers: {
       authorization: `Bearer ${session.token}`,
-      "x-openwork-org-id": orgId,
+      "x-micx-org-id": orgId,
     },
   });
   const members = isRecord(result.body) && Array.isArray(result.body.members)
@@ -97,9 +97,9 @@ async function useMobileViewport(browser: Surface): Promise<void> {
 
 test.skipIf(!apiUrl || !webUrl)(title, async () => {
   const den = { apiUrl, webUrl };
-  const password = process.env.OPENWORK_EVAL_DEMO_PASSWORD?.trim() || "OpenWorkDemo123!";
+  const password = process.env.MICX_EVAL_DEMO_PASSWORD?.trim() || "MicxDemo123!";
   const admin = await signIn(den, {
-    email: process.env.OPENWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test",
+    email: process.env.MICX_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test",
     password,
   });
   const orgId = await organizationId(admin);
@@ -108,7 +108,7 @@ test.skipIf(!apiUrl || !webUrl)(title, async () => {
   const mockPort = await allocateFreePort();
   await using mock = await startMockMcp({
     port: mockPort,
-    publicUrl: process.env.OPENWORK_EVAL_LIBRARY_MOCK_PUBLIC_URL?.trim() || undefined,
+    publicUrl: process.env.MICX_EVAL_LIBRARY_MOCK_PUBLIC_URL?.trim() || undefined,
   });
   await deleteConnectionsNamed(admin, "Library Spec Linear ");
   const connection = await createOrgConnection(admin, {
@@ -132,7 +132,7 @@ test.skipIf(!apiUrl || !webUrl)(title, async () => {
         method: "POST",
         headers: {
           authorization: `Bearer ${casey.token}`,
-          "x-openwork-org-id": orgId,
+          "x-micx-org-id": orgId,
         },
       }).catch(() => undefined);
     }
@@ -141,28 +141,28 @@ test.skipIf(!apiUrl || !webUrl)(title, async () => {
         method: "DELETE",
         headers: {
           authorization: `Bearer ${admin.token}`,
-          "x-openwork-org-id": orgId,
+          "x-micx-org-id": orgId,
         },
       }).catch(() => undefined);
     }
   });
 
-  const caseyEmail = process.env.OPENWORK_EVAL_CREATOR_EMAIL?.trim() || "casey.spec@acme.test";
+  const caseyEmail = process.env.MICX_EVAL_CREATOR_EMAIL?.trim() || "casey.spec@acme.test";
   caseySession = await ensureMemberSession(den, admin, {
     email: caseyEmail,
-    password: process.env.OPENWORK_EVAL_MEMBER_PASSWORD?.trim() || password,
+    password: process.env.MICX_EVAL_MEMBER_PASSWORD?.trim() || password,
     name: "Casey Spec",
-    markVerifiedCmd: process.env.OPENWORK_EVAL_MARK_VERIFIED_CMD?.trim(),
+    markVerifiedCmd: process.env.MICX_EVAL_MARK_VERIFIED_CMD?.trim(),
   });
   const casey = caseySession;
   await selectOrganization(casey, orgId);
 
-  const novaEmail = process.env.OPENWORK_EVAL_MEMBER_EMAIL?.trim() || "nova.spec@acme.test";
+  const novaEmail = process.env.MICX_EVAL_MEMBER_EMAIL?.trim() || "nova.spec@acme.test";
   const nova = await ensureMemberSession(den, admin, {
     email: novaEmail,
-    password: process.env.OPENWORK_EVAL_MEMBER_PASSWORD?.trim() || password,
+    password: process.env.MICX_EVAL_MEMBER_PASSWORD?.trim() || password,
     name: "Nova Spec",
-    markVerifiedCmd: process.env.OPENWORK_EVAL_MARK_VERIFIED_CMD?.trim(),
+    markVerifiedCmd: process.env.MICX_EVAL_MARK_VERIFIED_CMD?.trim(),
   });
   await selectOrganization(nova, orgId);
 
@@ -174,7 +174,7 @@ test.skipIf(!apiUrl || !webUrl)(title, async () => {
     method: "POST",
     headers: {
       authorization: `Bearer ${casey.token}`,
-      "x-openwork-org-id": orgId,
+      "x-micx-org-id": orgId,
     },
     body: JSON.stringify({
       name: pluginName,
@@ -194,7 +194,7 @@ test.skipIf(!apiUrl || !webUrl)(title, async () => {
     method: "POST",
     headers: {
       authorization: `Bearer ${admin.token}`,
-      "x-openwork-org-id": orgId,
+      "x-micx-org-id": orgId,
     },
     body: JSON.stringify({ name: teamName }),
   });
@@ -207,7 +207,7 @@ test.skipIf(!apiUrl || !webUrl)(title, async () => {
     method: "PATCH",
     headers: {
       authorization: `Bearer ${admin.token}`,
-      "x-openwork-org-id": orgId,
+      "x-micx-org-id": orgId,
     },
     body: JSON.stringify({ memberIds: [novaMemberId] }),
   });
@@ -219,7 +219,7 @@ test.skipIf(!apiUrl || !webUrl)(title, async () => {
     method: "POST",
     headers: {
       authorization: `Bearer ${casey.token}`,
-      "x-openwork-org-id": orgId,
+      "x-micx-org-id": orgId,
     },
     body: JSON.stringify({ orgMembershipId: novaMemberId, role: "viewer" }),
   });
@@ -230,7 +230,7 @@ test.skipIf(!apiUrl || !webUrl)(title, async () => {
     method: "POST",
     headers: {
       authorization: `Bearer ${casey.token}`,
-      "x-openwork-org-id": orgId,
+      "x-micx-org-id": orgId,
     },
     body: JSON.stringify({ teamId, role: "viewer" }),
   });
@@ -241,7 +241,7 @@ test.skipIf(!apiUrl || !webUrl)(title, async () => {
   const caseyAccess = await denFetch(casey, "/v1/me/library", {
     headers: {
       authorization: `Bearer ${casey.token}`,
-      "x-openwork-org-id": orgId,
+      "x-micx-org-id": orgId,
     },
   });
   expect(caseyAccess.response.status).toBe(200);
@@ -254,7 +254,7 @@ test.skipIf(!apiUrl || !webUrl)(title, async () => {
   const novaAccess = await denFetch(nova, "/v1/me/library", {
     headers: {
       authorization: `Bearer ${nova.token}`,
-      "x-openwork-org-id": orgId,
+      "x-micx-org-id": orgId,
     },
   });
   expect(novaAccess.response.status).toBe(200);
@@ -289,7 +289,7 @@ test.skipIf(!apiUrl || !webUrl)(title, async () => {
   const capabilities = await denFetch(casey, "/v1/resources/marketplace-capabilities", {
     headers: {
       authorization: `Bearer ${casey.token}`,
-      "x-openwork-org-id": orgId,
+      "x-micx-org-id": orgId,
     },
   });
   expect(capabilities.response.status).toBe(200);
@@ -301,8 +301,8 @@ test.skipIf(!apiUrl || !webUrl)(title, async () => {
     label: "Den Web origin before Nova auth token handoff",
   });
   const tokenStored = await evalIn(browser, `(() => {
-    localStorage.setItem("openwork:web:auth-token", ${JSON.stringify(nova.token)});
-    return localStorage.getItem("openwork:web:auth-token") === ${JSON.stringify(nova.token)};
+    localStorage.setItem("micx:web:auth-token", ${JSON.stringify(nova.token)});
+    return localStorage.getItem("micx:web:auth-token") === ${JSON.stringify(nova.token)};
   })()`);
   expect(tokenStored).toBe(true);
 

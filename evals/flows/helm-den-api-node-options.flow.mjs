@@ -5,7 +5,7 @@ import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
 
 const FLOW_ID = "helm-den-api-node-options";
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
-const CHART = join(ROOT, "packaging", "helm", "openwork-ee");
+const CHART = join(ROOT, "packaging", "helm", "micx-ee");
 const vo = await loadVoiceoverParagraphs(FLOW_ID);
 
 function witness(ctx, condition, assertion, actual) {
@@ -35,7 +35,7 @@ export default {
               "helm",
               [
                 "template",
-                "openwork-ee",
+                "micx-ee",
                 CHART,
                 "--set-string",
                 "config.denApiNodeOptions=--use-openssl-ca --max-old-space-size=4096",
@@ -67,7 +67,7 @@ export default {
               "The chart explicitly clears the previous valueFrom reference during upgrades",
             );
             ctx.output(
-              "$ helm template openwork-ee ... --set-string config.denApiNodeOptions=...",
+              "$ helm template micx-ee ... --set-string config.denApiNodeOptions=...",
               rendered
                 .split("\n")
                 .filter((line) => line.includes("DEN_API_NODE_OPTIONS") || line.includes("NODE_OPTIONS"))
@@ -88,7 +88,7 @@ export default {
               "helm",
               [
                 "template",
-                "openwork-ee",
+                "micx-ee",
                 CHART,
                 "--set-string",
                 "denApi.env.NODE_OPTIONS=--tls-max-v1.2",
@@ -115,7 +115,7 @@ export default {
               "The legacy direct value is not combined with valueFrom",
             );
             ctx.output(
-              "$ helm template openwork-ee ... --set-string denApi.env.NODE_OPTIONS=...",
+              "$ helm template micx-ee ... --set-string denApi.env.NODE_OPTIONS=...",
               rendered
                 .split("\n")
                 .filter((line) => line.includes("DEN_API_NODE_OPTIONS") || line.includes("NODE_OPTIONS") || line.includes("--tls-max"))

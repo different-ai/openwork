@@ -56,12 +56,12 @@ export default {
       run: async (ctx) => {
         const userAgent = await ctx.eval("navigator.userAgent");
         ctx.assert(typeof userAgent === "string" && userAgent.includes("Electron/"), `Expected Electron userAgent, got: ${userAgent}`);
-        await ctx.waitFor("Boolean(window.__openworkControl)", {
+        await ctx.waitFor("Boolean(window.__micxControl)", {
           timeoutMs: 60_000,
           label: "control API",
         });
         await ctx.waitFor(
-          "window.__openworkControl.listActions().some((a) => a.id === 'session.create_task' && !a.disabled)",
+          "window.__micxControl.listActions().some((a) => a.id === 'session.create_task' && !a.disabled)",
           { timeoutMs: 60_000, label: "enabled task creation action" },
         );
       },
@@ -71,7 +71,7 @@ export default {
       run: async (ctx) => {
         await ctx.control("session.create_task");
         const selected = await ctx.waitFor(`(() => {
-          const route = window.__openworkControl.snapshot().route;
+          const route = window.__micxControl.snapshot().route;
           const match = new RegExp('session/([^/?#]+)').exec(route);
           if (!match) return null;
           const sessionId = decodeURIComponent(match[1]);

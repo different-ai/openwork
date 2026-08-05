@@ -1,7 +1,7 @@
 import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
 
 const FLOW_ID = "new-signin-flow";
-const DEN_WEB_URL = (process.env.OPENWORK_EVAL_DEN_WEB_URL ?? "http://localhost:3005").replace(/\/+$/, "");
+const DEN_WEB_URL = (process.env.MICX_EVAL_DEN_WEB_URL ?? "http://localhost:3005").replace(/\/+$/, "");
 const vo = await loadVoiceoverParagraphs(FLOW_ID);
 
 export default {
@@ -19,7 +19,7 @@ export default {
             await openSignedOutRoot(ctx);
           },
           assert: async () => {
-            await ctx.expectText("Start using OpenWork", { timeoutMs: 30_000 });
+            await ctx.expectText("Start using Micx", { timeoutMs: 30_000 });
             const actual = await readAuthSurface(ctx);
             ctx.assert(actual.emailInputs === 1, `Expected one email field, got ${JSON.stringify(actual)}`);
             ctx.assert(actual.passwordInputs === 0, `Expected no password field, got ${JSON.stringify(actual)}`);
@@ -29,7 +29,7 @@ export default {
           },
           screenshot: {
             name: "email-first-start",
-            requireText: ["Start using OpenWork", "EMAIL", "Next"],
+            requireText: ["Start using Micx", "EMAIL", "Next"],
             rejectText: ["Password", "Continue with Google", "Create account"],
           },
         });
@@ -50,7 +50,7 @@ export default {
             });
           },
           assert: async () => {
-            const requests = await ctx.eval("window.__openworkLoginOptionRequests ?? []");
+            const requests = await ctx.eval("window.__micxLoginOptionRequests ?? []");
             ctx.assert(requests.length === 1, `Expected one login-options request, got ${JSON.stringify(requests)}`);
             ctx.assert(requests[0]?.endsWith("email=pat%40acme.test"), `Expected request to include the typed email, got ${JSON.stringify(requests)}`);
             const actual = await readAuthSurface(ctx);
@@ -193,7 +193,7 @@ async function openSignedOutRoot(ctx) {
   })()`);
   await ctx.waitFor("document.readyState === 'complete'", { timeoutMs: 30_000, label: "den-web loaded" });
   await ctx.eval(`(() => {
-    window.localStorage.removeItem('openwork:web:auth-token');
+    window.localStorage.removeItem('micx:web:auth-token');
     window.sessionStorage.clear();
     return fetch('/api/auth/sign-out', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
       .then(() => true)
@@ -204,7 +204,7 @@ async function openSignedOutRoot(ctx) {
     return true;
   })()`);
   await ctx.waitFor(
-    `(() => document.body.innerText.includes('Start using OpenWork') && Boolean(document.querySelector('input[type="email"]')))()`,
+    `(() => document.body.innerText.includes('Start using Micx') && Boolean(document.querySelector('input[type="email"]')))()`,
     { timeoutMs: 30_000, label: "email-first auth panel" },
   );
 }
@@ -212,12 +212,12 @@ async function openSignedOutRoot(ctx) {
 async function installLoginOptionsMock(ctx, responsePayload) {
   await ctx.eval(`((payload) => {
     const originalFetch = window.fetch.bind(window);
-    window.__openworkLoginOptionRequests = [];
+    window.__micxLoginOptionRequests = [];
     window.fetch = (input, init) => {
       const rawUrl = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
       const url = new URL(rawUrl, window.location.origin);
       if (url.pathname === '/v1/auth/login-options' || url.pathname === '/api/den/v1/auth/login-options') {
-        window.__openworkLoginOptionRequests.push(url.pathname + url.search);
+        window.__micxLoginOptionRequests.push(url.pathname + url.search);
         return Promise.resolve(new Response(JSON.stringify({ email: url.searchParams.get('email') ?? '', ...payload }), {
           status: 200,
           headers: { 'content-type': 'application/json' },

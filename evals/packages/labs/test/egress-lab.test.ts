@@ -13,8 +13,8 @@ import {
   resolveEgressProfileConfig,
   startEgressLab,
 } from "../src/egress.ts";
-import { productDiagnosticsPrecondition } from "@openwork/behaviors";
-import { matchVerdictExpectations } from "@openwork/matchers";
+import { productDiagnosticsPrecondition } from "@micx/behaviors";
+import { matchVerdictExpectations } from "@micx/matchers";
 
 function hi(value: number): number {
   return (value >> 8) & 0xff;
@@ -93,7 +93,7 @@ test("profile config resolution normalizes defaults", () => {
 
 test("openssl argv construction includes CA, AIA, and fullchain prerequisites", () => {
   const commands = opensslCertificateCommands({
-    dir: "/tmp/openwork-egress-test",
+    dir: "/tmp/micx-egress-test",
     hostname: "localhost",
     aiaUrl: "http://127.0.0.1:9000/__egress-lab/intermediate.der",
     corporateIssuer: true,
@@ -112,7 +112,7 @@ test("openssl argv construction includes CA, AIA, and fullchain prerequisites", 
     "leaf-csr",
     "leaf-cert",
   ]);
-  assert.ok(commands.some((command) => command.args.includes("/CN=OpenWork Egress Lab Corporate Interception CA")));
+  assert.ok(commands.some((command) => command.args.includes("/CN=Micx Egress Lab Corporate Interception CA")));
   assert.ok(commands.some((command) => command.args.includes("-extfile")));
   const rootCert = commands.find((command) => command.label === "root-cert");
   assert.ok(rootCert, "root-cert command must exist");

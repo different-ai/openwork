@@ -13,11 +13,11 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function routeUrl(ctx, path) {
-  return new URL(path, ctx.env.OPENWORK_EVAL_LANDING_URL).toString();
+  return new URL(path, ctx.env.MICX_EVAL_LANDING_URL).toString();
 }
 
 function mockUrl(ctx, path) {
-  return new URL(path, ctx.env.OPENWORK_EVAL_POSTHOG_MOCK_URL).toString();
+  return new URL(path, ctx.env.MICX_EVAL_POSTHOG_MOCK_URL).toString();
 }
 
 function recordAssertion(ctx, assertion, passed, actual) {
@@ -54,7 +54,7 @@ async function grantClipboardPermissions(ctx) {
     return;
   }
 
-  const origin = new URL(ctx.env.OPENWORK_EVAL_LANDING_URL).origin;
+  const origin = new URL(ctx.env.MICX_EVAL_LANDING_URL).origin;
   await ctx.client.send("Browser.grantPermissions", {
     origin,
     permissions: ["clipboardReadWrite", "clipboardSanitizedWrite"],
@@ -126,10 +126,10 @@ export default {
   title: "Landing hero prompt analytics fire end-to-end",
   kind: "user-facing",
   spec: "evals/README.md",
-  // The landing website has no theme system or __openworkControl API; skip the
+  // The landing website has no theme system or __micxControl API; skip the
   // desktop-app light-mode bootstrap instead of waiting for it to time out.
   preserveTheme: true,
-  requiredEnv: ["OPENWORK_EVAL_LANDING_URL", "OPENWORK_EVAL_POSTHOG_MOCK_URL"],
+  requiredEnv: ["MICX_EVAL_LANDING_URL", "MICX_EVAL_POSTHOG_MOCK_URL"],
   steps: [
     {
       name: "Hero prompt copy captures the analytics event",
@@ -145,7 +145,7 @@ export default {
             await fetch(routeUrl(ctx, "/")).catch(() => {});
             await ctx.eval(`location.href = ${JSON.stringify(routeUrl(ctx, "/"))}; true`);
             await ctx.waitFor(
-              `Boolean(document.querySelector(${JSON.stringify(COPY_BUTTON_SELECTOR)})) && document.body.innerText.includes("Install OpenWork on my computer")`,
+              `Boolean(document.querySelector(${JSON.stringify(COPY_BUTTON_SELECTOR)})) && document.body.innerText.includes("Install Micx on my computer")`,
               { timeoutMs: 30_000, label: "hero prompt copy button" },
             );
             // Let any post-compile dev-client refresh settle before arming.
@@ -238,9 +238,9 @@ export default {
               const headerButtons = Array.from(header ? header.querySelectorAll("button") : []);
               const headerLinks = Array.from(header ? header.querySelectorAll("a") : []);
               return {
-                heroPromptVisible: bodyText.includes("Install OpenWork on my computer") && bodyText.includes("start.md?v=hero"),
-                headerVisible: bodyText.includes("Paste this prompt — it installs OpenWork for you"),
-                executionPreviewVisible: bodyText.includes("now paste it into Claude Code") && bodyText.includes("Installs OpenWork") && bodyText.includes("Opens ready to run"),
+                heroPromptVisible: bodyText.includes("Install Micx on my computer") && bodyText.includes("start.md?v=hero"),
+                headerVisible: bodyText.includes("Paste this prompt — it installs Micx for you"),
+                executionPreviewVisible: bodyText.includes("now paste it into Claude Code") && bodyText.includes("Installs Micx") && bodyText.includes("Opens ready to run"),
                 copyPromptNavButtons: headerButtons.filter((button) => button.innerText.includes("Copy Prompt")).length,
                 downloadLinkVisible: headerLinks.some((link) => link.textContent.includes("Download") && link.href.endsWith("/download")),
               };
@@ -289,17 +289,17 @@ export default {
             guideFetch = {
               status: response.status,
               firstLines: body.split("\n").slice(0, 3).join("\n"),
-              startsWithGuide: body.startsWith("# OpenWork Start"),
-              offersMcpConnection: body.includes("Want me to connect the OpenWork MCP to this agent"),
-              includesCodexMcpSetup: body.includes("codex mcp add openwork --url https://api.openworklabs.com/mcp/agent")
-                && body.includes("codex mcp login openwork"),
+              startsWithGuide: body.startsWith("# Micx Start"),
+              offersMcpConnection: body.includes("Want me to connect the Micx MCP to this agent"),
+              includesCodexMcpSetup: body.includes("codex mcp add micx --url https://api.micxlabs.com/mcp/agent")
+                && body.includes("codex mcp login micx"),
             };
             const agentEvents = await waitForMockEvents(ctx, POSTHOG_SERVER_EVENT, 1);
             agentEvent = agentEvents[0] || null;
 
             await ctx.eval(`location.href = ${JSON.stringify(routeUrl(ctx, `/start.md?v=${PROMPT_VARIANT}`))}; true`);
             await ctx.waitFor(
-              `document.body.innerText.includes(${JSON.stringify("OpenWork Start")})`,
+              `document.body.innerText.includes(${JSON.stringify("Micx Start")})`,
               { timeoutMs: 30_000, label: "start.md guide in browser" },
             );
             browserEvents = await waitForMockEvents(ctx, POSTHOG_SERVER_EVENT, 2);
@@ -312,13 +312,13 @@ export default {
             });
             recordAssertion(
               ctx,
-              "Agent fetch returns HTTP 200 and the OpenWork start guide markdown",
+              "Agent fetch returns HTTP 200 and the Micx start guide markdown",
               guideFetch?.status === 200 && guideFetch.startsWithGuide === true,
               guideFetch,
             );
             recordAssertion(
               ctx,
-              "The start guide offers to connect the OpenWork MCP and includes the Codex setup path",
+              "The start guide offers to connect the Micx MCP and includes the Codex setup path",
               guideFetch?.offersMcpConnection === true && guideFetch.includesCodexMcpSetup === true,
               guideFetch,
             );
@@ -349,7 +349,7 @@ export default {
           },
           screenshot: {
             name: "start-md-guide",
-            requireText: ["OpenWork Start", "Want me to connect the OpenWork MCP to this agent"],
+            requireText: ["Micx Start", "Want me to connect the Micx MCP to this agent"],
           },
         });
       },

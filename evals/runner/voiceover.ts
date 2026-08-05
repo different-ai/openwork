@@ -17,7 +17,7 @@ export const VOICEOVERS_DIR = join(RUNNER_DIR, "..", "voiceovers");
 export const FLOWS_DIR = join(RUNNER_DIR, "..", "flows");
 
 function resolveVoiceoversDir(): string {
-  return process.env.OPENWORK_EVAL_VOICEOVERS_DIR?.trim() || VOICEOVERS_DIR;
+  return process.env.MICX_EVAL_VOICEOVERS_DIR?.trim() || VOICEOVERS_DIR;
 }
 
 export function voiceoverScriptPath(flowId: string): string {

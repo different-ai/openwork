@@ -9,7 +9,7 @@ const FLOW_ID = "xlsx-chat-attachments";
 const PROVIDER_ID = "xlsx-attachments-mock";
 const MODEL_ID = "office-attachment-mock";
 const MOCK_PORT = 18082;
-const DOWNLOAD_DIR = "/tmp/openwork-xlsx-attachment-downloads";
+const DOWNLOAD_DIR = "/tmp/micx-xlsx-attachment-downloads";
 const ARTIFACT_PATH = "artifacts/RevenueWorkbook.xlsx";
 const PROMPT = "Please inspect the attached Excel workbook, preserve an exact copy as a workspace artifact, and summarize the sheet values, formula, formatting, and merge range.";
 const FOLLOW_UP = "Confirm this spreadsheet attachment session still works after reopening.";
@@ -23,7 +23,7 @@ function shellQuote(value) {
 }
 
 function runInSandbox(ctx, script, timeout = 120_000) {
-  const sandbox = ctx.env?.OPENWORK_EVAL_DAYTONA_SANDBOX?.trim();
+  const sandbox = ctx.env?.MICX_EVAL_DAYTONA_SANDBOX?.trim();
   if (!sandbox) {
     const result = spawnSync("bash", ["-lc", script], { cwd: REPO_ROOT, encoding: "utf8", timeout });
     ctx.assert(result.status === 0, `Local command failed: ${result.stderr || result.stdout}`);
@@ -49,20 +49,20 @@ function record(ctx, condition, assertion, actual = "") {
 function startMockProvider(ctx) {
   return runInSandbox(ctx, `
 set -euo pipefail
-if [ -f /tmp/openwork-xlsx-attachments-mock.pid ]; then
-  kill "$(cat /tmp/openwork-xlsx-attachments-mock.pid)" >/dev/null 2>&1 || true
+if [ -f /tmp/micx-xlsx-attachments-mock.pid ]; then
+  kill "$(cat /tmp/micx-xlsx-attachments-mock.pid)" >/dev/null 2>&1 || true
 fi
-rm -f /tmp/openwork-xlsx-attachments-mock.log /tmp/openwork-xlsx-attachments-mock.pid
-nohup node evals/drivers/office-attachments-mock-provider.mjs --mode xlsx --port ${MOCK_PORT} --workspace ${shellQuote(ctx.workspacePath || "/workspace")} > /tmp/openwork-xlsx-attachments-mock.log 2>&1 < /dev/null &
-echo $! > /tmp/openwork-xlsx-attachments-mock.pid
+rm -f /tmp/micx-xlsx-attachments-mock.log /tmp/micx-xlsx-attachments-mock.pid
+nohup node evals/drivers/office-attachments-mock-provider.mjs --mode xlsx --port ${MOCK_PORT} --workspace ${shellQuote(ctx.workspacePath || "/workspace")} > /tmp/micx-xlsx-attachments-mock.log 2>&1 < /dev/null &
+echo $! > /tmp/micx-xlsx-attachments-mock.pid
 for _ in $(seq 1 80); do
-  if curl -sf http://127.0.0.1:${MOCK_PORT}/health >/tmp/openwork-xlsx-attachments-health.json; then
-    cat /tmp/openwork-xlsx-attachments-health.json
+  if curl -sf http://127.0.0.1:${MOCK_PORT}/health >/tmp/micx-xlsx-attachments-health.json; then
+    cat /tmp/micx-xlsx-attachments-health.json
     exit 0
   fi
   sleep 0.25
 done
-cat /tmp/openwork-xlsx-attachments-mock.log >&2
+cat /tmp/micx-xlsx-attachments-mock.log >&2
 exit 1
 `).trim();
 }
@@ -71,13 +71,13 @@ function stopMockProvider(ctx) {
   return runInSandbox(ctx, `
 set -uo pipefail
 curl -sf --connect-timeout 1 --max-time 2 -X POST http://127.0.0.1:${MOCK_PORT}/shutdown >/dev/null 2>&1 || true
-if [ -s /tmp/openwork-xlsx-attachments-mock.pid ]; then
-  pid="$(cat /tmp/openwork-xlsx-attachments-mock.pid 2>/dev/null || true)"
+if [ -s /tmp/micx-xlsx-attachments-mock.pid ]; then
+  pid="$(cat /tmp/micx-xlsx-attachments-mock.pid 2>/dev/null || true)"
   if [ -n "$pid" ] && kill -0 "$pid" >/dev/null 2>&1; then
     kill "$pid" >/dev/null 2>&1 || true
   fi
 fi
-rm -f /tmp/openwork-xlsx-attachments-mock.pid
+rm -f /tmp/micx-xlsx-attachments-mock.pid
 printf 'mock stopped\n'
 `, 30_000).trim();
 }
@@ -99,19 +99,19 @@ async function pollProof(ctx, predicate, timeoutMs, label) {
 
 async function forceEnglish(ctx) {
   const shouldReload = await ctx.eval(`(() => {
-    const current = localStorage.getItem("openwork.language");
-    localStorage.setItem("openwork.language", "en");
+    const current = localStorage.getItem("micx.language");
+    localStorage.setItem("micx.language", "en");
     return current !== "en" || document.documentElement.getAttribute("lang") !== "en";
   })()`);
   if (!shouldReload) return;
   await ctx.eval("location.reload()");
-  await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 60_000, label: "control API after language reload" });
+  await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 60_000, label: "control API after language reload" });
 }
 
 async function appRouteState(ctx) {
   return await ctx.eval(`(() => {
     const hash = location.hash;
-    const control = window.__openworkControl;
+    const control = window.__micxControl;
     const snapshot = control && typeof control.snapshot === "function" ? control.snapshot() : null;
     const route = (snapshot && snapshot.route) || (hash.startsWith("#") ? hash.slice(1) : hash);
     const pathSegment = (value, segment) => {
@@ -123,7 +123,7 @@ async function appRouteState(ctx) {
       const end = rest.indexOf("/");
       return end < 0 ? rest : rest.slice(0, end);
     };
-    const workspaceId = pathSegment(hash, "workspace") || localStorage.getItem("openwork.react.activeWorkspace") || "";
+    const workspaceId = pathSegment(hash, "workspace") || localStorage.getItem("micx.react.activeWorkspace") || "";
     const sessionId = pathSegment(hash, "session") || pathSegment(route, "session") || "";
     return { hash, route, workspaceId, sessionId };
   })()`);
@@ -132,8 +132,8 @@ async function appRouteState(ctx) {
 async function serverJson(ctx, path, init = {}) {
   const method = init.method || "GET";
   const raw = await ctx.eval(`(async () => {
-    const port = localStorage.getItem("openwork.server.port");
-    const token = localStorage.getItem("openwork.server.token");
+    const port = localStorage.getItem("micx.server.port");
+    const token = localStorage.getItem("micx.server.token");
     if (!port || !token) return JSON.stringify({ ok: false, status: 0, text: "missing server port/token" });
     const response = await fetch("http://127.0.0.1:" + port + ${JSON.stringify(path)}, {
       method: ${JSON.stringify(method)},
@@ -149,7 +149,7 @@ async function serverJson(ctx, path, init = {}) {
 }
 
 async function serverShell(ctx, path, init = {}) {
-  const auth = await ctx.eval(`JSON.stringify({ port: localStorage.getItem("openwork.server.port"), token: localStorage.getItem("openwork.server.token") })`);
+  const auth = await ctx.eval(`JSON.stringify({ port: localStorage.getItem("micx.server.port"), token: localStorage.getItem("micx.server.token") })`);
   const { port, token } = JSON.parse(auth);
   ctx.assert(Boolean(port && token), "missing server port/token");
   const method = init.method || "GET";
@@ -188,7 +188,7 @@ async function configureMockProvider(ctx) {
           [PROVIDER_ID]: {
             npm: "@ai-sdk/openai-compatible",
             name: "XLSX Attachments Mock",
-            options: { baseURL, apiKey: "sk-openwork-xlsx-attachments-eval" },
+            options: { baseURL, apiKey: "sk-micx-xlsx-attachments-eval" },
             models: {
               [MODEL_ID]: {
                 name: "Spreadsheet attachment mock",
@@ -203,24 +203,24 @@ async function configureMockProvider(ctx) {
   });
   await serverShell(ctx, `/workspace/${encodeURIComponent(ctx.workspaceId)}/engine/reload`, { method: "POST" });
   await ctx.eval(`(() => {
-    const prefsRaw = localStorage.getItem("openwork.preferences");
+    const prefsRaw = localStorage.getItem("micx.preferences");
     let prefs = {};
     try { prefs = prefsRaw ? JSON.parse(prefsRaw) : {}; } catch { prefs = {}; }
     if (!prefs || typeof prefs !== "object" || Array.isArray(prefs)) prefs = {};
-    localStorage.setItem("openwork.preferences", JSON.stringify({
+    localStorage.setItem("micx.preferences", JSON.stringify({
       ...prefs,
       defaultModel: { providerID: ${JSON.stringify(PROVIDER_ID)}, modelID: ${JSON.stringify(MODEL_ID)} },
       modelVariant: null,
       providerStepCompleted: true,
     }));
-    localStorage.setItem("openwork.defaultModel", ${JSON.stringify(`${PROVIDER_ID}/${MODEL_ID}`)});
-    localStorage.removeItem("openwork.sessionModels.${ctx.workspaceId}");
+    localStorage.setItem("micx.defaultModel", ${JSON.stringify(`${PROVIDER_ID}/${MODEL_ID}`)});
+    localStorage.removeItem("micx.sessionModels.${ctx.workspaceId}");
   })()`);
   ctx.output("XLSX mock provider", JSON.stringify({ provider: PROVIDER_ID, model: MODEL_ID, baseURL }, null, 2));
 }
 
 async function createFreshSession(ctx) {
-  await ctx.waitFor(`window.__openworkControl.listActions().some((item) => item.id === "session.create_task" && !item.disabled)`, { timeoutMs: 60_000, label: "session.create_task enabled" });
+  await ctx.waitFor(`window.__micxControl.listActions().some((item) => item.id === "session.create_task" && !item.disabled)`, { timeoutMs: 60_000, label: "session.create_task enabled" });
   await ctx.control("session.create_task");
   await ctx.waitFor(`location.hash.includes("/session/")`, { timeoutMs: 60_000, label: "fresh session route" });
   const state = await appRouteState(ctx);
@@ -256,17 +256,17 @@ async function attachXlsxFile(ctx) {
   );
 }
 
-async function dismissOpenWorkModelsModal(ctx) {
+async function dismissMicxModelsModal(ctx) {
   const result = await ctx.eval(`(() => {
-    const dialog = Array.from(document.querySelectorAll('[role="dialog"], [data-slot="dialog-content"], [data-radix-dialog-content]')).find((item) => (item.textContent || "").includes("OpenWork Models"));
+    const dialog = Array.from(document.querySelectorAll('[role="dialog"], [data-slot="dialog-content"], [data-radix-dialog-content]')).find((item) => (item.textContent || "").includes("Micx Models"));
     if (!dialog) return { dismissed: false };
-    const button = Array.from(dialog.querySelectorAll("button")).find((item) => (item.textContent || "").trim().includes("Continue without OpenWork Models") || item.getAttribute("aria-label") === "Close");
+    const button = Array.from(dialog.querySelectorAll("button")).find((item) => (item.textContent || "").trim().includes("Continue without Micx Models") || item.getAttribute("aria-label") === "Close");
     if (!button) return { dismissed: false };
     button.click();
     return { dismissed: true };
   })()`);
   if (!result?.dismissed) return;
-  await ctx.waitFor(`!Array.from(document.querySelectorAll('[role="dialog"], [data-slot="dialog-content"], [data-radix-dialog-content]')).some((item) => (item.textContent || "").includes("OpenWork Models"))`, { timeoutMs: 10_000, label: "OpenWork Models modal dismissed" });
+  await ctx.waitFor(`!Array.from(document.querySelectorAll('[role="dialog"], [data-slot="dialog-content"], [data-radix-dialog-content]')).some((item) => (item.textContent || "").includes("Micx Models"))`, { timeoutMs: 10_000, label: "Micx Models modal dismissed" });
 }
 
 function sentXlsxCardExpr() {
@@ -417,9 +417,9 @@ function assertPersistedOriginalXlsx(ctx, messages) {
 }
 
 function assertWorkspaceAttachmentPathNote(ctx, messages) {
-  const text = collectStrings(messages).filter((item) => item.includes(".opencode/openwork/inbox/chat-attachments/") || item.includes("Attached files were copied into this worker workspace")).join("\n");
+  const text = collectStrings(messages).filter((item) => item.includes(".opencode/micx/inbox/chat-attachments/") || item.includes("Attached files were copied into this worker workspace")).join("\n");
   const line = text.split(/\r?\n/).find((item) => item.includes(XLSX_FILENAME)) || "";
-  const path = /\.opencode\/openwork\/inbox\/chat-attachments\/[^\s)]*RevenueWorkbook\.xlsx/.exec(line)?.[0] ?? "";
+  const path = /\.opencode\/micx\/inbox\/chat-attachments\/[^\s)]*RevenueWorkbook\.xlsx/.exec(line)?.[0] ?? "";
   const url = /file:\/\/[^\s)]+/i.exec(line)?.[0] ?? "";
   record(ctx, Boolean(path), "Submitted XLSX path note includes a workspace-local inbox path", line || text.slice(0, 1000));
   record(ctx, Boolean(url), "Submitted XLSX path note includes a file: URL", line || text.slice(0, 1000));
@@ -463,14 +463,14 @@ export default {
   title: "Session composer safely normalizes valid Excel XLSX attachments through the real model boundary",
   kind: "user-facing",
   precondition: async (ctx) => {
-    await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 60_000, label: "control API" });
+    await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 60_000, label: "control API" });
     const serverExited = await ctx.eval(`document.body.innerText.includes("OpenCode server exited")`);
     if (serverExited) {
       await ctx.eval("location.reload()");
-      await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 60_000, label: "control API after server-error reload" });
+      await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 60_000, label: "control API after server-error reload" });
     }
     const state = await ctx.waitFor(`(() => {
-      const control = window.__openworkControl;
+      const control = window.__micxControl;
       const route = control.snapshot().route;
       if (route.startsWith("/welcome") || route.startsWith("/signin")) return "blocked";
       if (document.body.innerText.includes("OpenCode server exited")) return "server-exited";
@@ -496,7 +496,7 @@ export default {
             ctx.output("XLSX mock health", startMockProvider(ctx));
             await configureMockProvider(ctx);
             await ctx.eval("location.reload()");
-            await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 60_000, label: "control API after provider reload" });
+            await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 60_000, label: "control API after provider reload" });
             await createFreshSession(ctx);
             await assertMockSelected(ctx);
             const attached = await attachXlsxFile(ctx);
@@ -522,7 +522,7 @@ export default {
             resetXlsxArtifact(ctx);
             await ctx.control("composer.send");
             await ctx.waitFor(sentXlsxCardExpr(), { timeoutMs: 45_000, label: "sent XLSX card with Download action" });
-            await dismissOpenWorkModelsModal(ctx);
+            await dismissMicxModelsModal(ctx);
             await clickDownloadButtonAndVerifySha(ctx, {
               buttonLabel: `Download ${XLSX_FILENAME}`,
               filename: XLSX_FILENAME,
@@ -574,7 +574,7 @@ export default {
           voiceover: vo[3],
           action: async () => {
             await waitForFinalResponse(ctx);
-            await dismissOpenWorkModelsModal(ctx);
+            await dismissMicxModelsModal(ctx);
             await ctx.control("session.scroll_bottom");
           },
           assert: async () => {
@@ -594,7 +594,7 @@ export default {
           voiceover: vo[4],
           action: async () => {
             await ctx.eval("location.reload()");
-            await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 60_000, label: "control API after session reload" });
+            await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 60_000, label: "control API after session reload" });
             await ctx.navigateHash(`/workspace/${ctx.workspaceId}/session/${ctx.sessionId}`);
             await ctx.waitFor(sentXlsxCardExpr(), { timeoutMs: 45_000, label: "restored XLSX sent card" });
             await ctx.control("composer.set_text", { text: FOLLOW_UP });
@@ -602,7 +602,7 @@ export default {
             const replayProof = await pollProof(ctx, (item) => item.replayResponse && item.replayOfficeHistoryOk && item.replay?.normalizedTextOnly, 90_000, "successful replay follow-up with normalized XLSX history");
             ctx.output("XLSX mock proof after replay", JSON.stringify(replayProof, null, 2));
             await ctx.waitFor(`document.body.innerText.includes("Replay succeeded after reopening the session")`, { timeoutMs: 60_000, label: "replay success assistant response" });
-            await dismissOpenWorkModelsModal(ctx);
+            await dismissMicxModelsModal(ctx);
           },
           assert: async () => {
             await ctx.expectText(XLSX_FILENAME);

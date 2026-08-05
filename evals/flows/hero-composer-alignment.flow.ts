@@ -23,9 +23,9 @@ async function measure(ctx: FlowContext, expr: string, label: string): Promise<v
 }
 
 async function createTaskPrecondition(ctx: FlowContext): Promise<string | null> {
-  await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 60_000, label: "control API" });
+  await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 60_000, label: "control API" });
   const state = await ctx.waitFor(`(() => {
-    const control = window.__openworkControl;
+    const control = window.__micxControl;
     const route = String(control.snapshot().route || "");
     if (route.startsWith("/welcome") || route.startsWith("/signin")) return "blocked";
     const action = control.listActions().find((candidate) => candidate.id === "session.create_task");
@@ -37,7 +37,7 @@ async function createTaskPrecondition(ctx: FlowContext): Promise<string | null> 
 }
 
 const EMPTY_TASK_ROUTE_FROM_SESSION = `(() => {
-  const route = String(window.__openworkControl.snapshot().route || "");
+  const route = String(window.__micxControl.snapshot().route || "");
   const at = route.indexOf("/session/");
   return at === -1 ? "" : route.slice(0, at) + "/session";
 })()`;
@@ -102,10 +102,10 @@ export default defineFlow({
     {
       name: "New-task screen is visible on launch",
       run: async (ctx) => {
-        await ctx.prove("OpenWork lands on the empty new-task composer screen", {
+        await ctx.prove("Micx lands on the empty new-task composer screen", {
           voiceover: vo[0],
           action: async () => {
-            await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 60_000, label: "control API" });
+            await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 60_000, label: "control API" });
             const emptyRoute = await ctx.eval(EMPTY_TASK_ROUTE_FROM_SESSION);
             if (typeof emptyRoute === "string" && emptyRoute.length > 0) await ctx.navigateHash(emptyRoute);
           },
@@ -170,7 +170,7 @@ export default defineFlow({
           voiceover: vo[2],
           action: async () => {
             await ctx.control("session.create_task");
-            await ctx.waitFor(`window.__openworkControl.snapshot().route.includes("/session/")`, { timeoutMs: 60_000, label: "session route after task creation" });
+            await ctx.waitFor(`window.__micxControl.snapshot().route.includes("/session/")`, { timeoutMs: 60_000, label: "session route after task creation" });
             await ctx.waitFor(MEASURE_DOCKED_COMPOSER, { timeoutMs: 30_000, label: "sticky session composer laid out" });
           },
           assert: async () => {

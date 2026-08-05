@@ -1,1 +1,1 @@
-export * from "@openwork/cdp";
+export * from "@micx/cdp";

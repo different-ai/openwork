@@ -1,17 +1,17 @@
-# Default OpenWork Marketplace onboarding flow
+# Default Micx Marketplace onboarding flow
 
 End-to-end 5-star onboarding flow for the current capability level: Den gets the
 user to the desktop app, and the desktop app loads a backend-provisioned default
-Marketplace containing built-in OpenWork extension capabilities.
+Marketplace containing built-in Micx extension capabilities.
 
 ## Acceptance target
 
 - Den download/sign-in copy does not claim that Den creates or loads a desktop workspace.
-- Den introduces the built-in OpenWork Marketplace and explains it appears after desktop sign-in.
-- A signed-in desktop user can open Settings -> Marketplace and see `OpenWork Marketplace` from Den.
-- `OpenWork Marketplace` includes built-in extension entries such as `OpenWork Browser`, `Computer Use`, `OpenAI Image Gen`, `Google Workspace`, and `Ollama`.
-- Built-in OpenWork entries are rendered as cloud Marketplace entries with a `Built-in` status, not as locally injected desktop Marketplace rows.
-- Signed-out desktop users can still use OpenWork, but Marketplace nudges sign-in for built-in extensions and organization marketplaces.
+- Den introduces the built-in Micx Marketplace and explains it appears after desktop sign-in.
+- A signed-in desktop user can open Settings -> Marketplace and see `Micx Marketplace` from Den.
+- `Micx Marketplace` includes built-in extension entries such as `Micx Browser`, `Computer Use`, `OpenAI Image Gen`, `Google Workspace`, and `Ollama`.
+- Built-in Micx entries are rendered as cloud Marketplace entries with a `Built-in` status, not as locally injected desktop Marketplace rows.
+- Signed-out desktop users can still use Micx, but Marketplace nudges sign-in for built-in extensions and organization marketplaces.
 - A non-built-in assigned Marketplace plugin can be imported into an active desktop workspace.
 - Imported plugin resources appear in `My Extensions` and materialize into `.opencode` workspace files.
 - The chat composer can run a prompt that uses the imported plugin/skill once the workspace runtime is ready.
@@ -25,7 +25,7 @@ Marketplace containing built-in OpenWork extension capabilities.
 5. If recording, verify `wmctrl` and `xdotool` are installed in the Electron sandbox.
 6. Close stale native dialogs such as `Authorize folder` before recording.
 7. Prefer Den Web production mode (`next build` + `next start`) for the founder journey recording; Next dev can fail to hydrate through Daytona proxy/HMR.
-8. Validate dev auth before UI recording: direct Den API sign-in with the seeded user should return `200` when `OPENWORK_DEV_MODE=1`.
+8. Validate dev auth before UI recording: direct Den API sign-in with the seeded user should return `200` when `MICX_DEV_MODE=1`.
 
 ## Demo Standard
 
@@ -47,14 +47,14 @@ Steps:
 
 Expected outcome:
 
-- Page includes `built-in OpenWork Marketplace` or `built-in Marketplace`.
+- Page includes `built-in Micx Marketplace` or `built-in Marketplace`.
 - Page says the user downloads/opens the desktop app after Cloud signup.
 - Page says the workspace is created in the app.
 - Page does not say `Create a workspace` or `Set up your personal or team workspace before installing.`
 
 ## Flow 2: signed-out desktop Marketplace nudge
 
-**Goal:** OpenWork remains usable without account, while Marketplace clearly asks
+**Goal:** Micx remains usable without account, while Marketplace clearly asks
 for Cloud sign-in.
 
 Steps:
@@ -66,32 +66,32 @@ Steps:
 Expected outcome:
 
 - The Marketplace page renders.
-- The notice says the user can use OpenWork without an account.
+- The notice says the user can use Micx without an account.
 - The notice says sign-in loads the Marketplace, built-in extensions, and organization marketplaces.
 - No locally injected built-in extension cards appear before sign-in.
 
 ## Flow 3: default Marketplace provisioning after desktop sign-in
 
-**Goal:** Desktop sign-in causes Den to provision and return the default OpenWork
+**Goal:** Desktop sign-in causes Den to provision and return the default Micx
 Marketplace for any user/org.
 
 Steps:
 
-1. Sign Electron into OpenWork Cloud using the Daytona Den handoff flow.
+1. Sign Electron into Micx Cloud using the Daytona Den handoff flow.
 2. Create or open a local workspace.
 3. Open Settings -> Marketplace.
 4. Click `Refresh` if the Marketplace list has not loaded yet.
 5. Open `Filters` and inspect marketplace options.
-6. Search for `OpenWork Browser`.
-7. Open the `OpenWork Browser` card.
+6. Search for `Micx Browser`.
+7. Open the `Micx Browser` card.
 
 Expected outcome:
 
-- `OpenWork Marketplace` appears as a marketplace option.
-- `OpenWork Browser` appears as a Marketplace card from Den.
+- `Micx Marketplace` appears as a marketplace option.
+- `Micx Browser` appears as a Marketplace card from Den.
 - The card shows `Built-in` or an equivalent built-in/ready status.
-- The detail modal shows OpenWork Browser setup/resource details from the Den extension manifest.
-- The detail modal does not offer `Add` or `Remove` for built-in OpenWork entries.
+- The detail modal shows Micx Browser setup/resource details from the Den extension manifest.
+- The detail modal does not offer `Add` or `Remove` for built-in Micx entries.
 
 Daytona caveat:
 
@@ -106,15 +106,15 @@ Marketplace entries.
 Steps:
 
 1. With the same signed-in org, call Den API `GET /v1/marketplaces?status=active&limit=100`.
-2. Find `OpenWork Marketplace`.
+2. Find `Micx Marketplace`.
 3. Call `GET /v1/marketplaces/:id/resolved`.
 
 Expected outcome:
 
-- The API returns `OpenWork Marketplace`.
-- Resolved plugins include the built-in OpenWork entries.
-- Each built-in plugin has `extension.sourceFormat = openwork-builtin`.
-- `OpenWork Browser` has an extension manifest with the `opencode-chrome-devtools` resource.
+- The API returns `Micx Marketplace`.
+- Resolved plugins include the built-in Micx entries.
+- Each built-in plugin has `extension.sourceFormat = micx-builtin`.
+- `Micx Browser` has an extension manifest with the `opencode-chrome-devtools` resource.
 
 ## Flow 5: assigned Marketplace plugin import
 
@@ -184,11 +184,11 @@ The current flow proves the cloud-provisioned Marketplace concept, but an
 8-star founder/designer demo should feel like one continuous product journey:
 
 1. Den sign-in loads without proxy/auth ambiguity and uses the same visual language as desktop.
-2. Den explains in plain language: Marketplaces contain plugins; OpenWork Marketplace is included; org marketplaces appear after desktop sign-in.
+2. Den explains in plain language: Marketplaces contain plugins; Micx Marketplace is included; org marketplaces appear after desktop sign-in.
 3. The handoff page has one obvious primary action: `Open desktop app`, with a secondary `Copy sign-in code` fallback.
 4. Desktop opens directly into a connected state or a clear auth-completion state, not a generic settings page.
 5. Desktop shows a short success moment: `Connected to Acme Robotics` and `Marketplace synced`.
-6. Marketplace is pre-populated without manual refresh, with `OpenWork Marketplace` grouped separately from org marketplaces.
+6. Marketplace is pre-populated without manual refresh, with `Micx Marketplace` grouped separately from org marketplaces.
 7. Built-ins look first-party and ready, with `Built-in` status, no install/remove actions, and clear setup expectations.
 8. A live org plugin can be added with one click, then immediately appears in My Extensions and the composer/tooling surface.
 9. The user can send a task that uses the imported skill/plugin and gets a visible response.
@@ -202,7 +202,7 @@ recording alone, the experience is not 8-star yet.
 
 This PR intentionally makes Den the source of discovery and assignment for
 built-ins, but it does not move all built-in implementation code to Den. Den
-stores and returns OpenWork extension manifests; the desktop still owns local
+stores and returns Micx extension manifests; the desktop still owns local
 execution for first-party built-ins such as Browser, Computer Use, image
 generation, Google Workspace, and Ollama.
 

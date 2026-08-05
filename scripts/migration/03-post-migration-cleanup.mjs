@@ -112,7 +112,7 @@ async function main() {
       scripts.electron = undefined;
       scripts["dev:react-session"] = undefined;
       scripts["dev:electron:react-session"] =
-        "VITE_OPENWORK_REACT_SESSION=1 node ./scripts/electron-dev.mjs";
+        "VITE_MICX_REACT_SESSION=1 node ./scripts/electron-dev.mjs";
       // Remove Tauri-specific script entries.
       scripts["build:debug:react-session"] = undefined;
       scripts["dev:windows"] = undefined;

@@ -3,11 +3,11 @@ import { denApiFetch, denWebUrl, signInApi as signIn } from "./lib/den-web.mjs";
 
 const vo = await loadVoiceoverParagraphs("org-chooser-background");
 
-const ADMIN_EMAIL = process.env.OPENWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
-const ADMIN_PASSWORD = process.env.OPENWORK_EVAL_DEMO_PASSWORD?.trim() || "OpenWorkDemo123!";
+const ADMIN_EMAIL = process.env.MICX_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
+const ADMIN_PASSWORD = process.env.MICX_EVAL_DEMO_PASSWORD?.trim() || "MicxDemo123!";
 const EVAL_ORG_NAME = "Chooser Background Eval Org";
-const PENDING_ORG_SELECTION_KEY = "openwork:web:pending-org-selection";
-const AUTH_TOKEN_KEY = "openwork:web:auth-token";
+const PENDING_ORG_SELECTION_KEY = "micx:web:pending-org-selection";
+const AUTH_TOKEN_KEY = "micx:web:auth-token";
 
 const state = {
   token: null,
@@ -96,7 +96,7 @@ async function waitForEmailFirstRoot(ctx) {
       return location.pathname === '/'
         && !document.querySelector('[data-testid="org-chooser-root"]')
         && !text.includes('Dashboard')
-        && text.includes('Start using OpenWork')
+        && text.includes('Start using Micx')
         && Boolean(document.querySelector('input[type="email"]'))
         && localStorage.getItem(${JSON.stringify(AUTH_TOKEN_KEY)}) === null;
     })()`,
@@ -146,7 +146,7 @@ function chooserOrLoadedDashboardExpression() {
       && !text.includes('Refreshing workspace')
       && !text.includes('No active session found')
       && !text.includes('Failed to load')
-      && !text.includes('Start using OpenWork');
+      && !text.includes('Start using Micx');
   })()`;
 }
 
@@ -324,7 +324,7 @@ export default {
   id: "org-chooser-background",
   title: "Organization chooser uses the join flow's light-paper Dithering treatment",
   kind: "user-facing",
-  requiredEnv: ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_WEB_URL", "OPENWORK_EVAL_DEN_MULTI_ORG"],
+  requiredEnv: ["MICX_EVAL_DEN_API_URL", "MICX_EVAL_DEN_WEB_URL", "MICX_EVAL_DEN_MULTI_ORG"],
   steps: [
     {
       name: "Setup: seeded user has a real multi-org chooser",

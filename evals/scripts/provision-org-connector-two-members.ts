@@ -9,8 +9,8 @@ import {
   provisionDesktopSandbox,
   renderConnectorSpecEnv,
   startMockOnSandbox,
-} from "@openwork/hosts";
-import type { DesktopSandbox } from "@openwork/hosts";
+} from "@micx/hosts";
+import type { DesktopSandbox } from "@micx/hosts";
 
 const USAGE = `Usage:
   node scripts/provision-org-connector-two-members.ts --ref <branch-or-commit> [--reuse-a <id>] [--reuse-b <id>] [--reuse-den <id>] [--out org-connector-two-members.env]

@@ -65,8 +65,8 @@ export default {
           catalog: createReleaseCatalog(["0.17.40"], { platforms: ["win-x64"], distribution: "enterprise" }),
           actionableProbe: {
             kind: "host",
-            url: "https://github.com/different-ai/openwork/releases/download/v0.17.40/openwork-enterprise-win-x64-0.17.40.exe",
-            allowedHosts: ["app.openworklabs.com", "api.openworklabs.com"],
+            url: "https://github.com/different-ai/micx/releases/download/v0.17.40/micx-enterprise-win-x64-0.17.40.exe",
+            allowedHosts: ["app.micxlabs.com", "api.micxlabs.com"],
           },
         });
         await ctx.prove("A corporate policy that denies GitHub surfaces as release_host_denied", {

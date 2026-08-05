@@ -3,7 +3,7 @@
  * sidebar and returns grouped results (Recent / Session titles / Messages).
  *
  * The deep-search query defaults to "joke" and can be overridden with
- * OPENWORK_EVAL_SEARCH_QUERY for profiles seeded with different data. The flow
+ * MICX_EVAL_SEARCH_QUERY for profiles seeded with different data. The flow
  * expects the query to match at least one session title or message.
  */
 const SEARCH_INPUT = 'input[placeholder="Search all sessions and messages…"]';
@@ -16,9 +16,9 @@ export default {
     {
       name: "App boots with at least one session in the sidebar",
       run: async (ctx) => {
-        await ctx.waitFor("Boolean(window.__openworkControl)", {
+        await ctx.waitFor("Boolean(window.__micxControl)", {
           timeoutMs: 30_000,
-          label: "window.__openworkControl",
+          label: "window.__micxControl",
         });
         await ctx.waitFor("document.body.innerText.trim().length > 40", {
           label: "rendered body text",
@@ -31,7 +31,7 @@ export default {
         await ctx.prove("Sidebar exposes a Search sessions entry", {
           claim: "The sidebar shows a 'Search sessions' button with its keyboard shortcut, so cross-message search is one click away.",
           voiceover:
-            "This is OpenWork. Every workspace and conversation lives in the sidebar on the left. At the very top there is a new entry: Search sessions. Cross-message search used to be hidden behind a keyboard shortcut — now it is one click away, and the shortcut hint is printed right on the button.",
+            "This is Micx. Every workspace and conversation lives in the sidebar on the left. At the very top there is a new entry: Search sessions. Cross-message search used to be hidden behind a keyboard shortcut — now it is one click away, and the shortcut hint is printed right on the button.",
           assert: async () => {
             await ctx.expectText("Search sessions");
           },
@@ -80,7 +80,7 @@ export default {
     {
       name: "Typing a query groups results by match kind",
       run: async (ctx) => {
-        const query = ctx.env.OPENWORK_EVAL_SEARCH_QUERY?.trim() || "joke";
+        const query = ctx.env.MICX_EVAL_SEARCH_QUERY?.trim() || "joke";
         await ctx.prove("Query results are grouped with counts", {
           claim: `Typing "${query}" shows results grouped by why they matched (Session titles and/or Messages), each with a count.`,
           voiceover:

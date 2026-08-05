@@ -1,6 +1,6 @@
 # Cloud super admins - enforce a clear organization role hierarchy
 
-1. The sidebar documents the workspace areas clearly: Extensions contains Marketplace, Sources, Plugins, and Connectors; Models contains OpenWork Models and LLM Providers; Members and Analytics stand alone; Settings contains General, Diagnostics, Brand appearance, Desktop Policies, Stripe, API Keys, SSO, and SCIM.
+1. The sidebar documents the workspace areas clearly: Extensions contains Marketplace, Sources, Plugins, and Connectors; Models contains Micx Models and LLM Providers; Members and Analytics stand alone; Settings contains General, Diagnostics, Brand appearance, Desktop Policies, Stripe, API Keys, SSO, and SCIM.
 
 2. Signed in as an admin, I can create and manage resources throughout Extensions and Models, manage teams, invite people, remove eligible members, and use Analytics. I cannot change anyone's role.
 

@@ -292,7 +292,7 @@ function messageText(error: unknown): string {
 
 function daytonaSandboxFor(args: UpArgs): string | null {
   if (args.hostKind !== "daytona") return null;
-  return args.sandboxId?.trim() || process.env.OPENWORK_EVAL_DAYTONA_SANDBOX?.trim() || null;
+  return args.sandboxId?.trim() || process.env.MICX_EVAL_DAYTONA_SANDBOX?.trim() || null;
 }
 
 function defaultCreateHost(options: OwtHostOptions): Host {
@@ -327,8 +327,8 @@ async function recordedDenFromArgs(args: UpArgs, print: (message: string) => voi
 }
 
 function addDenEnv(env: Record<string, string>, den: DenServiceHandle): void {
-  env.OPENWORK_EVAL_DEN_WEB_URL = den.webUrl;
-  env.OPENWORK_EVAL_DEN_API_URL = den.apiUrl;
+  env.MICX_EVAL_DEN_WEB_URL = den.webUrl;
+  env.MICX_EVAL_DEN_API_URL = den.apiUrl;
 }
 
 async function adoptedSurface(args: UpArgs, host: Host, spec: AdoptSurfaceSpec): Promise<SurfaceHandle> {
@@ -344,7 +344,7 @@ async function adoptedSurface(args: UpArgs, host: Host, spec: AdoptSurfaceSpec):
     };
   }
   const sandboxId = daytonaSandboxFor(args);
-  if (!sandboxId) throw new Error("--host daytona --adopt requires --sandbox <id> or OPENWORK_EVAL_DAYTONA_SANDBOX.");
+  if (!sandboxId) throw new Error("--host daytona --adopt requires --sandbox <id> or MICX_EVAL_DAYTONA_SANDBOX.");
   if (!host.previewUrl) throw new Error("Daytona host does not expose previewUrl; cannot adopt Daytona CDP port.");
   return {
     name: spec.name,
@@ -371,7 +371,7 @@ function bootstrapFor(args: UpArgs, den: DenServiceHandle | null): ElectronSurfa
 
 function manifestDenHandle(den: DenServiceHandle): DenServiceHandle & { token?: string } {
   const entry: DenServiceHandle & { token?: string } = { ...den };
-  const token = process.env.OPENWORK_EVAL_DEN_TOKEN?.trim();
+  const token = process.env.MICX_EVAL_DEN_TOKEN?.trim();
   if (token) entry.token = token;
   return entry;
 }
@@ -390,7 +390,7 @@ function daytonaSandboxFromManifest(manifest: EnvManifest): string | null {
       if (sandbox) return sandbox;
     }
   }
-  return manifest.env?.OPENWORK_EVAL_DAYTONA_SANDBOX?.trim() || process.env.OPENWORK_EVAL_DAYTONA_SANDBOX?.trim() || null;
+  return manifest.env?.MICX_EVAL_DAYTONA_SANDBOX?.trim() || process.env.MICX_EVAL_DAYTONA_SANDBOX?.trim() || null;
 }
 
 function hasDaytonaSurface(manifest: EnvManifest): boolean {
@@ -441,8 +441,8 @@ async function handleUp(args: UpArgs, options: OwtMainOptions, print: (message: 
   }
 
   const env: Record<string, string> = {};
-  if (sandboxId) env.OPENWORK_EVAL_DAYTONA_SANDBOX = sandboxId;
-  if (args.cdpUrl) env.OPENWORK_EVAL_CDP_URL = args.cdpUrl;
+  if (sandboxId) env.MICX_EVAL_DAYTONA_SANDBOX = sandboxId;
+  if (args.cdpUrl) env.MICX_EVAL_CDP_URL = args.cdpUrl;
   if (recordedDen) addDenEnv(env, recordedDen);
 
   const manifest: EnvManifest = {
@@ -455,15 +455,15 @@ async function handleUp(args: UpArgs, options: OwtMainOptions, print: (message: 
   if (recordedDen) manifest.den = manifestDenHandle(recordedDen);
   const path = await writeEnvManifest(manifest);
   print(`Manifest: ${path}`);
-  if (sandboxId) print(`export OPENWORK_EVAL_DAYTONA_SANDBOX=${sandboxId}`);
-  if (args.cdpUrl) print(`export OPENWORK_EVAL_CDP_URL=${args.cdpUrl}`);
+  if (sandboxId) print(`export MICX_EVAL_DAYTONA_SANDBOX=${sandboxId}`);
+  if (args.cdpUrl) print(`export MICX_EVAL_CDP_URL=${args.cdpUrl}`);
   if (recordedDen) {
     print(`Den Web: ${recordedDen.webUrl}`);
     print(`Den API: ${recordedDen.apiUrl}`);
-    print(`export OPENWORK_EVAL_DEN_API_URL=${recordedDen.apiUrl}`);
-    print(`export OPENWORK_EVAL_DEN_WEB_URL=${recordedDen.webUrl}`);
-    const token = process.env.OPENWORK_EVAL_DEN_TOKEN?.trim();
-    if (token) print(`export OPENWORK_EVAL_DEN_TOKEN=${token}`);
+    print(`export MICX_EVAL_DEN_API_URL=${recordedDen.apiUrl}`);
+    print(`export MICX_EVAL_DEN_WEB_URL=${recordedDen.webUrl}`);
+    const token = process.env.MICX_EVAL_DEN_TOKEN?.trim();
+    if (token) print(`export MICX_EVAL_DEN_TOKEN=${token}`);
   }
   for (const handle of Object.values(surfaces)) printHandle(handle, print);
   if (!recordedDen && Object.keys(surfaces).length === 0) print(`No Den stack or surfaces requested; wrote an empty ${args.hostKind} manifest.`);

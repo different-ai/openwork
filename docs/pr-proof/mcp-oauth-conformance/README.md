@@ -2,7 +2,7 @@
 
 These frames were captured by the `mcp-oauth-conformance` Fraimz flow on
 July 14, 2026 (America/Los_Angeles). The flow uses an isolated Den database and
-OpenWork's local OAuth MCP conformance server; it does not use a third-party
+Micx's local OAuth MCP conformance server; it does not use a third-party
 service or pre-seeded connection.
 
 The passing journey proves that:
@@ -10,7 +10,7 @@ The passing journey proves that:
 1. URL-only requirements discovery reports OAuth, registration, scope, and
    administrator requirements without creating a connection or registering a
    client.
-2. DCR identifies OpenWork as a web client, PKCE authorization completes, and
+2. DCR identifies Micx as a web client, PKCE authorization completes, and
    the provider returns through the deployment-wide callback.
 3. The normalized connection contract reports a connected dynamic client with
    the shared callback and selected scope.

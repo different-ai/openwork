@@ -4,7 +4,7 @@ The enterprise desktop app is installed directly from the organization's Den
 download page. Before activation it shows only the pixel-dither activation
 gate, rejects runtime commands, and does not start the local runtime.
 
-An authenticated Den user requests the standard one-time `openwork://` desktop
+An authenticated Den user requests the standard one-time `micx://` desktop
 handoff. The enterprise build defaults `requireActivation` to true, while an
 explicit boolean in `desktop-bootstrap.json` can override that policy. A
 successful handoff activates the installation, signs the user into the issuing

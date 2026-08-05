@@ -1,9 +1,9 @@
-# Google Cloud GKE starter values for a first OpenWork EE self-host install.
+# Google Cloud GKE starter values for a first Micx EE self-host install.
 #
 # Copy this file, replace every REPLACE_* value, and install with:
 #
 #   helm upgrade --install openwork-ee oci://ghcr.io/different-ai/charts/openwork-ee \
-#     --version REPLACE_OPENWORK_VERSION \
+#     --version REPLACE_MICX_VERSION \
 #     --namespace openwork-ee \
 #     --create-namespace \
 #     -f values.gcp.yaml
@@ -13,7 +13,7 @@
 # BackendConfig manifests from docs/gcp-gke-helm.md before installing.
 
 image:
-  tag: "REPLACE_OPENWORK_VERSION"
+  tag: "REPLACE_MICX_VERSION"
   pullPolicy: IfNotPresent
 
 config:
@@ -45,7 +45,7 @@ secret:
   values:
     # Direct private IP Cloud SQL example. The current chart does not inject
     # Cloud SQL Auth Proxy sidecars, so use a private IP reachable from GKE.
-    databaseUrl: "mysql://openwork:REPLACE_DB_PASSWORD@REPLACE_CLOUD_SQL_PRIVATE_IP:3306/openwork_den"
+    databaseUrl: "mysql://micx:REPLACE_DB_PASSWORD@REPLACE_CLOUD_SQL_PRIVATE_IP:3306/micx_den"
     # Generate with: openssl rand -base64 48
     betterAuthSecret: "REPLACE_BETTER_AUTH_SECRET"
     # Generate separately with: openssl rand -base64 48

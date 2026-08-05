@@ -10,7 +10,7 @@ export default {
     {
       name: "App booted",
       run: async (ctx) => {
-        await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 30_000 });
+        await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 30_000 });
       },
     },
     {
@@ -18,14 +18,14 @@ export default {
       run: async (ctx) => {
         await ctx.navigateHash("/settings/cloud-account");
         await new Promise((resolve) => setTimeout(resolve, 500));
-        await ctx.waitFor("Boolean(window.__openworkControl)", {
+        await ctx.waitFor("Boolean(window.__micxControl)", {
           timeoutMs: 30_000,
           label: "control API after bare settings navigation",
         });
         await ctx.waitFor(
           `(() => {
             const text = document.body.innerText;
-            return text.includes("Settings") && (text.includes("Account") || text.includes("OpenWork Cloud"));
+            return text.includes("Settings") && (text.includes("Account") || text.includes("Micx Cloud"));
           })()`,
           { timeoutMs: 30_000, label: "cloud account settings content" },
         );
@@ -45,7 +45,7 @@ export default {
       name: "Back to the app",
       run: async (ctx) => {
         await ctx.navigateHash("/");
-        await ctx.waitFor("Boolean(window.__openworkControl)", {
+        await ctx.waitFor("Boolean(window.__micxControl)", {
           timeoutMs: 30_000,
           label: "control API after returning home",
         });

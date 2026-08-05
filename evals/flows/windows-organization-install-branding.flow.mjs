@@ -7,12 +7,12 @@ import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
 
 const vo = await loadVoiceoverParagraphs("windows-organization-install-branding");
 const BUNDLE_DIR = "C:\\Users\\Administrator\\Downloads\\Northwind";
-const INSTALLER = `${BUNDLE_DIR}\\openwork-win-x64-0.17.20.exe`;
+const INSTALLER = `${BUNDLE_DIR}\\micx-win-x64-0.17.20.exe`;
 const START_MENU = "C:\\Users\\Administrator\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs";
-const CONFIG = "C:\\Users\\Administrator\\AppData\\Local\\openwork\\desktop-bootstrap.json";
+const CONFIG = "C:\\Users\\Administrator\\AppData\\Local\\micx\\desktop-bootstrap.json";
 
 function sandboxId(ctx) {
-  return (ctx.env.OPENWORK_EVAL_DAYTONA_SANDBOX_ID || ctx.env.OPENWORK_EVAL_DAYTONA_SANDBOX).trim();
+  return (ctx.env.MICX_EVAL_DAYTONA_SANDBOX_ID || ctx.env.MICX_EVAL_DAYTONA_SANDBOX).trim();
 }
 
 async function windowsExec(ctx, label, command, timeout = 120) {
@@ -40,12 +40,12 @@ async function openRunCommand(ctx, command) {
 
 async function launchInstalledApp(ctx) {
   await windowsExec(ctx, "stop previous app", `
-Get-Process OpenWork -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Get-Process Micx -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 exit 0
 `);
   await daytonaComputerUsePress(sandboxId(ctx), "cmd");
   await new Promise((resolve) => setTimeout(resolve, 500));
-  await daytonaComputerUseType(sandboxId(ctx), "OpenWork");
+  await daytonaComputerUseType(sandboxId(ctx), "Micx");
   await new Promise((resolve) => setTimeout(resolve, 1_500));
   await daytonaComputerUsePress(sandboxId(ctx), "enter");
   await new Promise((resolve) => setTimeout(resolve, 15_000));
@@ -56,7 +56,7 @@ export default {
   title: "Organization installs converge Windows Search, Start Menu, and shortcuts without losing server configuration",
   kind: "user-facing",
   requiresApp: false,
-  requiredEnv: ["DAYTONA_API_KEY", "OPENWORK_EVAL_DAYTONA_SANDBOX"],
+  requiredEnv: ["DAYTONA_API_KEY", "MICX_EVAL_DAYTONA_SANDBOX"],
   steps: [
     {
       name: "Organization bundle",
@@ -108,7 +108,7 @@ $config = Get-Content '${CONFIG}' -Raw | ConvertFrom-Json
   AppName = $config.brandAppName
   BaseUrl = $config.baseUrl
   Shortcut = Test-Path '${START_MENU}\\Northwind.lnk'
-  StaleShortcut = Test-Path '${START_MENU}\\OpenWork.lnk'
+  StaleShortcut = Test-Path '${START_MENU}\\Micx.lnk'
 } | ConvertTo-Json
 `);
             ctx.assert(result.includes('"AppName":  "Northwind"'), result);
@@ -156,14 +156,14 @@ $config.apiBaseUrl = 'https://api.existing-onprem.northwind.test'
 $config.writtenAt = (Get-Date).ToUniversalTime().AddMinutes(5).ToString('o')
 [IO.File]::WriteAllText('${CONFIG}', ($config | ConvertTo-Json), (New-Object Text.UTF8Encoding($false)))
 Remove-Item '${START_MENU}\\Northwind.lnk' -Force
-Get-Process OpenWork -ErrorAction SilentlyContinue | Stop-Process -Force
+Get-Process Micx -ErrorAction SilentlyContinue | Stop-Process -Force
 `);
             await launchInstalledApp(ctx);
           },
           assert: async () => {
             const result = await windowsExec(ctx, "inspect upgrade convergence", `
 $config = Get-Content '${CONFIG}' -Raw | ConvertFrom-Json
-[pscustomobject]@{ BaseUrl = $config.baseUrl; Shortcut = Test-Path '${START_MENU}\\Northwind.lnk'; Stale = Test-Path '${START_MENU}\\OpenWork.lnk' } | ConvertTo-Json
+[pscustomobject]@{ BaseUrl = $config.baseUrl; Shortcut = Test-Path '${START_MENU}\\Northwind.lnk'; Stale = Test-Path '${START_MENU}\\Micx.lnk' } | ConvertTo-Json
 `);
             ctx.assert(result.includes('"BaseUrl":  "https://existing-onprem.northwind.test"'), result);
             ctx.assert(result.includes('"Shortcut":  true') && result.includes('"Stale":  false'), result);
@@ -175,13 +175,13 @@ $config = Get-Content '${CONFIG}' -Raw | ConvertFrom-Json
     {
       name: "Uninstall cleanup",
       run: async (ctx) => {
-        await ctx.prove("Uninstall removes the managed organization shortcut without leaving stale OpenWork entries", {
+        await ctx.prove("Uninstall removes the managed organization shortcut without leaving stale Micx entries", {
           voiceover: vo[4],
           action: async () => {
             await windowsExec(ctx, "uninstall Northwind", `
-Get-Process OpenWork -ErrorAction SilentlyContinue | Stop-Process -Force
+Get-Process Micx -ErrorAction SilentlyContinue | Stop-Process -Force
 $cmd = 'C:\\ow\\uninstall-northwind-proof.cmd'
-[IO.File]::WriteAllLines($cmd, @('@echo off', '"C:\\Users\\Administrator\\AppData\\Local\\Programs\\@openworkdesktop\\Uninstall OpenWork.exe" /S'))
+[IO.File]::WriteAllLines($cmd, @('@echo off', '"C:\\Users\\Administrator\\AppData\\Local\\Programs\\@micxdesktop\\Uninstall Micx.exe" /S'))
 schtasks /create /tn OWBrandProofUninstall /tr $cmd /sc once /st 00:00 /ru Administrator /it /rl HIGHEST /f | Out-Null
 schtasks /run /tn OWBrandProofUninstall | Out-Null
 Start-Sleep -Seconds 15
@@ -194,12 +194,12 @@ Start-Sleep -Seconds 15
             const result = await windowsExec(ctx, "inspect uninstall cleanup", `
 [pscustomobject]@{
   Northwind = Test-Path '${START_MENU}\\Northwind.lnk'
-  OpenWork = Test-Path '${START_MENU}\\OpenWork.lnk'
-  Marker = Test-Path 'C:\\Users\\Administrator\\AppData\\Roaming\\com.differentai.openwork\\windows-brand-shortcut.txt'
+  Micx = Test-Path '${START_MENU}\\Micx.lnk'
+  Marker = Test-Path 'C:\\Users\\Administrator\\AppData\\Roaming\\com.differentai.micx\\windows-brand-shortcut.txt'
 } | ConvertTo-Json
 `);
             ctx.assert(result.includes('"Northwind":  false'), result);
-            ctx.assert(result.includes('"OpenWork":  false'), result);
+            ctx.assert(result.includes('"Micx":  false'), result);
             ctx.assert(result.includes('"Marker":  false'), result);
           },
           screenshot: { name: "windows-search-clean-after-uninstall", sandboxCapture: "computer-use" },

@@ -20,7 +20,7 @@ concurrency:
 
 jobs:
   changelog:
-    if: github.repository == 'different-ai/openwork'
+    if: github.repository == 'different-ai/micx'
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 30
     env:
@@ -51,7 +51,7 @@ jobs:
         if: steps.guard.outputs.stable == 'true'
         id: dedupe
         run: |
-          if grep -Fq "[$TAG](https://github.com/different-ai/openwork/compare/" packages/docs/changelog.mdx; then
+          if grep -Fq "[$TAG](https://github.com/different-ai/micx/compare/" packages/docs/changelog.mdx; then
             echo "documented=true" >> "$GITHUB_OUTPUT"
             echo "$TAG is already documented; skipping changelog automation."
           else
@@ -109,7 +109,7 @@ jobs:
 
           git log --no-merges --format='%h %s' "$PREV".."$TAG" | head -400 > /tmp/commits.txt
           cat > /tmp/changelog_prompt.txt <<PROMPT_EOF
-          Document OpenWork release $TAG in the changelog. Use these facts exactly; do not invent or recompute any of them.
+          Document Micx release $TAG in the changelog. Use these facts exactly; do not invent or recompute any of them.
 
           - version: $TAG
           - previous version: $PREV
@@ -118,7 +118,7 @@ jobs:
           - docs date label: $DATE_LABEL
           - tracker file: $TRACKER_FILE
           - loc line (copy verbatim into the tracker): $LOC_LINE
-          - compare url: https://github.com/different-ai/openwork/compare/$PREV...$TAG
+          - compare url: https://github.com/different-ai/micx/compare/$PREV...$TAG
 
           Commits between $PREV and $TAG (hash subject):
           PROMPT_EOF

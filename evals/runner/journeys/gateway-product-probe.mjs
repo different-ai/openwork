@@ -424,7 +424,7 @@ function baseFinding(input) {
     faultId: input.faultId,
     fileReferences: input.fileReferences,
     profileId: input.profile.id,
-    productSource: "Den external MCP runtime via ee/apps/den-api/src/capability-sources/enterprise-mcp-client-adapter.ts using @openwork/enterprise-mcp-client",
+    productSource: "Den external MCP runtime via ee/apps/den-api/src/capability-sources/enterprise-mcp-client-adapter.ts using @micx/enterprise-mcp-client",
     requestCounts: requestCounts(input.server),
     requestSample: requestSample(),
     store: {
@@ -497,11 +497,11 @@ async function runProductCase(faultId) {
       const finding = {
         ...baseFinding({ connection, faultId, fileReferences, profile, server }),
         actionableImmediately: faultId === "dcr-required"
-          ? "Partially — OpenWork does perform dynamic registration when the provider advertises it, but an authorization-time DCR-required error still surfaces as a generic provider authorization rejection."
+          ? "Partially — Micx does perform dynamic registration when the provider advertises it, but an authorization-time DCR-required error still surfaces as a generic provider authorization rejection."
           : "Partially — the generated authorize URL contains the exact redirect_uri, but the Den callback diagnostic for this provider error does not include the rejected redirect URI or provider description.",
         assertions: [
           assertion("Den connect path returned a product authorize URL", connect?.status === "needs_auth", connect),
-          assertion("Product authorize URL carries the exact OpenWork redirect URI", connect?.redirectUri === redirectUri, { redirectUri, productRedirectUri: connect?.redirectUri ?? null }),
+          assertion("Product authorize URL carries the exact Micx redirect URI", connect?.redirectUri === redirectUri, { redirectUri, productRedirectUri: connect?.redirectUri ?? null }),
           ...(faultId === "dcr-required" ? [
             assertion("Den adapter attempted dynamic client registration when metadata advertised it", requestCounts(server).dynamicRegistrations === 1 && store.registration?.source === "dynamic", {
               dynamicRegistrations: requestCounts(server).dynamicRegistrations,
@@ -530,9 +530,9 @@ async function runProductCase(faultId) {
         actionableImmediately: "No product error is produced because the real connect path does not issue GET to the MCP endpoint; it proceeds to OAuth instead.",
         assertions: [
           assertion("Den connect path still reaches OAuth", connect?.status === "needs_auth", connect),
-          assertion("One real OpenWork connect action produced zero GET requests to the MCP endpoint", counts.getMcpEndpoint === 0, counts),
+          assertion("One real Micx connect action produced zero GET requests to the MCP endpoint", counts.getMcpEndpoint === 0, counts),
         ],
-        behavior: "connectExternalMcp returned needs_auth; the hostile GET-only 405 behavior is latent because OpenWork's client uses POST for MCP initialize and never GETs the endpoint in this flow.",
+        behavior: "connectExternalMcp returned needs_auth; the hostile GET-only 405 behavior is latent because Micx's client uses POST for MCP initialize and never GETs the endpoint in this flow.",
         connect,
         productMessage: `connectExternalMcp returned ${connect?.status ?? "unknown"}; GET /mcp count ${counts.getMcpEndpoint}`,
       };
@@ -602,7 +602,7 @@ async function runProductCase(faultId) {
         ...baseFinding({ connection, faultId, fileReferences, profile, server }),
         actionableImmediately: "Yes for this narrow case — the real client canonicalizes the trailing-dot authority before issuer discovery and still reaches the authorization URL.",
         assertions: [
-          assertion("OpenWork did not propagate a trailing-dot authority into product fetches", counts.trailingDotRequests === 0, counts),
+          assertion("Micx did not propagate a trailing-dot authority into product fetches", counts.trailingDotRequests === 0, counts),
           assertion("Current product behavior reaches authorization instead of failing discovery", connect?.status === "needs_auth" && diagnostic === null, diagnostic ?? connect),
         ],
         behavior: "connectExternalMcp received an authorization_servers value with a stray trailing dot, but the URL handling used by the real client canonicalized it before issuer discovery and returned a needs_auth authorize URL.",
@@ -655,9 +655,9 @@ async function runProductCase(faultId) {
       const counts = requestCounts(server);
       return {
         ...baseFinding({ connection, faultId, fileReferences, profile, server }),
-        actionableImmediately: "No — one OpenWork tool action sends exactly one MCP tools/call, but the returned product diagnostic does not preserve the provider's duplicate-request signal.",
+        actionableImmediately: "No — one Micx tool action sends exactly one MCP tools/call, but the returned product diagnostic does not preserve the provider's duplicate-request signal.",
         assertions: [
-          assertion("One user tool action produced exactly one OpenWork tools/call request", counts.mcpToolCalls === 1, counts),
+          assertion("One user tool action produced exactly one Micx tools/call request", counts.mcpToolCalls === 1, counts),
           assertion("Den diagnostic reports only a generic provider tool error today", diagnostic?.phase === "PROVIDER_EXECUTION" && diagnostic?.code === "MCP_PROVIDER_TOOL_ERROR", diagnostic),
           assertion("Current product message does not mention duplicate requests", !diagnostic?.message?.includes("duplicate"), diagnostic?.message ?? null),
         ],

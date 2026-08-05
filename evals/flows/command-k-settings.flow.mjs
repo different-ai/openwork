@@ -65,7 +65,7 @@ export default {
           voiceover: vo[0],
           action: async () => {
             await pressEscape(ctx);
-            await ctx.waitFor("Boolean(window.__openworkControl)", {
+            await ctx.waitFor("Boolean(window.__micxControl)", {
               timeoutMs: 30_000,
               label: "control API",
             });

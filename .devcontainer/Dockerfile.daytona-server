@@ -1,4 +1,4 @@
-# Daytona image for the OpenWork Den server stack.
+# Daytona image for the Micx Den server stack.
 #
 # This intentionally does not run Docker inside Daytona. The sandbox runs the
 # same services as packaging/docker/docker-compose.den-dev.yml directly:
@@ -23,14 +23,14 @@ RUN apt-get update \
 WORKDIR /workspace
 
 RUN git clone --depth 1 --branch dev https://github.com/different-ai/openwork.git . \
-  && mkdir -p /workspace/.openwork-daytona \
-  && sha256sum /workspace/pnpm-lock.yaml | cut -d ' ' -f 1 > /workspace/.openwork-daytona/pnpm-lock.sha256 \
+  && mkdir -p /workspace/.micx-daytona \
+  && sha256sum /workspace/pnpm-lock.yaml | cut -d ' ' -f 1 > /workspace/.micx-daytona/pnpm-lock.sha256 \
   && git gc --prune=now \
   && rm -rf /home/daytona/.cache /home/daytona/.npm /home/daytona/.local/share/pnpm/store \
     /workspace/node_modules
 
 RUN chown -R daytona:daytona /workspace \
-  && printf 'daytona ALL=(ALL) NOPASSWD:ALL\n' >/etc/sudoers.d/daytona-openwork \
-  && chmod 0440 /etc/sudoers.d/daytona-openwork
+  && printf 'daytona ALL=(ALL) NOPASSWD:ALL\n' >/etc/sudoers.d/daytona-micx \
+  && chmod 0440 /etc/sudoers.d/daytona-micx
 
 USER daytona

@@ -1,4 +1,4 @@
-import { timed } from "@openwork/timeline";
+import { timed } from "@micx/timeline";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -201,7 +201,7 @@ export async function validate(
   // Vision latency is the main per-frame cost; record it so results show it.
   const openAiKey = process.env.OPENAI_API_KEY?.trim() ?? "";
   const anthropicKey = process.env.ANTHROPIC_API_KEY?.trim() ?? "";
-  const model = process.env.OPENWORK_EVAL_VISION_MODEL?.trim()
+  const model = process.env.MICX_EVAL_VISION_MODEL?.trim()
     || (anthropicKey && !openAiKey ? ANTHROPIC_DEFAULT_MODEL : OPENAI_DEFAULT_MODEL);
   let ask = opts.ask;
   if (!ask) {

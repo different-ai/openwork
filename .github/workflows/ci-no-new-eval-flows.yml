@@ -45,7 +45,7 @@ jobs:
           if (( ${#violations[@]} > 0 )); then
             printf '%s\n' "The legacy eval flow corpus is frozen; only deletions under evals/flows/** are allowed."
             printf '  %s\n' "${violations[@]}"
-            printf '%s\n' "Put new executable end-to-end coverage in evals/specs/**/*.test.ts and import test from @openwork/testkit."
+            printf '%s\n' "Put new executable end-to-end coverage in evals/specs/**/*.test.ts and import test from @micx/testkit."
             exit 1
           fi
           printf '%s\n' "Legacy eval flow guard passed: evals/flows/** has no non-deletion changes."

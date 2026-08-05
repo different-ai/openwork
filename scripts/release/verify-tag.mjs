@@ -37,7 +37,7 @@ const check = (label, actual) => {
 
 check("app", appVersion);
 check("desktop", desktopVersion);
-check("openwork-server", serverVersion);
+check("micx-server", serverVersion);
 check("desktop release inventory", publishedDesktopVersions[0] ?? null);
 
 if (mismatches.length) {
@@ -48,4 +48,4 @@ if (mismatches.length) {
   process.exit(1);
 }
 
-console.log(`Release tag ${tag} matches app/desktop/openwork-server versions.`);
+console.log(`Release tag ${tag} matches app/desktop/micx-server versions.`);

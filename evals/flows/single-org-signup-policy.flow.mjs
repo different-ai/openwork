@@ -36,7 +36,7 @@ function runDenApiTest(file, pattern) {
 }
 
 function runDenWebTest(pattern) {
-  return spawnSync("pnpm", ["--filter", "@openwork-ee/den-web", "exec", "bun", "test", "tests/single-org-signup-ui.test.ts", "--test-name-pattern", pattern], {
+  return spawnSync("pnpm", ["--filter", "@micx-ee/den-web", "exec", "bun", "test", "tests/single-org-signup-ui.test.ts", "--test-name-pattern", pattern], {
     cwd: ROOT,
     encoding: "utf8",
     timeout: 60_000,
@@ -63,7 +63,7 @@ export default {
             const output = commandOutput(result);
             witness(ctx, result.status === 0, "The focused Den Web private-signup UI policy test passes", output);
             witness(ctx, output.includes("1 pass"), "Exactly one focused UI test covered the hidden signup behavior", output);
-            ctx.output("$ pnpm --filter @openwork-ee/den-web exec bun test tests/single-org-signup-ui.test.ts --test-name-pattern private", output);
+            ctx.output("$ pnpm --filter @micx-ee/den-web exec bun test tests/single-org-signup-ui.test.ts --test-name-pattern private", output);
           },
         });
       },

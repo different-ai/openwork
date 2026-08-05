@@ -5,8 +5,8 @@ import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
 const FLOW_ID = "windows-workspace-session-performance";
 const vo = await loadVoiceoverParagraphs(FLOW_ID);
 
-const JOB_GLOBAL = "__openworkWindowsWorkspaceSessionPerformance";
-const DEFAULT_ROOT = "C:\\ow\\openwork-perf";
+const JOB_GLOBAL = "__micxWindowsWorkspaceSessionPerformance";
+const DEFAULT_ROOT = "C:\\ow\\micx-perf";
 const DEFAULTS = {
   workspaces: 3,
   sessionsPerWorkspace: 20,
@@ -71,27 +71,27 @@ function safeRunSegment(value) {
 
 function readParams(ctx) {
   if (state.params) return state.params;
-  const runId = ctx.env.OPENWORK_PERF_RUN_ID?.trim() || "default";
-  const provider = ctx.env.OPENWORK_PERF_PROVIDER?.trim() || "";
-  const model = ctx.env.OPENWORK_PERF_MODEL?.trim() || "";
+  const runId = ctx.env.MICX_PERF_RUN_ID?.trim() || "default";
+  const provider = ctx.env.MICX_PERF_PROVIDER?.trim() || "";
+  const model = ctx.env.MICX_PERF_MODEL?.trim() || "";
   if ((provider && !model) || (!provider && model)) {
-    throw new Error("OPENWORK_PERF_PROVIDER and OPENWORK_PERF_MODEL must be supplied together, or both omitted.");
+    throw new Error("MICX_PERF_PROVIDER and MICX_PERF_MODEL must be supplied together, or both omitted.");
   }
   state.params = {
     runId,
     safeRunId: safeRunSegment(runId),
-    root: ctx.env.OPENWORK_PERF_ROOT?.trim() || DEFAULT_ROOT,
-    workspaces: requirePositiveInt(ctx.env, "OPENWORK_PERF_WORKSPACES", DEFAULTS.workspaces),
-    sessionsPerWorkspace: requirePositiveInt(ctx.env, "OPENWORK_PERF_SESSIONS_PER_WORKSPACE", DEFAULTS.sessionsPerWorkspace),
-    concurrency: requirePositiveInt(ctx.env, "OPENWORK_PERF_CONCURRENCY", DEFAULTS.concurrency),
-    conversations: requirePositiveInt(ctx.env, "OPENWORK_PERF_CONVERSATIONS", DEFAULTS.conversations),
-    timeoutMs: requirePositiveInt(ctx.env, "OPENWORK_PERF_TIMEOUT_MS", DEFAULTS.timeoutMs),
-    maxRouteReadyMs: requirePositiveInt(ctx.env, "OPENWORK_PERF_MAX_ROUTE_READY_MS", DEFAULTS.maxRouteReadyMs),
-    maxSwitchP95Ms: requirePositiveInt(ctx.env, "OPENWORK_PERF_MAX_SWITCH_P95_MS", DEFAULTS.maxSwitchP95Ms),
-    maxEventLoopP95Ms: requirePositiveInt(ctx.env, "OPENWORK_PERF_MAX_EVENT_LOOP_P95_MS", DEFAULTS.maxEventLoopP95Ms),
-    maxEventAborts: requireNonNegativeInt(ctx.env, "OPENWORK_PERF_MAX_EVENT_ABORTS", DEFAULTS.maxEventAborts),
-    maxJsHeapMb: requirePositiveInt(ctx.env, "OPENWORK_PERF_MAX_JS_HEAP_MB", DEFAULTS.maxJsHeapMb),
-    requireOutOfWindowSession: ctx.env.OPENWORK_PERF_REQUIRE_OUT_OF_WINDOW_SESSION?.trim() === "1",
+    root: ctx.env.MICX_PERF_ROOT?.trim() || DEFAULT_ROOT,
+    workspaces: requirePositiveInt(ctx.env, "MICX_PERF_WORKSPACES", DEFAULTS.workspaces),
+    sessionsPerWorkspace: requirePositiveInt(ctx.env, "MICX_PERF_SESSIONS_PER_WORKSPACE", DEFAULTS.sessionsPerWorkspace),
+    concurrency: requirePositiveInt(ctx.env, "MICX_PERF_CONCURRENCY", DEFAULTS.concurrency),
+    conversations: requirePositiveInt(ctx.env, "MICX_PERF_CONVERSATIONS", DEFAULTS.conversations),
+    timeoutMs: requirePositiveInt(ctx.env, "MICX_PERF_TIMEOUT_MS", DEFAULTS.timeoutMs),
+    maxRouteReadyMs: requirePositiveInt(ctx.env, "MICX_PERF_MAX_ROUTE_READY_MS", DEFAULTS.maxRouteReadyMs),
+    maxSwitchP95Ms: requirePositiveInt(ctx.env, "MICX_PERF_MAX_SWITCH_P95_MS", DEFAULTS.maxSwitchP95Ms),
+    maxEventLoopP95Ms: requirePositiveInt(ctx.env, "MICX_PERF_MAX_EVENT_LOOP_P95_MS", DEFAULTS.maxEventLoopP95Ms),
+    maxEventAborts: requireNonNegativeInt(ctx.env, "MICX_PERF_MAX_EVENT_ABORTS", DEFAULTS.maxEventAborts),
+    maxJsHeapMb: requirePositiveInt(ctx.env, "MICX_PERF_MAX_JS_HEAP_MB", DEFAULTS.maxJsHeapMb),
+    requireOutOfWindowSession: ctx.env.MICX_PERF_REQUIRE_OUT_OF_WINDOW_SESSION?.trim() === "1",
     provider: provider || null,
     model: model || null,
   };
@@ -141,16 +141,16 @@ async function getPerformanceMetrics(ctx, label) {
 }
 
 async function waitForControl(ctx, timeoutMs = 90_000) {
-  await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs, label: "OpenWork control API" });
+  await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs, label: "Micx control API" });
 }
 
-async function dismissOpenWorkModelsPromo(ctx) {
-  const promoText = "Use OpenWork Models without API keys";
+async function dismissMicxModelsPromo(ctx) {
+  const promoText = "Use Micx Models without API keys";
   if (!(await ctx.hasText(promoText))) return;
-  await ctx.clickText("Continue without OpenWork Models");
+  await ctx.clickText("Continue without Micx Models");
   await ctx.waitFor(`!document.body.innerText.includes(${quoted(promoText)})`, {
     timeoutMs: 20_000,
-    label: "OpenWork Models promo dismissed",
+    label: "Micx Models promo dismissed",
   });
 }
 
@@ -159,7 +159,7 @@ async function waitForWorkspaceRouteReady(ctx, workspaceId, sessionId = "") {
   await ctx.waitFor(`(() => {
     const text = document.body?.innerText || "";
     const hash = window.location.hash || "";
-    const route = window.__openworkControl?.snapshot?.().route || "";
+    const route = window.__micxControl?.snapshot?.().route || "";
     return hash.includes(${quoted(routeNeedle)}) &&
       route.includes(${quoted(routeNeedle)}) &&
       text.trim().length > 40 &&
@@ -176,7 +176,7 @@ async function waitForBenchmarkSessionReady(ctx, workspaceId, session) {
     const expectedTitle = ${quoted(session.title)};
     const text = document.body?.innerText || "";
     const hashPath = (window.location.hash || "").replace(/^#/, "").split(/[?#]/)[0];
-    const routePath = (window.__openworkControl?.snapshot?.().route || "").split(/[?#]/)[0];
+    const routePath = (window.__micxControl?.snapshot?.().route || "").split(/[?#]/)[0];
     const surface = Array.from(document.querySelectorAll("[data-session-surface-id]"))
       .find((element) => element.getAttribute("data-session-surface-id") === sessionId);
     const surfaceRect = surface?.getBoundingClientRect?.();
@@ -185,7 +185,7 @@ async function waitForBenchmarkSessionReady(ctx, workspaceId, session) {
       .find((element) => element.getAttribute("data-session-tab-id") === sessionId);
     const activeTabTitle = activeTab?.querySelector('button[title]')?.textContent?.trim() || "";
     const headerTitle = document.querySelector('[data-slot="sidebar-inset"] header h1')?.textContent?.trim() || "";
-    const routeState = window.__openwork?.slice?.("route");
+    const routeState = window.__micx?.slice?.("route");
     const routeSession = routeState?.sessionsByWorkspaceId?.[${quoted(workspaceId)}]
       ?.find((item) => item?.id === sessionId);
     const ready = hashPath === ${quoted(routeNeedle)} &&
@@ -207,35 +207,35 @@ async function activateVisibleWorkspace(ctx, setup) {
   const workspaceId = setup.firstWorkspaceId;
   const model = setup.model ?? null;
   await ctx.eval(`(async () => {
-    const bridge = window.__OPENWORK_ELECTRON__?.invokeDesktop;
+    const bridge = window.__MICX_ELECTRON__?.invokeDesktop;
     if (!bridge) throw new Error("desktop bridge missing");
     await bridge("workspaceSetSelected", ${quoted(workspaceId)}).catch(() => null);
     await bridge("workspaceSetRuntimeActive", ${quoted(workspaceId)}).catch(() => null);
-    localStorage.setItem("openwork.react.activeWorkspace", ${quoted(workspaceId)});
+    localStorage.setItem("micx.react.activeWorkspace", ${quoted(workspaceId)});
     let prefs = {};
-    try { prefs = JSON.parse(localStorage.getItem("openwork.preferences") || "{}"); } catch { prefs = {}; }
+    try { prefs = JSON.parse(localStorage.getItem("micx.preferences") || "{}"); } catch { prefs = {}; }
     const nextPrefs = {
       ...prefs,
       hasCompletedOnboarding: true,
       providerStepCompleted: true,
-      selectedAgent: "openwork",
+      selectedAgent: "micx",
       ${model ? `defaultModel: { providerID: ${quoted(model.provider)}, modelID: ${quoted(model.model)} },` : ""}
     };
-    localStorage.setItem("openwork.preferences", JSON.stringify(nextPrefs));
-    ${model ? `localStorage.setItem("openwork.defaultModel", ${quoted(`${model.provider}/${model.model}`)});` : ""}
+    localStorage.setItem("micx.preferences", JSON.stringify(nextPrefs));
+    ${model ? `localStorage.setItem("micx.defaultModel", ${quoted(`${model.provider}/${model.model}`)});` : ""}
     window.location.hash = ${quoted(`#/workspace/${workspaceId}/session`)};
     window.location.reload();
     return true;
   })()`, { awaitPromise: true });
   await waitForControl(ctx);
   await waitForWorkspaceRouteReady(ctx, workspaceId);
-  await dismissOpenWorkModelsPromo(ctx);
+  await dismissMicxModelsPromo(ctx);
   return Date.now() - startedAt;
 }
 
 async function installFetchProbe(ctx, label) {
   return ctx.eval(`(() => {
-    const key = "__openworkWindowsPerfFetchProbe";
+    const key = "__micxWindowsPerfFetchProbe";
     if (!window[key]) {
       const originalFetch = window.fetch.bind(window);
       const probe = { originalFetch, records: [], label: "", installedAt: Date.now() };
@@ -282,7 +282,7 @@ async function installFetchProbe(ctx, label) {
 
 async function fetchProbeSummary(ctx) {
   return ctx.eval(`(() => {
-    const probe = window.__openworkWindowsPerfFetchProbe;
+    const probe = window.__micxWindowsPerfFetchProbe;
     if (!probe) return { installed: false, records: [], summary: null };
     const records = probe.records.slice();
     const counts = {};
@@ -342,7 +342,7 @@ async function measureSessionSwitches(ctx, workspaceId, sessions) {
       title: session.title,
       indexedBeforeOpen: session.indexedBeforeOpen,
       durationMs: Date.now() - startedAt,
-      route: await ctx.eval("window.__openworkControl.snapshot().route"),
+      route: await ctx.eval("window.__micxControl.snapshot().route"),
       readiness,
     });
   }
@@ -475,17 +475,17 @@ function setupWorker(params, emit) {
     const assertDeadline = () => {
       if (Date.now() > deadlineAt) throw new Error(`Benchmark setup exceeded ${params.timeoutMs}ms.`);
     };
-    const bridge = window.__OPENWORK_ELECTRON__?.invokeDesktop;
-    if (!bridge) throw new Error("OpenWork Electron desktop bridge is missing.");
+    const bridge = window.__MICX_ELECTRON__?.invokeDesktop;
+    if (!bridge) throw new Error("Micx Electron desktop bridge is missing.");
     let connection = null;
     const refreshConnection = async (reason) => {
-      const info = await bridge("openworkServerInfo");
-      if (!info?.running || !info.port) throw new Error(`Embedded OpenWork server is not running after ${reason}.`);
+      const info = await bridge("micxServerInfo");
+      if (!info?.running || !info.port) throw new Error(`Embedded Micx server is not running after ${reason}.`);
       const clientToken = typeof info.clientToken === "string" && info.clientToken ? info.clientToken : "";
       const ownerToken = typeof info.ownerToken === "string" && info.ownerToken ? info.ownerToken : "";
       const hostToken = typeof info.hostToken === "string" && info.hostToken ? info.hostToken : "";
-      if (!clientToken && !ownerToken) throw new Error(`OpenWork client token is unavailable after ${reason}.`);
-      if (!hostToken && !ownerToken) throw new Error(`OpenWork host authentication is unavailable after ${reason}.`);
+      if (!clientToken && !ownerToken) throw new Error(`Micx client token is unavailable after ${reason}.`);
+      if (!hostToken && !ownerToken) throw new Error(`Micx host authentication is unavailable after ${reason}.`);
       connection = {
         baseUrl: `http://127.0.0.1:${info.port}`,
         port: info.port,
@@ -499,10 +499,10 @@ function setupWorker(params, emit) {
     const initialServer = await refreshConnection("initial setup");
     const perRequestTimeoutMs = Math.min(params.timeoutMs, 120_000);
     const headersFor = (auth) => {
-      if (!connection) throw new Error("OpenWork server connection is not initialized.");
+      if (!connection) throw new Error("Micx server connection is not initialized.");
       const headers = { "content-type": "application/json" };
       if (auth === "host") {
-        if (connection.hostToken) headers["x-openwork-host-token"] = connection.hostToken;
+        if (connection.hostToken) headers["x-micx-host-token"] = connection.hostToken;
         else headers.authorization = `Bearer ${connection.ownerToken}`;
         return headers;
       }
@@ -516,7 +516,7 @@ function setupWorker(params, emit) {
       let status = null;
       let recorded = false;
       try {
-        if (!connection) throw new Error("OpenWork server connection is not initialized.");
+        if (!connection) throw new Error("Micx server connection is not initialized.");
         const response = await fetch(`${connection.baseUrl}${path}`, {
           method,
           headers: headersFor(auth),
@@ -760,13 +760,13 @@ function conversationWorker(params, emit) {
     const assertDeadline = () => {
       if (Date.now() > deadlineAt) throw new Error(`Conversation benchmark exceeded ${params.timeoutMs}ms.`);
     };
-    const bridge = window.__OPENWORK_ELECTRON__?.invokeDesktop;
-    if (!bridge) throw new Error("OpenWork Electron desktop bridge is missing.");
-    const info = await bridge("openworkServerInfo");
-    if (!info?.running || !info.port) throw new Error("Embedded OpenWork server is not running.");
+    const bridge = window.__MICX_ELECTRON__?.invokeDesktop;
+    if (!bridge) throw new Error("Micx Electron desktop bridge is missing.");
+    const info = await bridge("micxServerInfo");
+    if (!info?.running || !info.port) throw new Error("Embedded Micx server is not running.");
     const clientToken = typeof info.clientToken === "string" && info.clientToken ? info.clientToken : "";
     const ownerToken = typeof info.ownerToken === "string" && info.ownerToken ? info.ownerToken : "";
-    if (!clientToken && !ownerToken) throw new Error("OpenWork client token is unavailable inside the renderer.");
+    if (!clientToken && !ownerToken) throw new Error("Micx client token is unavailable inside the renderer.");
     const baseUrl = `http://127.0.0.1:${info.port}`;
     const perRequestTimeoutMs = Math.min(params.timeoutMs, 120_000);
     const headers = { "content-type": "application/json", authorization: `Bearer ${ownerToken || clientToken}` };
@@ -870,7 +870,7 @@ function conversationWorker(params, emit) {
         index,
         marker,
         title: `${conversationTitlePrefix}${pad(index)}`,
-        prompt: `Reply with exactly ${marker} and no other text. Do not call tools. This is a Windows OpenWork performance isolation check.`,
+        prompt: `Reply with exactly ${marker} and no other text. Do not call tools. This is a Windows Micx performance isolation check.`,
         sessionId: null,
         created: false,
         accepted: false,
@@ -1022,7 +1022,7 @@ export default {
   preserveTheme: true,
   precondition: async (ctx) => {
     readParams(ctx);
-    await ctx.waitFor("Boolean(window.__OPENWORK_ELECTRON__)", { timeoutMs: 60_000, label: "OpenWork Electron bridge" });
+    await ctx.waitFor("Boolean(window.__MICX_ELECTRON__)", { timeoutMs: 60_000, label: "Micx Electron bridge" });
   },
   steps: [
     {
@@ -1030,7 +1030,7 @@ export default {
       run: async (ctx) => {
         const params = readParams(ctx);
         state.perfBefore = await getPerformanceMetrics(ctx, "before");
-        await ctx.prove("The eval is attached to a real packaged Windows Electron OpenWork app", {
+        await ctx.prove("The eval is attached to a real packaged Windows Electron Micx app", {
           voiceover: vo[0],
           action: async () => {
             await waitForControl(ctx);
@@ -1039,9 +1039,9 @@ export default {
               timeoutMs: 30_000,
               label: "general settings baseline",
             });
-            await dismissOpenWorkModelsPromo(ctx);
+            await dismissMicxModelsPromo(ctx);
             state.runtime = await ctx.eval(`(async () => {
-              const bridge = window.__OPENWORK_ELECTRON__;
+              const bridge = window.__MICX_ELECTRON__;
               const invoke = bridge?.invokeDesktop;
               const arch = await bridge?.system?.getArchitectureInfo?.();
               const build = invoke ? await invoke("appBuildInfo").catch(() => null) : null;
@@ -1054,7 +1054,7 @@ export default {
                   version: build.version ?? null,
                   gitSha: build.gitSha ?? null,
                   buildEpoch: build.buildEpoch ?? null,
-                  openworkDevMode: build.openworkDevMode,
+                  micxDevMode: build.micxDevMode,
                 } : null,
                 hash: window.location.hash,
                 title: document.title,
@@ -1064,15 +1064,15 @@ export default {
             ctx.output("cdp performance metrics before", JSON.stringify(state.perfBefore.raw, null, 2));
           },
           assert: async () => {
-            recordAssertion(ctx, state.runtime?.hasBridge === true && state.runtime?.hasInvoke === true, "window.__OPENWORK_ELECTRON__ and invokeDesktop are available.", state.runtime);
+            recordAssertion(ctx, state.runtime?.hasBridge === true && state.runtime?.hasInvoke === true, "window.__MICX_ELECTRON__ and invokeDesktop are available.", state.runtime);
             recordAssertion(ctx, state.runtime?.arch?.platform === "windows", "system.getArchitectureInfo().platform reports windows.", state.runtime?.arch);
             recordAssertion(ctx, typeof state.runtime?.userAgent === "string" && state.runtime.userAgent.includes("Electron"), "The renderer user agent is Electron.", state.runtime?.userAgent);
-            recordAssertion(ctx, state.runtime?.build?.openworkDevMode === false, "appBuildInfo reports packaged/not dev mode.", state.runtime?.build);
+            recordAssertion(ctx, state.runtime?.build?.micxDevMode === false, "appBuildInfo reports packaged/not dev mode.", state.runtime?.build);
           },
           screenshot: {
             name: "packaged-windows-baseline",
             requireText: ["Overview of all settings"],
-            rejectText: ["Something went wrong", "Use OpenWork Models without API keys"],
+            rejectText: ["Something went wrong", "Use Micx Models without API keys"],
             hashIncludes: "/settings/general",
           },
         });
@@ -1087,7 +1087,7 @@ export default {
         recordAssertion(ctx, state.setup.workspaceCount === params.workspaces, "The renderer created or reused the requested benchmark workspaces through /workspaces/local.", { expected: params.workspaces, actual: state.setup.workspaceCount });
         recordAssertion(ctx, Number.isInteger(state.setup.registeredWorkspaceTotal) && state.setup.registeredWorkspaceTotal >= state.setup.workspaceCount, "The server reported total registered workspaces separately from this run's benchmark workspaces.", { registeredWorkspaceTotal: state.setup.registeredWorkspaceTotal, benchmarkWorkspaceCount: state.setup.workspaceCount });
         recordAssertion(ctx, state.setup.benchmarkSessionTotal >= state.setup.targetSessionTotal, "The renderer created or reused enough real benchmark sessions through OpenCode.", { expected: state.setup.targetSessionTotal, actual: state.setup.benchmarkSessionTotal });
-        recordAssertion(ctx, state.setup.requestSummary.errors === 0, "Dataset setup completed with zero OpenWork/OpenCode API failures.", state.setup.requestSummary);
+        recordAssertion(ctx, state.setup.requestSummary.errors === 0, "Dataset setup completed with zero Micx/OpenCode API failures.", state.setup.requestSummary);
         ctx.output("windows setup metrics", JSON.stringify(state.setup, null, 2));
         state.activationRouteReadyMs = await activateVisibleWorkspace(ctx, state.setup);
       },
@@ -1097,12 +1097,12 @@ export default {
       run: async (ctx) => {
         const firstWorkspace = state.setup.workspaces[0];
         await ctx.waitFor(`(() => {
-          const route = window.__openwork?.slice?.("route");
+          const route = window.__micx?.slice?.("route");
           const workspace = route?.workspaces?.find((item) => item?.id === ${quoted(state.setup.firstWorkspaceId)});
           return Boolean(workspace && !workspace.loading && route?.sessionsByWorkspaceId?.[${quoted(state.setup.firstWorkspaceId)}]?.length);
         })()`, { timeoutMs: 90_000, label: "benchmark route session index" });
         const indexedSessionIds = await ctx.eval(`(() => {
-          const route = window.__openwork?.slice?.("route");
+          const route = window.__micx?.slice?.("route");
           return (route?.sessionsByWorkspaceId?.[${quoted(state.setup.firstWorkspaceId)}] || [])
             .map((session) => session?.id)
             .filter(Boolean);
@@ -1177,7 +1177,7 @@ export default {
             };
             ctx.output("windows UI/session responsiveness metrics", JSON.stringify(state.ui, null, 2));
             ctx.output("cdp performance metrics after setup", JSON.stringify(state.perfAfterSetup.raw, null, 2));
-            await dismissOpenWorkModelsPromo(ctx);
+            await dismissMicxModelsPromo(ctx);
           },
           assert: async () => {
             const params = readParams(ctx);
@@ -1185,12 +1185,12 @@ export default {
             const expectedSwitches = Math.min(10, available);
             recordAssertion(ctx, state.ui.switches.count === expectedSwitches, "Visible session switches reached the requested min(10, available sessions) sample.", state.ui.switches);
             recordAssertion(ctx, state.ui.fetchProbe.summary.unexpectedErrors === 0, "Renderer fetch instrumentation saw no unexpected fetch failures during session switching.", state.ui.fetchProbe.summary);
-            recordAssertion(ctx, Number.isInteger(state.ui.fetchProbe.summary.aborted) && state.ui.fetchProbe.summary.aborted <= params.maxEventAborts, "Renderer fetch instrumentation aborted request count stayed within OPENWORK_PERF_MAX_EVENT_ABORTS.", { actual: state.ui.fetchProbe.summary.aborted, budget: params.maxEventAborts, abortedByPath: state.ui.fetchProbe.summary.abortedByPath });
+            recordAssertion(ctx, Number.isInteger(state.ui.fetchProbe.summary.aborted) && state.ui.fetchProbe.summary.aborted <= params.maxEventAborts, "Renderer fetch instrumentation aborted request count stayed within MICX_PERF_MAX_EVENT_ABORTS.", { actual: state.ui.fetchProbe.summary.aborted, budget: params.maxEventAborts, abortedByPath: state.ui.fetchProbe.summary.abortedByPath });
             recordAssertion(ctx, state.ui.eventLoopLag.samples > 0 && Number.isFinite(state.ui.eventLoopLag.max), "Renderer event-loop lag probe produced usable samples.", state.ui.eventLoopLag);
-            recordAssertion(ctx, Number.isFinite(state.ui.routeReadyMs) && state.ui.routeReadyMs <= params.maxRouteReadyMs, "Workspace route readiness stayed within OPENWORK_PERF_MAX_ROUTE_READY_MS.", { actualMs: state.ui.routeReadyMs, budgetMs: params.maxRouteReadyMs });
-            recordAssertion(ctx, state.ui.switches.latencyMs.p95 !== null && state.ui.switches.latencyMs.p95 <= params.maxSwitchP95Ms, "Visible session switch p95 stayed within OPENWORK_PERF_MAX_SWITCH_P95_MS.", { actualMs: state.ui.switches.latencyMs.p95, budgetMs: params.maxSwitchP95Ms, latencyMs: state.ui.switches.latencyMs });
-            recordAssertion(ctx, state.ui.eventLoopLag.p95 !== null && state.ui.eventLoopLag.p95 <= params.maxEventLoopP95Ms, "Renderer event-loop lag p95 stayed within OPENWORK_PERF_MAX_EVENT_LOOP_P95_MS.", { actualMs: state.ui.eventLoopLag.p95, budgetMs: params.maxEventLoopP95Ms, eventLoopLag: state.ui.eventLoopLag });
-            recordAssertion(ctx, Number.isFinite(state.ui.jsHeapUsedMiB) && state.ui.jsHeapUsedMiB <= params.maxJsHeapMb, "After-setup renderer JS heap stayed within OPENWORK_PERF_MAX_JS_HEAP_MB.", { actualMiB: state.ui.jsHeapUsedMiB, budgetMiB: params.maxJsHeapMb, metric: "JSHeapUsedSize" });
+            recordAssertion(ctx, Number.isFinite(state.ui.routeReadyMs) && state.ui.routeReadyMs <= params.maxRouteReadyMs, "Workspace route readiness stayed within MICX_PERF_MAX_ROUTE_READY_MS.", { actualMs: state.ui.routeReadyMs, budgetMs: params.maxRouteReadyMs });
+            recordAssertion(ctx, state.ui.switches.latencyMs.p95 !== null && state.ui.switches.latencyMs.p95 <= params.maxSwitchP95Ms, "Visible session switch p95 stayed within MICX_PERF_MAX_SWITCH_P95_MS.", { actualMs: state.ui.switches.latencyMs.p95, budgetMs: params.maxSwitchP95Ms, latencyMs: state.ui.switches.latencyMs });
+            recordAssertion(ctx, state.ui.eventLoopLag.p95 !== null && state.ui.eventLoopLag.p95 <= params.maxEventLoopP95Ms, "Renderer event-loop lag p95 stayed within MICX_PERF_MAX_EVENT_LOOP_P95_MS.", { actualMs: state.ui.eventLoopLag.p95, budgetMs: params.maxEventLoopP95Ms, eventLoopLag: state.ui.eventLoopLag });
+            recordAssertion(ctx, Number.isFinite(state.ui.jsHeapUsedMiB) && state.ui.jsHeapUsedMiB <= params.maxJsHeapMb, "After-setup renderer JS heap stayed within MICX_PERF_MAX_JS_HEAP_MB.", { actualMiB: state.ui.jsHeapUsedMiB, budgetMiB: params.maxJsHeapMb, metric: "JSHeapUsedSize" });
             recordAssertion(ctx, state.ui.sidebarResizeGutter?.overlapPx > 0 && state.ui.sidebarResizeGutter.maskCoversOverlap === true && state.ui.sidebarResizeGutter.maskBackground !== "rgba(0, 0, 0, 0)" && state.ui.sidebarResizeGutter.maskPointerEvents === "none" && state.ui.sidebarResizeGutter.railPointerEvents !== "none", "The sidebar resize gutter paints over its main-pane overlap without blocking resize input.", state.ui.sidebarResizeGutter);
             recordAssertion(ctx, state.ui.switches.records.every((record) => record.readiness?.activeTabTitle === record.title && record.readiness?.headerTitle === record.title && record.readiness?.routeSessionTitle === record.title), "Every switched session keeps its route state, header, and active-tab title aligned.", state.ui.switches.records);
             recordAssertion(ctx, !params.requireOutOfWindowSession || state.ui.switches.records.some((record) => record.indexedBeforeOpen === false), "The dedicated regression configuration explicitly exercises an out-of-window routed session.", { required: params.requireOutOfWindowSession, totalListedSessions: firstWorkspace.totalListedSessions, routeIndexBeforeSwitches: state.ui.routeIndexBeforeSwitches, records: state.ui.switches.records });
@@ -1199,7 +1199,7 @@ export default {
           screenshot: {
             name: "benchmark-sessions-navigable",
             requireText: ["Search sessions", finalSwitchTitle],
-            rejectText: ["Something went wrong", "Use OpenWork Models without API keys"],
+            rejectText: ["Something went wrong", "Use Micx Models without API keys"],
           },
         });
       },
@@ -1230,7 +1230,7 @@ export default {
             recordAssertion(ctx, Boolean(representative?.sessionId && representative.marker), "A successful representative conversation is available for the final screenshot.", representative);
             await ctx.control("session.open", { sessionId: representative.sessionId });
             await waitForWorkspaceRouteReady(ctx, state.setup.firstWorkspaceId, representative.sessionId);
-            await dismissOpenWorkModelsPromo(ctx);
+            await dismissMicxModelsPromo(ctx);
             await ctx.waitForText(representative.marker, { timeoutMs: 90_000 });
           },
           assert: async () => {
@@ -1245,7 +1245,7 @@ export default {
           screenshot: {
             name: "completed-assistant-marker",
             requireText: [state.conversations.representative.marker],
-            rejectText: ["Something went wrong", "Use OpenWork Models without API keys"],
+            rejectText: ["Something went wrong", "Use Micx Models without API keys"],
           },
         });
       },

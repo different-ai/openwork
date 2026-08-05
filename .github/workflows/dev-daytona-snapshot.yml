@@ -1,4 +1,4 @@
-# web.openworklabs.com engine channel:
+# web.micxlabs.com engine channel:
 # Per-push snapshot from dev HEAD, named <base>-dev-<short-sha>, with a nightly backstop.
 # DAYTONA_PIN_CHANNEL resolves pin ping-pong: release pinning defers to the dev channel.
 # Set DAYTONA_PIN_CHANNEL=release to stop this pipeline; the next release re-pins.
@@ -30,7 +30,7 @@ concurrency:
 jobs:
   publish-daytona-snapshot:
     name: Build and Push Dev Daytona Snapshot
-    if: github.repository == 'different-ai/openwork'
+    if: github.repository == 'different-ai/micx'
     runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - name: Check channel
@@ -67,7 +67,7 @@ jobs:
           set -euo pipefail
 
           short_sha="$(git rev-parse --short=7 HEAD)"
-          snapshot_name="${DAYTONA_SNAPSHOT_NAME_BASE:-openwork}-dev-${short_sha}"
+          snapshot_name="${DAYTONA_SNAPSHOT_NAME_BASE:-micx}-dev-${short_sha}"
           snapshot_region="${DEFAULT_SNAPSHOT_REGION:-}"
           {
             echo "snapshot_name=$snapshot_name"
@@ -155,7 +155,7 @@ jobs:
           daytona login --api-key "$DAYTONA_API_KEY"
 
           echo "Publishing Daytona snapshot: ${DAYTONA_SNAPSHOT_NAME}"
-          ./scripts/create-daytona-openwork-snapshot.sh "${DAYTONA_SNAPSHOT_NAME}"
+          ./scripts/create-daytona-micx-snapshot.sh "${DAYTONA_SNAPSHOT_NAME}"
 
       - name: Checkout snapshot pin automation
         if: steps.channel.outputs.enabled == 'true' && vars.DAYTONA_CLOUD_ENV_GROUP_ID != ''

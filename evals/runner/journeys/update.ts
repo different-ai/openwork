@@ -112,7 +112,7 @@ const WORKSPACE_STORE_PATH = path.join(ROOT, "apps", "desktop", "electron", "wor
 const DESKTOP_UPDATER_PATH = path.join(ROOT, "apps", "desktop", "electron", "updater.mjs");
 const PRODUCT_ENV: NodeJS.ProcessEnv = {
   ...process.env,
-  DATABASE_URL: process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/openwork_den",
+  DATABASE_URL: process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/micx_den",
   DEN_DB_ENCRYPTION_KEY: process.env.DEN_DB_ENCRYPTION_KEY ?? "local-dev-db-encryption-key-please-change-1234567890",
   BETTER_AUTH_SECRET: process.env.BETTER_AUTH_SECRET ?? "local-dev-secret-not-for-production-use!!",
   BETTER_AUTH_URL: process.env.BETTER_AUTH_URL ?? "http://localhost:3005",
@@ -249,7 +249,7 @@ const fileName = input.distribution === "cloud"
   : input.distribution === "public"
     ? module.desktopReleaseAssetName(input.platform, releaseTag)
     : module.enterpriseDesktopReleaseAssetName(input.platform, releaseTag);
-const githubUrl = module.installerReleaseAssetUrl(fileName, { releaseTag, releaseRepo: "different-ai/openwork" });
+const githubUrl = module.installerReleaseAssetUrl(fileName, { releaseTag, releaseRepo: "different-ai/micx" });
 console.log(JSON.stringify({ fileName, githubUrl }));
 `;
   return productDownloadUrlResultFromUnknown(await execBunJson(script, input, "ee/apps/den-api/src/utils/installer-artifacts.ts"));
@@ -356,26 +356,26 @@ export async function expectDownloadUrl(ctx: FlowContext, options: ExpectDownloa
 }
 
 export async function resolveBootstrapPrecedence(options: BootstrapPrecedenceOptions): Promise<BootstrapPrecedenceResult> {
-  const root = await mkdtemp(path.join(tmpdir(), "openwork-release-bootstrap-"));
+  const root = await mkdtemp(path.join(tmpdir(), "micx-release-bootstrap-"));
   const home = path.join(root, "home");
   const xdg = path.join(root, "xdg");
   const userData = path.join(root, "userData");
-  const bundleDir = path.join(root, "downloads", "OpenWork update bundle");
-  const canonicalPath = path.join(xdg, "openwork", "desktop-bootstrap.json");
-  const legacyPath = path.join(home, ".config", "openwork", "desktop-bootstrap.json");
+  const bundleDir = path.join(root, "downloads", "Micx update bundle");
+  const canonicalPath = path.join(xdg, "micx", "desktop-bootstrap.json");
+  const legacyPath = path.join(home, ".config", "micx", "desktop-bootstrap.json");
   const installedPath = options.before.installedPath ?? "canonical";
   const installedBootstrapPath = installedPath === "legacy" ? legacyPath : canonicalPath;
   const previousHome = process.env.HOME;
   const previousXdg = process.env.XDG_CONFIG_HOME;
-  const previousOverride = process.env.OPENWORK_DESKTOP_BOOTSTRAP_PATH;
-  const previousBundle = process.env.OPENWORK_BOOTSTRAP_BUNDLE_DIR;
-  const previousDevMode = process.env.OPENWORK_DEV_MODE;
+  const previousOverride = process.env.MICX_DESKTOP_BOOTSTRAP_PATH;
+  const previousBundle = process.env.MICX_BOOTSTRAP_BUNDLE_DIR;
+  const previousDevMode = process.env.MICX_DEV_MODE;
 
   process.env.HOME = home;
   process.env.XDG_CONFIG_HOME = xdg;
-  process.env.OPENWORK_BOOTSTRAP_BUNDLE_DIR = bundleDir;
-  delete process.env.OPENWORK_DESKTOP_BOOTSTRAP_PATH;
-  delete process.env.OPENWORK_DEV_MODE;
+  process.env.MICX_BOOTSTRAP_BUNDLE_DIR = bundleDir;
+  delete process.env.MICX_DESKTOP_BOOTSTRAP_PATH;
+  delete process.env.MICX_DEV_MODE;
 
   try {
     await writeJsonFile(installedBootstrapPath, {
@@ -385,7 +385,7 @@ export async function resolveBootstrapPrecedence(options: BootstrapPrecedenceOpt
       writtenAt: options.before.installedWrittenAt ?? "2026-07-09T12:00:00.000Z",
     });
     await mkdir(bundleDir, { recursive: true });
-    await writeFile(path.join(bundleDir, "openwork-win-x64-0.17.40.exe"), "signed installer", "utf8");
+    await writeFile(path.join(bundleDir, "micx-win-x64-0.17.40.exe"), "signed installer", "utf8");
     await writeJsonFile(path.join(bundleDir, "desktop-bootstrap.json"), {
       baseUrl: options.before.bundleServerUrl,
       apiBaseUrl: options.before.bundleServerUrl,
@@ -398,7 +398,7 @@ export async function resolveBootstrapPrecedence(options: BootstrapPrecedenceOpt
     if (!isWorkspaceStoreModule(module)) throw new EvalError("workspace-store.mjs did not export createWorkspaceStore.");
     const createStore = () => module.createWorkspaceStore({
       app: { getPath: (name) => name === "userData" ? userData : root },
-      defaultDenBaseUrl: "https://default.openworklabs.com",
+      defaultDenBaseUrl: "https://default.micxlabs.com",
       defaultRequireSignin: false,
       forceRequireSignin: false,
     });
@@ -423,9 +423,9 @@ export async function resolveBootstrapPrecedence(options: BootstrapPrecedenceOpt
   } finally {
     restoreEnv("HOME", previousHome);
     restoreEnv("XDG_CONFIG_HOME", previousXdg);
-    restoreEnv("OPENWORK_DESKTOP_BOOTSTRAP_PATH", previousOverride);
-    restoreEnv("OPENWORK_BOOTSTRAP_BUNDLE_DIR", previousBundle);
-    restoreEnv("OPENWORK_DEV_MODE", previousDevMode);
+    restoreEnv("MICX_DESKTOP_BOOTSTRAP_PATH", previousOverride);
+    restoreEnv("MICX_BOOTSTRAP_BUNDLE_DIR", previousBundle);
+    restoreEnv("MICX_DEV_MODE", previousDevMode);
     await rm(root, { recursive: true, force: true });
   }
 }

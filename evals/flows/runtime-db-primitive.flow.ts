@@ -42,17 +42,17 @@ function moduleUrl(name: string): string {
 function harnessSource(): string {
   return `import { join } from "node:path";
 import { installCloudPlugin, readInstalledCloudPlugins } from ${JSON.stringify(moduleUrl("cloud-plugins.ts"))};
-import { readOpenworkWorkspaceConfig, writeOpenworkWorkspaceConfig } from ${JSON.stringify(moduleUrl("openwork-workspace-config-store.ts"))};
+import { readMicxWorkspaceConfig, writeMicxWorkspaceConfig } from ${JSON.stringify(moduleUrl("micx-workspace-config-store.ts"))};
 import { openRuntimeSqliteDatabase, runtimeDbPath, runtimeStorageDir } from ${JSON.stringify(moduleUrl("runtime-db.ts"))};
 import { readRuntimeOpencodeConfig, writeRuntimeOpencodeConfig } from ${JSON.stringify(moduleUrl("runtime-opencode-config-store.ts"))};
 import { readSessionGroupState, writeSessionGroupState } from ${JSON.stringify(moduleUrl("session-groups.ts"))};
 
 const mode = process.argv[2] ?? "";
 const root = process.env.RUNTIME_DB_PRIMITIVE_ROOT;
-const dbPath = process.env.OPENWORK_RUNTIME_DB;
+const dbPath = process.env.MICX_RUNTIME_DB;
 const workspaceId = ${JSON.stringify(WORKSPACE_ID)};
 
-if (!root || !dbPath) throw new Error("runtime DB primitive harness needs RUNTIME_DB_PRIMITIVE_ROOT and OPENWORK_RUNTIME_DB");
+if (!root || !dbPath) throw new Error("runtime DB primitive harness needs RUNTIME_DB_PRIMITIVE_ROOT and MICX_RUNTIME_DB");
 
 function serverConfig(configPath = join(root, "server.json")) {
   return {
@@ -79,7 +79,7 @@ async function writeSessionAndWorkspace(config) {
     groups: [{ id: "grp_flow", label: "Flow group" }],
     assignments: { ses_flow: "grp_flow" },
   });
-  await writeOpenworkWorkspaceConfig(config, workspaceId, (current) => ({
+  await writeMicxWorkspaceConfig(config, workspaceId, (current) => ({
     ...current,
     workspace: { label: "Flow workspace config" },
   }));
@@ -106,7 +106,7 @@ async function writeRuntimeAndCloud(config) {
 
 async function readSessionAndWorkspace(config) {
   const session = await readSessionGroupState(config, workspaceId);
-  const workspace = await readOpenworkWorkspaceConfig(config, workspaceId);
+  const workspace = await readMicxWorkspaceConfig(config, workspaceId);
   return {
     groupLabel: session.state.groups[0]?.label ?? null,
     assignment: session.state.assignments.ses_flow ?? null,
@@ -132,9 +132,9 @@ function print(value) {
 const config = serverConfig();
 
 if (mode === "paths") {
-  delete process.env.OPENWORK_RUNTIME_DB;
+  delete process.env.MICX_RUNTIME_DB;
   const defaultPath = runtimeDbPath(config);
-  process.env.OPENWORK_RUNTIME_DB = ` + "` ${dbPath} `" + `;
+  process.env.MICX_RUNTIME_DB = ` + "` ${dbPath} `" + `;
   const overridePath = runtimeDbPath(config);
   const storageDir = runtimeStorageDir(config);
   const connection = await openRuntimeSqliteDatabase(overridePath);
@@ -144,7 +144,7 @@ if (mode === "paths") {
   print({ mode, defaultPath, overridePath, storageDir, driver: connection.kind });
 } else if (mode === "write-session-workspace") {
   await writeSessionAndWorkspace(config);
-  print({ mode, wrote: ["session_group_states", "openwork_workspace_configs"] });
+  print({ mode, wrote: ["session_group_states", "micx_workspace_configs"] });
 } else if (mode === "read-session-workspace") {
   print({ mode, ...(await readSessionAndWorkspace(config)) });
 } else if (mode === "write-runtime-cloud") {
@@ -165,7 +165,7 @@ if (mode === "paths") {
 }
 
 async function createHarness(): Promise<HarnessPaths> {
-  const root = await mkdtemp(join(tmpdir(), "openwork-runtime-db-primitive-flow-"));
+  const root = await mkdtemp(join(tmpdir(), "micx-runtime-db-primitive-flow-"));
   const harnessPath = join(root, "runtime-db-primitive-harness.mjs");
   await writeFile(harnessPath, harnessSource(), "utf8");
   return { root, dbPath: join(root, "runtime.sqlite"), harnessPath };
@@ -177,7 +177,7 @@ function runHarness(paths: HarnessPaths, mode: string): SpawnSyncReturns<string>
     encoding: "utf8",
     env: {
       ...process.env,
-      OPENWORK_RUNTIME_DB: paths.dbPath,
+      MICX_RUNTIME_DB: paths.dbPath,
       RUNTIME_DB_PRIMITIVE_ROOT: paths.root,
     },
     timeout: RUN_TIMEOUT_MS,
@@ -254,7 +254,7 @@ export default defineFlow({
               witness(ctx, run.status === 0, "Path harness exits 0", commandOutput(run));
               const output = parseHarnessJson(run);
               witness(ctx, output.defaultPath === join(paths.root, "runtime.sqlite"), "Default path resolves next to server.json", String(output.defaultPath));
-              witness(ctx, output.overridePath === paths.dbPath, "OPENWORK_RUNTIME_DB override wins after trimming", String(output.overridePath));
+              witness(ctx, output.overridePath === paths.dbPath, "MICX_RUNTIME_DB override wins after trimming", String(output.overridePath));
               witness(ctx, output.storageDir === paths.root, "runtimeStorageDir points at the runtime DB directory", String(output.storageDir));
               witness(ctx, output.driver === "bun", "Harness opened the active Bun SQLite driver through the primitive", String(output.driver));
               witness(ctx, (await stat(paths.dbPath)).isFile(), "Opening the primitive created the runtime.sqlite file", paths.dbPath);
@@ -286,9 +286,9 @@ export default defineFlow({
               const output = parseHarnessJson(readRun);
               const tables = readTableNames(paths.dbPath);
               const sessionRow = readJsonCell(paths.dbPath, "SELECT state_json AS value FROM session_group_states WHERE workspace_id = 'ws_runtime_db_primitive_flow'");
-              const workspaceRow = readJsonCell(paths.dbPath, "SELECT config_json AS value FROM openwork_workspace_configs WHERE workspace_id = 'ws_runtime_db_primitive_flow'");
+              const workspaceRow = readJsonCell(paths.dbPath, "SELECT config_json AS value FROM micx_workspace_configs WHERE workspace_id = 'ws_runtime_db_primitive_flow'");
               witness(ctx, tables.includes("session_group_states"), "session_group_states table exists", tables.join(", "));
-              witness(ctx, tables.includes("openwork_workspace_configs"), "openwork_workspace_configs table exists", tables.join(", "));
+              witness(ctx, tables.includes("micx_workspace_configs"), "micx_workspace_configs table exists", tables.join(", "));
               witness(ctx, output.groupLabel === "Flow group" && output.assignment === "grp_flow", "Session group state reads back through the store", JSON.stringify(output));
               witness(ctx, output.workspaceLabel === "Flow workspace config", "Workspace config reads back through its store", JSON.stringify(output));
               witness(ctx, Array.isArray(sessionRow.groups) && isRecord(workspaceRow.workspace), "Raw DB rows keep domain JSON in separate schemas", JSON.stringify({ sessionRow, workspaceRow }));

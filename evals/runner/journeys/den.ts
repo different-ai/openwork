@@ -82,7 +82,7 @@ interface BrowserOrganization {
   slug: string;
 }
 
-const AUTH_TOKEN_STORAGE_KEY = "openwork:web:auth-token";
+const AUTH_TOKEN_STORAGE_KEY = "micx:web:auth-token";
 const DEFAULT_INVITE_ROLE = "member";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -133,7 +133,7 @@ function authHeaders(token: string): Headers {
 
 function orgScopedAuthHeaders(token: string, organizationId?: string): Headers {
   const headers = authHeaders(token);
-  if (organizationId) headers.set("x-openwork-org-id", organizationId);
+  if (organizationId) headers.set("x-micx-org-id", organizationId);
   return headers;
 }
 
@@ -251,11 +251,11 @@ export function cleanBaseUrl(value: string | undefined): string {
 }
 
 export function resolveDenApiUrl(env: NodeJS.ProcessEnv, override?: string): string {
-  return cleanBaseUrlRequired(override ?? env.OPENWORK_EVAL_DEN_API_URL, "OPENWORK_EVAL_DEN_API_URL");
+  return cleanBaseUrlRequired(override ?? env.MICX_EVAL_DEN_API_URL, "MICX_EVAL_DEN_API_URL");
 }
 
 export function resolveDenWebUrl(env: NodeJS.ProcessEnv, override?: string): string {
-  return cleanBaseUrlRequired(override ?? env.OPENWORK_EVAL_DEN_WEB_URL, "OPENWORK_EVAL_DEN_WEB_URL");
+  return cleanBaseUrlRequired(override ?? env.MICX_EVAL_DEN_WEB_URL, "MICX_EVAL_DEN_WEB_URL");
 }
 
 export function resolveDenUrls(env: NodeJS.ProcessEnv, options: DenUrlOptions = {}): DenUrls {
@@ -305,7 +305,7 @@ export function normalizeInviteUrl(rawInviteUrl: string, webUrl: string): Invite
   const token = parsed.searchParams.get("invite")?.trim() ?? "";
   if (!token) throw new EvalError(`Invite URL did not include an invite token: ${decoded}`);
   // Provenance: invite-to-desktop.flow.mjs:741-745 rewrites email-rendered
-  // links onto OPENWORK_EVAL_DEN_WEB_URL because the email origin can differ
+  // links onto MICX_EVAL_DEN_WEB_URL because the email origin can differ
   // from the browser-driven den-web origin in the local stack.
   const rewritten = new URL(`${parsed.pathname}${parsed.search}${parsed.hash}`, `${cleanBaseUrl(webUrl)}/`).toString();
   return { inviteUrl: rewritten, token };
@@ -353,7 +353,7 @@ export async function apiSignIn(ctx: FlowContext, options: ApiSignInOptions): Pr
   }, options);
   if (!result.response.ok && ((result.response.status === 401 && result.text.includes("Invalid or expired token")) || (result.response.status === 403 && result.text.includes("Invalid origin")))) {
     const urls = resolveDenUrls(ctx.env, options);
-    const authOrigin = ctx.env.OPENWORK_EVAL_DEN_AUTH_ORIGIN?.trim() || urls.webUrl;
+    const authOrigin = ctx.env.MICX_EVAL_DEN_AUTH_ORIGIN?.trim() || urls.webUrl;
     const headers = new Headers();
     headers.set("content-type", "application/json");
     headers.set("origin", authOrigin);
@@ -476,7 +476,7 @@ async function clickLastExactText(ctx: FlowContext, text: string, selector = "bu
 async function waitForAuthForm(ctx: FlowContext): Promise<void> {
   await ctx.waitFor(
     `document.body.innerText.includes('Sign in')
-      || document.body.innerText.includes('Start using OpenWork')
+      || document.body.innerText.includes('Start using Micx')
       || Boolean(document.querySelector('input[type="email"], input[name="email"]'))`,
     { timeoutMs: 45_000, label: "den-web auth form" },
   );
@@ -796,10 +796,10 @@ async function resolvePendingInviteViaApi(ctx: FlowContext, actor: Actor, email:
 }
 
 async function markEmailVerifiedIfConfigured(ctx: FlowContext, email: string): Promise<boolean> {
-  const command = ctx.env.OPENWORK_EVAL_MARK_VERIFIED_CMD?.trim() ?? "";
+  const command = ctx.env.MICX_EVAL_MARK_VERIFIED_CMD?.trim() ?? "";
   if (!command) return false;
   execSync(command.replaceAll("{email}", email), { stdio: "ignore" });
-  ctx.log(`Marked ${email} verified via OPENWORK_EVAL_MARK_VERIFIED_CMD.`);
+  ctx.log(`Marked ${email} verified via MICX_EVAL_MARK_VERIFIED_CMD.`);
   return true;
 }
 
@@ -885,7 +885,7 @@ async function completeInviteVerificationIfNeeded(ctx: FlowContext, actor: Actor
   const devVerified = await submitVerificationCodeFromDevOutbox(ctx, actor.email);
   if (devVerified) return true;
   const marked = await markEmailVerifiedIfConfigured(ctx, actor.email);
-  if (!marked) throw new EvalError("Invite acceptance reached email verification; set OPENWORK_EVAL_MARK_VERIFIED_CMD or run against a dev stack with /v1/dev/emails enabled.");
+  if (!marked) throw new EvalError("Invite acceptance reached email verification; set MICX_EVAL_MARK_VERIFIED_CMD or run against a dev stack with /v1/dev/emails enabled.");
   await navigateAbsolute(ctx, inviteUrl, "join org after verification");
   return true;
 }
@@ -962,7 +962,7 @@ async function handlePostClickInviteState(ctx: FlowContext, actor: Actor, invite
   const verifiedThroughDevEmail = await verifyBrowserEmailFromDevOutbox(ctx, actor.email);
   const verified = verifiedThroughDevEmail || await markEmailVerifiedIfConfigured(ctx, actor.email);
   if (!verified) {
-    throw new EvalError("Invite acceptance requires email verification; set OPENWORK_EVAL_MARK_VERIFIED_CMD or run against a dev stack with /v1/dev/emails enabled.");
+    throw new EvalError("Invite acceptance requires email verification; set MICX_EVAL_MARK_VERIFIED_CMD or run against a dev stack with /v1/dev/emails enabled.");
   }
 
   await clickJoinButton(ctx);
@@ -995,7 +995,7 @@ async function acceptInviteViaBrowserApi(ctx: FlowContext, inviteToken: string, 
 
 async function apiSignUpOrSignIn(ctx: FlowContext, actor: Actor): Promise<string> {
   const urls = resolveDenUrls(ctx.env);
-  const authOrigin = ctx.env.OPENWORK_EVAL_DEN_AUTH_ORIGIN?.trim() || urls.webUrl;
+  const authOrigin = ctx.env.MICX_EVAL_DEN_AUTH_ORIGIN?.trim() || urls.webUrl;
   async function authRequest(path: string, body: string): Promise<DenApiFetchResult> {
     const headers = new Headers();
     headers.set("content-type", "application/json");
@@ -1041,7 +1041,7 @@ export async function signUpWeb(ctx: FlowContext, options: SignInWebOptions): Pr
   const webUrl = denWebUrl(ctx);
   await ctx.on(options.surface, async () => {
     // Provenance: new-signin-flow.flow.mjs:189-239 documents the email-first
-    // sign-up surface: Start using OpenWork -> email -> Next -> Create your
+    // sign-up surface: Start using Micx -> email -> Next -> Create your
     // account with name/password and Sign up.
     await clearDenWebSession(ctx, webUrl);
     await navigateAbsolute(ctx, webUrl, "den-web signup");
@@ -1190,7 +1190,7 @@ export async function acceptInvite(ctx: FlowContext, options: AcceptInviteOption
 
     if (await ctx.hasText("You're one click away from the team workspace.")) {
       const verified = await markEmailVerifiedIfConfigured(ctx, actor.email);
-      if (!verified) ctx.log("OPENWORK_EVAL_MARK_VERIFIED_CMD is not set; attempting invite acceptance directly (local dev may skip verification).");
+      if (!verified) ctx.log("MICX_EVAL_MARK_VERIFIED_CMD is not set; attempting invite acceptance directly (local dev may skip verification).");
       await clickJoinButton(ctx);
       await waitForPostClickInviteState(ctx, actor.email);
       await handlePostClickInviteState(ctx, actor, invite.inviteUrl ?? "");

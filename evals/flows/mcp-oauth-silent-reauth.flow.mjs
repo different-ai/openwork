@@ -5,7 +5,7 @@
  * The OpenCode engine only refreshes MCP access tokens reactively — once per
  * transport — so an expired token or a transient outage at engine boot
  * strands the connector in "Sign in needed"/"Issue" until the user clicks
- * Sign in manually. OpenWork now heals this quietly: every MCP status
+ * Sign in manually. Micx now heals this quietly: every MCP status
  * refresh retries `mcp.connect` for unhealthy remote OAuth entries, which
  * re-runs the refresh-token grant on a fresh transport without ever opening
  * a browser or modal (apps/app/src/react-app/domains/connections/mcp-silent-reauth.ts).
@@ -16,7 +16,7 @@
  *
  *   1. One-time interactive sign-in for a custom "Advanced OAuth"
  *      (pre-registered client) connector → Ready.
- *   2. The connector's API goes down and OpenWork "reopens" (engine
+ *   2. The connector's API goes down and Micx "reopens" (engine
  *      restart) → connector is stranded (the reported bug state).
  *   3. The API comes back. With zero clicks beyond a status refresh, the
  *      connector flips back to Ready. Ground truth from the mock IdP's
@@ -140,10 +140,10 @@ async function refreshStatuses(ctx) {
 
 async function restartEngine(ctx) {
   await ctx.eval(
-    'window.__OPENWORK_ELECTRON__.invokeDesktop("engineRestart", {})',
+    'window.__MICX_ELECTRON__.invokeDesktop("engineRestart", {})',
     { awaitPromise: true },
   );
-  ctx.log("Engine restarted (simulates quitting and reopening OpenWork).");
+  ctx.log("Engine restarted (simulates quitting and reopening Micx).");
   // Give the engine a moment to boot before the next status read.
   await new Promise((resolve) => setTimeout(resolve, 8_000));
 }
@@ -172,7 +172,7 @@ export default {
     {
       name: "App booted with an open workspace",
       run: async (ctx) => {
-        await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 60_000 });
+        await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 60_000 });
         await ctx.waitFor("window.location.hash.includes('/workspace/')", {
           timeoutMs: 30_000,
           label: "an open workspace (this flow needs one to configure MCPs)",
@@ -199,7 +199,7 @@ export default {
           await ctx.fill('input[placeholder="github-copilot"]', MCP_NAME);
           await ctx.fill('input[placeholder="https://api.githubcopilot.com/mcp/"]', `${MOCK_BASE}/mcp`);
           await ctx.clickText("Advanced OAuth", { timeoutMs: 10_000 });
-          await ctx.fill('input[placeholder="Paste the OAuth client ID"]', "openwork-eval-preregistered-client");
+          await ctx.fill('input[placeholder="Paste the OAuth client ID"]', "micx-eval-preregistered-client");
           await ctx.clickText("Add App", { timeoutMs: 10_000 });
           // A sign-in modal may auto-open; the row's Sign in button below is
           // the canonical path, so close it if present.
@@ -243,7 +243,7 @@ export default {
       },
     },
     {
-      name: "Token expires and the API is unreachable while OpenWork reopens",
+      name: "Token expires and the API is unreachable while Micx reopens",
       run: async (ctx) => {
         // Restarting the mock wipes its in-memory access tokens (= expiry);
         // stopping it entirely reproduces the wake-from-sleep outage.
@@ -268,7 +268,7 @@ export default {
       },
     },
     {
-      name: "API returns; OpenWork silently re-authenticates with the stored refresh token",
+      name: "API returns; Micx silently re-authenticates with the stored refresh token",
       run: async (ctx) => {
         await startMock(ctx); // fresh instance: old access tokens invalid, request log empty
 

@@ -1,7 +1,7 @@
 # Cloud MCP agent flows
 
-End-to-end flows where the **agent itself** (composer prompts) operates OpenWork
-Cloud through the `openwork-cloud` MCP. These validate the real product story:
+End-to-end flows where the **agent itself** (composer prompts) operates Micx
+Cloud through the `micx-cloud` MCP. These validate the real product story:
 a signed-in user types plain English and the agent manages their org.
 
 All flows verified 2026-06-09 against a local Den stack (MySQL + den-api +
@@ -18,16 +18,16 @@ via Den API/DB, not just the transcript.
 2. Point the desktop at the Den stack (desktop-bootstrap.json), reload the
    renderer after changing the bootstrap (boot can race and keep stale base
    URLs in localStorage), then sign in via paste-code.
-3. Open Settings -> Extensions -> MCP and wait for **OpenWork Cloud Control —
+3. Open Settings -> Extensions -> MCP and wait for **Micx Cloud Control —
    Ready** (auto-sync mints the token and the entry hot-connects without an
    engine reload).
 4. A working model provider must be configured (flows below ran on
-   `openwork/kimi-k2.6`).
+   `micx/kimi-k2.6`).
 
 ## Flow 1: Which cloud am I connected to
 
-**Prompt:** "Which OpenWork Cloud organization am I connected to? Use your
-openwork-cloud tools to check."
+**Prompt:** "Which Micx Cloud organization am I connected to? Use your
+micx-cloud tools to check."
 
 **Expected:** agent calls `getV1Org` / `getV1Me` and answers with the org name,
 slug, the signed-in user, and their role.
@@ -38,8 +38,8 @@ and have the owner role."
 
 ## Flow 2: Invite a member
 
-**Prompt:** "Add omar@openworklabs.com to my organization as a member using
-your openwork-cloud tools."
+**Prompt:** "Add omar@micxlabs.com to my organization as a member using
+your micx-cloud tools."
 
 **Expected:**
 - If the email's domain is not allowed, the agent first updates the org's
@@ -54,7 +54,7 @@ your openwork-cloud tools."
 
 ## Flow 3: Assign a member to a team
 
-**Prompt:** "Assign <member> to the Sales team using your openwork-cloud tools."
+**Prompt:** "Assign <member> to the Sales team using your micx-cloud tools."
 
 **Expected:**
 - For a **pending invitee**, the agent refuses with a correct explanation
@@ -67,7 +67,7 @@ your openwork-cloud tools."
 
 **Prompt:** "Create a skill called 'weekly-report' (...instructions...) and
 save it as a proper SKILL.md in this workspace. Then share it with my whole
-organization using the proper OpenWork Cloud way: create a plugin containing
+organization using the proper Micx Cloud way: create a plugin containing
 the skill and publish it to our marketplace."
 
 **Expected:**
@@ -96,7 +96,7 @@ desktop app consumes).
 plugin from Flow 4 with its skill content.
 
 **Verified result:** omar (fresh account → accepted invite) sees
-`weekly-report` in OpenWork Marketplace.
+`weekly-report` in Micx Marketplace.
 
 ## Grading notes
 

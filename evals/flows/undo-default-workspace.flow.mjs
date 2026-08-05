@@ -8,11 +8,11 @@ const vo = await loadVoiceoverParagraphs("undo-default-workspace");
 const WELCOME_FOLDER_INPUT = 'input[placeholder="/workspace/my-project"]';
 
 async function desktopWorkspaceList(ctx) {
-  await ctx.waitFor("Boolean(window.__OPENWORK_ELECTRON__?.invokeDesktop)", {
+  await ctx.waitFor("Boolean(window.__MICX_ELECTRON__?.invokeDesktop)", {
     timeoutMs: 60_000,
     label: "desktop bridge",
   });
-  return ctx.eval("window.__OPENWORK_ELECTRON__.invokeDesktop('workspaceBootstrap')", {
+  return ctx.eval("window.__MICX_ELECTRON__.invokeDesktop('workspaceBootstrap')", {
     awaitPromise: true,
   });
 }
@@ -22,21 +22,21 @@ async function resetToFreshWelcome(ctx) {
   ctx.log(`desktop workspaces before reset: ${JSON.stringify(list?.workspaces ?? [])}`);
   for (const workspace of list?.workspaces ?? []) {
     await ctx.eval(`(async () => {
-      const info = await window.__OPENWORK_ELECTRON__.invokeDesktop("openworkServerInfo").catch(() => null);
-      const baseUrl = info?.baseUrl || info?.connectUrl || localStorage.getItem("openwork.server.active");
-      const token = info?.ownerToken || info?.clientToken || localStorage.getItem("openwork.server.token") || "";
-      const hostToken = info?.hostToken || localStorage.getItem("openwork.server.hostToken") || "";
+      const info = await window.__MICX_ELECTRON__.invokeDesktop("micxServerInfo").catch(() => null);
+      const baseUrl = info?.baseUrl || info?.connectUrl || localStorage.getItem("micx.server.active");
+      const token = info?.ownerToken || info?.clientToken || localStorage.getItem("micx.server.token") || "";
+      const hostToken = info?.hostToken || localStorage.getItem("micx.server.hostToken") || "";
       if (baseUrl) {
         const headers = {};
         if (token) headers.authorization = "Bearer " + token;
-        if (hostToken) headers["x-openwork-host-token"] = hostToken;
-        await window.__OPENWORK_ELECTRON__.invokeDesktop(
+        if (hostToken) headers["x-micx-host-token"] = hostToken;
+        await window.__MICX_ELECTRON__.invokeDesktop(
           "__fetch",
           baseUrl.replace(/\\/+$/, "") + "/workspaces/" + encodeURIComponent(${JSON.stringify(workspace.id)}),
           { method: "DELETE", headers, timeoutMs: 8_000 },
         ).catch(() => null);
       }
-      await window.__OPENWORK_ELECTRON__.invokeDesktop(
+      await window.__MICX_ELECTRON__.invokeDesktop(
         "workspaceForget",
         ${JSON.stringify(workspace.id)},
       ).catch(() => null);
@@ -45,14 +45,14 @@ async function resetToFreshWelcome(ctx) {
   }
 
   const cleanup = await ctx.eval(`(async () => {
-    const invoke = window.__OPENWORK_ELECTRON__.invokeDesktop;
-    const info = await invoke("openworkServerInfo");
+    const invoke = window.__MICX_ELECTRON__.invokeDesktop;
+    const info = await invoke("micxServerInfo");
     const baseUrl = info?.baseUrl || info?.connectUrl;
-    if (!baseUrl) throw new Error("OpenWork server URL is unavailable");
+    if (!baseUrl) throw new Error("Micx server URL is unavailable");
     const headers = {};
     const token = info?.ownerToken || info?.clientToken || "";
     if (token) headers.authorization = "Bearer " + token;
-    if (info?.hostToken) headers["x-openwork-host-token"] = info.hostToken;
+    if (info?.hostToken) headers["x-micx-host-token"] = info.hostToken;
     const response = await invoke("__fetch", baseUrl.replace(/\\/+$/, "") + "/workspaces", {
       method: "GET",
       headers,
@@ -82,18 +82,18 @@ async function resetToFreshWelcome(ctx) {
   ctx.log(`server workspace cleanup: ${JSON.stringify(cleanup)}`);
   await ctx.eval(`(() => {
     let prefs = {};
-    try { prefs = JSON.parse(localStorage.getItem("openwork.preferences") || "{}"); } catch {}
-    localStorage.setItem("openwork.preferences", JSON.stringify({
+    try { prefs = JSON.parse(localStorage.getItem("micx.preferences") || "{}"); } catch {}
+    localStorage.setItem("micx.preferences", JSON.stringify({
       ...prefs,
       hasCompletedOnboarding: false,
     }));
-    localStorage.removeItem("openwork.react.activeWorkspace");
-    localStorage.removeItem("openwork.react.sessionByWorkspace");
+    localStorage.removeItem("micx.react.activeWorkspace");
+    localStorage.removeItem("micx.react.sessionByWorkspace");
     location.hash = "#/session";
     location.reload();
     return true;
   })()`);
-  await ctx.waitFor("Boolean(window.__openworkControl)", {
+  await ctx.waitFor("Boolean(window.__micxControl)", {
     timeoutMs: 60_000,
     label: "control API after reset",
   });
@@ -101,7 +101,7 @@ async function resetToFreshWelcome(ctx) {
     timeoutMs: 60_000,
     label: "welcome route",
   });
-  await ctx.waitForText("Welcome to OpenWork", { timeoutMs: 30_000 });
+  await ctx.waitForText("Welcome to Micx", { timeoutMs: 30_000 });
 }
 
 export default {
@@ -123,7 +123,7 @@ export default {
           },
           screenshot: {
             name: "welcome-with-no-workspaces",
-            requireText: ["Welcome to OpenWork", "Pick a folder to get started"],
+            requireText: ["Welcome to Micx", "Pick a folder to get started"],
             hashIncludes: ["/welcome"],
           },
         });
@@ -132,9 +132,9 @@ export default {
     {
       name: "User chooses workspace folder",
       run: async (ctx) => {
-        const workspaceDir = await mkdtemp(join(homedir(), ".openwork-eval-user-workspace-"));
+        const workspaceDir = await mkdtemp(join(homedir(), ".micx-eval-user-workspace-"));
         ctx.workspaceDir = workspaceDir;
-        await ctx.prove("OpenWork creates a workspace only in the chosen folder", {
+        await ctx.prove("Micx creates a workspace only in the chosen folder", {
           voiceover: vo[1],
           action: async () => {
             await ctx.waitFor(`Boolean(document.querySelector(${JSON.stringify(WELCOME_FOLDER_INPUT)}))`, {
@@ -147,12 +147,12 @@ export default {
           assert: async () => {
             await ctx.waitForText("Power your first task", { timeoutMs: 60_000 });
             const created = await ctx.eval(`(async () => {
-              const invoke = window.__OPENWORK_ELECTRON__.invokeDesktop;
-              const info = await invoke("openworkServerInfo");
+              const invoke = window.__MICX_ELECTRON__.invokeDesktop;
+              const info = await invoke("micxServerInfo");
               const headers = {};
               const token = info?.ownerToken || info?.clientToken || "";
               if (token) headers.authorization = "Bearer " + token;
-              if (info?.hostToken) headers["x-openwork-host-token"] = info.hostToken;
+              if (info?.hostToken) headers["x-micx-host-token"] = info.hostToken;
               const response = await invoke(
                 "__fetch",
                 (info.baseUrl || info.connectUrl).replace(/\\/+$/, "") + "/workspaces",
@@ -186,16 +186,16 @@ export default {
               selector: "button",
               timeoutMs: 30_000,
             });
-            await ctx.waitForText("How did you hear about OpenWork?", { timeoutMs: 30_000 });
+            await ctx.waitForText("How did you hear about Micx?", { timeoutMs: 30_000 });
           },
           assert: async () => {
-            await ctx.expectText("How did you hear about OpenWork?");
+            await ctx.expectText("How did you hear about Micx?");
             const onWelcome = await ctx.eval("location.hash.includes('/welcome')");
             ctx.assert(onWelcome, "Onboarding left welcome before completion.");
           },
           screenshot: {
             name: "attribution-before-workspace",
-            requireText: ["How did you hear about OpenWork?", "Skip"],
+            requireText: ["How did you hear about Micx?", "Skip"],
             hashIncludes: ["/welcome"],
           },
         });
@@ -209,11 +209,11 @@ export default {
           action: async () => {
             await ctx.clickText("Skip", { selector: "button", timeoutMs: 15_000 });
             await ctx.waitFor(`(() => {
-              const route = window.__openworkControl.snapshot().route || "";
+              const route = window.__micxControl.snapshot().route || "";
               return route.includes("/session/ses_");
             })()`, { timeoutMs: 90_000, label: "onboarding-created session route" });
             ctx.sessionId = await ctx.eval(`(() => {
-              const route = window.__openworkControl.snapshot().route || "";
+              const route = window.__micxControl.snapshot().route || "";
               const marker = "/session/";
               const index = route.indexOf(marker);
               return index >= 0
@@ -243,20 +243,20 @@ export default {
     {
       name: "Empty workspace stays empty",
       run: async (ctx) => {
-        const emptyDir = await mkdtemp(join(homedir(), ".openwork-eval-empty-workspace-"));
+        const emptyDir = await mkdtemp(join(homedir(), ".micx-eval-empty-workspace-"));
         await ctx.prove("Opening an empty workspace does not create a session", {
           voiceover: vo[4],
           action: async () => {
             const created = await ctx.eval(`(async () => {
-              const info = await window.__OPENWORK_ELECTRON__.invokeDesktop("openworkServerInfo");
-              const baseUrl = info?.baseUrl || info?.connectUrl || localStorage.getItem("openwork.server.active");
-              if (!baseUrl) throw new Error("OpenWork server URL is unavailable");
-              const token = info?.ownerToken || info?.clientToken || localStorage.getItem("openwork.server.token") || "";
-              const hostToken = info?.hostToken || localStorage.getItem("openwork.server.hostToken") || "";
+              const info = await window.__MICX_ELECTRON__.invokeDesktop("micxServerInfo");
+              const baseUrl = info?.baseUrl || info?.connectUrl || localStorage.getItem("micx.server.active");
+              if (!baseUrl) throw new Error("Micx server URL is unavailable");
+              const token = info?.ownerToken || info?.clientToken || localStorage.getItem("micx.server.token") || "";
+              const hostToken = info?.hostToken || localStorage.getItem("micx.server.hostToken") || "";
               const headers = { "content-type": "application/json" };
               if (token) headers.authorization = "Bearer " + token;
-              if (hostToken) headers["x-openwork-host-token"] = hostToken;
-              const response = await window.__OPENWORK_ELECTRON__.invokeDesktop(
+              if (hostToken) headers["x-micx-host-token"] = hostToken;
+              const response = await window.__MICX_ELECTRON__.invokeDesktop(
                 "__fetch",
                 baseUrl.replace(/\\/+$/, "") + "/workspaces/local",
                 {
@@ -276,14 +276,14 @@ export default {
               const workspaceId = payload.activeId
                 || payload.workspaces?.find((workspace) => workspace.path === ${JSON.stringify(emptyDir)})?.id;
               if (!workspaceId) throw new Error("Empty workspace was not created");
-              await window.__OPENWORK_ELECTRON__.invokeDesktop("workspaceSetSelected", workspaceId);
-              await window.__OPENWORK_ELECTRON__.invokeDesktop("workspaceSetRuntimeActive", workspaceId);
-              localStorage.setItem("openwork.react.activeWorkspace", workspaceId);
+              await window.__MICX_ELECTRON__.invokeDesktop("workspaceSetSelected", workspaceId);
+              await window.__MICX_ELECTRON__.invokeDesktop("workspaceSetRuntimeActive", workspaceId);
+              localStorage.setItem("micx.react.activeWorkspace", workspaceId);
               return { workspaceId };
             })()`, { awaitPromise: true });
             ctx.emptyWorkspaceId = created.workspaceId;
             await ctx.eval("(() => { location.reload(); return true; })()");
-            await ctx.waitFor("Boolean(window.__openworkControl)", {
+            await ctx.waitFor("Boolean(window.__micxControl)", {
               timeoutMs: 60_000,
               label: "control API after workspace reload",
             });

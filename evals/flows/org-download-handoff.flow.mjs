@@ -10,12 +10,12 @@ const vo = await loadVoiceoverParagraphs("org-download-handoff");
 const FLOW_ID = "org-download-handoff";
 const DEN_API_URL = denApiUrl();
 const DEN_WEB_URL = denWebUrl();
-const INVITEE_CDP_URL = cleanBaseUrl(process.env.OPENWORK_EVAL_WEB_CDP_INVITEE);
-const DEN_TOKEN = process.env.OPENWORK_EVAL_DEN_TOKEN?.trim() || "";
-const MARK_VERIFIED_CMD = process.env.OPENWORK_EVAL_MARK_VERIFIED_CMD?.trim() || "";
+const INVITEE_CDP_URL = cleanBaseUrl(process.env.MICX_EVAL_WEB_CDP_INVITEE);
+const DEN_TOKEN = process.env.MICX_EVAL_DEN_TOKEN?.trim() || "";
+const MARK_VERIFIED_CMD = process.env.MICX_EVAL_MARK_VERIFIED_CMD?.trim() || "";
 const RUN_TAG = Date.now().toString(36);
 const MEMBER_EMAIL = `maya-download-${RUN_TAG}@acme.test`;
-const MEMBER_PASSWORD = "OpenWorkDemo123!";
+const MEMBER_PASSWORD = "MicxDemo123!";
 const ORG_NAME = "Acme Robotics";
 
 const state = {
@@ -39,11 +39,11 @@ export default {
   title: "An invited member gets Acme's guided install, connects the app, signs in, and has a copy-link recovery",
   kind: "user-facing",
   requiredEnv: [
-    "OPENWORK_EVAL_DEN_API_URL",
-    "OPENWORK_EVAL_DEN_TOKEN",
-    "OPENWORK_EVAL_DEN_WEB_URL",
-    "OPENWORK_EVAL_WEB_CDP_INVITEE",
-    "OPENWORK_EVAL_MARK_VERIFIED_CMD",
+    "MICX_EVAL_DEN_API_URL",
+    "MICX_EVAL_DEN_TOKEN",
+    "MICX_EVAL_DEN_WEB_URL",
+    "MICX_EVAL_WEB_CDP_INVITEE",
+    "MICX_EVAL_MARK_VERIFIED_CMD",
   ],
   steps: [
     {
@@ -73,12 +73,12 @@ export default {
             witness(ctx, ctaText === "Get the desktop app", "The join success primary CTA is the guided install button", ctaText);
             await ctx.expectNoText("Copy sign-in link");
             const oldOpenButtonVisible = await ctx.eval(`(() => {
-              const oldTestId = document.querySelector('[data-testid=join-org-open-openwork]');
+              const oldTestId = document.querySelector('[data-testid=join-org-open-micx]');
               const exactButton = [...document.querySelectorAll('button')]
-                .find((button) => (button.textContent ?? '').replace(/\\s+/g, ' ').trim() === 'Open OpenWork');
+                .find((button) => (button.textContent ?? '').replace(/\\s+/g, ' ').trim() === 'Open Micx');
               return Boolean(oldTestId || exactButton);
             })()`);
-            witness(ctx, !oldOpenButtonVisible, "The old Open OpenWork button is gone from the join success layout", oldOpenButtonVisible);
+            witness(ctx, !oldOpenButtonVisible, "The old Open Micx button is gone from the join success layout", oldOpenButtonVisible);
           },
           screenshot: {
             name: "join-success-one-clear-next-step",
@@ -107,7 +107,7 @@ export default {
           },
           assert: async () => {
             await ctx.expectText("Download and install");
-            await ctx.expectText("Open OpenWork");
+            await ctx.expectText("Open Micx");
             await ctx.expectText("Sign in");
 
             const href = await ctx.eval("document.querySelector('[data-testid=install-download-primary]')?.href ?? ''");
@@ -130,7 +130,7 @@ export default {
           },
           screenshot: {
             name: "guided-setup-org-served-download",
-            requireText: ["Download and install", "Open OpenWork", "Sign in"],
+            requireText: ["Download and install", "Open Micx", "Sign in"],
           },
         }));
       },
@@ -145,18 +145,18 @@ export default {
             await ctx.waitFor("Boolean(document.querySelector('[data-testid=install-guide]'))", { timeoutMs: 30_000, label: "guided installer" });
             // Both narrated beats: the wait-gate copy, then the one-click
             // "I already have it" affirmation that advances the guide.
-            await ctx.expectText("Only continue once OpenWork is installed and running on this computer.");
-            await ctx.expectText("I already have OpenWork");
+            await ctx.expectText("Only continue once Micx is installed and running on this computer.");
+            await ctx.expectText("I already have Micx");
             await clickSelector(ctx, "[data-testid=install-skip-download]", "already have app button");
           },
           assert: async () => {
             await ctx.waitFor("document.querySelector('[data-testid=install-guide-step-open]')?.dataset.state === 'active'", { timeoutMs: 20_000, label: "open step active" });
             await ctx.expectText("Open the app and confirm that you want to connect it to Acme Robotics.");
-            witness(ctx, await ctx.eval("Boolean(document.querySelector('[data-testid=install-connect-open]'))"), "The guide exposes the Open OpenWork action after the affirmation", "install-connect-open");
+            witness(ctx, await ctx.eval("Boolean(document.querySelector('[data-testid=install-connect-open]'))"), "The guide exposes the Open Micx action after the affirmation", "install-connect-open");
           },
           screenshot: {
             name: "install-wait-gate-copy",
-            requireText: ["Open OpenWork", "Open the app and confirm that you want to connect it to Acme Robotics."],
+            requireText: ["Open Micx", "Open the app and confirm that you want to connect it to Acme Robotics."],
           },
         }));
       },
@@ -164,7 +164,7 @@ export default {
     {
       name: "Frame 4",
       run: async (ctx) => {
-        await ctx.prove("Open OpenWork shows Acme and its server before anything changes", {
+        await ctx.prove("Open Micx shows Acme and its server before anything changes", {
           voiceover: vo[3],
           action: async () => {
             await withWeb(ctx, async () => {
@@ -177,7 +177,7 @@ export default {
               await clickSelector(ctx, "[data-testid=install-connect-open]", "open app button");
               state.connectUrl = await ctx.waitFor(`(() => {
                 const url = window.__keylessConnectCapture?.connectUrl ?? '';
-                if (!url.startsWith('openwork://connect')) return null;
+                if (!url.startsWith('micx://connect')) return null;
                 try {
                   return new URL(url).searchParams.get('code') ? url : null;
                 } catch {
@@ -217,15 +217,15 @@ export default {
             await clickSelector(ctx, "[data-testid=connect-confirm-accept]", "connect confirmation button");
           },
           assert: async () => {
-            await ctx.waitForText("Welcome to OpenWork", { timeoutMs: 45_000 });
-            await ctx.expectText("Sign in to OpenWork");
+            await ctx.waitForText("Welcome to Micx", { timeoutMs: 45_000 });
+            await ctx.expectText("Sign in to Micx");
             const persisted = await invokeDesktop(ctx, "getDesktopBootstrapConfig");
             witness(ctx, persisted?.requireSignin === true, "The accepted connect link persisted a required sign-in gate", persisted);
             witness(ctx, cleanBaseUrl(persisted?.baseUrl) === DEN_WEB_URL, "The desktop bootstrap baseUrl points at the Den deployment", persisted?.baseUrl);
           },
           screenshot: {
             name: "desktop-forced-signin-after-connect",
-            requireText: ["Welcome to OpenWork", "Sign in to OpenWork"],
+            requireText: ["Welcome to Micx", "Sign in to Micx"],
           },
         });
       },
@@ -241,17 +241,17 @@ export default {
             const handoff = await denApiFetch("/v1/auth/desktop-handoff", {
               method: "POST",
               headers: { authorization: `Bearer ${requireStateValue(state.memberBearer, "member bearer token")}` },
-              body: JSON.stringify({ desktopScheme: "openwork" }),
+              body: JSON.stringify({ desktopScheme: "micx" }),
             });
-            witness(ctx, handoff.response.ok && typeof handoff.body?.openworkUrl === "string", "The member session minted a desktop auth handoff", {
+            witness(ctx, handoff.response.ok && typeof handoff.body?.micxUrl === "string", "The member session minted a desktop auth handoff", {
               status: handoff.response.status,
-              hasOpenworkUrl: typeof handoff.body?.openworkUrl === "string",
+              hasMicxUrl: typeof handoff.body?.micxUrl === "string",
             });
-            await deliverDeepLinkToDesktop(ctx, handoff.body.openworkUrl);
+            await deliverDeepLinkToDesktop(ctx, handoff.body.micxUrl);
           },
           assert: async () => {
-            await ctx.waitFor("Boolean((localStorage.getItem('openwork.den.authToken') ?? '').trim())", { timeoutMs: 60_000, label: "persisted Den auth token" });
-            await ctx.waitFor("(localStorage.getItem('openwork.den.activeOrgName') ?? '').includes('Acme')", { timeoutMs: 60_000, label: "Acme active org" });
+            await ctx.waitFor("Boolean((localStorage.getItem('micx.den.authToken') ?? '').trim())", { timeoutMs: 60_000, label: "persisted Den auth token" });
+            await ctx.waitFor("(localStorage.getItem('micx.den.activeOrgName') ?? '').includes('Acme')", { timeoutMs: 60_000, label: "Acme active org" });
             await completeDesktopSignedInJourney(ctx);
             await ctx.expectText("Acme Robotics", { timeoutMs: 45_000 });
             await ctx.expectText(state.memberEmail, { timeoutMs: 45_000 });
@@ -283,7 +283,7 @@ export default {
                 await clickSelector(ctx, "[data-testid=install-connect-copy]", "copy connection link button");
                 state.recoveryConnectUrl = await ctx.waitFor(`(() => {
                   const url = window.__capturedConnectLink ?? '';
-                  if (!url.startsWith('openwork://connect')) return null;
+                  if (!url.startsWith('micx://connect')) return null;
                   try {
                     return new URL(url).searchParams.get('code') ? url : null;
                   } catch {
@@ -487,7 +487,7 @@ async function completeInviteSignup(ctx) {
 function markEmailVerified(ctx, email) {
   ctx.assert(
     MARK_VERIFIED_CMD.length > 0,
-    "Invitation acceptance requires a verified email; set OPENWORK_EVAL_MARK_VERIFIED_CMD (shell template with {email}).",
+    "Invitation acceptance requires a verified email; set MICX_EVAL_MARK_VERIFIED_CMD (shell template with {email}).",
   );
   execSync(MARK_VERIFIED_CMD.replaceAll("{email}", email), { stdio: "ignore" });
 }
@@ -578,20 +578,20 @@ async function installConnectFetchCapture(ctx) {
   })()`);
 }
 
-async function deliverDeepLinkToDesktop(ctx, openworkUrl) {
+async function deliverDeepLinkToDesktop(ctx, micxUrl) {
   await ctx.eval(`(() => {
-    const url = ${JSON.stringify(openworkUrl)};
-    window.__OPENWORK__ = window.__OPENWORK__ || {};
-    const pending = window.__OPENWORK__.deepLinks || [];
-    window.__OPENWORK__.deepLinks = [...pending, url];
-    window.dispatchEvent(new CustomEvent('openwork:deep-link', { detail: { urls: [url] } }));
+    const url = ${JSON.stringify(micxUrl)};
+    window.__MICX__ = window.__MICX__ || {};
+    const pending = window.__MICX__.deepLinks || [];
+    window.__MICX__.deepLinks = [...pending, url];
+    window.dispatchEvent(new CustomEvent('micx:deep-link', { detail: { urls: [url] } }));
     return true;
   })()`);
 }
 
 async function invokeDesktop(ctx, command, input) {
-  await ctx.waitFor("Boolean(window.__OPENWORK_ELECTRON__?.invokeDesktop)", { timeoutMs: 60_000, label: "desktop bridge" });
-  return ctx.eval(`window.__OPENWORK_ELECTRON__.invokeDesktop(${JSON.stringify(command)}, ${JSON.stringify(input)})`, { awaitPromise: true });
+  await ctx.waitFor("Boolean(window.__MICX_ELECTRON__?.invokeDesktop)", { timeoutMs: 60_000, label: "desktop bridge" });
+  return ctx.eval(`window.__MICX_ELECTRON__.invokeDesktop(${JSON.stringify(command)}, ${JSON.stringify(input)})`, { awaitPromise: true });
 }
 
 async function captureOriginalDesktopBootstrap(ctx) {
@@ -602,18 +602,18 @@ async function captureOriginalDesktopBootstrap(ctx) {
 }
 
 async function resetDesktopSession(ctx) {
-  await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 60_000, label: "desktop ready" });
+  await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 60_000, label: "desktop ready" });
   await captureOriginalDesktopBootstrap(ctx);
   await ctx.eval(`(() => {
     document.querySelector('[data-testid=connect-confirm-cancel]')?.click();
     document.querySelector('[data-testid=connect-error-dismiss]')?.click();
     for (const key of [
-      'openwork.den.authToken',
-      'openwork.den.activeOrgId',
-      'openwork.den.activeOrgSlug',
-      'openwork.den.activeOrgName',
+      'micx.den.authToken',
+      'micx.den.activeOrgId',
+      'micx.den.activeOrgSlug',
+      'micx.den.activeOrgName',
     ]) localStorage.removeItem(key);
-    window.dispatchEvent(new CustomEvent('openwork-den-session-updated', { detail: { status: 'signed_out' } }));
+    window.dispatchEvent(new CustomEvent('micx-den-session-updated', { detail: { status: 'signed_out' } }));
     return true;
   })()`);
 }
@@ -645,7 +645,7 @@ async function completeDesktopSignedInJourney(ctx) {
       || document.body.innerText.includes("No resources have been configured for this organization yet.")
       || location.hash.includes('/session')
       || location.hash.includes('/workspace/')
-      || document.body.innerText.includes("OpenWork Cloud")`,
+      || document.body.innerText.includes("Micx Cloud")`,
     { timeoutMs: 60_000, label: "post-sign-in desktop surface" },
   );
 
@@ -668,7 +668,7 @@ async function completeDesktopSignedInJourney(ctx) {
   }
 
   await ctx.navigateHash("/settings/cloud-account");
-  await ctx.waitForText("OpenWork Cloud", { timeoutMs: 45_000 });
+  await ctx.waitForText("Micx Cloud", { timeoutMs: 45_000 });
   await ctx.waitForText("Sign out", { timeoutMs: 45_000 });
 }
 
@@ -689,23 +689,23 @@ async function stubConnectionClipboardCapture(ctx) {
 }
 
 async function restoreDesktopAfterFlow(ctx) {
-  await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 60_000, label: "desktop ready for cleanup" }).catch(() => null);
+  await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 60_000, label: "desktop ready for cleanup" }).catch(() => null);
   await ctx.eval(`(() => {
     document.querySelector('[data-testid=connect-confirm-cancel]')?.click();
     document.querySelector('[data-testid=connect-error-dismiss]')?.click();
     for (const key of [
-      'openwork.den.authToken',
-      'openwork.den.activeOrgId',
-      'openwork.den.activeOrgSlug',
-      'openwork.den.activeOrgName',
+      'micx.den.authToken',
+      'micx.den.activeOrgId',
+      'micx.den.activeOrgSlug',
+      'micx.den.activeOrgName',
     ]) localStorage.removeItem(key);
-    window.dispatchEvent(new CustomEvent('openwork-den-session-updated', { detail: { status: 'signed_out' } }));
+    window.dispatchEvent(new CustomEvent('micx-den-session-updated', { detail: { status: 'signed_out' } }));
     return true;
   })()`).catch(() => null);
   if (state.originalDesktopBootstrapConfig) {
     await invokeDesktop(ctx, "setDesktopBootstrapConfig", state.originalDesktopBootstrapConfig).catch(() => null);
     await ctx.eval("location.reload()").catch(() => null);
-    await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 60_000, label: "desktop ready after cleanup reload" }).catch(() => null);
+    await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 60_000, label: "desktop ready after cleanup reload" }).catch(() => null);
   }
 }
 

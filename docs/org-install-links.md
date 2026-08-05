@@ -3,14 +3,14 @@
 Status: self-host operator guide
 
 Owner: platform/self-host
-Related: `ee/apps/den-api/src/install-links.ts`, `ee/apps/den-api/src/routes/org/install-links.ts`, `ee/apps/den-api/src/desktop-connect-grants.ts`, `packaging/helm/openwork-ee/README.md`
+Related: `ee/apps/den-api/src/install-links.ts`, `ee/apps/den-api/src/routes/org/install-links.ts`, `ee/apps/den-api/src/desktop-connect-grants.ts`, `packaging/helm/micx-ee/README.md`
 
 ## What users get
 
 An organization install link opens a three-step Den page:
 
-1. Download and run the standard OpenWork installer.
-2. Return to Den and click **Open OpenWork**.
+1. Download and run the standard Micx installer.
+2. Return to Den and click **Open Micx**.
 3. Confirm the exact organization and server in the app, then complete normal
    organization sign-in.
 
@@ -56,9 +56,9 @@ flag.
 ## Public origins
 
 Set `BETTER_AUTH_URL` to the externally reachable Den web origin, for example
-`https://openwork.example.com`. Set `DEN_API_PUBLIC_URL` to the externally
+`https://micx.example.com`. Set `DEN_API_PUBLIC_URL` to the externally
 reachable Den API base; in a single-origin setup, use the Den web proxy path,
-such as `https://openwork.example.com/api/den`, so desktops reach only the Den
+such as `https://micx.example.com/api/den`, so desktops reach only the Den
 web origin. If you publish a separate Den API origin, the install-link exchange
 and external MCP clients must be able to reach it.
 
@@ -78,17 +78,17 @@ one of these paths:
 
 | Deployment | Download behavior | Required client access |
 |---|---|---|
-| Internet-connected | Immediate `302` to the exact standard asset under `OPENWORK_INSTALLER_RELEASE_REPO` and `OPENWORK_INSTALLER_RELEASE_TAG`. The organization token is not forwarded. | Den web/API, `github.com`, `release-assets.githubusercontent.com`, and `objects.githubusercontent.com` for legacy or rollback paths. |
-| Semi-air-gapped | Stream the matching standard installer from `OPENWORK_INSTALLER_ARTIFACTS_DIR`. There is no ZIP or in-memory whole-file buffer. | Den web/API only. |
+| Internet-connected | Immediate `302` to the exact standard asset under `MICX_INSTALLER_RELEASE_REPO` and `MICX_INSTALLER_RELEASE_TAG`. The organization token is not forwarded. | Den web/API, `github.com`, `release-assets.githubusercontent.com`, and `objects.githubusercontent.com` for legacy or rollback paths. |
+| Semi-air-gapped | Stream the matching standard installer from `MICX_INSTALLER_ARTIFACTS_DIR`. There is no ZIP or in-memory whole-file buffer. | Den web/API only. |
 | Fully internal installer delivery | Same mounted-artifact path, with Den web/API and the installer artifact available entirely inside the isolated network. This describes installer bytes only, not full product isolation. | Internal Den web/API only. |
 
 The standard filenames use the release tag without a leading `v`:
 
-- `openwork-mac-arm64-<version>.dmg`
-- `openwork-mac-x64-<version>.dmg`
-- `openwork-win-x64-<version>.exe`
-- `openwork-linux-x86_64-<version>.AppImage`
-- `openwork-linux-arm64-<version>.AppImage`
+- `micx-mac-arm64-<version>.dmg`
+- `micx-mac-x64-<version>.dmg`
+- `micx-win-x64-<version>.exe`
+- `micx-linux-x86_64-<version>.AppImage`
+- `micx-linux-arm64-<version>.AppImage`
 
 There is no first-request GitHub download inside Den, artifact lookup API call,
 ZIP creation, per-pod cold cache, or different repeated-download path. Every
@@ -99,7 +99,7 @@ read-only PVC on every replica.
 ## Default connection handoff (no key)
 
 `DEN_CONNECT_LINK_MODE=exchange` is the default. When the user clicks **Open
-OpenWork**, Den mints a fresh five-minute bearer code and stores only its
+Micx**, Den mints a fresh five-minute bearer code and stores only its
 SHA-256 hash. The app:
 
 1. posts the code back to the exact HTTPS API origin carried in the deep link
@@ -156,19 +156,19 @@ installer and writing `desktop-bootstrap.json` directly:
 
 | OS | Canonical path |
 |---|---|
-| Windows | `%LOCALAPPDATA%\openwork\desktop-bootstrap.json` (`%XDG_CONFIG_HOME%\openwork\desktop-bootstrap.json` wins if set) |
-| macOS/Linux | `$XDG_CONFIG_HOME/openwork/desktop-bootstrap.json`, falling back to `~/.config/openwork/desktop-bootstrap.json` |
+| Windows | `%LOCALAPPDATA%\micx\desktop-bootstrap.json` (`%XDG_CONFIG_HOME%\micx\desktop-bootstrap.json` wins if set) |
+| macOS/Linux | `$XDG_CONFIG_HOME/micx/desktop-bootstrap.json`, falling back to `~/.config/micx/desktop-bootstrap.json` |
 
 ```json
 {
-  "baseUrl": "https://openwork.example.com",
-  "apiBaseUrl": "https://api.openwork.example.com",
+  "baseUrl": "https://micx.example.com",
+  "apiBaseUrl": "https://api.micx.example.com",
   "requireSignin": true,
   "writtenAt": "2026-07-14T12:00:00.000Z"
 }
 ```
 
-Current builds still read the older `~/.config/openwork` path for
+Current builds still read the older `~/.config/micx` path for
 compatibility. When both files exist, the valid configuration with the newest
 `writtenAt` wins.
 
@@ -193,7 +193,7 @@ compatibility. When both files exist, the valid configuration with the newest
 | Download redirects to GitHub | Expected for internet-connected deployments. Allow `github.com` and its release-asset redirect/CDN host on the user's network. |
 | Download returns `404` | The install token is invalid, expired, or revoked. Ask an org member for the current install page link. |
 | Mounted download fails | Verify the filename exactly matches the configured release tag and every Den replica mounts the same readable PVC path. |
-| **Open OpenWork** cannot prepare a connection | Verify the browser can reach Den API and `DEN_API_PUBLIC_URL` is the correct public HTTPS origin. |
-| The app refuses an expired or used link | Return to the same Den install page and click **Open OpenWork** again to mint a fresh code. |
+| **Open Micx** cannot prepare a connection | Verify the browser can reach Den API and `DEN_API_PUBLIC_URL` is the correct public HTTPS origin. |
+| The app refuses an expired or used link | Return to the same Den install page and click **Open Micx** again to mint a fresh code. |
 | Signed mode reports an unknown key | Return to `exchange` mode, or ship a desktop build containing the matching public key before re-enabling `signed`. |
 | Install links point at the wrong web host | Correct `BETTER_AUTH_URL` and `DEN_BETTER_AUTH_TRUSTED_ORIGINS`, then restart Den. |

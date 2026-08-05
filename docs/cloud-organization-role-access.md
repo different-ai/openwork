@@ -6,7 +6,7 @@ This guide documents the approved cloud organization hierarchy as it exists toda
 
 Organization roles authorize access inside one cloud workspace. They are separate from platform Den admin access: platform Den admins are allowlisted operators for Den admin routes and the den-admin MCP surface, and organization `owner` or `super-admin` roles do not grant that platform access.
 
-Den Web controls enforce policy in the client by hiding or disabling actions, and Den API endpoints enforce policy by rejecting unauthorized requests. UI disabling is not security enforcement; route guards and handler checks are the security boundary. Settings reads and writes are checked separately, and OpenWork Models is an operational Models surface outside Settings.
+Den Web controls enforce policy in the client by hiding or disabling actions, and Den API endpoints enforce policy by rejecting unauthorized requests. UI disabling is not security enforcement; route guards and handler checks are the security boundary. Settings reads and writes are checked separately, and Micx Models is an operational Models surface outside Settings.
 
 ## Built-in hierarchy
 
@@ -37,7 +37,7 @@ For cloud organization admins (`owner`, `super-admin`, and `admin`), the Den Web
   - Plugins
   - Connectors
 - Models
-  - OpenWork Models
+  - Micx Models
   - LLM Providers
 - Members
 - Analytics

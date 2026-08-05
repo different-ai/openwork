@@ -11,7 +11,7 @@ const MODEL_ID = "gpt-5.4";
 const READY_DRAFT = "Ready with the assigned model.";
 const ADMIN_EXCEPTION_POLICY_NAME = "Admins may add providers";
 const ORG_SLUG = "default";
-const OWNER_EMAIL = process.env.OPENWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
+const OWNER_EMAIL = process.env.MICX_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
 const vo = await loadVoiceoverParagraphs(FLOW_ID);
 if (!vo) throw new Error(`Missing approved voice-over script for ${FLOW_ID}.`);
 
@@ -24,20 +24,20 @@ const state = {
 };
 
 function apiBase(ctx) {
-  const value = (ctx.env.OPENWORK_EVAL_DEN_API_URL ?? "").trim().replace(/\/+$/, "");
-  ctx.assert(Boolean(value), "OPENWORK_EVAL_DEN_API_URL is required.");
+  const value = (ctx.env.MICX_EVAL_DEN_API_URL ?? "").trim().replace(/\/+$/, "");
+  ctx.assert(Boolean(value), "MICX_EVAL_DEN_API_URL is required.");
   return value;
 }
 
 function webBase(ctx) {
-  const value = (ctx.env.OPENWORK_EVAL_DEN_WEB_URL ?? "").trim().replace(/\/+$/, "");
-  ctx.assert(Boolean(value), "OPENWORK_EVAL_DEN_WEB_URL is required.");
+  const value = (ctx.env.MICX_EVAL_DEN_WEB_URL ?? "").trim().replace(/\/+$/, "");
+  ctx.assert(Boolean(value), "MICX_EVAL_DEN_WEB_URL is required.");
   return value;
 }
 
 function adminToken(ctx) {
-  const value = (ctx.env.OPENWORK_EVAL_DEN_TOKEN ?? "").trim();
-  ctx.assert(Boolean(value), "OPENWORK_EVAL_DEN_TOKEN is required.");
+  const value = (ctx.env.MICX_EVAL_DEN_TOKEN ?? "").trim();
+  ctx.assert(Boolean(value), "MICX_EVAL_DEN_TOKEN is required.");
   return value;
 }
 
@@ -54,7 +54,7 @@ async function request(ctx, path, options = {}, allowedStatuses = []) {
       "content-type": "application/json",
       origin: webBase(ctx),
       authorization: `Bearer ${adminToken(ctx)}`,
-      ...(state.orgId ? { "x-openwork-org-id": state.orgId } : {}),
+      ...(state.orgId ? { "x-micx-org-id": state.orgId } : {}),
       ...(options.headers ?? {}),
     },
   });
@@ -162,7 +162,7 @@ async function createProofProvider(ctx) {
       source: "models_dev",
       providerId: "openai",
       modelIds: [MODEL_ID],
-      apiKey: "sk-openwork-local-eval-only",
+      apiKey: "sk-micx-local-eval-only",
       memberIds: [state.ownerMemberId],
       teamIds: [],
     }),
@@ -212,9 +212,9 @@ export default {
   requiresApp: true,
   spec: "evals/voiceovers/composer-model-refresh-recovery.md",
   requiredEnv: [
-    "OPENWORK_EVAL_DEN_API_URL",
-    "OPENWORK_EVAL_DEN_WEB_URL",
-    "OPENWORK_EVAL_DEN_TOKEN",
+    "MICX_EVAL_DEN_API_URL",
+    "MICX_EVAL_DEN_WEB_URL",
+    "MICX_EVAL_DEN_TOKEN",
   ],
   steps: [
     {
@@ -225,13 +225,13 @@ export default {
         await configureManagedEmptyState(ctx);
         ctx.log("Managed no-model policy is configured.");
         await ctx.eval('location.hash = "#/session"; location.reload()');
-        await ctx.waitFor("Boolean(window.__openworkControl)", {
+        await ctx.waitFor("Boolean(window.__micxControl)", {
           timeoutMs: 60_000,
-          label: "OpenWork control API after clean-state reload",
+          label: "Micx control API after clean-state reload",
         });
         const desktopContext = await ctx.eval(`({
-          signedIn: Boolean((localStorage.getItem("openwork.den.authToken") ?? "").trim()),
-          activeOrgId: localStorage.getItem("openwork.den.activeOrgId") ?? "",
+          signedIn: Boolean((localStorage.getItem("micx.den.authToken") ?? "").trim()),
+          activeOrgId: localStorage.getItem("micx.den.activeOrgId") ?? "",
         })`);
         ctx.assert(desktopContext.signedIn, "The desktop is signed into the isolated Den stack.");
         ctx.assert(
@@ -239,10 +239,10 @@ export default {
           `The desktop uses the eval organization (actual: ${desktopContext.activeOrgId}).`,
         );
         await ctx.eval('location.hash = "#/session"');
-        const workspacePath = join(tmpdir(), "openwork-composer-model-refresh-proof");
+        const workspacePath = join(tmpdir(), "micx-composer-model-refresh-proof");
         await mkdir(workspacePath, { recursive: true });
         await ctx.waitFor(
-          "window.__openworkControl?.listActions().some((action) => action.id === 'workspace.create' && !action.disabled)",
+          "window.__micxControl?.listActions().some((action) => action.id === 'workspace.create' && !action.disabled)",
           { timeoutMs: 60_000, label: "workspace.create action" },
         );
         await ctx.control("workspace.create", { path: workspacePath });
@@ -300,7 +300,7 @@ export default {
     {
       name: "Frame 2",
       run: async (ctx) => {
-        await ctx.prove("The newly assigned model appears without restarting OpenWork", {
+        await ctx.prove("The newly assigned model appears without restarting Micx", {
           voiceover: vo[1],
           action: async () => {
             await clickEmptyStateNotice(ctx);

@@ -7,11 +7,11 @@
  *   DEN_API_PUBLIC_URL=<Den API URL reachable by this flow runner>
  *
  * Seed the deterministic healthy worker before running the flow:
- *   OPENWORK_EVAL_CLOUD_CONNECT_WORKER_URL=http://127.0.0.1:3979/worker \
- *     pnpm --filter @openwork-ee/den-api exec tsx ../../../evals/drivers/seed-cloud-connect-worker.ts
+ *   MICX_EVAL_CLOUD_CONNECT_WORKER_URL=http://127.0.0.1:3979/worker \
+ *     pnpm --filter @micx-ee/den-api exec tsx ../../../evals/drivers/seed-cloud-connect-worker.ts
  *
  * The seed uses mock-worker-host-token and mock-worker-client-token unless
- * OPENWORK_EVAL_CLOUD_CONNECT_HOST_TOKEN / CLIENT_TOKEN override them.
+ * MICX_EVAL_CLOUD_CONNECT_HOST_TOKEN / CLIENT_TOKEN override them.
  */
 
 import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
@@ -26,21 +26,21 @@ import {
 
 const vo = await loadVoiceoverParagraphs("telegram-cloud-connect");
 
-const ADMIN_EMAIL = process.env.OPENWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
-const ADMIN_PASSWORD = process.env.OPENWORK_EVAL_DEMO_PASSWORD?.trim() || "OpenWorkDemo123!";
-const MOCK_SERVER_URL = (process.env.OPENWORK_EVAL_CLOUD_CONNECT_MOCK_URL ?? "http://127.0.0.1:3979")
+const ADMIN_EMAIL = process.env.MICX_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
+const ADMIN_PASSWORD = process.env.MICX_EVAL_DEMO_PASSWORD?.trim() || "MicxDemo123!";
+const MOCK_SERVER_URL = (process.env.MICX_EVAL_CLOUD_CONNECT_MOCK_URL ?? "http://127.0.0.1:3979")
   .trim()
   .replace(/\/+$/, "");
-const BOT_TOKEN = process.env.OPENWORK_EVAL_CLOUD_CONNECT_TELEGRAM_TOKEN?.trim() || "900100:OPENWORK_TEST_TOKEN";
-const WORKER_NAME = process.env.OPENWORK_EVAL_CLOUD_CONNECT_WORKER_NAME?.trim() || "Cloud Connect Test Worker";
-const WORKER_HOST_TOKEN = process.env.OPENWORK_EVAL_CLOUD_CONNECT_HOST_TOKEN?.trim() || "mock-worker-host-token";
-const WORKER_CLIENT_TOKEN = process.env.OPENWORK_EVAL_CLOUD_CONNECT_CLIENT_TOKEN?.trim() || "mock-worker-client-token";
-const BOT_USERNAME = "openwork_test_bot";
+const BOT_TOKEN = process.env.MICX_EVAL_CLOUD_CONNECT_TELEGRAM_TOKEN?.trim() || "900100:MICX_TEST_TOKEN";
+const WORKER_NAME = process.env.MICX_EVAL_CLOUD_CONNECT_WORKER_NAME?.trim() || "Cloud Connect Test Worker";
+const WORKER_HOST_TOKEN = process.env.MICX_EVAL_CLOUD_CONNECT_HOST_TOKEN?.trim() || "mock-worker-host-token";
+const WORKER_CLIENT_TOKEN = process.env.MICX_EVAL_CLOUD_CONNECT_CLIENT_TOKEN?.trim() || "mock-worker-client-token";
+const BOT_USERNAME = "micx_test_bot";
 const TELEGRAM_CHAT_ID = 42001;
 const PAIRING_UPDATE_ID = 81_001;
 const TASK_UPDATE_ID = 81_002;
 const AFTER_DISCONNECT_UPDATE_ID = 81_003;
-const TASK_PROMPT = "Summarize the launch notes in my OpenWork workspace";
+const TASK_PROMPT = "Summarize the launch notes in my Micx workspace";
 const OUTBOUND_TEXT = "Launch update: the support handoff is ready.";
 const SEND_MESSAGE_PATH = "/v1/capabilities/telegram/send-message";
 
@@ -199,10 +199,10 @@ async function executeSendMessageCapability(ctx, capability) {
 
 export default {
   id: "telegram-cloud-connect",
-  title: "An admin securely pairs one private Telegram chat to one healthy OpenWork Cloud worker and can disconnect it fail-closed",
+  title: "An admin securely pairs one private Telegram chat to one healthy Micx Cloud worker and can disconnect it fail-closed",
   kind: "user-facing",
   preserveTheme: true,
-  requiredEnv: ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_WEB_URL"],
+  requiredEnv: ["MICX_EVAL_DEN_API_URL", "MICX_EVAL_DEN_WEB_URL"],
   steps: [
     {
       name: "Setup: mock services are healthy and Telegram starts disconnected",
@@ -222,8 +222,8 @@ export default {
         witness(ctx, firstReset.ok, "The Cloud Connect mock accepts a clean-state reset.", { status: firstReset.status });
 
         state.adminSession = await signInApi(ADMIN_EMAIL, ADMIN_PASSWORD);
-        if (!state.adminSession && ctx.env.OPENWORK_EVAL_DEN_TOKEN?.trim()) {
-          state.adminSession = ctx.env.OPENWORK_EVAL_DEN_TOKEN.trim();
+        if (!state.adminSession && ctx.env.MICX_EVAL_DEN_TOKEN?.trim()) {
+          state.adminSession = ctx.env.MICX_EVAL_DEN_TOKEN.trim();
         }
         witness(ctx, Boolean(state.adminSession), `The demo owner can sign in as ${ADMIN_EMAIL}.`);
 
@@ -283,7 +283,7 @@ export default {
             await ctx.expectText("Create a Telegram bot");
             await ctx.expectText("Choose a ready worker");
             await ctx.expectText(WORKER_NAME);
-            await ctx.expectText("stable public HTTPS OpenWork API URL");
+            await ctx.expectText("stable public HTTPS Micx API URL");
             await ctx.expectText("private text chats only");
             const form = await ctx.eval(`(() => {
               const token = document.querySelector('[data-testid="telegram-bot-token"]');
@@ -420,7 +420,7 @@ export default {
 
             await ctx.waitFor("Boolean(document.querySelector('[data-testid=\"telegram-paired\"]'))", {
               timeoutMs: 45_000,
-              label: "paired Telegram private chat in OpenWork",
+              label: "paired Telegram private chat in Micx",
             });
             await closeTelegramDialog(ctx);
             await openTelegramDialog(ctx);
@@ -431,25 +431,25 @@ export default {
           },
           assert: async () => {
             await ctx.expectText("Private chat paired");
-            await ctx.expectText("@openwork_tester");
+            await ctx.expectText("@micx_tester");
             await ctx.expectText("Only this chat can send tasks to the worker");
             const connection = await authenticatedApi("/v1/telegram/connection");
             witness(ctx, connection.response.ok && connection.body?.connection?.pairing?.paired === true, "The redacted management status persists the paired-chat boundary.", {
               paired: connection.body?.connection?.pairing?.paired,
               chat: connection.body?.connection?.pairing?.chat,
             });
-            witness(ctx, connection.body?.connection?.pairing?.chat?.username === "openwork_tester", "OpenWork identifies the paired private account without exposing its numeric chat ID.", connection.body?.connection?.pairing?.chat);
+            witness(ctx, connection.body?.connection?.pairing?.chat?.username === "micx_tester", "Micx identifies the paired private account without exposing its numeric chat ID.", connection.body?.connection?.pairing?.chat);
             ctx.output("telegram-pairing-confirmation.json", JSON.stringify({
               acceptedUpdateId: PAIRING_UPDATE_ID,
               paired: connection.body.connection.pairing.paired,
               privateChat: connection.body.connection.pairing.chat,
-              botConfirmation: "Connected. Messages in this private chat will now go to your selected OpenWork worker.",
+              botConfirmation: "Connected. Messages in this private chat will now go to your selected Micx worker.",
             }, null, 2));
           },
           screenshot: {
             name: "telegram-private-chat-paired",
-            claim: "OpenWork shows that exactly one private Telegram account is paired and is the only chat allowed to create worker tasks.",
-            requireText: ["Bot and webhook connected", `@${BOT_USERNAME}`, WORKER_NAME, "Private chat paired", "@openwork_tester", "Only this chat can send tasks to the worker"],
+            claim: "Micx shows that exactly one private Telegram account is paired and is the only chat allowed to create worker tasks.",
+            requireText: ["Bot and webhook connected", `@${BOT_USERNAME}`, WORKER_NAME, "Private chat paired", "@micx_tester", "Only this chat can send tasks to the worker"],
             rejectText: ["Not paired yet", "Telegram needs attention", "Something went wrong"],
           },
         });
@@ -474,11 +474,11 @@ export default {
               mockState,
               (cloud) => (
                 cloud.worker?.sessions?.some((session) => session.prompt === TASK_PROMPT)
-                && cloud.telegram?.sentMessages?.some((message) => message.text === `OpenWork worker reply: ${TASK_PROMPT}`)
+                && cloud.telegram?.sentMessages?.some((message) => message.text === `Micx worker reply: ${TASK_PROMPT}`)
               ),
             );
             const workerSession = completedCloud.worker.sessions.find((session) => session.prompt === TASK_PROMPT);
-            const reply = completedCloud.telegram.sentMessages.find((message) => message.text === `OpenWork worker reply: ${TASK_PROMPT}`);
+            const reply = completedCloud.telegram.sentMessages.find((message) => message.text === `Micx worker reply: ${TASK_PROMPT}`);
             state.taskMessageId = workerSession?.messageId ?? null;
             state.taskReply = reply?.text ?? null;
 
@@ -501,7 +501,7 @@ export default {
             witness(ctx, /^msg_[a-f0-9]{32}$/.test(state.taskMessageId ?? ""), "The worker prompt carries a deterministic, retry-stable Telegram message ID.", {
               messageId: state.taskMessageId,
             });
-            witness(ctx, state.taskReply === `OpenWork worker reply: ${TASK_PROMPT}`, "The final selected-worker answer is sent back through the same Telegram bot.", {
+            witness(ctx, state.taskReply === `Micx worker reply: ${TASK_PROMPT}`, "The final selected-worker answer is sent back through the same Telegram bot.", {
               reply: state.taskReply,
             });
 
@@ -516,13 +516,13 @@ export default {
             witness(
               ctx,
               workerRequests.every((request) => (
-                request.headers?.["x-openwork-host-token"] === WORKER_HOST_TOKEN
+                request.headers?.["x-micx-host-token"] === WORKER_HOST_TOKEN
                 && request.headers?.authorization === `Bearer ${WORKER_CLIENT_TOKEN}`
               )),
               "Every worker request carries both the host token and the client bearer token.",
               workerRequests.map((request) => ({
                 path: request.path,
-                hostTokenPresent: request.headers?.["x-openwork-host-token"] === WORKER_HOST_TOKEN,
+                hostTokenPresent: request.headers?.["x-micx-host-token"] === WORKER_HOST_TOKEN,
                 clientTokenPresent: request.headers?.authorization === `Bearer ${WORKER_CLIENT_TOKEN}`,
               })),
             );
@@ -593,7 +593,7 @@ export default {
           },
           assert: async () => {
             await ctx.expectText("Private chat paired");
-            await ctx.expectText("@openwork_tester");
+            await ctx.expectText("@micx_tester");
             const cloud = await mockState();
             const delivered = cloud.telegram.sentMessages.at(-1);
             witness(ctx, delivered?.text === OUTBOUND_TEXT && delivered?.chat?.id === TELEGRAM_CHAT_ID, "The agent update lands under the same bot in the same bound private chat.", delivered);
@@ -620,7 +620,7 @@ export default {
           screenshot: {
             name: "telegram-bidirectional-paired-chat",
             claim: "The bot remains green and the same private chat remains paired after an agent capability sends an update back through Telegram.",
-            requireText: ["Bot and webhook connected", `@${BOT_USERNAME}`, WORKER_NAME, "Private chat paired", "@openwork_tester"],
+            requireText: ["Bot and webhook connected", `@${BOT_USERNAME}`, WORKER_NAME, "Private chat paired", "@micx_tester"],
             rejectText: ["Not paired yet", "Telegram needs attention", "Something went wrong"],
           },
         });

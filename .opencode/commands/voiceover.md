@@ -15,10 +15,10 @@ Load the **`voiceover` skill** and follow its journey end to end:
    wrong: say so.
 2. Iterate on the words with the user until they would actually record it.
 3. On approval, start clean: create a fresh worktree + branch
-   (`git worktree add ../_worktrees/openwork-<slug> -b feat/<slug> origin/dev`),
+   (`git worktree add ../_worktrees/micx-<slug> -b feat/<slug> origin/dev`),
    then translate each approved paragraph directly into claims, actions, and
    assertions in `evals/specs/<slug>.slow.test.ts`. Import `test` from
-   `@openwork/testkit`; evidence is ambient and has no roll handle.
+   `@micx/testkit`; evidence is ambient and has no roll handle.
 4. Build until the demo holds: delegate coding when orchestrating, use
    `write-a-spec` → `run-tests`, and load `diagnose-a-red-run` for failures.
 5. Ship: push the branch, open the PR (`gh pr create --base dev`), then use

@@ -1,5 +1,5 @@
 import { expect } from "vitest";
-import { screenshot, validate } from "@openwork/fraimz";
+import { screenshot, validate } from "@micx/fraimz";
 import {
   clickButton,
   createOrgConnection,
@@ -8,15 +8,15 @@ import {
   visibleText,
   waitFor,
   waitForText,
-} from "@openwork/behaviors";
-import { app, mcpMock, needs, server, test } from "@openwork/testkit";
-import type { Surface } from "@openwork/cdp";
+} from "@micx/behaviors";
+import { app, mcpMock, needs, server, test } from "@micx/testkit";
+import type { Surface } from "@micx/cdp";
 
 /**
- * CORE JOURNEY: a person creates an active Automation in the main OpenWork
+ * CORE JOURNEY: a person creates an active Automation in the main Micx
  * app, keeps its authenticated desktop runner connected, and Den wakes that
  * runner to claim the scheduled occurrence exactly once. The desktop executes
- * it with the selected model and a current OpenWork Connect integration.
+ * it with the selected model and a current Micx Connect integration.
  * The app reveals the durable receipt and execution thread. Deactivation
  * stops future claims without becoming a cancellation control; reactivation
  * computes a new future occurrence.
@@ -30,7 +30,7 @@ import type { Surface } from "@openwork/cdp";
 
 const requirements = {
   model: "tool-capable" as const,
-  optIn: ["OPENWORK_EVAL_APP_SPECS", "OPENWORK_EVAL_AUTOMATIONS_SPEC"],
+  optIn: ["MICX_EVAL_APP_SPECS", "MICX_EVAL_AUTOMATIONS_SPEC"],
 };
 
 async function setField(surface: Surface, label: string, value: string): Promise<void> {
@@ -84,7 +84,7 @@ test("Den schedules and a connected desktop runner executes an Automation", asyn
   await setField(desktop, "Schedule", "daily");
   await setField(desktop, "Time", scheduledTime);
   await setField(desktop, "Timezone", "UTC");
-  await setField(desktop, "Model", process.env.OPENWORK_EVAL_MODEL ?? "");
+  await setField(desktop, "Model", process.env.MICX_EVAL_MODEL ?? "");
 
   const createScreen = await visibleText(desktop);
   expect(createScreen).not.toMatch(/draft|permission picker|review automation|approve/i);

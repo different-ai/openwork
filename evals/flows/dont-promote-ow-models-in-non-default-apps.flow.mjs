@@ -10,8 +10,8 @@ import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
 const FLOW_ID = "dont-promote-ow-models-in-non-default-apps";
 const vo = await loadVoiceoverParagraphs(FLOW_ID);
 
-const DEFAULT_DEN_BASE_URL = "https://app.openworklabs.com";
-const DEFAULT_DEN_API_BASE_URL = "https://app.openworklabs.com/api/den";
+const DEFAULT_DEN_BASE_URL = "https://app.micxlabs.com";
+const DEFAULT_DEN_API_BASE_URL = "https://app.micxlabs.com/api/den";
 const CUSTOM_TOKEN = "custom-den-eval-token";
 const CUSTOM_ORG = { id: "org_custom_den_eval", slug: "custom-den-eval", name: "Custom Den Eval Org", role: "owner" };
 const CUSTOM_USER = { id: "usr_custom_den_eval", email: "owner@custom-den-eval.test", name: "Custom Den Eval Owner" };
@@ -33,9 +33,9 @@ const CUSTOM_PROVIDER = {
   updatedAt: "2026-07-15T00:00:00.000Z",
 };
 const PROMO_REJECT_TEXT = [
-  "Use OpenWork Models",
-  "Use OpenWork Models without API keys",
-  "Continue without OpenWork Models",
+  "Use Micx Models",
+  "Use Micx Models without API keys",
+  "Continue without Micx Models",
   "Sign in to unlock hosted frontier models",
   "Subscribe to use hosted frontier models",
   "Subscribe to add this model",
@@ -56,13 +56,13 @@ function prefsPatchScript(patch) {
   return `(() => {
     let prefs = {};
     try {
-      const raw = localStorage.getItem("openwork.preferences");
+      const raw = localStorage.getItem("micx.preferences");
       prefs = raw ? JSON.parse(raw) : {};
     } catch {
       prefs = {};
     }
     if (!prefs || typeof prefs !== "object" || Array.isArray(prefs)) prefs = {};
-    localStorage.setItem("openwork.preferences", JSON.stringify({ ...prefs, ...${JSON.stringify(patch)} }));
+    localStorage.setItem("micx.preferences", JSON.stringify({ ...prefs, ...${JSON.stringify(patch)} }));
     return true;
   })()`;
 }
@@ -70,13 +70,13 @@ function prefsPatchScript(patch) {
 function promoResetScript() {
   return `(() => {
     for (const key of [
-      "openwork.openworkModelsPromo.hidden",
-      "openwork.openworkModelsPromo.lastShownAt",
-      "openwork.openworkModelsPromo.startupShown",
+      "micx.micxModelsPromo.hidden",
+      "micx.micxModelsPromo.lastShownAt",
+      "micx.micxModelsPromo.startupShown",
     ]) {
       localStorage.removeItem(key);
     }
-    window.dispatchEvent(new Event("openwork-openwork-models-promo-changed"));
+    window.dispatchEvent(new Event("micx-micx-models-promo-changed"));
     return true;
   })()`;
 }
@@ -85,12 +85,12 @@ function shellDefaultsScript() {
   return `(() => {
     let shellConfig = {};
     try {
-      const raw = localStorage.getItem("openwork.shell-config");
+      const raw = localStorage.getItem("micx.shell-config");
       shellConfig = raw ? JSON.parse(raw) : {};
     } catch {
       shellConfig = {};
     }
-    localStorage.setItem("openwork.shell-config", JSON.stringify({
+    localStorage.setItem("micx.shell-config", JSON.stringify({
       ...shellConfig,
       addWorkspace: true,
       cloudSignin: true,
@@ -106,11 +106,11 @@ function shellDefaultsScript() {
 function clearDenSessionScript() {
   return `(() => {
     for (const key of [
-      "openwork.den.authToken",
-      "openwork.den.activeOrgId",
-      "openwork.den.activeOrgSlug",
-      "openwork.den.activeOrgName",
-      "openwork.den.mcp.sync",
+      "micx.den.authToken",
+      "micx.den.activeOrgId",
+      "micx.den.activeOrgSlug",
+      "micx.den.activeOrgName",
+      "micx.den.mcp.sync",
     ]) {
       localStorage.removeItem(key);
     }
@@ -130,7 +130,7 @@ async function findFreePort() {
 
 function sendJson(response, status, payload) {
   response.writeHead(status, {
-    "access-control-allow-headers": "authorization, content-type, x-openwork-legacy-org-id",
+    "access-control-allow-headers": "authorization, content-type, x-micx-legacy-org-id",
     "access-control-allow-methods": "GET,POST,OPTIONS",
     "access-control-allow-origin": "*",
     "content-type": "application/json",
@@ -231,8 +231,8 @@ async function startCustomDenServer() {
   };
 }
 
-async function waitForControl(ctx, label = "OpenWork control API") {
-  await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 60_000, label });
+async function waitForControl(ctx, label = "Micx control API") {
+  await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 60_000, label });
 }
 
 async function waitForWorkspaceReady(ctx) {
@@ -253,17 +253,17 @@ async function closeDialogs(ctx) {
 }
 
 async function setDesktopBootstrapConfig(ctx, config) {
-  await ctx.waitFor("Boolean(window.__OPENWORK_ELECTRON__?.invokeDesktop)", {
+  await ctx.waitFor("Boolean(window.__MICX_ELECTRON__?.invokeDesktop)", {
     timeoutMs: 60_000,
     label: "desktop bridge",
   });
   await ctx.eval(`(async () => {
     const config = ${JSON.stringify(config)};
-    const persisted = await window.__OPENWORK_ELECTRON__.invokeDesktop("setDesktopBootstrapConfig", config);
+    const persisted = await window.__MICX_ELECTRON__.invokeDesktop("setDesktopBootstrapConfig", config);
     const baseUrl = persisted?.baseUrl || config.baseUrl;
     const apiBaseUrl = persisted?.apiBaseUrl || config.apiBaseUrl || (baseUrl.replace(/\\/+$/, "") + "/api/den");
-    localStorage.setItem("openwork.den.baseUrl", baseUrl);
-    localStorage.setItem("openwork.den.apiBaseUrl", apiBaseUrl);
+    localStorage.setItem("micx.den.baseUrl", baseUrl);
+    localStorage.setItem("micx.den.apiBaseUrl", apiBaseUrl);
     return { baseUrl, apiBaseUrl };
   })()`, { awaitPromise: true });
 }
@@ -281,9 +281,9 @@ async function resetToDefaultDen(ctx) {
     ${promoResetScript()};
     ${prefsPatchScript({ hasCompletedOnboarding: true, providerStepCompleted: true })};
     if (${quoted(state.workspaceId)}) {
-      await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("workspaceSetSelected", ${quoted(state.workspaceId)});
-      await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("workspaceSetRuntimeActive", ${quoted(state.workspaceId)});
-      localStorage.setItem("openwork.react.activeWorkspace", ${quoted(state.workspaceId)});
+      await window.__MICX_ELECTRON__?.invokeDesktop?.("workspaceSetSelected", ${quoted(state.workspaceId)});
+      await window.__MICX_ELECTRON__?.invokeDesktop?.("workspaceSetRuntimeActive", ${quoted(state.workspaceId)});
+      localStorage.setItem("micx.react.activeWorkspace", ${quoted(state.workspaceId)});
     }
     location.hash = ${quoted(state.workspaceId ? `#/workspace/${state.workspaceId}/session` : "#/session")};
     location.reload();
@@ -297,15 +297,15 @@ async function createDedicatedWorkspace(ctx) {
   await waitForControl(ctx);
   await ctx.waitFor(
     `(async () => {
-      const info = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo");
+      const info = await window.__MICX_ELECTRON__?.invokeDesktop?.("micxServerInfo");
       return Boolean(info?.running && info.port && info.clientToken);
     })()`,
-    { timeoutMs: 30_000, label: "OpenWork server auth for workspace setup" },
+    { timeoutMs: 30_000, label: "Micx server auth for workspace setup" },
   );
-  state.workspaceDir = ctx.env.OPENWORK_EVAL_WORKSPACE_DIR?.trim() || join(tmpdir(), `${FLOW_ID}-${Date.now()}`);
+  state.workspaceDir = ctx.env.MICX_EVAL_WORKSPACE_DIR?.trim() || join(tmpdir(), `${FLOW_ID}-${Date.now()}`);
   await mkdir(state.workspaceDir, { recursive: true });
   const auth = await ctx.eval(`(async () => {
-    const info = await window.__OPENWORK_ELECTRON__.invokeDesktop("openworkServerInfo");
+    const info = await window.__MICX_ELECTRON__.invokeDesktop("micxServerInfo");
     return {
       port: info.port || "",
       token: info.clientToken || "",
@@ -317,7 +317,7 @@ async function createDedicatedWorkspace(ctx) {
   const headers = {
     "content-type": "application/json",
     authorization: `Bearer ${auth.token}`,
-    ...(auth.hostToken ? { "x-openwork-host-token": auth.hostToken } : {}),
+    ...(auth.hostToken ? { "x-micx-host-token": auth.hostToken } : {}),
   };
   let response;
   try {
@@ -327,7 +327,7 @@ async function createDedicatedWorkspace(ctx) {
       body: JSON.stringify({ folderPath: state.workspaceDir, name: "Custom Den Promo Eval", preset: "starter" }),
     });
   } catch (error) {
-    throw new Error(`Could not reach OpenWork server at ${baseUrl}: ${error?.message ?? error}`);
+    throw new Error(`Could not reach Micx server at ${baseUrl}: ${error?.message ?? error}`);
   }
   const text = await response.text();
   const payload = text ? JSON.parse(text) : null;
@@ -342,9 +342,9 @@ async function createDedicatedWorkspace(ctx) {
   await ctx.eval(`(async () => {
     ${shellDefaultsScript()};
     ${prefsPatchScript({ hasCompletedOnboarding: true, providerStepCompleted: true })};
-    await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("workspaceSetSelected", ${quoted(workspaceId)});
-    await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("workspaceSetRuntimeActive", ${quoted(workspaceId)});
-    localStorage.setItem("openwork.react.activeWorkspace", ${quoted(workspaceId)});
+    await window.__MICX_ELECTRON__?.invokeDesktop?.("workspaceSetSelected", ${quoted(workspaceId)});
+    await window.__MICX_ELECTRON__?.invokeDesktop?.("workspaceSetRuntimeActive", ${quoted(workspaceId)});
+    localStorage.setItem("micx.react.activeWorkspace", ${quoted(workspaceId)});
     location.hash = ${quoted(`#/workspace/${workspaceId}/session`)};
     location.reload();
     return true;
@@ -359,7 +359,7 @@ async function createDedicatedWorkspace(ctx) {
 
 async function ensureSession(ctx) {
   await ctx.navigateHash(`/workspace/${state.workspaceId}/session`);
-  await ctx.waitFor("window.__openworkControl?.listActions?.().some((action) => action.id === 'session.create_task' && !action.disabled)", {
+  await ctx.waitFor("window.__micxControl?.listActions?.().some((action) => action.id === 'session.create_task' && !action.disabled)", {
     timeoutMs: 90_000,
     label: "session.create_task enabled",
   });
@@ -377,7 +377,7 @@ async function openModelPicker(ctx) {
   await waitForWorkspaceReady(ctx);
   await sleep(1_200);
   await closeDialogs(ctx);
-  await ctx.waitFor("window.__openworkControl?.listActions?.().some((action) => action.id === 'session.model_picker.open' && !action.disabled)", {
+  await ctx.waitFor("window.__micxControl?.listActions?.().some((action) => action.id === 'session.model_picker.open' && !action.disabled)", {
     timeoutMs: 60_000,
     label: "session.model_picker.open enabled",
   });
@@ -391,7 +391,7 @@ async function assertNoPromoText(ctx, surface) {
   ctx.recordEvidence({
     type: "assertion",
     status: found.length === 0 ? "passed" : "failed",
-    assertion: `${surface} does not contain OpenWork Models subscribe or promo copy.`,
+    assertion: `${surface} does not contain Micx Models subscribe or promo copy.`,
     actual: found,
   });
   ctx.assert(found.length === 0, `${surface} still contains promo copy: ${found.join(", ")}`);
@@ -430,7 +430,7 @@ async function workspaceConfigRequest(ctx, method, body) {
   let auth = null;
   while (Date.now() < deadline) {
     auth = await ctx.eval(`(async () => {
-      const info = await window.__OPENWORK_ELECTRON__.invokeDesktop("openworkServerInfo");
+      const info = await window.__MICX_ELECTRON__.invokeDesktop("micxServerInfo");
       return {
         port: info.port || "",
         token: info.clientToken || "",
@@ -445,7 +445,7 @@ async function workspaceConfigRequest(ctx, method, body) {
           headers: {
             "content-type": "application/json",
             authorization: `Bearer ${auth.token}`,
-            ...(auth.hostToken ? { "x-openwork-host-token": auth.hostToken } : {}),
+            ...(auth.hostToken ? { "x-micx-host-token": auth.hostToken } : {}),
           },
           body: body === undefined ? undefined : JSON.stringify(body),
         });
@@ -464,12 +464,12 @@ async function workspaceConfigRequest(ctx, method, body) {
 
 async function resetEvalProviderImport(ctx) {
   const current = await workspaceConfigRequest(ctx, "GET");
-  const cloudImports = current?.openwork?.cloudImports && typeof current.openwork.cloudImports === "object"
-    ? current.openwork.cloudImports
+  const cloudImports = current?.micx?.cloudImports && typeof current.micx.cloudImports === "object"
+    ? current.micx.cloudImports
     : {};
   await workspaceConfigRequest(ctx, "PATCH", {
-    opencode: { provider: { [CUSTOM_PROVIDER.id]: null, openwork: null } },
-    openwork: { cloudImports: { ...cloudImports, providers: {} } },
+    opencode: { provider: { [CUSTOM_PROVIDER.id]: null, micx: null } },
+    micx: { cloudImports: { ...cloudImports, providers: {} } },
   });
   ctx.recordEvidence({
     type: "assertion",
@@ -483,10 +483,10 @@ async function resetEvalProviderImport(ctx) {
 
 async function signInToCustomDen(ctx) {
   await ctx.eval(`(() => {
-    localStorage.setItem("openwork.den.authToken", ${quoted(CUSTOM_TOKEN)});
-    localStorage.setItem("openwork.den.activeOrgId", ${quoted(CUSTOM_ORG.id)});
-    localStorage.setItem("openwork.den.activeOrgSlug", ${quoted(CUSTOM_ORG.slug)});
-    localStorage.setItem("openwork.den.activeOrgName", ${quoted(CUSTOM_ORG.name)});
+    localStorage.setItem("micx.den.authToken", ${quoted(CUSTOM_TOKEN)});
+    localStorage.setItem("micx.den.activeOrgId", ${quoted(CUSTOM_ORG.id)});
+    localStorage.setItem("micx.den.activeOrgSlug", ${quoted(CUSTOM_ORG.slug)});
+    localStorage.setItem("micx.den.activeOrgName", ${quoted(CUSTOM_ORG.name)});
     ${promoResetScript()};
     ${prefsPatchScript({ hasCompletedOnboarding: true, providerStepCompleted: true })};
     location.hash = ${quoted(`#/workspace/${state.workspaceId}/settings/ai`)};
@@ -519,7 +519,7 @@ async function cleanup(ctx) {
 
 export default {
   id: FLOW_ID,
-  title: "Custom Den deployments do not promote OpenWork Models",
+  title: "Custom Den deployments do not promote Micx Models",
   kind: "user-facing",
   steps: [
     {
@@ -546,23 +546,23 @@ export default {
     {
       name: "Frame 1",
       run: async (ctx) => {
-        await ctx.prove("The default OpenWork Cloud Den still exposes OpenWork Models normally", {
+        await ctx.prove("The default Micx Cloud Den still exposes Micx Models normally", {
           voiceover: vo[0],
           action: async () => {
             await resetToDefaultDen(ctx);
             await closeDialogs(ctx);
             await ctx.navigateHash(`/workspace/${state.workspaceId}/settings/ai`);
             await ctx.waitForText("Providers", { timeoutMs: 60_000 });
-            await ctx.waitForText("OpenWork Models", { timeoutMs: 30_000 });
+            await ctx.waitForText("Micx Models", { timeoutMs: 30_000 });
           },
           assert: async () => {
-            await ctx.expectText("OpenWork Models");
+            await ctx.expectText("Micx Models");
             await ctx.expectText("Providers");
             await ctx.expectText("Connected");
           },
           screenshot: {
-            name: "frame-1-default-den-openwork-models",
-            requireText: ["Providers", "OpenWork Models", "Connected"],
+            name: "frame-1-default-den-micx-models",
+            requireText: ["Providers", "Micx Models", "Connected"],
             rejectText: ["Something went wrong"],
           },
         });
@@ -571,21 +571,21 @@ export default {
     {
       name: "Frame 2",
       run: async (ctx) => {
-        await ctx.prove("The default Den model picker still lists OpenWork Models for eligible users", {
+        await ctx.prove("The default Den model picker still lists Micx Models for eligible users", {
           voiceover: vo[1],
           action: async () => {
             await closeDialogs(ctx);
             await ctx.eval(promoResetScript());
             await openModelPicker(ctx);
-            await ctx.waitForText("OpenWork Models", { timeoutMs: 30_000 });
+            await ctx.waitForText("Micx Models", { timeoutMs: 30_000 });
           },
           assert: async () => {
-            await ctx.expectText("OpenWork Models");
+            await ctx.expectText("Micx Models");
             await ctx.expectText("Models");
           },
           screenshot: {
             name: "frame-2-default-den-model-picker-promo",
-            requireText: ["Models", "OpenWork Models"],
+            requireText: ["Models", "Micx Models"],
             rejectText: ["Something went wrong"],
           },
         });
@@ -608,7 +608,7 @@ export default {
             await ctx.expectText("Organization server");
             await ctx.expectText(`Current organization server: ${state.customDen.baseUrl}`);
             const stored = await ctx.eval(`(async () => {
-              const config = await window.__OPENWORK_ELECTRON__.invokeDesktop("getDesktopBootstrapConfig");
+              const config = await window.__MICX_ELECTRON__.invokeDesktop("getDesktopBootstrapConfig");
               return config?.baseUrl || "";
             })()`, { awaitPromise: true });
             ctx.assert(stored === state.customDen.baseUrl, `Expected desktop bootstrap Den URL to be ${state.customDen.baseUrl}, got ${stored}`);
@@ -624,7 +624,7 @@ export default {
     {
       name: "Frame 4",
       run: async (ctx) => {
-        await ctx.prove("On the custom Den, the model picker shows normal available models without OpenWork Models promos", {
+        await ctx.prove("On the custom Den, the model picker shows normal available models without Micx Models promos", {
           voiceover: vo[3],
           action: async () => {
             await ctx.eval(`(() => {
@@ -654,7 +654,7 @@ export default {
     {
       name: "Frame 5",
       run: async (ctx) => {
-        await ctx.prove("Custom Den suppresses OpenWork Models promos across startup, status, AI settings, provider setup, welcome, and first-task surfaces", {
+        await ctx.prove("Custom Den suppresses Micx Models promos across startup, status, AI settings, provider setup, welcome, and first-task surfaces", {
           voiceover: vo[4],
           action: async () => {
             await closeDialogs(ctx);

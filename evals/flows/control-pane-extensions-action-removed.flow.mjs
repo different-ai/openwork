@@ -17,7 +17,7 @@ export default {
     {
       name: "App booted with the control surface ready",
       run: async (ctx) => {
-        await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 30_000, label: "window.__openworkControl" });
+        await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 30_000, label: "window.__micxControl" });
         await ctx.waitFor("document.body.innerText.trim().length > 40", { label: "rendered body text" });
       },
     },
@@ -28,7 +28,7 @@ export default {
           claim: "The Control UI action list no longer contains route.settings.extensions, while settings.panel.open and the other route shortcuts remain.",
           voiceover: vo[0],
           assert: async () => {
-            const ids = await ctx.eval("window.__openworkControl.listActions().map((a) => a.id)");
+            const ids = await ctx.eval("window.__micxControl.listActions().map((a) => a.id)");
             ctx.assert(Array.isArray(ids) && ids.length > 0, "Control pane returned no actions.");
             ctx.assert(!ids.includes("route.settings.extensions"), "route.settings.extensions is still registered in the control pane.");
             ctx.assert(ids.includes("settings.panel.open"), "settings.panel.open is missing from the control pane.");

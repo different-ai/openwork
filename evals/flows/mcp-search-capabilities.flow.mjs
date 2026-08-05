@@ -1,21 +1,21 @@
 /**
  * Proves two things on top of the existing, real Den MCP infrastructure:
  *
- * 1. The rich `/mcp` endpoint ("OpenWork Cloud Control" as it existed
+ * 1. The rich `/mcp` endpoint ("Micx Cloud Control" as it existed
  *    before this change) keeps every catalog tool individually registered,
  *    plus the additive `search_capabilities` tool, unchanged.
  *
  * 2. A new, separate, minimal endpoint — `/mcp/agent` — exposes exactly
  *    two tools: `search_capabilities` and `execute_capability`. The
- *    desktop app's "OpenWork Cloud Control" connection now points here,
+ *    desktop app's "Micx Cloud Control" connection now points here,
  *    not at the rich endpoint. Both tools dispatch through the exact same
  *    unchanged `invoke.ts` execute path as the rich endpoint; nothing
  *    about auth, policy, or execution changes — only what the harness can
  *    see changes, from ~129 tools to 2.
  *
  * Required env:
- * - OPENWORK_EVAL_DEN_API_URL    Den API base (e.g. http://127.0.0.1:8793)
- * - OPENWORK_EVAL_DEN_TOKEN      Bearer session token for the demo owner
+ * - MICX_EVAL_DEN_API_URL    Den API base (e.g. http://127.0.0.1:8793)
+ * - MICX_EVAL_DEN_TOKEN      Bearer session token for the demo owner
  */
 
 const revealHidden = async (ctx) => {
@@ -24,7 +24,7 @@ const revealHidden = async (ctx) => {
 };
 
 async function denFetch(ctx, path, options = {}) {
-  const base = ctx.env.OPENWORK_EVAL_DEN_API_URL.trim().replace(/\/+$/, "");
+  const base = ctx.env.MICX_EVAL_DEN_API_URL.trim().replace(/\/+$/, "");
   const response = await fetch(`${base}${path}`, {
     ...options,
     headers: {
@@ -51,7 +51,7 @@ async function denFetch(ctx, path, options = {}) {
  * single message, so unwrap the `data: {...}` line.
  */
 async function mcpCallTo(ctx, path, mcpToken, method, params) {
-  const base = ctx.env.OPENWORK_EVAL_DEN_API_URL.trim().replace(/\/+$/, "");
+  const base = ctx.env.MICX_EVAL_DEN_API_URL.trim().replace(/\/+$/, "");
   const response = await fetch(`${base}${path}`, {
     method: "POST",
     headers: {
@@ -82,29 +82,29 @@ export default {
   id: "mcp-search-capabilities",
   title: "search_capabilities ranks the real Den MCP catalog and the matched tool executes for real",
   spec: "evals/cloud-mcp-agent-flows.md",
-  requiredEnv: ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_TOKEN", "OPENWORK_EVAL_WORKSPACE_PATH"],
+  requiredEnv: ["MICX_EVAL_DEN_API_URL", "MICX_EVAL_DEN_TOKEN", "MICX_EVAL_WORKSPACE_PATH"],
   steps: [
     {
       name: "App booted",
       run: async (ctx) => {
-        await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 60_000 });
+        await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 60_000 });
       },
     },
     {
       name: "Sign in via desktop handoff (skipped when already signed in)",
       run: async (ctx) => {
         const signedIn = await ctx.eval(
-          "Boolean((localStorage.getItem('openwork.den.authToken') ?? '').trim())",
+          "Boolean((localStorage.getItem('micx.den.authToken') ?? '').trim())",
         );
         if (signedIn) {
           ctx.log("Already signed in; reusing session.");
           return;
         }
-        const apiBase = ctx.env.OPENWORK_EVAL_DEN_API_URL.trim().replace(/\/+$/, "");
+        const apiBase = ctx.env.MICX_EVAL_DEN_API_URL.trim().replace(/\/+$/, "");
         const response = await fetch(`${apiBase}/v1/auth/desktop-handoff`, {
           method: "POST",
           headers: {
-            authorization: `Bearer ${ctx.env.OPENWORK_EVAL_DEN_TOKEN.trim()}`,
+            authorization: `Bearer ${ctx.env.MICX_EVAL_DEN_TOKEN.trim()}`,
             "content-type": "application/json",
           },
           body: JSON.stringify({}),
@@ -118,7 +118,7 @@ export default {
         // directly against the app's own already-configured apiBaseUrl.
         await ctx.control("auth.exchange-grant", { grant: payload.grant });
         await ctx.waitFor(
-          "window.__openworkControl.execute('auth.status').then(r => r.result?.status === 'signed_in')",
+          "window.__micxControl.execute('auth.status').then(r => r.result?.status === 'signed_in')",
           { timeoutMs: 15_000, label: "auth signed_in" },
         );
       },
@@ -127,7 +127,7 @@ export default {
       name: "Active organization resolves and Cloud Control MCP auto-configures",
       run: async (ctx) => {
         await ctx.waitFor(
-          "Boolean((localStorage.getItem('openwork.den.activeOrgId') ?? '').trim())",
+          "Boolean((localStorage.getItem('micx.den.activeOrgId') ?? '').trim())",
           { timeoutMs: 60_000, label: "active org" },
         );
 
@@ -143,7 +143,7 @@ export default {
         // we landed on /welcome (idempotent if a workspace already exists).
         const onWelcome = await ctx.eval("location.hash.includes('/welcome')");
         if (onWelcome) {
-          const wsPath = ctx.env.OPENWORK_EVAL_WORKSPACE_PATH.trim();
+          const wsPath = ctx.env.MICX_EVAL_WORKSPACE_PATH.trim();
           await ctx.fill("input", wsPath);
           await ctx.clickText("Use this folder", { timeoutMs: 10_000 });
           await ctx.waitFor("location.hash.includes('/workspace/')", {
@@ -153,13 +153,13 @@ export default {
         }
 
         await ctx.waitFor(
-          "Boolean(localStorage.getItem('openwork.den.mcp.sync'))",
-          { timeoutMs: 180_000, label: "openwork.den.mcp.sync marker" },
+          "Boolean(localStorage.getItem('micx.den.mcp.sync'))",
+          { timeoutMs: 180_000, label: "micx.den.mcp.sync marker" },
         );
       },
     },
     {
-      name: "OpenWork Cloud Control is connected — the unchanged existing surface still works",
+      name: "Micx Cloud Control is connected — the unchanged existing surface still works",
       run: async (ctx) => {
         await ctx.prove("Adding search_capabilities did not break the existing, already-shipped Cloud Control connection.", {
           action: async () => {
@@ -169,11 +169,11 @@ export default {
             await revealHidden(ctx);
           },
           assert: async () => {
-            await ctx.expectText("OpenWork Cloud Control", { timeoutMs: 30_000 });
+            await ctx.expectText("Micx Cloud Control", { timeoutMs: 30_000 });
           },
           screenshot: {
             name: "cloud-control-still-connected",
-            requireText: ["OpenWork Cloud Control"],
+            requireText: ["Micx Cloud Control"],
             rejectText: ["Something went wrong"],
             hashIncludes: "/settings/extensions/mcp",
           },
@@ -185,7 +185,7 @@ export default {
       run: async (ctx) => {
         const minted = await denFetch(ctx, "/v1/mcp/token", {
           method: "POST",
-          headers: { authorization: `Bearer ${ctx.env.OPENWORK_EVAL_DEN_TOKEN.trim()}` },
+          headers: { authorization: `Bearer ${ctx.env.MICX_EVAL_DEN_TOKEN.trim()}` },
           body: JSON.stringify({}),
         });
         ctx.assert(typeof minted.token === "string" && minted.token.startsWith("ow_mcp_at_"), "Expected a real opaque MCP token.");
@@ -349,13 +349,13 @@ export default {
           action: async () => {
             await ctx.navigateHash("/session");
             await ctx.waitFor(
-              "Boolean(window.__openworkControl?.listActions().find((a) => a.id === 'session.create_task' && !a.disabled))",
+              "Boolean(window.__micxControl?.listActions().find((a) => a.id === 'session.create_task' && !a.disabled))",
               { timeoutMs: 15_000, label: "session.create_task available" },
             );
             await ctx.control("session.create_task");
             await ctx.waitFor(
               `(() => {
-                const route = window.__openworkControl.snapshot().route || "";
+                const route = window.__micxControl.snapshot().route || "";
                 return /ses_[A-Za-z0-9]+/.test(route);
               })()`,
               { timeoutMs: 30_000, label: "new session active" },
@@ -368,7 +368,7 @@ export default {
               editor.focus();
               const data = new DataTransfer();
               data.setData('text/plain', ${JSON.stringify(
-                "On the OpenWork Cloud Control MCP, find and tell me the name of my current organization.",
+                "On the Micx Cloud Control MCP, find and tell me the name of my current organization.",
               )});
               editor.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: data }));
               return { ok: true };

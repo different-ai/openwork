@@ -1,6 +1,6 @@
 # install-download-feedback — Installer downloads stay clear while the bundle is prepared
 
-1.  The organization install link opens as a centered, focused card with the organization branding and “Download OpenWork for Different AI.”
+1.  The organization install link opens as a centered, focused card with the organization branding and “Download Micx for Different AI.”
 
 2.  The redundant team and server details are gone, so the page stays focused on choosing the right installer.
 

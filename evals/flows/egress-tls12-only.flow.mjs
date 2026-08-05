@@ -50,7 +50,7 @@ export default {
         let lab;
         let tls13;
         let tls12;
-        await ctx.prove("TLS 1.3 times out, Node TLS 1.2 succeeds, OpenWork product diagnostics name the handshake fault, and the Bun pinning gap is recorded", {
+        await ctx.prove("TLS 1.3 times out, Node TLS 1.2 succeeds, Micx product diagnostics name the handshake fault, and the Bun pinning gap is recorded", {
           voiceover: vo[0],
           action: async () => {
             lab = await startEgressLab({ profile: "tls12-only" });

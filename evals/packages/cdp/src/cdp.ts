@@ -97,7 +97,7 @@ export async function pickAppTarget(
   const targets = await listTargets(baseUrl, { timeoutMs });
   const pages = targets.filter((target) => target.type === "page" && target.webSocketDebuggerUrl);
   const target =
-    pages.find((page) => page.title === "OpenWork") ??
+    pages.find((page) => page.title === "Micx") ??
     pages.find(
       (page) =>
         page.url.includes("localhost") ||

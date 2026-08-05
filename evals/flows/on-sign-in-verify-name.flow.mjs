@@ -4,10 +4,10 @@ import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
 // The runner fails this flow if the narration drifts from that script.
 const vo = await loadVoiceoverParagraphs("on-sign-in-verify-name");
 
-const DEN_API_URL = (process.env.OPENWORK_EVAL_DEN_API_URL ?? "").trim().replace(/\/+$/, "");
-const DEN_WEB_URL = (process.env.OPENWORK_EVAL_DEN_WEB_URL ?? "").trim().replace(/\/+$/, "");
-const ADMIN_EMAIL = process.env.OPENWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
-const ADMIN_PASSWORD = process.env.OPENWORK_EVAL_DEMO_PASSWORD?.trim() || "OpenWorkDemo123!";
+const DEN_API_URL = (process.env.MICX_EVAL_DEN_API_URL ?? "").trim().replace(/\/+$/, "");
+const DEN_WEB_URL = (process.env.MICX_EVAL_DEN_WEB_URL ?? "").trim().replace(/\/+$/, "");
+const ADMIN_EMAIL = process.env.MICX_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
+const ADMIN_PASSWORD = process.env.MICX_EVAL_DEMO_PASSWORD?.trim() || "MicxDemo123!";
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -21,7 +21,7 @@ async function goTo(ctx, path) {
 async function resetSession(ctx) {
   await ctx.eval(
     `(async () => {
-      const token = localStorage.getItem("openwork:web:auth-token");
+      const token = localStorage.getItem("micx:web:auth-token");
       try {
         await fetch("/api/auth/sign-out", {
           method: "POST",
@@ -32,7 +32,7 @@ async function resetSession(ctx) {
           body: "{}",
         });
       } catch {}
-      localStorage.removeItem("openwork:web:auth-token");
+      localStorage.removeItem("micx:web:auth-token");
       return true;
     })()`,
     { awaitPromise: true },
@@ -79,7 +79,7 @@ async function uiSignIn(ctx) {
 async function updateProfileName(ctx, firstName, lastName) {
   const result = await ctx.eval(
     `(async () => {
-      const token = localStorage.getItem("openwork:web:auth-token");
+      const token = localStorage.getItem("micx:web:auth-token");
       const response = await fetch(${JSON.stringify(`${DEN_API_URL}/v1/me/profile`)}, {
         method: "PATCH",
         credentials: "include",
@@ -101,7 +101,7 @@ async function updateProfileName(ctx, firstName, lastName) {
 async function readProfileName(ctx) {
   const result = await ctx.eval(
     `(async () => {
-      const token = localStorage.getItem("openwork:web:auth-token");
+      const token = localStorage.getItem("micx:web:auth-token");
       const response = await fetch(${JSON.stringify(`${DEN_API_URL}/v1/me`)}, {
         method: "GET",
         credentials: "include",
@@ -166,7 +166,7 @@ export default {
   title: "Default-name users are prompted to update their profile from the dashboard",
   kind: "user-facing",
   spec: "evals/voiceovers/on-sign-in-verify-name.md",
-  requiredEnv: ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_WEB_URL"],
+  requiredEnv: ["MICX_EVAL_DEN_API_URL", "MICX_EVAL_DEN_WEB_URL"],
   steps: [
     {
       name: "Frame 1",
@@ -175,7 +175,7 @@ export default {
           voiceover: vo[0],
           action: async () => {
             await uiSignIn(ctx);
-            await updateProfileName(ctx, "OpenWork", "User");
+            await updateProfileName(ctx, "Micx", "User");
             await goTo(ctx, "/dashboard");
           },
           assert: async () => {
@@ -184,7 +184,7 @@ export default {
           },
           screenshot: {
             name: "default-name-dashboard-dialog",
-            claim: "The dashboard opens a User Profile dialog for the default OpenWork User name.",
+            claim: "The dashboard opens a User Profile dialog for the default Micx User name.",
             requireText: ["User Profile", "Change how your name appears in the organization"],
             rejectText: ["Something went wrong"],
           },
@@ -207,7 +207,7 @@ export default {
               const save = [...document.querySelectorAll('button')].find((el) => el.textContent.trim() === 'Save');
               return { first: first?.value ?? null, last: last?.value ?? null, saveDisabled: save?.disabled === true };
             })()`);
-            ctx.assert(state.first === "OpenWork", "First name is prefilled from the default name.");
+            ctx.assert(state.first === "Micx", "First name is prefilled from the default name.");
             ctx.assert(state.last === "User", "Last name is prefilled from the default name.");
             ctx.assert(state.saveDisabled, "Save is disabled before the user changes a field.");
           },
@@ -271,7 +271,7 @@ export default {
         await ctx.prove("Cancel closes the dialog without changing the default name during that dashboard visit", {
           voiceover: vo[4],
           action: async () => {
-            await updateProfileName(ctx, "OpenWork", "User");
+            await updateProfileName(ctx, "Micx", "User");
             await goTo(ctx, "/dashboard");
             await waitForProfileDialog(ctx);
             await clickDialogButton(ctx, "Cancel");
@@ -280,7 +280,7 @@ export default {
           assert: async () => {
             await ctx.waitFor("!document.body.innerText.includes('User Profile')", { timeoutMs: 10_000, label: "profile dialog remains dismissed" });
             const name = await readProfileName(ctx);
-            ctx.assert(name === "OpenWork User", "Cancel leaves the stored default name unchanged.");
+            ctx.assert(name === "Micx User", "Cancel leaves the stored default name unchanged.");
           },
           screenshot: {
             name: "dashboard-after-profile-cancel",

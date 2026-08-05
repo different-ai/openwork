@@ -8,4 +8,4 @@
 
 4. Only after I explicitly confirm does the marketplace leave the active list and disappear from the API.
 
-5. OpenWork's built-in marketplace has no edit or delete menu and stays protected by the API, so management actions apply only to custom catalogs.
+5. Micx's built-in marketplace has no edit or delete menu and stays protected by the API, so management actions apply only to custom catalogs.

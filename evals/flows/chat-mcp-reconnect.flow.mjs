@@ -7,15 +7,15 @@ import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
 const FLOW_ID = "chat-mcp-reconnect";
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const MOCK_SERVER_SCRIPT = join(ROOT, "scripts", "mock-oauth-mcp-server.mjs");
-const MOCK_PORT = Number(process.env.OPENWORK_EVAL_CHAT_RECONNECT_MOCK_PORT || 3994);
+const MOCK_PORT = Number(process.env.MICX_EVAL_CHAT_RECONNECT_MOCK_PORT || 3994);
 const MOCK_SERVER_URL = `http://127.0.0.1:${MOCK_PORT}`;
-const DEN_API_URL = (process.env.OPENWORK_EVAL_DEN_API_URL ?? "").trim().replace(/\/+$/, "");
-const DEN_ORIGIN = (process.env.OPENWORK_EVAL_DEN_WEB_URL ?? DEN_API_URL.replace("127.0.0.1", "localhost")).trim().replace(/\/+$/, "");
-const DEMO_EMAIL = process.env.OPENWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
-const DEMO_PASSWORD = process.env.OPENWORK_EVAL_DEMO_PASSWORD?.trim() || "OpenWorkDemo123!";
+const DEN_API_URL = (process.env.MICX_EVAL_DEN_API_URL ?? "").trim().replace(/\/+$/, "");
+const DEN_ORIGIN = (process.env.MICX_EVAL_DEN_WEB_URL ?? DEN_API_URL.replace("127.0.0.1", "localhost")).trim().replace(/\/+$/, "");
+const DEMO_EMAIL = process.env.MICX_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
+const DEMO_PASSWORD = process.env.MICX_EVAL_DEMO_PASSWORD?.trim() || "MicxDemo123!";
 const CONNECTION_PREFIX = "Research Vault";
 const CONNECTION_NAME = `${CONNECTION_PREFIX} ${Date.now()}`;
-const WORKSPACE_PATH = "/tmp/openwork-chat-mcp-reconnect";
+const WORKSPACE_PATH = "/tmp/micx-chat-mcp-reconnect";
 const ECHO_TEXT = `research vault recovered ${Date.now()}`;
 const PROVIDER_ERROR_TOOL = "mock_provider_denied";
 const vo = await loadVoiceoverParagraphs(FLOW_ID);
@@ -153,16 +153,16 @@ async function usableConnection() {
 
 async function readRuntimeCloudControlMcp(ctx) {
   return ctx.eval(`(async () => {
-    const port = localStorage.getItem('openwork.server.port');
-    const token = localStorage.getItem('openwork.server.token');
-    const hostToken = localStorage.getItem('openwork.server.hostToken');
+    const port = localStorage.getItem('micx.server.port');
+    const token = localStorage.getItem('micx.server.token');
+    const hostToken = localStorage.getItem('micx.server.hostToken');
     if (!port || !token) return { ok: false, reason: 'missing server auth' };
     const headers = { Authorization: 'Bearer ' + token };
-    if (hostToken) headers['X-OpenWork-Host-Token'] = hostToken;
+    if (hostToken) headers['X-Micx-Host-Token'] = hostToken;
     const base = 'http://127.0.0.1:' + port + '/workspace/' + ${JSON.stringify(state.workspaceId ?? "")};
     const [response, healthResponse] = await Promise.all([
       fetch(base + '/mcp', { headers }),
-      fetch(base + '/mcp/openwork-cloud/health?probe=1', { headers }),
+      fetch(base + '/mcp/micx-cloud/health?probe=1', { headers }),
     ]);
     const [text, healthText] = await Promise.all([response.text(), healthResponse.text()]);
     let payload = null;
@@ -172,7 +172,7 @@ async function readRuntimeCloudControlMcp(ctx) {
     if (!response.ok) return { ok: false, reason: 'mcp endpoint failed', status: response.status, text };
     if (!healthResponse.ok) return { ok: false, reason: 'health endpoint failed', status: healthResponse.status, text: healthText };
     const items = payload?.items ?? [];
-    const entry = items.find((item) => item.name === 'openwork-cloud');
+    const entry = items.find((item) => item.name === 'micx-cloud');
     const engineSync = payload?.engineSync?.status ?? null;
     const directTools = health?.tools?.direct?.present ?? [];
     return {
@@ -203,20 +203,20 @@ async function readRuntimeCloudControlMcp(ctx) {
 async function ensureCloudControlReady(ctx) {
   await openMcpSettings(ctx);
   await revealHidden(ctx);
-  await ctx.expectText("OpenWork Cloud Control", { timeoutMs: 60_000 });
+  await ctx.expectText("Micx Cloud Control", { timeoutMs: 60_000 });
 
   const alreadyConnected = await ctx.eval(`(() => {
-    const card = [...document.querySelectorAll('button')].find((entry) => entry.textContent.includes('OpenWork Cloud Control'));
+    const card = [...document.querySelectorAll('button')].find((entry) => entry.textContent.includes('Micx Cloud Control'));
     return Boolean(card?.textContent.includes('Connected'));
   })()`);
   if (!alreadyConnected) {
     const opened = await ctx.eval(`(() => {
-      const card = [...document.querySelectorAll('button')].find((entry) => entry.textContent.includes('OpenWork Cloud Control'));
+      const card = [...document.querySelectorAll('button')].find((entry) => entry.textContent.includes('Micx Cloud Control'));
       card?.scrollIntoView({ block: 'center' });
       card?.click();
       return Boolean(card);
     })()`);
-    ctx.assert(opened, "Could not open the OpenWork Cloud Control card.");
+    ctx.assert(opened, "Could not open the Micx Cloud Control card.");
     await ctx.expectText("Manage your org", { timeoutMs: 15_000 });
     const connected = await ctx.eval(`(() => {
       const dialog = document.querySelector('[role="dialog"]');
@@ -225,19 +225,19 @@ async function ensureCloudControlReady(ctx) {
       button?.click();
       return Boolean(button);
     })()`);
-    ctx.assert(connected, "Could not connect OpenWork Cloud Control for the eval workspace.");
+    ctx.assert(connected, "Could not connect Micx Cloud Control for the eval workspace.");
   }
 
   await ctx.waitFor(`(() => {
-    const card = [...document.querySelectorAll('button')].find((entry) => entry.textContent.includes('OpenWork Cloud Control'));
+    const card = [...document.querySelectorAll('button')].find((entry) => entry.textContent.includes('Micx Cloud Control'));
     return Boolean(card?.textContent.includes('Connected'));
-  })()`, { timeoutMs: 60_000, label: "OpenWork Cloud Control connected card" });
+  })()`, { timeoutMs: 60_000, label: "Micx Cloud Control connected card" });
   await ctx.control("extensions.refresh-marketplace").catch(() => undefined);
 
   const runtime = await waitFor(async () => {
     const current = await readRuntimeCloudControlMcp(ctx);
     return current?.ok ? current : null;
-  }, "Runtime OpenWork Cloud Control MCP config never became ready.", 60_000);
+  }, "Runtime Micx Cloud Control MCP config never became ready.", 60_000);
   ctx.log(`Runtime Cloud Control ready: ${JSON.stringify({ names: runtime.names, engineSync: runtime.engineSync, health: runtime.health })}`);
 }
 
@@ -273,7 +273,7 @@ async function advanceVisibleOnboarding(ctx) {
     return clickExactButtonIfPresent(ctx, "Use this folder");
   }
   if (await clickExactButtonIfPresent(ctx, "Skip and use the free model")) return true;
-  if (await clickExactButtonIfPresent(ctx, "Continue without OpenWork Models")) return true;
+  if (await clickExactButtonIfPresent(ctx, "Continue without Micx Models")) return true;
   if (await clickExactButtonIfPresent(ctx, "Skip")) return true;
   if (await clickExactButtonIfPresent(ctx, "Continue with organization")) return true;
   return clickExactButtonIfPresent(ctx, "Continue to workspace");
@@ -282,17 +282,17 @@ async function advanceVisibleOnboarding(ctx) {
 async function ensureWorkspace(ctx) {
   await mkdir(WORKSPACE_PATH, { recursive: true });
   await ctx.waitFor(
-    "Boolean(localStorage.getItem('openwork.server.port') && localStorage.getItem('openwork.server.token') && localStorage.getItem('openwork.server.hostToken'))",
-    { timeoutMs: 60_000, label: "OpenWork server auth for eval workspace" },
+    "Boolean(localStorage.getItem('micx.server.port') && localStorage.getItem('micx.server.token') && localStorage.getItem('micx.server.hostToken'))",
+    { timeoutMs: 60_000, label: "Micx server auth for eval workspace" },
   );
   const created = await ctx.eval(`(async () => {
-    const port = localStorage.getItem('openwork.server.port');
-    const token = localStorage.getItem('openwork.server.token');
-    const hostToken = localStorage.getItem('openwork.server.hostToken');
+    const port = localStorage.getItem('micx.server.port');
+    const token = localStorage.getItem('micx.server.token');
+    const hostToken = localStorage.getItem('micx.server.hostToken');
     const headers = {
       'Content-Type': 'application/json',
       Authorization: 'Bearer ' + token,
-      'X-OpenWork-Host-Token': hostToken,
+      'X-Micx-Host-Token': hostToken,
     };
     const response = await fetch('http://127.0.0.1:' + port + '/workspaces/local', {
       method: 'POST',
@@ -316,12 +316,12 @@ async function ensureWorkspace(ctx) {
       headers,
     });
     if (!activate.ok) return { ok: false, status: activate.status, text: await activate.text() };
-    await window.__OPENWORK_ELECTRON__?.invokeDesktop('workspaceSetSelected', workspaceId);
-    await window.__OPENWORK_ELECTRON__?.invokeDesktop('workspaceSetRuntimeActive', workspaceId);
-    localStorage.setItem('openwork.react.activeWorkspace', workspaceId);
+    await window.__MICX_ELECTRON__?.invokeDesktop('workspaceSetSelected', workspaceId);
+    await window.__MICX_ELECTRON__?.invokeDesktop('workspaceSetRuntimeActive', workspaceId);
+    localStorage.setItem('micx.react.activeWorkspace', workspaceId);
     let prefs = {};
-    try { prefs = JSON.parse(localStorage.getItem('openwork.preferences') || '{}'); } catch {}
-    localStorage.setItem('openwork.preferences', JSON.stringify({
+    try { prefs = JSON.parse(localStorage.getItem('micx.preferences') || '{}'); } catch {}
+    localStorage.setItem('micx.preferences', JSON.stringify({
       ...prefs,
       hasCompletedOnboarding: true,
       providerStepCompleted: true,
@@ -361,12 +361,12 @@ async function openMcpSettings(ctx) {
 
 async function createFreshTask(ctx) {
   await ctx.navigateHash(`/workspace/${state.workspaceId}/session`);
-  await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 30_000, label: "desktop control API" });
+  await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 30_000, label: "desktop control API" });
   let created = false;
   let lastCreateError = null;
   for (let attempt = 0; attempt < 5 && !created; attempt += 1) {
     await ctx.waitFor(
-      "window.__openworkControl.listActions().some((entry) => entry.id === 'session.create_task' && entry.disabled === false)",
+      "window.__micxControl.listActions().some((entry) => entry.id === 'session.create_task' && entry.disabled === false)",
       { timeoutMs: 45_000, label: "new task action" },
     );
     try {
@@ -388,7 +388,7 @@ async function createFreshTask(ctx) {
 async function sendPrompt(ctx, prompt) {
   await ctx.control("composer.set_text", { text: prompt });
   await ctx.waitFor(
-    "window.__openworkControl.listActions().some((entry) => entry.id === 'composer.send' && entry.disabled === false)",
+    "window.__micxControl.listActions().some((entry) => entry.id === 'composer.send' && entry.disabled === false)",
     { timeoutMs: 30_000, label: "enabled send action" },
   );
   await ctx.control("composer.send");
@@ -396,11 +396,11 @@ async function sendPrompt(ctx, prompt) {
 
 async function waitForAssistantToFinish(ctx, timeoutMs = 180_000) {
   await ctx.waitFor(
-    "window.__openworkControl.listActions().some((entry) => entry.id === 'composer.stop' && entry.disabled === false)",
+    "window.__micxControl.listActions().some((entry) => entry.id === 'composer.stop' && entry.disabled === false)",
     { timeoutMs: 45_000, label: "assistant run started" },
   ).catch(() => undefined);
   await ctx.waitFor(
-    "window.__openworkControl.listActions().some((entry) => entry.id === 'composer.stop' && entry.disabled === true)",
+    "window.__micxControl.listActions().some((entry) => entry.id === 'composer.stop' && entry.disabled === true)",
     { timeoutMs, label: "assistant run finished" },
   );
 }
@@ -415,12 +415,12 @@ export default {
   id: FLOW_ID,
   title: "Expired MCP credentials can be reconnected from the failed chat tool",
   kind: "user-facing",
-  requiredEnv: ["OPENWORK_EVAL_DEN_API_URL"],
+  requiredEnv: ["MICX_EVAL_DEN_API_URL"],
   steps: [
     {
       name: "Setup: real Den connection, OAuth credential, desktop sign-in, and Cloud Control",
       run: async (ctx) => {
-        state.token = process.env.OPENWORK_EVAL_DEN_TOKEN?.trim() || await signInDemoOwner();
+        state.token = process.env.MICX_EVAL_DEN_TOKEN?.trim() || await signInDemoOwner();
         ctx.assert(Boolean(state.token), `Demo owner sign-in failed for ${DEMO_EMAIL}.`);
         startMockServer();
         await waitFor(async () => (await fetch(`${MOCK_SERVER_URL}/health`).catch(() => null))?.ok, "Mock OAuth MCP server did not become healthy.", 30_000);
@@ -451,31 +451,31 @@ export default {
         ctx.assert(Boolean(connected.connectedAt), "The initial member authorization timestamp was missing.");
         state.reconnectBaselineConnectedAt = connected.connectedAt;
 
-        await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 120_000, label: "desktop control API" });
-        await ctx.waitFor("Boolean(window.__OPENWORK_ELECTRON__?.invokeDesktop)", { timeoutMs: 30_000, label: "desktop bridge" });
+        await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 120_000, label: "desktop control API" });
+        await ctx.waitFor("Boolean(window.__MICX_ELECTRON__?.invokeDesktop)", { timeoutMs: 30_000, label: "desktop bridge" });
         const bootstrap = { baseUrl: DEN_ORIGIN, apiBaseUrl: `${DEN_ORIGIN}/api/den`, requireSignin: false, handoff: null };
         const written = await ctx.eval(`(async () => {
-          await window.__OPENWORK_ELECTRON__.invokeDesktop("setDesktopBootstrapConfig", ${JSON.stringify(bootstrap)});
-          localStorage.setItem('openwork.den.baseUrl', ${JSON.stringify(DEN_ORIGIN)});
-          localStorage.setItem('openwork.den.apiBaseUrl', ${JSON.stringify(`${DEN_ORIGIN}/api/den`)});
+          await window.__MICX_ELECTRON__.invokeDesktop("setDesktopBootstrapConfig", ${JSON.stringify(bootstrap)});
+          localStorage.setItem('micx.den.baseUrl', ${JSON.stringify(DEN_ORIGIN)});
+          localStorage.setItem('micx.den.apiBaseUrl', ${JSON.stringify(`${DEN_ORIGIN}/api/den`)});
           return true;
         })()`, { awaitPromise: true });
         ctx.assert(written === true, "Could not point the desktop app at the eval Den.");
         await ctx.eval("location.reload()");
-        await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 60_000, label: "control API after Den bootstrap" });
+        await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 60_000, label: "control API after Den bootstrap" });
 
         const handoff = await denApiFetch("/v1/auth/desktop-handoff", {
           method: "POST",
-          body: JSON.stringify({ desktopScheme: "openwork" }),
+          body: JSON.stringify({ desktopScheme: "micx" }),
         });
         ctx.assert(handoff.response.ok && handoff.body.grant, `Desktop handoff failed: ${handoff.response.status}`);
         await ctx.waitFor(
-          "window.__openworkControl.listActions().some((entry) => entry.id === 'auth.exchange-grant' && entry.disabled === false)",
+          "window.__micxControl.listActions().some((entry) => entry.id === 'auth.exchange-grant' && entry.disabled === false)",
           { timeoutMs: 30_000, label: "auth.exchange-grant action" },
         );
         await ctx.control("auth.exchange-grant", { grant: handoff.body.grant, baseUrl: DEN_ORIGIN });
-        await ctx.waitFor("Boolean((localStorage.getItem('openwork.den.authToken') ?? '').trim())", { timeoutMs: 45_000, label: "desktop Den token" });
-        await ctx.waitFor("Boolean((localStorage.getItem('openwork.den.activeOrgId') ?? '').trim())", { timeoutMs: 60_000, label: "desktop active org" });
+        await ctx.waitFor("Boolean((localStorage.getItem('micx.den.authToken') ?? '').trim())", { timeoutMs: 45_000, label: "desktop Den token" });
+        await ctx.waitFor("Boolean((localStorage.getItem('micx.den.activeOrgId') ?? '').trim())", { timeoutMs: 60_000, label: "desktop active org" });
 
         await ensureWorkspace(ctx);
         await ensureCloudControlReady(ctx);
@@ -492,7 +492,7 @@ export default {
             ctx.assert(expired.response.ok && expired.body.expiredAccessTokens > 0 && expired.body.expiredRefreshTokens > 0, `Mock credentials were not invalidated: ${JSON.stringify(expired.body)}`);
             await createFreshTask(ctx);
             const exactCapability = `mcp:${state.connectionId}:mock_echo`;
-            await sendPrompt(ctx, `Use OpenWork Cloud Control to call the Research Vault mock echo capability. Follow the normal sequence: first search_capabilities for "Research Vault mock echo", then execute the exact returned capability named ${exactCapability} with body {"text":"expired credential proof"}. Continue through the execute call and report its result.`);
+            await sendPrompt(ctx, `Use Micx Cloud Control to call the Research Vault mock echo capability. Follow the normal sequence: first search_capabilities for "Research Vault mock echo", then execute the exact returned capability named ${exactCapability} with body {"text":"expired credential proof"}. Continue through the execute call and report its result.`);
           },
           assert: async () => {
             await ctx.waitFor("Boolean(document.querySelector('[data-testid=\"chat-mcp-reconnect-action\"]'))", { timeoutMs: 180_000, label: "inline MCP reconnect action" });
@@ -527,7 +527,7 @@ export default {
         await ctx.prove("Pending browser authorization remains an enabled, repeatable action", {
           voiceover: vo[1],
           action: async () => {
-            await ctx.eval("window.__openwork?.clearEvents()");
+            await ctx.eval("window.__micx?.clearEvents()");
             const clickedAt = new Date().toISOString();
             await ctx.trustedClick('[data-testid="chat-mcp-reconnect-action"]', { timeoutMs: 20_000 });
             await ctx.waitForText("Open sign-in again", { timeoutMs: 30_000 });
@@ -554,7 +554,7 @@ export default {
             })()`);
             ctx.assert(action?.label === "Open sign-in again", `Expected a reusable sign-in action, received ${JSON.stringify(action)}.`);
             ctx.assert(action?.disabled === false, "Pending sign-in must not lock the user out of reopening authorization.");
-            const events = await ctx.eval("window.__openwork?.events(20) ?? []");
+            const events = await ctx.eval("window.__micx?.events(20) ?? []");
             const started = events.filter((entry) => entry.name === "mcp.chat_reconnect.started");
             const reopened = events.filter((entry) => entry.name === "mcp.chat_reconnect.authorization_reopened");
             ctx.assert(started.length === 1, `Expected one reconnect transaction, observed ${started.length}.`);
@@ -648,7 +648,7 @@ export default {
           action: async () => {
             await createFreshTask(ctx);
             const exactCapability = `mcp:${state.connectionId}:mock_echo`;
-            await sendPrompt(ctx, `Use OpenWork Cloud Control to call the Research Vault mock echo capability. Follow the normal sequence: first search_capabilities for "Research Vault mock echo", then execute the exact returned capability named ${exactCapability} with body {"text":"${ECHO_TEXT}"}. Continue through the execute call and reply with exactly the returned text.`);
+            await sendPrompt(ctx, `Use Micx Cloud Control to call the Research Vault mock echo capability. Follow the normal sequence: first search_capabilities for "Research Vault mock echo", then execute the exact returned capability named ${exactCapability} with body {"text":"${ECHO_TEXT}"}. Continue through the execute call and reply with exactly the returned text.`);
           },
           assert: async () => {
             await ctx.waitFor(
@@ -676,7 +676,7 @@ export default {
           action: async () => {
             await createFreshTask(ctx);
             const exactCapability = `mcp:${state.connectionId}:${PROVIDER_ERROR_TOOL}`;
-            await sendPrompt(ctx, `Use OpenWork Cloud Control to call the Research Vault provider policy check. Follow the normal sequence: first search_capabilities for "Research Vault provider policy check", then execute the exact returned capability named ${exactCapability} with body {}. Continue through the execute call and report its result.`);
+            await sendPrompt(ctx, `Use Micx Cloud Control to call the Research Vault provider policy check. Follow the normal sequence: first search_capabilities for "Research Vault provider policy check", then execute the exact returned capability named ${exactCapability} with body {}. Continue through the execute call and report its result.`);
           },
           assert: async () => {
             await ctx.waitFor("Boolean(document.querySelector('[aria-label^=\"Error attribution: Provider error\"]'))", { timeoutMs: 180_000, label: "provider error attribution" });

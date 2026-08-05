@@ -63,7 +63,7 @@ YAML
 helm template openwork-ee "$chart_dir" -f "$disabled_values" > "$disabled_rendered"
 cmp -s "$default_rendered" "$disabled_rendered"
 assert_not_contains "$default_rendered" 'name: NODE_EXTRA_CA_CERTS'
-assert_not_contains "$default_rendered" '/etc/openwork/custom-ca'
+assert_not_contains "$default_rendered" '/etc/micx/custom-ca'
 assert_not_contains "$default_rendered" 'name: custom-ca'
 
 secret_values="$tmp_dir/secret-values.yaml"
@@ -71,19 +71,19 @@ secret_rendered="$tmp_dir/secret.yaml"
 cat > "$secret_values" <<'YAML'
 customCa:
   enabled: true
-  existingSecret: openwork-ca-secret
+  existingSecret: micx-ca-secret
   key: corp-root.pem
 YAML
 helm template openwork-ee "$chart_dir" -f "$secret_values" > "$secret_rendered"
 assert_count "$secret_rendered" 'name: NODE_EXTRA_CA_CERTS' 4
-assert_count "$secret_rendered" 'value: "/etc/openwork/custom-ca/ca-bundle.pem"' 5
+assert_count "$secret_rendered" 'value: "/etc/micx/custom-ca/ca-bundle.pem"' 5
 assert_count "$secret_rendered" 'name: custom-ca' 8
-assert_count "$secret_rendered" 'secretName: "openwork-ca-secret"' 4
+assert_count "$secret_rendered" 'secretName: "micx-ca-secret"' 4
 assert_count "$secret_rendered" 'key: "corp-root.pem"' 4
 assert_count "$secret_rendered" 'path: ca-bundle.pem' 4
-assert_count "$secret_rendered" 'mountPath: "/etc/openwork/custom-ca"' 4
+assert_count "$secret_rendered" 'mountPath: "/etc/micx/custom-ca"' 4
 assert_not_contains "$secret_rendered" 'subPath:'
-assert_not_contains "$secret_rendered" 'name: "openwork-ca-config"'
+assert_not_contains "$secret_rendered" 'name: "micx-ca-config"'
 assert_not_contains "$secret_rendered" 'name: openwork-ee-inference'
 
 configmap_values="$tmp_dir/configmap-values.yaml"
@@ -93,7 +93,7 @@ inference:
   enabled: true
 customCa:
   enabled: true
-  existingConfigMap: openwork-ca-config
+  existingConfigMap: micx-ca-config
   key: ca.crt
 YAML
 helm template openwork-ee "$chart_dir" -f "$configmap_values" > "$configmap_rendered"
@@ -102,21 +102,21 @@ assert_contains "$configmap_rendered" 'name: openwork-ee-den-web'
 assert_contains "$configmap_rendered" 'name: openwork-ee-inference'
 assert_contains "$configmap_rendered" 'name: openwork-ee-migrate'
 assert_count "$configmap_rendered" 'name: NODE_EXTRA_CA_CERTS' 5
-assert_count "$configmap_rendered" 'value: "/etc/openwork/custom-ca/ca-bundle.pem"' 6
+assert_count "$configmap_rendered" 'value: "/etc/micx/custom-ca/ca-bundle.pem"' 6
 assert_count "$configmap_rendered" 'name: custom-ca' 10
-assert_count "$configmap_rendered" 'name: "openwork-ca-config"' 5
+assert_count "$configmap_rendered" 'name: "micx-ca-config"' 5
 assert_count "$configmap_rendered" 'key: "ca.crt"' 5
 assert_count "$configmap_rendered" 'path: ca-bundle.pem' 5
-assert_count "$configmap_rendered" 'mountPath: "/etc/openwork/custom-ca"' 5
+assert_count "$configmap_rendered" 'mountPath: "/etc/micx/custom-ca"' 5
 assert_not_contains "$configmap_rendered" 'subPath:'
-assert_not_contains "$configmap_rendered" 'secretName: "openwork-ca-secret"'
+assert_not_contains "$configmap_rendered" 'secretName: "micx-ca-secret"'
 
 installer_values="$tmp_dir/installer-values.yaml"
 installer_rendered="$tmp_dir/installer.yaml"
 cat > "$installer_values" <<'YAML'
 customCa:
   enabled: true
-  existingSecret: openwork-ca-secret
+  existingSecret: micx-ca-secret
 installerArtifacts:
   enabled: true
   existingClaim: installer-artifacts-pvc
@@ -124,7 +124,7 @@ YAML
 helm template openwork-ee "$chart_dir" -f "$installer_values" > "$installer_rendered"
 assert_contains "$installer_rendered" 'name: installer-artifacts'
 assert_contains "$installer_rendered" 'claimName: "installer-artifacts-pvc"'
-assert_contains "$installer_rendered" 'name: OPENWORK_INSTALLER_ARTIFACTS_DIR'
+assert_contains "$installer_rendered" 'name: MICX_INSTALLER_ARTIFACTS_DIR'
 assert_contains "$installer_rendered" 'name: custom-ca'
 assert_contains "$installer_rendered" 'name: NODE_EXTRA_CA_CERTS'
 
@@ -139,8 +139,8 @@ multiple_sources_values="$tmp_dir/multiple-sources-values.yaml"
 cat > "$multiple_sources_values" <<'YAML'
 customCa:
   enabled: true
-  existingSecret: openwork-ca-secret
-  existingConfigMap: openwork-ca-config
+  existingSecret: micx-ca-secret
+  existingConfigMap: micx-ca-config
 YAML
 assert_failure "$multiple_sources_values" 'customCa.existingSecret and customCa.existingConfigMap are mutually exclusive when customCa.enabled=true'
 
@@ -148,7 +148,7 @@ empty_key_values="$tmp_dir/empty-key-values.yaml"
 cat > "$empty_key_values" <<'YAML'
 customCa:
   enabled: true
-  existingSecret: openwork-ca-secret
+  existingSecret: micx-ca-secret
   key: ""
 YAML
 assert_failure "$empty_key_values" 'customCa.key is required when customCa.enabled=true'
@@ -157,7 +157,7 @@ den_api_conflict_values="$tmp_dir/den-api-conflict-values.yaml"
 cat > "$den_api_conflict_values" <<'YAML'
 customCa:
   enabled: true
-  existingSecret: openwork-ca-secret
+  existingSecret: micx-ca-secret
 denApi:
   env:
     NODE_EXTRA_CA_CERTS: /already/set.pem
@@ -168,7 +168,7 @@ den_web_conflict_values="$tmp_dir/den-web-conflict-values.yaml"
 cat > "$den_web_conflict_values" <<'YAML'
 customCa:
   enabled: true
-  existingSecret: openwork-ca-secret
+  existingSecret: micx-ca-secret
 denWeb:
   env:
     NODE_EXTRA_CA_CERTS: /already/set.pem
@@ -179,7 +179,7 @@ inference_conflict_values="$tmp_dir/inference-conflict-values.yaml"
 cat > "$inference_conflict_values" <<'YAML'
 customCa:
   enabled: true
-  existingSecret: openwork-ca-secret
+  existingSecret: micx-ca-secret
 inference:
   env:
     NODE_EXTRA_CA_CERTS: /already/set.pem

@@ -42,7 +42,7 @@ function dryRunRecord(dir: string): PhotoRollRecord {
 }
 
 test("publishPr dry-run prints composed markdown without upload or gh calls", async () => {
-  const rollDir = await mkdtemp(join(tmpdir(), "openwork-evidence-publish-"));
+  const rollDir = await mkdtemp(join(tmpdir(), "micx-evidence-publish-"));
   try {
     await mkdir(rollDir, { recursive: true });
     await writeFile(join(rollDir, "roll.json"), JSON.stringify(dryRunRecord(rollDir)));
@@ -73,7 +73,7 @@ test("publishPr dry-run prints composed markdown without upload or gh calls", as
 });
 
 test("publishPr refuses a symlinked frame before calling the blob uploader", async () => {
-  const root = await mkdtemp(join(tmpdir(), "openwork-evidence-symlink-frame-"));
+  const root = await mkdtemp(join(tmpdir(), "micx-evidence-symlink-frame-"));
   const rollDir = join(root, "roll");
   const previousToken = process.env.BLOB_READ_WRITE_TOKEN;
   try {
@@ -106,7 +106,7 @@ test("publishPr refuses a symlinked frame before calling the blob uploader", asy
 });
 
 test("publishPr publishes when the roll SHA matches the PR head SHA", async () => {
-  const rollDir = await mkdtemp(join(tmpdir(), "openwork-evidence-regular-frame-"));
+  const rollDir = await mkdtemp(join(tmpdir(), "micx-evidence-regular-frame-"));
   const previousToken = process.env.BLOB_READ_WRITE_TOKEN;
   try {
     await writeFile(join(rollDir, "roll.json"), JSON.stringify(dryRunRecord(rollDir)));
@@ -141,7 +141,7 @@ test("publishPr publishes when the roll SHA matches the PR head SHA", async () =
 });
 
 test("publishPr refuses a roll whose SHA does not match the PR head", async () => {
-  const rollDir = await mkdtemp(join(tmpdir(), "openwork-evidence-stale-"));
+  const rollDir = await mkdtemp(join(tmpdir(), "micx-evidence-stale-"));
   try {
     await writeFile(join(rollDir, "roll.json"), JSON.stringify(dryRunRecord(rollDir)));
     let fetchCalled = false;
@@ -161,7 +161,7 @@ test("publishPr refuses a roll whose SHA does not match the PR head", async () =
 });
 
 test("publishPr --force publishes stale evidence with a SHA annotation", async () => {
-  const rollDir = await mkdtemp(join(tmpdir(), "openwork-evidence-force-"));
+  const rollDir = await mkdtemp(join(tmpdir(), "micx-evidence-force-"));
   const previousToken = process.env.BLOB_READ_WRITE_TOKEN;
   try {
     await writeFile(join(rollDir, "roll.json"), JSON.stringify(dryRunRecord(rollDir)));
@@ -188,7 +188,7 @@ test("publishPr --force publishes stale evidence with a SHA annotation", async (
 });
 
 test("publishPr renders facts without images, skips fact uploads, marks failures, and reports verdict math", async () => {
-  const rollDir = await mkdtemp(join(tmpdir(), "openwork-evidence-red-facts-"));
+  const rollDir = await mkdtemp(join(tmpdir(), "micx-evidence-red-facts-"));
   const previousToken = process.env.BLOB_READ_WRITE_TOKEN;
   try {
     const roll = dryRunRecord(rollDir);
@@ -263,7 +263,7 @@ test("publishPr renders facts without images, skips fact uploads, marks failures
 });
 
 test("publishPr reports gh authentication guidance when the PR head cannot be resolved", async () => {
-  const rollDir = await mkdtemp(join(tmpdir(), "openwork-evidence-gh-auth-"));
+  const rollDir = await mkdtemp(join(tmpdir(), "micx-evidence-gh-auth-"));
   try {
     await writeFile(join(rollDir, "roll.json"), JSON.stringify(dryRunRecord(rollDir)));
     const exec: CommandRunner = () => ({ status: 1, stdout: "", stderr: "not logged in" });

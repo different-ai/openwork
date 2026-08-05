@@ -9,7 +9,7 @@ concurrency: ${{ github.workflow }}-${{ github.ref }}
 
 jobs:
   stats:
-    if: github.repository == 'different-ai/openwork'
+    if: github.repository == 'different-ai/micx'
     runs-on: blacksmith-4vcpu-ubuntu-2404
     permissions:
       contents: write
@@ -30,8 +30,8 @@ jobs:
           POSTHOG_HOST: https://us.i.posthog.com
           POSTHOG_LEGACY_EVENT: download
           POSTHOG_V2_EVENT: release_asset_snapshot
-          POSTHOG_DISTINCT_ID: openwork-download
-          GITHUB_REPO: different-ai/openwork
+          POSTHOG_DISTINCT_ID: micx-download
+          GITHUB_REPO: different-ai/micx
         run: node scripts/stats.mjs
 
       - name: Commit stats

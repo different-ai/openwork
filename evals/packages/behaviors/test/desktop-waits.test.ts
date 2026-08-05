@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { waitFor } from "../src/desktop.ts";
-import type { CdpClient, Surface } from "@openwork/cdp";
+import type { CdpClient, Surface } from "@micx/cdp";
 
 function fakeSurface(valueForExpression: (expression: string) => unknown): Surface {
   const client: CdpClient = {
@@ -46,7 +46,7 @@ test("waitFor appends a bounded on-screen dump to timeout failures", async () =>
     ? {
       hash: "#/workspace/demo/extensions",
       route: "/workspace/demo/extensions",
-      title: "OpenWork",
+      title: "Micx",
       buttons: ["Back", "Add extension"],
       body: "Extensions Add an extension to this workspace",
     }
@@ -54,7 +54,7 @@ test("waitFor appends a bounded on-screen dump to timeout failures", async () =>
 
   await assert.rejects(
     waitFor(surface, "false", { timeoutMs: 1, label: "extensions route" }),
-    /On screen: \{"hash":"#\/workspace\/demo\/extensions","route":"\/workspace\/demo\/extensions","title":"OpenWork","buttons":\["Back","Add extension"\],"body":"Extensions Add an extension to this workspace"\}/,
+    /On screen: \{"hash":"#\/workspace\/demo\/extensions","route":"\/workspace\/demo\/extensions","title":"Micx","buttons":\["Back","Add extension"\],"body":"Extensions Add an extension to this workspace"\}/,
   );
 });
 

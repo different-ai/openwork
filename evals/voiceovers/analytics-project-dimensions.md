@@ -1,8 +1,8 @@
 # analytics-project-dimensions — Name a project once and org analytics can filter by it
 
-A team member connects their desktop app to the company's OpenWork Cloud, names their new workspace's project once, and the organization's analytics learn to filter by it — no keys, no slugs, no extra setup.
+A team member connects their desktop app to the company's Micx Cloud, names their new workspace's project once, and the organization's analytics learn to filter by it — no keys, no slugs, no extra setup.
 
-1. The member pastes their cloud sign-in code into Settings and the desktop app connects to the organization's OpenWork Cloud.
+1. The member pastes their cloud sign-in code into Settings and the desktop app connects to the organization's Micx Cloud.
 
 2. Adding a workspace offers one optional Project name under Want more analytics — they type Atlas Billing, and there is no machine value to invent because the server derives the stable key itself.
 

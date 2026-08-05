@@ -78,7 +78,7 @@ success("Pushed dev");
 // ── Step 4: Print workflow URL ──────────────────────────────────────
 heading("GitHub Actions");
 
-const repo = "different-ai/openwork";
+const repo = "different-ai/micx";
 const url = `https://github.com/${repo}/actions/workflows/release-macos-aarch64.yml`;
 log(`Workflow: ${url}`);
 log(`Release:  https://github.com/${repo}/releases/tag/${tag}`);

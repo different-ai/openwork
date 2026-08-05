@@ -1,11 +1,11 @@
-# Azure AKS starter values for a first OpenWork EE self-host install.
+# Azure AKS starter values for a first Micx EE self-host install.
 #
 # Follow docs/azure-aks-helm.md to create the VNet, AKS subnet, delegated
 # MySQL subnet, AKS cluster, and Azure Database for MySQL Flexible Server.
 # Then copy this file, replace every REPLACE_* value, and install with:
 #
 #   helm upgrade --install openwork-ee oci://ghcr.io/different-ai/charts/openwork-ee \
-#     --version REPLACE_OPENWORK_VERSION \
+#     --version REPLACE_MICX_VERSION \
 #     --namespace openwork-ee \
 #     --create-namespace \
 #     -f values.azure.yaml
@@ -15,7 +15,7 @@
 # tests where browser auth and SSO need stable HTTPS hostnames.
 
 image:
-  tag: "REPLACE_OPENWORK_VERSION"
+  tag: "REPLACE_MICX_VERSION"
   pullPolicy: IfNotPresent
 
 config:
@@ -47,14 +47,14 @@ secret:
   values:
     # Azure Database for MySQL Flexible Server private-network smoke path.
     # sslaccept=accept preserves TLS without requiring a mounted CA bundle.
-    databaseUrl: "mysql://openwork:REPLACE_DB_PASSWORD@REPLACE_MYSQL_SERVER_NAME.mysql.database.azure.com:3306/openwork_den?sslaccept=accept"
+    databaseUrl: "mysql://micx:REPLACE_DB_PASSWORD@REPLACE_MYSQL_SERVER_NAME.mysql.database.azure.com:3306/micx_den?sslaccept=accept"
     # Generate with: openssl rand -base64 48
     betterAuthSecret: "REPLACE_BETTER_AUTH_SECRET"
     # Generate separately with: openssl rand -base64 48
     denDbEncryptionKey: "REPLACE_DEN_DB_ENCRYPTION_KEY"
     # Optional SMTP settings for invitations and other transactional email.
     # SMTP delivery requires both emailFrom and smtpHost.
-    emailFrom: "OpenWork <no-reply@example.com>"
+    emailFrom: "Micx <no-reply@example.com>"
     smtpHost: ""
     smtpPort: "587"
     smtpUser: ""

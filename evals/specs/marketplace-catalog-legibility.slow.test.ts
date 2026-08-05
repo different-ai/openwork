@@ -1,6 +1,6 @@
 import { expect, onTestFinished, test } from "vitest";
-import { chrome } from "@openwork/hosts";
-import { photoRoll, screenshot, validate } from "@openwork/fraimz";
+import { chrome } from "@micx/hosts";
+import { photoRoll, screenshot, validate } from "@micx/fraimz";
 import {
   createMarketplace,
   denFetch,
@@ -10,9 +10,9 @@ import {
   signInInBrowser,
   waitFor,
   waitForText,
-} from "@openwork/behaviors";
-import type { DenSession } from "@openwork/behaviors";
-import type { Surface } from "@openwork/cdp";
+} from "@micx/behaviors";
+import type { DenSession } from "@micx/behaviors";
+import type { Surface } from "@micx/cdp";
 
 /**
  * CORE JOURNEY: an org admin opens the cloud dashboard's marketplace catalogue
@@ -30,16 +30,16 @@ import type { Surface } from "@openwork/cdp";
  *    authority for what "needs action".
  */
 
-const appSpecsEnabled = process.env.OPENWORK_EVAL_APP_SPECS === "1";
-const denApiUrl = process.env.OPENWORK_EVAL_DEN_API_URL?.trim().replace(/\/+$/, "") ?? "";
-const denWebUrl = (process.env.OPENWORK_EVAL_DEN_WEB_URL?.trim() || denApiUrl.replace("127.0.0.1", "localhost")).replace(/\/+$/, "");
-const email = process.env.OPENWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
-const password = process.env.OPENWORK_EVAL_DEMO_PASSWORD?.trim() || "OpenWorkDemo123!";
+const appSpecsEnabled = process.env.MICX_EVAL_APP_SPECS === "1";
+const denApiUrl = process.env.MICX_EVAL_DEN_API_URL?.trim().replace(/\/+$/, "") ?? "";
+const denWebUrl = (process.env.MICX_EVAL_DEN_WEB_URL?.trim() || denApiUrl.replace("127.0.0.1", "localhost")).replace(/\/+$/, "");
+const email = process.env.MICX_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
+const password = process.env.MICX_EVAL_DEMO_PASSWORD?.trim() || "MicxDemo123!";
 
 const title = !appSpecsEnabled
-  ? "marketplace catalogue legibility skipped: set OPENWORK_EVAL_APP_SPECS=1 to opt in"
+  ? "marketplace catalogue legibility skipped: set MICX_EVAL_APP_SPECS=1 to opt in"
   : !denApiUrl
-    ? "marketplace catalogue legibility skipped: set OPENWORK_EVAL_DEN_API_URL to a running Den"
+    ? "marketplace catalogue legibility skipped: set MICX_EVAL_DEN_API_URL to a running Den"
     : "an org admin can read identity, counts, and exceptional readiness across the cloud catalogues";
 
 type Marketplace = { id: string; name: string; pluginCount: number };

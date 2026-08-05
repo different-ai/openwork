@@ -1,4 +1,4 @@
-# Outbound network access for OpenWork
+# Outbound network access for Micx
 
 Status: maintainer pointer
 

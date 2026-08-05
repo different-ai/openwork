@@ -1,7 +1,7 @@
-# OpenWork end-to-end specs
+# Micx end-to-end specs
 
 All new executable end-to-end coverage lives in
-[`specs/**/*.test.ts`](./specs) and imports `test` from `@openwork/testkit`.
+[`specs/**/*.test.ts`](./specs) and imports `test` from `@micx/testkit`.
 Specs that drive Electron, Den, or another app surface use `.slow.test.ts`.
 The legacy corpus under `flows/` is frozen compatibility coverage, not an
 authoring path.
@@ -33,18 +33,18 @@ pnpm evals:spec                    # app-less PR project
 Run one app-driving spec through the stack project:
 
 ```bash
-OPENWORK_EVAL_APP_SPECS=1 \
+MICX_EVAL_APP_SPECS=1 \
   pnpm --dir evals exec vitest run --config vitest.config.ts \
   --project stack specs/<slug>.slow.test.ts
 ```
 
-Set `OPENWORK_EVAL_DAYTONA=1` to place supported resources in Daytona
+Set `MICX_EVAL_DAYTONA=1` to place supported resources in Daytona
 sandboxes. Leave it unset for isolated local resources. See `run-tests` for
 environment requirements and the cold-boot verdict check.
 
 ## Authoring contract
 
-- Import `test` from `@openwork/testkit`.
+- Import `test` from `@micx/testkit`.
 - Name app-driving files `<slug>.slow.test.ts`; other specs use `<slug>.test.ts`.
 - Acquire resources in dependency order with `needs()` → `server()` → `app()`.
 - Drive user-visible behavior and assert observable outcomes. Backend, file,
@@ -60,15 +60,15 @@ new executable coverage is always assembled as a spec under `specs/`.
 
 | Package | Owns |
 | --- | --- |
-| `@openwork/testkit` | spec fixture plus `needs()`, `server()`, `app()`, mock, and placement resources |
-| `@openwork/cdp` | raw CDP client, targets, `Surface`, and `attachSurface` |
-| `@openwork/labs` | egress, identity-provider, release-feed, and mock-MCP labs |
-| `@openwork/hosts` | local and Daytona hosts and `resolveHost()` |
-| `@openwork/behaviors` | framework-free actions and observations over narrow handles |
-| `@openwork/matchers` | pure findings over facts, with no I/O |
-| `@openwork/fraimz` | current internal screenshot-capture and ambient-tape implementation used by testkit; not a flow-authoring path |
-| `@openwork/timeline` | timing spans for long spec journeys |
-| `@openwork/evidence` | scan, render, and PR publication for completed tapes |
+| `@micx/testkit` | spec fixture plus `needs()`, `server()`, `app()`, mock, and placement resources |
+| `@micx/cdp` | raw CDP client, targets, `Surface`, and `attachSurface` |
+| `@micx/labs` | egress, identity-provider, release-feed, and mock-MCP labs |
+| `@micx/hosts` | local and Daytona hosts and `resolveHost()` |
+| `@micx/behaviors` | framework-free actions and observations over narrow handles |
+| `@micx/matchers` | pure findings over facts, with no I/O |
+| `@micx/fraimz` | current internal screenshot-capture and ambient-tape implementation used by testkit; not a flow-authoring path |
+| `@micx/timeline` | timing spans for long spec journeys |
+| `@micx/evidence` | scan, render, and PR publication for completed tapes |
 
 Because behaviors and matchers do not depend on a test context, they also power
 the standalone diagnostic script:
@@ -77,7 +77,7 @@ the standalone diagnostic script:
 node evals/scripts/diagnose.mts https://den.customer.example
 ```
 
-It imports only `@openwork/behaviors` and `@openwork/matchers` and can point at
+It imports only `@micx/behaviors` and `@micx/matchers` and can point at
 a real endpoint without creating test evidence.
 
 ## Ambient evidence and verdicts
@@ -108,13 +108,13 @@ never determine the pass/fail verdict.
 For an isolated Den API without Electron or Den Web, use the development helper:
 
 ```bash
-pnpm --dir evals dev:den -- up --port 8891 --database openwork_den_my_eval --seed
+pnpm --dir evals dev:den -- up --port 8891 --database micx_den_my_eval --seed
 pnpm --dir evals dev:den -- down --port 8891 --drop-database
 ```
 
 The port and database are generated when omitted. The helper starts MySQL,
 pushes the current schema, and prints the eval URL exports and teardown command.
-It also adds the printed `OPENWORK_EVAL_DEN_WEB_URL` to the trusted origins;
+It also adds the printed `MICX_EVAL_DEN_WEB_URL` to the trusted origins;
 without that origin, Better Auth rejects eval sign-in with
 `403 INVALID_ORIGIN`.
 
@@ -128,7 +128,7 @@ bash .devcontainer/test-on-daytona.sh [branch-or-commit] --artifacts-volume
 ```
 
 Then run the selected `.slow.test.ts` with both
-`OPENWORK_EVAL_APP_SPECS=1` and `OPENWORK_EVAL_DAYTONA=1`. Use direct CDP tools
+`MICX_EVAL_APP_SPECS=1` and `MICX_EVAL_DAYTONA=1`. Use direct CDP tools
 only to explore or debug. Convert repeatable new coverage into a testkit spec;
 do not add a legacy flow. [`daytona-flows.md`](./daytona-flows.md) retains the
 manual sandbox notes.
@@ -160,7 +160,7 @@ for compatibility. The corpus is frozen:
 - Deleting an obsolete flow is allowed.
 - Adding, modifying, copying, renaming, or scaffolding a flow is forbidden.
 - A user request for new coverage always goes to `evals/specs` and
-  `@openwork/testkit`.
+  `@micx/testkit`.
 
 Only when a user explicitly requests an existing legacy flow, load the
 `run-evals` or `fraimz` compatibility skill and run that unchanged flow:

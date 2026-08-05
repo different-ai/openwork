@@ -1,9 +1,9 @@
-# AWS EKS Auto Mode starter values for a first OpenWork EE self-host install.
+# AWS EKS Auto Mode starter values for a first Micx EE self-host install.
 #
 # Copy this file, replace every REPLACE_* value, and install with:
 #
 #   helm upgrade --install openwork-ee oci://ghcr.io/different-ai/charts/openwork-ee \
-#     --version REPLACE_OPENWORK_VERSION \
+#     --version REPLACE_MICX_VERSION \
 #     --namespace openwork-ee \
 #     --create-namespace \
 #     -f values.aws.yaml
@@ -13,7 +13,7 @@
 # test and for installs where separate web/API hostnames are acceptable.
 
 image:
-  tag: "REPLACE_OPENWORK_VERSION"
+  tag: "REPLACE_MICX_VERSION"
   pullPolicy: IfNotPresent
 
 config:
@@ -45,7 +45,7 @@ secret:
   values:
     # RDS MySQL private-network smoke path. sslaccept=accept preserves TLS but
     # does not require the RDS CA chain to be mounted into the image.
-    databaseUrl: "mysql://openwork:REPLACE_DB_PASSWORD@REPLACE_RDS_ENDPOINT:3306/openwork_den?sslaccept=accept"
+    databaseUrl: "mysql://micx:REPLACE_DB_PASSWORD@REPLACE_RDS_ENDPOINT:3306/micx_den?sslaccept=accept"
     # Generate with: openssl rand -base64 48
     betterAuthSecret: "REPLACE_BETTER_AUTH_SECRET"
     # Generate separately with: openssl rand -base64 48

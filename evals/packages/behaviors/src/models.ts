@@ -1,4 +1,4 @@
-import type { Surface } from "@openwork/cdp";
+import type { Surface } from "@micx/cdp";
 import type { DenSession } from "./den.ts";
 import { denFetch } from "./den.ts";
 import { evalIn, fill, waitFor } from "./desktop.ts";
@@ -61,7 +61,7 @@ function stringField(value: unknown): string {
 async function executeControl(app: Surface, action: string, args?: unknown): Promise<unknown> {
   const result = await evalIn(
     app,
-    `window.__openworkControl.execute(${JSON.stringify(action)}, ${JSON.stringify(args ?? null)})`,
+    `window.__micxControl.execute(${JSON.stringify(action)}, ${JSON.stringify(args ?? null)})`,
     { awaitPromise: true },
   );
   if (!isRecord(result) || result.ok !== true) {
@@ -73,7 +73,7 @@ async function executeControl(app: Surface, action: string, args?: unknown): Pro
 async function openModelPicker(app: Surface): Promise<void> {
   const open = await evalIn(app, `Boolean(document.querySelector(${JSON.stringify(MODEL_SEARCH_INPUT)}))`);
   if (open !== true) {
-    await waitFor(app, `window.__openworkControl?.listActions().some((entry) => entry.id === "session.model_picker.open" && entry.disabled === false)`, {
+    await waitFor(app, `window.__micxControl?.listActions().some((entry) => entry.id === "session.model_picker.open" && entry.disabled === false)`, {
       timeoutMs: 30_000,
       label: "session.model_picker.open enabled",
     });
@@ -183,7 +183,7 @@ export async function selectModel(app: Surface, name: string): Promise<ModelFact
   });
   const persisted = await evalIn(app, `(() => {
     try {
-      const preferences = JSON.parse(localStorage.getItem("openwork.preferences") || "{}");
+      const preferences = JSON.parse(localStorage.getItem("micx.preferences") || "{}");
       return preferences?.defaultModel?.modelID === ${JSON.stringify(model.id)};
     } catch {
       return false;
@@ -214,14 +214,14 @@ export async function recoverInvalidModelSelection(
 
   await evalIn(app, `(() => {
     let preferences = {};
-    try { preferences = JSON.parse(localStorage.getItem("openwork.preferences") || "{}"); } catch {}
+    try { preferences = JSON.parse(localStorage.getItem("micx.preferences") || "{}"); } catch {}
     delete preferences.defaultModel;
     delete preferences.modelVariant;
-    localStorage.setItem("openwork.preferences", JSON.stringify(preferences));
+    localStorage.setItem("micx.preferences", JSON.stringify(preferences));
     setTimeout(() => location.reload(), 0);
     return true;
   })()`);
-  await waitFor(app, "Boolean(window.__openworkControl)", {
+  await waitFor(app, "Boolean(window.__micxControl)", {
     timeoutMs: 60_000,
     label: "control API after clearing invalid selected model",
   });
@@ -284,7 +284,7 @@ export async function retryOrganizationModels(app: Surface): Promise<void> {
 }
 
 export async function seedUnavailableModel(app: Surface): Promise<UnavailableModelSeed> {
-  await waitFor(app, `window.__openworkControl?.listActions().some((entry) => entry.id === "eval.model_not_available.seed" && entry.disabled === false)`, {
+  await waitFor(app, `window.__micxControl?.listActions().some((entry) => entry.id === "eval.model_not_available.seed" && entry.disabled === false)`, {
     timeoutMs: 45_000,
     label: "eval.model_not_available.seed enabled",
   });

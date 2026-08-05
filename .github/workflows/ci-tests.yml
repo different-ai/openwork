@@ -1,4 +1,4 @@
-name: OpenWork Tests
+name: Micx Tests
 
 on:
   pull_request:
@@ -12,7 +12,7 @@ permissions:
   contents: read
 
 jobs:
-  openwork-tests:
+  micx-tests:
     runs-on: ${{ matrix.os }}
 
     strategy:
@@ -138,13 +138,13 @@ jobs:
         run: pnpm --dir evals run spec
 
       - name: Run app unit tests
-        run: pnpm --filter @openwork/app test
+        run: pnpm --filter @micx/app test
 
       - name: Run server unit tests
-        run: pnpm --filter openwork-server test
+        run: pnpm --filter micx-server test
 
       - name: Run desktop unit tests
-        run: pnpm --filter @openwork/desktop test
+        run: pnpm --filter @micx/desktop test
 
       - name: Run eval runner unit tests
         run: pnpm test:eval-runner
@@ -153,7 +153,7 @@ jobs:
         run: pnpm check:outbound-access
 
       - name: Typecheck Electron main against the IPC contract
-        run: pnpm --filter @openwork/desktop typecheck:electron
+        run: pnpm --filter @micx/desktop typecheck:electron
 
       - name: Run e2e tests
-        run: pnpm --filter @openwork/app test:e2e
+        run: pnpm --filter @micx/app test:e2e

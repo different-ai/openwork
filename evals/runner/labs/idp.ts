@@ -1,1 +1,1 @@
-export * from "@openwork/labs/idp";
+export * from "@micx/labs/idp";

@@ -12,9 +12,9 @@ const FLOW_ID = "standardized-workspace-reauth";
 const vo = await loadVoiceoverParagraphs(FLOW_ID);
 const execFileAsync = promisify(execFile);
 
-const ADMIN_EMAIL = process.env.OPENWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
-const ADMIN_PASSWORD = process.env.OPENWORK_EVAL_DEMO_PASSWORD?.trim() || "OpenWorkDemo123!";
-const ORG_SCOPE_HEADER = "x-openwork-org-id";
+const ADMIN_EMAIL = process.env.MICX_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
+const ADMIN_PASSWORD = process.env.MICX_EVAL_DEMO_PASSWORD?.trim() || "MicxDemo123!";
+const ORG_SCOPE_HEADER = "x-micx-org-id";
 const ORG_SETTINGS_PATH = "/dashboard/org-settings";
 const API_KEYS_PATH = "/dashboard/api-keys";
 const ORG_NAME_INPUT_SELECTOR = 'form input[type="text"]:not([readonly])';
@@ -34,7 +34,7 @@ const state = {
 };
 
 function mysqlContainer(ctx) {
-  const container = ctx.env.OPENWORK_EVAL_DEN_MYSQL_CONTAINER?.trim();
+  const container = ctx.env.MICX_EVAL_DEN_MYSQL_CONTAINER?.trim();
   return container ? container : null;
 }
 
@@ -56,8 +56,8 @@ async function runMysql(ctx, sql) {
   const container = mysqlContainer(ctx);
   const command = container ? "docker" : "mysql";
   const args = container
-    ? ["exec", container, "mysql", "-uroot", "-ppassword", "openwork_den", "-e", sql]
-    : ["-h127.0.0.1", "-uroot", "-ppassword", "openwork_den", "-e", sql];
+    ? ["exec", container, "mysql", "-uroot", "-ppassword", "micx_den", "-e", sql]
+    : ["-h127.0.0.1", "-uroot", "-ppassword", "micx_den", "-e", sql];
   const { stdout, stderr } = await execFileAsync(command, args);
 
   if (stderr.trim()) {
@@ -175,7 +175,7 @@ async function prepareSeededMultiOrg(ctx) {
   await cleanupApiKeys(ctx);
   let organization = await readOrganization(ctx);
   if (organization.name.startsWith(ORG_NAME_PREFIX)) {
-    const healedName = state.org.slug === "default" ? "OpenWork" : "Acme Robotics";
+    const healedName = state.org.slug === "default" ? "Micx" : "Acme Robotics";
     await renameOrganization(ctx, healedName);
     organization = await readOrganization(ctx);
   }
@@ -227,7 +227,7 @@ async function waitForOrgSettings(ctx) {
         return false;
       }
       if (location.pathname !== ${JSON.stringify(ORG_SETTINGS_PATH)}) {
-        window.location.href = ${JSON.stringify(`${process.env.OPENWORK_EVAL_DEN_WEB_URL?.replace(/\/$/, "") ?? ""}${ORG_SETTINGS_PATH}`)};
+        window.location.href = ${JSON.stringify(`${process.env.MICX_EVAL_DEN_WEB_URL?.replace(/\/$/, "") ?? ""}${ORG_SETTINGS_PATH}`)};
       }
       return false;
     })()`,
@@ -311,7 +311,7 @@ async function openOrgSettingsAsSeededAdmin(ctx) {
     { timeoutMs: 60_000, label: "seeded organization selected" },
   );
   await setBrowserActiveOrg(ctx);
-  await ctx.eval("window.sessionStorage.removeItem('openwork:web:pending-org-selection'); true");
+  await ctx.eval("window.sessionStorage.removeItem('micx:web:pending-org-selection'); true");
   await navigateTo(ctx, ORG_SETTINGS_PATH);
   await waitForOrgSettings(ctx);
 }
@@ -425,7 +425,7 @@ export default {
   title: "Workspace re-authentication keeps multi-org settings actions on the same route and org",
   kind: "user-facing",
   preserveTheme: true,
-  requiredEnv: ["OPENWORK_EVAL_DEN_WEB_URL", "OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_MULTI_ORG"],
+  requiredEnv: ["MICX_EVAL_DEN_WEB_URL", "MICX_EVAL_DEN_API_URL", "MICX_EVAL_DEN_MULTI_ORG"],
   steps: [
     {
       name: "Org settings save opens the standardized security dialog",

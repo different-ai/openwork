@@ -10,14 +10,14 @@ const FLOW_ID = "runtime-config-ownership";
 const vo = await loadVoiceoverParagraphs(FLOW_ID);
 
 const CARD_TITLE = "Runtime config ownership";
-const CARD_RULE = "OpenWork writes only the managed runtime config file; user OpenCode config stays user-owned.";
+const CARD_RULE = "Micx writes only the managed runtime config file; user OpenCode config stays user-owned.";
 const REDACTED_CONTENT_LABEL = "Redacted managed file";
 const REDACTED_CONTENT_VISIBLE_LABEL = "REDACTED MANAGED FILE";
 const DISABLED_PROVIDER = "anthropic";
 const LEGACY_HEADER = "// Personal OpenCode config owned by me.\n";
 const LEGACY_CONTENT = `${LEGACY_HEADER}{
   "mcp": {
-    "openwork-cloud": {
+    "micx-cloud": {
       "type": "remote",
       "url": "https://stale-cloud.example.test/mcp",
       "headers": {
@@ -30,30 +30,30 @@ const LEGACY_CONTENT = `${LEGACY_HEADER}{
     }
   },
   "agent": {
-    "openwork": {
-      "description": "Legacy OpenWork agent left by an older build",
+    "micx": {
+      "description": "Legacy Micx agent left by an older build",
       "mode": "primary"
     }
   },
-  "default_agent": "openwork",
+  "default_agent": "micx",
   "plugin": [
     "./plugins/my-plugin.js",
-    "/Users/example/.local/share/opencode-plugins/openwork-extensions-preview/index.js"
+    "/Users/example/.local/share/opencode-plugins/micx-extensions-preview/index.js"
   ]
 }
 `;
 
 function devDataRoot() {
-  const appIdentifier = "com.differentai.openwork.dev";
+  const appIdentifier = "com.differentai.micx.dev";
   if (process.platform === "darwin") {
-    return resolve(os.homedir(), "Library", "Application Support", appIdentifier, "openwork-dev-data");
+    return resolve(os.homedir(), "Library", "Application Support", appIdentifier, "micx-dev-data");
   }
   if (process.platform === "win32") {
     const appDataRoot = process.env.APPDATA?.trim() || join(os.homedir(), "AppData", "Roaming");
-    return resolve(appDataRoot, appIdentifier, "openwork-dev-data");
+    return resolve(appDataRoot, appIdentifier, "micx-dev-data");
   }
   const configRoot = process.env.XDG_CONFIG_HOME?.trim() || join(os.homedir(), ".config");
-  return resolve(configRoot, appIdentifier, "openwork-dev-data");
+  return resolve(configRoot, appIdentifier, "micx-dev-data");
 }
 
 function assertDevDataPath(ctx, path) {
@@ -61,9 +61,9 @@ function assertDevDataPath(ctx, path) {
   const resolved = resolve(path);
   ctx.assert(
     resolved === root || resolved.startsWith(`${root}${sep}`),
-    `Refusing to touch a path outside openwork-dev-data: ${resolved}`,
+    `Refusing to touch a path outside micx-dev-data: ${resolved}`,
   );
-  ctx.assert(resolved.includes("openwork-dev-data"), `Resolved path is not under openwork-dev-data: ${resolved}`);
+  ctx.assert(resolved.includes("micx-dev-data"), `Resolved path is not under micx-dev-data: ${resolved}`);
   return resolved;
 }
 
@@ -73,8 +73,8 @@ function legacyConfigPath(ctx) {
 
 function runtimeStorageCandidates(ctx) {
   return [
-    join(devDataRoot(), "home", ".config", "openwork"),
-    join(devDataRoot(), "xdg", "config", "openwork"),
+    join(devDataRoot(), "home", ".config", "micx"),
+    join(devDataRoot(), "xdg", "config", "micx"),
   ].map((path) => assertDevDataPath(ctx, path));
 }
 
@@ -103,26 +103,26 @@ async function waitForNode(ctx, label, probe, timeoutMs = 30_000) {
 }
 
 async function getServerInfo(ctx) {
-  await ctx.waitFor("Boolean(window.__OPENWORK_ELECTRON__?.invokeDesktop)", {
+  await ctx.waitFor("Boolean(window.__MICX_ELECTRON__?.invokeDesktop)", {
     timeoutMs: 60_000,
     label: "desktop bridge",
   });
-  const info = await ctx.eval("window.__OPENWORK_ELECTRON__.invokeDesktop('openworkServerInfo')", {
+  const info = await ctx.eval("window.__MICX_ELECTRON__.invokeDesktop('micxServerInfo')", {
     awaitPromise: true,
   });
   const baseUrl = String(info?.baseUrl || info?.connectUrl || "").replace(/\/+$/, "");
   const token = String(info?.ownerToken || info?.clientToken || "").trim();
   const hostToken = String(info?.hostToken || "").trim();
-  ctx.assert(Boolean(baseUrl), "OpenWork server base URL is unavailable.");
-  ctx.assert(Boolean(token), "OpenWork server token is unavailable.");
+  ctx.assert(Boolean(baseUrl), "Micx server base URL is unavailable.");
+  ctx.assert(Boolean(token), "Micx server token is unavailable.");
   return { baseUrl, token, hostToken };
 }
 
-async function fetchOpenworkJson(ctx, path, options = {}) {
+async function fetchMicxJson(ctx, path, options = {}) {
   const info = await getServerInfo(ctx);
   const headers = {
     Authorization: `Bearer ${info.token}`,
-    ...(info.hostToken ? { "X-OpenWork-Host-Token": info.hostToken } : {}),
+    ...(info.hostToken ? { "X-Micx-Host-Token": info.hostToken } : {}),
     ...(options.body ? { "Content-Type": "application/json" } : {}),
   };
   const response = await fetch(`${info.baseUrl}${path}`, {
@@ -151,10 +151,10 @@ async function ensureWorkspace(ctx) {
   const workspaceDir = assertDevDataPath(ctx, join(devDataRoot(), "eval-workspaces", FLOW_ID));
   await mkdir(workspaceDir, { recursive: true });
 
-  let list = await fetchOpenworkJson(ctx, "/workspaces");
+  let list = await fetchMicxJson(ctx, "/workspaces");
   let workspace = workspaceItems(list).find((item) => resolve(String(item?.path ?? "")) === workspaceDir);
   if (!workspace) {
-    const created = await fetchOpenworkJson(ctx, "/workspaces/local", {
+    const created = await fetchMicxJson(ctx, "/workspaces/local", {
       method: "POST",
       body: {
         folderPath: workspaceDir,
@@ -162,7 +162,7 @@ async function ensureWorkspace(ctx) {
         preset: "starter",
       },
     });
-    list = workspaceItems(created).length > 0 ? created : await fetchOpenworkJson(ctx, "/workspaces");
+    list = workspaceItems(created).length > 0 ? created : await fetchMicxJson(ctx, "/workspaces");
     workspace = workspaceItems(list).find((item) => resolve(String(item?.path ?? "")) === workspaceDir)
       ?? workspaceItems(list).find((item) => item?.id === created?.activeId);
   }
@@ -172,18 +172,18 @@ async function ensureWorkspace(ctx) {
 
   await ctx.eval(`(async () => {
     const workspaceId = ${JSON.stringify(workspaceId)};
-    const invoke = window.__OPENWORK_ELECTRON__?.invokeDesktop;
+    const invoke = window.__MICX_ELECTRON__?.invokeDesktop;
     if (!invoke) throw new Error("Desktop bridge is unavailable.");
     await invoke("workspaceSetSelected", workspaceId);
     await invoke("workspaceSetRuntimeActive", workspaceId);
-    localStorage.setItem("openwork.react.activeWorkspace", workspaceId);
+    localStorage.setItem("micx.react.activeWorkspace", workspaceId);
     let prefs = {};
-    try { prefs = JSON.parse(localStorage.getItem("openwork.preferences") || "{}"); } catch {}
-    localStorage.setItem("openwork.preferences", JSON.stringify({ ...prefs, hasCompletedOnboarding: true }));
+    try { prefs = JSON.parse(localStorage.getItem("micx.preferences") || "{}"); } catch {}
+    localStorage.setItem("micx.preferences", JSON.stringify({ ...prefs, hasCompletedOnboarding: true }));
     return true;
   })()`, { awaitPromise: true });
   await ctx.eval("location.reload()");
-  await ctx.waitFor("Boolean(window.__openworkControl)", {
+  await ctx.waitFor("Boolean(window.__micxControl)", {
     timeoutMs: 60_000,
     label: "control API after selecting eval workspace",
   });
@@ -207,7 +207,7 @@ function rememberRuntimeStatus(ctx, status) {
 
 async function readRuntimeConfigStatus(ctx) {
   const { workspaceId } = await ensureWorkspace(ctx);
-  const status = await fetchOpenworkJson(ctx, `/workspace/${encodeURIComponent(workspaceId)}/runtime-config`);
+  const status = await fetchMicxJson(ctx, `/workspace/${encodeURIComponent(workspaceId)}/runtime-config`);
   rememberRuntimeStatus(ctx, status);
   return status;
 }
@@ -237,7 +237,7 @@ async function clearLegacyBackups(ctx) {
   await mkdir(dir, { recursive: true });
   const entries = await readdir(dir).catch(() => []);
   for (const entry of entries) {
-    if (entry.startsWith(`${file}.openwork-backup-`)) {
+    if (entry.startsWith(`${file}.micx-backup-`)) {
       await rm(assertDevDataPath(ctx, join(dir, entry)), { force: true });
     }
   }
@@ -278,7 +278,7 @@ async function enableDeveloperMode(ctx) {
     if (toggle.getAttribute("aria-checked") !== "true") toggle.click();
     return true;
   })()`);
-  await ctx.waitFor(`localStorage.getItem("openwork.developerMode") === "1"`, {
+  await ctx.waitFor(`localStorage.getItem("micx.developerMode") === "1"`, {
     timeoutMs: 10_000,
     label: "developer mode enabled",
   });
@@ -312,29 +312,29 @@ async function openRedactedManagedFile(ctx) {
   await ctx.waitForText(REDACTED_CONTENT_VISIBLE_LABEL, { timeoutMs: 10_000 });
 }
 
-async function restartOpenworkServerFromDebug(ctx) {
+async function restartMicxServerFromDebug(ctx) {
   await openDebugSettings(ctx);
-  await ctx.clickText("Restart OpenWork server", { selector: "button", timeoutMs: 30_000 });
+  await ctx.clickText("Restart Micx server", { selector: "button", timeoutMs: 30_000 });
   await ctx.waitFor(`(() => {
     const text = document.body.innerText;
-    return text.includes("Restarted OpenWork server.") || text.includes("Failed to restart OpenWork server.");
+    return text.includes("Restarted Micx server.") || text.includes("Failed to restart Micx server.");
   })()`, {
     timeoutMs: 90_000,
-    label: "OpenWork server restart result",
+    label: "Micx server restart result",
   });
   const text = await ctx.eval("document.body.innerText");
-  ctx.assert(!text.includes("Failed to restart OpenWork server."), "OpenWork server restart failed.");
+  ctx.assert(!text.includes("Failed to restart Micx server."), "Micx server restart failed.");
   await ctx.eval("location.reload()");
-  await ctx.waitFor("Boolean(window.__openworkControl)", {
+  await ctx.waitFor("Boolean(window.__micxControl)", {
     timeoutMs: 60_000,
-    label: "control API after OpenWork server restart",
+    label: "control API after Micx server restart",
   });
 }
 
 async function setDisabledProviderThroughServer(ctx) {
   const { workspaceId } = await ensureWorkspace(ctx);
-  ctx.log("Using the OpenWork server runtime-config route as the provider-toggle fallback for this isolated eval.");
-  const result = await fetchOpenworkJson(ctx, `/workspace/${encodeURIComponent(workspaceId)}/runtime-config/disabled-providers`, {
+  ctx.log("Using the Micx server runtime-config route as the provider-toggle fallback for this isolated eval.");
+  const result = await fetchMicxJson(ctx, `/workspace/${encodeURIComponent(workspaceId)}/runtime-config/disabled-providers`, {
     method: "POST",
     body: { providers: [DISABLED_PROVIDER] },
   });
@@ -349,12 +349,12 @@ async function setDisabledProviderThroughServer(ctx) {
 function assertSeededGhosts(ctx, content) {
   ctx.assert(content.startsWith(LEGACY_HEADER), "Seeded legacy config is missing the header comment.");
   for (const expected of [
-    "openwork-cloud",
+    "micx-cloud",
     "stale-cloud.example.test",
     '"agent"',
-    '"openwork"',
+    '"micx"',
     '"default_agent"',
-    "openwork-extensions-preview",
+    "micx-extensions-preview",
     "my-notion",
     "./plugins/my-plugin.js",
   ]) {
@@ -364,7 +364,7 @@ function assertSeededGhosts(ctx, content) {
 
 function assertSweptPersonalConfig(ctx, content) {
   ctx.assert(content.startsWith(LEGACY_HEADER), "Swept personal config did not preserve the header comment.");
-  for (const removed of ["openwork-cloud", '"default_agent"', "openwork-extensions-preview"]) {
+  for (const removed of ["micx-cloud", '"default_agent"', "micx-extensions-preview"]) {
     ctx.assert(!content.includes(removed), `Swept personal config still contains ${removed}.`);
   }
   ctx.assert(content.includes("my-notion"), "Swept personal config lost the user-owned my-notion MCP entry.");
@@ -376,16 +376,16 @@ function assertSweepState(ctx, state) {
   const path = legacyConfigPath(ctx);
   const file = state.files?.find((entry) => resolve(String(entry?.path ?? "")) === path);
   ctx.assert(Boolean(file), `Legacy sweep state did not include ${path}.`);
-  for (const key of ["mcp.openwork-cloud", "agent.openwork", "default_agent", "plugin"]) {
+  for (const key of ["mcp.micx-cloud", "agent.micx", "default_agent", "plugin"]) {
     ctx.assert(file.removedKeys?.includes(key), `Legacy sweep state did not list removed key ${key}.`);
   }
-  ctx.assert(typeof file.backupPath === "string" && file.backupPath.includes(".openwork-backup-"), "Legacy sweep state did not record a backup path.");
+  ctx.assert(typeof file.backupPath === "string" && file.backupPath.includes(".micx-backup-"), "Legacy sweep state did not record a backup path.");
   return file;
 }
 
 export default {
   id: FLOW_ID,
-  title: "Runtime config is owned by OpenWork's managed file without mutating personal OpenCode config",
+  title: "Runtime config is owned by Micx's managed file without mutating personal OpenCode config",
   kind: "user-facing",
   steps: [
     {
@@ -416,13 +416,13 @@ export default {
     {
       name: "Restart runs the one-time cleanup with backup evidence",
       run: async (ctx) => {
-        await ctx.prove("The server restart sweeps OpenWork-owned leftovers, preserves user-owned config, and reports the backup", {
+        await ctx.prove("The server restart sweeps Micx-owned leftovers, preserves user-owned config, and reports the backup", {
           voiceover: vo[1],
           action: async () => {
             await enableDeveloperMode(ctx);
-            await restartOpenworkServerFromDebug(ctx);
+            await restartMicxServerFromDebug(ctx);
             await openDebugSettings(ctx);
-            await ctx.waitForText("Removed: mcp.openwork-cloud, agent.openwork, default_agent, plugin", { timeoutMs: 30_000 });
+            await ctx.waitForText("Removed: mcp.micx-cloud, agent.micx, default_agent, plugin", { timeoutMs: 30_000 });
             await ctx.waitForText("Backup:", { timeoutMs: 30_000 });
           },
           assert: async () => {
@@ -436,7 +436,7 @@ export default {
             ctx.assert(backupContent === LEGACY_CONTENT, "Legacy backup content did not match the original seeded file byte-for-byte.");
 
             await ctx.expectText(CARD_TITLE);
-            await ctx.expectText("Removed: mcp.openwork-cloud, agent.openwork, default_agent, plugin");
+            await ctx.expectText("Removed: mcp.micx-cloud, agent.micx, default_agent, plugin");
             await ctx.expectText("Backup:");
           },
           screenshot: {
@@ -463,7 +463,7 @@ export default {
             });
             ctx.runtimeConfigOwnership.managedBytesBeforeRestart = await readManagedFile(ctx);
 
-            await restartOpenworkServerFromDebug(ctx);
+            await restartMicxServerFromDebug(ctx);
             await readRuntimeConfigStatus(ctx);
             await openDebugSettings(ctx);
           },

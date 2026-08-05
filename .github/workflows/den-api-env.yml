@@ -32,7 +32,7 @@ concurrency:
 jobs:
   set-env:
     name: Set env var and deploy
-    if: github.repository == 'different-ai/openwork'
+    if: github.repository == 'different-ai/micx'
     runs-on: blacksmith-4vcpu-ubuntu-2204
 
     env:

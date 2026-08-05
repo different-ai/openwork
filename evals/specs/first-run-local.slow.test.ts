@@ -2,10 +2,10 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, onTestFinished, test } from "vitest";
-import type { Surface } from "@openwork/cdp";
-import { photoRoll, screenshot, validate } from "@openwork/fraimz";
-import { readActiveWorkspaceId } from "@openwork/cdp";
-import { desktop } from "@openwork/hosts";
+import type { Surface } from "@micx/cdp";
+import { photoRoll, screenshot, validate } from "@micx/fraimz";
+import { readActiveWorkspaceId } from "@micx/cdp";
+import { desktop } from "@micx/hosts";
 import {
   clickButton,
   createLocalWorkspaceViaUi,
@@ -20,13 +20,13 @@ import {
   waitForAssistantReply,
   waitForText,
   waitUntilTextStable,
-} from "@openwork/behaviors";
+} from "@micx/behaviors";
 
-const appSpecsEnabled = process.env.OPENWORK_EVAL_APP_SPECS === "1";
+const appSpecsEnabled = process.env.MICX_EVAL_APP_SPECS === "1";
 const title = appSpecsEnabled
   ? "first use without an invite or cloud reaches local task UI with honest model setup"
-  : "first-run local skipped: set OPENWORK_EVAL_APP_SPECS=1 to opt in";
-const prompt = "Create a short welcome checklist for this OpenWork workspace. Use exactly three bullets and mention one thing I can do next.";
+  : "first-run local skipped: set MICX_EVAL_APP_SPECS=1 to opt in";
+const prompt = "Create a short welcome checklist for this Micx workspace. Use exactly three bullets and mention one thing I can do next.";
 
 interface TaskAvailability {
   createTaskEnabled: boolean;
@@ -47,7 +47,7 @@ function taskAvailability(value: unknown): TaskAvailability {
 
 async function readTaskAvailability(app: Surface): Promise<TaskAvailability> {
   const value = await evalIn(app, `(() => {
-    const action = window.__openworkControl.listActions()
+    const action = window.__micxControl.listActions()
       .find((entry) => entry.id === "session.create_task");
     const buttons = [...document.querySelectorAll("button")];
     const run = buttons.find((button) => (button.textContent ?? "").trim() === "Run task");
@@ -64,7 +64,7 @@ async function readTaskAvailability(app: Surface): Promise<TaskAvailability> {
 async function createTask(app: Surface): Promise<void> {
   const value = await evalIn(
     app,
-    `window.__openworkControl.execute("session.create_task", null)`,
+    `window.__micxControl.execute("session.create_task", null)`,
     { awaitPromise: true },
   );
   if (typeof value !== "object" || value === null || Reflect.get(value, "ok") !== true) {
@@ -86,18 +86,18 @@ test.skipIf(!appSpecsEnabled)(title, async () => {
 
   expect(app.readiness.route).toContain("/welcome");
   expect(app.readiness.state).toBe("welcome");
-  await waitForText(app, "Welcome to OpenWork");
+  await waitForText(app, "Welcome to Micx");
   {
     const shot = await screenshot(app);
     const seen = await validate(shot, [
-      "The Welcome to OpenWork heading and Use Without Cloud option are visible",
+      "The Welcome to Micx heading and Use Without Cloud option are visible",
       "No generic error or 'Something went wrong' crash message is visible",
     ]);
     expect(seen.ok, seen.why).toBe(true);
     await roll.add(shot, seen);
   }
 
-  workspacePath = await mkdtemp(join(tmpdir(), "openwork-first-run-local-"));
+  workspacePath = await mkdtemp(join(tmpdir(), "micx-first-run-local-"));
   await clickButton(app, "Use Without Cloud");
   const workspace = await createLocalWorkspaceViaUi(app, { path: workspacePath });
   expect(workspace.path).toBe(workspacePath);
@@ -115,9 +115,9 @@ test.skipIf(!appSpecsEnabled)(title, async () => {
   }
 
   await clickButton(app, "Skip and use the free model", { timeoutMs: 90_000 });
-  await waitForText(app, "How did you hear about OpenWork?", { timeoutMs: 90_000 });
+  await waitForText(app, "How did you hear about Micx?", { timeoutMs: 90_000 });
   await clickButton(app, "Skip", { timeoutMs: 15_000 });
-  await waitFor(app, `Boolean(localStorage.getItem("openwork.react.activeWorkspace"))
+  await waitFor(app, `Boolean(localStorage.getItem("micx.react.activeWorkspace"))
     || /\\/workspace\\/[^/?#]+/.test(window.location.hash)`, {
     timeoutMs: 180_000,
     label: "first-run workspace selected",

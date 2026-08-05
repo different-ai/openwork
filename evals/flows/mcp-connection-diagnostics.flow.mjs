@@ -2,14 +2,14 @@ import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
 import { denApiFetch, openAdminConnections, signInApi } from "./lib/den-web.mjs";
 
 const vo = await loadVoiceoverParagraphs("mcp-connection-diagnostics");
-const ADMIN_EMAIL = process.env.OPENWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
-const ADMIN_PASSWORD = process.env.OPENWORK_EVAL_DEMO_PASSWORD?.trim() || "OpenWorkDemo123!";
+const ADMIN_EMAIL = process.env.MICX_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
+const ADMIN_PASSWORD = process.env.MICX_EVAL_DEMO_PASSWORD?.trim() || "MicxDemo123!";
 const CONNECTION_NAME = `diagnostic-unreachable-${Date.now()}`;
 const MCP_URL = "http://127.0.0.1:65534/mcp";
 const state = { adminSession: null };
 
 async function signInStagedBrowser(ctx) {
-  const baseUrl = process.env.OPENWORK_EVAL_DEN_WEB_URL;
+  const baseUrl = process.env.MICX_EVAL_DEN_WEB_URL;
   await ctx.eval(`(() => { window.location.href = ${JSON.stringify(baseUrl)}; return true; })()`);
   await ctx.waitFor("document.readyState === 'complete'", { timeoutMs: 30_000 });
   await ctx.eval("fetch('/api/auth/sign-out', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }).then(() => true).catch(() => true)", { awaitPromise: true });
@@ -39,7 +39,7 @@ export default {
   kind: "user-facing",
   spec: "evals/voiceovers/mcp-connection-diagnostics.md",
   preserveTheme: true,
-  requiredEnv: ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_WEB_URL"],
+  requiredEnv: ["MICX_EVAL_DEN_API_URL", "MICX_EVAL_DEN_WEB_URL"],
   steps: [
     {
       name: "Setup: sign in as the Den admin",

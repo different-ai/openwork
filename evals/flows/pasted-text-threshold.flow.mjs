@@ -11,13 +11,13 @@ const FITTING_PASTE = "This pasted message fits in the composer.";
 const URL_PASTE = "https://example.com/pasted-text-threshold/abcdefghijklmnopqrstuvwxyz";
 
 async function waitForReadySession(ctx) {
-  await ctx.waitFor("Boolean(window.__openworkControl)", {
+  await ctx.waitFor("Boolean(window.__micxControl)", {
     timeoutMs: 60_000,
     label: "control API",
   });
   return ctx.waitFor(
     `(() => {
-      const control = window.__openworkControl;
+      const control = window.__micxControl;
       const route = control.snapshot().route;
       if (route.startsWith("/welcome") || route.startsWith("/signin")) return "blocked";
       const action = control.listActions().find((item) => item.id === "session.create_task");
@@ -38,7 +38,7 @@ async function waitForComposer(ctx) {
 async function openEmptyComposer(ctx) {
   const target = await ctx.eval(
     `(() => {
-      const route = window.__openworkControl.snapshot().route || "";
+      const route = window.__micxControl.snapshot().route || "";
       const match = route.match(/^\\/workspace\\/([^/]+)/);
       if (!match) return { ok: false, reason: "workspace route not found", route };
       const targetRoute = "/workspace/" + match[1] + "/session";
@@ -48,7 +48,7 @@ async function openEmptyComposer(ctx) {
   );
   ctx.assert(target?.ok === true, `Could not open the empty-state composer: ${target?.reason ?? "unknown"}`);
   await ctx.waitFor(
-    `window.__openworkControl.snapshot().route === ${JSON.stringify(target.targetRoute)}`,
+    `window.__micxControl.snapshot().route === ${JSON.stringify(target.targetRoute)}`,
     { label: "empty workspace session route" },
   );
   await waitForComposer(ctx);
@@ -59,12 +59,12 @@ async function openEmptyComposer(ctx) {
 }
 
 async function createFreshTask(ctx) {
-  const previousRoute = await ctx.eval("window.__openworkControl.snapshot().route || ''");
+  const previousRoute = await ctx.eval("window.__micxControl.snapshot().route || ''");
   await ctx.control("session.create_task");
   await waitForComposer(ctx);
   await ctx.waitFor(
     `(() => {
-      const route = window.__openworkControl.snapshot().route || "";
+      const route = window.__micxControl.snapshot().route || "";
       const editor = document.querySelector(${JSON.stringify(EDITOR_SELECTOR)});
       return Boolean(route !== ${JSON.stringify(previousRoute)} && editor && editor.innerText.trim() === "");
     })()`,

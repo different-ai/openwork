@@ -1,6 +1,6 @@
 /**
  * Cloud providers are runtime-managed: importing an org LLM provider from
- * Settings -> Cloud writes it into the OpenWork server's runtime config
+ * Settings -> Cloud writes it into the Micx server's runtime config
  * (per-key provider merge), NOT into the user's opencode.jsonc — and a
  * legacy jsonc block left by pre-runtime builds is migrated (stripped).
  *
@@ -21,8 +21,8 @@
  * assertions lived in the reverted #2414 and return with its re-land.)
  *
  * Required env:
- * - OPENWORK_EVAL_DEN_API_URL  Den API base
- * - OPENWORK_EVAL_DEN_TOKEN    Bearer session token for a seeded org owner
+ * - MICX_EVAL_DEN_API_URL  Den API base
+ * - MICX_EVAL_DEN_TOKEN    Bearer session token for a seeded org owner
  */
 
 const PROVIDER_NAME = "Runtime Config Eval";
@@ -38,13 +38,13 @@ const providerConfig = (modelIds) => ({
   models: modelIds.map((id) => ({ id, name: id })),
 });
 
-// Reads the engine-reported provider list through the OpenWork server proxy,
+// Reads the engine-reported provider list through the Micx server proxy,
 // using the app's own token/port from inside the page. The workspace id is
 // injected (settings routes do not carry it in the hash). Returns the models
 // of the imported cloud provider matched by its lpr_* id, or null when absent.
 const engineProviderModelsExpr = (workspaceId, cloudProviderId) => `(async () => {
-  const port = localStorage.getItem("openwork.server.port");
-  const token = localStorage.getItem("openwork.server.token");
+  const port = localStorage.getItem("micx.server.port");
+  const token = localStorage.getItem("micx.server.token");
   const workspaceId = ${JSON.stringify(workspaceId)};
   if (!port || !token || !workspaceId) return null;
   const base = "http://127.0.0.1:" + port;
@@ -66,11 +66,11 @@ const engineProviderModelsExpr = (workspaceId, cloudProviderId) => `(async () =>
 })()`;
 
 async function denRequest(ctx, path, init = {}) {
-  const apiBase = ctx.env.OPENWORK_EVAL_DEN_API_URL.trim().replace(/\/+$/, "");
+  const apiBase = ctx.env.MICX_EVAL_DEN_API_URL.trim().replace(/\/+$/, "");
   const response = await fetch(`${apiBase}${path}`, {
     ...init,
     headers: {
-      authorization: `Bearer ${ctx.env.OPENWORK_EVAL_DEN_TOKEN.trim()}`,
+      authorization: `Bearer ${ctx.env.MICX_EVAL_DEN_TOKEN.trim()}`,
       "content-type": "application/json",
       ...(init.headers ?? {}),
     },
@@ -93,11 +93,11 @@ async function pollEngineModels(ctx, predicate, timeoutMs, label) {
   throw new Error(`Timed out after ${timeoutMs}ms waiting for: ${label}`);
 }
 
-// Read/write the workspace project opencode.jsonc via the OpenWork server
+// Read/write the workspace project opencode.jsonc via the Micx server
 // config-file API, from inside the page (uses the app's own token/port).
 const configFileExpr = (workspaceId, method, contentJson) => `(async () => {
-  const port = localStorage.getItem("openwork.server.port");
-  const token = localStorage.getItem("openwork.server.token");
+  const port = localStorage.getItem("micx.server.port");
+  const token = localStorage.getItem("micx.server.token");
   const workspaceId = ${JSON.stringify(workspaceId)};
   if (!port || !token || !workspaceId) return null;
   const base = "http://127.0.0.1:" + port;
@@ -165,24 +165,24 @@ export default {
   id: "cloud-runtime-provider-config",
   title: "Cloud provider import/sync lives in runtime config, not opencode.jsonc",
   spec: "evals/cloud-provider-sync-flows.md",
-  requiredEnv: ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_TOKEN"],
+  requiredEnv: ["MICX_EVAL_DEN_API_URL", "MICX_EVAL_DEN_TOKEN"],
   steps: [
     {
       name: "App booted",
       run: async (ctx) => {
-        await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 60_000 });
+        await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 60_000 });
         const workspaceId = await ctx.eval(
-          "localStorage.getItem('openwork.react.activeWorkspace') ?? ''",
+          "localStorage.getItem('micx.react.activeWorkspace') ?? ''",
         );
         ctx.assert(Boolean(workspaceId), "No active workspace recorded.");
         ctx.workspaceId = workspaceId;
       },
     },
     {
-      name: "Sign in to OpenWork Cloud via desktop handoff",
+      name: "Sign in to Micx Cloud via desktop handoff",
       run: async (ctx) => {
         const signedIn = await ctx.eval(
-          "Boolean((localStorage.getItem('openwork.den.authToken') ?? '').trim())",
+          "Boolean((localStorage.getItem('micx.den.authToken') ?? '').trim())",
         );
         if (signedIn) {
           ctx.log("Already signed in; reusing session.");
@@ -190,15 +190,15 @@ export default {
         }
         const payload = await denRequest(ctx, "/v1/auth/desktop-handoff", {
           method: "POST",
-          body: JSON.stringify({ desktopScheme: "openwork" }),
+          body: JSON.stringify({ desktopScheme: "micx" }),
         });
-        ctx.assert(typeof payload.openworkUrl === "string" && payload.openworkUrl.length > 0, "No openworkUrl in handoff response.");
+        ctx.assert(typeof payload.micxUrl === "string" && payload.micxUrl.length > 0, "No micxUrl in handoff response.");
         await ctx.navigateHash("/settings/cloud-account");
         await ctx.clickText("Paste sign-in code", { timeoutMs: 30_000 });
-        await ctx.fill("#den-signin-link", payload.openworkUrl);
+        await ctx.fill("#den-signin-link", payload.micxUrl);
         await ctx.clickText("Finish sign-in");
         await ctx.waitFor(
-          "Boolean((localStorage.getItem('openwork.den.authToken') ?? '').trim())",
+          "Boolean((localStorage.getItem('micx.den.authToken') ?? '').trim())",
           { timeoutMs: 45_000, label: "persisted den auth token" },
         );
       },
@@ -368,8 +368,8 @@ export default {
         // tracked separately). Clean deterministically via the same per-key
         // runtime merge the store uses: null deletes.
         const status = await ctx.eval(`(async () => {
-          const port = localStorage.getItem("openwork.server.port");
-          const token = localStorage.getItem("openwork.server.token");
+          const port = localStorage.getItem("micx.server.port");
+          const token = localStorage.getItem("micx.server.token");
           const workspaceId = ${JSON.stringify(ctx.workspaceId)};
           if (!port || !token || !workspaceId) return null;
           const base = "http://127.0.0.1:" + port;
@@ -384,8 +384,8 @@ export default {
         // The store's removal path reloads the engine itself; this direct
         // cleanup needs an explicit reload for the engine to drop the entry.
         await ctx.eval(`(async () => {
-          const port = localStorage.getItem("openwork.server.port");
-          const token = localStorage.getItem("openwork.server.token");
+          const port = localStorage.getItem("micx.server.port");
+          const token = localStorage.getItem("micx.server.token");
           const response = await fetch("http://127.0.0.1:" + port + "/workspace/" + ${JSON.stringify(ctx.workspaceId)} + "/engine/reload", {
             method: "POST", headers: { Authorization: "Bearer " + token },
           });

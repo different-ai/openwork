@@ -7,7 +7,7 @@
  * the first message.
  *
  * Required env:
- * - OPENWORK_EVAL_DAYTONA_SANDBOX  Daytona sandbox running the Electron app
+ * - MICX_EVAL_DAYTONA_SANDBOX  Daytona sandbox running the Electron app
  *   (used to start the mock provider and hash the uploaded file bytes).
  */
 import { execFile } from "node:child_process";
@@ -54,7 +54,7 @@ function errorMessage(error) {
 }
 
 async function daytonaBash(ctx, script, timeout = 60_000) {
-  const sandbox = ctx.env.OPENWORK_EVAL_DAYTONA_SANDBOX.trim();
+  const sandbox = ctx.env.MICX_EVAL_DAYTONA_SANDBOX.trim();
   const encoded = Buffer.from(script, "utf8").toString("base64");
   try {
     return await execFileAsync(
@@ -124,7 +124,7 @@ exit 1
 async function appRouteState(ctx) {
   return await ctx.eval(`(() => {
     const hash = location.hash;
-    const control = window.__openworkControl;
+    const control = window.__micxControl;
     const snapshot = control && typeof control.snapshot === "function" ? control.snapshot() : null;
     const route = (snapshot && snapshot.route) || (hash.startsWith("#") ? hash.slice(1) : hash);
     const pathSegment = (value, segment) => {
@@ -136,7 +136,7 @@ async function appRouteState(ctx) {
       const end = rest.indexOf("/");
       return end < 0 ? rest : rest.slice(0, end);
     };
-    const workspaceId = pathSegment(hash, "workspace") || localStorage.getItem("openwork.react.activeWorkspace") || "";
+    const workspaceId = pathSegment(hash, "workspace") || localStorage.getItem("micx.react.activeWorkspace") || "";
     const sessionId = pathSegment(hash, "session") || pathSegment(route, "session") || "";
     return { hash, route, workspaceId, sessionId };
   })()`);
@@ -145,8 +145,8 @@ async function appRouteState(ctx) {
 async function serverJson(ctx, path, init = {}) {
   const method = init.method || "GET";
   const raw = await ctx.eval(`(async () => {
-    const port = localStorage.getItem("openwork.server.port");
-    const token = localStorage.getItem("openwork.server.token");
+    const port = localStorage.getItem("micx.server.port");
+    const token = localStorage.getItem("micx.server.token");
     if (!port || !token) return JSON.stringify({ ok: false, status: 0, text: "missing server port/token" });
     const response = await fetch("http://127.0.0.1:" + port + ${JSON.stringify(path)}, {
       method: ${JSON.stringify(method)},
@@ -162,9 +162,9 @@ async function serverJson(ctx, path, init = {}) {
 }
 
 async function waitForControlReady(ctx) {
-  await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 90_000, label: "control API" });
+  await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 90_000, label: "control API" });
   await ctx.waitFor(
-    `window.__openworkControl.listActions().some((item) => item.id === "session.create_task" && !item.disabled)`,
+    `window.__micxControl.listActions().some((item) => item.id === "session.create_task" && !item.disabled)`,
     { timeoutMs: 60_000, label: "session.create_task enabled" },
   );
 }
@@ -182,7 +182,7 @@ async function configureMockProvider(ctx) {
           [PROVIDER_ID]: {
             npm: "@ai-sdk/openai-compatible",
             name: MODEL_NAME,
-            options: { baseURL: `http://127.0.0.1:${MOCK_PORT}/v1`, apiKey: "sk-openwork-ntca-eval" },
+            options: { baseURL: `http://127.0.0.1:${MOCK_PORT}/v1`, apiKey: "sk-micx-ntca-eval" },
             models: {
               [MODEL_ID]: {
                 name: MODEL_NAME,
@@ -197,7 +197,7 @@ async function configureMockProvider(ctx) {
   });
   await serverJson(ctx, `/workspace/${encodeURIComponent(ctx.workspaceId)}/engine/reload`, { method: "POST" });
   await ctx.eval(`(() => {
-    const prefsRaw = localStorage.getItem("openwork.preferences");
+    const prefsRaw = localStorage.getItem("micx.preferences");
     let prefs = {};
     try {
       prefs = prefsRaw ? JSON.parse(prefsRaw) : {};
@@ -205,14 +205,14 @@ async function configureMockProvider(ctx) {
       prefs = {};
     }
     if (!prefs || typeof prefs !== "object" || Array.isArray(prefs)) prefs = {};
-    localStorage.setItem("openwork.preferences", JSON.stringify({
+    localStorage.setItem("micx.preferences", JSON.stringify({
       ...prefs,
       defaultModel: { providerID: ${JSON.stringify(PROVIDER_ID)}, modelID: ${JSON.stringify(MODEL_ID)} },
       modelVariant: null,
       providerStepCompleted: true,
     }));
-    localStorage.setItem("openwork.defaultModel", ${JSON.stringify(`${PROVIDER_ID}/${MODEL_ID}`)});
-    localStorage.removeItem("openwork.sessionModels." + ${JSON.stringify(ctx.workspaceId)});
+    localStorage.setItem("micx.defaultModel", ${JSON.stringify(`${PROVIDER_ID}/${MODEL_ID}`)});
+    localStorage.removeItem("micx.sessionModels." + ${JSON.stringify(ctx.workspaceId)});
     location.reload();
     return true;
   })()`);
@@ -222,7 +222,7 @@ async function configureMockProvider(ctx) {
 
 async function openNewTaskScreen(ctx) {
   const emptyRoute = await ctx.eval(`(() => {
-    const route = String(window.__openworkControl.snapshot().route || "");
+    const route = String(window.__micxControl.snapshot().route || "");
     const at = route.indexOf("/session/");
     return at === -1 ? "" : route.slice(0, at) + "/session";
   })()`);
@@ -295,15 +295,15 @@ export default {
   id: FLOW_ID,
   title: "New Task composer accepts attachments before the session exists",
   kind: "user-facing",
-  requiredEnv: ["OPENWORK_EVAL_DAYTONA_SANDBOX"],
+  requiredEnv: ["MICX_EVAL_DAYTONA_SANDBOX"],
   precondition: async (ctx) => {
-    await ctx.waitFor("Boolean(window.__openworkControl)", {
+    await ctx.waitFor("Boolean(window.__micxControl)", {
       timeoutMs: 60_000,
       label: "control API",
     });
     const state = await ctx.waitFor(
       `(() => {
-        const control = window.__openworkControl;
+        const control = window.__micxControl;
         const route = control.snapshot().route;
         if (route.startsWith("/welcome") || route.startsWith("/signin")) return "blocked";
         const action = control.listActions().find((item) => item.id === "session.create_task");
@@ -336,7 +336,7 @@ export default {
           },
           assert: async () => {
             await ctx.waitForText(FILENAME, { timeoutMs: 10_000 });
-            const route = await ctx.eval(`String(window.__openworkControl.snapshot().route || "")`);
+            const route = await ctx.eval(`String(window.__micxControl.snapshot().route || "")`);
             assertEvidence(ctx, !String(route).includes("/session/ses_"), "No session exists yet while the file sits in the composer", String(route));
             const attachState = await ctx.eval(`(() => {
               const buttons = Array.from(document.querySelectorAll("button"));
@@ -372,7 +372,7 @@ export default {
               return true;
             })()`);
             ctx.assert(clicked === true, "Could not click the Run task button on the New Task screen.");
-            await ctx.waitFor(`String(window.__openworkControl.snapshot().route || "").includes("/session/ses_")`, { timeoutMs: 60_000, label: "session route after run task" });
+            await ctx.waitFor(`String(window.__micxControl.snapshot().route || "").includes("/session/ses_")`, { timeoutMs: 60_000, label: "session route after run task" });
             // Scope to the transcript's assistant message: sidebar titles of
             // previous runs can also contain the sentinel.
             await ctx.waitFor(`(() => {
@@ -390,7 +390,7 @@ export default {
             assertEvidence(ctx, sentCard === true, "The sent user turn shows the attachment card", String(sentCard));
             const transcript = await ctx.control("session.read_transcript", { count: 8 });
             const text = transcriptText(transcript);
-            assertEvidence(ctx, text.includes(".opencode/openwork/inbox/chat-attachments/"), "The submitted turn exposes the worker inbox path", text.slice(0, 600));
+            assertEvidence(ctx, text.includes(".opencode/micx/inbox/chat-attachments/"), "The submitted turn exposes the worker inbox path", text.slice(0, 600));
             assertEvidence(ctx, text.includes(ASSISTANT_SENTINEL), "The mock model answered, proving the auto-send completed", text.slice(-400));
             assertEvidence(ctx, !text.includes("[attachment "), "The raw composer attachment token is not leaked into the message text", text.slice(0, 600));
           },
@@ -425,7 +425,7 @@ export default {
             const fileUrl = extractAttachmentFileUrl(text);
             assertEvidence(ctx, Boolean(fileUrl), "Submitted turn includes a file:// URL for the uploaded CSV", text.slice(0, 600));
             const filePath = fileURLToPath(fileUrl);
-            assertEvidence(ctx, filePath.includes(".opencode/openwork/inbox/chat-attachments/"), "File path is inside the worker chat-attachments inbox", filePath);
+            assertEvidence(ctx, filePath.includes(".opencode/micx/inbox/chat-attachments/"), "File path is inside the worker chat-attachments inbox", filePath);
             const digest = await readSandboxFileDigest(ctx, filePath);
             assertEvidence(ctx, digest.bytes === EXPECTED_BYTES.length, "Uploaded CSV byte count matches the fixture", `${digest.bytes} bytes`);
             assertEvidence(ctx, digest.sha256 === EXPECTED_SHA256, "Uploaded CSV sha256 matches the fixture exactly", digest.sha256);

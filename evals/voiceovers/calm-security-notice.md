@@ -1,6 +1,6 @@
 # calm-security-notice — Security confirmation reads as guidance, not failure
 
-1. When a workspace action needs identity confirmation, OpenWork presents the security message as calm guidance instead of a red error.
+1. When a workspace action needs identity confirmation, Micx presents the security message as calm guidance instead of a red error.
 
 2. The same reusable notice appears consistently across Members and other workspace settings screens.
 

@@ -35,7 +35,7 @@ function scoreModel(query, id, model) {
 }
 
 const query = readFlag("--query")
-const outPath = readFlag("--out") ?? path.join(os.tmpdir(), `openwork-openrouter-models-${Date.now()}.json`)
+const outPath = readFlag("--out") ?? path.join(os.tmpdir(), `micx-openrouter-models-${Date.now()}.json`)
 const base = JSON.parse(await import("node:fs/promises").then((fs) => fs.readFile(basePath, "utf8")))
 const sourceModels = base?.openrouter?.models
 

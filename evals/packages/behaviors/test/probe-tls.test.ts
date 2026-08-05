@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { startEgressLab } from "@openwork/labs";
-import { diagnoseTls } from "@openwork/matchers";
+import { startEgressLab } from "@micx/labs";
+import { diagnoseTls } from "@micx/matchers";
 import { probeTls } from "../src/diagnostics.ts";
 
 test("probeTls and diagnoseTls identify a TLS 1.3-only stall without the eval framework", async () => {

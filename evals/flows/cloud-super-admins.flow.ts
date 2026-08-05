@@ -98,33 +98,33 @@ type FlowState = {
   ownerAfterTransferEmail: string | null;
 };
 
-const DEN_API_URL = cleanBaseUrl(process.env.OPENWORK_EVAL_DEN_API_URL);
-const DEN_WEB_URL = cleanBaseUrl(process.env.OPENWORK_EVAL_DEN_WEB_URL);
-const DEFAULT_PASSWORD = process.env.OPENWORK_EVAL_SUPER_ADMINS_PASSWORD?.trim() || "OpenWorkDemo123!";
-const FIXTURE_ORG_NAME = process.env.OPENWORK_EVAL_SUPER_ADMINS_ORG_NAME?.trim() || "Cloud Super Admins Eval";
+const DEN_API_URL = cleanBaseUrl(process.env.MICX_EVAL_DEN_API_URL);
+const DEN_WEB_URL = cleanBaseUrl(process.env.MICX_EVAL_DEN_WEB_URL);
+const DEFAULT_PASSWORD = process.env.MICX_EVAL_SUPER_ADMINS_PASSWORD?.trim() || "MicxDemo123!";
+const FIXTURE_ORG_NAME = process.env.MICX_EVAL_SUPER_ADMINS_ORG_NAME?.trim() || "Cloud Super Admins Eval";
 
 const OWNER: FixtureActor = {
-  email: process.env.OPENWORK_EVAL_SUPER_ADMINS_OWNER_EMAIL?.trim() || "casey.owner.super-admins@openwork.test",
+  email: process.env.MICX_EVAL_SUPER_ADMINS_OWNER_EMAIL?.trim() || "casey.owner.super-admins@micx.test",
   name: "Casey Owner",
-  password: process.env.OPENWORK_EVAL_SUPER_ADMINS_OWNER_PASSWORD?.trim() || DEFAULT_PASSWORD,
+  password: process.env.MICX_EVAL_SUPER_ADMINS_OWNER_PASSWORD?.trim() || DEFAULT_PASSWORD,
 };
 
 const ADMIN: FixtureActor = {
-  email: process.env.OPENWORK_EVAL_SUPER_ADMINS_ADMIN_EMAIL?.trim() || "riley.admin.super-admins@openwork.test",
+  email: process.env.MICX_EVAL_SUPER_ADMINS_ADMIN_EMAIL?.trim() || "riley.admin.super-admins@micx.test",
   name: "Riley Admin",
-  password: process.env.OPENWORK_EVAL_SUPER_ADMINS_ADMIN_PASSWORD?.trim() || DEFAULT_PASSWORD,
+  password: process.env.MICX_EVAL_SUPER_ADMINS_ADMIN_PASSWORD?.trim() || DEFAULT_PASSWORD,
 };
 
 const SECOND_ADMIN: FixtureActor = {
-  email: process.env.OPENWORK_EVAL_SUPER_ADMINS_SECOND_ADMIN_EMAIL?.trim() || "taylor.admin.super-admins@openwork.test",
+  email: process.env.MICX_EVAL_SUPER_ADMINS_SECOND_ADMIN_EMAIL?.trim() || "taylor.admin.super-admins@micx.test",
   name: "Taylor Admin",
-  password: process.env.OPENWORK_EVAL_SUPER_ADMINS_SECOND_ADMIN_PASSWORD?.trim() || DEFAULT_PASSWORD,
+  password: process.env.MICX_EVAL_SUPER_ADMINS_SECOND_ADMIN_PASSWORD?.trim() || DEFAULT_PASSWORD,
 };
 
 const MEMBER: FixtureActor = {
-  email: process.env.OPENWORK_EVAL_SUPER_ADMINS_MEMBER_EMAIL?.trim() || "morgan.member.super-admins@openwork.test",
+  email: process.env.MICX_EVAL_SUPER_ADMINS_MEMBER_EMAIL?.trim() || "morgan.member.super-admins@micx.test",
   name: "Morgan Member",
-  password: process.env.OPENWORK_EVAL_SUPER_ADMINS_MEMBER_PASSWORD?.trim() || DEFAULT_PASSWORD,
+  password: process.env.MICX_EVAL_SUPER_ADMINS_MEMBER_PASSWORD?.trim() || DEFAULT_PASSWORD,
 };
 
 const ACTORS: FixtureActor[] = [OWNER, ADMIN, SECOND_ADMIN, MEMBER];
@@ -146,7 +146,7 @@ const state: FlowState = {
 
 const SIDEBAR_TOP_LEVEL = ["Dashboard", "Extensions", "Models", "Members", "Analytics", "Settings"];
 const EXTENSIONS_CHILDREN = ["Marketplace", "Sources", "Plugins", "Connectors"];
-const MODELS_CHILDREN = ["OpenWork Models", "LLM Providers"];
+const MODELS_CHILDREN = ["Micx Models", "LLM Providers"];
 const SETTINGS_CHILDREN = ["General", "Diagnostics", "Brand appearance", "Desktop Policies", "Stripe", "API Keys", "SSO", "SCIM"];
 
 export default defineFlow({
@@ -154,7 +154,7 @@ export default defineFlow({
   title: "Cloud super admins: owners, super-admins, admins, and members see the right Den Web controls and API permissions",
   kind: "user-facing",
   spec: "evals/voiceovers/cloud-super-admins.md",
-  requiredEnv: ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_WEB_URL"],
+  requiredEnv: ["MICX_EVAL_DEN_API_URL", "MICX_EVAL_DEN_WEB_URL"],
   steps: [
     {
       name: "Frame 1",

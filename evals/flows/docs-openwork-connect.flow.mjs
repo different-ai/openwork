@@ -1,8 +1,8 @@
 import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
 
-const vo = await loadVoiceoverParagraphs("docs-openwork-connect");
+const vo = await loadVoiceoverParagraphs("docs-micx-connect");
 
-const MCP_SERVER_URL = "https://api.openworklabs.com/mcp/agent";
+const MCP_SERVER_URL = "https://api.micxlabs.com/mcp/agent";
 const CLIENTS = ["Cursor", "Codex", "ChatGPT Desktop", "Claude Code", "OpenCode", "VS Code", "Any client"];
 const SUPPORT_STATUS = [
   ["OpenCode", "Verified"],
@@ -13,11 +13,11 @@ const SUPPORT_STATUS = [
   ["VS Code", "Setup only"],
   ["Any client", "Setup only"],
 ];
-const OPENCODE_AUTH_COMMAND = "opencode mcp auth openwork";
-const OPENCODE_RECONNECT_LOGOUT = "opencode mcp logout openwork";
-const CODEX_ADD_COMMAND = `codex mcp add openwork --url ${MCP_SERVER_URL}`;
-const CODEX_LOGIN_COMMAND = "codex mcp login openwork";
-const CODEX_RECONNECT_LOGOUT = "codex mcp logout openwork";
+const OPENCODE_AUTH_COMMAND = "opencode mcp auth micx";
+const OPENCODE_RECONNECT_LOGOUT = "opencode mcp logout micx";
+const CODEX_ADD_COMMAND = `codex mcp add micx --url ${MCP_SERVER_URL}`;
+const CODEX_LOGIN_COMMAND = "codex mcp login micx";
+const CODEX_RECONNECT_LOGOUT = "codex mcp logout micx";
 
 function baseUrl(name) {
   return process.env[name].replace(/\/$/, "");
@@ -40,7 +40,7 @@ async function waitForInstaller(ctx) {
         && text.includes("Developers: point your own agent at your org")
         && text.includes(${JSON.stringify(MCP_SERVER_URL)});
     })()`,
-    { timeoutMs: 30_000, label: "OpenWork Connect installer" },
+    { timeoutMs: 30_000, label: "Micx Connect installer" },
   );
   await ctx.eval(`document.querySelector("#connect-mcp-install")?.scrollIntoView({ block: "start", behavior: "instant" }); true`);
 }
@@ -60,25 +60,25 @@ async function grantDocsClipboardPermissions(ctx) {
   if (!ctx.client?.send) return;
 
   await ctx.client.send("Browser.grantPermissions", {
-    origin: new URL(baseUrl("OPENWORK_EVAL_DOCS_URL")).origin,
+    origin: new URL(baseUrl("MICX_EVAL_DOCS_URL")).origin,
     permissions: ["clipboardReadWrite", "clipboardSanitizedWrite"],
   });
 }
 
 export default {
-  id: "docs-openwork-connect",
-  title: "Use the OpenWork Connect installer from the docs or landing page",
+  id: "docs-micx-connect",
+  title: "Use the Micx Connect installer from the docs or landing page",
   kind: "user-facing",
   preserveTheme: true,
-  requiredEnv: ["OPENWORK_EVAL_DOCS_URL", "OPENWORK_EVAL_LANDING_URL"],
+  requiredEnv: ["MICX_EVAL_DOCS_URL", "MICX_EVAL_LANDING_URL"],
   steps: [
     {
       name: "Frame 1",
       run: async (ctx) => {
-        await ctx.prove("The OpenWork Connect docs put the complete client installer at the top of the page.", {
+        await ctx.prove("The Micx Connect docs put the complete client installer at the top of the page.", {
           voiceover: vo[0],
           action: async () => {
-            await navigate(ctx, `${baseUrl("OPENWORK_EVAL_DOCS_URL")}/cloud/run-in-the-cloud/cloud-mcp`);
+            await navigate(ctx, `${baseUrl("MICX_EVAL_DOCS_URL")}/cloud/run-in-the-cloud/cloud-mcp`);
             await waitForInstaller(ctx);
           },
           assert: async () => {
@@ -100,8 +100,8 @@ export default {
                 hasSetupOnlyCopy: text.includes("setup guides for Codex, Cursor, ChatGPT"),
                 tabs: Array.from(installer?.querySelectorAll("[role='tab']") || []).map((tab) => (tab.textContent || "").trim()),
                 supportRows,
-                hasInternalProxy: bodyText.includes("app.openworklabs.com/api/den") && bodyText.includes("internal same-origin desktop proxy"),
-                hasAuthServer: bodyText.includes("https://app.openworklabs.com/api/auth"),
+                hasInternalProxy: bodyText.includes("app.micxlabs.com/api/den") && bodyText.includes("internal same-origin desktop proxy"),
+                hasAuthServer: bodyText.includes("https://app.micxlabs.com/api/auth"),
                 hasRfc9728: bodyText.includes("RFC9728"),
                 hasExactResource: bodyText.includes("OAuth authorize and token requests must include exactly one") && bodyText.includes(${JSON.stringify(MCP_SERVER_URL)}),
                 hasDcrFallback: bodyText.includes("dynamic client registration as a fallback"),
@@ -235,7 +235,7 @@ export default {
         await ctx.prove("The direct OpenCode docs link opens the installer with OpenCode selected.", {
           voiceover: vo[3],
           action: async () => {
-            await navigate(ctx, `${baseUrl("OPENWORK_EVAL_DOCS_URL")}/cloud/run-in-the-cloud/cloud-mcp#connect-mcp-install-opencode`);
+            await navigate(ctx, `${baseUrl("MICX_EVAL_DOCS_URL")}/cloud/run-in-the-cloud/cloud-mcp#connect-mcp-install-opencode`);
             await waitForInstaller(ctx);
           },
           assert: async () => {
@@ -264,10 +264,10 @@ export default {
     {
       name: "Frame 5",
       run: async (ctx) => {
-        await ctx.prove("The landing page keeps the same OpenWork Connect installer, including Codex and ChatGPT Desktop.", {
+        await ctx.prove("The landing page keeps the same Micx Connect installer, including Codex and ChatGPT Desktop.", {
           voiceover: vo[4],
           action: async () => {
-            await navigate(ctx, `${baseUrl("OPENWORK_EVAL_LANDING_URL")}/#connect-mcp`);
+            await navigate(ctx, `${baseUrl("MICX_EVAL_LANDING_URL")}/#connect-mcp`);
             await waitForInstaller(ctx);
             await clickTab(ctx, "Codex");
           },

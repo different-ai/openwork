@@ -43,7 +43,7 @@ Mechanics, building on precedent that already exists:
 
 1. **Marker in tool results** (server): `POST /v1/mcp-connections` responses
    and `needs_connection` error payloads include a well-known envelope,
-   e.g. `"openwork": { "component": "org-connection", "connectionId": ... }`.
+   e.g. `"micx": { "component": "org-connection", "connectionId": ... }`.
 2. **Rich tool-part mapping** (desktop): the session tool-part mapper
    already special-cases certain tools for rich chat rendering (see the
    env-var request mapping and its tests in

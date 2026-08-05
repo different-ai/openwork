@@ -8,7 +8,7 @@ const vo = await loadVoiceoverParagraphs(FLOW_ID);
 
 export default {
   id: FLOW_ID,
-  title: "Settings labels distinguish legacy local extensions from OpenWork Connect",
+  title: "Settings labels distinguish legacy local extensions from Micx Connect",
   kind: "user-facing",
   steps: [
     {
@@ -37,14 +37,14 @@ export default {
       },
     },
     {
-      name: "OpenWork Connect is the final sidebar item",
+      name: "Micx Connect is the final sidebar item",
       run: async (ctx) => {
-        await ctx.prove("OpenWork Connect stays last in Cloud settings even when Memory is enabled", {
+        await ctx.prove("Micx Connect stays last in Cloud settings even when Memory is enabled", {
           voiceover: vo[1],
-          claim: "The Cloud settings group shows OpenWork Connect with the beta badge after Memory, and OpenWork Connect is the final item in the full settings sidebar.",
+          claim: "The Cloud settings group shows Micx Connect with the beta badge after Memory, and Micx Connect is the final item in the full settings sidebar.",
           action: async () => {
             await waitForSettingsShell(ctx);
-            await ctx.clickText("OpenWork Connect", { selector: "button", timeoutMs: 30_000 });
+            await ctx.clickText("Micx Connect", { selector: "button", timeoutMs: 30_000 });
             await ctx.waitFor("location.hash.includes('/settings/connect')", { timeoutMs: 30_000, label: "connect settings route" });
           },
           assert: async () => {
@@ -53,23 +53,23 @@ export default {
             const cloud = findGroup(nav, "Cloud");
             const cloudLabels = cloud.items.map((item) => item.label);
             const memoryIndex = cloudLabels.indexOf("Memory");
-            const connectIndex = cloudLabels.indexOf("OpenWork Connect");
+            const connectIndex = cloudLabels.indexOf("Micx Connect");
             const allLabels = nav.groups.flatMap((group) => group.items.map((item) => item.label));
-            const connect = cloud.items.find((item) => item.label === "OpenWork Connect");
+            const connect = cloud.items.find((item) => item.label === "Micx Connect");
 
             ctx.assert(memoryIndex !== -1, `Memory tab was not visible after enabling the feature flag: ${JSON.stringify(cloudLabels)}.`);
-            ctx.assert(connectIndex !== -1, `OpenWork Connect tab was missing: ${JSON.stringify(cloudLabels)}.`);
-            ctx.assert(memoryIndex < connectIndex, `Memory was not before OpenWork Connect: ${JSON.stringify(cloudLabels)}.`);
-            ctx.assert(cloudLabels[cloudLabels.length - 1] === "OpenWork Connect", `OpenWork Connect was not last in Cloud: ${JSON.stringify(cloudLabels)}.`);
-            ctx.assert(allLabels[allLabels.length - 1] === "OpenWork Connect", `OpenWork Connect was not last in the sidebar: ${JSON.stringify(allLabels)}.`);
+            ctx.assert(connectIndex !== -1, `Micx Connect tab was missing: ${JSON.stringify(cloudLabels)}.`);
+            ctx.assert(memoryIndex < connectIndex, `Memory was not before Micx Connect: ${JSON.stringify(cloudLabels)}.`);
+            ctx.assert(cloudLabels[cloudLabels.length - 1] === "Micx Connect", `Micx Connect was not last in Cloud: ${JSON.stringify(cloudLabels)}.`);
+            ctx.assert(allLabels[allLabels.length - 1] === "Micx Connect", `Micx Connect was not last in the sidebar: ${JSON.stringify(allLabels)}.`);
             ctx.assert(
               Boolean(connect?.badges.some((badge) => badge.toLowerCase() === "beta")),
-              `OpenWork Connect was missing the beta badge: ${JSON.stringify(connect)}.`,
+              `Micx Connect was missing the beta badge: ${JSON.stringify(connect)}.`,
             );
           },
           screenshot: {
-            name: "settings-sidebar-openwork-connect-last",
-            requireText: ["Cloud", "Memory", "OpenWork Connect", "BETA"],
+            name: "settings-sidebar-micx-connect-last",
+            requireText: ["Cloud", "Memory", "Micx Connect", "BETA"],
             rejectText: ["Something went wrong"],
             hashIncludes: "/settings/connect",
           },
@@ -107,9 +107,9 @@ export default {
 };
 
 async function enableEnglishMemoryPreview(ctx) {
-  await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 30_000, label: "control API" });
+  await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 30_000, label: "control API" });
   const changed = await ctx.eval(`(() => {
-    const prefKey = "openwork.preferences";
+    const prefKey = "micx.preferences";
     let prefs = {};
     try {
       const parsed = JSON.parse(localStorage.getItem(prefKey) || "{}");
@@ -124,12 +124,12 @@ async function enableEnglishMemoryPreview(ctx) {
       ...prefs,
       featureFlags: { ...featureFlags, memory: true },
     }));
-    localStorage.setItem("openwork.language", "en");
+    localStorage.setItem("micx.language", "en");
     return true;
   })()`);
   ctx.assert(changed === true, "Failed to enable English locale and memory preview for the proof.");
   await ctx.eval("location.reload()");
-  await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 60_000, label: "control API after reload" });
+  await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 60_000, label: "control API after reload" });
 }
 
 async function navigateToSettingsTab(ctx, tab) {
@@ -144,7 +144,7 @@ async function waitForSettingsShell(ctx) {
     await ctx.waitFor("(document.body?.innerText ?? '').includes('Back to app')", { timeoutMs: 10_000, label: "settings surface mounted" });
   } catch {
     await ctx.eval("location.reload()");
-    await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 60_000, label: "control API after settings recovery reload" });
+    await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 60_000, label: "control API after settings recovery reload" });
     await ctx.waitFor("(document.body?.innerText ?? '').includes('Back to app')", { timeoutMs: 60_000, label: "settings surface mounted after recovery" });
   }
 }

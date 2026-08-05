@@ -1,5 +1,5 @@
 config:
-  openworkDevMode: "1"
+  micxDevMode: "1"
   denApiNodeOptions: --use-openssl-ca
   tenancy:
     mode: single_org
@@ -20,7 +20,7 @@ config:
     mode: stub
 secret:
   values:
-    databaseUrl: mysql://openwork:openwork@openwork-mysql:3306/openwork_den
+    databaseUrl: mysql://micx:micx@micx-mysql:3306/micx_den
     betterAuthSecret: local-dev-secret-not-for-production-use!!
     denDbEncryptionKey: local-dev-db-encryption-key-please-change-1234567890
 denApi:

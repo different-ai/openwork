@@ -4,7 +4,7 @@
  *
  * Local runbook:
  *   1. "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless=new --remote-debugging-port=9856 --user-data-dir="$(mktemp -d)" --window-size=1440,1100 about:blank
- *   2. OPENWORK_EVAL_WEB_CDP_MEMBER=http://127.0.0.1:9856 pnpm fraimz --flow join-org-already-joined --stack den
+ *   2. MICX_EVAL_WEB_CDP_MEMBER=http://127.0.0.1:9856 pnpm fraimz --flow join-org-already-joined --stack den
  */
 import { randomBytes } from "node:crypto";
 import { connect, debuggerUrlFor, listTargets } from "../runner/cdp.mjs";
@@ -14,13 +14,13 @@ import { denWebUrl } from "./lib/den-web.mjs";
 const FLOW_ID = "join-org-already-joined";
 const vo = await loadVoiceoverParagraphs(FLOW_ID);
 
-const DEN_API_URL = (process.env.OPENWORK_EVAL_DEN_API_URL ?? "").trim().replace(/\/+$/, "");
+const DEN_API_URL = (process.env.MICX_EVAL_DEN_API_URL ?? "").trim().replace(/\/+$/, "");
 const DEN_WEB_URL = denWebUrl();
-const ADMIN_TOKEN = (process.env.OPENWORK_EVAL_DEN_TOKEN ?? "").trim();
-const MEMBER_CDP_URL = (process.env.OPENWORK_EVAL_WEB_CDP_MEMBER ?? "").trim().replace(/\/+$/, "");
+const ADMIN_TOKEN = (process.env.MICX_EVAL_DEN_TOKEN ?? "").trim();
+const MEMBER_CDP_URL = (process.env.MICX_EVAL_WEB_CDP_MEMBER ?? "").trim().replace(/\/+$/, "");
 const RUN_TAG = `${Date.now().toString(36)}-${randomBytes(2).toString("hex")}`;
 const TEAMMATE_EMAIL = `teammate+${RUN_TAG}@acme.test`;
-const PASSWORD = "OpenWorkDemo123!";
+const PASSWORD = "MicxDemo123!";
 
 const state = {
   invitationId: null,
@@ -127,7 +127,7 @@ async function resetBrowserSession(ctx) {
     { awaitPromise: true },
   );
   await ctx.eval(`(() => {
-    localStorage.removeItem('openwork:web:auth-token');
+    localStorage.removeItem('micx:web:auth-token');
     sessionStorage.clear();
     document.cookie = 'better-auth.session_token=; Max-Age=0; Path=/';
     return true;
@@ -253,7 +253,7 @@ export default {
   title: "Clicking an invite you already accepted opens your workspace",
   kind: "user-facing",
   requiresApp: false,
-  requiredEnv: ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_TOKEN", "OPENWORK_EVAL_DEN_WEB_URL", "OPENWORK_EVAL_WEB_CDP_MEMBER"],
+  requiredEnv: ["MICX_EVAL_DEN_API_URL", "MICX_EVAL_DEN_TOKEN", "MICX_EVAL_DEN_WEB_URL", "MICX_EVAL_WEB_CDP_MEMBER"],
   steps: [
     {
       name: "Frame 1 — Invite lands on the redesigned card",
@@ -265,11 +265,11 @@ export default {
         ctx.assert(orgName.length > 0, "Admin token resolves the active organization name.");
 
         // The shared eval volume bootstraps the singleton org with the
-        // generic "OpenWork" name, which degenerates every copy line in the
-        // demo ("Join OpenWork.", "welcome to OpenWork's OpenWork"). Rename
+        // generic "Micx" name, which degenerates every copy line in the
+        // demo ("Join Micx.", "welcome to Micx's Micx"). Rename
         // it to a real company so the frames read like the customer story;
         // keep the resolved name on any failure — the flow is name-agnostic.
-        if (orgName === "OpenWork") {
+        if (orgName === "Micx") {
           const renamed = await authed("/v1/org", { method: "PATCH", body: JSON.stringify({ name: "Acme Robotics" }) });
           if (renamed.response.ok) {
             orgName = "Acme Robotics";

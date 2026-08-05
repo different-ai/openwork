@@ -21,7 +21,7 @@ import {
 // Narration is loaded from the approved script (evals/voiceovers/managed-brand-asset-uploads.md).
 // The runner fails this flow if the narration drifts from that script.
 const vo = await loadVoiceoverParagraphs("managed-brand-asset-uploads");
-const ADMIN_PASSWORD = "OpenWorkDemo123!";
+const ADMIN_PASSWORD = "MicxDemo123!";
 const RAW_REAUTH_MESSAGE = "For security, confirm it's you before changing workspace settings.";
 
 let firstAssets = null;
@@ -29,7 +29,7 @@ let firstIconBytes = null;
 let adminPanelTargetId = null;
 
 function orgSettingsUrl(ctx) {
-  return `${ctx.env.OPENWORK_EVAL_DEN_WEB_URL.replace(/\/$/, "")}${ORG_SETTINGS_PATH}`;
+  return `${ctx.env.MICX_EVAL_DEN_WEB_URL.replace(/\/$/, "")}${ORG_SETTINGS_PATH}`;
 }
 
 function parseMetadata(value) {
@@ -66,14 +66,14 @@ async function ensureDesktopSession(ctx) {
   });
 
   await ctx.eval(`(() => {
-    localStorage.setItem('openwork.den.baseUrl', ${JSON.stringify(process.env.OPENWORK_EVAL_DEN_WEB_URL)});
-    localStorage.setItem('openwork.den.apiBaseUrl', ${JSON.stringify(process.env.OPENWORK_EVAL_DEN_API_URL)});
-    localStorage.setItem('openwork.den.authToken', ${JSON.stringify(process.env.OPENWORK_EVAL_DEN_TOKEN)});
-    localStorage.setItem('openwork.den.activeOrgId', ${JSON.stringify(activeOrg.id)});
-    localStorage.setItem('openwork.den.activeOrgSlug', ${JSON.stringify(activeOrg.slug ?? "example-corp")});
-    localStorage.setItem('openwork.den.activeOrgName', 'Example Corp');
-    window.dispatchEvent(new CustomEvent('openwork-den-settings-changed', { detail: {} }));
-    window.dispatchEvent(new CustomEvent('openwork-den-session-updated', { detail: { token: ${JSON.stringify(process.env.OPENWORK_EVAL_DEN_TOKEN)} } }));
+    localStorage.setItem('micx.den.baseUrl', ${JSON.stringify(process.env.MICX_EVAL_DEN_WEB_URL)});
+    localStorage.setItem('micx.den.apiBaseUrl', ${JSON.stringify(process.env.MICX_EVAL_DEN_API_URL)});
+    localStorage.setItem('micx.den.authToken', ${JSON.stringify(process.env.MICX_EVAL_DEN_TOKEN)});
+    localStorage.setItem('micx.den.activeOrgId', ${JSON.stringify(activeOrg.id)});
+    localStorage.setItem('micx.den.activeOrgSlug', ${JSON.stringify(activeOrg.slug ?? "example-corp")});
+    localStorage.setItem('micx.den.activeOrgName', 'Example Corp');
+    window.dispatchEvent(new CustomEvent('micx-den-settings-changed', { detail: {} }));
+    window.dispatchEvent(new CustomEvent('micx-den-session-updated', { detail: { token: ${JSON.stringify(process.env.MICX_EVAL_DEN_TOKEN)} } }));
     return true;
   })()`);
 
@@ -92,7 +92,7 @@ async function stageBrandUploadReauthResponse(ctx) {
       const method = String(init?.method ?? (input instanceof Request ? input.method : 'GET')).toUpperCase();
       if (method === 'POST' && url.includes('/api/den/v1/org/brand-assets')) {
         window.fetch = originalFetch;
-        window.__openworkBrandReauthIntercepted = true;
+        window.__micxBrandReauthIntercepted = true;
         return new Response(${JSON.stringify(JSON.stringify({
           error: "reauth",
           reason: "fresh_auth_required",
@@ -218,13 +218,13 @@ export default {
   title: "Owners upload durable, versioned brand assets that member desktops load from their Den",
   kind: "user-facing",
   spec: "evals/voiceovers/managed-brand-asset-uploads.md",
-  requiredEnv: ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_TOKEN", "OPENWORK_EVAL_DEN_WEB_URL"],
+  requiredEnv: ["MICX_EVAL_DEN_API_URL", "MICX_EVAL_DEN_TOKEN", "MICX_EVAL_DEN_WEB_URL"],
   steps: [
     {
       name: "setup",
       run: async (ctx) => {
         await ensureRendererMounted(ctx);
-        await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 30_000, label: "window.__openworkControl" });
+        await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 30_000, label: "window.__micxControl" });
         await ctx.ensureLightMode();
         await ensureDesktopSession(ctx);
         await ensureWorkspaceReady(ctx);
@@ -331,7 +331,7 @@ export default {
               return {
                 dialogText: dialog?.textContent ?? '',
                 rawMessageOutsideDialog: pageText.includes(${JSON.stringify(RAW_REAUTH_MESSAGE)}),
-                interceptedReauth: window.__openworkBrandReauthIntercepted === true,
+                interceptedReauth: window.__micxBrandReauthIntercepted === true,
                 selectedLogo: document.querySelector('#brand-logo-upload')?.files?.[0]?.name ?? null,
                 selectedIcon: document.querySelector('#brand-icon-upload')?.files?.[0]?.name ?? null,
               };
@@ -380,7 +380,7 @@ export default {
             ctx.assert(firstAssets?.iconUrl === firstAssets?.icon?.url, "Icon URL and managed metadata diverged.");
             for (const asset of [firstAssets.logo, firstAssets.icon]) {
               const assetUrl = new URL(asset.url);
-              ctx.assert(assetUrl.origin === new URL(ctx.env.OPENWORK_EVAL_DEN_API_URL).origin, `Asset escaped the Den origin: ${asset.url}`);
+              ctx.assert(assetUrl.origin === new URL(ctx.env.MICX_EVAL_DEN_API_URL).origin, `Asset escaped the Den origin: ${asset.url}`);
               ctx.assert(Boolean(assetUrl.searchParams.get("signature")), `Asset URL is not capability-signed: ${asset.url}`);
               const fetched = await fetchAsset(asset.url);
               ctx.assert(fetched.status === 200, `Signed asset returned ${fetched.status}`);
@@ -446,8 +446,8 @@ export default {
                 brandResources: performance.getEntriesByType('resource').map((entry) => entry.name).filter((url) => url.includes('/v1/brand-assets/')),
               };
             })()`);
-            const iconState = await ctx.eval("window.__OPENWORK_ELECTRON__?.brandIcon?.getState?.()", { awaitPromise: true });
-            const denOrigin = new URL(ctx.env.OPENWORK_EVAL_DEN_API_URL).origin;
+            const iconState = await ctx.eval("window.__MICX_ELECTRON__?.brandIcon?.getState?.()", { awaitPromise: true });
+            const denOrigin = new URL(ctx.env.MICX_EVAL_DEN_API_URL).origin;
             ctx.assert(new URL(desktop.src).origin === denOrigin, `Wordmark did not load from Den: ${desktop.src}`);
             ctx.assert(desktop.width > 0, `Wordmark did not decode: ${JSON.stringify(desktop)}`);
             ctx.assert(iconState?.sourceUrl === firstAssets.icon.url && iconState?.applied === true, `Native icon did not load from Den: ${JSON.stringify(iconState)}`);
@@ -531,7 +531,7 @@ export default {
           },
           assert: async () => {
             const config = await denFetch(ctx, "/v1/me/desktop-config");
-            const iconState = await ctx.eval("window.__OPENWORK_ELECTRON__?.brandIcon?.getState?.()", { awaitPromise: true });
+            const iconState = await ctx.eval("window.__MICX_ELECTRON__?.brandIcon?.getState?.()", { awaitPromise: true });
             const logoPresent = await ctx.eval("Boolean(document.querySelector('[data-testid=\"brand-logo\"]'))");
             ctx.assert(!config.body.brandLogoUrl && !config.body.brandIconUrl, `Managed URLs were not cleared: ${JSON.stringify(config.body)}`);
             ctx.assert(iconState?.applied === false, `Native default icon was not restored: ${JSON.stringify(iconState)}`);

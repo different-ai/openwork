@@ -1,14 +1,14 @@
 ---
-title: "OpenWork MCP for Codex"
+title: "Micx MCP for Codex"
 sidebarTitle: "Codex"
-description: "Codex MCP setup for OpenWork Connect, with OAuth access to your org's Gmail, Calendar, Drive, shared connections, skills, and Cloud resources."
+description: "Codex MCP setup for Micx Connect, with OAuth access to your org's Gmail, Calendar, Drive, shared connections, skills, and Cloud resources."
 ---
 
-The OpenWork MCP server ([OpenWork Connect](/cloud/run-in-the-cloud/cloud-mcp))
-enables Codex to use the OpenWork capabilities your organization has made
+The Micx MCP server ([Micx Connect](/cloud/run-in-the-cloud/cloud-mcp))
+enables Codex to use the Micx capabilities your organization has made
 available to you: Gmail read/search, Calendar list/create, Drive search/read,
 Gmail draft creation, shared MCP connections such as Notion, Linear, Slack,
-Stripe, Exa, and Context7, shared skills, and OpenWork Cloud resources like
+Stripe, Exa, and Context7, shared skills, and Micx Cloud resources like
 skills, plugins, marketplaces, workers, members, roles, teams, and LLM
 providers. The server exposes only `search_capabilities` and
 `execute_capability`, so Codex searches what you can access and runs exact
@@ -20,22 +20,22 @@ capability names instead of loading hundreds of tool definitions into context.
 https://api.openworklabs.com/mcp/agent
 ```
 
-OAuth sign-in uses your OpenWork account, and the organization you pick is
+OAuth sign-in uses your Micx account, and the organization you pick is
 pinned into the token. If you do not have an account, create a
-[free OpenWork account](https://app.openworklabs.com?mode=sign-up).
+[free Micx account](https://app.openworklabs.com?mode=sign-up).
 
 ## Setup
 
-1. Add OpenWork Connect:
+1. Add Micx Connect:
 
    ```sh
-   codex mcp add openwork --url https://api.openworklabs.com/mcp/agent
+   codex mcp add micx --url https://api.openworklabs.com/mcp/agent
    ```
 
 2. Log in and finish the browser sign-in:
 
    ```sh
-   codex mcp login openwork
+   codex mcp login micx
    ```
 
 In the Codex desktop app, open `codex://settings/connections` and paste the
@@ -46,12 +46,12 @@ server URL there instead.
 Log out, then log in again and choose the organization you want:
 
 ```sh
-codex mcp logout openwork
-codex mcp login openwork
+codex mcp logout micx
+codex mcp login micx
 ```
 
 <Note>
-This is a setup guide. These steps match OpenWork Connect's OAuth profile:
+This is a setup guide. These steps match Micx Connect's OAuth profile:
 HTTPS or HTTP loopback callbacks, PKCE S256, and dynamic client registration
 fallback. Codex is listed as setup only because native proof is not complete.
 See the
@@ -61,7 +61,7 @@ table.
 
 ## What you can ask
 
-- "Which OpenWork organization am I connected to?"
+- "Which Micx organization am I connected to?"
 - "Add omar@example.com to my organization."
 - "Search my org's capabilities for calendar tools, then list tomorrow's events."
 - "Create a skill that writes weekly status reports and share it with my whole organization."
@@ -73,4 +73,4 @@ table.
 - Publish Notion, Linear, Slack, and other shared tools with
   [shared MCP connections](/cloud/share-with-your-team/shared-mcp-connections).
 - Connect from a remote environment with
-  [OpenWork MCP on a remote machine](/cloud/run-in-the-cloud/connect-openwork-mcp-remote-machine).
+  [Micx MCP on a remote machine](/cloud/run-in-the-cloud/connect-micx-mcp-remote-machine).

@@ -73,7 +73,7 @@ Lets members manage organization connections from the desktop and reworks cloud 
 #### Main changes
 - Organization connections can be connected, reconnected, and disconnected directly from the desktop Extensions surface.
 - Cloud LLM providers are materialized server-side, made engine-global, and verified from the instance so they actually reach the engine.
-- Cloud workspaces gained a status and version overlay with one-click update, boot states took over the main area, and the OpenWork Models startup dialog became a quiet inline hint.
+- Cloud workspaces gained a status and version overlay with one-click update, boot states took over the main area, and the Micx Models startup dialog became a quiet inline hint.
 - Den invite lifecycles were fixed and the BYOK provider editor was redesigned with auto-naming and a sticky save bar.
 
 #### Lines of code changed since previous release

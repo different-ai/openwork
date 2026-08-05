@@ -1,6 +1,6 @@
 import { execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { notImplemented } from "@openwork/labs";
+import { notImplemented } from "@micx/labs";
 
 export type DenRef = { apiUrl: string; webUrl: string };
 export type DenSession = DenRef & { token: string; email: string; password: string };
@@ -89,7 +89,7 @@ export async function freshSession(session: DenSession): Promise<DenSession> {
 }
 
 export function doInternalMarkEmailVerified(command: string, email: string): void {
-  if (!command.trim()) throw new Error("OPENWORK_EVAL_MARK_VERIFIED_CMD is required to verify a newly-created member.");
+  if (!command.trim()) throw new Error("MICX_EVAL_MARK_VERIFIED_CMD is required to verify a newly-created member.");
   try {
     execSync(command.replaceAll("{email}", email), { cwd: REPO_ROOT, encoding: "utf8", stdio: "pipe" });
   } catch (error) {
@@ -283,9 +283,9 @@ export async function provisionOrg(den: DenRef, input: ProvisionOrgInput): Promi
   }
 
   const unique = `${Date.now().toString(36)}-${crypto.randomUUID().slice(0, 12)}`;
-  const password = process.env.OPENWORK_EVAL_DEMO_PASSWORD?.trim() || "OpenWorkDemo123!";
-  const email = `openwork-eval-admin-${unique}@example.test`;
-  const name = `OpenWork Eval ${unique}`;
+  const password = process.env.MICX_EVAL_DEMO_PASSWORD?.trim() || "MicxDemo123!";
+  const email = `micx-eval-admin-${unique}@example.test`;
+  const name = `Micx Eval ${unique}`;
   const signUp = await denFetch(den, "/api/auth/sign-up/email", {
     method: "POST",
     body: JSON.stringify({ email, name, password }),
@@ -312,8 +312,8 @@ export async function provisionOrg(den: DenRef, input: ProvisionOrgInput): Promi
     const member = await ensureMemberSession(den, admin, {
       email: memberEmail,
       password,
-      name: "OpenWork Eval Member",
-      markVerifiedCmd: process.env.OPENWORK_EVAL_MARK_VERIFIED_CMD?.trim(),
+      name: "Micx Eval Member",
+      markVerifiedCmd: process.env.MICX_EVAL_MARK_VERIFIED_CMD?.trim(),
     });
     const orgs = await denFetch(den, "/v1/me/orgs", { headers: auth(member) });
     const memberships = isRecord(orgs.body) && Array.isArray(orgs.body.orgs) ? orgs.body.orgs : [];
@@ -346,8 +346,8 @@ export async function provisionOrg(den: DenRef, input: ProvisionOrgInput): Promi
       method: "POST",
       headers: auth(admin),
       body: JSON.stringify({
-        clientId: `openwork-eval-google-client-${unique}`,
-        clientSecret: `openwork-eval-google-secret-${unique}`,
+        clientId: `micx-eval-google-client-${unique}`,
+        clientSecret: `micx-eval-google-secret-${unique}`,
       }),
     });
     if (!configured.response.ok) {
@@ -358,7 +358,7 @@ export async function provisionOrg(den: DenRef, input: ProvisionOrgInput): Promi
   return { admin, orgId };
 }
 
-export async function createDesktopHandoffGrant(member: DenSession, desktopScheme = "openwork"): Promise<string> {
+export async function createDesktopHandoffGrant(member: DenSession, desktopScheme = "micx"): Promise<string> {
   const result = await denFetch(member, "/v1/auth/desktop-handoff", {
     method: "POST",
     headers: auth(member),

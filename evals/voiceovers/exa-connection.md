@@ -1,6 +1,6 @@
 # exa-connection — Exa joins the quick-add connections
 
-Cast is Alex, the Acme Robotics admin, in OpenWork Cloud on the web. Exa is
+Cast is Alex, the Acme Robotics admin, in Micx Cloud on the web. Exa is
 the AI search engine his team already uses; its hosted MCP server takes the
 org's Exa API key. This demo shows Exa as a first-class quick-add connection:
 tap the card, paste the key, and the org's AI coworkers can search the web

@@ -1,8 +1,8 @@
-# docs-openwork-connect — use the same OpenWork Connect installer from the docs or landing page
+# docs-micx-connect — use the same Micx Connect installer from the docs or landing page
 
-1. I open the OpenWork Connect docs and immediately see the same installer available on the landing page.
+1. I open the Micx Connect docs and immediately see the same installer available on the landing page.
 
-2. I select OpenCode and get the exact remote MCP configuration using `https://api.openworklabs.com/mcp/agent`.
+2. I select OpenCode and get the exact remote MCP configuration using `https://api.micxlabs.com/mcp/agent`.
 
 3. I copy the configuration and the button confirms that it was copied.
 

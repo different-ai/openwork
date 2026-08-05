@@ -1,6 +1,6 @@
 # den-gateway — Cloud workspace overlay
 
-1. I'm working in OpenWork in my browser. In the corner there's a quiet pill: "Cloud · v0.18.8". That's my workspace — healthy, current, out of my way.
+1. I'm working in Micx in my browser. In the corner there's a quiet pill: "Cloud · v0.18.8". That's my workspace — healthy, current, out of my way.
 
 2. I click it. A small panel: Connected · v0.18.8 (latest) · Backups on, and Sign out. Nothing to configure; it's just the truth about my machine.
 

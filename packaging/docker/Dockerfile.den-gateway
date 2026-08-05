@@ -9,10 +9,10 @@ ARG DEN_GATEWAY_VERSION=""
 ENV DEN_GATEWAY_VERSION=${DEN_GATEWAY_VERSION}
 ENV PORT=8788
 
-# The gateway serves the OpenWork web build itself, so the app and Den end up on
+# The gateway serves the Micx web build itself, so the app and Den end up on
 # one origin. That is what removes the need for cross-origin patches, and it is
 # why the SPA is baked in here rather than served from a separate CDN origin.
-ENV DEN_GATEWAY_WEB_ROOT=/opt/openwork/web
+ENV DEN_GATEWAY_WEB_ROOT=/opt/micx/web
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml /app/
 COPY patches /app/patches
@@ -37,7 +37,7 @@ RUN pnpm --dir /app/packages/ui run build
 RUN pnpm --dir /app/packages/install-config run build
 RUN pnpm --dir /app/ee/packages/utils run build
 
-# build:web already sets VITE_OPENWORK_DEPLOYMENT=web and
+# build:web already sets VITE_MICX_DEPLOYMENT=web and
 # VITE_DEN_REQUIRE_SIGNIN=1. VITE_DEN_BASE_URL is deliberately NOT baked: in
 # gateway mode the app resolves Den from window.location.origin at runtime via
 # the gateway marker, and a baked base URL would silently defeat that.
@@ -45,10 +45,10 @@ RUN pnpm --dir /app/apps/app run build:web
 
 RUN pnpm --dir /app/ee/apps/den-gateway run build
 
-RUN mkdir -p /opt/openwork \
-  && cp -R /app/apps/app/dist /opt/openwork/web \
-  && test -f /opt/openwork/web/index.html \
-  && test -d /opt/openwork/web/assets
+RUN mkdir -p /opt/micx \
+  && cp -R /app/apps/app/dist /opt/micx/web \
+  && test -f /opt/micx/web/index.html \
+  && test -d /opt/micx/web/assets
 
 EXPOSE 8788
 

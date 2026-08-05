@@ -27,13 +27,13 @@ function runEndToEndSuite() {
     encoding: "utf8",
     env: {
       ...process.env,
-      DATABASE_URL: process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/openwork_den",
+      DATABASE_URL: process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/micx_den",
       DEN_DB_ENCRYPTION_KEY: process.env.DEN_DB_ENCRYPTION_KEY ?? "daytona-den-db-encryption-key-please-change-1234567890",
       BETTER_AUTH_SECRET: process.env.BETTER_AUTH_SECRET ?? "daytona-den-auth-secret-please-change-1234567890",
       BETTER_AUTH_URL: process.env.BETTER_AUTH_URL ?? "http://127.0.0.1:3005",
       CORS_ORIGINS: process.env.CORS_ORIGINS ?? "http://127.0.0.1:3005",
       DEN_ALLOW_PRIVATE_MCP_URLS: "1",
-      OPENWORK_EVAL_VERBOSE: "1",
+      MICX_EVAL_VERBOSE: "1",
     },
     timeout: 120_000,
   });
@@ -51,7 +51,7 @@ function reportValue(output, prefix) {
 
 export default {
   id: FLOW_ID,
-  title: "OpenWork Cloud identifies and recovers any unhealthy downstream connector",
+  title: "Micx Cloud identifies and recovers any unhealthy downstream connector",
   kind: "internal",
   requiresApp: false,
   steps: [
@@ -78,7 +78,7 @@ export default {
     {
       name: "Invalid refresh tokens name the downstream connector and recovery owner",
       run: async (ctx) => {
-        await ctx.prove("A JSON-RPC refresh failure becomes a connector-specific reauthorization action, not an OpenWork Cloud failure", {
+        await ctx.prove("A JSON-RPC refresh failure becomes a connector-specific reauthorization action, not an Micx Cloud failure", {
           voiceover: vo[1],
           assert: async () => {
             const output = combinedOutput(runEndToEndSuite());
@@ -87,7 +87,7 @@ export default {
             witness(ctx, status?.connectionName === "Knowledge Hub", "The response names the failing connector", JSON.stringify(status));
             witness(ctx, status?.errorCode === "invalid_refresh_token" && status?.state === "reauth_required", "The refresh-token failure is classified as reauthorization", JSON.stringify(status));
             witness(ctx, status?.actor === "organization_admin", "The response identifies the organization admin as the recovery owner", JSON.stringify(status));
-            witness(ctx, status?.action?.type === "reconnect" && status?.action?.surface === "openwork_organization_connections", "The response points to the exact reconnect surface", JSON.stringify(status?.action));
+            witness(ctx, status?.action?.type === "reconnect" && status?.action?.surface === "micx_organization_connections", "The response points to the exact reconnect surface", JSON.stringify(status?.action));
             ctx.output("Daytona — structured connector failure", `E2E_CONNECTION_STATUS ${JSON.stringify(status, null, 2)}`);
           },
         });
@@ -96,7 +96,7 @@ export default {
     {
       name: "The same discovery path recovers after the connector is fixed",
       run: async (ctx) => {
-        await ctx.prove("Updating the connector credential makes live tools discoverable on the next search without reconnecting OpenWork Cloud", {
+        await ctx.prove("Updating the connector credential makes live tools discoverable on the next search without reconnecting Micx Cloud", {
           voiceover: vo[2],
           assert: async () => {
             const output = combinedOutput(runEndToEndSuite());

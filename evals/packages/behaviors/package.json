@@ -1,5 +1,5 @@
 {
-  "name": "@openwork/behaviors",
+  "name": "@micx/behaviors",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -31,9 +31,9 @@
     }
   },
   "dependencies": {
-    "@openwork/cdp": "workspace:*",
-    "@openwork/labs": "workspace:*",
-    "@openwork/matchers": "workspace:*",
-    "@openwork/timeline": "workspace:*"
+    "@micx/cdp": "workspace:*",
+    "@micx/labs": "workspace:*",
+    "@micx/matchers": "workspace:*",
+    "@micx/timeline": "workspace:*"
   }
 }

@@ -64,9 +64,9 @@ const readBool = (value: string | undefined) => {
 const silent = process.argv.includes("--silent");
 
 const autoBuildEnabled =
-  process.env.OPENWORK_DEV_HEADLESS_WEB_AUTOBUILD == null
+  process.env.MICX_DEV_HEADLESS_WEB_AUTOBUILD == null
     ? true
-    : readBool(process.env.OPENWORK_DEV_HEADLESS_WEB_AUTOBUILD);
+    : readBool(process.env.MICX_DEV_HEADLESS_WEB_AUTOBUILD);
 
 const runCommand = (command: string, args: string[]) =>
   new Promise<void>((resolve, reject) => {
@@ -116,57 +116,57 @@ const shutdown = (
 
 await ensureTmp();
 
-const remoteAccessEnabled = readBool(process.env.OPENWORK_REMOTE_ACCESS);
+const remoteAccessEnabled = readBool(process.env.MICX_REMOTE_ACCESS);
 const host = remoteAccessEnabled ? "0.0.0.0" : "127.0.0.1";
 const viteHost = process.env.VITE_HOST ?? process.env.HOST ?? host;
-const publicHost = process.env.OPENWORK_PUBLIC_HOST ?? null;
+const publicHost = process.env.MICX_PUBLIC_HOST ?? null;
 const clientHost = publicHost ?? (host === "0.0.0.0" ? "127.0.0.1" : host);
-const workspace = process.env.OPENWORK_WORKSPACE ?? cwd;
-const openworkPort = await resolvePort(process.env.OPENWORK_PORT, "127.0.0.1");
-const webPort = await resolvePort(process.env.OPENWORK_WEB_PORT, "127.0.0.1");
-const openworkToken = process.env.OPENWORK_TOKEN ?? randomUUID();
-const openworkHostToken = process.env.OPENWORK_HOST_TOKEN ?? randomUUID();
-const openworkServerBin = path.join(
+const workspace = process.env.MICX_WORKSPACE ?? cwd;
+const micxPort = await resolvePort(process.env.MICX_PORT, "127.0.0.1");
+const webPort = await resolvePort(process.env.MICX_WEB_PORT, "127.0.0.1");
+const micxToken = process.env.MICX_TOKEN ?? randomUUID();
+const micxHostToken = process.env.MICX_HOST_TOKEN ?? randomUUID();
+const micxServerBin = path.join(
   cwd,
-  "apps/server/dist/bin/openwork-server",
+  "apps/server/dist/bin/micx-server",
 );
-const openworkPluginDir = path.join(
+const micxPluginDir = path.join(
   cwd,
   "apps/server/dist/opencode-plugins",
 );
 
-const ensureOpenworkServer = async () => {
+const ensureMicxServer = async () => {
   try {
-    await access(openworkServerBin);
-    await access(openworkPluginDir);
+    await access(micxServerBin);
+    await access(micxPluginDir);
   } catch {
     if (!autoBuildEnabled) {
       logLine(
-        `[dev:headless-web] Missing OpenWork server build output at ${openworkServerBin}`,
+        `[dev:headless-web] Missing Micx server build output at ${micxServerBin}`,
       );
       logLine(
-        "[dev:headless-web] Auto-build disabled (OPENWORK_DEV_HEADLESS_WEB_AUTOBUILD=0)",
+        "[dev:headless-web] Auto-build disabled (MICX_DEV_HEADLESS_WEB_AUTOBUILD=0)",
       );
       logLine(
-        "[dev:headless-web] Run: pnpm --filter openwork-server build && pnpm --filter openwork-server build:bin",
+        "[dev:headless-web] Run: pnpm --filter micx-server build && pnpm --filter micx-server build:bin",
       );
       logLine(
-        "[dev:headless-web] Or unset/enable OPENWORK_DEV_HEADLESS_WEB_AUTOBUILD to auto-build.",
+        "[dev:headless-web] Or unset/enable MICX_DEV_HEADLESS_WEB_AUTOBUILD to auto-build.",
       );
       process.exit(1);
     }
 
     logLine(
-      `[dev:headless-web] Missing OpenWork server build output at ${openworkServerBin}`,
+      `[dev:headless-web] Missing Micx server build output at ${micxServerBin}`,
     );
     logLine(
-      "[dev:headless-web] Auto-building: pnpm --filter openwork-server build && pnpm --filter openwork-server build:bin",
+      "[dev:headless-web] Auto-building: pnpm --filter micx-server build && pnpm --filter micx-server build:bin",
     );
     try {
-      await runCommand("pnpm", ["--filter", "openwork-server", "build"]);
-      await runCommand("pnpm", ["--filter", "openwork-server", "build:bin"]);
-      await access(openworkServerBin);
-      await access(openworkPluginDir);
+      await runCommand("pnpm", ["--filter", "micx-server", "build"]);
+      await runCommand("pnpm", ["--filter", "micx-server", "build:bin"]);
+      await access(micxServerBin);
+      await access(micxPluginDir);
     } catch (error) {
       logLine(
         `[dev:headless-web] Auto-build failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -176,39 +176,39 @@ const ensureOpenworkServer = async () => {
   }
 };
 
-const openworkUrl = `http://${clientHost}:${openworkPort}`;
+const micxUrl = `http://${clientHost}:${micxPort}`;
 const webUrl = `http://${clientHost}:${webPort}`;
 const viteEnv = {
   ...process.env,
   HOST: viteHost,
   PORT: String(webPort),
-  VITE_OPENWORK_URL: process.env.VITE_OPENWORK_URL ?? openworkUrl,
-  VITE_OPENWORK_PORT: process.env.VITE_OPENWORK_PORT ?? String(openworkPort),
-  VITE_OPENWORK_TOKEN: process.env.VITE_OPENWORK_TOKEN ?? openworkToken,
+  VITE_MICX_URL: process.env.VITE_MICX_URL ?? micxUrl,
+  VITE_MICX_PORT: process.env.VITE_MICX_PORT ?? String(micxPort),
+  VITE_MICX_TOKEN: process.env.VITE_MICX_TOKEN ?? micxToken,
 };
 const headlessEnv = {
   ...process.env,
-  OPENWORK_WORKSPACE: workspace,
-  OPENWORK_HOST: host,
-  OPENWORK_REMOTE_ACCESS: remoteAccessEnabled ? "1" : "0",
-  OPENWORK_PORT: String(openworkPort),
-  OPENWORK_TOKEN: openworkToken,
-  OPENWORK_HOST_TOKEN: openworkHostToken,
-  OPENWORK_MANAGE_OPENCODE: "1",
-  OPENWORK_OPENCODE_BIN: process.env.OPENWORK_OPENCODE_BIN ?? "opencode",
-  OPENWORK_EXTENSIONS_PLUGIN_DIR: openworkPluginDir,
+  MICX_WORKSPACE: workspace,
+  MICX_HOST: host,
+  MICX_REMOTE_ACCESS: remoteAccessEnabled ? "1" : "0",
+  MICX_PORT: String(micxPort),
+  MICX_TOKEN: micxToken,
+  MICX_HOST_TOKEN: micxHostToken,
+  MICX_MANAGE_OPENCODE: "1",
+  MICX_OPENCODE_BIN: process.env.MICX_OPENCODE_BIN ?? "opencode",
+  MICX_EXTENSIONS_PLUGIN_DIR: micxPluginDir,
 };
 
-await ensureOpenworkServer();
+await ensureMicxServer();
 
 logLine("[dev:headless-web] Starting services");
 logLine(`[dev:headless-web] Workspace: ${workspace}`);
-logLine(`[dev:headless-web] OpenWork server: ${openworkUrl}`);
+logLine(`[dev:headless-web] Micx server: ${micxUrl}`);
 logLine(`[dev:headless-web] Web host: ${viteHost}`);
 logLine(`[dev:headless-web] Web port: ${webPort}`);
 logLine(`[dev:headless-web] Web URL: ${webUrl}`);
-logLine("[dev:headless-web] OPENWORK_TOKEN: [REDACTED]");
-logLine("[dev:headless-web] OPENWORK_HOST_TOKEN: [REDACTED]");
+logLine("[dev:headless-web] MICX_TOKEN: [REDACTED]");
+logLine("[dev:headless-web] MICX_HOST_TOKEN: [REDACTED]");
 logLine(
   `[dev:headless-web] Web logs: ${path.relative(cwd, path.join(tmpDir, "dev-web.log"))}`,
 );
@@ -220,7 +220,7 @@ const webProcess = spawnLogged(
   "pnpm",
   [
     "--filter",
-    "@openwork/app",
+    "@micx/app",
     "exec",
     "vite",
     "--host",
@@ -234,18 +234,18 @@ const webProcess = spawnLogged(
 );
 
 const headlessProcess = spawnLogged(
-  openworkServerBin,
+  micxServerBin,
   [
     "--workspace",
     workspace,
     "--host",
     host,
     "--port",
-    String(openworkPort),
+    String(micxPort),
     "--token",
-    openworkToken,
+    micxToken,
     "--host-token",
-    openworkHostToken,
+    micxHostToken,
     "--approval",
     "auto",
     "--cors",
@@ -270,5 +270,5 @@ process.on("SIGTERM", () => {
 
 webProcess.on("exit", (code, signal) => shutdown("web", code, signal));
 headlessProcess.on("exit", (code, signal) =>
-  shutdown("openwork-server", code, signal),
+  shutdown("micx-server", code, signal),
 );

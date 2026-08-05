@@ -11,10 +11,10 @@ export interface Roll {
 
 let warned = false;
 
-/** @deprecated Use the ambient evidence fixture from @openwork/fraimz/vitest. */
+/** @deprecated Use the ambient evidence fixture from @micx/fraimz/vitest. */
 export function photoRoll(name: string, opts: { outDir?: string } = {}): Roll {
   if (!warned) {
-    console.warn("[fraimz] photoRoll() is deprecated; use the ambient evidence fixture from @openwork/fraimz/vitest.");
+    console.warn("[fraimz] photoRoll() is deprecated; use the ambient evidence fixture from @micx/fraimz/vitest.");
     warned = true;
   }
   const tape = openTape({ name, outDir: opts.outDir });

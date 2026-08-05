@@ -26,7 +26,7 @@ sleep 2
 # ── 2. Vite dev server on 0.0.0.0 (so Electron can reach it via 127.0.0.1) ──
 echo "==> Starting Vite on :5173..."
 cd apps/app
-OPENWORK_DEV_MODE=1 nohup npx vite --host 0.0.0.0 --port 5173 > /tmp/vite.log 2>&1 &
+MICX_DEV_MODE=1 nohup npx vite --host 0.0.0.0 --port 5173 > /tmp/vite.log 2>&1 &
 cd /workspace
 sleep 3
 
@@ -49,7 +49,7 @@ if mysql -h mysql -u root -ppassword -e "SELECT 1" >/dev/null 2>&1; then
   echo "==> MySQL found, starting Den stack..."
 
   echo "  Pushing DB schema..."
-  pnpm --filter @openwork-ee/den-db db:push 2>&1 || echo "  DB push failed (may be up to date)"
+  pnpm --filter @micx-ee/den-db db:push 2>&1 || echo "  DB push failed (may be up to date)"
 
   echo "  Starting Den API on :8788..."
   pnpm dev:den:api > /tmp/den-api.log 2>&1 &

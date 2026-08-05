@@ -12,7 +12,7 @@ point of the demo is that the member does nothing to make it work.
 
 4. Maya opens the link, picks a password, and she's in — the page welcomes her to Acme Robotics and hands her the desktop app.
 
-5. She installs OpenWork and opens it for the very first time. One sign-in, one loading screen, and the workspace is already Acme's — nothing to dismiss, nothing to refresh.
+5. She installs Micx and opens it for the very first time. One sign-in, one loading screen, and the workspace is already Acme's — nothing to dismiss, nothing to refresh.
 
 6. She opens the model menu and finds exactly two entries: GPT-5.4 and GPT-5.5. No OpenCode Zen, no personal API keys, and no way to add one.
 

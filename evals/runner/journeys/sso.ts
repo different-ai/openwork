@@ -17,7 +17,7 @@ import {
 } from "../labs/idp.ts";
 import { cleanBaseUrl, denApiFetch, denWebUrl, inviteUrlFromToken, type DenApiFetchResult, type InviteRef } from "./den.ts";
 
-const AUTH_TOKEN_STORAGE_KEY = "openwork:web:auth-token";
+const AUTH_TOKEN_STORAGE_KEY = "micx:web:auth-token";
 const SSO_STATE_KEY = "__ssoJourney";
 
 export interface SsoOrganizationRef {
@@ -115,9 +115,9 @@ function sleep(ms: number): Promise<void> {
 }
 
 function authToken(ctx: FlowContext, org?: SsoOrganizationRef): string {
-  const token = org?.token?.trim() || ctx.env.OPENWORK_EVAL_DEN_TOKEN?.trim() || "";
+  const token = org?.token?.trim() || ctx.env.MICX_EVAL_DEN_TOKEN?.trim() || "";
   if (!token) {
-    throw new EvalError("OPENWORK_EVAL_DEN_TOKEN is required to configure the mock IdP through the Den SSO API.");
+    throw new EvalError("MICX_EVAL_DEN_TOKEN is required to configure the mock IdP through the Den SSO API.");
   }
   return token;
 }
@@ -133,7 +133,7 @@ function authHeaders(token: string, organizationId?: string, cookie?: string): H
     headers.set("cookie", cookie);
   }
   if (organizationId) {
-    headers.set("x-openwork-org-id", organizationId);
+    headers.set("x-micx-org-id", organizationId);
   }
   return headers;
 }
@@ -143,7 +143,7 @@ function demoOwnerEmail(ctx: FlowContext): string {
 }
 
 function demoOwnerPassword(ctx: FlowContext): string {
-  return ctx.env.DEN_DEMO_OWNER_PASSWORD?.trim() || "OpenWorkDemo123!";
+  return ctx.env.DEN_DEMO_OWNER_PASSWORD?.trim() || "MicxDemo123!";
 }
 
 function sessionCookieFromHeader(value: string | null): string {

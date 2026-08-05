@@ -1,12 +1,12 @@
 # Daytona Server Sync Eval Report
 
 Date: 2026-05-21
-PR: https://github.com/different-ai/openwork/pull/1887
+PR: https://github.com/different-ai/micx/pull/1887
 
 ## Topology
 
-- Server sandbox: `openwork-server-20260521-195504`
-- Electron sandbox: `openwork-test-20260521-200726`
+- Server sandbox: `micx-server-20260521-195504`
+- Electron sandbox: `micx-test-20260521-200726`
 - Den Web: `https://3005-8a1fmav0r1lc67wb.daytonaproxy01.net`
 - Den API: `https://8788-fsjfdaoh0xoklgyn.daytonaproxy01.net`
 - Worker proxy: `https://8789-lex0iaxjjidavjfz.daytonaproxy01.net`
@@ -27,8 +27,8 @@ Result: pass.
 
 - Created and verified a Den user on the Daytona server.
 - Created a desktop handoff grant from Den API.
-- Pasted the full `openwork://den-auth?...` link into the desktop Cloud Account manual sign-in flow.
-- Electron showed `OpenWork Cloud Connected` and `Signed in as daytona-proof-1779419514@example.com`.
+- Pasted the full `micx://den-auth?...` link into the desktop Cloud Account manual sign-in flow.
+- Electron showed `Micx Cloud Connected` and `Signed in as daytona-proof-1779419514@example.com`.
 - Den API logs showed:
   - `POST /v1/auth/desktop-handoff/exchange 200`
   - `GET /v1/me/orgs 200`
@@ -75,7 +75,7 @@ Observation: the API allows adding a plugin to a marketplace, and the desktop ma
 ## Issues Found
 
 - Fixed in this PR: desktop cloud settings sync overwrote a custom Den API URL with the Den Web URL. This broke split Daytona Den Web/Den API topologies.
-- Not fixed in this PR: raw manual sign-in grant paste does not reliably target the Den API in split Den Web/Den API deployments. Use the full `openwork://den-auth?...&denBaseUrl=...` handoff link for now.
+- Not fixed in this PR: raw manual sign-in grant paste does not reliably target the Den API in split Den Web/Den API deployments. Use the full `micx://den-auth?...&denBaseUrl=...` handoff link for now.
 - Follow-up recommended: add a non-empty plugin/config-object eval so marketplace import proves actual file materialization, not just plugin visibility and zero-file import.
 
 ## Commands And Checks
@@ -83,5 +83,5 @@ Observation: the API allows adding a plugin to a marketplace, and the desktop ma
 - `bash -n .devcontainer/test-on-daytona.sh`
 - `bash -n .devcontainer/test-server-on-daytona.sh`
 - `bash -n .devcontainer/start-daytona-server.sh`
-- `bash -n .devcontainer/create-daytona-openwork-server-snapshot.sh`
-- `pnpm --filter @openwork/app typecheck`
+- `bash -n .devcontainer/create-daytona-micx-server-snapshot.sh`
+- `pnpm --filter @micx/app typecheck`

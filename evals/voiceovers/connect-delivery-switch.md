@@ -1,6 +1,6 @@
 # connect-delivery-switch — retired switch now proves Connect-only delivery
 
-Cast is Alex, the Acme Robotics admin, using the OpenWork desktop app against the local Den stack. This older switch proof is now retired into the new contract: toggling Acme's Connect capability must not bring back desktop imports for Den marketplace plugins.
+Cast is Alex, the Acme Robotics admin, using the Micx desktop app against the local Den stack. This older switch proof is now retired into the new contract: toggling Acme's Connect capability must not bring back desktop imports for Den marketplace plugins.
 
 1. With Connect turned off, Alex opens the organization Marketplace. The seeded plugin is already Active · runs in cloud, and there is no Add, Install, or Update button.
 

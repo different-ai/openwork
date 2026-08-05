@@ -1,6 +1,6 @@
 # Skill: release
 
-Cut an OpenWork release from `dev`. The "Release App" workflow
+Cut an Micx release from `dev`. The "Release App" workflow
 (`.github/workflows/release-macos-aarch64.yml`, triggered by a `v*` tag push or
 dispatch) builds, signs, and publishes the standard desktop app assets on the
 GitHub release.
@@ -60,8 +60,8 @@ git push origin vX.Y.Z
 ## Watch
 
 ```bash
-gh run list --repo different-ai/openwork --workflow "Release App" --limit 1
-gh run watch <run-id> --repo different-ai/openwork --exit-status --interval 90
+gh run list --repo different-ai/micx --workflow "Release App" --limit 1
+gh run watch <run-id> --repo different-ai/micx --exit-status --interval 90
 ```
 
 The run includes a Windows test job; any test failure blocks publish (the
@@ -82,7 +82,7 @@ git push origin vX.Y.Z
 **Rerun without retagging** (e.g. transient failure):
 
 ```bash
-gh workflow run "Release App" --repo different-ai/openwork -f tag=vX.Y.Z
+gh workflow run "Release App" --repo different-ai/micx -f tag=vX.Y.Z
 ```
 
 The release workflow may open an AUR packaging PR instead of pushing packaging
@@ -107,19 +107,19 @@ the user explicitly stops the release.
 ## Verify
 
 ```bash
-gh release view vX.Y.Z --repo different-ai/openwork --json assets --jq '.assets[].name'
+gh release view vX.Y.Z --repo different-ai/micx --json assets --jq '.assets[].name'
 ```
 
-Expect the app assets (`openwork-<platform>-X.Y.Z.*`, `latest*.yml`), including:
+Expect the app assets (`micx-<platform>-X.Y.Z.*`, `latest*.yml`), including:
 
-- `openwork-mac-arm64-X.Y.Z.dmg`
-- `openwork-mac-x64-X.Y.Z.dmg`
-- `openwork-win-x64-X.Y.Z.exe`
+- `micx-mac-arm64-X.Y.Z.dmg`
+- `micx-mac-x64-X.Y.Z.dmg`
+- `micx-win-x64-X.Y.Z.exe`
 
 Spot-check a download URL resolves (302 to release-assets CDN):
 
 ```bash
-curl -sI "https://github.com/different-ai/openwork/releases/download/vX.Y.Z/openwork-mac-arm64-X.Y.Z.dmg" | head -2
+curl -sI "https://github.com/different-ai/micx/releases/download/vX.Y.Z/micx-mac-arm64-X.Y.Z.dmg" | head -2
 ```
 
 ---

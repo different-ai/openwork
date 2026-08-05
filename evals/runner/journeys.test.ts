@@ -20,8 +20,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 test("Den URL helpers trim bases and build invite URLs", () => {
   const env: NodeJS.ProcessEnv = {
-    OPENWORK_EVAL_DEN_API_URL: " http://127.0.0.1:3004/api/den/// ",
-    OPENWORK_EVAL_DEN_WEB_URL: " http://127.0.0.1:3005/// ",
+    MICX_EVAL_DEN_API_URL: " http://127.0.0.1:3004/api/den/// ",
+    MICX_EVAL_DEN_WEB_URL: " http://127.0.0.1:3005/// ",
   };
 
   assert.equal(resolveDenApiUrl(env), "http://127.0.0.1:3004/api/den");
@@ -50,11 +50,11 @@ test("invite extraction accepts JSON payload links and tokens", () => {
 test("Den env resolution reports missing URLs clearly", () => {
   assert.throws(
     () => resolveDenApiUrl({}),
-    (error) => error instanceof EvalError && error.message.includes("OPENWORK_EVAL_DEN_API_URL"),
+    (error) => error instanceof EvalError && error.message.includes("MICX_EVAL_DEN_API_URL"),
   );
   assert.throws(
-    () => resolveDenWebUrl({ OPENWORK_EVAL_DEN_API_URL: "http://api.test" }),
-    (error) => error instanceof EvalError && error.message.includes("OPENWORK_EVAL_DEN_WEB_URL"),
+    () => resolveDenWebUrl({ MICX_EVAL_DEN_API_URL: "http://api.test" }),
+    (error) => error instanceof EvalError && error.message.includes("MICX_EVAL_DEN_WEB_URL"),
   );
 });
 
@@ -62,7 +62,7 @@ test("actor validation accepts complete actors and rejects incomplete shapes", (
   const actor = {
     name: "Maya",
     email: "maya@example.test",
-    password: "OpenWorkEval123!",
+    password: "MicxEval123!",
     role: "fresh",
   };
 
@@ -89,7 +89,7 @@ test("hostile gateway journey exposes the required app-less fault cases", () => 
 });
 
 test("hostile gateway precondition reports an actionable bun skip reason", async () => {
-  const reason = await hostileGatewayBunPrecondition("__openwork_missing_bun__");
+  const reason = await hostileGatewayBunPrecondition("__micx_missing_bun__");
 
   assert.equal(typeof reason, "string");
   assert.match(reason || "", /bun is required/);

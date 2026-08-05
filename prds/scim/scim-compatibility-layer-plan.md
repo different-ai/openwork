@@ -15,7 +15,7 @@ Observed failures:
 
 ## Goal
 
-Add a Den-owned SCIM compatibility layer that keeps Better Auth's useful connector/token pieces while giving OpenWork control over SCIM resource identity, response shape, pagination, and group semantics.
+Add a Den-owned SCIM compatibility layer that keeps Better Auth's useful connector/token pieces while giving Micx control over SCIM resource identity, response shape, pagination, and group semantics.
 
 ## Identity Model
 
@@ -26,7 +26,7 @@ Use an org/provider-scoped identity table instead, because the same local user m
 Proposed table: `scim_identity`
 
 - `id`: Den TypeID, e.g. `sci_...`
-- `organizationId`: owning OpenWork org
+- `organizationId`: owning Micx org
 - `providerId`: SCIM provider connection id
 - `userId`: local Better Auth user id
 - `remoteId`: remote immutable id when supplied by the IdP
@@ -125,9 +125,9 @@ On `DELETE /scim/v2/Users/:userId`:
 
 ## Group Resource Model
 
-SCIM `Group` is closest to OpenWork org teams, but it is not exactly the same thing.
+SCIM `Group` is closest to Micx org teams, but it is not exactly the same thing.
 
-A SCIM Group is an IdP-owned membership container. It may represent teams, departments, roles, app assignments, or access policy groups. OpenWork org teams are local collaboration/access structures inside an organization.
+A SCIM Group is an IdP-owned membership container. It may represent teams, departments, roles, app assignments, or access policy groups. Micx org teams are local collaboration/access structures inside an organization.
 
 Recommended stance:
 
@@ -188,7 +188,7 @@ Initial behavior can store remote group records without creating local teams.
 
 ### Phase 3: optional team mapping
 
-If product wants SCIM groups to manage OpenWork teams:
+If product wants SCIM groups to manage Micx teams:
 
 1. Add org setting: `scimGroupMappingMode`.
 2. Modes:

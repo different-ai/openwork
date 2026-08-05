@@ -2,14 +2,14 @@ import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
 
 const vo = await loadVoiceoverParagraphs("connections-beta-desktop");
 
-const DEN_API_URL = (process.env.OPENWORK_EVAL_DEN_API_URL ?? "").trim().replace(/\/+$/, "");
-const DEN_WEB_URL = (process.env.OPENWORK_EVAL_DEN_WEB_URL ?? DEN_API_URL).trim().replace(/\/+$/, "");
-const ADMIN_EMAIL = process.env.OPENWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
-const ADMIN_PASSWORD = process.env.OPENWORK_EVAL_DEMO_PASSWORD?.trim() || "OpenWorkDemo123!";
+const DEN_API_URL = (process.env.MICX_EVAL_DEN_API_URL ?? "").trim().replace(/\/+$/, "");
+const DEN_WEB_URL = (process.env.MICX_EVAL_DEN_WEB_URL ?? DEN_API_URL).trim().replace(/\/+$/, "");
+const ADMIN_EMAIL = process.env.MICX_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
+const ADMIN_PASSWORD = process.env.MICX_EVAL_DEMO_PASSWORD?.trim() || "MicxDemo123!";
 const RUN_TAG = Date.now();
 const CONNECTION_NAME = `beta-proof-desktop-${RUN_TAG}`;
 const CONNECTION_URL = "https://beta-proof.example.com/mcp";
-const WORKSPACE_PATH = "/tmp/openwork-connections-beta-desktop";
+const WORKSPACE_PATH = "/tmp/micx-connections-beta-desktop";
 
 const state = {
   adminSession: null,
@@ -96,15 +96,15 @@ async function closeStaleDialogs(ctx) {
 }
 
 async function signDesktopIntoCloud(ctx) {
-  await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 120_000 });
+  await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 120_000 });
 
-  const alreadySignedIn = await ctx.eval("Boolean((localStorage.getItem('openwork.den.authToken') ?? '').trim())");
+  const alreadySignedIn = await ctx.eval("Boolean((localStorage.getItem('micx.den.authToken') ?? '').trim())");
   if (!alreadySignedIn) {
     // Point the app at the local Den control plane the designed way:
     // desktop-bootstrap.json (via the desktop bridge). Everything derives
     // from it — including getDenMcpUrl(), which the cloud MCP auto-config
     // uses; localStorage overrides alone are not enough.
-    await ctx.waitFor("Boolean(window.__OPENWORK_ELECTRON__?.invokeDesktop)", { timeoutMs: 30_000, label: "desktop bridge" });
+    await ctx.waitFor("Boolean(window.__MICX_ELECTRON__?.invokeDesktop)", { timeoutMs: 30_000, label: "desktop bridge" });
     const bootstrap = {
       baseUrl: DEN_API_URL,
       apiBaseUrl: DEN_API_URL,
@@ -112,33 +112,33 @@ async function signDesktopIntoCloud(ctx) {
       handoff: null,
     };
     const written = await ctx.eval(`(async () => {
-      const bridge = window.__OPENWORK_ELECTRON__?.invokeDesktop;
+      const bridge = window.__MICX_ELECTRON__?.invokeDesktop;
       if (!bridge) return { ok: false };
       await bridge("setDesktopBootstrapConfig", ${JSON.stringify(bootstrap)});
       return { ok: true };
     })()`, { awaitPromise: true });
     ctx.assert(written?.ok, "Failed to write desktop bootstrap config.");
     await ctx.eval(`(() => {
-      localStorage.setItem('openwork.den.baseUrl', ${JSON.stringify(DEN_API_URL)});
-      localStorage.setItem('openwork.den.apiBaseUrl', ${JSON.stringify(DEN_API_URL)});
+      localStorage.setItem('micx.den.baseUrl', ${JSON.stringify(DEN_API_URL)});
+      localStorage.setItem('micx.den.apiBaseUrl', ${JSON.stringify(DEN_API_URL)});
       return true;
     })()`);
     await ctx.eval("location.reload()");
-    await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 60_000, label: "control API after bootstrap reload" });
+    await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 60_000, label: "control API after bootstrap reload" });
     const handoff = await denApiFetch("/v1/auth/desktop-handoff", {
       method: "POST",
       headers: { authorization: `Bearer ${state.adminSession}` },
-      body: JSON.stringify({ desktopScheme: "openwork" }),
+      body: JSON.stringify({ desktopScheme: "micx" }),
     });
     ctx.assert(handoff.response.ok, `Handoff create failed: ${handoff.response.status}`);
     await ctx.control("auth.exchange-grant", { grant: handoff.body.grant, baseUrl: DEN_API_URL });
   }
   await ctx.waitFor(
-    "Boolean((localStorage.getItem('openwork.den.authToken') ?? '').trim())",
+    "Boolean((localStorage.getItem('micx.den.authToken') ?? '').trim())",
     { timeoutMs: 45_000, label: "persisted den auth token" },
   );
   await ctx.waitFor(
-    "Boolean((localStorage.getItem('openwork.den.activeOrgId') ?? '').trim())",
+    "Boolean((localStorage.getItem('micx.den.activeOrgId') ?? '').trim())",
     { timeoutMs: 60_000, label: "active org resolved" },
   );
 }
@@ -160,9 +160,9 @@ async function ensureWorkspace(ctx) {
     }
     await ctx.waitFor("window.location.hash.includes('/workspace/')", { timeoutMs: 60_000, label: "workspace open" });
   }
-  // Dismiss the OpenWork Models upsell if it appears.
+  // Dismiss the Micx Models upsell if it appears.
   await ctx.eval(`(() => {
-    const btn = [...document.querySelectorAll('button')].find((el) => el.textContent.trim() === 'Continue without OpenWork Models');
+    const btn = [...document.querySelectorAll('button')].find((el) => el.textContent.trim() === 'Continue without Micx Models');
     btn?.click();
     return true;
   })()`);
@@ -252,7 +252,7 @@ export default {
   title: "Desktop Connect: beta org connections appear only in Connect",
   kind: "user-facing",
   spec: "evals/voiceovers/connections-beta-desktop.md",
-  requiredEnv: ["OPENWORK_EVAL_DEN_API_URL"],
+  requiredEnv: ["MICX_EVAL_DEN_API_URL"],
   steps: [
     {
       name: "Frame 1",
@@ -268,8 +268,8 @@ export default {
           },
           assert: async () => {
             const auth = await ctx.eval(`(() => ({
-              token: (localStorage.getItem('openwork.den.authToken') ?? '').trim(),
-              activeOrgId: (localStorage.getItem('openwork.den.activeOrgId') ?? '').trim(),
+              token: (localStorage.getItem('micx.den.authToken') ?? '').trim(),
+              activeOrgId: (localStorage.getItem('micx.den.activeOrgId') ?? '').trim(),
             }))()`);
             ctx.assert(Boolean(auth.token), "Desktop Den auth token was not persisted.");
             ctx.assert(Boolean(auth.activeOrgId), "Desktop active org was not resolved.");
@@ -309,7 +309,7 @@ export default {
           },
           screenshot: {
             name: "connections-beta-desktop-connect-row",
-            claim: "OpenWork Connect shows the org MCP connection under Needs your sign-in with Connect your account.",
+            claim: "Micx Connect shows the org MCP connection under Needs your sign-in with Connect your account.",
             requireText: ["From your organization", "NEEDS YOUR SIGN-IN", CONNECTION_NAME, "Connect your account"],
             rejectText: ["Something went wrong"],
           },

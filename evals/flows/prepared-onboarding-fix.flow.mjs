@@ -33,7 +33,7 @@ export default {
             await ctx.expectNoText("First skill ready");
             await ctx.expectNoText("Try asking");
             await ctx.expectNoText("Open your workspace and try a task");
-            const route = await ctx.eval("window.__openworkControl.snapshot().route");
+            const route = await ctx.eval("window.__micxControl.snapshot().route");
             ctx.assert(route === "/onboarding", `Expected /onboarding, got ${route}`);
             const requestCount = await ctx.eval(`performance.getEntriesByType("resource").filter((entry) =>
               entry.name.includes("/sessions?limit=200") || entry.name.endsWith("/workspaces")

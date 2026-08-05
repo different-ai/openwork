@@ -4,21 +4,21 @@ import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
 const FLOW_ID = "email-invites-remove-download-link";
 const vo = await loadVoiceoverParagraphs(FLOW_ID);
 
-const DEN_API_URL = cleanBaseUrl(process.env.OPENWORK_EVAL_DEN_API_URL);
-const DEN_TOKEN = process.env.OPENWORK_EVAL_DEN_TOKEN?.trim() ?? "";
+const DEN_API_URL = cleanBaseUrl(process.env.MICX_EVAL_DEN_API_URL);
+const DEN_TOKEN = process.env.MICX_EVAL_DEN_TOKEN?.trim() ?? "";
 const RUN_TAG = Date.now().toString(36);
 const INVITEE_EMAIL = `maya.invite+${RUN_TAG}@acme.test`;
 
 const REMOVED_EMAIL_TEXT = [
   "Download the desktop app",
-  "Download OpenWork",
+  "Download Micx",
   "Edit spreadsheets",
   "Control your browser",
   "Organize files",
   "Automate tasks",
   "desktop app",
-  "Open OpenWork",
-  "Install OpenWork",
+  "Open Micx",
+  "Install Micx",
   "Install the desktop app",
 ];
 
@@ -144,8 +144,8 @@ async function navigateTo(ctx, url) {
 }
 
 async function withGenericBrowser(ctx, fn) {
-  const cdpBaseUrl = cleanBaseUrl(ctx.cdpBaseUrl ?? process.env.OPENWORK_EVAL_CDP_URL);
-  witness(ctx, cdpBaseUrl.length > 0, "A generic CDP browser endpoint is available for rendered-email screenshots", cdpBaseUrl || "missing --cdp-url/OPENWORK_EVAL_CDP_URL");
+  const cdpBaseUrl = cleanBaseUrl(ctx.cdpBaseUrl ?? process.env.MICX_EVAL_CDP_URL);
+  witness(ctx, cdpBaseUrl.length > 0, "A generic CDP browser endpoint is available for rendered-email screenshots", cdpBaseUrl || "missing --cdp-url/MICX_EVAL_CDP_URL");
   const previous = ctx.client;
   const target = await firstPageTarget(cdpBaseUrl);
   const client = await connect(debuggerUrlFor(cdpBaseUrl, target));
@@ -278,11 +278,11 @@ function assertRemovedDesktopCopy(ctx, html) {
     witness(ctx, !lowerHtml.includes(removedText.toLowerCase()), `The invitation email omits desktop/download copy: ${removedText}`, "absent");
   }
   witness(ctx, !lowerHtml.includes("/install?token="), "The invitation email has no organization install token link", "absent");
-  witness(ctx, !lowerHtml.includes("openworklabs.com/download"), "The invitation email has no generic desktop download link", "absent");
+  witness(ctx, !lowerHtml.includes("micxlabs.com/download"), "The invitation email has no generic desktop download link", "absent");
 
   const blockedLinks = htmlHrefs(html).filter((href) => {
     const lowerHref = href.toLowerCase();
-    return lowerHref.includes("/install") || lowerHref.includes("openworklabs.com/download") || lowerHref.includes("download") || lowerHref.includes("openwork://");
+    return lowerHref.includes("/install") || lowerHref.includes("micxlabs.com/download") || lowerHref.includes("download") || lowerHref.includes("micx://");
   });
   witness(ctx, blockedLinks.length === 0, "The invitation email contains no download or install hrefs", blockedLinks);
 }
@@ -360,8 +360,8 @@ export default {
   requiresApp: false,
   preserveTheme: true,
   requiredEnv: [
-    "OPENWORK_EVAL_DEN_API_URL",
-    "OPENWORK_EVAL_DEN_TOKEN",
+    "MICX_EVAL_DEN_API_URL",
+    "MICX_EVAL_DEN_TOKEN",
   ],
   steps: [
     {
@@ -407,7 +407,7 @@ export default {
                 .map((link) => link.href)
                 .filter((href) => {
                   const lowerHref = href.toLowerCase();
-                  return lowerHref.includes('/install') || lowerHref.includes('openworklabs.com/download') || lowerHref.includes('download') || lowerHref.includes('openwork://');
+                  return lowerHref.includes('/install') || lowerHref.includes('micxlabs.com/download') || lowerHref.includes('download') || lowerHref.includes('micx://');
                 }))()`);
               witness(ctx, blockedLinks.length === 0, "The rendered email page has no download or install links", blockedLinks);
             },

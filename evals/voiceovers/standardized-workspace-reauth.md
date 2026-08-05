@@ -1,6 +1,6 @@
 # standardized-workspace-reauth — Workspace re-authentication returns users to their settings
 
-1. I’m in workspace settings, and when I change a sensitive setting, OpenWork shows one consistent identity-confirmation dialog: “For security, confirm it’s you before changing workspace settings.”
+1. I’m in workspace settings, and when I change a sensitive setting, Micx shows one consistent identity-confirmation dialog: “For security, confirm it’s you before changing workspace settings.”
 
 2. I confirm my identity without losing the settings page, selected organization, or any unsaved context.
 

@@ -11,17 +11,17 @@
  * (alex@acme.test, seeded into AdminAllowlistTable on the Daytona Den):
  *   1. Sign in via desktop handoff (handles org onboarding + workspace pick).
  *   2. Open Settings -> Extensions -> MCP and reveal the hidden admin entry.
- *   3. Connect "OpenWork Admin Analytics".
+ *   3. Connect "Micx Admin Analytics".
  *   4. Assert the entry flips to Connected and the connected app count grows —
  *      only possible if admin OAuth discovery + token mint + allowlist all
  *      succeed end-to-end against den-api /mcp/admin.
  *
  * Required env:
- * - OPENWORK_EVAL_DEN_API_URL  Den API base (the fixed sandbox Den)
- * - OPENWORK_EVAL_DEN_TOKEN    Bearer session token for the admin account
+ * - MICX_EVAL_DEN_API_URL  Den API base (the fixed sandbox Den)
+ * - MICX_EVAL_DEN_TOKEN    Bearer session token for the admin account
  */
 
-const ADMIN_TITLE = "OpenWork Admin Analytics";
+const ADMIN_TITLE = "Micx Admin Analytics";
 const WORKSPACE_FOLDER = "/workspace/admin-mcp-test";
 
 const CLICK_ANY = "button, [role=button], a, div, article, li, label";
@@ -45,45 +45,45 @@ export default {
   id: "admin-mcp-connect",
   title: "Admin MCP connects end-to-end after OAuth discovery fix",
   spec: "evals/cloud-mcp-agent-flows.md",
-  requiredEnv: ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_TOKEN"],
+  requiredEnv: ["MICX_EVAL_DEN_API_URL", "MICX_EVAL_DEN_TOKEN"],
   steps: [
     {
       name: "App booted",
       run: async (ctx) => {
-        await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 60_000 });
+        await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 60_000 });
       },
     },
     {
       name: "Sign in as the admin user via desktop handoff",
       run: async (ctx) => {
         const signedIn = await ctx.eval(
-          "Boolean((localStorage.getItem('openwork.den.authToken') ?? '').trim())",
+          "Boolean((localStorage.getItem('micx.den.authToken') ?? '').trim())",
         );
         if (signedIn) {
           ctx.log("Already signed in; reusing session.");
           return;
         }
-        const apiBase = ctx.env.OPENWORK_EVAL_DEN_API_URL.trim().replace(/\/+$/, "");
+        const apiBase = ctx.env.MICX_EVAL_DEN_API_URL.trim().replace(/\/+$/, "");
         const response = await fetch(`${apiBase}/v1/auth/desktop-handoff`, {
           method: "POST",
           headers: {
-            authorization: `Bearer ${ctx.env.OPENWORK_EVAL_DEN_TOKEN.trim()}`,
+            authorization: `Bearer ${ctx.env.MICX_EVAL_DEN_TOKEN.trim()}`,
             "content-type": "application/json",
           },
-          body: JSON.stringify({ desktopScheme: "openwork" }),
+          body: JSON.stringify({ desktopScheme: "micx" }),
         });
         const body = await response.text();
         ctx.assert(response.ok, `Handoff create failed: ${response.status} ${body.slice(0, 200)}`);
         const payload = JSON.parse(body);
-        ctx.assert(typeof payload.openworkUrl === "string" && payload.openworkUrl.length > 0, "No openworkUrl in handoff response.");
+        ctx.assert(typeof payload.micxUrl === "string" && payload.micxUrl.length > 0, "No micxUrl in handoff response.");
 
         await ctx.navigateHash("/settings/cloud-account");
         await ctx.expectHashIncludes("/settings/cloud-account");
         await ctx.clickText("Paste sign-in code", { timeoutMs: 30_000 });
-        await ctx.fill("#den-signin-link", payload.openworkUrl);
+        await ctx.fill("#den-signin-link", payload.micxUrl);
         await ctx.clickText("Finish sign-in");
         await ctx.waitFor(
-          "Boolean((localStorage.getItem('openwork.den.authToken') ?? '').trim())",
+          "Boolean((localStorage.getItem('micx.den.authToken') ?? '').trim())",
           { timeoutMs: 45_000, label: "persisted den auth token" },
         );
       },
@@ -127,7 +127,7 @@ export default {
           },
           screenshot: {
             name: "admin-entry-revealed",
-            claim: "OpenWork Admin Analytics appears in MCP settings after Show hidden.",
+            claim: "Micx Admin Analytics appears in MCP settings after Show hidden.",
             requireText: [ADMIN_TITLE],
             rejectText: ["Something went wrong"],
             hashIncludes: "/settings/extensions/mcp",
@@ -184,7 +184,7 @@ export default {
           },
           screenshot: {
             name: "admin-mcp-connected",
-            claim: "OpenWork Admin Analytics shows Connected — admin MCP attached end-to-end.",
+            claim: "Micx Admin Analytics shows Connected — admin MCP attached end-to-end.",
             requireText: [ADMIN_TITLE, "Connected"],
             rejectText: ["Something went wrong"],
             hashIncludes: "/settings/extensions/mcp",

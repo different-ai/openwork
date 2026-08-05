@@ -12,28 +12,28 @@ if (vo.length !== 5) {
 }
 
 const ENV_NAMES = [
-  "OPENWORK_EVAL_WIN_SANDBOX_ID",
-  "OPENWORK_EVAL_CDP_URL",
-  "OPENWORK_EVAL_WIN_PROFILE",
+  "MICX_EVAL_WIN_SANDBOX_ID",
+  "MICX_EVAL_CDP_URL",
+  "MICX_EVAL_WIN_PROFILE",
 ];
 
-const SANDBOX_ID = (process.env.OPENWORK_EVAL_WIN_SANDBOX_ID ?? "").trim();
-const CDP_URL = cleanUrl(process.env.OPENWORK_EVAL_CDP_URL);
-const INITIAL_INTERNAL_CDP_PORT = safeTcpPort(process.env.OPENWORK_EVAL_INITIAL_CDP_PORT) ?? 9222;
+const SANDBOX_ID = (process.env.MICX_EVAL_WIN_SANDBOX_ID ?? "").trim();
+const CDP_URL = cleanUrl(process.env.MICX_EVAL_CDP_URL);
+const INITIAL_INTERNAL_CDP_PORT = safeTcpPort(process.env.MICX_EVAL_INITIAL_CDP_PORT) ?? 9222;
 const CDP_DISCOVERY_PORTS = [9223, 9224, 9225, 9226, 9227];
-const WIN_PROFILE = cleanWinPath(process.env.OPENWORK_EVAL_WIN_PROFILE ?? "");
+const WIN_PROFILE = cleanWinPath(process.env.MICX_EVAL_WIN_PROFILE ?? "");
 const RUN_TAG = `${Date.now().toString(36)}-${randomBytes(2).toString("hex")}`;
 const BRAND_APP_NAME = "Nuke Proof Work";
-const BOOTSTRAP_BASE_URL = "https://openwork-poc.example.test";
+const BOOTSTRAP_BASE_URL = "https://micx-poc.example.test";
 const SEED_MARKER = `debug-nuke-seed-${RUN_TAG}`;
 const FAKE_AUTH_TOKEN = `eval-fake-token-${RUN_TAG}`;
-const LOCKER_SCRIPT_NAME = `openwork-nuke-locker-${RUN_TAG}.ps1`;
-const LEGACY_ORCHESTRATOR_DIR_NAME = ["openwork", "orchestrator"].join("-");
+const LOCKER_SCRIPT_NAME = `micx-nuke-locker-${RUN_TAG}.ps1`;
+const LEGACY_ORCHESTRATOR_DIR_NAME = ["micx", "orchestrator"].join("-");
 const LEGACY_ORCHESTRATOR_AUTH_FILE = `${LEGACY_ORCHESTRATOR_DIR_NAME}-auth.json`;
 const paths = buildWindowsPaths(WIN_PROFILE);
 const WIN_PROFILE_USER = winBasename(WIN_PROFILE);
-const OUT_OF_BAND_BOOT_TASK_NAME = `OpenWorkNukeRetry-${RUN_TAG}`;
-const OUT_OF_BAND_BOOT_CMD_PATH = winJoin(paths.windowsTemp, `openwork-nuke-retry-${RUN_TAG}.cmd`);
+const OUT_OF_BAND_BOOT_TASK_NAME = `MicxNukeRetry-${RUN_TAG}`;
+const OUT_OF_BAND_BOOT_CMD_PATH = winJoin(paths.windowsTemp, `micx-nuke-retry-${RUN_TAG}.cmd`);
 let currentCdpUrl = CDP_URL;
 let currentInternalPort = INITIAL_INTERNAL_CDP_PORT;
 let currentRelayPort = null;
@@ -81,18 +81,18 @@ function winBasename(path) {
 function buildWindowsPaths(profile) {
   const appData = winJoin(profile, "AppData", "Roaming");
   const localAppData = winJoin(profile, "AppData", "Local");
-  const configHome = winJoin(localAppData, "openwork");
-  const appDataOpenwork = winJoin(appData, "openwork");
-  const userData = winJoin(appData, "com.differentai.openwork");
+  const configHome = winJoin(localAppData, "micx");
+  const appDataMicx = winJoin(appData, "micx");
+  const userData = winJoin(appData, "com.differentai.micx");
   const opencode = winJoin(appData, "opencode");
-  const orchestrator = winJoin(profile, ".openwork", LEGACY_ORCHESTRATOR_DIR_NAME);
+  const orchestrator = winJoin(profile, ".micx", LEGACY_ORCHESTRATOR_DIR_NAME);
   const localShareOpencode = winJoin(profile, ".local", "share", "opencode");
   const cacheOpencode = winJoin(profile, ".cache", "opencode");
   return {
     appData,
     localAppData,
     configHome,
-    appDataOpenwork,
+    appDataMicx,
     userData,
     opencode,
     orchestrator,
@@ -267,10 +267,10 @@ do {
     $name=$null
     $alive=$false
     try { $proc=Get-Process -Id $pidValue -ErrorAction Stop; $name=$proc.ProcessName; $alive=$true } catch {}
-    $isOpenWork=$alive -and $name -eq 'OpenWork'
-    $last += [pscustomobject][ordered]@{ port=[int]$conn.LocalPort; localAddress=[string]$conn.LocalAddress; pid=$pidValue; processName=$name; processAlive=$alive; isOpenWork=$isOpenWork }
+    $isMicx=$alive -and $name -eq 'Micx'
+    $last += [pscustomobject][ordered]@{ port=[int]$conn.LocalPort; localAddress=[string]$conn.LocalAddress; pid=$pidValue; processName=$name; processAlive=$alive; isMicx=$isMicx }
   }
-  $match=@($last | Where-Object { $_.isOpenWork -and $_.port -ne $exclude } | Sort-Object port | Select-Object -First 1)
+  $match=@($last | Where-Object { $_.isMicx -and $_.port -ne $exclude } | Sort-Object port | Select-Object -First 1)
   if($match.Count -gt 0){
     $result=[ordered]@{ found=$true; port=[int]$match[0].port; pid=[int]$match[0].pid; processName=[string]$match[0].processName; excludedPort=$exclude; candidates=$last }
     Write-Output ($result | ConvertTo-Json -Depth 6 -Compress)
@@ -335,7 +335,7 @@ function discoverAndRelayCdp(ctx, label, previousPort) {
   });
   ctx.output(`${label} cdp-discovery-json`, JSON.stringify(discovery, null, 2));
   if (discovery?.found !== true) {
-    throw new Error(`${label}: no active OpenWork.exe CDP listener found on ${CDP_DISCOVERY_PORTS.join(", ")} excluding ${previousPort}.`);
+    throw new Error(`${label}: no active Micx.exe CDP listener found on ${CDP_DISCOVERY_PORTS.join(", ")} excluding ${previousPort}.`);
   }
   const internalPort = safeTcpPort(discovery.port);
   if (!internalPort) throw new Error(`${label}: invalid discovered CDP port ${JSON.stringify(discovery.port)}.`);
@@ -378,9 +378,9 @@ async function attachApp(ctx, timeoutMs = 90_000) {
   throw new Error(`Timed out after ${timeoutMs}ms attaching to ${currentCdpUrl}: ${lastError?.message ?? "unknown error"}`);
 }
 
-async function waitForAppShell(ctx, label = "OpenWork renderer") {
+async function waitForAppShell(ctx, label = "Micx renderer") {
   await ctx.waitFor("document.readyState === 'complete'", { timeoutMs: 60_000, label: `${label} document complete` });
-  await ctx.waitFor("Boolean(window.__OPENWORK_ELECTRON__)", { timeoutMs: 60_000, label: `${label} Electron bridge` });
+  await ctx.waitFor("Boolean(window.__MICX_ELECTRON__)", { timeoutMs: 60_000, label: `${label} Electron bridge` });
 }
 
 async function waitForRendererDisconnect(ctx, label, timeoutMs = 120_000) {
@@ -426,39 +426,39 @@ async function bootOutOfBandForLockedRetry(ctx, executablePath) {
 async function enableRendererState(ctx, options = {}) {
   const includePreferences = options.includePreferences !== false;
   await ctx.eval(`(() => {
-    localStorage.setItem('openwork.developerMode', '1');
-    localStorage.setItem('openwork.den.authToken', ${JSON.stringify(FAKE_AUTH_TOKEN)});
-    localStorage.setItem('openwork.den.activeOrgId', 'org_eval_debug_nuke');
-    localStorage.setItem('openwork.den.activeOrgSlug', 'debug-nuke');
-    localStorage.setItem('openwork.den.activeOrgName', 'Debug Nuke Eval');
-    localStorage.setItem('openwork.react.settings.theme-mode', 'light');
+    localStorage.setItem('micx.developerMode', '1');
+    localStorage.setItem('micx.den.authToken', ${JSON.stringify(FAKE_AUTH_TOKEN)});
+    localStorage.setItem('micx.den.activeOrgId', 'org_eval_debug_nuke');
+    localStorage.setItem('micx.den.activeOrgSlug', 'debug-nuke');
+    localStorage.setItem('micx.den.activeOrgName', 'Debug Nuke Eval');
+    localStorage.setItem('micx.react.settings.theme-mode', 'light');
     if (${includePreferences ? "true" : "false"}) {
-      localStorage.setItem('openwork.preferences', JSON.stringify({ hasCompletedOnboarding: true, seededBy: ${JSON.stringify(FLOW_ID)}, runTag: ${JSON.stringify(RUN_TAG)} }));
+      localStorage.setItem('micx.preferences', JSON.stringify({ hasCompletedOnboarding: true, seededBy: ${JSON.stringify(FLOW_ID)}, runTag: ${JSON.stringify(RUN_TAG)} }));
     }
     return true;
   })()`);
   const marker = `debug-nuke-reload-${Date.now()}`;
   await ctx.eval(`(() => { window.__debugNukeReloadMarker = ${JSON.stringify(marker)}; location.reload(); return true; })()`);
   await ctx.waitFor(
-    `window.__debugNukeReloadMarker !== ${JSON.stringify(marker)} && document.readyState === 'complete' && Boolean(window.__OPENWORK_ELECTRON__)`,
+    `window.__debugNukeReloadMarker !== ${JSON.stringify(marker)} && document.readyState === 'complete' && Boolean(window.__MICX_ELECTRON__)`,
     { timeoutMs: 60_000, label: "renderer reload after eval storage seed" },
   );
   const authSnapshot = await ctx.eval(`(() => {
-    localStorage.setItem('openwork.den.authToken', ${JSON.stringify(FAKE_AUTH_TOKEN)});
-    localStorage.setItem('openwork.den.activeOrgId', 'org_eval_debug_nuke');
-    localStorage.setItem('openwork.den.activeOrgSlug', 'debug-nuke');
-    localStorage.setItem('openwork.den.activeOrgName', 'Debug Nuke Eval');
-    const token = localStorage.getItem('openwork.den.authToken');
+    localStorage.setItem('micx.den.authToken', ${JSON.stringify(FAKE_AUTH_TOKEN)});
+    localStorage.setItem('micx.den.activeOrgId', 'org_eval_debug_nuke');
+    localStorage.setItem('micx.den.activeOrgSlug', 'debug-nuke');
+    localStorage.setItem('micx.den.activeOrgName', 'Debug Nuke Eval');
+    const token = localStorage.getItem('micx.den.authToken');
     return {
       authTokenPresent: Boolean(token),
       authTokenMatches: token === ${JSON.stringify(FAKE_AUTH_TOKEN)},
       authToken: token ? '<seeded>' : null,
-      activeOrgId: localStorage.getItem('openwork.den.activeOrgId'),
-      activeOrgSlug: localStorage.getItem('openwork.den.activeOrgSlug'),
-      activeOrgName: localStorage.getItem('openwork.den.activeOrgName'),
+      activeOrgId: localStorage.getItem('micx.den.activeOrgId'),
+      activeOrgSlug: localStorage.getItem('micx.den.activeOrgSlug'),
+      activeOrgName: localStorage.getItem('micx.den.activeOrgName'),
     };
   })()`);
-  witness(ctx, authSnapshot.authTokenMatches === true, "Renderer localStorage accepted the seeded fake openwork.den.authToken after reload", authSnapshot);
+  witness(ctx, authSnapshot.authTokenMatches === true, "Renderer localStorage accepted the seeded fake micx.den.authToken after reload", authSnapshot);
   witness(ctx, authSnapshot.activeOrgId === "org_eval_debug_nuke", "Renderer localStorage accepted the seeded active organization after reload", authSnapshot);
   return authSnapshot;
 }
@@ -513,7 +513,7 @@ function bootstrapFixture() {
     baseUrl: BOOTSTRAP_BASE_URL,
     requireSignin: true,
     brandAppName: BRAND_APP_NAME,
-    brandIconUrl: "https://openwork-poc.example.test/icon.png",
+    brandIconUrl: "https://micx-poc.example.test/icon.png",
     seedMarker: SEED_MARKER,
     runTag: RUN_TAG,
     handoff: {
@@ -553,22 +553,22 @@ function bootstrapFixture() {
   };
 }
 
-function seedOpenworkConfigAndUserDataScript() {
+function seedMicxConfigAndUserDataScript() {
   return `
 $profilePath=${psQuote(WIN_PROFILE)}
 $userData=${psQuote(paths.userData)}
-$appOpenwork=${psQuote(paths.appDataOpenwork)}
+$appMicx=${psQuote(paths.appDataMicx)}
 $configHome=${psQuote(paths.configHome)}
-$dirs=@($userData,$appOpenwork,$configHome)
+$dirs=@($userData,$appMicx,$configHome)
 foreach($dir in $dirs){ New-Item -ItemType Directory -Force -Path $dir | Out-Null }
 Set-Content -Path (Join-Path $userData 'eval-userdata-marker.txt') -Value ${psQuote(`delete-me-userdata ${SEED_MARKER} ${RUN_TAG}`)} -Encoding UTF8
-Set-Content -Path (Join-Path $appOpenwork 'server.json') -Value ${seededJson({ server: "dummy" })} -Encoding UTF8
-Set-Content -Path (Join-Path $appOpenwork 'env.json') -Value ${seededJson({ APPDATA_ENV: "dummy" })} -Encoding UTF8
-Set-Content -Path (Join-Path $appOpenwork 'tokens.json') -Value ${seededJson({ APPDATA_TOKEN: "dummy" })} -Encoding UTF8
-[IO.File]::WriteAllBytes((Join-Path $appOpenwork 'runtime.sqlite'), [Text.Encoding]::UTF8.GetBytes('dummy appdata runtime db ${SEED_MARKER} ${RUN_TAG}'))
+Set-Content -Path (Join-Path $appMicx 'server.json') -Value ${seededJson({ server: "dummy" })} -Encoding UTF8
+Set-Content -Path (Join-Path $appMicx 'env.json') -Value ${seededJson({ APPDATA_ENV: "dummy" })} -Encoding UTF8
+Set-Content -Path (Join-Path $appMicx 'tokens.json') -Value ${seededJson({ APPDATA_TOKEN: "dummy" })} -Encoding UTF8
+[IO.File]::WriteAllBytes((Join-Path $appMicx 'runtime.sqlite'), [Text.Encoding]::UTF8.GetBytes('dummy appdata runtime db ${SEED_MARKER} ${RUN_TAG}'))
 Set-Content -Path (Join-Path $configHome 'env.json') -Value ${seededJson({ LOCAL_ENV: "dummy" })} -Encoding UTF8
 Set-Content -Path (Join-Path $configHome 'tokens.json') -Value ${seededJson({ LOCAL_TOKEN: "dummy" })} -Encoding UTF8
-$result=[ordered]@{ profile=$profilePath; userData=$userData; appOpenwork=$appOpenwork; configHome=$configHome }
+$result=[ordered]@{ profile=$profilePath; userData=$userData; appMicx=$appMicx; configHome=$configHome }
 Write-Output ($result | ConvertTo-Json -Depth 4 -Compress)
 `;
 }
@@ -623,7 +623,7 @@ Write-Output ($result | ConvertTo-Json -Depth 6 -Compress)
 function fixtureProbeScript() {
   return `
 $paths=@{
-  userData=${psQuote(paths.userData)}; opencode=${psQuote(paths.opencode)}; appOpenwork=${psQuote(paths.appDataOpenwork)}; configHome=${psQuote(paths.configHome)}; orchestrator=${psQuote(paths.orchestrator)}; localShareOpencode=${psQuote(paths.localShareOpencode)}; cacheOpencode=${psQuote(paths.cacheOpencode)}; bootstrap=${psQuote(paths.bootstrap)}
+  userData=${psQuote(paths.userData)}; opencode=${psQuote(paths.opencode)}; appMicx=${psQuote(paths.appDataMicx)}; configHome=${psQuote(paths.configHome)}; orchestrator=${psQuote(paths.orchestrator)}; localShareOpencode=${psQuote(paths.localShareOpencode)}; cacheOpencode=${psQuote(paths.cacheOpencode)}; bootstrap=${psQuote(paths.bootstrap)}
 }
 $checks=[ordered]@{}
 foreach($name in $paths.Keys){ $checks[$name]=[ordered]@{ path=$paths[$name]; exists=(Test-Path -LiteralPath $paths[$name]) } }
@@ -631,10 +631,10 @@ $checks['opencode']['auth']=Test-Path -LiteralPath (Join-Path $paths.opencode 'a
 $checks['opencode']['mcpAuth']=Test-Path -LiteralPath (Join-Path $paths.opencode 'mcp-auth.json')
 $checks['opencode']['db']=Test-Path -LiteralPath (Join-Path $paths.opencode 'opencode.db')
 $checks['userData']['marker']=Test-Path -LiteralPath (Join-Path $paths.userData 'eval-userdata-marker.txt')
-$checks['appOpenwork']['server']=Test-Path -LiteralPath (Join-Path $paths.appOpenwork 'server.json')
-$checks['appOpenwork']['env']=Test-Path -LiteralPath (Join-Path $paths.appOpenwork 'env.json')
-$checks['appOpenwork']['tokens']=Test-Path -LiteralPath (Join-Path $paths.appOpenwork 'tokens.json')
-$checks['appOpenwork']['runtime']=Test-Path -LiteralPath (Join-Path $paths.appOpenwork 'runtime.sqlite')
+$checks['appMicx']['server']=Test-Path -LiteralPath (Join-Path $paths.appMicx 'server.json')
+$checks['appMicx']['env']=Test-Path -LiteralPath (Join-Path $paths.appMicx 'env.json')
+$checks['appMicx']['tokens']=Test-Path -LiteralPath (Join-Path $paths.appMicx 'tokens.json')
+$checks['appMicx']['runtime']=Test-Path -LiteralPath (Join-Path $paths.appMicx 'runtime.sqlite')
 $checks['configHome']['env']=Test-Path -LiteralPath (Join-Path $paths.configHome 'env.json')
 $checks['configHome']['tokens']=Test-Path -LiteralPath (Join-Path $paths.configHome 'tokens.json')
 $checks['configHome']['bootstrap']=Test-Path -LiteralPath $paths.bootstrap
@@ -651,14 +651,14 @@ function N($p){if(Test-Path -LiteralPath $p){@(Get-ChildItem -LiteralPath $p -Fo
 function S($r,$n){$p=Join-Path $r $n;$e=Test-Path -LiteralPath $p;$m=$false;$t=$false;if($e){try{$x=[IO.File]::ReadAllText($p);$m=$x.Contains($sm);$t=$x.Contains($rt)}catch{}}[ordered]@{name=$n;exists=$e;containsSeedMarker=$m;rawContainsRunTag=$t}}
 function SS($r,$ns){@($ns|%{S $r $_})}
 $sm=${psQuote(SEED_MARKER)};$rt=${psQuote(RUN_TAG)}
-$u=${psQuote(paths.userData)};$o=${psQuote(paths.opencode)};$a=${psQuote(paths.appDataOpenwork)};$c=${psQuote(paths.configHome)}
+$u=${psQuote(paths.userData)};$o=${psQuote(paths.opencode)};$a=${psQuote(paths.appDataMicx)};$c=${psQuote(paths.configHome)}
 $r=${psQuote(paths.orchestrator)};$s=${psQuote(paths.localShareOpencode)};$k=${psQuote(paths.cacheOpencode)};$p=${psQuote(paths.pending)}
-$appOpenworkSeeded=SS $a @('server.json','env.json','tokens.json','runtime.sqlite')
+$appMicxSeeded=SS $a @('server.json','env.json','tokens.json','runtime.sqlite')
 $result=[ordered]@{
   userData=[ordered]@{path=$u;exists=(Test-Path -LiteralPath $u);markerExists=(Test-Path -LiteralPath (Join-Path $u 'eval-userdata-marker.txt'));seededFiles=(SS $u @('eval-userdata-marker.txt'));entries=(N $u)}
   opencode=[ordered]@{path=$o;exists=(Test-Path -LiteralPath $o);seededFiles=(SS $o @('auth.json','mcp-auth.json','opencode.db'));entries=(N $o)}
-  appOpenwork=[ordered]@{path=$a;exists=(Test-Path -LiteralPath $a);seededFiles=$appOpenworkSeeded;entries=(N $a)}
-  localOpenwork=[ordered]@{path=$c;exists=(Test-Path -LiteralPath $c);entries=(N $c);seededFiles=(SS $c @('env.json','tokens.json'));pendingExists=(Test-Path -LiteralPath $p);envExists=(Test-Path -LiteralPath (Join-Path $c 'env.json'));tokensExists=(Test-Path -LiteralPath (Join-Path $c 'tokens.json'))}
+  appMicx=[ordered]@{path=$a;exists=(Test-Path -LiteralPath $a);seededFiles=$appMicxSeeded;entries=(N $a)}
+  localMicx=[ordered]@{path=$c;exists=(Test-Path -LiteralPath $c);entries=(N $c);seededFiles=(SS $c @('env.json','tokens.json'));pendingExists=(Test-Path -LiteralPath $p);envExists=(Test-Path -LiteralPath (Join-Path $c 'env.json'));tokensExists=(Test-Path -LiteralPath (Join-Path $c 'tokens.json'))}
   orchestrator=[ordered]@{path=$r;exists=(Test-Path -LiteralPath $r);seededFiles=(SS $r @(${psQuote(LEGACY_ORCHESTRATOR_AUTH_FILE)}));entries=(N $r)}
   localShareOpencode=[ordered]@{path=$s;exists=(Test-Path -LiteralPath $s);seededFiles=(SS $s @('data-marker.txt'));entries=(N $s)}
   cacheOpencode=[ordered]@{path=$k;exists=(Test-Path -LiteralPath $k);seededFiles=(SS $k @('cache-marker.txt'));entries=(N $k)}
@@ -714,7 +714,7 @@ function latestReceiptProbeScript() {
   return `
 $tempCandidates=@(${psQuote(paths.temp)},${psQuote(paths.windowsTemp)}) | Select-Object -Unique
 $receipts=@()
-foreach($dir in $tempCandidates){ if(Test-Path -LiteralPath $dir){ $receipts += @(Get-ChildItem -LiteralPath $dir -Filter 'openwork-nuke-receipt-*.json' -File -ErrorAction SilentlyContinue) } }
+foreach($dir in $tempCandidates){ if(Test-Path -LiteralPath $dir){ $receipts += @(Get-ChildItem -LiteralPath $dir -Filter 'micx-nuke-receipt-*.json' -File -ErrorAction SilentlyContinue) } }
 $latest=$receipts | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
 $receiptRaw=''
 $deletedCount=0
@@ -742,7 +742,7 @@ $lockedPath=${psQuote(paths.localRuntimeSqlite)}
 $pendingPath=${psQuote(paths.pending)}
 $tempCandidates=@(${psQuote(paths.temp)},${psQuote(paths.windowsTemp)}) | Select-Object -Unique
 $receipts=@()
-foreach($dir in $tempCandidates){ if(Test-Path -LiteralPath $dir){ $receipts += @(Get-ChildItem -LiteralPath $dir -Filter 'openwork-nuke-receipt-*.json' -File -ErrorAction SilentlyContinue) } }
+foreach($dir in $tempCandidates){ if(Test-Path -LiteralPath $dir){ $receipts += @(Get-ChildItem -LiteralPath $dir -Filter 'micx-nuke-receipt-*.json' -File -ErrorAction SilentlyContinue) } }
 $latest=$receipts | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
 $receiptRaw=''
 $receiptPendingRetry=@()
@@ -852,9 +852,9 @@ if(-not $stopped -or $existsAfter){ exit 46 }
 `;
 }
 
-function discoverMainOpenWorkExecutableScript() {
+function discoverMainMicxExecutableScript() {
   return `
-$processes=@(Get-CimInstance Win32_Process -Filter "Name = 'OpenWork.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.ExecutablePath -and ($null -eq $_.CommandLine -or $_.CommandLine -notmatch '--type=') } | Sort-Object ProcessId)
+$processes=@(Get-CimInstance Win32_Process -Filter "Name = 'Micx.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.ExecutablePath -and ($null -eq $_.CommandLine -or $_.CommandLine -notmatch '--type=') } | Sort-Object ProcessId)
 $selected=$processes | Select-Object -First 1
 $candidates=@($processes | ForEach-Object { [ordered]@{ processId=[int]$_.ProcessId; executablePath=[string]$_.ExecutablePath; commandLine=[string]$_.CommandLine } })
 $exePath=$null
@@ -874,21 +874,21 @@ $cmdPath=${psQuote(OUT_OF_BAND_BOOT_CMD_PATH)}
 $runUser=${psQuote(WIN_PROFILE_USER)}
 $stopped=@();$remaining=@();$createOut=@();$runOut=@();$createExit=$null;$runExit=$null;$cmdText='';$errorText=''
 if(-not $exe -or -not (Test-Path -LiteralPath $exe)){
-  $result=[ordered]@{ executablePath=$exe; executableExists=$false; error='OpenWork executable path missing before out-of-band boot' }
+  $result=[ordered]@{ executablePath=$exe; executableExists=$false; error='Micx executable path missing before out-of-band boot' }
   Write-Output ($result | ConvertTo-Json -Depth 4 -Compress)
   exit 53
 }
 try {
-  foreach($proc in @(Get-Process -Name OpenWork -ErrorAction SilentlyContinue)){
+  foreach($proc in @(Get-Process -Name Micx -ErrorAction SilentlyContinue)){
     $entry=[ordered]@{ pid=$proc.Id; stopped=$false; error='' }
     try { Stop-Process -Id $proc.Id -Force -ErrorAction Stop; $entry.stopped=$true } catch { $entry.error=$_.Exception.Message }
     $stopped += [pscustomobject]$entry
   }
   Start-Sleep -Milliseconds 1000
-  foreach($proc in @(Get-Process -Name OpenWork -ErrorAction SilentlyContinue)){
+  foreach($proc in @(Get-Process -Name Micx -ErrorAction SilentlyContinue)){
     $remaining += [pscustomobject][ordered]@{ pid=$proc.Id }
   }
-  $cmdText=('@echo off','set OPENWORK_ELECTRON_REMOTE_DEBUG_PORT=','start "" "' + $exe + '"') -join [Environment]::NewLine
+  $cmdText=('@echo off','set MICX_ELECTRON_REMOTE_DEBUG_PORT=','start "" "' + $exe + '"') -join [Environment]::NewLine
   [IO.File]::WriteAllText($cmdPath, $cmdText + [Environment]::NewLine, [Text.UTF8Encoding]::new($false))
   $createArgs=@('/create','/f','/sc','once','/st','23:59','/ru',$runUser,'/it','/rl','highest','/tn',$taskName,'/tr',$cmdPath)
   $createOut=@(& schtasks @createArgs 2>&1 | ForEach-Object { [string]$_ })
@@ -951,7 +951,7 @@ function fileContainsSeed(entry) {
 }
 
 function seededMarkerSurvivors(data) {
-  const rootNames = ["userData", "opencode", "appOpenwork", "localOpenwork", "orchestrator", "localShareOpencode", "cacheOpencode"];
+  const rootNames = ["userData", "opencode", "appMicx", "localMicx", "orchestrator", "localShareOpencode", "cacheOpencode"];
   return rootNames.flatMap((rootName) =>
     arrayValue(data[rootName]?.seededFiles)
       .filter(fileContainsSeed)
@@ -971,49 +971,49 @@ function assertSeededDirectoryListing(ctx, listing) {
   witness(ctx, hasChild(listing.opencode, "auth.json"), "Seeded opencode directory lists auth.json", listing.opencode);
   witness(ctx, hasChild(listing.opencode, "mcp-auth.json"), "Seeded opencode directory lists mcp-auth.json", listing.opencode);
   witness(ctx, hasChild(listing.opencode, "opencode.db"), "Seeded opencode directory lists opencode.db", listing.opencode);
-  witness(ctx, listing.configHome?.exists === true, "Seeded %LOCALAPPDATA%\\openwork root exists", listing.configHome);
-  witness(ctx, hasChild(listing.configHome, "env.json"), "Seeded LOCALAPPDATA openwork directory lists env.json", listing.configHome);
-  witness(ctx, hasChild(listing.configHome, "tokens.json"), "Seeded LOCALAPPDATA openwork directory lists tokens.json", listing.configHome);
-  witness(ctx, hasChild(listing.configHome, "desktop-bootstrap.json"), "Seeded LOCALAPPDATA openwork directory lists desktop-bootstrap.json", listing.configHome);
+  witness(ctx, listing.configHome?.exists === true, "Seeded %LOCALAPPDATA%\\micx root exists", listing.configHome);
+  witness(ctx, hasChild(listing.configHome, "env.json"), "Seeded LOCALAPPDATA micx directory lists env.json", listing.configHome);
+  witness(ctx, hasChild(listing.configHome, "tokens.json"), "Seeded LOCALAPPDATA micx directory lists tokens.json", listing.configHome);
+  witness(ctx, hasChild(listing.configHome, "desktop-bootstrap.json"), "Seeded LOCALAPPDATA micx directory lists desktop-bootstrap.json", listing.configHome);
   witness(ctx, listing.orchestrator?.exists === true, "Seeded profile legacy runtime root exists", listing.orchestrator);
   witness(ctx, hasChild(listing.orchestrator, LEGACY_ORCHESTRATOR_AUTH_FILE), "Seeded legacy runtime directory lists its auth file", listing.orchestrator);
-  witness(ctx, listing.userData?.exists === true, "Seeded %APPDATA%\\com.differentai.openwork userData root exists", listing.userData);
+  witness(ctx, listing.userData?.exists === true, "Seeded %APPDATA%\\com.differentai.micx userData root exists", listing.userData);
   witness(ctx, hasChild(listing.userData, "eval-userdata-marker.txt"), "Seeded userData directory lists eval-userdata-marker.txt", listing.userData);
 }
 
 function assertPostFirstNuke(ctx, data) {
-  const localEntries = arrayValue(data.localOpenwork?.entries).map(String);
+  const localEntries = arrayValue(data.localMicx?.entries).map(String);
   const unexpectedLocal = localEntries.filter((entry) => entry !== "desktop-bootstrap.json");
-  const seededAppOpenwork = arrayValue(data.appOpenwork?.seededFiles);
-  const appOpenworkHardDeleteNames = ["server.json", "env.json", "runtime.sqlite"];
-  const appOpenworkHardDeleteSurvivors = seededAppOpenwork
-    .filter((entry) => appOpenworkHardDeleteNames.includes(String(entry?.name)) && entry?.exists === true)
+  const seededAppMicx = arrayValue(data.appMicx?.seededFiles);
+  const appMicxHardDeleteNames = ["server.json", "env.json", "runtime.sqlite"];
+  const appMicxHardDeleteSurvivors = seededAppMicx
+    .filter((entry) => appMicxHardDeleteNames.includes(String(entry?.name)) && entry?.exists === true)
     .map((entry) => entry.name);
-  const appOpenworkMarkerSurvivors = seededAppOpenwork.filter(fileContainsSeed).map((entry) => entry.name);
+  const appMicxMarkerSurvivors = seededAppMicx.filter(fileContainsSeed).map((entry) => entry.name);
   const markerSurvivors = seededMarkerSurvivors(data);
   const bootstrapRaw = String(data.bootstrap?.raw ?? "");
   const bootstrap = data.bootstrap ?? {};
   const receipt = data.receipt ?? {};
 
-  witness(ctx, data.userData?.markerExists === false, "%APPDATA%\\com.differentai.openwork lost the seeded userData marker after relaunch", data.userData);
+  witness(ctx, data.userData?.markerExists === false, "%APPDATA%\\com.differentai.micx lost the seeded userData marker after relaunch", data.userData);
   witness(ctx, data.opencode?.exists === false, "%APPDATA%\\opencode is gone after the nuke", data.opencode);
-  witness(ctx, appOpenworkHardDeleteSurvivors.length === 0, "%APPDATA%\\openwork no longer contains seeded server/env/runtime files", data.appOpenwork);
-  witness(ctx, appOpenworkMarkerSurvivors.length === 0, "%APPDATA%\\openwork contains no seeded marker/runTag even if clean tokens.json is recreated", data.appOpenwork);
+  witness(ctx, appMicxHardDeleteSurvivors.length === 0, "%APPDATA%\\micx no longer contains seeded server/env/runtime files", data.appMicx);
+  witness(ctx, appMicxMarkerSurvivors.length === 0, "%APPDATA%\\micx contains no seeded marker/runTag even if clean tokens.json is recreated", data.appMicx);
   witness(ctx, markerSurvivors.length === 0, "No seeded marker or runTag survived in post-nuke seeded file probes", markerSurvivors);
-  witness(ctx, data.localOpenwork?.exists === true, "%LOCALAPPDATA%\\openwork survives only as the preserved config directory", data.localOpenwork);
-  witness(ctx, unexpectedLocal.length === 0, "%LOCALAPPDATA%\\openwork contains only desktop-bootstrap.json", localEntries);
-  witness(ctx, data.localOpenwork?.pendingExists === false, ".nuke-pending.json is absent after the unlocked nuke", data.localOpenwork);
-  witness(ctx, data.localOpenwork?.envExists === false && data.localOpenwork?.tokensExists === false, "Seeded LOCALAPPDATA env.json and tokens.json were removed", data.localOpenwork);
+  witness(ctx, data.localMicx?.exists === true, "%LOCALAPPDATA%\\micx survives only as the preserved config directory", data.localMicx);
+  witness(ctx, unexpectedLocal.length === 0, "%LOCALAPPDATA%\\micx contains only desktop-bootstrap.json", localEntries);
+  witness(ctx, data.localMicx?.pendingExists === false, ".nuke-pending.json is absent after the unlocked nuke", data.localMicx);
+  witness(ctx, data.localMicx?.envExists === false && data.localMicx?.tokensExists === false, "Seeded LOCALAPPDATA env.json and tokens.json were removed", data.localMicx);
   witness(ctx, data.bootstrap?.exists === true, "desktop-bootstrap.json still exists", data.bootstrap?.path);
   witness(ctx, bootstrap.parsedOk === true, "desktop-bootstrap.json parses as sanitized JSON", bootstrap);
-  witness(ctx, bootstrap.baseUrl === BOOTSTRAP_BASE_URL, "desktop-bootstrap.json keeps baseUrl https://openwork-poc.example.test", bootstrap);
+  witness(ctx, bootstrap.baseUrl === BOOTSTRAP_BASE_URL, "desktop-bootstrap.json keeps baseUrl https://micx-poc.example.test", bootstrap);
   witness(ctx, bootstrap.requireSignin === true, "desktop-bootstrap.json keeps requireSignin true", bootstrap);
   witness(ctx, bootstrap.brandAppName === BRAND_APP_NAME, `desktop-bootstrap.json keeps brandAppName ${BRAND_APP_NAME}`, bootstrap);
   witness(ctx, bootstrap.containsSecretGrant === false, "desktop-bootstrap.json no longer contains secret-grant", bootstrapRaw);
   witness(ctx, bootstrap.containsSecretToken === false, "desktop-bootstrap.json no longer contains secret-token", bootstrapRaw);
   witness(ctx, bootstrap.containsSeedMarker === false && bootstrap.rawContainsRunTag === false, "desktop-bootstrap.json no longer contains the seeded marker or runTag", bootstrap);
   witness(ctx, bootstrap.hasHandoff === false && bootstrap.hasClaimLinks === false && bootstrap.hasPrepared === false, "desktop-bootstrap.json strips handoff, claimLinks, and prepared", bootstrap);
-  witness(ctx, Number(receipt.deletedCount) > 0, "The newest openwork-nuke-receipt JSON has a non-empty deleted[]", data.receipt);
+  witness(ctx, Number(receipt.deletedCount) > 0, "The newest micx-nuke-receipt JSON has a non-empty deleted[]", data.receipt);
   state.firstReceiptPath = String(data.receipt?.path ?? "");
 }
 
@@ -1026,16 +1026,16 @@ export default {
   precondition: async (ctx) => {
     const missing = ENV_NAMES.filter((name) => !ctx.env[name]?.trim());
     if (missing.length > 0) {
-      throw new Error(`debug-nuke-fresh-start requires a running remote Windows packaged app. Missing env: ${missing.join(", ")}. Set OPENWORK_EVAL_WIN_SANDBOX_ID, OPENWORK_EVAL_CDP_URL, and OPENWORK_EVAL_WIN_PROFILE.`);
+      throw new Error(`debug-nuke-fresh-start requires a running remote Windows packaged app. Missing env: ${missing.join(", ")}. Set MICX_EVAL_WIN_SANDBOX_ID, MICX_EVAL_CDP_URL, and MICX_EVAL_WIN_PROFILE.`);
     }
     if (!/^[a-zA-Z]:\\/.test(WIN_PROFILE)) {
-      throw new Error(`OPENWORK_EVAL_WIN_PROFILE must be an absolute Windows profile path, got ${JSON.stringify(WIN_PROFILE)}.`);
+      throw new Error(`MICX_EVAL_WIN_PROFILE must be an absolute Windows profile path, got ${JSON.stringify(WIN_PROFILE)}.`);
     }
     ctx.output("debug-nuke-fresh-start-env", JSON.stringify({
       sandboxId: SANDBOX_ID,
       initialCdpUrl: CDP_URL,
       initialInternalPort: INITIAL_INTERNAL_CDP_PORT,
-      optionalInitialPortEnv: process.env.OPENWORK_EVAL_INITIAL_CDP_PORT?.trim() || null,
+      optionalInitialPortEnv: process.env.MICX_EVAL_INITIAL_CDP_PORT?.trim() || null,
       winProfile: WIN_PROFILE,
       discoveryPorts: CDP_DISCOVERY_PORTS,
     }, null, 2));
@@ -1047,14 +1047,14 @@ export default {
     {
       name: "Frame 1 — A tester's machine is full of real state",
       run: async (ctx) => {
-        await ctx.prove("The Windows tester profile has seeded OpenWork, OpenCode, bootstrap, orchestrator, Chromium, and renderer state", {
+        await ctx.prove("The Windows tester profile has seeded Micx, OpenCode, bootstrap, orchestrator, Chromium, and renderer state", {
           voiceover: vo[0],
           action: async () => {
             await attachApp(ctx);
-            const openworkSeed = daytonaPowerShellJson(ctx, "seed-openwork-config-and-userdata-state", seedOpenworkConfigAndUserDataScript());
+            const micxSeed = daytonaPowerShellJson(ctx, "seed-micx-config-and-userdata-state", seedMicxConfigAndUserDataScript());
             const bootstrapSeed = daytonaPowerShellJson(ctx, "seed-secret-desktop-bootstrap", seedDesktopBootstrapScript());
             const opencodeSeed = daytonaPowerShellJson(ctx, "seed-opencode-and-orchestrator-state", seedOpencodeAndOrchestratorScript());
-            ctx.output("seeded path summary", JSON.stringify({ openworkSeed, bootstrapSeed, opencodeSeed }, null, 2));
+            ctx.output("seeded path summary", JSON.stringify({ micxSeed, bootstrapSeed, opencodeSeed }, null, 2));
             const seededListing = daytonaPowerShellJson(ctx, "seeded-directories-listing", seededDirectoriesListingScript(), { attempts: 2 });
             ctx.output("seeded-directories-listing-json", JSON.stringify(seededListing, null, 2));
             assertSeededDirectoryListing(ctx, seededListing);
@@ -1067,25 +1067,25 @@ export default {
             witness(ctx, probe.opencode?.auth === true, "%APPDATA%\\opencode\\auth.json exists", probe.opencode);
             witness(ctx, probe.opencode?.mcpAuth === true, "%APPDATA%\\opencode\\mcp-auth.json exists", probe.opencode);
             witness(ctx, probe.opencode?.db === true, "%APPDATA%\\opencode\\opencode.db exists", probe.opencode);
-            witness(ctx, probe.userData?.marker === true, "%APPDATA%\\com.differentai.openwork seeded marker exists", probe.userData);
-            witness(ctx, probe.appOpenwork?.server === true && probe.appOpenwork?.env === true && probe.appOpenwork?.tokens === true && probe.appOpenwork?.runtime === true, "%APPDATA%\\openwork seeded server/env/tokens/runtime files exist", probe.appOpenwork);
-            witness(ctx, probe.configHome?.env === true && probe.configHome?.tokens === true, "%LOCALAPPDATA%\\openwork env.json and tokens.json exist", probe.configHome);
-            witness(ctx, probe.bootstrap?.exists === true, "%LOCALAPPDATA%\\openwork\\desktop-bootstrap.json exists", probe.bootstrap);
-            witness(ctx, probe.configHome?.bootstrap === true, "%LOCALAPPDATA%\\openwork\\desktop-bootstrap.json exists in configHome probe", probe.configHome);
+            witness(ctx, probe.userData?.marker === true, "%APPDATA%\\com.differentai.micx seeded marker exists", probe.userData);
+            witness(ctx, probe.appMicx?.server === true && probe.appMicx?.env === true && probe.appMicx?.tokens === true && probe.appMicx?.runtime === true, "%APPDATA%\\micx seeded server/env/tokens/runtime files exist", probe.appMicx);
+            witness(ctx, probe.configHome?.env === true && probe.configHome?.tokens === true, "%LOCALAPPDATA%\\micx env.json and tokens.json exist", probe.configHome);
+            witness(ctx, probe.bootstrap?.exists === true, "%LOCALAPPDATA%\\micx\\desktop-bootstrap.json exists", probe.bootstrap);
+            witness(ctx, probe.configHome?.bootstrap === true, "%LOCALAPPDATA%\\micx\\desktop-bootstrap.json exists in configHome probe", probe.configHome);
             witness(ctx, probe.orchestrator?.auth === true, "profile legacy runtime auth exists", probe.orchestrator);
             witness(ctx, probe.localShareOpencode?.dataMarker === true, "profile .local\\share\\opencode data marker exists", probe.localShareOpencode);
             witness(ctx, probe.cacheOpencode?.cacheMarker === true, "profile .cache\\opencode cache marker exists", probe.cacheOpencode);
             const storage = await ctx.eval(`(() => {
-              const pick = ['openwork.preferences', 'openwork.developerMode', 'openwork.den.authToken'];
+              const pick = ['micx.preferences', 'micx.developerMode', 'micx.den.authToken'];
               const result = {};
               for (const key of pick) result[key] = localStorage.getItem(key);
-              result.allOpenworkKeys = Object.keys(localStorage).filter((key) => key.startsWith('openwork.')).sort();
+              result.allMicxKeys = Object.keys(localStorage).filter((key) => key.startsWith('micx.')).sort();
               return result;
             })()`);
-            witness(ctx, storage["openwork.developerMode"] === "1", "Renderer localStorage has openwork.developerMode = 1", storage);
-            witness(ctx, String(storage["openwork.preferences"] ?? "").includes("hasCompletedOnboarding"), "Renderer localStorage has openwork.preferences with hasCompletedOnboarding", storage);
-            witness(ctx, state.rendererSeedSnapshot?.authTokenMatches === true, "Renderer localStorage had the seeded fake openwork.den.authToken immediately after reload", state.rendererSeedSnapshot);
-            const redactedStorage = { ...storage, "openwork.den.authToken": storage["openwork.den.authToken"] ? "<seeded>" : null };
+            witness(ctx, storage["micx.developerMode"] === "1", "Renderer localStorage has micx.developerMode = 1", storage);
+            witness(ctx, String(storage["micx.preferences"] ?? "").includes("hasCompletedOnboarding"), "Renderer localStorage has micx.preferences with hasCompletedOnboarding", storage);
+            witness(ctx, state.rendererSeedSnapshot?.authTokenMatches === true, "Renderer localStorage had the seeded fake micx.den.authToken immediately after reload", state.rendererSeedSnapshot);
+            const redactedStorage = { ...storage, "micx.den.authToken": storage["micx.den.authToken"] ? "<seeded>" : null };
             ctx.output("renderer-localStorage-before-nuke", JSON.stringify(redactedStorage, null, 2));
           },
           screenshot: { name: "stateful-machine-before-nuke", requireText: ["Overview of all settings"], rejectText: ["Something went wrong"] },
@@ -1105,24 +1105,24 @@ export default {
             await ctx.expectText("Danger zone");
             await ctx.expectText("Nuke & fresh start");
             await ctx.expectText("Nuke local state and start fresh?");
-            await ctx.expectText("This removes local OpenWork, OpenCode, browser, token, runtime, cache, and legacy runtime state on this device.");
+            await ctx.expectText("This removes local Micx, OpenCode, browser, token, runtime, cache, and legacy runtime state on this device.");
             await ctx.expectText("WILL DELETE");
             await ctx.expectText("WILL SURVIVE");
             await ctx.expectText("Also delete bootstrap / organization server");
             await ctx.expectText("Type NUKE to confirm");
-            await ctx.expectText("Chromium storage cleared: default, persist:openwork-browser");
+            await ctx.expectText("Chromium storage cleared: default, persist:micx-browser");
             await ctx.expectText("Nuke & relaunch");
           },
           screenshot: {
             name: "debug-danger-zone-nuke-dialog",
             requireText: [
               "Nuke local state and start fresh?",
-              "This removes local OpenWork, OpenCode, browser, token, runtime, cache, and legacy runtime state on this device.",
+              "This removes local Micx, OpenCode, browser, token, runtime, cache, and legacy runtime state on this device.",
               "WILL DELETE",
               "WILL SURVIVE",
               "Also delete bootstrap / organization server",
               "Type NUKE to confirm",
-              "Chromium storage cleared: default, persist:openwork-browser",
+              "Chromium storage cleared: default, persist:micx-browser",
               "Nuke & relaunch",
             ],
           },
@@ -1144,21 +1144,21 @@ export default {
             await ctx.expectText(`Sign in to ${BRAND_APP_NAME}`);
             await ctx.expectText("Paste sign-in code");
             const storage = await ctx.eval(`(() => {
-              const preferencesRaw = localStorage.getItem('openwork.preferences');
+              const preferencesRaw = localStorage.getItem('micx.preferences');
               let preferencesParsed = null;
               try { preferencesParsed = preferencesRaw ? JSON.parse(preferencesRaw) : null; } catch {}
               return {
                 preferences: preferencesRaw,
                 preferencesParsed,
-                developerMode: localStorage.getItem('openwork.developerMode'),
-                authToken: localStorage.getItem('openwork.den.authToken'),
-                openworkKeys: Object.keys(localStorage).filter((key) => key.startsWith('openwork.')).sort(),
+                developerMode: localStorage.getItem('micx.developerMode'),
+                authToken: localStorage.getItem('micx.den.authToken'),
+                micxKeys: Object.keys(localStorage).filter((key) => key.startsWith('micx.')).sort(),
               };
             })()`);
-            witness(ctx, storage.authToken === null, "Seeded openwork.den.authToken is gone after Chromium storage clear", storage);
-            witness(ctx, storage.preferencesParsed?.seededBy === undefined && storage.preferencesParsed?.runTag === undefined, "openwork.preferences contains no seededBy or runTag after Chromium storage clear", storage);
-            witness(ctx, storage.preferencesParsed?.hasCompletedOnboarding !== true, "openwork.preferences does not preserve completed onboarding after Chromium storage clear", storage);
-            witness(ctx, storage.developerMode === null, "Seeded openwork.developerMode is gone after Chromium storage clear", storage);
+            witness(ctx, storage.authToken === null, "Seeded micx.den.authToken is gone after Chromium storage clear", storage);
+            witness(ctx, storage.preferencesParsed?.seededBy === undefined && storage.preferencesParsed?.runTag === undefined, "micx.preferences contains no seededBy or runTag after Chromium storage clear", storage);
+            witness(ctx, storage.preferencesParsed?.hasCompletedOnboarding !== true, "micx.preferences does not preserve completed onboarding after Chromium storage clear", storage);
+            witness(ctx, storage.developerMode === null, "Seeded micx.developerMode is gone after Chromium storage clear", storage);
             ctx.output("renderer-localStorage-after-first-nuke", JSON.stringify(storage, null, 2));
           },
           screenshot: {
@@ -1184,7 +1184,7 @@ export default {
             const bootstrap = daytonaPowerShellJson(ctx, "post-first-nuke-bootstrap-probe", postNukeBootstrapProbeScript(), { attempts: 2 });
             const receipt = daytonaPowerShellJson(ctx, "post-first-nuke-receipt-probe", latestReceiptProbeScript(), { attempts: 2 });
             const data = { ...roots, bootstrap, receipt };
-            ctx.output("post-first-nuke-directory-listing-json", JSON.stringify({ localOpenwork: roots.localOpenwork, opencode: roots.opencode }, null, 2));
+            ctx.output("post-first-nuke-directory-listing-json", JSON.stringify({ localMicx: roots.localMicx, opencode: roots.opencode }, null, 2));
             ctx.output("post-first-nuke-witness-json", JSON.stringify(data, null, 2));
             assertPostFirstNuke(ctx, data);
           },
@@ -1201,7 +1201,7 @@ export default {
             const lock = daytonaPowerShellJson(ctx, "start-exclusive-runtime-sqlite-lock", lockRuntimeScript());
             state.lockPid = Number(lock.pid) || 0;
             state.lockVerified = lock.locked === true;
-            witness(ctx, state.lockVerified, "PowerShell holds an exclusive FileShare.None handle on %LOCALAPPDATA%\\openwork\\runtime.sqlite", lock);
+            witness(ctx, state.lockVerified, "PowerShell holds an exclusive FileShare.None handle on %LOCALAPPDATA%\\micx\\runtime.sqlite", lock);
             state.rendererSeedSnapshot = await enableRendererState(ctx, { includePreferences: false });
             await openNukeDialog(ctx);
             await executeNukeFromDialog(ctx, "second nuke with locked runtime.sqlite");
@@ -1211,8 +1211,8 @@ export default {
             ctx.output("stop-runtime-sqlite-locker-json", JSON.stringify(state.killResult, null, 2));
             state.unlockProbe = daytonaPowerShellJson(ctx, "verify-runtime-sqlite-lock-released", unlockProbeScript(), { attempts: 2, timeoutMs: 30_000 });
             ctx.output("runtime-sqlite-unlock-probe", JSON.stringify(state.unlockProbe, null, 2));
-            state.executableProbe = daytonaPowerShellJson(ctx, "discover-main-openwork-executable-before-out-of-band-boot", discoverMainOpenWorkExecutableScript(), { timeoutMs: 30_000 });
-            ctx.output("main-openwork-executable-before-out-of-band-boot-json", JSON.stringify(state.executableProbe, null, 2));
+            state.executableProbe = daytonaPowerShellJson(ctx, "discover-main-micx-executable-before-out-of-band-boot", discoverMainMicxExecutableScript(), { timeoutMs: 30_000 });
+            ctx.output("main-micx-executable-before-out-of-band-boot-json", JSON.stringify(state.executableProbe, null, 2));
             await bootOutOfBandForLockedRetry(ctx, String(state.executableProbe?.executablePath ?? ""));
             state.afterBootGuard = daytonaPowerShellJson(ctx, "after-boot-guard-locked-path-probe", lockedStateScript(), { attempts: 2 });
             ctx.output("after-boot-guard-witness-json", JSON.stringify(state.afterBootGuard, null, 2));
@@ -1232,8 +1232,8 @@ export default {
             witness(ctx, hasPendingEvidence, "The pending retry file or newest receipt names the locked runtime.sqlite/config root", { pendingPaths, receiptPaths, pendingExists: afterLocked?.pendingExists });
             witness(ctx, state.killResult?.foundBefore === true && state.killResult?.stopped === true && state.killResult?.existsAfter === false, "Stop-Process terminated the detached PowerShell locker", state.killResult);
             witness(ctx, state.unlockProbe?.unlocked === true, "The runtime.sqlite exclusive handle was released before the retry boot", state.unlockProbe);
-            witness(ctx, state.executableProbe?.found === true && String(state.executableProbe?.executablePath ?? "").length > 0, "Harness discovered the main OpenWork.exe path before stopping the app", state.executableProbe);
-            witness(ctx, state.outOfBandBoot?.createExit === 0 && state.outOfBandBoot?.runExit === 0, "Interactive scheduled task launched a fresh OpenWork process without inherited remote debug port env", state.outOfBandBoot);
+            witness(ctx, state.executableProbe?.found === true && String(state.executableProbe?.executablePath ?? "").length > 0, "Harness discovered the main Micx.exe path before stopping the app", state.executableProbe);
+            witness(ctx, state.outOfBandBoot?.createExit === 0 && state.outOfBandBoot?.runExit === 0, "Interactive scheduled task launched a fresh Micx process without inherited remote debug port env", state.outOfBandBoot);
             witness(ctx, afterBoot?.pendingExists === false, "After the retry boot, .nuke-pending.json is gone", afterBoot);
             witness(ctx, afterBoot?.lockedExists === false, "After the retry boot, the formerly locked runtime.sqlite is gone", afterBoot);
           },

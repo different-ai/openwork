@@ -1,13 +1,13 @@
 import { fileURLToPath } from "node:url";
 import { expect, test } from "vitest";
-import { createAndSelectWorkspace, evalIn, waitFor } from "@openwork/behaviors";
-import { photoRoll, screenshot, validate } from "@openwork/fraimz";
-import { desktop } from "@openwork/hosts";
+import { createAndSelectWorkspace, evalIn, waitFor } from "@micx/behaviors";
+import { photoRoll, screenshot, validate } from "@micx/fraimz";
+import { desktop } from "@micx/hosts";
 
-const appSpecsEnabled = process.env.OPENWORK_EVAL_APP_SPECS === "1";
+const appSpecsEnabled = process.env.MICX_EVAL_APP_SPECS === "1";
 const title = appSpecsEnabled
   ? "Library shows readiness state tabs"
-  : "Library state tabs skipped: set OPENWORK_EVAL_APP_SPECS=1 to opt in";
+  : "Library state tabs skipped: set MICX_EVAL_APP_SPECS=1 to opt in";
 const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
 
 test.skipIf(!appSpecsEnabled)(title, async () => {

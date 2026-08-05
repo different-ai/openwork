@@ -2,7 +2,7 @@
  * Internal proof that stale engine-MCP failure evidence heals when live engine
  * status shows the managed cloud connection is already connected.
  *
- * The orchestrator supplies OPENWORK_EVAL_REPRO_COMMAND. That command runs the
+ * The orchestrator supplies MICX_EVAL_REPRO_COMMAND. That command runs the
  * real repro driver on the target environment and prints its final JSON as the
  * last stdout line.
  */
@@ -11,7 +11,7 @@ import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
 
 const FLOW_ID = "engine-mcp-evidence-heal";
 const DEFAULT_REPRO_TIMEOUT_MS = 300_000;
-const REQUIRED_ENV = ["OPENWORK_EVAL_REPRO_COMMAND"];
+const REQUIRED_ENV = ["MICX_EVAL_REPRO_COMMAND"];
 
 const vo = await loadVoiceoverParagraphs(FLOW_ID);
 
@@ -55,11 +55,11 @@ function textTail(value, max = 4_000) {
 }
 
 function parseTimeoutMs() {
-  const raw = process.env.OPENWORK_EVAL_REPRO_TIMEOUT_MS?.trim();
+  const raw = process.env.MICX_EVAL_REPRO_TIMEOUT_MS?.trim();
   if (!raw) return DEFAULT_REPRO_TIMEOUT_MS;
   const value = Number(raw);
   if (!Number.isFinite(value) || value <= 0) {
-    throw new Error(`OPENWORK_EVAL_REPRO_TIMEOUT_MS must be a positive number of milliseconds (got ${raw}).`);
+    throw new Error(`MICX_EVAL_REPRO_TIMEOUT_MS must be a positive number of milliseconds (got ${raw}).`);
   }
   return Math.round(value);
 }
@@ -80,10 +80,10 @@ function requiredEnv() {
   if (snapshot.missing.length > 0) {
     throw new Error(
       `Missing required environment variables for ${FLOW_ID}: ${snapshot.missing.join(", ")}. `
-      + "Set OPENWORK_EVAL_REPRO_COMMAND to a shell command that runs scripts/repro-engine-mcp-evidence.mjs on the target environment and prints the driver's final JSON as the last stdout line.",
+      + "Set MICX_EVAL_REPRO_COMMAND to a shell command that runs scripts/repro-engine-mcp-evidence.mjs on the target environment and prints the driver's final JSON as the last stdout line.",
     );
   }
-  return { command: snapshot.values.OPENWORK_EVAL_REPRO_COMMAND, timeoutMs: parseTimeoutMs() };
+  return { command: snapshot.values.MICX_EVAL_REPRO_COMMAND, timeoutMs: parseTimeoutMs() };
 }
 
 function parseLastStdoutJson(stdout, stderr) {
@@ -165,7 +165,7 @@ function engineSyncFailed(mcpBody) {
   const failures = own(sync, "failures");
   return own(sync, "status") === "failed"
     && Array.isArray(failures)
-    && failures.some((failure) => own(failure, "name") === "openwork-cloud");
+    && failures.some((failure) => own(failure, "name") === "micx-cloud");
 }
 
 function initialReconcileFailed(reconcile) {
@@ -176,10 +176,10 @@ function initialReconcileFailed(reconcile) {
     || own(own(delivery, "failure"), "code") === "opencode_mcp_sync_failed";
 }
 
-function openworkCloudConnectedStatus(diagnostics) {
-  const statuses = own(diagnostics, "openworkCloudSyncStatuses");
+function micxCloudConnectedStatus(diagnostics) {
+  const statuses = own(diagnostics, "micxCloudSyncStatuses");
   if (!Array.isArray(statuses)) return null;
-  return statuses.find((status) => own(status, "name") === "openwork-cloud" && own(status, "source") === "config.remote" && own(status, "syncStatus") === "connected") ?? null;
+  return statuses.find((status) => own(status, "name") === "micx-cloud" && own(status, "source") === "config.remote" && own(status, "syncStatus") === "connected") ?? null;
 }
 
 export default {
@@ -194,7 +194,7 @@ export default {
     {
       name: "Frame 1 — The repro seeds the slow first handshake and records the original failure",
       run: async (ctx) => {
-        await ctx.prove("The repro run forced the first OpenWork Cloud handshake past the registration window and captured the initial failure evidence", {
+        await ctx.prove("The repro run forced the first Micx Cloud handshake past the registration window and captured the initial failure evidence", {
           voiceover: vo[0],
           assert: async () => {
             const seed = seedPhase();
@@ -213,7 +213,7 @@ export default {
               firstFailure: own(seedReconcile, "firstFailure"),
               delivery: own(seedReconcile, "delivery"),
             });
-            witness(ctx, engineSyncFailed(seedMcp), "The immediate MCP inventory recorded engineSync failed for openwork-cloud", own(seedMcp, "engineSync"));
+            witness(ctx, engineSyncFailed(seedMcp), "The immediate MCP inventory recorded engineSync failed for micx-cloud", own(seedMcp, "engineSync"));
           },
         });
       },
@@ -228,7 +228,7 @@ export default {
             const health = own(healed, "health");
             ctx.output("healed-health", JSON.stringify(health ?? null, null, 2));
             witness(ctx, isRecord(healed), "The repro evidence includes phases.healed", healed);
-            witness(ctx, isHealthConnected(health), "The driver's healed health poll observed a usable or connected OpenWork Cloud MCP", health);
+            witness(ctx, isHealthConnected(health), "The driver's healed health poll observed a usable or connected Micx Cloud MCP", health);
           },
         });
       },
@@ -244,11 +244,11 @@ export default {
             const details = own(check, "details");
             const staleWarning = own(check, "status") === "warning" && own(check, "code") === "mcp_registration_stale_failure";
             const passed = own(check, "status") === "passed";
-            const connectedStatus = openworkCloudConnectedStatus(diagnostics);
+            const connectedStatus = micxCloudConnectedStatus(diagnostics);
 
             ctx.output("diagnostics-check-and-verdict", JSON.stringify({
               engineMcpSyncCheck: check,
-              openworkCloudSyncStatuses: own(diagnostics, "openworkCloudSyncStatuses"),
+              micxCloudSyncStatuses: own(diagnostics, "micxCloudSyncStatuses"),
               firstFailedCheck: own(diagnostics, "firstFailedCheck") ?? null,
               contradictionReproduced: own(evidence(), "contradictionReproduced"),
             }, null, 2));
@@ -261,7 +261,7 @@ export default {
               witness(ctx, own(details, "failedCount") === 0, "engine-mcp-sync details.failedCount is 0", details);
             }
             witness(ctx, own(details, "engineReachableNow") === true, "engine-mcp-sync details.engineReachableNow is true", details);
-            witness(ctx, Boolean(connectedStatus), "openworkCloudSyncStatuses includes config.remote openwork-cloud with syncStatus connected", own(diagnostics, "openworkCloudSyncStatuses"));
+            witness(ctx, Boolean(connectedStatus), "micxCloudSyncStatuses includes config.remote micx-cloud with syncStatus connected", own(diagnostics, "micxCloudSyncStatuses"));
             witness(ctx, own(diagnostics, "firstFailedCheck") == null, "firstFailedCheck is null or absent", own(diagnostics, "firstFailedCheck"));
             witness(ctx, own(evidence(), "contradictionReproduced") === false, "The historical healthy-system contradiction is not reproduced", own(evidence(), "contradictionReproduced"));
           },

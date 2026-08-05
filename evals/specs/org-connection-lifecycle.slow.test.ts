@@ -1,7 +1,7 @@
 import { expect, onTestFinished, test } from "vitest";
-import { photoRoll, screenshot, validate } from "@openwork/fraimz";
-import { desktop } from "@openwork/hosts";
-import { startMockMcp } from "@openwork/labs";
+import { photoRoll, screenshot, validate } from "@micx/fraimz";
+import { desktop } from "@micx/hosts";
+import { startMockMcp } from "@micx/labs";
 import {
   clickButton,
   createAndSelectWorkspace,
@@ -19,15 +19,15 @@ import {
   waitForButtonGone,
   waitForText,
   createOrgConnection,
-} from "@openwork/behaviors";
-import type { Surface } from "@openwork/cdp";
+} from "@micx/behaviors";
+import type { Surface } from "@micx/cdp";
 
-const apiUrl = process.env.OPENWORK_EVAL_DEN_API_URL?.trim().replace(/\/+$/, "") ?? "";
-const appSpecsEnabled = process.env.OPENWORK_EVAL_APP_SPECS === "1";
+const apiUrl = process.env.MICX_EVAL_DEN_API_URL?.trim().replace(/\/+$/, "") ?? "";
+const appSpecsEnabled = process.env.MICX_EVAL_APP_SPECS === "1";
 const title = !appSpecsEnabled
-  ? "organization connection lifecycle skipped: set OPENWORK_EVAL_APP_SPECS=1 to opt in"
+  ? "organization connection lifecycle skipped: set MICX_EVAL_APP_SPECS=1 to opt in"
   : !apiUrl
-    ? "organization connection lifecycle skipped: set OPENWORK_EVAL_DEN_API_URL"
+    ? "organization connection lifecycle skipped: set MICX_EVAL_DEN_API_URL"
     : "member connects, reconnects, and disconnects an organization OAuth connection";
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -45,7 +45,7 @@ async function waitForConnectionCard(app: Surface, name: string, workspaceId: st
     }
     await evalIn(
       app,
-      "window.__openworkControl.execute('extensions.refresh-marketplace', null)",
+      "window.__micxControl.execute('extensions.refresh-marketplace', null)",
       { awaitPromise: true },
     ).catch(() => undefined);
     await evalIn(app, `(() => {
@@ -101,21 +101,21 @@ async function waitForNotConnected(app: Surface, name: string): Promise<void> {
 test.skipIf(!apiUrl || !appSpecsEnabled)(title, async () => {
   const den = {
     apiUrl,
-    webUrl: (process.env.OPENWORK_EVAL_DEN_WEB_URL?.trim() || apiUrl.replace("127.0.0.1", "localhost")).replace(/\/+$/, ""),
+    webUrl: (process.env.MICX_EVAL_DEN_WEB_URL?.trim() || apiUrl.replace("127.0.0.1", "localhost")).replace(/\/+$/, ""),
   };
   const admin = await signIn(den, {
-    email: process.env.OPENWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test",
-    password: process.env.OPENWORK_EVAL_DEMO_PASSWORD?.trim() || "OpenWorkDemo123!",
+    email: process.env.MICX_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test",
+    password: process.env.MICX_EVAL_DEMO_PASSWORD?.trim() || "MicxDemo123!",
   });
   const member = await ensureMemberSession(den, admin, {
-    email: process.env.OPENWORK_EVAL_MEMBER_EMAIL?.trim() || "jordan.demo@acme.test",
-    password: process.env.OPENWORK_EVAL_MEMBER_PASSWORD?.trim() || "OpenWorkDemo123!",
+    email: process.env.MICX_EVAL_MEMBER_EMAIL?.trim() || "jordan.demo@acme.test",
+    password: process.env.MICX_EVAL_MEMBER_PASSWORD?.trim() || "MicxDemo123!",
     name: "Jordan Demo",
-    markVerifiedCmd: process.env.OPENWORK_EVAL_MARK_VERIFIED_CMD?.trim(),
+    markVerifiedCmd: process.env.MICX_EVAL_MARK_VERIFIED_CMD?.trim(),
   });
   await using mock = await startMockMcp({
-    port: Number(process.env.OPENWORK_EVAL_LIFECYCLE_MOCK_PORT ?? 3979),
-    publicUrl: process.env.OPENWORK_EVAL_LIFECYCLE_MOCK_PUBLIC_URL?.trim() || undefined,
+    port: Number(process.env.MICX_EVAL_LIFECYCLE_MOCK_PORT ?? 3979),
+    publicUrl: process.env.MICX_EVAL_LIFECYCLE_MOCK_PUBLIC_URL?.trim() || undefined,
   });
   await deleteConnectionsNamed(admin, "Meeting Notes ");
   const connection = await createOrgConnection(admin, {
@@ -135,7 +135,7 @@ test.skipIf(!apiUrl || !appSpecsEnabled)(title, async () => {
   await using roll = photoRoll("org-connection-lifecycle");
   // Workspace first, then the org sign-in: the signed-in org shell offers no
   // Add workspace entry, so a member's workspace exists before they connect.
-  const workspacePath = `/tmp/openwork-org-connection-lifecycle-${Date.now()}`;
+  const workspacePath = `/tmp/micx-org-connection-lifecycle-${Date.now()}`;
   await createAndSelectWorkspace(app, { path: workspacePath });
   await signInDesktopAs(app, den, member);
   const { workspaceId } = await createAndSelectWorkspace(app, { path: workspacePath });

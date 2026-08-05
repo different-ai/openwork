@@ -1,22 +1,22 @@
 ---
-title: "Get started with OpenWork Cloud"
-description: "Connect the desktop app to your OpenWork Cloud org and unlock shared workspaces, marketplaces, and shared providers"
+title: "Get started with Micx Cloud"
+description: "Connect the desktop app to your Micx Cloud org and unlock shared workspaces, marketplaces, and shared providers"
 ---
 
-OpenWork Cloud requires an active subscription at [app.openworklabs.com](https://app.openworklabs.com/).
+Micx Cloud requires an active subscription at [app.openworklabs.com](https://app.openworklabs.com/).
 It is intended for teams what want to share `SKILLs.md`, `MCPs` and `configs`. 
 
 
-First, you should connect your desktop app with Openwork Cloud.
+First, you should connect your desktop app with Micx Cloud.
 
 <Frame>
-  ![OpenWork Cloud org settings with organization identity, allowed email domains, and desktop restrictions](/images/cloud-org-settings.png)
+  ![Micx Cloud org settings with organization identity, allowed email domains, and desktop restrictions](/images/cloud-org-settings.png)
 </Frame>
 
 1. Open [app.openworklabs.com](https://app.openworklabs.com/) in your browser.
 2. Click `Create organization`.
 3. Enter your org name.
-4. Finish checkout if OpenWork Cloud asks for billing.
+4. Finish checkout if Micx Cloud asks for billing.
 5. Return to the desktop app and refresh `Active org`.
 
 Once you're there, you can configure the settings for the organization.
@@ -39,7 +39,7 @@ Next, you want to make sure you can sign in the desktop app.
 1. Open `Settings -> Cloud`.
 2. Click `Sign in`.
 3. Finish sign-in in your browser.
-4. If the browser does not return to OpenWork automatically, click `Paste sign-in code`, paste the `openwork://den-auth?...` link or one-time code from OpenWork Cloud, then click `Finish sign-in`.
+4. If the browser does not return to Micx automatically, click `Paste sign-in code`, paste the `micx://den-auth?...` link or one-time code from Micx Cloud, then click `Finish sign-in`.
 
 ## Cloud URL used by the desktop app
 
@@ -50,12 +50,12 @@ All Cloud API and MCP traffic is derived from that one URL through the web app
 proxy:
 
 - Cloud API requests go to `<baseUrl>/api/den/v1/...`.
-- OpenWork Cloud MCP requests go to `<baseUrl>/api/den/mcp/...`.
+- Micx Cloud MCP requests go to `<baseUrl>/api/den/mcp/...`.
 
 The desktop app does not store or read a separate API URL. On startup it reads
 the Cloud URL from `desktop-bootstrap.json`; if that file is missing, it falls
 back to `https://app.openworklabs.com`. When you change the Cloud URL in
-`Settings -> Cloud`, OpenWork writes the new `baseUrl` back to the bootstrap
+`Settings -> Cloud`, Micx writes the new `baseUrl` back to the bootstrap
 file so the next launch uses the same source of truth.
 
 ## Choose your organization
@@ -67,6 +67,6 @@ After sign-in, pick your org in `Settings -> Cloud -> Active org`.
 - Send members to [Connect your services](/start-here/connect-your-stack/connect-services) to sign in to team-approved accounts from the desktop app.
 - Use [MCP Connections](/cloud/share-with-your-team/shared-mcp-connections) to publish a managed service and grant member or team access.
 - Use marketplace plugins to publish grouped skills and MCPs for teams, or save a single skill directly from the desktop app and install it from `Skills -> Cloud`.
-- Use [Shared workspaces](/cloud/run-in-the-cloud/shared-workspace) to deploy hosted OpenWork runtimes that teammates can open from the desktop app.
+- Use [Shared workspaces](/cloud/run-in-the-cloud/shared-workspace) to deploy hosted Micx runtimes that teammates can open from the desktop app.
 - Use [LLM providers](/cloud/share-with-your-team/managed-llm-provider) or [custom LLM providers](/cloud/share-with-your-team/custom-llm-provider) to manage shared model access.
 - Use [Members and RBAC](/cloud/members-and-rbac) to invite people, create teams, and control access.

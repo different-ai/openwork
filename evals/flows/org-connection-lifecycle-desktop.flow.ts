@@ -12,25 +12,25 @@ if (!vo) throw new Error("Missing approved voice-over script for org-connection-
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const MOCK_SERVER_SCRIPT = join(ROOT, "scripts", "mock-oauth-mcp-server.mjs");
-const DEN_API_URL = (process.env.OPENWORK_EVAL_DEN_API_URL ?? "").trim().replace(/\/+$/, "");
-const DEN_WEB_URL = (process.env.OPENWORK_EVAL_DEN_WEB_URL ?? DEN_API_URL.replace("127.0.0.1", "localhost")).trim().replace(/\/+$/, "");
-const ADMIN_EMAIL = process.env.OPENWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
-const ADMIN_PASSWORD = process.env.OPENWORK_EVAL_DEMO_PASSWORD?.trim() || "OpenWorkDemo123!";
-const MEMBER_EMAIL = process.env.OPENWORK_EVAL_MEMBER_EMAIL?.trim() || "jordan.demo@acme.test";
-const MEMBER_PASSWORD = process.env.OPENWORK_EVAL_MEMBER_PASSWORD?.trim() || "OpenWorkDemo123!";
-const MARK_VERIFIED_CMD = process.env.OPENWORK_EVAL_MARK_VERIFIED_CMD?.trim() || "";
-const MOCK_PORT = Number(process.env.OPENWORK_EVAL_LIFECYCLE_MOCK_PORT || 3979);
+const DEN_API_URL = (process.env.MICX_EVAL_DEN_API_URL ?? "").trim().replace(/\/+$/, "");
+const DEN_WEB_URL = (process.env.MICX_EVAL_DEN_WEB_URL ?? DEN_API_URL.replace("127.0.0.1", "localhost")).trim().replace(/\/+$/, "");
+const ADMIN_EMAIL = process.env.MICX_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
+const ADMIN_PASSWORD = process.env.MICX_EVAL_DEMO_PASSWORD?.trim() || "MicxDemo123!";
+const MEMBER_EMAIL = process.env.MICX_EVAL_MEMBER_EMAIL?.trim() || "jordan.demo@acme.test";
+const MEMBER_PASSWORD = process.env.MICX_EVAL_MEMBER_PASSWORD?.trim() || "MicxDemo123!";
+const MARK_VERIFIED_CMD = process.env.MICX_EVAL_MARK_VERIFIED_CMD?.trim() || "";
+const MOCK_PORT = Number(process.env.MICX_EVAL_LIFECYCLE_MOCK_PORT || 3979);
 const MOCK_LOCAL_URL = `http://127.0.0.1:${MOCK_PORT}`;
 // When a public URL is provided the mock server is managed externally (e.g.
 // started on the sandbox that hosts Electron) and the flow talks to it over
 // that URL instead of spawning its own local instance.
-const MOCK_EXTERNAL_URL = process.env.OPENWORK_EVAL_LIFECYCLE_MOCK_PUBLIC_URL?.trim().replace(/\/+$/, "") ?? "";
+const MOCK_EXTERNAL_URL = process.env.MICX_EVAL_LIFECYCLE_MOCK_PUBLIC_URL?.trim().replace(/\/+$/, "") ?? "";
 const MOCK_SELF_HOSTED = MOCK_EXTERNAL_URL.length === 0;
 const MOCK_PUBLIC_URL = MOCK_SELF_HOSTED ? MOCK_LOCAL_URL : MOCK_EXTERNAL_URL;
 const MOCK_CONTROL_URL = MOCK_SELF_HOSTED ? MOCK_LOCAL_URL : MOCK_EXTERNAL_URL;
 const RUN_TAG = Date.now();
 const CONNECTION_NAME = `Meeting Notes ${RUN_TAG}`;
-const WORKSPACE_PATH = `/tmp/openwork-org-connection-lifecycle-${RUN_TAG}`;
+const WORKSPACE_PATH = `/tmp/micx-org-connection-lifecycle-${RUN_TAG}`;
 
 type ParsedFetch = {
   response: Response;
@@ -188,7 +188,7 @@ async function ensureMember(ctx: FlowContext): Promise<void> {
     body: JSON.stringify({ email: MEMBER_EMAIL, name: "Jordan Demo", password: MEMBER_PASSWORD }),
   });
   ctx.assert(signUp.response.ok, `Member sign-up failed: ${signUp.response.status} ${bodyPreview(signUp.body).slice(0, 300)}`);
-  ctx.assert(MARK_VERIFIED_CMD.length > 0, "Set OPENWORK_EVAL_MARK_VERIFIED_CMD to verify the member's email.");
+  ctx.assert(MARK_VERIFIED_CMD.length > 0, "Set MICX_EVAL_MARK_VERIFIED_CMD to verify the member's email.");
   execSync(MARK_VERIFIED_CMD.replaceAll("{email}", MEMBER_EMAIL), { cwd: ROOT, stdio: "ignore" });
 
   state.memberSession = await signIn(MEMBER_EMAIL, MEMBER_PASSWORD);
@@ -218,7 +218,7 @@ async function ensureWorkspace(ctx: FlowContext): Promise<void> {
       const hasFolderInput = Boolean(document.querySelector('input[placeholder="/workspace/my-project"]'));
       const hasWorkspaceRoute = window.location.hash.includes('/workspace/') && !text.includes('Choose your organization') && !hasFolderInput;
       const hasOnboardingStep = text.includes('Choose your organization') || text.includes('Continue to workspace') || text.includes('Loading available resources');
-      const hasCreateAction = !hasOnboardingStep && window.__openworkControl?.listActions?.().find((a) => a.id === 'workspace.create')?.disabled === false;
+      const hasCreateAction = !hasOnboardingStep && window.__micxControl?.listActions?.().find((a) => a.id === 'workspace.create')?.disabled === false;
       return { hasFolderInput, hasWorkspaceRoute, hasCreateAction };
     })()`);
     if (isRecord(workspaceState) && (workspaceState.hasWorkspaceRoute === true || workspaceState.hasCreateAction === true)) break;
@@ -244,13 +244,13 @@ async function ensureWorkspace(ctx: FlowContext): Promise<void> {
       const hasFolderInput = Boolean(document.querySelector('input[placeholder="/workspace/my-project"]'));
       const hasWorkspaceRoute = window.location.hash.includes('/workspace/') && !text.includes('Choose your organization') && !hasFolderInput;
       const hasOnboardingStep = text.includes('Choose your organization') || text.includes('Continue to workspace') || text.includes('Loading available resources');
-      const hasCreateAction = !hasOnboardingStep && window.__openworkControl?.listActions?.().find((a) => a.id === 'workspace.create')?.disabled === false;
+      const hasCreateAction = !hasOnboardingStep && window.__micxControl?.listActions?.().find((a) => a.id === 'workspace.create')?.disabled === false;
       return hasWorkspaceRoute || hasCreateAction;
     })()`,
     { timeoutMs: 10_000, label: "workspace route or create action" },
   );
   await ctx.eval(`(() => {
-    const btn = [...document.querySelectorAll('button')].find((el) => el.textContent.trim() === 'Continue without OpenWork Models');
+    const btn = [...document.querySelectorAll('button')].find((el) => el.textContent.trim() === 'Continue without Micx Models');
     btn?.click();
     return true;
   })()`, { awaitPromise: true });
@@ -275,22 +275,22 @@ function parseWorkspaceSetup(value: unknown): { ok: boolean; workspaceId: string
 async function createFreshEvalWorkspace(ctx: FlowContext): Promise<void> {
   await ensureWorkspace(ctx);
   await ctx.waitFor(
-    "Boolean(localStorage.getItem('openwork.server.port') && localStorage.getItem('openwork.server.token') && localStorage.getItem('openwork.server.hostToken'))",
-    { timeoutMs: 30_000, label: "OpenWork server auth for workspace setup" },
+    "Boolean(localStorage.getItem('micx.server.port') && localStorage.getItem('micx.server.token') && localStorage.getItem('micx.server.hostToken'))",
+    { timeoutMs: 30_000, label: "Micx server auth for workspace setup" },
   );
   let created: unknown = null;
   const deadline = Date.now() + 60_000;
   while (Date.now() < deadline) {
     created = await ctx.eval(`(async () => {
       try {
-        const port = localStorage.getItem('openwork.server.port');
-        const token = localStorage.getItem('openwork.server.token');
-        const hostToken = localStorage.getItem('openwork.server.hostToken');
+        const port = localStorage.getItem('micx.server.port');
+        const token = localStorage.getItem('micx.server.token');
+        const hostToken = localStorage.getItem('micx.server.hostToken');
         const base = 'http://127.0.0.1:' + port;
         const headers = {
           'Content-Type': 'application/json',
           Authorization: 'Bearer ' + token,
-          'X-OpenWork-Host-Token': hostToken,
+          'X-Micx-Host-Token': hostToken,
         };
         const response = await fetch(base + '/workspaces/local', {
           method: 'POST',
@@ -305,7 +305,7 @@ async function createFreshEvalWorkspace(ctx: FlowContext): Promise<void> {
         if (!workspaceId) return { ok: false, status: response.status, text: 'workspace id missing' };
         const activate = await fetch(base + '/workspaces/' + workspaceId + '/activate?persist=true', { method: 'POST', headers });
         if (!activate.ok) return { ok: false, status: activate.status, text: await activate.text() };
-        localStorage.setItem('openwork.react.activeWorkspace', workspaceId);
+        localStorage.setItem('micx.react.activeWorkspace', workspaceId);
         return { ok: true, workspaceId };
       } catch (error) {
         return { ok: false, error: error instanceof Error ? error.message : String(error) };
@@ -515,7 +515,7 @@ async function waitForMockAuthorizeRequest(ctx: FlowContext, clickedAt: string):
   ctx.assert(
     redirectUri.includes("/v1/mcp-connections/")
       && (redirectUri.includes("/oauth/callback") || redirectUri.includes(requireStateString(state.connectionId, "connection id"))),
-    `Authorize redirect_uri was not an OpenWork MCP connection callback: ${redirectUri}`,
+    `Authorize redirect_uri was not an Micx MCP connection callback: ${redirectUri}`,
   );
 }
 
@@ -544,7 +544,7 @@ export default defineFlow({
   title: "Desktop Extensions: connect, reconnect, and disconnect a per-member org connection",
   kind: "user-facing",
   spec: "evals/voiceovers/org-connection-lifecycle-desktop.md",
-  requiredEnv: ["OPENWORK_EVAL_DEN_API_URL"],
+  requiredEnv: ["MICX_EVAL_DEN_API_URL"],
   steps: [
     {
       name: "Setup: mock provider + per-member org connection",
@@ -593,44 +593,44 @@ export default defineFlow({
     {
       name: "Desktop boots and signs in as the member",
       run: async (ctx) => {
-        await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 120_000 });
-        await ctx.waitFor("Boolean(window.__OPENWORK_ELECTRON__?.invokeDesktop)", { timeoutMs: 30_000, label: "desktop bridge" });
+        await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 120_000 });
+        await ctx.waitFor("Boolean(window.__MICX_ELECTRON__?.invokeDesktop)", { timeoutMs: 30_000, label: "desktop bridge" });
         // The app derives its /api/den proxy base from these URLs, so both must
         // point at the web origin (den-web proxies /api/den/* to den-api; the
         // bare den-api origin does not serve that prefix).
         const bootstrap = { baseUrl: DEN_WEB_URL, apiBaseUrl: DEN_WEB_URL, requireSignin: false, handoff: null };
         const written = await ctx.eval(`(async () => {
-          const bridge = window.__OPENWORK_ELECTRON__?.invokeDesktop;
+          const bridge = window.__MICX_ELECTRON__?.invokeDesktop;
           if (!bridge) return { ok: false };
           await bridge("setDesktopBootstrapConfig", ${JSON.stringify(bootstrap)});
           return { ok: true };
         })()`, { awaitPromise: true });
         ctx.assert(isRecord(written) && written.ok === true, "Failed to write desktop bootstrap config.");
         await ctx.eval(`(() => {
-          localStorage.setItem('openwork.den.baseUrl', ${JSON.stringify(DEN_WEB_URL)});
-          localStorage.setItem('openwork.den.apiBaseUrl', ${JSON.stringify(DEN_WEB_URL)});
+          localStorage.setItem('micx.den.baseUrl', ${JSON.stringify(DEN_WEB_URL)});
+          localStorage.setItem('micx.den.apiBaseUrl', ${JSON.stringify(DEN_WEB_URL)});
           let prefs = {};
-          try { prefs = JSON.parse(localStorage.getItem('openwork.preferences') || '{}'); } catch {}
-          localStorage.setItem('openwork.preferences', JSON.stringify({ ...prefs, selectedAgent: 'openwork' }));
+          try { prefs = JSON.parse(localStorage.getItem('micx.preferences') || '{}'); } catch {}
+          localStorage.setItem('micx.preferences', JSON.stringify({ ...prefs, selectedAgent: 'micx' }));
           return true;
         })()`);
         await ctx.eval("location.reload()");
-        await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 60_000, label: "control API after bootstrap reload" });
+        await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 60_000, label: "control API after bootstrap reload" });
 
         const handoff = await denApiFetch("/v1/auth/desktop-handoff", {
           method: "POST",
           headers: { authorization: `Bearer ${requireStateString(state.memberSession, "member session")}` },
-          body: JSON.stringify({ desktopScheme: "openwork" }),
+          body: JSON.stringify({ desktopScheme: "micx" }),
         });
         const grant = readStringField(handoff.body, "grant");
         ctx.assert(handoff.response.ok && Boolean(grant), `Handoff create failed: ${handoff.response.status} ${bodyPreview(handoff.body).slice(0, 300)}`);
         await ctx.waitFor(
-          "Boolean(window.__openworkControl?.listActions?.().some((a) => a.id === 'auth.exchange-grant'))",
+          "Boolean(window.__micxControl?.listActions?.().some((a) => a.id === 'auth.exchange-grant'))",
           { timeoutMs: 60_000, label: "auth.exchange-grant action registered" },
         );
         await ctx.control("auth.exchange-grant", { grant: requireStateString(grant, "desktop handoff grant"), baseUrl: DEN_WEB_URL });
-        await ctx.waitFor("Boolean((localStorage.getItem('openwork.den.authToken') ?? '').trim())", { timeoutMs: 45_000, label: "persisted den auth token" });
-        await ctx.waitFor("Boolean((localStorage.getItem('openwork.den.activeOrgId') ?? '').trim())", { timeoutMs: 60_000, label: "active org resolved" });
+        await ctx.waitFor("Boolean((localStorage.getItem('micx.den.authToken') ?? '').trim())", { timeoutMs: 45_000, label: "persisted den auth token" });
+        await ctx.waitFor("Boolean((localStorage.getItem('micx.den.activeOrgId') ?? '').trim())", { timeoutMs: 60_000, label: "active org resolved" });
         await createFreshEvalWorkspace(ctx);
       },
     },
@@ -742,7 +742,7 @@ export default defineFlow({
             // The connected detail page fits one viewport, so a page capture
             // would be byte-identical to frame 3. Capture the sandbox desktop
             // instead (real window on a real display) when available.
-            sandboxCapture: Boolean(process.env.OPENWORK_EVAL_DAYTONA_SANDBOX?.trim()),
+            sandboxCapture: Boolean(process.env.MICX_EVAL_DAYTONA_SANDBOX?.trim()),
           },
         });
       },

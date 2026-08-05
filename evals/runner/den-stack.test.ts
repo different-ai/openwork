@@ -61,7 +61,7 @@ test("Den evaluator trusts both loopback spellings used by the proof browser", (
 });
 
 test("Den Web startup discards generated output from a reusable image", async () => {
-  const denWebRoot = await mkdtemp(join(tmpdir(), "openwork-den-web-"));
+  const denWebRoot = await mkdtemp(join(tmpdir(), "micx-den-web-"));
   const staleManifest = join(denWebRoot, ".next", "server", "app-paths-manifest.json");
 
   try {

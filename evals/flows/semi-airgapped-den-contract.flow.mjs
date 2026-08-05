@@ -11,7 +11,7 @@ const APP_ROOT = join(ROOT, "apps", "app");
 const DEN_API_ROOT = join(ROOT, "ee", "apps", "den-api");
 const SERVER_ROOT = join(ROOT, "apps", "server");
 const COMMAND_TIMEOUT_MS = 120_000;
-const DEFAULT_DIAGNOSTICS_ORIGIN = "https://diagnostic.openworklabs.com";
+const DEFAULT_DIAGNOSTICS_ORIGIN = "https://diagnostic.micxlabs.com";
 const CUSTOMER_DIAGNOSTICS_ORIGIN = "https://diagnostic.customer.example";
 const MIN_DIAGNOSTICS_BEARER_TOKEN_LENGTH = 24;
 const vo = await loadVoiceoverParagraphs(FLOW_ID);
@@ -68,12 +68,12 @@ function denEnv(extra = {}) {
     PATH: process.env.PATH ?? "",
     HOME: process.env.HOME ?? "",
     TMPDIR: process.env.TMPDIR ?? "",
-    DATABASE_URL: "mysql://root:password@127.0.0.1:3306/openwork_test",
+    DATABASE_URL: "mysql://root:password@127.0.0.1:3306/micx_test",
     DB_MODE: "mysql",
     DEN_DB_ENCRYPTION_KEY: "x".repeat(32),
     BETTER_AUTH_SECRET: "y".repeat(32),
-    BETTER_AUTH_URL: "https://den.openwork.test",
-    OPENWORK_DEV_MODE: "0",
+    BETTER_AUTH_URL: "https://den.micx.test",
+    MICX_DEV_MODE: "0",
     PROVISIONER_MODE: "stub",
     ...extra,
   };
@@ -147,7 +147,7 @@ export default {
             guardResult = run("bun", args, DEN_API_ROOT, {
               ...process.env,
               DEN_ALLOW_PRIVATE_MCP_URLS: "",
-              OPENWORK_DEV_MODE: "0",
+              MICX_DEV_MODE: "0",
             });
             output = commandOutput("bun", args, DEN_API_ROOT, guardResult);
             privateUrlProbe = denEnvProbe(`
@@ -175,7 +175,7 @@ export default {
             devEnvProbe = denEnvProbe(`
               const { env } = await import("./src/env.ts");
               console.log(JSON.stringify({ allowPrivateMcpUrls: env.allowPrivateMcpUrls }));
-            `, { OPENWORK_DEV_MODE: "1" });
+            `, { MICX_DEV_MODE: "1" });
           },
           assert: async () => {
             const raw = combinedOutput(guardResult);
@@ -188,7 +188,7 @@ export default {
             ctx.output("DEN_ALLOW_PRIVATE_MCP_URLS env probes", [
               commandOutput("bun", ["--conditions", "development", "--eval", "<default env probe>"], DEN_API_ROOT, defaultEnvProbe),
               commandOutput("bun", ["--conditions", "development", "--eval", "<DEN_ALLOW_PRIVATE_MCP_URLS=1 env probe>"], DEN_API_ROOT, allowEnvProbe),
-              commandOutput("bun", ["--conditions", "development", "--eval", "<OPENWORK_DEV_MODE=1 env probe>"], DEN_API_ROOT, devEnvProbe),
+              commandOutput("bun", ["--conditions", "development", "--eval", "<MICX_DEV_MODE=1 env probe>"], DEN_API_ROOT, devEnvProbe),
             ].join("\n\n"));
             witness(ctx, guardResult.status === 0, "mcp-url-guard focused tests exit 0", output);
             witness(ctx, raw.includes(" 0 fail"), "mcp-url-guard test output reports 0 failures", output);
@@ -199,7 +199,7 @@ export default {
             witness(ctx, privateUrl?.errorName === "PrivateUrlError", "the default-deny refusal is a PrivateUrlError", JSON.stringify(privateUrl));
             witness(ctx, defaultEnvProbe.status === 0 && defaultEnv?.allowPrivateMcpUrls === false, "env.allowPrivateMcpUrls is false by default", commandOutput("bun", ["--conditions", "development", "--eval", "<default env probe>"], DEN_API_ROOT, defaultEnvProbe));
             witness(ctx, allowEnvProbe.status === 0 && allowEnv?.allowPrivateMcpUrls === true, "DEN_ALLOW_PRIVATE_MCP_URLS=1 is an opt-out switch", commandOutput("bun", ["--conditions", "development", "--eval", "<DEN_ALLOW_PRIVATE_MCP_URLS=1 env probe>"], DEN_API_ROOT, allowEnvProbe));
-            witness(ctx, devEnvProbe.status === 0 && devEnv?.allowPrivateMcpUrls === true, "OPENWORK_DEV_MODE=1 is the local-dev opt-out switch", commandOutput("bun", ["--conditions", "development", "--eval", "<OPENWORK_DEV_MODE=1 env probe>"], DEN_API_ROOT, devEnvProbe));
+            witness(ctx, devEnvProbe.status === 0 && devEnv?.allowPrivateMcpUrls === true, "MICX_DEV_MODE=1 is the local-dev opt-out switch", commandOutput("bun", ["--conditions", "development", "--eval", "<MICX_DEV_MODE=1 env probe>"], DEN_API_ROOT, devEnvProbe));
           },
         });
       },
@@ -221,13 +221,13 @@ export default {
             ];
             result = run("bun", args, SERVER_ROOT, {
               ...process.env,
-              OPENWORK_AGENT_DIAGNOSTICS_TRUSTED_ORIGINS: "",
+              MICX_AGENT_DIAGNOSTICS_TRUSTED_ORIGINS: "",
             });
             output = commandOutput("bun", args, SERVER_ROOT, result);
             untrustedProbe = run("bun", ["--eval", `
-              const { probeOpenworkCloudCatalog } = await import("./src/agent-context-cloud-probe.ts");
+              const { probeMicxCloudCatalog } = await import("./src/agent-context-cloud-probe.ts");
               let calls = 0;
-              const observed = await probeOpenworkCloudCatalog({
+              const observed = await probeMicxCloudCatalog({
                 workspaceId: "ws_private_den",
                 workspaceType: "local",
                 config: {
@@ -248,7 +248,7 @@ export default {
               console.log(JSON.stringify({ calls, observed }));
             `], SERVER_ROOT, {
               ...process.env,
-              OPENWORK_AGENT_DIAGNOSTICS_TRUSTED_ORIGINS: "",
+              MICX_AGENT_DIAGNOSTICS_TRUSTED_ORIGINS: "",
             });
           },
           assert: async () => {
@@ -286,7 +286,7 @@ export default {
               "test",
               "test/egress-diagnostics.test.ts",
               "-t",
-              "defaults to the OpenWork Labs diagnostic host and accepts an operator override",
+              "defaults to the Micx Labs diagnostic host and accepts an operator override",
             ];
             result = run("bun", args, DEN_API_ROOT);
             output = commandOutput("bun", args, DEN_API_ROOT, result);

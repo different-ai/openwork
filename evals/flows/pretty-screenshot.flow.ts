@@ -115,11 +115,11 @@ export default defineFlow({
         await ctx.prove("ScreenshotOptions exposes pretty without changing the screenshot pipeline contract", {
           voiceover: vo[0],
           action: async () => {
-            await ctx.waitFor("Boolean(window.__openworkControl)", {
+            await ctx.waitFor("Boolean(window.__micxControl)", {
               timeoutMs: 30_000,
-              label: "window.__openworkControl",
+              label: "window.__micxControl",
             });
-            await ctx.waitFor("window.__openworkControl.listActions().some((action) => action.id === 'route.settings.general')", {
+            await ctx.waitFor("window.__micxControl.listActions().some((action) => action.id === 'route.settings.general')", {
               label: "route.settings.general control action",
             });
             await ctx.control("route.settings.general");
@@ -152,7 +152,7 @@ export default defineFlow({
             // Duplicate detection hashes the raw app capture, so this pretty frame
             // moves to a sibling settings tab instead of repeating pixel-identical
             // app pixels from frame 1 and tripping the anti-duplicate guard.
-            await ctx.waitFor("window.__openworkControl.listActions().some((action) => action.id === 'route.settings.appearance')", {
+            await ctx.waitFor("window.__micxControl.listActions().some((action) => action.id === 'route.settings.appearance')", {
               label: "route.settings.appearance control action",
             });
             await ctx.control("route.settings.appearance");

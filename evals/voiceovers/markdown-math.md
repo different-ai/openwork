@@ -1,6 +1,6 @@
 # markdown-math — LaTeX math renders as real typeset math in chat
 
-1. OpenWork opens an existing conversation and displays the session normally, with no errors before the math proof begins.
+1. Micx opens an existing conversation and displays the session normally, with no errors before the math proof begins.
 
 2. A technical answer arrives and the inline formulas read as real typeset math, so dollar-delimited LaTeX no longer shows up as raw source in the sentence.
 

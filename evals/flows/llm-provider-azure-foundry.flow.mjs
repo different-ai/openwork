@@ -15,14 +15,14 @@
  *      hand-written: right npm package, right env var, right base URL.
  *
  * Required env:
- * - OPENWORK_EVAL_DEN_WEB_URL          Den web origin
- * - OPENWORK_EVAL_DEN_EMAIL            Seeded admin email
- * - OPENWORK_EVAL_DEN_PASSWORD         Seeded admin password
- * - OPENWORK_EVAL_AZURE_FOUNDRY_RESOURCE  Azure AI Foundry resource name
- * - OPENWORK_EVAL_AZURE_FOUNDRY_API_KEY   Azure AI Foundry key (throwaway)
+ * - MICX_EVAL_DEN_WEB_URL          Den web origin
+ * - MICX_EVAL_DEN_EMAIL            Seeded admin email
+ * - MICX_EVAL_DEN_PASSWORD         Seeded admin password
+ * - MICX_EVAL_AZURE_FOUNDRY_RESOURCE  Azure AI Foundry resource name
+ * - MICX_EVAL_AZURE_FOUNDRY_API_KEY   Azure AI Foundry key (throwaway)
  */
 
-const RESOURCE_ORIGIN = `https://${process.env.OPENWORK_EVAL_AZURE_FOUNDRY_RESOURCE ?? ""}.services.ai.azure.com`;
+const RESOURCE_ORIGIN = `https://${process.env.MICX_EVAL_AZURE_FOUNDRY_RESOURCE ?? ""}.services.ai.azure.com`;
 const HEALED_API = `${RESOURCE_ORIGIN}/openai/v1`;
 const PROVIDER_NAME = "Acme Azure Foundry";
 const PROVIDER_ID = "acme-foundry";
@@ -55,17 +55,17 @@ export default {
   title: "Azure Foundry sets up gpt-5-mini with only name + URL + key",
   spec: "evals/cloud-provider-sync-flows.md",
   requiredEnv: [
-    "OPENWORK_EVAL_DEN_WEB_URL",
-    "OPENWORK_EVAL_DEN_EMAIL",
-    "OPENWORK_EVAL_DEN_PASSWORD",
-    "OPENWORK_EVAL_AZURE_FOUNDRY_RESOURCE",
-    "OPENWORK_EVAL_AZURE_FOUNDRY_API_KEY",
+    "MICX_EVAL_DEN_WEB_URL",
+    "MICX_EVAL_DEN_EMAIL",
+    "MICX_EVAL_DEN_PASSWORD",
+    "MICX_EVAL_AZURE_FOUNDRY_RESOURCE",
+    "MICX_EVAL_AZURE_FOUNDRY_API_KEY",
   ],
   steps: [
     {
       name: "Signed-in dashboard session (signs in if needed)",
       run: async (ctx) => {
-        const origin = ctx.env.OPENWORK_EVAL_DEN_WEB_URL.trim().replace(/\/+$/, "");
+        const origin = ctx.env.MICX_EVAL_DEN_WEB_URL.trim().replace(/\/+$/, "");
         await ctx.eval(`(() => { location.href = ${JSON.stringify(`${origin}/`)}; return true; })()`);
         await ctx.waitFor(
           `location.origin === ${JSON.stringify(origin)} && document.readyState === "complete"`,
@@ -82,8 +82,8 @@ export default {
               headers: { "content-type": "application/json" },
               credentials: "include",
               body: JSON.stringify({
-                email: ${JSON.stringify(ctx.env.OPENWORK_EVAL_DEN_EMAIL)},
-                password: ${JSON.stringify(ctx.env.OPENWORK_EVAL_DEN_PASSWORD)},
+                email: ${JSON.stringify(ctx.env.MICX_EVAL_DEN_EMAIL)},
+                password: ${JSON.stringify(ctx.env.MICX_EVAL_DEN_PASSWORD)},
               }),
             });
             return response.status;
@@ -96,7 +96,7 @@ export default {
     {
       name: "Open the custom provider form",
       run: async (ctx) => {
-        const origin = ctx.env.OPENWORK_EVAL_DEN_WEB_URL.trim().replace(/\/+$/, "");
+        const origin = ctx.env.MICX_EVAL_DEN_WEB_URL.trim().replace(/\/+$/, "");
         await ctx.eval(`(() => { location.href = ${JSON.stringify(`${origin}/dashboard/custom-llm-providers/new`)}; return true; })()`);
         await ctx.waitForText("Add a new LLM provider", { timeoutMs: 45_000 });
         await ctx.clickText("Custom provider", { selector: "button, [role=tab]", timeoutMs: 15_000 });
@@ -124,7 +124,7 @@ export default {
               ));
               await ctx.eval(fillInputExpr(
                 `document.querySelector('input[type="password"]')`,
-                ctx.env.OPENWORK_EVAL_AZURE_FOUNDRY_API_KEY,
+                ctx.env.MICX_EVAL_AZURE_FOUNDRY_API_KEY,
               ));
             },
             assert: async () => {

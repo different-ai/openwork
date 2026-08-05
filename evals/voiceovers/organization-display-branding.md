@@ -1,6 +1,6 @@
 # organization-display-branding — Organization-controlled application display branding
 
-The organization controls the visible product name and wordmark while OpenWork keeps its signed executable identity, protocol, install directory, and updater compatibility.
+The organization controls the visible product name and wordmark while Micx keeps its signed executable identity, protocol, install directory, and updater compatibility.
 
 1. An Example Corp owner sets the application display name to Acme Work and supplies the existing Example Corp wordmark.
 

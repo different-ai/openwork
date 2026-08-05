@@ -13,13 +13,13 @@ export default {
   title: "Chat transcript renders sentences, aggregates, chips — never raw JSON",
   kind: "user-facing",
   precondition: async (ctx) => {
-    await ctx.waitFor("Boolean(window.__openworkControl)", {
+    await ctx.waitFor("Boolean(window.__micxControl)", {
       timeoutMs: 60_000,
       label: "control API",
     });
     const state = await ctx.waitFor(
       `(() => {
-        const control = window.__openworkControl;
+        const control = window.__micxControl;
         const route = control.snapshot().route;
         if (route.startsWith("/welcome") || route.startsWith("/signin")) return "blocked";
         const action = control.listActions().find((a) => a.id === "session.create_task");
@@ -39,14 +39,14 @@ export default {
         // Idempotency: a previous run may have left panels expanded in this
         // renderer; a reload resets all component state before we seed.
         await ctx.eval("location.reload()");
-        await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 60_000, label: "control API after reload" });
+        await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 60_000, label: "control API after reload" });
         await ctx.waitFor(
-          `window.__openworkControl.listActions().some((a) => a.id === "session.create_task" && !a.disabled)`,
+          `window.__micxControl.listActions().some((a) => a.id === "session.create_task" && !a.disabled)`,
           { timeoutMs: 30_000, label: "task creation ready" },
         );
         await ctx.control("session.create_task");
         await ctx.waitFor(
-          `window.__openworkControl.listActions().some((a) => a.id === "eval.chat_transcript.seed" && !a.disabled)`,
+          `window.__micxControl.listActions().some((a) => a.id === "eval.chat_transcript.seed" && !a.disabled)`,
           { timeoutMs: 30_000, label: "chat transcript seed action" },
         );
         await ctx.control("eval.chat_transcript.seed");
@@ -83,7 +83,7 @@ export default {
             await ctx.expectText("Fetched Google Workspace Calendar Events");
             // Sentence line, not a JSON card: no raw braces in the visible line.
             const rawJson = await ctx.eval(`(() => {
-              const el = [...document.querySelectorAll('[data-capability-call="openwork-cloud_execute_capability"]')][0];
+              const el = [...document.querySelectorAll('[data-capability-call="micx-cloud_execute_capability"]')][0];
               return el ? el.textContent.includes("{") : null;
             })()`);
             ctx.assert(rawJson === false, "Capability line leaks raw JSON while collapsed.");
@@ -220,7 +220,7 @@ export default {
             ctx.assert(strip.plan && strip.notes, "FILES strip is missing touched file chips.");
             // Assistant markdown link also carries a favicon.
             const favicon = await ctx.eval(`(() => {
-              const anchor = [...document.querySelectorAll('a[href*="openworklabs.com"]')][0];
+              const anchor = [...document.querySelectorAll('a[href*="micxlabs.com"]')][0];
               return Boolean(anchor && (anchor.querySelector("img[src*='favicons']")
                 || anchor.previousElementSibling?.matches?.("img[src*='favicons']")));
             })()`);

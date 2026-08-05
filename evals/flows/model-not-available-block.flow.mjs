@@ -22,7 +22,7 @@ function requireSeededRecovery(ctx) {
 }
 
 async function waitForControl(ctx) {
-  await ctx.waitFor("Boolean(window.__openworkControl)", {
+  await ctx.waitFor("Boolean(window.__micxControl)", {
     timeoutMs: 60_000,
     label: "control API",
   });
@@ -30,18 +30,18 @@ async function waitForControl(ctx) {
 
 async function ensureSession(ctx) {
   await waitForControl(ctx);
-  const inSession = await ctx.eval(`window.__openworkControl.snapshot().route.includes("/session/")`);
+  const inSession = await ctx.eval(`window.__micxControl.snapshot().route.includes("/session/")`);
   if (inSession) return;
 
   await ctx.waitFor(
     `(() => {
-      const action = window.__openworkControl.listActions().find((item) => item.id === "session.create_task");
+      const action = window.__micxControl.listActions().find((item) => item.id === "session.create_task");
       return action && !action.disabled;
     })()`,
     { timeoutMs: 45_000, label: "session.create_task enabled" },
   );
   await ctx.control("session.create_task");
-  await ctx.waitFor(`window.__openworkControl.snapshot().route.includes("/session/")`, {
+  await ctx.waitFor(`window.__micxControl.snapshot().route.includes("/session/")`, {
     timeoutMs: 45_000,
     label: "created session route",
   });
@@ -49,7 +49,7 @@ async function ensureSession(ctx) {
 
 async function seedUnavailableSelectedModel(ctx) {
   await ctx.waitFor(
-    `window.__openworkControl.listActions().some((item) => item.id === "eval.model_not_available.seed" && !item.disabled)`,
+    `window.__micxControl.listActions().some((item) => item.id === "eval.model_not_available.seed" && !item.disabled)`,
     { timeoutMs: 45_000, label: "unavailable model eval seed action" },
   );
   seededRecovery = await ctx.control("eval.model_not_available.seed");
@@ -95,7 +95,7 @@ export default {
   kind: "user-facing",
   precondition: async (ctx) => {
     await waitForControl(ctx);
-    const route = await ctx.eval(`window.__openworkControl.snapshot().route || ""`);
+    const route = await ctx.eval(`window.__micxControl.snapshot().route || ""`);
     return route.startsWith("/welcome") || route.startsWith("/signin")
       ? "Profile is not onboarded; this flow requires a workspace with a usable model."
       : null;

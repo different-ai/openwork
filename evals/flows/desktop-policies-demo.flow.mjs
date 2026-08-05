@@ -20,8 +20,8 @@
 const GENPACT_LOGO = "https://upload.wikimedia.org/wikipedia/commons/5/50/Genpact_Logo_Black_%283%29.png";
 
 async function denFetch(ctx, path, options = {}) {
-  const base = ctx.env.OPENWORK_EVAL_DEN_API_URL;
-  const token = ctx.env.OPENWORK_EVAL_DEN_TOKEN;
+  const base = ctx.env.MICX_EVAL_DEN_API_URL;
+  const token = ctx.env.MICX_EVAL_DEN_TOKEN;
   const url = `${base}${path}`;
   const res = await fetch(url, {
     ...options,
@@ -44,7 +44,7 @@ async function denFetch(ctx, path, options = {}) {
 async function syncConfigToApp(ctx) {
   const { body: config } = await denFetch(ctx, "/v1/me/desktop-config");
   await ctx.eval(`(() => {
-    const bridge = window.__openworkApplyDesktopConfig;
+    const bridge = window.__micxApplyDesktopConfig;
     if (typeof bridge === 'function') bridge(${JSON.stringify(config)});
     return true;
   })()`);
@@ -55,7 +55,7 @@ export default {
   id: "desktop-policies-demo",
   title: "Admin configures desktop policies → member app reacts in real-time",
   spec: "evals/desktop-policy-white-label.md",
-  requiredEnv: ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_TOKEN"],
+  requiredEnv: ["MICX_EVAL_DEN_API_URL", "MICX_EVAL_DEN_TOKEN"],
   steps: [
     // ---------------------------------------------------------------
     // ACT 1: Setup
@@ -63,9 +63,9 @@ export default {
     {
       name: "Boot app in light mode, reset server state",
       run: async (ctx) => {
-        await ctx.waitFor("Boolean(window.__openworkControl)", {
+        await ctx.waitFor("Boolean(window.__micxControl)", {
           timeoutMs: 30_000,
-          label: "window.__openworkControl",
+          label: "window.__micxControl",
         });
 
         // Clean server: clear brand + restore all policies to defaults.
@@ -93,13 +93,13 @@ export default {
 
         // Light mode + clear any leftover brand from the app.
         await ctx.eval(`(() => {
-          localStorage.setItem('openwork.react.settings.theme-mode', 'light');
-          const bridge = window.__openworkApplyDesktopConfig;
+          localStorage.setItem('micx.react.settings.theme-mode', 'light');
+          const bridge = window.__micxApplyDesktopConfig;
           if (typeof bridge === 'function') bridge({});
           return true;
         })()`);
         await ctx.eval("location.reload()");
-        await ctx.waitFor("Boolean(window.__openworkControl)", {
+        await ctx.waitFor("Boolean(window.__micxControl)", {
           timeoutMs: 30_000, label: "control API after reload",
         });
         await ctx.waitFor("document.documentElement.dataset.theme === 'light'", {

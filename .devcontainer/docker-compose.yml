@@ -21,7 +21,7 @@ services:
       - --innodb-buffer-pool-size=64M
     environment:
       MYSQL_ROOT_PASSWORD: password
-      MYSQL_DATABASE: openwork_den
+      MYSQL_DATABASE: micx_den
     healthcheck:
       test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -ppassword --silent"]
       interval: 5s
@@ -51,13 +51,13 @@ services:
       DISPLAY: ":99"
       ELECTRON_DISABLE_SANDBOX: "1"
       # Electron CDP debugging
-      OPENWORK_ELECTRON_REMOTE_DEBUG_PORT: "9825"
+      MICX_ELECTRON_REMOTE_DEBUG_PORT: "9825"
       # Den API config
-      DATABASE_URL: mysql://root:password@mysql:3306/openwork_den
+      DATABASE_URL: mysql://root:password@mysql:3306/micx_den
       DEN_DB_ENCRYPTION_KEY: local-dev-db-encryption-key-please-change-1234567890
       BETTER_AUTH_SECRET: local-dev-secret-not-for-production-use!!
       BETTER_AUTH_URL: http://localhost:3005
-      OPENWORK_DEV_MODE: "1"
+      MICX_DEV_MODE: "1"
       PORT: "8788"
       PROVISIONER_MODE: stub
       # Den Web config

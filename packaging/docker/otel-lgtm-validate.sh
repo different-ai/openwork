@@ -3,7 +3,7 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/../.." && pwd)"
-project="${OTEL_LGTM_PROJECT:-openwork-otel-lgtm-validate-$$}"
+project="${OTEL_LGTM_PROJECT:-micx-otel-lgtm-validate-$$}"
 compose_file="${OTEL_LGTM_COMPOSE_FILE:-$repo_root/packaging/docker/docker-compose.otel-lgtm.yml}"
 grafana_port="${OTEL_LGTM_GRAFANA_PORT:-3000}"
 otlp_http_port="${OTEL_LGTM_OTLP_HTTP_PORT:-4318}"

@@ -2,7 +2,7 @@
  * Kubernetes Den-stack harness for the eval runner (`pnpm evals --stack kube`).
  *
  * This is the kind-backed Den placement: the same eval scenarios target the
- * same OPENWORK_EVAL_DEN_* URLs, but the control plane runs through the Helm
+ * same MICX_EVAL_DEN_* URLs, but the control plane runs through the Helm
  * chart in a local Kubernetes cluster. Endpoints are exposed with kubectl
  * port-forward instead of kind node port mappings so an existing warm cluster
  * can be reused across profiles without recreating the node config.
@@ -17,32 +17,32 @@ import { resolveChromeBinary } from "./hosts/local.ts";
 const RUNNER_DIR = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(RUNNER_DIR, "..", "..");
 const DEFAULT_STATE_DIR = join(RUNNER_DIR, "..", "results", ".kube-stack");
-const DEFAULT_ELECTRON_USERDATA = process.env.OPENWORK_EVAL_KUBE_ELECTRON_USERDATA?.trim()
+const DEFAULT_ELECTRON_USERDATA = process.env.MICX_EVAL_KUBE_ELECTRON_USERDATA?.trim()
   || join(DEFAULT_STATE_DIR, "electron-user-data");
 
-export const KUBE_CLUSTER_NAME = "openwork-kube-lab";
+export const KUBE_CLUSTER_NAME = "micx-kube-lab";
 export const KUBE_CONTEXT = `kind-${KUBE_CLUSTER_NAME}`;
-export const KUBE_RELEASE_NAME = "openwork-ee";
+export const KUBE_RELEASE_NAME = "micx-ee";
 export const KUBE_NAMESPACE = "default";
-export const KUBE_CHART_PATH = "packaging/helm/openwork-ee";
+export const KUBE_CHART_PATH = "packaging/helm/micx-ee";
 const KUBE_FIXTURE_DIR = "evals/fixtures/kube";
 const KUBE_MYSQL_MANIFEST = `${KUBE_FIXTURE_DIR}/mysql.yaml`;
 const DEN_API_SERVICE = `${KUBE_RELEASE_NAME}-den-api`;
 const DEN_WEB_SERVICE = `${KUBE_RELEASE_NAME}-den-web`;
-const MYSQL_DEPLOYMENT = "openwork-mysql";
-const DEN_API_PORT = Number(process.env.OPENWORK_EVAL_DEN_PORT ?? 8790);
-const DEN_WEB_PORT = Number(process.env.OPENWORK_EVAL_DEN_WEB_PORT ?? 3005);
+const MYSQL_DEPLOYMENT = "micx-mysql";
+const DEN_API_PORT = Number(process.env.MICX_EVAL_DEN_PORT ?? 8790);
+const DEN_WEB_PORT = Number(process.env.MICX_EVAL_DEN_WEB_PORT ?? 3005);
 const DEN_API_URL = `http://127.0.0.1:${DEN_API_PORT}`;
 const DEN_WEB_URL = `http://127.0.0.1:${DEN_WEB_PORT}`;
 const DEN_BASE_URL = `http://localhost:${DEN_API_PORT}`;
 const DEMO_EMAIL = process.env.DEN_DEMO_OWNER_EMAIL ?? "alex@acme.test";
-const DEMO_PASSWORD = process.env.DEN_DEMO_OWNER_PASSWORD ?? "OpenWorkDemo123!";
-const LOCAL_IMAGE_TAG = process.env.OPENWORK_EVAL_KUBE_LOCAL_IMAGE_TAG?.trim() || "kube-lab";
-const PUBLISHED_IMAGE_TAG = process.env.OPENWORK_EVAL_KUBE_IMAGE_TAG?.trim() || "latest";
-const PUBLISHED_DEN_API_REPOSITORY = "ghcr.io/different-ai/openwork-den-api";
-const PUBLISHED_DEN_WEB_REPOSITORY = "ghcr.io/different-ai/openwork-den-web";
-const LOCAL_DEN_API_REPOSITORY = "openwork-den-api";
-const LOCAL_DEN_WEB_REPOSITORY = "openwork-den-web";
+const DEMO_PASSWORD = process.env.DEN_DEMO_OWNER_PASSWORD ?? "MicxDemo123!";
+const LOCAL_IMAGE_TAG = process.env.MICX_EVAL_KUBE_LOCAL_IMAGE_TAG?.trim() || "kube-lab";
+const PUBLISHED_IMAGE_TAG = process.env.MICX_EVAL_KUBE_IMAGE_TAG?.trim() || "latest";
+const PUBLISHED_DEN_API_REPOSITORY = "ghcr.io/different-ai/micx-den-api";
+const PUBLISHED_DEN_WEB_REPOSITORY = "ghcr.io/different-ai/micx-den-web";
+const LOCAL_DEN_API_REPOSITORY = "micx-den-api";
+const LOCAL_DEN_WEB_REPOSITORY = "micx-den-web";
 
 type DenOrgMode = "single_org" | "multi_org";
 export type KubeProfile = "single-org" | "multi-org";
@@ -396,7 +396,7 @@ async function publishedImagesSupportPlatform(runtime: KubeRuntime, platform: Ku
 
 export async function resolveKubeImagePlan(options: { exec?: KubeExec; images?: KubeImageMode; log?: (message: string) => void } = {}): Promise<KubeImagePlan> {
   const runtime = createRuntime({ exec: options.exec, log: options.log });
-  const envMode = parseImageMode(process.env.OPENWORK_EVAL_KUBE_IMAGES);
+  const envMode = parseImageMode(process.env.MICX_EVAL_KUBE_IMAGES);
   const requested = options.images ?? envMode;
   const platform = currentDockerPlatform();
   if (requested === "local") {
@@ -556,9 +556,9 @@ async function mysqlQuery(runtime: KubeRuntime, sql: string): Promise<string> {
     `deployment/${MYSQL_DEPLOYMENT}`,
     "--",
     "mysql",
-    "-uopenwork",
-    "-popenwork",
-    "openwork_den",
+    "-umicx",
+    "-pmicx",
+    "micx_den",
     "-N",
     "-e",
     sql,
@@ -594,7 +594,7 @@ export async function ensureSeed(options: KubeLayerOptions = {}): Promise<void> 
     "--",
     "sh",
     "-lc",
-    "cd /app/ee/apps/den-api && OPENWORK_DEV_MODE=1 DEN_DEMO_SEED_ALLOW_NONLOCAL=1 DEN_DEMO_SEED_FETCH_GITHUB=0 node --conditions=development --import tsx scripts/seed-demo-org.ts",
+    "cd /app/ee/apps/den-api && MICX_DEV_MODE=1 DEN_DEMO_SEED_ALLOW_NONLOCAL=1 DEN_DEMO_SEED_FETCH_GITHUB=0 node --conditions=development --import tsx scripts/seed-demo-org.ts",
   ]), { timeoutMs: 10 * 60_000 });
   if (result.code !== 0) {
     const detail = [result.stderr.trim(), result.stdout.trim()].filter(Boolean).join("\n");
@@ -665,17 +665,17 @@ export async function exposeEndpoints(profile: KubeProfileConfig, options: KubeL
   await mkdir(runtime.stateDir, { recursive: true });
   await ensurePortForward(runtime, "api", DEN_API_SERVICE, DEN_API_PORT, 8788);
   await ensurePortForward(runtime, "web", DEN_WEB_SERVICE, DEN_WEB_PORT, 3005);
-  process.env.OPENWORK_EVAL_DEN_API_URL = DEN_API_URL;
-  process.env.OPENWORK_EVAL_DEN_WEB_URL = DEN_WEB_URL;
+  process.env.MICX_EVAL_DEN_API_URL = DEN_API_URL;
+  process.env.MICX_EVAL_DEN_WEB_URL = DEN_WEB_URL;
   if (profile.orgMode === "multi_org") {
-    process.env.OPENWORK_EVAL_DEN_MULTI_ORG = "1";
+    process.env.MICX_EVAL_DEN_MULTI_ORG = "1";
   } else {
-    delete process.env.OPENWORK_EVAL_DEN_MULTI_ORG;
+    delete process.env.MICX_EVAL_DEN_MULTI_ORG;
   }
   const token = await signInDemoOwner();
   if (!token) throw new Error("Could not obtain a demo-owner session token from the kube Den API.");
-  process.env.OPENWORK_EVAL_DEN_TOKEN = token;
-  runtime.log(`Kube Den endpoints exported: OPENWORK_EVAL_DEN_API_URL=${DEN_API_URL}, OPENWORK_EVAL_DEN_WEB_URL=${DEN_WEB_URL}${profile.orgMode === "multi_org" ? ", OPENWORK_EVAL_DEN_MULTI_ORG=1" : ""}`);
+  process.env.MICX_EVAL_DEN_TOKEN = token;
+  runtime.log(`Kube Den endpoints exported: MICX_EVAL_DEN_API_URL=${DEN_API_URL}, MICX_EVAL_DEN_WEB_URL=${DEN_WEB_URL}${profile.orgMode === "multi_org" ? ", MICX_EVAL_DEN_MULTI_ORG=1" : ""}`);
 }
 
 function appUserDataHome(): string {
@@ -683,7 +683,7 @@ function appUserDataHome(): string {
 }
 
 function appBootstrapPath(): string {
-  return join(appUserDataHome(), "openwork-dev-data", "home", ".config", "openwork", "desktop-bootstrap.json");
+  return join(appUserDataHome(), "micx-dev-data", "home", ".config", "micx", "desktop-bootstrap.json");
 }
 
 async function hasCdpPageTarget(baseUrl: string): Promise<boolean> {
@@ -767,8 +767,8 @@ async function ensureApp(cdpCandidates: string[], options: KubeLayerOptions = {}
     }
   }
 
-  if (process.env.OPENWORK_EVAL_KUBE_SURFACE?.trim() !== "electron") {
-    runtime.log("Starting Chrome CDP surface for kube Den web evals (set OPENWORK_EVAL_KUBE_SURFACE=electron to force dev Electron).");
+  if (process.env.MICX_EVAL_KUBE_SURFACE?.trim() !== "electron") {
+    runtime.log("Starting Chrome CDP surface for kube Den web evals (set MICX_EVAL_KUBE_SURFACE=electron to force dev Electron).");
     await ensureChromeApp(cdpCandidates, options);
     return;
   }
@@ -786,7 +786,7 @@ async function ensureApp(cdpCandidates: string[], options: KubeLayerOptions = {}
   const pid = runtime.spawnDetached("pnpm", ["dev"], {
     stateDir: runtime.stateDir,
     logName: "app",
-    env: { OPENWORK_ELECTRON_USERDATA: appUserDataHome() },
+    env: { MICX_ELECTRON_USERDATA: appUserDataHome() },
   });
   await writePidState(runtime, "app.pid", pid);
   for (let attempt = 0; attempt < 45; attempt += 1) {

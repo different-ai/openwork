@@ -9,7 +9,7 @@ teaches.
 ## The mental model
 
 > The desktop does not *have* remote MCP connections (except local-process
-> ones). It has one live connection — OpenWork Cloud — and everything else it
+> ones). It has one live connection — Micx Cloud — and everything else it
 > shows is a rendered view of Den state.
 
 - Credentials live in Den (shared org credential, or one per member). The
@@ -18,7 +18,7 @@ teaches.
   connect completed anywhere (desktop-initiated, browser-only, another
   device) is immediately live everywhere, with no client resync.
 - Tools reach the agent through `search_capabilities` / `execute_capability`
-  on the single OpenWork Cloud connection — not as per-provider live engine
+  on the single Micx Cloud connection — not as per-provider live engine
   connections.
 
 ## Invariants (non-negotiable)
@@ -31,7 +31,7 @@ teaches.
 2. **Never remove or migrate an existing direct connection.** A user's
    locally-configured Notion/Linear (engine as MCP client, personal token on
    device) is grandfathered forever, or until the user removes it.
-3. **Local-process entries stay engine-direct.** OpenWork Browser, UI
+3. **Local-process entries stay engine-direct.** Micx Browser, UI
    Control, local-command custom MCPs: Den cannot spawn processes on a
    member's machine. Hard constraint, not a preference.
 4. **The desktop never opens a URL supplied by tool output.** Connect flows
@@ -84,7 +84,7 @@ merged into the existing Extensions catalog (`buildExtensionItems`), shown
    not acceptable to providers; the OAuth client is Den, so the redirect
    must land on Den's callback).
 4. Den's callback page completes the exchange and renders an arrival page:
-   "Connected ✓ — Open OpenWork" (`openwork://` deep link + auto-attempt).
+   "Connected ✓ — Open Micx" (`micx://` deep link + auto-attempt).
 5. The desktop's polling loop (2s interval, 90s cap — same pattern as local
    MCP OAuth) observes `connectedForMe: true` and flips the originating card
    in place. No page reload.
@@ -140,7 +140,7 @@ Because credentials live in Den, the browser path is complete, not degraded:
   **Your Connections** → connect fully in browser → desktop finds everything
   already connected at next sign-in.
 - Signed-out desktops show a single dismissible hint row in Extensions:
-  "Sign in to OpenWork Cloud to see apps shared by your organization."
+  "Sign in to Micx Cloud to see apps shared by your organization."
 
 ## Admin's half (later)
 
@@ -154,7 +154,7 @@ members" — tells the admin who to nudge. All data already exists.
   interim "From your organization" section).
 - Dedup rule with degradation guard.
 - Connect flow with polling (built, fraimz-proven).
-- Callback arrival page ("Connected ✓ — Open OpenWork").
+- Callback arrival page ("Connected ✓ — Open Micx").
 
 **Phase 2 (fast follow):**
 - Chat inline `needs_connection` connect card + "Ask agent to continue".

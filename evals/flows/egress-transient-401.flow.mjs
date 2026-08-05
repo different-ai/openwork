@@ -76,7 +76,7 @@ function transient401Script(baseUrl) {
       value: { localStorage: storage, dispatchEvent() { return true; } },
     });
     const { createDenClient, isDenSessionRevokedError } = await import("./src/app/lib/den.ts");
-    const tokenKey = "openwork.den.authToken";
+    const tokenKey = "micx.den.authToken";
     window.localStorage.setItem(tokenKey, "tok_stored_transient_401");
     const client = createDenClient({ baseUrl: ${JSON.stringify(baseUrl)}, token: window.localStorage.getItem(tokenKey) });
     let first = null;
@@ -124,7 +124,7 @@ export default {
         let lab;
         let verdictLab;
         let result;
-        await ctx.prove("A one-off foreign 401 is treated as unavailable, not revoked, and OpenWork product diagnostics report the recovered transient 401", {
+        await ctx.prove("A one-off foreign 401 is treated as unavailable, not revoked, and Micx product diagnostics report the recovered transient 401", {
           voiceover: vo[0],
           action: async () => {
             lab = await startEgressLab({ profile: "blip", blip: { route: "/api/den/v1/me", count: 1, status: 401, body: "" } });

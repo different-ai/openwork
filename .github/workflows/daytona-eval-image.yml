@@ -23,7 +23,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/openwork-eval-vnc
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/micx-eval-vnc
 
 jobs:
   build-and-push:

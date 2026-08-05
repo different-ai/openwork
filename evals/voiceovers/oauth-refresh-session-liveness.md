@@ -1,6 +1,6 @@
 # oauth-refresh-session-liveness — Signed-out sessions stop pretending to refresh, and infra blips stop pretending to be sign-outs
 
-This is an internal proof: the protagonist is the OAuth grant behind an MCP connection, driven through OpenWork's real token endpoint and resource handler at the wire level.
+This is an internal proof: the protagonist is the OAuth grant behind an MCP connection, driven through Micx's real token endpoint and resource handler at the wire level.
 
 1. Here is the new contract in the code itself: the token endpoint now checks that the session behind a refresh grant is still alive before minting tokens, and the resource endpoint now tells the truth when it merely could not check — a missing session means invalid grant, a failed check means try again shortly, and only a real rejection carries an authentication challenge.
 

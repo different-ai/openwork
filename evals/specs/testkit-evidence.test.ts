@@ -2,9 +2,9 @@ import { createHash } from "node:crypto";
 import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, expect } from "vitest";
-import type { Shot } from "@openwork/fraimz";
-import { validate } from "@openwork/fraimz";
-import { expectFrame, test } from "@openwork/fraimz/vitest";
+import type { Shot } from "@micx/fraimz";
+import { validate } from "@micx/fraimz";
+import { expectFrame, test } from "@micx/fraimz/vitest";
 
 const expectation = "The synthetic frame is visible";
 const rollDirs: string[] = [];

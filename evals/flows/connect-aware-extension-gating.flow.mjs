@@ -2,7 +2,7 @@
  * Internal demo: connect-aware gating of the legacy Google Workspace
  * extension surface behind the org-level `connectEnabled` flag.
  *
- * Protagonist: the OpenWork server surface the agent actually consumes
+ * Protagonist: the Micx server surface the agent actually consumes
  * (`/experimental/extensions/*`), driven through the real running app via
  * CDP — every request runs in-page with the app's own port and tokens,
  * exactly like the desktop client and the extensions-preview plugin do.
@@ -35,13 +35,13 @@ const GW_NON_STATUS = [
 ];
 
 /**
- * In-page request against the embedded OpenWork server using the app's own
+ * In-page request against the embedded Micx server using the app's own
  * token (in the dev sandbox the client bearer carries host scope; the stored
  * hostToken can be stale across restarts, so we deliberately avoid it).
  */
 const serverExpr = (path, { method = "GET", body } = {}) => `(async () => {
-  const port = localStorage.getItem("openwork.server.port");
-  const token = localStorage.getItem("openwork.server.token");
+  const port = localStorage.getItem("micx.server.port");
+  const token = localStorage.getItem("micx.server.token");
   if (!port || !token) return { transport: "missing port or token" };
   const response = await fetch("http://127.0.0.1:" + port + ${JSON.stringify(path)}, {
     method: ${JSON.stringify(method)},
@@ -71,15 +71,15 @@ async function listActions(ctx) {
 
 export default {
   id: FLOW_ID,
-  title: "Connect flag gates dead legacy Google Workspace actions and redirects the agent to OpenWork Cloud",
+  title: "Connect flag gates dead legacy Google Workspace actions and redirects the agent to Micx Cloud",
   kind: "internal",
   spec: "evals/voiceovers/connect-aware-extension-gating.md",
   steps: [
     {
       name: "Baseline: flag off, full legacy surface (today's behavior)",
       run: async (ctx) => {
-        await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 60_000, label: "window.__openworkControl" });
-        await ctx.waitFor('Boolean(localStorage.getItem("openwork.server.port")) && Boolean(localStorage.getItem("openwork.server.token"))', {
+        await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 60_000, label: "window.__micxControl" });
+        await ctx.waitFor('Boolean(localStorage.getItem("micx.server.port")) && Boolean(localStorage.getItem("micx.server.token"))', {
           timeoutMs: 60_000,
           label: "embedded server port/token in localStorage",
         });
@@ -117,7 +117,7 @@ export default {
           assert: async () => {
             const state = await server(ctx, "/experimental/connect/state");
             ctx.assert(state.payload?.connectEnabled === true, "connect state reports connectEnabled=true");
-            ctx.assert(typeof state.payload?.cloudMcpPresent === "boolean", "snapshot reports whether the openwork-cloud MCP is present");
+            ctx.assert(typeof state.payload?.cloudMcpPresent === "boolean", "snapshot reports whether the micx-cloud MCP is present");
             ctx.output("connect-state-on", JSON.stringify(state.payload, null, 2));
           },
         });
@@ -144,7 +144,7 @@ export default {
     {
       name: "Calling a hidden action returns a redirect, not an OAuth dead-end",
       run: async (ctx) => {
-        await ctx.prove("A gated call answers use_openwork_cloud with Settings > Connect guidance", {
+        await ctx.prove("A gated call answers use_micx_cloud with Settings > Connect guidance", {
           voiceover: vo[3],
           assert: async () => {
             const call = await server(ctx, "/experimental/extensions/call", {
@@ -153,7 +153,7 @@ export default {
             });
             ctx.assert(call.status === 200, `gated call responds 200 with a structured payload (status ${call.status})`);
             ctx.assert(call.payload?.ok === false, "gated call is not treated as success");
-            ctx.assert(call.payload?.error === "use_openwork_cloud", `gated call error is use_openwork_cloud (got ${call.payload?.error})`);
+            ctx.assert(call.payload?.error === "use_micx_cloud", `gated call error is use_micx_cloud (got ${call.payload?.error})`);
             ctx.assert(String(call.payload?.message ?? "").includes("Settings > Connect"), "guidance points at Settings > Connect");
             ctx.assert(!String(call.payload?.message ?? "").includes("client secret"), "guidance never mentions OAuth client secrets");
             ctx.output("gated-call-redirect", JSON.stringify(call.payload, null, 2));

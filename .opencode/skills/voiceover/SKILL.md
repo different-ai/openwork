@@ -31,13 +31,13 @@ untouched:
 
 ```bash
 git fetch origin dev
-git worktree add ../_worktrees/openwork-<slug> -b feat/<slug> origin/dev
+git worktree add ../_worktrees/micx-<slug> -b feat/<slug> origin/dev
 ```
 
 Then, inside the worktree:
 
 4. **Translate the approved narration directly into a spec.** Create
-   `evals/specs/<slug>.slow.test.ts`, import `test` from `@openwork/testkit`,
+   `evals/specs/<slug>.slow.test.ts`, import `test` from `@micx/testkit`,
    and encode each paragraph as user action, observable assertion, and evidence
    claim. Do not create a separate narration artifact. Evidence is ambient;
    never create, pass, or manage a roll handle.
@@ -81,6 +81,6 @@ translated directly into the spec; it is not written to a separate file.
 
 ## Source of truth
 
-- `write-a-spec` — authoring the `@openwork/testkit` spec.
+- `write-a-spec` — authoring the `@micx/testkit` spec.
 - `run-tests` and `diagnose-a-red-run` — execution and repair.
 - `publish-evidence` — publishing an existing ambient evidence tape.

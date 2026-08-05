@@ -6,18 +6,18 @@ import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
 // The runner fails this flow if the narration drifts from that script.
 const vo = await loadVoiceoverParagraphs("org-connections-capability");
 
-const DEN_API_URL = cleanBaseUrl(process.env.OPENWORK_EVAL_DEN_API_URL);
-const DEN_WEB_URL = cleanBaseUrl(process.env.OPENWORK_EVAL_DEN_WEB_URL);
-const ADMIN_CDP_URL = cleanBaseUrl(process.env.OPENWORK_EVAL_WEB_CDP_ADMIN);
-const MARK_VERIFIED_CMD = process.env.OPENWORK_EVAL_MARK_VERIFIED_CMD?.trim() || "";
-const PLATFORM_ADMIN_EMAIL = process.env.OPENWORK_EVAL_PLATFORM_ADMIN_EMAIL?.trim() || "";
-const PLATFORM_ADMIN_PASSWORD = process.env.OPENWORK_EVAL_PLATFORM_ADMIN_PASSWORD?.trim() || "";
-const ORG_ADMIN_EMAIL = process.env.OPENWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
-const ORG_ADMIN_PASSWORD = process.env.OPENWORK_EVAL_DEMO_PASSWORD?.trim() || "OpenWorkDemo123!";
+const DEN_API_URL = cleanBaseUrl(process.env.MICX_EVAL_DEN_API_URL);
+const DEN_WEB_URL = cleanBaseUrl(process.env.MICX_EVAL_DEN_WEB_URL);
+const ADMIN_CDP_URL = cleanBaseUrl(process.env.MICX_EVAL_WEB_CDP_ADMIN);
+const MARK_VERIFIED_CMD = process.env.MICX_EVAL_MARK_VERIFIED_CMD?.trim() || "";
+const PLATFORM_ADMIN_EMAIL = process.env.MICX_EVAL_PLATFORM_ADMIN_EMAIL?.trim() || "";
+const PLATFORM_ADMIN_PASSWORD = process.env.MICX_EVAL_PLATFORM_ADMIN_PASSWORD?.trim() || "";
+const ORG_ADMIN_EMAIL = process.env.MICX_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
+const ORG_ADMIN_PASSWORD = process.env.MICX_EVAL_DEMO_PASSWORD?.trim() || "MicxDemo123!";
 
 const ORG_FILTER_INPUT = 'input[placeholder="Org name, slug, or id"]';
 const NOTION_NAME = "Notion";
-const WORKSPACE_PATH = "/tmp/openwork-org-connections-capability";
+const WORKSPACE_PATH = "/tmp/micx-org-connections-capability";
 
 const state = {
   platformAdminToken: null,
@@ -32,13 +32,13 @@ export default {
   title: "Platform admins flip the mcpConnections org capability from /admin; den-web nav and the desktop react uniformly",
   kind: "user-facing",
   requiredEnv: [
-    "OPENWORK_EVAL_DEN_API_URL",
-    "OPENWORK_EVAL_DEN_TOKEN",
-    "OPENWORK_EVAL_DEN_WEB_URL",
-    "OPENWORK_EVAL_WEB_CDP_ADMIN",
-    "OPENWORK_EVAL_PLATFORM_ADMIN_EMAIL",
-    "OPENWORK_EVAL_PLATFORM_ADMIN_PASSWORD",
-    "OPENWORK_EVAL_MARK_VERIFIED_CMD",
+    "MICX_EVAL_DEN_API_URL",
+    "MICX_EVAL_DEN_TOKEN",
+    "MICX_EVAL_DEN_WEB_URL",
+    "MICX_EVAL_WEB_CDP_ADMIN",
+    "MICX_EVAL_PLATFORM_ADMIN_EMAIL",
+    "MICX_EVAL_PLATFORM_ADMIN_PASSWORD",
+    "MICX_EVAL_MARK_VERIFIED_CMD",
   ],
   steps: [
     {
@@ -182,7 +182,7 @@ export default {
     {
       name: "Frame 5",
       run: async (ctx) => {
-        await ctx.prove("OpenWork Connect shows Acme's Notion org connection as available to connect", {
+        await ctx.prove("Micx Connect shows Acme's Notion org connection as available to connect", {
           voiceover: vo[4],
           action: async () => {
             await remountDesktopConnect(ctx);
@@ -216,7 +216,7 @@ export default {
     {
       name: "Frame 6",
       run: async (ctx) => {
-        await ctx.prove("Turning the capability back off removes Notion from OpenWork Connect", {
+        await ctx.prove("Turning the capability back off removes Notion from Micx Connect", {
           voiceover: vo[5],
           action: async () => {
             await withClient(ctx, ADMIN_CDP_URL, async () => {
@@ -248,7 +248,7 @@ export default {
             ctx.assert(orgView.mcpConnections === false, "/v1/org still reported mcpConnections on after turning it off.");
 
             const visible = await desktopConnectOrgConnectionVisible(ctx, NOTION_NAME);
-            ctx.assert(!visible, "Notion org connection row still rendered in OpenWork Connect after disabling the capability.");
+            ctx.assert(!visible, "Notion org connection row still rendered in Micx Connect after disabling the capability.");
             const usable = await fetchMcpConnections(ctx, "usable");
             ctx.assert(usable.length === 0, `Usable MCP connections were still visible after turning the capability off: ${JSON.stringify(usable)}`);
             ctx.output("mcp-connections-off-again", JSON.stringify({ admin, orgView, usable }, null, 2));
@@ -349,7 +349,7 @@ async function denApiFetch(pathname, options = {}) {
 function markEmailVerified(ctx, email) {
   ctx.assert(
     MARK_VERIFIED_CMD.length > 0,
-    "Platform-admin provisioning requires a verified email; set OPENWORK_EVAL_MARK_VERIFIED_CMD (shell template with {email}).",
+    "Platform-admin provisioning requires a verified email; set MICX_EVAL_MARK_VERIFIED_CMD (shell template with {email}).",
   );
   execSync(MARK_VERIFIED_CMD.replaceAll("{email}", email), { stdio: "ignore" });
 }
@@ -743,11 +743,11 @@ async function waitForManageableConnectionRow(ctx, name) {
 }
 
 async function ensureDesktopSignedInAsOrgAdmin(ctx) {
-  await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 120_000, label: "desktop control API" });
+  await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 120_000, label: "desktop control API" });
 
   const current = await ctx.eval(`(() => ({
-    token: (localStorage.getItem('openwork.den.authToken') ?? '').trim(),
-    activeOrgId: (localStorage.getItem('openwork.den.activeOrgId') ?? '').trim(),
+    token: (localStorage.getItem('micx.den.authToken') ?? '').trim(),
+    activeOrgId: (localStorage.getItem('micx.den.activeOrgId') ?? '').trim(),
   }))()`);
   if (current.token) {
     const org = await denApiFetch("/v1/org", {
@@ -764,22 +764,22 @@ async function ensureDesktopSignedInAsOrgAdmin(ctx) {
   const handoff = await denApiFetch("/v1/auth/desktop-handoff", {
     method: "POST",
     headers: { authorization: `Bearer ${requireStateValue(state.orgAdminToken, "org admin token")}` },
-    body: JSON.stringify({ desktopScheme: "openwork" }),
+    body: JSON.stringify({ desktopScheme: "micx" }),
   });
   ctx.assert(handoff.response.ok, `Desktop handoff create failed: ${handoff.response.status} ${handoff.text.slice(0, 300)}`);
-  ctx.assert(typeof handoff.body?.openworkUrl === "string", "Desktop handoff response did not include openworkUrl.");
+  ctx.assert(typeof handoff.body?.micxUrl === "string", "Desktop handoff response did not include micxUrl.");
 
   await ctx.navigateHash("/settings/cloud-account");
   await ctx.waitFor("window.location.hash.includes('/settings/cloud-account')", { timeoutMs: 30_000, label: "cloud account settings" });
   await ctx.clickText("Paste sign-in code", { timeoutMs: 30_000 });
-  await ctx.fill("#den-signin-link", handoff.body.openworkUrl);
+  await ctx.fill("#den-signin-link", handoff.body.micxUrl);
   await ctx.clickText("Finish sign-in", { timeoutMs: 30_000 });
-  await ctx.waitFor("Boolean((localStorage.getItem('openwork.den.authToken') ?? '').trim())", {
+  await ctx.waitFor("Boolean((localStorage.getItem('micx.den.authToken') ?? '').trim())", {
     timeoutMs: 45_000,
     label: "persisted den auth token",
   });
   await completeDesktopCloudOnboardingIfNeeded(ctx);
-  await ctx.waitFor(`localStorage.getItem('openwork.den.activeOrgId') === ${JSON.stringify(requireStateValue(state.orgId, "organization id"))}`, {
+  await ctx.waitFor(`localStorage.getItem('micx.den.activeOrgId') === ${JSON.stringify(requireStateValue(state.orgId, "organization id"))}`, {
     timeoutMs: 60_000,
     label: "Acme active org resolved",
   });
@@ -795,7 +795,7 @@ async function completeDesktopCloudOnboardingIfNeeded(ctx) {
     await ctx.waitFor("window.location.hash.includes('/workspace/')", { timeoutMs: 60_000, label: "workspace open after folder selection" });
   }
   await ctx.eval(`(() => {
-    const button = [...document.querySelectorAll('button')].find((candidate) => (candidate.textContent ?? '').trim() === 'Continue without OpenWork Models');
+    const button = [...document.querySelectorAll('button')].find((candidate) => (candidate.textContent ?? '').trim() === 'Continue without Micx Models');
     button?.click();
     return true;
   })()`);
@@ -803,15 +803,15 @@ async function completeDesktopCloudOnboardingIfNeeded(ctx) {
 
 async function clearDesktopDenSession(ctx) {
   await ctx.eval(`(() => {
-    localStorage.removeItem('openwork.den.authToken');
-    localStorage.removeItem('openwork.den.activeOrgId');
-    localStorage.removeItem('openwork.den.activeOrgSlug');
-    localStorage.removeItem('openwork.den.activeOrgName');
-    localStorage.removeItem('openwork.den.mcp.sync');
+    localStorage.removeItem('micx.den.authToken');
+    localStorage.removeItem('micx.den.activeOrgId');
+    localStorage.removeItem('micx.den.activeOrgSlug');
+    localStorage.removeItem('micx.den.activeOrgName');
+    localStorage.removeItem('micx.den.mcp.sync');
     return true;
   })()`);
   await ctx.eval("location.reload()");
-  await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 60_000, label: "desktop control API after sign-out reload" });
+  await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 60_000, label: "desktop control API after sign-out reload" });
 }
 
 async function closeDesktopDialogs(ctx) {
@@ -843,7 +843,7 @@ async function openDesktopConnect(ctx) {
 async function remountDesktopConnect(ctx) {
   await closeDesktopDialogs(ctx);
   await ctx.eval("location.reload()");
-  await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 120_000, label: "desktop control API after reload" });
+  await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 120_000, label: "desktop control API after reload" });
   await completeDesktopCloudOnboardingIfNeeded(ctx);
   await openDesktopConnect(ctx);
 }
@@ -890,7 +890,7 @@ async function waitForDesktopConnectOrgConnection(ctx, name) {
     await ctx.control("extensions.refresh-marketplace").catch(() => {});
     await sleep(2_000);
   }
-  ctx.assert(false, `${name} org MCP connection did not render in OpenWork Connect.`);
+  ctx.assert(false, `${name} org MCP connection did not render in Micx Connect.`);
 }
 
 async function waitForDesktopConnectOrgConnectionGone(ctx, name) {
@@ -900,5 +900,5 @@ async function waitForDesktopConnectOrgConnectionGone(ctx, name) {
     await ctx.control("extensions.refresh-marketplace").catch(() => {});
     await sleep(1_000);
   }
-  ctx.assert(false, `${name} org MCP connection did not disappear from OpenWork Connect.`);
+  ctx.assert(false, `${name} org MCP connection did not disappear from Micx Connect.`);
 }

@@ -4,10 +4,10 @@ const vo = await loadVoiceoverParagraphs("side-panel-not-restored-on-load");
 
 const EXTENSIONS_TOGGLE = 'button[aria-label="Extensions"][aria-pressed]';
 const EXTENSIONS_MARKER = "Extensions (Legacy)";
-const UI_STATE_KEY = "openwork:ui-state:v1";
+const UI_STATE_KEY = "micx:ui-state:v1";
 
 async function waitForControl(ctx, label = "control API") {
-  await ctx.waitFor("Boolean(window.__openworkControl)", {
+  await ctx.waitFor("Boolean(window.__micxControl)", {
     timeoutMs: 60_000,
     label,
   });
@@ -22,7 +22,7 @@ async function waitForRenderedBody(ctx) {
 async function waitForActiveSessionId(ctx) {
   return ctx.waitFor(
     `(() => {
-      const route = window.__openworkControl.snapshot().route || "";
+      const route = window.__micxControl.snapshot().route || "";
       const match = route.match(/ses_[A-Za-z0-9]+/);
       return match ? match[0] : null;
     })()`,
@@ -32,7 +32,7 @@ async function waitForActiveSessionId(ctx) {
 
 async function readRouteSessionId(ctx) {
   return ctx.eval(`(() => {
-    const route = window.__openworkControl.snapshot().route || "";
+    const route = window.__micxControl.snapshot().route || "";
     const match = route.match(/ses_[A-Za-z0-9]+/);
     return match ? match[0] : null;
   })()`);
@@ -111,7 +111,7 @@ export default {
     await waitForControl(ctx);
     const state = await ctx.waitFor(
       `(() => {
-        const control = window.__openworkControl;
+        const control = window.__micxControl;
         const route = control.snapshot().route;
         if (route.startsWith("/welcome") || route.startsWith("/signin")) return "blocked";
         const action = control.listActions().find((a) => a.id === "session.create_task");
@@ -183,7 +183,7 @@ export default {
           screenshot: {
             name: "extensions-open",
             requireText: ["Extensions (Legacy)"],
-            rejectText: ["Use OpenWork Models without API keys"],
+            rejectText: ["Use Micx Models without API keys"],
           },
         });
       },
@@ -200,23 +200,23 @@ export default {
             ctx.assert(Boolean(sessionId), "No active session id before reload.");
             ctx.log(`session before reload: ${sessionId}`);
             await ctx.eval("(() => { window.__sidePanelReloadSentinel = true; window.location.reload(); return true; })()");
-            await ctx.waitFor("Boolean(window.__openworkControl) && !window.__sidePanelReloadSentinel", {
+            await ctx.waitFor("Boolean(window.__micxControl) && !window.__sidePanelReloadSentinel", {
               timeoutMs: 60_000,
               label: "control API after reload",
             });
             await waitForRenderedBody(ctx);
             const routeHasSession = await ctx.eval(
-              `window.__openworkControl.snapshot().route.includes(${JSON.stringify(sessionId)})`,
+              `window.__micxControl.snapshot().route.includes(${JSON.stringify(sessionId)})`,
             );
             if (!routeHasSession) {
               await ctx.waitFor(
-                `window.__openworkControl.listActions().some((a) => a.id === "session.open" && !a.disabled)`,
+                `window.__micxControl.listActions().some((a) => a.id === "session.open" && !a.disabled)`,
                 { timeoutMs: 45_000, label: "session.open available after reload" },
               );
               await ctx.control("session.open", { sessionId });
             }
             await ctx.waitFor(
-              `window.__openworkControl.snapshot().route.includes(${JSON.stringify(sessionId)})`,
+              `window.__micxControl.snapshot().route.includes(${JSON.stringify(sessionId)})`,
               { timeoutMs: 30_000, label: "same session route after reload" },
             );
             await dismissPromoDialogs(ctx);

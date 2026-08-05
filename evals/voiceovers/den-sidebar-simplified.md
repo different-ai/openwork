@@ -1,6 +1,6 @@
 # den-sidebar-simplified — Sixteen rows become seven: tools, models, people, settings
 
-Cast is Alex (org admin) and Jordan (member), in OpenWork Cloud (den-web).
+Cast is Alex (org admin) and Jordan (member), in Micx Cloud (den-web).
 Phase 1 scope: the grouped sidebar, the two renames ("MCP Connections" to
 "Connections", "Integrations" to "Sources"), badge cleanup, and old-URL
 compatibility. Page-level tab merges are phase 2 and not narrated here. All
@@ -14,7 +14,7 @@ Marketplaces — with alpha Connections last.
 
 3. The rest of Extensions is the plugin pipeline, laid out in the order it actually flows: Sources, Plugins, Marketplaces, and then Connections last with an Alpha badge. Connections is still there — Google Workspace and Notion are ready to prove the page — but it is clearly untested and out of the default path.
 
-4. Models next: the managed OpenWork Models plan and the company own provider keys, side by side — one place to answer what the org can run.
+4. Models next: the managed Micx Models plan and the company own provider keys, side by side — one place to answer what the org can run.
 
 5. Everything set-once — billing, desktop policies, SSO, SCIM, API keys — now lives under Settings. Out of his daily path, still one click away.
 

@@ -10,9 +10,9 @@
  * upstream endpoint is a real local HTTP server started by this flow.
  *
  * Required env:
- * - OPENWORK_EVAL_DEN_WEB_URL   Den web origin (e.g. http://localhost:3015)
- * - OPENWORK_EVAL_DEN_EMAIL     Seeded user email (sign-in fallback)
- * - OPENWORK_EVAL_DEN_PASSWORD  Seeded user password (sign-in fallback)
+ * - MICX_EVAL_DEN_WEB_URL   Den web origin (e.g. http://localhost:3015)
+ * - MICX_EVAL_DEN_EMAIL     Seeded user email (sign-in fallback)
+ * - MICX_EVAL_DEN_PASSWORD  Seeded user password (sign-in fallback)
  */
 
 import { createServer } from "node:http";
@@ -62,12 +62,12 @@ export default {
   id: "llm-provider-test-connection-api",
   title: "Provider test-connection probe returns real models and heals URLs",
   spec: "evals/cloud-provider-sync-flows.md",
-  requiredEnv: ["OPENWORK_EVAL_DEN_WEB_URL", "OPENWORK_EVAL_DEN_EMAIL", "OPENWORK_EVAL_DEN_PASSWORD"],
+  requiredEnv: ["MICX_EVAL_DEN_WEB_URL", "MICX_EVAL_DEN_EMAIL", "MICX_EVAL_DEN_PASSWORD"],
   steps: [
     {
       name: "Signed-in dashboard session is available (signs in if needed)",
       run: async (ctx) => {
-        const origin = ctx.env.OPENWORK_EVAL_DEN_WEB_URL.trim().replace(/\/+$/, "");
+        const origin = ctx.env.MICX_EVAL_DEN_WEB_URL.trim().replace(/\/+$/, "");
         const onOrigin = await ctx.eval(`location.origin === ${JSON.stringify(origin)}`);
         if (!onOrigin) {
           await ctx.eval(`(() => { location.href = ${JSON.stringify(`${origin}/`)}; return true; })()`);
@@ -89,8 +89,8 @@ export default {
               headers: { "content-type": "application/json" },
               credentials: "include",
               body: JSON.stringify({
-                email: ${JSON.stringify(ctx.env.OPENWORK_EVAL_DEN_EMAIL)},
-                password: ${JSON.stringify(ctx.env.OPENWORK_EVAL_DEN_PASSWORD)},
+                email: ${JSON.stringify(ctx.env.MICX_EVAL_DEN_EMAIL)},
+                password: ${JSON.stringify(ctx.env.MICX_EVAL_DEN_PASSWORD)},
               }),
             });
             return response.status;

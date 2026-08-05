@@ -8,9 +8,9 @@ const MCP_PATH = "/mcp/agent";
 const REDIRECT_PORT = 8917;
 const REDIRECT_URI = "http://127.0.0.1:8917/callback";
 const DEMO_EMAIL = "alex@acme.test";
-const DEMO_PASSWORD = "OpenWorkDemo123!";
+const DEMO_PASSWORD = "MicxDemo123!";
 const CLIENT_SCOPE = "openid profile email mcp:read mcp:write";
-const CLIENT_NAME = "OpenWork eval URL-only MCP client";
+const CLIENT_NAME = "Micx eval URL-only MCP client";
 const EXPECTED_AGENT_TOOLS = ["execute_capability", "search_capabilities"];
 
 // Narration is loaded from the approved script (evals/voiceovers/mcp-external-client-connect.md).
@@ -40,7 +40,7 @@ const state = {
 
 let loopbackPage = {
   status: "waiting for authorization",
-  details: ["OpenWork MCP client is waiting for the browser callback."],
+  details: ["Micx MCP client is waiting for the browser callback."],
 };
 
 function recordAssertion(ctx, assertion, passed, actual) {
@@ -267,7 +267,7 @@ function renderLoopbackPage() {
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>OpenWork MCP client — ${escapeHtml(loopbackPage.status)}</title>
+    <title>Micx MCP client — ${escapeHtml(loopbackPage.status)}</title>
     <style>
       :root { color-scheme: light; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
       body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #eef7ff; color: #0f172a; }
@@ -279,8 +279,8 @@ function renderLoopbackPage() {
   </head>
   <body>
     <main>
-      <p>OpenWork MCP client</p>
-      <h1>OpenWork MCP client — ${escapeHtml(loopbackPage.status)}</h1>
+      <p>Micx MCP client</p>
+      <h1>Micx MCP client — ${escapeHtml(loopbackPage.status)}</h1>
       <p>Loopback redirect URI: <code>${escapeHtml(REDIRECT_URI)}</code></p>
       <ul>${details}</ul>
     </main>
@@ -290,7 +290,7 @@ function renderLoopbackPage() {
 
 async function startLoopbackServer() {
   const serverUrl = `http://127.0.0.1:${REDIRECT_PORT}`;
-  setLoopbackPage("waiting for authorization", ["OpenWork MCP client is waiting for the browser callback."]);
+  setLoopbackPage("waiting for authorization", ["Micx MCP client is waiting for the browser callback."]);
   let resolved = false;
   let resolveCode;
   let rejectCode;
@@ -304,7 +304,7 @@ async function startLoopbackServer() {
     if (requestUrl.pathname === "/callback") {
       const code = requestUrl.searchParams.get("code") ?? "";
       if (code) {
-        setLoopbackPage("authorization code received", ["OpenWork redirected back to the loopback callback.", "The client can now exchange the code for tokens."]);
+        setLoopbackPage("authorization code received", ["Micx redirected back to the loopback callback.", "The client can now exchange the code for tokens."]);
         if (!resolved) {
           resolved = true;
           resolveCode(code);
@@ -314,7 +314,7 @@ async function startLoopbackServer() {
         return;
       }
       response.writeHead(400, { "content-type": "text/html; charset=utf-8" });
-      response.end("<h1>OpenWork MCP client — missing code</h1>");
+      response.end("<h1>Micx MCP client — missing code</h1>");
       return;
     }
 
@@ -475,7 +475,7 @@ export default {
   title: "A URL-only MCP client connects to the API origin end to end",
   kind: "user-facing",
   preserveTheme: true,
-  requiredEnv: ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_WEB_URL"],
+  requiredEnv: ["MICX_EVAL_DEN_API_URL", "MICX_EVAL_DEN_WEB_URL"],
   steps: [
     {
       name: "Frame 1",
@@ -590,12 +590,12 @@ export default {
             );
             recordAssertion(
               ctx,
-              "The authorize URL sends the browser to the real OpenWork sign-in page",
+              "The authorize URL sends the browser to the real Micx sign-in page",
               signInFields?.hasEmail === true && signInFields?.hasPassword === true && signInFields?.bodyText?.includes("Sign in") === true,
               signInFields,
             );
           },
-          screenshot: { name: "frame-3-openwork-sign-in", requireText: ["Sign in"] },
+          screenshot: { name: "frame-3-micx-sign-in", requireText: ["Sign in"] },
         });
       },
     },

@@ -9,26 +9,26 @@ import { promisify } from "node:util";
 import { denApiUrl, denWebUrl } from "./lib/den-web.mjs";
 import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
 
-const FLOW_ID = "reliable-openwork-connect";
-const MCP_NAME = "openwork";
+const FLOW_ID = "reliable-micx-connect";
+const MCP_NAME = "micx";
 const MCP_PATH = "/mcp/agent";
-const PUBLIC_MCP_SERVER_URL = "https://api.openworklabs.com/mcp/agent";
+const PUBLIC_MCP_SERVER_URL = "https://api.micxlabs.com/mcp/agent";
 const CLIENT_SCOPE = "mcp:read mcp:write offline_access";
-const CLIENT_NAME = "OpenWork reliable connect eval client";
-const OPENCODE_BIN = process.env.OPENWORK_EVAL_OPENCODE_BIN?.trim() || "opencode";
-const DEMO_EMAIL = process.env.OPENWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
-const DEMO_PASSWORD = process.env.OPENWORK_EVAL_DEMO_PASSWORD?.trim() || "OpenWorkDemo123!";
+const CLIENT_NAME = "Micx reliable connect eval client";
+const OPENCODE_BIN = process.env.MICX_EVAL_OPENCODE_BIN?.trim() || "opencode";
+const DEMO_EMAIL = process.env.MICX_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
+const DEMO_PASSWORD = process.env.MICX_EVAL_DEMO_PASSWORD?.trim() || "MicxDemo123!";
 const SECTION_SELECTOR = "#connect-mcp";
 const INSTALL_SELECTOR = "#connect-mcp-install";
 const ACTIVE_PANEL_SELECTOR = `${INSTALL_SELECTOR} [role="tabpanel"]:not([hidden])`;
 const EXPECTED_TOOLS = ["execute_capability", "search_capabilities"];
-const OPENCODE_AUTH_COMMAND = "opencode mcp auth openwork";
-const OPENCODE_RECONNECT_COMMAND = `opencode mcp logout openwork
-opencode mcp auth openwork`;
-const CODEX_COMMAND = `codex mcp add openwork --url ${PUBLIC_MCP_SERVER_URL}`;
-const CODEX_LOGIN_COMMAND = "codex mcp login openwork";
-const CODEX_RECONNECT_COMMAND = `codex mcp logout openwork
-codex mcp login openwork`;
+const OPENCODE_AUTH_COMMAND = "opencode mcp auth micx";
+const OPENCODE_RECONNECT_COMMAND = `opencode mcp logout micx
+opencode mcp auth micx`;
+const CODEX_COMMAND = `codex mcp add micx --url ${PUBLIC_MCP_SERVER_URL}`;
+const CODEX_LOGIN_COMMAND = "codex mcp login micx";
+const CODEX_RECONNECT_COMMAND = `codex mcp logout micx
+codex mcp login micx`;
 const CLIENT_EXPECTATIONS = [
   {
     label: "Cursor",
@@ -67,7 +67,7 @@ const CLIENT_EXPECTATIONS = [
   },
 ];
 
-// Narration is loaded from the approved script (evals/voiceovers/reliable-openwork-connect.md).
+// Narration is loaded from the approved script (evals/voiceovers/reliable-micx-connect.md).
 // The runner fails this flow if the narration drifts from that script.
 const vo = await loadVoiceoverParagraphs(FLOW_ID);
 const execFileAsync = promisify(execFile);
@@ -350,9 +350,9 @@ async function navigateBrowser(ctx, url, label) {
 }
 
 async function ensureLandingConnect(ctx) {
-  const url = `${baseUrlFromEnv(ctx, "OPENWORK_EVAL_LANDING_URL")}/#connect-mcp`;
+  const url = `${baseUrlFromEnv(ctx, "MICX_EVAL_LANDING_URL")}/#connect-mcp`;
   await applyDesktopViewport(ctx);
-  await navigateBrowser(ctx, url, "landing OpenWork Connect section");
+  await navigateBrowser(ctx, url, "landing Micx Connect section");
   await ctx.waitFor(
     `(() => {
       const section = document.querySelector(${JSON.stringify(SECTION_SELECTOR)});
@@ -563,7 +563,7 @@ function renderLoopbackPage(input) {
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>OpenWork MCP client - ${escapeHtml(input.status)}</title>
+    <title>Micx MCP client - ${escapeHtml(input.status)}</title>
     <style>
       body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #f0f9ff; color: #0f172a; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
       main { width: min(760px, calc(100vw - 48px)); border: 1px solid #bae6fd; border-radius: 28px; background: white; box-shadow: 0 24px 80px rgba(15,23,42,.16); padding: 40px; }
@@ -574,7 +574,7 @@ function renderLoopbackPage(input) {
   </head>
   <body>
     <main>
-      <p>OpenWork MCP client</p>
+      <p>Micx MCP client</p>
       <h1>${escapeHtml(input.status)}</h1>
       <p>Loopback redirect URI: <code>${escapeHtml(input.redirectUri)}</code></p>
       <ul>${details}</ul>
@@ -585,7 +585,7 @@ function renderLoopbackPage(input) {
 
 async function startLoopbackServer() {
   let status = "waiting for authorization";
-  let details = ["The browser is authorizing OpenWork MCP access."];
+  let details = ["The browser is authorizing Micx MCP access."];
   let resolveCallback;
   const waitForCallback = new Promise((resolve) => {
     resolveCallback = resolve;
@@ -598,7 +598,7 @@ async function startLoopbackServer() {
       const callbackState = requestUrl.searchParams.get("state") ?? "";
       status = requestUrl.searchParams.get("code") ? "authorization code received" : "callback missing authorization code";
       details = [
-        "OpenWork redirected back to the client loopback callback.",
+        "Micx redirected back to the client loopback callback.",
         "The callback carried an authorization code and state only; no bearer or refresh tokens are present in the URL.",
       ];
       resolveCallback({
@@ -713,7 +713,7 @@ function registerNativeSyncCleanup() {
 async function prepareNativeOpenCodeEnvironment() {
   if (state.nativeTempRoot) return;
   await startNativeBrowserCaptureServer();
-  const root = await mkdtemp(path.join(os.tmpdir(), `openwork-reliable-connect-${state.nativeRunId}-`));
+  const root = await mkdtemp(path.join(os.tmpdir(), `micx-reliable-connect-${state.nativeRunId}-`));
   const xdgConfigHome = path.join(root, "xdg-config");
   const xdgDataHome = path.join(root, "xdg-data");
   const xdgCacheHome = path.join(root, "xdg-cache");
@@ -743,7 +743,7 @@ async function prepareNativeOpenCodeEnvironment() {
     XDG_CACHE_HOME: xdgCacheHome,
     PATH: [captureBinDir, process.env.PATH ?? ""].filter(Boolean).join(path.delimiter),
     BROWSER: state.nativeBrowserCaptureScript,
-    OPENWORK_EVAL_BROWSER_CAPTURE_ENDPOINT: state.nativeBrowserCaptureEndpoint,
+    MICX_EVAL_BROWSER_CAPTURE_ENDPOINT: state.nativeBrowserCaptureEndpoint,
     NO_COLOR: "1",
   };
 
@@ -760,8 +760,8 @@ async function prepareNativeOpenCodeEnvironment() {
   };
   const browserCaptureScript = `#!/usr/bin/env node
 const http = require("node:http");
-const endpoint = process.env.OPENWORK_EVAL_BROWSER_CAPTURE_ENDPOINT || "";
-const launcher = process.env.OPENWORK_EVAL_BROWSER_LAUNCHER || "BROWSER";
+const endpoint = process.env.MICX_EVAL_BROWSER_CAPTURE_ENDPOINT || "";
+const launcher = process.env.MICX_EVAL_BROWSER_LAUNCHER || "BROWSER";
 const argv = process.argv.slice(2);
 function unquote(value) {
   let output = String(value || "").trim();
@@ -835,7 +835,7 @@ try {
     "safari",
   ];
   const browserShimScript = (launcherName) => `#!/bin/sh
-OPENWORK_EVAL_BROWSER_LAUNCHER=${JSON.stringify(launcherName)} exec ${JSON.stringify(state.nativeBrowserCaptureScript)} "$@"
+MICX_EVAL_BROWSER_LAUNCHER=${JSON.stringify(launcherName)} exec ${JSON.stringify(state.nativeBrowserCaptureScript)} "$@"
 `;
   await Promise.all([
     writeFile(state.nativeConfigPath, `${JSON.stringify(config, null, 2)}\n`, "utf8"),
@@ -874,7 +874,7 @@ function summarizeCommandResult(result) {
     stdoutHash: shortHash(result.stdout),
     stderrHash: shortHash(result.stderr),
     outputBytes: Buffer.byteLength(combined),
-    mentionsOpenwork: /\bopenwork\b/i.test(combined),
+    mentionsMicx: /\bmicx\b/i.test(combined),
     mentionsOAuth: /oauth|auth/i.test(combined),
     mentionsAuthenticated: /authenticated|authorized|logged\s*in|valid/i.test(combined),
     mentionsConnected: /connected|enabled|ready|remote/i.test(combined),
@@ -1242,12 +1242,12 @@ async function forceNativeCredentialExpired(ctx, credential) {
 
 function commandLooksAuthenticated(result) {
   const summary = summarizeCommandResult(result);
-  return result.exitCode === 0 && summary.mentionsOpenwork && summary.mentionsAuthenticated && summary.mentionsOAuth && !summary.containsUnredactedToken;
+  return result.exitCode === 0 && summary.mentionsMicx && summary.mentionsAuthenticated && summary.mentionsOAuth && !summary.containsUnredactedToken;
 }
 
 function commandLooksConnected(result) {
   const summary = summarizeCommandResult(result);
-  return result.exitCode === 0 && summary.mentionsOpenwork && summary.mentionsConnected && !summary.containsUnredactedToken;
+  return result.exitCode === 0 && summary.mentionsMicx && summary.mentionsConnected && !summary.containsUnredactedToken;
 }
 
 async function clearDenWebSession(ctx) {
@@ -1285,7 +1285,7 @@ async function submitSignIn(ctx) {
     return Boolean(document.querySelector(${JSON.stringify(emailSelector)}))
       || Boolean(document.querySelector('input[name="mcp-organization"], input[type="radio"]'))
       || text.includes('Choose workspace');
-  })()`, { timeoutMs: 60_000, label: "OpenWork OAuth sign-in or consent" });
+  })()`, { timeoutMs: 60_000, label: "Micx OAuth sign-in or consent" });
 
   const alreadyAtConsent = await ctx.eval(`Boolean(document.querySelector('input[name="mcp-organization"], input[type="radio"]'))`);
   if (alreadyAtConsent) return "already signed in";
@@ -1328,7 +1328,7 @@ async function replaceCurrentUrlWithQueryless(ctx) {
 async function screenshotWithTemporarilyQuerylessUrl(ctx, name, options) {
   const before = await currentPageUrlSummary(ctx);
   const sanitizedHref = await ctx.eval(`(() => {
-    window.__openworkReliableConnectRawHref = location.href;
+    window.__micxReliableConnectRawHref = location.href;
     const url = new URL(location.href);
     history.replaceState(history.state, document.title, url.origin + url.pathname);
     return location.href;
@@ -1338,11 +1338,11 @@ async function screenshotWithTemporarilyQuerylessUrl(ctx, name, options) {
     await ctx.screenshot(name, options);
   } finally {
     await ctx.eval(`(() => {
-      const rawHref = window.__openworkReliableConnectRawHref;
+      const rawHref = window.__micxReliableConnectRawHref;
       if (typeof rawHref === "string" && rawHref.length > 0) {
         history.replaceState(history.state, document.title, rawHref);
       }
-      delete window.__openworkReliableConnectRawHref;
+      delete window.__micxReliableConnectRawHref;
       return true;
     })()`).catch((error) => ctx.log(`Consent URL restore skipped: ${error instanceof Error ? error.message : String(error)}`));
   }
@@ -1518,14 +1518,14 @@ function renderProofPage(proof) {
   const checks = proof.checks.map((check) => `<li><strong>${escapeHtml(check.label)}:</strong> ${escapeHtml(check.value)}</li>`).join("\n");
   const commandRows = proof.commands.map((command) => `<tr>
     <th>${escapeHtml(command.label)}</th>
-    <td>exit ${escapeHtml(String(command.exitCode))}; stdout <code>${escapeHtml(command.stdoutHash)}</code>; stderr <code>${escapeHtml(command.stderrHash)}</code>; openwork=${escapeHtml(String(command.mentionsOpenwork))}; oauth=${escapeHtml(String(command.mentionsOAuth))}; connected=${escapeHtml(String(command.mentionsConnected))}; authenticated=${escapeHtml(String(command.mentionsAuthenticated))}</td>
+    <td>exit ${escapeHtml(String(command.exitCode))}; stdout <code>${escapeHtml(command.stdoutHash)}</code>; stderr <code>${escapeHtml(command.stderrHash)}</code>; micx=${escapeHtml(String(command.mentionsMicx))}; oauth=${escapeHtml(String(command.mentionsOAuth))}; connected=${escapeHtml(String(command.mentionsConnected))}; authenticated=${escapeHtml(String(command.mentionsAuthenticated))}</td>
   </tr>`).join("\n");
   const credentialRows = Object.entries(proof.credentialSummary).map(([key, value]) => `<tr><th>${escapeHtml(key)}</th><td>${escapeHtml(typeof value === "string" ? value : JSON.stringify(value))}</td></tr>`).join("\n");
   return `<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>Reliable OpenWork Connect proof</title>
+    <title>Reliable Micx Connect proof</title>
     <style>
       body { margin: 0; background: #f8fafc; color: #0f172a; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
       main { max-width: 1040px; margin: 0 auto; padding: 36px; }
@@ -1543,7 +1543,7 @@ function renderProofPage(proof) {
   <body>
     <main>
       <p class="badge">Connected</p><p class="badge">No tokens shown</p><p class="badge">Native OpenCode</p>
-      <h1>Reliable OpenWork Connect proof</h1>
+      <h1>Reliable Micx Connect proof</h1>
       <p>Landing UI contract: <code>${escapeHtml(proof.canonicalServerUrl)}</code></p>
       <p>Runtime under test: <code>${escapeHtml(proof.runtimeServerUrl)}</code>. ${escapeHtml(proof.urlContract)}</p>
       <div class="grid">
@@ -1577,7 +1577,7 @@ function renderErrorMatrixPage(matrix) {
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>OpenWork Connect error matrix</title>
+    <title>Micx Connect error matrix</title>
     <style>
       body { margin: 0; background: #fff7ed; color: #111827; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
       main { max-width: 1120px; margin: 0 auto; padding: 36px; }
@@ -1591,7 +1591,7 @@ function renderErrorMatrixPage(matrix) {
   </head>
   <body>
     <main>
-      <h1>OpenWork Connect error matrix</h1>
+      <h1>Micx Connect error matrix</h1>
       <p>Every row is from a real HTTP response and includes an <strong>X-Request-Id</strong> plus a body reference. Tokens are redacted.</p>
       <table>
         <thead><tr><th>Scenario</th><th>Status</th><th>X-Request-Id</th><th>Body reference</th><th>Contract</th></tr></thead>
@@ -1665,9 +1665,9 @@ function sqlString(value) {
 }
 
 async function runMysql(ctx, sql) {
-  const container = ctx.env.OPENWORK_EVAL_DEN_MYSQL_CONTAINER.trim();
-  const database = ctx.env.OPENWORK_EVAL_DEN_MYSQL_DATABASE.trim();
-  const password = process.env.OPENWORK_EVAL_DEN_MYSQL_ROOT_PASSWORD?.trim() || "password";
+  const container = ctx.env.MICX_EVAL_DEN_MYSQL_CONTAINER.trim();
+  const database = ctx.env.MICX_EVAL_DEN_MYSQL_DATABASE.trim();
+  const password = process.env.MICX_EVAL_DEN_MYSQL_ROOT_PASSWORD?.trim() || "password";
   try {
     const { stdout, stderr } = await execFileAsync("docker", [
       "exec",
@@ -1718,8 +1718,8 @@ const BETTER_AUTH_EVAL_RATE_LIMIT_PATHS = [
 
 async function cleanupEvalRateLimits(ctx, phase) {
   ctx.assert(
-    ctx.env.OPENWORK_EVAL_ISOLATED_DATABASE.trim() === "1",
-    "Rate-limit cleanup requires OPENWORK_EVAL_ISOLATED_DATABASE=1 and must never run against a shared database.",
+    ctx.env.MICX_EVAL_ISOLATED_DATABASE.trim() === "1",
+    "Rate-limit cleanup requires MICX_EVAL_ISOLATED_DATABASE=1 and must never run against a shared database.",
   );
   const predicates = BETTER_AUTH_EVAL_RATE_LIMIT_PATHS
     .map((path) => `\`key\` LIKE ${sqlString(`%|${path}`)}`)
@@ -1733,7 +1733,7 @@ async function cleanupEvalRateLimits(ctx, phase) {
 }
 
 async function generateLiveRateLimit(ctx) {
-  const maxAttempts = Number(process.env.OPENWORK_EVAL_OAUTH_RATE_LIMIT_MAX_ATTEMPTS?.trim() || "80");
+  const maxAttempts = Number(process.env.MICX_EVAL_OAUTH_RATE_LIMIT_MAX_ATTEMPTS?.trim() || "80");
   const tokenEndpoint = readString(state.authorizationServerMetadata, "token_endpoint");
   const tokenEndpointUrl = new URL(tokenEndpoint);
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
@@ -1843,38 +1843,38 @@ function matrixRow(scenario, response, contract) {
 }
 
 async function navigateDocsPage(ctx) {
-  const url = `${baseUrlFromEnv(ctx, "OPENWORK_EVAL_DOCS_URL")}/cloud/run-in-the-cloud/cloud-mcp`;
-  await navigateBrowser(ctx, url, "OpenWork Connect docs page");
+  const url = `${baseUrlFromEnv(ctx, "MICX_EVAL_DOCS_URL")}/cloud/run-in-the-cloud/cloud-mcp`;
+  await navigateBrowser(ctx, url, "Micx Connect docs page");
   await ctx.waitFor(
     `(() => {
       const root = document.querySelector('article, main') || document.body;
       const text = root.innerText || "";
-      return text.includes(${JSON.stringify(PUBLIC_MCP_SERVER_URL)}) && text.includes('OpenWork Connect MCP');
+      return text.includes(${JSON.stringify(PUBLIC_MCP_SERVER_URL)}) && text.includes('Micx Connect MCP');
     })()`,
-    { timeoutMs: 30_000, label: "OpenWork Connect docs content" },
+    { timeoutMs: 30_000, label: "Micx Connect docs content" },
   );
   return url;
 }
 
 export default {
   id: FLOW_ID,
-  title: "Reliable OpenWork Connect is proven from landing page to OAuth, MCP tools, errors, and docs",
+  title: "Reliable Micx Connect is proven from landing page to OAuth, MCP tools, errors, and docs",
   kind: "user-facing",
   preserveTheme: true,
   requiredEnv: [
-    "OPENWORK_EVAL_LANDING_URL",
-    "OPENWORK_EVAL_DOCS_URL",
-    "OPENWORK_EVAL_DEN_API_URL",
-    "OPENWORK_EVAL_DEN_WEB_URL",
-    "OPENWORK_EVAL_DEN_MYSQL_CONTAINER",
-    "OPENWORK_EVAL_DEN_MYSQL_DATABASE",
-    "OPENWORK_EVAL_ISOLATED_DATABASE",
+    "MICX_EVAL_LANDING_URL",
+    "MICX_EVAL_DOCS_URL",
+    "MICX_EVAL_DEN_API_URL",
+    "MICX_EVAL_DEN_WEB_URL",
+    "MICX_EVAL_DEN_MYSQL_CONTAINER",
+    "MICX_EVAL_DEN_MYSQL_DATABASE",
+    "MICX_EVAL_ISOLATED_DATABASE",
   ],
   steps: [
     {
       name: "Frame 1",
       run: async (ctx) => {
-        await ctx.prove("OpenWork Connect publishes the permanent MCP server URL and labels only native-proven clients as verified.", {
+        await ctx.prove("Micx Connect publishes the permanent MCP server URL and labels only native-proven clients as verified.", {
           voiceover: vo[0],
           action: async () => {
             state.landingUrl = await ensureLandingConnect(ctx);
@@ -1946,8 +1946,8 @@ export default {
                 && opencode.includes('"oauth": {}')
                 && opencode.includes(PUBLIC_MCP_SERVER_URL)
                 && opencode.includes(OPENCODE_AUTH_COMMAND)
-                && opencode.indexOf("opencode mcp logout openwork") >= 0
-                && opencode.indexOf(OPENCODE_AUTH_COMMAND, opencode.indexOf("opencode mcp logout openwork")) > opencode.indexOf("opencode mcp logout openwork"),
+                && opencode.indexOf("opencode mcp logout micx") >= 0
+                && opencode.indexOf(OPENCODE_AUTH_COMMAND, opencode.indexOf("opencode mcp logout micx")) > opencode.indexOf("opencode mcp logout micx"),
               { selected: panels.OpenCode.selected, panelText: opencode },
             );
             recordAssertion(
@@ -1955,8 +1955,8 @@ export default {
               "Codex shows the add command, login command, and logout-then-login reconnect sequence",
               codex.includes(CODEX_COMMAND)
                 && codex.includes(CODEX_LOGIN_COMMAND)
-                && codex.indexOf("codex mcp logout openwork") >= 0
-                && codex.indexOf(CODEX_LOGIN_COMMAND, codex.indexOf("codex mcp logout openwork")) > codex.indexOf("codex mcp logout openwork"),
+                && codex.indexOf("codex mcp logout micx") >= 0
+                && codex.indexOf(CODEX_LOGIN_COMMAND, codex.indexOf("codex mcp logout micx")) > codex.indexOf("codex mcp logout micx"),
               { selected: panels.Codex.selected, panelText: codex },
             );
             recordAssertion(
@@ -2008,7 +2008,7 @@ export default {
               await waitForOrganizationConsent(ctx);
               state.selectedOrganizationLabel = await selectAcmeOrganization(ctx);
               const consentScreenshotUrl = await screenshotWithTemporarilyQuerylessUrl(ctx, "frame-3-consent-before-authorize", {
-                claim: "OpenWork shows the selected organization on the MCP consent screen before authorization.",
+                claim: "Micx shows the selected organization on the MCP consent screen before authorization.",
                 voiceover: vo[2],
                 requireText: ["CHOOSE WORKSPACE", "Authorize"],
                 rejectText: ["access_token", "refresh_token"],
@@ -2133,7 +2133,7 @@ export default {
       name: "Frame 4",
       run: async (ctx) => {
         try {
-          await ctx.prove("Public OAuth uses JWT access tokens plus rotating opaque refresh tokens while the verified client searches and executes OpenWork capabilities for the selected org.", {
+          await ctx.prove("Public OAuth uses JWT access tokens plus rotating opaque refresh tokens while the verified client searches and executes Micx capabilities for the selected org.", {
             voiceover: vo[3],
             action: async () => {
               const nativeBefore = await readNativeCredential();
@@ -2220,7 +2220,7 @@ export default {
               );
               recordAssertion(
                 ctx,
-                "Native opencode mcp auth list and mcp list exit successfully and report authenticated connected OAuth for openwork from real command output",
+                "Native opencode mcp auth list and mcp list exit successfully and report authenticated connected OAuth for micx from real command output",
                 commandLooksAuthenticated(state.nativeAuthList)
                   && commandLooksConnected(state.nativeMcpListBeforeRefresh),
                 commandSummaries,
@@ -2257,7 +2257,7 @@ export default {
       name: "Frame 5",
       run: async (ctx) => {
         try {
-          await ctx.prove("OpenWork Connect returns standards-compliant, traceable error responses for the failure modes clients hit.", {
+          await ctx.prove("Micx Connect returns standards-compliant, traceable error responses for the failure modes clients hit.", {
             voiceover: vo[4],
             action: async () => {
               const rateLimitReset = await cleanupEvalRateLimits(ctx, "frame-5-start");
@@ -2391,10 +2391,10 @@ export default {
                     && bodyText.includes('audience is exactly'),
                   hasOpaqueRefreshTokenContract: bodyText.includes('Refresh tokens are opaque rotating grants'),
                   hasOpenCodeAuth: bodyText.includes(${JSON.stringify(OPENCODE_AUTH_COMMAND)}),
-                  hasOpenCodeReconnect: bodyText.includes('opencode mcp logout openwork') && bodyText.includes(${JSON.stringify(OPENCODE_AUTH_COMMAND)}),
+                  hasOpenCodeReconnect: bodyText.includes('opencode mcp logout micx') && bodyText.includes(${JSON.stringify(OPENCODE_AUTH_COMMAND)}),
                   hasCodexAdd: bodyText.includes(${JSON.stringify(CODEX_COMMAND)}),
                   hasCodexLogin: bodyText.includes(${JSON.stringify(CODEX_LOGIN_COMMAND)}),
-                  hasCodexReconnect: bodyText.includes('codex mcp logout openwork') && bodyText.includes(${JSON.stringify(CODEX_LOGIN_COMMAND)}),
+                  hasCodexReconnect: bodyText.includes('codex mcp logout micx') && bodyText.includes(${JSON.stringify(CODEX_LOGIN_COMMAND)}),
                   rows,
                   hasRfc9728: bodyText.includes('RFC9728'),
                   hasExactResource: bodyText.includes('OAuth authorize and token requests must include exactly one') && bodyText.includes(${JSON.stringify(PUBLIC_MCP_SERVER_URL)}),
@@ -2403,7 +2403,7 @@ export default {
                     && bodyText.includes('429 rate limit')
                     && bodyText.includes('Retry-After'),
                   hasRequestId: bodyText.includes('X-Request-Id') && bodyText.includes('referenceId') && bodyText.includes('reference_id'),
-                  hasInternalProxyWarning: bodyText.includes('app.openworklabs.com/api/den') && bodyText.includes('internal same-origin desktop proxy') && bodyText.includes('Do not paste it into external MCP clients'),
+                  hasInternalProxyWarning: bodyText.includes('app.micxlabs.com/api/den') && bodyText.includes('internal same-origin desktop proxy') && bodyText.includes('Do not paste it into external MCP clients'),
                   hasOrganizationSwitching: bodyText.includes('The organization you choose in the browser is pinned into the token') && bodyText.includes('logout/auth') && bodyText.includes('logout/login'),
                   hasStaleSevenDayClaim: /\b(?:7|seven)[ -]?day\b/i.test(bodyText),
                   hasOpaqueAccessTokenClaim: bodyText.includes('opaque bearer tokens') || bodyText.includes('Access tokens are opaque'),

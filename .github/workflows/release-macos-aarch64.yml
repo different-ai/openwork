@@ -11,7 +11,7 @@ on:
         required: false
         type: string
       release_name:
-        description: "Release title (defaults to OpenWork <tag>)"
+        description: "Release title (defaults to Micx <tag>)"
         required: false
         type: string
       release_body:
@@ -34,7 +34,7 @@ on:
         type: boolean
         default: true
       publish_npm:
-        description: "Publish openwork-server to npm if its version changed"
+        description: "Publish micx-server to npm if its version changed"
         required: false
         type: boolean
         default: true
@@ -123,19 +123,19 @@ jobs:
           if [ -n "$RELEASE_NAME_INPUT" ]; then
             RELEASE_NAME="$RELEASE_NAME_INPUT"
           else
-            RELEASE_NAME="OpenWork $TAG"
+            RELEASE_NAME="Micx $TAG"
           fi
 
           RELEASE_BODY_INPUT="${INPUT_RELEASE_BODY:-}"
           if [ -n "$RELEASE_BODY_INPUT" ]; then
             RELEASE_BODY="$RELEASE_BODY_INPUT"
           else
-            printf -v RELEASE_BODY '%s\n\nOpenWork %s desktop release.\n\n%s\n%s\n%s\n%s' \
+            printf -v RELEASE_BODY '%s\n\nMicx %s desktop release.\n\n%s\n%s\n%s\n%s' \
               "## What's new" \
               "$TAG" \
-              "- Public artifacts use the openwork-* naming convention." \
-              "- Cloud artifacts use openwork-cloud-* and require sign-in without enterprise activation." \
-              "- Enterprise artifacts use openwork-enterprise-* while retaining the standard OpenWork app identity." \
+              "- Public artifacts use the micx-* naming convention." \
+              "- Cloud artifacts use micx-cloud-* and require sign-in without enterprise activation." \
+              "- Enterprise artifacts use micx-enterprise-* while retaining the standard Micx app identity." \
               "- Public, Cloud, and enterprise Electron builds use separate updater manifests on this release."
           fi
 
@@ -197,9 +197,9 @@ jobs:
           echo "publish_npm=$publish_npm" >> "$GITHUB_OUTPUT"
           echo "publish_daytona_snapshot=$publish_daytona_snapshot" >> "$GITHUB_OUTPUT"
           {
-            echo "release_body<<__OPENWORK_RELEASE_BODY_EOF__"
+            echo "release_body<<__MICX_RELEASE_BODY_EOF__"
             printf '%s\n' "$RELEASE_BODY"
-            echo "__OPENWORK_RELEASE_BODY_EOF__"
+            echo "__MICX_RELEASE_BODY_EOF__"
           } >> "$GITHUB_OUTPUT"
 
       - name: Create release if missing
@@ -280,7 +280,7 @@ jobs:
             os_type: macos
             artifact: electron-macos-arm64
             builder_config: electron-builder.yml
-            asset_prefix: openwork
+            asset_prefix: micx
             manifest_pattern: latest*.yml
             electron_args: "--mac --arm64"
             target_triple: aarch64-apple-darwin
@@ -288,7 +288,7 @@ jobs:
             os_type: macos
             artifact: electron-macos-x64
             builder_config: electron-builder.yml
-            asset_prefix: openwork
+            asset_prefix: micx
             manifest_pattern: latest*.yml
             electron_args: "--mac --x64"
             target_triple: x86_64-apple-darwin
@@ -296,7 +296,7 @@ jobs:
             os_type: linux
             artifact: electron-linux-x64
             builder_config: electron-builder.yml
-            asset_prefix: openwork
+            asset_prefix: micx
             manifest_pattern: latest*.yml
             electron_args: "--linux --x64"
             target_triple: x86_64-unknown-linux-gnu
@@ -304,7 +304,7 @@ jobs:
             os_type: linux
             artifact: electron-linux-arm64
             builder_config: electron-builder.yml
-            asset_prefix: openwork
+            asset_prefix: micx
             manifest_pattern: latest*.yml
             electron_args: "--linux --arm64"
             target_triple: aarch64-unknown-linux-gnu
@@ -312,7 +312,7 @@ jobs:
             os_type: windows
             artifact: electron-windows-x64
             builder_config: electron-builder.yml
-            asset_prefix: openwork
+            asset_prefix: micx
             manifest_pattern: latest*.yml
             electron_args: "--win --x64"
             target_triple: x86_64-pc-windows-msvc
@@ -320,7 +320,7 @@ jobs:
             os_type: windows
             artifact: electron-windows-arm64
             builder_config: electron-builder.yml
-            asset_prefix: openwork
+            asset_prefix: micx
             manifest_pattern: latest*.yml
             electron_args: "--win --arm64"
             target_triple: aarch64-pc-windows-msvc
@@ -328,7 +328,7 @@ jobs:
             os_type: macos
             artifact: electron-cloud-macos-arm64
             builder_config: electron-builder.cloud.yml
-            asset_prefix: openwork-cloud
+            asset_prefix: micx-cloud
             manifest_pattern: cloud*.yml
             electron_args: "--mac --arm64"
             target_triple: aarch64-apple-darwin
@@ -336,7 +336,7 @@ jobs:
             os_type: macos
             artifact: electron-cloud-macos-x64
             builder_config: electron-builder.cloud.yml
-            asset_prefix: openwork-cloud
+            asset_prefix: micx-cloud
             manifest_pattern: cloud*.yml
             electron_args: "--mac --x64"
             target_triple: x86_64-apple-darwin
@@ -344,7 +344,7 @@ jobs:
             os_type: linux
             artifact: electron-cloud-linux-x64
             builder_config: electron-builder.cloud.yml
-            asset_prefix: openwork-cloud
+            asset_prefix: micx-cloud
             manifest_pattern: cloud*.yml
             electron_args: "--linux --x64"
             target_triple: x86_64-unknown-linux-gnu
@@ -352,7 +352,7 @@ jobs:
             os_type: linux
             artifact: electron-cloud-linux-arm64
             builder_config: electron-builder.cloud.yml
-            asset_prefix: openwork-cloud
+            asset_prefix: micx-cloud
             manifest_pattern: cloud*.yml
             electron_args: "--linux --arm64"
             target_triple: aarch64-unknown-linux-gnu
@@ -360,7 +360,7 @@ jobs:
             os_type: windows
             artifact: electron-cloud-windows-x64
             builder_config: electron-builder.cloud.yml
-            asset_prefix: openwork-cloud
+            asset_prefix: micx-cloud
             manifest_pattern: cloud*.yml
             electron_args: "--win --x64"
             target_triple: x86_64-pc-windows-msvc
@@ -368,7 +368,7 @@ jobs:
             os_type: windows
             artifact: electron-cloud-windows-arm64
             builder_config: electron-builder.cloud.yml
-            asset_prefix: openwork-cloud
+            asset_prefix: micx-cloud
             manifest_pattern: cloud*.yml
             electron_args: "--win --arm64"
             target_triple: aarch64-pc-windows-msvc
@@ -376,7 +376,7 @@ jobs:
             os_type: macos
             artifact: electron-enterprise-macos-arm64
             builder_config: electron-builder.enterprise.yml
-            asset_prefix: openwork-enterprise
+            asset_prefix: micx-enterprise
             manifest_pattern: enterprise*.yml
             electron_args: "--mac --arm64"
             target_triple: aarch64-apple-darwin
@@ -384,7 +384,7 @@ jobs:
             os_type: macos
             artifact: electron-enterprise-macos-x64
             builder_config: electron-builder.enterprise.yml
-            asset_prefix: openwork-enterprise
+            asset_prefix: micx-enterprise
             manifest_pattern: enterprise*.yml
             electron_args: "--mac --x64"
             target_triple: x86_64-apple-darwin
@@ -392,7 +392,7 @@ jobs:
             os_type: linux
             artifact: electron-enterprise-linux-x64
             builder_config: electron-builder.enterprise.yml
-            asset_prefix: openwork-enterprise
+            asset_prefix: micx-enterprise
             manifest_pattern: enterprise*.yml
             electron_args: "--linux --x64"
             target_triple: x86_64-unknown-linux-gnu
@@ -400,7 +400,7 @@ jobs:
             os_type: linux
             artifact: electron-enterprise-linux-arm64
             builder_config: electron-builder.enterprise.yml
-            asset_prefix: openwork-enterprise
+            asset_prefix: micx-enterprise
             manifest_pattern: enterprise*.yml
             electron_args: "--linux --arm64"
             target_triple: aarch64-unknown-linux-gnu
@@ -408,7 +408,7 @@ jobs:
             os_type: windows
             artifact: electron-enterprise-windows-x64
             builder_config: electron-builder.enterprise.yml
-            asset_prefix: openwork-enterprise
+            asset_prefix: micx-enterprise
             manifest_pattern: enterprise*.yml
             electron_args: "--win --x64"
             target_triple: x86_64-pc-windows-msvc
@@ -416,7 +416,7 @@ jobs:
             os_type: windows
             artifact: electron-enterprise-windows-arm64
             builder_config: electron-builder.enterprise.yml
-            asset_prefix: openwork-enterprise
+            asset_prefix: micx-enterprise
             manifest_pattern: enterprise*.yml
             electron_args: "--win --arm64"
             target_triple: aarch64-pc-windows-msvc
@@ -514,7 +514,7 @@ jobs:
           # TARGET tells prepare-sidecar.mjs which architecture's opencode binary
           # to download (critical for cross-arch builds like x64 on arm64 mac).
           TARGET: ${{ matrix.target_triple }}
-        run: pnpm --filter @openwork/desktop build:electron
+        run: pnpm --filter @micx/desktop build:electron
 
       - name: Package Electron (macOS, signed + notarized)
         if: matrix.os_type == 'macos' && env.MACOS_NOTARIZE == 'true'
@@ -640,14 +640,14 @@ jobs:
       # electron-builder may still emit latest*.yml for a custom distribution.
       # Normalize each non-public feed so it cannot update into another flavor.
       - name: Normalize custom distribution updater manifests
-        if: matrix.asset_prefix != 'openwork'
+        if: matrix.asset_prefix != 'micx'
         shell: bash
         run: |
           set -euo pipefail
           cd apps/desktop/dist-electron
           shopt -s nullglob
           channel="${{ matrix.asset_prefix }}"
-          channel="${channel#openwork-}"
+          channel="${channel#micx-}"
           for manifest in latest*.yml; do
             target="${channel}${manifest#latest}"
             if [ -e "$target" ]; then
@@ -722,7 +722,7 @@ jobs:
         run: node scripts/release/publish-electron-assets.mjs --manifests-only "${{ runner.temp }}/electron-dist" "$RELEASE_TAG"
 
   publish-npm:
-    name: Publish openwork-server
+    name: Publish micx-server
     needs: [resolve-release, verify-release]
     if: |
       always() &&
@@ -754,7 +754,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v1
         with:
-          # Bun builds the openwork-server executable before npm publish.
+          # Bun builds the micx-server executable before npm publish.
           bun-version: "1.3.10"
 
       - name: Get pnpm store path
@@ -789,7 +789,7 @@ jobs:
           set -euo pipefail
           # npm view exits non-zero for packages that don't exist yet (404).
           # Treat missing packages as "not published" so release can publish them.
-          server_current="$(npm view openwork-server version 2>/dev/null || true)"
+          server_current="$(npm view micx-server version 2>/dev/null || true)"
 
           if [ "$server_current" = "$SERVER_VERSION" ]; then
             echo "publish_server=false" >> "$GITHUB_OUTPUT"
@@ -822,9 +822,9 @@ jobs:
           npm config set //registry.npmjs.org/:_authToken "$NPM_TOKEN"
           echo "enabled=true" >> "$GITHUB_OUTPUT"
 
-      - name: Publish openwork-server
+      - name: Publish micx-server
         if: steps.npm-auth.outputs.enabled == 'true' && steps.npm-versions.outputs.publish_server == 'true'
-        run: pnpm --filter openwork-server publish:npm --access public
+        run: pnpm --filter micx-server publish:npm --access public
 
   publish-daytona-snapshot:
     name: Build + Push Daytona Snapshot
@@ -880,7 +880,7 @@ jobs:
           version="${RELEASE_TAG#v}"
           branch="automation/aur-${version}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           git add packaging/aur/PKGBUILD packaging/aur/.SRCINFO
-          git -c user.name="OpenWork Release Bot" \
+          git -c user.name="Micx Release Bot" \
               -c user.email="release-bot@users.noreply.github.com" \
               commit -m "chore(aur): update PKGBUILD for ${version}"
           git push origin "HEAD:${branch}"
@@ -918,7 +918,7 @@ jobs:
         if: steps.aur-packaging-pr.outputs.created != 'true'
         env:
           AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
-          AUR_REPO: ${{ vars.AUR_REPO || 'openwork' }}
+          AUR_REPO: ${{ vars.AUR_REPO || 'micx' }}
           AUR_SKIP_UPDATE: "1"
         run: |
           set -euo pipefail

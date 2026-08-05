@@ -24,7 +24,7 @@ let savedAssets = null;
 let brandShapeStates = [];
 
 function orgSettingsUrl(ctx) {
-  return `${ctx.env.OPENWORK_EVAL_DEN_WEB_URL.replace(/\/$/, "")}${ORG_SETTINGS_PATH}`;
+  return `${ctx.env.MICX_EVAL_DEN_WEB_URL.replace(/\/$/, "")}${ORG_SETTINGS_PATH}`;
 }
 
 function parseMetadata(value) {
@@ -60,16 +60,16 @@ async function ensureDesktopSession(ctx) {
     body: JSON.stringify({ name: "Example Corp", brandAppName: "Example Work", brandLogoUrl: null, brandIconUrl: null }),
   });
 
-  await ctx.control("eval.auth.set-base-url", { baseUrl: process.env.OPENWORK_EVAL_DEN_WEB_URL });
+  await ctx.control("eval.auth.set-base-url", { baseUrl: process.env.MICX_EVAL_DEN_WEB_URL });
   await ctx.eval(`(() => {
-    localStorage.setItem('openwork.den.baseUrl', ${JSON.stringify(process.env.OPENWORK_EVAL_DEN_WEB_URL)});
-    localStorage.setItem('openwork.den.apiBaseUrl', ${JSON.stringify(process.env.OPENWORK_EVAL_DEN_API_URL)});
-    localStorage.setItem('openwork.den.authToken', ${JSON.stringify(process.env.OPENWORK_EVAL_DEN_TOKEN)});
-    localStorage.setItem('openwork.den.activeOrgId', ${JSON.stringify(activeOrg.id)});
-    localStorage.setItem('openwork.den.activeOrgSlug', ${JSON.stringify(activeOrg.slug ?? "example-corp")});
-    localStorage.setItem('openwork.den.activeOrgName', 'Example Corp');
-    window.dispatchEvent(new CustomEvent('openwork-den-settings-changed', { detail: {} }));
-    window.dispatchEvent(new CustomEvent('openwork-den-session-updated', { detail: { token: ${JSON.stringify(process.env.OPENWORK_EVAL_DEN_TOKEN)} } }));
+    localStorage.setItem('micx.den.baseUrl', ${JSON.stringify(process.env.MICX_EVAL_DEN_WEB_URL)});
+    localStorage.setItem('micx.den.apiBaseUrl', ${JSON.stringify(process.env.MICX_EVAL_DEN_API_URL)});
+    localStorage.setItem('micx.den.authToken', ${JSON.stringify(process.env.MICX_EVAL_DEN_TOKEN)});
+    localStorage.setItem('micx.den.activeOrgId', ${JSON.stringify(activeOrg.id)});
+    localStorage.setItem('micx.den.activeOrgSlug', ${JSON.stringify(activeOrg.slug ?? "example-corp")});
+    localStorage.setItem('micx.den.activeOrgName', 'Example Corp');
+    window.dispatchEvent(new CustomEvent('micx-den-settings-changed', { detail: {} }));
+    window.dispatchEvent(new CustomEvent('micx-den-session-updated', { detail: { token: ${JSON.stringify(process.env.MICX_EVAL_DEN_TOKEN)} } }));
     return true;
   })()`);
 
@@ -145,13 +145,13 @@ export default {
   id: "organization-branding-upload-layout",
   title: "Branding uploads stay contained and desktop wordmarks align without adjacent text",
   kind: "user-facing",
-  requiredEnv: ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_TOKEN", "OPENWORK_EVAL_DEN_WEB_URL"],
+  requiredEnv: ["MICX_EVAL_DEN_API_URL", "MICX_EVAL_DEN_TOKEN", "MICX_EVAL_DEN_WEB_URL"],
   steps: [
     {
       name: "setup",
       run: async (ctx) => {
         await ensureRendererMounted(ctx);
-        await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 30_000, label: "window.__openworkControl" });
+        await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 30_000, label: "window.__micxControl" });
         await ctx.ensureLightMode();
         await ensureDesktopSession(ctx);
         await ensureWorkspaceReady(ctx);

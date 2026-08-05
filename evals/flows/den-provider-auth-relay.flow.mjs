@@ -2,7 +2,7 @@
  * Internal proof for Den's downstream-provider authorization relay.
  *
  * Runs app-less against a real Den API and two public mock OAuth MCP gateways
- * supplied by the orchestrator through OPENWORK_EVAL_* environment variables.
+ * supplied by the orchestrator through MICX_EVAL_* environment variables.
  */
 import { createRequire } from "node:module";
 import { randomBytes } from "node:crypto";
@@ -15,13 +15,13 @@ const { StreamableHTTPClientTransport } = await import(requireFromDenApi.resolve
 const FLOW_ID = "den-provider-auth-relay";
 const TOOL_NAME = "query_salesforce_records";
 const REQUIRED_ENV = [
-  "OPENWORK_EVAL_DEN_API_URL",
-  "OPENWORK_EVAL_GATEWAY_MCP_URL",
-  "OPENWORK_EVAL_GATEWAY_MCP_URL_FOREIGN",
+  "MICX_EVAL_DEN_API_URL",
+  "MICX_EVAL_GATEWAY_MCP_URL",
+  "MICX_EVAL_GATEWAY_MCP_URL_FOREIGN",
 ];
 const RUN_TAG = `${Date.now().toString(36)}-${randomBytes(3).toString("hex")}`;
 const ADMIN_EMAIL = `den-provider-auth-${RUN_TAG}@acme.test`;
-const ADMIN_PASSWORD = `OpenWork-${RUN_TAG}-Provider-Auth!`;
+const ADMIN_PASSWORD = `Micx-${RUN_TAG}-Provider-Auth!`;
 const CONNECTION_A_NAME = `Salesforce Gateway Auth Required ${RUN_TAG}`;
 const CONNECTION_B_NAME = `Salesforce Gateway Foreign Link ${RUN_TAG}`;
 const TIMEOUT_WORDING = /latency|timed? ?out/i;
@@ -56,7 +56,7 @@ function readEvalEnv() {
 }
 
 function missingEnvMessage() {
-  return `Missing required environment variables for ${FLOW_ID}: ${envSnapshot.missing.join(", ")}. Set OPENWORK_EVAL_DEN_API_URL, OPENWORK_EVAL_GATEWAY_MCP_URL, and OPENWORK_EVAL_GATEWAY_MCP_URL_FOREIGN to the Daytona Den API and mock gateway MCP URLs.`;
+  return `Missing required environment variables for ${FLOW_ID}: ${envSnapshot.missing.join(", ")}. Set MICX_EVAL_DEN_API_URL, MICX_EVAL_GATEWAY_MCP_URL, and MICX_EVAL_GATEWAY_MCP_URL_FOREIGN to the Daytona Den API and mock gateway MCP URLs.`;
 }
 
 function requiredEnv(ctx) {
@@ -68,9 +68,9 @@ function requiredEnv(ctx) {
     throw new Error(message);
   }
   return {
-    denApiUrl: stripTrailingSlashes(envSnapshot.values.OPENWORK_EVAL_DEN_API_URL),
-    gatewayMcpUrl: stripTrailingSlashes(envSnapshot.values.OPENWORK_EVAL_GATEWAY_MCP_URL),
-    foreignGatewayMcpUrl: stripTrailingSlashes(envSnapshot.values.OPENWORK_EVAL_GATEWAY_MCP_URL_FOREIGN),
+    denApiUrl: stripTrailingSlashes(envSnapshot.values.MICX_EVAL_DEN_API_URL),
+    gatewayMcpUrl: stripTrailingSlashes(envSnapshot.values.MICX_EVAL_GATEWAY_MCP_URL),
+    foreignGatewayMcpUrl: stripTrailingSlashes(envSnapshot.values.MICX_EVAL_GATEWAY_MCP_URL_FOREIGN),
   };
 }
 

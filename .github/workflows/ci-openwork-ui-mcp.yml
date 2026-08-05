@@ -1,25 +1,25 @@
-name: openwork-ui-mcp
+name: micx-ui-mcp
 
 on:
   push:
     branches: [dev]
     paths:
-      - "packages/openwork-ui-mcp/**"
-      - ".github/workflows/ci-openwork-ui-mcp.yml"
+      - "packages/micx-ui-mcp/**"
+      - ".github/workflows/ci-micx-ui-mcp.yml"
     tags:
-      - "openwork-ui-mcp-v*"
+      - "micx-ui-mcp-v*"
   pull_request:
     branches: [dev]
     paths:
-      - "packages/openwork-ui-mcp/**"
-      - ".github/workflows/ci-openwork-ui-mcp.yml"
+      - "packages/micx-ui-mcp/**"
+      - ".github/workflows/ci-micx-ui-mcp.yml"
 
 permissions:
   contents: read
 
 defaults:
   run:
-    working-directory: packages/openwork-ui-mcp
+    working-directory: packages/micx-ui-mcp
 
 jobs:
   check:
@@ -53,7 +53,7 @@ jobs:
   publish:
     name: Publish to npm
     needs: check
-    if: startsWith(github.ref, 'refs/tags/openwork-ui-mcp-v')
+    if: startsWith(github.ref, 'refs/tags/micx-ui-mcp-v')
     runs-on: ubuntu-latest
 
     permissions:

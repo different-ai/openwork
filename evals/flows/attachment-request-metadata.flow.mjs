@@ -23,7 +23,7 @@ function witness(ctx, condition, assertion, actual = "") {
 function runTests(pattern) {
   return spawnSync(
     "pnpm",
-    ["--filter", "@openwork/app", "exec", "bun", "test", "tests/attachment-file-part.test.ts", "--test-name-pattern", pattern],
+    ["--filter", "@micx/app", "exec", "bun", "test", "tests/attachment-file-part.test.ts", "--test-name-pattern", pattern],
     { cwd: ROOT, encoding: "utf8", timeout: 60_000 },
   );
 }
@@ -76,7 +76,7 @@ export default {
           assert: async () => {
             const run = spawnSync(
               "pnpm",
-              ["--filter", "@openwork/app", "exec", "bun", "test", "tests/attachment-file-part.test.ts", "tests/ollama-local-provider.test.ts"],
+              ["--filter", "@micx/app", "exec", "bun", "test", "tests/attachment-file-part.test.ts", "tests/ollama-local-provider.test.ts"],
               { cwd: ROOT, encoding: "utf8", timeout: 60_000 },
             );
             const output = `${run.stdout}\n${run.stderr}`.trim();

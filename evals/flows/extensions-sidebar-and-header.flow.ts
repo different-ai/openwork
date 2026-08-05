@@ -35,8 +35,8 @@ export default defineFlow({
         await ctx.prove("The main sidebar places Extensions directly below Search and before Pinned", {
           voiceover: vo[0],
           action: async () => {
-            await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 60_000, label: "control API" });
-            const route = String(await ctx.eval("window.__openworkControl.snapshot().route || ''"));
+            await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 60_000, label: "control API" });
+            const route = String(await ctx.eval("window.__micxControl.snapshot().route || ''"));
             const prefix = appPrefix(route);
             const sessionRoute = `${prefix}/session`;
 
@@ -97,7 +97,7 @@ export default defineFlow({
         await ctx.prove("Opening Extensions uses the main content area with one correct heading through reload and history", {
           voiceover: vo[1],
           action: async () => {
-            const route = String(await ctx.eval("window.__openworkControl.snapshot().route || ''"));
+            const route = String(await ctx.eval("window.__micxControl.snapshot().route || ''"));
             const prefix = appPrefix(route);
             const extensionsRoute = `${prefix}/extensions`;
             const sessionRoute = `${prefix}/session`;
@@ -114,7 +114,7 @@ export default defineFlow({
             await ctx.waitForRoute(extensionsRoute, { timeoutMs: 20_000 });
 
             await ctx.eval("location.reload()");
-            await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 60_000, label: "control API after reload" });
+            await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 60_000, label: "control API after reload" });
             await ctx.waitForRoute(extensionsRoute, { timeoutMs: 20_000 });
             await ctx.waitFor(`(() => {
               const heading = [...document.querySelectorAll("h1")]
@@ -146,7 +146,7 @@ export default defineFlow({
             await ctx.waitForRoute(extensionsRoute, { timeoutMs: 20_000 });
           },
           assert: async () => {
-            const route = String(await ctx.eval("window.__openworkControl.snapshot().route || ''"));
+            const route = String(await ctx.eval("window.__micxControl.snapshot().route || ''"));
             ctx.assert(route.endsWith("/extensions"), `Expected main Extensions route, got ${route}.`);
             const headings = await ctx.eval(`([...document.querySelectorAll("h1")]
               .filter((entry) => (entry.textContent || "").trim() === "Extensions").length)`);

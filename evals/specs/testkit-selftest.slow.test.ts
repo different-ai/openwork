@@ -1,15 +1,15 @@
 import { createServer } from "node:net";
 import { expect } from "vitest";
-import { signIn } from "@openwork/behaviors";
-import { localMysqlIsRunning, needs, server, test } from "@openwork/testkit";
+import { signIn } from "@micx/behaviors";
+import { localMysqlIsRunning, needs, server, test } from "@micx/testkit";
 
-const appSpecsEnabled = process.env.OPENWORK_EVAL_APP_SPECS === "1";
-const localPlacement = process.env.OPENWORK_EVAL_DAYTONA !== "1";
+const appSpecsEnabled = process.env.MICX_EVAL_APP_SPECS === "1";
+const localPlacement = process.env.MICX_EVAL_DAYTONA !== "1";
 const mysqlOpen = await localMysqlIsRunning();
 const title = !appSpecsEnabled
-  ? "testkit local server skipped: set OPENWORK_EVAL_APP_SPECS=1 to opt in"
+  ? "testkit local server skipped: set MICX_EVAL_APP_SPECS=1 to opt in"
   : !localPlacement
-    ? "testkit local server skipped: unset OPENWORK_EVAL_DAYTONA for the local boot selftest"
+    ? "testkit local server skipped: unset MICX_EVAL_DAYTONA for the local boot selftest"
     : !mysqlOpen
       ? "testkit local server skipped: run pnpm dev:den:mysql"
       : "testkit boots and fully disposes an isolated local Den";
@@ -22,9 +22,9 @@ async function portCanBind(port: number): Promise<boolean> {
   });
 }
 
-test("skipped — needs: set OPENWORK_TESTKIT_INTENTIONALLY_MISSING", ({ place }) => {
+test("skipped — needs: set MICX_TESTKIT_INTENTIONALLY_MISSING", ({ place }) => {
   void place;
-  needs({ env: ["OPENWORK_TESTKIT_INTENTIONALLY_MISSING"] });
+  needs({ env: ["MICX_TESTKIT_INTENTIONALLY_MISSING"] });
 });
 
 test.skipIf(!appSpecsEnabled || !localPlacement || !mysqlOpen)(title, async ({ place }) => {

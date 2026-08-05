@@ -1,5 +1,5 @@
 {
-  "name": "@openwork/evals",
+  "name": "@micx/evals",
   "private": true,
   "type": "module",
   "scripts": {
@@ -14,14 +14,14 @@
     "typecheck": "tsc -p ."
   },
   "dependencies": {
-    "@openwork/behaviors": "workspace:*",
-    "@openwork/cdp": "workspace:*",
-    "@openwork/evidence": "workspace:*",
-    "@openwork/fraimz": "workspace:*",
-    "@openwork/hosts": "workspace:*",
-    "@openwork/labs": "workspace:*",
-    "@openwork/matchers": "workspace:*",
-    "@openwork/testkit": "workspace:*"
+    "@micx/behaviors": "workspace:*",
+    "@micx/cdp": "workspace:*",
+    "@micx/evidence": "workspace:*",
+    "@micx/fraimz": "workspace:*",
+    "@micx/hosts": "workspace:*",
+    "@micx/labs": "workspace:*",
+    "@micx/matchers": "workspace:*",
+    "@micx/testkit": "workspace:*"
   },
   "devDependencies": {
     "vitest": "^3.2.4"

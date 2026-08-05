@@ -2,14 +2,14 @@ import { spawnSync } from "node:child_process";
 import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
 
 const FLOW_ID = "appimage-static-runtime";
-const DEFAULT_APPIMAGE = "/workspace/apps/desktop/dist-electron/openwork-linux-x86_64-*.AppImage";
+const DEFAULT_APPIMAGE = "/workspace/apps/desktop/dist-electron/micx-linux-x86_64-*.AppImage";
 const vo = await loadVoiceoverParagraphs(FLOW_ID);
 
 function runInSandbox(ctx, script) {
   const encoded = Buffer.from(script, "utf8").toString("base64");
   const result = spawnSync(
     "daytona",
-    ["exec", ctx.env.OPENWORK_EVAL_DAYTONA_SANDBOX, "--", "echo", encoded, "|", "base64", "-d", "|", "bash"],
+    ["exec", ctx.env.MICX_EVAL_DAYTONA_SANDBOX, "--", "echo", encoded, "|", "base64", "-d", "|", "bash"],
     { encoding: "utf8", timeout: 120_000 },
   );
   ctx.assert(result.status === 0, `Daytona command failed: ${result.stderr || result.stdout}`);
@@ -28,9 +28,9 @@ function record(ctx, condition, assertion, actual = "") {
 
 export default {
   id: FLOW_ID,
-  title: "OpenWork AppImage runs without FUSE2 and remains updateable",
+  title: "Micx AppImage runs without FUSE2 and remains updateable",
   kind: "internal",
-  requiredEnv: ["OPENWORK_EVAL_DAYTONA_SANDBOX"],
+  requiredEnv: ["MICX_EVAL_DAYTONA_SANDBOX"],
   steps: [
     {
       name: "The host has FUSE3 without FUSE2",
@@ -61,12 +61,12 @@ printf 'DEV_FUSE=present\\n'
       },
     },
     {
-      name: "The fixed AppImage reaches a working OpenWork session",
+      name: "The fixed AppImage reaches a working Micx session",
       run: async (ctx) => {
-        await ctx.prove("The static-runtime AppImage starts and serves the packaged OpenWork UI", {
+        await ctx.prove("The static-runtime AppImage starts and serves the packaged Micx UI", {
           voiceover: vo[1],
           assert: async () => {
-            const appImage = ctx.env.OPENWORK_EVAL_APPIMAGE_PATH || DEFAULT_APPIMAGE;
+            const appImage = ctx.env.MICX_EVAL_APPIMAGE_PATH || DEFAULT_APPIMAGE;
             const output = runInSandbox(ctx, `
 set -euo pipefail
 APPIMAGE_PATTERN=${JSON.stringify(appImage)}
@@ -74,19 +74,19 @@ APPIMAGES=($APPIMAGE_PATTERN)
 test "\${#APPIMAGES[@]}" -eq 1
 APPIMAGE="\${APPIMAGES[0]}"
 "$APPIMAGE" --appimage-version
-pgrep -af '/tmp/.mount_openwo.*/openwork'
+pgrep -af '/tmp/.mount_openwo.*/micx'
 curl -sf http://127.0.0.1:9825/json/list
 grep 'GET /workspaces 200' /tmp/appimage-fix-launch.log
 `);
             record(ctx, output.includes("type2-runtime/commit/dd6cebe"), "The AppImage reports the static type-two runtime");
             record(ctx, output.includes("/tmp/.mount_openwo"), "The packaged AppImage process is running from its mounted image");
-            record(ctx, output.includes('"title": "OpenWork"'), "The packaged Electron CDP target is ready");
+            record(ctx, output.includes('"title": "Micx"'), "The packaged Electron CDP target is ready");
             record(ctx, output.includes("GET /workspaces 200"), "The packaged embedded server answers workspace requests");
             ctx.output("Packaged AppImage runtime", output.trim());
           },
           screenshot: {
             name: "packaged-appimage-ready",
-            requireText: ["OpenWork", "New session", "Ready for new tasks"],
+            requireText: ["Micx", "New session", "Ready for new tasks"],
             rejectText: ["Something went wrong"],
             hashIncludes: ["/workspace/"],
           },
@@ -99,7 +99,7 @@ grep 'GET /workspaces 200' /tmp/appimage-fix-launch.log
         await ctx.prove("The updater manifest matches the static-runtime AppImage", {
           voiceover: vo[2],
           assert: async () => {
-            const appImage = ctx.env.OPENWORK_EVAL_APPIMAGE_PATH || DEFAULT_APPIMAGE;
+            const appImage = ctx.env.MICX_EVAL_APPIMAGE_PATH || DEFAULT_APPIMAGE;
             const output = runInSandbox(ctx, `
 set -euo pipefail
 APPIMAGE_PATTERN=${JSON.stringify(appImage)}

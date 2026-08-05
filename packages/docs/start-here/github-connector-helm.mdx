@@ -1,9 +1,9 @@
 ---
 title: "GitHub connector for Helm"
-description: "Create a GitHub App and configure the OpenWork EE Helm chart for repository connectors."
+description: "Create a GitHub App and configure the Micx EE Helm chart for repository connectors."
 ---
 
-The GitHub connector lets a self-hosted OpenWork deployment install a GitHub App, list repositories the installation can read, discover plugin or marketplace manifests, import selected repositories, and keep imported content fresh from GitHub webhooks.
+The GitHub connector lets a self-hosted Micx deployment install a GitHub App, list repositories the installation can read, discover plugin or marketplace manifests, import selected repositories, and keep imported content fresh from GitHub webhooks.
 
 This is separate from GitHub social sign-in. Social sign-in uses `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` for Better Auth. The repository connector uses the `GITHUB_CONNECTOR_APP_*` settings below.
 
@@ -14,17 +14,17 @@ Use the same public hosts that you set in the Helm chart:
 ```yaml
 config:
   public:
-    webOrigin: "https://openwork.example.com"
-    apiOrigin: "https://api.openwork.example.com"
+    webOrigin: "https://micx.example.com"
+    apiOrigin: "https://api.micx.example.com"
 ```
 
-The GitHub App needs these OpenWork URLs:
+The GitHub App needs these Micx URLs:
 
 | GitHub App field | Value |
 | --- | --- |
-| Homepage URL | `https://openwork.example.com` |
-| Setup URL | `https://openwork.example.com/dashboard/integrations/github` |
-| Webhook URL | `https://api.openwork.example.com/v1/webhooks/connectors/github` |
+| Homepage URL | `https://micx.example.com` |
+| Setup URL | `https://micx.example.com/dashboard/integrations/github` |
+| Webhook URL | `https://api.micx.example.com/v1/webhooks/connectors/github` |
 
 Enable **Redirect on update** for the setup URL. GitHub redirects back to the setup URL with `installation_id` and `state`; Den web completes the installation by calling Den API.
 
@@ -37,9 +37,9 @@ In GitHub, create a new GitHub App for the account that should own the connector
 Use these settings:
 
 - **Webhook**: active.
-- **Webhook URL**: `https://api.openwork.example.com/v1/webhooks/connectors/github`.
+- **Webhook URL**: `https://api.micx.example.com/v1/webhooks/connectors/github`.
 - **Webhook secret**: generate a strong random secret and keep it for Helm.
-- **Setup URL**: `https://openwork.example.com/dashboard/integrations/github`.
+- **Setup URL**: `https://micx.example.com/dashboard/integrations/github`.
 - **Redirect on update**: enabled.
 - **Repository permissions**:
   - **Contents**: read-only.
@@ -87,7 +87,7 @@ If you use an existing Kubernetes Secret instead of `secret.values`, keep `confi
 ```yaml
 secret:
   create: false
-  existingSecret: openwork-ee-secrets
+  existingSecret: micx-ee-secrets
 ```
 
 Required deployment values:
@@ -103,9 +103,9 @@ Optional connector keys:
 
 The chart writes `GITHUB_CONNECTOR_APP_ID` and `GITHUB_CONNECTOR_APP_CLIENT_ID` through the shared ConfigMap, and writes `GITHUB_CONNECTOR_APP_PRIVATE_KEY`, `GITHUB_CONNECTOR_APP_WEBHOOK_SECRET`, and `GITHUB_CONNECTOR_APP_CLIENT_SECRET` through the shared Secret.
 
-## What OpenWork does with it
+## What Micx does with it
 
-When an admin clicks **Connect GitHub** in OpenWork:
+When an admin clicks **Connect GitHub** in Micx:
 
 1. Den API calls `/v1/connectors/github/install/start`.
 2. Den API reads the GitHub App metadata with the app ID and private key.
@@ -121,9 +121,9 @@ When GitHub sends a webhook to `/v1/webhooks/connectors/github`, Den API verifie
 After deploying the chart, sign in to Den web and open:
 
 ```text
-https://openwork.example.com/dashboard/integrations
+https://micx.example.com/dashboard/integrations
 ```
 
-Choose GitHub, install the GitHub App on a test account or organization, select a repository, and start discovery. A working setup should return to OpenWork, show repositories visible to the installation, and allow discovery on a selected repository.
+Choose GitHub, install the GitHub App on a test account or organization, select a repository, and start discovery. A working setup should return to Micx, show repositories visible to the installation, and allow discovery on a selected repository.
 
 For webhook validation, push to a connected repository and check Den API logs for an accepted or intentionally ignored GitHub webhook delivery. A `503` response from `/v1/webhooks/connectors/github` means the webhook secret is not configured in the Den API pod.

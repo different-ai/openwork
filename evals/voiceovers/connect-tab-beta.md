@@ -1,6 +1,6 @@
 # connect-tab-beta — Desktop Connect tab beta shell
 
-Cast is Alex, the Acme Robotics admin, using the OpenWork desktop app against the local Den stack. The proof stays cloud-only: Connect shows organization MCP connections, while Extensions keeps the old local extension experience.
+Cast is Alex, the Acme Robotics admin, using the Micx desktop app against the local Den stack. The proof stays cloud-only: Connect shows organization MCP connections, while Extensions keeps the old local extension experience.
 
 1. Alex signs the desktop into Acme and opens Settings. In the Cloud group, there is a new Connect entry, and it carries a small Beta badge so the rollout is visible before anyone opens the tab.
 

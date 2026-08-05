@@ -1,8 +1,8 @@
 # MCP OAuth conformance
 
-1. An administrator enters only the MCP URL and asks OpenWork to discover requirements. Before anything is saved, the dialog explains that OAuth is required, recommends dynamic registration, shows the available scopes, and calls out the administrator checks that standards metadata cannot prove.
+1. An administrator enters only the MCP URL and asks Micx to discover requirements. Before anything is saved, the dialog explains that OAuth is required, recommends dynamic registration, shows the available scopes, and calls out the administrator checks that standards metadata cannot prove.
 
-2. After the administrator chooses the least-privilege read scope, OpenWork completes dynamic registration and PKCE authorization in a real browser window. The provider returns to the deployment-wide callback and Den shows the successful connection page.
+2. After the administrator chooses the least-privilege read scope, Micx completes dynamic registration and PKCE authorization in a real browser window. The provider returns to the deployment-wide callback and Den shows the successful connection page.
 
 3. Back on the Connections screen, the normalized connection card reports Connected, Shared callback, and dynamic registration. The callback shown is deployment-wide and contains no connection identifier.
 

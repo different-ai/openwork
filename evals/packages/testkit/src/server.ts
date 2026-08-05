@@ -5,18 +5,18 @@ import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { allocateFreePorts } from "@openwork/cdp";
+import { allocateFreePorts } from "@micx/cdp";
 import {
   deleteSandboxes,
   freePort,
   killLocalPid,
   provisionDenSandbox,
   startMockOnSandbox,
-} from "@openwork/hosts";
-import { denFetch, ensureMemberSession, freshSession, signIn } from "@openwork/behaviors";
+} from "@micx/hosts";
+import { denFetch, ensureMemberSession, freshSession, signIn } from "@micx/behaviors";
 import { createConnection } from "mysql2/promise";
 import type { ChildProcess } from "node:child_process";
-import type { DenRef, DenSession } from "@openwork/behaviors";
+import type { DenRef, DenSession } from "@micx/behaviors";
 import type { DbHandle, Place } from "./place.ts";
 import { ephemeralDatabaseName, localMysqlIsRunning } from "./place.ts";
 import type { BootedMock, MockBoot, MockHandle } from "./mock.ts";
@@ -93,15 +93,15 @@ function auth(session: DenSession): Record<string, string> {
 
 function personDefaults(key: string, person: PersonShape | undefined, runId: string): Required<PersonShape> {
   return {
-    email: person?.email?.trim() || `${key}+${runId}@openwork.test`,
+    email: person?.email?.trim() || `${key}+${runId}@micx.test`,
     name: person?.name?.trim() || key.replace(/(^|[-_ ])\w/g, (part) => part.toUpperCase()),
-    password: person?.password || "OpenWorkEval123!",
+    password: person?.password || "MicxEval123!",
   };
 }
 
 function defaultLocalOrg(runId: string): OrgShape {
   return {
-    name: `OpenWork Eval ${runId}`,
+    name: `Micx Eval ${runId}`,
     admin: personDefaults("admin", undefined, runId),
     members: { jordan: personDefaults("jordan", { name: "Jordan Eval" }, runId) },
   };
@@ -109,9 +109,9 @@ function defaultLocalOrg(runId: string): OrgShape {
 
 function defaultReuseAdmin(): Required<PersonShape> {
   return {
-    email: process.env.OPENWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test",
+    email: process.env.MICX_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test",
     name: "Alex Eval",
-    password: process.env.OPENWORK_EVAL_DEMO_PASSWORD || "OpenWorkDemo123!",
+    password: process.env.MICX_EVAL_DEMO_PASSWORD || "MicxDemo123!",
   };
 }
 
@@ -178,7 +178,7 @@ async function waitForAuthProbe(ref: DenRef, service: SpawnedService): Promise<v
       const response = await fetch(url, {
         method: "POST",
         headers: { "content-type": "application/json", origin: ref.webUrl },
-        body: JSON.stringify({ email: `probe-${Date.now()}@openwork.test`, password: "not-a-real-password" }),
+        body: JSON.stringify({ email: `probe-${Date.now()}@micx.test`, password: "not-a-real-password" }),
         signal: AbortSignal.timeout(5_000),
       });
       if (response.status !== 403 && response.status < 500) return;
@@ -193,7 +193,7 @@ async function waitForAuthProbe(ref: DenRef, service: SpawnedService): Promise<v
 
 async function runDbPush(databaseUrl: string): Promise<void> {
   try {
-    await execFileAsync("pnpm", ["--filter", "@openwork-ee/den-db", "db:push"], {
+    await execFileAsync("pnpm", ["--filter", "@micx-ee/den-db", "db:push"], {
       cwd: REPO_ROOT,
       env: {
         ...process.env,
@@ -296,7 +296,7 @@ async function provisionOrganization(
   const admin = options.fallbackAdmin && !shape.admin
     ? await signIn(ref, { email: adminPerson.email, password: adminPerson.password })
     : await createOrSignInAccount(ref, adminPerson, options.databaseUrl);
-  if (options.createOrg) await createOrganization(admin, shape.name?.trim() || `OpenWork Eval ${runId}`);
+  if (options.createOrg) await createOrganization(admin, shape.name?.trim() || `Micx Eval ${runId}`);
   const members: Record<string, DenSession> = {};
   for (const [key, memberShape] of Object.entries(shape.members ?? {})) {
     members[key] = await createMember(ref, admin, personDefaults(key, memberShape, runId), options.databaseUrl);
@@ -317,7 +317,7 @@ async function provisionReusedMembers(
       email: person.email,
       password: person.password,
       name: person.name,
-      markVerifiedCmd: process.env.OPENWORK_EVAL_MARK_VERIFIED_CMD?.trim(),
+      markVerifiedCmd: process.env.MICX_EVAL_MARK_VERIFIED_CMD?.trim(),
     });
   }
   return members;
@@ -376,17 +376,17 @@ async function bootDaytonaMocks(
 async function stopMocks(handles: Record<string, MockHandle>): Promise<void> {
   for (const [name, handle] of Object.entries(handles)) {
     await handle.stop().catch((error: unknown) => {
-      console.error(`[openwork/testkit] mock ${name} cleanup failed: ${messageText(error)}`);
+      console.error(`[micx/testkit] mock ${name} cleanup failed: ${messageText(error)}`);
     });
   }
 }
 
 async function stopServices(services: SpawnedService[]): Promise<void> {
   for (const service of services) {
-    await killLocalPid(service.pid, { log: (line) => console.error(`[openwork/testkit] ${line}`) })
-      .catch((error: unknown) => console.error(`[openwork/testkit] ${service.label} cleanup failed: ${messageText(error)}`));
+    await killLocalPid(service.pid, { log: (line) => console.error(`[micx/testkit] ${line}`) })
+      .catch((error: unknown) => console.error(`[micx/testkit] ${service.label} cleanup failed: ${messageText(error)}`));
     await freePort(service.port)
-      .catch((error: unknown) => console.error(`[openwork/testkit] ${service.label} port cleanup failed: ${messageText(error)}`));
+      .catch((error: unknown) => console.error(`[micx/testkit] ${service.label} port cleanup failed: ${messageText(error)}`));
   }
 }
 
@@ -400,10 +400,10 @@ async function deleteCreatedOrganization(admin: DenSession): Promise<void> {
 
 function reusedRef(options: ServerOptions): DenRef | null {
   if (options.reuse) return { apiUrl: cleanUrl(options.reuse.apiUrl), webUrl: cleanUrl(options.reuse.webUrl) };
-  const apiUrl = process.env.OPENWORK_EVAL_DEN_API_URL?.trim();
+  const apiUrl = process.env.MICX_EVAL_DEN_API_URL?.trim();
   if (!apiUrl) return null;
   const cleanApi = cleanUrl(apiUrl);
-  const webUrl = process.env.OPENWORK_EVAL_DEN_WEB_URL?.trim()
+  const webUrl = process.env.MICX_EVAL_DEN_WEB_URL?.trim()
     || cleanApi.replace("127.0.0.1", "localhost");
   return { apiUrl: cleanApi, webUrl: cleanUrl(webUrl) };
 }
@@ -440,7 +440,7 @@ export async function server(options: ServerOptions): Promise<Den> {
           disposed = true;
           if (organization.createdOrg) {
             await deleteCreatedOrganization(organization.admin).catch((error: unknown) => {
-              console.error(`[openwork/testkit] reused Den org cleanup failed: ${messageText(error)}`);
+              console.error(`[micx/testkit] reused Den org cleanup failed: ${messageText(error)}`);
             });
           }
           await stopMocks(bootedMocks.handles);
@@ -454,13 +454,13 @@ export async function server(options: ServerOptions): Promise<Den> {
 
   if (options.place.kind === "daytona") {
     if (!daytonaAvailable()) {
-      throw new SkipError("Daytona CLI is unavailable; install and authenticate daytona, then set OPENWORK_EVAL_DAYTONA=1");
+      throw new SkipError("Daytona CLI is unavailable; install and authenticate daytona, then set MICX_EVAL_DAYTONA=1");
     }
     const base = options.place.denBase();
     if (base.kind !== "daytona") throw new Error("Daytona place returned a local Den base.");
     const provisioned = await provisionDenSandbox({
       ref: base.ref,
-      log: (line) => console.error(`[openwork/testkit] ${line}`),
+      log: (line) => console.error(`[micx/testkit] ${line}`),
     });
     let bootedMocks: { handles: Record<string, MockHandle>; env: Record<string, string> } = { handles: {}, env: {} };
     try {
@@ -486,13 +486,13 @@ export async function server(options: ServerOptions): Promise<Den> {
           disposed = true;
           if (organization.createdOrg) {
             await deleteCreatedOrganization(organization.admin).catch((error: unknown) => {
-              console.error(`[openwork/testkit] Daytona Den org cleanup failed: ${messageText(error)}`);
+              console.error(`[micx/testkit] Daytona Den org cleanup failed: ${messageText(error)}`);
             });
           }
           await stopMocks(bootedMocks.handles);
           if (provisioned.created) {
             await deleteSandboxes([provisioned.sandbox]).catch((error: unknown) => {
-              console.error(`[openwork/testkit] Daytona Den cleanup failed: ${messageText(error)}`);
+              console.error(`[micx/testkit] Daytona Den cleanup failed: ${messageText(error)}`);
             });
           }
         },
@@ -538,7 +538,7 @@ export async function server(options: ServerOptions): Promise<Den> {
       DEN_ORG_MODE: "multi_org",
       DEN_REQUIRE_EMAIL_VERIFICATION: "false",
       DEN_PASSWORD_BREACH_SCREENING_ENABLED: "false",
-      OPENWORK_DEV_MODE: "1",
+      MICX_DEV_MODE: "1",
       PROVISIONER_MODE: "stub",
     };
     const api = spawnService("den-api", "dev:den:api", apiPort, { ...commonEnv, DEN_BIND_HOST: "127.0.0.1" }, join(logsDir, "api.log"));
@@ -572,11 +572,11 @@ export async function server(options: ServerOptions): Promise<Den> {
         if (disposed) return;
         disposed = true;
         await deleteCreatedOrganization(organization.admin).catch((error: unknown) => {
-          console.error(`[openwork/testkit] local Den org cleanup failed: ${messageText(error)}`);
+          console.error(`[micx/testkit] local Den org cleanup failed: ${messageText(error)}`);
         });
         await stopServices(services);
         await database?.drop().catch((error: unknown) => {
-          console.error(`[openwork/testkit] ephemeral database cleanup failed: ${messageText(error)}`);
+          console.error(`[micx/testkit] ephemeral database cleanup failed: ${messageText(error)}`);
         });
         await stopMocks(bootedMocks.handles);
       },

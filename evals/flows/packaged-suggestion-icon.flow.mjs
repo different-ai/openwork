@@ -61,7 +61,7 @@ export default {
     {
       name: "Frame 2 — icon src is a rebased relative path, not a bare absolute path",
       run: async (ctx) => {
-        await ctx.prove("The Browse the web icon src is a relative path rebased by resolveExtensionIconSrc, not a bare absolute /openwork-mark.svg", {
+        await ctx.prove("The Browse the web icon src is a relative path rebased by resolveExtensionIconSrc, not a bare absolute /micx-mark.svg", {
           voiceover: vo[1],
           action: async () => {
             const result = await ctx.eval(`(() => {
@@ -90,8 +90,8 @@ export default {
             })()`);
             ctx.assert(result.found, "Browse the web button not found.");
             ctx.assert(result.src !== null, "Browse the web img has no src attribute.");
-            ctx.assert(!result.src.startsWith("/openwork-mark"), `Icon src is absolute "${result.src}" — should be rebased to relative.`);
-            ctx.assert(result.src.includes("openwork-mark.svg"), `Icon src "${result.src}" does not reference openwork-mark.svg.`);
+            ctx.assert(!result.src.startsWith("/micx-mark"), `Icon src is absolute "${result.src}" — should be rebased to relative.`);
+            ctx.assert(result.src.includes("micx-mark.svg"), `Icon src "${result.src}" does not reference micx-mark.svg.`);
           },
         });
       },

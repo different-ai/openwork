@@ -1,6 +1,6 @@
 # connect-cloud-partition — Connect lists cloud-runnable capabilities and Extensions stays local
 
-Cast is Alex, the Acme Robotics admin, using the OpenWork desktop app against the local Den stack. The proof seeds one organization marketplace with a ready cloud skill, one plugin that still needs an admin MCP connection, one desktop-only plugin, and one per-member team connection.
+Cast is Alex, the Acme Robotics admin, using the Micx desktop app against the local Den stack. The proof seeds one organization marketplace with a ready cloud skill, one plugin that still needs an admin MCP connection, one desktop-only plugin, and one per-member team connection.
 
 1. Alex opens Connect with the organization capability enabled. The From your organization list is grouped, Ready to use contains the seeded cloud-ready plugin, and the desktop-only plugin is absent from the entire Connect page.
 

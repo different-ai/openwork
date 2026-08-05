@@ -11,28 +11,28 @@ const MODEL_UNAVAILABLE_TEXT = "The model you were using is no longer available"
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function waitForDesktop(ctx) {
-  await ctx.waitFor("Boolean(window.__OPENWORK_ELECTRON__?.invokeDesktop)", {
+  await ctx.waitFor("Boolean(window.__MICX_ELECTRON__?.invokeDesktop)", {
     timeoutMs: 60_000,
     label: "desktop bridge",
   });
 }
 
 async function desktopWorkspaces(ctx) {
-  return ctx.eval("window.__OPENWORK_ELECTRON__.invokeDesktop('workspaceBootstrap')", {
+  return ctx.eval("window.__MICX_ELECTRON__.invokeDesktop('workspaceBootstrap')", {
     awaitPromise: true,
   });
 }
 
 async function serverRequest(ctx, path, options = {}) {
   return ctx.eval(`(async () => {
-    const invoke = window.__OPENWORK_ELECTRON__.invokeDesktop;
-    const info = await invoke("openworkServerInfo");
+    const invoke = window.__MICX_ELECTRON__.invokeDesktop;
+    const info = await invoke("micxServerInfo");
     const baseUrl = String(info?.baseUrl || info?.connectUrl || "").replace(/\\/+$/, "");
-    if (!baseUrl) throw new Error("OpenWork server URL is unavailable");
+    if (!baseUrl) throw new Error("Micx server URL is unavailable");
     const headers = { "content-type": "application/json" };
     const token = info?.ownerToken || info?.clientToken || "";
     if (token) headers.authorization = "Bearer " + token;
-    if (info?.hostToken) headers["x-openwork-host-token"] = info.hostToken;
+    if (info?.hostToken) headers["x-micx-host-token"] = info.hostToken;
     const response = await invoke("__fetch", baseUrl + ${JSON.stringify(path)}, {
       method: ${JSON.stringify(options.method ?? "GET")},
       headers,
@@ -63,7 +63,7 @@ async function resetFixtures(ctx) {
   ]);
   for (const workspaceId of ids) {
     await serverRequest(ctx, `/workspaces/${encodeURIComponent(workspaceId)}`, { method: "DELETE" }).catch(() => null);
-    await ctx.eval(`window.__OPENWORK_ELECTRON__.invokeDesktop("workspaceForget", ${JSON.stringify(workspaceId)})`, {
+    await ctx.eval(`window.__MICX_ELECTRON__.invokeDesktop("workspaceForget", ${JSON.stringify(workspaceId)})`, {
       awaitPromise: true,
     }).catch(() => null);
   }
@@ -77,7 +77,7 @@ async function resetFixtures(ctx) {
     const workspace = serverWorkspaceItems(serverState).find((item) => item.path === fixture.path);
     const workspaceId = serverState?.activeId || serverState?.selectedId || workspace?.id;
     ctx.assert(Boolean(workspaceId), `Workspace creation returned no id for ${fixture.path}`);
-    await ctx.eval(`window.__OPENWORK_ELECTRON__.invokeDesktop("workspaceCreate", ${JSON.stringify({
+    await ctx.eval(`window.__MICX_ELECTRON__.invokeDesktop("workspaceCreate", ${JSON.stringify({
       folderPath: fixture.path,
       name: fixture.name,
       preset: "starter",
@@ -88,17 +88,17 @@ async function resetFixtures(ctx) {
   const selected = created[created.length - 1];
   await serverRequest(ctx, `/workspaces/${encodeURIComponent(selected.id)}/activate?persist=true`, { method: "POST" });
   await ctx.eval(`(async () => {
-    const invoke = window.__OPENWORK_ELECTRON__.invokeDesktop;
+    const invoke = window.__MICX_ELECTRON__.invokeDesktop;
     await invoke("workspaceSetSelected", ${JSON.stringify(selected.id)});
     await invoke("workspaceSetRuntimeActive", ${JSON.stringify(selected.id)});
     let prefs = {};
-    try { prefs = JSON.parse(localStorage.getItem("openwork.preferences") || "{}"); } catch {}
-    localStorage.setItem("openwork.preferences", JSON.stringify({ ...prefs, hasCompletedOnboarding: true }));
+    try { prefs = JSON.parse(localStorage.getItem("micx.preferences") || "{}"); } catch {}
+    localStorage.setItem("micx.preferences", JSON.stringify({ ...prefs, hasCompletedOnboarding: true }));
     location.hash = ${JSON.stringify(`#/workspace/${selected.id}/session`)};
     location.reload();
     return true;
   })()`, { awaitPromise: true }).catch(() => null);
-  await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 90_000, label: "app after fixture setup" });
+  await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 90_000, label: "app after fixture setup" });
   await ctx.waitForText(FIXTURES[0].name, { timeoutMs: 90_000 });
   await ctx.waitForText(FIXTURES[1].name, { timeoutMs: 90_000 });
   const sidebarCollapsed = await ctx.eval('document.querySelector(\'[data-slot="sidebar"]\')?.getAttribute("data-state") === "collapsed"');
@@ -230,7 +230,7 @@ export default {
         await ctx.prove("The empty workspace registry remains authoritative after restart", {
           voiceover: vo[3],
           action: async () => {
-            await ctx.eval("window.__OPENWORK_ELECTRON__.shell.relaunch()", { awaitPromise: true }).catch(() => null);
+            await ctx.eval("window.__MICX_ELECTRON__.shell.relaunch()", { awaitPromise: true }).catch(() => null);
             await sleep(2_000);
             await ctx.reconnect({ timeoutMs: 120_000 });
             await waitForDesktop(ctx);

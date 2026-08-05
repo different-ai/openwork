@@ -1,5 +1,5 @@
 {
-  "name": "@openwork/testkit",
+  "name": "@micx/testkit",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -11,11 +11,11 @@
     }
   },
   "dependencies": {
-    "@openwork/behaviors": "workspace:*",
-    "@openwork/cdp": "workspace:*",
-    "@openwork/fraimz": "workspace:*",
-    "@openwork/hosts": "workspace:*",
-    "@openwork/labs": "workspace:*",
+    "@micx/behaviors": "workspace:*",
+    "@micx/cdp": "workspace:*",
+    "@micx/fraimz": "workspace:*",
+    "@micx/hosts": "workspace:*",
+    "@micx/labs": "workspace:*",
     "mysql2": "^3.11.3",
     "vitest": "^3.2.4"
   }

@@ -1,6 +1,6 @@
-# markdown-primitive — One supported Markdown pipeline across OpenWork
+# markdown-primitive — One supported Markdown pipeline across Micx
 
-1. OpenWork opens an existing conversation and displays the session normally, with no errors or unexpected visual changes.
+1. Micx opens an existing conversation and displays the session normally, with no errors or unexpected visual changes.
 
 2. The conversation shows headings, bold text, inline code, a fenced code block, and a link through the supported Markdown renderer.
 

@@ -17,9 +17,9 @@ const MARKDOWN_PROMPT = [
   "console.log(\"primitive proof\");",
   "```",
   "",
-  "[OpenWork docs](https://openwork.dev)",
+  "[Micx docs](https://micx.dev)",
 ].join("\n");
-const MARKDOWN_TEXT_MARKERS = ["Primitive Markdown Proof", "inlineToken", "console.log", "OpenWork docs"];
+const MARKDOWN_TEXT_MARKERS = ["Primitive Markdown Proof", "inlineToken", "console.log", "Micx docs"];
 const NEW_SESSION_PROMPT = "Reply with exactly: primitive cleanup response ok";
 const NEW_SESSION_RESPONSE = "primitive cleanup response ok";
 const ERROR_TEXT = [
@@ -55,18 +55,18 @@ function includesAll(text, markers) {
 
 function actionExpression(actionId, enabled = true) {
   return `(() => {
-    const action = window.__openworkControl?.listActions?.().find((item) => item.id === ${json(actionId)});
+    const action = window.__micxControl?.listActions?.().find((item) => item.id === ${json(actionId)});
     if (!action) return false;
     return ${enabled ? "!action.disabled" : "true"};
   })()`;
 }
 
 async function waitForControl(ctx, label = "control API") {
-  await ctx.waitFor("Boolean(window.__openworkControl)", {
+  await ctx.waitFor("Boolean(window.__micxControl)", {
     timeoutMs: 60_000,
     label,
   });
-  await ctx.waitFor("window.__openworkControl.snapshot().status !== 'acting'", {
+  await ctx.waitFor("window.__micxControl.snapshot().status !== 'acting'", {
     timeoutMs: 30_000,
     label: `${label} idle`,
   });
@@ -108,7 +108,7 @@ async function routeSession(ctx) {
 async function waitForSessionState(ctx) {
   await waitForControl(ctx);
   return ctx.waitFor(`(() => {
-    const route = window.__openwork?.slice?.("route");
+    const route = window.__micx?.slice?.("route");
     if (!route || route.loading) return null;
     if (!Array.isArray(route.workspaces) || route.workspaces.length === 0) return null;
     if (typeof route.selectedWorkspaceId !== "string" || !route.selectedWorkspaceId.trim()) return null;
@@ -122,19 +122,19 @@ async function waitForSessionState(ctx) {
 
 async function selectedSessionId(ctx) {
   return ctx.eval(`(() => {
-    const route = window.__openwork?.slice?.("route");
+    const route = window.__micx?.slice?.("route");
     if (typeof route?.selectedSessionId === "string" && route.selectedSessionId.trim()) return route.selectedSessionId;
-    return (${sessionIdFromRoute.toString()})(window.__openworkControl?.snapshot?.().route || "");
+    return (${sessionIdFromRoute.toString()})(window.__micxControl?.snapshot?.().route || "");
   })()`);
 }
 
 async function waitForSelectedSessionId(ctx, previousSessionId, label = "selected session id") {
   return ctx.waitFor(`(() => {
     const previous = ${json(previousSessionId ?? "")};
-    const route = window.__openwork?.slice?.("route");
+    const route = window.__micx?.slice?.("route");
     const selected = typeof route?.selectedSessionId === "string" ? route.selectedSessionId.trim() : "";
     if (selected && selected !== previous) return selected;
-    const controlRoute = window.__openworkControl?.snapshot?.().route || "";
+    const controlRoute = window.__micxControl?.snapshot?.().route || "";
     const match = controlRoute.match(/ses_[A-Za-z0-9_-]+/);
     const routed = match ? match[0] : "";
     return routed && routed !== previous ? routed : null;
@@ -147,9 +147,9 @@ async function waitForSelectedSessionId(ctx, previousSessionId, label = "selecte
 async function waitForSessionRoute(ctx, sessionId) {
   await ctx.waitFor(`(() => {
     const expected = ${json(sessionId)};
-    const route = window.__openwork?.slice?.("route");
+    const route = window.__micx?.slice?.("route");
     if (route?.selectedSessionId === expected) return true;
-    return (window.__openworkControl?.snapshot?.().route || "").includes(expected);
+    return (window.__micxControl?.snapshot?.().route || "").includes(expected);
   })()`, {
     timeoutMs: 45_000,
     label: `session route ${sessionId}`,
@@ -222,9 +222,9 @@ function markdownDomInfoExpression() {
     const assistantMessages = Array.from(document.querySelectorAll('[data-message-role="assistant"]'));
     const proofMessage = assistantMessages.find((message) => ${json(MARKDOWN_TEXT_MARKERS)}.every((marker) => message.textContent.includes(marker)));
     if (!proofMessage) return { ok: false, reason: "assistant markdown proof message not visible", assistantMessages: assistantMessages.length };
-    const codeBlock = proofMessage.querySelector('[data-openwork-code-block]');
-    const inlineCode = Array.from(proofMessage.querySelectorAll('code')).find((code) => !code.closest('[data-openwork-code-block]') && code.textContent.includes('inlineToken'));
-    const link = proofMessage.querySelector('a[data-openwork-link-href="https://openwork.dev"], a[href="https://openwork.dev/"]');
+    const codeBlock = proofMessage.querySelector('[data-micx-code-block]');
+    const inlineCode = Array.from(proofMessage.querySelectorAll('code')).find((code) => !code.closest('[data-micx-code-block]') && code.textContent.includes('inlineToken'));
+    const link = proofMessage.querySelector('a[data-micx-link-href="https://micx.dev"], a[href="https://micx.dev/"]');
     const strong = Array.from(proofMessage.querySelectorAll('strong')).find((node) => node.textContent.includes('Bold status'));
     return {
       ok: Boolean(codeBlock && inlineCode && link && strong),
@@ -335,8 +335,8 @@ function windowRoute(state) {
 }
 
 async function assertBootState(ctx, state) {
-  ctx.assert(state.connected === true, `OpenWork server is not connected: ${JSON.stringify(state)}`);
-  ctx.assert(state.tokenPresent === true, `OpenWork token is missing: ${JSON.stringify(state)}`);
+  ctx.assert(state.connected === true, `Micx server is not connected: ${JSON.stringify(state)}`);
+  ctx.assert(state.tokenPresent === true, `Micx token is missing: ${JSON.stringify(state)}`);
   ctx.assert(Boolean(state.selectedWorkspaceId), `No selected workspace: ${JSON.stringify(state)}`);
   ctx.assert(state.routeError === null, `Route reported an error: ${JSON.stringify(state.routeError)}`);
   await ctx.expectText("Search sessions");
@@ -361,7 +361,7 @@ async function openSettingsPanel(ctx, panel, requiredText) {
   await dismissStaleOverlays(ctx);
   await waitForAction(ctx, "settings.panel.open", { enabled: false });
   await ctx.control("settings.panel.open", { panel });
-  await ctx.waitFor(`window.__openworkControl.snapshot().route.includes(${json(`/settings/${panel}`)})`, {
+  await ctx.waitFor(`window.__micxControl.snapshot().route.includes(${json(`/settings/${panel}`)})`, {
     timeoutMs: 30_000,
     label: `${panel} settings route`,
   });
@@ -371,7 +371,7 @@ async function openSettingsPanel(ctx, panel, requiredText) {
 async function inspectConnectSurface(ctx) {
   return ctx.eval(`(() => {
     const text = document.body.innerText;
-    const route = window.__openworkControl?.snapshot?.().route || "";
+    const route = window.__micxControl?.snapshot?.().route || "";
     return {
       route,
       hasHeader: text.includes("Connect for teams"),
@@ -388,7 +388,7 @@ async function inspectConnectSurface(ctx) {
 async function inspectExtensionsSurface(ctx) {
   return ctx.eval(`(() => {
     const text = document.body.innerText;
-    const route = window.__openworkControl?.snapshot?.().route || "";
+    const route = window.__micxControl?.snapshot?.().route || "";
     return {
       route,
       hasExtensionsHeader: text.includes("Extensions (Legacy)") || text.includes("Extensions"),
@@ -396,7 +396,7 @@ async function inspectExtensionsSurface(ctx) {
       hasMarketplace: text.includes("Marketplace"),
       hasRefresh: text.includes("Refresh"),
       hasAddApp: text.includes("Add App") || text.includes("Available apps") || text.includes("No apps connected yet"),
-      hasConnectPath: text.includes("OpenWork Connect") || text.includes("Open Connect") || text.includes("Marketplace content now lives in Connect") || text.includes("My Extensions"),
+      hasConnectPath: text.includes("Micx Connect") || text.includes("Open Connect") || text.includes("Marketplace content now lives in Connect") || text.includes("My Extensions"),
     };
   })()`);
 }
@@ -408,19 +408,19 @@ async function reloadRendererClient(ctx) {
 
 export default {
   id: "primitives-80-20",
-  title: "Primitive cleanup leaves the user-facing OpenWork journey unchanged",
+  title: "Primitive cleanup leaves the user-facing Micx journey unchanged",
   kind: "user-facing",
   precondition: async (ctx) => {
     await waitForControl(ctx);
-    const route = await ctx.eval("window.__openworkControl.snapshot().route || ''");
+    const route = await ctx.eval("window.__micxControl.snapshot().route || ''");
     if (route.startsWith("/welcome") || route.startsWith("/signin") || route.startsWith("/onboarding")) {
       return "Profile is not onboarded (welcome/signin/onboarding); primitives proof requires an existing workspace.";
     }
     await routeSession(ctx);
     const state = await ctx.waitFor(`(() => {
-      const route = window.__openwork?.slice?.("route");
+      const route = window.__micx?.slice?.("route");
       if (!route || route.loading) return null;
-      const action = window.__openworkControl.listActions().find((item) => item.id === "session.create_task");
+      const action = window.__micxControl.listActions().find((item) => item.id === "session.create_task");
       if (action && !action.disabled && route.connected && route.selectedWorkspaceId) return "ready";
       return null;
     })()`, {
@@ -433,7 +433,7 @@ export default {
     {
       name: "Existing workspace boots cleanly",
       run: async (ctx) => {
-        await ctx.prove("OpenWork lands on an existing workspace session surface with no migration or error warning", {
+        await ctx.prove("Micx lands on an existing workspace session surface with no migration or error warning", {
           voiceover: vo[0],
           action: async () => {
             await routeSession(ctx);
@@ -472,7 +472,7 @@ export default {
             ctx.assert(info.ok === true, `Markdown renderer did not expose the expected DOM: ${JSON.stringify(info)}`);
             ctx.assert(info.hasCodeBlock === true && info.codeText.includes("console.log"), `Code block is missing: ${JSON.stringify(info)}`);
             ctx.assert(info.hasInlineCode === true && info.inlineCodeText.includes("inlineToken"), `Inline code is missing: ${JSON.stringify(info)}`);
-            ctx.assert(info.hasLink === true && info.linkText.includes("OpenWork docs"), `Link is missing: ${JSON.stringify(info)}`);
+            ctx.assert(info.hasLink === true && info.linkText.includes("Micx docs"), `Link is missing: ${JSON.stringify(info)}`);
             ctx.assert(info.linkTarget === "_blank", `Link target changed: ${JSON.stringify(info)}`);
           },
           screenshot: {
@@ -553,7 +553,7 @@ export default {
     {
       name: "Restart restores durable workspace state",
       run: async (ctx) => {
-        await ctx.prove("Reopening OpenWork restores the workspace, session history, settings route, and server connection", {
+        await ctx.prove("Reopening Micx restores the workspace, session history, settings route, and server connection", {
           voiceover: vo[4],
           action: async () => {
             ctx.assert(Boolean(createdSessionId), "No created session id is available for restart proof.");
@@ -585,7 +585,7 @@ export default {
           },
           screenshot: {
             name: "restarted-connect-settings-restored",
-            requireText: ["OpenWork Connect", "Connect for teams"],
+            requireText: ["Micx Connect", "Connect for teams"],
             rejectText: ERROR_TEXT,
             hashIncludes: "/settings/connect",
           },

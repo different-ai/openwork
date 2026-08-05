@@ -1,11 +1,11 @@
 ---
 title: "Roadmap"
-description: "The roadmap for the OpenWork desktop app, portable capabilities, hosted workspaces, and every surface where work happens."
+description: "The roadmap for the Micx desktop app, portable capabilities, hosted workspaces, and every surface where work happens."
 ---
 
-Most people use OpenWork through the desktop app today. It is where you create a workspace, work with files, connect services, add skills, and customize how your agent works.
+Most people use Micx through the desktop app today. It is where you create a workspace, work with files, connect services, add skills, and customize how your agent works.
 
-What you create there should not stay trapped there. OpenWork Connect already brings the same capabilities into compatible agents. Next come persistent hosted workspaces, Slack, mobile, and more.
+What you create there should not stay trapped there. Micx Connect already brings the same capabilities into compatible agents. Next come persistent hosted workspaces, Slack, mobile, and more.
 
 Last updated: July 2026
 
@@ -15,7 +15,7 @@ Last updated: July 2026
 
 ## The desktop app is home
 
-The desktop app is the main OpenWork experience. It is where people work with files, run agents, manage sessions, create skills, connect services, and customize a workspace.
+The desktop app is the main Micx experience. It is where people work with files, run agents, manage sessions, create skills, connect services, and customize a workspace.
 
 | Capability | What it does | Status |
 | --- | --- | --- |
@@ -28,15 +28,15 @@ The desktop app is the main OpenWork experience. It is where people work with fi
 | Isolated sandbox workspaces | Run work in a separate Docker or microsandbox environment, with some platform and setup limitations today. | Partial |
 | Better organization for long-running work | Make active, waiting, and completed work easier to understand and return to. | Building |
 
-> The desktop app is where most people configure OpenWork today. Connect is how that configuration travels.
+> The desktop app is where most people configure Micx today. Connect is how that configuration travels.
 
 ## Your setup follows you
 
-What you configure in OpenWork should not stay trapped in one interface. OpenWork Connect brings the same capabilities into the agents you already use.
+What you configure in Micx should not stay trapped in one interface. Micx Connect brings the same capabilities into the agents you already use.
 
 | Capability | Status |
 | --- | --- |
-| OpenWork Connect MCP | Live |
+| Micx Connect MCP | Live |
 | Codex, Claude Code, Cursor, and OpenCode | Live |
 | Organization marketplaces and access controls | Live |
 | Shared and per-user authentication | Live |
@@ -44,7 +44,7 @@ What you configure in OpenWork should not stay trapped in one interface. OpenWor
 
 ## MCP spec compliance
 
-OpenWork implements the [MCP authorization specification](https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization) on both sides of the wire: as an MCP client (the desktop app and OpenWork Cloud connections) and as an MCP server with its own authorization server (OpenWork Cloud). Items marked Building or Next track the 2026-07-28 MCP specification release.
+Micx implements the [MCP authorization specification](https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization) on both sides of the wire: as an MCP client (the desktop app and Micx Cloud connections) and as an MCP server with its own authorization server (Micx Cloud). Items marked Building or Next track the 2026-07-28 MCP specification release.
 
 | Capability | What it does | Status |
 | --- | --- | --- |
@@ -53,28 +53,28 @@ OpenWork implements the [MCP authorization specification](https://modelcontextpr
 | Silent session renewal | Short-lived access tokens backed by rotating refresh grants with replay protection, so connections renew without re-prompting for login. | Live |
 | Manual client credentials fallback | Enter a client ID and secret for authorization servers that do not offer Dynamic Client Registration. | Live |
 | `application_type` declaration (SEP-837) | Declare native or web application type during Dynamic Client Registration for compatibility with OIDC-backed enterprise authorization servers. | Building |
-| Client ID Metadata Documents (SEP-991) | A single, stable HTTPS client identity for OpenWork that enterprises allowlist once, replacing per-connection registrations and wildcard redirect allowlists. | Building |
+| Client ID Metadata Documents (SEP-991) | A single, stable HTTPS client identity for Micx that enterprises allowlist once, replacing per-connection registrations and wildcard redirect allowlists. | Building |
 | Issuer-bound credentials (SEP-2352) | Key stored client credentials to the issuing authorization server and re-register automatically when a server's authorization server changes. | Building |
 | Authorization hardening (SEP-2468, SEP-2207) | Validate the `iss` parameter on authorization responses (RFC 9207) and adopt clarified refresh-token scope semantics. | Next |
-| URL-based client IDs in OpenWork Cloud | Accept Client ID Metadata Document identities in the OpenWork Cloud authorization server. | Next |
+| URL-based client IDs in Micx Cloud | Accept Client ID Metadata Document identities in the Micx Cloud authorization server. | Next |
 
-> Following the spec is what makes OpenWork drop-in compatible with enterprise MCP gateways: paste the gateway URL, sign in with your identity provider, and every downstream system it fronts becomes available.
+> Following the spec is what makes Micx drop-in compatible with enterprise MCP gateways: paste the gateway URL, sign in with your identity provider, and every downstream system it fronts becomes available.
 
 ## Central management
 
-OpenWork Cloud is the control plane for distributing capabilities, applying desktop policies, managing identity and access, and understanding adoption across the organization.
+Micx Cloud is the control plane for distributing capabilities, applying desktop policies, managing identity and access, and understanding adoption across the organization.
 
 | Capability | What it does | Status |
 | --- | --- | --- |
 | Desktop policies | Control custom providers, OpenCode Zen, workspaces, settings, extensions, built-in tools, and onboarding by organization, team, or member. | Live |
 | Members, teams, and roles | Invite people, organize teams, and decide who can manage capabilities and security settings. | Live |
 | Skills and plugin marketplaces | Publish skills, commands, MCP dependencies, and extensions once, then assign them to the right people and teams. | Live |
-| Anthropic-compatible plugins | Import Claude-compatible plugin and marketplace manifests and normalize their skills, MCPs, commands, and tools into OpenWork extensions. | Live |
+| Anthropic-compatible plugins | Import Claude-compatible plugin and marketplace manifests and normalize their skills, MCPs, commands, and tools into Micx extensions. | Live |
 | SAML SSO | Connect an identity provider and provision organization members when they first sign in. | Live |
 | Usage and adoption telemetry | See active members, sessions, and task outcomes over time using event metadata, never prompts, code, or file contents. | Live |
-| OpenTelemetry coverage | Extend OTLP traces, metrics, and logs across OpenWork services and deployment paths. | Building |
+| OpenTelemetry coverage | Extend OTLP traces, metrics, and logs across Micx services and deployment paths. | Building |
 
-> Configure policies and access once in OpenWork Cloud. The desktop app and OpenWork Connect apply them for each member and team.
+> Configure policies and access once in Micx Cloud. The desktop app and Micx Connect apply them for each member and team.
 
 ## A workspace that stays on
 
@@ -91,13 +91,13 @@ Hosted workspaces give a person or team a persistent filesystem and a predictabl
 
 > Start with the desktop app. Leave work running in a hosted workspace. Return from the desktop, Slack, mobile, or another surface.
 
-## OpenWork on every surface
+## Micx on every surface
 
-The desktop app remains the richest OpenWork experience. Other surfaces provide focused ways to reach the same capabilities, permissions, workspaces, and history.
+The desktop app remains the richest Micx experience. Other surfaces provide focused ways to reach the same capabilities, permissions, workspaces, and history.
 
 | Surface | Status |
 | --- | --- |
-| OpenWork desktop | Live |
+| Micx desktop | Live |
 | Existing AI agents through MCP | Live |
 | Slack | Next |
 | Mobile | Next |

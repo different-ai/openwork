@@ -33,7 +33,7 @@ function escapeUnsafeChars(str) {
 }
 
 async function waitForControl(ctx) {
-  await ctx.waitFor("Boolean(window.__openworkControl)", {
+  await ctx.waitFor("Boolean(window.__micxControl)", {
     timeoutMs: 60_000,
     label: "control API",
   });
@@ -66,7 +66,7 @@ async function ensureSession(ctx) {
   await ctx.control("session.create_task");
   activeSessionId = await ctx.waitFor(
     `(() => {
-      const route = String(window.__openworkControl.snapshot().route || "");
+      const route = String(window.__micxControl.snapshot().route || "");
       const match = route.match(/ses_[A-Za-z0-9]+/);
       return match ? match[0] : null;
     })()`,
@@ -82,7 +82,7 @@ async function ensureSession(ctx) {
 /** Seeds progressively more of the math message so each frame shows new content. */
 async function seedMathMessage(ctx, stage, expectedFormulas) {
   await ctx.waitFor(
-    `window.__openworkControl.listActions().some((action) => action.id === ${escapeUnsafeChars(JSON.stringify(MATH_SEED_ACTION))} && !action.disabled)`,
+    `window.__micxControl.listActions().some((action) => action.id === ${escapeUnsafeChars(JSON.stringify(MATH_SEED_ACTION))} && !action.disabled)`,
     { timeoutMs: 30_000, label: `${MATH_SEED_ACTION} enabled` },
   );
 
@@ -111,7 +111,7 @@ async function readMathState(ctx) {
     const annotations = Array.from(root.querySelectorAll('annotation[encoding="application/x-tex"]'))
       .map((node) => (node.textContent || "").trim());
     const mathml = Array.from(root.querySelectorAll("math"));
-    const errors = Array.from(root.querySelectorAll("[data-openwork-math-error]"))
+    const errors = Array.from(root.querySelectorAll("[data-micx-math-error]"))
       .map((node) => (node.textContent || "").trim());
 
     // The visible sentence text, with the aria-hidden KaTeX HTML branch and the
@@ -142,7 +142,7 @@ export default {
     await waitForControl(ctx);
     const state = await ctx.waitFor(
       `(() => {
-        const control = window.__openworkControl;
+        const control = window.__micxControl;
         const route = String(control.snapshot().route || "");
         if (route.startsWith("/welcome") || route.startsWith("/signin")) return "blocked";
         if (route.includes("/session/")) return "ready";
@@ -160,7 +160,7 @@ export default {
     {
       name: "Conversation opens normally",
       run: async (ctx) => {
-        await ctx.prove("OpenWork displays a normal session before the math proof starts", {
+        await ctx.prove("Micx displays a normal session before the math proof starts", {
           voiceover: vo[0],
           action: async () => {
             await ensureSession(ctx);

@@ -5,8 +5,8 @@ const FLOW_ID = "release-bootstrap-precedence";
 const vo = await loadVoiceoverParagraphs(FLOW_ID);
 if (!vo) throw new Error(`Missing approved voice-over script for ${FLOW_ID}.`);
 
-const ORG_URL = "http://openwork.example-manufacturing.internal:48765";
-const HOSTED_URL = "https://app.openworklabs.com";
+const ORG_URL = "http://micx.example-manufacturing.internal:48765";
+const HOSTED_URL = "https://app.micxlabs.com";
 
 export default {
   id: FLOW_ID,

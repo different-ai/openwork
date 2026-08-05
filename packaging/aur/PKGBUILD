@@ -1,4 +1,4 @@
-pkgname=openwork
+pkgname=micx
 pkgver=0.18.14
 pkgrel=1 # pkgrel should change when PKGBUILD does. Standard is to change back to 1 next time. Any interger is valid.
 pkgdesc="An Open source alternative to Claude Cowork"
@@ -9,10 +9,10 @@ depends=('gtk3' 'nss' 'alsa-lib' 'libxss' 'libxtst' 'xdg-utils' 'at-spi2-core' '
 options=(!strip)
 
 # Architecture-specific sources and checksums
-source_x86_64=("${pkgname}-${pkgver}-x64.tar.gz::${url}/releases/download/v${pkgver}/openwork-linux-x64-${pkgver}.tar.gz")
+source_x86_64=("${pkgname}-${pkgver}-x64.tar.gz::${url}/releases/download/v${pkgver}/micx-linux-x64-${pkgver}.tar.gz")
 sha256sums_x86_64=('56b09c794368d3a87cdf1dde995aec8f0694bc49abc4a90934a7367edbaf3aab')
 
-source_aarch64=("${pkgname}-${pkgver}-arm64.tar.gz::${url}/releases/download/v${pkgver}/openwork-linux-arm64-${pkgver}.tar.gz")
+source_aarch64=("${pkgname}-${pkgver}-arm64.tar.gz::${url}/releases/download/v${pkgver}/micx-linux-arm64-${pkgver}.tar.gz")
 sha256sums_aarch64=('1192dbd5aedf44905dc6577082aa2e457146d4c987a66616573290dba5153b10')
 
 package() {
@@ -21,10 +21,10 @@ package() {
   local bundle_dir
   case "${CARCH}" in
     x86_64)
-      bundle_dir="openwork-linux-x64-${pkgver}"
+      bundle_dir="micx-linux-x64-${pkgver}"
       ;;
     aarch64)
-      bundle_dir="openwork-linux-arm64-${pkgver}"
+      bundle_dir="micx-linux-arm64-${pkgver}"
       ;;
     *)
       echo "Unsupported architecture: ${CARCH}" >&2
@@ -32,28 +32,28 @@ package() {
       ;;
   esac
 
-  install -d "${pkgdir}/opt/openwork"
-  cp -a "${bundle_dir}/." "${pkgdir}/opt/openwork/"
+  install -d "${pkgdir}/opt/micx"
+  cp -a "${bundle_dir}/." "${pkgdir}/opt/micx/"
 
   install -d "${pkgdir}/usr/bin"
-  ln -s /opt/openwork/@openworkdesktop "${pkgdir}/usr/bin/openwork"
+  ln -s /opt/micx/@micxdesktop "${pkgdir}/usr/bin/micx"
 
-  install -Dm644 "${pkgdir}/opt/openwork/resources/app-dist/openwork-logo-square.svg" \
-    "${pkgdir}/usr/share/icons/hicolor/scalable/apps/openwork.svg"
+  install -Dm644 "${pkgdir}/opt/micx/resources/app-dist/micx-logo-square.svg" \
+    "${pkgdir}/usr/share/icons/hicolor/scalable/apps/micx.svg"
 
   install -d "${pkgdir}/usr/share/applications"
-  cat > "${pkgdir}/usr/share/applications/openwork.desktop" <<'EOF'
+  cat > "${pkgdir}/usr/share/applications/micx.desktop" <<'EOF'
 [Desktop Entry]
-Name=OpenWork
+Name=Micx
 Comment=Run agents, skills, and MCP workflows
-Exec=openwork %U
+Exec=micx %U
 Terminal=false
 Type=Application
-Icon=openwork
-StartupWMClass=OpenWork
+Icon=micx
+StartupWMClass=Micx
 Categories=Development;Utility;
-MimeType=x-scheme-handler/openwork;
+MimeType=x-scheme-handler/micx;
 EOF
 
-  chmod 4755 "${pkgdir}/opt/openwork/chrome-sandbox"
+  chmod 4755 "${pkgdir}/opt/micx/chrome-sandbox"
 }

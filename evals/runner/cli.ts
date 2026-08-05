@@ -18,7 +18,7 @@ import type { Host } from "./hosts/types.ts";
 
 const RUNNER_DIR = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(RUNNER_DIR, "..", "..");
-const FLOWS_DIR = process.env.OPENWORK_EVAL_FLOWS_DIR?.trim() || join(RUNNER_DIR, "..", "flows");
+const FLOWS_DIR = process.env.MICX_EVAL_FLOWS_DIR?.trim() || join(RUNNER_DIR, "..", "flows");
 const DEFAULT_RESULTS_DIR = join(RUNNER_DIR, "..", "results");
 const DEFAULT_CDP_CANDIDATES = ["http://127.0.0.1:9825", "http://127.0.0.1:9823"];
 
@@ -201,11 +201,11 @@ function manifestDaytonaSandbox(manifest: EnvManifest | null): string | null {
       if (sandbox) return sandbox;
     }
   }
-  return manifest.env?.OPENWORK_EVAL_DAYTONA_SANDBOX?.trim() || null;
+  return manifest.env?.MICX_EVAL_DAYTONA_SANDBOX?.trim() || null;
 }
 
 export function resolveHostPlacement(manifest: EnvManifest | null, env: NodeJS.ProcessEnv = process.env): HostPlacement {
-  const daytonaSandboxId = manifestDaytonaSandbox(manifest) ?? (env.OPENWORK_EVAL_DAYTONA_SANDBOX?.trim() || null);
+  const daytonaSandboxId = manifestDaytonaSandbox(manifest) ?? (env.MICX_EVAL_DAYTONA_SANDBOX?.trim() || null);
   return {
     daytonaSandboxId,
     defaultHostKind: manifest?.defaultHostKind ?? (daytonaSandboxId ? "daytona" : "local"),
@@ -319,7 +319,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
   // App-less flows (requiresApp: false) don't need a CDP endpoint; only probe
   // for one when at least one selected flow drives the app.
   const needsApp = selected.some((flow) => missingEnv(flow, process.env).length === 0 && flow.requiresApp !== false);
-  const envCdp = process.env.OPENWORK_EVAL_CDP_URL?.trim();
+  const envCdp = process.env.MICX_EVAL_CDP_URL?.trim();
   const cdpBaseUrl = args.cdpUrl
     ?? (envCdp || (needsApp ? await resolveCdpBaseUrl(DEFAULT_CDP_CANDIDATES) : null));
 
@@ -354,7 +354,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       }
       if (result.skipReason) console.log(`  ⏭ skipped: ${result.skipReason}`);
     } else {
-      const repeatRunStamp = process.env.OPENWORK_EVAL_RUNSTAMP?.trim() || process.env.OPENWORK_EVAL_RUN_STAMP?.trim() || runId;
+      const repeatRunStamp = process.env.MICX_EVAL_RUNSTAMP?.trim() || process.env.MICX_EVAL_RUN_STAMP?.trim() || runId;
       const repeated = await runFlowRepeated(flow, { cdpBaseUrl, outDir, env: process.env, mode: args.mode, hosts, defaultHostKind, manifest, repeat: args.repeat, runStamp: repeatRunStamp });
       report.flows.push(...repeated.results);
       report.soak = [...(report.soak ?? []), repeated.summary];

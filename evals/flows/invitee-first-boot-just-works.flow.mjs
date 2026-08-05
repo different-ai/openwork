@@ -16,10 +16,10 @@ const FLOW_ID = "invitee-first-boot-just-works";
 const vo = await loadVoiceoverParagraphs(FLOW_ID);
 if (!vo) throw new Error(`Missing approved voice-over script for ${FLOW_ID}.`);
 
-const ADMIN_EMAIL = process.env.OPENWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
-const ADMIN_PASSWORD = process.env.OPENWORK_EVAL_DEMO_PASSWORD?.trim() || "OpenWorkDemo123!";
+const ADMIN_EMAIL = process.env.MICX_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
+const ADMIN_PASSWORD = process.env.MICX_EVAL_DEMO_PASSWORD?.trim() || "MicxDemo123!";
 const MAYA_EMAIL = "maya.firstboot@acme.test";
-const MAYA_PASSWORD = "OpenWorkDemo123!";
+const MAYA_PASSWORD = "MicxDemo123!";
 const ORG_SLUG = "acme-robotics-demo";
 const ORG_NAME = "Acme Robotics";
 const ENGINEERING_TEAM = "Engineering";
@@ -28,9 +28,9 @@ const MODEL_IDS = ["gpt-5.4", "gpt-5.5"];
 const TARGET_REPLY = "acme-first-boot-ok";
 const RELOAD_TEXT = "Reloading OpenCode config";
 const EDITOR_SELECTOR = '[contenteditable="true"][data-lexical-editor="true"]';
-const ADMIN_CDP_URL = cleanBaseUrl(process.env.OPENWORK_EVAL_WEB_CDP_ADMIN);
-const INVITEE_CDP_URL = cleanBaseUrl(process.env.OPENWORK_EVAL_WEB_CDP_INVITEE);
-const MARK_VERIFIED_CMD = process.env.OPENWORK_EVAL_MARK_VERIFIED_CMD?.trim() || "";
+const ADMIN_CDP_URL = cleanBaseUrl(process.env.MICX_EVAL_WEB_CDP_ADMIN);
+const INVITEE_CDP_URL = cleanBaseUrl(process.env.MICX_EVAL_WEB_CDP_INVITEE);
+const MARK_VERIFIED_CMD = process.env.MICX_EVAL_MARK_VERIFIED_CMD?.trim() || "";
 const ERROR_TEXT = ["Something went wrong", "Failed", "Could not", "Only workspace"];
 
 const state = {
@@ -65,15 +65,15 @@ export default {
   requiresApp: true,
   spec: "evals/voiceovers/invitee-first-boot-just-works.md",
   requiredEnv: [
-    "OPENWORK_EVAL_DEN_API_URL",
-    "OPENWORK_EVAL_DEN_WEB_URL",
-    "OPENWORK_EVAL_DEN_TOKEN",
-    "OPENWORK_EVAL_WEB_CDP_ADMIN",
-    "OPENWORK_EVAL_WEB_CDP_INVITEE",
+    "MICX_EVAL_DEN_API_URL",
+    "MICX_EVAL_DEN_WEB_URL",
+    "MICX_EVAL_DEN_TOKEN",
+    "MICX_EVAL_WEB_CDP_ADMIN",
+    "MICX_EVAL_WEB_CDP_INVITEE",
   ],
   precondition: () => {
     if (!orgModelApiKey()) {
-      return "Missing OPENWORK_EVAL_ORG_MODEL_API_KEY or OPENAI_API_KEY; frame 8 needs a real org-held model key.";
+      return "Missing MICX_EVAL_ORG_MODEL_API_KEY or OPENAI_API_KEY; frame 8 needs a real org-held model key.";
     }
     return null;
   },
@@ -246,22 +246,22 @@ export default {
             action: async () => {
               await withClient(ctx, INVITEE_CDP_URL, async () => {
                 await openInstallGuideFromJoinSuccess(ctx);
-                await ctx.screenshot("maya-installs-openwork-guide", {
+                await ctx.screenshot("maya-installs-micx-guide", {
                   claim: "Maya reaches Acme's install/download guide before opening her first desktop session.",
                   voiceover: vo[4],
-                  requireText: ["Download OpenWork", "Download the OpenWork installer", "Open OpenWork"],
+                  requireText: ["Download Micx", "Download the Micx installer", "Open Micx"],
                   rejectText: ERROR_TEXT,
                 });
               });
 
               state.mayaBearer = await signInMayaByEmail(ctx);
-              const openworkUrl = await createDesktopHandoff(ctx, state.mayaBearer);
+              const micxUrl = await createDesktopHandoff(ctx, state.mayaBearer);
 
               await resetDesktopToColdFirstBoot(ctx);
               await armFirstBootProbe(ctx);
               state.firstBootGuardArmed = true;
               const deliveredAt = Date.now();
-              await deliverDesktopDeepLink(ctx, openworkUrl);
+              await deliverDesktopDeepLink(ctx, micxUrl);
               state.firstBootResult = await waitForFirstBootWorkspace(ctx, deliveredAt, 60_000);
               await freezeFirstBootDialogRecorder(ctx);
               state.firstBootGuardArmed = false;
@@ -272,7 +272,7 @@ export default {
               const onboarding = state.firstBootResult?.onboarding ?? { count: 0, labels: [] };
               const elapsedMs = state.firstBootResult?.elapsedMs ?? Number.POSITIVE_INFINITY;
               ctx.output("frame-5-first-boot", JSON.stringify({
-                rendererColdBoot: "Renderer cold boot on an isolated OPENWORK_ELECTRON_USERDATA profile after clearing Den renderer/session caches, preferences, and prior lpr_* workspace imports. This is not a fresh OS install.",
+                rendererColdBoot: "Renderer cold boot on an isolated MICX_ELECTRON_USERDATA profile after clearing Den renderer/session caches, preferences, and prior lpr_* workspace imports. This is not a fresh OS install.",
                 elapsedMs,
                 onboardingClicks: onboarding.count,
                 onboardingClickLabels: onboarding.labels,
@@ -284,8 +284,8 @@ export default {
                 composerReady: desktop.hasComposer,
                 pageReloadsAfterArming: probe.pageReloadsAfterArming,
               }, null, 2));
-              ctx.assert(desktop.authTokenSet, "openwork.den.authToken is set after the first desktop handoff.");
-              ctx.assert(Boolean(desktop.activeOrgId), "openwork.den.activeOrgId is set after the first desktop handoff.");
+              ctx.assert(desktop.authTokenSet, "micx.den.authToken is set after the first desktop handoff.");
+              ctx.assert(Boolean(desktop.activeOrgId), "micx.den.activeOrgId is set after the first desktop handoff.");
               ctx.assert(desktop.usableSessionRoute, `Desktop is on a usable workspace session route (actual hash: ${desktop.hash}).`);
               ctx.assert(desktop.hasComposer, "The composer is ready without eval assistance.");
               ctx.assert(elapsedMs <= 60_000, `First boot reached composer-ready in ${elapsedMs}ms (ceiling 60000ms).`);
@@ -295,7 +295,7 @@ export default {
             screenshot: {
               name: "maya-first-desktop-boot-ready",
               requireText: ["Run task"],
-              rejectText: ["Choose your organization", "You have access to the following resources.", "Continue to workspace", "Restart OpenWork", RELOAD_TEXT],
+              rejectText: ["Choose your organization", "You have access to the following resources.", "Continue to workspace", "Restart Micx", RELOAD_TEXT],
               hashIncludes: "/session",
             },
           });
@@ -333,7 +333,7 @@ export default {
             screenshot: {
               name: "maya-model-picker-acme-only",
               requireText: ["GPT-5.4", "GPT-5.5"],
-              rejectText: ["OpenCode Zen", "Use OpenWork Models", "Subscribe to add this model", "no longer available"],
+              rejectText: ["OpenCode Zen", "Use Micx Models", "Subscribe to add this model", "no longer available"],
             },
           });
         } finally {
@@ -388,7 +388,7 @@ export default {
           screenshot: {
             name: "quiet-boot-no-reload-churn",
             requireText: ["Run task"],
-            rejectText: [RELOAD_TEXT, "Restart OpenWork"],
+            rejectText: [RELOAD_TEXT, "Restart Micx"],
             hashIncludes: "/session",
           },
         });
@@ -452,12 +452,12 @@ function cleanBaseUrl(value) {
 }
 
 function orgModelApiKey() {
-  return process.env.OPENWORK_EVAL_ORG_MODEL_API_KEY?.trim() || process.env.OPENAI_API_KEY?.trim() || "";
+  return process.env.MICX_EVAL_ORG_MODEL_API_KEY?.trim() || process.env.OPENAI_API_KEY?.trim() || "";
 }
 
 function adminToken(ctx) {
-  const token = state.adminToken || process.env.OPENWORK_EVAL_DEN_TOKEN?.trim() || "";
-  ctx.assert(token.length > 0, "OPENWORK_EVAL_DEN_TOKEN is required for admin API calls.");
+  const token = state.adminToken || process.env.MICX_EVAL_DEN_TOKEN?.trim() || "";
+  ctx.assert(token.length > 0, "MICX_EVAL_DEN_TOKEN is required for admin API calls.");
   state.adminToken = token;
   return token;
 }
@@ -465,7 +465,7 @@ function adminToken(ctx) {
 function authHeaders(ctx) {
   return {
     authorization: `Bearer ${adminToken(ctx)}`,
-    ...(state.orgId ? { "x-openwork-org-id": state.orgId } : {}),
+    ...(state.orgId ? { "x-micx-org-id": state.orgId } : {}),
   };
 }
 
@@ -1163,15 +1163,15 @@ async function openInstallGuideFromJoinSuccess(ctx) {
     timeoutMs: 45_000,
     label: "install guide page",
   });
-  await ctx.waitForText("Download the OpenWork installer", { timeoutMs: 30_000 });
+  await ctx.waitForText("Download the Micx installer", { timeoutMs: 30_000 });
   await ctx.eval(`(() => {
     const button = [...document.querySelectorAll('button')]
-      .find((entry) => (entry.textContent ?? '').includes('I already have OpenWork'));
+      .find((entry) => (entry.textContent ?? '').includes('I already have Micx'));
     button?.scrollIntoView({ block: 'center', inline: 'center' });
     button?.click();
     return Boolean(button);
   })()`);
-  await ctx.waitForText("Open OpenWork", { timeoutMs: 30_000 });
+  await ctx.waitForText("Open Micx", { timeoutMs: 30_000 });
 }
 
 async function signInMayaByEmail(ctx) {
@@ -1185,26 +1185,26 @@ async function signInMayaByEmail(ctx) {
   return token.trim();
 }
 
-async function getOpenworkServerInfo(ctx) {
-  await ctx.waitFor("Boolean(window.__OPENWORK_ELECTRON__?.invokeDesktop)", {
+async function getMicxServerInfo(ctx) {
+  await ctx.waitFor("Boolean(window.__MICX_ELECTRON__?.invokeDesktop)", {
     timeoutMs: 60_000,
     label: "desktop bridge",
   });
-  const info = await ctx.eval("window.__OPENWORK_ELECTRON__.invokeDesktop('openworkServerInfo')", { awaitPromise: true });
+  const info = await ctx.eval("window.__MICX_ELECTRON__.invokeDesktop('micxServerInfo')", { awaitPromise: true });
   const baseUrl = String(info?.baseUrl || info?.connectUrl || (info?.port ? `http://127.0.0.1:${info.port}` : "")).replace(/\/+$/, "");
   const token = String(info?.clientToken || info?.ownerToken || "").trim();
   const hostToken = String(info?.hostToken || "").trim();
-  ctx.assert(Boolean(baseUrl), "OpenWork server base URL is available.");
-  ctx.assert(Boolean(token), "OpenWork server client token is available.");
+  ctx.assert(Boolean(baseUrl), "Micx server base URL is available.");
+  ctx.assert(Boolean(token), "Micx server client token is available.");
   return { baseUrl, token, hostToken };
 }
 
-async function openworkRequest(ctx, path, options = {}) {
-  const info = await getOpenworkServerInfo(ctx);
+async function micxRequest(ctx, path, options = {}) {
+  const info = await getMicxServerInfo(ctx);
   const headers = {
     ...(options.body !== undefined ? { "content-type": "application/json" } : {}),
     authorization: `Bearer ${info.token}`,
-    ...(options.host === true && info.hostToken ? { "x-openwork-host-token": info.hostToken } : {}),
+    ...(options.host === true && info.hostToken ? { "x-micx-host-token": info.hostToken } : {}),
     ...(options.headers ?? {}),
   };
   const request = {
@@ -1232,8 +1232,8 @@ async function openworkRequest(ctx, path, options = {}) {
   return { response: { ok: result.ok, status: result.status, statusText: result.statusText }, text: result.text, body: result.body, url: result.url };
 }
 
-async function expectOpenworkJson(ctx, path, options = {}) {
-  const result = await openworkRequest(ctx, path, options);
+async function expectMicxJson(ctx, path, options = {}) {
+  const result = await micxRequest(ctx, path, options);
   ctx.assert(result.response.ok, `${options.method ?? "GET"} ${path} failed: ${result.response.status} ${safeBody(result.body)}`);
   return result.body;
 }
@@ -1247,11 +1247,11 @@ function workspaceItems(payload) {
 }
 
 async function ensureEvalWorkspace(ctx) {
-  const workspacePath = "/tmp/openwork-invitee-first-boot-workspace";
-  const list = await expectOpenworkJson(ctx, "/workspaces");
+  const workspacePath = "/tmp/micx-invitee-first-boot-workspace";
+  const list = await expectMicxJson(ctx, "/workspaces");
   let workspace = workspaceItems(list).find((item) => item?.path === workspacePath || item?.name === "Invitee first boot eval") ?? null;
   if (!workspace) {
-    const created = await expectOpenworkJson(ctx, "/workspaces/local", {
+    const created = await expectMicxJson(ctx, "/workspaces/local", {
       method: "POST",
       host: true,
       body: {
@@ -1270,9 +1270,9 @@ async function ensureEvalWorkspace(ctx) {
   state.desktopWorkspaceId = workspaceId;
   await ctx.eval(`(async () => {
     const workspaceId = ${JSON.stringify(workspaceId)};
-    await window.__OPENWORK_ELECTRON__?.invokeDesktop?.('workspaceSetSelected', workspaceId);
-    await window.__OPENWORK_ELECTRON__?.invokeDesktop?.('workspaceSetRuntimeActive', workspaceId);
-    localStorage.setItem('openwork.react.activeWorkspace', workspaceId);
+    await window.__MICX_ELECTRON__?.invokeDesktop?.('workspaceSetSelected', workspaceId);
+    await window.__MICX_ELECTRON__?.invokeDesktop?.('workspaceSetRuntimeActive', workspaceId);
+    localStorage.setItem('micx.react.activeWorkspace', workspaceId);
     location.hash = '#/workspace/' + encodeURIComponent(workspaceId) + '/session';
     return true;
   })()`, { awaitPromise: true });
@@ -1281,7 +1281,7 @@ async function ensureEvalWorkspace(ctx) {
 
 async function workspaceConfigRequest(ctx, method, body) {
   const workspaceId = state.desktopWorkspaceId || (await ensureEvalWorkspace(ctx)).workspaceId;
-  return expectOpenworkJson(ctx, `/workspace/${encodeURIComponent(workspaceId)}/config`, {
+  return expectMicxJson(ctx, `/workspace/${encodeURIComponent(workspaceId)}/config`, {
     method,
     body,
   });
@@ -1297,8 +1297,8 @@ function runtimeProviderDeletes(opencode) {
 }
 
 async function resetDesktopToColdFirstBoot(ctx) {
-  await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 60_000, label: "control API before cold reset" });
-  await ctx.eval(`window.__OPENWORK_ELECTRON__?.invokeDesktop?.('setDesktopBootstrapConfig', {
+  await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 60_000, label: "control API before cold reset" });
+  await ctx.eval(`window.__MICX_ELECTRON__?.invokeDesktop?.('setDesktopBootstrapConfig', {
     baseUrl: ${JSON.stringify(denWebUrl())},
     apiBaseUrl: ${JSON.stringify(denApiUrl())},
     requireSignin: false,
@@ -1307,8 +1307,8 @@ async function resetDesktopToColdFirstBoot(ctx) {
   const { workspaceId, workspacePath } = await ensureEvalWorkspace(ctx);
   const current = await workspaceConfigRequest(ctx, "GET");
   const providerDeletes = runtimeProviderDeletes(current?.opencode);
-  const cloudImports = current?.openwork?.cloudImports && typeof current.openwork.cloudImports === "object"
-    ? current.openwork.cloudImports
+  const cloudImports = current?.micx?.cloudImports && typeof current.micx.cloudImports === "object"
+    ? current.micx.cloudImports
     : {};
 
   await workspaceConfigRequest(ctx, "PATCH", {
@@ -1316,7 +1316,7 @@ async function resetDesktopToColdFirstBoot(ctx) {
       disabled_providers: [],
       ...(Object.keys(providerDeletes).length > 0 ? { provider: providerDeletes } : {}),
     },
-    openwork: {
+    micx: {
       cloudImports: { ...cloudImports, providers: {} },
     },
   });
@@ -1324,45 +1324,45 @@ async function resetDesktopToColdFirstBoot(ctx) {
 
   await ctx.eval(`(() => {
     for (const key of Object.keys(localStorage)) {
-      if (key.startsWith('openwork.den.') && key !== 'openwork.den.baseUrl' && key !== 'openwork.den.apiBaseUrl') localStorage.removeItem(key);
-      if (key.startsWith('openwork.sessionModels.')) localStorage.removeItem(key);
-      if (key.startsWith('openwork.modelVariant.')) localStorage.removeItem(key);
+      if (key.startsWith('micx.den.') && key !== 'micx.den.baseUrl' && key !== 'micx.den.apiBaseUrl') localStorage.removeItem(key);
+      if (key.startsWith('micx.sessionModels.')) localStorage.removeItem(key);
+      if (key.startsWith('micx.modelVariant.')) localStorage.removeItem(key);
     }
-    localStorage.setItem('openwork.den.baseUrl', ${JSON.stringify(denWebUrl())});
-    localStorage.setItem('openwork.den.apiBaseUrl', ${JSON.stringify(denApiUrl())});
-    localStorage.removeItem('openwork.preferences');
-    localStorage.removeItem('openwork.defaultModel');
-    localStorage.removeItem('openwork.policy.disabledProviders');
-    localStorage.removeItem('openwork.seenProviderIds');
+    localStorage.setItem('micx.den.baseUrl', ${JSON.stringify(denWebUrl())});
+    localStorage.setItem('micx.den.apiBaseUrl', ${JSON.stringify(denApiUrl())});
+    localStorage.removeItem('micx.preferences');
+    localStorage.removeItem('micx.defaultModel');
+    localStorage.removeItem('micx.policy.disabledProviders');
+    localStorage.removeItem('micx.seenProviderIds');
     sessionStorage.removeItem('__owFirstBootArmed');
     sessionStorage.removeItem('__owFirstBootReloads');
     sessionStorage.removeItem('__owFirstBootCounters');
     sessionStorage.removeItem('__owFirstBootDialogs');
-    localStorage.setItem('openwork.react.activeWorkspace', ${JSON.stringify(workspaceId)});
+    localStorage.setItem('micx.react.activeWorkspace', ${JSON.stringify(workspaceId)});
     location.hash = '#/workspace/' + encodeURIComponent(${JSON.stringify(workspaceId)}) + '/session';
     return true;
   })()`);
   await ctx.client.send("Page.reload", { ignoreCache: true });
-  await ctx.waitFor("Boolean(window.__openworkControl)", {
+  await ctx.waitFor("Boolean(window.__micxControl)", {
     timeoutMs: 90_000,
     label: "control API after cold reset reload",
   });
-  await ctx.waitFor(`localStorage.getItem('openwork.react.activeWorkspace') === ${JSON.stringify(workspaceId)}`, {
+  await ctx.waitFor(`localStorage.getItem('micx.react.activeWorkspace') === ${JSON.stringify(workspaceId)}`, {
     timeoutMs: 10_000,
     label: "active workspace retained after cold reset",
   });
 }
 
 async function startDesktopEngine(ctx, workspacePath) {
-  const result = await ctx.eval(`window.__OPENWORK_ELECTRON__?.invokeDesktop?.('engineStart', ${JSON.stringify(workspacePath)}, {
+  const result = await ctx.eval(`window.__MICX_ELECTRON__?.invokeDesktop?.('engineStart', ${JSON.stringify(workspacePath)}, {
     runtime: 'direct',
     workspacePaths: [${JSON.stringify(workspacePath)}],
-    openworkRemoteAccess: false,
+    micxRemoteAccess: false,
   })`, { awaitPromise: true });
   ctx.output("frame-5-engine-start", JSON.stringify({ baseUrlSet: Boolean(result?.baseUrl), error: result?.error ?? null }, null, 2));
   let last = null;
   for (let attempt = 0; attempt < 40; attempt += 1) {
-    last = await openworkRequest(ctx, `/workspace/${encodeURIComponent(state.desktopWorkspaceId)}/opencode/global/health`).catch((error) => ({
+    last = await micxRequest(ctx, `/workspace/${encodeURIComponent(state.desktopWorkspaceId)}/opencode/global/health`).catch((error) => ({
       response: { ok: false, status: 0 },
       body: error instanceof Error ? error.message : String(error),
     }));
@@ -1494,9 +1494,9 @@ async function readDesktopSessionState(ctx) {
     const match = new RegExp('^#/workspace/([^/?#]+)/session(?:/(ses_[^/?#]+))?').exec(hash);
     const editor = document.querySelector(${JSON.stringify(EDITOR_SELECTOR)});
     return {
-      authTokenSet: Boolean((localStorage.getItem('openwork.den.authToken') ?? '').trim()),
-      activeOrgId: localStorage.getItem('openwork.den.activeOrgId') || '',
-      activeOrgName: localStorage.getItem('openwork.den.activeOrgName') || '',
+      authTokenSet: Boolean((localStorage.getItem('micx.den.authToken') ?? '').trim()),
+      activeOrgId: localStorage.getItem('micx.den.activeOrgId') || '',
+      activeOrgName: localStorage.getItem('micx.den.activeOrgName') || '',
       hash,
       workspaceId: match?.[1] ? decodeURIComponent(match[1]) : '',
       sessionId: match?.[2] ? decodeURIComponent(match[2]) : '',
@@ -1528,7 +1528,7 @@ async function clickFirstBootOnboardingIfVisible(ctx) {
       button?.click();
       return Boolean(button);
     };
-    for (const label of ['Continue with organization', 'Continue to workspace', 'Restart OpenWork']) {
+    for (const label of ['Continue with organization', 'Continue to workspace', 'Restart Micx']) {
       if (clickButton(label)) return label;
     }
     if (body.includes('Choose your organization')) {
@@ -1565,7 +1565,7 @@ async function waitForFirstBootWorkspace(ctx, deliveredAt, timeoutMs) {
 }
 
 async function ensureSessionReady(ctx) {
-  await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 90_000, label: "control API" });
+  await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 90_000, label: "control API" });
   await ctx.waitFor(`(() => {
     const hash = window.location.hash;
     return new RegExp('^#/workspace/[^/?#]+/session(?:/ses_[^/?#]+)?').test(hash)
@@ -1577,7 +1577,7 @@ async function ensureSessionReady(ctx) {
 
 async function openModelPicker(ctx) {
   await ensureSessionReady(ctx);
-  await ctx.waitFor("window.__openworkControl?.listActions?.().some((action) => action.id === 'session.model_picker.open' && !action.disabled)", {
+  await ctx.waitFor("window.__micxControl?.listActions?.().some((action) => action.id === 'session.model_picker.open' && !action.disabled)", {
     timeoutMs: 60_000,
     label: "session.model_picker.open enabled",
   });
@@ -1601,7 +1601,7 @@ async function expandModelPickerGroups(ctx) {
 }
 
 async function readEngineProviderList(ctx, workspaceId = state.desktopWorkspaceId) {
-  const result = await openworkRequest(ctx, `/workspace/${encodeURIComponent(workspaceId)}/opencode/provider`);
+  const result = await micxRequest(ctx, `/workspace/${encodeURIComponent(workspaceId)}/opencode/provider`);
   ctx.assert(result.response.ok, `GET /provider through workspace proxy failed: ${result.response.status} ${safeBody(result.body)}`);
   return result.body;
 }
@@ -1671,7 +1671,7 @@ async function modelPickerDialogHasText(ctx, text) {
 }
 
 async function controlRaw(ctx, actionId, args = null) {
-  return ctx.eval(`window.__openworkControl.execute(${JSON.stringify(actionId)}, ${JSON.stringify(args)})`, { awaitPromise: true });
+  return ctx.eval(`window.__micxControl.execute(${JSON.stringify(actionId)}, ${JSON.stringify(args)})`, { awaitPromise: true });
 }
 
 async function closeModelPicker(ctx) {
@@ -1701,7 +1701,7 @@ async function sampleReloadBanner(ctx) {
 async function readRuntimeConfigHashes(ctx, workspaceId) {
   const entries = [];
   for (let index = 0; index < 5; index += 1) {
-    const result = await openworkRequest(ctx, `/workspace/${encodeURIComponent(workspaceId)}/runtime-config`);
+    const result = await micxRequest(ctx, `/workspace/${encodeURIComponent(workspaceId)}/runtime-config`);
     ctx.assert(result.response.ok, `GET runtime-config sample ${index + 1} failed: ${result.response.status} ${safeBody(result.body)}`);
     entries.push({
       sample: index + 1,
@@ -1714,11 +1714,11 @@ async function readRuntimeConfigHashes(ctx, workspaceId) {
 }
 
 async function readWorkspaceConfigState(ctx, workspaceId) {
-  const config = await expectOpenworkJson(ctx, `/workspace/${encodeURIComponent(workspaceId)}/config`);
-  const runtimeStatus = await expectOpenworkJson(ctx, `/workspace/${encodeURIComponent(workspaceId)}/runtime-config`);
+  const config = await expectMicxJson(ctx, `/workspace/${encodeURIComponent(workspaceId)}/config`);
+  const runtimeStatus = await expectMicxJson(ctx, `/workspace/${encodeURIComponent(workspaceId)}/runtime-config`);
   const providerList = await readEngineProviderList(ctx, workspaceId);
-  const cloudProviders = config?.openwork?.cloudImports?.providers && typeof config.openwork.cloudImports.providers === "object"
-    ? Object.keys(config.openwork.cloudImports.providers)
+  const cloudProviders = config?.micx?.cloudImports?.providers && typeof config.micx.cloudImports.providers === "object"
+    ? Object.keys(config.micx.cloudImports.providers)
     : [];
   const runtimeConfig = runtimeStatus?.runtime && typeof runtimeStatus.runtime === "object"
     ? runtimeStatus.runtime
@@ -1779,7 +1779,7 @@ function quietBootTable(frame) {
 
 async function readDefaultModel(ctx) {
   return ctx.eval(`(() => {
-    const raw = localStorage.getItem('openwork.defaultModel') || '';
+    const raw = localStorage.getItem('micx.defaultModel') || '';
     const [providerID, ...rest] = raw.split('/');
     return {
       raw,
@@ -1802,7 +1802,7 @@ async function selectModel(ctx, modelId) {
     return Boolean(row);
   })()`, { timeoutMs: 30_000, label: `select model ${modelId}` });
   await closeModelPicker(ctx);
-  await ctx.waitFor(`(localStorage.getItem('openwork.defaultModel') || '').endsWith('/' + ${JSON.stringify(modelId)})`, {
+  await ctx.waitFor(`(localStorage.getItem('micx.defaultModel') || '').endsWith('/' + ${JSON.stringify(modelId)})`, {
     timeoutMs: 10_000,
     label: `default model ${modelId}`,
   });

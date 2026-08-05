@@ -31,21 +31,21 @@ import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
 const vo = await loadVoiceoverParagraphs("windows-brand-icon-real-taskbar");
 
 function sandboxId(ctx) {
-  return (ctx.env.OPENWORK_EVAL_DAYTONA_SANDBOX_ID || ctx.env.OPENWORK_EVAL_DAYTONA_SANDBOX).trim();
+  return (ctx.env.MICX_EVAL_DAYTONA_SANDBOX_ID || ctx.env.MICX_EVAL_DAYTONA_SANDBOX).trim();
 }
 
 function testIconUrl(ctx) {
-  return ctx.env.OPENWORK_EVAL_BRAND_ICON_URL.trim();
+  return ctx.env.MICX_EVAL_BRAND_ICON_URL.trim();
 }
 
 async function getBrandIconState(ctx) {
-  return ctx.eval("window.__OPENWORK_ELECTRON__?.brandIcon?.getState?.()", { awaitPromise: true });
+  return ctx.eval("window.__MICX_ELECTRON__?.brandIcon?.getState?.()", { awaitPromise: true });
 }
 
 async function closeAdminPanel(ctx) {
   await ctx.eval(`(async () => {
-    await window.__OPENWORK_ELECTRON__?.browser?.closeAllTabs?.();
-    await window.__OPENWORK_ELECTRON__?.browser?.hide?.();
+    await window.__MICX_ELECTRON__?.browser?.closeAllTabs?.();
+    await window.__MICX_ELECTRON__?.browser?.hide?.();
     return true;
   })()`, { awaitPromise: true });
   await ensureWorkspaceReady(ctx);
@@ -78,7 +78,7 @@ async function windowsExec(ctx, label, command) {
 
 async function assertWindowsBrandShortcut(ctx, expected) {
   const result = await windowsExec(ctx, "check organization shortcut", `
-$path = 'C:\\Users\\Administrator\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\OpenWork.lnk'
+$path = 'C:\\Users\\Administrator\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\Micx.lnk'
 if (Test-Path -LiteralPath $path) { Write-Output 'present' } else { Write-Output 'absent' }
 `);
   const actual = result.stdout.match(/(?:^|\r?\n)(present|absent)(?:\r?\n|$)/)?.[1] ?? result.stdout.trim();
@@ -118,21 +118,21 @@ async function showAltTabSwitcher(ctx) {
   await sleep(1_200);
 }
 
-async function assertOpenWorkWindow(ctx) {
+async function assertMicxWindow(ctx) {
   const result = await daytonaComputerUseWindows(sandboxId(ctx));
   const windows = Array.isArray(result?.windows) ? result.windows : [];
-  const openwork = windows.find((entry) => /openwork/i.test(entry?.title ?? ""));
-  ctx.assert(Boolean(openwork), `Daytona Computer Use did not find an OpenWork window: ${JSON.stringify(windows)}`);
+  const micx = windows.find((entry) => /micx/i.test(entry?.title ?? ""));
+  ctx.assert(Boolean(micx), `Daytona Computer Use did not find an Micx window: ${JSON.stringify(windows)}`);
   ctx.recordEvidence({
     type: "assertion",
     status: "passed",
-    assertion: "Daytona Computer Use sees the real OpenWork window in the interactive Windows session",
-    actual: openwork?.title,
+    assertion: "Daytona Computer Use sees the real Micx window in the interactive Windows session",
+    actual: micx?.title,
   });
 }
 
 async function assertWindowsRuntime(ctx) {
-  const info = await ctx.eval("window.__OPENWORK_ELECTRON__?.system?.getArchitectureInfo?.()", { awaitPromise: true });
+  const info = await ctx.eval("window.__MICX_ELECTRON__?.system?.getArchitectureInfo?.()", { awaitPromise: true });
   ctx.assert(info?.platform === "windows", `Expected a Windows Electron build, got ${JSON.stringify(info)}`);
   ctx.recordEvidence({
     type: "assertion",
@@ -158,11 +158,11 @@ export default {
   preserveTheme: true,
   requiredEnv: [
     "DAYTONA_API_KEY",
-    "OPENWORK_EVAL_BRAND_ICON_URL",
-    "OPENWORK_EVAL_DAYTONA_SANDBOX",
-    "OPENWORK_EVAL_DEN_API_URL",
-    "OPENWORK_EVAL_DEN_TOKEN",
-    "OPENWORK_EVAL_DEN_WEB_URL",
+    "MICX_EVAL_BRAND_ICON_URL",
+    "MICX_EVAL_DAYTONA_SANDBOX",
+    "MICX_EVAL_DEN_API_URL",
+    "MICX_EVAL_DEN_TOKEN",
+    "MICX_EVAL_DEN_WEB_URL",
   ],
   steps: [
     {
@@ -170,9 +170,9 @@ export default {
       run: async (ctx) => {
         await daytonaComputerUseStart(sandboxId(ctx));
         await ensureRendererMounted(ctx);
-        await ctx.waitFor("Boolean(window.__openworkControl)", {
+        await ctx.waitFor("Boolean(window.__micxControl)", {
           timeoutMs: 30_000,
-          label: "window.__openworkControl",
+          label: "window.__micxControl",
         });
         await assertWindowsRuntime(ctx);
         await assertSignedIntoDen(ctx);
@@ -197,10 +197,10 @@ export default {
     {
       name: "Frame 1",
       run: async (ctx) => {
-        await ctx.prove("The stock OpenWork icon is visible in the real Windows taskbar", {
+        await ctx.prove("The stock Micx icon is visible in the real Windows taskbar", {
           voiceover: vo[0],
           action: async () => {
-            await assertOpenWorkWindow(ctx);
+            await assertMicxWindow(ctx);
           },
           assert: async () => {
             const state = await getBrandIconState(ctx);
@@ -266,7 +266,7 @@ export default {
             );
             ctx.recordEvidence({ type: "assertion", status: "passed", assertion: "Windows setIcon and setAppDetails both completed for the Den-served icon", actual: JSON.stringify(state) });
             await assertWindowsBrandShortcut(ctx, "present");
-            await assertOpenWorkWindow(ctx);
+            await assertMicxWindow(ctx);
           },
           screenshot: computerUseScreenshot("company-icon-taskbar-and-alt-tab", { requireText: ["Search sessions"] }),
         });
@@ -282,7 +282,7 @@ export default {
             // Wait for the Alt-Tab harness to release Alt before relaunching.
             await sleep(8_000);
             const hasEvalRelaunch = await ctx.eval(
-              "window.__openworkControl.listActions().some((action) => action.id === 'eval.app.relaunch' && !action.disabled)",
+              "window.__micxControl.listActions().some((action) => action.id === 'eval.app.relaunch' && !action.disabled)",
             );
             try {
               if (hasEvalRelaunch) {
@@ -290,7 +290,7 @@ export default {
               } else {
                 // Release packages intentionally omit the dev-only control
                 // action. Exercise the production relaunch bridge instead.
-                await ctx.eval("window.__OPENWORK_ELECTRON__.shell.relaunch()", { awaitPromise: true });
+                await ctx.eval("window.__MICX_ELECTRON__.shell.relaunch()", { awaitPromise: true });
               }
             } catch (error) {
               ctx.log(`Relaunch ended during the expected process shutdown: ${error instanceof Error ? error.message : String(error)}`);
@@ -308,7 +308,7 @@ export default {
           assert: async () => {
             ctx.assert(bootState?.applied === true && bootState?.reason === null, `Expected cached icon at boot, got ${JSON.stringify(bootState)}`);
             ctx.recordEvidence({ type: "assertion", status: "passed", assertion: "The first relaunched BrowserWindow applied the cached Windows taskbar identity", actual: JSON.stringify(bootState) });
-            await assertOpenWorkWindow(ctx);
+            await assertMicxWindow(ctx);
           },
           screenshot: computerUseScreenshot("company-icon-first-window-after-relaunch", { requireText: ["Search sessions"] }),
         });
@@ -342,7 +342,7 @@ export default {
             );
             ctx.recordEvidence({ type: "assertion", status: "passed", assertion: "Windows taskbar identity returned to the executable's stock icon", actual: JSON.stringify(state) });
             await assertWindowsBrandShortcut(ctx, "present");
-            await assertOpenWorkWindow(ctx);
+            await assertMicxWindow(ctx);
           },
           screenshot: computerUseScreenshot("stock-icon-restored", { requireText: ["Search sessions"] }),
         });

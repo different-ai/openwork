@@ -1,6 +1,6 @@
 # google-workspace-multi-account — Two Google domains, one person, no wrong inbox
 
-Cast reuses the Google Workspace demo — Alex (org admin, OpenWork Cloud) and
+Cast reuses the Google Workspace demo — Alex (org admin, Micx Cloud) and
 Jordan (member, desktop) — after Acme Robotics acquires Acme Labs, which runs
 its own Google domain. Today a member's Google credential is unique per
 `(member, provider)` and the org's OAuth client is unique per `(org, provider)`,
@@ -23,7 +23,7 @@ single-domain experience is unchanged.
 
 4. She connects Acme Labs, and her real browser opens Google's consent screen — which asks her which account to use, instead of quietly reusing the one she's already signed into. She picks her Labs account and approves.
 
-5. Back in OpenWork both connectors read Connected, each showing the real email address behind it. Two sign-ins, both hers, each one revocable on its own.
+5. Back in Micx both connectors read Connected, each showing the real email address behind it. Two sign-ins, both hers, each one revocable on its own.
 
 6. Now she asks her AI coworker to draft the supplier email in Acme Labs. It doesn't guess and it doesn't have to ask — it sees two Google connectors by name and reaches for the right one.
 

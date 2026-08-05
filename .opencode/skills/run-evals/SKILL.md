@@ -10,7 +10,7 @@ Use this guide only when the user names a flow that already exists in
 
 - Refuse to create, scaffold, copy, rename, or modify a legacy flow.
 - If the requested behavior has no existing flow, use `write-a-spec` and
-  `run-tests`; new specs import `test` from `@openwork/testkit`.
+  `run-tests`; new specs import `test` from `@micx/testkit`.
 - Manual browser work is debugging, not replacement verdict evidence.
 
 List and run only the requested existing flow:

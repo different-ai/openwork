@@ -114,7 +114,7 @@ spec:
               valueFrom: null
             {{- end }}
             {{- if .Values.installerArtifacts.enabled }}
-            - name: OPENWORK_INSTALLER_ARTIFACTS_DIR
+            - name: MICX_INSTALLER_ARTIFACTS_DIR
               value: {{ .Values.installerArtifacts.mountPath | quote }}
             {{- end }}
             {{- if .Values.customCa.enabled }}

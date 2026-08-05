@@ -1,8 +1,8 @@
 ---
-description: Run the OpenWork release flow
+description: Run the Micx release flow
 ---
 
-You are running the OpenWork release flow in this repo.
+You are running the Micx release flow in this repo.
 
 Arguments: `$ARGUMENTS`
 - If empty, default to a patch release.
@@ -16,6 +16,6 @@ Do the following, in order, and stop on any failure:
 4. Run `pnpm release:review` and resolve any mismatches.
 5. Tag and push: `git tag vX.Y.Z` and `git push origin vX.Y.Z`, then `git push origin dev`.
 6. Watch the Release App GitHub Actions workflow to completion.
-7. If the `openwork-server` version changed, publish that package.
+7. If the `micx-server` version changed, publish that package.
 
 Report what you changed, the tag created, and the GHA status.

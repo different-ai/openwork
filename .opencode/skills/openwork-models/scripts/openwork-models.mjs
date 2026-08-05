@@ -4,18 +4,18 @@ import path from "node:path"
 
 const paths = {
   source: path.resolve("ee/apps/inference/src/models/base.json"),
-  models: path.resolve("ee/apps/inference/src/models/openwork-models.json"),
+  models: path.resolve("ee/apps/inference/src/models/micx-models.json"),
   aliases: path.resolve("packages/types/src/den/inference.ts"),
 }
 
 function usage() {
   console.log(`Usage:
-  openwork-models.mjs search <query>
-  openwork-models.mjs add <query-or-id>
-  openwork-models.mjs remove <id> [<id2>]
-  openwork-models.mjs discount <usageFactor> <id> [<id2>]
-  openwork-models.mjs sync
-  openwork-models.mjs validate`)
+  micx-models.mjs search <query>
+  micx-models.mjs add <query-or-id>
+  micx-models.mjs remove <id> [<id2>]
+  micx-models.mjs discount <usageFactor> <id> [<id2>]
+  micx-models.mjs sync
+  micx-models.mjs validate`)
 }
 
 async function readJson(filePath) {
@@ -76,7 +76,7 @@ async function readSourceModels() {
   return sourceModels
 }
 
-async function readOpenworkModels() {
+async function readMicxModels() {
   const models = await readJson(paths.models)
   if (!isRecord(models)) {
     throw new Error(`${paths.models} must be a JSON object keyed by model id`)
@@ -114,16 +114,16 @@ function resolveSingleSourceModel(sourceModels, query) {
   return null
 }
 
-function resolveExactOpenworkIds(openworkModels, ids) {
+function resolveExactMicxIds(micxModels, ids) {
   const resolved = []
   for (const id of ids) {
-    if (openworkModels[id]) {
+    if (micxModels[id]) {
       resolved.push(id)
       continue
     }
 
-    const matches = findMatches(openworkModels, id)
-    console.error(`OpenWork model "${id}" was not exact. Please clarify with exact id:`)
+    const matches = findMatches(micxModels, id)
+    console.error(`Micx model "${id}" was not exact. Please clarify with exact id:`)
     displayMatches(matches)
     process.exitCode = 2
     return null
@@ -150,7 +150,7 @@ async function syncAliases(models, usageOverrides = new Map()) {
   const existingFactors = await readUsageFactors()
   const entries = Object.entries(models).map(([id, model]) => {
     const usageFactor = usageOverrides.get(id) ?? existingFactors.get(id) ?? 1
-    const displayName = `OpenWork: ${model.name}`
+    const displayName = `Micx: ${model.name}`
     return `  ${escapeTsString(id)}: {
     upstreamModel: ${escapeTsString(id)},
     displayName: ${escapeTsString(displayName)},
@@ -177,7 +177,7 @@ async function syncAll(models, usageOverrides = new Map()) {
 }
 
 async function validate() {
-  const models = await readOpenworkModels()
+  const models = await readMicxModels()
   for (const [id, model] of Object.entries(models)) {
     if (!isRecord(model)) throw new Error(`${id} must be an object`)
     if (model.id !== id) throw new Error(`${id} must have matching id field`)
@@ -206,7 +206,7 @@ async function validate() {
     }
   }
 
-  console.log(`validated ${Object.keys(models).length} OpenWork model(s)`)
+  console.log(`validated ${Object.keys(models).length} Micx model(s)`)
 }
 
 async function search(query) {
@@ -224,15 +224,15 @@ async function add(query) {
   const selected = resolveSingleSourceModel(sourceModels, query)
   if (!selected) return
 
-  const models = await readOpenworkModels()
+  const models = await readMicxModels()
   models[selected.id] = selected.model
   await syncAll(models)
   console.log(`added ${selected.id}`)
 }
 
 async function remove(ids) {
-  const models = await readOpenworkModels()
-  const resolved = resolveExactOpenworkIds(models, ids)
+  const models = await readMicxModels()
+  const resolved = resolveExactMicxIds(models, ids)
   if (!resolved) return
 
   for (const id of resolved) {
@@ -248,8 +248,8 @@ async function discount(factorText, ids) {
     throw new Error("usageFactor must be a positive number")
   }
 
-  const models = await readOpenworkModels()
-  const resolved = resolveExactOpenworkIds(models, ids)
+  const models = await readMicxModels()
+  const resolved = resolveExactMicxIds(models, ids)
   if (!resolved) return
 
   const currentFactors = await readUsageFactors()
@@ -277,7 +277,7 @@ if (command === "search") {
 } else if (command === "discount") {
   await discount(args[0], args.slice(1))
 } else if (command === "sync") {
-  await syncAll(await readOpenworkModels())
+  await syncAll(await readMicxModels())
 } else if (command === "validate") {
   await validate()
 } else {

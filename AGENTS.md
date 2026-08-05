@@ -1,23 +1,23 @@
 # AGENTS.md
 
-OpenWork helps users run agents, skills, and MCP. It is an open-source alternative to Claude Cowork/Codex as a desktop app.
+Micx Work helps users run agents, skills, and MCP. It is an open-source alternative to Claude Cowork/Codex as a desktop app.
 
-## What OpenWork Is
+## What Micx Work Is
 
-OpenWork is a practical control surface for agentic work:
+Micx Work is a practical control surface for agentic work:
 
 * Run local and remote agent workflows from one place.
-* Use OpenCode capabilities directly through OpenWork.
+* Use OpenCode capabilities directly through Micx.
 * Compose desktop app, server, and messaging connectors without lock-in.
-* Treat the OpenWork app as a client of the OpenWork server API surface.
+* Treat the Micx app as a client of the Micx server API surface.
 * Connect to hosted workers through a simple user flow: `Add a worker` -> `Connect remote`.
 
 ## Core Philosophy
 
-* **Local-first, cloud-ready**: OpenWork runs on your machine in one click and can connect to cloud workflows when needed.
-* **Server-consumption first**: the app should consume OpenWork server surfaces (self-hosted or hosted), not invent parallel behavior.
+* **Local-first, cloud-ready**: Micx runs on your machine in one click and can connect to cloud workflows when needed.
+* **Server-consumption first**: the app should consume Micx server surfaces (self-hosted or hosted), not invent parallel behavior.
 * **Composable**: use the desktop app, WhatsApp/Slack/Telegram connectors, or server mode based on the task.
-* **Ejectable**: OpenWork is powered by OpenCode, so anything OpenCode can do is available in OpenWork, even before a dedicated UI exists.
+* **Ejectable**: Micx Work is powered by OpenCode, so anything OpenCode can do is available in Micx Work, even before a dedicated UI exists.
 * **Sharing is caring**: start solo, then share quickly; one CLI or desktop command can spin up an instantly shareable instance.
 
 
@@ -25,7 +25,7 @@ OpenWork is a practical control surface for agentic work:
 
 If you open a PR, you must run tests and report what you ran (commands + result).
 
-For runtime-observable changes, include the `@openwork/testkit` evidence tape.
+For runtime-observable changes, include the `@micx/testkit` evidence tape.
 Custom screenshots and recordings may supplement that tape, but never determine the
 pass/fail verdict. If validation cannot run, say why and give exact repro steps.
 
@@ -34,7 +34,7 @@ pass/fail verdict. If validation cannot run, say why and give exact repro steps.
 Almost everything we change affects the filesystem, runtime DB, server API,
 provisioning, sessions, config, or UI. New executable end-to-end coverage has
 one path: `evals/specs/**/*.test.ts`, with `test` imported from
-`@openwork/testkit`. Specs that drive the app use `.slow.test.ts`.
+`@micx/testkit`. Specs that drive the app use `.slow.test.ts`.
 
 Use the skills in this order: `write-a-spec` → `run-tests` →
 `diagnose-a-red-run` when failing → `publish-evidence` for an existing ambient
@@ -67,7 +67,7 @@ Feature work starts with the demo, not a PRD:
 
 - Use components from @/components when possible.
 - When creating new components, we prefer using shadcn/ui with (Base UI).
-- Assume most end users of OpenWork are non-technical.
+- Assume most end users of Micx are non-technical.
 
 ### Tech Stack Preferences
 

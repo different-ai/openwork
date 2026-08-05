@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/** OpenWork testbed CLI bootstrap. */
+/** Micx testbed CLI bootstrap. */
 
 if (!process.features?.typescript) {
   console.error("Node 24+ with native TypeScript required — run `nvm use`");

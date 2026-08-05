@@ -1,6 +1,6 @@
-import { createAndSelectWorkspace, signInDesktopAs } from "@openwork/behaviors";
-import { desktop } from "@openwork/hosts";
-import type { DesktopHandle, Host } from "@openwork/hosts";
+import { createAndSelectWorkspace, signInDesktopAs } from "@micx/behaviors";
+import { desktop } from "@micx/hosts";
+import type { DesktopHandle, Host } from "@micx/hosts";
 import type { Den } from "./server.ts";
 import type { Place } from "./place.ts";
 
@@ -12,7 +12,7 @@ export interface AppOptions {
   model?: string;
   /** Reuse this caller-owned local Electron profile root instead of creating one. */
   profileDir?: string;
-  /** Eval-only delay before the desktop starts its embedded OpenWork server. */
+  /** Eval-only delay before the desktop starts its embedded Micx server. */
   localServerDelayMs?: number;
 }
 
@@ -28,9 +28,9 @@ export async function app(options: AppOptions): Promise<App> {
     throw new Error(`Unknown Den member ${JSON.stringify(options.as)}. Available: ${available}`);
   }
   const env: Record<string, string> = {};
-  if (options.model) env.OPENWORK_EVAL_MODEL = options.model;
+  if (options.model) env.MICX_EVAL_MODEL = options.model;
   if (options.localServerDelayMs !== undefined) {
-    env.OPENWORK_EVAL_LOCAL_SERVER_DELAY_MS = String(options.localServerDelayMs);
+    env.MICX_EVAL_LOCAL_SERVER_DELAY_MS = String(options.localServerDelayMs);
   }
   const surface = await desktop({
     name: `testkit-${options.as}`,
@@ -46,7 +46,7 @@ export async function app(options: AppOptions): Promise<App> {
   try {
     // Workspace first, then the org sign-in: the signed-in org shell offers no
     // Add workspace entry, so a member's workspace exists before they connect.
-    const path = `/tmp/openwork-${options.as}-${Date.now()}`;
+    const path = `/tmp/micx-${options.as}-${Date.now()}`;
     await createAndSelectWorkspace(surface, { path });
     await signInDesktopAs(surface, options.den.ref, member);
     const { workspaceId } = await createAndSelectWorkspace(surface, { path });

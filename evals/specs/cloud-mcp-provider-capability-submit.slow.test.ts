@@ -1,5 +1,5 @@
 import { expect, onTestFinished } from "vitest";
-import { screenshot, validate } from "@openwork/fraimz";
+import { screenshot, validate } from "@micx/fraimz";
 import {
   clickButton,
   createOrgConnection,
@@ -16,20 +16,20 @@ import {
   waitForConnectionCard,
   waitForText,
   writeComposerText,
-} from "@openwork/behaviors";
-import { app, mcpMock, needs, server, test, unmetNeeds } from "@openwork/testkit";
-import type { NeedsSpec } from "@openwork/testkit";
+} from "@micx/behaviors";
+import { app, mcpMock, needs, server, test, unmetNeeds } from "@micx/testkit";
+import type { NeedsSpec } from "@micx/testkit";
 
 const requirements: NeedsSpec = {
   model: "tool-capable",
-  env: ["OPENWORK_EVAL_DEN_API_URL"],
-  optIn: ["OPENWORK_EVAL_APP_SPECS", "OPENWORK_EVAL_CONNECTOR_SPEC"],
+  env: ["MICX_EVAL_DEN_API_URL"],
+  optIn: ["MICX_EVAL_APP_SPECS", "MICX_EVAL_CONNECTOR_SPEC"],
 };
 const missingRequirements = unmetNeeds(requirements, process.env);
 const title = missingRequirements.length > 0
   ? `Cloud MCP provider capability submission skipped — needs: ${missingRequirements.join(", ")}`
   : "bundled engine provider capability proof allows an organization connector task to submit";
-const modelId = process.env.OPENWORK_EVAL_MODEL?.trim() || "";
+const modelId = process.env.MICX_EVAL_MODEL?.trim() || "";
 
 test(title, async ({ evidence, place }) => {
   needs(requirements);
@@ -37,8 +37,8 @@ test(title, async ({ evidence, place }) => {
     place,
     mocks: {
       connector: mcpMock({
-        port: Number(process.env.OPENWORK_EVAL_CONNECTOR_MOCK_PORT ?? 3979),
-        publicUrl: process.env.OPENWORK_EVAL_CONNECTOR_MOCK_PUBLIC_URL?.trim() || undefined,
+        port: Number(process.env.MICX_EVAL_CONNECTOR_MOCK_PORT ?? 3979),
+        publicUrl: process.env.MICX_EVAL_CONNECTOR_MOCK_PUBLIC_URL?.trim() || undefined,
       }),
     },
   });
@@ -87,7 +87,7 @@ test(title, async ({ evidence, place }) => {
     window.fetch = async (input, init) => {
       const response = await originalFetch(input, init);
       const url = typeof input === "string" ? input : input?.url ?? String(input);
-      if (url.includes("/mcp/openwork-cloud/health")) {
+      if (url.includes("/mcp/micx-cloud/health")) {
         probe.probeRequested ||= url.includes("probe=1");
         const body = await response.clone().json().catch(() => null);
         if (body?.tools?.providerProjection) {
@@ -152,7 +152,7 @@ test(title, async ({ evidence, place }) => {
 
   const shot = await screenshot(desktopApp);
   const seen = await validate(shot, [
-    "An OpenWork session shows a submitted task that used a connected organization tool",
+    "An Micx session shows a submitted task that used a connected organization tool",
     "No connected service preparation failure or crash message is visible",
   ]);
   expect(seen.ok, seen.why).toBe(true);

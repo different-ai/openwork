@@ -7,9 +7,9 @@ import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
 const FLOW_ID = "den-skill-crud-complete-body";
 const vo = await loadVoiceoverParagraphs(FLOW_ID);
 const ADMIN_EMAIL =
-  process.env.OPENWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
+  process.env.MICX_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
 const ADMIN_PASSWORD =
-  process.env.OPENWORK_EVAL_DEMO_PASSWORD?.trim() || "OpenWorkDemo123!";
+  process.env.MICX_EVAL_DEMO_PASSWORD?.trim() || "MicxDemo123!";
 
 const unique = Date.now().toString(36);
 const state = {
@@ -30,7 +30,7 @@ const state = {
     "- List owners and next steps",
     "",
     "```sh",
-    "openwork verify-handoff",
+    "micx verify-handoff",
     "```",
   ].join("\n"),
   editedBody: [
@@ -43,7 +43,7 @@ const state = {
     "3. Link the verification receipt",
     "",
     "```sh",
-    "openwork verify-handoff --strict",
+    "micx verify-handoff --strict",
     "```",
   ].join("\n"),
 };
@@ -165,7 +165,7 @@ export default {
   kind: "user-facing",
   preserveTheme: true,
   spec: `evals/voiceovers/${FLOW_ID}.md`,
-  requiredEnv: ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_WEB_URL"],
+  requiredEnv: ["MICX_EVAL_DEN_API_URL", "MICX_EVAL_DEN_WEB_URL"],
   steps: [
     {
       name: "Create a complete skill",
@@ -279,7 +279,7 @@ export default {
                 state.originalName,
                 "Complete skill body",
                 "Incident handoff",
-                "openwork verify-handoff",
+                "micx verify-handoff",
               ],
             ),
           },
@@ -342,7 +342,7 @@ export default {
                 state.editedName,
                 state.editedDescription,
                 "Verified incident handoff",
-                "openwork verify-handoff --strict",
+                "micx verify-handoff --strict",
               ],
             ),
           },

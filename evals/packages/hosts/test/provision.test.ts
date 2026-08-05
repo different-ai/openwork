@@ -25,7 +25,7 @@ function desktopFake(diskUse = "40%"):
       return { stdout: "", stderr: "already started", code: 1 };
     }
     if (args[0] === "snapshot") {
-      return { stdout: JSON.stringify([{ name: "openwork-eval-vnc", id: "snapshot-123" }]), stderr: "", code: 0 };
+      return { stdout: JSON.stringify([{ name: "micx-eval-vnc", id: "snapshot-123" }]), stderr: "", code: 0 };
     }
     if (args[0] !== "exec") return { stdout: "", stderr: "", code: 0 };
 
@@ -66,9 +66,9 @@ test("renderConnectorSpecEnv and parseConnectorSpecEnv round-trip the connector 
   assert.deepEqual(parseConnectorSpecEnv(content), facts);
   assert.match(content, /^# provisioned for org-connector-two-members — generated .*; ref=feat\/eval-connector-two-members$/m);
   assert.match(content, /^# provision-created=den,desktop-a$/m);
-  assert.match(content, /OPENWORK_EVAL_MODEL=big-pickle/);
-  const missingApi = content.split("\n").filter((line) => !line.startsWith("OPENWORK_EVAL_DEN_API_URL=")).join("\n");
-  assert.throws(() => parseConnectorSpecEnv(missingApi), /OPENWORK_EVAL_DEN_API_URL/);
+  assert.match(content, /MICX_EVAL_MODEL=big-pickle/);
+  const missingApi = content.split("\n").filter((line) => !line.startsWith("MICX_EVAL_DEN_API_URL=")).join("\n");
+  assert.throws(() => parseConnectorSpecEnv(missingApi), /MICX_EVAL_DEN_API_URL/);
 });
 
 test("provisionDesktopSandbox reuses a sandbox and keeps every remote command in one argument", async () => {
@@ -111,7 +111,7 @@ test("rendered values are shell-quoted, because the env file is meant to be sour
     created: [],
   });
 
-  assert(content.includes(`OPENWORK_EVAL_DAYTONA_SANDBOX_A='$(touch /tmp/pwned); echo it'"'"'s-here'`));
+  assert(content.includes(`MICX_EVAL_DAYTONA_SANDBOX_A='$(touch /tmp/pwned); echo it'"'"'s-here'`));
   assert.equal(parseConnectorSpecEnv(content).sandboxA, nasty);
 });
 
@@ -142,7 +142,7 @@ test("the eval secrets volume is mounted only when explicitly asked for", async 
   await provisionDesktopSandbox({ ref: "dev", name: "b", secrets: true, exec, log: () => undefined });
 
   const create = calls.find((call) => call.args[0] === "create");
-  assert(create?.args.includes("openwork-eval-secrets:/daytona-secrets"));
+  assert(create?.args.includes("micx-eval-secrets:/daytona-secrets"));
 });
 
 test("provisionDesktopSandbox fails the disk gate above 85 percent", async () => {

@@ -6,8 +6,8 @@ const FLOW_ID = "desktop-policies-dashboard-section";
 const vo = await loadVoiceoverParagraphs(FLOW_ID);
 if (!vo) throw new Error(`Missing approved voice-over script for ${FLOW_ID}.`);
 
-const EMAIL = process.env.OPENWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
-const PASSWORD = process.env.OPENWORK_EVAL_DEMO_PASSWORD?.trim() || "OpenWorkDemo123!";
+const EMAIL = process.env.MICX_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
+const PASSWORD = process.env.MICX_EVAL_DEMO_PASSWORD?.trim() || "MicxDemo123!";
 
 async function setViewport(ctx: FlowContext, width: number): Promise<void> {
   ctx.assert(Boolean(ctx.client), "A browser CDP client is required.");
@@ -40,7 +40,7 @@ export default defineFlow({
   id: FLOW_ID,
   title: "Desktop Policies render as one independent responsive dashboard section",
   kind: "user-facing",
-  requiredEnv: ["OPENWORK_EVAL_DEN_WEB_URL"],
+  requiredEnv: ["MICX_EVAL_DEN_WEB_URL"],
   steps: [
     {
       name: "Desktop Policies keep an independent responsive boundary",

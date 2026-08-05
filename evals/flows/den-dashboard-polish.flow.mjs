@@ -4,12 +4,12 @@ import { signInViaBrowser } from "./lib/den-web.mjs";
 
 const FLOW_ID = "den-dashboard-polish";
 const vo = await loadVoiceoverParagraphs(FLOW_ID);
-const DEN_API_URL = (process.env.OPENWORK_EVAL_DEN_API_URL ?? "").trim().replace(/\/+$/, "");
-const DEN_WEB_URL = (process.env.OPENWORK_EVAL_DEN_WEB_URL ?? "").trim().replace(/\/+$/, "");
-const OWNER_EMAIL = process.env.OPENWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
-const PASSWORD = process.env.OPENWORK_EVAL_DEMO_PASSWORD?.trim() || "OpenWorkDemo123!";
+const DEN_API_URL = (process.env.MICX_EVAL_DEN_API_URL ?? "").trim().replace(/\/+$/, "");
+const DEN_WEB_URL = (process.env.MICX_EVAL_DEN_WEB_URL ?? "").trim().replace(/\/+$/, "");
+const OWNER_EMAIL = process.env.MICX_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
+const PASSWORD = process.env.MICX_EVAL_DEMO_PASSWORD?.trim() || "MicxDemo123!";
 const ADMIN_EMAIL = "riley.dashboard-polish@acme.test";
-const EXPECTED_VERSION = process.env.OPENWORK_EVAL_DEN_EXPECTED_VERSION?.trim() || "commit 8c412db";
+const EXPECTED_VERSION = process.env.MICX_EVAL_DEN_EXPECTED_VERSION?.trim() || "commit 8c412db";
 
 const state = {
   ownerToken: "",
@@ -64,8 +64,8 @@ async function signInApi(email, password) {
 }
 
 function runMysql(sql) {
-  const container = process.env.OPENWORK_EVAL_DEN_MYSQL_CONTAINER?.trim() || "openwork-web-local-mysql";
-  const database = process.env.OPENWORK_EVAL_DEN_DATABASE_NAME?.trim() || "openwork_den";
+  const container = process.env.MICX_EVAL_DEN_MYSQL_CONTAINER?.trim() || "micx-web-local-mysql";
+  const database = process.env.MICX_EVAL_DEN_DATABASE_NAME?.trim() || "micx_den";
   execFileSync("docker", [
     "exec",
     container,
@@ -201,7 +201,7 @@ export default {
   title: "Den dashboard polish keeps the admin journey simple and truthful",
   kind: "user-facing",
   preserveTheme: true,
-  requiredEnv: ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_WEB_URL"],
+  requiredEnv: ["MICX_EVAL_DEN_API_URL", "MICX_EVAL_DEN_WEB_URL"],
   steps: [
     {
       name: "Setup",

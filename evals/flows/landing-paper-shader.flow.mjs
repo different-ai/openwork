@@ -1,14 +1,14 @@
 const ROUTES_WITHOUT_SHADER = [
-  { path: "/pricing", text: "OpenWork pricing" },
+  { path: "/pricing", text: "Micx pricing" },
   { path: "/enterprise", text: "A privacy-first" },
   { path: "/trust", text: "Security & Data Privacy" },
   { path: "/privacy", text: "Privacy Policy" },
   { path: "/terms", text: "Terms of Service" },
-  { path: "/og", text: "OpenWork" },
+  { path: "/og", text: "Micx" },
 ];
 
 function routeUrl(ctx, path) {
-  return new URL(path, ctx.env.OPENWORK_EVAL_LANDING_URL).toString();
+  return new URL(path, ctx.env.MICX_EVAL_LANDING_URL).toString();
 }
 
 async function navigateTo(ctx, path, text) {
@@ -41,7 +41,7 @@ export default {
   id: "landing-paper-shader",
   title: "Landing Paper shader is scoped to the root page",
   spec: "evals/README.md",
-  requiredEnv: ["OPENWORK_EVAL_LANDING_URL"],
+  requiredEnv: ["MICX_EVAL_LANDING_URL"],
   steps: [
     {
       name: "Root route renders the Paper shader",

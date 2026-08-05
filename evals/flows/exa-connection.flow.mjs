@@ -9,10 +9,10 @@ import { denApiFetch, mcpAgentCall, mintMcpToken, openAdminConnections, signInAp
 
 const vo = await loadVoiceoverParagraphs("exa-connection");
 
-const ADMIN_EMAIL = process.env.OPENWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
-const ADMIN_PASSWORD = process.env.OPENWORK_EVAL_DEMO_PASSWORD?.trim() || "OpenWorkDemo123!";
+const ADMIN_EMAIL = process.env.MICX_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
+const ADMIN_PASSWORD = process.env.MICX_EVAL_DEMO_PASSWORD?.trim() || "MicxDemo123!";
 const EXA_URL = "https://mcp.exa.ai/mcp";
-const EXA_API_KEY = process.env.OPENWORK_EVAL_EXA_API_KEY?.trim() || "exa-eval-placeholder-key";
+const EXA_API_KEY = process.env.MICX_EVAL_EXA_API_KEY?.trim() || "exa-eval-placeholder-key";
 const HAS_REAL_EXA_API_KEY = EXA_API_KEY !== "exa-eval-placeholder-key";
 
 const state = {
@@ -61,7 +61,7 @@ export default {
   title: "Exa is a quick-add Cloud Connection with org API-key setup",
   kind: "user-facing",
   preserveTheme: true,
-  requiredEnv: ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_WEB_URL"],
+  requiredEnv: ["MICX_EVAL_DEN_API_URL", "MICX_EVAL_DEN_WEB_URL"],
   spec: "evals/org-mcp-connections-ux.md",
   steps: [
     {
@@ -178,14 +178,14 @@ export default {
                 name: "execute_capability",
                 arguments: {
                   name: exaToolName,
-                  body: { query: "OpenWork AI agents", numResults: 1 },
+                  body: { query: "Micx AI agents", numResults: 1 },
                 },
               }, ctx);
               const executeText = JSON.stringify(execute);
               ctx.assert(!executeText.includes("Invalid API key"), `Exa execution rejected the API key: ${executeText.slice(0, 500)}`);
               ctx.assert(execute.isError !== true, `Exa execution returned an error: ${executeText.slice(0, 500)}`);
             } else {
-              ctx.log("Skipping real Exa web_search_exa execution because real execution requires OPENWORK_EVAL_EXA_API_KEY; placeholder keys only validate create and tool discovery.");
+              ctx.log("Skipping real Exa web_search_exa execution because real execution requires MICX_EVAL_EXA_API_KEY; placeholder keys only validate create and tool discovery.");
             }
 
             // The list polls/re-renders while the API checks above run, which

@@ -17,12 +17,12 @@ Spec: docs/external-mcp-oauth.md
   - Assertion: Visible text includes "Administrator action required" (passed)
   - Assertion: Visible text includes "mcp:read" (passed)
   - Frame: mcp-oauth-conformance-01-requirements-discovered.png (passed)
-    - Voiceover: An administrator enters only the MCP URL and asks OpenWork to discover requirements. Before anything is saved, the dialog explains that OAuth is required, recommends dynamic registration, shows the available scopes, and calls out the administrator checks that standards metadata cannot prove.
+    - Voiceover: An administrator enters only the MCP URL and asks Micx to discover requirements. Before anything is saved, the dialog explains that OAuth is required, recommends dynamic registration, shows the available scopes, and calls out the administrator checks that standards metadata cannot prove.
 - ✅ DCR and PKCE return through the shared callback (479ms)
   - Assertion: Visible text includes "OAuth conformance mrlgygve" (passed)
   - Assertion: Visible text does not include "Connection failed" (passed)
   - Frame: mcp-oauth-conformance-02-shared-callback-connected.png (passed)
-    - Voiceover: After the administrator chooses the least-privilege read scope, OpenWork completes dynamic registration and PKCE authorization in a real browser window. The provider returns to the deployment-wide callback and Den shows the successful connection page.
+    - Voiceover: After the administrator chooses the least-privilege read scope, Micx completes dynamic registration and PKCE authorization in a real browser window. The provider returns to the deployment-wide callback and Den shows the successful connection page.
 - ✅ The normalized connection contract reports the shared callback (1841ms)
   - Frame: mcp-oauth-conformance-03-dashboard-shared-callback.png (passed)
     - Voiceover: Back on the Connections screen, the normalized connection card reports Connected, Shared callback, and dynamic registration. The callback shown is deployment-wide and contains no connection identifier.
@@ -33,8 +33,8 @@ Spec: docs/external-mcp-oauth.md
     - Voiceover: The connected server exposes its real Mock Echo tool in the dashboard catalog. The same connection is immediately usable through search_capabilities and execute_capability, proving the OAuth result reaches the agent-facing MCP surface end to end.
 - ✅ Clean up the proof connection and mock server (17ms)
 - ✅ Voice-over script coverage (0ms)
-  - Assertion: Script frame 1 narrated: "An administrator enters only the MCP URL and asks OpenWork to discover requirements. Bef" (passed)
-  - Assertion: Script frame 2 narrated: "After the administrator chooses the least-privilege read scope, OpenWork completes dynam" (passed)
+  - Assertion: Script frame 1 narrated: "An administrator enters only the MCP URL and asks Micx to discover requirements. Bef" (passed)
+  - Assertion: Script frame 2 narrated: "After the administrator chooses the least-privilege read scope, Micx completes dynam" (passed)
   - Assertion: Script frame 3 narrated: "Back on the Connections screen, the normalized connection card reports Connected, Shared" (passed)
   - Assertion: Script frame 4 narrated: "The connected server exposes its real Mock Echo tool in the dashboard catalog. The same " (passed)
 

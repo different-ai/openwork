@@ -29,7 +29,7 @@ Every task prompt contains: **Goal** · **Files** (exact `path:line`) · **Const
 
 - Always: read the full diff yourself; rerun the executor's narrowest check.
 - Runtime-observable changes use `evals/specs/**/*.test.ts`, import `test` from
-  `@openwork/testkit`, and follow `write-a-spec` → `run-tests` →
+  `@micx/testkit`, and follow `write-a-spec` → `run-tests` →
   `diagnose-a-red-run` when red → `publish-evidence` for the ambient tape.
   App-driving specs use `.slow.test.ts`; never create or pass roll handles.
 - Docs, types-only, or `.opencode/` config → skip runtime proof and say so explicitly.
@@ -38,7 +38,7 @@ Every task prompt contains: **Goal** · **Files** (exact `path:line`) · **Const
 
 Follow demo-driven development (see AGENTS.md): `/voiceover` to align on the
 demo script before any code, build on a fresh worktree (`git worktree add`),
-translate the approved narration into an `@openwork/testkit` app-driving spec,
+translate the approved narration into an `@micx/testkit` app-driving spec,
 run it until its claims hold, then open the PR and publish its existing ambient
 evidence tape.
 

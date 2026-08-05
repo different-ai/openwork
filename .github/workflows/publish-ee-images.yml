@@ -25,7 +25,7 @@ on:
       - "packaging/docker/Dockerfile.den-gateway"
       - "packaging/docker/Dockerfile.den-web"
       - "packaging/docker/Dockerfile.inference"
-      - "packaging/helm/openwork-ee/**"
+      - "packaging/helm/micx-ee/**"
       - "ee/apps/den-api/**"
       - "ee/apps/den-gateway/**"
       - "ee/apps/den-web/**"
@@ -96,21 +96,21 @@ jobs:
         uses: azure/setup-helm@v4
 
       - name: Lint chart
-        run: helm lint packaging/helm/openwork-ee
+        run: helm lint packaging/helm/micx-ee
 
       - name: Render chart
-        run: helm template openwork-ee packaging/helm/openwork-ee --set ingress.enabled=true --set inference.enabled=true
+        run: helm template micx-ee packaging/helm/micx-ee --set ingress.enabled=true --set inference.enabled=true
 
       - name: Run chart tests
         run: |
-          for test in packaging/helm/openwork-ee/tests/*.sh; do
+          for test in packaging/helm/micx-ee/tests/*.sh; do
             bash "$test"
           done
 
       - name: Package chart
         if: ${{ needs.artifact-version.outputs.chart_version != '' }}
         run: |
-          helm package packaging/helm/openwork-ee \
+          helm package packaging/helm/micx-ee \
             --version "${{ needs.artifact-version.outputs.chart_version }}" \
             --app-version "${{ needs.artifact-version.outputs.chart_version }}" \
             --destination dist/charts
@@ -124,7 +124,7 @@ jobs:
 
       - name: Publish chart
         if: ${{ needs.artifact-version.outputs.publish == 'true' && needs.artifact-version.outputs.chart_version != '' }}
-        run: helm push "dist/charts/openwork-ee-${{ needs.artifact-version.outputs.chart_version }}.tgz" "oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts"
+        run: helm push "dist/charts/micx-ee-${{ needs.artifact-version.outputs.chart_version }}.tgz" "oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts"
 
   ee-images:
     name: Build ${{ matrix.image }}
@@ -134,7 +134,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - image: openwork-den-api
+          - image: micx-den-api
             dockerfile: packaging/docker/Dockerfile.den
             port: 8788
             health_path: /health
@@ -144,12 +144,12 @@ jobs:
               -e DEN_DB_ENCRYPTION_KEY=ci-den-db-encryption-key-value-123456
               -e BETTER_AUTH_SECRET=ci-better-auth-secret-value-123456
               -e BETTER_AUTH_URL=http://127.0.0.1:8788
-          - image: openwork-den-web
+          - image: micx-den-web
             dockerfile: packaging/docker/Dockerfile.den-web
             port: 3005
             health_path: /api/health
             smoke_env: ""
-          - image: openwork-inference
+          - image: micx-inference
             dockerfile: packaging/docker/Dockerfile.inference
             port: 8791
             health_path: /health
@@ -159,7 +159,7 @@ jobs:
               -e DEN_DB_ENCRYPTION_KEY=ci-den-db-encryption-key-value-123456
           # The gateway's own liveness lives at /__gw/health because /health is
           # proxied through to the user's instance.
-          - image: openwork-den-gateway
+          - image: micx-den-gateway
             dockerfile: packaging/docker/Dockerfile.den-gateway
             port: 8788
             health_path: /__gw/health
@@ -238,7 +238,7 @@ jobs:
         # Build every image except the ones whose Sentry-enabled step below owns
         # them. Stated as an exclusion so a newly added matrix entry builds by
         # default instead of silently skipping and failing the smoke step.
-        if: ${{ !((matrix.image == 'openwork-den-api' && steps.sentry_sourcemaps.outputs.den_api_upload == 'true') || (matrix.image == 'openwork-den-web' && steps.sentry_sourcemaps.outputs.den_web_upload == 'true')) }}
+        if: ${{ !((matrix.image == 'micx-den-api' && steps.sentry_sourcemaps.outputs.den_api_upload == 'true') || (matrix.image == 'micx-den-web' && steps.sentry_sourcemaps.outputs.den_web_upload == 'true')) }}
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -251,13 +251,13 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}
           build-args: |
-            ${{ matrix.image == 'openwork-den-api' && format('DEN_API_VERSION={0}', needs.artifact-version.outputs.chart_version || github.sha) || '' }}
-            ${{ matrix.image == 'openwork-den-gateway' && format('DEN_GATEWAY_VERSION={0}', needs.artifact-version.outputs.chart_version || github.sha) || '' }}
-            ${{ matrix.image == 'openwork-den-api' && 'DEN_UPLOAD_SENTRY_SOURCEMAPS=0' || '' }}
-            ${{ matrix.image == 'openwork-den-web' && 'DEN_WEB_UPLOAD_SENTRY_SOURCEMAPS=0' || '' }}
+            ${{ matrix.image == 'micx-den-api' && format('DEN_API_VERSION={0}', needs.artifact-version.outputs.chart_version || github.sha) || '' }}
+            ${{ matrix.image == 'micx-den-gateway' && format('DEN_GATEWAY_VERSION={0}', needs.artifact-version.outputs.chart_version || github.sha) || '' }}
+            ${{ matrix.image == 'micx-den-api' && 'DEN_UPLOAD_SENTRY_SOURCEMAPS=0' || '' }}
+            ${{ matrix.image == 'micx-den-web' && 'DEN_WEB_UPLOAD_SENTRY_SOURCEMAPS=0' || '' }}
 
       - name: Build and push with Sentry source-map upload
-        if: ${{ (matrix.image == 'openwork-den-api' && steps.sentry_sourcemaps.outputs.den_api_upload == 'true') || (matrix.image == 'openwork-den-web' && steps.sentry_sourcemaps.outputs.den_web_upload == 'true') }}
+        if: ${{ (matrix.image == 'micx-den-api' && steps.sentry_sourcemaps.outputs.den_api_upload == 'true') || (matrix.image == 'micx-den-web' && steps.sentry_sourcemaps.outputs.den_web_upload == 'true') }}
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -269,12 +269,12 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}
           build-args: |
-            ${{ matrix.image == 'openwork-den-api' && format('DEN_API_VERSION={0}', needs.artifact-version.outputs.chart_version || github.sha) || '' }}
-            ${{ matrix.image == 'openwork-den-gateway' && format('DEN_GATEWAY_VERSION={0}', needs.artifact-version.outputs.chart_version || github.sha) || '' }}
-            ${{ matrix.image == 'openwork-den-api' && 'DEN_UPLOAD_SENTRY_SOURCEMAPS=1' || '' }}
-            ${{ matrix.image == 'openwork-den-web' && 'DEN_WEB_UPLOAD_SENTRY_SOURCEMAPS=1' || '' }}
-            ${{ matrix.image == 'openwork-den-api' && format('DEN_SENTRY_UPLOAD_BUILD_ID={0}-{1}', github.run_id, github.run_attempt) || '' }}
-            ${{ matrix.image == 'openwork-den-web' && format('DEN_WEB_SENTRY_UPLOAD_BUILD_ID={0}-{1}', github.run_id, github.run_attempt) || '' }}
+            ${{ matrix.image == 'micx-den-api' && format('DEN_API_VERSION={0}', needs.artifact-version.outputs.chart_version || github.sha) || '' }}
+            ${{ matrix.image == 'micx-den-gateway' && format('DEN_GATEWAY_VERSION={0}', needs.artifact-version.outputs.chart_version || github.sha) || '' }}
+            ${{ matrix.image == 'micx-den-api' && 'DEN_UPLOAD_SENTRY_SOURCEMAPS=1' || '' }}
+            ${{ matrix.image == 'micx-den-web' && 'DEN_WEB_UPLOAD_SENTRY_SOURCEMAPS=1' || '' }}
+            ${{ matrix.image == 'micx-den-api' && format('DEN_SENTRY_UPLOAD_BUILD_ID={0}-{1}', github.run_id, github.run_attempt) || '' }}
+            ${{ matrix.image == 'micx-den-web' && format('DEN_WEB_SENTRY_UPLOAD_BUILD_ID={0}-{1}', github.run_id, github.run_attempt) || '' }}
           secrets: |
             sentry_auth_token=${{ secrets.SENTRY_AUTH_TOKEN }}
             sentry_org=${{ secrets.SENTRY_ORG }}
@@ -284,7 +284,7 @@ jobs:
             sentry_dist=${{ secrets.SENTRY_DIST }}
 
       - name: Assert Den DB migration assets
-        if: ${{ github.event_name == 'pull_request' && matrix.image == 'openwork-den-api' }}
+        if: ${{ github.event_name == 'pull_request' && matrix.image == 'micx-den-api' }}
         shell: bash
         env:
           IMAGE_TAGS: ${{ steps.meta.outputs.tags }}

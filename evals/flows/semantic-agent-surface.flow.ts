@@ -28,7 +28,7 @@ function sessionSurfaceExpression(sessionId: string, body: string) {
 
 async function currentRouteSessionId(ctx: FlowContext): Promise<string | null> {
   const sessionId = await ctx.eval(`(() => {
-    const route = window.__openworkControl?.snapshot?.().route || "";
+    const route = window.__micxControl?.snapshot?.().route || "";
     const match = route.match(/ses_[A-Za-z0-9_-]+/);
     return match ? match[0] : null;
   })()`);
@@ -41,7 +41,7 @@ async function waitForNewSession(
   label: string,
 ): Promise<string> {
   const sessionId = await ctx.waitFor(`(() => {
-    const route = window.__openworkControl?.snapshot?.().route || "";
+    const route = window.__micxControl?.snapshot?.().route || "";
     const match = route.match(/ses_[A-Za-z0-9_-]+/);
     if (!match || match[0] === ${JSON.stringify(previousId)}) return null;
     return match[0];
@@ -88,7 +88,7 @@ async function closeStaleTabs(ctx: FlowContext) {
 
 async function setSidebarOpen(ctx: FlowContext, open: boolean) {
   const already = await ctx.eval(
-    `window.__openworkControl?.context?.().chrome.sidebarOpen === ${JSON.stringify(open)}`,
+    `window.__micxControl?.context?.().chrome.sidebarOpen === ${JSON.stringify(open)}`,
   );
   if (already === true) return;
   const clicked = await ctx.eval(`(() => {
@@ -99,7 +99,7 @@ async function setSidebarOpen(ctx: FlowContext, open: boolean) {
   })()`);
   ctx.assert(clicked === true, "Sidebar trigger was unavailable.");
   await ctx.waitFor(
-    `window.__openworkControl?.context?.().chrome.sidebarOpen === ${JSON.stringify(open)}`,
+    `window.__micxControl?.context?.().chrome.sidebarOpen === ${JSON.stringify(open)}`,
     { timeoutMs: 10_000, label: `sidebar ${open ? "open" : "closed"}` },
   );
 }
@@ -158,20 +158,20 @@ async function sendPrompt(
 }
 
 async function semanticContext(ctx: FlowContext) {
-  return ctx.eval("window.__openworkControl?.context?.()");
+  return ctx.eval("window.__micxControl?.context?.()");
 }
 
 export default defineFlow({
   id: "semantic-agent-surface",
-  title: "People and agents share one semantic OpenWork context",
+  title: "People and agents share one semantic Micx context",
   kind: "user-facing",
   precondition: async (ctx) => {
-    await ctx.waitFor("Boolean(window.__openworkControl)", {
+    await ctx.waitFor("Boolean(window.__micxControl)", {
       timeoutMs: 60_000,
-      label: "OpenWork control API",
+      label: "Micx control API",
     });
     const state = await ctx.waitFor(`(() => {
-      const control = window.__openworkControl;
+      const control = window.__micxControl;
       const route = control.snapshot().route;
       if (route.startsWith("/welcome") || route.startsWith("/signin")) return "blocked";
       const create = control.listActions().find((action) => action.id === "session.create_task");
@@ -205,7 +205,7 @@ export default defineFlow({
 
             draftSessionId = await createNamedSession(ctx, "Context Draft");
             primarySessionId = await createNamedSession(ctx, "Context Primary");
-            primaryRoute = String(await ctx.eval("window.__openworkControl.snapshot().route"));
+            primaryRoute = String(await ctx.eval("window.__micxControl.snapshot().route"));
             await setSidebarOpen(ctx, true);
 
             const splitClicked = await ctx.eval(`(() => {
@@ -224,7 +224,7 @@ export default defineFlow({
             await sendPrompt(
               ctx,
               primarySessionId,
-              "Call openwork_context. Reply with exactly: CONTEXT-SUMMARY TABS=3 SPLIT=yes FOCUSED=secondary SIDEBAR=open SETTINGS=none",
+              "Call micx_context. Reply with exactly: CONTEXT-SUMMARY TABS=3 SPLIT=yes FOCUSED=secondary SIDEBAR=open SETTINGS=none",
               "CONTEXT-SUMMARY",
             );
           },
@@ -232,7 +232,7 @@ export default defineFlow({
             const context = await semanticContext(ctx);
             ctx.output("frame-1-context", context);
             const state = await ctx.eval(`(() => {
-              const context = window.__openworkControl.context();
+              const context = window.__micxControl.context();
               return {
                 tabs: context.conversations.tabs.length,
                 layout: context.conversations.layout,
@@ -268,7 +268,7 @@ export default defineFlow({
             await sendPrompt(
               ctx,
               primary,
-              "Call openwork_context, find the session resource titled Context Previous, then call openwork_execute with id workbench.session.focus, that sessionId, expectedRevision, and actor fraimz. Reply with exactly FOCUS-RESULT=secondary-reused.",
+              "Call micx_context, find the session resource titled Context Previous, then call micx_execute with id workbench.session.focus, that sessionId, expectedRevision, and actor fraimz. Reply with exactly FOCUS-RESULT=secondary-reused.",
               "FOCUS-RESULT=secondary-reused",
             );
           },
@@ -278,9 +278,9 @@ export default defineFlow({
               { timeoutMs: 30_000, label: "secondary pane focused" },
             );
             const state = await ctx.eval(`(() => ({
-              tabs: window.__openworkControl.context().conversations.tabs.length,
+              tabs: window.__micxControl.context().conversations.tabs.length,
               surfaces: document.querySelectorAll(${JSON.stringify(SURFACE_SELECTOR)}).length,
-              route: window.__openworkControl.snapshot().route,
+              route: window.__micxControl.snapshot().route,
             }))()`);
             ctx.assert(
               JSON.stringify(state).includes('"tabs":3') && JSON.stringify(state).includes('"surfaces":2'),
@@ -306,15 +306,15 @@ export default defineFlow({
             await sendPrompt(
               ctx,
               primary,
-              `Call openwork_context, find Context Previous, then call openwork_query with id session.read for that sessionId. Do not call a UI command. Reply with exactly PREVIOUS-SAID=${PREVIOUS_MARKER}.`,
+              `Call micx_context, find Context Previous, then call micx_query with id session.read for that sessionId. Do not call a UI command. Reply with exactly PREVIOUS-SAID=${PREVIOUS_MARKER}.`,
               `PREVIOUS-SAID=${PREVIOUS_MARKER}`,
             );
           },
           assert: async () => {
             const state = await ctx.eval(`(() => ({
-              route: window.__openworkControl.snapshot().route,
-              layout: window.__openworkControl.context().conversations.layout.kind,
-              tabs: window.__openworkControl.context().conversations.tabs.length,
+              route: window.__micxControl.snapshot().route,
+              layout: window.__micxControl.context().conversations.layout.kind,
+              tabs: window.__micxControl.context().conversations.tabs.length,
               surfaces: document.querySelectorAll(${JSON.stringify(SURFACE_SELECTOR)}).length,
             }))()`);
             ctx.assert(
@@ -342,7 +342,7 @@ export default defineFlow({
           action: async () => {
             await setSidebarOpen(ctx, false);
             const result = await ctx.eval(`(async () => {
-              const control = window.__openworkControl;
+              const control = window.__micxControl;
               const context = control.context();
               return control.command({
                 id: "settings.panel.open",
@@ -353,8 +353,8 @@ export default defineFlow({
             })()`, { awaitPromise: true });
             ctx.assert(JSON.stringify(result).includes('"ok":true'), `Could not open AI settings: ${JSON.stringify(result)}.`);
             await ctx.waitFor(
-              `window.__openworkControl.context().screen.kind === "settings"
-                && window.__openworkControl.context().screen.panel === "ai"`,
+              `window.__micxControl.context().screen.kind === "settings"
+                && window.__micxControl.context().screen.panel === "ai"`,
               { timeoutMs: 30_000, label: "AI settings semantic screen" },
             );
           },
@@ -362,7 +362,7 @@ export default defineFlow({
             const context = await semanticContext(ctx);
             ctx.output("frame-4-settings-context", context);
             const state = await ctx.eval(`(() => {
-              const context = window.__openworkControl.context();
+              const context = window.__micxControl.context();
               return {
                 screen: context.screen,
                 sidebarOpen: context.chrome.sidebarOpen,
@@ -402,20 +402,20 @@ export default defineFlow({
             await sendPrompt(
               ctx,
               primary,
-              "Choose one remote skill already listed in available_skills. Load it directly with its exact capability using openwork-cloud_execute_capability; do not search first and do not perform the skill workflow. Then call openwork_context. Reply with exactly these three lines: DIRECT_SKILL_TOOL=openwork-cloud_execute_capability; UNKNOWN_CAPABILITY_TOOL=openwork-cloud_search_capabilities; LOCAL_EXTENSION_COMMAND=extension.call",
-              "DIRECT_SKILL_TOOL=openwork-cloud_execute_capability",
+              "Choose one remote skill already listed in available_skills. Load it directly with its exact capability using micx-cloud_execute_capability; do not search first and do not perform the skill workflow. Then call micx_context. Reply with exactly these three lines: DIRECT_SKILL_TOOL=micx-cloud_execute_capability; UNKNOWN_CAPABILITY_TOOL=micx-cloud_search_capabilities; LOCAL_EXTENSION_COMMAND=extension.call",
+              "DIRECT_SKILL_TOOL=micx-cloud_execute_capability",
             );
           },
           assert: async () => {
-            await ctx.expectText("DIRECT_SKILL_TOOL=openwork-cloud_execute_capability");
-            await ctx.expectText("UNKNOWN_CAPABILITY_TOOL=openwork-cloud_search_capabilities");
+            await ctx.expectText("DIRECT_SKILL_TOOL=micx-cloud_execute_capability");
+            await ctx.expectText("UNKNOWN_CAPABILITY_TOOL=micx-cloud_search_capabilities");
             await ctx.expectText("LOCAL_EXTENSION_COMMAND=extension.call");
           },
           screenshot: {
             name: "frame-5-provider-and-skill-routing",
             requireText: [
-              "DIRECT_SKILL_TOOL=openwork-cloud_execute_capability",
-              "UNKNOWN_CAPABILITY_TOOL=openwork-cloud_search_capabilities",
+              "DIRECT_SKILL_TOOL=micx-cloud_execute_capability",
+              "UNKNOWN_CAPABILITY_TOOL=micx-cloud_search_capabilities",
               "LOCAL_EXTENSION_COMMAND=extension.call",
             ],
           },
@@ -433,7 +433,7 @@ export default defineFlow({
             await sendPrompt(
               ctx,
               primary,
-              "Call openwork_context and inspect availableAffordances plus execution. Reply with exactly five lines using real ids: READ=<id> data=read; UI=<id> ui=<effect>; DURABLE=<id> data=write; CONFIRMATION=<id> confirmation=destructive; CONCURRENCY=queries:parallel commands:serialized",
+              "Call micx_context and inspect availableAffordances plus execution. Reply with exactly five lines using real ids: READ=<id> data=read; UI=<id> ui=<effect>; DURABLE=<id> data=write; CONFIRMATION=<id> confirmation=destructive; CONCURRENCY=queries:parallel commands:serialized",
               "CONCURRENCY=queries:parallel commands:serialized",
             );
           },

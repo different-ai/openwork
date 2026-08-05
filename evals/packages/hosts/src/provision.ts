@@ -186,20 +186,20 @@ export async function provisionDesktopSandbox(options: DesktopSandboxOptions & P
     if (reused) {
       await exec(["sandbox", "start", reused], { timeoutMs: 60_000 });
     } else {
-      const snapshot = options.snapshot ?? "openwork-eval-vnc";
+      const snapshot = options.snapshot ?? "micx-eval-vnc";
       const listed = await checkedExec(exec, ["snapshot", "list", "-f", "json"], "snapshot gate", { timeoutMs: 60_000 });
       const id = snapshotId(listed.stdout, snapshot);
       if (!id) {
         throw new Error(`Snapshot gate failed: snapshot ${snapshot} is missing. Output tail: ${outputTail(listed)}`);
       }
-      sandbox = `openwork-connector-${options.name}-${sandboxTimestamp()}`;
+      sandbox = `micx-connector-${options.name}-${sandboxTimestamp()}`;
       await checkedExec(
         exec,
         [
           "create",
           "--name", sandbox,
           "--snapshot", id,
-          ...(options.secrets === true ? ["--volume", "openwork-eval-secrets:/daytona-secrets"] : []),
+          ...(options.secrets === true ? ["--volume", "micx-eval-secrets:/daytona-secrets"] : []),
           "--auto-stop", "60",
           "--public",
           "--target", "us",
@@ -236,7 +236,7 @@ export async function provisionDesktopSandbox(options: DesktopSandboxOptions & P
     await execInSandbox(
       exec,
       sandbox,
-      "cd /workspace; pnpm install --store-dir /workspace/.openwork-daytona/pnpm-store",
+      "cd /workspace; pnpm install --store-dir /workspace/.micx-daytona/pnpm-store",
       { timeoutMs: INSTALL_TIMEOUT_MS, context: `install gate for ${sandbox}` },
     );
   });
@@ -245,7 +245,7 @@ export async function provisionDesktopSandbox(options: DesktopSandboxOptions & P
     const result = await execInSandbox(
       exec,
       sandbox,
-      "rm -rf /workspace/.openwork-daytona/profiles /tmp/openwork-* 2>/dev/null; df -P /workspace | tail -1",
+      "rm -rf /workspace/.micx-daytona/profiles /tmp/micx-* 2>/dev/null; df -P /workspace | tail -1",
       { timeoutMs: 60_000, context: `cleanup and disk gate for ${sandbox}` },
     );
     const dfLine = lastNonemptyLine(result.stdout);
@@ -258,7 +258,7 @@ export async function provisionDesktopSandbox(options: DesktopSandboxOptions & P
       const sizes = await execInSandbox(
         exec,
         sandbox,
-        "du -sh /workspace/node_modules /workspace/.openwork-daytona/pnpm-store 2>&1 || true",
+        "du -sh /workspace/node_modules /workspace/.micx-daytona/pnpm-store 2>&1 || true",
         { timeoutMs: 60_000, context: `disk usage detail for ${sandbox}` },
       );
       throw new Error(`Cleanup and disk gate failed for ${sandbox}: workspace is ${useField} used. df: ${dfLine}\n${outputTail(sizes)}`);
@@ -320,14 +320,14 @@ echo detached`;
 
   await timedStep(log, "first boot gate", async () => {
     // A sandbox's first Electron boot pays sidecar prepare, the
-    // openwork-server tsc build, and the engine cold start. Paid INSIDE a
+    // micx-server tsc build, and the engine cold start. Paid INSIDE a
     // spec, that bill starved the tool-call phase past its window while every
     // UI assertion still passed. Boot once into a throwaway profile, wait for
     // CDP, tear it down — after this the room behaves like a warm machine.
     const detachScript = `python3 - <<PYEOF
 import subprocess
 log = open("/tmp/warmup-electron.log", "ab", buffering=0)
-subprocess.Popen(["bash", "-lc", "cd /workspace && env OPENWORK_ELECTRON_USERDATA=/tmp/warmup-profile OPENWORK_ELECTRON_REMOTE_DEBUG_PORT=9825 bash .devcontainer/start-daytona-electron.sh"], stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, start_new_session=True, close_fds=True)
+subprocess.Popen(["bash", "-lc", "cd /workspace && env MICX_ELECTRON_USERDATA=/tmp/warmup-profile MICX_ELECTRON_REMOTE_DEBUG_PORT=9825 bash .devcontainer/start-daytona-electron.sh"], stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, start_new_session=True, close_fds=True)
 PYEOF
 echo detached`;
     await execInSandbox(exec, sandbox, detachScript, { timeoutMs: 30_000, context: `first boot detach for ${sandbox}` });
@@ -500,8 +500,8 @@ async function previewUrl(exec: DaytonaExec, sandbox: string, port: number): Pro
 }
 
 async function proveDenSeed(apiUrl: string, webUrl: string, sandbox: string, reused: boolean): Promise<void> {
-  const email = process.env.OPENWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
-  const password = process.env.OPENWORK_EVAL_DEMO_PASSWORD ?? "OpenWorkDemo123!";
+  const email = process.env.MICX_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
+  const password = process.env.MICX_EVAL_DEMO_PASSWORD ?? "MicxDemo123!";
   const url = `${apiUrl.replace(/\/+$/, "")}/api/auth/sign-in/email`;
   // A freshly-booted stack was observed answering public sign-in with bare
   // 403s for its first ~minute, then recovering on its own — so the window is
@@ -687,14 +687,14 @@ export function renderConnectorSpecEnv(facts: ConnectorSpecEnv): string {
   return [
     `${ENV_HEADER_PREFIX} — generated ${new Date().toISOString()}${ENV_REF_MARKER}${facts.ref}`,
     `${ENV_CREATED_PREFIX}${facts.created.join(",")}`,
-    "OPENWORK_EVAL_APP_SPECS=1",
-    "OPENWORK_EVAL_CONNECTOR_SPEC=1",
-    `OPENWORK_EVAL_DEN_API_URL=${shellQuote(facts.denApiUrl)}`,
-    `OPENWORK_EVAL_DEN_WEB_URL=${shellQuote(facts.denWebUrl)}`,
-    `OPENWORK_EVAL_DAYTONA_SANDBOX_A=${shellQuote(facts.sandboxA)}`,
-    `OPENWORK_EVAL_DAYTONA_SANDBOX_B=${shellQuote(facts.sandboxB)}`,
-    `OPENWORK_EVAL_CONNECTOR_MOCK_PUBLIC_URL=${shellQuote(facts.mockUrl)}`,
-    "OPENWORK_EVAL_MODEL=big-pickle",
+    "MICX_EVAL_APP_SPECS=1",
+    "MICX_EVAL_CONNECTOR_SPEC=1",
+    `MICX_EVAL_DEN_API_URL=${shellQuote(facts.denApiUrl)}`,
+    `MICX_EVAL_DEN_WEB_URL=${shellQuote(facts.denWebUrl)}`,
+    `MICX_EVAL_DAYTONA_SANDBOX_A=${shellQuote(facts.sandboxA)}`,
+    `MICX_EVAL_DAYTONA_SANDBOX_B=${shellQuote(facts.sandboxB)}`,
+    `MICX_EVAL_CONNECTOR_MOCK_PUBLIC_URL=${shellQuote(facts.mockUrl)}`,
+    "MICX_EVAL_MODEL=big-pickle",
     "",
   ].join("\n");
 }
@@ -712,9 +712,9 @@ export function parseConnectorSpecEnv(content: string): ConnectorSpecEnv {
     return value;
   }
 
-  required("OPENWORK_EVAL_APP_SPECS");
-  required("OPENWORK_EVAL_CONNECTOR_SPEC");
-  required("OPENWORK_EVAL_MODEL");
+  required("MICX_EVAL_APP_SPECS");
+  required("MICX_EVAL_CONNECTOR_SPEC");
+  required("MICX_EVAL_MODEL");
   // Header comments are read by line scan, not regex: `.*` before a literal
   // backtracks polynomially on adversarial input (CodeQL js/polynomial-redos).
   const header = commentLine(content, ENV_HEADER_PREFIX);
@@ -726,11 +726,11 @@ export function parseConnectorSpecEnv(content: string): ConnectorSpecEnv {
   if (createdText === null) throw new Error("Missing provision-created in connector spec env header.");
 
   return {
-    denApiUrl: required("OPENWORK_EVAL_DEN_API_URL"),
-    denWebUrl: required("OPENWORK_EVAL_DEN_WEB_URL"),
-    sandboxA: required("OPENWORK_EVAL_DAYTONA_SANDBOX_A"),
-    sandboxB: required("OPENWORK_EVAL_DAYTONA_SANDBOX_B"),
-    mockUrl: required("OPENWORK_EVAL_CONNECTOR_MOCK_PUBLIC_URL"),
+    denApiUrl: required("MICX_EVAL_DEN_API_URL"),
+    denWebUrl: required("MICX_EVAL_DEN_WEB_URL"),
+    sandboxA: required("MICX_EVAL_DAYTONA_SANDBOX_A"),
+    sandboxB: required("MICX_EVAL_DAYTONA_SANDBOX_B"),
+    mockUrl: required("MICX_EVAL_CONNECTOR_MOCK_PUBLIC_URL"),
     ref,
     created: createdText.split(",").map((id) => id.trim()).filter(Boolean),
   };

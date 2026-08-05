@@ -67,14 +67,14 @@ None.
 Downloads CTA and npm install fallback land
 
 #### One-line summary
-Gets desktop users to the right download path faster and lets `openwork-orchestrator` recover when npm skips its platform binary.
+Gets desktop users to the right download path faster and lets `micx-orchestrator` recover when npm skips its platform binary.
 
 #### Main changes
 Routes the desktop landing CTA to the Download page so the install path is clearer.
 
 Also released:
 
-- `openwork-orchestrator` postinstall now downloads the matching release binary when optional platform packages are missing.
+- `micx-orchestrator` postinstall now downloads the matching release binary when optional platform packages are missing.
 - Daytona snapshot builds now use the source orchestrator binary.
 
 #### Lines of code changed since previous release
@@ -328,13 +328,13 @@ None.
 `2026-03-23T01:48:48Z`
 
 #### Title
-Local workspaces move under OpenWork server control
+Local workspaces move under Micx server control
 
 #### One-line summary
-Shifts local workspace ownership into OpenWork server so creation, reconnects, config writes, and starter bootstrap stay aligned across the app.
+Shifts local workspace ownership into Micx server so creation, reconnects, config writes, and starter bootstrap stay aligned across the app.
 
 #### Main changes
-- Local workspace create, rename, delete, config writes, and reload events now go through OpenWork server first.
+- Local workspace create, rename, delete, config writes, and reload events now go through Micx server first.
 - First-run starter bootstrap and reconnect logic are more reliable across onboarding and sidebar flows.
 - Simplified the remote connect modal, moved tool-trace chevrons right, and added Windows ARM64 dev startup support.
 
@@ -360,7 +360,7 @@ True
 2
 
 #### Major bug fix details
-- Fixed local workspace reconnect and onboarding inconsistencies by moving workspace ownership into OpenWork server.
+- Fixed local workspace reconnect and onboarding inconsistencies by moving workspace ownership into Micx server.
 - Fixed remote connect friction by simplifying the modal users see when attaching to a remote workspace.
 
 #### Deprecated features
@@ -894,7 +894,7 @@ None.
 `2026-03-26T05:23:19Z`
 
 #### Title
-Team template sharing reaches OpenWork Cloud
+Team template sharing reaches Micx Cloud
 
 #### One-line summary
 Adds Save-to-team template flows in the app, while Den gains organizations, member roles, invitations, and a manual Cloud sign-in fallback.
@@ -908,7 +908,7 @@ Adds Save-to-team template flows in the app, while Den gains organizations, memb
 7841 lines changed since `v0.11.192` (6406 insertions, 1435 deletions).
 
 #### Release importance
-Major release: adds substantial new Cloud collaboration and organization-management workflows that materially change how teams use OpenWork.
+Major release: adds substantial new Cloud collaboration and organization-management workflows that materially change how teams use Micx.
 
 #### Major improvements
 True
@@ -917,7 +917,7 @@ True
 2
 
 #### Major improvement details
-- Added Cloud team template sharing flows in the OpenWork app.
+- Added Cloud team template sharing flows in the Micx app.
 - Added Den organization management, permissions, and org-scoped template sharing surfaces.
 
 #### Major bugs resolved
@@ -1055,7 +1055,7 @@ None.
 `2026-03-30T21:27:27Z`
 
 #### Title
-OpenWork resumes where you left off
+Micx resumes where you left off
 
 #### One-line summary
 Boots back into the last session, routes straight into session view, and moves automations onto a live scheduler-backed page.
@@ -1117,7 +1117,7 @@ Hardens workspace sharing, keeps orchestrator secrets out of CLI args and logs, 
 #### Main changes
 - Blocked sensitive workspace exports and showed warnings before sharing risky config or secrets.
 - Trusted bundle imports only from the configured publisher unless users explicitly choose a warning-backed manual path.
-- Moved OpenWork tokens off CLI args and logs, stopped auto-creating Welcome, and fixed collapsed sidebar session lists.
+- Moved Micx tokens off CLI args and logs, stopped auto-creating Welcome, and fixed collapsed sidebar session lists.
 
 #### Lines of code changed since previous release
 6399 lines changed since `v0.11.196` (5657 insertions, 742 deletions).
@@ -1142,7 +1142,7 @@ True
 
 #### Major bug fix details
 - Fixed sensitive workspace exports so secrets can be detected and blocked before sharing.
-- Fixed bundle fetch routing so publish and fetch traffic stays pinned to the configured OpenWork publisher.
+- Fixed bundle fetch routing so publish and fetch traffic stays pinned to the configured Micx publisher.
 - Fixed orchestrator secret handling so credentials no longer ride in argv and logs.
 - Fixed workspace boot/sidebar behavior by stopping unwanted Welcome workspace creation and restoring missing root sessions.
 
@@ -1276,7 +1276,7 @@ Cloud skills and team limits move into the core flow
 Brings Cloud team skills into the app, adds Den teams and deeper skill-hub management, and enforces org limits during creation.
 
 #### Main changes
-- Added an OpenWork Cloud skills catalog to the Skills page, with install and share-to-team flows.
+- Added an Micx Cloud skills catalog to the Skills page, with install and share-to-team flows.
 - Added Den teams plus full skill hub and skill editing and visibility management.
 - Moved billing into org creation and enforced organization member limits before setup finishes.
 
@@ -1293,7 +1293,7 @@ True
 3
 
 #### Major improvement details
-- Added the OpenWork Cloud team skills catalog on the app Skills page.
+- Added the Micx Cloud team skills catalog on the app Skills page.
 - Added Den teams and full skill hub management across the org dashboard.
 - Added billing-aware org creation with org limit enforcement.
 

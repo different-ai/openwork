@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { connect } from "node:net";
-import { provisionDesktopSandbox, deleteSandboxes, daytonaSandbox } from "@openwork/hosts";
+import { provisionDesktopSandbox, deleteSandboxes, daytonaSandbox } from "@micx/hosts";
 import { createConnection } from "mysql2/promise";
 import type { RowDataPacket } from "mysql2";
 import type {
@@ -8,7 +8,7 @@ import type {
   ElectronSurfaceOptions,
   Host,
   SurfaceHandle,
-} from "@openwork/hosts";
+} from "@micx/hosts";
 
 const DEFAULT_MYSQL_URL = "mysql://root:password@127.0.0.1:3306";
 
@@ -63,7 +63,7 @@ async function databaseExists(mysqlUrl: URL, name: string): Promise<boolean> {
   }
 }
 
-export function ephemeralDatabaseName(prefix = "openwork_eval"): string {
+export function ephemeralDatabaseName(prefix = "micx_eval"): string {
   const timestamp = Date.now().toString(36);
   const nonce = randomBytes(6).toString("hex");
   return `${prefix}_${process.pid}_${timestamp}_${nonce}`.toLowerCase();
@@ -159,7 +159,7 @@ class DaytonaPlacementHost implements Host {
     const provisioned = await provisionDesktopSandbox({
       ref: this.#ref,
       name,
-      log: (line) => console.error(`[openwork/testkit] ${line}`),
+      log: (line) => console.error(`[micx/testkit] ${line}`),
     });
     return {
       host: daytonaSandbox(provisioned.sandbox),
@@ -177,7 +177,7 @@ class DaytonaPlacementHost implements Host {
     } catch (error) {
       if (placed.created) {
         await deleteSandboxes([placed.sandbox]).catch((cleanupError: unknown) => {
-          console.error(`[openwork/testkit] Daytona cleanup failed: ${messageText(cleanupError)}`);
+          console.error(`[micx/testkit] Daytona cleanup failed: ${messageText(cleanupError)}`);
         });
       }
       throw error;
@@ -193,7 +193,7 @@ class DaytonaPlacementHost implements Host {
     } catch (error) {
       if (placed.created) {
         await deleteSandboxes([placed.sandbox]).catch((cleanupError: unknown) => {
-          console.error(`[openwork/testkit] Daytona cleanup failed: ${messageText(cleanupError)}`);
+          console.error(`[micx/testkit] Daytona cleanup failed: ${messageText(cleanupError)}`);
         });
       }
       throw error;
@@ -245,10 +245,10 @@ class DaytonaPlace implements Place {
 
 /** Resolve placement once; resources never inspect placement environment again. */
 export function resolvePlace(env: NodeJS.ProcessEnv = process.env): Place {
-  const useDaytona = env.OPENWORK_EVAL_DAYTONA?.trim() === "1";
+  const useDaytona = env.MICX_EVAL_DAYTONA?.trim() === "1";
   if (useDaytona) {
-    const ref = env.OPENWORK_EVAL_REF?.trim() || env.GITHUB_SHA?.trim() || "dev";
+    const ref = env.MICX_EVAL_REF?.trim() || env.GITHUB_SHA?.trim() || "dev";
     return new DaytonaPlace(ref);
   }
-  return new LocalPlace(env.OPENWORK_EVAL_MYSQL_URL?.trim() || DEFAULT_MYSQL_URL);
+  return new LocalPlace(env.MICX_EVAL_MYSQL_URL?.trim() || DEFAULT_MYSQL_URL);
 }

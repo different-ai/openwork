@@ -9,12 +9,12 @@ imagePullSecrets: []
 
 config:
   databaseMode: mysql
-  openworkDevMode: "0"
+  micxDevMode: "0"
   # Passed to the den-api Node.js process as NODE_OPTIONS at container startup.
   denApiNodeOptions: ""
   tenancy:
     mode: single_org
-    singleOrgName: OpenWork
+    singleOrgName: Micx
     singleOrgSlug: default
     ownerEmails: ""
     allowPublicSignup: "false"
@@ -25,27 +25,27 @@ config:
     appId: ""
     clientId: ""
   public:
-    webOrigin: https://openwork.example.com
-    apiOrigin: https://api.openwork.example.com
-    mcpResourceUrl: https://api.openwork.example.com/mcp
+    webOrigin: https://micx.example.com
+    apiOrigin: https://api.micx.example.com
+    mcpResourceUrl: https://api.micx.example.com/mcp
     mcpAdditionalResources: ""
     # Leave blank to keep External MCP URL SSRF protection enabled.
     # Set "1" only for trusted private-network MCP servers.
     allowPrivateMcpUrls: ""
     mcpClaimNamespace: ""
-    desktopDenBaseUrl: https://openwork.example.com
-    corsOrigins: https://openwork.example.com,https://api.openwork.example.com
-    betterAuthTrustedOrigins: https://openwork.example.com
-    webAppHosts: openwork.example.com
+    desktopDenBaseUrl: https://micx.example.com
+    corsOrigins: https://micx.example.com,https://api.micx.example.com
+    betterAuthTrustedOrigins: https://micx.example.com
+    webAppHosts: micx.example.com
     bootstrapAdminEmails: ""
     installLinksGatingEnabled: "false"
     connectLinkMode: exchange
     connectLinkKeyId: ""
-    openworkAppConnectUrl: ""
-    openworkWebUrl: ""
+    micxAppConnectUrl: ""
+    micxWebUrl: ""
     installerReleaseTag: ""
     installerReleaseRepo: ""
-    authCallbackUrl: https://openwork.example.com
+    authCallbackUrl: https://micx.example.com
   internal:
     apiBaseUrl: ""
     authFallbackBaseUrl: ""
@@ -77,7 +77,7 @@ config:
     runtimeWorkspacePath: ""
     runtimeDataPath: ""
     sidecarDir: ""
-    openworkPort: ""
+    micxPort: ""
     opencodePort: ""
     createTimeoutSeconds: ""
     deleteTimeoutSeconds: ""
@@ -157,7 +157,7 @@ secret:
     githubConnectorAppWebhookSecret: GITHUB_CONNECTOR_APP_WEBHOOK_SECRET
     connectLinkPrivateKey: DEN_CONNECT_LINK_PRIVATE_KEY
   values:
-    databaseUrl: mysql://openwork:change-me@mysql:3306/openwork_den
+    databaseUrl: mysql://micx:change-me@mysql:3306/micx_den
     betterAuthSecret: CHANGE_ME_32_CHARS_MINIMUM_BETTER_AUTH
     denDbEncryptionKey: CHANGE_ME_32_CHARS_MINIMUM_DB_ENCRYPTION
     daytonaApiKey: ""
@@ -180,12 +180,12 @@ installerArtifacts:
   enabled: false
   existingClaim: ""
   hostPath: ""
-  mountPath: /var/lib/openwork/installer-artifacts
+  mountPath: /var/lib/micx/installer-artifacts
 
 denApi:
   replicaCount: 1
   image:
-    repository: ghcr.io/different-ai/openwork-den-api
+    repository: ghcr.io/different-ai/micx-den-api
     tag: ""
   service:
     type: ClusterIP
@@ -213,7 +213,7 @@ denApi:
 denWeb:
   replicaCount: 1
   image:
-    repository: ghcr.io/different-ai/openwork-den-web
+    repository: ghcr.io/different-ai/micx-den-web
     tag: ""
   service:
     type: ClusterIP
@@ -242,7 +242,7 @@ inference:
   enabled: false
   replicaCount: 1
   image:
-    repository: ghcr.io/different-ai/openwork-inference
+    repository: ghcr.io/different-ai/micx-inference
     tag: ""
   service:
     type: ClusterIP
@@ -285,12 +285,12 @@ ingress:
   className: ""
   annotations: {}
   web:
-    host: openwork.example.com
+    host: micx.example.com
     path: /
     pathType: Prefix
   api:
     enabled: true
-    host: api.openwork.example.com
+    host: api.micx.example.com
     path: /
     pathType: Prefix
   tls: []

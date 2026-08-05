@@ -82,7 +82,7 @@ export default {
       run: async (ctx) => {
         const userAgent = await ctx.eval("navigator.userAgent");
         ctx.assert(userAgent.includes("Electron/"), `Expected Electron userAgent, got ${userAgent}`);
-        await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 60_000, label: "control API" });
+        await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 60_000, label: "control API" });
       },
     },
     {

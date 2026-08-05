@@ -8,7 +8,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(__dirname, "..")
 const TRACKER_DIR = resolve(ROOT, "changelog")
 const OUTPUT_PATH = resolve(ROOT, "packages/docs/changelog.mdx")
-const COMPARE_BASE = "https://github.com/different-ai/openwork/compare"
+const COMPARE_BASE = "https://github.com/different-ai/micx/compare"
 const TRACKER_FILE_PATTERN = /^release-tracker-\d{4}-\d{2}-\d{2}\.md$/
 
 // ---------------------------------------------------------------------------

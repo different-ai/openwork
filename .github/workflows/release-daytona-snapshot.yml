@@ -70,7 +70,7 @@ jobs:
             exit 1
           fi
 
-          base_name="${SNAPSHOT_NAME_BASE:-openwork}"
+          base_name="${SNAPSHOT_NAME_BASE:-micx}"
           if [ -n "${INPUT_SNAPSHOT_NAME:-}" ]; then
             snapshot_name="${INPUT_SNAPSHOT_NAME}"
           else
@@ -148,7 +148,7 @@ jobs:
           daytona login --api-key "$DAYTONA_API_KEY"
 
           echo "Publishing Daytona snapshot: ${DAYTONA_SNAPSHOT_NAME}"
-          ./scripts/create-daytona-openwork-snapshot.sh "${DAYTONA_SNAPSHOT_NAME}"
+          ./scripts/create-daytona-micx-snapshot.sh "${DAYTONA_SNAPSHOT_NAME}"
 
       - name: Note skipped release pin
         if: vars.DAYTONA_PIN_CHANNEL == 'dev'

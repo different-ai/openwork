@@ -1,14 +1,14 @@
 ---
-title: "OpenWork MCP for Zed"
+title: "Micx MCP for Zed"
 sidebarTitle: "Zed"
-description: "Zed MCP setup for OpenWork Connect through mcp-remote and OAuth access to your org's shared capabilities."
+description: "Zed MCP setup for Micx Connect through mcp-remote and OAuth access to your org's shared capabilities."
 ---
 
-The OpenWork MCP server ([OpenWork Connect](/cloud/run-in-the-cloud/cloud-mcp))
-enables Zed to use the OpenWork capabilities your organization has made
+The Micx MCP server ([Micx Connect](/cloud/run-in-the-cloud/cloud-mcp))
+enables Zed to use the Micx capabilities your organization has made
 available to you: Gmail read/search, Calendar list/create, Drive search/read,
 Gmail draft creation, shared MCP connections such as Notion, Linear, Slack,
-Stripe, Exa, and Context7, shared skills, and OpenWork Cloud resources like
+Stripe, Exa, and Context7, shared skills, and Micx Cloud resources like
 skills, plugins, marketplaces, workers, members, roles, teams, and LLM
 providers. The server exposes only `search_capabilities` and
 `execute_capability`, so Zed searches what you can access and runs exact
@@ -20,9 +20,9 @@ capability names instead of loading hundreds of tool definitions into context.
 https://api.openworklabs.com/mcp/agent
 ```
 
-OAuth sign-in uses your OpenWork account, and the organization you pick is
+OAuth sign-in uses your Micx account, and the organization you pick is
 pinned into the token. If you do not have an account, create a
-[free OpenWork account](https://app.openworklabs.com?mode=sign-up).
+[free Micx account](https://app.openworklabs.com?mode=sign-up).
 
 ## Setup
 
@@ -31,7 +31,7 @@ Add this to Zed `settings.json`:
 ```json
 {
   "context_servers": {
-    "openwork": {
+    "micx": {
       "source": "custom",
       "command": "npx",
       "args": ["-y", "mcp-remote@latest", "https://api.openworklabs.com/mcp/agent"],
@@ -42,15 +42,15 @@ Add this to Zed `settings.json`:
 ```
 
 `mcp-remote` handles the browser OAuth on an HTTP loopback callback, which
-OpenWork accepts.
+Micx accepts.
 
 ## Switch organizations
 
-Remove the stored MCP auth token for `openwork`, then restart the server and
+Remove the stored MCP auth token for `micx`, then restart the server and
 choose the organization you want during browser sign-in.
 
 <Note>
-This is a setup guide. These steps match OpenWork Connect's OAuth profile:
+This is a setup guide. These steps match Micx Connect's OAuth profile:
 HTTPS or HTTP loopback callbacks, PKCE S256, and dynamic client registration
 fallback. Zed is listed as setup only because native proof is not complete. See
 the [client support status](/cloud/run-in-the-cloud/cloud-mcp#client-support-status)
@@ -59,7 +59,7 @@ table.
 
 ## What you can ask
 
-- "Which OpenWork organization am I connected to?"
+- "Which Micx organization am I connected to?"
 - "Assign Priya to the Sales team."
 - "Search my org's capabilities for calendar tools, then list tomorrow's events."
 - "Find the Q3 launch page in Notion and summarize it."

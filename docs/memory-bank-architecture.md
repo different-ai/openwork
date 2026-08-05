@@ -10,7 +10,7 @@
 
 ## 1. Goal & principles
 
-A per-user **memory bank** inside OpenWork. The user opts in by chatting (e.g.
+A per-user **memory bank** inside Micx. The user opts in by chatting (e.g.
 "save this memory to the memory bank"); the agent drafts a memory + relevant context,
 a human verifies it, and it's persisted **server-side**. Later the user can **explicitly
 search** their memories with natural-language phrasing, and **view/delete** them from a
@@ -211,8 +211,8 @@ existing accessible Base UI primitives** (Switch, Dialog/AlertDialog, `ConfirmMo
 - **Content is rendered escaped** in the panel (stored-XSS guard; §8). [FIX]
 
 ### Agent priming [DECISION: static `## Memory Bank`, search-first]
-Append a static, distinct `## Memory Bank` section to `OPENWORK_AGENT_PROMPT`
-(`apps/server/src/openwork-runtime-config.ts:34-66`) — separate from the existing
+Append a static, distinct `## Memory Bank` section to `MICX_AGENT_PROMPT`
+(`apps/server/src/micx-runtime-config.ts:34-66`) — separate from the existing
 `## Memory` (credential-hygiene) section. It must **[FIX B1]**:
 - Be **search-first**: "to save a memory, search for a capability to save a memory, then
   execute it" — never name `memory_save`.
@@ -341,7 +341,7 @@ Verify at impl (non-blocking):
   `ee/apps/den-api/src/routes/workers/core.ts` (structure only — re-scope authz to user),
   `ee/apps/den-api/src/openapi.ts` (operationId gen),
   `ee/apps/den-api/src/mcp/policy.ts:2-23`, `search.ts` / `agent.ts` (rail + error shape),
-  `apps/server/src/openwork-runtime-config.ts:34-66`,
+  `apps/server/src/micx-runtime-config.ts:34-66`,
   `apps/app/src/react-app/domains/settings/state/feature-flags-preferences.ts`,
   `apps/app/src/react-app/kernel/local-provider.tsx`, `evals/flows/*cloud-mcp*.flow.mjs`.
 
@@ -351,6 +351,6 @@ Verify at impl (non-blocking):
 
 Revised after a 5-lens `/autoplan` review (product · arch · design · devex · security),
 2026-07-02. Full findings + consolidated report:
-`~/.agentic-workflow/joi-fairshare-openwork/plans/20260702-112912-memory-bank/consolidated-review.md`.
+`~/.agentic-workflow/joi-fairshare-micx/plans/20260702-112912-memory-bank/consolidated-review.md`.
 Blockers B1–B5 and the operationId correction are folded in above; the three product/
 security tensions were decided as recorded in §11.

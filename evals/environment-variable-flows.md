@@ -12,7 +12,7 @@ surface and should run against a real Electron app through CDP.
    ```
 2. Create or select a local workspace.
 3. If possible, point the environment store at an eval-only file before launch,
-   for example `/tmp/openwork-env-eval.json`, so file verification cannot touch
+   for example `/tmp/micx-env-eval.json`, so file verification cannot touch
    a user's real secrets.
 4. Open Settings -> Environment through the UI or by navigating the renderer to
    the environment settings route.
@@ -61,7 +61,7 @@ overwriting existing values.
 
 1. Preseed `DUPLICATE_KEY=original` through the env API or eval store file.
 2. Try to add `1BAD=value`.
-3. Try to add `OPENWORK_TOKEN=value`.
+3. Try to add `MICX_TOKEN=value`.
 4. Try to add `DUPLICATE_KEY=overwritten`.
 
 ### CDP steering
@@ -78,7 +78,7 @@ overwriting existing values.
 ### Pass criteria
 
 - Invalid names show a user-readable validation message.
-- Reserved `OPENWORK_`/`OPENCODE_` names are blocked.
+- Reserved `MICX_`/`OPENCODE_` names are blocked.
 - Duplicate names do not overwrite existing values.
 
 ## Flow 3: Apply changes activates the runtime environment

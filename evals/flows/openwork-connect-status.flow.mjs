@@ -1,11 +1,11 @@
 import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
 
-const FLOW_ID = "openwork-connect-status";
+const FLOW_ID = "micx-connect-status";
 const vo = await loadVoiceoverParagraphs(FLOW_ID);
 const DEMO_EMAIL = "alex@acme.test";
-const DEMO_PASSWORD = "OpenWorkDemo123!";
+const DEMO_PASSWORD = "MicxDemo123!";
 const PROMPT = "Say hello without using connected services.";
-const SAVED_TOKEN_KEY = "openwork.eval.openworkConnectStatus.sessionToken";
+const SAVED_TOKEN_KEY = "micx.eval.micxConnectStatus.sessionToken";
 
 const state = {
   workspaceId: null,
@@ -27,8 +27,8 @@ function witness(ctx, condition, assertion, actual) {
 }
 
 async function authDelay(ctx, action) {
-  const baseUrl = ctx.env.OPENWORK_EVAL_DEN_API_URL.replace(/\/+$/, "");
-  const response = await fetch(`${baseUrl}/__openwork_eval/auth-delay${action ? `?action=${action}` : ""}`, {
+  const baseUrl = ctx.env.MICX_EVAL_DEN_API_URL.replace(/\/+$/, "");
+  const response = await fetch(`${baseUrl}/__micx_eval/auth-delay${action ? `?action=${action}` : ""}`, {
     method: action ? "POST" : "GET",
   });
   ctx.assert(response.ok, `The eval auth-delay control failed (${response.status}).`);
@@ -36,8 +36,8 @@ async function authDelay(ctx, action) {
 }
 
 async function dismissModelUpsells(ctx) {
-  if (await ctx.hasText("Use OpenWork Models without API keys")) {
-    await ctx.clickText("Continue without OpenWork Models", { selector: "button", timeoutMs: 15_000 });
+  if (await ctx.hasText("Use Micx Models without API keys")) {
+    await ctx.clickText("Continue without Micx Models", { selector: "button", timeoutMs: 15_000 });
   }
   if (await ctx.hasText("Power your first task")) {
     await ctx.clickText("Skip and use the free model", { selector: "button", timeoutMs: 15_000 });
@@ -45,9 +45,9 @@ async function dismissModelUpsells(ctx) {
 }
 
 async function ensureLocalCloudSession(ctx) {
-  const denBaseUrl = ctx.env.OPENWORK_EVAL_DEN_API_URL.trim();
-  const denOrigin = ctx.env.OPENWORK_EVAL_DEN_ORIGIN?.trim() || denBaseUrl;
-  let token = ctx.env.OPENWORK_EVAL_DEN_TOKEN?.trim() ?? "";
+  const denBaseUrl = ctx.env.MICX_EVAL_DEN_API_URL.trim();
+  const denOrigin = ctx.env.MICX_EVAL_DEN_ORIGIN?.trim() || denBaseUrl;
+  let token = ctx.env.MICX_EVAL_DEN_TOKEN?.trim() ?? "";
   if (!token) {
     const signIn = await fetch(`${denBaseUrl.replace(/\/+$/, "")}/api/auth/sign-in/email`, {
       method: "POST",
@@ -68,24 +68,24 @@ async function ensureLocalCloudSession(ctx) {
   const org = orgs.find((entry) => entry.id === payload.activeOrgId) ?? orgs[0];
   ctx.assert(org?.id, "The isolated Den demo session has no organization.");
   await ctx.eval(`(() => {
-    const shellConfig = JSON.parse(localStorage.getItem("openwork.shell-config") || "{}");
-    localStorage.setItem("openwork.shell-config", JSON.stringify({ ...shellConfig, statusBar: true }));
-    localStorage.setItem("openwork.den.baseUrl", ${quoted(denBaseUrl)});
-    localStorage.setItem("openwork.den.authToken", ${quoted(token)});
-    localStorage.setItem("openwork.den.activeOrgId", ${quoted(org.id)});
-    ${org.slug ? `localStorage.setItem("openwork.den.activeOrgSlug", ${quoted(org.slug)});` : ""}
-    ${org.name ? `localStorage.setItem("openwork.den.activeOrgName", ${quoted(org.name)});` : ""}
+    const shellConfig = JSON.parse(localStorage.getItem("micx.shell-config") || "{}");
+    localStorage.setItem("micx.shell-config", JSON.stringify({ ...shellConfig, statusBar: true }));
+    localStorage.setItem("micx.den.baseUrl", ${quoted(denBaseUrl)});
+    localStorage.setItem("micx.den.authToken", ${quoted(token)});
+    localStorage.setItem("micx.den.activeOrgId", ${quoted(org.id)});
+    ${org.slug ? `localStorage.setItem("micx.den.activeOrgSlug", ${quoted(org.slug)});` : ""}
+    ${org.name ? `localStorage.setItem("micx.den.activeOrgName", ${quoted(org.name)});` : ""}
     return true;
   })()`);
   await ctx.eval("location.reload()");
-  await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 60_000, label: "control API after Cloud session restore" });
+  await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 60_000, label: "control API after Cloud session restore" });
   await dismissModelUpsells(ctx);
 }
 
 async function createFreshTask(ctx) {
   const deadline = Date.now() + 15_000;
   while (Date.now() < deadline) {
-    const result = await ctx.eval("window.__openworkControl.execute('session.create_task', null)", { awaitPromise: true });
+    const result = await ctx.eval("window.__micxControl.execute('session.create_task', null)", { awaitPromise: true });
     if (result?.ok === true) return;
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
@@ -93,7 +93,7 @@ async function createFreshTask(ctx) {
 }
 
 async function transcriptCount(ctx) {
-  const result = await ctx.eval("window.__openworkControl.execute('session.read_transcript', { count: 30 })", { awaitPromise: true });
+  const result = await ctx.eval("window.__micxControl.execute('session.read_transcript', { count: 30 })", { awaitPromise: true });
   if (result?.ok === true) return result.result?.messages?.length ?? 0;
   if (result?.error === "No messages in this session") return 0;
   throw new Error(`Could not read the active transcript: ${result?.error ?? "unknown error"}`);
@@ -110,7 +110,7 @@ async function waitForTranscriptIncrease(ctx, before) {
 }
 
 const ACCOUNT_MENU = '[data-testid="account-status-menu"]';
-const CONNECT_ROW = '[data-testid="openwork-connect-status"]';
+const CONNECT_ROW = '[data-testid="micx-connect-status"]';
 
 /** Live status lives inside the sidebar account menu, so frames open it first. */
 async function openAccountMenu(ctx) {
@@ -149,7 +149,7 @@ async function waitForConnectState(ctx, expected, timeoutMs = 90_000) {
     await ctx.eval("window.dispatchEvent(new Event('focus'))");
     await new Promise((resolve) => setTimeout(resolve, 2_000));
   }
-  throw new Error(`OpenWork Connect did not reach "${expected}" after background retries.`);
+  throw new Error(`Micx Connect did not reach "${expected}" after background retries.`);
 }
 
 async function waitForConnectReady(ctx) {
@@ -159,7 +159,7 @@ async function waitForConnectReady(ctx) {
 async function beginSavedSessionRestore(ctx) {
   await authDelay(ctx, "hold");
   await ctx.eval("location.reload()");
-  await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 60_000, label: "control API during saved-session restore" });
+  await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 60_000, label: "control API during saved-session restore" });
   await dismissModelUpsells(ctx);
   const deadline = Date.now() + 5_000;
   while (Date.now() < deadline) {
@@ -172,9 +172,9 @@ async function beginSavedSessionRestore(ctx) {
 
 async function installHealthFailureProbe(ctx) {
   const result = await ctx.eval(`(() => {
-    const bridge = window.__OPENWORK_ELECTRON__;
+    const bridge = window.__MICX_ELECTRON__;
     if (!bridge?.invokeDesktop) return false;
-    const existing = window.__openworkConnectStatusProbe;
+    const existing = window.__micxConnectStatusProbe;
     if (existing?.originalInvoke) bridge.invokeDesktop = existing.originalInvoke;
     if (existing?.originalFetch) window.fetch = existing.originalFetch;
     const originalInvoke = bridge.invokeDesktop.bind(bridge);
@@ -185,17 +185,17 @@ async function installHealthFailureProbe(ctx) {
       usable: false,
       usableByCurrentModel: false,
       firstFailure: {
-        code: "openwork_connect_eval_failure",
+        code: "micx_connect_eval_failure",
         stage: "engine_delivery",
         retryable: true,
         recommendedAction: "Run diagnostics",
-        message: "OpenWork Connect could not verify connected service tools.",
+        message: "Micx Connect could not verify connected service tools.",
       },
     });
     window.fetch = async (input, init) => {
       const response = await originalFetch(input, init);
       const url = typeof input === "string" ? input : input?.url || String(input);
-      if (!url.includes("/mcp/openwork-cloud/")) return response;
+      if (!url.includes("/mcp/micx-cloud/")) return response;
       let health;
       try { health = await response.clone().json(); } catch { return response; }
       if (!health || typeof health !== "object" || !("usable" in health)) return response;
@@ -208,7 +208,7 @@ async function installHealthFailureProbe(ctx) {
     bridge.invokeDesktop = async (command, ...args) => {
       const response = await originalInvoke(command, ...args);
       const url = String(args[0] || "");
-      if (command !== "__fetch" || !url.includes("/mcp/openwork-cloud/") || !response?.body) return response;
+      if (command !== "__fetch" || !url.includes("/mcp/micx-cloud/") || !response?.body) return response;
       let health;
       try { health = JSON.parse(response.body); } catch { return response; }
       if (!health || typeof health !== "object" || !("usable" in health)) return response;
@@ -217,7 +217,7 @@ async function installHealthFailureProbe(ctx) {
         body: JSON.stringify(failedHealth(health)),
       };
     };
-    window.__openworkConnectStatusProbe = { originalInvoke, originalFetch };
+    window.__micxConnectStatusProbe = { originalInvoke, originalFetch };
     return true;
   })()`);
   ctx.assert(result === true, "Could not install the bounded Connect health failure probe.");
@@ -225,29 +225,29 @@ async function installHealthFailureProbe(ctx) {
 
 async function restoreHealthProbe(ctx) {
   await ctx.eval(`(() => {
-    const bridge = window.__OPENWORK_ELECTRON__;
-    const probe = window.__openworkConnectStatusProbe;
+    const bridge = window.__MICX_ELECTRON__;
+    const probe = window.__micxConnectStatusProbe;
     if (bridge && probe?.originalInvoke) bridge.invokeDesktop = probe.originalInvoke;
     if (probe?.originalFetch) window.fetch = probe.originalFetch;
-    delete window.__openworkConnectStatusProbe;
+    delete window.__micxConnectStatusProbe;
     return true;
   })()`);
 }
 
 async function setup(ctx) {
   await authDelay(ctx, "release").catch(() => undefined);
-  await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 60_000, label: "control API" });
+  await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 60_000, label: "control API" });
   await restoreHealthProbe(ctx);
   await ensureLocalCloudSession(ctx);
   state.workspaceId = await ctx.eval(`(() => {
     const hashWorkspace = (location.hash.match(new RegExp("/workspace/([^/]+)")) || [])[1] || "";
-    return hashWorkspace || (localStorage.getItem("openwork.react.activeWorkspace") || "").trim();
+    return hashWorkspace || (localStorage.getItem("micx.react.activeWorkspace") || "").trim();
   })()`);
   ctx.assert(state.workspaceId, "The active workspace was not available.");
   const hasSession = await ctx.eval("window.location.hash.includes('/session/ses_')");
   if (!hasSession) {
     await ctx.navigateHash(`/workspace/${state.workspaceId}/session`);
-    await ctx.waitFor("window.__openworkControl?.listActions?.().some((action) => action.id === 'session.create_task' && !action.disabled)", {
+    await ctx.waitFor("window.__micxControl?.listActions?.().some((action) => action.id === 'session.create_task' && !action.disabled)", {
       timeoutMs: 90_000,
       label: "session.create_task enabled",
     });
@@ -261,29 +261,29 @@ async function setup(ctx) {
 
 export default {
   id: FLOW_ID,
-  title: "Signed-in users see non-blocking OpenWork Connect lifecycle health",
+  title: "Signed-in users see non-blocking Micx Connect lifecycle health",
   kind: "user-facing",
-  requiredEnv: ["OPENWORK_EVAL_DEN_API_URL"],
+  requiredEnv: ["MICX_EVAL_DEN_API_URL"],
   steps: [
     { name: "Setup signed-in Connect status", run: setup },
     {
       name: "Frame 1: saved-session restore shows Checking",
       run: async (ctx) => {
-        await ctx.prove("A retained signed-in session shows OpenWork Connect checking while authentication is restored", {
+        await ctx.prove("A retained signed-in session shows Micx Connect checking while authentication is restored", {
           voiceover: vo[0],
           action: async () => {
             await beginSavedSessionRestore(ctx);
             await openAccountMenu(ctx);
-            await ctx.waitForText("OpenWork Connect: Checking", { timeoutMs: 10_000 });
+            await ctx.waitForText("Micx Connect: Checking", { timeoutMs: 10_000 });
           },
           assert: async () => {
             const delay = await authDelay(ctx);
             witness(ctx, delay.pending >= 1, "Cloud session restoration is genuinely still pending while the status shows Checking.", delay);
           },
           screenshot: {
-            name: "openwork-connect-checking",
-            claim: "The signed-in status bar shows OpenWork Connect checking during session restoration.",
-            requireText: ["OpenWork Connect: Checking", "Ready for new tasks"],
+            name: "micx-connect-checking",
+            claim: "The signed-in status bar shows Micx Connect checking during session restoration.",
+            requireText: ["Micx Connect: Checking", "Ready for new tasks"],
             hashIncludes: `/workspace/${state.workspaceId}/session/`,
           },
         });
@@ -320,12 +320,12 @@ export default {
           },
           assert: async () => {
             witness(ctx, state.transcriptCount > 0, "The message entered the transcript while Connect restoration remained pending.", { transcriptCount: state.transcriptCount });
-            ctx.expectText("OpenWork Connect: Checking");
+            ctx.expectText("Micx Connect: Checking");
           },
           screenshot: {
-            name: "openwork-connect-nonblocking",
-            claim: "A normal task is submitted while OpenWork Connect continues checking in the background.",
-            requireText: ["OpenWork Connect: Checking", PROMPT],
+            name: "micx-connect-nonblocking",
+            claim: "A normal task is submitted while Micx Connect continues checking in the background.",
+            requireText: ["Micx Connect: Checking", PROMPT],
             rejectText: ["Preparing connected service tools"],
             hashIncludes: `/workspace/${state.workspaceId}/session/`,
           },
@@ -335,7 +335,7 @@ export default {
     {
       name: "Frame 3: successful restore shows Ready",
       run: async (ctx) => {
-        await ctx.prove("Successful reconciliation changes OpenWork Connect to Ready", {
+        await ctx.prove("Successful reconciliation changes Micx Connect to Ready", {
           voiceover: vo[2],
           action: async () => {
             await closeAccountMenu(ctx);
@@ -344,12 +344,12 @@ export default {
             await openAccountMenu(ctx);
           },
           assert: async () => {
-            ctx.expectNoText("OpenWork Connect: Needs attention");
+            ctx.expectNoText("Micx Connect: Needs attention");
           },
           screenshot: {
-            name: "openwork-connect-ready",
-            claim: "The status bar reports OpenWork Connect ready after background restoration succeeds.",
-            requireText: ["OpenWork Connect: Ready", "Ready for new tasks"],
+            name: "micx-connect-ready",
+            claim: "The status bar reports Micx Connect ready after background restoration succeeds.",
+            requireText: ["Micx Connect: Ready", "Ready for new tasks"],
             hashIncludes: `/workspace/${state.workspaceId}/session/`,
           },
         });
@@ -369,12 +369,12 @@ export default {
           },
           assert: async () => {
             const red = await ctx.eval(`Boolean(document.querySelector('${CONNECT_ROW} .bg-red-9'))`);
-            witness(ctx, red, "The failed OpenWork Connect status uses the red error indicator.", { red });
+            witness(ctx, red, "The failed Micx Connect status uses the red error indicator.", { red });
           },
           screenshot: {
-            name: "openwork-connect-needs-attention",
+            name: "micx-connect-needs-attention",
             claim: "The failed status is red and explains how to run diagnostics.",
-            requireText: ["OpenWork Connect: Needs attention", "Run diagnostics"],
+            requireText: ["Micx Connect: Needs attention", "Run diagnostics"],
             hashIncludes: `/workspace/${state.workspaceId}/session/`,
           },
         });
@@ -383,30 +383,30 @@ export default {
     {
       name: "Frame 5: signed-out status is hidden",
       run: async (ctx) => {
-        await ctx.prove("The OpenWork Connect status is absent when the user is signed out", {
+        await ctx.prove("The Micx Connect status is absent when the user is signed out", {
           voiceover: vo[4],
           action: async () => {
             await closeAccountMenu(ctx);
             await restoreHealthProbe(ctx);
             await ctx.eval(`(() => {
-              const token = localStorage.getItem("openwork.den.authToken") || "";
+              const token = localStorage.getItem("micx.den.authToken") || "";
               if (token) localStorage.setItem(${quoted(SAVED_TOKEN_KEY)}, token);
-              localStorage.removeItem("openwork.den.authToken");
+              localStorage.removeItem("micx.den.authToken");
               location.reload();
               return true;
             })()`);
-            await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 60_000, label: "control API after sign-out" });
-            await ctx.waitFor("!document.body.innerText.includes('OpenWork Connect:')", { timeoutMs: 15_000, label: "Connect status hidden" });
+            await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 60_000, label: "control API after sign-out" });
+            await ctx.waitFor("!document.body.innerText.includes('Micx Connect:')", { timeoutMs: 15_000, label: "Connect status hidden" });
             await openAccountMenu(ctx);
           },
           assert: async () => {
-            ctx.expectNoText("OpenWork Connect:");
+            ctx.expectNoText("Micx Connect:");
           },
           screenshot: {
-            name: "openwork-connect-signed-out-hidden",
-            claim: "Signed-out users do not see an OpenWork Connect lifecycle status.",
+            name: "micx-connect-signed-out-hidden",
+            claim: "Signed-out users do not see an Micx Connect lifecycle status.",
             requireText: ["Ready for new tasks"],
-            rejectText: ["OpenWork Connect:"],
+            rejectText: ["Micx Connect:"],
             hashIncludes: `/workspace/${state.workspaceId}/session/`,
           },
         });
@@ -419,7 +419,7 @@ export default {
         await restoreHealthProbe(ctx).catch(() => undefined);
         await ctx.eval(`(() => {
           const token = localStorage.getItem(${quoted(SAVED_TOKEN_KEY)});
-          if (token) localStorage.setItem("openwork.den.authToken", token);
+          if (token) localStorage.setItem("micx.den.authToken", token);
           localStorage.removeItem(${quoted(SAVED_TOKEN_KEY)});
           return true;
         })()`);

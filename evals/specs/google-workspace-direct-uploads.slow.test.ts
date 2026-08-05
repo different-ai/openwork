@@ -4,11 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect } from "vitest";
-import { denFetch } from "@openwork/behaviors";
-import { startMockGoogle } from "@openwork/labs";
-import { localMysqlIsRunning, needs, server, test } from "@openwork/testkit";
-import type { DenSession } from "@openwork/behaviors";
-import type { MockGoogleHandle } from "@openwork/labs";
+import { denFetch } from "@micx/behaviors";
+import { startMockGoogle } from "@micx/labs";
+import { localMysqlIsRunning, needs, server, test } from "@micx/testkit";
+import type { DenSession } from "@micx/behaviors";
+import type { MockGoogleHandle } from "@micx/labs";
 
 /**
  * CLAIMS:
@@ -26,11 +26,11 @@ import type { MockGoogleHandle } from "@openwork/labs";
  * the extension action call plus the provider witness, not UI presentation.
  */
 
-const localPlacement = process.env.OPENWORK_EVAL_DAYTONA !== "1"
-  && !process.env.OPENWORK_EVAL_DEN_API_URL?.trim();
+const localPlacement = process.env.MICX_EVAL_DAYTONA !== "1"
+  && !process.env.MICX_EVAL_DEN_API_URL?.trim();
 const mysqlOpen = await localMysqlIsRunning();
 const title = !localPlacement
-  ? "google workspace direct uploads skipped — needs: local placement without OPENWORK_EVAL_DEN_API_URL"
+  ? "google workspace direct uploads skipped — needs: local placement without MICX_EVAL_DEN_API_URL"
   : !mysqlOpen
     ? "google workspace direct uploads skipped — needs: MySQL on 127.0.0.1:3306"
     : "workspace paths upload directly to Google without model-visible bytes";
@@ -195,8 +195,8 @@ function runCloudUpload(input: Record<string, unknown>): Promise<Record<string, 
 
 test.skipIf(!localPlacement || !mysqlOpen)(title, async ({ evidence, place }) => {
   needs({});
-  const account = "uploader@openwork.test";
-  const root = await mkdtemp(join(tmpdir(), "openwork-direct-upload-spec-"));
+  const account = "uploader@micx.test";
+  const root = await mkdtemp(join(tmpdir(), "micx-direct-upload-spec-"));
   const fixture = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0xff, 0x80, 0x13]);
   await writeFile(join(root, "witness.png"), fixture);
   await using google = await startMockGoogle({ accounts: [account], port: 0, autoApprove: false });
@@ -210,7 +210,7 @@ test.skipIf(!localPlacement || !mysqlOpen)(title, async ({ evidence, place }) =>
     const inspection = await runCloudUpload({ mode: "inspect" });
     const actions = Array.isArray(inspection.result) ? inspection.result : [];
     const cloudActions = actions.filter((action): action is Record<string, unknown> => (
-      isRecord(action) && action.extensionId === "openwork-cloud-uploads"
+      isRecord(action) && action.extensionId === "micx-cloud-uploads"
     ));
     expect(cloudActions.map((action) => action.action).sort()).toEqual([
       "drive_upload_file",
@@ -275,7 +275,7 @@ test.skipIf(!localPlacement || !mysqlOpen)(title, async ({ evidence, place }) =>
       root,
       action: "gmail_create_draft_with_attachments",
       args: {
-        to: "reviewer@openwork.test",
+        to: "reviewer@micx.test",
         subject: "Binary attachment witness",
         body: "Please review the attached file.",
         paths: ["witness.png"],
@@ -314,7 +314,7 @@ test.skipIf(!localPlacement || !mysqlOpen)(title, async ({ evidence, place }) =>
       root,
       action: "gmail_create_draft_with_attachments",
       args: {
-        to: "reviewer@openwork.test",
+        to: "reviewer@micx.test",
         subject: "Too large",
         body: "This must fail locally.",
         paths: ["part-a.bin", "part-b.bin"],

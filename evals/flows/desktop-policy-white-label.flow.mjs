@@ -19,12 +19,12 @@ export default {
     {
       name: "App boots and control API is ready; reset brand state",
       run: async (ctx) => {
-        await ctx.waitFor("Boolean(window.__openworkControl)", {
+        await ctx.waitFor("Boolean(window.__micxControl)", {
           timeoutMs: 30_000,
-          label: "window.__openworkControl",
+          label: "window.__micxControl",
         });
         const route = await ctx.waitFor(
-          "window.__openworkControl.snapshot().route",
+          "window.__micxControl.snapshot().route",
           { label: "control snapshot route" },
         );
         ctx.log(`initial route: ${JSON.stringify(route)}`);
@@ -32,14 +32,14 @@ export default {
         // Persist light mode and reset brand, then reload so the theme
         // module's internal cache picks up the new value.
         await ctx.eval(`(() => {
-          localStorage.setItem('openwork.react.settings.theme-mode', 'light');
-          const bridge = window.__openworkApplyDesktopConfig;
+          localStorage.setItem('micx.react.settings.theme-mode', 'light');
+          const bridge = window.__micxApplyDesktopConfig;
           if (typeof bridge === 'function') bridge({});
           return true;
         })()`);
         await ctx.eval("location.reload()");
         // Wait for the app to fully re-render after reload.
-        await ctx.waitFor("Boolean(window.__openworkControl)", {
+        await ctx.waitFor("Boolean(window.__micxControl)", {
           timeoutMs: 30_000,
           label: "control API after reload",
         });
@@ -76,7 +76,7 @@ export default {
         ctx.assert(!logo, "Expected no brand logo at baseline.");
 
         await ctx.screenshot("baseline", {
-          claim: "App renders with default OpenWork accent and no brand logo.",
+          claim: "App renders with default Micx accent and no brand logo.",
         });
       },
     },
@@ -85,7 +85,7 @@ export default {
       name: "Apply brand accent (violet) + logo via control action",
       run: async (ctx) => {
         await ctx.waitFor(
-          "window.__openworkControl.listActions().some(a => a.id === 'eval.brand_theme.apply')",
+          "window.__micxControl.listActions().some(a => a.id === 'eval.brand_theme.apply')",
           { timeoutMs: 10_000, label: "eval.brand_theme.apply action" },
         );
 
@@ -190,7 +190,7 @@ export default {
       run: async (ctx) => {
         // Check the notification store directly.
         const hasNotification = await ctx.eval(`(() => {
-          const raw = localStorage.getItem('openwork:notifications:v1');
+          const raw = localStorage.getItem('micx:notifications:v1');
           if (!raw) return false;
           try {
             const store = JSON.parse(raw);
@@ -236,7 +236,7 @@ export default {
         // Navigate back to session view.
         await ctx.navigateHash("/session");
         await ctx.waitFor(
-          "window.__openworkControl.snapshot().route",
+          "window.__micxControl.snapshot().route",
           { label: "route after navigation" },
         );
 

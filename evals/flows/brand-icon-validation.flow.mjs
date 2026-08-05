@@ -31,9 +31,9 @@ const SUCCESS_TEXT = "Workspace settings updated.";
 
 async function ensureMemberReady(ctx) {
   await ensureRendererMounted(ctx);
-  await ctx.waitFor("Boolean(window.__openworkControl)", {
+  await ctx.waitFor("Boolean(window.__micxControl)", {
     timeoutMs: 30_000,
-    label: "window.__openworkControl",
+    label: "window.__micxControl",
   });
   await ctx.ensureLightMode();
   await assertSignedIntoDen(ctx);
@@ -93,14 +93,14 @@ export default {
   title: "Brand Icon URL rejects web pages loudly and accepts real logo image links",
   kind: "user-facing",
   spec: "evals/voiceovers/brand-icon-validation.md",
-  // OPENWORK_EVAL_DAYTONA_SANDBOX is required (not optional, unlike
+  // MICX_EVAL_DAYTONA_SANDBOX is required (not optional, unlike
   // desktop-brand-icon): the admin panel's Icon URL field lives in an
   // embedded browser-panel WebContentsView, which no CDP target's
   // Page.captureScreenshot can see. Only a real OS-level (X11) screen grab
   // inside the sandbox shows its actual content, so without a sandbox this
   // flow would either fail with a "duplicate blank screenshot" or need to
   // skip the visual proof entirely — cleaner to just require it.
-  requiredEnv: ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_TOKEN", "OPENWORK_EVAL_DEN_WEB_URL", "OPENWORK_EVAL_DAYTONA_SANDBOX"],
+  requiredEnv: ["MICX_EVAL_DEN_API_URL", "MICX_EVAL_DEN_TOKEN", "MICX_EVAL_DEN_WEB_URL", "MICX_EVAL_DAYTONA_SANDBOX"],
   steps: [
     {
       name: "setup",

@@ -2,7 +2,7 @@
 
 1. The sign-in screen starts simple: one email address field and one **Next** button.
 
-2. After entering an email, OpenWork checks the backend and chooses the right next step.
+2. After entering an email, Micx checks the backend and chooses the right next step.
 
 3. If the email belongs to an org with SSO, the next screen only shows **Sign in with SSO**.
 

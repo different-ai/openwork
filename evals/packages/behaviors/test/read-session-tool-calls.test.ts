@@ -13,10 +13,10 @@ test("parses namespaced and catalog tool calls from a session transcript", () =>
       index: 0,
       role: "assistant",
       text: [
-        "OpenWork",
+        "Micx",
         "[tool:mcp:emc_labs:send_email] sent",
         "[tool:native:emc_robotics:postCapabilitiesGoogleWorkspaceGmailDrafts] drafted",
-        "[tool:openwork-cloud_execute_capability] searched",
+        "[tool:micx-cloud_execute_capability] searched",
       ].join("\n\n"),
     }],
   });
@@ -28,7 +28,7 @@ test("parses namespaced and catalog tool calls from a session transcript", () =>
       connectionId: "emc_robotics",
       at: "",
     },
-    { capability: "openwork-cloud_execute_capability", connectionId: null, at: "" },
+    { capability: "micx-cloud_execute_capability", connectionId: null, at: "" },
   ]);
 });
 

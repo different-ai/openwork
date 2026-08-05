@@ -9,10 +9,10 @@ const TAB_COUNT = 14;
 
 async function ensureWorkspaceAndSession(ctx) {
   await mkdir(WORKSPACE_PATH, { recursive: true });
-  await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 30_000 });
+  await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 30_000 });
 
   const hasCreateTask = await ctx.eval(
-    "window.__openworkControl.listActions().some((action) => action.id === 'session.create_task' && !action.disabled)",
+    "window.__micxControl.listActions().some((action) => action.id === 'session.create_task' && !action.disabled)",
   );
   if (!hasCreateTask) {
     const usedManualFolder = await ctx.eval(`(() => {
@@ -92,7 +92,7 @@ async function ensureWorkspaceAndSession(ctx) {
   }
 
   await ctx.waitFor(
-    "window.__openworkControl.listActions().some((action) => action.id === 'session.create_task' && !action.disabled)",
+    "window.__micxControl.listActions().some((action) => action.id === 'session.create_task' && !action.disabled)",
     { timeoutMs: 60_000, label: "session.create_task action" },
   );
 
@@ -106,7 +106,7 @@ async function ensureWorkspaceAndSession(ctx) {
   }
 
   await ctx.eval(`(() => {
-    for (const label of ['Continue without OpenWork Models', 'Close']) {
+    for (const label of ['Continue without Micx Models', 'Close']) {
       const button = Array.from(document.querySelectorAll('button')).find((candidate) =>
         candidate.textContent?.trim() === label && !candidate.disabled
       );
@@ -117,7 +117,7 @@ async function ensureWorkspaceAndSession(ctx) {
 }
 
 const tabMetricsExpression = `(async () => {
-  const state = await window.__OPENWORK_ELECTRON__.browser.getState();
+  const state = await window.__MICX_ELECTRON__.browser.getState();
   const activeTabId = state?.activeTabId ?? null;
   const buttons = Array.from(document.querySelectorAll('button[aria-label^="Select tab:"]'));
   const scroller = buttons[0]
@@ -162,10 +162,10 @@ export default {
     {
       name: "Open many built-in browser tabs",
       run: async (ctx) => {
-        await ctx.eval("window.__OPENWORK_ELECTRON__.browser.closeAllTabs?.()", { awaitPromise: true });
+        await ctx.eval("window.__MICX_ELECTRON__.browser.closeAllTabs?.()", { awaitPromise: true });
         await ctx.control("browser.open_url", {
           provider: "builtin",
-          url: "https://example.com/?openwork-overflow-tab=1",
+          url: "https://example.com/?micx-overflow-tab=1",
         });
         await ctx.waitFor("document.querySelectorAll('button[aria-label^=\"Select tab:\"]').length >= 1", {
           timeoutMs: 20_000,
@@ -174,8 +174,8 @@ export default {
 
         const tabIds = [];
         for (let index = 2; index <= TAB_COUNT; index += 1) {
-          const result = await ctx.eval(`window.__OPENWORK_ELECTRON__.browser.createTab(${JSON.stringify(
-            `https://example.com/?openwork-overflow-tab=${index}`,
+          const result = await ctx.eval(`window.__MICX_ELECTRON__.browser.createTab(${JSON.stringify(
+            `https://example.com/?micx-overflow-tab=${index}`,
           )})`, { awaitPromise: true });
           tabIds.push(result.tabId);
         }
@@ -206,7 +206,7 @@ export default {
           return button?.closest('[id]')?.id ?? null;
         })()`);
         ctx.assert(typeof firstTabId === "string" && firstTabId.length > 0, "Could not resolve first tab id.");
-        await ctx.eval(`window.__OPENWORK_ELECTRON__.browser.selectTab(${JSON.stringify(firstTabId)})`, { awaitPromise: true });
+        await ctx.eval(`window.__MICX_ELECTRON__.browser.selectTab(${JSON.stringify(firstTabId)})`, { awaitPromise: true });
         let metrics = null;
         const startedAt = Date.now();
         while (Date.now() - startedAt < 5_000) {

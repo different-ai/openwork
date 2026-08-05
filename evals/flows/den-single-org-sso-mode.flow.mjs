@@ -10,7 +10,7 @@ export default {
         await ctx.prove("Single-org SSO configured renders one SSO sign-in action", {
           action: async () => {
             await ctx.eval("(() => { window.location.href = 'http://127.0.0.1:3005/?mode=sign-up'; return true; })()");
-            await ctx.waitFor("document.body.innerText.includes('Sign in to OpenWork.')", {
+            await ctx.waitFor("document.body.innerText.includes('Sign in to Micx.')", {
               timeoutMs: 30_000,
               label: "Den web rendered the single-org SSO-only auth panel",
             });
@@ -24,7 +24,7 @@ export default {
           },
           screenshot: {
             name: "single-org-sso-only-auth",
-            requireText: ["Sign in to OpenWork.", "Continue with SSO"],
+            requireText: ["Sign in to Micx.", "Continue with SSO"],
             rejectText: [
               "Create account",
               "Continue with GitHub",

@@ -4,11 +4,11 @@ import {
   diagnoseEgressLabProduct,
   productDiagnosticsPrecondition,
   readBunTls12PinningFinding,
-} from "@openwork/behaviors";
-import { matchVerdictExpectations } from "@openwork/matchers";
-import type { DiagnosticVerdict } from "@openwork/behaviors";
-import type { DiagnosticVerdictExpectation } from "@openwork/matchers";
-import type { EgressLabHandle } from "@openwork/labs";
+} from "@micx/behaviors";
+import { matchVerdictExpectations } from "@micx/matchers";
+import type { DiagnosticVerdict } from "@micx/behaviors";
+import type { DiagnosticVerdictExpectation } from "@micx/matchers";
+import type { EgressLabHandle } from "@micx/labs";
 import type { FlowContext } from "../flow.ts";
 
 export {
@@ -44,12 +44,12 @@ export async function expectVerdictNames(
   const verdict = await diagnoseEgressLabProduct(options.lab);
   const corroboration = await diagnoseEgressLabCorroboration(options.lab);
   const matched = matchVerdictExpectations(verdict.text, options.expect);
-  ctx.output(`${options.lab.profile} OpenWork product diagnostics verdict`, `${verdict.text}\n\n${verdict.evidence}`);
+  ctx.output(`${options.lab.profile} Micx product diagnostics verdict`, `${verdict.text}\n\n${verdict.evidence}`);
   ctx.output(`${options.lab.profile} lab-local corroborating probes`, `${corroboration.text}\n\n${corroboration.evidence}`);
   evidence(
     ctx,
     verdict.available && matched.ok,
-    `OpenWork product diagnostics verdict did not name expected fault(s): ${matched.missing.join(", ")}. Verdict: ${verdict.text}`,
+    `Micx product diagnostics verdict did not name expected fault(s): ${matched.missing.join(", ")}. Verdict: ${verdict.text}`,
     verdict.text,
   );
   return verdict;
@@ -69,7 +69,7 @@ const { X509Certificate } = require("node:crypto");
 const fs = require("node:fs");
 let tls;
 try { tls = require("node:tls"); } catch { tls = {}; }
-const needle = (process.env.OPENWORK_TLS_REPRO_CA_MATCH || "OpenWork Egress Lab").toLowerCase();
+const needle = (process.env.MICX_TLS_REPRO_CA_MATCH || "Micx Egress Lab").toLowerCase();
 function countMatching(certs) {
   let count = 0;
   for (const pem of certs || []) {
@@ -131,7 +131,7 @@ export async function expectRuntimeTrust(ctx: FlowContext, options: { caPath: st
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     NODE_EXTRA_CA_CERTS: options.caPath,
-    OPENWORK_TLS_REPRO_CA_MATCH: "OpenWork Egress Lab",
+    MICX_TLS_REPRO_CA_MATCH: "Micx Egress Lab",
   };
   for (const runtime of [
     { name: "node", command: process.execPath },

@@ -21,17 +21,17 @@ Run these before shipping changes that touch:
 
 1. Start the dev app (CDP auto-exposes on port 9223):
    ```bash
-   pnpm --filter @openwork/desktop dev
+   pnpm --filter @micx/desktop dev
    ```
 2. Wait ~20s, then verify CDP:
    ```
    browser_list({ browser_url: "http://127.0.0.1:9223" })
    ```
-   You should see the OpenWork target.
+   You should see the Micx target.
 3. Enable control mode:
    ```
    browser_eval({ browser_url: CDP_URL, target_id: APP_TARGET,
-     expression: "window.__openworkControl.setEnabled(true); 'ok'" })
+     expression: "window.__micxControl.setEnabled(true); 'ok'" })
    ```
 
 ## Flow 1 — Plugin is loaded and browser tools exist
@@ -51,7 +51,7 @@ Steps:
 
 Pass criteria:
 - `opencode.jsonc` has `"plugin": ["opencode-chrome-devtools"]`.
-- No stale MCP keys (`openwork-browser`, `chrome`, `chrome-devtools`,
+- No stale MCP keys (`micx-browser`, `chrome`, `chrome-devtools`,
   `control-chrome`) exist in the `mcp` section.
 
 Known regressions this catches:
@@ -68,14 +68,14 @@ Steps:
 1. Create a new session:
    ```
    browser_eval({ browser_url: CDP_URL, target_id: APP_TARGET,
-     expression: "window.__openworkControl.execute('session.create_task')" })
+     expression: "window.__micxControl.execute('session.create_task')" })
    ```
 2. Type and send the prompt:
    ```
    browser_eval({ browser_url: CDP_URL, target_id: APP_TARGET,
      expression: `(async () => {
-       const ctrl = window.__openworkControl;
-       await ctrl.execute('composer.set_text', { text: 'Use the OpenWork Browser extension to navigate to https://example.com and tell me the page title' });
+       const ctrl = window.__micxControl;
+       await ctrl.execute('composer.set_text', { text: 'Use the Micx Browser extension to navigate to https://example.com and tell me the page title' });
        await new Promise(r => setTimeout(r, 500));
        return JSON.stringify(await ctrl.execute('composer.send'));
      })()` })
@@ -103,7 +103,7 @@ read results.
 
 Steps:
 1. Create a new session.
-2. Send: "Use the OpenWork Browser extension to go to https://www.google.com,
+2. Send: "Use the Micx Browser extension to go to https://www.google.com,
    search for 'opencode ai', and tell me the first result title"
 3. Wait 60s for the multi-step task.
 4. Check the transcript for tool calls.
@@ -147,12 +147,12 @@ Steps:
 3. Count visible extensions.
 
 Pass criteria:
-- "OpenWork Browser" is visible with a name and description.
-- "Chrome" is not visible as an OpenWork extension.
+- "Micx Browser" is visible with a name and description.
+- "Chrome" is not visible as an Micx extension.
 
 Known regressions this catches:
 - Extension catalog not loaded.
-- `isOpenWorkExtensionEnabled` filtering incorrectly.
+- `isMicxExtensionEnabled` filtering incorrectly.
 
 ## Flow 5 — Extension chip inserts composerPrompt
 
@@ -160,11 +160,11 @@ Known regressions this catches:
 into the composer text.
 
 Steps:
-1. With the Extensions menu open, click the "OpenWork Browser" entry.
+1. With the Extensions menu open, click the "Micx Browser" entry.
 2. Check the composer text.
 
 Pass criteria:
-- Composer contains "Use the OpenWork Browser extension to".
+- Composer contains "Use the Micx Browser extension to".
 - The tool menu closed.
 
 Known regressions this catches:
@@ -177,13 +177,13 @@ Known regressions this catches:
 the composer menu.
 
 Steps:
-1. Disable OpenWork Browser:
+1. Disable Micx Browser:
    ```
    browser_eval({ browser_url: CDP_URL, target_id: APP_TARGET,
      expression: `(() => {
-       localStorage.setItem('openwork.extension.disabled.openwork-browser', '1');
-       window.dispatchEvent(new CustomEvent('openwork:extension-state-changed', {
-         detail: { id: 'openwork-browser', enabled: false }
+       localStorage.setItem('micx.extension.disabled.micx-browser', '1');
+       window.dispatchEvent(new CustomEvent('micx:extension-state-changed', {
+         detail: { id: 'micx-browser', enabled: false }
        }));
        return 'disabled';
      })()` })
@@ -193,9 +193,9 @@ Steps:
    ```
    browser_eval({ browser_url: CDP_URL, target_id: APP_TARGET,
      expression: `(() => {
-       localStorage.removeItem('openwork.extension.disabled.openwork-browser');
-       window.dispatchEvent(new CustomEvent('openwork:extension-state-changed', {
-         detail: { id: 'openwork-browser', enabled: true }
+       localStorage.removeItem('micx.extension.disabled.micx-browser');
+       window.dispatchEvent(new CustomEvent('micx:extension-state-changed', {
+         detail: { id: 'micx-browser', enabled: true }
        }));
        return 'enabled';
      })()` })
@@ -203,9 +203,9 @@ Steps:
 4. Re-open Extensions menu and count.
 
 Pass criteria:
-- After disabling: OpenWork Browser is NOT in the Extensions menu.
-- After re-enabling: OpenWork Browser IS in the Extensions menu.
-- `localStorage` key `openwork.extension.disabled.openwork-browser` is `"1"`
+- After disabling: Micx Browser is NOT in the Extensions menu.
+- After re-enabling: Micx Browser IS in the Extensions menu.
+- `localStorage` key `micx.extension.disabled.micx-browser` is `"1"`
   when disabled, absent when enabled.
 
 Known regressions this catches:
@@ -215,18 +215,18 @@ Known regressions this catches:
 ## Flow 7 — Stale MCP migration
 
 **Why**: Workspaces from the pre-extension architecture have dead MCP entries
-(`openwork-browser`, `chrome`) that must be cleaned up on activation.
+(`micx-browser`, `chrome`) that must be cleaned up on activation.
 
 Steps:
 1. Write a stale config to the workspace `opencode.jsonc`:
    ```json
    {
      "$schema": "https://opencode.ai/config.json",
-     "default_agent": "openwork",
+     "default_agent": "micx",
      "mcp": {
-       "openwork-browser": { "type": "remote", "url": "http://127.0.0.1:59674/mcp" },
+       "micx-browser": { "type": "remote", "url": "http://127.0.0.1:59674/mcp" },
        "chrome": { "type": "remote", "url": "http://127.0.0.1:59675/mcp" },
-       "openwork-ui": { "type": "remote", "url": "http://127.0.0.1:59673/mcp" }
+       "micx-ui": { "type": "remote", "url": "http://127.0.0.1:59673/mcp" }
      }
    }
    ```
@@ -234,10 +234,10 @@ Steps:
 3. Read the migrated `opencode.jsonc`.
 
 Pass criteria:
-- `openwork-browser` MCP entry removed.
+- `micx-browser` MCP entry removed.
 - `chrome` MCP entry removed.
-- `openwork-ui` MCP entry preserved (not a legacy browser MCP).
-- `default_agent: "openwork"` preserved.
+- `micx-ui` MCP entry preserved (not a legacy browser MCP).
+- `default_agent: "micx"` preserved.
 - `plugin: ["opencode-chrome-devtools"]` added.
 
 Known regressions this catches:
@@ -253,17 +253,17 @@ when `Show hidden` is enabled.
 
 Steps:
 1. Open Settings -> Extensions.
-2. Open the "OpenWork Browser" detail modal and click `Hide`.
-3. Confirm "OpenWork Browser" disappears from the normal Extensions catalog.
+2. Open the "Micx Browser" detail modal and click `Hide`.
+3. Confirm "Micx Browser" disappears from the normal Extensions catalog.
 4. Open the composer tool menu -> Extensions.
-5. Confirm "OpenWork Browser" is not listed.
+5. Confirm "Micx Browser" is not listed.
 6. Return to Settings -> Extensions and click `Show hidden`.
-7. Confirm "OpenWork Browser" reappears with a hidden badge.
+7. Confirm "Micx Browser" reappears with a hidden badge.
 8. Open its detail modal and click `Show`.
 
 Pass criteria:
 - Hidden state is persisted in localStorage under
-  `openwork.extension.hidden.openwork-browser`.
+  `micx.extension.hidden.micx-browser`.
 - Normal Extensions catalog excludes the hidden card.
 - Composer Extensions excludes the hidden card.
 - `Show hidden` reveals the card and allows restoring visibility.
@@ -275,12 +275,12 @@ Known regressions this catches:
 
 ## Flow 9 — Organization marketplace is Connect-only
 
-**Why**: Organization marketplace extensions now run through OpenWork Connect,
+**Why**: Organization marketplace extensions now run through Micx Connect,
 not local marketplace installs. This flow verifies cloud delivery stays visible
 without exposing the retired Add/import path.
 
 Steps:
-1. Sign in to OpenWork Cloud with an org that has a marketplace plugin.
+1. Sign in to Micx Cloud with an org that has a marketplace plugin.
 2. Open Settings -> Connect and verify the org extension appears under From your organization.
 3. Open Settings -> Marketplace and verify the same package says `Runs in cloud`.
 4. Confirm no `Add`, `Install`, or `Update` action is shown for the org package.

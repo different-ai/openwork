@@ -16,7 +16,7 @@ export default defineFlow({
       run: async (ctx) => {
         await ctx.prove("TODO: claim for frame 1", {
           voiceover: vo[0],
-          // "I'm signed in to OpenWork on the web. There's no Cloud anywhere — not in the"
+          // "I'm signed in to Micx on the web. There's no Cloud anywhere — not in the"
           action: async () => {
             // TODO: drive the app as the end user (ctx.clickText, ctx.fill, ...)
           },

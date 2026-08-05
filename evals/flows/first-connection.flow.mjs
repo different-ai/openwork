@@ -13,18 +13,18 @@ import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
 // The runner fails this flow if the narration drifts from that script.
 const vo = await loadVoiceoverParagraphs("first-connection");
 
-const DEN_API_URL = cleanBaseUrl(process.env.OPENWORK_EVAL_DEN_API_URL);
-const DEN_WEB_URL = cleanBaseUrl(process.env.OPENWORK_EVAL_DEN_WEB_URL);
-const ADMIN_CDP_URL = cleanBaseUrl(process.env.OPENWORK_EVAL_WEB_CDP_ADMIN);
-const INVITEE_CDP_URL = cleanBaseUrl(process.env.OPENWORK_EVAL_WEB_CDP_INVITEE);
-const MARK_VERIFIED_CMD = process.env.OPENWORK_EVAL_MARK_VERIFIED_CMD?.trim() || "";
-const ADMIN_EMAIL = process.env.OPENWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
-const ADMIN_PASSWORD = process.env.OPENWORK_EVAL_DEMO_PASSWORD?.trim() || "OpenWorkDemo123!";
+const DEN_API_URL = cleanBaseUrl(process.env.MICX_EVAL_DEN_API_URL);
+const DEN_WEB_URL = cleanBaseUrl(process.env.MICX_EVAL_DEN_WEB_URL);
+const ADMIN_CDP_URL = cleanBaseUrl(process.env.MICX_EVAL_WEB_CDP_ADMIN);
+const INVITEE_CDP_URL = cleanBaseUrl(process.env.MICX_EVAL_WEB_CDP_INVITEE);
+const MARK_VERIFIED_CMD = process.env.MICX_EVAL_MARK_VERIFIED_CMD?.trim() || "";
+const ADMIN_EMAIL = process.env.MICX_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
+const ADMIN_PASSWORD = process.env.MICX_EVAL_DEMO_PASSWORD?.trim() || "MicxDemo123!";
 const RUN_TAG = Date.now().toString(36);
-const MEMBER_EMAIL = process.env.OPENWORK_EVAL_MEMBER_EMAIL?.trim() || `riley.first.connection+${RUN_TAG}@acme.test`;
-const MEMBER_PASSWORD = process.env.OPENWORK_EVAL_MEMBER_PASSWORD?.trim() || "OpenWorkDemo123!";
-const BOOTSTRAP_PATH = process.env.OPENWORK_EVAL_BOOTSTRAP_PATH?.trim()
-  || path.join(makeTempDir("openwork-first-connection-bootstrap-"), "desktop-bootstrap.json");
+const MEMBER_EMAIL = process.env.MICX_EVAL_MEMBER_EMAIL?.trim() || `riley.first.connection+${RUN_TAG}@acme.test`;
+const MEMBER_PASSWORD = process.env.MICX_EVAL_MEMBER_PASSWORD?.trim() || "MicxDemo123!";
+const BOOTSTRAP_PATH = process.env.MICX_EVAL_BOOTSTRAP_PATH?.trim()
+  || path.join(makeTempDir("micx-first-connection-bootstrap-"), "desktop-bootstrap.json");
 
 const state = {
   desktopClient: null,
@@ -50,12 +50,12 @@ export default {
   title: "An invited teammate follows one Acme install link from dashboard copy to verified desktop connection",
   kind: "user-facing",
   requiredEnv: [
-    "OPENWORK_EVAL_DEN_API_URL",
-    "OPENWORK_EVAL_DEN_TOKEN",
-    "OPENWORK_EVAL_DEN_WEB_URL",
-    "OPENWORK_EVAL_WEB_CDP_ADMIN",
-    "OPENWORK_EVAL_WEB_CDP_INVITEE",
-    "OPENWORK_EVAL_MARK_VERIFIED_CMD",
+    "MICX_EVAL_DEN_API_URL",
+    "MICX_EVAL_DEN_TOKEN",
+    "MICX_EVAL_DEN_WEB_URL",
+    "MICX_EVAL_WEB_CDP_ADMIN",
+    "MICX_EVAL_WEB_CDP_INVITEE",
+    "MICX_EVAL_MARK_VERIFIED_CMD",
   ],
   steps: [
     {
@@ -65,7 +65,7 @@ export default {
         await withClient(ctx, ADMIN_CDP_URL, async () => {
           await ctx.prove("Alex copies a workspace install link from the dashboard and the token resolves to Acme's required sign-in config", {
             voiceover: vo[0],
-            // "On the OpenWork dashboard home, the admin clicks Download for this workspace"
+            // "On the Micx dashboard home, the admin clicks Download for this workspace"
             action: async () => {
               await ensureAdminToken(ctx);
               await ensureOrgId(ctx);
@@ -132,9 +132,9 @@ export default {
               });
             },
             assert: async () => {
-              await ctx.expectText("Download OpenWork for Acme Robotics");
+              await ctx.expectText("Download Micx for Acme Robotics");
               await ctx.expectText("Apple Silicon (M1+)");
-              await ctx.expectText("Download the OpenWork installer");
+              await ctx.expectText("Download the Micx installer");
               await ctx.expectText("Open the installer and paste this link:");
               await ctx.expectText("Sign in");
               await ctx.expectText("Waiting for sign-in");
@@ -153,7 +153,7 @@ export default {
             },
             screenshot: {
               name: "invitee-acme-install-checklist",
-              requireText: ["Download OpenWork for Acme Robotics", "Download the OpenWork installer", "Open the installer and paste this link:", "Waiting for sign-in"],
+              requireText: ["Download Micx for Acme Robotics", "Download the Micx installer", "Open the installer and paste this link:", "Waiting for sign-in"],
             },
           });
         }, { targetId: state.installPageTargetId });
@@ -174,12 +174,12 @@ export default {
               const redirect = requireRedirectWitness(state.frame3DownloadRedirect);
               witness(ctx, redirect.status === 302, "The macOS desktop download returns a redirect instead of mutating the artifact", redirect);
               witness(ctx, redirect.location === redirect.expectedLocation, "The redirect Location is the exact standard macOS desktop release asset", redirect);
-              await ctx.expectText("Download OpenWork for Acme Robotics");
+              await ctx.expectText("Download Micx for Acme Robotics");
               await ctx.expectText("Open the installer and paste this link:");
             },
             screenshot: {
               name: "standard-desktop-download-redirect",
-              requireText: ["Download OpenWork for Acme Robotics", "Open the installer and paste this link:", "Waiting for sign-in"],
+              requireText: ["Download Micx for Acme Robotics", "Open the installer and paste this link:", "Waiting for sign-in"],
             },
           });
         }, { targetId: state.installPageTargetId });
@@ -189,39 +189,39 @@ export default {
       name: "Frame 4",
       run: async (ctx) => {
         useDesktopClient(ctx);
-        await ctx.prove("A plain first-run desktop asks whether to use OpenWork Cloud or join an organization, and pasting Acme's link binds it to Acme's server", {
+        await ctx.prove("A plain first-run desktop asks whether to use Micx Cloud or join an organization, and pasting Acme's link binds it to Acme's server", {
           voiceover: vo[3],
-          // "Suppose someone skips all that and installs the plain OpenWork app instead: "
+          // "Suppose someone skips all that and installs the plain Micx app instead: "
           action: async () => {
             await ensureDesktopReady(ctx);
             await captureOriginalDesktopBootstrap(ctx);
             await resetDesktopToDefaultBootstrap(ctx);
             await ctx.eval(`(() => {
-              const raw = localStorage.getItem('openwork.preferences');
+              const raw = localStorage.getItem('micx.preferences');
               const prefs = raw ? JSON.parse(raw) : {};
               prefs.hasCompletedOnboarding = false;
-              localStorage.setItem('openwork.preferences', JSON.stringify(prefs));
+              localStorage.setItem('micx.preferences', JSON.stringify(prefs));
               location.hash = '#/welcome';
               location.reload();
               return true;
             })()`);
             await ensureDesktopReady(ctx);
-            await ctx.waitForText("Use OpenWork Cloud", { timeoutMs: 45_000 });
+            await ctx.waitForText("Use Micx Cloud", { timeoutMs: 45_000 });
             await ctx.waitFor("Boolean(document.querySelector('[data-testid=\"welcome-join-org\"]'))", {
               timeoutMs: 30_000,
               label: "welcome join organization fork",
             });
-            await ctx.expectText("Use OpenWork Cloud");
+            await ctx.expectText("Use Micx Cloud");
             await ctx.expectText("Join your organization");
             await clickSelector(ctx, '[data-testid="welcome-join-org"]', "join organization fork");
             await ctx.waitForText("Join your organization", { timeoutMs: 20_000 });
             await ctx.fill("#join-organization-input", requireStateValue(state.installPageUrl, "install page URL"));
             await clickExactText(ctx, "Connect", "button");
             await ctx.waitForText(`Connected to ${new URL(state.installConfig.webUrl).host}`, { timeoutMs: 30_000 });
-            await ctx.waitForText("Sign in to OpenWork", { timeoutMs: 60_000 });
+            await ctx.waitForText("Sign in to Micx", { timeoutMs: 60_000 });
           },
           assert: async () => {
-            await ctx.expectText("Sign in to OpenWork");
+            await ctx.expectText("Sign in to Micx");
             const bootstrap = await invokeDesktop(ctx, "getDesktopBootstrapConfig");
             witness(ctx, bootstrap?.requireSignin === true, "Pasting the install link writes a required sign-in bootstrap", bootstrap);
             witness(ctx, cleanBaseUrl(bootstrap?.baseUrl) === cleanBaseUrl(state.installConfig.webUrl), "The desktop bootstrap points at Acme's web server", bootstrap);
@@ -230,9 +230,9 @@ export default {
             witness(ctx, String(serverText).includes(serverHost), "The forced sign-in surface shows Acme's organization server", serverText);
             ctx.output("desktop-bootstrap-after-welcome-paste", JSON.stringify(bootstrap, null, 2));
             await ctx.screenshot("plain-desktop-join-org-paste-forced-signin", {
-              claim: "A plain first-run desktop asks whether to use OpenWork Cloud or join an organization, and pasting Acme's link binds it to Acme's server.",
+              claim: "A plain first-run desktop asks whether to use Micx Cloud or join an organization, and pasting Acme's link binds it to Acme's server.",
               voiceover: vo[4],
-              requireText: ["Welcome to OpenWork", "Sign in to OpenWork", `Connected to ${serverHost}`],
+              requireText: ["Welcome to Micx", "Sign in to Micx", `Connected to ${serverHost}`],
               rejectText: ["Pick a folder"],
             });
           },
@@ -248,9 +248,9 @@ export default {
           // "The desktop opens sign-in for Acme Robotics with the browser handling the ha"
           action: async () => {
             await ensureDesktopReady(ctx);
-            await ctx.waitForText("Sign in to OpenWork", { timeoutMs: 60_000 });
+            await ctx.waitForText("Sign in to Micx", { timeoutMs: 60_000 });
             await stubDesktopExternalOpenCapture(ctx);
-            await clickExactText(ctx, "Sign in to OpenWork", "button");
+            await clickExactText(ctx, "Sign in to Micx", "button");
             state.browserSignInUrl = await ctx.waitFor(
               `(() => {
                 const captured = typeof window.__capturedBrowserSigninUrl === 'string'
@@ -271,16 +271,16 @@ export default {
               await navigateToAbsolute(ctx, requireStateValue(state.browserSignInUrl, "browser sign-in URL"));
               await signInOnCurrentDenWebPage(ctx, MEMBER_EMAIL, MEMBER_PASSWORD, { captureDesktopHandoff: true });
               state.copiedDesktopUrl = await ctx.waitFor(
-                "typeof window.__capturedSignin === 'string' && window.__capturedSignin.startsWith('openwork://den-auth') && window.__capturedSignin",
-                { timeoutMs: 45_000, label: "captured browser-minted OpenWork sign-in link" },
+                "typeof window.__capturedSignin === 'string' && window.__capturedSignin.startsWith('micx://den-auth') && window.__capturedSignin",
+                { timeoutMs: 45_000, label: "captured browser-minted Micx sign-in link" },
               );
               state.copiedDesktopGrant = new URL(state.copiedDesktopUrl).searchParams.get("grant") ?? "";
-              witness(ctx, state.copiedDesktopGrant.length > 0, "The browser-minted OpenWork URL carries a handoff grant", redactUrlParam(state.copiedDesktopUrl, "grant"));
+              witness(ctx, state.copiedDesktopGrant.length > 0, "The browser-minted Micx URL carries a handoff grant", redactUrlParam(state.copiedDesktopUrl, "grant"));
             }, { targetId: state.authTargetId });
 
             useDesktopClient(ctx);
-            await deliverDeepLinkToDesktop(ctx, requireStateValue(state.copiedDesktopUrl, "browser-minted OpenWork sign-in URL"));
-            await ctx.waitFor("(localStorage.getItem('openwork.den.activeOrgName') ?? '').includes('Acme Robotics')", {
+            await deliverDeepLinkToDesktop(ctx, requireStateValue(state.copiedDesktopUrl, "browser-minted Micx sign-in URL"));
+            await ctx.waitFor("(localStorage.getItem('micx.den.activeOrgName') ?? '').includes('Acme Robotics')", {
               timeoutMs: 60_000,
               label: "desktop signed into Acme",
             });
@@ -311,7 +311,7 @@ export default {
             });
             const afterMismatchBootstrap = await invokeDesktop(ctx, "getDesktopBootstrapConfig");
             witness(ctx, cleanBaseUrl(afterMismatchBootstrap?.baseUrl) === cleanBaseUrl(state.installConfig.webUrl), "Cancel leaves the desktop bootstrap on Acme's server", afterMismatchBootstrap);
-            witness(ctx, (await ctx.eval("localStorage.getItem('openwork.den.activeOrgName') ?? ''")).includes("Acme Robotics"), "Cancel leaves the active organization as Acme Robotics", await ctx.eval("localStorage.getItem('openwork.den.activeOrgName') ?? ''"));
+            witness(ctx, (await ctx.eval("localStorage.getItem('micx.den.activeOrgName') ?? ''")).includes("Acme Robotics"), "Cancel leaves the active organization as Acme Robotics", await ctx.eval("localStorage.getItem('micx.den.activeOrgName') ?? ''"));
             ctx.output("desktop-signin-and-mismatch-guard", JSON.stringify({
               browserSignInUrl: state.browserSignInUrl,
               copiedDesktopUrl: redactUrlParam(state.copiedDesktopUrl, "grant"),
@@ -321,7 +321,7 @@ export default {
           },
           screenshot: {
             name: "desktop-stays-on-acme-after-cancel",
-            requireText: ["OpenWork Cloud", "Acme Robotics", "Sign out"],
+            requireText: ["Micx Cloud", "Acme Robotics", "Sign out"],
             rejectText: ["Switch organization server?", "Something went wrong"],
           },
         });
@@ -333,7 +333,7 @@ export default {
         await withClient(ctx, INVITEE_CDP_URL, async () => {
           await ctx.prove("The browser handoff and original install page both flip to Connected for Acme Robotics", {
             voiceover: vo[5],
-            // "Back on the install page, step three flips to Connected — OpenWork is set up"
+            // "Back on the install page, step three flips to Connected — Micx is set up"
             action: async () => {
               await withClient(ctx, INVITEE_CDP_URL, async () => {
                 await ctx.waitFor("Boolean(document.querySelector('[data-testid=\"desktop-connected\"]'))", {
@@ -347,14 +347,14 @@ export default {
             },
             assert: async () => {
               await ctx.expectText("Connected");
-              await ctx.expectText("OpenWork is set up for Acme Robotics");
+              await ctx.expectText("Micx is set up for Acme Robotics");
               const connected = await ctx.eval("document.querySelector('[data-testid=\"install-connected\"]')?.textContent ?? ''");
               witness(ctx, String(connected).includes("Connected") && String(connected).includes("Acme Robotics"), "Step three on the install page reports Connected for Acme Robotics", connected);
               ctx.output("desktop-handoff-status", JSON.stringify({ grant: state.copiedDesktopGrant ? "[captured]" : "", installPageReloaded: state.usedInstallPageReload }, null, 2));
             },
             screenshot: {
               name: "install-page-connected-to-acme",
-              requireText: ["Download the OpenWork installer", "Open the installer and paste this link:", "Connected", "OpenWork is set up for Acme Robotics"],
+              requireText: ["Download the Micx installer", "Open the installer and paste this link:", "Connected", "Micx is set up for Acme Robotics"],
             },
           });
         }, { targetId: state.installPageTargetId });
@@ -504,8 +504,8 @@ async function ensureAdminToken(ctx) {
     state.adminToken = signedIn.body.token;
     return state.adminToken;
   }
-  const token = process.env.OPENWORK_EVAL_DEN_TOKEN?.trim() ?? "";
-  ctx.assert(token.length > 0, `Admin sign-in failed and OPENWORK_EVAL_DEN_TOKEN is missing: ${signedIn.response.status}`);
+  const token = process.env.MICX_EVAL_DEN_TOKEN?.trim() ?? "";
+  ctx.assert(token.length > 0, `Admin sign-in failed and MICX_EVAL_DEN_TOKEN is missing: ${signedIn.response.status}`);
   state.adminToken = token;
   return token;
 }
@@ -598,7 +598,7 @@ async function ensureMemberAccount(ctx) {
 function markEmailVerified(ctx, email) {
   ctx.assert(
     MARK_VERIFIED_CMD.length > 0,
-    "Invitation acceptance requires a verified email; set OPENWORK_EVAL_MARK_VERIFIED_CMD (shell template with {email}).",
+    "Invitation acceptance requires a verified email; set MICX_EVAL_MARK_VERIFIED_CMD (shell template with {email}).",
   );
   execSync(MARK_VERIFIED_CMD.replaceAll("{email}", email), { stdio: "ignore" });
 }
@@ -630,7 +630,7 @@ async function signInToDenWeb(ctx, email, password) {
 async function signInOnCurrentDenWebPage(ctx, email, password, { captureDesktopHandoff = false } = {}) {
   await ctx.waitFor(
     `document.body.innerText.includes('Sign in')
-      || document.body.innerText.includes('Start using OpenWork')
+      || document.body.innerText.includes('Start using Micx')
       || Boolean(document.querySelector('input[type="email"], input[name="email"]'))`,
     { timeoutMs: 45_000, label: "sign-in screen" },
   );
@@ -662,7 +662,7 @@ async function signInOnCurrentDenWebPage(ctx, email, password, { captureDesktopH
   await clickLastExactText(ctx, "Sign in", "button");
   if (captureDesktopHandoff) {
     await ctx.waitFor(
-      "typeof window.__capturedSignin === 'string' && window.__capturedSignin.startsWith('openwork://den-auth')",
+      "typeof window.__capturedSignin === 'string' && window.__capturedSignin.startsWith('micx://den-auth')",
       { timeoutMs: 45_000, label: "desktop handoff URL captured" },
     );
   }
@@ -759,7 +759,7 @@ async function stubDesktopHandoffFetchCapture(ctx) {
         try {
           const payload = await response.clone().json();
           window.__capturedSigninPayload = payload;
-          if (typeof payload?.openworkUrl === 'string') window.__capturedSignin = payload.openworkUrl;
+          if (typeof payload?.micxUrl === 'string') window.__capturedSignin = payload.micxUrl;
         } catch {}
       }
       return response;
@@ -769,7 +769,7 @@ async function stubDesktopHandoffFetchCapture(ctx) {
       Object.defineProperty(window.location, 'assign', {
         configurable: true,
         value(url) {
-          if (String(url).startsWith('openwork://')) {
+          if (String(url).startsWith('micx://')) {
             window.__capturedSignin = String(url);
             return undefined;
           }
@@ -784,13 +784,13 @@ async function stubDesktopHandoffFetchCapture(ctx) {
 }
 
 async function ensureDesktopReady(ctx) {
-  await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 60_000, label: "desktop control API" });
-  await ctx.waitFor("Boolean(window.__OPENWORK_ELECTRON__?.invokeDesktop)", { timeoutMs: 60_000, label: "desktop bridge" });
+  await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 60_000, label: "desktop control API" });
+  await ctx.waitFor("Boolean(window.__MICX_ELECTRON__?.invokeDesktop)", { timeoutMs: 60_000, label: "desktop bridge" });
 }
 
 async function invokeDesktop(ctx, command, input) {
   await ensureDesktopReady(ctx);
-  return ctx.eval(`window.__OPENWORK_ELECTRON__.invokeDesktop(${JSON.stringify(command)}, ${JSON.stringify(input ?? null)})`, { awaitPromise: true });
+  return ctx.eval(`window.__MICX_ELECTRON__.invokeDesktop(${JSON.stringify(command)}, ${JSON.stringify(input ?? null)})`, { awaitPromise: true });
 }
 
 async function captureOriginalDesktopBootstrap(ctx) {
@@ -811,14 +811,14 @@ async function resetDesktopDenSession(ctx) {
   await ctx.eval(`(() => {
     document.querySelector('[role="alertdialog"] button')?.click();
     for (const key of [
-      'openwork.den.authToken',
-      'openwork.den.activeOrgId',
-      'openwork.den.activeOrgSlug',
-      'openwork.den.activeOrgName',
+      'micx.den.authToken',
+      'micx.den.activeOrgId',
+      'micx.den.activeOrgSlug',
+      'micx.den.activeOrgName',
     ]) {
       localStorage.removeItem(key);
     }
-    window.dispatchEvent(new CustomEvent('openwork-den-session-updated', { detail: { status: 'signed_out' } }));
+    window.dispatchEvent(new CustomEvent('micx-den-session-updated', { detail: { status: 'signed_out' } }));
     return true;
   })()`);
 }
@@ -826,9 +826,9 @@ async function resetDesktopDenSession(ctx) {
 async function stubDesktopExternalOpenCapture(ctx) {
   await ctx.eval(`(() => {
     window.__capturedBrowserSigninUrl = '';
-    window.__OPENWORK_ELECTRON__ = window.__OPENWORK_ELECTRON__ || {};
-    window.__OPENWORK_ELECTRON__.shell = window.__OPENWORK_ELECTRON__.shell || {};
-    window.__OPENWORK_ELECTRON__.shell.openExternal = async (url) => {
+    window.__MICX_ELECTRON__ = window.__MICX_ELECTRON__ || {};
+    window.__MICX_ELECTRON__.shell = window.__MICX_ELECTRON__.shell || {};
+    window.__MICX_ELECTRON__.shell.openExternal = async (url) => {
       window.__capturedBrowserSigninUrl = String(url);
       return { ok: true };
     };
@@ -836,14 +836,14 @@ async function stubDesktopExternalOpenCapture(ctx) {
   })()`);
 }
 
-async function deliverDeepLinkToDesktop(ctx, openworkUrl) {
+async function deliverDeepLinkToDesktop(ctx, micxUrl) {
   await ctx.eval(`(() => {
-    const url = ${JSON.stringify(openworkUrl)};
-    window.__OPENWORK__ = window.__OPENWORK__ || {};
-    const pending = window.__OPENWORK__.deepLinks || [];
-    window.__OPENWORK__.deepLinks = [...pending, url];
-    window.dispatchEvent(new CustomEvent('openwork:deep-link-native', { detail: [url] }));
-    window.dispatchEvent(new CustomEvent('openwork:deep-link', { detail: { urls: [url] } }));
+    const url = ${JSON.stringify(micxUrl)};
+    window.__MICX__ = window.__MICX__ || {};
+    const pending = window.__MICX__.deepLinks || [];
+    window.__MICX__.deepLinks = [...pending, url];
+    window.dispatchEvent(new CustomEvent('micx:deep-link-native', { detail: [url] }));
+    window.dispatchEvent(new CustomEvent('micx:deep-link', { detail: { urls: [url] } }));
     return true;
   })()`);
 }
@@ -855,7 +855,7 @@ async function completeDesktopSignedInJourney(ctx) {
       || document.body.innerText.includes("No resources have been configured for this organization yet.")
       || location.hash.includes('/session')
       || location.hash.includes('/workspace/')
-      || document.body.innerText.includes("OpenWork Cloud")`,
+      || document.body.innerText.includes("Micx Cloud")`,
     { timeoutMs: 60_000, label: "post-sign-in desktop surface" },
   );
 
@@ -878,7 +878,7 @@ async function completeDesktopSignedInJourney(ctx) {
   }
 
   await ctx.navigateHash("/settings/cloud-account");
-  await ctx.waitForText("OpenWork Cloud", { timeoutMs: 45_000 });
+  await ctx.waitForText("Micx Cloud", { timeoutMs: 45_000 });
   await ctx.waitForText("Sign out", { timeoutMs: 45_000 });
   await ctx.expectText("Acme Robotics", { timeoutMs: 45_000 });
   await ctx.expectText(MEMBER_EMAIL, { timeoutMs: 45_000 });
@@ -946,8 +946,8 @@ async function fetchAndVerifyMacInstallerRedirect(ctx) {
   const location = response.headers.get("location") ?? "";
   const releaseTag = await expectedInstallerReleaseTag(ctx);
   const version = releaseTag.startsWith("v") ? releaseTag.slice(1) : releaseTag;
-  const fileName = `openwork-mac-arm64-${version}.dmg`;
-  const expectedLocation = `https://github.com/different-ai/openwork/releases/download/${encodeURIComponent(releaseTag)}/${encodeURIComponent(fileName)}`;
+  const fileName = `micx-mac-arm64-${version}.dmg`;
+  const expectedLocation = `https://github.com/different-ai/micx/releases/download/${encodeURIComponent(releaseTag)}/${encodeURIComponent(fileName)}`;
   const parsedLocation = location ? new URL(location) : null;
 
   return {
@@ -975,7 +975,7 @@ function readBootstrapConfig(ctx, bootstrapPath) {
 }
 
 function buildMismatchedDenAuthUrl() {
-  const url = new URL("openwork://den-auth");
+  const url = new URL("micx://den-auth");
   url.searchParams.set("grant", `bogus-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`);
   url.searchParams.set("denBaseUrl", "https://other-server.example/api/den");
   return url.toString();

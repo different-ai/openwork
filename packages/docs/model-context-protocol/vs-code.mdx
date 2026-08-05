@@ -1,14 +1,14 @@
 ---
-title: "OpenWork MCP for VS Code"
+title: "Micx MCP for VS Code"
 sidebarTitle: "VS Code"
-description: "VS Code MCP setup for OpenWork Connect, with OAuth access to your org's Gmail, Calendar, Drive, shared connections, skills, and Cloud resources."
+description: "VS Code MCP setup for Micx Connect, with OAuth access to your org's Gmail, Calendar, Drive, shared connections, skills, and Cloud resources."
 ---
 
-The OpenWork MCP server ([OpenWork Connect](/cloud/run-in-the-cloud/cloud-mcp))
-enables VS Code to use the OpenWork capabilities your organization has made
+The Micx MCP server ([Micx Connect](/cloud/run-in-the-cloud/cloud-mcp))
+enables VS Code to use the Micx capabilities your organization has made
 available to you: Gmail read/search, Calendar list/create, Drive search/read,
 Gmail draft creation, shared MCP connections such as Notion, Linear, Slack,
-Stripe, Exa, and Context7, shared skills, and OpenWork Cloud resources like
+Stripe, Exa, and Context7, shared skills, and Micx Cloud resources like
 skills, plugins, marketplaces, workers, members, roles, teams, and LLM
 providers. The server exposes only `search_capabilities` and
 `execute_capability`, so VS Code searches what you can access and runs exact
@@ -20,19 +20,19 @@ capability names instead of loading hundreds of tool definitions into context.
 https://api.openworklabs.com/mcp/agent
 ```
 
-OAuth sign-in uses your OpenWork account, and the organization you pick is
+OAuth sign-in uses your Micx account, and the organization you pick is
 pinned into the token. If you do not have an account, create a
-[free OpenWork account](https://app.openworklabs.com?mode=sign-up).
+[free Micx account](https://app.openworklabs.com?mode=sign-up).
 
 ## Setup
 
 Run this command:
 
 ```sh
-code --add-mcp '{"name":"openwork","type":"http","url":"https://api.openworklabs.com/mcp/agent"}'
+code --add-mcp '{"name":"micx","type":"http","url":"https://api.openworklabs.com/mcp/agent"}'
 ```
 
-Then open the Command Palette and run `MCP: List Servers` > `openwork` >
+Then open the Command Palette and run `MCP: List Servers` > `micx` >
 `Start Server`. Follow the sign-in prompt and choose your organization.
 
 ## Manual setup
@@ -43,7 +43,7 @@ Open the Command Palette and run `MCP: Open User Configuration`, or edit
 ```json
 {
   "servers": {
-    "openwork": {
+    "micx": {
       "type": "http",
       "url": "https://api.openworklabs.com/mcp/agent"
     }
@@ -51,16 +51,16 @@ Open the Command Palette and run `MCP: Open User Configuration`, or edit
 }
 ```
 
-Then run `MCP: List Servers` > `openwork` > `Start Server`, and follow the
+Then run `MCP: List Servers` > `micx` > `Start Server`, and follow the
 sign-in prompt.
 
 ## Switch organizations
 
-Remove the stored MCP auth token for `openwork`, then start the server again
+Remove the stored MCP auth token for `micx`, then start the server again
 and choose the organization you want during browser sign-in.
 
 <Note>
-This is a setup guide. These steps match OpenWork Connect's OAuth profile:
+This is a setup guide. These steps match Micx Connect's OAuth profile:
 HTTPS or HTTP loopback callbacks, PKCE S256, and dynamic client registration
 fallback. VS Code is listed as setup only because native proof is not complete.
 See the
@@ -70,7 +70,7 @@ table.
 
 ## What you can ask
 
-- "Which OpenWork organization am I connected to?"
+- "Which Micx organization am I connected to?"
 - "Assign Priya to the Sales team."
 - "Search my org's capabilities for calendar tools, then list tomorrow's events."
 - "Find the Q3 launch page in Notion and summarize it."

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { captureScreenshot, evaluate } from "@openwork/cdp";
-import type { Surface } from "@openwork/cdp";
+import { captureScreenshot, evaluate } from "@micx/cdp";
+import type { Surface } from "@micx/cdp";
 import { currentTape } from "./ambient.ts";
 
 export interface Shot {

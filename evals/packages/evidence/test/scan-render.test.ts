@@ -41,7 +41,7 @@ function record(name: string, dir: string, createdAt: string, passed: boolean): 
 }
 
 test("scanRolls reads valid rolls and legacy evidence while tolerating corrupt roll.json", async () => {
-  const resultsDir = await mkdtemp(join(tmpdir(), "openwork-evidence-scan-"));
+  const resultsDir = await mkdtemp(join(tmpdir(), "micx-evidence-scan-"));
   try {
     const rollsDir = join(resultsDir, "rolls");
     const olderDir = join(rollsDir, "2026-07-01T10-00-00-000Z-older");
@@ -101,7 +101,7 @@ test("renderPrMarkdown binds claim verdicts to uploaded image URLs", () => {
 });
 
 test("scanRolls skips a symlinked roll.json without throwing", async () => {
-  const resultsDir = await mkdtemp(join(tmpdir(), "openwork-evidence-symlink-roll-"));
+  const resultsDir = await mkdtemp(join(tmpdir(), "micx-evidence-symlink-roll-"));
   try {
     const rollDir = join(resultsDir, "rolls", "2026-07-02T10-00-00-000Z-symlinked");
     await mkdir(rollDir, { recursive: true });

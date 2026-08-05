@@ -2,45 +2,45 @@
 
 [English](../README.md) | 日本語 | [他の翻訳README](./README.md)
 
-# OpenWork
-> OpenWorkは、Claude Cowork/Codex（デスクトップアプリ）のオープンソース代替です。
+# Micx Work
+> Micxは、Claude Cowork/Codex（デスクトップアプリ）のオープンソース代替です。
 
 ## 基本理念
 
-- ローカルファースト、クラウド対応: OpenWorkはワンクリックであなたのマシン上で動作します。メッセージを即座に送信できます。
+- ローカルファースト、クラウド対応: Micxはワンクリックであなたのマシン上で動作します。メッセージを即座に送信できます。
 - コンポーザブル: デスクトップアプリ、WhatsApp/Slack/Telegramコネクタ、またはサーバー。用途に合ったものを使えます。ロックインなし。
-- エジェクタブル: OpenWorkはOpenCodeで動いているため、OpenCodeでできることはすべてOpenWorkでも動作します（UIがなくても）。
+- エジェクタブル: MicxはOpenCodeで動いているため、OpenCodeでできることはすべてMicxでも動作します（UIがなくても）。
 - シェアリング・イズ・ケアリング: localhostでソロ作業を始め、必要に応じてリモート共有を明示的にオプトインできます。
 
 <p align="center">
-  <img src="../app-demo.gif" alt="OpenWork デモ" width="800" />
+  <img src="../app-demo.gif" alt="Micx デモ" width="800" />
 </p>
 
-OpenWorkは、エージェントワークフローを再現可能なプロダクト化されたプロセスとして簡単にリリースできるように設計されています。
+Micxは、エージェントワークフローを再現可能なプロダクト化されたプロセスとして簡単にリリースできるように設計されています。
 
 ## 代替UI
-- **OpenWork Server（CLIホスト）**: デスクトップUIなしでOpenWorkサーバーを実行します。
-  - インストール: `npm install -g openwork-server`
-  - 実行: `openwork-server`
+- **Micx Server（CLIホスト）**: デスクトップUIなしでMicxサーバーを実行します。
+  - インストール: `npm install -g micx-server`
+  - 実行: `micx-server`
 
 ## クイックスタート
 
-デスクトップアプリを[openworklabs.com/download](https://openworklabs.com/download)からダウンロードするか、最新の[GitHubリリース](https://github.com/different-ai/openwork/releases)を取得するか、以下の手順でソースからインストールしてください。
+デスクトップアプリを[micxlabs.com/download](https://micxlabs.com/download)からダウンロードするか、最新の[GitHubリリース](https://github.com/different-ai/micx/releases)を取得するか、以下の手順でソースからインストールしてください。
 
 - macOSおよびLinux向けのダウンロードが直接利用可能です。
-- Windowsへのアクセスは現在、[openworklabs.com/pricing#windows-support](https://openworklabs.com/pricing#windows-support)の有料サポートプランで提供されています。
-- ホステッドOpenWork Cloudワーカーは、チェックアウト後にWebアプリから起動し、デスクトップアプリから`Add a worker` -> `Connect remote`で接続します。
+- Windowsへのアクセスは現在、[micxlabs.com/pricing#windows-support](https://micxlabs.com/pricing#windows-support)の有料サポートプランで提供されています。
+- ホステッドMicx Cloudワーカーは、チェックアウト後にWebアプリから起動し、デスクトップアプリから`Add a worker` -> `Connect remote`で接続します。
 
-## なぜOpenWorkか
+## なぜMicxか
 
 現在のOpenCode向けCLIやGUIは開発者を中心に設計されています。つまり、ファイルの差分、ツール名、そしてCLIを公開しなければ拡張が難しい機能に焦点が当てられています。
 
-OpenWorkは以下を目指して設計されています:
+Micxは以下を目指して設計されています:
 
 - **拡張可能**: スキルとOpenCodeプラグインはインストール可能なモジュールです。
 - **監査可能**: 何が、いつ、なぜ起きたかを表示します。
 - **権限管理**: 特権フローへのアクセスを制御します。
-- **ローカル/リモート**: OpenWorkはローカルでもリモートサーバーへの接続でも動作します。
+- **ローカル/リモート**: Micxはローカルでもリモートサーバーへの接続でも動作します。
 
 ## 含まれる機能
 
@@ -94,7 +94,7 @@ pnpm install --frozen-lockfile
 
 which bun
 bun --version
-pnpm --filter @openwork/desktop exec tauri --version
+pnpm --filter @micx/desktop exec tauri --version
 ```
 
 ### インストール
@@ -103,7 +103,7 @@ pnpm --filter @openwork/desktop exec tauri --version
 pnpm install
 ```
 
-OpenWorkは現在 `apps/app`（UI）と `apps/desktop`（デスクトップシェル）に配置されています。
+Micxは現在 `apps/app`（UI）と `apps/desktop`（デスクトップシェル）に配置されています。
 
 ### 実行（デスクトップ）
 
@@ -111,7 +111,7 @@ OpenWorkは現在 `apps/app`（UI）と `apps/desktop`（デスクトップシ�
 pnpm dev
 ```
 
-`pnpm dev` は自動的に `OPENWORK_DEV_MODE=1` を有効にするため、デスクトップ開発では個人のグローバル設定/認証/データの代わりに分離されたOpenCode状態を使用します。
+`pnpm dev` は自動的に `MICX_DEV_MODE=1` を有効にするため、デスクトップ開発では個人のグローバル設定/認証/データの代わりに分離されたOpenCode状態を使用します。
 
 ### 実行（Web UIのみ）
 
@@ -119,7 +119,7 @@ pnpm dev
 pnpm dev:ui
 ```
 
-リポジトリのすべての `dev` エントリポイントは同じ開発モード分離にオプトインするため、ローカルテストでは一貫してOpenWork管理のOpenCode状態を使用します。
+リポジトリのすべての `dev` エントリポイントは同じ開発モード分離にオプトインするため、ローカルテストでは一貫してMicx管理のOpenCode状態を使用します。
 
 ### Archユーザー向け:
 
@@ -130,10 +130,10 @@ curl -fsSL https://opencode.ai/install | bash -s -- --version "$(node -e "const 
 
 ## アーキテクチャ（概要）
 
-- **ホストモード**では、OpenWorkはローカルホストスタックを実行し、UIをそれに接続します。
-  - デフォルトランタイム: `openwork-server`。OpenCodeとOpenWork APIを同じサーバーで提供します。
+- **ホストモード**では、Micxはローカルホストスタックを実行し、UIをそれに接続します。
+  - デフォルトランタイム: `micx-server`。OpenCodeとMicx APIを同じサーバーで提供します。
 
-プロジェクトフォルダを選択すると、OpenWorkはそのフォルダを使用してローカルでホストスタックを実行し、デスクトップUIを接続します。
+プロジェクトフォルダを選択すると、Micxはそのフォルダを使用してローカルでホストスタックを実行し、デスクトップUIを接続します。
 これにより、リモートサーバーなしで完全にマシン上でエージェントワークフローの実行、プロンプトの送信、進捗の確認が可能です。
 
 - UIは `@opencode-ai/sdk/v2/client` を使用して:
@@ -152,12 +152,12 @@ curl -fsSL https://opencode.ai/install | bash -s -- --version "$(node -e "const 
 
 ## OpenCodeプラグイン
 
-プラグインはOpenCodeを拡張する**ネイティブ**な方法です。OpenWorkはスキルタブから `opencode.json` を読み書きして管理します。
+プラグインはOpenCodeを拡張する**ネイティブ**な方法です。Micxはスキルタブから `opencode.json` を読み書きして管理します。
 
 - **プロジェクトスコープ**: `<workspace>/opencode.json`
 - **グローバルスコープ**: `~/.config/opencode/opencode.json`（または `$XDG_CONFIG_HOME/opencode/opencode.json`）
 
-`opencode.json` を手動で編集することもできます。OpenWorkはOpenCode CLIと同じ形式を使用します:
+`opencode.json` を手動で編集することもできます。MicxはOpenCode CLIと同じ形式を使用します:
 
 ```json
 {
@@ -183,19 +183,19 @@ pnpm test:e2e
 
 ### Linux / Wayland（Hyprland）
 
-OpenWorkがWebKitGTKエラー（`Failed to create GBM buffer` など）で起動時にクラッシュする場合は、起動前にdmabufまたはコンポジティングを無効にしてください。以下のいずれかの環境変数フラグを試してください。
+MicxがWebKitGTKエラー（`Failed to create GBM buffer` など）で起動時にクラッシュする場合は、起動前にdmabufまたはコンポジティングを無効にしてください。以下のいずれかの環境変数フラグを試してください。
 
 ```bash
-WEBKIT_DISABLE_DMABUF_RENDERER=1 openwork
+WEBKIT_DISABLE_DMABUF_RENDERER=1 micx
 ```
 
 ```bash
-WEBKIT_DISABLE_COMPOSITING_MODE=1 openwork
+WEBKIT_DISABLE_COMPOSITING_MODE=1 micx
 ```
 
 ## セキュリティに関する注意
 
-- OpenWorkはデフォルトでモデルの推論と機密ツールメタデータを非表示にします。
+- Micxはデフォルトでモデルの推論と機密ツールメタデータを非表示にします。
 - ホストモードはデフォルトで `127.0.0.1` にバインドします。
 
 ## コントリビューション
@@ -224,7 +224,7 @@ WEBKIT_DISABLE_COMPOSITING_MODE=1 openwork
 
 ## チーム・企業向け
 
-組織でのOpenWork利用に興味がありますか？ぜひお聞かせください — [ben@openworklabs.com](mailto:ben@openworklabs.com) までユースケースについてご連絡ください。
+組織でのMicx利用に興味がありますか？ぜひお聞かせください — [ben@micxlabs.com](mailto:ben@micxlabs.com) までユースケースについてご連絡ください。
 
 ## ライセンス
 

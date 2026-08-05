@@ -47,7 +47,7 @@ on:
         description: "Artifact name in artifact_run_id"
         required: false
         type: string
-        default: openwork-electron-linux-x64
+        default: micx-electron-linux-x64
       asset_url_x86_64:
         description: "Optional explicit public URL for x86_64 Electron tarball"
         required: false
@@ -61,7 +61,7 @@ on:
         description: "AUR repo name"
         required: false
         type: string
-        default: openwork
+        default: micx
 
   workflow_call:
     inputs:
@@ -93,7 +93,7 @@ on:
       artifact_name:
         required: false
         type: string
-        default: openwork-electron-linux-x64
+        default: micx-electron-linux-x64
       asset_url_x86_64:
         required: false
         type: string
@@ -104,7 +104,7 @@ on:
       aur_repo:
         required: false
         type: string
-        default: openwork
+        default: micx
     secrets:
       AUR_SSH_PRIVATE_KEY:
         required: false
@@ -131,9 +131,9 @@ jobs:
       INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
       INPUT_ASSET_URL_X86_64: ${{ inputs.asset_url_x86_64 }}
       INPUT_ARTIFACT_RUN_ID: ${{ inputs.artifact_run_id }}
-      INPUT_ARTIFACT_NAME: ${{ inputs.artifact_name || 'openwork-electron-linux-x64' }}
+      INPUT_ARTIFACT_NAME: ${{ inputs.artifact_name || 'micx-electron-linux-x64' }}
       PUSH_TO_AUR: ${{ inputs.push_to_aur && 'true' || 'false' }}
-      AUR_REPO: ${{ inputs.aur_repo || 'openwork' }}
+      AUR_REPO: ${{ inputs.aur_repo || 'micx' }}
     steps:
       - name: Validate workflow inputs
         shell: bash
@@ -221,11 +221,11 @@ jobs:
           asset_url="${INPUT_ASSET_URL_X86_64:-}"
           if [ -z "$asset_url" ]; then
             version="${release_tag#v}"
-            asset_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${release_tag}/openwork-linux-x64-${version}.tar.gz"
+            asset_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${release_tag}/micx-linux-x64-${version}.tar.gz"
           fi
 
           mkdir -p /tmp/aur-artifacts
-          curl -fL --retry 5 --retry-all-errors --retry-delay 2 "$asset_url" -o /tmp/aur-artifacts/openwork-linux-x64.tar.gz
+          curl -fL --retry 5 --retry-all-errors --retry-delay 2 "$asset_url" -o /tmp/aur-artifacts/micx-linux-x64.tar.gz
 
           echo "RESOLVED_RELEASE_TAG=${release_tag}" >> "$GITHUB_ENV"
           echo "RESOLVED_ASSET_URL_X86_64=${asset_url}" >> "$GITHUB_ENV"
@@ -234,7 +234,7 @@ jobs:
         if: env.ARTIFACT_SOURCE == 'local-build-artifact' && env.INPUT_ASSET_URL_X86_64 == ''
         uses: actions/download-artifact@v8
         with:
-          name: ${{ inputs.artifact_name || 'openwork-electron-linux-x64' }}
+          name: ${{ inputs.artifact_name || 'micx-electron-linux-x64' }}
           run-id: ${{ inputs.artifact_run_id }}
           github-token: ${{ github.token }}
           path: /tmp/aur-artifacts
@@ -245,14 +245,14 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p /tmp/aur-artifacts
-          curl -fL --retry 5 --retry-all-errors --retry-delay 2 "${INPUT_ASSET_URL_X86_64}" -o /tmp/aur-artifacts/openwork-linux-x64.tar.gz
+          curl -fL --retry 5 --retry-all-errors --retry-delay 2 "${INPUT_ASSET_URL_X86_64}" -o /tmp/aur-artifacts/micx-linux-x64.tar.gz
 
       - name: Resolve local artifact path
         if: env.ARTIFACT_SOURCE == 'local-build-artifact'
         shell: bash
         run: |
           set -euo pipefail
-          asset_path=$(find /tmp/aur-artifacts -maxdepth 3 -type f -name 'openwork-linux-x64-*.tar.gz' | head -n 1)
+          asset_path=$(find /tmp/aur-artifacts -maxdepth 3 -type f -name 'micx-linux-x64-*.tar.gz' | head -n 1)
           if [ -z "${asset_path:-}" ]; then
             asset_path=$(find /tmp/aur-artifacts -maxdepth 3 -type f -name '*.tar.gz' | head -n 1)
           fi
@@ -261,8 +261,8 @@ jobs:
             exit 1
           fi
 
-          if [ "$asset_path" != "/tmp/aur-artifacts/openwork-linux-x64.tar.gz" ]; then
-            cp "$asset_path" /tmp/aur-artifacts/openwork-linux-x64.tar.gz
+          if [ "$asset_path" != "/tmp/aur-artifacts/micx-linux-x64.tar.gz" ]; then
+            cp "$asset_path" /tmp/aur-artifacts/micx-linux-x64.tar.gz
           fi
 
       - name: Resolve version, URL, and checksum
@@ -271,7 +271,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          asset_path="/tmp/aur-artifacts/openwork-linux-x64.tar.gz"
+          asset_path="/tmp/aur-artifacts/micx-linux-x64.tar.gz"
           if [ ! -f "$asset_path" ]; then
             echo "Expected $asset_path to exist" >&2
             exit 1
@@ -297,7 +297,7 @@ jobs:
             source_url="${INPUT_ASSET_URL_X86_64}"
           fi
           if [ -z "$source_url" ]; then
-            source_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/v${version}/openwork-linux-x64-${version}.tar.gz"
+            source_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/v${version}/micx-linux-x64-${version}.tar.gz"
           fi
 
           echo "version=${version}" >> "$GITHUB_OUTPUT"
@@ -366,7 +366,7 @@ jobs:
           set -euo pipefail
           cd packaging/aur
           namcap PKGBUILD || true
-          pkg_file=$(ls -1 openwork-*.pkg.tar.* | head -n 1)
+          pkg_file=$(ls -1 micx-*.pkg.tar.* | head -n 1)
           namcap "$pkg_file" || true
 
       - name: Install built package
@@ -374,27 +374,27 @@ jobs:
         run: |
           set -euo pipefail
           cd packaging/aur
-          pkg_file=$(ls -1 openwork-*.pkg.tar.* | head -n 1)
+          pkg_file=$(ls -1 micx-*.pkg.tar.* | head -n 1)
           pacman -U --noconfirm "$pkg_file"
 
       - name: Smoke launch
         shell: bash
         run: |
           set -euo pipefail
-          pacman -Ql openwork > /tmp/openwork-installed-files.txt
+          pacman -Ql micx > /tmp/micx-installed-files.txt
 
-          if [ ! -s /tmp/openwork-installed-files.txt ]; then
-            echo "openwork package install listing is empty" >&2
+          if [ ! -s /tmp/micx-installed-files.txt ]; then
+            echo "micx package install listing is empty" >&2
             exit 1
           fi
 
           launch_bin=""
           for candidate in \
-            "$(command -v openwork 2>/dev/null || true)" \
-            /usr/bin/openwork \
-            /opt/openwork/openwork \
-            /opt/openwork/openwork-desktop \
-            /opt/openwork/opencode
+            "$(command -v micx 2>/dev/null || true)" \
+            /usr/bin/micx \
+            /opt/micx/micx \
+            /opt/micx/micx-desktop \
+            /opt/micx/opencode
           do
             if [ -n "$candidate" ] && [ -x "$candidate" ]; then
               launch_bin="$candidate"
@@ -403,7 +403,7 @@ jobs:
           done
 
           if [ -n "$launch_bin" ]; then
-            xvfb-run -a bash -lc '"$1" --help >/tmp/openwork-help.txt 2>&1 || "$1" --version >/tmp/openwork-version.txt 2>&1 || true' -- "$launch_bin"
+            xvfb-run -a bash -lc '"$1" --help >/tmp/micx-help.txt 2>&1 || "$1" --version >/tmp/micx-version.txt 2>&1 || true' -- "$launch_bin"
           else
             echo "No runnable desktop binary found; install sanity check passed." 
           fi
@@ -449,7 +449,7 @@ jobs:
           fi
 
           git add PKGBUILD .SRCINFO
-          git -c user.name="OpenWork Release Bot" \
+          git -c user.name="Micx Release Bot" \
               -c user.email="release-bot@users.noreply.github.com" \
               commit -m "chore(aur): update PKGBUILD for ${RELEASE_TAG#v}"
 

@@ -4,7 +4,7 @@
  * Run this against a single-org Den sandbox configured as Acme Robotics with:
  * - alex@acme.test in DEN_SINGLE_ORG_OWNER_EMAILS and DEN_BOOTSTRAP_ADMIN_EMAILS
  * - installLinks enabled by this flow through the platform-admin API
- * - a standard win-x64 desktop artifact available through OPENWORK_INSTALLER_ARTIFACTS_DIR
+ * - a standard win-x64 desktop artifact available through MICX_INSTALLER_ARTIFACTS_DIR
  *
  * Riley is created through ordinary sign-up and single-org membership
  * provisioning. No invitation or app-version endpoint participates in setup.
@@ -15,13 +15,13 @@ import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
 const FLOW_ID = "org-aware-dashboard-downloads";
 const vo = await loadVoiceoverParagraphs(FLOW_ID);
 
-const DEN_API_URL = cleanBaseUrl(process.env.OPENWORK_EVAL_DEN_API_URL);
-const DEN_WEB_URL = cleanBaseUrl(process.env.OPENWORK_EVAL_DEN_WEB_URL);
-const MARK_VERIFIED_CMD = process.env.OPENWORK_EVAL_MARK_VERIFIED_CMD?.trim() || "";
-const ADMIN_EMAIL = process.env.OPENWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
-const ADMIN_PASSWORD = process.env.OPENWORK_EVAL_DEMO_PASSWORD?.trim() || "OpenWorkDemo123!";
-const MEMBER_EMAIL = process.env.OPENWORK_EVAL_MEMBER_EMAIL?.trim() || "riley.downloads@acme.test";
-const MEMBER_PASSWORD = process.env.OPENWORK_EVAL_MEMBER_PASSWORD?.trim() || "OpenWorkDemo123!";
+const DEN_API_URL = cleanBaseUrl(process.env.MICX_EVAL_DEN_API_URL);
+const DEN_WEB_URL = cleanBaseUrl(process.env.MICX_EVAL_DEN_WEB_URL);
+const MARK_VERIFIED_CMD = process.env.MICX_EVAL_MARK_VERIFIED_CMD?.trim() || "";
+const ADMIN_EMAIL = process.env.MICX_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
+const ADMIN_PASSWORD = process.env.MICX_EVAL_DEMO_PASSWORD?.trim() || "MicxDemo123!";
+const MEMBER_EMAIL = process.env.MICX_EVAL_MEMBER_EMAIL?.trim() || "riley.downloads@acme.test";
+const MEMBER_PASSWORD = process.env.MICX_EVAL_MEMBER_PASSWORD?.trim() || "MicxDemo123!";
 const ORGANIZATION_NAME = "Acme Robotics";
 
 const state = {
@@ -260,9 +260,9 @@ export default {
   title: "Every Acme member gets the configured desktop installer without invalidating earlier links",
   kind: "user-facing",
   requiredEnv: [
-    "OPENWORK_EVAL_DEN_API_URL",
-    "OPENWORK_EVAL_DEN_WEB_URL",
-    "OPENWORK_EVAL_MARK_VERIFIED_CMD",
+    "MICX_EVAL_DEN_API_URL",
+    "MICX_EVAL_DEN_WEB_URL",
+    "MICX_EVAL_MARK_VERIFIED_CMD",
   ],
   steps: [
     {
@@ -274,17 +274,17 @@ export default {
             await ensureSetup(ctx);
             await uiSignIn(ctx, ADMIN_EMAIL, ADMIN_PASSWORD);
             await navigateTo(ctx, `${DEN_WEB_URL}/dashboard`);
-            await ctx.waitForText(`Download OpenWork for ${ORGANIZATION_NAME}`, { timeoutMs: 30_000 });
+            await ctx.waitForText(`Download Micx for ${ORGANIZATION_NAME}`, { timeoutMs: 30_000 });
           },
           assert: async () => {
-            await ctx.expectText(`Download OpenWork for ${ORGANIZATION_NAME}`);
+            await ctx.expectText(`Download Micx for ${ORGANIZATION_NAME}`);
             await ctx.expectText("Download for this workspace");
             const evidence = await ctx.eval(`(() => {
               const card = document.querySelector('[data-testid="organization-download-card"]');
               return {
                 cardExists: Boolean(card),
                 githubLinks: [...(card?.querySelectorAll('a') ?? [])].map((link) => link.href).filter((href) => href.includes('github.com')),
-                githubRequests: performance.getEntriesByType('resource').map((entry) => entry.name).filter((url) => url.includes('api.github.com/repos/different-ai/openwork/releases')),
+                githubRequests: performance.getEntriesByType('resource').map((entry) => entry.name).filter((url) => url.includes('api.github.com/repos/different-ai/micx/releases')),
               };
             })()`);
             witness(ctx, evidence.cardExists === true, "The organization download card is visible", evidence);
@@ -293,7 +293,7 @@ export default {
           },
           screenshot: {
             name: "admin-acme-download-card",
-            requireText: [`Download OpenWork for ${ORGANIZATION_NAME}`, "Download for this workspace"],
+            requireText: [`Download Micx for ${ORGANIZATION_NAME}`, "Download for this workspace"],
             rejectText: ["Apple Silicon (M1+)", "ARM64 Installer"],
           },
         });
@@ -310,7 +310,7 @@ export default {
               "location.pathname === '/install' && new URL(location.href).searchParams.has('token') && location.href",
               { timeoutMs: 30_000, label: "Acme install page" },
             );
-            await ctx.waitForText(`Download OpenWork for ${ORGANIZATION_NAME}`, { timeoutMs: 30_000 });
+            await ctx.waitForText(`Download Micx for ${ORGANIZATION_NAME}`, { timeoutMs: 30_000 });
           },
           assert: async () => {
             const config = await fetchInstallConfig(ctx, state.adminDirectLink);
@@ -320,7 +320,7 @@ export default {
           },
           screenshot: {
             name: "admin-acme-install-page",
-            requireText: [`Download OpenWork for ${ORGANIZATION_NAME}`, "Run it, then sign in", "Download for"],
+            requireText: [`Download Micx for ${ORGANIZATION_NAME}`, "Run it, then sign in", "Download for"],
           },
         });
       },
@@ -337,7 +337,7 @@ export default {
             await ctx.waitForText("Download for this workspace", { timeoutMs: 30_000 });
           },
           assert: async () => {
-            await ctx.expectText(`Download OpenWork for ${ORGANIZATION_NAME}`);
+            await ctx.expectText(`Download Micx for ${ORGANIZATION_NAME}`);
             await ctx.expectText("WORKSPACE MEMBER");
             await ctx.expectNoText("Copy install link");
             const rotate = await denApiFetch(`/v1/orgs/${state.organizationId}/install-links`, {
@@ -349,7 +349,7 @@ export default {
           },
           screenshot: {
             name: "member-acme-download-card",
-            requireText: ["WORKSPACE MEMBER", `Download OpenWork for ${ORGANIZATION_NAME}`, "Download for this workspace"],
+            requireText: ["WORKSPACE MEMBER", `Download Micx for ${ORGANIZATION_NAME}`, "Download for this workspace"],
             rejectText: ["Copy install link", "Pending invites"],
           },
         });
@@ -358,7 +358,7 @@ export default {
     {
       name: "Frame 4",
       run: async (ctx) => {
-        await ctx.prove("Riley receives the configured Windows installer from Acme's OpenWork server", {
+        await ctx.prove("Riley receives the configured Windows installer from Acme's Micx server", {
           voiceover: vo[3],
           action: async () => {
             await ctx.client.send("Emulation.setUserAgentOverride", {
@@ -387,12 +387,12 @@ export default {
             const bytes = await response.arrayBuffer();
             const disposition = response.headers.get("content-disposition") ?? "";
             witness(ctx, response.ok, "Acme's server returns the Windows installer", { status: response.status, disposition, byteLength: bytes.byteLength });
-            witness(ctx, disposition.includes("openwork-win-x64-"), "The Windows filename is the standard desktop installer asset", disposition);
+            witness(ctx, disposition.includes("micx-win-x64-"), "The Windows filename is the standard desktop installer asset", disposition);
             witness(ctx, bytes.byteLength > 0, "The Windows installer response is non-empty", bytes.byteLength);
           },
           screenshot: {
             name: "member-acme-windows-installer",
-            requireText: [`Download OpenWork for ${ORGANIZATION_NAME}`, "Download for Windows", "Run it, then sign in"],
+            requireText: [`Download Micx for ${ORGANIZATION_NAME}`, "Download for Windows", "Run it, then sign in"],
           },
         });
       },
@@ -458,7 +458,7 @@ export default {
             await ctx.eval("(() => { localStorage.clear(); sessionStorage.clear(); return true; })()");
             await ctx.client.send("Network.clearBrowserCookies");
             await navigateTo(ctx, state.firstSharedLink);
-            await ctx.waitForText(`Download OpenWork for ${ORGANIZATION_NAME}`, { timeoutMs: 30_000 });
+            await ctx.waitForText(`Download Micx for ${ORGANIZATION_NAME}`, { timeoutMs: 30_000 });
           },
           assert: async () => {
             const config = await fetchInstallConfig(ctx, state.firstSharedLink);
@@ -474,7 +474,7 @@ export default {
           },
           screenshot: {
             name: "installer-still-requires-signin",
-            requireText: [`Download OpenWork for ${ORGANIZATION_NAME}`, "Run it, then sign in"],
+            requireText: [`Download Micx for ${ORGANIZATION_NAME}`, "Run it, then sign in"],
             rejectText: ["Members", "Settings", "Sign out"],
           },
         });

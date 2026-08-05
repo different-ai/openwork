@@ -13,7 +13,7 @@ scripts/migration/03-post-migration-cleanup.mjs  # delete src-tauri, flip defaul
 
 | Step | When | What user-visible effect |
 | ---- | ---- | ------------------------ |
-| 01   | Ready to ship the migration | Tauri users see "OpenWork is moving" prompt on next update |
+| 01   | Ready to ship the migration | Tauri users see "Micx is moving" prompt on next update |
 | 02   | Right after the workflow finishes | Dogfood validation — no user effect |
 | 03   | After 1-2 weeks of stable Electron telemetry | Dev repo is Electron-only; no user effect |
 
@@ -29,13 +29,13 @@ The next release is intentionally **non-destructive**:
 - Electron is built as a preview artifact on every push by
   `.github/workflows/build-electron-desktop.yml`.
 - Pushes to `dev` or `main` refresh the rolling prerelease bucket at
-  <https://github.com/different-ai/openwork/releases/tag/electron-preview-latest>.
+  <https://github.com/different-ai/micx/releases/tag/electron-preview-latest>.
 - The Debug settings migration controls are Tauri-only and developer-mode only.
   The default action, **Prepare migration data**, only writes
   `migration-snapshot.v1.json`; it does not quit, replace, or delete Tauri.
 - The install handoff requires a pasted Electron artifact URL plus two explicit
   confirmations. On macOS the native handoff keeps the previous bundle at
-  `OpenWork.app.migrate-bak` for rollback.
+  `Micx.app.migrate-bak` for rollback.
 
 Use this safe-prep release to test migration data capture and preview downloads
 before enabling any user-facing migration prompt.
@@ -44,12 +44,12 @@ before enabling any user-facing migration prompt.
 
 1. Wait for `Build Electron Desktop Preview` to finish on the target commit.
 2. Share the rolling preview release page:
-   <https://github.com/different-ai/openwork/releases/tag/electron-preview-latest>
+   <https://github.com/different-ai/micx/releases/tag/electron-preview-latest>
 3. Ask testers to download the matching platform artifact:
-   - macOS Apple Silicon: `openwork-mac-arm64-*.dmg` or `.zip`
-   - macOS Intel: `openwork-mac-x64-*.dmg` or `.zip`
-   - Windows: `openwork-win-x64-*.exe`
-   - Linux: `openwork-linux-x64-*.AppImage` or `.tar.gz`
+   - macOS Apple Silicon: `micx-mac-arm64-*.dmg` or `.zip`
+   - macOS Intel: `micx-mac-x64-*.dmg` or `.zip`
+   - Windows: `micx-win-x64-*.exe`
+   - Linux: `micx-linux-x64-*.AppImage` or `.tar.gz`
 
 Do not point stable Tauri users at these preview assets as an automatic update
 until the explicit migration release is cut and validated.
@@ -58,7 +58,7 @@ until the explicit migration release is cut and validated.
 
 ```bash
 node scripts/migration/01-cut-migration-release.mjs --version 0.12.0 \
-  --mac-url 'https://github.com/different-ai/openwork/releases/download/v0.12.0/OpenWork-darwin-arm64-0.12.0-mac.zip' \
+  --mac-url 'https://github.com/different-ai/micx/releases/download/v0.12.0/Micx-darwin-arm64-0.12.0-mac.zip' \
   --dry-run         # inspect planned changes first
 ```
 
@@ -69,7 +69,7 @@ What it does:
    AGENTS.md release runbook).
 3. Creates a release-config fragment at
    `apps/app/.env.migration-release` setting
-   `VITE_OPENWORK_MIGRATION_RELEASE=1` and the per-platform download
+   `VITE_MICX_MIGRATION_RELEASE=1` and the per-platform download
    URLs. The `Release App` workflow copies this into the build env so
    the migration prompt is dormant on every other build but live for
    this release.
@@ -136,11 +136,11 @@ If the v0.12.0 migration release is bad:
 - Users on Electron already: ship v0.12.1 via electron-updater. Same
   mechanism as any other update.
 - Users still on Tauri: the migrate prompt is gated on
-  `VITE_OPENWORK_MIGRATION_RELEASE=1` at build time. Re-cut the
+  `VITE_MICX_MIGRATION_RELEASE=1` at build time. Re-cut the
   release with that flag unset, minisign-sign a replacement
   `latest.json`, and users who haven't clicked "Install now" yet will
   fall back to the non-migrating release.
 - Users mid-migration: the Rust `migrate_to_electron` command keeps
-  the previous `.app` at `OpenWork.app.migrate-bak`. Instruct users
-  to `mv OpenWork.app.migrate-bak OpenWork.app` if the Electron
+  the previous `.app` at `Micx.app.migrate-bak`. Instruct users
+  to `mv Micx.app.migrate-bak Micx.app` if the Electron
   launch fails.

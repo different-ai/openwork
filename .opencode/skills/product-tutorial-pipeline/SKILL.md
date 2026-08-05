@@ -1,6 +1,6 @@
 ---
 name: product-tutorial-pipeline
-description: Reproduce or refresh a product tutorial with polished screenshots end-to-end — cloud dashboard flows, desktop app flows, Screen.Studio-style framing, tutorial doc, PR. Use when asked to "redo the tutorial", "refresh tutorial screenshots", "make a tutorial/walkthrough with screenshots", or to document a cloud + desktop flow like the OpenWork Cloud team quickstart.
+description: Reproduce or refresh a product tutorial with polished screenshots end-to-end — cloud dashboard flows, desktop app flows, Screen.Studio-style framing, tutorial doc, PR. Use when asked to "redo the tutorial", "refresh tutorial screenshots", "make a tutorial/walkthrough with screenshots", or to document a cloud + desktop flow like the Micx Cloud team quickstart.
 ---
 
 # Product Tutorial Pipeline
@@ -31,7 +31,7 @@ git worktree add ../_worktrees/<name> -b docs/<tutorial-branch> origin/dev
 - Do NOT run the desktop app locally on macOS from an agent shell —
   `app.whenReady()` never fires (window-server/keychain quirk); the Daytona
   Electron sandbox is the paved path.
-- Provider keys for real model runs come from the `openwork-eval-secrets`
+- Provider keys for real model runs come from the `micx-eval-secrets`
   volume (mounted automatically) or Infisical (`get-env-var` skill).
 
 ## 2. Drive and capture
@@ -63,11 +63,11 @@ style:
 ```bash
 # cloud/dashboard shots — browser chrome with the canonical URL
 node beautify.mjs raw/NN.png out/NN.png \
-  --chrome browser --url app.openworklabs.com --bg paper --width 1600
+  --chrome browser --url app.micxlabs.com --bg paper --width 1600
 
 # desktop shots — macOS chrome, contrasting background
 node beautify.mjs raw/NN.png out/NN.png \
-  --chrome mac --title OpenWork --bg indigo --width 1600
+  --chrome mac --title Micx --bg indigo --width 1600
 ```
 
 Run from a repo root that has `node_modules` (the script resolves `sharp`

@@ -1,6 +1,6 @@
 /**
  * User-facing flow demo: the composer plug menu (Skills / Extensions) paints
- * from local + cached data immediately instead of waiting for the OpenWork
+ * from local + cached data immediately instead of waiting for the Micx
  * Cloud (Den) capability fan-out.
  *
  * Perf fix under test (scratch/composer-skills-fast-load):
@@ -16,18 +16,18 @@
  * Skills section still renders local skills in milliseconds while the cloud
  * request is provably in flight.
  *
- * Requires a workspace whose root contains `.opencode/skills` (the OpenWork
+ * Requires a workspace whose root contains `.opencode/skills` (the Micx
  * repo checkout at /workspace in the Daytona eval sandbox).
  */
 const PLUG_BUTTON = 'button[title="Commands, skills, and MCPs"]';
 const SKILL_MARKERS = ["/browser-automation", "/agent-first-screenshots"];
 
 const DEN_KEYS_CLEANUP = `(() => {
-  localStorage.removeItem("openwork.den.authToken");
-  localStorage.removeItem("openwork.den.activeOrgId");
-  localStorage.removeItem("openwork.den.activeOrgSlug");
-  localStorage.removeItem("openwork.den.activeOrgName");
-  delete window.__OPENWORK_GATEWAY__;
+  localStorage.removeItem("micx.den.authToken");
+  localStorage.removeItem("micx.den.activeOrgId");
+  localStorage.removeItem("micx.den.activeOrgSlug");
+  localStorage.removeItem("micx.den.activeOrgName");
+  delete window.__MICX_GATEWAY__;
   return true;
 })()`;
 
@@ -74,9 +74,9 @@ export default {
     {
       name: "App boots into a workspace with a clean cloud state",
       run: async (ctx) => {
-        await ctx.waitFor("Boolean(window.__openworkControl)", {
+        await ctx.waitFor("Boolean(window.__micxControl)", {
           timeoutMs: 60_000,
-          label: "window.__openworkControl",
+          label: "window.__micxControl",
         });
         await ctx.waitFor("document.body.innerText.trim().length > 40", {
           label: "rendered body text",
@@ -86,9 +86,9 @@ export default {
         // starts from the same signed-out state.
         await ctx.eval(DEN_KEYS_CLEANUP);
         await ctx.eval("location.reload()").catch(() => {});
-        await ctx.waitFor("Boolean(window.__openworkControl)", {
+        await ctx.waitFor("Boolean(window.__micxControl)", {
           timeoutMs: 60_000,
-          label: "window.__openworkControl after reload",
+          label: "window.__micxControl after reload",
         });
         await ctx.waitFor(`Boolean(document.querySelector(${JSON.stringify(PLUG_BUTTON)}))`, {
           timeoutMs: 60_000,
@@ -151,24 +151,24 @@ export default {
         await ctx.prove("Extensions settle immediately instead of hanging on a loader", {
           claim: "Selecting Extensions shows the built-in extension catalog right away.",
           voiceover:
-            "Extensions behave the same way: the catalog is on screen immediately — here the built-in OpenWork Browser, already enabled.",
+            "Extensions behave the same way: the catalog is on screen immediately — here the built-in Micx Browser, already enabled.",
           action: async () => {
             await ctx.eval(`(() => {
               const btn = [...document.querySelectorAll("button")].find((b) => b.textContent.trim() === "Extensions");
               btn.click();
               return true;
             })()`);
-            await ctx.waitFor(`document.body.innerText.includes("OpenWork Browser")`, {
+            await ctx.waitFor(`document.body.innerText.includes("Micx Browser")`, {
               timeoutMs: 10_000,
               label: "extensions catalog entry",
             });
           },
           assert: async () => {
-            await ctx.expectText("OpenWork Browser");
+            await ctx.expectText("Micx Browser");
           },
           screenshot: {
             name: "extensions-section",
-            requireText: ["OpenWork Browser"],
+            requireText: ["Micx Browser"],
             rejectText: ["Loading commands"],
           },
         });
@@ -224,9 +224,9 @@ export default {
             // Boot clears any locally-set Den token (the server config is the
             // source of truth), so the fake scope is installed post-boot.
             await ctx.eval("location.reload()").catch(() => {});
-            await ctx.waitFor("Boolean(window.__openworkControl)", {
+            await ctx.waitFor("Boolean(window.__micxControl)", {
               timeoutMs: 60_000,
-              label: "window.__openworkControl after reload",
+              label: "window.__micxControl after reload",
             });
             await ctx.waitFor(`Boolean(document.querySelector(${JSON.stringify(PLUG_BUTTON)}))`, {
               timeoutMs: 60_000,
@@ -236,7 +236,7 @@ export default {
               // The gateway marker routes Den API calls through the page's own
               // fetch (same-origin), which we wrap to hold capability requests
               // for 15s — a deterministic "slow cloud".
-              window.__OPENWORK_GATEWAY__ = { version: 1 };
+              window.__MICX_GATEWAY__ = { version: 1 };
               const orig = window.fetch.bind(window);
               window.__denFetchLog = [];
               window.fetch = async (input, init) => {
@@ -247,8 +247,8 @@ export default {
                 }
                 return orig(input, init);
               };
-              localStorage.setItem("openwork.den.authToken", "eval-slow-cloud-token");
-              localStorage.setItem("openwork.den.activeOrgId", "org_slowcloud_" + Date.now());
+              localStorage.setItem("micx.den.authToken", "eval-slow-cloud-token");
+              localStorage.setItem("micx.den.activeOrgId", "org_slowcloud_" + Date.now());
               import("/src/react-app/domains/connections/cloud-inventory-cache.ts").then((m) => {
                 const tStart = performance.now();
                 const witness = { connectSettledMs: null };
@@ -313,9 +313,9 @@ export default {
       run: async (ctx) => {
         await ctx.eval(DEN_KEYS_CLEANUP);
         await ctx.eval("location.reload()").catch(() => {});
-        await ctx.waitFor("Boolean(window.__openworkControl)", {
+        await ctx.waitFor("Boolean(window.__micxControl)", {
           timeoutMs: 60_000,
-          label: "window.__openworkControl after cleanup",
+          label: "window.__micxControl after cleanup",
         });
       },
     },

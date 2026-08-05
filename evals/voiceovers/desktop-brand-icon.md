@@ -12,10 +12,10 @@ paths cover Windows (`win.setIcon`) and macOS (`app.dock.setIcon`).
 
 2. I paste our icon's URL and save — settings confirm the change applies to everyone in the org.
 
-3. On a teammate's desktop the app is just running — and within moments its icon in the taskbar switches from the OpenWork mark to our company icon, no restart needed.
+3. On a teammate's desktop the app is just running — and within moments its icon in the taskbar switches from the Micx mark to our company icon, no restart needed.
 
 4. Inside the app nothing is lost: the sidebar still shows our full logo — the wide wordmark — exactly as before.
 
 5. I quit and relaunch the app, and it comes back already wearing our icon from the very first frame — before sign-in even finishes.
 
-6. Back in the dashboard I clear the Icon URL, and the running app's icon returns to the stock OpenWork mark on its own.
+6. Back in the dashboard I clear the Icon URL, and the running app's icon returns to the stock Micx mark on its own.

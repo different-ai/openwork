@@ -51,7 +51,7 @@ concurrency:
 jobs:
   migrate:
     name: Apply migrations
-    if: github.repository == 'different-ai/openwork'
+    if: github.repository == 'different-ai/micx'
     runs-on: blacksmith-4vcpu-ubuntu-2204
 
     env:
@@ -95,7 +95,7 @@ jobs:
           version: 11.4.0
 
       - name: Install dependencies
-        run: pnpm install --filter "@openwork-ee/den-db..."
+        run: pnpm install --filter "@micx-ee/den-db..."
 
       - name: Setup pscale CLI
         id: setup-pscale
@@ -208,9 +208,9 @@ jobs:
             extra="--through ${{ inputs.baseline_through }}"
           fi
           if [ "${{ inputs.dry_run }}" = "true" ]; then
-            run_with_ddl_retry pnpm --filter @openwork-ee/den-db db:baseline -- $extra
+            run_with_ddl_retry pnpm --filter @micx-ee/den-db db:baseline -- $extra
           else
-            run_with_ddl_retry pnpm --filter @openwork-ee/den-db db:baseline -- --yes $extra
+            run_with_ddl_retry pnpm --filter @micx-ee/den-db db:baseline -- --yes $extra
           fi
 
       - name: Apply migrations
@@ -233,7 +233,7 @@ jobs:
             done
             return 1
           }
-          run_with_ddl_retry pnpm --filter @openwork-ee/den-db db:migrate
+          run_with_ddl_retry pnpm --filter @micx-ee/den-db db:migrate
 
       - name: Re-enable safe migrations
         if: always() && steps.setup-pscale.conclusion == 'success'

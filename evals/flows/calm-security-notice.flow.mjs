@@ -66,7 +66,7 @@ export default {
   title: "Routine security confirmation reads as calm guidance across workspace settings",
   kind: "user-facing",
   preserveTheme: true,
-  requiredEnv: ["OPENWORK_EVAL_DEN_WEB_URL", "OPENWORK_EVAL_DEN_MYSQL_CONTAINER"],
+  requiredEnv: ["MICX_EVAL_DEN_WEB_URL", "MICX_EVAL_DEN_MYSQL_CONTAINER"],
   steps: [
     {
       name: "Members shows canceled reauth as calm guidance",

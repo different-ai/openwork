@@ -1,20 +1,20 @@
 import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
 
 // Narration is loaded from the approved script
-// (evals/voiceovers/openwork-models-hidden-self-hosted.md).
+// (evals/voiceovers/micx-models-hidden-self-hosted.md).
 // The runner fails this flow if the narration drifts from that script.
-const FLOW_ID = "openwork-models-hidden-self-hosted";
+const FLOW_ID = "micx-models-hidden-self-hosted";
 const vo = await loadVoiceoverParagraphs(FLOW_ID);
 
 const SELF_HOSTED_BASE_URL = "https://den.internal.acme.test";
-const STARTUP_DIALOG_TITLE = "Use OpenWork Models without API keys";
-const DEFAULT_ORG_SERVER_TEXT = "Using standard OpenWork Cloud.";
+const STARTUP_DIALOG_TITLE = "Use Micx Models without API keys";
+const DEFAULT_ORG_SERVER_TEXT = "Using standard Micx Cloud.";
 const EDITOR_SELECTOR = '[contenteditable="true"][data-lexical-editor="true"]';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function waitForControl(ctx) {
-  await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 90_000, label: "OpenWork control API" });
+  await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 90_000, label: "Micx control API" });
 }
 
 async function reloadApp(ctx) {
@@ -44,7 +44,7 @@ async function clickReact(ctx, text) {
 
 /** Skip through first-run onboarding overlays (provider step + attribution). */
 async function dismissOnboardingOverlays(ctx) {
-  const ATTRIBUTION_TITLE = "How did you hear about OpenWork?";
+  const ATTRIBUTION_TITLE = "How did you hear about Micx?";
   if (await ctx.hasText("Skip and use the free model")) {
     await clickReact(ctx, "Skip and use the free model");
     // The attribution step follows the provider choice; wait for it (or for
@@ -71,7 +71,7 @@ async function dismissOnboardingOverlays(ctx) {
  */
 async function ensureWorkspaceSession(ctx) {
   await waitForControl(ctx);
-  const workspaceDir = ctx.env.OPENWORK_EVAL_WORKSPACE_DIR?.trim() || "/workspace/hello";
+  const workspaceDir = ctx.env.MICX_EVAL_WORKSPACE_DIR?.trim() || "/workspace/hello";
 
   // A previous (failed) run can leave the first-run overlays open; clear them
   // before deciding which route we are on.
@@ -177,10 +177,10 @@ async function openProviderStepViaWorkspaceSetup(ctx, workspaceDir) {
   // boot settles (the boot sequence restores the last session route and would
   // otherwise race the hash we set).
   await ctx.eval(`(() => {
-    const raw = localStorage.getItem("openwork.preferences");
+    const raw = localStorage.getItem("micx.preferences");
     const prefs = raw ? JSON.parse(raw) : {};
     prefs.hasCompletedOnboarding = false;
-    localStorage.setItem("openwork.preferences", JSON.stringify(prefs));
+    localStorage.setItem("micx.preferences", JSON.stringify(prefs));
     return true;
   })()`);
   await reloadApp(ctx);
@@ -212,24 +212,24 @@ async function openProviderStepViaWorkspaceSetup(ctx, workspaceDir) {
 /** Setup shortcut (labeled): reset the one-shot latches this flow proves. */
 async function resetPromoLatches(ctx, { startupShown }) {
   await ctx.eval(`(() => {
-    const raw = localStorage.getItem("openwork.preferences");
+    const raw = localStorage.getItem("micx.preferences");
     const prefs = raw ? JSON.parse(raw) : {};
     delete prefs.providerStepCompleted;
-    localStorage.setItem("openwork.preferences", JSON.stringify(prefs));
+    localStorage.setItem("micx.preferences", JSON.stringify(prefs));
     if (${JSON.stringify(Boolean(startupShown))}) {
-      localStorage.setItem("openwork.openworkModelsPromo.startupShown", "1");
+      localStorage.setItem("micx.micxModelsPromo.startupShown", "1");
     } else {
-      localStorage.removeItem("openwork.openworkModelsPromo.startupShown");
+      localStorage.removeItem("micx.micxModelsPromo.startupShown");
     }
-    localStorage.removeItem("openwork.openworkModelsPromo.hidden");
-    localStorage.removeItem("openwork.openworkModelsPromo.lastShownAt");
+    localStorage.removeItem("micx.micxModelsPromo.hidden");
+    localStorage.removeItem("micx.micxModelsPromo.lastShownAt");
     return true;
   })()`);
 }
 
 export default {
   id: FLOW_ID,
-  title: "Self-hosted control planes hide every OpenWork Models upsell surface; hosted keeps them",
+  title: "Self-hosted control planes hide every Micx Models upsell surface; hosted keeps them",
   kind: "user-facing",
   steps: [
     {
@@ -247,26 +247,26 @@ export default {
         ctx.recordEvidence({
           type: "assertion",
           status: "passed",
-          assertion: "Setup: session is ready on the default hosted OpenWork Cloud control plane with promo latches reset (startup dialog latch pre-marked for the baseline phase).",
+          assertion: "Setup: session is ready on the default hosted Micx Cloud control plane with promo latches reset (startup dialog latch pre-marked for the baseline phase).",
         });
       },
     },
     {
-      name: "Frame 1 — hosted model picker pitches OpenWork Models",
+      name: "Frame 1 — hosted model picker pitches Micx Models",
       run: async (ctx) => {
-        await ctx.prove("On the hosted control plane the model picker shows the OpenWork Models promo group", {
+        await ctx.prove("On the hosted control plane the model picker shows the Micx Models promo group", {
           voiceover: vo[0],
           action: async () => {
             await openModelPicker(ctx);
-            await ctx.waitForText("OpenWork hosted", { timeoutMs: 15_000 });
+            await ctx.waitForText("Micx hosted", { timeoutMs: 15_000 });
           },
           assert: async () => {
-            await ctx.expectText("OpenWork Models");
-            await ctx.expectText("OpenWork hosted");
+            await ctx.expectText("Micx Models");
+            await ctx.expectText("Micx hosted");
           },
           screenshot: {
             name: "hosted-model-picker-promo",
-            requireText: ["OpenWork Models", "OpenWork hosted"],
+            requireText: ["Micx Models", "Micx hosted"],
           },
         });
         await closeModelPicker(ctx);
@@ -275,42 +275,42 @@ export default {
     {
       name: "Frame 2 — hosted Settings > AI shows the subscribe banner",
       run: async (ctx) => {
-        await ctx.prove("On the hosted control plane Settings > AI offers the OpenWork Models subscription", {
+        await ctx.prove("On the hosted control plane Settings > AI offers the Micx Models subscription", {
           voiceover: vo[1],
           action: async () => {
             await ctx.navigateHash("/settings/ai");
-            await ctx.waitForText("OpenWork Models", { timeoutMs: 30_000 });
+            await ctx.waitForText("Micx Models", { timeoutMs: 30_000 });
           },
           assert: async () => {
-            await ctx.expectText("OpenWork Models");
+            await ctx.expectText("Micx Models");
             await ctx.expectText("Subscribe");
-            await ctx.expectText("Hosted frontier models for OpenWork tasks without managing provider API keys.");
+            await ctx.expectText("Hosted frontier models for Micx tasks without managing provider API keys.");
           },
           screenshot: {
             name: "hosted-settings-ai-subscribe",
-            requireText: ["OpenWork Models", "Subscribe"],
+            requireText: ["Micx Models", "Subscribe"],
             hashIncludes: "/settings/ai",
           },
         });
       },
     },
     {
-      name: "Frame 3 — hosted workspace setup offers Use OpenWork Models",
+      name: "Frame 3 — hosted workspace setup offers Use Micx Models",
       run: async (ctx) => {
-        await ctx.prove("On the hosted control plane the workspace-setup provider step includes the Use OpenWork Models option", {
+        await ctx.prove("On the hosted control plane the workspace-setup provider step includes the Use Micx Models option", {
           voiceover: vo[2],
           action: async () => {
             await openProviderStepViaWorkspaceSetup(ctx, "/workspace/hello-hosted");
           },
           assert: async () => {
             await ctx.expectText("Power your first task");
-            await ctx.expectText("Use OpenWork Models");
+            await ctx.expectText("Use Micx Models");
             await ctx.expectText("Bring your own API key");
             await ctx.expectText("Skip and use the free model");
           },
           screenshot: {
-            name: "hosted-provider-step-openwork-models",
-            requireText: ["Power your first task", "Use OpenWork Models", "Skip and use the free model"],
+            name: "hosted-provider-step-micx-models",
+            requireText: ["Power your first task", "Use Micx Models", "Skip and use the free model"],
           },
         });
         await dismissOnboardingOverlays(ctx);
@@ -347,9 +347,9 @@ export default {
       },
     },
     {
-      name: "Frame 5 — no startup pitch and no OpenWork Models in Settings > AI",
+      name: "Frame 5 — no startup pitch and no Micx Models in Settings > AI",
       run: async (ctx) => {
-        await ctx.prove("Self-hosted: the startup dialog never auto-opens and Settings > AI drops every OpenWork Models row", {
+        await ctx.prove("Self-hosted: the startup dialog never auto-opens and Settings > AI drops every Micx Models row", {
           voiceover: vo[4],
           action: async () => {
             await ensureWorkspaceSession(ctx);
@@ -361,13 +361,13 @@ export default {
             await ctx.waitForText("Connect provider", { timeoutMs: 30_000 });
           },
           assert: async () => {
-            await ctx.expectNoText("OpenWork Models");
+            await ctx.expectNoText("Micx Models");
             await ctx.expectNoText("Hosted frontier models");
           },
           screenshot: {
             name: "self-hosted-settings-ai-clean",
             requireText: ["Connect provider"],
-            rejectText: ["OpenWork Models", "Subscribe"],
+            rejectText: ["Micx Models", "Subscribe"],
             hashIncludes: "/settings/ai",
           },
         });
@@ -376,7 +376,7 @@ export default {
     {
       name: "Frame 6 — self-hosted model picker has no promo group",
       run: async (ctx) => {
-        await ctx.prove("Self-hosted: the model picker lists only real providers, no OpenWork Models group", {
+        await ctx.prove("Self-hosted: the model picker lists only real providers, no Micx Models group", {
           voiceover: vo[5],
           action: async () => {
             await ctx.navigateHash("/");
@@ -384,20 +384,20 @@ export default {
             await openModelPicker(ctx);
           },
           assert: async () => {
-            await ctx.expectNoText("OpenWork hosted");
-            await ctx.expectNoText("OpenWork Models");
+            await ctx.expectNoText("Micx hosted");
+            await ctx.expectNoText("Micx Models");
           },
           screenshot: {
             name: "self-hosted-model-picker-clean",
             requireText: ["All models"],
-            rejectText: ["OpenWork Models", "OpenWork hosted"],
+            rejectText: ["Micx Models", "Micx hosted"],
           },
         });
         await closeModelPicker(ctx);
       },
     },
     {
-      name: "Frame 7 — self-hosted provider step has no OpenWork Models option",
+      name: "Frame 7 — self-hosted provider step has no Micx Models option",
       run: async (ctx) => {
         await ctx.prove("Self-hosted: the workspace-setup provider step only offers BYO key and the free model", {
           voiceover: vo[6],
@@ -408,12 +408,12 @@ export default {
             await ctx.expectText("Power your first task");
             await ctx.expectText("Bring your own API key");
             await ctx.expectText("Skip and use the free model");
-            await ctx.expectNoText("Use OpenWork Models");
+            await ctx.expectNoText("Use Micx Models");
           },
           screenshot: {
             name: "self-hosted-provider-step-clean",
             requireText: ["Power your first task", "Bring your own API key", "Skip and use the free model"],
-            rejectText: ["Use OpenWork Models"],
+            rejectText: ["Use Micx Models"],
           },
         });
         await dismissOnboardingOverlays(ctx);
@@ -423,7 +423,7 @@ export default {
     {
       name: "Frame 8 — clearing the server restores the hosted offer",
       run: async (ctx) => {
-        await ctx.prove("Clearing the server configuration returns to OpenWork Cloud and the subscribe banner comes back", {
+        await ctx.prove("Clearing the server configuration returns to Micx Cloud and the subscribe banner comes back", {
           voiceover: vo[7],
           action: async () => {
             await ctx.navigateHash("/settings/advanced");
@@ -434,15 +434,15 @@ export default {
             await ctx.waitForText(DEFAULT_ORG_SERVER_TEXT, { timeoutMs: 15_000 });
             await reloadApp(ctx);
             await ctx.navigateHash("/settings/ai");
-            await ctx.waitForText("OpenWork Models", { timeoutMs: 30_000 });
+            await ctx.waitForText("Micx Models", { timeoutMs: 30_000 });
           },
           assert: async () => {
-            await ctx.expectText("OpenWork Models");
+            await ctx.expectText("Micx Models");
             await ctx.expectText("Subscribe");
           },
           screenshot: {
             name: "hosted-restored-settings-ai",
-            requireText: ["OpenWork Models", "Subscribe"],
+            requireText: ["Micx Models", "Subscribe"],
             hashIncludes: "/settings/ai",
           },
         });

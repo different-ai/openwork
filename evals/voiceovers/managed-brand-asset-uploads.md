@@ -4,11 +4,11 @@ This proof covers Den-managed wordmark and square-icon uploads for an on-prem de
 
 1. An Example Corp owner uploads the supplied wordmark and square icon directly instead of finding public URLs.
 
-2. OpenWork previews both files and validates their format, dimensions, and intended use.
+2. Micx previews both files and validates their format, dimensions, and intended use.
 
 3. If the owner's sign-in is no longer recent, saving opens a clear security check instead of exposing a raw server error.
 
-4. The owner verifies once, and OpenWork resumes the pending upload automatically without making them choose the files again.
+4. The owner verifies once, and Micx resumes the pending upload automatically without making them choose the files again.
 
 5. The saved assets are now available to every member through the Example Corp deployment.
 

@@ -14,9 +14,9 @@
  *      the picked models.
  *
  * Required env:
- * - OPENWORK_EVAL_DEN_WEB_URL   Den web origin (e.g. http://localhost:3015)
- * - OPENWORK_EVAL_DEN_EMAIL     Seeded user email (sign-in fallback)
- * - OPENWORK_EVAL_DEN_PASSWORD  Seeded user password (sign-in fallback)
+ * - MICX_EVAL_DEN_WEB_URL   Den web origin (e.g. http://localhost:3015)
+ * - MICX_EVAL_DEN_EMAIL     Seeded user email (sign-in fallback)
+ * - MICX_EVAL_DEN_PASSWORD  Seeded user password (sign-in fallback)
  */
 
 import { createServer } from "node:http";
@@ -74,12 +74,12 @@ export default {
   id: "llm-provider-probe-picker",
   title: "Editor probes the endpoint, heals the URL, and offers real models to pick",
   spec: "evals/cloud-provider-sync-flows.md",
-  requiredEnv: ["OPENWORK_EVAL_DEN_WEB_URL", "OPENWORK_EVAL_DEN_EMAIL", "OPENWORK_EVAL_DEN_PASSWORD"],
+  requiredEnv: ["MICX_EVAL_DEN_WEB_URL", "MICX_EVAL_DEN_EMAIL", "MICX_EVAL_DEN_PASSWORD"],
   steps: [
     {
       name: "Signed-in dashboard session (signs in if needed) + mock endpoint",
       run: async (ctx) => {
-        const origin = ctx.env.OPENWORK_EVAL_DEN_WEB_URL.trim().replace(/\/+$/, "");
+        const origin = ctx.env.MICX_EVAL_DEN_WEB_URL.trim().replace(/\/+$/, "");
         await ctx.eval(`(() => { location.href = ${JSON.stringify(`${origin}/`)}; return true; })()`);
         await ctx.waitFor(
           `location.origin === ${JSON.stringify(origin)} && document.readyState === "complete"`,
@@ -96,8 +96,8 @@ export default {
               headers: { "content-type": "application/json" },
               credentials: "include",
               body: JSON.stringify({
-                email: ${JSON.stringify(ctx.env.OPENWORK_EVAL_DEN_EMAIL)},
-                password: ${JSON.stringify(ctx.env.OPENWORK_EVAL_DEN_PASSWORD)},
+                email: ${JSON.stringify(ctx.env.MICX_EVAL_DEN_EMAIL)},
+                password: ${JSON.stringify(ctx.env.MICX_EVAL_DEN_PASSWORD)},
               }),
             });
             return response.status;
@@ -112,7 +112,7 @@ export default {
     {
       name: "Open the custom provider form",
       run: async (ctx) => {
-        const origin = ctx.env.OPENWORK_EVAL_DEN_WEB_URL.trim().replace(/\/+$/, "");
+        const origin = ctx.env.MICX_EVAL_DEN_WEB_URL.trim().replace(/\/+$/, "");
         await ctx.eval(`(() => { location.href = ${JSON.stringify(`${origin}/dashboard/custom-llm-providers/new`)}; return true; })()`);
         await ctx.waitForText("Add a new LLM provider", { timeoutMs: 45_000 });
         await ctx.clickText("Custom provider", { selector: "button, [role=tab]", timeoutMs: 15_000 });

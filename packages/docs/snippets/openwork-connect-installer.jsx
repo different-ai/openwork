@@ -1,13 +1,13 @@
-export const OpenWorkConnectInstaller = () => {
+export const MicxConnectInstaller = () => {
   const MCP_SERVER_URL = "https://api.openworklabs.com/mcp/agent";
   const CODEX_CONNECTIONS_DEEPLINK = "codex://settings/connections";
   const CHATGPT_SETTINGS_URL = "https://chatgpt.com/#settings/Connectors";
-  const CODEX_LOGIN_COMMAND = "codex mcp login openwork";
-  const CODEX_RECONNECT_COMMAND = `codex mcp logout openwork
-codex mcp login openwork`;
-  const OPENCODE_AUTH_COMMAND = "opencode mcp auth openwork";
-  const OPENCODE_RECONNECT_COMMAND = `opencode mcp logout openwork
-opencode mcp auth openwork`;
+  const CODEX_LOGIN_COMMAND = "codex mcp login micx";
+  const CODEX_RECONNECT_COMMAND = `codex mcp logout micx
+codex mcp login micx`;
+  const OPENCODE_AUTH_COMMAND = "opencode mcp auth micx";
+  const OPENCODE_RECONNECT_COMMAND = `opencode mcp logout micx
+opencode mcp auth micx`;
   const installs = [
     {
       id: "cursor",
@@ -22,10 +22,10 @@ opencode mcp auth openwork`;
       id: "codex",
       label: "Codex",
       eyebrow: "Codex desktop, CLI, and IDE",
-      helper: "Add OpenWork once, then sign in with Codex's MCP login command.",
+      helper: "Add Micx once, then sign in with Codex's MCP login command.",
       supportStatus: "Setup only",
-      supportExplanation: "Setup guide only: add OpenWork, run codex mcp login openwork, and reconnect with logout then login. Native proof must be rerun on this exact branch.",
-      copyText: `codex mcp add openwork --url ${MCP_SERVER_URL}`,
+      supportExplanation: "Setup guide only: add Micx, run codex mcp login micx, and reconnect with logout then login. Native proof must be rerun on this exact branch.",
+      copyText: `codex mcp add micx --url ${MCP_SERVER_URL}`,
       authText: CODEX_LOGIN_COMMAND,
       reconnectText: CODEX_RECONNECT_COMMAND,
     },
@@ -45,7 +45,7 @@ opencode mcp auth openwork`;
       helper: "Add the remote HTTP server, then use /mcp in Claude Code and follow the client auth flow.",
       supportStatus: "Setup only",
       supportExplanation: "Setup guide only: add the server, then use /mcp in Claude Code to run the client auth flow. Native proof is not complete.",
-      copyText: `claude mcp add --transport http openwork ${MCP_SERVER_URL}`,
+      copyText: `claude mcp add --transport http micx ${MCP_SERVER_URL}`,
     },
     {
       id: "opencode",
@@ -56,7 +56,7 @@ opencode mcp auth openwork`;
       supportExplanation: "Verified with OpenCode native remote MCP OAuth flow.",
       copyText: `{
   "mcp": {
-    "openwork": {
+    "micx": {
       "type": "remote",
       "enabled": true,
       "url": "${MCP_SERVER_URL}",
@@ -74,7 +74,7 @@ opencode mcp auth openwork`;
       helper: "Run this from a shell with the VS Code CLI on your path, then start OAuth from VS Code's MCP server prompt.",
       supportStatus: "Setup only",
       supportExplanation: "Setup guide only: add the server with the VS Code CLI, then start OAuth from VS Code's MCP server prompt. Native proof is not complete.",
-      copyText: `code --add-mcp '{"name":"openwork","type":"http","url":"${MCP_SERVER_URL}"}'`,
+      copyText: `code --add-mcp '{"name":"micx","type":"http","url":"${MCP_SERVER_URL}"}'`,
     },
     {
       id: "any-client",
@@ -135,7 +135,7 @@ opencode mcp auth openwork`;
         </div>
       </div>
 
-      <div className="overflow-x-auto border-b border-gray-100 px-4 pt-4 dark:border-white/10" role="tablist" aria-label="OpenWork MCP client install options">
+      <div className="overflow-x-auto border-b border-gray-100 px-4 pt-4 dark:border-white/10" role="tablist" aria-label="Micx MCP client install options">
         <div className="flex min-w-max gap-1">
           {installs.map((install) => (
             <button
@@ -195,8 +195,8 @@ opencode mcp auth openwork`;
           </div>
         ) : null}
         <div className="mt-4 flex items-center justify-between gap-3">
-          <p className="m-0 text-xs text-gray-500">Works with your OpenWork account — <a href="https://app.openworklabs.com?mode=sign-up" className="font-medium underline">create one free</a>.</p>
-          <button type="button" aria-label="Copy the OpenWork MCP install command" onClick={() => copy(activeInstall.id, activeInstall.copyText)} className="shrink-0 rounded-lg bg-[#011627] px-4 py-2 text-xs font-medium text-white">
+          <p className="m-0 text-xs text-gray-500">Works with your Micx account — <a href="https://app.openworklabs.com?mode=sign-up" className="font-medium underline">create one free</a>.</p>
+          <button type="button" aria-label="Copy the Micx MCP install command" onClick={() => copy(activeInstall.id, activeInstall.copyText)} className="shrink-0 rounded-lg bg-[#011627] px-4 py-2 text-xs font-medium text-white">
             {copied === activeInstall.id ? "Copied" : copied === "error" ? "Couldn't copy" : "Copy"}
           </button>
         </div>
@@ -206,7 +206,7 @@ opencode mcp auth openwork`;
         <span className="font-semibold uppercase tracking-wider text-gray-400">Server URL</span>
         <div className="flex min-w-0 items-center gap-2">
           <code className="break-all text-gray-950 dark:text-white">{MCP_SERVER_URL}</code>
-          <button type="button" aria-label="Copy the OpenWork MCP server URL" onClick={() => copy("server-url", MCP_SERVER_URL)} className="shrink-0 font-medium underline">
+          <button type="button" aria-label="Copy the Micx MCP server URL" onClick={() => copy("server-url", MCP_SERVER_URL)} className="shrink-0 font-medium underline">
             {copied === "server-url" ? "Copied" : "Copy URL"}
           </button>
         </div>

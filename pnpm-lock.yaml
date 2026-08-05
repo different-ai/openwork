@@ -107,13 +107,13 @@ importers:
       '@opencode-ai/sdk':
         specifier: ^1.17.11
         version: 1.17.11
-      '@openwork/install-config':
+      '@micx/install-config':
         specifier: workspace:*
         version: link:../../packages/install-config
-      '@openwork/types':
+      '@micx/types':
         specifier: workspace:*
         version: link:../../packages/types
-      '@openwork/ui':
+      '@micx/ui':
         specifier: workspace:*
         version: link:../../packages/ui
       '@paper-design/shaders-react':
@@ -264,7 +264,7 @@ importers:
       '@opencode-ai/sdk':
         specifier: ^1.17.11
         version: 1.17.11
-      '@openwork/paths':
+      '@micx/paths':
         specifier: workspace:*
         version: link:../../packages/paths
       better-sqlite3:
@@ -295,7 +295,7 @@ importers:
       '@electron/rebuild':
         specifier: ^4.2.0
         version: 4.2.0
-      '@openwork/types':
+      '@micx/types':
         specifier: workspace:*
         version: link:../../packages/types
       electron:
@@ -332,10 +332,10 @@ importers:
         specifier: ^4.3.6
         version: 4.3.6
     devDependencies:
-      '@openwork/paths':
+      '@micx/paths':
         specifier: workspace:*
         version: link:../../packages/paths
-      '@openwork/types':
+      '@micx/types':
         specifier: workspace:*
         version: link:../../packages/types
       '@types/better-sqlite3':
@@ -356,7 +356,7 @@ importers:
 
   apps/ui-demo:
     dependencies:
-      '@openwork/ui':
+      '@micx/ui':
         specifier: workspace:*
         version: link:../../packages/ui
       react:
@@ -447,28 +447,28 @@ importers:
       '@opentelemetry/semantic-conventions':
         specifier: 1.42.0
         version: 1.42.0
-      '@openwork-ee/den-db':
+      '@micx-ee/den-db':
         specifier: workspace:*
         version: link:../../packages/den-db
-      '@openwork-ee/utils':
+      '@micx-ee/utils':
         specifier: workspace:*
         version: link:../../packages/utils
-      '@openwork/automations':
+      '@micx/automations':
         specifier: workspace:*
         version: link:../../../packages/automations
-      '@openwork/connect-link':
+      '@micx/connect-link':
         specifier: workspace:*
         version: link:../../../packages/connect-link
-      '@openwork/email':
+      '@micx/email':
         specifier: workspace:*
         version: link:../../../packages/email
-      '@openwork/enterprise-mcp-client':
+      '@micx/enterprise-mcp-client':
         specifier: workspace:*
         version: link:../../../packages/enterprise-mcp-client
-      '@openwork/install-config':
+      '@micx/install-config':
         specifier: workspace:*
         version: link:../../../packages/install-config
-      '@openwork/types':
+      '@micx/types':
         specifier: workspace:*
         version: link:../../../packages/types
       '@sentry/hono':
@@ -553,7 +553,7 @@ importers:
       '@hono/node-server':
         specifier: ^1.13.8
         version: 1.19.11(hono@4.12.27)
-      '@openwork-ee/utils':
+      '@micx-ee/utils':
         specifier: workspace:*
         version: link:../../packages/utils
       dotenv:
@@ -611,13 +611,13 @@ importers:
       '@opentelemetry/semantic-conventions':
         specifier: 1.42.0
         version: 1.42.0
-      '@openwork-ee/utils':
+      '@micx-ee/utils':
         specifier: workspace:*
         version: link:../../packages/utils
-      '@openwork/types':
+      '@micx/types':
         specifier: workspace:*
         version: link:../../../packages/types
-      '@openwork/ui':
+      '@micx/ui':
         specifier: workspace:*
         version: link:../../../packages/ui
       '@paper-design/shaders-react':
@@ -672,10 +672,10 @@ importers:
       '@hono/node-server':
         specifier: ^1.13.8
         version: 1.19.11(hono@4.12.27)
-      '@openwork-ee/den-db':
+      '@micx-ee/den-db':
         specifier: workspace:*
         version: link:../../packages/den-db
-      '@openwork-ee/utils':
+      '@micx-ee/utils':
         specifier: workspace:*
         version: link:../../packages/utils
       dotenv:
@@ -700,7 +700,7 @@ importers:
 
   ee/apps/diagnostics:
     dependencies:
-      '@openwork/types':
+      '@micx/types':
         specifier: workspace:*
         version: link:../../../packages/types
       next:
@@ -731,7 +731,7 @@ importers:
       '@hono/node-server':
         specifier: ^1.13.8
         version: 1.19.11(hono@4.12.27)
-      '@openwork/enterprise-mcp-mock-server':
+      '@micx/enterprise-mcp-mock-server':
         specifier: workspace:*
         version: link:../../../packages/enterprise-mcp-mock-server
       hono:
@@ -756,13 +756,13 @@ importers:
       '@hono/node-server':
         specifier: ^1.13.8
         version: 1.19.11(hono@4.12.27)
-      '@openwork-ee/den-db':
+      '@micx-ee/den-db':
         specifier: workspace:*
         version: link:../../packages/den-db
-      '@openwork-ee/utils':
+      '@micx-ee/utils':
         specifier: workspace:*
         version: link:../../packages/utils
-      '@openwork/types':
+      '@micx/types':
         specifier: workspace:*
         version: link:../../../packages/types
       '@sentry/hono':
@@ -796,10 +796,10 @@ importers:
 
   ee/apps/landing:
     dependencies:
-      '@openwork/email':
+      '@micx/email':
         specifier: workspace:*
         version: link:../../../packages/email
-      '@openwork/ui':
+      '@micx/ui':
         specifier: workspace:*
         version: link:../../../packages/ui
       botid:
@@ -860,10 +860,10 @@ importers:
 
   ee/packages/den-db:
     dependencies:
-      '@openwork-ee/utils':
+      '@micx-ee/utils':
         specifier: workspace:*
         version: link:../utils
-      '@openwork/types':
+      '@micx/types':
         specifier: workspace:*
         version: link:../../../packages/types
       '@planetscale/database':
@@ -922,7 +922,7 @@ importers:
 
   packages/automations:
     dependencies:
-      '@openwork/types':
+      '@micx/types':
         specifier: workspace:*
         version: link:../types
       zod:
@@ -941,7 +941,7 @@ importers:
 
   packages/connect-link:
     dependencies:
-      '@openwork/types':
+      '@micx/types':
         specifier: workspace:*
         version: link:../types
       zod:
@@ -1054,9 +1054,9 @@ importers:
         specifier: ^5.6.3
         version: 5.9.3
 
-  packages/openwork-bootstrap: {}
+  packages/micx-bootstrap: {}
 
-  packages/openwork-ui-mcp:
+  packages/micx-ui-mcp:
     dependencies:
       '@modelcontextprotocol/sdk':
         specifier: ^1.29.0

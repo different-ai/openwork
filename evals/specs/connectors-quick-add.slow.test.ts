@@ -1,14 +1,14 @@
 import { expect } from "vitest";
-import { evalIn, waitFor } from "@openwork/behaviors";
-import { navigate } from "@openwork/cdp";
-import type { Surface } from "@openwork/cdp";
-import { screenshot, validate } from "@openwork/fraimz";
-import { chrome } from "@openwork/hosts";
-import { mcpMock, needs, server, test, unmetNeeds } from "@openwork/testkit";
-import type { NeedsSpec } from "@openwork/testkit";
+import { evalIn, waitFor } from "@micx/behaviors";
+import { navigate } from "@micx/cdp";
+import type { Surface } from "@micx/cdp";
+import { screenshot, validate } from "@micx/fraimz";
+import { chrome } from "@micx/hosts";
+import { mcpMock, needs, server, test, unmetNeeds } from "@micx/testkit";
+import type { NeedsSpec } from "@micx/testkit";
 
 const requirements: NeedsSpec = {
-  optIn: ["OPENWORK_EVAL_APP_SPECS"],
+  optIn: ["MICX_EVAL_APP_SPECS"],
 };
 const missingRequirements = unmetNeeds(requirements, process.env);
 const title = missingRequirements.length > 0
@@ -68,8 +68,8 @@ test(title, async ({ evidence, place }) => {
     label: "Den Web origin before admin auth token handoff",
   });
   const tokenStored = await evalIn(browser, `(() => {
-    localStorage.setItem("openwork:web:auth-token", ${JSON.stringify(den.admin.token)});
-    return localStorage.getItem("openwork:web:auth-token") === ${JSON.stringify(den.admin.token)};
+    localStorage.setItem("micx:web:auth-token", ${JSON.stringify(den.admin.token)});
+    return localStorage.getItem("micx:web:auth-token") === ${JSON.stringify(den.admin.token)};
   })()`);
   expect(tokenStored).toBe(true);
 

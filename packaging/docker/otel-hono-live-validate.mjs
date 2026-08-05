@@ -538,7 +538,7 @@ async function requestOpenApi({ requestPath, secret, traceId = randomBytes(16).t
   const requestResponse = await fetch(`${webUrl}${requestPath}`, {
     headers: {
       traceparent,
-      "x-openwork-otel-hono-e2e": traceId,
+      "x-micx-otel-hono-e2e": traceId,
     },
   });
   const requestBody = await requestResponse.text();

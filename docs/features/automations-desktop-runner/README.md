@@ -13,7 +13,7 @@ resumable notification cursor. After connecting or receiving a wake-up, the
 desktop discovers work over HTTP, atomically claims one occurrence, and reports
 attempt-bound heartbeats, ordered events, cancellation, usage, and completion.
 
-The claimed Automation runs as a normal visible local OpenWork thread in the
+The claimed Automation runs as a normal visible local Micx thread in the
 desktop's active workspace. It uses the selected model and the same local
 OpenCode tool and integration experience as a thread started by the user.
 

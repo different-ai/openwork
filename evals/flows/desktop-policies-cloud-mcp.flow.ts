@@ -8,15 +8,15 @@ import type { FlowContext } from "../runner/flow.ts";
 const vo = await loadVoiceoverParagraphs("desktop-policies-cloud-mcp");
 if (!vo) throw new Error("Missing approved voice-over script for desktop-policies-cloud-mcp.");
 
-const DEN_WEB_URL = (process.env.OPENWORK_EVAL_DEN_WEB_URL ?? "http://localhost:3005").trim().replace(/\/+$/, "");
+const DEN_WEB_URL = (process.env.MICX_EVAL_DEN_WEB_URL ?? "http://localhost:3005").trim().replace(/\/+$/, "");
 const DEN_WEB_HOST = new URL(DEN_WEB_URL).host;
 const DEN_DESKTOP_POLICIES_URL = new URL("/dashboard/desktop-policies", DEN_WEB_URL).toString();
-const ADMIN_EMAIL = process.env.OPENWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
-const ADMIN_PASSWORD = process.env.OPENWORK_EVAL_DEMO_PASSWORD?.trim() || "OpenWorkDemo123!";
-const MEMBER_EMAIL = process.env.OPENWORK_EVAL_MEMBER_EMAIL?.trim() || "jordan.demo@acme.test";
-const MEMBER_PASSWORD = process.env.OPENWORK_EVAL_MEMBER_PASSWORD?.trim() || "OpenWorkDemo123!";
+const ADMIN_EMAIL = process.env.MICX_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
+const ADMIN_PASSWORD = process.env.MICX_EVAL_DEMO_PASSWORD?.trim() || "MicxDemo123!";
+const MEMBER_EMAIL = process.env.MICX_EVAL_MEMBER_EMAIL?.trim() || "jordan.demo@acme.test";
+const MEMBER_PASSWORD = process.env.MICX_EVAL_MEMBER_PASSWORD?.trim() || "MicxDemo123!";
 const DEFAULT_POLICY_NAME = "Default desktop policy";
-const CLOUD_CONNECTION_NAMES = ["OpenWork Cloud Control", "OpenWork Cloud"];
+const CLOUD_CONNECTION_NAMES = ["Micx Cloud Control", "Micx Cloud"];
 const WRITE_SCOPES = ["mcp:read", "mcp:write"];
 
 type ParsedFetch = {
@@ -67,7 +67,7 @@ const state: FlowState = {
   organizationId: "",
   defaultPolicyId: "",
   defaultPolicyName: DEFAULT_POLICY_NAME,
-  cloudConnectionName: "OpenWork Cloud",
+  cloudConnectionName: "Micx Cloud",
   searchMatches: [],
   searchMatchNames: [],
   patchResultText: "",
@@ -108,11 +108,11 @@ function bodyPreview(value: unknown): string {
 }
 
 function denApiBase(ctx: FlowContext): string {
-  return ctx.env.OPENWORK_EVAL_DEN_API_URL?.trim().replace(/\/+$/, "") ?? "";
+  return ctx.env.MICX_EVAL_DEN_API_URL?.trim().replace(/\/+$/, "") ?? "";
 }
 
 function adminSessionToken(ctx: FlowContext): string {
-  return ctx.env.OPENWORK_EVAL_DEN_TOKEN?.trim() ?? "";
+  return ctx.env.MICX_EVAL_DEN_TOKEN?.trim() ?? "";
 }
 
 async function parsedFetch(url: string, options: RequestInit): Promise<ParsedFetch> {
@@ -338,13 +338,13 @@ async function currentDesktopConfig(ctx: FlowContext): Promise<Record<string, un
 
 async function syncConfigToApp(ctx: FlowContext): Promise<Record<string, unknown>> {
   const config = await currentDesktopConfig(ctx);
-  await ctx.waitFor("typeof window.__openworkApplyDesktopConfig === 'function'", {
+  await ctx.waitFor("typeof window.__micxApplyDesktopConfig === 'function'", {
     timeoutMs: 30_000,
     label: "desktop config bridge",
   });
   await ctx.eval(`(() => {
-    localStorage.setItem('openwork.react.settings.theme-mode', 'light');
-    window.__openworkApplyDesktopConfig(${JSON.stringify(config)});
+    localStorage.setItem('micx.react.settings.theme-mode', 'light');
+    window.__micxApplyDesktopConfig(${JSON.stringify(config)});
     return true;
   })()`);
   return config;
@@ -360,12 +360,12 @@ async function resolveCloudConnectionName(ctx: FlowContext): Promise<string> {
   for (const name of CLOUD_CONNECTION_NAMES) {
     if (await ctx.hasText(name)) return name;
   }
-  throw new Error("OpenWork Cloud connection name was not visible after revealing hidden extensions.");
+  throw new Error("Micx Cloud connection name was not visible after revealing hidden extensions.");
 }
 
 async function ensureDesktopSignedIn(ctx: FlowContext): Promise<void> {
-  await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 60_000, label: "desktop control API" });
-  const signedIn = await ctx.eval("Boolean((localStorage.getItem('openwork.den.authToken') ?? '').trim())");
+  await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 60_000, label: "desktop control API" });
+  const signedIn = await ctx.eval("Boolean((localStorage.getItem('micx.den.authToken') ?? '').trim())");
   if (!signedIn) {
     const handoff = await denFetch(ctx, "/v1/auth/desktop-handoff", {
       method: "POST",
@@ -376,7 +376,7 @@ async function ensureDesktopSignedIn(ctx: FlowContext): Promise<void> {
     ctx.assert(Boolean(grant), `Desktop handoff response did not include a grant: ${bodyPreview(handoff)}`);
     await ctx.control("auth.exchange-grant", { grant });
     await ctx.waitFor(
-      "window.__openworkControl.execute('auth.status').then(r => r.result?.status === 'signed_in')",
+      "window.__micxControl.execute('auth.status').then(r => r.result?.status === 'signed_in')",
       { timeoutMs: 30_000, label: "desktop auth signed in" },
     );
   } else {
@@ -384,7 +384,7 @@ async function ensureDesktopSignedIn(ctx: FlowContext): Promise<void> {
   }
 
   await ctx.waitFor(
-    "Boolean((localStorage.getItem('openwork.den.activeOrgId') ?? '').trim())",
+    "Boolean((localStorage.getItem('micx.den.activeOrgId') ?? '').trim())",
     { timeoutMs: 60_000, label: "active org" },
   );
 
@@ -396,8 +396,8 @@ async function ensureDesktopSignedIn(ctx: FlowContext): Promise<void> {
 
   const onWelcome = await ctx.eval("location.hash.includes('/welcome')");
   if (onWelcome) {
-    const workspacePath = ctx.env.OPENWORK_EVAL_WORKSPACE_PATH?.trim() ?? "";
-    ctx.assert(Boolean(workspacePath), "Desktop landed on /welcome; set OPENWORK_EVAL_WORKSPACE_PATH so the eval can create/select a workspace.");
+    const workspacePath = ctx.env.MICX_EVAL_WORKSPACE_PATH?.trim() ?? "";
+    ctx.assert(Boolean(workspacePath), "Desktop landed on /welcome; set MICX_EVAL_WORKSPACE_PATH so the eval can create/select a workspace.");
     await ctx.fill("input", workspacePath);
     await ctx.clickText("Use this folder", { timeoutMs: 10_000 });
     await ctx.waitFor("location.hash.includes('/workspace/')", { timeoutMs: 30_000, label: "workspace route after creation" });
@@ -407,8 +407,8 @@ async function ensureDesktopSignedIn(ctx: FlowContext): Promise<void> {
   // land on #/session with a "Create or connect a workspace" empty state.
   const needsWorkspace = await ctx.eval("document.body.innerText.includes('Create or connect a workspace')");
   if (needsWorkspace) {
-    const workspacePath = ctx.env.OPENWORK_EVAL_WORKSPACE_PATH?.trim() ?? "";
-    ctx.assert(Boolean(workspacePath), "No workspace exists; set OPENWORK_EVAL_WORKSPACE_PATH so the eval can create one.");
+    const workspacePath = ctx.env.MICX_EVAL_WORKSPACE_PATH?.trim() ?? "";
+    ctx.assert(Boolean(workspacePath), "No workspace exists; set MICX_EVAL_WORKSPACE_PATH so the eval can create one.");
     await ctx.control("workspace.create", { path: workspacePath });
     await ctx.waitFor("location.hash.includes('/workspace/')", { timeoutMs: 60_000, label: "workspace route after control creation" });
   }
@@ -417,7 +417,7 @@ async function ensureDesktopSignedIn(ctx: FlowContext): Promise<void> {
   // a scope; on resumed profiles the connection can already be configured, in
   // which case maintenance reports "ok" without rewriting the marker.
   await ctx.waitFor(
-    "Boolean(localStorage.getItem('openwork.den.mcp.sync')) || (localStorage.getItem('openwork.den.mcp.lastMaintenanceOutcome') ?? '').includes('\"status\":\"ok\"')",
+    "Boolean(localStorage.getItem('micx.den.mcp.sync')) || (localStorage.getItem('micx.den.mcp.lastMaintenanceOutcome') ?? '').includes('\"status\":\"ok\"')",
     { timeoutMs: 180_000, label: "cloud MCP sync marker or healthy maintenance outcome" },
   );
 }
@@ -427,7 +427,7 @@ async function enterDenPolicies(ctx: FlowContext): Promise<void> {
   // leave settings for the sessions home and open an empty session first.
   await ctx.navigateHash("/session");
   await ctx.waitFor(
-    "window.__openworkControl.listActions().some((action) => action.id === 'session.create_task' && !action.disabled)",
+    "window.__micxControl.listActions().some((action) => action.id === 'session.create_task' && !action.disabled)",
     { timeoutMs: 60_000, label: "session.create_task action available" },
   );
   // The action can flicker to disabled while the workspace runtime boots.
@@ -442,7 +442,7 @@ async function enterDenPolicies(ctx: FlowContext): Promise<void> {
     }
   }
   await ctx.waitFor(
-    "window.__openworkControl.listActions().some((action) => action.id === 'browser.open_url' && !action.disabled)",
+    "window.__micxControl.listActions().some((action) => action.id === 'browser.open_url' && !action.disabled)",
     { timeoutMs: 60_000, label: "browser.open_url action available" },
   );
   await ctx.switchToNewTab({
@@ -472,13 +472,13 @@ async function enterDenPolicies(ctx: FlowContext): Promise<void> {
 }
 
 async function closeBuiltInBrowserTabs(ctx: FlowContext): Promise<void> {
-  await ctx.waitFor("Boolean(window.__OPENWORK_ELECTRON__)", { timeoutMs: 10_000, label: "Electron bridge before closing browser tabs" });
+  await ctx.waitFor("Boolean(window.__MICX_ELECTRON__)", { timeoutMs: 10_000, label: "Electron bridge before closing browser tabs" });
   await ctx.eval(`(async () => {
-    const bridge = window.__OPENWORK_ELECTRON__;
+    const bridge = window.__MICX_ELECTRON__;
     if (!bridge) throw new Error('Electron bridge is unavailable.');
     if (bridge.invokeDesktop) {
       try {
-        return await bridge.invokeDesktop('openwork:browser:closeAllTabs');
+        return await bridge.invokeDesktop('micx:browser:closeAllTabs');
       } catch (error) {
         if (!String(error).includes('not implemented')) throw error;
       }
@@ -509,10 +509,10 @@ async function inviteMember(ctx: FlowContext): Promise<string> {
 }
 
 function markMemberVerifiedIfConfigured(ctx: FlowContext): void {
-  const command = ctx.env.OPENWORK_EVAL_MARK_VERIFIED_CMD?.trim() ?? "";
+  const command = ctx.env.MICX_EVAL_MARK_VERIFIED_CMD?.trim() ?? "";
   if (!command) return;
   execSync(command.replaceAll("{email}", MEMBER_EMAIL), { stdio: "ignore" });
-  ctx.log(`Marked ${MEMBER_EMAIL} verified through OPENWORK_EVAL_MARK_VERIFIED_CMD.`);
+  ctx.log(`Marked ${MEMBER_EMAIL} verified through MICX_EVAL_MARK_VERIFIED_CMD.`);
 }
 
 async function acceptInvitation(ctx: FlowContext, memberSessionToken: string, inviteToken: string): Promise<void> {
@@ -522,8 +522,8 @@ async function acceptInvitation(ctx: FlowContext, memberSessionToken: string, in
   }, memberSessionToken);
   if (accept.response.ok) return;
   const text = bodyPreview(accept.body);
-  if (/email.*verif/i.test(text) && !(ctx.env.OPENWORK_EVAL_MARK_VERIFIED_CMD?.trim())) {
-    throw new Error(`Member invitation accept requires email verification; set OPENWORK_EVAL_MARK_VERIFIED_CMD. Response: ${accept.response.status} ${text}`);
+  if (/email.*verif/i.test(text) && !(ctx.env.MICX_EVAL_MARK_VERIFIED_CMD?.trim())) {
+    throw new Error(`Member invitation accept requires email verification; set MICX_EVAL_MARK_VERIFIED_CMD. Response: ${accept.response.status} ${text}`);
   }
   throw new Error(`Member invitation accept failed: ${accept.response.status} ${text}`);
 }
@@ -559,9 +559,9 @@ async function ensureMemberMcpToken(ctx: FlowContext): Promise<MintedMcpToken> {
 
 export default defineFlow({
   id: "desktop-policies-cloud-mcp",
-  title: "Desktop Policies are discoverable and enforce permissions through OpenWork Cloud MCP",
+  title: "Desktop Policies are discoverable and enforce permissions through Micx Cloud MCP",
   kind: "user-facing",
-  requiredEnv: ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_TOKEN"],
+  requiredEnv: ["MICX_EVAL_DEN_API_URL", "MICX_EVAL_DEN_TOKEN"],
   steps: [
     {
       name: "Setup: desktop signed in, default policy reset, admin MCP token minted",
@@ -588,7 +588,7 @@ export default defineFlow({
     {
       name: "Frame 1",
       run: async (ctx) => {
-        await ctx.prove("Capability search returns the desktop policy tools through OpenWork Cloud MCP", {
+        await ctx.prove("Capability search returns the desktop policy tools through Micx Cloud MCP", {
           voiceover: vo[0],
           action: async () => {
             await ctx.navigateHash("/settings/extensions/mcp");
@@ -771,7 +771,7 @@ export default defineFlow({
           action: async () => {
             await ctx.switchBack();
             await closeBuiltInBrowserTabs(ctx);
-            await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 60_000, label: "desktop control API after closing Den web tab" });
+            await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 60_000, label: "desktop control API after closing Den web tab" });
             const config = await syncConfigToApp(ctx);
             ctx.assert(config.allowCustomProviders === false, `Effective desktop config did not restrict custom providers: ${bodyPreview(config)}`);
             await ctx.navigateHash("/settings/general");

@@ -1,7 +1,7 @@
-import { timed } from "@openwork/timeline";
-import { attachSurface, describeAppState, dumpScreenState, isInteractive, probeAppState } from "@openwork/cdp";
+import { timed } from "@micx/timeline";
+import { attachSurface, describeAppState, dumpScreenState, isInteractive, probeAppState } from "@micx/cdp";
 import { resolveHost } from "./resolve.ts";
-import type { AppStateProbe, AppSurfaceState, AttachedSurface, Surface, SurfaceHandle } from "@openwork/cdp";
+import type { AppStateProbe, AppSurfaceState, AttachedSurface, Surface, SurfaceHandle } from "@micx/cdp";
 import type { Host } from "./types.ts";
 
 const DEFAULT_TIMEOUT_MS = 180_000;
@@ -14,7 +14,7 @@ function messageText(error: unknown): string {
 }
 
 function logCleanupError(name: string, error: unknown): void {
-  console.warn(`[openwork/evals] Desktop ${name} cleanup failed: ${messageText(error)}`);
+  console.warn(`[micx/evals] Desktop ${name} cleanup failed: ${messageText(error)}`);
 }
 
 export interface DesktopOptions {
@@ -73,7 +73,7 @@ async function waitForReadiness(app: Surface, timeoutMs: number): Promise<AppRea
     await sleep(Math.min(POLL_INTERVAL_MS, Math.max(0, deadline - Date.now())));
   }
   throw new Error(
-    `OpenWork desktop did not become ready after ${timeoutMs}ms: ${describeAppState(last)} On screen: ${await dumpScreenState(app)}.`,
+    `Micx desktop did not become ready after ${timeoutMs}ms: ${describeAppState(last)} On screen: ${await dumpScreenState(app)}.`,
   );
 }
 
@@ -96,9 +96,9 @@ export async function desktop(opts: DesktopOptions = {}): Promise<DesktopHandle>
   let handle: SurfaceHandle;
 
   if (mode === "attach") {
-    const cdpUrl = process.env.OPENWORK_EVAL_CDP_URL?.trim();
+    const cdpUrl = process.env.MICX_EVAL_CDP_URL?.trim();
     if (!cdpUrl) {
-      throw new Error('desktop({ mode: "attach" }) requires OPENWORK_EVAL_CDP_URL to point at a running Electron app.');
+      throw new Error('desktop({ mode: "attach" }) requires MICX_EVAL_CDP_URL to point at a running Electron app.');
     }
     handle = {
       name: opts.name ?? "attached-app",

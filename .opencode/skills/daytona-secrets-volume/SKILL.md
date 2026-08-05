@@ -1,6 +1,6 @@
 ---
 name: daytona-secrets-volume
-description: Daytona secrets, provider key, OpenAI key, Anthropic key, real model e2e, voice e2e, eval secrets, /daytona-secrets, openwork-eval-secrets. Use for real provider tests in Daytona.
+description: Daytona secrets, provider key, OpenAI key, Anthropic key, real model e2e, voice e2e, eval secrets, /daytona-secrets, micx-eval-secrets. Use for real provider tests in Daytona.
 ---
 
 # Daytona Secrets Volume
@@ -13,7 +13,7 @@ Never commit secrets to the repo and never print secret values.
 The reusable Daytona volume is:
 
 ```text
-openwork-eval-secrets:/daytona-secrets
+micx-eval-secrets:/daytona-secrets
 ```
 
 Electron sandboxes mount it automatically through `.devcontainer/test-on-daytona.sh`.
@@ -68,7 +68,7 @@ If the sandbox is already running, restart Electron so it reloads `/daytona-secr
 ```bash
 daytona exec "$SANDBOX" -- "bash -lc 'pkill -f electron || true; pkill -f electron-dev || true; pkill -f opencode || true'"
 sleep 3
-daytona exec "$SANDBOX" -- "bash -lc 'cd /workspace && bash /opt/openwork-daytona/start-daytona-electron.sh --detach'"
+daytona exec "$SANDBOX" -- "bash -lc 'cd /workspace && bash /opt/micx-daytona/start-daytona-electron.sh --detach'"
 ```
 
 Do not chain the kill and restart in one `daytona exec` command. The `pkill`

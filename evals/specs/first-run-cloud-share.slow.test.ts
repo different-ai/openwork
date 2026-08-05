@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
-import { chrome, desktop } from "@openwork/hosts";
-import { photoRoll, screenshot, validate } from "@openwork/fraimz";
+import { chrome, desktop } from "@micx/hosts";
+import { photoRoll, screenshot, validate } from "@micx/fraimz";
 import {
   assignPluginToMarketplace,
   captureOpenedUrls,
@@ -19,10 +19,10 @@ import {
   visibleText,
   waitForText,
   waitUntilInteractive,
-} from "@openwork/behaviors";
+} from "@micx/behaviors";
 
 /**
- * CORE JOURNEY: a person opens the app for the first time, signs in to OpenWork
+ * CORE JOURNEY: a person opens the app for the first time, signs in to Micx
  * Cloud — which hands off to a real browser and comes back — then shares a skill
  * with a colleague by authoring it inside a plugin and putting that plugin on a
  * marketplace the colleague can use.
@@ -31,23 +31,23 @@ import {
  *  - The browser hop is real: we capture the URL the app asks the OS to open
  *    (PATH shim over xdg-open, which is what shell.openExternal calls on Linux)
  *    and drive that page in a real Chrome.
- *  - Only the OS protocol dispatch of `openwork://den-auth?grant=…` is bridged,
+ *  - Only the OS protocol dispatch of `micx://den-auth?grant=…` is bridged,
  *    because a container registers no protocol handler. The grant is the real one
  *    the app generated and the browser approved; it is handed to the product's own
  *    documented entry point for this case.
  */
 
-const appSpecsEnabled = process.env.OPENWORK_EVAL_APP_SPECS === "1";
-const denApiUrl = process.env.OPENWORK_EVAL_DEN_API_URL?.trim().replace(/\/+$/, "") ?? "";
-const denWebUrl = (process.env.OPENWORK_EVAL_DEN_WEB_URL?.trim() || denApiUrl.replace("127.0.0.1", "localhost")).replace(/\/+$/, "");
-const password = process.env.OPENWORK_EVAL_DEMO_PASSWORD?.trim() || "OpenWorkDemo123!";
-const adminEmail = process.env.OPENWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
-const colleagueEmail = process.env.OPENWORK_EVAL_MEMBER_EMAIL?.trim() || "jordan.demo@acme.test";
+const appSpecsEnabled = process.env.MICX_EVAL_APP_SPECS === "1";
+const denApiUrl = process.env.MICX_EVAL_DEN_API_URL?.trim().replace(/\/+$/, "") ?? "";
+const denWebUrl = (process.env.MICX_EVAL_DEN_WEB_URL?.trim() || denApiUrl.replace("127.0.0.1", "localhost")).replace(/\/+$/, "");
+const password = process.env.MICX_EVAL_DEMO_PASSWORD?.trim() || "MicxDemo123!";
+const adminEmail = process.env.MICX_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
+const colleagueEmail = process.env.MICX_EVAL_MEMBER_EMAIL?.trim() || "jordan.demo@acme.test";
 
 const title = !appSpecsEnabled
-  ? "first-run cloud sharing skipped: set OPENWORK_EVAL_APP_SPECS=1 to opt in"
+  ? "first-run cloud sharing skipped: set MICX_EVAL_APP_SPECS=1 to opt in"
   : !denApiUrl
-    ? "first-run cloud sharing skipped: set OPENWORK_EVAL_DEN_API_URL to a running Den"
+    ? "first-run cloud sharing skipped: set MICX_EVAL_DEN_API_URL to a running Den"
     : "first run signs in through the browser, then shares a skill with a colleague via a marketplace";
 
 test.skipIf(!appSpecsEnabled || !denApiUrl)(title, async () => {
@@ -65,7 +65,7 @@ test.skipIf(!appSpecsEnabled || !denApiUrl)(title, async () => {
   {
     const shot = await screenshot(app);
     const seen = await validate(shot, [
-      "A fresh OpenWork app is visible offering to sign in to OpenWork Cloud",
+      "A fresh Micx app is visible offering to sign in to Micx Cloud",
       "No error or 'Something went wrong' message is visible",
     ]);
     expect(seen.ok, seen.why).toBe(true);
@@ -74,7 +74,7 @@ test.skipIf(!appSpecsEnabled || !denApiUrl)(title, async () => {
 
   // 1. Sign in from inside the app: this must hand off to the browser.
   const buttons = await enabledButtons(app);
-  const signInLabel = ["Sign in to OpenWork Cloud", "Sign in"].find((label) => buttons.includes(label));
+  const signInLabel = ["Sign in to Micx Cloud", "Sign in"].find((label) => buttons.includes(label));
   expect(signInLabel, `no sign-in control. Buttons: ${buttons.join(" | ")}`).toBeDefined();
   if (!signInLabel) throw new Error("unreachable");
   await clickButton(app, signInLabel, { timeoutMs: 60_000 });
@@ -94,7 +94,7 @@ test.skipIf(!appSpecsEnabled || !denApiUrl)(title, async () => {
   {
     const shot = await screenshot(browser);
     const seen = await validate(shot, [
-      "A browser page shows an OpenWork Cloud sign-in result or dashboard, not a sign-in form error",
+      "A browser page shows an Micx Cloud sign-in result or dashboard, not a sign-in form error",
       "No 'invalid credentials' or error banner is visible",
     ]);
     expect(seen.ok, seen.why).toBe(true);
@@ -103,7 +103,7 @@ test.skipIf(!appSpecsEnabled || !denApiUrl)(title, async () => {
 
   // 3. Back to the app with the grant Den issued for this browser session.
   const deepLink = await readHandoffDeepLink(browser, { timeoutMs: 120_000 });
-  expect(deepLink.startsWith("openwork://"), `unexpected deep link: ${deepLink}`).toBe(true);
+  expect(deepLink.startsWith("micx://"), `unexpected deep link: ${deepLink}`).toBe(true);
   await completeDesktopHandoff(app, deepLink, den.webUrl);
   await waitUntilInteractive(app, { timeoutMs: 180_000 });
   const signedInText = await visibleText(app);
@@ -114,7 +114,7 @@ test.skipIf(!appSpecsEnabled || !denApiUrl)(title, async () => {
   {
     const shot = await screenshot(app);
     const seen = await validate(shot, [
-      "The app is back in focus and no longer offers a bare 'Sign in to OpenWork Cloud' as the only action",
+      "The app is back in focus and no longer offers a bare 'Sign in to Micx Cloud' as the only action",
       "No sign-in failure message is visible",
     ]);
     expect(seen.ok, seen.why).toBe(true);
@@ -127,7 +127,7 @@ test.skipIf(!appSpecsEnabled || !denApiUrl)(title, async () => {
     email: colleagueEmail,
     password,
     name: "Jordan Demo",
-    markVerifiedCmd: process.env.OPENWORK_EVAL_MARK_VERIFIED_CMD?.trim(),
+    markVerifiedCmd: process.env.MICX_EVAL_MARK_VERIFIED_CMD?.trim(),
   });
 
   const stamp = Date.now();
@@ -164,7 +164,7 @@ test.skipIf(!appSpecsEnabled || !denApiUrl)(title, async () => {
   {
     const shot = await screenshot(app);
     const seen = await validate(shot, [
-      "An OpenWork surface listing extensions, skills or connections is visible",
+      "An Micx surface listing extensions, skills or connections is visible",
       "No 'Something went wrong' crash message is visible",
     ]);
     expect(seen.ok, seen.why).toBe(true);

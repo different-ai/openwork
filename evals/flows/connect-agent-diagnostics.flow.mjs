@@ -40,14 +40,14 @@ async function setDesktopViewport(ctx) {
 
 async function navigateToDebugDiagnostics(ctx) {
   await ctx.eval(`(() => {
-    localStorage.setItem("openwork.developerMode", "1");
+    localStorage.setItem("micx.developerMode", "1");
     return true;
   })()`);
-  await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 60_000, label: "OpenWork control API" });
+  await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 60_000, label: "Micx control API" });
   const workspaceId = await ctx.eval(`(() => {
-    const route = window.__openworkControl?.snapshot?.().route ?? location.hash;
+    const route = window.__micxControl?.snapshot?.().route ?? location.hash;
     return (String(route).match(/\\/workspace\\/([^/]+)/) ?? [])[1]
-      ?? localStorage.getItem("openwork.react.activeWorkspace")
+      ?? localStorage.getItem("micx.react.activeWorkspace")
       ?? "";
   })()`);
   await ctx.navigateHash(workspaceId
@@ -61,11 +61,11 @@ async function navigateToDebugDiagnostics(ctx) {
 }
 
 async function navigateToConnect(ctx) {
-  await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 60_000, label: "OpenWork control API" });
+  await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 60_000, label: "Micx control API" });
   const workspaceId = await ctx.eval(`(() => {
-    const route = window.__openworkControl?.snapshot?.().route ?? location.hash;
+    const route = window.__micxControl?.snapshot?.().route ?? location.hash;
     return (String(route).match(/\\/workspace\\/([^/]+)/) ?? [])[1]
-      ?? localStorage.getItem("openwork.react.activeWorkspace")
+      ?? localStorage.getItem("micx.react.activeWorkspace")
       ?? "";
   })()`);
   await ctx.navigateHash(workspaceId
@@ -77,14 +77,14 @@ async function navigateToConnect(ctx) {
 
 async function installForwardingDiagnosticsObserver(ctx) {
   await ctx.eval(`(() => {
-    const previous = window.__openworkAgentDiagnosticsEval;
+    const previous = window.__micxAgentDiagnosticsEval;
     const originalFetch = previous?.originalFetch ?? window.fetch.bind(window);
-    window.__openworkAgentDiagnosticsEval = {
+    window.__micxAgentDiagnosticsEval = {
       originalFetch,
       requests: [],
     };
     window.fetch = async (input, init) => {
-      const state = window.__openworkAgentDiagnosticsEval;
+      const state = window.__micxAgentDiagnosticsEval;
       const url = typeof input === "string"
         ? input
         : input instanceof URL
@@ -144,8 +144,8 @@ async function realClickSelector(ctx, selector, label) {
   }
   await ctx.eval(`(() => {
     const element = document.querySelector(${JSON.stringify(selector)});
-    window.__openworkFraimzClickObserved = false;
-    element?.addEventListener("click", () => { window.__openworkFraimzClickObserved = true; }, { once: true });
+    window.__micxFraimzClickObserved = false;
+    element?.addEventListener("click", () => { window.__micxFraimzClickObserved = true; }, { once: true });
     return Boolean(element);
   })()`);
   await ctx.client.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: point.x, y: point.y });
@@ -164,7 +164,7 @@ async function realClickSelector(ctx, selector, label) {
     clickCount: 1,
   });
   await new Promise((resolve) => setTimeout(resolve, 50));
-  const observed = await ctx.eval("window.__openworkFraimzClickObserved === true");
+  const observed = await ctx.eval("window.__micxFraimzClickObserved === true");
   if (!observed) {
     ctx.log(`CDP mouse input did not reach ${label}; dispatching the element's click handler.`);
     await ctx.eval(`document.querySelector(${JSON.stringify(selector)})?.click(); true`);
@@ -182,7 +182,7 @@ async function scrollIntoView(ctx, selector, block = "center") {
 
 async function observerLog(ctx) {
   return ctx.eval(`(() => ({
-    entries: (window.__openworkAgentDiagnosticsEval?.requests ?? []).map((entry) => ({ ...entry })),
+    entries: (window.__micxAgentDiagnosticsEval?.requests ?? []).map((entry) => ({ ...entry })),
   }))()`);
 }
 
@@ -265,7 +265,7 @@ export default {
               const mutating = ["POST", "PUT", "PATCH", "DELETE"].includes(entry.method);
               return mutating && /(refresh|reload|reconnect|\/opencode-config(?:\/|$)|\/config(?:\/|$)|\/mcp(?:\/|$)|\/connect\/state(?:\/|$))/i.test(entry.pathname);
             });
-            ctx.assert(exchange.forwarded === true, "The diagnostics request was not forwarded to the real OpenWork server.");
+            ctx.assert(exchange.forwarded === true, "The diagnostics request was not forwarded to the real Micx server.");
             ctx.assert(exchange.responseStatus === 200, `The real diagnostics route returned ${exchange.responseStatus}.`);
             ctx.assert(
               Object.keys(request).sort().join(",") === "organizationConnections,organizationConnectionsProbe",
@@ -286,7 +286,7 @@ export default {
           },
           screenshot: {
             name: "agent-diagnostics-real-bounded-run",
-            claim: "Settings Debug displays the report returned by the real OpenWork diagnostics route.",
+            claim: "Settings Debug displays the report returned by the real Micx diagnostics route.",
             requireText: ["Agent diagnostics report", "Diagnostics directly requests no configuration mutation"],
             rejectText: ["Agent diagnostics could not complete", "Something went wrong"],
             hashIncludes: "/settings/debug",
@@ -306,14 +306,14 @@ export default {
             const { report } = actualDiagnosticsExchange(await observerLog(ctx));
             const engineReadChecks = ENGINE_READ_CHECKS.map((id) => report.checks.find((check) => check.id === id));
             const effective = report.agent.evidenceSource === "effective-engine";
-            ctx.assert(report.agent.configuredOpenworkAgent.state === "present", "The reported OpenWork agent was absent or disabled.");
-            ctx.assert(report.agent.configuredOpenworkAgent.mode === "primary", `Unexpected agent mode: ${report.agent.configuredOpenworkAgent.mode}`);
+            ctx.assert(report.agent.configuredMicxAgent.state === "present", "The reported Micx agent was absent or disabled.");
+            ctx.assert(report.agent.configuredMicxAgent.mode === "primary", `Unexpected agent mode: ${report.agent.configuredMicxAgent.mode}`);
             ctx.assert(
-              Object.values(report.agent.configuredOpenworkAgent.prompt.markers).every(Boolean),
-              `Required context markers were absent: ${JSON.stringify(report.agent.configuredOpenworkAgent.prompt.markers)}`,
+              Object.values(report.agent.configuredMicxAgent.prompt.markers).every(Boolean),
+              `Required context markers were absent: ${JSON.stringify(report.agent.configuredMicxAgent.prompt.markers)}`,
             );
             ctx.assert(
-              report.agent.pluginLabels.includes("openwork-extensions-preview"),
+              report.agent.pluginLabels.includes("micx-extensions-preview"),
               `Connect steering plugin evidence was absent: ${JSON.stringify(report.agent.pluginLabels)}`,
             );
             if (effective) {
@@ -360,13 +360,13 @@ export default {
               };
             })()`);
             ctx.assert(
-              rendered.report.includes(effective ? "Effective OpenWork agent" : "Configured OpenWork agent"),
+              rendered.report.includes(effective ? "Effective Micx agent" : "Configured Micx agent"),
               "The report did not label the agent evidence scope.",
             );
             for (const marker of ["search_capabilities", "execute_capability", "Memory marker"]) {
               ctx.assert(rendered.report.includes(marker), `Rendered marker was missing: ${marker}`);
             }
-            ctx.assert(rendered.plugins.includes("openwork-extensions-preview"), "Connect plugin evidence was not rendered.");
+            ctx.assert(rendered.plugins.includes("micx-extensions-preview"), "Connect plugin evidence was not rendered.");
             ctx.assert(
               JSON.stringify(rendered.mcps.sort()) === JSON.stringify(report.mcps.map((mcp) => mcp.name).sort()),
               `Rendered MCP rows diverged from the real report: ${JSON.stringify(rendered.mcps)} vs ${JSON.stringify(report.mcps)}`,
@@ -381,7 +381,7 @@ export default {
           screenshot: {
             name: "agent-diagnostics-real-injection-intent",
             claim: "Agent markers, plugin labels, and the real MCP inventory state are visibly labeled as effective engine evidence or configured fallback intent.",
-            requireText: ["OpenWork agent", "search_capabilities", "execute_capability", "openwork-extensions-preview", "MCP inventory"],
+            requireText: ["Micx agent", "search_capabilities", "execute_capability", "micx-extensions-preview", "MCP inventory"],
             rejectText: ["Something went wrong"],
           },
         });
@@ -402,7 +402,7 @@ export default {
             const performed = report.safety.cloudCatalogToolsListPerformed;
             ctx.assert(cloudCheck.details.requestPerformed === performed, `Cloud check contradicted safety metadata: ${JSON.stringify(cloudCheck)}`);
             if (performed && cloudCheck.code === "cloud_catalog_exact_match") {
-              const runtimeCloud = report.mcps.find((mcp) => mcp.source === "config.remote" && mcp.name === "openwork-cloud");
+              const runtimeCloud = report.mcps.find((mcp) => mcp.source === "config.remote" && mcp.name === "micx-cloud");
               ctx.assert(runtimeCloud?.syncStatus === "connected", `Cloud catalog ran without connected runtime registration evidence: ${JSON.stringify(runtimeCloud)}`);
               ctx.assert(
                 JSON.stringify([...report.observedCloudToolIds].sort()) === JSON.stringify(["execute_capability", "search_capabilities"]),
@@ -516,7 +516,7 @@ export default {
           screenshot: {
             name: "agent-diagnostics-real-action-and-copy",
             claim: "The real cloud check names an owner and recovery action, and the exact sanitized response is copyable.",
-            requireText: ["OpenWork Cloud tool catalog", "Owner", "Recommended action"],
+            requireText: ["Micx Cloud tool catalog", "Owner", "Recommended action"],
             rejectText: ["Bearer ", "https://", "Error:"],
           },
         });

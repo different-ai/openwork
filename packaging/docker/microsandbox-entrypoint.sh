@@ -1,16 +1,16 @@
 #!/usr/bin/env sh
 set -eu
 
-OPENWORK_WORKSPACE="${OPENWORK_WORKSPACE:-/workspace}"
-OPENWORK_DATA_DIR="${OPENWORK_DATA_DIR:-/data/openwork-server}"
-OPENWORK_SIDECAR_DIR="${OPENWORK_SIDECAR_DIR:-/data/sidecars}"
-OPENWORK_PORT="${OPENWORK_PORT:-8787}"
-OPENWORK_TOKEN="${OPENWORK_TOKEN:-microsandbox-token}"
-OPENWORK_HOST_TOKEN="${OPENWORK_HOST_TOKEN:-microsandbox-host-token}"
-OPENWORK_APPROVAL_MODE="${OPENWORK_APPROVAL_MODE:-auto}"
-OPENWORK_CORS_ORIGINS="${OPENWORK_CORS_ORIGINS:-*}"
-OPENWORK_CONNECT_HOST="${OPENWORK_CONNECT_HOST:-127.0.0.1}"
-OPENWORK_EXTENSIONS_PLUGIN_DIR="${OPENWORK_EXTENSIONS_PLUGIN_DIR:-/opt/openwork/opencode-plugins}"
+MICX_WORKSPACE="${MICX_WORKSPACE:-/workspace}"
+MICX_DATA_DIR="${MICX_DATA_DIR:-/data/micx-server}"
+MICX_SIDECAR_DIR="${MICX_SIDECAR_DIR:-/data/sidecars}"
+MICX_PORT="${MICX_PORT:-8787}"
+MICX_TOKEN="${MICX_TOKEN:-microsandbox-token}"
+MICX_HOST_TOKEN="${MICX_HOST_TOKEN:-microsandbox-host-token}"
+MICX_APPROVAL_MODE="${MICX_APPROVAL_MODE:-auto}"
+MICX_CORS_ORIGINS="${MICX_CORS_ORIGINS:-*}"
+MICX_CONNECT_HOST="${MICX_CONNECT_HOST:-127.0.0.1}"
+MICX_EXTENSIONS_PLUGIN_DIR="${MICX_EXTENSIONS_PLUGIN_DIR:-/opt/micx/opencode-plugins}"
 HOME="${HOME:-/root}"
 USER="${USER:-root}"
 SHELL="${SHELL:-/bin/sh}"
@@ -28,28 +28,28 @@ if [ "$HOME" = "/" ]; then
 fi
 
 export HOME USER SHELL XDG_CONFIG_HOME XDG_CACHE_HOME XDG_DATA_HOME XDG_STATE_HOME
-export OPENWORK_DATA_DIR OPENWORK_TOKEN OPENWORK_HOST_TOKEN OPENWORK_EXTENSIONS_PLUGIN_DIR
-export OPENWORK_MANAGE_OPENCODE=1
-export OPENWORK_OPENCODE_BIN=/usr/local/bin/opencode
+export MICX_DATA_DIR MICX_TOKEN MICX_HOST_TOKEN MICX_EXTENSIONS_PLUGIN_DIR
+export MICX_MANAGE_OPENCODE=1
+export MICX_OPENCODE_BIN=/usr/local/bin/opencode
 
-mkdir -p "$OPENWORK_WORKSPACE" "$OPENWORK_DATA_DIR" "$OPENWORK_SIDECAR_DIR"
+mkdir -p "$MICX_WORKSPACE" "$MICX_DATA_DIR" "$MICX_SIDECAR_DIR"
 mkdir -p "$HOME" "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$XDG_DATA_HOME" "$XDG_STATE_HOME"
 
-printf '%s\n' "Starting OpenWork micro-sandbox"
-printf '%s\n' "- workspace: $OPENWORK_WORKSPACE"
+printf '%s\n' "Starting Micx micro-sandbox"
+printf '%s\n' "- workspace: $MICX_WORKSPACE"
 printf '%s\n' "- home: $HOME"
-printf '%s\n' "- openwork url: http://$OPENWORK_CONNECT_HOST:$OPENWORK_PORT"
-printf '%s\n' "- client token: $OPENWORK_TOKEN"
-printf '%s\n' "- host token: $OPENWORK_HOST_TOKEN"
-printf '%s\n' "- health: curl http://$OPENWORK_CONNECT_HOST:$OPENWORK_PORT/health"
-printf '%s\n' "- auth test: curl -H \"Authorization: Bearer $OPENWORK_TOKEN\" http://$OPENWORK_CONNECT_HOST:$OPENWORK_PORT/workspaces"
+printf '%s\n' "- micx url: http://$MICX_CONNECT_HOST:$MICX_PORT"
+printf '%s\n' "- client token: $MICX_TOKEN"
+printf '%s\n' "- host token: $MICX_HOST_TOKEN"
+printf '%s\n' "- health: curl http://$MICX_CONNECT_HOST:$MICX_PORT/health"
+printf '%s\n' "- auth test: curl -H \"Authorization: Bearer $MICX_TOKEN\" http://$MICX_CONNECT_HOST:$MICX_PORT/workspaces"
 
-exec openwork-server \
-  --workspace "$OPENWORK_WORKSPACE" \
+exec micx-server \
+  --workspace "$MICX_WORKSPACE" \
   --host 0.0.0.0 \
-  --port "$OPENWORK_PORT" \
-  --token "$OPENWORK_TOKEN" \
-  --host-token "$OPENWORK_HOST_TOKEN" \
-  --approval "$OPENWORK_APPROVAL_MODE" \
-  --cors "$OPENWORK_CORS_ORIGINS" \
+  --port "$MICX_PORT" \
+  --token "$MICX_TOKEN" \
+  --host-token "$MICX_HOST_TOKEN" \
+  --approval "$MICX_APPROVAL_MODE" \
+  --cors "$MICX_CORS_ORIGINS" \
   --verbose

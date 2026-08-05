@@ -7,7 +7,7 @@ import {
 
 const vo = await loadVoiceoverParagraphs("sen-api-desktop-versions");
 const DEMO_EMAIL = "alex@acme.test";
-const DEMO_PASSWORD = "OpenWorkDemo123!";
+const DEMO_PASSWORD = "MicxDemo123!";
 
 function recordAssertion(ctx, assertion, passed, actual) {
   ctx.recordEvidence({
@@ -23,12 +23,12 @@ async function openDesktopVersionSettings(ctx) {
   await applyDesktopViewport(ctx);
   await navigateTo(ctx, "/");
   await ctx.eval(`fetch('/api/auth/sign-out', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }).then(() => {
-    localStorage.removeItem('openwork:web:auth-token');
+    localStorage.removeItem('micx:web:auth-token');
     sessionStorage.clear();
     location.reload();
     return true;
   }).catch(() => true)`, { awaitPromise: true });
-  await ctx.waitFor(`document.body.innerText.includes('Start using OpenWork') && Boolean(document.querySelector('input[type="email"]'))`, {
+  await ctx.waitFor(`document.body.innerText.includes('Start using Micx') && Boolean(document.querySelector('input[type="email"]'))`, {
     timeoutMs: 30_000,
     label: "email-first sign-in",
   });
@@ -70,7 +70,7 @@ export default {
   title: "Organization owners see every published desktop version and clear server compatibility guidance",
   kind: "user-facing",
   preserveTheme: true,
-  requiredEnv: ["OPENWORK_EVAL_DEN_WEB_URL"],
+  requiredEnv: ["MICX_EVAL_DEN_WEB_URL"],
   steps: [
     {
       name: "Minimum supported version is v0.17.0",

@@ -16,7 +16,7 @@ function json(response, status, body) {
   response.end(JSON.stringify(body));
 }
 
-function startMockOpenWorkServer() {
+function startMockMicxServer() {
   const requests = [];
   const server = createServer((request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
@@ -94,7 +94,7 @@ function startMockOpenWorkServer() {
     server.listen(0, "127.0.0.1", () => {
       const address = server.address();
       if (!address || typeof address === "string") {
-        reject(new Error("Mock OpenWork server did not bind a port."));
+        reject(new Error("Mock Micx server did not bind a port."));
         return;
       }
       resolve({
@@ -108,18 +108,18 @@ function startMockOpenWorkServer() {
 
 async function runInjectedSessionTools(baseUrl) {
   const script = `
-    const { OpenWorkExtensionsPreview } = await import("./apps/server/src/opencode-plugins/openwork-extensions-preview.ts");
-    const plugin = await OpenWorkExtensionsPreview();
-    const search = JSON.parse(await plugin.tool.openwork_query.execute({ id: "session.search", args: { query: "raven launch", limit: 5, scanLimit: 10 } }));
-    const read = JSON.parse(await plugin.tool.openwork_query.execute({ id: "session.read", args: { sessionId: "ses_archive", count: 2 } }));
+    const { MicxExtensionsPreview } = await import("./apps/server/src/opencode-plugins/micx-extensions-preview.ts");
+    const plugin = await MicxExtensionsPreview();
+    const search = JSON.parse(await plugin.tool.micx_query.execute({ id: "session.search", args: { query: "raven launch", limit: 5, scanLimit: 10 } }));
+    const read = JSON.parse(await plugin.tool.micx_query.execute({ id: "session.read", args: { sessionId: "ses_archive", count: 2 } }));
     console.log(JSON.stringify({ search: search.result, read: read.result }));
   `;
   const { stdout } = await execFile("bun", ["--eval", script], {
     cwd: process.cwd(),
     env: {
       ...process.env,
-      OPENWORK_SERVER_URL: baseUrl,
-      OPENWORK_SERVER_TOKEN: TOKEN,
+      MICX_SERVER_URL: baseUrl,
+      MICX_SERVER_TOKEN: TOKEN,
     },
     maxBuffer: 1024 * 1024,
   });
@@ -129,7 +129,7 @@ async function runInjectedSessionTools(baseUrl) {
 async function showProofPanel(ctx, title, rows) {
   await ctx.eval(
     `(() => {
-      const id = "openwork-fraimz-past-chat-proof";
+      const id = "micx-fraimz-past-chat-proof";
       document.getElementById(id)?.remove();
       const panel = document.createElement("section");
       panel.id = id;
@@ -171,20 +171,20 @@ async function showProofPanel(ctx, title, rows) {
 
 export default {
   id: "past-chat-search-tool",
-  title: "Injected tools can search and read past OpenWork chats",
-  spec: "OpenWork injected tool surface for cross-session memory",
+  title: "Injected tools can search and read past Micx chats",
+  spec: "Micx injected tool surface for cross-session memory",
   steps: [
     {
       name: "Real app boots before tool proof",
       run: async (ctx) => {
-        await ctx.prove("The real OpenWork app is running for frame proof", {
+        await ctx.prove("The real Micx app is running for frame proof", {
           action: async () => {
-            await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 60_000, label: "control API" });
+            await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 60_000, label: "control API" });
             await ctx.waitFor("document.body.innerText.trim().length > 40", { label: "rendered app text" });
           },
           assert: async () => {
-            const route = await ctx.eval("window.__openworkControl.snapshot().route");
-            ctx.assert(typeof route === "string" && route.length > 0, "OpenWork route was not available.");
+            const route = await ctx.eval("window.__micxControl.snapshot().route");
+            ctx.assert(typeof route === "string" && route.length > 0, "Micx route was not available.");
             ctx.log(`route: ${route}`);
           },
           screenshot: { name: "app-ready", rejectText: ["Something went wrong"] },
@@ -194,15 +194,15 @@ export default {
     {
       name: "Injected search tool finds a past chat transcript match",
       run: async (ctx) => {
-        const server = await startMockOpenWorkServer();
+        const server = await startMockMicxServer();
         try {
           const output = await runInjectedSessionTools(server.baseUrl);
           ctx.toolOutput = output;
-          await ctx.prove("openwork_query session.search returns a transcript hit from another chat", {
+          await ctx.prove("micx_query session.search returns a transcript hit from another chat", {
             action: async () => {
               const hit = output.search.results[0];
               await showProofPanel(ctx, "Past Chat Search Tool Proof", [
-                { label: "Tool called", value: "openwork_query session.search" },
+                { label: "Tool called", value: "micx_query session.search" },
                 { label: "Query", value: output.search.query },
                 { label: "Matched session", value: `${hit.workspaceId} / ${hit.sessionId}` },
                 { label: "Match kind", value: `${hit.kind} (${hit.role})` },
@@ -217,10 +217,10 @@ export default {
               ctx.assert(hit?.snippet?.match?.toLowerCase() === "raven launch", "Search snippet did not highlight the query.");
               ctx.assert(
                 server.requests.some((request) => request.pathname === "/workspace/ws_1/sessions/ses_alpha/messages" && request.search === "?limit=400"),
-                "Search did not load transcript messages through the OpenWork server API.",
+                "Search did not load transcript messages through the Micx server API.",
               );
             },
-            screenshot: { name: "session-search-hit", requireText: ["openwork_query session.search", "raven launch", "ses_alpha"] },
+            screenshot: { name: "session-search-hit", requireText: ["micx_query session.search", "raven launch", "ses_alpha"] },
           });
         } finally {
           await server.close();
@@ -231,10 +231,10 @@ export default {
       name: "Injected read tool retrieves another chat transcript",
       run: async (ctx) => {
         const output = ctx.toolOutput;
-        await ctx.prove("openwork_query session.read retrieves the referenced session transcript", {
+        await ctx.prove("micx_query session.read retrieves the referenced session transcript", {
           action: async () => {
             await showProofPanel(ctx, "Past Chat Read Tool Proof", [
-              { label: "Tool called", value: "openwork_query session.read" },
+              { label: "Tool called", value: "micx_query session.read" },
               { label: "Session", value: `${output.read.workspaceId} / ${output.read.sessionId}` },
               { label: "Title", value: output.read.title },
               { label: "Returned transcript", value: output.read.messages.map((message) => `${message.role}: ${message.text}`).join("\n") },
@@ -249,7 +249,7 @@ export default {
               "Read tool did not return the expected transcript text.",
             );
           },
-          screenshot: { name: "session-read-transcript", requireText: ["openwork_query session.read", "Archive decisions", "ship the archive importer first"] },
+          screenshot: { name: "session-read-transcript", requireText: ["micx_query session.read", "Archive decisions", "ship the archive importer first"] },
         });
       },
     },

@@ -11,7 +11,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 let testRun;
 
 function runTests() {
-  testRun ??= spawnSync("pnpm", ["--filter", "@openwork-ee/inference", "test"], {
+  testRun ??= spawnSync("pnpm", ["--filter", "@micx-ee/inference", "test"], {
     cwd: ROOT,
     encoding: "utf8",
     timeout: 60_000,
@@ -26,7 +26,7 @@ function provePassingTests(ctx, names) {
   for (const name of names) {
     ctx.assert(output.includes(`✔ ${name}`), `Passing test witnessed: ${name}`);
   }
-  ctx.output("$ pnpm --filter @openwork-ee/inference test", output);
+  ctx.output("$ pnpm --filter @micx-ee/inference test", output);
 }
 
 export default {

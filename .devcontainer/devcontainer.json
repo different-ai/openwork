@@ -1,5 +1,5 @@
 {
-  "name": "OpenWork Full Stack (Electron)",
+  "name": "Micx Full Stack (Electron)",
   "dockerComposeFile": "docker-compose.yml",
   "service": "workspace",
   "workspaceFolder": "/workspace",

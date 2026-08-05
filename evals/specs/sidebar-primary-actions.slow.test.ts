@@ -1,13 +1,13 @@
 import { expect } from "vitest";
-import { control, createAndSelectWorkspace, evalIn, waitFor } from "@openwork/behaviors";
-import { screenshot, validate } from "@openwork/fraimz";
-import { desktop } from "@openwork/hosts";
-import { needs, test } from "@openwork/testkit";
+import { control, createAndSelectWorkspace, evalIn, waitFor } from "@micx/behaviors";
+import { screenshot, validate } from "@micx/fraimz";
+import { desktop } from "@micx/hosts";
+import { needs, test } from "@micx/testkit";
 
-const appSpecsEnabled = process.env.OPENWORK_EVAL_APP_SPECS === "1";
+const appSpecsEnabled = process.env.MICX_EVAL_APP_SPECS === "1";
 const title = appSpecsEnabled
   ? "the sidebar offers New task and Notifications as primary actions, and the bell is not duplicated in the session header"
-  : "sidebar primary actions skipped — needs: set OPENWORK_EVAL_APP_SPECS=1";
+  : "sidebar primary actions skipped — needs: set MICX_EVAL_APP_SPECS=1";
 
 /** Labels of the top-level rows, which all live in the sidebar header block. */
 const primaryActionLabels = `(() => {
@@ -55,11 +55,11 @@ function sessionCount(value: unknown): number {
 }
 
 test.skipIf(!appSpecsEnabled)(title, async ({ evidence }) => {
-  needs({ optIn: ["OPENWORK_EVAL_APP_SPECS"] });
+  needs({ optIn: ["MICX_EVAL_APP_SPECS"] });
 
   await using app = await desktop({ name: "sidebar-primary-actions" });
   await createAndSelectWorkspace(app, {
-    path: `/tmp/openwork-sidebar-primary-actions-${Date.now()}`,
+    path: `/tmp/micx-sidebar-primary-actions-${Date.now()}`,
   });
 
   await waitFor(app, `Boolean(document.querySelector('[data-slot="sidebar-header"] [data-sidebar-new-chat]'))`, {

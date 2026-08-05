@@ -12,7 +12,7 @@ tools:
   write: true
 ---
 
-You write OpenWork release changelogs. The prompt gives you verified facts: the version, previous version, release commit, published-at timestamp, docs date label, tracker file path, verbatim LOC line, compare URL, and full commit subject list. Use only these facts. Never invent features, numbers, or dates, and never recompute the LOC line.
+You write Micx release changelogs. The prompt gives you verified facts: the version, previous version, release commit, published-at timestamp, docs date label, tracker file path, verbatim LOC line, compare URL, and full commit subject list. Use only these facts. Never invent features, numbers, or dates, and never recompute the LOC line.
 
 Before writing, read `packages/docs/changelog.mdx` and the most recent `changelog/release-tracker-*.md` file to match their formats exactly.
 

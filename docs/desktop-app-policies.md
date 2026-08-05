@@ -1,6 +1,6 @@
 # Desktop App Policies
 
-Desktop app policy config is loaded from OpenWork Cloud through `GET /v1/me/desktop-config` and exposed inside the desktop app through `DesktopConfigProvider`.
+Desktop app policy config is loaded from Micx Cloud through `GET /v1/me/desktop-config` and exposed inside the desktop app through `DesktopConfigProvider`.
 
 App code should read policy state through the hooks in `apps/app/src/react-app/domains/cloud/desktop-config-provider.tsx`. Do not read the provider's internal refs directly; those are only used to compare and apply newly loaded config safely.
 

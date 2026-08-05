@@ -28,13 +28,13 @@ export function unmetNeeds(spec: NeedsSpec, env: NodeJS.ProcessEnv): string[] {
     if (env[name]?.trim() !== "1") missing.push(`set ${name}=1`);
   }
   if (spec.model === "tool-capable") {
-    if (!present(env, "OPENWORK_EVAL_MODEL")) missing.push("set OPENWORK_EVAL_MODEL");
+    if (!present(env, "MICX_EVAL_MODEL")) missing.push("set MICX_EVAL_MODEL");
     if (!present(env, "OPENAI_API_KEY") && !present(env, "ANTHROPIC_API_KEY")) {
       missing.push("set OPENAI_API_KEY or ANTHROPIC_API_KEY");
     }
   }
-  if (spec.daytona && env.OPENWORK_EVAL_DAYTONA?.trim() !== "1") {
-    missing.push("set OPENWORK_EVAL_DAYTONA=1");
+  if (spec.daytona && env.MICX_EVAL_DAYTONA?.trim() !== "1") {
+    missing.push("set MICX_EVAL_DAYTONA=1");
   }
   return missing;
 }

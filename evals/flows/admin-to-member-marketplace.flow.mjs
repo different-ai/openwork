@@ -6,20 +6,20 @@
  * few steps that should go through the real UI.
  *
  * Required env:
- * - OPENWORK_EVAL_DEN_API_URL    Den API base (e.g. http://localhost:8788)
- * - OPENWORK_EVAL_DEN_TOKEN      Bearer session token for the demo owner
- * - OPENWORK_EVAL_WORKSPACE_PATH Absolute path for the eval workspace
+ * - MICX_EVAL_DEN_API_URL    Den API base (e.g. http://localhost:8788)
+ * - MICX_EVAL_DEN_TOKEN      Bearer session token for the demo owner
+ * - MICX_EVAL_WORKSPACE_PATH Absolute path for the eval workspace
  */
 export default {
   id: "admin-to-member-marketplace",
   title: "Owner creates skill, shares via MCP, member discovers it from the marketplace",
   spec: "evals/react-session-flows.md",
-  requiredEnv: ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_TOKEN", "OPENWORK_EVAL_WORKSPACE_PATH"],
+  requiredEnv: ["MICX_EVAL_DEN_API_URL", "MICX_EVAL_DEN_TOKEN", "MICX_EVAL_WORKSPACE_PATH"],
   steps: [
     {
       name: "App booted and control API available",
       run: async (ctx) => {
-        await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 30_000 });
+        await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 30_000 });
         ctx.log("Control API ready.");
       },
     },
@@ -34,11 +34,11 @@ export default {
         }
 
         // Create handoff grant via Den API
-        const apiBase = ctx.env.OPENWORK_EVAL_DEN_API_URL.trim().replace(/\/+$/, "");
+        const apiBase = ctx.env.MICX_EVAL_DEN_API_URL.trim().replace(/\/+$/, "");
         const response = await fetch(`${apiBase}/v1/auth/desktop-handoff`, {
           method: "POST",
           headers: {
-            authorization: `Bearer ${ctx.env.OPENWORK_EVAL_DEN_TOKEN.trim()}`,
+            authorization: `Bearer ${ctx.env.MICX_EVAL_DEN_TOKEN.trim()}`,
             "content-type": "application/json",
           },
           body: JSON.stringify({}),
@@ -49,7 +49,7 @@ export default {
         // Exchange grant via control action
         await ctx.control("auth.exchange-grant", { grant: body.grant });
         await ctx.waitFor(
-          "window.__openworkControl.execute('auth.status').then(r => r.result?.status === 'signed_in')",
+          "window.__micxControl.execute('auth.status').then(r => r.result?.status === 'signed_in')",
           { timeoutMs: 15_000, label: "auth signed_in" },
         );
         ctx.log("Signed in via handoff grant.");
@@ -58,7 +58,7 @@ export default {
     {
       name: "Create workspace",
       run: async (ctx) => {
-        const wsPath = ctx.env.OPENWORK_EVAL_WORKSPACE_PATH.trim();
+        const wsPath = ctx.env.MICX_EVAL_WORKSPACE_PATH.trim();
 
         // Check if we are already in a workspace
         const route = await ctx.eval("window.location.hash");
@@ -106,7 +106,7 @@ export default {
 
         // Fallback: try control action if session-route is mounted
         const hasAction = await ctx.eval(
-          "Boolean(window.__openworkControl?.listActions().find(a => a.id === 'workspace.create'))",
+          "Boolean(window.__micxControl?.listActions().find(a => a.id === 'workspace.create'))",
         );
         if (hasAction) {
           await ctx.control("workspace.create", { path: wsPath });
@@ -157,7 +157,7 @@ export default {
 
         // Now force refresh if the action is available
         const hasRefresh = await ctx.eval(
-          "Boolean(window.__openworkControl?.listActions().find(a => a.id === 'extensions.refresh-marketplace'))",
+          "Boolean(window.__micxControl?.listActions().find(a => a.id === 'extensions.refresh-marketplace'))",
         );
         if (hasRefresh) {
           await ctx.control("extensions.refresh-marketplace");
@@ -172,8 +172,8 @@ export default {
     {
       name: "Verify org context via Den API",
       run: async (ctx) => {
-        const apiBase = ctx.env.OPENWORK_EVAL_DEN_API_URL.trim().replace(/\/+$/, "");
-        const token = ctx.env.OPENWORK_EVAL_DEN_TOKEN.trim();
+        const apiBase = ctx.env.MICX_EVAL_DEN_API_URL.trim().replace(/\/+$/, "");
+        const token = ctx.env.MICX_EVAL_DEN_TOKEN.trim();
         const orgResponse = await fetch(`${apiBase}/v1/org`, {
           headers: { authorization: `Bearer ${token}` },
         });

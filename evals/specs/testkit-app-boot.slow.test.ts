@@ -2,18 +2,18 @@ import { createServer } from "node:net";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
-import { screenshot, validate } from "@openwork/fraimz";
-import { expectFrame } from "@openwork/fraimz/vitest";
-import { app, localMysqlIsRunning, needs, server, test } from "@openwork/testkit";
+import { screenshot, validate } from "@micx/fraimz";
+import { expectFrame } from "@micx/fraimz/vitest";
+import { app, localMysqlIsRunning, needs, server, test } from "@micx/testkit";
 
-const expectation = "The OpenWork workspace shell is visible and ready for a task";
-const appSpecsEnabled = process.env.OPENWORK_EVAL_APP_SPECS === "1";
-const localPlacement = process.env.OPENWORK_EVAL_DAYTONA !== "1" && !process.env.OPENWORK_EVAL_DEN_API_URL?.trim();
+const expectation = "The Micx workspace shell is visible and ready for a task";
+const appSpecsEnabled = process.env.MICX_EVAL_APP_SPECS === "1";
+const localPlacement = process.env.MICX_EVAL_DAYTONA !== "1" && !process.env.MICX_EVAL_DEN_API_URL?.trim();
 const mysqlOpen = await localMysqlIsRunning();
 const title = !appSpecsEnabled
-  ? "testkit app boot skipped — needs: set OPENWORK_EVAL_APP_SPECS=1"
+  ? "testkit app boot skipped — needs: set MICX_EVAL_APP_SPECS=1"
   : !localPlacement
-    ? "testkit app boot skipped — needs local placement without OPENWORK_EVAL_DEN_API_URL"
+    ? "testkit app boot skipped — needs local placement without MICX_EVAL_DEN_API_URL"
     : !mysqlOpen
       ? "testkit app boot skipped — needs MySQL on 127.0.0.1:3306"
       : "testkit boots a local Den and signed-in app with ambient evidence";
@@ -27,7 +27,7 @@ async function portCanBind(port: number): Promise<boolean> {
 }
 
 test.skipIf(!appSpecsEnabled || !localPlacement || !mysqlOpen)(title, async ({ evidence, place }) => {
-  needs({ optIn: ["OPENWORK_EVAL_APP_SPECS"] });
+  needs({ optIn: ["MICX_EVAL_APP_SPECS"] });
   let apiPort = 0;
   let webPort = 0;
   {
@@ -41,7 +41,7 @@ test.skipIf(!appSpecsEnabled || !localPlacement || !mysqlOpen)(title, async ({ e
     const shot = await screenshot(desktopApp);
     const seen = await validate(shot, [expectation], {
       ask: async (request) => request.prompt.startsWith("Objectively describe")
-        ? JSON.stringify({ description: "An OpenWork workspace shell with navigation and a task composer." })
+        ? JSON.stringify({ description: "An Micx workspace shell with navigation and a task composer." })
         : JSON.stringify({
           results: [{
             expectation,

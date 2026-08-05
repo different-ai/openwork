@@ -8,7 +8,7 @@
  * wrong org.
  *
  * Fix under test: den-web now pins ALL dashboard /v1/* requests with
- * x-openwork-org-id for the org on screen (centralized in requestJson + the org
+ * x-micx-org-id for the org on screen (centralized in requestJson + the org
  * dashboard provider), so a rename issued from org A's settings screen lands on
  * org A even when the session has drifted to org B.
  */
@@ -18,11 +18,11 @@ import { denApiFetch, denWebUrl, signInApi as signIn } from "./lib/den-web.mjs";
 
 const vo = await loadVoiceoverParagraphs("org-scope-dashboard-pinning");
 
-const ADMIN_EMAIL = process.env.OPENWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
-const ADMIN_PASSWORD = process.env.OPENWORK_EVAL_DEMO_PASSWORD?.trim() || "OpenWorkDemo123!";
+const ADMIN_EMAIL = process.env.MICX_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
+const ADMIN_PASSWORD = process.env.MICX_EVAL_DEMO_PASSWORD?.trim() || "MicxDemo123!";
 const DRIFT_ORG_NAME = "Drift Probe Org";
-const ORG_SCOPE_HEADER = "x-openwork-org-id";
-const PENDING_ORG_SELECTION_KEY = "openwork:web:pending-org-selection";
+const ORG_SCOPE_HEADER = "x-micx-org-id";
+const PENDING_ORG_SELECTION_KEY = "micx:web:pending-org-selection";
 const ORG_NAME_INPUT_SELECTOR = 'form input[type="text"]:not([readonly])';
 
 const state = {
@@ -99,7 +99,7 @@ export default {
   title: "Dashboard settings writes stay pinned to the org on screen when the session's active org drifts",
   kind: "user-facing",
   preserveTheme: true,
-  requiredEnv: ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_WEB_URL", "OPENWORK_EVAL_DEN_MULTI_ORG"],
+  requiredEnv: ["MICX_EVAL_DEN_API_URL", "MICX_EVAL_DEN_WEB_URL", "MICX_EVAL_DEN_MULTI_ORG"],
   steps: [
     {
       name: "Setup: admin signs in, has (or gets) a second org, and org names are captured",
@@ -148,7 +148,7 @@ export default {
           // A prior crashed run left our probe rename behind. Slugs survive
           // renames, so restore the stack's canonical name for the slug.
           const healedName = state.orgA.slug === "default"
-            ? "OpenWork"
+            ? "Micx"
             : state.orgA.slug.startsWith("acme")
               ? "Acme Robotics"
               : `Restored ${state.orgA.slug}`;

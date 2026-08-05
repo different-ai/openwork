@@ -17,7 +17,7 @@ export default {
       run: async (ctx) => {
         await ctx.prove("App boots to a session surface with the control API", {
           action: async () => {
-            await ctx.waitFor("Boolean(window.__openworkControl)", {
+            await ctx.waitFor("Boolean(window.__micxControl)", {
               timeoutMs: 60_000,
               label: "control API",
             });
@@ -35,17 +35,17 @@ export default {
       run: async (ctx) => {
         await ctx.prove("A session is active and the PDF seed action is available", {
           action: async () => {
-            const hasSelectedSession = await ctx.eval(`window.__openworkControl.snapshot().route.includes("/session/")`);
+            const hasSelectedSession = await ctx.eval(`window.__micxControl.snapshot().route.includes("/session/")`);
             if (!hasSelectedSession) {
               await ctx.control("session.create_task");
               await ctx.waitFor(
-                `window.__openworkControl.snapshot().route.includes("/session/")`,
+                `window.__micxControl.snapshot().route.includes("/session/")`,
                 { timeoutMs: 60_000, label: "session route after task creation" },
               );
             }
             // Mount the side panel (registers the seed action) only if not open.
             await ctx.eval(`(() => {
-              const seedReady = window.__openworkControl.listActions()
+              const seedReady = window.__micxControl.listActions()
                 .some((a) => a.id === "eval.artifact_tabs.seed_pdf" && !a.disabled);
               if (seedReady) return "already-open";
               const button = Array.from(document.querySelectorAll("button"))
@@ -56,7 +56,7 @@ export default {
           },
           assert: async () => {
             await ctx.waitFor(
-              `window.__openworkControl.listActions().some((a) => a.id === "eval.artifact_tabs.seed_pdf" && !a.disabled)`,
+              `window.__micxControl.listActions().some((a) => a.id === "eval.artifact_tabs.seed_pdf" && !a.disabled)`,
               { timeoutMs: 30_000, label: "PDF seed action enabled" },
             );
           },

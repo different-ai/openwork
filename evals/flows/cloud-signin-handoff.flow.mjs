@@ -4,38 +4,38 @@
  * deep link into Settings -> Cloud -> Account, and assert the session lands.
  *
  * Required env:
- * - OPENWORK_EVAL_DEN_API_URL    Den API base, e.g. https://api.example.com
- * - OPENWORK_EVAL_DEN_TOKEN      Bearer session token for a Den account
+ * - MICX_EVAL_DEN_API_URL    Den API base, e.g. https://api.example.com
+ * - MICX_EVAL_DEN_TOKEN      Bearer session token for a Den account
  */
 export default {
   id: "cloud-signin-handoff",
   title: "Cloud sign-in via desktop handoff paste code",
   spec: "evals/cloud-auth-flows.md#flow-1-cloud-sign-in-happy-path",
-  requiredEnv: ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_TOKEN"],
+  requiredEnv: ["MICX_EVAL_DEN_API_URL", "MICX_EVAL_DEN_TOKEN"],
   steps: [
     {
       name: "App booted",
       run: async (ctx) => {
-        await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 30_000 });
+        await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 30_000 });
       },
     },
     {
       name: "Create desktop handoff grant via Den API",
       run: async (ctx) => {
-        const apiBase = ctx.env.OPENWORK_EVAL_DEN_API_URL.trim().replace(/\/+$/, "");
+        const apiBase = ctx.env.MICX_EVAL_DEN_API_URL.trim().replace(/\/+$/, "");
         const response = await fetch(`${apiBase}/v1/auth/desktop-handoff`, {
           method: "POST",
           headers: {
-            authorization: `Bearer ${ctx.env.OPENWORK_EVAL_DEN_TOKEN.trim()}`,
+            authorization: `Bearer ${ctx.env.MICX_EVAL_DEN_TOKEN.trim()}`,
             "content-type": "application/json",
           },
-          body: JSON.stringify({ desktopScheme: "openwork" }),
+          body: JSON.stringify({ desktopScheme: "micx" }),
         });
         const body = await response.text();
         ctx.assert(response.ok, `Handoff create failed: ${response.status} ${body.slice(0, 200)}`);
         const payload = JSON.parse(body);
-        ctx.assert(typeof payload.openworkUrl === "string" && payload.openworkUrl.length > 0, "No openworkUrl in handoff response.");
-        ctx.handoffUrl = payload.openworkUrl;
+        ctx.assert(typeof payload.micxUrl === "string" && payload.micxUrl.length > 0, "No micxUrl in handoff response.");
+        ctx.handoffUrl = payload.micxUrl;
         ctx.log("Handoff grant created.");
       },
     },
@@ -69,7 +69,7 @@ export default {
       run: async (ctx) => {
         await ctx.expectText("Sign out", { timeoutMs: 45_000 });
         const token = await ctx.eval(
-          "localStorage.getItem('openwork.den.authToken') ?? ''",
+          "localStorage.getItem('micx.den.authToken') ?? ''",
         );
         ctx.assert(typeof token === "string" && token.trim().length > 0, "No persisted den auth token.");
         await ctx.screenshot("signed-in", {

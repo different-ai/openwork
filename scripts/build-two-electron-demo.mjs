@@ -24,4 +24,4 @@ function build(config) {
 }
 
 await Promise.all(configs.map(build));
-console.log("Packaged OpenWork Demo A and OpenWork Demo B.");
+console.log("Packaged Micx Demo A and Micx Demo B.");

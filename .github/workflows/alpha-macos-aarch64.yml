@@ -41,7 +41,7 @@ jobs:
     timeout-minutes: 180
 
     env:
-      ALPHA_RELEASE_NAME: OpenWork Alpha (macOS arm64)
+      ALPHA_RELEASE_NAME: Micx Alpha (macOS arm64)
       # Apple signing + notarization are required so alpha bundles install
       # and launch without Gatekeeper friction. Alpha builds are served
       # from GitHub Releases like stable, just from a different tag.
@@ -156,7 +156,7 @@ jobs:
         shell: bash
         env:
           TARGET: aarch64-apple-darwin
-        run: pnpm --filter @openwork/desktop build:electron
+        run: pnpm --filter @micx/desktop build:electron
 
       - name: Package Electron alpha (macOS, signed + notarized)
         if: env.MACOS_NOTARIZE == 'true'
@@ -198,7 +198,7 @@ jobs:
             gh release create "$CHANNEL_TAG" \
               --repo "$GITHUB_REPOSITORY" \
               --title "$ALPHA_RELEASE_NAME" \
-              --notes "Rolling alpha channel for OpenWork macOS arm64 builds. Each publish adds versioned updater assets and advances the channel manifest." \
+              --notes "Rolling alpha channel for Micx macOS arm64 builds. Each publish adds versioned updater assets and advances the channel manifest." \
               --target "$GITHUB_SHA" \
               --prerelease
           fi

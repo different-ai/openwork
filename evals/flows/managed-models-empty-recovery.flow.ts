@@ -89,7 +89,7 @@ export default defineFlow({
           action: async () => {
             const result = spawnSync("pnpm", [
               "--filter",
-              "@openwork/app",
+              "@micx/app",
               "exec",
               "bun",
               "test",

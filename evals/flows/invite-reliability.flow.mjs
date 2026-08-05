@@ -4,13 +4,13 @@ import { defineScenario } from "../runner/scenario.mjs";
 import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
 
 const FLOW_ID = "invite-reliability";
-const REQUIRED_DEN_ENV = ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_WEB_URL"];
+const REQUIRED_DEN_ENV = ["MICX_EVAL_DEN_API_URL", "MICX_EVAL_DEN_WEB_URL"];
 
 const vo = await loadVoiceoverParagraphs(FLOW_ID);
 if (!vo) throw new Error(`Missing approved voice-over script for ${FLOW_ID}.`);
 
 const { den } = journeys;
-const AUTH_TOKEN_STORAGE_KEY = "openwork:web:auth-token";
+const AUTH_TOKEN_STORAGE_KEY = "micx:web:auth-token";
 
 function safeJson(value) {
   try {
@@ -30,7 +30,7 @@ function cleanStamp(value) {
 }
 
 function uniqueOrgName(ctx) {
-  const stamp = ctx.env.OPENWORK_EVAL_RUNSTAMP?.trim() || new Date().toISOString();
+  const stamp = ctx.env.MICX_EVAL_RUNSTAMP?.trim() || new Date().toISOString();
   return `Invite Reliability ${cleanStamp(stamp)}`;
 }
 
@@ -59,7 +59,7 @@ function normalizedEmail(value) {
 function authHeaders(token, organizationId) {
   return {
     authorization: `Bearer ${token}`,
-    "x-openwork-org-id": organizationId,
+    "x-micx-org-id": organizationId,
   };
 }
 
@@ -335,15 +335,15 @@ export default defineScenario({
             voiceover: vo[5],
             action: async () => {
               const invalidUrl = new URL("/join-org", `${denWebUrl(ctx)}/`);
-              invalidUrl.searchParams.set("invite", `invalid-${cleanStamp(ctx.env.OPENWORK_EVAL_RUNSTAMP)}-token`);
+              invalidUrl.searchParams.set("invite", `invalid-${cleanStamp(ctx.env.MICX_EVAL_RUNSTAMP)}-token`);
               await navigateUrl(ctx, invalidUrl.toString(), "invalid invite token");
             },
             assert: async () => {
               await ctx.expectText("This invite can't be opened.", { timeoutMs: 60_000 });
-              await ctx.expectText("Back to OpenWork Cloud", { timeoutMs: 60_000 });
+              await ctx.expectText("Back to Micx Cloud", { timeoutMs: 60_000 });
               await ctx.expectNoText("Dashboard");
             },
-            screenshot: { name: "invalid-invite-token", requireText: ["This invite can't be opened.", "Back to OpenWork Cloud"], rejectText: ["Dashboard", "Could not join", "Something went wrong"] },
+            screenshot: { name: "invalid-invite-token", requireText: ["This invite can't be opened.", "Back to Micx Cloud"], rejectText: ["Dashboard", "Could not join", "Something went wrong"] },
           });
         });
       },
@@ -414,9 +414,9 @@ export default defineScenario({
           voiceover: vo[8],
           action: async () => {
             await removeMemberIfPresent(ctx, ctx.actors.jamie.email);
-            const desktopGate = ctx.env.OPENWORK_EVAL_DESKTOP_SURFACE?.trim() ? "requested" : "not requested";
+            const desktopGate = ctx.env.MICX_EVAL_DESKTOP_SURFACE?.trim() ? "requested" : "not requested";
             ctx.skip(`Electron desktop surface ${desktopGate}; ${FLOW_ID} is intentionally web-only.`);
-            ctx.output("desktop-surface-gate", `OPENWORK_EVAL_DESKTOP_SURFACE=${ctx.env.OPENWORK_EVAL_DESKTOP_SURFACE ?? ""}`);
+            ctx.output("desktop-surface-gate", `MICX_EVAL_DESKTOP_SURFACE=${ctx.env.MICX_EVAL_DESKTOP_SURFACE ?? ""}`);
           },
           assert: async () => {
             const org = await loadOrg(ctx);

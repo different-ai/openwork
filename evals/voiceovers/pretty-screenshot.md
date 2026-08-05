@@ -9,7 +9,7 @@ held to.
 
 1. Any screenshot an eval takes can now ship presentation-ready. It is one flag on the existing screenshot primitive — the flow, the assertions, and the evidence pipeline stay exactly the same.
 
-2. Here is the same app state twice: first the plain capture, then the pretty capture — the app framed on the paper mesh-gradient background in OpenWork's brand palette.
+2. Here is the same app state twice: first the plain capture, then the pretty capture — the app framed on the paper mesh-gradient background in Micx's brand palette.
 
 3. The pretty frame is not a filter: the capture sits centered with rounded corners, and every corner of the canvas is proven by pixel checks to show the gradient background — including inside the corner radius, where the app image is clipped away.
 

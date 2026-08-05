@@ -3,10 +3,10 @@ import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
 
 const FLOW_ID = "approved-desktop-update-targeting";
 const vo = await loadVoiceoverParagraphs(FLOW_ID);
-const DEN_WEB_URL = (process.env.OPENWORK_EVAL_DEN_WEB_URL ?? "http://127.0.0.1:3005").replace(/\/+$/, "");
-const ADMIN_CDP_URL = (process.env.OPENWORK_EVAL_WEB_CDP_ADMIN ?? "").replace(/\/+$/, "");
-const ADMIN_EMAIL = process.env.OPENWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
-const ADMIN_PASSWORD = process.env.OPENWORK_EVAL_DEMO_PASSWORD?.trim() || "OpenWorkDemo123!";
+const DEN_WEB_URL = (process.env.MICX_EVAL_DEN_WEB_URL ?? "http://127.0.0.1:3005").replace(/\/+$/, "");
+const ADMIN_CDP_URL = (process.env.MICX_EVAL_WEB_CDP_ADMIN ?? "").replace(/\/+$/, "");
+const ADMIN_EMAIL = process.env.MICX_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
+const ADMIN_PASSWORD = process.env.MICX_EVAL_DEMO_PASSWORD?.trim() || "MicxDemo123!";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -84,16 +84,16 @@ async function configureDesktopEval(ctx, input) {
     }
     window.__approvedUpdateEval.currentVersion = ${JSON.stringify(input.currentVersion)};
     window.__approvedUpdateEval.delayMs = ${input.delayMs ?? 0};
-    const stale = window.__openworkApplyDesktopConfig;
-    const fresh = window.__openworkSetDesktopConfigRefreshResult;
+    const stale = window.__micxApplyDesktopConfig;
+    const fresh = window.__micxSetDesktopConfigRefreshResult;
     if (typeof stale !== 'function' || typeof fresh !== 'function') throw new Error('Desktop policy eval bridge unavailable');
     stale(${JSON.stringify(input.staleConfig)});
     fresh(${JSON.stringify(input.freshConfig)});
-    window.__openworkReadDesktopVersionMetadataEval = async () => {
+    window.__micxReadDesktopVersionMetadataEval = async () => {
       window.__approvedUpdateEval.metadataReads += 1;
       return metadata;
     };
-    window.__openworkUpdaterEvalBridge = {
+    window.__micxUpdaterEvalBridge = {
       getChannel: async () => ({ channel: 'stable', feedUrl: 'eval://stable', currentVersion: window.__approvedUpdateEval.currentVersion }),
       check: async (channel, targetVersion) => {
         window.__approvedUpdateEval.checks.push({ channel, targetVersion, currentVersion: window.__approvedUpdateEval.currentVersion });
@@ -104,7 +104,7 @@ async function configureDesktopEval(ctx, input) {
           currentVersion: window.__approvedUpdateEval.currentVersion,
           latestVersion: resolvedVersion ?? null,
           channel: 'stable',
-          feedUrl: targetVersion ? 'https://github.com/different-ai/openwork/releases/download/v' + targetVersion : 'eval://stable',
+          feedUrl: targetVersion ? 'https://github.com/different-ai/micx/releases/download/v' + targetVersion : 'eval://stable',
           releaseDate: '2026-07-13T18:43:13.427Z',
         };
       },
@@ -116,8 +116,8 @@ async function configureDesktopEval(ctx, input) {
 }
 
 async function ensureDesktopSession(ctx) {
-  const apiUrl = ctx.env.OPENWORK_EVAL_DEN_API_URL.replace(/\/+$/, "");
-  const token = ctx.env.OPENWORK_EVAL_DEN_TOKEN;
+  const apiUrl = ctx.env.MICX_EVAL_DEN_API_URL.replace(/\/+$/, "");
+  const token = ctx.env.MICX_EVAL_DEN_TOKEN;
   const response = await fetch(`${apiUrl}/v1/me/orgs`, {
     headers: { authorization: `Bearer ${token}` },
   });
@@ -128,14 +128,14 @@ async function ensureDesktopSession(ctx) {
 
   await ctx.control("eval.auth.set-base-url", { baseUrl: DEN_WEB_URL });
   await ctx.eval(`(() => {
-    localStorage.setItem('openwork.den.baseUrl', ${JSON.stringify(DEN_WEB_URL)});
-    localStorage.setItem('openwork.den.apiBaseUrl', ${JSON.stringify(apiUrl)});
-    localStorage.setItem('openwork.den.authToken', ${JSON.stringify(token)});
-    localStorage.setItem('openwork.den.activeOrgId', ${JSON.stringify(activeOrg.id)});
-    localStorage.setItem('openwork.den.activeOrgSlug', ${JSON.stringify(activeOrg.slug ?? "acme-robotics-demo")});
-    localStorage.setItem('openwork.den.activeOrgName', ${JSON.stringify(activeOrg.name ?? "Acme Robotics")});
-    window.dispatchEvent(new CustomEvent('openwork-den-settings-changed', { detail: {} }));
-    window.dispatchEvent(new CustomEvent('openwork-den-session-updated', { detail: { token: ${JSON.stringify(token)} } }));
+    localStorage.setItem('micx.den.baseUrl', ${JSON.stringify(DEN_WEB_URL)});
+    localStorage.setItem('micx.den.apiBaseUrl', ${JSON.stringify(apiUrl)});
+    localStorage.setItem('micx.den.authToken', ${JSON.stringify(token)});
+    localStorage.setItem('micx.den.activeOrgId', ${JSON.stringify(activeOrg.id)});
+    localStorage.setItem('micx.den.activeOrgSlug', ${JSON.stringify(activeOrg.slug ?? "acme-robotics-demo")});
+    localStorage.setItem('micx.den.activeOrgName', ${JSON.stringify(activeOrg.name ?? "Acme Robotics")});
+    window.dispatchEvent(new CustomEvent('micx-den-settings-changed', { detail: {} }));
+    window.dispatchEvent(new CustomEvent('micx-den-session-updated', { detail: { token: ${JSON.stringify(token)} } }));
     return true;
   })()`);
   for (let attempt = 0; attempt < 120; attempt += 1) {
@@ -147,12 +147,12 @@ async function ensureDesktopSession(ctx) {
 }
 
 async function openDesktopUpdates(ctx) {
-  await ctx.waitFor("Boolean(window.__openworkControl && window.__openworkApplyDesktopConfig && window.__openworkSetDesktopConfigRefreshResult)", {
+  await ctx.waitFor("Boolean(window.__micxControl && window.__micxApplyDesktopConfig && window.__micxSetDesktopConfigRefreshResult)", {
     timeoutMs: 45_000,
     label: "desktop eval bridges",
   });
   await ensureDesktopSession(ctx);
-  await ctx.eval("localStorage.setItem('openwork.react.settings.update-auto-check', '0')");
+  await ctx.eval("localStorage.setItem('micx.react.settings.update-auto-check', '0')");
   await ctx.navigateHash("/settings/updates");
   await ctx.waitForText("Check now", { timeoutMs: 30_000 });
   await setAutomaticChecks(ctx, false);
@@ -180,7 +180,7 @@ export default {
   id: FLOW_ID,
   title: "Automatic stable desktop checks install the highest approved published release",
   kind: "user-facing",
-  requiredEnv: ["OPENWORK_EVAL_WEB_CDP_ADMIN"],
+  requiredEnv: ["MICX_EVAL_WEB_CDP_ADMIN"],
   steps: [
     {
       name: "Frame 1 — Den exposes real published versions",

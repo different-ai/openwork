@@ -6,19 +6,19 @@
 # Then open the printed Web UI URL — already wired to headless, no config needed.
 #
 # Env overrides (optional, via .env or export):
-#   OPENWORK_TOKEN        — shared client token (auto-generated if unset)
-#   OPENWORK_HOST_TOKEN   — host/admin token (auto-generated if unset)
-#   OPENWORK_WORKSPACE    — host path to mount as workspace (default: ./workspace)
-#   OPENWORK_PORT         — host port to map to container :8787 (default: 8787)
+#   MICX_TOKEN        — shared client token (auto-generated if unset)
+#   MICX_HOST_TOKEN   — host/admin token (auto-generated if unset)
+#   MICX_WORKSPACE    — host path to mount as workspace (default: ./workspace)
+#   MICX_PORT         — host port to map to container :8787 (default: 8787)
 #   WEB_PORT              — host port to map to container :5173 (default: 5173)
-#   OPENWORK_DEV_ID       — unique ID for this stack (default: default)
-#   OPENWORK_DEV_MODE     — enables isolated OpenCode dev state
-#   OPENWORK_PUBLIC_HOST  — browser-facing host/IP for LAN-accessible URLs
-#   OPENWORK_DOCKER_DEV_MOUNT_HOST_OPENCODE=1 — import host OpenCode config/auth into the isolated dev state
-#   OPENWORK_OPENCODE_CONFIG_DIR      — host OpenCode config dir detection override
-#   OPENWORK_OPENCODE_DATA_DIR        — host OpenCode data dir detection override
-#   OPENWORK_HOST_OPENCODE_CONFIG_DIR — import source for OpenCode config
-#   OPENWORK_HOST_OPENCODE_DATA_DIR   — import source for OpenCode auth/data
+#   MICX_DEV_ID       — unique ID for this stack (default: default)
+#   MICX_DEV_MODE     — enables isolated OpenCode dev state
+#   MICX_PUBLIC_HOST  — browser-facing host/IP for LAN-accessible URLs
+#   MICX_DOCKER_DEV_MOUNT_HOST_OPENCODE=1 — import host OpenCode config/auth into the isolated dev state
+#   MICX_OPENCODE_CONFIG_DIR      — host OpenCode config dir detection override
+#   MICX_OPENCODE_DATA_DIR        — host OpenCode data dir detection override
+#   MICX_HOST_OPENCODE_CONFIG_DIR — import source for OpenCode config
+#   MICX_HOST_OPENCODE_DATA_DIR   — import source for OpenCode auth/data
 
 x-shared: &shared
   image: node:22-bookworm-slim
@@ -28,12 +28,12 @@ x-shared: &shared
     - ../../:/app
     - pnpm-store:/root/.local/share/pnpm/store
     - bun-install:/root/.bun
-    - ${OPENWORK_WORKSPACE:-./workspace}:/workspace
-    - ${OPENWORK_HOST_OPENCODE_CONFIG_DIR:-./workspace/.openwork-host-opencode-config}:/persist/.config/opencode:ro
-    - ${OPENWORK_HOST_OPENCODE_DATA_DIR:-./workspace/.openwork-host-opencode-data}:/persist/.openwork-host-opencode-data:ro
+    - ${MICX_WORKSPACE:-./workspace}:/workspace
+    - ${MICX_HOST_OPENCODE_CONFIG_DIR:-./workspace/.micx-host-opencode-config}:/persist/.config/opencode:ro
+    - ${MICX_HOST_OPENCODE_DATA_DIR:-./workspace/.micx-host-opencode-data}:/persist/.micx-host-opencode-data:ro
 
 services:
-  openwork-server:
+  micx-server:
     <<: *shared
     entrypoint: ["/bin/sh", "-c"]
     command:
@@ -51,7 +51,7 @@ services:
         export BUN_INSTALL="/root/.bun"
         export PATH="$$BUN_INSTALL/bin:$$PATH"
         if ! command -v bun >/dev/null 2>&1; then
-          echo "[openwork-server] Installing bun..."
+          echo "[micx-server] Installing bun..."
           curl -fsSL https://bun.sh/install | bash
         fi
 
@@ -59,11 +59,11 @@ services:
         corepack enable && corepack prepare pnpm@10.27.0 --activate
 
         # --- Install deps ---
-        echo "[openwork-server] Installing dependencies..."
+        echo "[micx-server] Installing dependencies..."
         pnpm install --no-frozen-lockfile --network-concurrency 1 --child-concurrency 1
 
         # --- Build the server plugins and install the pinned OpenCode binary ---
-        pnpm --filter openwork-server build
+        pnpm --filter micx-server build
         OPENCODE_VERSION=$$(node -e 'const fs=require("fs"); const parsed=JSON.parse(fs.readFileSync("/app/constants.json", "utf8")); process.stdout.write(String(parsed.opencodeVersion || "").trim().replace(/^v/, ""));')
         export OPENCODE_INSTALL_DIR="/root/.opencode/bin"
         mkdir -p "$$OPENCODE_INSTALL_DIR"
@@ -71,46 +71,46 @@ services:
           curl -fsSL https://opencode.ai/install | bash -s -- --version "$$OPENCODE_VERSION" --no-modify-path
         fi
         export PATH="$$OPENCODE_INSTALL_DIR:$$PATH"
-        export OPENWORK_MANAGE_OPENCODE=1
-        export OPENWORK_OPENCODE_BIN="$$(command -v opencode)"
-        export OPENWORK_EXTENSIONS_PLUGIN_DIR="/app/apps/server/dist/opencode-plugins"
+        export MICX_MANAGE_OPENCODE=1
+        export MICX_OPENCODE_BIN="$$(command -v opencode)"
+        export MICX_EXTENSIONS_PLUGIN_DIR="/app/apps/server/dist/opencode-plugins"
 
         # --- Resolve tokens ---
-        if [ -z "$$OPENWORK_TOKEN" ]; then
-          OPENWORK_TOKEN=$$(cat /proc/sys/kernel/random/uuid)
-          export OPENWORK_TOKEN
+        if [ -z "$$MICX_TOKEN" ]; then
+          MICX_TOKEN=$$(cat /proc/sys/kernel/random/uuid)
+          export MICX_TOKEN
         fi
-        if [ -z "$$OPENWORK_HOST_TOKEN" ]; then
-          OPENWORK_HOST_TOKEN=$$(cat /proc/sys/kernel/random/uuid)
-          export OPENWORK_HOST_TOKEN
+        if [ -z "$$MICX_HOST_TOKEN" ]; then
+          MICX_HOST_TOKEN=$$(cat /proc/sys/kernel/random/uuid)
+          export MICX_HOST_TOKEN
         fi
 
         # Write tokens so the web service can source them
         mkdir -p /app/tmp
-        printf 'OPENWORK_TOKEN=%s\nOPENWORK_HOST_TOKEN=%s\n' \
-          "$$OPENWORK_TOKEN" "$$OPENWORK_HOST_TOKEN" > "/app/tmp/.dev-env-${OPENWORK_DEV_ID:-default}"
+        printf 'MICX_TOKEN=%s\nMICX_HOST_TOKEN=%s\n' \
+          "$$MICX_TOKEN" "$$MICX_HOST_TOKEN" > "/app/tmp/.dev-env-${MICX_DEV_ID:-default}"
 
         echo ""
         echo "============================================"
-        echo "  OpenWork server"
-        echo "  Server:     http://localhost:${OPENWORK_PORT:-8787}"
-        echo "  Health:     http://localhost:${OPENWORK_PORT:-8787}/health"
-        echo "  Token:      $$OPENWORK_TOKEN"
-        echo "  Host token: $$OPENWORK_HOST_TOKEN"
+        echo "  Micx server"
+        echo "  Server:     http://localhost:${MICX_PORT:-8787}"
+        echo "  Health:     http://localhost:${MICX_PORT:-8787}/health"
+        echo "  Token:      $$MICX_TOKEN"
+        echo "  Host token: $$MICX_HOST_TOKEN"
         echo "============================================"
         echo ""
 
-        exec pnpm --filter openwork-server exec bun dist/cli.js \
+        exec pnpm --filter micx-server exec bun dist/cli.js \
           --workspace /workspace \
           --host 0.0.0.0 \
           --port 8787 \
-          --token "$$OPENWORK_TOKEN" \
-          --host-token "$$OPENWORK_HOST_TOKEN" \
+          --token "$$MICX_TOKEN" \
+          --host-token "$$MICX_HOST_TOKEN" \
           --approval auto \
           --cors "*" \
           --verbose
     ports:
-      - "${OPENWORK_PORT:-8787}:8787"
+      - "${MICX_PORT:-8787}:8787"
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8787/health || exit 1"]
       interval: 5s
@@ -119,17 +119,17 @@ services:
       start_period: 90s
     environment:
       CI: "true"
-      OPENWORK_TOKEN: ${OPENWORK_TOKEN:-}
-      OPENWORK_HOST_TOKEN: ${OPENWORK_HOST_TOKEN:-}
-      OPENWORK_DEV_ID: ${OPENWORK_DEV_ID:-default}
-      OPENWORK_DEV_MODE: ${OPENWORK_DEV_MODE:-1}
-      OPENWORK_DEV_OPENCODE_IMPORT_CONFIG_DIR: /persist/.config/opencode
-      OPENWORK_DEV_OPENCODE_IMPORT_DATA_DIR: /persist/.openwork-host-opencode-data
+      MICX_TOKEN: ${MICX_TOKEN:-}
+      MICX_HOST_TOKEN: ${MICX_HOST_TOKEN:-}
+      MICX_DEV_ID: ${MICX_DEV_ID:-default}
+      MICX_DEV_MODE: ${MICX_DEV_MODE:-1}
+      MICX_DEV_OPENCODE_IMPORT_CONFIG_DIR: /persist/.config/opencode
+      MICX_DEV_OPENCODE_IMPORT_DATA_DIR: /persist/.micx-host-opencode-data
 
   web:
     <<: *shared
     depends_on:
-      openwork-server:
+      micx-server:
         condition: service_healthy
     entrypoint: ["/bin/sh", "-c"]
     command:
@@ -148,37 +148,37 @@ services:
         fi
         corepack enable && corepack prepare pnpm@10.27.0 --activate
 
-        # --- Read token written by openwork-server ---
-        if [ -f "/app/tmp/.dev-env-${OPENWORK_DEV_ID:-default}" ]; then
-          . "/app/tmp/.dev-env-${OPENWORK_DEV_ID:-default}"
-          export VITE_OPENWORK_TOKEN="$$OPENWORK_TOKEN"
+        # --- Read token written by micx-server ---
+        if [ -f "/app/tmp/.dev-env-${MICX_DEV_ID:-default}" ]; then
+          . "/app/tmp/.dev-env-${MICX_DEV_ID:-default}"
+          export VITE_MICX_TOKEN="$$MICX_TOKEN"
         fi
 
         echo ""
         echo "============================================"
-        echo "  OpenWork web UI"
+        echo "  Micx web UI"
         echo "  URL:   http://localhost:${WEB_PORT:-5173}"
-          echo "  Token: $${VITE_OPENWORK_TOKEN:-<see openwork-server logs>}"
+          echo "  Token: $${VITE_MICX_TOKEN:-<see micx-server logs>}"
         echo "============================================"
         echo ""
 
-        export VITE_OPENWORK_URL="http://${OPENWORK_PUBLIC_HOST:-localhost}:${OPENWORK_PORT:-8787}"
-        export VITE_OPENWORK_PORT="${OPENWORK_PORT:-8787}"
+        export VITE_MICX_URL="http://${MICX_PUBLIC_HOST:-localhost}:${MICX_PORT:-8787}"
+        export VITE_MICX_PORT="${MICX_PORT:-8787}"
         export VITE_ALLOWED_HOSTS="all"
         export HOST="0.0.0.0"
         export PORT="5173"
 
-        exec pnpm --filter @openwork/app exec vite \
+        exec pnpm --filter @micx/app exec vite \
           --host 0.0.0.0 \
           --port 5173 \
           --strictPort
     ports:
       - "${WEB_PORT:-5173}:5173"
     environment:
-      OPENWORK_DEV_ID: ${OPENWORK_DEV_ID:-default}
+      MICX_DEV_ID: ${MICX_DEV_ID:-default}
 
 volumes:
   pnpm-store:
-    name: openwork-dev-pnpm-store
+    name: micx-dev-pnpm-store
   bun-install:
-    name: openwork-dev-bun-install
+    name: micx-dev-bun-install

@@ -1,6 +1,6 @@
 # Enterprise MCP client
 
-1. Start Den and confirm startup identifies `@openwork/enterprise-mcp-client`.
+1. Start Den and confirm startup identifies `@micx/enterprise-mcp-client`.
 2. Reconnect an existing OAuth connection and confirm it uses the callback URL
    stored on that connection.
 3. Create a new OAuth connection and confirm it uses the deployment-wide

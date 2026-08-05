@@ -1,14 +1,14 @@
 /**
- * The Extensions page Refresh button force-syncs the OpenWork Cloud Control
+ * The Extensions page Refresh button force-syncs the Micx Cloud Control
  * connection: re-mints the member's token and rewrites the MCP config NOW,
  * bypassing the freshness marker — one click instead of sign-out/sign-in or
  * waiting for the marker to expire.
  *
- * Proof: the `openwork.den.mcp.sync` marker (written only when a sync
+ * Proof: the `micx.den.mcp.sync` marker (written only when a sync
  * actually re-minted + reconnected) changes after clicking Refresh even
  * though it was still fresh — previously Refresh never touched it.
  *
- * Prerequisites: a desktop app (this worktree) signed in to OpenWork Cloud
+ * Prerequisites: a desktop app (this worktree) signed in to Micx Cloud
  * with an active org and a workspace open — the state mcp-connections-
  * desktop-e2e.flow.mjs ends in. Fails fast with a clear message otherwise.
  */
@@ -26,10 +26,10 @@ export default {
     {
       name: "App booted and signed in with a fresh sync marker",
       run: async (ctx) => {
-        await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 60_000 });
-        const signedIn = await ctx.eval("Boolean((localStorage.getItem('openwork.den.authToken') ?? '').trim())");
-        ctx.assert(signedIn, "Desktop app must be signed in to OpenWork Cloud (run mcp-connections-desktop-e2e first).");
-        const marker = await ctx.eval("localStorage.getItem('openwork.den.mcp.sync')");
+        await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 60_000 });
+        const signedIn = await ctx.eval("Boolean((localStorage.getItem('micx.den.authToken') ?? '').trim())");
+        ctx.assert(signedIn, "Desktop app must be signed in to Micx Cloud (run mcp-connections-desktop-e2e first).");
+        const marker = await ctx.eval("localStorage.getItem('micx.den.mcp.sync')");
         ctx.assert(Boolean(marker), "No sync marker present — cloud MCP was never configured.");
         ctx.log(`marker before: ${marker}`);
       },
@@ -48,7 +48,7 @@ export default {
         // `force` nothing would rewrite it — any change after the click is
         // attributable to the Refresh button alone.
         await new Promise((resolve) => setTimeout(resolve, 3_000));
-        const before = await ctx.eval("localStorage.getItem('openwork.den.mcp.sync')");
+        const before = await ctx.eval("localStorage.getItem('micx.den.mcp.sync')");
         ctx.assert(Boolean(before), "No marker after mount settle.");
 
         await ctx.prove("Refresh re-mints and rewrites the cloud MCP config immediately", {
@@ -57,17 +57,17 @@ export default {
           },
           assert: async () => {
             await ctx.waitFor(
-              `localStorage.getItem('openwork.den.mcp.sync') !== ${JSON.stringify(before)}`,
+              `localStorage.getItem('micx.den.mcp.sync') !== ${JSON.stringify(before)}`,
               { timeoutMs: 30_000, label: "sync marker rewritten by Refresh" },
             );
-            ctx.log(`marker after: ${await ctx.eval("localStorage.getItem('openwork.den.mcp.sync')")}`);
-            await ctx.expectText("OpenWork Cloud Control");
+            ctx.log(`marker after: ${await ctx.eval("localStorage.getItem('micx.den.mcp.sync')")}`);
+            await ctx.expectText("Micx Cloud Control");
             await ctx.expectNoText("Something went wrong");
           },
           screenshot: {
             name: "force-sync-refreshed",
             claim: "After one Refresh click, the cloud MCP sync marker was rewritten — token re-minted and config re-synced on demand.",
-            requireText: ["OpenWork Cloud Control"],
+            requireText: ["Micx Cloud Control"],
             rejectText: ["Something went wrong"],
           },
         });

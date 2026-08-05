@@ -2,7 +2,7 @@
 
 The Den dashboard keeps its useful workspace actions while repeated catalog artwork becomes lightweight, member access becomes approachable, settings gain clearer destinations, and protected or billing states feel native to the dashboard.
 
-1. I open the Den dashboard and immediately see the useful workspace overview and “Download OpenWork” card. The “download the app to unlock extensions” promotion is gone, so the page feels focused.
+1. I open the Den dashboard and immediately see the useful workspace overview and “Download Micx” card. The “download the app to unlock extensions” promotion is gone, so the page feels focused.
 
 2. I move through a large Plugins and Marketplaces catalog and scroll normally. Every item keeps distinctive artwork and consistent card styling, but the browser remains responsive even with many results.
 

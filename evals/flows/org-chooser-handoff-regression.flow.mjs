@@ -21,14 +21,14 @@ function installFixtureExpression() {
     const orgs = ${JSON.stringify(ORGS)};
     const defaultOrg = orgs[0];
     const targetOrg = orgs[1];
-    const originalFetch = window.__openworkOrgChooserOriginalFetch ?? window.fetch.bind(window);
-    window.__openworkOrgChooserOriginalFetch = originalFetch;
-    window.__openworkOrgChooserFixture = {
+    const originalFetch = window.__micxOrgChooserOriginalFetch ?? window.fetch.bind(window);
+    window.__micxOrgChooserOriginalFetch = originalFetch;
+    window.__micxOrgChooserFixture = {
       calls: [],
       requests: [],
       selectedOrgId: defaultOrg.id,
     };
-    const fixture = window.__openworkOrgChooserFixture;
+    const fixture = window.__micxOrgChooserFixture;
     const json = (payload, status = 200) => new Response(JSON.stringify(payload), {
       status,
       headers: { "content-type": "application/json" },
@@ -50,7 +50,7 @@ function installFixtureExpression() {
       fixture.requests.push({
         method,
         path,
-        organizationId: headers.get("x-openwork-organization-id") ?? null,
+        organizationId: headers.get("x-micx-organization-id") ?? null,
       });
 
       if (method === "GET" && path === "/v1/me") {
@@ -119,20 +119,20 @@ function installFixtureExpression() {
       return json({ error: "unhandled_fixture_route", method, path }, 404);
     };
 
-    localStorage.setItem("openwork.den.baseUrl", window.location.origin);
-    localStorage.setItem("openwork.den.authToken", "fixture-token");
-    localStorage.setItem("openwork.den.activeOrgId", defaultOrg.id);
-    localStorage.setItem("openwork.den.activeOrgSlug", defaultOrg.slug);
-    localStorage.setItem("openwork.den.activeOrgName", defaultOrg.name);
-    sessionStorage.setItem("openwork.den.handoffAutoContinueAt", String(Date.now()));
+    localStorage.setItem("micx.den.baseUrl", window.location.origin);
+    localStorage.setItem("micx.den.authToken", "fixture-token");
+    localStorage.setItem("micx.den.activeOrgId", defaultOrg.id);
+    localStorage.setItem("micx.den.activeOrgSlug", defaultOrg.slug);
+    localStorage.setItem("micx.den.activeOrgName", defaultOrg.name);
+    sessionStorage.setItem("micx.den.handoffAutoContinueAt", String(Date.now()));
     return true;
   })()`;
 }
 
 async function prepareHandoffFixture(ctx) {
-  await ctx.waitFor("Boolean(window.__openworkControl)", {
+  await ctx.waitFor("Boolean(window.__micxControl)", {
     timeoutMs: 60_000,
-    label: "OpenWork control API",
+    label: "Micx control API",
   });
   await ctx.eval(installFixtureExpression(), { awaitPromise: true });
   const baseUrl = await ctx.eval("window.location.origin");
@@ -143,19 +143,19 @@ async function prepareHandoffFixture(ctx) {
     label: "welcome route before onboarding fixture",
   });
   await ctx.eval(`(() => {
-    localStorage.setItem("openwork.den.baseUrl", window.location.origin);
-    localStorage.setItem("openwork.den.authToken", "fixture-token");
-    localStorage.setItem("openwork.den.activeOrgId", ${JSON.stringify(DEFAULT_ORG.id)});
-    localStorage.setItem("openwork.den.activeOrgSlug", ${JSON.stringify(DEFAULT_ORG.slug)});
-    localStorage.setItem("openwork.den.activeOrgName", ${JSON.stringify(DEFAULT_ORG.name)});
-    sessionStorage.setItem("openwork.den.handoffAutoContinueAt", String(Date.now()));
+    localStorage.setItem("micx.den.baseUrl", window.location.origin);
+    localStorage.setItem("micx.den.authToken", "fixture-token");
+    localStorage.setItem("micx.den.activeOrgId", ${JSON.stringify(DEFAULT_ORG.id)});
+    localStorage.setItem("micx.den.activeOrgSlug", ${JSON.stringify(DEFAULT_ORG.slug)});
+    localStorage.setItem("micx.den.activeOrgName", ${JSON.stringify(DEFAULT_ORG.name)});
+    sessionStorage.setItem("micx.den.handoffAutoContinueAt", String(Date.now()));
     return true;
   })()`);
   await navigateAppRoute(ctx, "/onboarding?orgChooserHandoffRegression=" + Date.now());
 }
 
 function routeExpression(path) {
-  return `(() => window.__OPENWORK_ELECTRON__
+  return `(() => window.__MICX_ELECTRON__
     ? location.hash.includes(${JSON.stringify(path)})
     : location.pathname === ${JSON.stringify(path)})()`;
 }
@@ -163,7 +163,7 @@ function routeExpression(path) {
 async function navigateAppRoute(ctx, route) {
   await ctx.eval(`(() => {
     const route = ${JSON.stringify(route)};
-    if (window.__OPENWORK_ELECTRON__) {
+    if (window.__MICX_ELECTRON__) {
       window.location.hash = route;
     } else {
       window.history.pushState(null, "", route);
@@ -175,12 +175,12 @@ async function navigateAppRoute(ctx, route) {
 
 function fixtureSnapshotExpression() {
   return `(() => ({
-    calls: window.__openworkOrgChooserFixture?.calls ?? [],
-    requests: window.__openworkOrgChooserFixture?.requests ?? [],
-    selectedOrgId: window.__openworkOrgChooserFixture?.selectedOrgId ?? null,
-    activeOrgId: localStorage.getItem("openwork.den.activeOrgId"),
-    activeOrgName: localStorage.getItem("openwork.den.activeOrgName"),
-    handoffAutoContinueAt: sessionStorage.getItem("openwork.den.handoffAutoContinueAt"),
+    calls: window.__micxOrgChooserFixture?.calls ?? [],
+    requests: window.__micxOrgChooserFixture?.requests ?? [],
+    selectedOrgId: window.__micxOrgChooserFixture?.selectedOrgId ?? null,
+    activeOrgId: localStorage.getItem("micx.den.activeOrgId"),
+    activeOrgName: localStorage.getItem("micx.den.activeOrgName"),
+    handoffAutoContinueAt: sessionStorage.getItem("micx.den.handoffAutoContinueAt"),
     text: document.body.innerText,
   }))()`;
 }
@@ -188,7 +188,7 @@ function fixtureSnapshotExpression() {
 async function waitForChooser(ctx) {
   await ctx.waitFor(`(() => {
     const text = document.body.innerText;
-    const onOnboarding = window.__OPENWORK_ELECTRON__
+    const onOnboarding = window.__MICX_ELECTRON__
       ? location.hash.includes("/onboarding")
       : location.pathname === "/onboarding";
     return onOnboarding

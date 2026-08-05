@@ -2,21 +2,21 @@
  * Enterprise new-member first run — factory-fresh desktop app first auth.
  *
  * Required env:
- * - OPENWORK_EVAL_DEN_API_URL: Den API base URL for the enterprise sandbox.
- * - OPENWORK_EVAL_DEN_WEB_URL: Den Web origin used by the desktop handoff link.
+ * - MICX_EVAL_DEN_API_URL: Den API base URL for the enterprise sandbox.
+ * - MICX_EVAL_DEN_WEB_URL: Den Web origin used by the desktop handoff link.
  *
  * Optional env:
- * - OPENWORK_EVAL_CDP_URL or --cdp-url: CDP endpoint for a factory-fresh Electron app.
- * - OPENWORK_EVAL_ENTERPRISE_ORG_NAME: organization display name (default Example Organization).
- * - OPENWORK_EVAL_ENTERPRISE_NEW_MEMBER_EMAIL: signed-in member email (default new.member@example.com).
- * - OPENWORK_EVAL_ENTERPRISE_NEW_MEMBER_WORKSPACE: workspace folder (default /workspace/enterprise-first-auth).
- * - OPENWORK_EVAL_ENTERPRISE_GATEWAY_URL: gateway base URL used if the transcript asks for JIT login without a full link.
- * - OPENWORK_EVAL_ENTERPRISE_NEW_MEMBER_GATEWAY_USER: gateway login user override (default signed-in member email).
- * - OPENWORK_EVAL_ENTERPRISE_PASSWORD: account password (default TutorialDemo123!).
- * - OPENWORK_EVAL_ENTERPRISE_TASK_TIMEOUT_MS: chat turn timeout in milliseconds.
+ * - MICX_EVAL_CDP_URL or --cdp-url: CDP endpoint for a factory-fresh Electron app.
+ * - MICX_EVAL_ENTERPRISE_ORG_NAME: organization display name (default Example Organization).
+ * - MICX_EVAL_ENTERPRISE_NEW_MEMBER_EMAIL: signed-in member email (default new.member@example.com).
+ * - MICX_EVAL_ENTERPRISE_NEW_MEMBER_WORKSPACE: workspace folder (default /workspace/enterprise-first-auth).
+ * - MICX_EVAL_ENTERPRISE_GATEWAY_URL: gateway base URL used if the transcript asks for JIT login without a full link.
+ * - MICX_EVAL_ENTERPRISE_NEW_MEMBER_GATEWAY_USER: gateway login user override (default signed-in member email).
+ * - MICX_EVAL_ENTERPRISE_PASSWORD: account password (default TutorialDemo123!).
+ * - MICX_EVAL_ENTERPRISE_TASK_TIMEOUT_MS: chat turn timeout in milliseconds.
  *
  * Runner note: evals/runner/run.mjs chooses one CDP endpoint for a run. Point
- * OPENWORK_EVAL_CDP_URL (or --cdp-url) at the freshly installed sandbox/app.
+ * MICX_EVAL_CDP_URL (or --cdp-url) at the freshly installed sandbox/app.
  */
 
 import {
@@ -33,16 +33,16 @@ import {
   sendPromptAndWait,
   signInByEmail,
   timeoutMs,
-  waitForOpenWorkConnectReady,
+  waitForMicxConnectReady,
   workspaceFolder,
 } from "./enterprise-gateway-common.mjs";
 
 const DEFAULT_NEW_MEMBER_EMAIL = "new.member@example.com";
-const WORKSPACE_ENV = "OPENWORK_EVAL_ENTERPRISE_NEW_MEMBER_WORKSPACE";
+const WORKSPACE_ENV = "MICX_EVAL_ENTERPRISE_NEW_MEMBER_WORKSPACE";
 const DEFAULT_WORKSPACE = "/workspace/enterprise-first-auth";
-const PROMPT = "Use OpenWork Cloud capabilities to find and use the `my-incidents` skill, then report the open incidents assigned to me.";
+const PROMPT = "Use Micx Cloud capabilities to find and use the `my-incidents` skill, then report the open incidents assigned to me.";
 const PROMPT_AFTER_JIT = "The enterprise incident gateway sign-in is complete. Start fresh without reusing prior results: find and use `my-incidents` / `enterprise_graph_query` with `assigned_to: me` and `status: open`, then report my open incidents.";
-const JIT_COMPLETE_SENTINEL = "OPENWORK_ENTERPRISE_JIT_COMPLETE_SENTINEL";
+const JIT_COMPLETE_SENTINEL = "MICX_ENTERPRISE_JIT_COMPLETE_SENTINEL";
 
 const state = {
   newMemberToken: "",
@@ -54,22 +54,22 @@ export default {
   id: "enterprise-first-auth",
   title: "Enterprise factory-fresh desktop first auth provisions org resources and discovers my-incidents",
   kind: "user-facing",
-  requiredEnv: ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_WEB_URL"],
+  requiredEnv: ["MICX_EVAL_DEN_API_URL", "MICX_EVAL_DEN_WEB_URL"],
   steps: [
     {
       name: "Frame: first open",
       run: async (ctx) => {
-        await ctx.prove("A just-installed enterprise desktop app opens to the OpenWork welcome screen", {
+        await ctx.prove("A just-installed enterprise desktop app opens to the Micx welcome screen", {
           action: async () => {
-            await ctx.waitForText("Welcome to OpenWork", { timeoutMs: 90_000 });
+            await ctx.waitForText("Welcome to Micx", { timeoutMs: 90_000 });
           },
           assert: async () => {
-            await ctx.expectText("Welcome to OpenWork");
+            await ctx.expectText("Welcome to Micx");
           },
           screenshot: {
             name: "enterprise-first-open",
-            claim: "The first launch starts from the generic OpenWork welcome screen before the member signs in.",
-            requireText: ["Welcome to OpenWork"],
+            claim: "The first launch starts from the generic Micx welcome screen before the member signs in.",
+            requireText: ["Welcome to Micx"],
             rejectText: ["Something went wrong"],
           },
         });
@@ -132,25 +132,25 @@ export default {
       },
     },
     {
-      name: "Continue to workspace and wait for OpenWork Connect",
+      name: "Continue to workspace and wait for Micx Connect",
       run: async (ctx) => {
         await clickTextStartingWith(ctx, "Continue to workspace", "button, [role=button]", 30_000);
-        await ctx.waitFor("Boolean((localStorage.getItem('openwork.den.authToken') ?? '').trim())", { timeoutMs: 60_000, label: "desktop Den auth token" });
+        await ctx.waitFor("Boolean((localStorage.getItem('micx.den.authToken') ?? '').trim())", { timeoutMs: 60_000, label: "desktop Den auth token" });
         const shell = await ctx.waitFor(`(() => {
           const text = document.body.innerText || '';
-          return text.includes('OpenWork Connect') || text.includes('Run task') || location.hash.includes('/workspace') || location.hash.includes('/welcome');
+          return text.includes('Micx Connect') || text.includes('Run task') || location.hash.includes('/workspace') || location.hash.includes('/welcome');
         })()`, { timeoutMs: 90_000, label: "desktop app shell after org provisioning" });
         assertEvidence(ctx, Boolean(shell), "The signed-in desktop app shell is visible after org provisioning", await desktopAuthState(ctx));
         const folder = workspaceFolder(ctx, WORKSPACE_ENV, DEFAULT_WORKSPACE);
         state.workspaceId = await ensureLocalWorkspaceBeforeConnectPollIfNeeded(ctx, folder);
         if (state.workspaceId) {
-          assertEvidence(ctx, true, "A local workspace is created from the welcome route before polling OpenWork Connect", {
+          assertEvidence(ctx, true, "A local workspace is created from the welcome route before polling Micx Connect", {
             folder,
             workspaceId: state.workspaceId,
           });
         }
-        const ready = await waitForOpenWorkConnectReady(ctx);
-        assertEvidence(ctx, ready.ready, "OpenWork Connect reaches Ready on the factory-fresh app", ready);
+        const ready = await waitForMicxConnectReady(ctx);
+        assertEvidence(ctx, ready.ready, "Micx Connect reaches Ready on the factory-fresh app", ready);
       },
     },
     {
@@ -176,7 +176,7 @@ export default {
       run: async (ctx) => {
         await ctx.prove("Member's first task discovers the my-incidents org skill on a fresh machine", {
           action: async () => {
-            const timeout = timeoutMs(ctx, "OPENWORK_EVAL_ENTERPRISE_FIRST_AUTH_TIMEOUT_MS", 300_000);
+            const timeout = timeoutMs(ctx, "MICX_EVAL_ENTERPRISE_FIRST_AUTH_TIMEOUT_MS", 300_000);
             const first = await sendPromptAndWait(ctx, PROMPT, { timeout });
             state.latestTranscript = await retryAfterGatewayLoginIfNeeded(
               ctx,
@@ -184,7 +184,7 @@ export default {
               first,
               JIT_COMPLETE_SENTINEL,
               PROMPT_AFTER_JIT,
-              { timeout, gatewayUserEnvName: "OPENWORK_EVAL_ENTERPRISE_NEW_MEMBER_GATEWAY_USER" },
+              { timeout, gatewayUserEnvName: "MICX_EVAL_ENTERPRISE_NEW_MEMBER_GATEWAY_USER" },
             );
           },
           assert: async () => {
@@ -204,25 +204,25 @@ export default {
 };
 
 function newMemberEmail(ctx) {
-  return envText(ctx, "OPENWORK_EVAL_ENTERPRISE_NEW_MEMBER_EMAIL") || DEFAULT_NEW_MEMBER_EMAIL;
+  return envText(ctx, "MICX_EVAL_ENTERPRISE_NEW_MEMBER_EMAIL") || DEFAULT_NEW_MEMBER_EMAIL;
 }
 
 async function dispatchDesktopHandoff(ctx, email) {
   await configureDesktopForDen(ctx);
   await resetDesktopDenSession(ctx);
   const token = await signInByEmail(ctx, email);
-  const openworkUrl = await createDesktopHandoff(ctx, token);
-  await deliverDesktopDeepLink(ctx, openworkUrl);
-  await waitForDesktopToken(ctx, openworkUrl);
+  const micxUrl = await createDesktopHandoff(ctx, token);
+  await deliverDesktopDeepLink(ctx, micxUrl);
+  await waitForDesktopToken(ctx, micxUrl);
   return token;
 }
 
-async function waitForDesktopToken(ctx, openworkUrl) {
+async function waitForDesktopToken(ctx, micxUrl) {
   try {
-    await ctx.waitFor("Boolean((localStorage.getItem('openwork.den.authToken') ?? '').trim())", { timeoutMs: 60_000, label: "desktop Den token after handoff" });
+    await ctx.waitFor("Boolean((localStorage.getItem('micx.den.authToken') ?? '').trim())", { timeoutMs: 60_000, label: "desktop Den token after handoff" });
   } catch (error) {
     const diagnostics = await desktopAuthState(ctx);
-    const redactedUrl = openworkUrl.replace(/([?&]grant=)[^&]+/, "$1<redacted>");
+    const redactedUrl = micxUrl.replace(/([?&]grant=)[^&]+/, "$1<redacted>");
     throw new Error(`Timed out waiting for desktop Den token after deep-link handoff ${redactedUrl}. Diagnostics: ${JSON.stringify(diagnostics)}. ${error instanceof Error ? error.message : String(error)}`);
   }
 }
@@ -259,9 +259,9 @@ async function clickTextStartingWith(ctx, prefix, selector, timeoutMs) {
 
 async function desktopAuthState(ctx) {
   return ctx.eval(`(() => ({
-    hasToken: Boolean((localStorage.getItem('openwork.den.authToken') ?? '').trim()),
-    activeOrgId: localStorage.getItem('openwork.den.activeOrgId') || '',
-    activeOrgName: localStorage.getItem('openwork.den.activeOrgName') || '',
+    hasToken: Boolean((localStorage.getItem('micx.den.authToken') ?? '').trim()),
+    activeOrgId: localStorage.getItem('micx.den.activeOrgId') || '',
+    activeOrgName: localStorage.getItem('micx.den.activeOrgName') || '',
     hash: location.hash,
     visibleText: (document.body.innerText || '').slice(0, 1_000),
     handoffEvents: window.__enterpriseHandoffDiagnostics?.events ?? [],

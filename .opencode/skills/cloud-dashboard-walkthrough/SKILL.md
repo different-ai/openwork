@@ -1,11 +1,11 @@
 ---
 name: cloud-dashboard-walkthrough
-description: Drive the OpenWork Cloud dashboard (Den Web / app.openworklabs.com) as a real user via headless Chrome CDP — sign up, create an org, invite teammates, teams, plugins with skills, marketplaces, team access grants, desktop handoff. Use for cloud tutorials, dashboard screenshots, demo walkthroughs, or when a task says "create an org / invite teammates / create a plugin / assign a marketplace" on OpenWork Cloud.
+description: Drive the Micx Cloud dashboard (Den Web / app.micxlabs.com) as a real user via headless Chrome CDP — sign up, create an org, invite teammates, teams, plugins with skills, marketplaces, team access grants, desktop handoff. Use for cloud tutorials, dashboard screenshots, demo walkthroughs, or when a task says "create an org / invite teammates / create a plugin / assign a marketplace" on Micx Cloud.
 ---
 
 # Cloud Dashboard Walkthrough (Den Web via CDP)
 
-Drive the real OpenWork Cloud dashboard end-to-end as a user. Proven flow used
+Drive the real Micx Cloud dashboard end-to-end as a user. Proven flow used
 to produce `packages/docs/cloud/team-quickstart.mdx` — reuse it for
 tutorial refreshes, demos, and screenshot runs.
 
@@ -63,7 +63,7 @@ headless — drive everything through `browser_eval` DOM queries instead.
 
 | Step | Route | Key labels |
 |---|---|---|
-| Email-first sign-in | `/` | "Start using OpenWork" → EMAIL → **Next** |
+| Email-first sign-in | `/` | "Start using Micx" → EMAIL → **Next** |
 | Sign-up | `/` | "Create your account." → EMAIL/NAME/PASSWORD → **Sign up** |
 | Create org | `/organization` | "Name your team." → Organization name → **Continue** |
 | Onboarding checklist | `/dashboard/onboarding` | "Set up {org}" → Step 1 of 2 install, Step 2 of 2 model |
@@ -97,7 +97,7 @@ Invite tokens are readable as the owner: `GET /api/den/v1/org` →
   invited email (dev mode returns a token immediately), then
   `POST /v1/orgs/invitations/accept` with `Authorization: Bearer <token>` and
   body `{"id":"<inviteToken>"}`.
-- Accounts created through the join flow get the default name "OpenWork User";
+- Accounts created through the join flow get the default name "Micx User";
   fix via `PATCH /api/den/v1/me/profile` `{"firstName":"…","lastName":"…"}`
   from that user's session.
 
@@ -108,7 +108,7 @@ As a signed-in web user: `POST /api/den/v1/auth/desktop-handoff` (body `{}`)
 `denBaseUrl` can be an internal host:
 
 ```
-openwork://den-auth?grant=<grant>&denBaseUrl=<urlencoded DEN_WEB_URL>
+micx://den-auth?grant=<grant>&denBaseUrl=<urlencoded DEN_WEB_URL>
 ```
 
 Grants expire in 5 minutes and are single-use. Consuming it in Electron is

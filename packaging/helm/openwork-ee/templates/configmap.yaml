@@ -7,7 +7,7 @@ metadata:
 data:
   CI: "true"
   NODE_ENV: "production"
-  OPENWORK_DEV_MODE: {{ .Values.config.openworkDevMode | quote }}
+  MICX_DEV_MODE: {{ .Values.config.micxDevMode | quote }}
   DEN_API_NODE_OPTIONS: {{ .Values.config.denApiNodeOptions | quote }}
   DB_MODE: {{ .Values.config.databaseMode | quote }}
   DEN_ORG_MODE: {{ .Values.config.tenancy.mode | quote }}
@@ -39,10 +39,10 @@ data:
   DEN_API_PUBLIC_URL: {{ .Values.config.public.apiOrigin | quote }}
   DEN_DESKTOP_DEN_BASE_URL: {{ .Values.config.public.desktopDenBaseUrl | quote }}
   {{ if .Values.config.public.installerReleaseTag }}
-  OPENWORK_INSTALLER_RELEASE_TAG: {{ .Values.config.public.installerReleaseTag | quote }}
+  MICX_INSTALLER_RELEASE_TAG: {{ .Values.config.public.installerReleaseTag | quote }}
   {{ end }}
   {{ if .Values.config.public.installerReleaseRepo }}
-  OPENWORK_INSTALLER_RELEASE_REPO: {{ .Values.config.public.installerReleaseRepo | quote }}
+  MICX_INSTALLER_RELEASE_REPO: {{ .Values.config.public.installerReleaseRepo | quote }}
   {{ end }}
   PROVISIONER_MODE: {{ .Values.config.provisioner.mode | quote }}
   WORKER_PROVISIONING_RECONCILE_INTERVAL_MS: {{ .Values.config.provisioner.reconcileIntervalMs | quote }}
@@ -58,7 +58,7 @@ data:
   DEN_AUTH_FALLBACK_BASE: {{ include "openwork-ee.authFallbackInternalUrl" . | quote }}
   DEN_AUTH_ORIGIN: {{ .Values.config.public.webOrigin | quote }}
   DEN_WEB_PUBLIC_ORIGIN: {{ .Values.config.public.webOrigin | quote }}
-  DEN_WEB_OPENWORK_AUTH_CALLBACK_URL: {{ .Values.config.public.authCallbackUrl | quote }}
+  DEN_WEB_MICX_AUTH_CALLBACK_URL: {{ .Values.config.public.authCallbackUrl | quote }}
   {{ with .Values.config.polar.apiBase }}
   POLAR_API_BASE: {{ . | quote }}
   {{ end }}
@@ -131,8 +131,8 @@ data:
   {{ with .Values.config.daytona.sidecarDir }}
   DAYTONA_SIDECAR_DIR: {{ . | quote }}
   {{ end }}
-  {{ with .Values.config.daytona.openworkPort }}
-  DAYTONA_OPENWORK_PORT: {{ . | quote }}
+  {{ with .Values.config.daytona.micxPort }}
+  DAYTONA_MICX_PORT: {{ . | quote }}
   {{ end }}
   {{ with .Values.config.daytona.opencodePort }}
   DAYTONA_OPENCODE_PORT: {{ . | quote }}
@@ -158,11 +158,11 @@ data:
   {{ with .Values.config.inference.creditsPerDollar }}
   INFERENCE_CREDITS_PER_DOLLAR: {{ . | quote }}
   {{ end }}
-  {{ with .Values.config.public.openworkAppConnectUrl }}
-  DEN_WEB_OPENWORK_APP_CONNECT_URL: {{ . | quote }}
+  {{ with .Values.config.public.micxAppConnectUrl }}
+  DEN_WEB_MICX_APP_CONNECT_URL: {{ . | quote }}
   {{ end }}
-  {{ with .Values.config.public.openworkWebUrl }}
-  DEN_WEB_OPENWORK_WEB_URL: {{ . | quote }}
+  {{ with .Values.config.public.micxWebUrl }}
+  DEN_WEB_MICX_WEB_URL: {{ . | quote }}
   {{ end }}
   {{ with .Values.config.web.posthogKey }}
   DEN_WEB_POSTHOG_KEY: {{ . | quote }}

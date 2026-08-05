@@ -186,7 +186,7 @@ Usage:
 
 Options:
   --env-group-id <id>  Render env group holding DAYTONA_SNAPSHOT (e.g. evg-...).
-  --snapshot <name>    Desired snapshot name (e.g. openwork-0.18.11).
+  --snapshot <name>    Desired snapshot name (e.g. micx-0.18.11).
   --dry-run            Print the request that would be sent; write nothing.
   --compare            Read-only drift check; exits non-zero when the pin differs.
   --read               Print the current snapshot pin; write nothing.

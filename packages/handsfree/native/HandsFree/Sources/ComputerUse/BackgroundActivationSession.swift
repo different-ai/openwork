@@ -54,7 +54,7 @@ final class BackgroundActivationSession: @unchecked Sendable {
                 CFRunLoopRun()
             }
         }
-        thread.name = "OpenWorkBackgroundActivationSession"
+        thread.name = "MicxBackgroundActivationSession"
         self.thread = thread
         thread.start()
         ready.wait()

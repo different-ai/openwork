@@ -6,14 +6,14 @@ import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
 const vo = await loadVoiceoverParagraphs("marketplace-connect-only-delivery");
 
 const FLOW_ID = "marketplace-connect-only-delivery";
-const DEN_API_URL = cleanBaseUrl(process.env.OPENWORK_EVAL_DEN_API_URL);
-const DEN_WEB_URL = cleanBaseUrl(process.env.OPENWORK_EVAL_DEN_WEB_URL || DEN_API_URL);
-const ADMIN_EMAIL = process.env.OPENWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
-const ADMIN_PASSWORD = process.env.OPENWORK_EVAL_DEMO_PASSWORD?.trim() || "OpenWorkDemo123!";
-const PLATFORM_ADMIN_EMAIL = process.env.OPENWORK_EVAL_PLATFORM_ADMIN_EMAIL?.trim() || "";
-const PLATFORM_ADMIN_PASSWORD = process.env.OPENWORK_EVAL_PLATFORM_ADMIN_PASSWORD?.trim() || "";
-const MARK_VERIFIED_CMD = process.env.OPENWORK_EVAL_MARK_VERIFIED_CMD?.trim() || "";
-const WORKSPACE_PATH = process.env.OPENWORK_EVAL_WORKSPACE_PATH?.trim() || "/tmp/openwork-marketplace-connect-only-delivery";
+const DEN_API_URL = cleanBaseUrl(process.env.MICX_EVAL_DEN_API_URL);
+const DEN_WEB_URL = cleanBaseUrl(process.env.MICX_EVAL_DEN_WEB_URL || DEN_API_URL);
+const ADMIN_EMAIL = process.env.MICX_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
+const ADMIN_PASSWORD = process.env.MICX_EVAL_DEMO_PASSWORD?.trim() || "MicxDemo123!";
+const PLATFORM_ADMIN_EMAIL = process.env.MICX_EVAL_PLATFORM_ADMIN_EMAIL?.trim() || "";
+const PLATFORM_ADMIN_PASSWORD = process.env.MICX_EVAL_PLATFORM_ADMIN_PASSWORD?.trim() || "";
+const MARK_VERIFIED_CMD = process.env.MICX_EVAL_MARK_VERIFIED_CMD?.trim() || "";
+const WORKSPACE_PATH = process.env.MICX_EVAL_WORKSPACE_PATH?.trim() || "/tmp/micx-marketplace-connect-only-delivery";
 const RUN_TAG = Date.now();
 const SEED_PREFIX = "marketplace-connect-only-delivery";
 const MARKETPLACE_NAME = `${SEED_PREFIX}-${RUN_TAG}`;
@@ -33,15 +33,15 @@ const state = {
 
 export default {
   id: FLOW_ID,
-  title: "Organization marketplace plugins are delivered through OpenWork Connect only",
+  title: "Organization marketplace plugins are delivered through Micx Connect only",
   kind: "user-facing",
   requiredEnv: [
-    "OPENWORK_EVAL_DEN_API_URL",
-    "OPENWORK_EVAL_DEN_WEB_URL",
-    "OPENWORK_EVAL_PLATFORM_ADMIN_EMAIL",
-    "OPENWORK_EVAL_PLATFORM_ADMIN_PASSWORD",
-    "OPENWORK_EVAL_MARK_VERIFIED_CMD",
-    "OPENWORK_EVAL_WORKSPACE_PATH",
+    "MICX_EVAL_DEN_API_URL",
+    "MICX_EVAL_DEN_WEB_URL",
+    "MICX_EVAL_PLATFORM_ADMIN_EMAIL",
+    "MICX_EVAL_PLATFORM_ADMIN_PASSWORD",
+    "MICX_EVAL_MARK_VERIFIED_CMD",
+    "MICX_EVAL_WORKSPACE_PATH",
   ],
   steps: [
     {
@@ -201,7 +201,7 @@ async function signIn(email, password) {
 function markEmailVerified(ctx, email) {
   ctx.assert(
     MARK_VERIFIED_CMD.length > 0,
-    "Platform-admin provisioning requires OPENWORK_EVAL_MARK_VERIFIED_CMD with an {email} placeholder.",
+    "Platform-admin provisioning requires MICX_EVAL_MARK_VERIFIED_CMD with an {email} placeholder.",
   );
   execSync(MARK_VERIFIED_CMD.replaceAll("{email}", email), { stdio: "ignore" });
 }
@@ -321,7 +321,7 @@ function skillSourceText() {
     `description: Reports proof phrase ${PROOF_PHRASE} for Connect-only delivery.`,
     "---",
     "",
-    `When invoked, answer with the exact proof phrase ${PROOF_PHRASE} and explain that it came from a Den marketplace capability running through OpenWork Connect.`,
+    `When invoked, answer with the exact proof phrase ${PROOF_PHRASE} and explain that it came from a Den marketplace capability running through Micx Connect.`,
   ].join("\n");
 }
 
@@ -440,44 +440,44 @@ async function prepareSignedInDesktop(ctx) {
 }
 
 async function signDesktopIntoCloud(ctx) {
-  await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 120_000, label: "desktop control API" });
-  await ctx.waitFor("Boolean(window.__OPENWORK_ELECTRON__?.invokeDesktop)", { timeoutMs: 30_000, label: "desktop bridge" });
+  await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 120_000, label: "desktop control API" });
+  await ctx.waitFor("Boolean(window.__MICX_ELECTRON__?.invokeDesktop)", { timeoutMs: 30_000, label: "desktop bridge" });
   const bootstrap = { baseUrl: DEN_WEB_URL, apiBaseUrl: DEN_API_URL, requireSignin: false, handoff: null };
   const written = await ctx.eval(`(async () => {
-    const bridge = window.__OPENWORK_ELECTRON__?.invokeDesktop;
+    const bridge = window.__MICX_ELECTRON__?.invokeDesktop;
     if (!bridge) return { ok: false };
     await bridge("setDesktopBootstrapConfig", ${JSON.stringify(bootstrap)});
-    localStorage.setItem('openwork.den.baseUrl', ${JSON.stringify(DEN_WEB_URL)});
-    localStorage.setItem('openwork.den.apiBaseUrl', ${JSON.stringify(DEN_API_URL)});
-    localStorage.removeItem('openwork.den.authToken');
-    localStorage.removeItem('openwork.den.activeOrgId');
-    localStorage.removeItem('openwork.den.activeOrgSlug');
-    localStorage.removeItem('openwork.den.activeOrgName');
-    localStorage.removeItem('openwork.den.mcp.sync');
+    localStorage.setItem('micx.den.baseUrl', ${JSON.stringify(DEN_WEB_URL)});
+    localStorage.setItem('micx.den.apiBaseUrl', ${JSON.stringify(DEN_API_URL)});
+    localStorage.removeItem('micx.den.authToken');
+    localStorage.removeItem('micx.den.activeOrgId');
+    localStorage.removeItem('micx.den.activeOrgSlug');
+    localStorage.removeItem('micx.den.activeOrgName');
+    localStorage.removeItem('micx.den.mcp.sync');
     return { ok: true };
   })()`, { awaitPromise: true });
   ctx.assert(written?.ok, "Failed to write desktop bootstrap config.");
   await clearDesktopConfigCache(ctx);
   await ctx.eval("location.reload()");
-  await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 60_000, label: "control API after bootstrap reload" });
+  await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 60_000, label: "control API after bootstrap reload" });
   await ctx.waitFor("(document.getElementById('root')?.childElementCount ?? 0) > 0", { timeoutMs: 60_000, label: "react root mounted after bootstrap reload" });
 
   const handoff = await denApiFetch("/v1/auth/desktop-handoff", {
     method: "POST",
     headers: { authorization: `Bearer ${requireStateValue(state.orgAdminToken, "org admin token")}` },
-    body: JSON.stringify({ desktopScheme: "openwork" }),
+    body: JSON.stringify({ desktopScheme: "micx" }),
   });
   ctx.assert(handoff.response.ok, `Handoff create failed: ${handoff.response.status} ${handoff.text.slice(0, 300)}`);
   await ctx.waitFor(
-    "Boolean(window.__openworkControl?.listActions().some((action) => action.id === 'auth.exchange-grant'))",
+    "Boolean(window.__micxControl?.listActions().some((action) => action.id === 'auth.exchange-grant'))",
     { timeoutMs: 30_000, label: "auth.exchange-grant control action" },
   );
   await ctx.control("auth.exchange-grant", { grant: handoff.body.grant, baseUrl: DEN_WEB_URL });
-  await ctx.waitFor("Boolean((localStorage.getItem('openwork.den.authToken') ?? '').trim())", {
+  await ctx.waitFor("Boolean((localStorage.getItem('micx.den.authToken') ?? '').trim())", {
     timeoutMs: 45_000,
     label: "persisted den auth token",
   });
-  await ctx.waitFor(`localStorage.getItem('openwork.den.activeOrgId') === ${JSON.stringify(requireStateValue(state.orgId, "organization id"))}`, {
+  await ctx.waitFor(`localStorage.getItem('micx.den.activeOrgId') === ${JSON.stringify(requireStateValue(state.orgId, "organization id"))}`, {
     timeoutMs: 60_000,
     label: "active org resolved",
   });
@@ -486,7 +486,7 @@ async function signDesktopIntoCloud(ctx) {
 async function clearDesktopConfigCache(ctx) {
   await ctx.eval(`(() => {
     for (const key of Object.keys(localStorage)) {
-      if (key.startsWith('openwork.den.desktopConfig:')) localStorage.removeItem(key);
+      if (key.startsWith('micx.den.desktopConfig:')) localStorage.removeItem(key);
     }
     return true;
   })()`);
@@ -506,7 +506,7 @@ async function completeDesktopCloudOnboardingIfNeeded(ctx) {
     if (routeReady) return;
     await ctx.eval(`(() => {
       const buttons = [...document.querySelectorAll('button')];
-      const modelSkip = buttons.find((candidate) => ['Skip and use the free model', 'Continue without OpenWork Models'].includes((candidate.textContent ?? '').trim()));
+      const modelSkip = buttons.find((candidate) => ['Skip and use the free model', 'Continue without Micx Models'].includes((candidate.textContent ?? '').trim()));
       if (modelSkip instanceof HTMLElement && !modelSkip.hasAttribute('disabled')) modelSkip.click();
       const surveySkip = buttons.find((candidate) => (candidate.textContent ?? '').trim() === 'Skip');
       if (surveySkip instanceof HTMLElement && !surveySkip.hasAttribute('disabled')) surveySkip.click();
@@ -525,7 +525,7 @@ async function remountDesktop(ctx) {
   for (let attempt = 0; attempt < 3 && !remountReady; attempt += 1) {
     await ctx.eval("location.reload()");
     try {
-      await ctx.waitFor("Boolean(window.__openworkControl) && (document.getElementById('root')?.childElementCount ?? 0) > 0", { timeoutMs: 45_000, label: `desktop alive after reload (attempt ${attempt + 1})` });
+      await ctx.waitFor("Boolean(window.__micxControl) && (document.getElementById('root')?.childElementCount ?? 0) > 0", { timeoutMs: 45_000, label: `desktop alive after reload (attempt ${attempt + 1})` });
       remountReady = true;
     } catch {
       // Retry a blank renderer boot.
@@ -537,21 +537,21 @@ async function remountDesktop(ctx) {
 
 async function waitForCloudMcpSync(ctx) {
   await ctx.waitFor(
-    "Boolean(localStorage.getItem('openwork.den.mcp.lastMaintenanceOutcome')) || (document.body?.innerText ?? '').includes('OpenWork Connect: Ready')",
-    { timeoutMs: 180_000, label: "OpenWork Connect maintenance ready" },
+    "Boolean(localStorage.getItem('micx.den.mcp.lastMaintenanceOutcome')) || (document.body?.innerText ?? '').includes('Micx Connect: Ready')",
+    { timeoutMs: 180_000, label: "Micx Connect maintenance ready" },
   );
 }
 
 async function navigateToSettingsTab(ctx, tab) {
   await dismissStaleDialogs(ctx);
-  const workspaceId = await ctx.eval("(window.location.hash.match(/\\/workspace\\/([^/]+)/) ?? [])[1] ?? localStorage.getItem('openwork.react.activeWorkspace') ?? ''");
+  const workspaceId = await ctx.eval("(window.location.hash.match(/\\/workspace\\/([^/]+)/) ?? [])[1] ?? localStorage.getItem('micx.react.activeWorkspace') ?? ''");
   await ctx.navigateHash(workspaceId ? `/workspace/${workspaceId}/settings/${tab}` : `/settings/${tab}`);
   await ctx.waitFor(`window.location.hash.includes('/settings/${tab}')`, { timeoutMs: 30_000, label: `${tab} settings route` });
   try {
     await ctx.waitFor("(document.body?.innerText ?? '').includes('Back to app')", { timeoutMs: 10_000, label: "settings surface mounted" });
   } catch {
     await ctx.eval("location.reload()");
-    await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 60_000, label: "control API after settings recovery reload" });
+    await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 60_000, label: "control API after settings recovery reload" });
     await ctx.waitFor("(document.body?.innerText ?? '').includes('Back to app')", { timeoutMs: 60_000, label: "settings surface mounted after reload" });
   }
 }
@@ -644,19 +644,19 @@ async function readExtensionsLegacyState(ctx) {
 async function runSeededCapabilityAgentTurn(ctx) {
   await navigateToSession(ctx);
   await ctx.waitFor(
-    "Boolean(window.__openworkControl?.listActions().find((action) => action.id === 'session.create_task' && !action.disabled))",
+    "Boolean(window.__micxControl?.listActions().find((action) => action.id === 'session.create_task' && !action.disabled))",
     { timeoutMs: 20_000, label: "session.create_task available" },
   );
   await ctx.control("session.create_task");
   await ctx.waitFor(
     `(() => {
-      const route = window.__openworkControl.snapshot().route || "";
+      const route = window.__micxControl.snapshot().route || "";
       return /ses_[A-Za-z0-9]+/.test(route);
     })()`,
     { timeoutMs: 30_000, label: "new session active" },
   );
 
-  const prompt = `Use the OpenWork Cloud Control capability named ${SKILL_NAME}. Search for it first, execute the matched capability, and tell me the exact proof phrase.`;
+  const prompt = `Use the Micx Cloud Control capability named ${SKILL_NAME}. Search for it first, execute the matched capability, and tell me the exact proof phrase.`;
   const pasted = await ctx.eval(`(() => {
     const editor = document.querySelector('[contenteditable="true"][data-lexical-editor="true"]')
       || document.querySelector('[contenteditable="true"]');
@@ -678,7 +678,7 @@ async function runSeededCapabilityAgentTurn(ctx) {
 }
 
 async function navigateToSession(ctx) {
-  const workspaceId = await ctx.eval("(window.location.hash.match(/\\/workspace\\/([^/]+)/) ?? [])[1] ?? localStorage.getItem('openwork.react.activeWorkspace') ?? ''");
+  const workspaceId = await ctx.eval("(window.location.hash.match(/\\/workspace\\/([^/]+)/) ?? [])[1] ?? localStorage.getItem('micx.react.activeWorkspace') ?? ''");
   await ctx.navigateHash(workspaceId ? `/workspace/${workspaceId}/session` : "/session");
   await ctx.waitFor("window.location.hash.includes('/session')", { timeoutMs: 30_000, label: "session route" });
 }
@@ -692,17 +692,17 @@ async function seedLegacyLocalImport(ctx) {
   ctx.assert(resolvedResponse.response.ok, `Plugin resolved fetch failed: ${resolvedResponse.response.status} ${resolvedResponse.text.slice(0, 300)}`);
   const resolved = { plugin: state.plugin, memberships: resolvedResponse.body?.items ?? [] };
 
-  // Eval-only seeding: call the still-alive local OpenWork server cloud-plugin
+  // Eval-only seeding: call the still-alive local Micx server cloud-plugin
   // install route directly to simulate a pre-D2 legacy import. No UI path should
   // call this route for Den marketplace plugins anymore.
   const result = await ctx.eval(`(async () => {
-    const bridge = window.__OPENWORK_ELECTRON__?.invokeDesktop;
+    const bridge = window.__MICX_ELECTRON__?.invokeDesktop;
     if (!bridge) return { ok: false, reason: "Electron bridge unavailable" };
-    const info = await bridge("openworkServerInfo");
+    const info = await bridge("micxServerInfo");
     const baseUrl = String(info?.baseUrl ?? "").replace(/\\/+$/, "");
     const token = String(info?.ownerToken || info?.clientToken || "").trim();
-    const workspaceId = (location.hash.match(/\\/workspace\\/([^/]+)/) || [])[1] || localStorage.getItem("openwork.react.activeWorkspace") || "";
-    if (!baseUrl || !token || !workspaceId) return { ok: false, reason: "Missing OpenWork server connection" };
+    const workspaceId = (location.hash.match(/\\/workspace\\/([^/]+)/) || [])[1] || localStorage.getItem("micx.react.activeWorkspace") || "";
+    if (!baseUrl || !token || !workspaceId) return { ok: false, reason: "Missing Micx server connection" };
     const response = await fetch(baseUrl + "/workspace/" + encodeURIComponent(workspaceId) + "/cloud-plugins", {
       method: "POST",
       headers: { authorization: "Bearer " + token, "content-type": "application/json" },
@@ -723,13 +723,13 @@ async function seedLegacyLocalImport(ctx) {
 
 async function workspaceServerJson(ctx, path) {
   return ctx.eval(`(async () => {
-    const bridge = window.__OPENWORK_ELECTRON__?.invokeDesktop;
+    const bridge = window.__MICX_ELECTRON__?.invokeDesktop;
     if (!bridge) throw new Error("Electron bridge unavailable");
-    const info = await bridge("openworkServerInfo");
+    const info = await bridge("micxServerInfo");
     const baseUrl = String(info?.baseUrl ?? "").replace(/\\/+$/, "");
     const token = String(info?.ownerToken || info?.clientToken || "").trim();
-    const workspaceId = (location.hash.match(/\\/workspace\\/([^/]+)/) || [])[1] || localStorage.getItem("openwork.react.activeWorkspace") || "";
-    if (!baseUrl || !token || !workspaceId) throw new Error("Missing OpenWork server connection");
+    const workspaceId = (location.hash.match(/\\/workspace\\/([^/]+)/) || [])[1] || localStorage.getItem("micx.react.activeWorkspace") || "";
+    if (!baseUrl || !token || !workspaceId) throw new Error("Missing Micx server connection");
     const response = await fetch(baseUrl + "/workspace/" + encodeURIComponent(workspaceId) + ${JSON.stringify(path)}, {
       headers: { authorization: "Bearer " + token },
     });
@@ -744,12 +744,12 @@ async function workspaceServerJson(ctx, path) {
 async function assertLegacyImportArtifacts(ctx) {
   await ctx.waitFor(
     `(async () => {
-      const bridge = window.__OPENWORK_ELECTRON__?.invokeDesktop;
+      const bridge = window.__MICX_ELECTRON__?.invokeDesktop;
       if (!bridge) return false;
-      const info = await bridge("openworkServerInfo");
+      const info = await bridge("micxServerInfo");
       const baseUrl = String(info?.baseUrl ?? "").replace(/\\/+$/, "");
       const token = String(info?.ownerToken || info?.clientToken || "").trim();
-      const workspaceId = (location.hash.match(/\\/workspace\\/([^/]+)/) || [])[1] || localStorage.getItem("openwork.react.activeWorkspace") || "";
+      const workspaceId = (location.hash.match(/\\/workspace\\/([^/]+)/) || [])[1] || localStorage.getItem("micx.react.activeWorkspace") || "";
       if (!baseUrl || !token || !workspaceId) return false;
       const response = await fetch(baseUrl + "/workspace/" + encodeURIComponent(workspaceId) + "/skills", {
         headers: { authorization: "Bearer " + token },

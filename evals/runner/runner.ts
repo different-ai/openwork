@@ -112,7 +112,7 @@ function sanitizeRunStamp(value: string): string {
 function iterationEnv(env: NodeJS.ProcessEnv, runStamp: string, iteration: number): NodeJS.ProcessEnv {
   return {
     ...env,
-    OPENWORK_EVAL_RUNSTAMP: `${sanitizeRunStamp(runStamp)}-${iteration}`,
+    MICX_EVAL_RUNSTAMP: `${sanitizeRunStamp(runStamp)}-${iteration}`,
   };
 }
 

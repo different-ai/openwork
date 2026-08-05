@@ -84,7 +84,7 @@ export default {
           assert: async () => {
             const demo = spawnSync(
               "pnpm",
-              ["--filter", "@openwork/enterprise-mcp-client", "exec", "tsx", "test/terminal-401-guard.demo.ts"],
+              ["--filter", "@micx/enterprise-mcp-client", "exec", "tsx", "test/terminal-401-guard.demo.ts"],
               { cwd: ROOT, encoding: "utf8" },
             );
             witness(ctx, demo.status === 0, "The demo drive of the real client exits cleanly", demo.status === 0 ? undefined : `${demo.stdout}\n${demo.stderr}`);
@@ -137,7 +137,7 @@ export default {
             ctx.output("credential-invalidation diagnostic", JSON.stringify(diagnostic, null, 2));
             const tests = spawnSync(
               "pnpm",
-              ["--filter", "@openwork/enterprise-mcp-client", "test"],
+              ["--filter", "@micx/enterprise-mcp-client", "test"],
               { cwd: ROOT, encoding: "utf8" },
             );
             witness(ctx, tests.status === 0, "The full enterprise MCP client test suite passes", tests.status === 0 ? undefined : `${tests.stdout}\n${tests.stderr}`);

@@ -1,5 +1,5 @@
 /**
- * Portable extensions export: an installed skill and an OpenWork-managed
+ * Portable extensions export: an installed skill and an Micx-managed
  * runtime MCP can be exported through the authenticated server API as one
  * portable bundle with secret header values redacted.
  *
@@ -25,10 +25,10 @@ const MCP_NAME = "eval-export-mcp";
 const MCP_URL = "https://mcp.example.com/eval-export";
 const SECRET = "Bearer eval-export-secret-12345";
 
-// In-page OpenWork server access using the app's own connection details.
+// In-page Micx server access using the app's own connection details.
 const serverCallExpr = (pathTemplate, init) => `(async () => {
-  const port = localStorage.getItem("openwork.server.port");
-  const token = localStorage.getItem("openwork.server.token");
+  const port = localStorage.getItem("micx.server.port");
+  const token = localStorage.getItem("micx.server.token");
   if (!port || !token) return { ok: false, error: "no server port/token in localStorage" };
   const base = "http://127.0.0.1:" + port;
   const headers = { Authorization: "Bearer " + token, "Content-Type": "application/json" };
@@ -36,7 +36,7 @@ const serverCallExpr = (pathTemplate, init) => `(async () => {
   if (!wsResponse.ok) return { ok: false, error: "workspaces " + wsResponse.status };
   const wsPayload = await wsResponse.json();
   const workspaces = Array.isArray(wsPayload) ? wsPayload : wsPayload.items ?? [];
-  const active = localStorage.getItem("openwork.react.activeWorkspace");
+  const active = localStorage.getItem("micx.react.activeWorkspace");
   const fromHash = (window.location.hash.match(/workspace\\/(ws_[a-z0-9]+)/) ?? [])[1];
   const workspace = workspaces.find((entry) => entry.id === (fromHash || active)) ?? workspaces[0];
   if (!workspace) return { ok: false, error: "no workspace" };
@@ -63,8 +63,8 @@ export default {
   title: "Skill + runtime MCP export as a portable, secret-redacted bundle",
   spec: "apps/server/src/extensions-export.ts",
   precondition: async (ctx) => {
-    await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 60_000, label: "control API" });
-    const route = await ctx.eval("window.__openworkControl.snapshot().route");
+    await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 60_000, label: "control API" });
+    const route = await ctx.eval("window.__micxControl.snapshot().route");
     return typeof route === "string" && (route.startsWith("/welcome") || route.startsWith("/signin"))
       ? "Profile is not onboarded (welcome/signin); flow requires a workspace."
       : null;
@@ -75,11 +75,11 @@ export default {
       run: async (ctx) => {
         await ctx.prove("App boots to a usable surface", {
           action: async () => {
-            await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 60_000, label: "control API" });
+            await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 60_000, label: "control API" });
             await ctx.waitFor("document.body.innerText.trim().length > 40", { label: "rendered body text" });
           },
           assert: async () => {
-            const route = await ctx.eval("window.__openworkControl.snapshot().route");
+            const route = await ctx.eval("window.__micxControl.snapshot().route");
             ctx.assert(typeof route === "string" && route.length > 0, "No route reported by control snapshot.");
           },
           screenshot: { name: "booted", rejectText: ["Something went wrong"] },
@@ -121,7 +121,7 @@ export default {
         await ctx.prove("Runtime-managed MCP appears in Settings > Extensions", {
           action: async () => {
             // Same programmatic path the app's own connect flows use
-            // (POST /workspace/:id/mcp); stored in the OpenWork runtime DB,
+            // (POST /workspace/:id/mcp); stored in the Micx runtime DB,
             // not in workspace files. enabled:false keeps it Paused so the
             // engine does not try to reach the placeholder URL.
             await serverCall(ctx, "/workspace/:id/mcp", {

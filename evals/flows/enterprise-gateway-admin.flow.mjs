@@ -2,23 +2,23 @@
  * Enterprise incident gateway demo — Admin machine.
  *
  * Required env:
- * - OPENWORK_EVAL_DEN_API_URL: Den API base URL for the enterprise sandbox.
- * - OPENWORK_EVAL_DEN_WEB_URL: Den web origin used by the desktop handoff deep link.
+ * - MICX_EVAL_DEN_API_URL: Den API base URL for the enterprise sandbox.
+ * - MICX_EVAL_DEN_WEB_URL: Den web origin used by the desktop handoff deep link.
  *
  * Optional env:
- * - OPENWORK_EVAL_CDP_URL or --cdp-url: CDP endpoint for the admin desktop app.
- * - OPENWORK_EVAL_ENTERPRISE_ADMIN_EMAIL: admin email (default admin@example.com).
- * - OPENWORK_EVAL_ENTERPRISE_MEMBER_EMAIL: member email used to verify sharing (default member@example.com).
- * - OPENWORK_EVAL_ENTERPRISE_ADMIN_WORKSPACE: workspace folder (default /workspace/enterprise-admin).
- * - OPENWORK_EVAL_ENTERPRISE_GATEWAY_URL: gateway base URL used only if the transcript asks for JIT login without a full link.
- * - OPENWORK_EVAL_ENTERPRISE_ADMIN_GATEWAY_USER: gateway login user override (default admin email).
- * - OPENWORK_EVAL_ENTERPRISE_PASSWORD: account password override (default TutorialDemo123!).
- * - OPENWORK_EVAL_ENTERPRISE_TASK_TIMEOUT_MS: chat turn timeout in milliseconds.
- * - OPENWORK_EVAL_ENTERPRISE_SHARE_TIMEOUT_MS: marketplace/share chat timeout in milliseconds.
+ * - MICX_EVAL_CDP_URL or --cdp-url: CDP endpoint for the admin desktop app.
+ * - MICX_EVAL_ENTERPRISE_ADMIN_EMAIL: admin email (default admin@example.com).
+ * - MICX_EVAL_ENTERPRISE_MEMBER_EMAIL: member email used to verify sharing (default member@example.com).
+ * - MICX_EVAL_ENTERPRISE_ADMIN_WORKSPACE: workspace folder (default /workspace/enterprise-admin).
+ * - MICX_EVAL_ENTERPRISE_GATEWAY_URL: gateway base URL used only if the transcript asks for JIT login without a full link.
+ * - MICX_EVAL_ENTERPRISE_ADMIN_GATEWAY_USER: gateway login user override (default admin email).
+ * - MICX_EVAL_ENTERPRISE_PASSWORD: account password override (default TutorialDemo123!).
+ * - MICX_EVAL_ENTERPRISE_TASK_TIMEOUT_MS: chat turn timeout in milliseconds.
+ * - MICX_EVAL_ENTERPRISE_SHARE_TIMEOUT_MS: marketplace/share chat timeout in milliseconds.
  *
  * Runner note: evals/runner/run.mjs currently chooses one CDP endpoint for a run.
  * To run the member flow on a second desktop, run it in a separate command with
- * OPENWORK_EVAL_CDP_URL (or --cdp-url) pointed at that second app instance.
+ * MICX_EVAL_CDP_URL (or --cdp-url) pointed at that second app instance.
  */
 
 import {
@@ -33,16 +33,16 @@ import {
   sendPromptAndWait,
   signInByEmail,
   timeoutMs,
-  waitForOpenWorkConnectReady,
+  waitForMicxConnectReady,
   workspaceFolder,
 } from "./enterprise-gateway-common.mjs";
 
 const DEFAULT_ADMIN_EMAIL = "admin@example.com";
 const DEFAULT_MEMBER_EMAIL = "member@example.com";
-const WORKSPACE_ENV = "OPENWORK_EVAL_ENTERPRISE_ADMIN_WORKSPACE";
+const WORKSPACE_ENV = "MICX_EVAL_ENTERPRISE_ADMIN_WORKSPACE";
 const DEFAULT_WORKSPACE = "/workspace/enterprise-admin";
 
-const PROMPT_INCIDENTS = "Use OpenWork Connect capabilities to find the enterprise incident gateway. Search for the right capability, then ask the gateway for my open incidents assigned to me using its enterprise graph query capability. Do not use lookup_incident_records. I need the incident numbers, priorities, and short descriptions.";
+const PROMPT_INCIDENTS = "Use Micx Connect capabilities to find the enterprise incident gateway. Search for the right capability, then ask the gateway for my open incidents assigned to me using its enterprise graph query capability. Do not use lookup_incident_records. I need the incident numbers, priorities, and short descriptions.";
 const PROMPT_INCIDENTS_RETRY = "I completed the enterprise incident gateway sign-in. Retry the same enterprise graph query for my open incidents assigned to me, still without using lookup_incident_records.";
 const PROMPT_CREATE_SKILL = "Create a skill from what we just learned and save it to our org: whenever I ask about my incidents, always use enterprise_graph_query scoped to assigned_to=me (never lookup_incident_records), default to open status, and present a table with number, priority, and short description. Name it my-incidents.";
 
@@ -55,7 +55,7 @@ export default {
   id: "enterprise-gateway-admin",
   title: "Enterprise gateway demo: Admin creates and shares the my-incidents skill",
   kind: "user-facing",
-  requiredEnv: ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_WEB_URL"],
+  requiredEnv: ["MICX_EVAL_DEN_API_URL", "MICX_EVAL_DEN_WEB_URL"],
   steps: [
     {
       name: "Desktop handoff signs in Admin to the organization",
@@ -64,12 +64,12 @@ export default {
       },
     },
     {
-      name: "Create Admin's fresh workspace with OpenWork Connect ready",
+      name: "Create Admin's fresh workspace with Micx Connect ready",
       run: async (ctx) => {
         await clickThroughLingeringOnboarding(ctx);
         const folder = workspaceFolder(ctx, WORKSPACE_ENV, DEFAULT_WORKSPACE);
         state.workspaceId = await ensureLocalWorkspaceBeforeConnectPollIfNeeded(ctx, folder);
-        await waitForOpenWorkConnectReady(ctx);
+        await waitForMicxConnectReady(ctx);
         if (!state.workspaceId) state.workspaceId = await ensureLocalWorkspace(ctx, folder);
       },
     },
@@ -78,7 +78,7 @@ export default {
       run: async (ctx) => {
         await ctx.prove("Admin's agent uses the enterprise incident gateway and resolves the JIT sign-in path", {
           action: async () => {
-            const timeout = timeoutMs(ctx, "OPENWORK_EVAL_ENTERPRISE_INCIDENT_TIMEOUT_MS", 300_000);
+            const timeout = timeoutMs(ctx, "MICX_EVAL_ENTERPRISE_INCIDENT_TIMEOUT_MS", 300_000);
             const first = await sendPromptAndWait(ctx, PROMPT_INCIDENTS, { timeout });
             state.latestTranscript = await retryAfterGatewayLoginIfNeeded(
               ctx,
@@ -86,7 +86,7 @@ export default {
               first,
               "INC0012341",
               PROMPT_INCIDENTS_RETRY,
-              { timeout, gatewayUserEnvName: "OPENWORK_EVAL_ENTERPRISE_ADMIN_GATEWAY_USER" },
+              { timeout, gatewayUserEnvName: "MICX_EVAL_ENTERPRISE_ADMIN_GATEWAY_USER" },
             );
           },
           assert: async () => {
@@ -110,7 +110,7 @@ export default {
         await ctx.prove("Admin turns the learned gateway pattern into an org skill", {
           action: async () => {
             state.latestTranscript = await sendPromptAndWait(ctx, PROMPT_CREATE_SKILL, {
-              timeout: timeoutMs(ctx, "OPENWORK_EVAL_ENTERPRISE_SKILL_TIMEOUT_MS", 300_000),
+              timeout: timeoutMs(ctx, "MICX_EVAL_ENTERPRISE_SKILL_TIMEOUT_MS", 300_000),
             });
           },
           assert: async () => {
@@ -131,7 +131,7 @@ export default {
         await ctx.prove("Admin assigns the org skill to the member through the organization marketplace", {
           action: async () => {
             state.latestTranscript = await sendPromptAndWait(ctx, shareSkillPrompt(ctx), {
-              timeout: timeoutMs(ctx, "OPENWORK_EVAL_ENTERPRISE_SHARE_TIMEOUT_MS", 420_000),
+              timeout: timeoutMs(ctx, "MICX_EVAL_ENTERPRISE_SHARE_TIMEOUT_MS", 420_000),
             });
           },
           assert: async () => {
@@ -160,11 +160,11 @@ export default {
 };
 
 function adminEmail(ctx) {
-  return envText(ctx, "OPENWORK_EVAL_ENTERPRISE_ADMIN_EMAIL") || DEFAULT_ADMIN_EMAIL;
+  return envText(ctx, "MICX_EVAL_ENTERPRISE_ADMIN_EMAIL") || DEFAULT_ADMIN_EMAIL;
 }
 
 function memberEmail(ctx) {
-  return envText(ctx, "OPENWORK_EVAL_ENTERPRISE_MEMBER_EMAIL") || DEFAULT_MEMBER_EMAIL;
+  return envText(ctx, "MICX_EVAL_ENTERPRISE_MEMBER_EMAIL") || DEFAULT_MEMBER_EMAIL;
 }
 
 function shareSkillPrompt(ctx) {

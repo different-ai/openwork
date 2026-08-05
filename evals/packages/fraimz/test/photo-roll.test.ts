@@ -31,7 +31,7 @@ function seen(caption: string, passed: boolean): SeenFacts {
 }
 
 test("photo roll writes distinct shots, verdicts, and idempotent indexes", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "openwork-photo-roll-"));
+  const dir = await mkdtemp(join(tmpdir(), "micx-photo-roll-"));
   try {
     const roll = photoRoll("unit roll", { outDir: dir });
     const firstPath = await roll.add(shot("first"), seen("First caption", true));
@@ -58,7 +58,7 @@ test("photo roll writes distinct shots, verdicts, and idempotent indexes", async
 });
 
 test("photo roll rejects duplicate pixels and names both frames", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "openwork-photo-roll-duplicate-"));
+  const dir = await mkdtemp(join(tmpdir(), "micx-photo-roll-duplicate-"));
   try {
     const roll = photoRoll("duplicate roll", { outDir: dir });
     const duplicate = shot("same pixels");

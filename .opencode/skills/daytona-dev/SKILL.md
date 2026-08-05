@@ -5,7 +5,7 @@ description: Daytona development environment overview. Use when the user asks ab
 
 # Skill: Daytona Dev Environment
 
-Launch the OpenWork Electron app in a Daytona cloud sandbox. The real desktop
+Launch the Micx Electron app in a Daytona cloud sandbox. The real desktop
 app runs on Daytona's XFCE/noVNC desktop stack and is accessible through your
 browser.
 
@@ -25,7 +25,7 @@ bash .devcontainer/test-on-daytona.sh [branch-or-commit]
 
 The helper uses the VNC snapshot, starts noVNC/Vite/Electron, and prints the
 URLs. If the snapshot is missing, create it with
-`bash .devcontainer/create-daytona-openwork-snapshot.sh`.
+`bash .devcontainer/create-daytona-micx-snapshot.sh`.
 
 Use the Daytona setup as four reusable pieces. Prefer the focused skills when a
 request names one piece directly:
@@ -35,8 +35,8 @@ request names one piece directly:
 - `test-server-on-daytona.sh` for the cloud Den server sandbox.
 - `daytona-electron-den` for Electron connected to a Daytona Den server.
 - `daytona-chrome-cdp` for standalone Chrome in the sandbox, separate from Electron.
-- `openwork-eval-secrets:/daytona-secrets` for provider keys and eval-only secrets.
-- `openwork-eval-artifacts:/daytona-artifacts` for screenshots, validation notes, and recordings.
+- `micx-eval-secrets:/daytona-secrets` for provider keys and eval-only secrets.
+- `micx-eval-artifacts:/daytona-artifacts` for screenshots, validation notes, and recordings.
 
 Focused skills:
 
@@ -58,19 +58,19 @@ cd /workspace
 ### 2. Get the noVNC URL
 
 ```bash
-daytona preview-url openwork-dev -p 6080
+daytona preview-url micx-dev -p 6080
 ```
 
-Open that URL in your browser. You'll see the real Electron OpenWork app.
+Open that URL in your browser. You'll see the real Electron Micx app.
 
 ### 4. Get other URLs
 
 ```bash
 # Den Web dashboard (if Den stack is running)
-daytona preview-url openwork-dev -p 3005
+daytona preview-url micx-dev -p 3005
 
 # CDP debugging endpoint
-daytona preview-url openwork-dev -p 9825
+daytona preview-url micx-dev -p 9825
 ```
 
 ## What's Running
@@ -91,7 +91,7 @@ The devcontainer's `docker-compose.yml` includes MySQL. If you're using Daytona'
 
 Just point the app to the production Den:
 1. Open the app via noVNC
-2. Sign in normally (uses production `app.openworklabs.com`)
+2. Sign in normally (uses production `app.micxlabs.com`)
 3. All cloud features work
 
 ### Option B: Daytona sandbox + local Den
@@ -107,31 +107,31 @@ If you need a local Den (for testing customization, restrictions, etc.):
 daytona list
 
 # SSH into sandbox
-daytona ssh openwork-dev
+daytona ssh micx-dev
 
 # Check logs
-daytona exec openwork-dev 'tail -50 /tmp/electron.log'
-daytona exec openwork-dev 'tail -50 /tmp/vite.log'
-daytona exec openwork-dev 'tail -50 /tmp/start-vnc.log'
+daytona exec micx-dev 'tail -50 /tmp/electron.log'
+daytona exec micx-dev 'tail -50 /tmp/vite.log'
+daytona exec micx-dev 'tail -50 /tmp/start-vnc.log'
 
 # Inspect Electron CDP targets
-daytona exec openwork-dev 'curl -s http://127.0.0.1:9825/json/list'
+daytona exec micx-dev 'curl -s http://127.0.0.1:9825/json/list'
 
 # Capture a persistent screenshot artifact
-daytona exec openwork-dev 'bash .devcontainer/capture-daytona-screenshot.sh'
+daytona exec micx-dev 'bash .devcontainer/capture-daytona-screenshot.sh'
 
 # Restart just the Electron app
-daytona exec openwork-dev 'bash -lc "pkill -f electron || true; pkill -f electron-dev || true"'
-daytona exec openwork-dev 'bash -lc "cd /workspace && bash /opt/openwork-daytona/start-daytona-electron.sh --detach"'
+daytona exec micx-dev 'bash -lc "pkill -f electron || true; pkill -f electron-dev || true"'
+daytona exec micx-dev 'bash -lc "cd /workspace && bash /opt/micx-daytona/start-daytona-electron.sh --detach"'
 
 # Stop the sandbox (preserves state)
-daytona stop openwork-dev
+daytona stop micx-dev
 
 # Start it again
-daytona start openwork-dev
+daytona start micx-dev
 
 # Delete (destroys everything)
-daytona delete openwork-dev
+daytona delete micx-dev
 ```
 
 ## Updating the Code
@@ -139,7 +139,7 @@ daytona delete openwork-dev
 Inside the sandbox, the repo is at `/workspace`. To pull latest:
 
 ```bash
-daytona ssh openwork-dev
+daytona ssh micx-dev
 cd /workspace
 git pull origin dev
 pnpm install
@@ -151,18 +151,18 @@ pnpm install
 **Electron shows blank window:**
 Vite might not be running. Check `tail /tmp/vite.log`. Restart with:
 ```bash
-cd /workspace/apps/app && OPENWORK_DEV_MODE=1 nohup npx vite --host 0.0.0.0 --port 5173 > /tmp/vite.log 2>&1 &
+cd /workspace/apps/app && MICX_DEV_MODE=1 nohup npx vite --host 0.0.0.0 --port 5173 > /tmp/vite.log 2>&1 &
 ```
 
 **noVNC shows black screen:**
 Xvfb/XFCE may have crashed. Restart the desktop stack:
 ```bash
-bash /opt/openwork-daytona/start-daytona-vnc.sh
+bash /opt/micx-daytona/start-daytona-vnc.sh
 ```
 
 **"no space left on device" when creating sandbox:**
 Use `--disk 10`. The default Daytona disk can be 3 GB, which is not enough for
-OpenWork dependencies and sidecar prep. Also don't use `--context .` — it
+Micx dependencies and sidecar prep. Also don't use `--context .` — it
 uploads the entire repo (with worktrees, node_modules). Use individual
 `--context` flags for just the files needed.
 

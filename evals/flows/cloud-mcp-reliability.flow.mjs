@@ -14,25 +14,25 @@ const CONNECTION_BASE_NAME = "Cloud Reliability Check";
 const CONNECTION_NAME = `${CONNECTION_BASE_NAME} ${RUN_TAG}`;
 const FIXTURE_TOOL_NAME = "record_reliability_check";
 const RESULT_MARKER = `cloud-reliability-result-${RUN_TAG}`;
-const WORKSPACE_PATH = join(tmpdir(), `openwork-cloud-mcp-reliability-${RUN_TAG}`);
-const CLOUD_MCP_NAME = "openwork-cloud";
+const WORKSPACE_PATH = join(tmpdir(), `micx-cloud-mcp-reliability-${RUN_TAG}`);
+const CLOUD_MCP_NAME = "micx-cloud";
 const AUTOMATIC_RECONCILE_TRIGGERS = [
   "desktop-settings-background",
   "desktop-background",
   "desktop-connect-autocheck",
 ];
-const GUARD_STORAGE_KEY = "openwork.eval.cloudMcpReliability.guard";
-const GUARD_BLOCKED_STORAGE_KEY = "openwork.eval.cloudMcpReliability.blockedDesktopFetches";
+const GUARD_STORAGE_KEY = "micx.eval.cloudMcpReliability.guard";
+const GUARD_BLOCKED_STORAGE_KEY = "micx.eval.cloudMcpReliability.blockedDesktopFetches";
 const TOKEN_MINT_DEDUPLICATION_WINDOW_MS = 2_000;
 const SETTINGS_SYNC_MARKER_WINDOW_MS = 4_000;
 const SETTINGS_SYNC_STABLE_HEALTH_GAP_MS = 1_800;
 const MODEL_SEED_ACTION_ID = "eval.model_not_available.seed";
 const EXPECTED_TOOL_IDS = [
-  "openwork-cloud_search_capabilities",
-  "openwork-cloud_execute_capability",
+  "micx-cloud_search_capabilities",
+  "micx-cloud_execute_capability",
 ];
 const EXPECTED_AGENT_TOOLS = ["execute_capability", "search_capabilities"];
-const PLUGIN_CANARY = "openwork_docs_search";
+const PLUGIN_CANARY = "micx_docs_search";
 
 const state = {
   fixtureServer: null,
@@ -90,22 +90,22 @@ function desktopReachableBaseUrl(value) {
 }
 
 function configureFixtureFromEnv(ctx) {
-  const portText = optionalEnv(ctx, "OPENWORK_EVAL_MCP_FIXTURE_PORT");
+  const portText = optionalEnv(ctx, "MICX_EVAL_MCP_FIXTURE_PORT");
   const listenPort = portText ? Number(portText) : 0;
-  ctx.assert(Number.isInteger(listenPort) && listenPort >= 0 && listenPort <= 65535, `OPENWORK_EVAL_MCP_FIXTURE_PORT must be a TCP port, got ${quoted(portText)}.`);
+  ctx.assert(Number.isInteger(listenPort) && listenPort >= 0 && listenPort <= 65535, `MICX_EVAL_MCP_FIXTURE_PORT must be a TCP port, got ${quoted(portText)}.`);
   state.fixtureListenPort = listenPort;
 
-  const publicUrl = optionalEnv(ctx, "OPENWORK_EVAL_MCP_FIXTURE_URL");
+  const publicUrl = optionalEnv(ctx, "MICX_EVAL_MCP_FIXTURE_URL");
   state.fixturePublicUrl = publicUrl ? normalizeFixtureUrl(publicUrl) : null;
 }
 
 function denApiBase(ctx) {
-  return cleanBaseUrl(ctx.env.OPENWORK_EVAL_DEN_API_URL);
+  return cleanBaseUrl(ctx.env.MICX_EVAL_DEN_API_URL);
 }
 
 function denWebBase(ctx) {
-  const webBase = optionalEnv(ctx, "OPENWORK_EVAL_DEN_WEB_URL");
-  return cleanBaseUrl(webBase || ctx.env.OPENWORK_EVAL_DEN_API_URL);
+  const webBase = optionalEnv(ctx, "MICX_EVAL_DEN_WEB_URL");
+  return cleanBaseUrl(webBase || ctx.env.MICX_EVAL_DEN_API_URL);
 }
 
 function denDesktopWebBase(ctx) {
@@ -131,8 +131,8 @@ async function denFetch(ctx, path, options = {}) {
     ...options,
     headers: {
       "content-type": "application/json",
-      authorization: `Bearer ${ctx.env.OPENWORK_EVAL_DEN_TOKEN.trim()}`,
-      ...(state.org?.id ? { "x-openwork-legacy-org-id": state.org.id } : {}),
+      authorization: `Bearer ${ctx.env.MICX_EVAL_DEN_TOKEN.trim()}`,
+      ...(state.org?.id ? { "x-micx-legacy-org-id": state.org.id } : {}),
       ...(options.headers || {}),
     },
   });
@@ -304,16 +304,16 @@ async function setViewport(ctx, height = 1000) {
 }
 
 async function waitForControl(ctx) {
-  await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 90_000, label: "control API" });
+  await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 90_000, label: "control API" });
 }
 
 async function observeSetupView(ctx) {
   return ctx.eval(`(() => {
     const text = document.body?.innerText || "";
-    const actions = window.__openworkControl?.listActions?.() ?? [];
+    const actions = window.__micxControl?.listActions?.() ?? [];
     return {
       hash: window.location.hash,
-      hasControl: Boolean(window.__openworkControl),
+      hasControl: Boolean(window.__micxControl),
       hasModelSeedAction: actions.some((item) => item?.id === ${quoted(MODEL_SEED_ACTION_ID)} && !item.disabled),
       chooseOrganization: text.includes("Choose your organization"),
       continueWithOrganization: text.includes("Continue with organization"),
@@ -416,11 +416,11 @@ async function configureDesktopForDen(ctx) {
   const baseUrl = denDesktopWebBase(ctx);
   const apiBaseUrl = denDesktopApiBase(ctx);
   const written = await ctx.eval(`(async () => {
-    const bridge = window.__OPENWORK_ELECTRON__?.invokeDesktop;
+    const bridge = window.__MICX_ELECTRON__?.invokeDesktop;
     if (!bridge) return { ok: false, reason: "desktop bridge missing" };
     await bridge("setDesktopBootstrapConfig", { baseUrl: ${quoted(baseUrl)}, apiBaseUrl: ${quoted(apiBaseUrl)}, requireSignin: false, handoff: null });
-    localStorage.setItem("openwork.den.baseUrl", ${quoted(baseUrl)});
-    localStorage.setItem("openwork.den.apiBaseUrl", ${quoted(apiBaseUrl)});
+    localStorage.setItem("micx.den.baseUrl", ${quoted(baseUrl)});
+    localStorage.setItem("micx.den.apiBaseUrl", ${quoted(apiBaseUrl)});
     return { ok: true };
   })()`, { awaitPromise: true });
   witness(ctx, written?.ok === true, "The desktop bootstrap points at the local Den stack.", written);
@@ -443,29 +443,29 @@ async function loadOrg(ctx) {
 async function signInWithFreshHandoff(ctx) {
   await loadOrg(ctx);
   await ctx.eval(`(() => {
-    localStorage.removeItem("openwork.den.authToken");
-    localStorage.removeItem("openwork.den.activeOrgId");
-    localStorage.removeItem("openwork.den.activeOrgSlug");
-    localStorage.removeItem("openwork.den.activeOrgName");
-    localStorage.removeItem("openwork.den.mcp.sync");
+    localStorage.removeItem("micx.den.authToken");
+    localStorage.removeItem("micx.den.activeOrgId");
+    localStorage.removeItem("micx.den.activeOrgSlug");
+    localStorage.removeItem("micx.den.activeOrgName");
+    localStorage.removeItem("micx.den.mcp.sync");
     return true;
   })()`);
   const handoff = await denFetch(ctx, "/v1/auth/desktop-handoff", {
     method: "POST",
-    body: JSON.stringify({ desktopScheme: "openwork" }),
+    body: JSON.stringify({ desktopScheme: "micx" }),
   });
   ctx.assert(typeof handoff?.grant === "string" && handoff.grant.trim(), "Desktop handoff did not return a grant.");
   await ctx.control("auth.exchange-grant", { grant: handoff.grant, baseUrl: denDesktopWebBase(ctx) });
   await ctx.eval(`(() => {
-    localStorage.setItem("openwork.den.activeOrgId", ${quoted(state.org.id)});
-    ${state.org.slug ? `localStorage.setItem("openwork.den.activeOrgSlug", ${quoted(state.org.slug)});` : "localStorage.removeItem(\"openwork.den.activeOrgSlug\");"}
-    ${state.org.name ? `localStorage.setItem("openwork.den.activeOrgName", ${quoted(state.org.name)});` : "localStorage.removeItem(\"openwork.den.activeOrgName\");"}
-    window.dispatchEvent(new Event("openwork:den-settings-changed"));
-    window.dispatchEvent(new Event("openwork:den-session-updated"));
+    localStorage.setItem("micx.den.activeOrgId", ${quoted(state.org.id)});
+    ${state.org.slug ? `localStorage.setItem("micx.den.activeOrgSlug", ${quoted(state.org.slug)});` : "localStorage.removeItem(\"micx.den.activeOrgSlug\");"}
+    ${state.org.name ? `localStorage.setItem("micx.den.activeOrgName", ${quoted(state.org.name)});` : "localStorage.removeItem(\"micx.den.activeOrgName\");"}
+    window.dispatchEvent(new Event("micx:den-settings-changed"));
+    window.dispatchEvent(new Event("micx:den-session-updated"));
     return true;
   })()`);
   await ctx.waitFor(
-    `Boolean((localStorage.getItem("openwork.den.authToken") ?? "").trim()) && localStorage.getItem("openwork.den.activeOrgId") === ${quoted(state.org.id)}`,
+    `Boolean((localStorage.getItem("micx.den.authToken") ?? "").trim()) && localStorage.getItem("micx.den.activeOrgId") === ${quoted(state.org.id)}`,
     { timeoutMs: 45_000, label: "fresh Den handoff signed in with active org" },
   );
   witness(ctx, true, "A fresh Den desktop handoff was exchanged and the eval organization is active.", state.org);
@@ -477,13 +477,13 @@ async function getServerAuth(ctx, requireWorkspace = false) {
     // Keep this template-safe: regex literals lose backslashes inside the outer eval string.
     const workspaceFromHash = (hash.match(new RegExp("/workspace/([^/]+)")) ?? [])[1] ?? "";
     return {
-      port: (localStorage.getItem("openwork.server.port") ?? "").trim(),
-      token: (localStorage.getItem("openwork.server.token") ?? "").trim(),
-      hostToken: (localStorage.getItem("openwork.server.hostToken") ?? "").trim(),
-      workspaceId: workspaceFromHash || (localStorage.getItem("openwork.react.activeWorkspace") ?? "").trim(),
+      port: (localStorage.getItem("micx.server.port") ?? "").trim(),
+      token: (localStorage.getItem("micx.server.token") ?? "").trim(),
+      hostToken: (localStorage.getItem("micx.server.hostToken") ?? "").trim(),
+      workspaceId: workspaceFromHash || (localStorage.getItem("micx.react.activeWorkspace") ?? "").trim(),
     };
   })()`);
-  ctx.assert(auth?.port && auth.token, `OpenWork server credentials missing: ${JSON.stringify(auth)}`);
+  ctx.assert(auth?.port && auth.token, `Micx server credentials missing: ${JSON.stringify(auth)}`);
   if (requireWorkspace) ctx.assert(auth.workspaceId, `Workspace id missing from desktop state: ${JSON.stringify(auth)}`);
   state.serverAuth = auth;
   return auth;
@@ -496,7 +496,7 @@ async function serverFetchJson(ctx, path, options = {}) {
     headers: {
       "content-type": "application/json",
       authorization: `Bearer ${auth.token}`,
-      ...(auth.hostToken ? { "x-openwork-host-token": auth.hostToken } : {}),
+      ...(auth.hostToken ? { "x-micx-host-token": auth.hostToken } : {}),
       ...(options.headers || {}),
     },
     body: options.body === undefined ? undefined : JSON.stringify(options.body),
@@ -527,9 +527,9 @@ async function createFreshWorkspace(ctx) {
   await installDesktopFetchGuard(ctx);
   await serverFetchJson(ctx, `/workspaces/${encodeURIComponent(workspaceId)}/activate?persist=true`, { method: "POST" });
   await ctx.eval(`(() => {
-    localStorage.setItem("openwork.react.activeWorkspace", ${quoted(workspaceId)});
-    const prefs = JSON.parse(localStorage.getItem("openwork.preferences") || "{}");
-    localStorage.setItem("openwork.preferences", JSON.stringify({ ...prefs, hasCompletedOnboarding: true, providerStepCompleted: true, selectedAgent: "openwork" }));
+    localStorage.setItem("micx.react.activeWorkspace", ${quoted(workspaceId)});
+    const prefs = JSON.parse(localStorage.getItem("micx.preferences") || "{}");
+    localStorage.setItem("micx.preferences", JSON.stringify({ ...prefs, hasCompletedOnboarding: true, providerStepCompleted: true, selectedAgent: "micx" }));
     return true;
   })()`);
   await ctx.navigateHash(`/workspace/${workspaceId}/session`);
@@ -545,12 +545,12 @@ async function ensureUsableModel(ctx) {
   ctx.assert(available?.providerID && available?.modelID, `No available connected model found: ${JSON.stringify(seeded)}`);
   state.model = { provider: available.providerID, model: available.modelID, title: available.title ?? available.modelID };
   await ctx.eval(`(() => {
-    const prefs = JSON.parse(localStorage.getItem("openwork.preferences") || "{}");
-    localStorage.setItem("openwork.preferences", JSON.stringify({
+    const prefs = JSON.parse(localStorage.getItem("micx.preferences") || "{}");
+    localStorage.setItem("micx.preferences", JSON.stringify({
       ...prefs,
       defaultModel: { providerID: ${quoted(state.model.provider)}, modelID: ${quoted(state.model.model)} },
       modelVariant: null,
-      selectedAgent: "openwork",
+      selectedAgent: "micx",
       providerStepCompleted: true,
       hasCompletedOnboarding: true,
     }));
@@ -562,7 +562,7 @@ async function ensureUsableModel(ctx) {
   await ctx.navigateHash(`/workspace/${state.workspaceId}/session`);
   await ctx.waitFor(
     `(() => {
-      const prefs = JSON.parse(localStorage.getItem("openwork.preferences") || "{}");
+      const prefs = JSON.parse(localStorage.getItem("micx.preferences") || "{}");
       return prefs.defaultModel?.providerID === ${quoted(state.model.provider)} && prefs.defaultModel?.modelID === ${quoted(state.model.model)};
     })()`,
     { timeoutMs: 20_000, label: "selected eval model persisted" },
@@ -641,7 +641,7 @@ async function initialStrictReconcile(ctx) {
     trigger: "fraimz-initial-strict-reconcile",
     ...(state.model ? { provider: state.model.provider, model: state.model.model } : {}),
   };
-  const health = await serverFetchJson(ctx, `/workspace/${encodeURIComponent(state.workspaceId)}/mcp/openwork-cloud/reconcile`, {
+  const health = await serverFetchJson(ctx, `/workspace/${encodeURIComponent(state.workspaceId)}/mcp/micx-cloud/reconcile`, {
     method: "POST",
     body: payload,
   });
@@ -665,7 +665,7 @@ async function deleteCloudRuntimeConfig(ctx) {
   await installDesktopFetchGuard(ctx);
   await serverFetchJson(ctx, `/workspace/${encodeURIComponent(state.workspaceId)}/mcp/${encodeURIComponent(CLOUD_MCP_NAME)}`, { method: "DELETE" });
   await ctx.eval(`(() => {
-    localStorage.removeItem("openwork.den.mcp.sync");
+    localStorage.removeItem("micx.den.mcp.sync");
     return true;
   })()`);
   state.degradedHealth = await waitForHealth(ctx, (health) => (
@@ -674,7 +674,7 @@ async function deleteCloudRuntimeConfig(ctx) {
     health.firstFailure?.stage === "desired_config" &&
     health.firstFailure?.code === "cloud_mcp_missing"
   ), "desired_config cloud_mcp_missing after deleting runtime config");
-  witness(ctx, true, "Deleting only this workspace's openwork-cloud runtime config makes direct health unusable with desired_config/cloud_mcp_missing.", {
+  witness(ctx, true, "Deleting only this workspace's micx-cloud runtime config makes direct health unusable with desired_config/cloud_mcp_missing.", {
     workspaceId: state.degradedHealth.workspace.id,
     firstFailure: state.degradedHealth.firstFailure,
   });
@@ -687,7 +687,7 @@ async function getHealth(ctx) {
     query.set("model", state.model.model);
   }
   const suffix = query.size ? `?${query.toString()}` : "";
-  return serverFetchJson(ctx, `/workspace/${encodeURIComponent(state.workspaceId)}/mcp/openwork-cloud/health${suffix}`);
+  return serverFetchJson(ctx, `/workspace/${encodeURIComponent(state.workspaceId)}/mcp/micx-cloud/health${suffix}`);
 }
 
 async function waitForHealth(ctx, predicate, label, timeoutMs = 90_000) {
@@ -710,7 +710,7 @@ async function waitForScopedSyncMarker(ctx, timeoutMs = SETTINGS_SYNC_MARKER_WIN
   let last = null;
   while (Date.now() - startedAt < timeoutMs) {
     last = await ctx.eval(`(() => {
-      const raw = localStorage.getItem("openwork.den.mcp.sync");
+      const raw = localStorage.getItem("micx.den.mcp.sync");
       if (!raw) return { found: false, rawPresent: false, markerCount: 0 };
       try {
         const parsed = JSON.parse(raw);
@@ -893,7 +893,7 @@ function desktopProbeHarnessSource() {
     const key = "__cloudMcpReliabilityProbe";
     const guardStorageKey = ${quoted(GUARD_STORAGE_KEY)};
     const blockedStorageKey = ${quoted(GUARD_BLOCKED_STORAGE_KEY)};
-    const bridge = window.__OPENWORK_ELECTRON__;
+    const bridge = window.__MICX_ELECTRON__;
     const isObject = (value) => value !== null && typeof value === "object";
     const defaultGuard = () => ({ active: false, workspaceId: null, triggers: [] });
     const readStoredGuard = () => {
@@ -996,7 +996,7 @@ function desktopProbeHarnessSource() {
         const trigger = typeof body?.trigger === "string" ? body.trigger : "";
         const shouldBlock = guard.active === true &&
           method === "POST" &&
-          url.includes("/mcp/openwork-cloud/reconcile") &&
+          url.includes("/mcp/micx-cloud/reconcile") &&
           workspaceMatches &&
           triggers.includes(trigger);
         if (shouldBlock) {
@@ -1026,7 +1026,7 @@ function desktopProbeHarnessSource() {
     }
     if (!probe.retryTimer && probe.desktopPatched !== true) {
       probe.retryTimer = window.setInterval(() => {
-        const nextBridge = window.__OPENWORK_ELECTRON__;
+        const nextBridge = window.__MICX_ELECTRON__;
         if (!nextBridge?.invokeDesktop) return;
         if (!probe.originalInvoke) probe.originalInvoke = nextBridge.invokeDesktop.bind(nextBridge);
         if (probe.originalInvoke && nextBridge.invokeDesktop !== probe.invokeWrapper) {
@@ -1129,7 +1129,7 @@ async function desktopFetchGuardSummary(ctx) {
 async function restoreDesktopFetchGuard(ctx) {
   const result = await ctx.eval(`(() => {
     const probe = window.__cloudMcpReliabilityProbe;
-    const bridge = window.__OPENWORK_ELECTRON__;
+    const bridge = window.__MICX_ELECTRON__;
     const sanitize = (request) => ({
       at: request.at,
       method: request.method,
@@ -1293,7 +1293,7 @@ function tokenFingerprintFromHealth(health) {
 }
 
 async function readMarker(ctx) {
-  return ctx.eval("localStorage.getItem('openwork.den.mcp.sync')");
+  return ctx.eval("localStorage.getItem('micx.den.mcp.sync')");
 }
 
 async function clickAgentAccessButton(ctx, label) {
@@ -1348,7 +1348,7 @@ export default {
   id: FLOW_ID,
   title: "Users can verify, repair, diagnose, and use Cloud agent access per workspace",
   kind: "user-facing",
-  requiredEnv: ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_TOKEN"],
+  requiredEnv: ["MICX_EVAL_DEN_API_URL", "MICX_EVAL_DEN_TOKEN"],
   steps: [
     {
       name: "Setup: fresh Den handoff, workspace, fixture, and degraded state",
@@ -1444,8 +1444,8 @@ export default {
           },
           assert: async () => {
             const summary = await networkSummary(ctx);
-            const healthGets = summary.requests.filter((request) => request.method === "GET" && request.url.includes(`/workspace/${state.workspaceId}/mcp/openwork-cloud/health`));
-            const reconcilePosts = summary.requests.filter((request) => request.method === "POST" && request.url.includes("/mcp/openwork-cloud/reconcile"));
+            const healthGets = summary.requests.filter((request) => request.method === "GET" && request.url.includes(`/workspace/${state.workspaceId}/mcp/micx-cloud/health`));
+            const reconcilePosts = summary.requests.filter((request) => request.method === "POST" && request.url.includes("/mcp/micx-cloud/reconcile"));
             const tokenMints = classifyTokenMintPosts(summary);
             const userTokenMints = tokenMints.operations.filter((operation) => operation.automaticBackground !== true);
             const backgroundTokenMints = tokenMints.operations.filter((operation) => operation.automaticBackground === true);
@@ -1489,7 +1489,7 @@ export default {
           },
           assert: async () => {
             const summary = await networkSummary(ctx);
-            const posts = summary.requests.filter((request) => request.method === "POST" && request.url.includes(`/workspace/${state.workspaceId}/mcp/openwork-cloud/reconcile`));
+            const posts = summary.requests.filter((request) => request.method === "POST" && request.url.includes(`/workspace/${state.workspaceId}/mcp/micx-cloud/reconcile`));
             witness(ctx, posts.length === 1 && posts[0].body?.workspaceId === state.workspaceId && posts[0].body?.name === CLOUD_MCP_NAME && posts[0].body?.hasAuthorization === true, "Repair posted one sanitized reconcile request to the exact workspace route and body.", posts.map((post) => post.body));
             const tokenMints = classifyTokenMintPosts(summary);
             witness(ctx, true, "Renderer/desktop Den MCP token mint counts are diagnostic only; remint proof uses server safe fingerprint metadata.", {
@@ -1537,13 +1537,13 @@ export default {
               workspaceId: health.workspace.id,
               firstFailure: health.firstFailure,
             });
-            witness(ctx, health.engine.status === "connected", "OpenCode mcp.status reports openwork-cloud connected for the workspace.", { engine: health.engine });
+            witness(ctx, health.engine.status === "connected", "OpenCode mcp.status reports micx-cloud connected for the workspace.", { engine: health.engine });
             const directNames = [...(health.tools.direct?.present ?? [])].sort();
             witness(ctx, directNames.length === 2 && directNames.join(",") === EXPECTED_AGENT_TOOLS.join(","), "Direct Cloud endpoint tools/list exposes exactly the two unprefixed agent tools.", {
               direct: health.tools.direct,
             });
             assertExpectedTools(ctx, health.tools.present, "health.tools.present");
-            witness(ctx, health.tools.missing.length === 0, "No expected OpenWork Cloud tools are missing.", { missing: health.tools.missing });
+            witness(ctx, health.tools.missing.length === 0, "No expected Micx Cloud tools are missing.", { missing: health.tools.missing });
             if (state.model) {
               const projection = health.tools.providerProjection;
               witness(ctx, projection.checked === true && projection.provider === state.model.provider && projection.model === state.model.model, "Provider/model compatibility was checked for the selected provider/model.", projection);
@@ -1564,7 +1564,7 @@ export default {
             witness(ctx, health.pluginCanaries.present.includes(PLUGIN_CANARY) && health.pluginCanaries.missing.length === 0, "Plugin canary tools are present and not missing.", health.pluginCanaries);
             const listed = await serverFetchJson(ctx, `/workspace/${encodeURIComponent(state.workspaceId)}/mcp`);
             const cloud = listed.items.find((item) => item.name === CLOUD_MCP_NAME);
-            witness(ctx, Boolean(cloud) && listed.engineSync?.status === "ok", "Workspace MCP status includes openwork-cloud and engine sync is ok.", {
+            witness(ctx, Boolean(cloud) && listed.engineSync?.status === "ok", "Workspace MCP status includes micx-cloud and engine sync is ok.", {
               names: listed.items.map((item) => item.name),
               engineSync: listed.engineSync,
             });
@@ -1626,7 +1626,7 @@ export default {
               state.serverAuth?.token,
               state.serverAuth?.hostToken,
               state.mcpToken,
-              await ctx.eval("localStorage.getItem('openwork.den.authToken')"),
+              await ctx.eval("localStorage.getItem('micx.den.authToken')"),
             ];
             assertNoSecretText(ctx, clipboard, secrets);
             witness(ctx, true, "Copied diagnostic preserves safe workspace/revision/tool IDs and excludes Den/MCP/server/host tokens.", {
@@ -1638,7 +1638,7 @@ export default {
           },
           screenshot: {
             name: "frame-6-advanced-sanitized-diagnostic",
-            requireText: ["Agent access diagnostics", "ACTIVE WORKSPACE", "DESIRED REVISION", "APPLIED REVISION", "DELIVERY", "DIRECT TOOLS/LIST", "EXPERIMENTAL TOOL IDS", "EXPERIMENTAL PROVIDER TOOLS", "OPENWORK VERSIONS", "OPENCODE COMPATIBILITY", "Copied sanitized Cloud diagnostic."],
+            requireText: ["Agent access diagnostics", "ACTIVE WORKSPACE", "DESIRED REVISION", "APPLIED REVISION", "DELIVERY", "DIRECT TOOLS/LIST", "EXPERIMENTAL TOOL IDS", "EXPERIMENTAL PROVIDER TOOLS", "MICX VERSIONS", "OPENCODE COMPATIBILITY", "Copied sanitized Cloud diagnostic."],
             rejectText: ["Bearer ", "ow_mcp_at_", "No Cloud MCP health"],
             hashIncludes: "/settings/advanced",
           },
@@ -1654,7 +1654,7 @@ export default {
             await ctx.navigateHash(`/workspace/${state.workspaceId}/session`);
             await ctx.waitFor(`window.location.hash.includes(${quoted(`/workspace/${state.workspaceId}/session`)})`, { timeoutMs: 45_000, label: "session route" });
             await ctx.waitFor(
-              "window.__openworkControl?.listActions?.().find((item) => item.id === 'session.create_task' && !item.disabled)",
+              "window.__micxControl?.listActions?.().find((item) => item.id === 'session.create_task' && !item.disabled)",
               { timeoutMs: 45_000, label: "session.create_task enabled" },
             );
             await ctx.control("session.create_task");
@@ -1663,7 +1663,7 @@ export default {
             const prompt = `Please run the reliability check in my connected service named ${CONNECTION_BASE_NAME}. Reply with the exact marker it returns.`;
             await ctx.control("composer.set_text", { text: prompt });
             await ctx.waitFor(
-              "window.__openworkControl?.listActions?.().find((item) => item.id === 'composer.send' && !item.disabled)",
+              "window.__micxControl?.listActions?.().find((item) => item.id === 'composer.send' && !item.disabled)",
               { timeoutMs: 30_000, label: "composer.send enabled" },
             );
             await ctx.control("composer.send");
@@ -1673,10 +1673,10 @@ export default {
             await ctx.waitForText(RESULT_MARKER, { timeoutMs: 60_000 });
             const transcript = await ctx.control("session.read_transcript", { count: 30 });
             const transcriptText = (transcript.messages ?? []).map((message) => message.text).join("\n---\n");
-            const searchIndex = transcriptText.indexOf("[tool:openwork-cloud_search_capabilities]");
-            const executeIndex = transcriptText.indexOf("[tool:openwork-cloud_execute_capability]");
-            witness(ctx, searchIndex >= 0 && executeIndex > searchIndex, "Transcript tool order is openwork-cloud_search_capabilities before openwork-cloud_execute_capability.", { searchIndex, executeIndex });
-            witness(ctx, !transcriptText.includes(PLUGIN_CANARY), "Transcript did not substitute OpenWork documentation search for the connected-service action.", { containsDocsSearch: transcriptText.includes(PLUGIN_CANARY) });
+            const searchIndex = transcriptText.indexOf("[tool:micx-cloud_search_capabilities]");
+            const executeIndex = transcriptText.indexOf("[tool:micx-cloud_execute_capability]");
+            witness(ctx, searchIndex >= 0 && executeIndex > searchIndex, "Transcript tool order is micx-cloud_search_capabilities before micx-cloud_execute_capability.", { searchIndex, executeIndex });
+            witness(ctx, !transcriptText.includes(PLUGIN_CANARY), "Transcript did not substitute Micx documentation search for the connected-service action.", { containsDocsSearch: transcriptText.includes(PLUGIN_CANARY) });
             const freshExecutions = state.fixtureExecutions.filter((entry) => !state.chatStartedAt || entry.at >= state.chatStartedAt);
             witness(ctx, freshExecutions.length >= 1, "The external Cloud Reliability Check fixture observed a real tools/call execution from the task.", freshExecutions.map((entry) => ({ at: entry.at, toolName: entry.toolName })));
             const latest = await ctx.control("session.latest_message");
@@ -1686,7 +1686,7 @@ export default {
           screenshot: {
             name: "frame-7-real-task-fixture-executed",
             requireText: [RESULT_MARKER, CONNECTION_BASE_NAME],
-            rejectText: ["openwork_docs_search", "Something went wrong"],
+            rejectText: ["micx_docs_search", "Something went wrong"],
             hashIncludes: "/session",
           },
         });
@@ -1713,7 +1713,7 @@ export default {
           const probe = window.__cloudMcpReliabilityProbe;
           if (probe?.retryTimer) window.clearInterval(probe.retryTimer);
           if (probe?.originalFetch) window.fetch = probe.originalFetch;
-          if (probe?.originalInvoke && window.__OPENWORK_ELECTRON__) window.__OPENWORK_ELECTRON__.invokeDesktop = probe.originalInvoke;
+          if (probe?.originalInvoke && window.__MICX_ELECTRON__) window.__MICX_ELECTRON__.invokeDesktop = probe.originalInvoke;
           localStorage.removeItem(${quoted(GUARD_STORAGE_KEY)});
           localStorage.removeItem(${quoted(GUARD_BLOCKED_STORAGE_KEY)});
           delete window.__cloudMcpReliabilityProbe;

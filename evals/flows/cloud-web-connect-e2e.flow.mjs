@@ -35,15 +35,15 @@ function required(ctx, name) {
 }
 
 function denBase(ctx) {
-  return trimBase(required(ctx, "OPENWORK_EVAL_DEN_API_URL"));
+  return trimBase(required(ctx, "MICX_EVAL_DEN_API_URL"));
 }
 
 function spaBase(ctx) {
-  return trimBase(required(ctx, "OPENWORK_EVAL_SPA_URL"));
+  return trimBase(required(ctx, "MICX_EVAL_SPA_URL"));
 }
 
 function mockBase(ctx) {
-  return trimBase(required(ctx, "OPENWORK_EVAL_MOCK_URL"));
+  return trimBase(required(ctx, "MICX_EVAL_MOCK_URL"));
 }
 
 function instanceBase() {
@@ -61,7 +61,7 @@ function bearer(token) {
 function hostHeaders(ctx) {
   return {
     "content-type": "application/json",
-    "x-openwork-host-token": required(ctx, "OPENWORK_EVAL_INSTANCE_HOST_TOKEN"),
+    "x-micx-host-token": required(ctx, "MICX_EVAL_INSTANCE_HOST_TOKEN"),
   };
 }
 
@@ -137,15 +137,15 @@ async function navigateAbsolute(ctx, url, timeoutMs = 90_000) {
 async function clearDenBrowserSession(ctx) {
   await ctx.eval(`(() => {
     for (const key of Object.keys(localStorage)) {
-      if (key.startsWith("openwork.den.")) localStorage.removeItem(key);
+      if (key.startsWith("micx.den.")) localStorage.removeItem(key);
     }
-    localStorage.removeItem("openwork:web:auth-token");
+    localStorage.removeItem("micx:web:auth-token");
     return true;
   })()`);
 }
 
 function denBrowserBase(ctx) {
-  const override = process.env.OPENWORK_EVAL_DEN_BROWSER_URL?.trim();
+  const override = process.env.MICX_EVAL_DEN_BROWSER_URL?.trim();
   return override || denBase(ctx);
 }
 
@@ -154,11 +154,11 @@ async function seedDenSession(ctx) {
   witness(ctx, Boolean(state.denToken), "The Den session token is available before browser seeding");
   witness(ctx, Boolean(org?.id), "The active organization is available before browser seeding", org);
   await ctx.eval(`(() => {
-    localStorage.setItem("openwork.den.baseUrl", ${JSON.stringify(denBrowserBase(ctx))});
-    localStorage.setItem("openwork.den.authToken", ${JSON.stringify(state.denToken)});
-    localStorage.setItem("openwork.den.activeOrgId", ${JSON.stringify(org.id)});
-    localStorage.setItem("openwork.den.activeOrgSlug", ${JSON.stringify(org.slug ?? "")});
-    localStorage.setItem("openwork.den.activeOrgName", ${JSON.stringify(org.name ?? "")});
+    localStorage.setItem("micx.den.baseUrl", ${JSON.stringify(denBrowserBase(ctx))});
+    localStorage.setItem("micx.den.authToken", ${JSON.stringify(state.denToken)});
+    localStorage.setItem("micx.den.activeOrgId", ${JSON.stringify(org.id)});
+    localStorage.setItem("micx.den.activeOrgSlug", ${JSON.stringify(org.slug ?? "")});
+    localStorage.setItem("micx.den.activeOrgName", ${JSON.stringify(org.name ?? "")});
     return true;
   })()`);
 }
@@ -167,8 +167,8 @@ async function signIn(ctx) {
   const signInResult = await denFetch(ctx, "/api/auth/sign-in/email", {
     method: "POST",
     body: JSON.stringify({
-      email: required(ctx, "OPENWORK_EVAL_DEN_EMAIL"),
-      password: required(ctx, "OPENWORK_EVAL_DEN_PASSWORD"),
+      email: required(ctx, "MICX_EVAL_DEN_EMAIL"),
+      password: required(ctx, "MICX_EVAL_DEN_PASSWORD"),
     }),
   });
   witness(ctx, signInResult.response.ok, "Admin email/password sign-in returns HTTP 200", {
@@ -191,8 +191,8 @@ async function resolveSignedInOrg(ctx) {
   const orgs = Array.isArray(orgsResult.body?.orgs) ? orgsResult.body.orgs : [];
   const org = orgs[0] ?? null;
   witness(ctx, Boolean(org?.id), "The signed-in admin belongs to an organization", orgsResult.body);
-  witness(ctx, org.name === required(ctx, "OPENWORK_EVAL_ORG_NAME"), "The active organization display name matches the eval org", {
-    expected: required(ctx, "OPENWORK_EVAL_ORG_NAME"),
+  witness(ctx, org.name === required(ctx, "MICX_EVAL_ORG_NAME"), "The active organization display name matches the eval org", {
+    expected: required(ctx, "MICX_EVAL_ORG_NAME"),
     actual: org.name,
   });
   state.org = org;
@@ -232,8 +232,8 @@ async function pollCloudInstance(ctx) {
 async function extractClientToken(ctx) {
   const root = await fetchText(instanceUrl("/"));
   witness(ctx, root.response.ok, "The Cloud instance root HTML is fetchable", { status: root.response.status });
-  const match = root.text.match(/window\.__OPENWORK_BOOTSTRAP__\s*=\s*(\{[^<]+?\})\s*<\/script>/);
-  witness(ctx, Boolean(match), "The instance HTML includes __OPENWORK_BOOTSTRAP__", root.text.slice(0, 500));
+  const match = root.text.match(/window\.__MICX_BOOTSTRAP__\s*=\s*(\{[^<]+?\})\s*<\/script>/);
+  witness(ctx, Boolean(match), "The instance HTML includes __MICX_BOOTSTRAP__", root.text.slice(0, 500));
   const bootstrap = JSON.parse(match[1]);
   const token = typeof bootstrap?.token === "string" ? bootstrap.token.trim() : "";
   witness(ctx, token.length > 0, "The bootstrap JSON includes a client token");
@@ -543,18 +543,18 @@ async function executeMockMcpThroughAgent(ctx) {
 
 export default defineFlow({
   id: FLOW_ID,
-  title: "Cloud web sign-in opens a real instance, completes an approved action, and executes a mock MCP through OpenWork Connect",
+  title: "Cloud web sign-in opens a real instance, completes an approved action, and executes a mock MCP through Micx Connect",
   kind: "user-facing",
   preserveTheme: true,
   requiresApp: true,
   requiredEnv: [
-    "OPENWORK_EVAL_DEN_API_URL",
-    "OPENWORK_EVAL_SPA_URL",
-    "OPENWORK_EVAL_MOCK_URL",
-    "OPENWORK_EVAL_DEN_EMAIL",
-    "OPENWORK_EVAL_DEN_PASSWORD",
-    "OPENWORK_EVAL_ORG_NAME",
-    "OPENWORK_EVAL_INSTANCE_HOST_TOKEN",
+    "MICX_EVAL_DEN_API_URL",
+    "MICX_EVAL_SPA_URL",
+    "MICX_EVAL_MOCK_URL",
+    "MICX_EVAL_DEN_EMAIL",
+    "MICX_EVAL_DEN_PASSWORD",
+    "MICX_EVAL_ORG_NAME",
+    "MICX_EVAL_INSTANCE_HOST_TOKEN",
   ],
   steps: [
     {
@@ -612,8 +612,8 @@ export default defineFlow({
             const body = await res.json().catch(() => null);
             const email = body && body.user ? body.user.email : null;
             witness(ctx, res.status === 200, "Den accepts the signed-in admin session", { status: res.status });
-            witness(ctx, email === required(ctx, "OPENWORK_EVAL_DEN_EMAIL"), "The session belongs to the signing-in admin", { email });
-            const seeded = await ctx.eval(`(() => localStorage.getItem("openwork.den.authToken") !== null)()`);
+            witness(ctx, email === required(ctx, "MICX_EVAL_DEN_EMAIL"), "The session belongs to the signing-in admin", { email });
+            const seeded = await ctx.eval(`(() => localStorage.getItem("micx.den.authToken") !== null)()`);
             witness(ctx, seeded === true || seeded === "true", "The browser carries the Den session", { seeded });
             const gated = await ctx.hasText("Paste sign-in code");
             witness(ctx, gated === false, "The forced sign-in gate is no longer blocking the app", { gated });
@@ -647,7 +647,7 @@ export default defineFlow({
     {
       name: "Frame 4 — Instance is full app",
       run: async (ctx) => {
-        await ctx.prove("The instance is the full OpenWork app.", {
+        await ctx.prove("The instance is the full Micx app.", {
           action: async () => {
             await navigateAbsolute(ctx, instanceBase());
             await seedDenSession(ctx);
@@ -656,7 +656,7 @@ export default defineFlow({
             await navigateAbsolute(ctx, `${instanceBase()}/session`);
             await ctx.waitFor("document.body.innerText.includes('What do you need done?') || document.body.innerText.includes('New session')", {
               timeoutMs: 90_000,
-              label: "OpenWork app shell in Cloud instance",
+              label: "Micx app shell in Cloud instance",
             });
           },
           assert: async () => {
@@ -666,11 +666,11 @@ export default defineFlow({
               if (text.includes("New session")) return "New session";
               return "";
             })()`);
-            witness(ctx, marker === "What do you need done?" || marker === "New session", "The Cloud instance renders the OpenWork app shell", marker);
+            witness(ctx, marker === "What do you need done?" || marker === "New session", "The Cloud instance renders the Micx app shell", marker);
           },
           screenshot: {
             name: "frame-4-instance-app",
-            claim: "The Cloud instance loads the full OpenWork app shell after the same signed-in organization session is restored.",
+            claim: "The Cloud instance loads the full Micx app shell after the same signed-in organization session is restored.",
             rejectText: ["Something went wrong"],
           },
         });
@@ -738,13 +738,13 @@ export default defineFlow({
     {
       name: "Frame 7 — Mock MCP executes through Connect",
       run: async (ctx) => {
-        await ctx.prove("The mock MCP provably executes through OpenWork Connect.", {
+        await ctx.prove("The mock MCP provably executes through Micx Connect.", {
           action: async () => {
             await executeMockMcpThroughAgent(ctx);
           },
           assert: async () => {
             witness(ctx, state.mockWitnessEntries.length > 0, "The mock MCP witness log captured the executed tool", state.mockWitnessEntries);
-            witness(ctx, state.executeResultText.includes(LOOKUP_OK_TEXT), "The OpenWork Connect execution returned the Acme lookup proof", state.executeResultText);
+            witness(ctx, state.executeResultText.includes(LOOKUP_OK_TEXT), "The Micx Connect execution returned the Acme lookup proof", state.executeResultText);
           },
           // No screenshot: the execution is node-side and the Connect view is
           // visually identical to frame 6 (the runner rejects duplicate

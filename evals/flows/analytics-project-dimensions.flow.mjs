@@ -4,16 +4,16 @@
  * that server-derived project key.
  *
  * Required env:
- * - OPENWORK_EVAL_DEN_API_URL   Den API base, e.g. https://api.example.com
- * - OPENWORK_EVAL_DEN_TOKEN     Bearer session token for a Den account
+ * - MICX_EVAL_DEN_API_URL   Den API base, e.g. https://api.example.com
+ * - MICX_EVAL_DEN_TOKEN     Bearer session token for a Den account
  *
  * Optional env:
- * - OPENWORK_EVAL_PROJECT_DIR   Existing sandbox folder for the workspace
+ * - MICX_EVAL_PROJECT_DIR   Existing sandbox folder for the workspace
  *                               (default /workspace/atlas-billing). The flow
  *                               assumes this folder already exists.
  *
  * How to run:
- * OPENWORK_EVAL_DEN_API_URL=... OPENWORK_EVAL_DEN_TOKEN=... pnpm fraimz --flow analytics-project-dimensions --cdp-url <electron-cdp>
+ * MICX_EVAL_DEN_API_URL=... MICX_EVAL_DEN_TOKEN=... pnpm fraimz --flow analytics-project-dimensions --cdp-url <electron-cdp>
  */
 import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
 
@@ -26,11 +26,11 @@ const vo = await loadVoiceoverParagraphs(FLOW_ID);
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function apiBase(ctx) {
-  return ctx.env.OPENWORK_EVAL_DEN_API_URL.trim().replace(/\/+$/, "");
+  return ctx.env.MICX_EVAL_DEN_API_URL.trim().replace(/\/+$/, "");
 }
 
 function bearerToken(ctx) {
-  return ctx.env.OPENWORK_EVAL_DEN_TOKEN.trim();
+  return ctx.env.MICX_EVAL_DEN_TOKEN.trim();
 }
 
 function optionalEnv(ctx, name, fallback) {
@@ -70,14 +70,14 @@ async function createDesktopHandoff(ctx) {
   const { response, payload, text } = await fetchJson(ctx, "/v1/auth/desktop-handoff", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ desktopScheme: "openwork" }),
+    body: JSON.stringify({ desktopScheme: "micx" }),
   });
   ctx.assert(response.ok, `Handoff create failed: ${response.status} ${text.slice(0, 200)}`);
   ctx.assert(
-    typeof payload?.openworkUrl === "string" && payload.openworkUrl.length > 0,
-    "No openworkUrl in handoff response.",
+    typeof payload?.micxUrl === "string" && payload.micxUrl.length > 0,
+    "No micxUrl in handoff response.",
   );
-  return payload.openworkUrl;
+  return payload.micxUrl;
 }
 
 async function waitForProjectDimension(ctx) {
@@ -120,7 +120,7 @@ export default {
   title: "Project dimensions flow from desktop workspace to filtered org analytics",
   kind: "user-facing",
   spec: "evals/voiceovers/analytics-project-dimensions.md",
-  requiredEnv: ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_TOKEN"],
+  requiredEnv: ["MICX_EVAL_DEN_API_URL", "MICX_EVAL_DEN_TOKEN"],
   steps: [
     {
       name: "Setup an onboarded desktop profile",
@@ -134,7 +134,7 @@ export default {
           await ctx.client.send("Page.navigate", { url: "http://localhost:5173/#/session" });
           await sleep(5_000);
         }
-        await ctx.waitFor("Boolean(window.__openworkControl)", {
+        await ctx.waitFor("Boolean(window.__micxControl)", {
           timeoutMs: 120_000,
           label: "control API",
         });
@@ -142,7 +142,7 @@ export default {
         // boots to /welcome needs the pref plus one reload to come up
         // onboarded. Warm onboarded profiles skip the reload entirely.
         const needsReload = await ctx.eval(`(() => {
-          const raw = localStorage.getItem("openwork.preferences");
+          const raw = localStorage.getItem("micx.preferences");
           let prefs = {};
           try {
             prefs = raw ? JSON.parse(raw) : {};
@@ -152,7 +152,7 @@ export default {
           if (!prefs || typeof prefs !== "object" || Array.isArray(prefs)) prefs = {};
           const wasOnboarded = prefs.hasCompletedOnboarding === true;
           prefs.hasCompletedOnboarding = true;
-          localStorage.setItem("openwork.preferences", JSON.stringify(prefs));
+          localStorage.setItem("micx.preferences", JSON.stringify(prefs));
           if (!wasOnboarded || location.hash.startsWith("#/welcome")) {
             location.hash = "#/session";
             location.reload();
@@ -162,7 +162,7 @@ export default {
         })()`);
         if (needsReload) {
           await sleep(3_000);
-          await ctx.waitFor("Boolean(window.__openworkControl) && !location.hash.startsWith('#/welcome')", {
+          await ctx.waitFor("Boolean(window.__micxControl) && !location.hash.startsWith('#/welcome')", {
             timeoutMs: 120_000,
             label: "control API after onboarded reload",
           });
@@ -232,7 +232,7 @@ export default {
           },
           assert: async () => {
             await ctx.expectText("Sign out", { timeoutMs: 45_000 });
-            const token = await ctx.eval("localStorage.getItem('openwork.den.authToken') ?? ''");
+            const token = await ctx.eval("localStorage.getItem('micx.den.authToken') ?? ''");
             recordAssertion(
               ctx,
               "Desktop persisted a non-empty Den auth token after handoff",
@@ -321,7 +321,7 @@ export default {
     {
       name: "Create the workspace and send its first task",
       run: async (ctx) => {
-        const projectDir = optionalEnv(ctx, "OPENWORK_EVAL_PROJECT_DIR", DEFAULT_PROJECT_DIR);
+        const projectDir = optionalEnv(ctx, "MICX_EVAL_PROJECT_DIR", DEFAULT_PROJECT_DIR);
         await ctx.prove("The first task from the project workspace is tagged for telemetry", {
           voiceover: vo[2],
           action: async () => {
@@ -358,7 +358,7 @@ export default {
             await ctx.eval(`(() => {
               const wsId = (location.hash.match(/workspace\\/([^/]+)/) ?? [])[1] ?? "";
               if (!wsId) throw new Error("no workspace id in hash");
-              const key = "openwork.react.workspaceProjectDimension";
+              const key = "micx.react.workspaceProjectDimension";
               let map = {};
               try {
                 map = JSON.parse(localStorage.getItem(key) ?? "{}") ?? {};
@@ -372,17 +372,17 @@ export default {
               return wsId;
             })()`);
             await ctx.waitFor(
-              `window.__openworkControl.listActions().some((action) => action.id === "session.create_task" && !action.disabled)`,
+              `window.__micxControl.listActions().some((action) => action.id === "session.create_task" && !action.disabled)`,
               { timeoutMs: 90_000, label: "session.create_task enabled (workspace server up)" },
             );
             await ctx.control("session.create_task");
             await ctx.waitFor(
-              `window.__openworkControl.listActions().some((action) => action.id === "composer.set_text")`,
+              `window.__micxControl.listActions().some((action) => action.id === "composer.set_text")`,
               { timeoutMs: 60_000, label: "composer actions registered" },
             );
             await ctx.control("composer.set_text", { text: "Reply with exactly: ATLAS-OK" });
             await ctx.waitFor(
-              `window.__openworkControl.listActions().some((action) => action.id === "composer.send" && !action.disabled)`,
+              `window.__micxControl.listActions().some((action) => action.id === "composer.send" && !action.disabled)`,
               { timeoutMs: 60_000, label: "composer.send enabled" },
             );
             await ctx.control("composer.send");
@@ -390,7 +390,7 @@ export default {
           },
           assert: async () => {
             const witness = await ctx.eval(`(() => {
-              const raw = localStorage.getItem("openwork.react.workspaceProjectDimension");
+              const raw = localStorage.getItem("micx.react.workspaceProjectDimension");
               let parsed = null;
               try {
                 parsed = raw ? JSON.parse(raw) : null;

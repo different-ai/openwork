@@ -1,6 +1,6 @@
 # markdown-table-live-preview — Markdown tables render in the artifact editor
 
-This user-facing proof drives the OpenWork desktop app over CDP, loads a document with markdown tables into a markdown artifact, and shows that the tables render as real tables while the document stays editable, that clicking or arrowing into one hands its markdown source back, and that a wide table no longer stops the surrounding prose from wrapping.
+This user-facing proof drives the Micx desktop app over CDP, loads a document with markdown tables into a markdown artifact, and shows that the tables render as real tables while the document stays editable, that clicking or arrowing into one hands its markdown source back, and that a wide table no longer stops the surrounding prose from wrapping.
 
 1. A markdown document with two tables opens in an artifact, and both tables are drawn as real tables with header rows, ruled cells, and the right-hand columns aligned to the right the way the markdown asked for. None of the pipe characters or the dashed divider row are left on screen as text.
 

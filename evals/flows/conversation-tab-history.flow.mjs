@@ -15,13 +15,13 @@ export default {
   kind: "user-facing",
   spec: "evals/voiceovers/conversation-tab-history.md",
   precondition: async (ctx) => {
-    await ctx.waitFor("Boolean(window.__openworkControl)", {
+    await ctx.waitFor("Boolean(window.__micxControl)", {
       timeoutMs: 60_000,
       label: "control API",
     });
     const availability = await ctx.waitFor(
       `(() => {
-        const control = window.__openworkControl;
+        const control = window.__micxControl;
         const action = control?.listActions?.().find((item) => item.id === "session.create_task");
         if (action && !action.disabled) return { ok: true };
         const route = control?.snapshot?.().route ?? "";
@@ -152,12 +152,12 @@ async function ensureConversationTabs(ctx) {
     return state.sessionIds;
   }
 
-  await ctx.waitFor("Boolean(window.__openworkControl)", {
+  await ctx.waitFor("Boolean(window.__micxControl)", {
     timeoutMs: 60_000,
     label: "control API",
   });
   await ctx.waitFor(
-    "window.__openworkControl.listActions().some((action) => action.id === 'session.create_task' && !action.disabled)",
+    "window.__micxControl.listActions().some((action) => action.id === 'session.create_task' && !action.disabled)",
     { timeoutMs: 60_000, label: "enabled session.create_task action" },
   );
 
@@ -182,7 +182,7 @@ async function waitForNewSession(ctx, previousSessionId) {
       const id = currentRouteSessionId();
       return id && id !== ${JSON.stringify(previous)} ? id : null;
       function currentRouteSessionId() {
-        const route = window.__openworkControl?.snapshot?.().route ?? window.location.hash ?? "";
+        const route = window.__micxControl?.snapshot?.().route ?? window.location.hash ?? "";
         const match = new RegExp("(?:^|/)session/([^/?#]+)").exec(route);
         return match ? decodeURIComponent(match[1]) : null;
       }
@@ -193,7 +193,7 @@ async function waitForNewSession(ctx, previousSessionId) {
 
 async function currentSessionId(ctx) {
   return ctx.eval(`(() => {
-    const route = window.__openworkControl?.snapshot?.().route ?? window.location.hash ?? "";
+    const route = window.__micxControl?.snapshot?.().route ?? window.location.hash ?? "";
     const match = new RegExp("(?:^|/)session/([^/?#]+)").exec(route);
     return match ? decodeURIComponent(match[1]) : null;
   })()`);
@@ -205,7 +205,7 @@ async function waitForConversationTabs(ctx, sessionIds) {
       const expectedIds = ${JSON.stringify(sessionIds)};
       const tabs = Array.from(document.querySelectorAll("[data-session-tab-id]"));
       const hasTabs = expectedIds.every((id) => tabs.some((tab) => tab.getAttribute("data-session-tab-id") === id));
-      const route = window.__openworkControl?.snapshot?.().route ?? window.location.hash ?? "";
+      const route = window.__micxControl?.snapshot?.().route ?? window.location.hash ?? "";
       const match = new RegExp("(?:^|/)session/([^/?#]+)").exec(route);
       const currentSessionId = match ? decodeURIComponent(match[1]) : null;
       const active = document.querySelector('[data-session-tab-active="true"]');
@@ -247,7 +247,7 @@ async function clickHistoryButton(ctx, direction, expectedSessionId) {
 async function waitForSession(ctx, sessionId) {
   await ctx.waitFor(
     `(() => {
-      const route = window.__openworkControl?.snapshot?.().route ?? window.location.hash ?? "";
+      const route = window.__micxControl?.snapshot?.().route ?? window.location.hash ?? "";
       const match = new RegExp("(?:^|/)session/([^/?#]+)").exec(route);
       const currentSessionId = match ? decodeURIComponent(match[1]) : null;
       const active = document.querySelector('[data-session-tab-active="true"]');
@@ -260,7 +260,7 @@ async function waitForSession(ctx, sessionId) {
 // History entries record the split layout too, so a step may change the
 // split pane instead of the route. Track both to detect each move.
 const HISTORY_STATE_KEY = `(() => {
-  const route = window.__openworkControl?.snapshot?.().route ?? window.location.hash ?? "";
+  const route = window.__micxControl?.snapshot?.().route ?? window.location.hash ?? "";
   const match = new RegExp("(?:^|/)session/([^/?#]+)").exec(route);
   const id = match ? decodeURIComponent(match[1]) : "";
   const split = document.querySelectorAll('[data-session-tab-split-pill] [data-session-tab-id]')[1]?.getAttribute("data-session-tab-id") ?? "";
@@ -290,7 +290,7 @@ async function clickUntilHistoryBoundary(ctx, direction) {
 
 async function readTabStripState(ctx) {
   return ctx.eval(`(() => {
-    const route = window.__openworkControl?.snapshot?.().route ?? window.location.hash ?? "";
+    const route = window.__micxControl?.snapshot?.().route ?? window.location.hash ?? "";
     const match = new RegExp("(?:^|/)session/([^/?#]+)").exec(route);
     const currentSessionId = match ? decodeURIComponent(match[1]) : null;
     const tabs = Array.from(document.querySelectorAll("[data-session-tab-id]"));

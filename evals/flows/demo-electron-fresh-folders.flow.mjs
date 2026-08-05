@@ -61,10 +61,10 @@ export default {
             action: async () => {},
             assert: async () => {
               const run = await createDemoRun(testRoot);
-              const productionRoot = path.join(os.homedir(), ".openwork");
+              const productionRoot = path.join(os.homedir(), ".micx");
               witness(ctx, run.admin.root !== run.consumer.root, "Demo A and Demo B folders differ");
-              witness(ctx, !run.admin.root.startsWith(productionRoot), "Demo A does not use the production .openwork folder", run.admin.root);
-              witness(ctx, !run.consumer.root.startsWith(productionRoot), "Demo B does not use the production .openwork folder", run.consumer.root);
+              witness(ctx, !run.admin.root.startsWith(productionRoot), "Demo A does not use the production .micx folder", run.admin.root);
+              witness(ctx, !run.consumer.root.startsWith(productionRoot), "Demo B does not use the production .micx folder", run.consumer.root);
               witness(ctx, await exists(run.admin.userDataDir), "Demo A Electron data folder exists");
               witness(ctx, await exists(run.consumer.userDataDir), "Demo B Electron data folder exists");
               ctx.output("Created demo folders", `Demo A: ${run.admin.root}\nDemo B: ${run.consumer.root}`);

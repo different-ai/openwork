@@ -202,7 +202,7 @@ function connectionsFromBody(body: unknown): McpConnection[] {
 function authHeaders(token: string, organizationId?: string): Headers {
   const headers = new Headers();
   headers.set("authorization", `Bearer ${token}`);
-  if (organizationId) headers.set("x-openwork-org-id", organizationId);
+  if (organizationId) headers.set("x-micx-org-id", organizationId);
   return headers;
 }
 
@@ -536,8 +536,8 @@ export async function mintMcpToken(ctx: FlowContext, options: MintMcpTokenOption
 }
 
 export async function mcpAgentCall(ctx: FlowContext, options: McpAgentCallOptions): Promise<unknown> {
-  const apiUrl = ctx.env.OPENWORK_EVAL_DEN_API_URL?.trim().replace(/\/+$/, "");
-  if (!apiUrl) throw new EvalError("OPENWORK_EVAL_DEN_API_URL is required for MCP agent calls.");
+  const apiUrl = ctx.env.MICX_EVAL_DEN_API_URL?.trim().replace(/\/+$/, "");
+  if (!apiUrl) throw new EvalError("MICX_EVAL_DEN_API_URL is required for MCP agent calls.");
   // Provenance: evals/flows/lib/den-web.mjs:158-174 calls /mcp/agent and
   // reads the first Server-Sent Events data frame as the JSON-RPC result.
   const response = await fetch(`${apiUrl}/mcp/agent`, {

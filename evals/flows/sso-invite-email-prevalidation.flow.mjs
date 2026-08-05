@@ -5,21 +5,21 @@ import { clearOrgSso, configureOrgSso, expectInviteEmailPrevalidated } from "../
 import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
 
 const FLOW_ID = "sso-invite-email-prevalidation";
-const REQUIRED_DEN_ENV = ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_WEB_URL", "OPENWORK_EVAL_DEN_TOKEN"];
+const REQUIRED_DEN_ENV = ["MICX_EVAL_DEN_API_URL", "MICX_EVAL_DEN_WEB_URL", "MICX_EVAL_DEN_TOKEN"];
 
 const vo = await loadVoiceoverParagraphs(FLOW_ID);
 if (!vo) throw new Error(`Missing approved voice-over script for ${FLOW_ID}.`);
 
 function runSuffix(ctx) {
-  return `${ctx.env.OPENWORK_EVAL_RUNSTAMP?.trim() || Date.now()}-${process.pid}`
+  return `${ctx.env.MICX_EVAL_RUNSTAMP?.trim() || Date.now()}-${process.pid}`
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "") || "run";
 }
 
 function authHeaders(ctx) {
-  const token = ctx.env.OPENWORK_EVAL_DEN_TOKEN?.trim();
-  if (!token) throw new Error("OPENWORK_EVAL_DEN_TOKEN is required.");
+  const token = ctx.env.MICX_EVAL_DEN_TOKEN?.trim();
+  if (!token) throw new Error("MICX_EVAL_DEN_TOKEN is required.");
   const headers = new Headers();
   headers.set("authorization", `Bearer ${token}`);
   return headers;
@@ -80,7 +80,7 @@ export default defineScenario({
           });
 
           await ctx.on(surface, async () => {
-            await ctx.prove("If the IdP returns a different email, OpenWork rejects the invite coherently and does not loop", {
+            await ctx.prove("If the IdP returns a different email, Micx rejects the invite coherently and does not loop", {
               voiceover: vo[1],
               action: async () => {
                 await expectInviteEmailPrevalidated(ctx, {

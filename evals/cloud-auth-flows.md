@@ -1,6 +1,6 @@
 # Cloud auth flows
 
-End-to-end user flows for signing the desktop app into OpenWork Cloud through a
+End-to-end user flows for signing the desktop app into Micx Cloud through a
 Daytona-hosted Den server. These flows should run against a real Electron app
 through CDP, not a web-only build.
 
@@ -49,10 +49,10 @@ verification before starting desktop handoff.
    ```bash
    curl -H "authorization: Bearer $TOKEN" \
      -H 'content-type: application/json' \
-     --data '{"desktopScheme":"openwork"}' \
+     --data '{"desktopScheme":"micx"}' \
      "$DEN_API_URL/v1/auth/desktop-handoff"
    ```
-4. Paste the full `openwork://den-auth?...&denBaseUrl=...` link into `Paste sign-in code`.
+4. Paste the full `micx://den-auth?...&denBaseUrl=...` link into `Paste sign-in code`.
 5. Click `Finish sign-in`.
 
 ### Expected outcome
@@ -60,7 +60,7 @@ verification before starting desktop handoff.
 - Cloud Account shows `Connected`.
 - The signed-in email is visible.
 - The active organization appears if one exists.
-- `localStorage.openwork.den.authToken` is present.
+- `localStorage.micx.den.authToken` is present.
 - Den API logs include `POST /v1/auth/desktop-handoff/exchange 200` and `GET /v1/me/orgs 200`.
 
 ## Flow 2: Raw code fallback
@@ -101,7 +101,7 @@ wrong base in split Den Web/API deployments.
 ### Expected outcome
 
 - The UI shows a useful failure message.
-- `localStorage.openwork.den.authToken` remains empty.
+- `localStorage.micx.den.authToken` remains empty.
 - The Cloud Account page stays signed out.
 - Den API returns `404 grant_not_found` for the exchange.
 

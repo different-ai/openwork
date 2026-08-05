@@ -34,10 +34,10 @@ export default {
   title: "Vertical tabs: split view from the sidebar, history-aware",
   kind: "user-facing",
   precondition: async (ctx) => {
-    await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 60_000, label: "control API" });
+    await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 60_000, label: "control API" });
     const state = await ctx.waitFor(
       `(() => {
-        const control = window.__openworkControl;
+        const control = window.__micxControl;
         const route = control.snapshot().route;
         if (route.startsWith("/welcome") || route.startsWith("/signin")) return "blocked";
         const action = control.listActions().find((a) => a.id === "session.list_sessions");
@@ -56,9 +56,9 @@ export default {
       run: async (ctx) => {
         // Idempotency: reset renderer state, then make sure two sessions exist.
         await ctx.eval("location.reload()");
-        await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 60_000, label: "control API after reload" });
+        await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 60_000, label: "control API after reload" });
         await ctx.waitFor(
-          `window.__openworkControl.listActions().some((a) => a.id === "session.list_sessions" && !a.disabled)`,
+          `window.__micxControl.listActions().some((a) => a.id === "session.list_sessions" && !a.disabled)`,
           { timeoutMs: 30_000, label: "session listing ready" },
         );
         let sessions = [];

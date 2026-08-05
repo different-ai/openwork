@@ -306,7 +306,7 @@ function parseUrlAfterLabels(output: string, labels: string[]): string | null {
 }
 
 function serverRefArg(): string | null {
-  const explicit = process.env.OPENWORK_EVAL_DAYTONA_REF?.trim() || process.env.OPENWORK_EVAL_REF?.trim() || "";
+  const explicit = process.env.MICX_EVAL_DAYTONA_REF?.trim() || process.env.MICX_EVAL_REF?.trim() || "";
   return explicit || null;
 }
 
@@ -369,7 +369,7 @@ export function createDaytonaHost(options: DaytonaHostOptions): DaytonaHost {
   const spawnedSurfaces = new Set<SurfaceHandle>();
 
   function requireSandbox(): string {
-    const sandbox = options.sandboxId?.trim() || process.env.OPENWORK_EVAL_DAYTONA_SANDBOX?.trim() || "";
+    const sandbox = options.sandboxId?.trim() || process.env.MICX_EVAL_DAYTONA_SANDBOX?.trim() || "";
     if (!sandbox) {
       throw new Error("Daytona sandbox required: create one with bash .devcontainer/test-on-daytona.sh <ref> or pass sandboxId.");
     }
@@ -393,7 +393,7 @@ export function createDaytonaHost(options: DaytonaHostOptions): DaytonaHost {
     const sandbox = requireSandbox();
     const safeName = sanitizeName(name);
     const spawnStamp = timestamp();
-    const profileRoot = `/workspace/.openwork-daytona/profiles/${safeName}-${spawnStamp}`;
+    const profileRoot = `/workspace/.micx-daytona/profiles/${safeName}-${spawnStamp}`;
     const profileDir = `${profileRoot}/electron-userdata`;
     const bootstrapPath = `${profileRoot}/bootstrap.json`;
     const port = await allocateSandboxPort(electronPorts, exec, sandbox);
@@ -417,11 +417,11 @@ export function createDaytonaHost(options: DaytonaHostOptions): DaytonaHost {
       const env = new Map<string, string>();
       appendExtraEnv(env, opts.env);
       env.set("DAYTONA_ELECTRON_LOG", logPath);
-      env.set("OPENWORK_ELECTRON_REMOTE_DEBUG_PORT", String(port));
-      env.set("OPENWORK_ELECTRON_USERDATA", profileDir);
-      env.set("OPENWORK_WORKSPACE_DIR", "/workspace");
-      env.set("OPENWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT", "1");
-      if (opts.bootstrap) env.set("OPENWORK_DESKTOP_BOOTSTRAP_PATH", bootstrapPath);
+      env.set("MICX_ELECTRON_REMOTE_DEBUG_PORT", String(port));
+      env.set("MICX_ELECTRON_USERDATA", profileDir);
+      env.set("MICX_WORKSPACE_DIR", "/workspace");
+      env.set("MICX_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT", "1");
+      if (opts.bootstrap) env.set("MICX_DESKTOP_BOOTSTRAP_PATH", bootstrapPath);
 
       const startCommand = `set -euo pipefail; cd /workspace; ${shellExport(env)} bash /workspace/.devcontainer/start-daytona-electron.sh --detach`;
       await checkedExec(
@@ -515,8 +515,8 @@ export function createDaytonaHost(options: DaytonaHostOptions): DaytonaHost {
   }
 
   async function startDen(opts: DenServiceOptions = {}): Promise<DenServiceHandle> {
-    const apiUrl = process.env.OPENWORK_EVAL_DEN_API_URL?.trim();
-    const webUrl = process.env.OPENWORK_EVAL_DEN_WEB_URL?.trim();
+    const apiUrl = process.env.MICX_EVAL_DEN_API_URL?.trim();
+    const webUrl = process.env.MICX_EVAL_DEN_WEB_URL?.trim();
     if (apiUrl && webUrl) {
       return {
         webUrl,
@@ -527,7 +527,7 @@ export function createDaytonaHost(options: DaytonaHostOptions): DaytonaHost {
     }
 
     if (!options.serverScript) {
-      throw new Error("No Den URLs in OPENWORK_EVAL_DEN_API_URL/OPENWORK_EVAL_DEN_WEB_URL. Set them, or create the server with bash .devcontainer/test-server-on-daytona.sh <ref> and rerun with serverScript enabled.");
+      throw new Error("No Den URLs in MICX_EVAL_DEN_API_URL/MICX_EVAL_DEN_WEB_URL. Set them, or create the server with bash .devcontainer/test-server-on-daytona.sh <ref> and rerun with serverScript enabled.");
     }
 
     const args = [".devcontainer/test-server-on-daytona.sh"];

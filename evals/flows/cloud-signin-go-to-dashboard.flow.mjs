@@ -8,9 +8,9 @@ import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
 
 const vo = await loadVoiceoverParagraphs("cloud-signin-go-to-dashboard");
 
-const DEN_WEB_URL = (process.env.OPENWORK_EVAL_DEN_WEB_URL ?? "").trim().replace(/\/+$/, "");
-const ADMIN_EMAIL = process.env.OPENWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
-const ADMIN_PASSWORD = process.env.OPENWORK_EVAL_DEMO_PASSWORD?.trim() || "OpenWorkDemo123!";
+const DEN_WEB_URL = (process.env.MICX_EVAL_DEN_WEB_URL ?? "").trim().replace(/\/+$/, "");
+const ADMIN_EMAIL = process.env.MICX_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
+const ADMIN_PASSWORD = process.env.MICX_EVAL_DEMO_PASSWORD?.trim() || "MicxDemo123!";
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -66,7 +66,7 @@ async function resetSession(ctx) {
   // with the stored bearer token, then drop the token).
   await ctx.eval(
     `(async () => {
-      const token = localStorage.getItem("openwork:web:auth-token");
+      const token = localStorage.getItem("micx:web:auth-token");
       try {
         await fetch("/api/auth/sign-out", {
           method: "POST",
@@ -77,7 +77,7 @@ async function resetSession(ctx) {
           body: "{}",
         });
       } catch {}
-      localStorage.removeItem("openwork:web:auth-token");
+      localStorage.removeItem("micx:web:auth-token");
       return true;
     })()`,
     { awaitPromise: true },
@@ -89,7 +89,7 @@ export default {
   title: "Cloud sign-in: \"Go to dashboard\" navigates while a desktop handoff is pending",
   kind: "user-facing",
   spec: "evals/voiceovers/cloud-signin-go-to-dashboard.md",
-  requiredEnv: ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_WEB_URL"],
+  requiredEnv: ["MICX_EVAL_DEN_API_URL", "MICX_EVAL_DEN_WEB_URL"],
   steps: [
     {
       name: "Frame 1",
@@ -103,13 +103,13 @@ export default {
           assert: async () => {
             await ctx.waitFor(`(() => {
               const text = document.body.innerText;
-              return text.includes("You're signed in.") && text.includes("Go to dashboard") && text.includes("Open OpenWork") && location.pathname === "/";
+              return text.includes("You're signed in.") && text.includes("Go to dashboard") && text.includes("Open Micx") && location.pathname === "/";
             })()`, { timeoutMs: 30_000, label: "signed-in desktop handoff card" });
           },
           screenshot: {
             name: "signed-in-handoff-card",
             claim: "The signed-in handoff card appears with the dashboard escape hatch.",
-            requireText: ["You're signed in.", "Go to dashboard", "Open OpenWork"],
+            requireText: ["You're signed in.", "Go to dashboard", "Open Micx"],
             rejectText: ["Something went wrong"],
           },
         });

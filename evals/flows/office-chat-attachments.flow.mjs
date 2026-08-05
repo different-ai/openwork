@@ -15,7 +15,7 @@ const FLOW_ID = "office-chat-attachments";
 const PROVIDER_ID = "office-attachments-mock";
 const MODEL_ID = "office-attachment-mock";
 const MOCK_PORT = 18081;
-const DOWNLOAD_DIR = "/tmp/openwork-office-attachment-downloads";
+const DOWNLOAD_DIR = "/tmp/micx-office-attachment-downloads";
 const PROMPT = "Please inspect the attached Word document and PowerPoint deck, save exact copies as workspace artifacts, and summarize what you found.";
 const FOLLOW_UP = "Confirm this Office attachment session still works after reopening.";
 const vo = await loadVoiceoverParagraphs(FLOW_ID);
@@ -30,7 +30,7 @@ function runInSandbox(ctx, script, timeout = 120_000) {
   const encoded = Buffer.from(script, "utf8").toString("base64");
   const result = spawnSync(
     "daytona",
-    ["exec", ctx.env.OPENWORK_EVAL_DAYTONA_SANDBOX.trim(), "--", "echo", encoded, "|", "base64", "-d", "|", "bash"],
+    ["exec", ctx.env.MICX_EVAL_DAYTONA_SANDBOX.trim(), "--", "echo", encoded, "|", "base64", "-d", "|", "bash"],
     { encoding: "utf8", timeout },
   );
   ctx.assert(result.status === 0, `Daytona command failed: ${result.stderr || result.stdout}`);
@@ -46,20 +46,20 @@ function startMockProvider(ctx) {
   const output = runInSandbox(ctx, `
 set -euo pipefail
 cd /workspace
-if [ -f /tmp/openwork-office-attachments-mock.pid ]; then
-  kill "$(cat /tmp/openwork-office-attachments-mock.pid)" >/dev/null 2>&1 || true
+if [ -f /tmp/micx-office-attachments-mock.pid ]; then
+  kill "$(cat /tmp/micx-office-attachments-mock.pid)" >/dev/null 2>&1 || true
 fi
-rm -f /tmp/openwork-office-attachments-mock.log /tmp/openwork-office-attachments-mock.pid
-nohup node evals/drivers/office-attachments-mock-provider.mjs --port ${MOCK_PORT} --workspace ${shellQuote(ctx.workspacePath || "/workspace")} > /tmp/openwork-office-attachments-mock.log 2>&1 < /dev/null &
-echo $! > /tmp/openwork-office-attachments-mock.pid
+rm -f /tmp/micx-office-attachments-mock.log /tmp/micx-office-attachments-mock.pid
+nohup node evals/drivers/office-attachments-mock-provider.mjs --port ${MOCK_PORT} --workspace ${shellQuote(ctx.workspacePath || "/workspace")} > /tmp/micx-office-attachments-mock.log 2>&1 < /dev/null &
+echo $! > /tmp/micx-office-attachments-mock.pid
 for _ in $(seq 1 80); do
-  if curl -sf http://127.0.0.1:${MOCK_PORT}/health >/tmp/openwork-office-attachments-health.json; then
-    cat /tmp/openwork-office-attachments-health.json
+  if curl -sf http://127.0.0.1:${MOCK_PORT}/health >/tmp/micx-office-attachments-health.json; then
+    cat /tmp/micx-office-attachments-health.json
     exit 0
   fi
   sleep 0.25
 done
-cat /tmp/openwork-office-attachments-mock.log >&2
+cat /tmp/micx-office-attachments-mock.log >&2
 exit 1
 `);
   return output.trim();
@@ -68,7 +68,7 @@ exit 1
 function stopMockProvider(ctx) {
   return runInSandbox(ctx, `
 set -uo pipefail
-pidfile=/tmp/openwork-office-attachments-mock.pid
+pidfile=/tmp/micx-office-attachments-mock.pid
 curl -sf --connect-timeout 1 --max-time 2 -X POST http://127.0.0.1:${MOCK_PORT}/shutdown >/dev/null 2>&1 || true
 if [ -s "$pidfile" ]; then
   pid="$(cat "$pidfile" 2>/dev/null || true)"
@@ -108,13 +108,13 @@ async function pollProof(ctx, predicate, timeoutMs, label) {
 
 async function forceEnglish(ctx) {
   const shouldReload = await ctx.eval(`(() => {
-    const current = localStorage.getItem("openwork.language");
-    localStorage.setItem("openwork.language", "en");
+    const current = localStorage.getItem("micx.language");
+    localStorage.setItem("micx.language", "en");
     return current !== "en" || document.documentElement.getAttribute("lang") !== "en";
   })()`);
   if (!shouldReload) return;
   await ctx.eval("location.reload()");
-  await ctx.waitFor("Boolean(window.__openworkControl)", {
+  await ctx.waitFor("Boolean(window.__micxControl)", {
     timeoutMs: 60_000,
     label: "control API after language reload",
   });
@@ -123,7 +123,7 @@ async function forceEnglish(ctx) {
 async function appRouteState(ctx) {
   return await ctx.eval(`(() => {
     const hash = location.hash;
-    const control = window.__openworkControl;
+    const control = window.__micxControl;
     const snapshot = control && typeof control.snapshot === "function" ? control.snapshot() : null;
     const route = (snapshot && snapshot.route) || (hash.startsWith("#") ? hash.slice(1) : hash);
     const pathSegment = (value, segment) => {
@@ -135,7 +135,7 @@ async function appRouteState(ctx) {
       const end = rest.indexOf("/");
       return end < 0 ? rest : rest.slice(0, end);
     };
-    const workspaceId = pathSegment(hash, "workspace") || localStorage.getItem("openwork.react.activeWorkspace") || "";
+    const workspaceId = pathSegment(hash, "workspace") || localStorage.getItem("micx.react.activeWorkspace") || "";
     const sessionId = pathSegment(hash, "session") || pathSegment(route, "session") || "";
     return { hash, route, workspaceId, sessionId };
   })()`);
@@ -144,8 +144,8 @@ async function appRouteState(ctx) {
 async function serverJson(ctx, path, init = {}) {
   const method = init.method || "GET";
   const raw = await ctx.eval(`(async () => {
-    const port = localStorage.getItem("openwork.server.port");
-    const token = localStorage.getItem("openwork.server.token");
+    const port = localStorage.getItem("micx.server.port");
+    const token = localStorage.getItem("micx.server.token");
     if (!port || !token) return JSON.stringify({ ok: false, status: 0, text: "missing server port/token" });
     const response = await fetch("http://127.0.0.1:" + port + ${JSON.stringify(path)}, {
       method: ${JSON.stringify(method)},
@@ -184,7 +184,7 @@ async function configureMockProvider(ctx) {
           [PROVIDER_ID]: {
             npm: "@ai-sdk/openai-compatible",
             name: "Office Attachments Mock",
-            options: { baseURL, apiKey: "sk-openwork-office-attachments-eval" },
+            options: { baseURL, apiKey: "sk-micx-office-attachments-eval" },
             models: {
               [MODEL_ID]: {
                 name: "Office attachment mock",
@@ -199,7 +199,7 @@ async function configureMockProvider(ctx) {
   });
   await serverJson(ctx, `/workspace/${encodeURIComponent(ctx.workspaceId)}/engine/reload`, { method: "POST" });
   await ctx.eval(`(() => {
-    const prefsRaw = localStorage.getItem("openwork.preferences");
+    const prefsRaw = localStorage.getItem("micx.preferences");
     let prefs = {};
     try {
       prefs = prefsRaw ? JSON.parse(prefsRaw) : {};
@@ -207,14 +207,14 @@ async function configureMockProvider(ctx) {
       prefs = {};
     }
     if (!prefs || typeof prefs !== "object" || Array.isArray(prefs)) prefs = {};
-    localStorage.setItem("openwork.preferences", JSON.stringify({
+    localStorage.setItem("micx.preferences", JSON.stringify({
       ...prefs,
       defaultModel: { providerID: ${JSON.stringify(PROVIDER_ID)}, modelID: ${JSON.stringify(MODEL_ID)} },
       modelVariant: null,
       providerStepCompleted: true,
     }));
-    localStorage.setItem("openwork.defaultModel", ${JSON.stringify(`${PROVIDER_ID}/${MODEL_ID}`)});
-    localStorage.removeItem("openwork.sessionModels.${ctx.workspaceId}");
+    localStorage.setItem("micx.defaultModel", ${JSON.stringify(`${PROVIDER_ID}/${MODEL_ID}`)});
+    localStorage.removeItem("micx.sessionModels.${ctx.workspaceId}");
   })()`);
   ctx.output("Office mock provider", JSON.stringify({ provider: PROVIDER_ID, model: MODEL_ID, baseURL }, null, 2));
 }
@@ -229,32 +229,32 @@ async function assertOfficeMockSelected(ctx) {
   record(ctx, selected.includes("Office attachment mock"), "Visible selected model is Office attachment mock", selected);
 }
 
-async function dismissOpenWorkModelsModal(ctx) {
+async function dismissMicxModelsModal(ctx) {
   const result = await ctx.eval(`(() => {
     const roots = Array.from(document.querySelectorAll('[role="dialog"], [data-slot="dialog-content"], [data-radix-dialog-content]'));
-    const dialog = roots.find((item) => (item.textContent || "").includes("OpenWork Models"));
+    const dialog = roots.find((item) => (item.textContent || "").includes("Micx Models"));
     if (!dialog) return { dismissed: false };
     const buttons = Array.from(dialog.querySelectorAll("button"));
-    const continueButton = buttons.find((button) => (button.textContent || "").trim().includes("Continue without OpenWork Models"));
+    const continueButton = buttons.find((button) => (button.textContent || "").trim().includes("Continue without Micx Models"));
     const closeButton = buttons.find((button) => {
       const label = button.getAttribute("aria-label") || "";
       return label === "Close" || (button.textContent || "").trim() === "Close";
     });
     const button = continueButton || closeButton;
-    if (!button) return { dismissed: false, reason: "OpenWork Models modal had no dismiss button" };
+    if (!button) return { dismissed: false, reason: "Micx Models modal had no dismiss button" };
     button.click();
     return { dismissed: true };
   })()`);
   if (!result || !result.dismissed) return;
   await ctx.waitFor(`(() => {
     const roots = Array.from(document.querySelectorAll('[role="dialog"], [data-slot="dialog-content"], [data-radix-dialog-content]'));
-    return !roots.some((item) => (item.textContent || "").includes("OpenWork Models"));
-  })()`, { timeoutMs: 10_000, label: "OpenWork Models modal dismissed" });
+    return !roots.some((item) => (item.textContent || "").includes("Micx Models"));
+  })()`, { timeoutMs: 10_000, label: "Micx Models modal dismissed" });
 }
 
 async function createFreshSession(ctx) {
   await ctx.waitFor(
-    `window.__openworkControl.listActions().some((item) => item.id === "session.create_task" && !item.disabled)`,
+    `window.__micxControl.listActions().some((item) => item.id === "session.create_task" && !item.disabled)`,
     { timeoutMs: 60_000, label: "session.create_task enabled" },
   );
   await ctx.control("session.create_task");
@@ -270,7 +270,7 @@ async function createFreshSession(ctx) {
         const sessionId = end < 0 ? rest : rest.slice(0, end);
         return sessionId.startsWith("ses_") ? sessionId : "";
       };
-      const control = window.__openworkControl;
+      const control = window.__micxControl;
       const snapshot = control && typeof control.snapshot === "function" ? control.snapshot() : null;
       const route = snapshot && snapshot.route ? snapshot.route : "";
       return Boolean(sessionIdFrom(location.hash) || sessionIdFrom(route));
@@ -460,13 +460,13 @@ function escapeRegExp(value) {
 
 function attachmentPathNoteText(messages) {
   return collectStrings(messages)
-    .filter((text) => text.includes(".opencode/openwork/inbox/chat-attachments/") || text.includes("Attached files were copied into this worker workspace"))
+    .filter((text) => text.includes(".opencode/micx/inbox/chat-attachments/") || text.includes("Attached files were copied into this worker workspace"))
     .join("\n");
 }
 
 function parseAttachmentPathNoteReference(text, expected) {
   const filenamePattern = escapeRegExp(expected.filename);
-  const pathPattern = new RegExp(`\\.opencode/openwork/inbox/chat-attachments/[^\\s)]*${filenamePattern}`);
+  const pathPattern = new RegExp(`\\.opencode/micx/inbox/chat-attachments/[^\\s)]*${filenamePattern}`);
   const lines = text.split(/\r?\n/).filter((line) => line.includes(expected.filename));
   for (const line of lines) {
     const path = pathPattern.exec(line)?.[0] ?? "";
@@ -553,7 +553,7 @@ function assertWorkspaceAttachmentPathNotes(ctx, messages) {
   for (const [kind, expected] of Object.entries(OFFICE_FIXTURES)) {
     const reference = parseAttachmentPathNoteReference(text, expected);
     record(ctx, Boolean(reference.path), `Submitted ${kind.toUpperCase()} path note includes a workspace-local inbox path`, reference.line || text.slice(0, 1000));
-    record(ctx, reference.path.startsWith(".opencode/openwork/inbox/chat-attachments/"), `Submitted ${kind.toUpperCase()} path note stays under chat-attachments`, reference.path);
+    record(ctx, reference.path.startsWith(".opencode/micx/inbox/chat-attachments/"), `Submitted ${kind.toUpperCase()} path note stays under chat-attachments`, reference.path);
     record(ctx, Boolean(reference.url), `Submitted ${kind.toUpperCase()} path note includes a file: URL`, reference.line || text.slice(0, 1000));
     const filePath = reference.url ? fileURLToPath(reference.url) : "";
     const relativePath = filePath ? workspaceRelativePath(ctx.workspacePath, filePath) : "";
@@ -603,7 +603,7 @@ function workspaceArtifactsHaveExpectedHashes(hashes) {
 }
 
 async function clickArtifact(ctx, filename) {
-  await dismissOpenWorkModelsModal(ctx);
+  await dismissMicxModelsModal(ctx);
   await ctx.waitFor(`(() => {
     const buttons = Array.from(document.querySelectorAll("button"));
     const tabsOpen = buttons.some((item) => {
@@ -714,15 +714,15 @@ export default {
   id: FLOW_ID,
   title: "Session composer safely normalizes valid Word and PowerPoint attachments through the real model boundary",
   kind: "user-facing",
-  requiredEnv: ["OPENWORK_EVAL_DAYTONA_SANDBOX"],
+  requiredEnv: ["MICX_EVAL_DAYTONA_SANDBOX"],
   precondition: async (ctx) => {
-    await ctx.waitFor("Boolean(window.__openworkControl)", {
+    await ctx.waitFor("Boolean(window.__micxControl)", {
       timeoutMs: 60_000,
       label: "control API",
     });
     const state = await ctx.waitFor(
       `(() => {
-        const control = window.__openworkControl;
+        const control = window.__micxControl;
         const route = control.snapshot().route;
         if (route.startsWith("/welcome") || route.startsWith("/signin")) return "blocked";
         const action = control.listActions().find((item) => item.id === "session.create_task");
@@ -751,7 +751,7 @@ export default {
             ctx.output("Office mock health", health);
             await configureMockProvider(ctx);
             await ctx.eval("location.reload()");
-            await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 60_000, label: "control API after provider reload" });
+            await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 60_000, label: "control API after provider reload" });
             await createFreshSession(ctx);
             await assertOfficeMockSelected(ctx);
           },
@@ -806,7 +806,7 @@ export default {
     {
       name: "Send normalizes Office files for provider text, tool loop writes artifacts, and sent cards are actionable",
       run: async (ctx) => {
-        await ctx.prove("Sending crosses Electron, OpenWork, OpenCode, and the provider; the mock receives normalized Office text, then writes exact materialized bytes via bash", {
+        await ctx.prove("Sending crosses Electron, Micx, OpenCode, and the provider; the mock receives normalized Office text, then writes exact materialized bytes via bash", {
           voiceover: vo[2],
           action: async () => {
             const beforeHashes = resetWorkspaceOfficeArtifacts(ctx);
@@ -840,7 +840,7 @@ export default {
               JSON.stringify(afterHashes),
             );
             await waitForFinalResponse(ctx);
-            await dismissOpenWorkModelsModal(ctx);
+            await dismissMicxModelsModal(ctx);
             const messages = await sessionMessages(ctx);
             const sessionText = JSON.stringify(messages);
             record(ctx, sessionText.includes(DOCX_SENTINEL) && sessionText.includes(PPTX_SENTINEL), "Session read API contains both extracted sentinel facts");
@@ -857,7 +857,7 @@ export default {
               expectedSha: OFFICE_FIXTURES.docx.sha256,
               assertion: `Sent attachment card Download for ${DOCX_FILENAME} saves the exact expected sha256`,
             });
-            await dismissOpenWorkModelsModal(ctx);
+            await dismissMicxModelsModal(ctx);
             await ctx.control("session.scroll_bottom");
             await waitForVisibleFinalResponse(ctx);
           },
@@ -931,13 +931,13 @@ export default {
           voiceover: vo[5],
           action: async () => {
             await ctx.eval("location.reload()");
-            await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 60_000, label: "control API after session reload" });
+            await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 60_000, label: "control API after session reload" });
             await ctx.navigateHash(`/workspace/${ctx.workspaceId}/session/${ctx.sessionId}`);
             await ctx.waitFor(`location.hash.includes(${JSON.stringify(`/workspace/${ctx.workspaceId}/session/${ctx.sessionId}`)})`, {
               timeoutMs: 30_000,
               label: "reopened Office session route",
             });
-            await dismissOpenWorkModelsModal(ctx);
+            await dismissMicxModelsModal(ctx);
             const restoredCards = await ctx.waitFor(sentAttachmentCardsExpr(), { timeoutMs: 45_000, label: "restored Office sent cards" });
             record(ctx, restoredCards.docx && restoredCards.pptx, "Reload restored both sent Office cards with badges and Download actions");
             record(ctx, restoredCards.downloadButtons >= 2, "Reloaded Office sent cards keep DOCX/PPTX Download actions", JSON.stringify({ downloadButtons: restoredCards.downloadButtons }));
@@ -949,7 +949,7 @@ export default {
               timeoutMs: 60_000,
               label: "replay success assistant response",
             });
-            await dismissOpenWorkModelsModal(ctx);
+            await dismissMicxModelsModal(ctx);
           },
           assert: async () => {
             await ctx.expectText(DOCX_FILENAME);

@@ -1,5 +1,5 @@
 [package]
-name = "microsandbox-openwork-rust"
+name = "microsandbox-micx-rust"
 version = "0.1.0"
 edition = "2021"
 publish = false

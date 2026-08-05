@@ -12,7 +12,7 @@ Use the right channel to get faster help:
 ## Before opening an issue
 
 - Search existing issues to avoid duplicates.
-- Include exact OpenWork/OpenCode versions, OS, and reproduction steps.
+- Include exact Micx/OpenCode versions, OS, and reproduction steps.
 - For desktop, worker, or session bugs, open Settings -> Debug and include both:
   - the runtime debug report
   - the developer log export

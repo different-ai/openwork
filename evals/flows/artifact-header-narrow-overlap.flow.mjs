@@ -46,16 +46,16 @@ export default {
       run: async (ctx) => {
         const userAgent = await ctx.eval("navigator.userAgent");
         ctx.assert(userAgent.includes("Electron/"), `Expected Electron userAgent, got ${userAgent}`);
-        await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 60_000, label: "control API" });
+        await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 60_000, label: "control API" });
       },
     },
     {
       name: "Create or select a session and mount the side panel",
       run: async (ctx) => {
-        const hasSelectedSession = await ctx.eval(`window.__openworkControl.snapshot().route.includes("/session/")`);
+        const hasSelectedSession = await ctx.eval(`window.__micxControl.snapshot().route.includes("/session/")`);
         if (!hasSelectedSession) {
           await ctx.control("session.create_task");
-          await ctx.waitFor(`window.__openworkControl.snapshot().route.includes("/session/")`, {
+          await ctx.waitFor(`window.__micxControl.snapshot().route.includes("/session/")`, {
             timeoutMs: 60_000,
             label: "session route after task creation",
           });
@@ -65,7 +65,7 @@ export default {
         // action only registers while the panel is mounted. Toggle deliberately
         // (at most twice), checking after each click, to land on "open".
         const seedReady = async () =>
-          ctx.eval(`window.__openworkControl.listActions().some((a) => a.id === "eval.artifact_tabs.seed_overflow" && !a.disabled)`);
+          ctx.eval(`window.__micxControl.listActions().some((a) => a.id === "eval.artifact_tabs.seed_overflow" && !a.disabled)`);
         const clickBrowserRail = () =>
           ctx.eval(`(() => {
             const button = Array.from(document.querySelectorAll("button"))
@@ -78,7 +78,7 @@ export default {
           await clickBrowserRail();
           try {
             await ctx.waitFor(
-              `window.__openworkControl.listActions().some((a) => a.id === "eval.artifact_tabs.seed_overflow" && !a.disabled)`,
+              `window.__micxControl.listActions().some((a) => a.id === "eval.artifact_tabs.seed_overflow" && !a.disabled)`,
               { timeoutMs: 6_000, label: "artifact overflow eval seed action" },
             );
           } catch {

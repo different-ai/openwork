@@ -1,11 +1,11 @@
 ---
 title: "Adding a managed LLM provider"
-description: "Create an org-managed provider in OpenWork Cloud and import it into the desktop app"
+description: "Create an org-managed provider in Micx Cloud and import it into the desktop app"
 ---
 
 Use `LLM Providers` when you want the org to manage the credential, model list, and access rules once, then let each desktop workspace import the providers from cloud.
 
-## Create the provider in OpenWork Cloud
+## Create the provider in Micx Cloud
 
 1. Open `LLM Providers`.
 2. Click `Add Provider`.
@@ -17,7 +17,7 @@ Use `LLM Providers` when you want the org to manage the credential, model list, 
 8. Click `Create Provider`.
 
 <Frame>
-  ![Managed LLM provider detail in OpenWork Cloud](/images/cloud-managed-llm-provider-detail.png)
+  ![Managed LLM provider detail in Micx Cloud](/images/cloud-managed-llm-provider-detail.png)
 </Frame>
 
 
@@ -26,13 +26,13 @@ Use `LLM Providers` when you want the org to manage the credential, model list, 
 1. Open `Settings -> Cloud`.
 2. Choose the correct `Active org`.
 3. Under `Cloud providers`, click `Import`.
-4. Reload the workspace when OpenWork asks.
+4. Reload the workspace when Micx asks.
 
-OpenWork writes the imported provider into the workspace `opencode.jsonc` and stores the org credential for that workspace.
+Micx writes the imported provider into the workspace `opencode.jsonc` and stores the org credential for that workspace.
 
 ## Update or remove it later
 
-- Use `Sync` after changing models or access in OpenWork Cloud.
+- Use `Sync` after changing models or access in Micx Cloud.
 - Use `Remove` to stop managing the imported provider from this workspace.
 - If the provider was deleted in Cloud, the desktop app shows `Removed from cloud` and lets you `Uninstall` the local config.
 - The provider must have a stored org credential before the desktop app can import it.

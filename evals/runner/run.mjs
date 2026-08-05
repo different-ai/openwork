@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/** OpenWork eval runner bootstrap. */
+/** Micx eval runner bootstrap. */
 
 if (!process.features?.typescript) {
   console.error("Node 24+ with native TypeScript required — run `nvm use`");

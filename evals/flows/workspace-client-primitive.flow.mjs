@@ -8,19 +8,19 @@ import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
 const vo = await loadVoiceoverParagraphs("workspace-client-primitive");
 
 const FIXTURE_WORKSPACE = resolve(
-  process.env.OPENWORK_EVAL_ARTIFACTS_DIR ?? "evals/results",
+  process.env.MICX_EVAL_ARTIFACTS_DIR ?? "evals/results",
   "..",
   "workspace-client-primitive-workspace",
 );
 const SESSION_TITLE = "Workspace client primitive proof";
-const ACTIVE_WORKSPACE_KEY = "openwork.react.activeWorkspace";
+const ACTIVE_WORKSPACE_KEY = "micx.react.activeWorkspace";
 
 let baselineRoute = null;
 let createdSessionId = "";
 let settingsHashBeforeReload = "";
 
 async function waitForControl(ctx, label = "control API") {
-  await ctx.waitFor("Boolean(window.__openworkControl)", {
+  await ctx.waitFor("Boolean(window.__micxControl)", {
     timeoutMs: 60_000,
     label,
   });
@@ -29,12 +29,12 @@ async function waitForControl(ctx, label = "control API") {
 async function maybeSkipOnboardingPrompts(ctx) {
   const dismissedModels = await ctx.eval(`(() => {
     const dialog = Array.from(document.querySelectorAll('[role="dialog"], [data-slot="dialog-content"], [data-radix-dialog-content]'))
-      .find((item) => (item.textContent || "").includes("OpenWork Models"));
+      .find((item) => (item.textContent || "").includes("Micx Models"));
     if (!dialog) return false;
     const button = Array.from(dialog.querySelectorAll("button"))
       .find((item) => {
         const label = (item.textContent || "").trim();
-        return label.includes("Continue without OpenWork Models") || label === "Close" || item.getAttribute("aria-label") === "Close";
+        return label.includes("Continue without Micx Models") || label === "Close" || item.getAttribute("aria-label") === "Close";
       });
     if (!button) return false;
     button.click();
@@ -42,8 +42,8 @@ async function maybeSkipOnboardingPrompts(ctx) {
   })()`);
   if (dismissedModels) {
     await ctx.waitFor(
-      `!Array.from(document.querySelectorAll('[role="dialog"], [data-slot="dialog-content"], [data-radix-dialog-content]')).some((item) => (item.textContent || "").includes("OpenWork Models"))`,
-      { timeoutMs: 10_000, label: "OpenWork Models modal dismissed" },
+      `!Array.from(document.querySelectorAll('[role="dialog"], [data-slot="dialog-content"], [data-radix-dialog-content]')).some((item) => (item.textContent || "").includes("Micx Models"))`,
+      { timeoutMs: 10_000, label: "Micx Models modal dismissed" },
     );
   }
   const choosingModel = await ctx.hasText("Skip and use the free model");
@@ -66,7 +66,7 @@ async function ensureWorkspaceReady(ctx) {
   })()`);
 
   const canCreateTask = await ctx.eval(
-    "window.__openworkControl.listActions().some((action) => action.id === 'session.create_task' && !action.disabled)",
+    "window.__micxControl.listActions().some((action) => action.id === 'session.create_task' && !action.disabled)",
   );
   if (!canCreateTask) {
     await mkdir(FIXTURE_WORKSPACE, { recursive: true });
@@ -78,7 +78,7 @@ async function ensureWorkspaceReady(ctx) {
       await maybeSkipOnboardingPrompts(ctx);
     } else {
       await ctx.waitFor(
-        "window.__openworkControl.listActions().some((action) => action.id === 'workspace.create' && !action.disabled)",
+        "window.__micxControl.listActions().some((action) => action.id === 'workspace.create' && !action.disabled)",
         { timeoutMs: 30_000, label: "workspace.create action" },
       );
       await ctx.control("workspace.create", { path: FIXTURE_WORKSPACE });
@@ -86,7 +86,7 @@ async function ensureWorkspaceReady(ctx) {
   }
 
   await ctx.waitFor(
-    "window.__openworkControl.listActions().some((action) => action.id === 'session.create_task' && !action.disabled)",
+    "window.__micxControl.listActions().some((action) => action.id === 'session.create_task' && !action.disabled)",
     { timeoutMs: 60_000, label: "enabled session.create_task action" },
   );
 }
@@ -94,7 +94,7 @@ async function ensureWorkspaceReady(ctx) {
 async function readRouteInspector(ctx, label = "route inspector") {
   return ctx.waitFor(
     `(() => {
-      const route = window.__openwork?.slice?.("route");
+      const route = window.__micx?.slice?.("route");
       if (!route || route.loading) return null;
       if (!route.baseUrl || !route.tokenPresent || !route.selectedWorkspaceId || !route.connected) return null;
       const selected = Array.isArray(route.workspaces)
@@ -105,7 +105,7 @@ async function readRouteInspector(ctx, label = "route inspector") {
         tokenPresent: route.tokenPresent,
         selectedWorkspaceId: route.selectedWorkspaceId,
         selectedWorkspaceSessionCount: selected?.sessionCount ?? 0,
-        route: window.__openworkControl?.snapshot?.().route ?? window.location.hash,
+        route: window.__micxControl?.snapshot?.().route ?? window.location.hash,
       };
     })()`,
     { timeoutMs: 60_000, label },
@@ -127,7 +127,7 @@ function selectedWorkspaceSettingsHash(tab) {
 async function waitForCreatedSessionInRoute(ctx) {
   return ctx.waitFor(
     `(() => {
-      const route = window.__openworkControl.snapshot().route || "";
+      const route = window.__micxControl.snapshot().route || "";
       const marker = "/session/";
       const markerIndex = route.indexOf(marker);
       if (markerIndex < 0) return null;
@@ -185,7 +185,7 @@ export default {
             await ctx.control("session.create_task");
             createdSessionId = await waitForCreatedSessionInRoute(ctx);
             await ctx.waitFor(
-              "window.__openworkControl.listActions().some((action) => action.id === 'session.rename' && !action.disabled)",
+              "window.__micxControl.listActions().some((action) => action.id === 'session.rename' && !action.disabled)",
               { timeoutMs: 30_000, label: "enabled session.rename action" },
             );
             await ctx.control("session.rename", { sessionId: createdSessionId, title: SESSION_TITLE });
@@ -255,7 +255,7 @@ export default {
             await ctx.waitForText("Extensions", { timeoutMs: 60_000 });
             await ctx.control("route.session");
             await ctx.waitFor(
-              "window.__openworkControl.listActions().some((action) => action.id === 'session.open')",
+              "window.__micxControl.listActions().some((action) => action.id === 'session.open')",
               { timeoutMs: 60_000, label: "session.open action after reload" },
             );
             await ctx.control("session.open", { sessionId: createdSessionId });

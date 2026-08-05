@@ -5,26 +5,26 @@ const RUN_SUFFIX = Date.now().toString().slice(-5);
 const FIRST_TITLE = `Pinned alpha ${RUN_SUFFIX}`;
 const SECOND_TITLE = `Pinned beta ${RUN_SUFFIX}`;
 const FIRST_WORKSPACE = resolve(
-  process.env.OPENWORK_EVAL_ARTIFACTS_DIR ?? "evals/results",
+  process.env.MICX_EVAL_ARTIFACTS_DIR ?? "evals/results",
   "..",
   `global-pinning-alpha-${RUN_SUFFIX}`,
 );
 const SECOND_WORKSPACE = resolve(
-  process.env.OPENWORK_EVAL_ARTIFACTS_DIR ?? "evals/results",
+  process.env.MICX_EVAL_ARTIFACTS_DIR ?? "evals/results",
   "..",
   `global-pinning-beta-${RUN_SUFFIX}`,
 );
 
 async function currentSessionId(ctx) {
   return ctx.waitFor(`(() => {
-    const match = /session\\/([^/?#]+)/.exec(window.__openworkControl.snapshot().route);
+    const match = /session\\/([^/?#]+)/.exec(window.__micxControl.snapshot().route);
     return match ? decodeURIComponent(match[1]) : null;
   })()`, { timeoutMs: 30_000, label: "current session" });
 }
 
 async function finishOnboarding(ctx) {
   await ctx.eval("location.reload()");
-  await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 60_000, label: "control API" });
+  await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 60_000, label: "control API" });
   await mkdir(FIRST_WORKSPACE, { recursive: true });
 
   const welcomeInput = 'input[placeholder="/workspace/my-project"]';
@@ -37,7 +37,7 @@ async function finishOnboarding(ctx) {
   }
 
   await ctx.waitFor(
-    "window.__openworkControl.listActions().some((action) => action.id === 'session.create_task' && !action.disabled)",
+    "window.__micxControl.listActions().some((action) => action.id === 'session.create_task' && !action.disabled)",
     { timeoutMs: 60_000, label: "enabled task creation" },
   );
 }
@@ -46,7 +46,7 @@ async function createNamedSession(ctx, title) {
   await ctx.control("session.create_task");
   const sessionId = await currentSessionId(ctx);
   await ctx.waitFor(
-    "window.__openworkControl.listActions().some((action) => action.id === 'session.rename' && !action.disabled)",
+    "window.__micxControl.listActions().some((action) => action.id === 'session.rename' && !action.disabled)",
     { timeoutMs: 30_000, label: "enabled session rename" },
   );
   await ctx.control("session.rename", { sessionId, title });
@@ -72,7 +72,7 @@ export default {
         await mkdir(SECOND_WORKSPACE, { recursive: true });
         await ctx.control("workspace.create", { path: SECOND_WORKSPACE, projectLabel: `Beta ${RUN_SUFFIX}` });
         await ctx.waitFor(
-          "window.__openworkControl.listActions().some((action) => action.id === 'session.create_task' && !action.disabled)",
+          "window.__micxControl.listActions().some((action) => action.id === 'session.create_task' && !action.disabled)",
           { timeoutMs: 60_000, label: "second workspace task creation" },
         );
         const secondSessionId = await createNamedSession(ctx, SECOND_TITLE);

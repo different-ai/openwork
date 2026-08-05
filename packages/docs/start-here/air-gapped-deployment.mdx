@@ -1,9 +1,9 @@
 ---
 title: "Air-gapped deployment"
-description: "Plan OpenWork deployments that limit or remove public internet access."
+description: "Plan Micx deployments that limit or remove public internet access."
 ---
 
-"Air-gapped" can mean several different things in OpenWork planning. Use these terms precisely so the network design, installer path, and feature expectations stay aligned.
+"Air-gapped" can mean several different things in Micx planning. Use these terms precisely so the network design, installer path, and feature expectations stay aligned.
 
 ## Deployment terms
 
@@ -11,26 +11,26 @@ description: "Plan OpenWork deployments that limit or remove public internet acc
 | --- | --- |
 | **Private-network / semi-air-gapped** | Employee desktops can reach the public internet and can also reach internal Den over VPN or private network. Den access is restricted to approved networks, but the desktop still has ordinary internet paths unless your endpoint policy blocks them. |
 | **Isolated Den** | Den has no unrestricted public internet access. Client laptops may still have internet access for installers, model catalogs, npm packages, providers, and links. |
-| **Fully air-gapped installer delivery** | Only the installer bytes are mounted or served from inside your network. This does **not** make the entire OpenWork product fully air-gapped. It only removes the GitHub release-asset download path for the installer. |
-| **Fully isolated OpenWork deployment** | Every dependency used by the enabled OpenWork features is mirrored, provisioned, disabled, or replaced with an internally reachable service. This includes deployment artifacts, desktop runtime dependencies, model/provider catalogs, OAuth/provider endpoints, MCP servers, email, diagnostics, updates, and trust anchors. |
+| **Fully air-gapped installer delivery** | Only the installer bytes are mounted or served from inside your network. This does **not** make the entire Micx product fully air-gapped. It only removes the GitHub release-asset download path for the installer. |
+| **Fully isolated Micx deployment** | Every dependency used by the enabled Micx features is mirrored, provisioned, disabled, or replaced with an internally reachable service. This includes deployment artifacts, desktop runtime dependencies, model/provider catalogs, OAuth/provider endpoints, MCP servers, email, diagnostics, updates, and trust anchors. |
 
 If desktops have internet access and Den is private, start with [Private network deployment](/start-here/private-network-deployment). If you need to inventory domains, use [Outbound network access](/start-here/outbound-network-access). If TLS inspection or private roots are involved, use [Certificate trust and proxies](/start-here/certificate-trust-and-proxies).
 
 ## Full isolation checklist
 
-Use this checklist only when the goal is a fully isolated OpenWork deployment, not just private Den or internal installer delivery.
+Use this checklist only when the goal is a fully isolated Micx deployment, not just private Den or internal installer delivery.
 
 ### Deployment artifacts
 
 - Mirror the GHCR Helm chart into an internal OCI registry.
-- Mirror all enabled images into an internal registry, including `openwork-den-api`, `openwork-den-web`, and `openwork-inference` if inference is enabled.
+- Mirror all enabled images into an internal registry, including `micx-den-api`, `micx-den-web`, and `micx-inference` if inference is enabled.
 - Configure Helm image repositories and chart installation to use the internal registry. The public `ghcr.io` path is only needed when you are not mirroring the chart and images.
 
 ### Installer artifacts
 
-- Mount the standard release installer files into Den and set `OPENWORK_INSTALLER_ARTIFACTS_DIR` to that mount path.
-- Use `OPENWORK_INSTALLER_RELEASE_TAG` to select the expected standard filenames. The version inside each filename is the tag without a leading `v`.
-- Use `OPENWORK_INSTALLER_RELEASE_REPO` only for the GitHub redirect path when mounted artifacts are not present; it is not an internal artifact registry override.
+- Mount the standard release installer files into Den and set `MICX_INSTALLER_ARTIFACTS_DIR` to that mount path.
+- Use `MICX_INSTALLER_RELEASE_TAG` to select the expected standard filenames. The version inside each filename is the tag without a leading `v`.
+- Use `MICX_INSTALLER_RELEASE_REPO` only for the GitHub redirect path when mounted artifacts are not present; it is not an internal artifact registry override.
 - Mount the same read-only installer artifact PVC across every Den API replica. Den streams the mounted file; it does not fetch, cache, rewrap, or ZIP installer bytes.
 
 See [Installer delivery](/start-here/installer-delivery) for the exact filenames and delivery matrix.
@@ -38,7 +38,7 @@ See [Installer delivery](/start-here/installer-delivery) for the exact filenames
 ### Desktop runtime dependencies
 
 - Point `OPENCODE_MODELS_URL` at an internal mirror of the model catalog. The default catalog is `https://models.openworklabs.com/`.
-- The packaged desktop can start the UI-control MCP with `npx -y openwork-ui-mcp`. In a fully isolated environment, provide an internal npm registry or npm mirror that can serve that package to `npx`. OpenWork does not currently document a separate OpenWork-specific registry override for this package; use standard npm configuration for the runtime account.
+- The packaged desktop can start the UI-control MCP with `npx -y micx-ui-mcp`. In a fully isolated environment, provide an internal npm registry or npm mirror that can serve that package to `npx`. Micx does not currently document a separate Micx-specific registry override for this package; use standard npm configuration for the runtime account.
 - Disable, mirror, or manage desktop updates and GitHub release assets through your internal release process. Do not assume a built-in updater mirror setting unless it has been verified for the desktop release you ship.
 
 ### Feature dependencies

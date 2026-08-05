@@ -14,10 +14,10 @@ Internal preparation file for release summaries. This is not yet published to th
 Feedback emails reach the team inbox again
 
 #### One-line summary
-Fixes the in-app feedback email target so reports reach the shared OpenWork inbox again.
+Fixes the in-app feedback email target so reports reach the shared Micx inbox again.
 
 #### Main changes
-Updates the feedback mail link to send reports to `team@openworklabs.com`, restoring the intended shared inbox for in-app feedback.
+Updates the feedback mail link to send reports to `team@micxlabs.com`, restoring the intended shared inbox for in-app feedback.
 
 #### Lines of code changed since previous release
 81 lines changed since `v0.11.150` (55 insertions, 26 deletions).
@@ -41,7 +41,7 @@ True
 1
 
 #### Major bug fix details
-- Fixed the feedback flow so submitted messages are sent to the OpenWork team inbox.
+- Fixed the feedback flow so submitted messages are sent to the Micx team inbox.
 
 #### Deprecated features
 False
@@ -64,7 +64,7 @@ Unreleased tag only. No published GitHub release. Tagged at `2026-03-14T20:53:19
 CI workflows move to Blacksmith runners
 
 #### One-line summary
-Moves CI and release workflows onto Blacksmith-backed runners, with no visible OpenWork app, web, or server workflow change.
+Moves CI and release workflows onto Blacksmith-backed runners, with no visible Micx app, web, or server workflow change.
 
 #### Main changes
 Repoints CI and release workflows to Blacksmith runners and larger Linux release builders, tightening the release pipeline without changing user-facing product behavior.
@@ -125,7 +125,7 @@ Restores real-time assistant streaming in sessions while keeping long replies pi
 449 lines changed since `v0.11.152` (315 insertions, 134 deletions).
 
 #### Release importance
-Minor release: repairs a core live-session behavior without materially changing OpenWork's overall workflow model.
+Minor release: repairs a core live-session behavior without materially changing Micx's overall workflow model.
 
 #### Major improvements
 False
@@ -328,7 +328,7 @@ Hardens Den sign-in and worker access while restoring inline subagent transcript
 706 lines changed since `v0.11.156` (485 insertions, 221 deletions).
 
 #### Release importance
-Minor release: improves session clarity and fixes a few focused interaction issues without changing the broader OpenWork model.
+Minor release: improves session clarity and fixes a few focused interaction issues without changing the broader Micx model.
 
 #### Major improvements
 False
@@ -371,7 +371,7 @@ Unreleased tag only. No published GitHub release. Tagged at `2026-03-15T12:43:37
 Orchestrator npm publish runs from package cwd
 
 #### One-line summary
-Fixes the release workflow so `openwork-orchestrator` publishes from `packages/orchestrator`, with no visible app or web workflow change.
+Fixes the release workflow so `micx-orchestrator` publishes from `packages/orchestrator`, with no visible app or web workflow change.
 
 #### Main changes
 Corrects the orchestrator publish job to run from the package directory so sidecar build and npm publish steps use the right paths.
@@ -432,7 +432,7 @@ Aligns the app-hosted Den flow with landing-page messaging, restores checkout ha
 2472 lines changed since `v0.11.158` (1192 insertions, 1280 deletions).
 
 #### Release importance
-Minor release: meaningfully improves the hosted cloud flow and corrects a couple of visible web regressions without redefining OpenWork's overall product shape.
+Minor release: meaningfully improves the hosted cloud flow and corrects a couple of visible web regressions without redefining Micx's overall product shape.
 
 #### Major improvements
 True
@@ -485,7 +485,7 @@ Simplifies the Den auth entry flow, sends landing-page downloads to the right in
 475 lines changed since `v0.11.159` (303 insertions, 172 deletions).
 
 #### Release importance
-Minor release: delivers a collection of focused UX and reliability fixes across key web and session surfaces without changing the core OpenWork workflow.
+Minor release: delivers a collection of focused UX and reliability fixes across key web and session surfaces without changing the core Micx workflow.
 
 #### Major improvements
 False
@@ -531,13 +531,13 @@ Den first-run goes straight to connect
 Cuts onboarding friction by removing the intent step, waiting for session hydration cleanly, and ending first-run on a direct connect screen.
 
 #### Main changes
-Removes the extra intent step, drops the transient marketing-heavy auth shell, and adds a dedicated final connect screen so new Den users can launch a worker and open it in OpenWork with fewer detours.
+Removes the extra intent step, drops the transient marketing-heavy auth shell, and adds a dedicated final connect screen so new Den users can launch a worker and open it in Micx with fewer detours.
 
 #### Lines of code changed since previous release
 448 lines changed since `v0.11.160` (198 insertions, 250 deletions).
 
 #### Release importance
-Minor release: improves a focused hosted onboarding path without materially changing OpenWork's broader product model.
+Minor release: improves a focused hosted onboarding path without materially changing Micx's broader product model.
 
 #### Major improvements
 True
@@ -575,7 +575,7 @@ None.
 `2026-03-16T00:51:15Z`
 
 #### Title
-Docker dev prints LAN-ready OpenWork URLs
+Docker dev prints LAN-ready Micx URLs
 
 #### One-line summary
 Makes local Docker testing easier from phones and other devices by printing public URLs and deriving Den auth and CORS defaults from the detected host.
@@ -583,13 +583,13 @@ Makes local Docker testing easier from phones and other devices by printing publ
 #### Main changes
 - The legacy Docker dev stack now prints localhost, hostname, and LAN IP URLs for the app, server, and share service.
 - `den-dev-up.sh` derives auth URLs and trusted origins for cross-device testing.
-- Added `OPENWORK_PUBLIC_HOST` and `DEN_PUBLIC_HOST` overrides when auto-detection is wrong.
+- Added `MICX_PUBLIC_HOST` and `DEN_PUBLIC_HOST` overrides when auto-detection is wrong.
 
 #### Lines of code changed since previous release
 149 lines changed since `v0.11.161` (130 insertions, 19 deletions).
 
 #### Release importance
-Minor release: improves local stack accessibility for testing and self-hosted development without changing the main OpenWork product flow.
+Minor release: improves local stack accessibility for testing and self-hosted development without changing the main Micx product flow.
 
 #### Major improvements
 True
@@ -598,7 +598,7 @@ True
 1
 
 #### Major improvement details
-- Improved Docker dev-stack defaults so OpenWork is easier to access from other devices on local networks.
+- Improved Docker dev-stack defaults so Micx is easier to access from other devices on local networks.
 
 #### Major bugs resolved
 False
@@ -650,7 +650,7 @@ True
 1
 
 #### Major improvement details
-- Added custom GitHub skill hub repository support so organizations can use their own hosted skill sources inside OpenWork.
+- Added custom GitHub skill hub repository support so organizations can use their own hosted skill sources inside Micx.
 
 #### Major bugs resolved
 True
@@ -695,7 +695,7 @@ Clarifies remote approval access with owner tokens, keeps nested child sessions 
 2418 lines changed since `v0.11.163` (1907 insertions, 511 deletions).
 
 #### Release importance
-Minor release: improves visibility, recovery, and localization across key flows without materially changing OpenWork's core architecture.
+Minor release: improves visibility, recovery, and localization across key flows without materially changing Micx's core architecture.
 
 #### Major improvements
 True
@@ -739,10 +739,10 @@ None.
 Settings can sign into Cloud and open workers
 
 #### One-line summary
-Adds an in-app OpenWork Cloud settings flow for sign-in, org selection, and worker opening, while smoothing desktop auth handoff and share reliability.
+Adds an in-app Micx Cloud settings flow for sign-in, org selection, and worker opening, while smoothing desktop auth handoff and share reliability.
 
 #### Main changes
-- Added a Cloud tab in Settings for sign-in, org selection, worker lists, and opening ready Den workers into OpenWork.
+- Added a Cloud tab in Settings for sign-in, org selection, worker lists, and opening ready Den workers into Micx.
 - Routed desktop auth through the web handoff flow, including installed-app scheme support and bearer-session handling.
 - Restored shared bundle installs and fully cleared disconnected provider credentials.
 
@@ -750,7 +750,7 @@ Adds an in-app OpenWork Cloud settings flow for sign-in, org selection, and work
 3120 lines changed since `v0.11.164` (2391 insertions, 729 deletions).
 
 #### Release importance
-Major release: introduces a substantial new OpenWork Cloud workflow and expands how users authenticate and open cloud workers from the product.
+Major release: introduces a substantial new Micx Cloud workflow and expands how users authenticate and open cloud workers from the product.
 
 #### Major improvements
 True
@@ -759,7 +759,7 @@ True
 2
 
 #### Major improvement details
-- Added OpenWork Cloud authentication and worker-open controls directly in Settings.
+- Added Micx Cloud authentication and worker-open controls directly in Settings.
 - Added web-based desktop auth handoff for Den so cloud and desktop sign-in flows connect more smoothly.
 
 #### Major bugs resolved
@@ -769,7 +769,7 @@ True
 4
 
 #### Major bug fix details
-- Restored shared bundle installs and repeat app opens in OpenWork Share.
+- Restored shared bundle installs and repeat app opens in Micx Share.
 - Fully cleared disconnected provider credentials.
 - Fixed Den auth handoff to use the installed desktop scheme reliably.
 - Improved share preview readability so unfurls are easier to scan.
@@ -851,7 +851,7 @@ Cloud settings stay gated by developer mode
 Keeps the Cloud settings tab and default settings route aligned with developer mode so regular users do not land in unfinished controls.
 
 #### Main changes
-Fixes the Settings tab list and default settings route so Cloud controls only appear in developer mode, matching the intended rollout of the new OpenWork Cloud panel.
+Fixes the Settings tab list and default settings route so Cloud controls only appear in developer mode, matching the intended rollout of the new Micx Cloud panel.
 
 #### Lines of code changed since previous release
 45 lines changed since `v0.11.166` (23 insertions, 22 deletions).
@@ -957,7 +957,7 @@ Hardened Den sign-in and worker-open handoff by separating browser and API base 
 Also released:
 
 - Restored composer focus, flattened reload banners, and removed the broken artifacts rail.
-- Simplified OpenWork Share OG previews and cleaned up Den landing CTAs.
+- Simplified Micx Share OG previews and cleaned up Den landing CTAs.
 
 #### Lines of code changed since previous release
 3699 lines changed since `v0.11.168` (2421 insertions, 1278 deletions).
@@ -1005,7 +1005,7 @@ None.
 `2026-03-19T17:27:40Z`
 
 #### Title
-OpenWork Cloud web flows and remote reconnects improve
+Micx Cloud web flows and remote reconnects improve
 
 #### One-line summary
 Reworks the hosted Cloud web flow while making remote worker links, persisted share tokens, provider auth, and desktop close behavior more dependable.
@@ -1019,7 +1019,7 @@ Reworks the hosted Cloud web flow while making remote worker links, persisted sh
 20054 lines changed since `v0.11.169` (7642 insertions, 12412 deletions).
 
 #### Release importance
-Major release: substantially changes the hosted OpenWork Cloud experience and remote-connect workflow across web, desktop, and cloud surfaces.
+Major release: substantially changes the hosted Micx Cloud experience and remote-connect workflow across web, desktop, and cloud surfaces.
 
 #### Major improvements
 True
@@ -1028,7 +1028,7 @@ True
 2
 
 #### Major improvement details
-- Tailored the hosted web app UI and Den onboarding flow for OpenWork Cloud deployments.
+- Tailored the hosted web app UI and Den onboarding flow for Micx Cloud deployments.
 - Made Cloud settings self-serve and exposed OpenAI headless auth so more provider and cloud setup can happen directly in-product.
 
 #### Major bugs resolved
@@ -1118,10 +1118,10 @@ None.
 Server package naming and session traces line up
 
 #### One-line summary
-Renames the published server package to `openwork-server` and polishes trace-row icon and chevron alignment so session runs scan more cleanly.
+Renames the published server package to `micx-server` and polishes trace-row icon and chevron alignment so session runs scan more cleanly.
 
 #### Main changes
-- Renamed the published server package to `openwork-server`, updating orchestrator, release, and dev tooling to resolve the same package consistently.
+- Renamed the published server package to `micx-server`, updating orchestrator, release, and dev tooling to resolve the same package consistently.
 - Tightened trace-row icon and chevron alignment so session summaries read cleanly.
 
 #### Lines of code changed since previous release
@@ -1156,7 +1156,7 @@ True
 1
 
 #### Deprecated details
-- Replaced prior published server package references with the standardized `openwork-server` naming.
+- Replaced prior published server package references with the standardized `micx-server` naming.
 
 ## v0.11.173
 
@@ -1181,7 +1181,7 @@ Adds worker heartbeats for Daytona-backed Cloud workers while making local MCP a
 805 lines changed since `v0.11.172` (762 insertions, 43 deletions).
 
 #### Release importance
-Minor release: improves worker runtime observability and local spawn compatibility without materially changing how most users operate OpenWork.
+Minor release: improves worker runtime observability and local spawn compatibility without materially changing how most users operate Micx.
 
 #### Major improvements
 True

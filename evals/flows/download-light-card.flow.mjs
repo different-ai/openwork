@@ -3,9 +3,9 @@ import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
 const FLOW_ID = "download-light-card";
 const vo = await loadVoiceoverParagraphs(FLOW_ID);
 
-const CARD_SELECTOR = '[data-testid="download-openwork-card"]';
-const LINK_SELECTOR = '[data-testid="download-openwork-link"]';
-const RECOMMENDED_SELECTOR = '[data-testid="download-openwork-link"][data-recommended="true"]';
+const CARD_SELECTOR = '[data-testid="download-micx-card"]';
+const LINK_SELECTOR = '[data-testid="download-micx-link"]';
+const RECOMMENDED_SELECTOR = '[data-testid="download-micx-link"][data-recommended="true"]';
 const INSTALLER_LABELS = [
   "Apple Silicon (M1+)",
   "Intel",
@@ -18,13 +18,13 @@ const INSTALLER_LABELS = [
 ];
 
 function routeUrl(ctx, path) {
-  return new URL(path, ctx.env.OPENWORK_EVAL_LANDING_URL).toString();
+  return new URL(path, ctx.env.MICX_EVAL_LANDING_URL).toString();
 }
 
 async function navigateToDownload(ctx) {
   await ctx.eval(`location.href = ${JSON.stringify(routeUrl(ctx, "/download"))}; true`);
   await ctx.waitFor(
-    `Boolean(document.querySelector(${JSON.stringify(CARD_SELECTOR)})) && document.body.innerText.includes("Download OpenWork")`,
+    `Boolean(document.querySelector(${JSON.stringify(CARD_SELECTOR)})) && document.body.innerText.includes("Download Micx")`,
     { timeoutMs: 30_000, label: "/download light download card" },
   );
 }
@@ -41,16 +41,16 @@ function recordAssertion(ctx, assertion, passed, actual) {
 
 export default {
   id: FLOW_ID,
-  title: "Landing /download serves the light Download OpenWork card",
+  title: "Landing /download serves the light Download Micx card",
   kind: "user-facing",
   spec: "evals/README.md",
   preserveTheme: true,
-  requiredEnv: ["OPENWORK_EVAL_LANDING_URL"],
+  requiredEnv: ["MICX_EVAL_LANDING_URL"],
   steps: [
     {
       name: "/download renders the light-mode card",
       run: async (ctx) => {
-        await ctx.prove("/download renders the light-mode Download OpenWork card", {
+        await ctx.prove("/download renders the light-mode Download Micx card", {
           voiceover: vo[0],
           action: async () => {
             await navigateToDownload(ctx);
@@ -63,7 +63,7 @@ export default {
               const channels = match ? [Number(match[1]), Number(match[2]), Number(match[3])] : [];
               return {
                 cardExists: Boolean(card),
-                bodyHasTitle: document.body.innerText.includes("Download OpenWork"),
+                bodyHasTitle: document.body.innerText.includes("Download Micx"),
                 backgroundColor,
                 channels,
                 isLight: channels.length === 3 && channels.every((channel) => channel >= 240),
@@ -71,7 +71,7 @@ export default {
             })()`);
             recordAssertion(
               ctx,
-              "The Download OpenWork card exists on /download",
+              "The Download Micx card exists on /download",
               actual.cardExists === true && actual.bodyHasTitle === true,
               actual,
             );
@@ -84,7 +84,7 @@ export default {
           },
           screenshot: {
             name: "download-light-card",
-            requireText: ["Download OpenWork"],
+            requireText: ["Download Micx"],
           },
         });
       },

@@ -1,4 +1,4 @@
-import { test as evidenceTest } from "@openwork/fraimz/vitest";
+import { test as evidenceTest } from "@micx/fraimz/vitest";
 import { resolvePlace } from "./place.ts";
 import { SkipError } from "./needs.ts";
 
@@ -46,8 +46,8 @@ function wrapTestApi<T extends (...args: never[]) => unknown>(api: T): T {
 
 export const test = wrapTestApi(fixtureTest);
 
-export { createDesktopHandoffGrant, signInDesktopAs } from "@openwork/behaviors";
-export type { DesktopHandle } from "@openwork/hosts";
+export { createDesktopHandoffGrant, signInDesktopAs } from "@micx/behaviors";
+export type { DesktopHandle } from "@micx/hosts";
 export * from "./app.ts";
 export * from "./eventually.ts";
 export * from "./faults.ts";

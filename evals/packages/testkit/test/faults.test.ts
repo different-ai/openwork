@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import test from "node:test";
-import { denFetch } from "@openwork/behaviors";
+import { denFetch } from "@micx/behaviors";
 import { faultProxy } from "../src/faults.ts";
 import type { Server } from "node:http";
 

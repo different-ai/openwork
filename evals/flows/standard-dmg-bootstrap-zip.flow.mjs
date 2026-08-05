@@ -8,12 +8,12 @@ import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
 const FLOW_ID = "standard-dmg-bootstrap-zip";
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const vo = await loadVoiceoverParagraphs(FLOW_ID);
-const DEN_WEB_URL = cleanUrl(process.env.OPENWORK_EVAL_DEN_WEB_URL);
-const INSTALL_TOKEN = process.env.OPENWORK_EVAL_INSTALL_TOKEN?.trim() ?? "";
-const BUNDLE_ZIP = process.env.OPENWORK_EVAL_BUNDLE_ZIP?.trim() ?? "";
-const BUNDLE_DIR = process.env.OPENWORK_EVAL_BUNDLE_DIR?.trim() ?? "";
-const BOOTSTRAP_PATH = process.env.OPENWORK_EVAL_BOOTSTRAP_PATH?.trim() ?? "";
-const DESKTOP_CDP_URL = cleanUrl(process.env.OPENWORK_EVAL_DESKTOP_CDP_URL);
+const DEN_WEB_URL = cleanUrl(process.env.MICX_EVAL_DEN_WEB_URL);
+const INSTALL_TOKEN = process.env.MICX_EVAL_INSTALL_TOKEN?.trim() ?? "";
+const BUNDLE_ZIP = process.env.MICX_EVAL_BUNDLE_ZIP?.trim() ?? "";
+const BUNDLE_DIR = process.env.MICX_EVAL_BUNDLE_DIR?.trim() ?? "";
+const BOOTSTRAP_PATH = process.env.MICX_EVAL_BOOTSTRAP_PATH?.trim() ?? "";
+const DESKTOP_CDP_URL = cleanUrl(process.env.MICX_EVAL_DESKTOP_CDP_URL);
 
 function cleanUrl(value) {
   return (value ?? "").trim().replace(/\/+$/, "");
@@ -61,15 +61,15 @@ function zipEntries() {
 
 export default {
   id: FLOW_ID,
-  title: "Organization downloads reuse the standard signed installer and configure OpenWork on first launch",
+  title: "Organization downloads reuse the standard signed installer and configure Micx on first launch",
   kind: "user-facing",
   requiredEnv: [
-    "OPENWORK_EVAL_DEN_WEB_URL",
-    "OPENWORK_EVAL_INSTALL_TOKEN",
-    "OPENWORK_EVAL_BUNDLE_ZIP",
-    "OPENWORK_EVAL_BUNDLE_DIR",
-    "OPENWORK_EVAL_BOOTSTRAP_PATH",
-    "OPENWORK_EVAL_DESKTOP_CDP_URL",
+    "MICX_EVAL_DEN_WEB_URL",
+    "MICX_EVAL_INSTALL_TOKEN",
+    "MICX_EVAL_BUNDLE_ZIP",
+    "MICX_EVAL_BUNDLE_DIR",
+    "MICX_EVAL_BOOTSTRAP_PATH",
+    "MICX_EVAL_DESKTOP_CDP_URL",
   ],
   steps: [
     {
@@ -120,7 +120,7 @@ export default {
           assert: async () => {
             const entries = zipEntries();
             witness(ctx, entries.length === 2, "The organization ZIP has exactly two top-level files", entries);
-            witness(ctx, entries.some((entry) => /^openwork-mac-arm64-.+\.dmg$/.test(entry)), "The ZIP contains the normal versioned macOS DMG", entries);
+            witness(ctx, entries.some((entry) => /^micx-mac-arm64-.+\.dmg$/.test(entry)), "The ZIP contains the normal versioned macOS DMG", entries);
             witness(ctx, entries.includes("desktop-bootstrap.json"), "The ZIP contains desktop-bootstrap.json", entries);
             witness(ctx, !entries.some((entry) => /installer/i.test(entry)), "The ZIP contains no separate installer application", entries);
             ctx.output("organization-download.zip", `${entries.join("\n")}\n\n${statSync(BUNDLE_ZIP).size} bytes`);

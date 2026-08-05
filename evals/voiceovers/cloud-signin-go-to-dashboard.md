@@ -1,6 +1,6 @@
 # cloud-signin-go-to-dashboard — Signed in? "Go to dashboard" actually goes
 
-Cast is Alex (org admin) in OpenWork Cloud (den-web). The desktop app sends
+Cast is Alex (org admin) in Micx Cloud (den-web). The desktop app sends
 him to the cloud sign-in page with a desktop handoff (`?desktopAuth=1`) while
 he already has a session. The page shows the signed-in card with an escape
 hatch back to the web dashboard — a button that used to do nothing, because

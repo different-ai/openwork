@@ -4,9 +4,9 @@ import { denApiFetch, openAdminConnections, signInApi, signInViaBrowser } from "
 
 const FLOW_ID = "mcp-connection-editing";
 const vo = await loadVoiceoverParagraphs(FLOW_ID);
-const ADMIN_EMAIL = process.env.OPENWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
-const ADMIN_PASSWORD = process.env.OPENWORK_EVAL_DEMO_PASSWORD?.trim() || "OpenWorkDemo123!";
-const MOCK_PORT = Number(process.env.OPENWORK_EVAL_MCP_EDIT_MOCK_PORT ?? 4541);
+const ADMIN_EMAIL = process.env.MICX_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
+const ADMIN_PASSWORD = process.env.MICX_EVAL_DEMO_PASSWORD?.trim() || "MicxDemo123!";
+const MOCK_PORT = Number(process.env.MICX_EVAL_MCP_EDIT_MOCK_PORT ?? 4541);
 const MOCK_ORIGIN = `http://127.0.0.1:${MOCK_PORT}`;
 const RUN_TAG = Date.now().toString(36);
 const REGULAR_NAME = `Editable Operations ${RUN_TAG}`;
@@ -38,8 +38,8 @@ function requireState(value, label) {
 function authHeaders() {
   const headers = { authorization: `Bearer ${requireState(state.adminSession, "admin session")}` };
   if (state.orgId) {
-    headers["x-openwork-org-id"] = state.orgId;
-    headers["x-openwork-legacy-org-id"] = state.orgId;
+    headers["x-micx-org-id"] = state.orgId;
+    headers["x-micx-legacy-org-id"] = state.orgId;
   }
   return headers;
 }
@@ -265,7 +265,7 @@ export default {
   kind: "user-facing",
   preserveTheme: true,
   spec: "evals/voiceovers/mcp-connection-editing.md",
-  requiredEnv: ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_WEB_URL"],
+  requiredEnv: ["MICX_EVAL_DEN_API_URL", "MICX_EVAL_DEN_WEB_URL"],
   steps: [
     {
       name: "Setup",
@@ -354,7 +354,7 @@ export default {
             await clickDialogButton(ctx, "Review identity change");
             await ctx.waitForText("Confirm that you want to invalidate the old identity.", { timeoutMs: 10_000 });
             await ctx.screenshot("frame-3-identity-change-warning", {
-              claim: "OpenWork names every credential class that the identity change will invalidate before confirmation.",
+              claim: "Micx names every credential class that the identity change will invalidate before confirmation.",
               voiceover: vo[2],
               requireText: ["This changes the connection identity", "shared and individual sessions", "pending OAuth state", "Confirm and save"],
               rejectText: [REGULAR_API_KEY, "access_token", "refresh_token"],

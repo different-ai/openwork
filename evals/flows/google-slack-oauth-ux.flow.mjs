@@ -10,7 +10,7 @@ const FLOW_ID = "google-slack-oauth-ux";
 const vo = await loadVoiceoverParagraphs(FLOW_ID);
 const execFileAsync = promisify(execFile);
 
-const ADMIN_EMAIL = process.env.OPENWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
+const ADMIN_EMAIL = process.env.MICX_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
 const MOCK_SERVER_URL = (process.env.MOCK_DCRLESS_MCP_URL ?? "http://127.0.0.1:3979").trim().replace(/\/+$/, "");
 const MOCK_CLIENT_ID = process.env.MOCK_CLIENT_ID || "mock-preregistered-client";
 const MOCK_CLIENT_SECRET = process.env.MOCK_CLIENT_SECRET || "mock-preregistered-secret";
@@ -43,26 +43,26 @@ function sqlString(value) {
 }
 
 function denWebUrl(ctx, path = "/") {
-  const base = ctx.env.OPENWORK_EVAL_DEN_WEB_URL.trim().replace(/\/+$/, "");
-  ctx.assert(base.length > 0, "OPENWORK_EVAL_DEN_WEB_URL was empty.");
+  const base = ctx.env.MICX_EVAL_DEN_WEB_URL.trim().replace(/\/+$/, "");
+  ctx.assert(base.length > 0, "MICX_EVAL_DEN_WEB_URL was empty.");
   if (path.startsWith("http")) return path;
   return `${base}${path.startsWith("/") ? path : `/${path}`}`;
 }
 
 function adminSessionToken(ctx) {
-  const token = ctx.env.OPENWORK_EVAL_DEN_TOKEN.trim();
-  ctx.assert(token.length > 0, "OPENWORK_EVAL_DEN_TOKEN was empty.");
+  const token = ctx.env.MICX_EVAL_DEN_TOKEN.trim();
+  ctx.assert(token.length > 0, "MICX_EVAL_DEN_TOKEN was empty.");
   return token;
 }
 
 function mysqlContainer(ctx) {
-  return ctx.env.OPENWORK_EVAL_DEN_MYSQL_CONTAINER || "openwork-web-local-mysql";
+  return ctx.env.MICX_EVAL_DEN_MYSQL_CONTAINER || "micx-web-local-mysql";
 }
 
 function orgHeaders(session) {
   if (!session) throw new Error("Missing session for org-scoped API call.");
   if (!state.orgId) throw new Error("Missing pinned organization id for org-scoped API call.");
-  return { authorization: `Bearer ${session}`, "x-openwork-legacy-org-id": state.orgId };
+  return { authorization: `Bearer ${session}`, "x-micx-legacy-org-id": state.orgId };
 }
 
 async function runMysql(ctx, sql) {
@@ -72,7 +72,7 @@ async function runMysql(ctx, sql) {
     "mysql",
     "-uroot",
     "-ppassword",
-    "openwork_den",
+    "micx_den",
     "-e",
     sql,
   ]);
@@ -178,7 +178,7 @@ async function signInAdminBrowserWithToken(ctx) {
     const token = ${JSON.stringify(token)};
     document.cookie = 'better-auth.session_token=; Max-Age=0; Path=/; SameSite=Lax';
     document.cookie = 'better-auth.session_token=' + token + '; Path=/; SameSite=Lax';
-    localStorage.setItem('openwork:web:auth-token', token);
+    localStorage.setItem('micx:web:auth-token', token);
     sessionStorage.clear();
     return true;
   })()`);
@@ -365,7 +365,7 @@ function reauthReadyScript() {
   return `(() => {
     const dialog = document.querySelector('[role="dialog"]');
     const text = dialog?.textContent ?? '';
-    const helperOk = text.includes('OpenWork retries the pending action automatically');
+    const helperOk = text.includes('Micx retries the pending action automatically');
     const hasGoogle = text.includes('Continue with Google');
     const hasPassword = text.includes('Verify password');
     const hasSso = text.includes('Continue with organization SSO');
@@ -429,7 +429,7 @@ async function completeVisibleReauth(ctx) {
   ctx.assert(reauthState?.visible, "Reauth dialog was not visible before completing it.");
   await makeBrowserSessionFreshInDb(ctx);
   ctx.assert(typeof reauthState.nonce === "string" && reauthState.nonce.length > 0, "Reauth nonce was missing for the completion seam.");
-  await ctx.eval(`window.postMessage({ type: 'openwork:reauth-complete', nonce: ${JSON.stringify(reauthState.nonce)}, error: null }, window.location.origin); true`);
+  await ctx.eval(`window.postMessage({ type: 'micx:reauth-complete', nonce: ${JSON.stringify(reauthState.nonce)}, error: null }, window.location.origin); true`);
 }
 
 async function waitForNoModalCopy(ctx) {
@@ -489,7 +489,7 @@ export default {
   id: FLOW_ID,
   title: "Google and Slack OAuth setup tells admins exactly what to do next",
   kind: "user-facing",
-  requiredEnv: ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_TOKEN", "OPENWORK_EVAL_DEN_WEB_URL", "OPENWORK_EVAL_DEN_MYSQL_CONTAINER"],
+  requiredEnv: ["MICX_EVAL_DEN_API_URL", "MICX_EVAL_DEN_TOKEN", "MICX_EVAL_DEN_WEB_URL", "MICX_EVAL_DEN_MYSQL_CONTAINER"],
   spec: "evals/voiceovers/google-slack-oauth-ux.md",
   steps: [
     {
@@ -549,7 +549,7 @@ export default {
             const actual = await ctx.eval(reauthDialogStateScript());
             ctx.assert(actual.visible === true, "Reauth dialog should be visible.");
             ctx.assert(actual.text.includes(SECURITY_MESSAGE), `Reauth guidance missing: ${actual.text}`);
-            ctx.assert(actual.text.includes("OpenWork retries the pending action automatically"), `Reauth helper missing automatic retry copy: ${actual.text}`);
+            ctx.assert(actual.text.includes("Micx retries the pending action automatically"), `Reauth helper missing automatic retry copy: ${actual.text}`);
             if (state.authProviders.includes("google")) {
               ctx.assert(actual.hasGoogle === true, `Seeded Google auth provider should expose Continue with Google. Providers: ${JSON.stringify(state.authProviders)}. Dialog: ${actual.text}`);
             } else {
@@ -560,8 +560,8 @@ export default {
             name: "google-workspace-reauth-security-check",
             claim: "The security check explains why it appeared and gives a clear way to continue before retrying the save.",
             requireText: state.authProviders.includes("google")
-              ? [SECURITY_MESSAGE, "SECURITY CHECK", "OpenWork retries the pending action automatically", "Continue with Google"]
-              : [SECURITY_MESSAGE, "SECURITY CHECK", "OpenWork retries the pending action automatically"],
+              ? [SECURITY_MESSAGE, "SECURITY CHECK", "Micx retries the pending action automatically", "Continue with Google"]
+              : [SECURITY_MESSAGE, "SECURITY CHECK", "Micx retries the pending action automatically"],
             rejectText: ["Confirm it's you to continue"],
           },
         });
@@ -700,7 +700,7 @@ export default {
           },
           screenshot: {
             name: "slack-style-redirect-url-copy-handoff",
-            claim: "After creation, OpenWork shows the exact redirect URL and a Copy button before teammates connect.",
+            claim: "After creation, Micx shows the exact redirect URL and a Copy button before teammates connect.",
             requireText: ["Almost done", "redirect URL", "/connect/callback", "Copy"],
             rejectText: ["Something went wrong", "Failed to add connection"],
           },

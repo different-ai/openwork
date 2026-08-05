@@ -32,7 +32,7 @@ const state = {
 };
 
 function denWebBase(ctx) {
-  return ctx.env.OPENWORK_EVAL_DEN_WEB_URL.replace(/\/$/, "");
+  return ctx.env.MICX_EVAL_DEN_WEB_URL.replace(/\/$/, "");
 }
 
 function desktopPoliciesUrl(ctx) {
@@ -149,16 +149,16 @@ async function ensureDesktopSession(ctx) {
   const activeOrg = organizations.find((organization) => organization?.id === body?.activeOrgId) ?? organizations[0];
   ctx.assert(activeOrg?.id, "The eval token does not have an active organization.");
 
-  await ctx.control("eval.auth.set-base-url", { baseUrl: ctx.env.OPENWORK_EVAL_DEN_WEB_URL });
+  await ctx.control("eval.auth.set-base-url", { baseUrl: ctx.env.MICX_EVAL_DEN_WEB_URL });
   await ctx.eval(`(() => {
-    localStorage.setItem('openwork.den.baseUrl', ${JSON.stringify(ctx.env.OPENWORK_EVAL_DEN_WEB_URL)});
-    localStorage.setItem('openwork.den.apiBaseUrl', ${JSON.stringify(ctx.env.OPENWORK_EVAL_DEN_API_URL)});
-    localStorage.setItem('openwork.den.authToken', ${JSON.stringify(ctx.env.OPENWORK_EVAL_DEN_TOKEN)});
-    localStorage.setItem('openwork.den.activeOrgId', ${JSON.stringify(activeOrg.id)});
-    localStorage.setItem('openwork.den.activeOrgSlug', ${JSON.stringify(activeOrg.slug ?? "example-corp")});
-    localStorage.setItem('openwork.den.activeOrgName', ${JSON.stringify(activeOrg.name ?? "Example Corp")});
-    window.dispatchEvent(new CustomEvent('openwork-den-settings-changed', { detail: {} }));
-    window.dispatchEvent(new CustomEvent('openwork-den-session-updated', { detail: { token: ${JSON.stringify(ctx.env.OPENWORK_EVAL_DEN_TOKEN)} } }));
+    localStorage.setItem('micx.den.baseUrl', ${JSON.stringify(ctx.env.MICX_EVAL_DEN_WEB_URL)});
+    localStorage.setItem('micx.den.apiBaseUrl', ${JSON.stringify(ctx.env.MICX_EVAL_DEN_API_URL)});
+    localStorage.setItem('micx.den.authToken', ${JSON.stringify(ctx.env.MICX_EVAL_DEN_TOKEN)});
+    localStorage.setItem('micx.den.activeOrgId', ${JSON.stringify(activeOrg.id)});
+    localStorage.setItem('micx.den.activeOrgSlug', ${JSON.stringify(activeOrg.slug ?? "example-corp")});
+    localStorage.setItem('micx.den.activeOrgName', ${JSON.stringify(activeOrg.name ?? "Example Corp")});
+    window.dispatchEvent(new CustomEvent('micx-den-settings-changed', { detail: {} }));
+    window.dispatchEvent(new CustomEvent('micx-den-session-updated', { detail: { token: ${JSON.stringify(ctx.env.MICX_EVAL_DEN_TOKEN)} } }));
     return true;
   })()`);
 
@@ -171,7 +171,7 @@ async function ensureDesktopSession(ctx) {
 async function dismissDesktopOverlays(ctx) {
   await ctx.eval(`(() => {
     const continueButton = Array.from(document.querySelectorAll('button')).find((button) =>
-      button.textContent?.includes('Continue without OpenWork Models')
+      button.textContent?.includes('Continue without Micx Models')
     );
     if (continueButton) {
       continueButton.click();
@@ -356,7 +356,7 @@ async function waitForPromptCard(ctx) {
 async function openFreshDesktopSession(ctx) {
   await ensureWorkspaceReady(ctx);
   await ctx.waitFor(
-    "window.__openworkControl.listActions().some((action) => action.id === 'session.create_task' && !action.disabled)",
+    "window.__micxControl.listActions().some((action) => action.id === 'session.create_task' && !action.disabled)",
     { timeoutMs: 60_000, label: "new session action" },
   );
   await ctx.control("session.create_task");
@@ -382,7 +382,7 @@ async function markPromptCardForClick(ctx) {
 
 async function readComposerState(ctx) {
   return ctx.eval(`(() => {
-    const composer = window.__openwork?.slice?.('composer');
+    const composer = window.__micx?.slice?.('composer');
     const editor = document.querySelector('[contenteditable="true"][data-lexical-editor="true"]') || document.querySelector('[contenteditable="true"]');
     return {
       draft: composer?.draft ?? null,
@@ -396,13 +396,13 @@ export default {
   id: "org-custom-prompt-descriptions",
   title: "Organization prompt descriptions persist and become desktop suggestion card titles",
   kind: "user-facing",
-  requiredEnv: ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_TOKEN", "OPENWORK_EVAL_DEN_WEB_URL"],
+  requiredEnv: ["MICX_EVAL_DEN_API_URL", "MICX_EVAL_DEN_TOKEN", "MICX_EVAL_DEN_WEB_URL"],
   steps: [
     {
       name: "setup",
       run: async (ctx) => {
         await ensureRendererMounted(ctx);
-        await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 30_000, label: "window.__openworkControl" });
+        await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 30_000, label: "window.__micxControl" });
         await ctx.ensureLightMode();
         await ensureDesktopSession(ctx);
         await ensureWorkspaceReady(ctx);
@@ -495,7 +495,7 @@ export default {
             action: async () => {
               const config = await waitForDesktopPromptConfig(ctx, "member effective prompt descriptions before opening session", PROMPTS, DESCRIPTIONS);
               await ctx.eval(`(() => {
-                const applyDesktopConfig = window.__openworkApplyDesktopConfig;
+                const applyDesktopConfig = window.__micxApplyDesktopConfig;
                 if (typeof applyDesktopConfig !== 'function') throw new Error('Desktop config eval bridge is unavailable');
                 applyDesktopConfig(${JSON.stringify(config)});
                 return true;
@@ -529,7 +529,7 @@ export default {
               ctx.assert(marked?.title === DESCRIPTIONS[0], `Could not mark the organization prompt card for click: ${JSON.stringify(marked)}`);
               await ctx.trustedClick('[data-eval-org-prompt-card="true"]', { timeoutMs: 10_000 });
               await ctx.waitFor(
-                `window.__openwork?.slice?.('composer')?.draft === ${JSON.stringify(PROMPTS[0])}`,
+                `window.__micx?.slice?.('composer')?.draft === ${JSON.stringify(PROMPTS[0])}`,
                 { timeoutMs: 10_000, label: "composer draft after organization prompt card click" },
               );
             },

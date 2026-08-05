@@ -1,4 +1,4 @@
-import type { Surface } from "@openwork/cdp";
+import type { Surface } from "@micx/cdp";
 import { control, evalIn, waitFor } from "./desktop.ts";
 
 export interface ComposerState {
@@ -67,7 +67,7 @@ export async function writeComposerText(app: Surface, text: string): Promise<voi
   // mounted). Prefer it: it types visibly the way a user does. The direct
   // contenteditable paste below stays as a fallback for surfaces that do not
   // register the action.
-  const hasControl = await evalIn(app, `Boolean(window.__openworkControl?.listActions?.()
+  const hasControl = await evalIn(app, `Boolean(window.__micxControl?.listActions?.()
     .find((entry) => entry.id === "composer.set_text" && entry.disabled === false))`).catch(() => false);
   if (hasControl === true) {
     await control(app, "composer.set_text", { text }, { timeoutMs: 120_000 });

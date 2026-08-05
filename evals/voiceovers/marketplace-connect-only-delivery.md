@@ -1,4 +1,4 @@
-# marketplace-connect-only-delivery — org marketplace plugins arrive through OpenWork Connect, with nothing to install
+# marketplace-connect-only-delivery — org marketplace plugins arrive through Micx Connect, with nothing to install
 
 Context (not narrated): Phase D / PR D2 of the extensions drain. Den marketplace
 content is cloud-delivered unconditionally — the app no longer consults the org
@@ -9,7 +9,7 @@ Frame 5 seeds a legacy import through the still-alive server install route to
 simulate pre-flip state; frame 4 runs a real agent turn on the seeded Den eval
 stack.
 
-1. My organization publishes a plugin to its marketplace, and on my desktop it simply appears in OpenWork Connect — already active, running in the cloud, with nothing to install.
+1. My organization publishes a plugin to its marketplace, and on my desktop it simply appears in Micx Connect — already active, running in the cloud, with nothing to install.
 
 2. The old install path is really gone: the organization marketplace shows everything as running in the cloud — no Install buttons anywhere — and nobody had to flip a switch to get here.
 

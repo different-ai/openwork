@@ -15,8 +15,8 @@ REF=""
 FORCE_INSTALL=0
 RUN_SEED=0
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SANDBOX="openwork-server-$(date +%Y%m%d-%H%M%S)"
-DAYTONA_SERVER_SNAPSHOT="${DAYTONA_SERVER_SNAPSHOT:-openwork-server}"
+SANDBOX="micx-server-$(date +%Y%m%d-%H%M%S)"
+DAYTONA_SERVER_SNAPSHOT="${DAYTONA_SERVER_SNAPSHOT:-micx-server}"
 DAYTONA_TARGET="${DAYTONA_TARGET:-us}"
 DEN_API_PORT="${DEN_API_PORT:-8788}"
 DEN_WEB_PORT="${DEN_WEB_PORT:-3005}"
@@ -109,13 +109,13 @@ DEN_API_URL="$(daytona preview-url "$SANDBOX" -p "$DEN_API_PORT" 2>/dev/null | g
 DEN_WORKER_PROXY_URL="$(daytona preview-url "$SANDBOX" -p "$DEN_WORKER_PROXY_PORT" 2>/dev/null | grep -v "^time=")"
 
 echo "==> Checking out $REF..."
-daytona exec "$SANDBOX" -- "bash -lc 'set -euo pipefail; cd /workspace; REF=\"$REF\"; FORCE_INSTALL=\"$FORCE_INSTALL\"; if git fetch origin \"\$REF\"; then git checkout --detach FETCH_HEAD; else git fetch origin dev --depth 50 || true; git checkout \"\$REF\"; fi; git rev-parse --short HEAD; if [ \"\$FORCE_INSTALL\" = 1 ]; then rm -f .openwork-daytona/pnpm-lock.sha256; fi'"
+daytona exec "$SANDBOX" -- "bash -lc 'set -euo pipefail; cd /workspace; REF=\"$REF\"; FORCE_INSTALL=\"$FORCE_INSTALL\"; if git fetch origin \"\$REF\"; then git checkout --detach FETCH_HEAD; else git fetch origin dev --depth 50 || true; git checkout \"\$REF\"; fi; git rev-parse --short HEAD; if [ \"\$FORCE_INSTALL\" = 1 ]; then rm -f .micx-daytona/pnpm-lock.sha256; fi'"
 
 echo "==> Uploading server start script..."
 START_SCRIPT_B64="$(base64 < "$ROOT_DIR/.devcontainer/start-daytona-server.sh" | tr -d '\n')"
 daytona exec "$SANDBOX" -- "bash -lc 'set -euo pipefail; cd /workspace; mkdir -p .devcontainer; printf %s $START_SCRIPT_B64 | base64 -d > .devcontainer/start-daytona-server.sh; chmod +x .devcontainer/start-daytona-server.sh'"
 
-echo "==> Starting OpenWork Den server stack..."
+echo "==> Starting Micx Den server stack..."
 daytona exec "$SANDBOX" -- "bash -lc 'set -euo pipefail; cd /workspace; DEN_WEB_PUBLIC_URL=\"$DEN_WEB_URL\" DEN_API_PUBLIC_URL=\"$DEN_API_URL\" DEN_WORKER_PROXY_PUBLIC_URL=\"$DEN_WORKER_PROXY_URL\" DEN_WEB_PORT=$DEN_WEB_PORT DEN_API_PORT=$DEN_API_PORT DEN_WORKER_PROXY_PORT=$DEN_WORKER_PROXY_PORT RUN_SEED=$RUN_SEED bash .devcontainer/start-daytona-server.sh'"
 
 echo "==> Waiting for public Den Web health (up to ${MAX_WAIT}s)..."

@@ -1,4 +1,4 @@
-pkgbase = openwork
+pkgbase = micx
 	pkgdesc = An Open source alternative to Claude Cowork
 	pkgver = 0.18.14
 	pkgrel = 1
@@ -19,9 +19,9 @@ pkgbase = openwork
 	depends = dbus
 	depends = hicolor-icon-theme
 	options = !strip
-	source_x86_64 = openwork-0.18.14-x64.tar.gz::https://github.com/different-ai/openwork/releases/download/v0.18.14/openwork-linux-x64-0.18.14.tar.gz
+	source_x86_64 = micx-0.18.14-x64.tar.gz::https://github.com/different-ai/openwork/releases/download/v0.18.14/micx-linux-x64-0.18.14.tar.gz
 	sha256sums_x86_64 = 56b09c794368d3a87cdf1dde995aec8f0694bc49abc4a90934a7367edbaf3aab
-	source_aarch64 = openwork-0.18.14-arm64.tar.gz::https://github.com/different-ai/openwork/releases/download/v0.18.14/openwork-linux-arm64-0.18.14.tar.gz
+	source_aarch64 = micx-0.18.14-arm64.tar.gz::https://github.com/different-ai/openwork/releases/download/v0.18.14/micx-linux-arm64-0.18.14.tar.gz
 	sha256sums_aarch64 = 1192dbd5aedf44905dc6577082aa2e457146d4c987a66616573290dba5153b10
 
-pkgname = openwork
+pkgname = micx

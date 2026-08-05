@@ -54,7 +54,7 @@ JSON.stringify({ hash: location.hash, text: document.body.innerText.slice(0, 100
 Then inspect the desktop bootstrap file:
 
 ```bash
-daytona exec "$SANDBOX" -- 'cat /workspace/.openwork-daytona/desktop-bootstrap.json'
+daytona exec "$SANDBOX" -- 'cat /workspace/.micx-daytona/desktop-bootstrap.json'
 ```
 
 Expected: `baseUrl` is `DEN_WEB_URL` and `apiBaseUrl` is `DEN_API_URL`, not
@@ -72,8 +72,8 @@ Fully automated variant (no paste UI): as a signed-in web user call
 Electron renderer via CDP — the auth provider consumes it:
 
 ```js
-window.dispatchEvent(new CustomEvent("openwork:deep-link", {
-  detail: { urls: ["openwork://den-auth?grant=" + grant +
+window.dispatchEvent(new CustomEvent("micx:deep-link", {
+  detail: { urls: ["micx://den-auth?grant=" + grant +
     "&denBaseUrl=" + encodeURIComponent(DEN_WEB_URL)] },
 }));
 ```

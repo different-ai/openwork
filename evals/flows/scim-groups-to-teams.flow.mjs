@@ -5,13 +5,13 @@ import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
 
 const FLOW_ID = "scim-groups-to-teams";
 const vo = await loadVoiceoverParagraphs(FLOW_ID);
-const DEN_API_URL = (process.env.OPENWORK_EVAL_DEN_API_URL ?? "").trim().replace(/\/+$/, "");
-const DEN_WEB_URL = (process.env.OPENWORK_EVAL_DEN_WEB_URL ?? "").trim().replace(/\/+$/, "");
-const ADMIN_CDP_URL = (process.env.OPENWORK_EVAL_WEB_CDP_ADMIN ?? "").trim().replace(/\/+$/, "");
-const ADMIN_TOKEN = (process.env.OPENWORK_EVAL_DEN_TOKEN ?? "").trim();
-const ADMIN_EMAIL = process.env.OPENWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
-const ADMIN_PASSWORD = process.env.OPENWORK_EVAL_DEMO_PASSWORD?.trim() || "OpenWorkDemo123!";
-const MYSQL_CONTAINER = process.env.OPENWORK_EVAL_DEN_MYSQL_CONTAINER?.trim() || "openwork-web-local-mysql";
+const DEN_API_URL = (process.env.MICX_EVAL_DEN_API_URL ?? "").trim().replace(/\/+$/, "");
+const DEN_WEB_URL = (process.env.MICX_EVAL_DEN_WEB_URL ?? "").trim().replace(/\/+$/, "");
+const ADMIN_CDP_URL = (process.env.MICX_EVAL_WEB_CDP_ADMIN ?? "").trim().replace(/\/+$/, "");
+const ADMIN_TOKEN = (process.env.MICX_EVAL_DEN_TOKEN ?? "").trim();
+const ADMIN_EMAIL = process.env.MICX_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
+const ADMIN_PASSWORD = process.env.MICX_EVAL_DEMO_PASSWORD?.trim() || "MicxDemo123!";
+const MYSQL_CONTAINER = process.env.MICX_EVAL_DEN_MYSQL_CONTAINER?.trim() || "micx-web-local-mysql";
 const RUN_TAG = `${Date.now().toString(36)}-${randomBytes(2).toString("hex")}`;
 const MAYA_EMAIL = `maya.scim+${RUN_TAG}@acme.test`;
 const JORDAN_EMAIL = `jordan.scim+${RUN_TAG}@acme.test`;
@@ -62,7 +62,7 @@ function createDenTypeId(name) {
 }
 
 function mysqlQuery(sql) {
-  return execFileSync("docker", ["exec", MYSQL_CONTAINER, "mysql", "-uroot", "-ppassword", "openwork_den", "-N", "-e", sql], {
+  return execFileSync("docker", ["exec", MYSQL_CONTAINER, "mysql", "-uroot", "-ppassword", "micx_den", "-N", "-e", sql], {
     encoding: "utf8",
     maxBuffer: 1024 * 1024,
   }).trim();
@@ -161,7 +161,7 @@ async function withAdminBrowser(ctx, fn) {
       await ctx.eval(`(() => {
         document.cookie = 'better-auth.session_token=; Max-Age=0; Path=/';
         document.cookie = ${JSON.stringify(`${session.cookie}; Path=/; SameSite=Lax`)};
-        localStorage.setItem('openwork:web:auth-token', ${JSON.stringify(session.token)});
+        localStorage.setItem('micx:web:auth-token', ${JSON.stringify(session.token)});
         sessionStorage.clear();
         return true;
       })()`);
@@ -225,7 +225,7 @@ async function setup(ctx) {
   witness(ctx, Boolean(state.adminUserId), "The eval organization has an SSO provider owner", state.adminUserId);
   state.browserSession = await createAdminBrowserSession(ctx);
 
-  mysqlQuery("DELETE tm FROM team_member tm INNER JOIN scim_group_member sgm ON sgm.team_member_id=tm.id; DELETE t FROM team t INNER JOIN scim_group sg ON sg.team_id=t.id; DELETE FROM scim_group_member; DELETE FROM scim_group; DELETE FROM scim_user_tombstone; DELETE FROM sso_connection; DELETE FROM sso_provider; DELETE FROM account WHERE provider_id LIKE 'openwork-scim-%'; DELETE FROM scim_provider;");
+  mysqlQuery("DELETE tm FROM team_member tm INNER JOIN scim_group_member sgm ON sgm.team_member_id=tm.id; DELETE t FROM team t INNER JOIN scim_group sg ON sg.team_id=t.id; DELETE FROM scim_group_member; DELETE FROM scim_group; DELETE FROM scim_user_tombstone; DELETE FROM sso_connection; DELETE FROM sso_provider; DELETE FROM account WHERE provider_id LIKE 'micx-scim-%'; DELETE FROM scim_provider;");
 
   mysqlQuery(`INSERT INTO sso_connection (id, organization_id, provider_id, kind, issuer, domain, status, sign_in_path, created_at, updated_at)
     VALUES (${sqlString(state.ssoConnectionId)}, ${sqlString(state.orgId)}, ${sqlString(`eval-saml-${RUN_TAG}`)}, 'saml', 'https://idp.example.test', 'saml.example.test', 'enabled', ${sqlString(`/sso/${state.orgSlug}`)}, NOW(3), NOW(3))
@@ -328,15 +328,15 @@ function removedMemberState(memberId) {
 
 export default {
   id: FLOW_ID,
-  title: "SCIM groups create and safely manage OpenWork teams alongside SAML",
+  title: "SCIM groups create and safely manage Micx teams alongside SAML",
   kind: "user-facing",
   requiresApp: false,
   preserveTheme: true,
   requiredEnv: [
-    "OPENWORK_EVAL_DEN_API_URL",
-    "OPENWORK_EVAL_DEN_TOKEN",
-    "OPENWORK_EVAL_DEN_WEB_URL",
-    "OPENWORK_EVAL_WEB_CDP_ADMIN",
+    "MICX_EVAL_DEN_API_URL",
+    "MICX_EVAL_DEN_TOKEN",
+    "MICX_EVAL_DEN_WEB_URL",
+    "MICX_EVAL_WEB_CDP_ADMIN",
   ],
   steps: [
     {
@@ -422,7 +422,7 @@ export default {
     {
       name: "Frame 5",
       run: async (ctx) => withAdminBrowser(ctx, async () => {
-        await ctx.prove("A SCIM membership move updates OpenWork teams without another user login", {
+        await ctx.prove("A SCIM membership move updates Micx teams without another user login", {
           voiceover: vo[4],
           action: async () => {
             await patchGroup(ctx, state.engineering, [{ op: "remove", path: `members[value eq \"${state.maya.userId}\"]` }]);
@@ -518,7 +518,7 @@ export default {
     {
       name: "cleanup",
       run: async () => {
-        mysqlQuery("DELETE FROM sso_connection; DELETE FROM account WHERE provider_id LIKE 'openwork-scim-%'; DELETE FROM scim_provider;");
+        mysqlQuery("DELETE FROM sso_connection; DELETE FROM account WHERE provider_id LIKE 'micx-scim-%'; DELETE FROM scim_provider;");
       },
     },
   ],

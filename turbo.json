@@ -1,7 +1,7 @@
 {
   "$schema": "https://turbo.build/schema.json",
   "globalEnv": [
-    "OPENWORK_DEV_MODE",
+    "MICX_DEV_MODE",
     "DATABASE_URL",
     "DEN_DB_ENCRYPTION_KEY",
     "DEN_ORG_MODE",

@@ -1,14 +1,14 @@
 import { createHmac, generateKeyPairSync } from "node:crypto";
 import { expect } from "vitest";
-import { denFetch } from "@openwork/behaviors";
-import type { DenSession } from "@openwork/behaviors";
-import { startMockGithub } from "@openwork/labs";
-import type { MockGithubRepository } from "@openwork/labs";
-import { localMysqlIsRunning, needs, server, test } from "@openwork/testkit";
+import { denFetch } from "@micx/behaviors";
+import type { DenSession } from "@micx/behaviors";
+import { startMockGithub } from "@micx/labs";
+import type { MockGithubRepository } from "@micx/labs";
+import { localMysqlIsRunning, needs, server, test } from "@micx/testkit";
 
 /**
  * CLAIMS — APPROVED NARRATION:
- *  1. Push → auto-update. GitHub receives the webhook immediately, OpenWork
+ *  1. Push → auto-update. GitHub receives the webhook immediately, Micx
  *     acknowledges it before processing, and the exact pushed commit becomes
  *     the skill's latest stored version automatically.
  *  2. Rate-limited push retries itself. Two provider 429s recover without a
@@ -24,11 +24,11 @@ import { localMysqlIsRunning, needs, server, test } from "@openwork/testkit";
  *     retries, rename continuity, and reconciliation all happened.
  */
 
-const localPlacement = process.env.OPENWORK_EVAL_DAYTONA !== "1"
-  && !process.env.OPENWORK_EVAL_DEN_API_URL?.trim();
+const localPlacement = process.env.MICX_EVAL_DAYTONA !== "1"
+  && !process.env.MICX_EVAL_DEN_API_URL?.trim();
 const mysqlOpen = await localMysqlIsRunning();
 const title = !localPlacement
-  ? "GitHub sync self-healing skipped — needs: local placement without OPENWORK_EVAL_DEN_API_URL"
+  ? "GitHub sync self-healing skipped — needs: local placement without MICX_EVAL_DEN_API_URL"
   : !mysqlOpen
     ? "GitHub sync self-healing skipped — needs: MySQL on 127.0.0.1:3306"
     : "GitHub sync queues work, retries transient faults, reconciles drift, and survives repository renames";
@@ -162,7 +162,7 @@ async function apiRequest(
   const headers: Record<string, string> = {
     authorization: `Bearer ${session.token}`,
   };
-  if (input.orgId) headers["x-openwork-org-id"] = input.orgId;
+  if (input.orgId) headers["x-micx-org-id"] = input.orgId;
   if (input.body) headers["content-type"] = "application/json";
   const result = await denFetch(session, path, {
     method: input.method ?? "GET",

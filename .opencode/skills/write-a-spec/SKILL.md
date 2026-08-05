@@ -1,12 +1,12 @@
 ---
 name: write-a-spec
-description: Write a spec, new e2e test, test a feature end to end, add a slow spec. Use when authoring an @openwork/testkit spec in evals/specs.
+description: Write a spec, new e2e test, test a feature end to end, add a slow spec. Use when authoring an @micx/testkit spec in evals/specs.
 ---
 
 # Skill: Write a Spec
 
 Write new tests in `evals/specs/*.test.ts` and import `test` from
-`@openwork/testkit`. App-driving specs use `.slow.test.ts`; the PR lane excludes
+`@micx/testkit`. App-driving specs use `.slow.test.ts`; the PR lane excludes
 them. Model setup as resources in dependency order: `needs()` → `server()` →
 `app()`.
 

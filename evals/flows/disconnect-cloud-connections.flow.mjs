@@ -6,12 +6,12 @@ import { denApiFetch, openAdminConnections, openYourConnections, signInApi, sign
 // The runner fails this flow if the narration drifts from that script.
 const vo = await loadVoiceoverParagraphs("disconnect-cloud-connections");
 
-const ADMIN_EMAIL = process.env.OPENWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
-const ADMIN_PASSWORD = process.env.OPENWORK_EVAL_DEMO_PASSWORD?.trim() || "OpenWorkDemo123!";
-const MEMBER_EMAIL = process.env.OPENWORK_EVAL_MEMBER_EMAIL?.trim() || ADMIN_EMAIL;
-const MEMBER_PASSWORD = process.env.OPENWORK_EVAL_MEMBER_PASSWORD?.trim() || ADMIN_PASSWORD;
+const ADMIN_EMAIL = process.env.MICX_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
+const ADMIN_PASSWORD = process.env.MICX_EVAL_DEMO_PASSWORD?.trim() || "MicxDemo123!";
+const MEMBER_EMAIL = process.env.MICX_EVAL_MEMBER_EMAIL?.trim() || ADMIN_EMAIL;
+const MEMBER_PASSWORD = process.env.MICX_EVAL_MEMBER_PASSWORD?.trim() || ADMIN_PASSWORD;
 const MOCK_OAUTH_MCP_URL = (process.env.MOCK_OAUTH_MCP_URL ?? "http://127.0.0.1:3978").trim().replace(/\/+$/, "");
-const MOCK_PORT = Number(process.env.OPENWORK_EVAL_DISCONNECT_MCP_PORT ?? 4552);
+const MOCK_PORT = Number(process.env.MICX_EVAL_DISCONNECT_MCP_PORT ?? 4552);
 const MOCK_ORIGIN = `http://127.0.0.1:${MOCK_PORT}`;
 const RUN_TAG = Date.now().toString(36);
 const API_KEY_NAME = `Disconnect API key ${RUN_TAG}`;
@@ -37,8 +37,8 @@ function requireState(value, label) {
 function authHeaders(token = requireState(state.adminSession, "admin session")) {
   const headers = { authorization: `Bearer ${token}` };
   if (state.orgId) {
-    headers["x-openwork-org-id"] = state.orgId;
-    headers["x-openwork-legacy-org-id"] = state.orgId;
+    headers["x-micx-org-id"] = state.orgId;
+    headers["x-micx-legacy-org-id"] = state.orgId;
   }
   return headers;
 }
@@ -118,7 +118,7 @@ async function ensureAdminContext(ctx) {
 
 async function ensureMemberContext(ctx) {
   state.memberSession = await signInApi(MEMBER_EMAIL, MEMBER_PASSWORD);
-  ctx.assert(Boolean(state.memberSession), `Member sign-in failed for ${MEMBER_EMAIL}. Set OPENWORK_EVAL_MEMBER_EMAIL/PASSWORD to an existing member or omit them to reuse the admin account.`);
+  ctx.assert(Boolean(state.memberSession), `Member sign-in failed for ${MEMBER_EMAIL}. Set MICX_EVAL_MEMBER_EMAIL/PASSWORD to an existing member or omit them to reuse the admin account.`);
   await orgApi(ctx, "/v1/me/active-organization", { method: "POST", body: JSON.stringify({ organizationId: requireState(state.orgId, "organization id") }) }, state.memberSession);
 }
 
@@ -249,7 +249,7 @@ export default {
   id: "disconnect-cloud-connections",
   title: "Cloud connector disconnect signs accounts out without deleting setup",
   kind: "user-facing",
-  requiredEnv: ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_WEB_URL"],
+  requiredEnv: ["MICX_EVAL_DEN_API_URL", "MICX_EVAL_DEN_WEB_URL"],
   steps: [
     {
       name: "Frame 1",

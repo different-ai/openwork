@@ -13,9 +13,9 @@ function fakeSurface(name: string, kind: "electron" | "chrome"): SurfaceHandle {
     hostKind: "local",
     cdpUrl: `http://127.0.0.1/${kind}/${name}`,
     pid: 987654321,
-    profileDir: `/tmp/openwork-fake-${name}`,
+    profileDir: `/tmp/micx-fake-${name}`,
   };
-  if (kind === "electron") handle.meta = { log: `/tmp/openwork-fake-${name}/electron.log` };
+  if (kind === "electron") handle.meta = { log: `/tmp/micx-fake-${name}/electron.log` };
   return handle;
 }
 
@@ -101,8 +101,8 @@ test("owt manifest lifecycle writes fake surfaces, shares links, and tolerates E
   const name = `owt-test-${Date.now()}`;
   const printed: string[] = [];
   const bootstraps: string[] = [];
-  const previousToken = process.env.OPENWORK_EVAL_DEN_TOKEN;
-  delete process.env.OPENWORK_EVAL_DEN_TOKEN;
+  const previousToken = process.env.MICX_EVAL_DEN_TOKEN;
+  delete process.env.MICX_EVAL_DEN_TOKEN;
   const host: Host = {
     kind: "fake-local",
     workspaceRoot: "/workspace",
@@ -142,15 +142,15 @@ test("owt manifest lifecycle writes fake surfaces, shares links, and tolerates E
     printed.length = 0;
     await main(["share", "--name", name], { print: (line) => printed.push(line) });
     assert(printed.some((line) => line === "Den Web: http://den-web.test"));
-    assert(printed.some((line) => line === "electron desk log: /tmp/openwork-fake-desk/electron.log"));
+    assert(printed.some((line) => line === "electron desk log: /tmp/micx-fake-desk/electron.log"));
 
     printed.length = 0;
     await main(["down", "--name", name], { print: (line) => printed.push(line) });
     assert(printed.some((line) => line.includes("pid 987654321 was not running")));
     assert.equal(await readEnvManifest(name), null);
   } finally {
-    if (previousToken === undefined) delete process.env.OPENWORK_EVAL_DEN_TOKEN;
-    else process.env.OPENWORK_EVAL_DEN_TOKEN = previousToken;
+    if (previousToken === undefined) delete process.env.MICX_EVAL_DEN_TOKEN;
+    else process.env.MICX_EVAL_DEN_TOKEN = previousToken;
     await rm(manifestPath(name), { force: true });
   }
 });
@@ -189,8 +189,8 @@ test("owt up adopts existing Daytona surfaces without spawning", async () => {
     assert(manifest);
     assert.equal(spawnCount, 0);
     assert.equal(manifest.defaultHostKind, "daytona");
-    assert.equal(manifest.env?.OPENWORK_EVAL_DAYTONA_SANDBOX, "sandbox-9");
-    assert.equal(manifest.env?.OPENWORK_EVAL_CDP_URL, "https://primary.example.test");
+    assert.equal(manifest.env?.MICX_EVAL_DAYTONA_SANDBOX, "sandbox-9");
+    assert.equal(manifest.env?.MICX_EVAL_CDP_URL, "https://primary.example.test");
     assert.deepEqual(manifest.surfaces["alex-desktop"], {
       name: "alex-desktop",
       kind: "electron",

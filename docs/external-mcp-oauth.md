@@ -1,6 +1,6 @@
 # External MCP OAuth administration
 
-OpenWork discovers and authorizes Den-managed external MCP connections without
+Micx discovers and authorizes Den-managed external MCP connections without
 placing provider credentials in the agent engine. Tokens, refresh tokens,
 client secrets, PKCE verifiers, and pending authorization transactions remain
 encrypted in Den.
@@ -8,7 +8,7 @@ encrypted in Den.
 ## Required public origin
 
 Set `DEN_API_PUBLIC_URL` to the externally reachable HTTPS base URL for the Den
-deployment. OpenWork derives both public OAuth URLs exclusively from this
+deployment. Micx derives both public OAuth URLs exclusively from this
 configured origin; request host headers cannot replace it.
 
 - Shared callback: `<DEN_API_PUBLIC_URL>/v1/mcp-connections/oauth/callback`
@@ -16,12 +16,12 @@ configured origin; request host headers cannot replace it.
 - Client metadata document: `<DEN_API_PUBLIC_URL>/oauth/client-metadata.json`
 
 The client metadata document is public, contains no secrets, and describes
-OpenWork as a web OAuth client. Each self-hosted Den deployment has its own
+Micx as a web OAuth client. Each self-hosted Den deployment has its own
 callback and metadata URL.
 
 ## OAuth runtime and callback compatibility
 
-Den uses `@openwork/enterprise-mcp-client` for discovery, authorization,
+Den uses `@micx/enterprise-mcp-client` for discovery, authorization,
 refresh, tool discovery, and tool calls. There is no deployment or workspace
 runtime switch.
 
@@ -33,7 +33,7 @@ tokens, access grants, or plugin bindings.
 
 ## Add a connection
 
-In Cloud → Connections, enter the MCP server URL. OpenWork automatically runs
+In Cloud → Connections, enter the MCP server URL. Micx automatically runs
 discovery after the URL settles; there is no separate discovery step. A failed
 check shows its error and a retry action. Discovery is side-effect free: it does
 not create a connection, register an OAuth client, open a browser, or save credentials. It reports MCP
@@ -41,7 +41,7 @@ initialization, RFC 9728 protected-resource metadata, authorization servers,
 PKCE and refresh support, registration choices, scopes, visible tools, and any
 network or administrator work that standards metadata cannot prove.
 
-When authorization starts, OpenWork uses this registration priority:
+When authorization starts, Micx uses this registration priority:
 
 1. An administrator-supplied pre-registered client.
 2. A client metadata URL (CIMD) when the authorization server advertises it.
@@ -50,7 +50,7 @@ When authorization starts, OpenWork uses this registration priority:
 
 Required challenge scopes are locked. Administrators may select optional
 advertised scopes and edit the saved scope set later. When neither the 401
-challenge nor the administrator selects scopes, OpenWork falls back to the
+challenge nor the administrator selects scopes, Micx falls back to the
 provider's advertised `scopes_supported` set; this preserves compatibility
 with providers that reject scope-less authorization requests. A configured
 scope set still takes precedence. `offline_access` is requested only when both
@@ -86,7 +86,7 @@ so a secret can never be sent to a newly selected issuer.
 - **Network trust required**: verify Den's proxy, private CA, DNS, firewall, and
   service-mesh egress. Discovery uses the same Den network policy as live MCP calls.
 - **Additional permission required**: review and approve the newly challenged
-  scope before reconnecting; OpenWork does not silently expand access.
+  scope before reconnecting; Micx does not silently expand access.
 - **Provider identity/verification page after authorize**: leave requested
   scopes empty only when the provider advertises the complete workable set, or
   edit the connection's requested scopes and reconnect.

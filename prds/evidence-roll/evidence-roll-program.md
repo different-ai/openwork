@@ -6,7 +6,7 @@ a thin skill. Leave schema room for live Daytona handoffs and resumable rolls.
 
 ## What already exists on dev (verified at 3e052843f)
 
-`@openwork/fraimz` ships three proof primitives (#3322, #3359):
+`@micx/fraimz` ships three proof primitives (#3322, #3359):
 
 - `screenshot(surface)` → `Shot { png, hash, route, at }`
 - `validate(shot, expectations)` → `SeenFacts { ok, description, results:
@@ -49,7 +49,7 @@ know where it came from; unknown fields in roll.json are ignored, never fatal.
 
 ### S1 — collect + publish (this PR)
 
-New package `evals/packages/evidence` (`@openwork/evidence`, zero new npm
+New package `evals/packages/evidence` (`@micx/evidence`, zero new npm
 deps):
 
 - `scanRolls(resultsDir)` — read `rolls/*/roll.json` (validating reader,
@@ -91,7 +91,7 @@ deps):
 - Environment finding, out of scope here: `hosts.desktop()` local spawn on
   this Mac brought up Electron CDP but no page target within 120s (twice) —
   the app-spec path's home remains the warm Daytona nightly
-  (`OPENWORK_EVAL_APP_SPECS=1`).
+  (`MICX_EVAL_APP_SPECS=1`).
 
 ### S2 — living index + handoff
 

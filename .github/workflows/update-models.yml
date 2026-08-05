@@ -25,7 +25,7 @@ env:
 
 jobs:
   update-models:
-    if: github.repository == 'different-ai/openwork'
+    if: github.repository == 'different-ai/micx'
     runs-on: blacksmith-4vcpu-ubuntu-2404
 
     steps:

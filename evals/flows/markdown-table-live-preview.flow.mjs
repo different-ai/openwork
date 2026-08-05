@@ -9,7 +9,7 @@ const DOC = `# Recovery objectives
 | Service or obligation | Proposed RTO | Proposed RPO | Approval |
 |---|---:|---:|---|
 | Critical support intake | 4 hours | Not applicable | Joint |
-| OpenWork server | 8 hours | 24 hours | Genpact |
+| Micx server | 8 hours | 24 hours | Genpact |
 
 Some prose between the two tables that should still wrap to the width of the panel.
 
@@ -32,13 +32,13 @@ async function closeStaleDialogs(ctx) {
 }
 
 async function bootPrecondition(ctx) {
-  await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 60_000, label: "control API" });
+  await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 60_000, label: "control API" });
   await closeStaleDialogs(ctx);
   const state = await ctx.waitFor(
     `(() => {
-      const route = String(window.__openworkControl.snapshot().route || "");
+      const route = String(window.__micxControl.snapshot().route || "");
       if (route.startsWith("/welcome") || route.startsWith("/signin")) return "blocked";
-      const action = window.__openworkControl.listActions().find((item) => item.id === "session.create_task");
+      const action = window.__micxControl.listActions().find((item) => item.id === "session.create_task");
       return action && !action.disabled ? "ready" : null;
     })()`,
     { timeoutMs: 30_000, label: "session.create_task enabled (or welcome/signin)" },
@@ -75,18 +75,18 @@ async function readEditor(ctx) {
 }
 
 async function openMarkdownArtifact(ctx) {
-  const hasSession = await ctx.eval(`String(window.__openworkControl.snapshot().route || "").includes("/session/ses_")`);
+  const hasSession = await ctx.eval(`String(window.__micxControl.snapshot().route || "").includes("/session/ses_")`);
   if (!hasSession) {
     await ctx.control("session.create_task");
     await ctx.waitFor(
-      `String(window.__openworkControl.snapshot().route || "").includes("/session/ses_")`,
+      `String(window.__micxControl.snapshot().route || "").includes("/session/ses_")`,
       { timeoutMs: 60_000, label: "session route after task creation" },
     );
   }
 
   // The artifact seed action is registered by the side panel, so the panel has
   // to be mounted before it can be called.
-  const seedReady = `window.__openworkControl.listActions().some((item) => item.id === "eval.artifact_tabs.seed_overflow" && !item.disabled)`;
+  const seedReady = `window.__micxControl.listActions().some((item) => item.id === "eval.artifact_tabs.seed_overflow" && !item.disabled)`;
   if (!(await ctx.eval(seedReady))) {
     await ctx.eval(`(() => {
       const globe = Array.from(document.querySelectorAll("button"))

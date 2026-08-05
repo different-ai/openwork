@@ -4,7 +4,7 @@ import { clearOrgSso, configureOrgSso, expectSsoBlockedUserMessage } from "../ru
 import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
 
 const FLOW_ID = "sso-blocked-user";
-const REQUIRED_DEN_ENV = ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_WEB_URL", "OPENWORK_EVAL_DEN_TOKEN"];
+const REQUIRED_DEN_ENV = ["MICX_EVAL_DEN_API_URL", "MICX_EVAL_DEN_WEB_URL", "MICX_EVAL_DEN_TOKEN"];
 const BLOCKED_EMAIL = "blocked.sso@acme.test";
 
 const vo = await loadVoiceoverParagraphs(FLOW_ID);

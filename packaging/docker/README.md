@@ -1,4 +1,4 @@
-# OpenWork Host (Docker)
+# Micx Host (Docker)
 
 ## Den local stack (Docker)
 
@@ -20,20 +20,20 @@ What it does:
 - Starts **MySQL** for the Den service
 - Starts **Den control plane** on port 8788 inside Docker with `PROVISIONER_MODE=stub`
 - Runs **Den migrations** automatically before the API starts in the local compose stack
-- Starts the **OpenWork Cloud web app** on port 3005 inside Docker
+- Starts the **Micx Cloud web app** on port 3005 inside Docker
 - Points the web app's auth + API proxy routes at the local Den service
 - Prints randomized host URLs so multiple stacks can run side by side
 
 Production-oriented EE images:
-- `Dockerfile.den` -> `ghcr.io/different-ai/openwork-den-api`
-- `Dockerfile.den-web` -> `ghcr.io/different-ai/openwork-den-web`
-- `Dockerfile.inference` -> `ghcr.io/different-ai/openwork-inference`
+- `Dockerfile.den` -> `ghcr.io/different-ai/micx-den-api`
+- `Dockerfile.den-web` -> `ghcr.io/different-ai/micx-den-web`
+- `Dockerfile.inference` -> `ghcr.io/different-ai/micx-inference`
 
 These images are intended for Terraform, Helm, ECS, EKS, and customer-cloud deployments. Prefer immutable tags or digests in production.
 
 Publish flow:
 - Release tags like `v0.17.1` publish images tagged `v0.17.1`, `0.17.1`, `sha-<commit>`, and `latest`.
-- The same workflow publishes the Helm chart to `oci://ghcr.io/different-ai/charts/openwork-ee` with chart version `0.17.1`.
+- The same workflow publishes the Helm chart to `oci://ghcr.io/different-ai/charts/micx-ee` with chart version `0.17.1`.
 - Manual publishes from a branch require `push=true` and an explicit `chart_version`.
 
 Health and smoke expectations:
@@ -54,7 +54,7 @@ The seed is local/dev-only, idempotent for the `acme-robotics-demo` org, and doe
 Default demo login:
 
 - Email: `alex@acme.test`
-- Password: `OpenWorkDemo123!`
+- Password: `MicxDemo123!`
 
 For the Docker stack with randomized MySQL ports, source the printed runtime env file first and pass `DEN_MYSQL_URL` as `DATABASE_URL`:
 
@@ -153,7 +153,7 @@ OTEL_TRACES_EXPORTER=otlp \
 OTEL_METRICS_EXPORTER=otlp \
 OTEL_LOGS_EXPORTER=otlp \
 OTEL_TRACES_SAMPLER=parentbased_always_on \
-docker compose -p openwork-den-otel \
+docker compose -p micx-den-otel \
   -f packaging/docker/docker-compose.den-dev.yml \
   -f packaging/docker/docker-compose.otel-lgtm.yml \
   up --build --wait
@@ -215,7 +215,7 @@ docker buildx build \
   --secret id=sentry_project,env=SENTRY_PROJECT \
   --secret id=sentry_release,env=SENTRY_RELEASE \
   --secret id=sentry_dist,env=SENTRY_DIST \
-  -t openwork-den-api:sentry .
+  -t micx-den-api:sentry .
 ```
 
 For custom Den Web images, `DEN_WEB_UPLOAD_SENTRY_SOURCEMAPS=1` requires
@@ -236,7 +236,7 @@ docker buildx build \
   --secret id=sentry_url,env=SENTRY_URL \
   --secret id=sentry_release,env=SENTRY_RELEASE \
   --secret id=sentry_dist,env=SENTRY_DIST \
-  -t openwork-den-web:sentry .
+  -t micx-den-web:sentry .
 ```
 
 The EE image publish workflow never passes repository Sentry secrets to
@@ -256,28 +256,28 @@ Run the install-link migration once against the Den database:
 docker compose -f packaging/docker/docker-compose.den-dev.yml exec den sh -lc "node /app/ee/packages/den-db/dist/scripts/bootstrap.js"
 ```
 
-Set `DEN_BOOTSTRAP_ADMIN_EMAILS` on the Den API service, restart it, open `/admin`, and toggle `Install links` for each org. Optional installer artifact env vars are `OPENWORK_INSTALLER_RELEASE_TAG`, `OPENWORK_INSTALLER_RELEASE_REPO`, and `OPENWORK_INSTALLER_ARTIFACTS_DIR`; see the [operator guide](../../docs/org-install-links.md).
+Set `DEN_BOOTSTRAP_ADMIN_EMAILS` on the Den API service, restart it, open `/admin`, and toggle `Install links` for each org. Optional installer artifact env vars are `MICX_INSTALLER_RELEASE_TAG`, `MICX_INSTALLER_RELEASE_REPO`, and `MICX_INSTALLER_ARTIFACTS_DIR`; see the [operator guide](../../docs/org-install-links.md).
 
 ### Faster inner-loop alternative
 
 If you are iterating on Den locally and do not need the full Dockerized web stack, use the hybrid path instead:
 
-From the OpenWork repo root:
+From the Micx repo root:
 
 ```bash
 pnpm dev:den
 ```
 
-Or from the OpenWork enterprise root:
+Or from the Micx enterprise root:
 
 ```bash
-pnpm --dir _repos/openwork dev:den
+pnpm --dir _repos/micx dev:den
 ```
 
 What it does:
 - Starts only **MySQL** in Docker
 - Runs **Den controller** locally in watch mode
-- Runs **OpenWork Cloud web app** locally in Next.js dev mode
+- Runs **Micx Cloud web app** locally in Next.js dev mode
 - Reuses the existing local-dev wiring in `scripts/dev-web-local.sh`
 
 This is usually the fastest path for UI/auth/control-plane iteration because it avoids rebuilding the Docker web image on each boot.
@@ -301,26 +301,26 @@ pnpm dev:den:mysql:down
 
 ## Pre-baked Micro-Sandbox Image
 
-For micro-sandbox work, use the pre-baked image that compiles `openwork-server` from source and downloads the pinned `opencode` binary during `docker build`.
+For micro-sandbox work, use the pre-baked image that compiles `micx-server` from source and downloads the pinned `opencode` binary during `docker build`.
 
 Build it from the repo root:
 
 ```bash
-./scripts/build-microsandbox-openwork-image.sh
+./scripts/build-microsandbox-micx-image.sh
 ```
 
 Run it locally:
 
 ```bash
 docker run --rm -p 8787:8787 \
-  -e OPENWORK_CONNECT_HOST=127.0.0.1 \
-  openwork-microsandbox:dev
+  -e MICX_CONNECT_HOST=127.0.0.1 \
+  micx-microsandbox:dev
 ```
 
 Defaults:
-- `OPENWORK_TOKEN=microsandbox-token`
-- `OPENWORK_HOST_TOKEN=microsandbox-host-token`
-- `OPENWORK_APPROVAL_MODE=auto`
+- `MICX_TOKEN=microsandbox-token`
+- `MICX_HOST_TOKEN=microsandbox-host-token`
+- `MICX_APPROVAL_MODE=auto`
 
 Verification:
 - Health: `curl http://127.0.0.1:8787/health`
@@ -328,21 +328,21 @@ Verification:
 - Docker health: `docker inspect --format '{{json .State.Health}}' <container>`
 
 Useful overrides:
-- `OPENWORK_TOKEN` — set your own client bearer token
-- `OPENWORK_HOST_TOKEN` — set your own host/admin token
-- `OPENWORK_CONNECT_HOST` — host name embedded in the printed connect URL
+- `MICX_TOKEN` — set your own client bearer token
+- `MICX_HOST_TOKEN` — set your own host/admin token
+- `MICX_CONNECT_HOST` — host name embedded in the printed connect URL
 - `DOCKER_PLATFORM` — optional platform passed to `docker build`
 
 ---
 
 ## Production container
 
-This is a minimal packaging template to run the OpenWork Host contract in a single container.
+This is a minimal packaging template to run the Micx Host contract in a single container.
 
 It runs:
 
-- `openwork-server` published on `0.0.0.0:8787` (the only published surface)
-- Managed `opencode` launched internally by `openwork-server`
+- `micx-server` published on `0.0.0.0:8787` (the only published surface)
+- Managed `opencode` launched internally by `micx-server`
 
 ### Local run (compose)
 
@@ -360,20 +360,20 @@ Then open:
 
 Recommended env vars:
 
-- `OPENWORK_TOKEN` (client token)
-- `OPENWORK_HOST_TOKEN` (host/owner token)
+- `MICX_TOKEN` (client token)
+- `MICX_HOST_TOKEN` (host/owner token)
 
 Optional:
 
-- `OPENWORK_APPROVAL_MODE=auto|manual`
-- `OPENWORK_APPROVAL_TIMEOUT_MS=30000`
+- `MICX_APPROVAL_MODE=auto|manual`
+- `MICX_APPROVAL_TIMEOUT_MS=30000`
 
 Persistence:
 
 - Workspace is mounted at `/workspace`
-- Host data dir is mounted at `/data` (OpenCode caches + OpenWork server config/tokens)
+- Host data dir is mounted at `/data` (OpenCode caches + Micx server config/tokens)
 
 ### Notes
 
-- OpenCode is not exposed directly; access it via the OpenWork proxy (`/opencode/*`).
+- OpenCode is not exposed directly; access it via the Micx proxy (`/opencode/*`).
 - For PaaS, replace `./workspace:/workspace` with a volume or a checkout strategy (git clone on boot).

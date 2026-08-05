@@ -1,5 +1,5 @@
 {
-  "name": "@openwork/hosts",
+  "name": "@micx/hosts",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -31,7 +31,7 @@
     }
   },
   "dependencies": {
-    "@openwork/cdp": "workspace:*",
-    "@openwork/timeline": "workspace:*"
+    "@micx/cdp": "workspace:*",
+    "@micx/timeline": "workspace:*"
   }
 }

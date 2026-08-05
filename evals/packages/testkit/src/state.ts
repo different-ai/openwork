@@ -1,8 +1,8 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { evalIn } from "@openwork/behaviors";
-import { electronProfilePaths } from "@openwork/hosts";
-import type { Surface } from "@openwork/cdp";
+import { evalIn } from "@micx/behaviors";
+import { electronProfilePaths } from "@micx/hosts";
+import type { Surface } from "@micx/cdp";
 
 export interface DenClientState {
   authTokenPresent: boolean;
@@ -36,10 +36,10 @@ function errorCode(error: unknown): string | null {
 
 export async function readDenClientState(app: Surface): Promise<DenClientState> {
   const value = await evalIn(app, `(() => ({
-    authTokenPresent: Boolean((localStorage.getItem("openwork.den.authToken") ?? "").trim()),
-    activeOrgId: (localStorage.getItem("openwork.den.activeOrgId") ?? "").trim() || null,
-    activeOrgSlug: (localStorage.getItem("openwork.den.activeOrgSlug") ?? "").trim() || null,
-    activeOrgName: (localStorage.getItem("openwork.den.activeOrgName") ?? "").trim() || null,
+    authTokenPresent: Boolean((localStorage.getItem("micx.den.authToken") ?? "").trim()),
+    activeOrgId: (localStorage.getItem("micx.den.activeOrgId") ?? "").trim() || null,
+    activeOrgSlug: (localStorage.getItem("micx.den.activeOrgSlug") ?? "").trim() || null,
+    activeOrgName: (localStorage.getItem("micx.den.activeOrgName") ?? "").trim() || null,
   }))()`);
   if (!isRecord(value)) throw new Error("The desktop returned an invalid Den client state.");
   return {
@@ -58,9 +58,9 @@ export async function readConnectState(app: Surface): Promise<ConnectState> {
     let baseUrl = "";
     let token = "";
     try {
-      const invokeDesktop = window.__OPENWORK_ELECTRON__ && window.__OPENWORK_ELECTRON__.invokeDesktop;
+      const invokeDesktop = window.__MICX_ELECTRON__ && window.__MICX_ELECTRON__.invokeDesktop;
       if (invokeDesktop) {
-        const info = await invokeDesktop("openworkServerInfo");
+        const info = await invokeDesktop("micxServerInfo");
         if (info && info.running === true) {
           baseUrl = String(info.baseUrl ?? info.connectUrl ?? "").trim().replace(/\\/+$/, "");
           token = String(info.ownerToken ?? info.clientToken ?? "").trim();
@@ -68,9 +68,9 @@ export async function readConnectState(app: Surface): Promise<ConnectState> {
       }
     } catch {}
     if (!baseUrl || !token) {
-      const port = (localStorage.getItem("openwork.server.port") ?? "").trim();
+      const port = (localStorage.getItem("micx.server.port") ?? "").trim();
       baseUrl = port ? "http://127.0.0.1:" + port : baseUrl;
-      token = token || (localStorage.getItem("openwork.server.token") ?? "").trim();
+      token = token || (localStorage.getItem("micx.server.token") ?? "").trim();
     }
     if (!baseUrl || !token) {
       return { ok: false, connectEnabled: null, raw: { error: "Local server credentials are unavailable." } };
@@ -113,14 +113,14 @@ export async function readConnectStateFile(app: Surface): Promise<ConnectStateFi
   }
   if (!app.handle.profileDir) throw new Error("The local app did not expose its profile directory.");
   // The local server persists runtime state next to its config file
-  // (`openworkConfigDir()`). The dev-mode desktop redirects that XDG config
-  // root under its Electron userData dir (`<userData>/openwork-dev-data/xdg/config`),
+  // (`micxConfigDir()`). The dev-mode desktop redirects that XDG config
+  // root under its Electron userData dir (`<userData>/micx-dev-data/xdg/config`),
   // so probe the known layouts in order.
   const paths = electronProfilePaths(app.handle.profileDir);
   const candidates = [
-    join(paths.userDataDir, "openwork-dev-data", "xdg", "config", "openwork", "connect-state.json"),
-    join(paths.configHome, "openwork", "connect-state.json"),
-    join(paths.homeDir, ".config", "openwork", "connect-state.json"),
+    join(paths.userDataDir, "micx-dev-data", "xdg", "config", "micx", "connect-state.json"),
+    join(paths.configHome, "micx", "connect-state.json"),
+    join(paths.homeDir, ".config", "micx", "connect-state.json"),
   ];
   let text: string | null = null;
   for (const path of candidates) {

@@ -1,6 +1,6 @@
 # org-mcp-agent-config-demo — An admin publishes a team connection from chat, and everyone gets a clean way in
 
-Cast: Alex (org admin) and Jordan (member), both in the OpenWork desktop app
+Cast: Alex (org admin) and Jordan (member), both in the Micx desktop app
 against a real Den stack. The external tool is played by the mock MCP server
 (protocol-identical to Notion). This is Path A (classical) from
 evals/org-mcp-agent-config-ux.md: the agent creates and configures the
@@ -15,6 +15,6 @@ and not narrated here.
 
 3. Alex asks who can use it, and the agent reads the access back: everyone in the org, each with their own sign-in. Governance you can ask about in plain language.
 
-4. Jordan opens her own OpenWork and there it is — the connection her admin created in a chat window, waiting in Extensions with Connect your account. Same card, same flow she already knows.
+4. Jordan opens her own Micx and there it is — the connection her admin created in a chat window, waiting in Extensions with Connect your account. Same card, same flow she already knows.
 
 5. And when Jordan asks her own agent to publish a connection, it politely declines: that needs an admin. The agent's power is your role, nothing more.

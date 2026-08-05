@@ -1,6 +1,6 @@
-# OpenWork EE Helm Chart
+# Micx EE Helm Chart
 
-Initial Helm chart for the OpenWork EE Den stack:
+Initial Helm chart for the Micx EE Den stack:
 
 - `den-api` control plane on port `8788`
 - `den-web` web app on port `3005`
@@ -15,7 +15,7 @@ Published releases are available as an OCI Helm chart:
 
 ```bash
 helm upgrade --install openwork-ee oci://ghcr.io/different-ai/charts/openwork-ee \
-  --version REPLACE_OPENWORK_VERSION \
+  --version REPLACE_MICX_VERSION \
   -f values.prod.yaml
 ```
 
@@ -25,31 +25,31 @@ Create a values file for the target environment:
 
 ```yaml
 image:
-  tag: "REPLACE_OPENWORK_VERSION"
+  tag: "REPLACE_MICX_VERSION"
 
 config:
   tenancy:
     # Default chart behavior is single-org for private/self-hosted installs.
-    # Hosted OpenWork Cloud should set this to "multi_org" explicitly.
+    # Hosted Micx Cloud should set this to "multi_org" explicitly.
     mode: "single_org"
-    singleOrgName: "OpenWork"
+    singleOrgName: "Micx"
     singleOrgSlug: "default"
     ownerEmails: "admin@example.com"
     allowPublicSignup: "false"
     requireEmailVerification: "false"
   public:
-    webOrigin: "https://openwork.example.com"
-    apiOrigin: "https://api.openwork.example.com"
-    mcpResourceUrl: "https://api.openwork.example.com/mcp"
-    mcpClaimNamespace: "https://openwork.example.com"
-    desktopDenBaseUrl: "https://openwork.example.com"
-    corsOrigins: "https://openwork.example.com,https://api.openwork.example.com"
-    betterAuthTrustedOrigins: "https://openwork.example.com"
-    webAppHosts: "openwork.example.com"
+    webOrigin: "https://micx.example.com"
+    apiOrigin: "https://api.micx.example.com"
+    mcpResourceUrl: "https://api.micx.example.com/mcp"
+    mcpClaimNamespace: "https://micx.example.com"
+    desktopDenBaseUrl: "https://micx.example.com"
+    corsOrigins: "https://micx.example.com,https://api.micx.example.com"
+    betterAuthTrustedOrigins: "https://micx.example.com"
+    webAppHosts: "micx.example.com"
     bootstrapAdminEmails: "admin@example.com"
     # Self-hosted default: every organization gets install downloads.
     installLinksGatingEnabled: "false"
-    authCallbackUrl: "https://openwork.example.com"
+    authCallbackUrl: "https://micx.example.com"
   githubConnector:
     appId: ""
     clientId: ""
@@ -58,13 +58,13 @@ secret:
   values:
     # Transitional/smoke TLS only: sslaccept=accept encrypts without certificate verification.
     # For production verification, use customCa plus sslmode=verify-full or verify-ca.
-    databaseUrl: "mysql://openwork:REPLACE_ME@mysql.example.internal:3306/openwork_den?sslaccept=accept"
+    databaseUrl: "mysql://micx:REPLACE_ME@mysql.example.internal:3306/micx_den?sslaccept=accept"
     betterAuthSecret: "REPLACE_WITH_AT_LEAST_32_CHARACTERS"
     denDbEncryptionKey: "REPLACE_WITH_AT_LEAST_32_CHARACTERS"
-    emailFrom: "OpenWork <no-reply@example.com>"
+    emailFrom: "Micx <no-reply@example.com>"
     smtpHost: "smtp.example.com"
     smtpPort: "587"
-    smtpUser: "openwork@example.com"
+    smtpUser: "micx@example.com"
     smtpPass: "REPLACE_ME"
     smtpSecure: "false"
     githubConnectorAppClientSecret: ""
@@ -75,9 +75,9 @@ ingress:
   enabled: true
   className: nginx
   web:
-    host: openwork.example.com
+    host: micx.example.com
   api:
-    host: api.openwork.example.com
+    host: api.micx.example.com
 ```
 
 For private GHCR packages, authenticate before installing:
@@ -152,7 +152,7 @@ The existing Secret must contain the keys listed under `secret.keys`, especially
 - `BETTER_AUTH_SECRET`
 - `DEN_DB_ENCRYPTION_KEY`
 
-Set `DAYTONA_API_KEY` when `config.provisioner.mode` is `daytona`. Set `POLAR_ACCESS_TOKEN` when Polar feature gating is enabled. Set `OPENROUTER_MANAGEMENT_API_KEY` when enabling OpenWork Models management.
+Set `DAYTONA_API_KEY` when `config.provisioner.mode` is `daytona`. Set `POLAR_ACCESS_TOKEN` when Polar feature gating is enabled. Set `OPENROUTER_MANAGEMENT_API_KEY` when enabling Micx Models management.
 
 ## Custom CA certificates
 
@@ -161,7 +161,7 @@ surfaces, see the published
 [Certificate trust and proxies](../../../packages/docs/start-here/certificate-trust-and-proxies.mdx)
 page. This section remains the authoritative chart values reference.
 
-Use `customCa` when OpenWork must trust a private certificate authority for
+Use `customCa` when Micx must trust a private certificate authority for
 strict TLS verification, such as a MySQL endpoint signed by an internal or cloud
 private CA. The chart does not accept PEM material in values and does not create
 the CA resource for you; create the Kubernetes Secret or ConfigMap in the
@@ -170,15 +170,15 @@ release namespace before running `helm install` or `helm upgrade`.
 Secret example:
 
 ```bash
-kubectl create secret generic openwork-custom-ca \
-  --namespace openwork \
+kubectl create secret generic micx-custom-ca \
+  --namespace micx \
   --from-file=ca.crt=./corp-root-ca.pem
 ```
 
 ```yaml
 customCa:
   enabled: true
-  existingSecret: openwork-custom-ca
+  existingSecret: micx-custom-ca
   existingConfigMap: ""
   key: ca.crt
 ```
@@ -186,8 +186,8 @@ customCa:
 ConfigMap example:
 
 ```bash
-kubectl create configmap openwork-custom-ca \
-  --namespace openwork \
+kubectl create configmap micx-custom-ca \
+  --namespace micx \
   --from-file=ca.crt=./corp-root-ca.pem
 ```
 
@@ -195,13 +195,13 @@ kubectl create configmap openwork-custom-ca \
 customCa:
   enabled: true
   existingSecret: ""
-  existingConfigMap: openwork-custom-ca
+  existingConfigMap: micx-custom-ca
   key: ca.crt
 ```
 
 When enabled, set exactly one of `existingSecret` or `existingConfigMap`, and set
 `key` to the data key containing the CA bundle. The chart mounts only that key as
-`/etc/openwork/custom-ca/ca-bundle.pem` and sets `NODE_EXTRA_CA_CERTS` to that
+`/etc/micx/custom-ca/ca-bundle.pem` and sets `NODE_EXTRA_CA_CERTS` to that
 file for `den-api`, `den-web`, enabled `inference`, and the migration Job. Do
 not also set `denApi.env.NODE_EXTRA_CA_CERTS`, `denWeb.env.NODE_EXTRA_CA_CERTS`,
 or `inference.env.NODE_EXTRA_CA_CERTS`; Helm rejects those conflicts while
@@ -213,7 +213,7 @@ For strict MySQL TLS verification, pair the mounted CA with a verifying
 ```yaml
 secret:
   values:
-    databaseUrl: "mysql://openwork:REPLACE_DB_PASSWORD@mysql.example.internal:3306/openwork_den?sslmode=verify-full"
+    databaseUrl: "mysql://micx:REPLACE_DB_PASSWORD@mysql.example.internal:3306/micx_den?sslmode=verify-full"
 ```
 
 `sslmode=verify-ca`, `sslmode=verify-full`, and `sslaccept=strict` enable strict
@@ -223,14 +223,14 @@ the CA bundle.
 
 The custom CA is release-wide for Node.js processes in this chart. Treat it as a
 global trust decision for outbound TLS from those workloads, and include only CA
-roots your OpenWork deployment should trust. On CA rotation, update the existing
+roots your Micx deployment should trust. On CA rotation, update the existing
 Secret or ConfigMap and restart the running workloads so Node reloads the CA
 file, for example:
 
 ```bash
-kubectl rollout restart deployment/openwork-ee-den-api --namespace openwork
-kubectl rollout restart deployment/openwork-ee-den-web --namespace openwork
-kubectl rollout restart deployment/openwork-ee-inference --namespace openwork
+kubectl rollout restart deployment/openwork-ee-den-api --namespace micx
+kubectl rollout restart deployment/openwork-ee-den-web --namespace micx
+kubectl rollout restart deployment/openwork-ee-inference --namespace micx
 ```
 
 The next migration hook Job will mount the current CA data; rerun a failed
@@ -258,27 +258,27 @@ Before starting, you need:
   authentication.
 - `kubectl` and Helm configured for the target cluster.
 
-The chart configures telemetry export from OpenWork; it does not install an
+The chart configures telemetry export from Micx; it does not install an
 OpenTelemetry Collector. For an in-cluster Collector, use its Kubernetes DNS
 name, for example
 `http://otel-collector.observability.svc.cluster.local:4318`. Do not use
-`localhost`, because that would refer to the OpenWork container itself.
+`localhost`, because that would refer to the Micx container itself.
 
 First create the namespace used by this example:
 
 ```bash
-kubectl create namespace openwork
+kubectl create namespace micx
 ```
 
 If the Collector does not require authentication, skip the Secret and leave
 `observability.otel.headers.existingSecret` empty.
 
 If it requires a bearer token, create the header Secret in the **same
-namespace as OpenWork**:
+namespace as Micx**:
 
 ```bash
-kubectl create secret generic openwork-otel-headers \
-  --namespace openwork \
+kubectl create secret generic micx-otel-headers \
+  --namespace micx \
   --from-literal=OTEL_EXPORTER_OTLP_HEADERS='Authorization=Bearer <token>'
 ```
 
@@ -287,8 +287,8 @@ passes the complete header as one value. To update an existing Secret without
 deleting it first, use:
 
 ```bash
-kubectl create secret generic openwork-otel-headers \
-  --namespace openwork \
+kubectl create secret generic micx-otel-headers \
+  --namespace micx \
   --from-literal=OTEL_EXPORTER_OTLP_HEADERS='Authorization=Bearer <token>' \
   --dry-run=client -o yaml | kubectl apply -f -
 ```
@@ -296,8 +296,8 @@ kubectl create secret generic openwork-otel-headers \
 Multiple OTLP headers use the standard comma-separated `key=value` format:
 
 ```bash
-kubectl create secret generic openwork-otel-headers \
-  --namespace openwork \
+kubectl create secret generic micx-otel-headers \
+  --namespace micx \
   --from-literal=OTEL_EXPORTER_OTLP_HEADERS='Authorization=Bearer <token>,x-scope-orgid=<tenant>'
 ```
 
@@ -312,8 +312,8 @@ Create `values-observability.yaml`:
 observability:
   backend: otel
   serviceNames:
-    denApi: openwork-den-api
-    denWeb: openwork-den-web
+    denApi: micx-den-api
+    denWeb: micx-den-web
   otel:
     endpoint: "http://otel-collector.observability.svc.cluster.local:4318"
     tracesEndpoint: ""
@@ -326,7 +326,7 @@ observability:
     tracesSampler: parentbased_always_on
     tracesSamplerArg: ""
     headers:
-      existingSecret: openwork-otel-headers
+      existingSecret: micx-otel-headers
       key: OTEL_EXPORTER_OTLP_HEADERS
 ```
 
@@ -338,11 +338,11 @@ For a Collector without authentication, use:
       key: OTEL_EXPORTER_OTLP_HEADERS
 ```
 
-Install or upgrade OpenWork with the values file:
+Install or upgrade Micx with the values file:
 
 ```bash
 helm upgrade --install openwork-ee ./packaging/helm/openwork-ee \
-  --namespace openwork \
+  --namespace micx \
   --create-namespace \
   --values values-observability.yaml
 ```
@@ -355,32 +355,32 @@ Secret. Its key is exposed as `OTEL_EXPORTER_OTLP_HEADERS` only on `den-api` and
 
 The commands below assume the Helm release is named `openwork-ee`. If you use a
 different release name, run `kubectl get deployments,services --namespace
-openwork` to find the generated resource names.
+micx` to find the generated resource names.
 
 Confirm that the workloads are ready:
 
 ```bash
-kubectl get pods --namespace openwork
-kubectl rollout status deployment/openwork-ee-den-api --namespace openwork
-kubectl rollout status deployment/openwork-ee-den-web --namespace openwork
+kubectl get pods --namespace micx
+kubectl rollout status deployment/openwork-ee-den-api --namespace micx
+kubectl rollout status deployment/openwork-ee-den-web --namespace micx
 ```
 
 Inspect the rendered environment references without printing the Secret's
 value:
 
 ```bash
-kubectl describe deployment/openwork-ee-den-api --namespace openwork
-kubectl describe deployment/openwork-ee-den-web --namespace openwork
+kubectl describe deployment/openwork-ee-den-api --namespace micx
+kubectl describe deployment/openwork-ee-den-web --namespace micx
 ```
 
 Look for `DEN_OBSERVABILITY_BACKEND=otel`, distinct `OTEL_SERVICE_NAME` values,
 the OTLP endpoint, and an `OTEL_EXPORTER_OTLP_HEADERS` reference to
-`openwork-otel-headers`.
+`micx-otel-headers`.
 
 Generate a request that crosses both services. Keep this port-forward running:
 
 ```bash
-kubectl port-forward service/openwork-ee-den-web 3005:3005 --namespace openwork
+kubectl port-forward service/openwork-ee-den-web 3005:3005 --namespace micx
 ```
 
 In another terminal:
@@ -390,20 +390,20 @@ curl --fail --silent --show-error \
   http://127.0.0.1:3005/api/den/openapi.json >/dev/null
 ```
 
-Your observability backend should show `openwork-den-web` and
-`openwork-den-api`, with one connected trace for the request. Logs from both
+Your observability backend should show `micx-den-web` and
+`micx-den-api`, with one connected trace for the request. Logs from both
 services carry trace and span IDs. Den API also exports Hono request-duration
 and active-request metrics.
 
 ### Endpoint and troubleshooting notes
 
-- `observability.otel.endpoint` is a base endpoint. OpenWork appends
+- `observability.otel.endpoint` is a base endpoint. Micx appends
   `/v1/traces`, `/v1/metrics`, and `/v1/logs`.
 - Signal-specific endpoints are used exactly as written. Include the full
   signal path, such as `https://collector.example.com/v1/traces`.
 - Only OTLP HTTP/protobuf is supported. Port `4317` is normally OTLP gRPC and
   will not work; use the HTTP receiver, usually port `4318`.
-- The Secret must be in the OpenWork release namespace, and its key must match
+- The Secret must be in the Micx release namespace, and its key must match
   `observability.otel.headers.key` exactly.
 - A `401` or `403` exporter error usually means the token or header syntax is
   wrong. A connection error usually means the endpoint is not reachable from
@@ -412,8 +412,8 @@ and active-request metrics.
   secret controller does not trigger a rollout:
 
   ```bash
-  kubectl rollout restart deployment/openwork-ee-den-api --namespace openwork
-  kubectl rollout restart deployment/openwork-ee-den-web --namespace openwork
+  kubectl rollout restart deployment/openwork-ee-den-api --namespace micx
+  kubectl rollout restart deployment/openwork-ee-den-web --namespace micx
   ```
 - For lower production trace volume, use
   `tracesSampler: parentbased_traceidratio` with `tracesSamplerArg: "0.1"` to
@@ -429,7 +429,7 @@ observability:
   backend: sentry
   sentry:
     dsnSecret:
-      existingSecret: openwork-sentry-runtime
+      existingSecret: micx-sentry-runtime
       key: SENTRY_DSN
     tracesSampleRate: "1"
     environment: production
@@ -456,8 +456,8 @@ OAuth social sign-in. Follow the full setup guide in
 
 Use these public URLs when creating the GitHub App:
 
-- Setup URL: `https://openwork.example.com/dashboard/integrations/github`
-- Webhook URL: `https://api.openwork.example.com/v1/webhooks/connectors/github`
+- Setup URL: `https://micx.example.com/dashboard/integrations/github`
+- Webhook URL: `https://api.micx.example.com/v1/webhooks/connectors/github`
 
 Then set the chart values:
 
@@ -497,10 +497,10 @@ the chart Secret:
 ```yaml
 secret:
   values:
-    emailFrom: "OpenWork <no-reply@example.com>"
+    emailFrom: "Micx <no-reply@example.com>"
     smtpHost: "smtp.example.com"
     smtpPort: "587"
-    smtpUser: "openwork@example.com"
+    smtpUser: "micx@example.com"
     smtpPass: "REPLACE_ME"
     smtpSecure: "false"
 ```
@@ -527,7 +527,7 @@ The chart defaults to a private single-org deployment:
 config:
   tenancy:
     mode: "single_org"
-    singleOrgName: "OpenWork"
+    singleOrgName: "Micx"
     singleOrgSlug: "default"
     ownerEmails: "admin@example.com"
     allowPublicSignup: "false"
@@ -737,12 +737,12 @@ Optional installer artifact values:
 config:
   public:
     installerReleaseTag: "v0.17.9"
-    installerReleaseRepo: "different-ai/openwork"
+    installerReleaseRepo: "different-ai/micx"
 
 installerArtifacts:
   enabled: true
-  existingClaim: openwork-desktop-artifacts
-  mountPath: /var/lib/openwork/installer-artifacts
+  existingClaim: micx-desktop-artifacts
+  mountPath: /var/lib/micx/installer-artifacts
 ```
 
 Use either `installerArtifacts.existingClaim` or `installerArtifacts.hostPath`,
@@ -750,7 +750,7 @@ not both.
 
 ### Guided desktop setup
 
-The organization download page hands the normal OpenWork app its Den
+The organization download page hands the normal Micx app its Den
 configuration in an explicit second step. The default is a short-lived,
 single-use HTTPS exchange and needs no key configuration:
 
@@ -767,7 +767,7 @@ Den validates the install token and then either:
 - redirects the browser directly to the exact configured GitHub release asset.
 
 Den does not download, cache, wrap, or ZIP GitHub artifacts. The organization
-setup stays in the **Open OpenWork** deep-link step after installation.
+setup stays in the **Open Micx** deep-link step after installation.
 
 For an optional signed handoff, explicitly select signed mode and configure a
 dedicated Ed25519 key whose public key is already trusted by the desktop build:
@@ -794,11 +794,11 @@ desktop build will reject it until the matching public key ships in that build.
 For a semi-air-gapped deployment, mount these normal release filenames (where
 `<version>` is `installerReleaseTag` without its leading `v`):
 
-- `openwork-mac-arm64-<version>.dmg`
-- `openwork-mac-x64-<version>.dmg`
-- `openwork-win-x64-<version>.exe`
-- `openwork-linux-x86_64-<version>.AppImage`
-- `openwork-linux-arm64-<version>.AppImage`
+- `micx-mac-arm64-<version>.dmg`
+- `micx-mac-x64-<version>.dmg`
+- `micx-win-x64-<version>.exe`
+- `micx-linux-x86_64-<version>.AppImage`
+- `micx-linux-arm64-<version>.AppImage`
 
 Without mounted artifacts, client networks must permit the configured GitHub
 release URL and GitHub's redirected release-asset host. With mounted artifacts,

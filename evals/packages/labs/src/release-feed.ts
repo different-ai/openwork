@@ -112,7 +112,7 @@ type ComparableVersion = {
   prerelease: string[];
 };
 
-const DEFAULT_REPO = "different-ai/openwork";
+const DEFAULT_REPO = "different-ai/micx";
 const DEFAULT_PLATFORMS: ReleasePlatform[] = ["mac-arm64", "mac-x64", "win-x64", "linux-x64", "linux-arm64"];
 const DEFAULT_DISTRIBUTION: ReleaseDistribution = "enterprise";
 const textEncoder = new TextEncoder();
@@ -230,7 +230,7 @@ export function desktopReleaseAssetFileName(
   distribution: ReleaseDistribution = DEFAULT_DISTRIBUTION,
 ): string {
   const normalized = requireVersion(version);
-  const prefix = distribution === "public" ? "openwork" : `openwork-${distribution}`;
+  const prefix = distribution === "public" ? "micx" : `micx-${distribution}`;
   if (platform === "win-x64") return `${prefix}-win-x64-${normalized}.exe`;
   if (platform === "mac-arm64" || platform === "mac-x64") return `${prefix}-${platform}-${normalized}.dmg`;
   return `${prefix}-${platformFilePart(platform)}-${normalized}.AppImage`;
@@ -245,7 +245,7 @@ function contentTypeForPlatform(platform: ReleasePlatform): string {
 function assetBody(input: ReleaseAssetInput, version: string): Uint8Array {
   if (typeof input.body === "string") return textEncoder.encode(input.body);
   if (input.body) return input.body;
-  return textEncoder.encode(`openwork release ${version} ${input.platform}\n`);
+  return textEncoder.encode(`micx release ${version} ${input.platform}\n`);
 }
 
 function normalizeAsset(input: ReleaseAssetInput, version: string, installerCapable: boolean): ReleaseAsset {

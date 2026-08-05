@@ -50,13 +50,13 @@ export default {
   title: "Open app, create a task, write a message, get a response",
   spec: "evals/react-session-flows.md",
   precondition: async (ctx) => {
-    await ctx.waitFor("Boolean(window.__openworkControl)", {
+    await ctx.waitFor("Boolean(window.__micxControl)", {
       timeoutMs: 60_000,
       label: "control API",
     });
     const state = await ctx.waitFor(
       `(() => {
-        const control = window.__openworkControl;
+        const control = window.__micxControl;
         const route = control.snapshot().route;
         if (route.startsWith("/welcome") || route.startsWith("/signin")) return "blocked";
         const action = control.listActions().find((a) => a.id === "session.create_task");
@@ -75,7 +75,7 @@ export default {
       run: async (ctx) => {
         await ctx.prove("App boots clean to a known route", {
           action: async () => {
-            await ctx.waitFor("Boolean(window.__openworkControl)", {
+            await ctx.waitFor("Boolean(window.__micxControl)", {
               timeoutMs: 60_000,
               label: "control API",
             });
@@ -84,7 +84,7 @@ export default {
             });
           },
           assert: async () => {
-            const route = await ctx.eval("window.__openworkControl.snapshot().route");
+            const route = await ctx.eval("window.__micxControl.snapshot().route");
             ctx.assert(
               typeof route === "string" && route.length > 0,
               "No route reported by control snapshot.",
@@ -106,7 +106,7 @@ export default {
             // The newly created session id should be reflected in the route.
             const sessionId = await ctx.waitFor(
               `(() => {
-                const route = window.__openworkControl.snapshot().route || "";
+                const route = window.__micxControl.snapshot().route || "";
                 const m = route.match(/ses_[A-Za-z0-9]+/);
                 return m ? m[0] : null;
               })()`,

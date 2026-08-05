@@ -12,7 +12,7 @@ pnpm fraimz:publish -- --pr <n> [--roll <dir|name>] [--force] [--open]
 ```
 
 `fraimz:publish` is an implementation-compatibility command name. It publishes
-an existing `@openwork/testkit` evidence tape; it does not run a legacy flow.
+an existing `@micx/testkit` evidence tape; it does not run a legacy flow.
 
 ## Publishing contract
 

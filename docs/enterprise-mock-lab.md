@@ -43,7 +43,7 @@ The local admin application is [`ee/apps/enterprise-mock-lab`](../ee/apps/enterp
 Dependency rules:
 
 1. `enterprise-mock-lab` may depend on `enterprise-mcp-mock-server`.
-2. `enterprise-mcp-mock-server` must not import Den, an EE app, OpenWork's MCP client, or a provider SDK.
+2. `enterprise-mcp-mock-server` must not import Den, an EE app, Micx's MCP client, or a provider SDK.
 3. Den must not import the EE app. A future Den test connects to a lab data-plane URL like any other remote MCP client.
 4. Provider differences belong in named, sourced profiles or faults—not hidden environment checks.
 5. Runtime secrets and ports belong to the app or test harness, never to package fixtures.
@@ -76,7 +76,7 @@ From the repository root, install dependencies once, generate a fresh local admi
 pnpm install
 export ENTERPRISE_MOCK_LAB_ADMIN_SECRET="$(node -e 'console.log(require("node:crypto").randomBytes(32).toString("base64url"))')"
 printf 'Local lab admin secret: %s\n' "$ENTERPRISE_MOCK_LAB_ADMIN_SECRET"
-pnpm --filter @openwork-ee/enterprise-mock-lab dev
+pnpm --filter @micx-ee/enterprise-mock-lab dev
 ```
 
 Open `http://127.0.0.1:8794` and paste the generated admin secret. The control plane starts with no mock instances; creating an instance does not start it automatically.
@@ -349,11 +349,11 @@ No single test is allowed to stand in for all the others.
 
 | Layer | What it proves | Command or owner |
 | --- | --- | --- |
-| Contract/unit | Scenario schema, profile provenance, fault applicability, revisions, redaction, deterministic state | `pnpm --filter @openwork/enterprise-mcp-mock-server test` |
-| Package quality | Public TypeScript surface and distributable build | `pnpm --filter @openwork/enterprise-mcp-mock-server check` |
+| Contract/unit | Scenario schema, profile provenance, fault applicability, revisions, redaction, deterministic state | `pnpm --filter @micx/enterprise-mcp-mock-server test` |
+| Package quality | Public TypeScript surface and distributable build | `pnpm --filter @micx/enterprise-mcp-mock-server check` |
 | Protocol integration | OAuth discovery/token path, MCP initialize/lifecycle, pagination, tool calls, JSON/SSE, exact injected failures | Package integration tests |
-| Control-plane security | Loopback configuration, login/rate limit, session cookie, Origin/CSRF, write-only secrets, safe errors | `pnpm --filter @openwork-ee/enterprise-mock-lab test` |
-| App build | EE app imports only the public package contract and compiles as a standalone process | `pnpm --filter @openwork-ee/enterprise-mock-lab build` |
+| Control-plane security | Loopback configuration, login/rate limit, session cookie, Origin/CSRF, write-only secrets, safe errors | `pnpm --filter @micx-ee/enterprise-mock-lab test` |
+| App build | EE app imports only the public package contract and compiles as a standalone process | `pnpm --filter @micx-ee/enterprise-mock-lab build` |
 | Standalone journey | Real lab process and browser: create, start, inject fault, match first phase, reset, recover, delete | `pnpm fraimz --flow enterprise-mock-lab --cdp-url <disposable-cdp-url>` |
 | Future Den consumer | Den connects over the instance URL and renders the same phase/category without importing the lab | Separate follow-up PR and Den-specific tests |
 | Live-provider conformance | Target tenant, product, patch, permissions, policy, schemas, and provider IDs match reality | Approved Microsoft/ServiceNow test tenant; never silently run by this lab |

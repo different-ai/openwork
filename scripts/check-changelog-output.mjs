@@ -42,7 +42,7 @@ if (openingUpdates !== closingUpdates) {
   fail(`unbalanced Update tags: found ${openingUpdates} opening and ${closingUpdates} closing tags`);
 }
 
-const compareLink = `[${tag}](https://github.com/different-ai/openwork/compare/${previousTag}...${tag})`;
+const compareLink = `[${tag}](https://github.com/different-ai/micx/compare/${previousTag}...${tag})`;
 const compareLinkCount = docs.split(compareLink).length - 1;
 if (compareLinkCount !== 1) {
   fail(`expected the exact compare link ${compareLink} once, found ${compareLinkCount}`);

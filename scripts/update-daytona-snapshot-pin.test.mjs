@@ -9,7 +9,7 @@ import {
 
 const envGroupId = "evg-d83537f2gups73em0m90"
 const apiKey = "test-render-api-key"
-const snapshotName = "openwork-0.18.10"
+const snapshotName = "micx-0.18.10"
 const expectedUrl =
   "https://api.render.com/v1/env-groups/evg-d83537f2gups73em0m90/env-vars/DAYTONA_SNAPSHOT"
 
@@ -36,7 +36,7 @@ test("an already-correct pin makes zero write requests and reports unchanged", a
   assert.equal(result.status, "unchanged")
   assert.equal(calls.filter((call) => call.options.method === "PUT").length, 0)
   assert.deepEqual(messages, [
-    "unchanged: DAYTONA_SNAPSHOT is already openwork-0.18.10",
+    "unchanged: DAYTONA_SNAPSHOT is already micx-0.18.10",
   ])
 })
 
@@ -48,7 +48,7 @@ test("a different pin makes exactly one documented PUT and reports the transitio
     if (options.method === "GET") {
       return jsonResponse({
         key: "DAYTONA_SNAPSHOT",
-        value: "openwork-0.18.9",
+        value: "micx-0.18.9",
       })
     }
     return jsonResponse({ id: envGroupId })
@@ -66,10 +66,10 @@ test("a different pin makes exactly one documented PUT and reports the transitio
   assert.equal(result.status, "updated")
   assert.equal(writes.length, 1)
   assert.equal(writes[0].url, expectedUrl)
-  assert.equal(writes[0].options.body, '{"value":"openwork-0.18.10"}')
+  assert.equal(writes[0].options.body, '{"value":"micx-0.18.10"}')
   assert.equal(writes[0].options.headers["Content-Type"], "application/json")
   assert.deepEqual(messages, [
-    "updated: DAYTONA_SNAPSHOT openwork-0.18.9 -> openwork-0.18.10",
+    "updated: DAYTONA_SNAPSHOT micx-0.18.9 -> micx-0.18.10",
   ])
 })
 
@@ -78,7 +78,7 @@ test("a non-2xx response fails with the status and response body", async () => {
     if (options.method === "GET") {
       return jsonResponse({
         key: "DAYTONA_SNAPSHOT",
-        value: "openwork-0.18.9",
+        value: "micx-0.18.9",
       })
     }
     return new Response("upstream exploded", {
@@ -169,7 +169,7 @@ test("dry-run makes no requests and prints the exact proposed request", async ()
     "dry-run: no request sent",
     "method: PUT",
     `url: ${expectedUrl}`,
-    'body: {"value":"openwork-0.18.10"}',
+    'body: {"value":"micx-0.18.10"}',
   ])
 })
 
@@ -190,7 +190,7 @@ test("compare mode reports agreement without writing", async () => {
   assert.equal(result.status, "agreement")
   assert.equal(calls.length, 1)
   assert.equal(calls[0].options.method, "GET")
-  assert.deepEqual(messages, ["agreement: DAYTONA_SNAPSHOT=openwork-0.18.10"])
+  assert.deepEqual(messages, ["agreement: DAYTONA_SNAPSHOT=micx-0.18.10"])
 })
 
 test("compare mode fails with a clear diff when drift is detected", async () => {
@@ -202,10 +202,10 @@ test("compare mode fails with a clear diff when drift is detected", async () => 
       fetchImpl: async () =>
         jsonResponse({
           key: "DAYTONA_SNAPSHOT",
-          value: "openwork-0.18.9",
+          value: "micx-0.18.9",
         }),
     }),
-    /expected DAYTONA_SNAPSHOT=openwork-0\.18\.10, found DAYTONA_SNAPSHOT=openwork-0\.18\.9/,
+    /expected DAYTONA_SNAPSHOT=micx-0\.18\.10, found DAYTONA_SNAPSHOT=micx-0\.18\.9/,
   )
 })
 

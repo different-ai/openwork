@@ -12,18 +12,18 @@ const state = {
 };
 
 async function createWorkspace(ctx) {
-  const evalWorkspaceRoot = process.env.OPENWORK_DATA_DIR || tmpdir();
-  state.workspacePath = await mkdtemp(join(evalWorkspaceRoot, "openwork-create-sessions-"));
+  const evalWorkspaceRoot = process.env.MICX_DATA_DIR || tmpdir();
+  state.workspacePath = await mkdtemp(join(evalWorkspaceRoot, "micx-create-sessions-"));
   const result = await ctx.eval(`(async () => {
-    const port = localStorage.getItem("openwork.server.port");
-    const token = localStorage.getItem("openwork.server.token");
-    const hostToken = localStorage.getItem("openwork.server.hostToken");
-    if (!port || !token || !hostToken) throw new Error("OpenWork server auth is unavailable");
+    const port = localStorage.getItem("micx.server.port");
+    const token = localStorage.getItem("micx.server.token");
+    const hostToken = localStorage.getItem("micx.server.hostToken");
+    if (!port || !token || !hostToken) throw new Error("Micx server auth is unavailable");
     const baseUrl = "http://127.0.0.1:" + port;
     const headers = {
       "Content-Type": "application/json",
       Authorization: "Bearer " + token,
-      "X-OpenWork-Host-Token": hostToken,
+      "X-Micx-Host-Token": hostToken,
     };
     const existingResponse = await fetch(baseUrl + "/workspaces", { headers });
     const existing = existingResponse.ok ? await existingResponse.json() : {};
@@ -35,7 +35,7 @@ async function createWorkspace(ctx) {
         method: "DELETE",
         headers,
       }).catch(() => null);
-      await window.__OPENWORK_ELECTRON__.invokeDesktop("workspaceForget", workspace.id).catch(() => null);
+      await window.__MICX_ELECTRON__.invokeDesktop("workspaceForget", workspace.id).catch(() => null);
     }
     const createdResponse = await fetch(baseUrl + "/workspaces/local", {
       method: "POST",
@@ -57,9 +57,9 @@ async function createWorkspace(ctx) {
     if (!activatedResponse.ok) {
       throw new Error("Workspace activation failed: " + await activatedResponse.text());
     }
-    await window.__OPENWORK_ELECTRON__.invokeDesktop("workspaceSetSelected", created.activeId);
-    await window.__OPENWORK_ELECTRON__.invokeDesktop("workspaceSetRuntimeActive", created.activeId);
-    await window.__OPENWORK_ELECTRON__.invokeDesktop(
+    await window.__MICX_ELECTRON__.invokeDesktop("workspaceSetSelected", created.activeId);
+    await window.__MICX_ELECTRON__.invokeDesktop("workspaceSetRuntimeActive", created.activeId);
+    await window.__MICX_ELECTRON__.invokeDesktop(
       "engineStart",
       ${JSON.stringify(state.workspacePath)},
       {
@@ -67,15 +67,15 @@ async function createWorkspace(ctx) {
         workspacePaths: [${JSON.stringify(state.workspacePath)}],
       },
     );
-    const serverInfo = await window.__OPENWORK_ELECTRON__.invokeDesktop("openworkServerInfo");
-    if (!serverInfo?.baseUrl) throw new Error("OpenWork server did not restart for the eval workspace");
-    localStorage.setItem("openwork.server.urlOverride", serverInfo.baseUrl);
-    if (serverInfo.port) localStorage.setItem("openwork.server.port", String(serverInfo.port));
+    const serverInfo = await window.__MICX_ELECTRON__.invokeDesktop("micxServerInfo");
+    if (!serverInfo?.baseUrl) throw new Error("Micx server did not restart for the eval workspace");
+    localStorage.setItem("micx.server.urlOverride", serverInfo.baseUrl);
+    if (serverInfo.port) localStorage.setItem("micx.server.port", String(serverInfo.port));
     const nextToken = String(serverInfo.ownerToken || serverInfo.clientToken || "").trim();
     const nextHostToken = String(serverInfo.hostToken || "").trim();
-    if (nextToken) localStorage.setItem("openwork.server.token", nextToken);
-    if (nextHostToken) localStorage.setItem("openwork.server.hostToken", nextHostToken);
-    window.dispatchEvent(new CustomEvent("openwork-server-settings-changed"));
+    if (nextToken) localStorage.setItem("micx.server.token", nextToken);
+    if (nextHostToken) localStorage.setItem("micx.server.hostToken", nextHostToken);
+    window.dispatchEvent(new CustomEvent("micx-server-settings-changed"));
     const originResponse = await fetch(
       serverInfo.baseUrl.replace(/\\\/+$/, "")
         + "/workspace/" + encodeURIComponent(created.activeId) + "/opencode/session",
@@ -94,20 +94,20 @@ async function createWorkspace(ctx) {
       throw new Error("Origin session creation failed: " + JSON.stringify(originBody));
     }
     let preferences = {};
-    try { preferences = JSON.parse(localStorage.getItem("openwork.preferences") || "{}"); } catch {}
-    localStorage.setItem("openwork.preferences", JSON.stringify({
+    try { preferences = JSON.parse(localStorage.getItem("micx.preferences") || "{}"); } catch {}
+    localStorage.setItem("micx.preferences", JSON.stringify({
       ...preferences,
       hasCompletedOnboarding: true,
       providerStepCompleted: true,
     }));
-    localStorage.setItem("openwork.react.activeWorkspace", created.activeId);
+    localStorage.setItem("micx.react.activeWorkspace", created.activeId);
     location.hash = "#/workspace/" + encodeURIComponent(created.activeId)
       + "/session/" + encodeURIComponent(origin.id);
     return { workspaceId: created.activeId, originSessionId: origin.id, previousEvalPaths };
   })()`, { awaitPromise: true });
   state.workspaceId = result.workspaceId;
   state.originSessionId = result.originSessionId;
-  const safeEvalPrefix = join(evalWorkspaceRoot, "openwork-create-sessions-");
+  const safeEvalPrefix = join(evalWorkspaceRoot, "micx-create-sessions-");
   for (const previousPath of result.previousEvalPaths) {
     if (typeof previousPath === "string" && previousPath.startsWith(safeEvalPrefix)) {
       await rm(previousPath, { recursive: true, force: true });
@@ -117,9 +117,9 @@ async function createWorkspace(ctx) {
 
 async function readCreatedSessions(ctx) {
   return ctx.eval(`(async () => {
-    const port = localStorage.getItem("openwork.server.port");
-    const token = localStorage.getItem("openwork.server.token");
-    if (!port || !token) throw new Error("OpenWork server connection is unavailable");
+    const port = localStorage.getItem("micx.server.port");
+    const token = localStorage.getItem("micx.server.token");
+    if (!port || !token) throw new Error("Micx server connection is unavailable");
     const baseUrl = "http://127.0.0.1:" + port;
     const headers = { Authorization: "Bearer " + token };
     const listResponse = await fetch(
@@ -159,20 +159,20 @@ async function waitForCreatedSessions(ctx, timeoutMs = 180_000) {
 async function cleanupWorkspace(ctx) {
   if (state.workspaceId) {
     await ctx.eval(`(async () => {
-      const info = await window.__OPENWORK_ELECTRON__.invokeDesktop("openworkServerInfo");
+      const info = await window.__MICX_ELECTRON__.invokeDesktop("micxServerInfo");
       const baseUrl = info?.baseUrl || info?.connectUrl;
       const token = info?.ownerToken || info?.clientToken || "";
       const hostToken = info?.hostToken || "";
       if (baseUrl) {
         const headers = {};
         if (token) headers.Authorization = "Bearer " + token;
-        if (hostToken) headers["X-OpenWork-Host-Token"] = hostToken;
+        if (hostToken) headers["X-Micx-Host-Token"] = hostToken;
         await fetch(
           baseUrl.replace(/\\/+$/, "") + "/workspaces/" + encodeURIComponent(${JSON.stringify(state.workspaceId)}),
           { method: "DELETE", headers },
         ).catch(() => null);
       }
-      await window.__OPENWORK_ELECTRON__.invokeDesktop(
+      await window.__MICX_ELECTRON__.invokeDesktop(
         "workspaceForget",
         ${JSON.stringify(state.workspaceId)},
       ).catch(() => null);
@@ -192,9 +192,9 @@ export default {
     {
       name: "Isolated workspace and origin session are ready",
       run: async (ctx) => {
-        await ctx.waitFor("Boolean(window.__openworkControl && window.__OPENWORK_ELECTRON__)", {
+        await ctx.waitFor("Boolean(window.__micxControl && window.__MICX_ELECTRON__)", {
           timeoutMs: 60_000,
-          label: "OpenWork desktop control surfaces",
+          label: "Micx desktop control surfaces",
         });
         await createWorkspace(ctx);
         await ctx.waitFor(
@@ -214,22 +214,22 @@ export default {
         await ctx.prove("CREATE-SESSIONS creates and starts every requested chat without navigating the origin", {
           action: async () => {
             const promoOpen = await ctx.eval(
-              `document.body.innerText.includes("Continue without OpenWork Models")`,
+              `document.body.innerText.includes("Continue without Micx Models")`,
             );
             if (promoOpen) {
-              await ctx.clickText("Continue without OpenWork Models");
+              await ctx.clickText("Continue without Micx Models");
               await ctx.waitFor(
-                `!document.body.innerText.includes("Continue without OpenWork Models")`,
-                { timeoutMs: 10_000, label: "OpenWork Models promo dismissed" },
+                `!document.body.innerText.includes("Continue without Micx Models")`,
+                { timeoutMs: 10_000, label: "Micx Models promo dismissed" },
               );
             }
             await ctx.waitFor(
-              "window.__openworkControl.listActions().some((entry) => entry.id === 'composer.set_text' && entry.disabled === false)",
+              "window.__micxControl.listActions().some((entry) => entry.id === 'composer.set_text' && entry.disabled === false)",
               { timeoutMs: 30_000, label: "composer set-text action" },
             );
             await ctx.control("composer.set_text", { text: REQUEST });
             await ctx.waitFor(
-              "window.__openworkControl.listActions().some((entry) => entry.id === 'composer.send' && entry.disabled === false)",
+              "window.__micxControl.listActions().some((entry) => entry.id === 'composer.send' && entry.disabled === false)",
               { timeoutMs: 30_000, label: "enabled send action" },
             );
             await ctx.control("composer.send");
@@ -245,7 +245,7 @@ export default {
               .map((session) => `document.querySelector(${JSON.stringify(`[data-open-created-session="${session.id}"]`)})`)
               .join(" && ");
             await ctx.waitFor(
-              `document.querySelector('[data-openwork-session-create-card][data-created-session-count="3"]') && ${resultCardsExpression}`,
+              `document.querySelector('[data-micx-session-create-card][data-created-session-count="3"]') && ${resultCardsExpression}`,
               { timeoutMs: 60_000, label: "created chat card and Open chat actions" },
             );
             await ctx.eval(`(() => {

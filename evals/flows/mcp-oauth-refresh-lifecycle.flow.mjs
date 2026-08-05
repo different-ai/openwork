@@ -23,7 +23,7 @@ export default {
               "pnpm",
               [
                 "--filter",
-                "@openwork-ee/den-api",
+                "@micx-ee/den-api",
                 "exec",
                 "bun",
                 "test",

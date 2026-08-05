@@ -5,18 +5,18 @@ import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
 // The runner fails this flow if the narration drifts from that script.
 const vo = await loadVoiceoverParagraphs("gmail-reply-draft-integrity");
 
-const DEN_API_URL = (process.env.OPENWORK_EVAL_DEN_API_URL ?? "").trim().replace(/\/+$/, "");
-const DEN_WEB_URL = (process.env.OPENWORK_EVAL_DEN_WEB_URL ?? DEN_API_URL.replace("127.0.0.1", "localhost")).trim().replace(/\/+$/, "");
-const ADMIN_EMAIL = process.env.OPENWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
-const ADMIN_PASSWORD = process.env.OPENWORK_EVAL_DEMO_PASSWORD?.trim() || "OpenWorkDemo123!";
-const MEMBER_EMAIL = process.env.OPENWORK_EVAL_MEMBER_EMAIL?.trim() || "jordan.demo@acme.test";
-const MEMBER_PASSWORD = process.env.OPENWORK_EVAL_MEMBER_PASSWORD?.trim() || "OpenWorkDemo123!";
-const MARK_VERIFIED_CMD = process.env.OPENWORK_EVAL_MARK_VERIFIED_CMD?.trim() || "";
+const DEN_API_URL = (process.env.MICX_EVAL_DEN_API_URL ?? "").trim().replace(/\/+$/, "");
+const DEN_WEB_URL = (process.env.MICX_EVAL_DEN_WEB_URL ?? DEN_API_URL.replace("127.0.0.1", "localhost")).trim().replace(/\/+$/, "");
+const ADMIN_EMAIL = process.env.MICX_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
+const ADMIN_PASSWORD = process.env.MICX_EVAL_DEMO_PASSWORD?.trim() || "MicxDemo123!";
+const MEMBER_EMAIL = process.env.MICX_EVAL_MEMBER_EMAIL?.trim() || "jordan.demo@acme.test";
+const MEMBER_PASSWORD = process.env.MICX_EVAL_MEMBER_PASSWORD?.trim() || "MicxDemo123!";
+const MARK_VERIFIED_CMD = process.env.MICX_EVAL_MARK_VERIFIED_CMD?.trim() || "";
 const MOCK_SERVER_URL = (process.env.MOCK_OAUTH_MCP_URL ?? "http://127.0.0.1:3978").trim().replace(/\/+$/, "");
 const RUN_TAG = Date.now();
-const WORKSPACE_PATH = `/tmp/openwork-gmail-reply-draft-integrity-${RUN_TAG}`;
+const WORKSPACE_PATH = `/tmp/micx-gmail-reply-draft-integrity-${RUN_TAG}`;
 const GMAIL_THREAD_ID = "thread-q3-launch";
-const PROMPT = `Use the OpenWork Cloud connection: find the Gmail thread about "Q3 launch" (call search_capabilities, then the Gmail messages capability), then create a reply draft on that thread with subject "Re: Q3 launch" confirming Thursday works, addressed to sarah@acme.test. Do not include quoted history yourself; pass the threadId so OpenWork can append it. When done, reply with the draft link the tool returned.`;
+const PROMPT = `Use the Micx Cloud connection: find the Gmail thread about "Q3 launch" (call search_capabilities, then the Gmail messages capability), then create a reply draft on that thread with subject "Re: Q3 launch" confirming Thursday works, addressed to sarah@acme.test. Do not include quoted history yourself; pass the threadId so Micx can append it. When done, reply with the draft link the tool returned.`;
 const PROMPT_FRAGMENT = 'find the Gmail thread about "Q3 launch"';
 const GOOGLE_CARD_EXPR = (needle) =>
   `[...document.querySelectorAll("button")].some((el) => el.textContent.includes("Google Workspace") && el.textContent.includes(${JSON.stringify(needle)}))`;
@@ -73,7 +73,7 @@ async function ensureVerifiedUser(ctx, email, name, password) {
     body: JSON.stringify({ email, name, password }),
   });
   ctx.assert(signUp.response.ok, `Sign-up failed for ${email}: ${signUp.response.status}`);
-  ctx.assert(MARK_VERIFIED_CMD.length > 0, "Set OPENWORK_EVAL_MARK_VERIFIED_CMD to verify eval accounts.");
+  ctx.assert(MARK_VERIFIED_CMD.length > 0, "Set MICX_EVAL_MARK_VERIFIED_CMD to verify eval accounts.");
   execSync(MARK_VERIFIED_CMD.replaceAll("{email}", email), { stdio: "ignore" });
   token = await signIn(email, password);
   ctx.assert(Boolean(token), `Sign-in still failing for ${email} after sign-up.`);
@@ -123,7 +123,7 @@ async function ensureWorkspace(ctx) {
       const hasFolderInput = Boolean(document.querySelector('input[placeholder="/workspace/my-project"]'));
       const hasWorkspaceRoute = window.location.hash.includes('/workspace/') && !text.includes('Choose your organization') && !hasFolderInput;
       const hasOnboardingStep = text.includes('Choose your organization') || text.includes('Continue to workspace') || text.includes('Loading available resources');
-      const hasCreateAction = !hasOnboardingStep && window.__openworkControl?.listActions?.().find((a) => a.id === 'workspace.create')?.disabled === false;
+      const hasCreateAction = !hasOnboardingStep && window.__micxControl?.listActions?.().find((a) => a.id === 'workspace.create')?.disabled === false;
       return { hasFolderInput, hasWorkspaceRoute, hasCreateAction };
     })()`);
     if (step.hasWorkspaceRoute || step.hasCreateAction) break;
@@ -144,7 +144,7 @@ async function ensureWorkspace(ctx) {
     await sleep(1_000);
   }
   await ctx.eval(`(() => {
-    const btn = [...document.querySelectorAll('button')].find((el) => el.textContent.trim() === 'Continue without OpenWork Models');
+    const btn = [...document.querySelectorAll('button')].find((el) => el.textContent.trim() === 'Continue without Micx Models');
     btn?.click();
     return true;
   })()`, { awaitPromise: true });
@@ -153,22 +153,22 @@ async function ensureWorkspace(ctx) {
 async function createFreshEvalWorkspace(ctx) {
   await ensureWorkspace(ctx);
   await ctx.waitFor(
-    "Boolean(localStorage.getItem('openwork.server.port') && localStorage.getItem('openwork.server.token') && localStorage.getItem('openwork.server.hostToken'))",
-    { timeoutMs: 30_000, label: "OpenWork server auth for workspace setup" },
+    "Boolean(localStorage.getItem('micx.server.port') && localStorage.getItem('micx.server.token') && localStorage.getItem('micx.server.hostToken'))",
+    { timeoutMs: 30_000, label: "Micx server auth for workspace setup" },
   );
   let created = null;
   const deadline = Date.now() + 60_000;
   while (Date.now() < deadline) {
     created = await ctx.eval(`(async () => {
       try {
-        const port = localStorage.getItem('openwork.server.port');
-        const token = localStorage.getItem('openwork.server.token');
-        const hostToken = localStorage.getItem('openwork.server.hostToken');
+        const port = localStorage.getItem('micx.server.port');
+        const token = localStorage.getItem('micx.server.token');
+        const hostToken = localStorage.getItem('micx.server.hostToken');
         const base = 'http://127.0.0.1:' + port;
         const headers = {
           'Content-Type': 'application/json',
           Authorization: 'Bearer ' + token,
-          'X-OpenWork-Host-Token': hostToken,
+          'X-Micx-Host-Token': hostToken,
         };
         const response = await fetch(base + '/workspaces/local', {
           method: 'POST',
@@ -183,7 +183,7 @@ async function createFreshEvalWorkspace(ctx) {
         if (!workspaceId) return { ok: false, status: response.status, text: 'workspace id missing' };
         const activate = await fetch(base + '/workspaces/' + workspaceId + '/activate?persist=true', { method: 'POST', headers });
         if (!activate.ok) return { ok: false, status: activate.status, text: await activate.text() };
-        localStorage.setItem('openwork.react.activeWorkspace', workspaceId);
+        localStorage.setItem('micx.react.activeWorkspace', workspaceId);
         return { ok: true, workspaceId };
       } catch (error) {
         return { ok: false, error: error instanceof Error ? error.message : String(error) };
@@ -241,35 +241,35 @@ async function clickTab(ctx, label) {
 }
 
 async function bootstrapDesktopToDen(ctx) {
-  await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 120_000 });
-  await ctx.waitFor("Boolean(window.__OPENWORK_ELECTRON__?.invokeDesktop)", { timeoutMs: 30_000, label: "desktop bridge" });
+  await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 120_000 });
+  await ctx.waitFor("Boolean(window.__MICX_ELECTRON__?.invokeDesktop)", { timeoutMs: 30_000, label: "desktop bridge" });
   const bootstrap = { baseUrl: DEN_API_URL, apiBaseUrl: DEN_API_URL, requireSignin: false, handoff: null };
   const written = await ctx.eval(`(async () => {
-    const bridge = window.__OPENWORK_ELECTRON__?.invokeDesktop;
+    const bridge = window.__MICX_ELECTRON__?.invokeDesktop;
     if (!bridge) return { ok: false };
     await bridge("setDesktopBootstrapConfig", ${JSON.stringify(bootstrap)});
     return { ok: true };
   })()`, { awaitPromise: true });
   ctx.assert(written?.ok, "Failed to write desktop bootstrap config.");
   await ctx.eval(`(() => {
-    localStorage.setItem('openwork.den.baseUrl', ${JSON.stringify(DEN_API_URL)});
-    localStorage.setItem('openwork.den.apiBaseUrl', ${JSON.stringify(DEN_API_URL)});
-    const prefs = JSON.parse(localStorage.getItem('openwork.preferences') || '{}');
-    localStorage.setItem('openwork.preferences', JSON.stringify({ ...prefs, selectedAgent: 'openwork' }));
+    localStorage.setItem('micx.den.baseUrl', ${JSON.stringify(DEN_API_URL)});
+    localStorage.setItem('micx.den.apiBaseUrl', ${JSON.stringify(DEN_API_URL)});
+    const prefs = JSON.parse(localStorage.getItem('micx.preferences') || '{}');
+    localStorage.setItem('micx.preferences', JSON.stringify({ ...prefs, selectedAgent: 'micx' }));
     return true;
   })()`);
   await ctx.eval("location.reload()");
-  await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 60_000, label: "control API after bootstrap reload" });
+  await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 60_000, label: "control API after bootstrap reload" });
 
   const handoff = await denApiFetch("/v1/auth/desktop-handoff", {
     method: "POST",
     headers: { authorization: `Bearer ${state.memberSession}` },
-    body: JSON.stringify({ desktopScheme: "openwork" }),
+    body: JSON.stringify({ desktopScheme: "micx" }),
   });
   ctx.assert(handoff.response.ok, `Handoff create failed: ${handoff.response.status}`);
   await ctx.control("auth.exchange-grant", { grant: handoff.body.grant, baseUrl: DEN_API_URL });
-  await ctx.waitFor("Boolean((localStorage.getItem('openwork.den.authToken') ?? '').trim())", { timeoutMs: 45_000, label: "persisted den auth token" });
-  await ctx.waitFor("Boolean((localStorage.getItem('openwork.den.activeOrgId') ?? '').trim())", { timeoutMs: 60_000, label: "active org resolved" });
+  await ctx.waitFor("Boolean((localStorage.getItem('micx.den.authToken') ?? '').trim())", { timeoutMs: 45_000, label: "persisted den auth token" });
+  await ctx.waitFor("Boolean((localStorage.getItem('micx.den.activeOrgId') ?? '').trim())", { timeoutMs: 60_000, label: "active org resolved" });
 }
 
 async function mockRequests() {
@@ -300,7 +300,7 @@ async function connectGoogleWorkspace(ctx) {
       return Boolean(card);
     })()`);
     ctx.assert(opened, "Could not open the org Google Workspace card.");
-    await ctx.expectText("OpenWork stores this sign-in", { timeoutMs: 15_000 });
+    await ctx.expectText("Micx stores this sign-in", { timeoutMs: 15_000 });
     state.clickedAt = new Date().toISOString();
     const clicked = await ctx.eval(`(() => {
       const dialog = document.querySelector('[role="dialog"]');
@@ -337,22 +337,22 @@ async function connectGoogleWorkspace(ctx) {
   ctx.assert(connected, "Server-side connectedForMe should be true after the Google round trip.");
 }
 
-async function ensureOpenWorkCloudControl(ctx) {
+async function ensureMicxCloudControl(ctx) {
   await openMcpSettings(ctx);
   await revealHidden(ctx);
-  await ctx.expectText("OpenWork Cloud Control", { timeoutMs: 30_000 });
+  await ctx.expectText("Micx Cloud Control", { timeoutMs: 30_000 });
   const alreadyConnected = await ctx.eval(`(() => {
-    const card = [...document.querySelectorAll('button')].find((el) => el.textContent.includes('OpenWork Cloud Control'));
+    const card = [...document.querySelectorAll('button')].find((el) => el.textContent.includes('Micx Cloud Control'));
     return Boolean(card?.textContent.includes('Connected'));
   })()`);
   if (!alreadyConnected) {
     const openedCard = await ctx.eval(`(() => {
-      const card = [...document.querySelectorAll('button')].find((el) => el.textContent.includes('OpenWork Cloud Control'));
+      const card = [...document.querySelectorAll('button')].find((el) => el.textContent.includes('Micx Cloud Control'));
       card?.scrollIntoView({ block: 'center' });
       card?.click();
       return Boolean(card);
     })()`);
-    ctx.assert(openedCard, "Could not open the OpenWork Cloud Control card.");
+    ctx.assert(openedCard, "Could not open the Micx Cloud Control card.");
     await ctx.expectText("Manage your org", { timeoutMs: 15_000 });
     const clicked = await ctx.eval(`(() => {
       const dialog = document.querySelector('[role="dialog"]');
@@ -360,14 +360,14 @@ async function ensureOpenWorkCloudControl(ctx) {
       button?.click();
       return Boolean(button);
     })()`);
-    ctx.assert(clicked, "Could not click Connect for OpenWork Cloud Control.");
+    ctx.assert(clicked, "Could not click Connect for Micx Cloud Control.");
   }
   await ctx.waitFor(
     `(() => {
-      const card = [...document.querySelectorAll('button')].find((el) => el.textContent.includes('OpenWork Cloud Control'));
+      const card = [...document.querySelectorAll('button')].find((el) => el.textContent.includes('Micx Cloud Control'));
       return Boolean(card?.textContent.includes('Connected'));
     })()`,
-    { timeoutMs: 60_000, label: "OpenWork Cloud Control connected card" },
+    { timeoutMs: 60_000, label: "Micx Cloud Control connected card" },
   );
   await ctx.clickText("Refresh", { timeoutMs: 15_000 }).catch(() => {});
 }
@@ -378,29 +378,29 @@ async function ensureRuntimeCloudMcp(ctx) {
   while (Date.now() < deadline) {
     runtime = await ctx.eval(`(async () => {
       const workspaceId = ${JSON.stringify(state.workspaceId)};
-      const port = localStorage.getItem('openwork.server.port');
-      const token = localStorage.getItem('openwork.server.token');
-      const hostToken = localStorage.getItem('openwork.server.hostToken');
+      const port = localStorage.getItem('micx.server.port');
+      const token = localStorage.getItem('micx.server.token');
+      const hostToken = localStorage.getItem('micx.server.hostToken');
       if (!workspaceId || !port || !token) return { ok: false, reason: 'missing workspace/server auth' };
       const headers = { Authorization: 'Bearer ' + token };
-      if (hostToken) headers['X-OpenWork-Host-Token'] = hostToken;
+      if (hostToken) headers['X-Micx-Host-Token'] = hostToken;
       const response = await fetch('http://127.0.0.1:' + port + '/workspace/' + workspaceId + '/mcp', { headers });
       if (!response.ok) return { ok: false, status: response.status };
       const payload = await response.json();
-      const entry = (payload?.items ?? []).find((item) => item.name === 'openwork-cloud');
+      const entry = (payload?.items ?? []).find((item) => item.name === 'micx-cloud');
       return { ok: Boolean(entry?.config?.url?.includes('/mcp/agent') && payload?.engineSync?.status === 'ok') };
     })()`, { awaitPromise: true });
     if (runtime?.ok) break;
     await sleep(1_000);
   }
-  ctx.assert(runtime?.ok, `Runtime OpenWork Cloud Control MCP never became ready: ${JSON.stringify(runtime)}`);
+  ctx.assert(runtime?.ok, `Runtime Micx Cloud Control MCP never became ready: ${JSON.stringify(runtime)}`);
 }
 
 async function resetChatState(ctx) {
   await ctx.navigateHash(`/workspace/${state.workspaceId}/session`);
   await ctx.waitFor("window.location.hash.includes('/session')", { timeoutMs: 20_000 });
   await ctx.waitFor(
-    "window.__openworkControl?.listActions?.().find((a) => a.id === 'session.create_task')?.disabled === false",
+    "window.__micxControl?.listActions?.().find((a) => a.id === 'session.create_task')?.disabled === false",
     { timeoutMs: 30_000, label: "session.create_task enabled" },
   );
   await ctx.control("session.create_task");
@@ -464,7 +464,7 @@ export default {
   title: "Gmail reply drafts stay threaded, quote history, keep clean prose, and return the Gmail draft link",
   kind: "user-facing",
   spec: "evals/voiceovers/gmail-reply-draft-integrity.md",
-  requiredEnv: ["OPENWORK_EVAL_DEN_API_URL"],
+  requiredEnv: ["MICX_EVAL_DEN_API_URL"],
   steps: [
     {
       name: "Setup",
@@ -496,7 +496,7 @@ export default {
         await bootstrapDesktopToDen(ctx);
         await createFreshEvalWorkspace(ctx);
         await connectGoogleWorkspace(ctx);
-        await ensureOpenWorkCloudControl(ctx);
+        await ensureMicxCloudControl(ctx);
         await ensureRuntimeCloudMcp(ctx);
         await resetChatState(ctx);
       },
@@ -504,13 +504,13 @@ export default {
     {
       name: "Frame 1",
       run: async (ctx) => {
-        await ctx.prove("The user asks OpenWork to reply to Sarah's Q3 launch thread", {
+        await ctx.prove("The user asks Micx to reply to Sarah's Q3 launch thread", {
           voiceover: vo[0],
-          // "I'm in OpenWork, and Sarah's thread about the Q3 launch has been going back "
+          // "I'm in Micx, and Sarah's thread about the Q3 launch has been going back "
           action: async () => {
             await ctx.control("composer.set_text", { text: PROMPT });
             await ctx.waitFor(
-              "window.__openworkControl?.listActions?.().find((a) => a.id === 'composer.send')?.disabled === false",
+              "window.__micxControl?.listActions?.().find((a) => a.id === 'composer.send')?.disabled === false",
               { timeoutMs: 15_000, label: "composer.send enabled" },
             );
             state.chatStartedAt = new Date().toISOString();
@@ -531,9 +531,9 @@ export default {
     {
       name: "Frame 2",
       run: async (ctx) => {
-        await ctx.prove("OpenWork reads Gmail before drafting the reply", {
+        await ctx.prove("Micx reads Gmail before drafting the reply", {
           voiceover: vo[1],
-          // "OpenWork reads the thread through my connected Google account first, so the "
+          // "Micx reads the thread through my connected Google account first, so the "
           action: async () => {},
           assert: async () => {
             const read = await pollForGmailRead(ctx);
@@ -631,9 +631,9 @@ export default {
     {
       name: "Frame 6",
       run: async (ctx) => {
-        await ctx.prove("OpenWork relays the Gmail draft link back to the user", {
+        await ctx.prove("Micx relays the Gmail draft link back to the user", {
           voiceover: vo[5],
-          // "And OpenWork finishes by handing me the link — one click opens the ready-to-"
+          // "And Micx finishes by handing me the link — one click opens the ready-to-"
           action: async () => {},
           assert: async () => {
             await ctx.waitForText("mail.google.com", { timeoutMs: 240_000 });

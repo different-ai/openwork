@@ -2,7 +2,7 @@
 
 ## Goal
 
-Add self-serve SCIM to `ee/apps/den-api` so an organization in OpenWork Cloud can:
+Add self-serve SCIM to `ee/apps/den-api` so an organization in Micx Cloud can:
 
 - create and manage its own SCIM connector
 - rotate its own SCIM bearer token
@@ -45,7 +45,7 @@ Do not ship the raw plugin lifecycle behavior unless we explicitly accept these 
 - SCIM updates can change global app user profile fields
 - SCIM delete can delete the whole app user
 
-For OpenWork Cloud, the safer stance is:
+For Micx Cloud, the safer stance is:
 
 - connector is per org
 - membership is per org
@@ -77,7 +77,7 @@ Pros:
 
 - keeps the good parts of org-scoped SCIM
 - reduces risk from global user mutation/deletion
-- closer to OpenWork's org model
+- closer to Micx's org model
 
 Cons:
 
@@ -141,7 +141,7 @@ Recommendation:
 
 ## Decisions Needed Before Build
 
-1. Are OpenWork identities allowed to be globally shared across orgs when SCIM emails match?
+1. Are Micx identities allowed to be globally shared across orgs when SCIM emails match?
 2. Should SCIM delete remove the global user, remove only the org membership, or just deactivate access?
 3. Should SCIM-provisioned users always land as `member`, or should org admins choose a default role?
 4. Do we need SCIM only, or full enterprise identity including SSO in the same admin surface?

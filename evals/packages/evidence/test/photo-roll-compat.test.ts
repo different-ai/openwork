@@ -9,7 +9,7 @@ import { openTape } from "../../fraimz/src/tape.ts";
 import { scanRolls } from "../src/scan.ts";
 
 test("scanRolls reads screenshot and fact frames produced by the real tape writer", async () => {
-  const resultsDir = await mkdtemp(join(tmpdir(), "openwork-evidence-compat-"));
+  const resultsDir = await mkdtemp(join(tmpdir(), "micx-evidence-compat-"));
   const rollDir = join(resultsDir, "rolls", "2026-07-02T10-00-00-000Z-writer-compat");
   try {
     const png = Buffer.from("synthetic screenshot pixels");

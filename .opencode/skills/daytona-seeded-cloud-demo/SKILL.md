@@ -1,11 +1,11 @@
 ---
 name: daytona-seeded-cloud-demo
-description: Daytona seeded cloud demo, demo credentials, Acme Robotics seed. Use when the user asks to spin up, keep running, seed, or prepare an OpenWork Cloud/Den Daytona demo instance.
+description: Daytona seeded cloud demo, demo credentials, Acme Robotics seed. Use when the user asks to spin up, keep running, seed, or prepare an Micx Cloud/Den Daytona demo instance.
 ---
 
 # Daytona Seeded Cloud Demo
 
-Use this skill to quickly create a persistent-enough OpenWork Cloud/Den Daytona server demo, seed it with Acme Robotics demo data, validate the login, and return copy-pasteable demo details.
+Use this skill to quickly create a persistent-enough Micx Cloud/Den Daytona server demo, seed it with Acme Robotics demo data, validate the login, and return copy-pasteable demo details.
 
 ## Goal
 
@@ -17,7 +17,7 @@ Run from the repo root. Prefer a stable sandbox name when the user wants to hand
 
 ```bash
 BRANCH="$(git rev-parse --abbrev-ref HEAD)"
-SANDBOX="openwork-cloud-demo-seeded"
+SANDBOX="micx-cloud-demo-seeded"
 
 bash .devcontainer/test-server-on-daytona.sh "$BRANCH" --name "$SANDBOX"
 ```
@@ -25,7 +25,7 @@ bash .devcontainer/test-server-on-daytona.sh "$BRANCH" --name "$SANDBOX"
 If the sandbox name already exists, choose a dated suffix instead, for example:
 
 ```bash
-SANDBOX="openwork-cloud-demo-seeded-$(date +%Y%m%d-%H%M)"
+SANDBOX="micx-cloud-demo-seeded-$(date +%Y%m%d-%H%M)"
 bash .devcontainer/test-server-on-daytona.sh "$BRANCH" --name "$SANDBOX"
 ```
 
@@ -42,14 +42,14 @@ DEN_WORKER_PROXY_URL="<printed Worker Proxy URL>"
 Seed the sandbox after the Den stack is healthy. The seed uses the same encryption and auth secrets as `.devcontainer/start-daytona-server.sh`.
 
 ```bash
-daytona exec "$SANDBOX" -- 'bash -lc '\''cd /workspace && pnpm --filter @openwork/email build && cd /workspace/ee/apps/den-api && OPENWORK_DEV_MODE=1 DATABASE_URL=mysql://root:password@127.0.0.1:3306/openwork_den DEN_DB_ENCRYPTION_KEY=daytona-den-db-encryption-key-please-change-1234567890 BETTER_AUTH_SECRET=daytona-den-auth-secret-please-change-1234567890 BETTER_AUTH_URL="'"$DEN_WEB_URL"'" pnpm exec tsx scripts/seed-demo-org.ts --reset'\'''
+daytona exec "$SANDBOX" -- 'bash -lc '\''cd /workspace && pnpm --filter @micx/email build && cd /workspace/ee/apps/den-api && MICX_DEV_MODE=1 DATABASE_URL=mysql://root:password@127.0.0.1:3306/micx_den DEN_DB_ENCRYPTION_KEY=daytona-den-db-encryption-key-please-change-1234567890 BETTER_AUTH_SECRET=daytona-den-auth-secret-please-change-1234567890 BETTER_AUTH_URL="'"$DEN_WEB_URL"'" pnpm exec tsx scripts/seed-demo-org.ts --reset'\'''
 ```
 
 Expected seeded credentials:
 
 ```text
 Email: alex@acme.test
-Password: OpenWorkDemo123!
+Password: MicxDemo123!
 ```
 
 Expected seed summary:
@@ -98,7 +98,7 @@ Validate the demo account through Den Web auth. This is the most relevant browse
 ```bash
 curl -fsS -X POST "$DEN_WEB_URL/api/auth/sign-in/email" \
   -H 'Content-Type: application/json' \
-  --data '{"email":"alex@acme.test","password":"OpenWorkDemo123!"}'
+  --data '{"email":"alex@acme.test","password":"MicxDemo123!"}'
 ```
 
 Also validate direct Den API auth if the user will connect desktop or debug handoff:
@@ -106,7 +106,7 @@ Also validate direct Den API auth if the user will connect desktop or debug hand
 ```bash
 curl -fsS -X POST "$DEN_API_URL/api/auth/sign-in/email" \
   -H 'Content-Type: application/json' \
-  --data '{"email":"alex@acme.test","password":"OpenWorkDemo123!"}'
+  --data '{"email":"alex@acme.test","password":"MicxDemo123!"}'
 ```
 
 Both auth calls should return `redirect: false`, a `token`, and user `Alex Chen`.
@@ -127,7 +127,7 @@ Daytona cloud demo is running and seeded.
 
 **Credentials**
 - Email: `alex@acme.test`
-- Password: `OpenWorkDemo123!`
+- Password: `MicxDemo123!`
 
 **Seeded Data**
 - Org: `Acme Robotics`
@@ -152,6 +152,6 @@ If older docs suggest running the Electron helper in a server-only mode, do not
 use that path unless this checkout supports it. Use
 `.devcontainer/test-server-on-daytona.sh` for server-only cloud demos.
 
-If sign-in returns `403` for email verification, Den API is not running with `OPENWORK_DEV_MODE=1` or did not restart after env changes. Restart the Den stack and rerun the seed.
+If sign-in returns `403` for email verification, Den API is not running with `MICX_DEV_MODE=1` or did not restart after env changes. Restart the Den stack and rerun the seed.
 
 If Den Web health passes but auth through Den Web fails while direct Den API auth passes, report that distinction and debug the Den Web proxy separately. Do not claim the browser-facing demo path passed from direct API auth alone.

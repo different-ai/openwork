@@ -1,20 +1,20 @@
-# Deploy OpenWork EE on Google Cloud with GKE and Helm
+# Deploy Micx EE on Google Cloud with GKE and Helm
 
 Status: self-host operator guide
-Related: `packaging/helm/openwork-ee`, `packaging/helm/openwork-ee/examples/values.gcp-ingress.yaml`
+Related: `packaging/helm/micx-ee`, `packaging/helm/micx-ee/examples/values.gcp-ingress.yaml`
 
-This is the recommended Google Cloud path for a first production-like OpenWork
+This is the recommended Google Cloud path for a first production-like Micx
 EE self-host install. Use Helm on GKE Autopilot with Cloud SQL for MySQL. For
 web/API exposure, use GKE Ingress with Google-managed certificates, a reserved
 global IP address, and explicit backend health checks.
 
 Google recommends Gateway API for new L7 traffic management, and GKE Ingress is
-in maintenance mode. The current OpenWork chart emits Ingress resources, so GKE
+in maintenance mode. The current Micx chart emits Ingress resources, so GKE
 Ingress is the simplest supported GCP path today. Treat Gateway API support as a
 future chart/platform hardening item.
 
 Do not use raw Kubernetes `LoadBalancer` Services as the normal GCP path for
-OpenWork. GKE `LoadBalancer` Services are useful for TCP services and quick
+Micx. GKE `LoadBalancer` Services are useful for TCP services and quick
 smoke tests, but the customer-facing web app and SSO flow need HTTP(S) load
 balancing, host routing, managed certificates, and backend health checks.
 
@@ -24,13 +24,13 @@ balancing, host routing, managed certificates, and backend health checks.
 - Den Web on port `3005`
 - optional inference service, disabled by default
 - one Cloud SQL for MySQL database
-- one single-org OpenWork deployment
+- one single-org Micx deployment
 - one external GKE Ingress backed by a Google Cloud Application Load Balancer
 - one Google-managed certificate covering web and API hosts
 
 Google Cloud owns the GKE cluster, Autopilot compute lifecycle, VPC networking,
 Cloud Load Balancing, managed certificates, Cloud SQL, IAM, and firewall rules.
-The OpenWork Helm chart owns OpenWork Deployments, Services, ConfigMaps,
+The Micx Helm chart owns Micx Deployments, Services, ConfigMaps,
 Secrets, health probes, the optional Ingress, and the database migration Job.
 The `BackendConfig` and `ManagedCertificate` resources in this guide are
 GKE-specific platform resources applied alongside the chart.
@@ -38,11 +38,11 @@ GKE-specific platform resources applied alongside the chart.
 ## Use Helm or something else?
 
 Use Helm on GKE for Google Cloud unless the customer explicitly cannot run
-Kubernetes. The OpenWork EE release artifact is already a Helm chart, and GKE
+Kubernetes. The Micx EE release artifact is already a Helm chart, and GKE
 Autopilot keeps the first customer path small while still supporting migration
 Jobs, separate web/API services, SSO-ready HTTPS, and later enterprise network
 controls. The practical gap to fill is GCP-specific ingress and database
-guidance, not a different OpenWork packaging format.
+guidance, not a different Micx packaging format.
 
 ## Prerequisites
 
@@ -53,8 +53,8 @@ guidance, not a different OpenWork packaging format.
 - Enabled APIs: Kubernetes Engine API, Compute Engine API, Cloud SQL Admin API,
   and Service Networking API.
 - A real admin email address for the first owner account.
-- A domain you control, such as `openwork.example.com` and
-  `api.openwork.example.com`.
+- A domain you control, such as `micx.example.com` and
+  `api.micx.example.com`.
 
 Google Cloud docs used for this guide:
 
@@ -74,7 +74,7 @@ For a first deployment, create a regional Autopilot cluster:
 ```bash
 export GCP_PROJECT=REPLACE_PROJECT_ID
 export GCP_REGION=us-central1
-export GKE_CLUSTER=openwork-ee
+export GKE_CLUSTER=micx-ee
 
 gcloud config set project "$GCP_PROJECT"
 
@@ -104,7 +104,7 @@ Create Cloud SQL for MySQL with private IP in the same VPC as the GKE cluster.
 The most important requirements are:
 
 - MySQL 8-compatible Cloud SQL instance.
-- Database name: `openwork_den`.
+- Database name: `micx_den`.
 - Private services access configured for the VPC.
 - Private IP enabled on the Cloud SQL instance.
 - GKE is VPC-native and can reach the private IP.
@@ -115,7 +115,7 @@ Private IP requires a one-time private services access connection for the VPC:
 
 ```bash
 export VPC_NETWORK=default
-export SQL_RANGE=openwork-sql-range
+export SQL_RANGE=micx-sql-range
 
 gcloud compute addresses create "$SQL_RANGE" \
   --global \
@@ -132,7 +132,7 @@ gcloud services vpc-peerings connect \
 Create the instance and database:
 
 ```bash
-export SQL_INSTANCE=openwork-ee-mysql
+export SQL_INSTANCE=micx-ee-mysql
 
 gcloud sql instances create "$SQL_INSTANCE" \
   --database-version=MYSQL_8_0 \
@@ -140,10 +140,10 @@ gcloud sql instances create "$SQL_INSTANCE" \
   --network="projects/$GCP_PROJECT/global/networks/$VPC_NETWORK" \
   --no-assign-ip
 
-gcloud sql databases create openwork_den \
+gcloud sql databases create micx_den \
   --instance="$SQL_INSTANCE"
 
-gcloud sql users create openwork \
+gcloud sql users create micx \
   --instance="$SQL_INSTANCE" \
   --password=REPLACE_DB_PASSWORD
 ```
@@ -158,23 +158,23 @@ gcloud sql instances describe "$SQL_INSTANCE" \
 Example database URL:
 
 ```text
-mysql://openwork:<password>@<cloud-sql-private-ip>:3306/openwork_den
+mysql://micx:<password>@<cloud-sql-private-ip>:3306/micx_den
 ```
 
-This guide uses direct private IP because the current OpenWork chart does not
+This guide uses direct private IP because the current Micx chart does not
 inject Cloud SQL Auth Proxy sidecars. Cloud SQL Auth Proxy is a stronger future
 hardening path when the chart supports sidecars or an operator-managed proxy
 pattern.
 
 If the Cloud SQL instance enforces encrypted client connections, use
 `?sslaccept=accept` for the simple private-MySQL smoke path. This keeps TLS on
-without requiring a cloud CA bundle to be mounted into the OpenWork image. Use
+without requiring a cloud CA bundle to be mounted into the Micx image. Use
 strict certificate verification later, after you provide the required CA bundle,
 with a hardened value such as `sslmode=verify-ca` or `sslmode=verify-full`.
 Verify the same URL works for both the migration Job and runtime pods before
 testing the browser flow.
 
-Before installing OpenWork, verify network access from the cluster:
+Before installing Micx, verify network access from the cluster:
 
 ```bash
 kubectl run mysql-client \
@@ -184,7 +184,7 @@ kubectl run mysql-client \
   --image=mysql:8 \
   -- mysql \
     --host="REPLACE_CLOUD_SQL_PRIVATE_IP" \
-    --user=openwork \
+    --user=micx \
     --password \
     --execute "select 1"
 ```
@@ -194,10 +194,10 @@ kubectl run mysql-client \
 Reserve a global IP address for the HTTPS load balancer:
 
 ```bash
-gcloud compute addresses create openwork-ee-ip \
+gcloud compute addresses create micx-ee-ip \
   --global
 
-gcloud compute addresses describe openwork-ee-ip \
+gcloud compute addresses describe micx-ee-ip \
   --global \
   --format='value(address)'
 ```
@@ -205,17 +205,17 @@ gcloud compute addresses describe openwork-ee-ip \
 Create the namespace:
 
 ```bash
-kubectl create namespace openwork-ee
+kubectl create namespace micx-ee
 ```
 
 Create a Google-managed certificate resource:
 
 ```bash
-kubectl apply -n openwork-ee -f - <<'YAML'
+kubectl apply -n micx-ee -f - <<'YAML'
 apiVersion: networking.gke.io/v1
 kind: ManagedCertificate
 metadata:
-  name: openwork-ee-cert
+  name: micx-ee-cert
 spec:
   domains:
     - REPLACE_WEB_HOST
@@ -223,14 +223,14 @@ spec:
 YAML
 ```
 
-Create explicit backend health checks for the two OpenWork services:
+Create explicit backend health checks for the two Micx services:
 
 ```bash
-kubectl apply -n openwork-ee -f - <<'YAML'
+kubectl apply -n micx-ee -f - <<'YAML'
 apiVersion: cloud.google.com/v1
 kind: BackendConfig
 metadata:
-  name: openwork-ee-den-api-backend
+  name: micx-ee-den-api-backend
 spec:
   healthCheck:
     type: HTTP
@@ -240,7 +240,7 @@ spec:
 apiVersion: cloud.google.com/v1
 kind: BackendConfig
 metadata:
-  name: openwork-ee-den-web-backend
+  name: micx-ee-den-web-backend
 spec:
   healthCheck:
     type: HTTP
@@ -249,7 +249,7 @@ spec:
 YAML
 ```
 
-The Helm values annotate the OpenWork Services so GKE associates these
+The Helm values annotate the Micx Services so GKE associates these
 `BackendConfig` objects with the Google Cloud backend services.
 
 ## 4. Prepare Helm values
@@ -257,7 +257,7 @@ The Helm values annotate the OpenWork Services so GKE associates these
 Copy the starter file:
 
 ```bash
-cp packaging/helm/openwork-ee/examples/values.gcp-ingress.yaml values.gcp.yaml
+cp packaging/helm/micx-ee/examples/values.gcp-ingress.yaml values.gcp.yaml
 ```
 
 Replace every `REPLACE_*` placeholder.
@@ -278,10 +278,10 @@ To send transactional email, configure SMTP in the same values file:
 ```yaml
 secret:
   values:
-    emailFrom: "OpenWork <no-reply@example.com>"
+    emailFrom: "Micx <no-reply@example.com>"
     smtpHost: "smtp.example.com"
     smtpPort: "587"
-    smtpUser: "openwork@example.com"
+    smtpUser: "micx@example.com"
     smtpPass: "REPLACE_SMTP_PASSWORD"
     smtpSecure: "false"
 ```
@@ -293,7 +293,7 @@ add those keys to the existing Kubernetes Secret referenced by
 `SMTP_HOST`; leave `smtpHost` blank only when SMTP-backed transactional email
 should be disabled.
 
-Use a values file, not a long list of `--set` flags. Several OpenWork values are
+Use a values file, not a long list of `--set` flags. Several Micx values are
 comma-separated strings, such as `config.public.corsOrigins`, and plain `--set`
 parsing commonly breaks them.
 
@@ -306,24 +306,24 @@ Before installing, render the chart and verify the migration Job will use your
 Cloud SQL URL:
 
 ```bash
-helm template openwork-ee oci://ghcr.io/different-ai/charts/openwork-ee \
-  --version REPLACE_OPENWORK_VERSION \
-  --namespace openwork-ee \
-  -f values.gcp.yaml > /tmp/openwork-rendered.yaml
+helm template micx-ee oci://ghcr.io/different-ai/charts/micx-ee \
+  --version REPLACE_MICX_VERSION \
+  --namespace micx-ee \
+  -f values.gcp.yaml > /tmp/micx-rendered.yaml
 
-grep -E 'DATABASE_URL|BETTER_AUTH_URL|DEN_API_PUBLIC_URL|DEN_WEB_PUBLIC_ORIGIN|EMAIL_FROM|SMTP_HOST|SMTP_PORT|SMTP_SECURE' /tmp/openwork-rendered.yaml
+grep -E 'DATABASE_URL|BETTER_AUTH_URL|DEN_API_PUBLIC_URL|DEN_WEB_PUBLIC_ORIGIN|EMAIL_FROM|SMTP_HOST|SMTP_PORT|SMTP_SECURE' /tmp/micx-rendered.yaml
 ```
 
 Redact secrets before sharing rendered manifests or terminal output.
 
-## 5. Install OpenWork
+## 5. Install Micx
 
 Published chart releases live in GHCR:
 
 ```bash
-helm upgrade --install openwork-ee oci://ghcr.io/different-ai/charts/openwork-ee \
-  --version REPLACE_OPENWORK_VERSION \
-  --namespace openwork-ee \
+helm upgrade --install micx-ee oci://ghcr.io/different-ai/charts/micx-ee \
+  --version REPLACE_MICX_VERSION \
+  --namespace micx-ee \
   --create-namespace \
   -f values.gcp.yaml
 ```
@@ -331,8 +331,8 @@ helm upgrade --install openwork-ee oci://ghcr.io/different-ai/charts/openwork-ee
 For a checkout-local test:
 
 ```bash
-helm upgrade --install openwork-ee ./packaging/helm/openwork-ee \
-  --namespace openwork-ee \
+helm upgrade --install micx-ee ./packaging/helm/micx-ee \
+  --namespace micx-ee \
   --create-namespace \
   -f values.gcp.yaml
 ```
@@ -343,7 +343,7 @@ private packages or private forks do:
 
 ```bash
 kubectl create secret docker-registry ghcr-pull-secret \
-  --namespace openwork-ee \
+  --namespace micx-ee \
   --docker-server=ghcr.io \
   --docker-username="$GITHUB_USER" \
   --docker-password="$GITHUB_TOKEN"
@@ -359,7 +359,7 @@ imagePullSecrets:
 The migration Job runs before the Deployments are useful. If it fails, fix that
 before debugging web/API readiness.
 
-Avoid `kubectl describe job openwork-ee-migrate` in shared reports because the
+Avoid `kubectl describe job micx-ee-migrate` in shared reports because the
 hook Job currently includes `DATABASE_URL` and `DEN_DB_ENCRYPTION_KEY` in the
 rendered environment. Use logs and redacted rendered manifests instead.
 
@@ -375,15 +375,15 @@ migrations:
 Then run Helm and inspect the normal Job logs:
 
 ```bash
-helm upgrade --install openwork-ee oci://ghcr.io/different-ai/charts/openwork-ee \
-  --version REPLACE_OPENWORK_VERSION \
-  --namespace openwork-ee \
+helm upgrade --install micx-ee oci://ghcr.io/different-ai/charts/micx-ee \
+  --version REPLACE_MICX_VERSION \
+  --namespace micx-ee \
   --create-namespace \
   -f values.gcp.yaml \
   --wait=false
 
-kubectl get jobs,pods -n openwork-ee
-kubectl logs -n openwork-ee -l job-name=openwork-ee-migrate --all-containers=true
+kubectl get jobs,pods -n micx-ee
+kubectl logs -n micx-ee -l job-name=micx-ee-migrate --all-containers=true
 ```
 
 Return to the default hook mode after debugging:
@@ -400,15 +400,15 @@ migrations:
 Get the reserved IP address:
 
 ```bash
-gcloud compute addresses describe openwork-ee-ip \
+gcloud compute addresses describe micx-ee-ip \
   --global \
   --format='value(address)'
 ```
 
 Create DNS records:
 
-- `openwork.example.com` -> the reserved global IP address.
-- `api.openwork.example.com` -> the reserved global IP address.
+- `micx.example.com` -> the reserved global IP address.
+- `api.micx.example.com` -> the reserved global IP address.
 
 GKE can take several minutes to provision the load balancer. Google-managed
 certificates can take up to an hour to become active after DNS points at the
@@ -417,9 +417,9 @@ load balancer.
 Check status:
 
 ```bash
-kubectl get ingress -n openwork-ee
-kubectl describe managedcertificate openwork-ee-cert -n openwork-ee
-kubectl describe ingress openwork-ee -n openwork-ee
+kubectl get ingress -n micx-ee
+kubectl describe managedcertificate micx-ee-cert -n micx-ee
+kubectl describe ingress micx-ee -n micx-ee
 ```
 
 If you are still using temporary hosts before DNS/TLS is ready, temporarily
@@ -432,9 +432,9 @@ when ConfigMap or Secret content changes. On older chart versions, manually
 restart the deployments after changing public origin values:
 
 ```bash
-kubectl rollout restart deployment/openwork-ee-den-api deployment/openwork-ee-den-web -n openwork-ee
-kubectl rollout status deployment/openwork-ee-den-api -n openwork-ee --timeout=180s
-kubectl rollout status deployment/openwork-ee-den-web -n openwork-ee --timeout=180s
+kubectl rollout restart deployment/micx-ee-den-api deployment/micx-ee-den-web -n micx-ee
+kubectl rollout status deployment/micx-ee-den-api -n micx-ee --timeout=180s
+kubectl rollout status deployment/micx-ee-den-web -n micx-ee --timeout=180s
 ```
 
 ## 8. Verify readiness
@@ -442,21 +442,21 @@ kubectl rollout status deployment/openwork-ee-den-web -n openwork-ee --timeout=1
 Check Kubernetes state:
 
 ```bash
-helm status openwork-ee -n openwork-ee
-kubectl get pods -n openwork-ee
-kubectl get jobs -n openwork-ee
-kubectl get ingress -n openwork-ee
-kubectl describe backendconfig openwork-ee-den-api-backend -n openwork-ee
-kubectl describe backendconfig openwork-ee-den-web-backend -n openwork-ee
-kubectl logs -n openwork-ee deploy/openwork-ee-den-api
-kubectl logs -n openwork-ee deploy/openwork-ee-den-web
+helm status micx-ee -n micx-ee
+kubectl get pods -n micx-ee
+kubectl get jobs -n micx-ee
+kubectl get ingress -n micx-ee
+kubectl describe backendconfig micx-ee-den-api-backend -n micx-ee
+kubectl describe backendconfig micx-ee-den-web-backend -n micx-ee
+kubectl logs -n micx-ee deploy/micx-ee-den-api
+kubectl logs -n micx-ee deploy/micx-ee-den-web
 ```
 
 Check readiness from your machine:
 
 ```bash
-curl -fsS https://api.openwork.example.com/ready
-curl -fsS https://openwork.example.com/api/ready
+curl -fsS https://api.micx.example.com/ready
+curl -fsS https://micx.example.com/api/ready
 ```
 
 ## 9. Bootstrap the first owner
@@ -475,7 +475,7 @@ config:
     bootstrapAdminEmails: "admin@acme.com"
 ```
 
-Open `https://openwork.example.com` and sign up with the owner email. OpenWork
+Open `https://micx.example.com` and sign up with the owner email. Micx
 creates the singleton organization and makes that user the owner. Later users
 join the same organization. If `ownerEmails` is blank, the first user to reach
 the deployment can claim ownership, which is not recommended for production.
@@ -493,19 +493,19 @@ demo IdPs.
 Configure the IdP application with this callback URL:
 
 ```text
-https://openwork.example.com/api/auth/sso/callback/openwork-sso-<org-id>
+https://micx.example.com/api/auth/sso/callback/micx-sso-<org-id>
 ```
 
-In OpenWork, sign in as the owner, open the organization SSO settings, and enter
+In Micx, sign in as the owner, open the organization SSO settings, and enter
 the IdP issuer/client details. After saving, the organization sign-in path is:
 
 ```text
-https://openwork.example.com/sso/<singleOrgSlug>
+https://micx.example.com/sso/<singleOrgSlug>
 ```
 
-For SAML, OpenWork shows the generated ACS URL and metadata URL after the SAML
+For SAML, Micx shows the generated ACS URL and metadata URL after the SAML
 connection is registered. Use those values in the IdP rather than guessing.
-OpenWork rejects unsigned or weak SAML responses, so configure the IdP to sign
+Micx rejects unsigned or weak SAML responses, so configure the IdP to sign
 assertions.
 
 After SSO is configured, root sign-in shows the SSO-only experience for the
@@ -516,13 +516,13 @@ single organization. Password sign-in for that organization is rejected.
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | Ingress does not reconcile | HTTP load balancing add-on is disabled or Ingress annotation is wrong | Keep HTTP load balancing enabled and use `kubernetes.io/ingress.class: gce` |
-| Backends are unhealthy | GKE load balancer health checks do not match OpenWork readiness endpoints | Apply the `BackendConfig` resources and keep the service annotations from the starter values |
+| Backends are unhealthy | GKE load balancer health checks do not match Micx readiness endpoints | Apply the `BackendConfig` resources and keep the service annotations from the starter values |
 | Managed certificate is not `Active` | DNS does not point at the load balancer or provisioning is still running | Point both hosts at the reserved global IP and wait; check `kubectl describe managedcertificate` |
 | Migration Job fails to connect to MySQL | Private services access, VPC, credentials, IP, or TLS mode are wrong | Test from `mysql-client`, confirm the private IP, and confirm GKE and Cloud SQL share VPC reachability |
 | Migration Job logs show `self-signed certificate in certificate chain` | Strict certificate verification is being used without the cloud MySQL CA bundle | Use `?sslaccept=accept` for the smoke path or mount/configure the CA bundle before strict verification |
 | `ImagePullBackOff` from GHCR | Private image or missing pull token | Add `imagePullSecrets` |
 | Browser auth loops or CORS errors | Public origins do not match DNS/TLS | Set `webOrigin`, `apiOrigin`, `corsOrigins`, `betterAuthTrustedOrigins`, and `authCallbackUrl` to the final HTTPS domains |
-| SSO callback rejected | IdP callback URL does not match OpenWork | Use the callback/ACS URL shown by OpenWork for that org/provider |
+| SSO callback rejected | IdP callback URL does not match Micx | Use the callback/ACS URL shown by Micx for that org/provider |
 | SSO settings show Enterprise gating | `DEN_PLAN_GATING_ENABLED=true` or org is not entitled | Leave plan gating off for self-host smoke tests, or grant enterprise entitlement |
 
 ## 12. Cleanup
@@ -530,8 +530,8 @@ single organization. Password sign-in for that organization is rejected.
 For a disposable test:
 
 ```bash
-helm uninstall openwork-ee -n openwork-ee
-gcloud compute addresses delete openwork-ee-ip --global
+helm uninstall micx-ee -n micx-ee
+gcloud compute addresses delete micx-ee-ip --global
 gcloud container clusters delete "$GKE_CLUSTER" --location "$GCP_REGION"
 gcloud sql instances delete "$SQL_INSTANCE"
 ```

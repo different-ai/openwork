@@ -11,7 +11,7 @@ turns screenshots from hand-crafted artifacts into a regenerable pipeline.
 
 Use this for "take/redo screenshots / make marketing images" tasks. It is NOT
 e2e evidence — for pass/fail proof use `run-tests` with an
-`@openwork/testkit` spec and its ambient evidence tape.
+`@micx/testkit` spec and its ambient evidence tape.
 
 ## The Zero-Defect Bar
 
@@ -96,13 +96,13 @@ node scripts/beautify.mjs in.png out.png [flags]
 #  --bg paper|indigo|slate|peach|ocean|violet|"#hex,#hex[,#hex]"  --bg-angle 135
 #  --pad 7            padding as % of long side
 #  --radius 24        corner radius (output px; raws are usually 2x)
-#  --chrome none|mac|browser   --title "OpenWork"   --url app.openworklabs.com
+#  --chrome none|mac|browser   --title "Micx"   --url app.micxlabs.com
 #  --width 1600       final width   --ratio 16:9    extend canvas, never crop
 ```
 
 House style for packages/docs tutorials: cloud/dashboard shots use
-`--chrome browser --url app.openworklabs.com --bg paper --width 1600`;
-desktop shots use `--chrome mac --title OpenWork --bg indigo --width 1600`.
+`--chrome browser --url app.micxlabs.com --bg paper --width 1600`;
+desktop shots use `--chrome mac --title Micx --bg indigo --width 1600`.
 Beautify AFTER verification — framing is presentation, not proof.
 
 ## Common failure modes

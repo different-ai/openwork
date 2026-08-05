@@ -16,7 +16,7 @@ browsable catalogs.
   with provenance on every row.
 - Org admins can set a sharing posture (Open / Team-scoped / Curated) without
   a deploy.
-- Marketplaces keep working exactly as today for catalogs (OpenWork defaults,
+- Marketplaces keep working exactly as today for catalogs (Micx defaults,
   Anthropic starters, GitHub imports). Nothing is deleted.
 
 ## Short answer
@@ -110,8 +110,8 @@ marketplace-attached"; everything downstream keeps working.
    Keep "Do not send `marketplaceId` or `orgWide`."
 7. Sweep steering copy that asserts the old behavior
    (`mcp/agent.ts:117`, `apps/server/src/opencode-plugins/
-   openwork-extensions-preview-steering.ts:141`,
-   `openwork-capabilities-knowledge.ts:95`) — update only if they state
+   micx-extensions-preview-steering.ts:141`,
+   `micx-capabilities-knowledge.ts:95`) — update only if they state
    "unusable until published".
 
 **Proof (spec acceptance, run with `bun test` — this program uses spec
@@ -119,7 +119,7 @@ acceptance criteria + suites instead of fraimz, per program owner decision):**
 
 - New suite `ee/apps/den-api/test/grant-native-capabilities.test.ts`
   (pattern: copy of `test/marketplace-capabilities.test.ts` harness, own
-  `openwork_test_*` database):
+  `micx_test_*` database):
   - A1 creator: plugin+skill with member `manager` grant, **no marketplace**
     → search finds it, execute returns raw SKILL.md content, descriptors
     include it, `marketplace` is null/omitted in payloads.
@@ -150,7 +150,7 @@ acceptance criteria + suites instead of fraimz, per program owner decision):**
   rows because its consumer requires marketplace ids — grant-only skills reach
   chat via search/execute/descriptors, not that route. Revisit in P3.
 - **Step-7 outcome:** steering copy in `mcp/agent.ts`,
-  `openwork-extensions-preview-steering.ts`, `openwork-capabilities-knowledge.ts`
+  `micx-extensions-preview-steering.ts`, `micx-capabilities-knowledge.ts`
   made no stale "unusable until published" claims — unchanged.
 - Proof: `bun test test/grant-native-capabilities.test.ts
   test/marketplace-capabilities.test.ts test/marketplace-cloud-readiness.test.ts
@@ -180,10 +180,10 @@ pnpm dev:den:db-push
 DEN_ORG_MODE=multi_org pnpm dev:den:api        # :8790; demo:den also uses multi_org.
                                                # The spec self-diagnoses disabled signup;
                                                # DEN_SINGLE_ORG_ALLOW_PUBLIC_SIGNUP=true also works.
-DEN_DEMO_SEED_FETCH_GITHUB=0 pnpm --filter @openwork-ee/den-api run seed:demo-org -- --reset
-export OPENWORK_EVAL_DEN_API_URL=http://127.0.0.1:8790
-export OPENWORK_EVAL_DEN_WEB_URL=http://localhost:3005
-export OPENWORK_EVAL_MARK_VERIFIED_CMD='docker exec openwork-web-local-mysql mysql -uroot -ppassword openwork_den -e "UPDATE \`user\` SET email_verified = 1 WHERE email = '\''{email}'\''"'
+DEN_DEMO_SEED_FETCH_GITHUB=0 pnpm --filter @micx-ee/den-api run seed:demo-org -- --reset
+export MICX_EVAL_DEN_API_URL=http://127.0.0.1:8790
+export MICX_EVAL_DEN_WEB_URL=http://localhost:3005
+export MICX_EVAL_MARK_VERIFIED_CMD='docker exec micx-web-local-mysql mysql -uroot -ppassword micx_den -e "UPDATE \`user\` SET email_verified = 1 WHERE email = '\''{email}'\''"'
 pnpm --dir evals install && pnpm --dir evals run spec specs/skill-grant-access.test.ts
 ```
 
@@ -320,10 +320,10 @@ asserting each posture's allow/deny matrix.
 
 ## North-star demo
 
-1. I ask OpenWork to create a skill that formats my standup notes; it
+1. I ask Micx to create a skill that formats my standup notes; it
    confirms the skill is ready to use — no publish step, nowhere to browse.
 2. In the same chat I ask it to use the skill, and it just works.
-3. I say "share it with Ben"; Ben asks his own OpenWork to use it and it
+3. I say "share it with Ben"; Ben asks his own Micx to use it and it
    works for him too, labeled "Shared by Laurent".
 4. I open the dashboard library and see mine, Ben sees "shared with me", and
    the org catalogs sit untouched in Catalogs.

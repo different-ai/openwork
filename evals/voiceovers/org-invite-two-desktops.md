@@ -6,7 +6,7 @@ One scenario, five surfaces: the admin builds her org from a browser, gets her o
 
 2. She creates a brand-new organization for her team, and it appears in her org switcher.
 
-3. Her own OpenWork desktop comes up on a fresh profile and connects to the new org.
+3. Her own Micx desktop comes up on a fresh profile and connects to the new org.
 
 4. She asks the agent for a hello script, and the task starts running in her workspace.
 
@@ -14,6 +14,6 @@ One scenario, five surfaces: the admin builds her org from a browser, gets her o
 
 6. Jamie accepts the invite from her own separate Chrome profile.
 
-7. A second OpenWork desktop spawns mid-scenario just for Jamie, on a fresh profile, already pointed at the org.
+7. A second Micx desktop spawns mid-scenario just for Jamie, on a fresh profile, already pointed at the org.
 
 8. Jamie signs in on her desktop and runs her own task — two people, two desktops, two browsers, one org, one command.

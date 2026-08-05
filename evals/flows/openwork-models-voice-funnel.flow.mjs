@@ -4,23 +4,23 @@ import { mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const EMAIL_DOMAIN = "voice-eval.openwork.test";
-const PASSWORD = "OpenWorkVoiceEval123!";
+const EMAIL_DOMAIN = "voice-eval.micx.test";
+const PASSWORD = "MicxVoiceEval123!";
 const MOCK_INFERENCE_KEY = "ow_inf_voice_funnel";
-const DEFAULT_STRIPE_WEBHOOK_SECRET = "whsec_openwork_eval";
-const DEFAULT_STRIPE_PRICE_ID = "price_openwork_models_eval";
+const DEFAULT_STRIPE_WEBHOOK_SECRET = "whsec_micx_eval";
+const DEFAULT_STRIPE_PRICE_ID = "price_micx_models_eval";
 const VOICE_TRANSCRIPT_TEXT = "What can you help me with?";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function apiBase(ctx) {
-  return ctx.env.OPENWORK_EVAL_DEN_API_URL.trim().replace(/\/+$/, "");
+  return ctx.env.MICX_EVAL_DEN_API_URL.trim().replace(/\/+$/, "");
 }
 
 function jsonHeaders(token) {
   return {
     "content-type": "application/json",
-    origin: process.env.OPENWORK_EVAL_DEN_ORIGIN?.trim() || process.env.OPENWORK_EVAL_DEN_API_URL?.trim()?.replace(/\/+$/, "") || "http://localhost:8790",
+    origin: process.env.MICX_EVAL_DEN_ORIGIN?.trim() || process.env.MICX_EVAL_DEN_API_URL?.trim()?.replace(/\/+$/, "") || "http://localhost:8790",
     ...(token ? { authorization: `Bearer ${token}` } : {}),
   };
 }
@@ -90,8 +90,8 @@ async function startMockBroker() {
         expiresAt: 987654321,
         model: "gpt-realtime-2",
         transcriptionModel: "gpt-4o-transcribe",
-        tools: ["openwork_snapshot", "openwork_list_actions", "openwork_execute_action"],
-        source: "openwork-models",
+        tools: ["micx_snapshot", "micx_list_actions", "micx_execute_action"],
+        source: "micx-models",
       }));
     });
   });
@@ -131,7 +131,7 @@ function stripeSubscriptionEvent({ organizationId, memberId, priceId }) {
         metadata: {
           org_id: organizationId,
           created_by_org_member_id: memberId,
-          openwork_product: "openwork_models",
+          micx_product: "micx_models",
           subscription_type: "inference",
         },
         items: {
@@ -166,19 +166,19 @@ async function waitForNodeCondition(check, label, timeoutMs = 30_000) {
 }
 
 export default {
-  id: "openwork-models-voice-funnel",
-  title: "Sign up, pay for OpenWork Models, and start managed Voice Mode",
-  spec: "evals/onboarding-welcome-flows.md#flow-28--openwork-models-path-explains-payment-before-value",
-  requiredEnv: ["OPENWORK_EVAL_DEN_API_URL"],
+  id: "micx-models-voice-funnel",
+  title: "Sign up, pay for Micx Models, and start managed Voice Mode",
+  spec: "evals/onboarding-welcome-flows.md#flow-28--micx-models-path-explains-payment-before-value",
+  requiredEnv: ["MICX_EVAL_DEN_API_URL"],
   steps: [
     {
-      name: "Start mock OpenWork Models voice broker",
+      name: "Start mock Micx Models voice broker",
       run: async (ctx) => {
         ctx.mockBroker = await startMockBroker();
         ctx.recordEvidence({
           type: "assertion",
           status: "passed",
-          assertion: "Managed voice broker fixture is listening for authenticated OpenWork Models session requests.",
+          assertion: "Managed voice broker fixture is listening for authenticated Micx Models session requests.",
           actual: ctx.mockBroker.baseUrl,
         });
       },
@@ -224,10 +224,10 @@ export default {
       },
     },
     {
-      name: "Record paid OpenWork Models subscription",
+      name: "Record paid Micx Models subscription",
       run: async (ctx) => {
-        const secret = ctx.env.OPENWORK_EVAL_STRIPE_WEBHOOK_SECRET?.trim() || DEFAULT_STRIPE_WEBHOOK_SECRET;
-        const priceId = ctx.env.OPENWORK_EVAL_STRIPE_INFERENCE_PRICE_ID?.trim() || DEFAULT_STRIPE_PRICE_ID;
+        const secret = ctx.env.MICX_EVAL_STRIPE_WEBHOOK_SECRET?.trim() || DEFAULT_STRIPE_WEBHOOK_SECRET;
+        const priceId = ctx.env.MICX_EVAL_STRIPE_INFERENCE_PRICE_ID?.trim() || DEFAULT_STRIPE_PRICE_ID;
         const event = stripeSubscriptionEvent({ organizationId: ctx.den.organizationId, memberId: ctx.den.memberId, priceId });
         const payload = JSON.stringify(event);
         const response = await fetch(`${apiBase(ctx)}/v1/webhooks/stripe`, {
@@ -243,31 +243,31 @@ export default {
 
         const billing = await denRequest(ctx, "/v1/billing", { token: ctx.den.token });
         ctx.assert(billing.response.ok, `Billing status failed: ${billing.response.status} ${billing.text.slice(0, 300)}`);
-        ctx.assert(billing.json?.billing?.stripe?.hasActiveSubscription === true, "Billing status did not show an active OpenWork Models subscription.");
-        ctx.recordEvidence({ type: "assertion", status: "passed", assertion: "The paid OpenWork Models subscription boundary is active for the new organization.", actual: billing.json.billing.stripe.subscription });
+        ctx.assert(billing.json?.billing?.stripe?.hasActiveSubscription === true, "Billing status did not show an active Micx Models subscription.");
+        ctx.recordEvidence({ type: "assertion", status: "passed", assertion: "The paid Micx Models subscription boundary is active for the new organization.", actual: billing.json.billing.stripe.subscription });
       },
     },
     {
       name: "Sign desktop app into the paid Den account",
       run: async (ctx) => {
-        await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 60_000, label: "OpenWork control API" });
+        await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 60_000, label: "Micx control API" });
         await ctx.eval(`(() => {
-          localStorage.setItem("openwork.den.baseUrl", ${JSON.stringify(apiBase(ctx))});
-          localStorage.setItem("openwork.den.apiBaseUrl", ${JSON.stringify(apiBase(ctx))});
-          for (const key of ["openwork.den.authToken", "openwork.den.activeOrgId", "openwork.den.activeOrgSlug", "openwork.den.activeOrgName"]) localStorage.removeItem(key);
+          localStorage.setItem("micx.den.baseUrl", ${JSON.stringify(apiBase(ctx))});
+          localStorage.setItem("micx.den.apiBaseUrl", ${JSON.stringify(apiBase(ctx))});
+          for (const key of ["micx.den.authToken", "micx.den.activeOrgId", "micx.den.activeOrgSlug", "micx.den.activeOrgName"]) localStorage.removeItem(key);
           window.location.hash = "#/settings/cloud-account";
           window.location.reload();
           return true;
         })()`);
-        await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 60_000, label: "OpenWork control API after auth reset" });
+        await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 60_000, label: "Micx control API after auth reset" });
 
         const handoff = await denRequest(ctx, "/v1/auth/desktop-handoff", {
           method: "POST",
           token: ctx.den.token,
-          body: { desktopScheme: "openwork" },
+          body: { desktopScheme: "micx" },
         });
         ctx.assert(handoff.response.ok, `Desktop handoff creation failed: ${handoff.response.status} ${handoff.text.slice(0, 300)}`);
-        ctx.assert(typeof handoff.json?.openworkUrl === "string", "Desktop handoff did not return openworkUrl.");
+        ctx.assert(typeof handoff.json?.micxUrl === "string", "Desktop handoff did not return micxUrl.");
 
         await ctx.navigateHash("/settings/cloud-account");
         await ctx.waitFor(`document.body.innerText.includes('Paste sign-in code') || document.body.innerText.includes('Hide sign-in code') || document.body.innerText.includes('Sign out')`, {
@@ -304,10 +304,10 @@ export default {
             await sleep(1_000);
           }
           await ctx.waitFor("Boolean(document.querySelector('#den-signin-link'))", { timeoutMs: 15_000, label: "den-signin-link input" });
-          await ctx.fill("#den-signin-link", handoff.json.openworkUrl);
+          await ctx.fill("#den-signin-link", handoff.json.micxUrl);
           await ctx.clickText("Finish sign-in", { timeoutMs: 15_000 });
         }
-        await ctx.waitFor(`localStorage.getItem("openwork.den.authToken") === ${JSON.stringify(ctx.den.token)}`, {
+        await ctx.waitFor(`localStorage.getItem("micx.den.authToken") === ${JSON.stringify(ctx.den.token)}`, {
           timeoutMs: 45_000,
           label: "desktop persisted the newly signed-up account token",
         });
@@ -317,27 +317,27 @@ export default {
           await sleep(1_000);
         }
         await ctx.eval(`(() => {
-          const raw = localStorage.getItem("openwork.preferences");
+          const raw = localStorage.getItem("micx.preferences");
           const prefs = raw ? JSON.parse(raw) : {};
-          localStorage.setItem("openwork.preferences", JSON.stringify({ ...prefs, hasCompletedOnboarding: true }));
+          localStorage.setItem("micx.preferences", JSON.stringify({ ...prefs, hasCompletedOnboarding: true }));
           window.location.hash = "#/settings/cloud-account";
           return true;
         })()`);
         await ctx.expectText("Sign out", { timeoutMs: 30_000 });
-        await ctx.screenshot("paid-den-account-signed-in", { claim: "Desktop is signed in to the newly paid OpenWork Models account.", requireText: ["Sign out"] });
+        await ctx.screenshot("paid-den-account-signed-in", { claim: "Desktop is signed in to the newly paid Micx Models account.", requireText: ["Sign out"] });
       },
     },
     {
       name: "Create workspace via UI",
       run: async (ctx) => {
-        const workspaceDir = ctx.env.OPENWORK_EVAL_WORKSPACE_DIR?.trim() || join(tmpdir(), `openwork-models-voice-${Date.now()}`);
+        const workspaceDir = ctx.env.MICX_EVAL_WORKSPACE_DIR?.trim() || join(tmpdir(), `micx-models-voice-${Date.now()}`);
         await mkdir(workspaceDir, { recursive: true });
         ctx.workspaceDir = workspaceDir;
 
         await ctx.eval(`(() => {
-          const raw = localStorage.getItem("openwork.preferences");
+          const raw = localStorage.getItem("micx.preferences");
           const prefs = raw ? JSON.parse(raw) : {};
-          localStorage.setItem("openwork.preferences", JSON.stringify({ ...prefs, hasCompletedOnboarding: true }));
+          localStorage.setItem("micx.preferences", JSON.stringify({ ...prefs, hasCompletedOnboarding: true }));
           window.location.hash = "#/";
           return true;
         })()`);
@@ -376,7 +376,7 @@ export default {
           const nameInput = document.querySelector('input[placeholder*="name" i], input[placeholder*="workspace" i]');
           if (nameInput) {
             const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
-            setter.call(nameInput, "OpenWork Models Voice Eval");
+            setter.call(nameInput, "Micx Models Voice Eval");
             nameInput.dispatchEvent(new Event("input", { bubbles: true }));
             nameInput.dispatchEvent(new Event("change", { bubbles: true }));
           }
@@ -394,21 +394,21 @@ export default {
         ctx.log(`Workspace created via UI: ${ctx.workspace.id}`);
 
         await ctx.eval(`(() => {
-          localStorage.setItem("openwork.extension.enabled.openwork-voice", "1");
-          window.dispatchEvent(new CustomEvent("openwork:extension-state-changed", { detail: { id: "openwork-voice", enabled: true } }));
+          localStorage.setItem("micx.extension.enabled.micx-voice", "1");
+          window.dispatchEvent(new CustomEvent("micx:extension-state-changed", { detail: { id: "micx-voice", enabled: true } }));
           return true;
         })()`);
 
-        await ctx.expectText("OpenWork Models", { timeoutMs: 30_000 });
-        await ctx.screenshot("workspace-created-via-ui", { claim: "Workspace was created through the Add workspace UI flow.", requireText: ["OpenWork Models"] });
+        await ctx.expectText("Micx Models", { timeoutMs: 30_000 });
+        await ctx.screenshot("workspace-created-via-ui", { claim: "Workspace was created through the Add workspace UI flow.", requireText: ["Micx Models"] });
       },
     },
     {
       name: "Configure managed voice credentials via Settings UI",
       run: async (ctx) => {
         const serverConfig = await ctx.eval(`(() => ({
-          baseUrl: localStorage.getItem("openwork.server.urlOverride") || localStorage.getItem("openwork.server.active") || "",
-          hostToken: localStorage.getItem("openwork.server.hostToken") || "",
+          baseUrl: localStorage.getItem("micx.server.urlOverride") || localStorage.getItem("micx.server.active") || "",
+          hostToken: localStorage.getItem("micx.server.hostToken") || "",
         }))()`);
 
         await sleep(1_000);
@@ -441,7 +441,7 @@ export default {
         await ctx.clickText("Environment", { timeoutMs: 10_000 });
         await sleep(1_000);
 
-        for (const [key, value] of [["OPENWORK_API_KEY", MOCK_INFERENCE_KEY], ["OPENWORK_INFERENCE_BASE_URL", ctx.mockBroker.baseUrl]]) {
+        for (const [key, value] of [["MICX_API_KEY", MOCK_INFERENCE_KEY], ["MICX_INFERENCE_BASE_URL", ctx.mockBroker.baseUrl]]) {
           await ctx.clickText("Add variable", { timeoutMs: 10_000 });
           await ctx.waitFor(`Boolean(document.querySelector('input[placeholder="ANTHROPIC_API_KEY"]'))`, { timeoutMs: 10_000, label: "env key input" });
           await ctx.fill('input[placeholder="ANTHROPIC_API_KEY"]', key);
@@ -481,13 +481,13 @@ export default {
             ctx.log(`UI save for ${key} did not persist — falling back to API.`);
             const envResponse = await fetch(`${serverConfig.baseUrl}/env`, {
               method: "PUT",
-              headers: { "x-openwork-host-token": serverConfig.hostToken, "content-type": "application/json" },
+              headers: { "x-micx-host-token": serverConfig.hostToken, "content-type": "application/json" },
               body: JSON.stringify({ entries: [{ key, value }] }),
             });
             ctx.assert(envResponse.ok, `Fallback env write for ${key} failed: ${envResponse.status} ${await envResponse.text().catch(() => "")}`);
             await sleep(1_000);
             await ctx.eval("window.location.reload()");
-            await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 30_000, label: "control API after env reload" });
+            await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 30_000, label: "control API after env reload" });
             await ctx.clickText("Environment", { timeoutMs: 10_000 });
             await sleep(1_000);
           }
@@ -497,12 +497,12 @@ export default {
         ctx.recordEvidence({
           type: "assertion",
           status: "passed",
-          assertion: "Managed voice credentials (OPENWORK_API_KEY + OPENWORK_INFERENCE_BASE_URL) were saved through the Settings > Environment UI.",
-          actual: ["OPENWORK_API_KEY", "OPENWORK_INFERENCE_BASE_URL"],
+          assertion: "Managed voice credentials (MICX_API_KEY + MICX_INFERENCE_BASE_URL) were saved through the Settings > Environment UI.",
+          actual: ["MICX_API_KEY", "MICX_INFERENCE_BASE_URL"],
         });
         await ctx.screenshot("managed-voice-env-configured-via-ui", {
           claim: "Settings > Environment shows both managed voice credentials saved via the UI form.",
-          requireText: ["OPENWORK_API_KEY", "OPENWORK_INFERENCE_BASE_URL"],
+          requireText: ["MICX_API_KEY", "MICX_INFERENCE_BASE_URL"],
         });
       },
     },
@@ -510,7 +510,7 @@ export default {
       name: "Create a session via UI",
       run: async (ctx) => {
         await ctx.navigateHash(`/workspace/${ctx.workspace.id}/session`);
-        await ctx.waitFor("window.__openworkControl.listActions().some((action) => action.id === 'session.create_task' && !action.disabled)", {
+        await ctx.waitFor("window.__micxControl.listActions().some((action) => action.id === 'session.create_task' && !action.disabled)", {
           timeoutMs: 60_000,
           label: "session.create_task action enabled",
         });
@@ -526,7 +526,7 @@ export default {
           if (!createdSession) await sleep(2_000);
         }
         ctx.assert(createdSession, "Clicking New session did not navigate to a session route.");
-        await ctx.waitFor("window.__openworkControl.listActions().some((action) => action.id === 'voice.panel.open' && !action.disabled)", {
+        await ctx.waitFor("window.__micxControl.listActions().some((action) => action.id === 'voice.panel.open' && !action.disabled)", {
           timeoutMs: 30_000,
           label: "voice.panel.open action enabled",
         });
@@ -619,12 +619,12 @@ export default {
         }
 
         const request = await waitForNodeCondition(() => ctx.mockBroker.requests[0] ?? null, "managed voice broker request", 30_000);
-        ctx.assert(request.authorization === `Bearer ${MOCK_INFERENCE_KEY}`, "Voice Mode did not authenticate to the OpenWork Models broker with the paid inference key.");
+        ctx.assert(request.authorization === `Bearer ${MOCK_INFERENCE_KEY}`, "Voice Mode did not authenticate to the Micx Models broker with the paid inference key.");
         ctx.assert(request.url === "/voice/realtime/session", "Voice Mode did not call the managed realtime session endpoint.");
         ctx.recordEvidence({
           type: "assertion",
           status: "passed",
-          assertion: "Voice Mode requested a managed OpenWork Models realtime session.",
+          assertion: "Voice Mode requested a managed Micx Models realtime session.",
           actual: { method: request.method, url: request.url, authorization: "Bearer [redacted]" },
         });
 
@@ -632,7 +632,7 @@ export default {
         const bodyText = await ctx.eval("document.body.innerText");
         ctx.assert(
           !bodyText.includes("OpenAI API key missing"),
-          "Voice Mode showed a direct OpenAI API key missing error instead of using the managed OpenWork Models path.",
+          "Voice Mode showed a direct OpenAI API key missing error instead of using the managed Micx Models path.",
         );
         ctx.recordEvidence({
           type: "assertion",
@@ -641,7 +641,7 @@ export default {
         });
 
         await ctx.screenshot("managed-voice-mode-started", {
-          claim: "Voice Mode started through the managed OpenWork Models session path via UI click.",
+          claim: "Voice Mode started through the managed Micx Models session path via UI click.",
           requireText: ["Voice Mode"],
           rejectText: ["OpenAI API key missing"],
         });
@@ -666,7 +666,7 @@ export default {
           actual: { hasTimeline, hasConnectionState, hasVoiceError },
         });
 
-        const statusResult = await ctx.eval(`window.__openworkControl.execute("voice.status")`);
+        const statusResult = await ctx.eval(`window.__micxControl.execute("voice.status")`);
         ctx.log(`Voice status: ${JSON.stringify(statusResult?.result ?? statusResult)?.slice(0, 200)}`);
 
         const injectResult = await ctx.control("voice.inject_transcript", { text: VOICE_TRANSCRIPT_TEXT }).catch((error) => {
@@ -695,7 +695,7 @@ export default {
         }
 
         await ctx.screenshot("voice-mode-active-with-transcript", {
-          claim: "Voice Mode is active through the managed OpenWork Models path, with timeline and connection state visible.",
+          claim: "Voice Mode is active through the managed Micx Models path, with timeline and connection state visible.",
           requireText: ["Voice Mode"],
           rejectText: ["OpenAI API key missing"],
         });

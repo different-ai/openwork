@@ -11,7 +11,7 @@ permissions:
 jobs:
   check-snapshot-pin:
     name: Compare production pin with latest release
-    if: github.repository == 'different-ai/openwork'
+    if: github.repository == 'different-ai/micx'
     runs-on: blacksmith-4vcpu-ubuntu-2404
     env:
       DAYTONA_CLOUD_ENV_GROUP_ID: ${{ vars.DAYTONA_CLOUD_ENV_GROUP_ID }}
@@ -51,7 +51,7 @@ jobs:
           pin="$(node scripts/update-daytona-snapshot-pin.mjs \
             --env-group-id "$DAYTONA_CLOUD_ENV_GROUP_ID" \
             --read)"
-          base_name="${DAYTONA_SNAPSHOT_NAME_BASE:-openwork}"
+          base_name="${DAYTONA_SNAPSHOT_NAME_BASE:-micx}"
           echo "pin=$pin" >> "$GITHUB_OUTPUT"
           if [[ "$pin" =~ ^${base_name}-dev-([0-9a-f]{7,})$ ]]; then
             echo "channel=dev" >> "$GITHUB_OUTPUT"
@@ -102,7 +102,7 @@ jobs:
             exit 1
           fi
 
-          base_name="${DAYTONA_SNAPSHOT_NAME_BASE:-openwork}"
+          base_name="${DAYTONA_SNAPSHOT_NAME_BASE:-micx}"
           snapshot_name="${base_name}-${release_tag#v}"
           echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
           echo "snapshot_name=$snapshot_name" >> "$GITHUB_OUTPUT"

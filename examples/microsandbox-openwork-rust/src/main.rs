@@ -7,27 +7,27 @@ use std::time::{Duration, Instant};
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let image = env::var("OPENWORK_MICROSANDBOX_IMAGE")
-        .unwrap_or_else(|_| "openwork-microsandbox:dev".to_string());
-    let name = env::var("OPENWORK_MICROSANDBOX_NAME")
-        .unwrap_or_else(|_| "openwork-microsandbox-rust".to_string());
-    let workspace_dir = env::var("OPENWORK_MICROSANDBOX_WORKSPACE_DIR")
+    let image = env::var("MICX_MICROSANDBOX_IMAGE")
+        .unwrap_or_else(|_| "micx-microsandbox:dev".to_string());
+    let name = env::var("MICX_MICROSANDBOX_NAME")
+        .unwrap_or_else(|_| "micx-microsandbox-rust".to_string());
+    let workspace_dir = env::var("MICX_MICROSANDBOX_WORKSPACE_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|_| default_bind_dir(&name, "workspace"));
-    let data_dir = env::var("OPENWORK_MICROSANDBOX_DATA_DIR")
+    let data_dir = env::var("MICX_MICROSANDBOX_DATA_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|_| default_bind_dir(&name, "data"));
-    let replace = env_flag("OPENWORK_MICROSANDBOX_REPLACE");
-    let host_port = env::var("OPENWORK_MICROSANDBOX_PORT")
+    let replace = env_flag("MICX_MICROSANDBOX_REPLACE");
+    let host_port = env::var("MICX_MICROSANDBOX_PORT")
         .ok()
         .and_then(|value| value.parse::<u16>().ok())
         .unwrap_or(8787);
     let connect_host =
-        env::var("OPENWORK_CONNECT_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
+        env::var("MICX_CONNECT_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
     let client_token =
-        env::var("OPENWORK_TOKEN").unwrap_or_else(|_| "microsandbox-token".to_string());
+        env::var("MICX_TOKEN").unwrap_or_else(|_| "microsandbox-token".to_string());
     let host_token =
-        env::var("OPENWORK_HOST_TOKEN").unwrap_or_else(|_| "microsandbox-host-token".to_string());
+        env::var("MICX_HOST_TOKEN").unwrap_or_else(|_| "microsandbox-host-token".to_string());
 
     println!(
         "Starting microsandbox `{name}` from image `{image}` on http://{connect_host}:{host_port}"
@@ -40,10 +40,10 @@ async fn main() -> Result<()> {
         .image(image.as_str())
         .memory(2048)
         .cpus(2)
-        .env("OPENWORK_CONNECT_HOST", &connect_host)
-        .env("OPENWORK_TOKEN", &client_token)
-        .env("OPENWORK_HOST_TOKEN", &host_token)
-        .env("OPENWORK_APPROVAL_MODE", "auto")
+        .env("MICX_CONNECT_HOST", &connect_host)
+        .env("MICX_TOKEN", &client_token)
+        .env("MICX_HOST_TOKEN", &host_token)
+        .env("MICX_APPROVAL_MODE", "auto")
         .port(host_port, 8787)
         .volume("/workspace", |v| {
             v.bind(workspace_dir.to_string_lossy().as_ref())
@@ -70,7 +70,7 @@ async fn main() -> Result<()> {
             ["-lc", "/usr/local/bin/microsandbox-entrypoint.sh"],
         )
         .await
-        .context("failed to start the OpenWork microsandbox entrypoint inside the VM")?;
+        .context("failed to start the Micx microsandbox entrypoint inside the VM")?;
 
     let log_task = tokio::spawn(async move {
         let mut server = server;
@@ -197,7 +197,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires microsandbox runtime and a pullable OCI image"]
     async fn rust_example_smoke_test_checks_health_and_session_endpoints() -> Result<()> {
-        let image = env::var("OPENWORK_MICROSANDBOX_IMAGE")
+        let image = env::var("MICX_MICROSANDBOX_IMAGE")
             .unwrap_or_else(|_| "ttl.sh/openwork-microsandbox-11559:1d".to_string());
         let connect_host = "127.0.0.1";
         let client_token = "some-shared-secret";
@@ -221,10 +221,10 @@ mod tests {
             .replace()
             .memory(2048)
             .cpus(2)
-            .env("OPENWORK_CONNECT_HOST", connect_host)
-            .env("OPENWORK_TOKEN", client_token)
-            .env("OPENWORK_HOST_TOKEN", host_token)
-            .env("OPENWORK_APPROVAL_MODE", "auto")
+            .env("MICX_CONNECT_HOST", connect_host)
+            .env("MICX_TOKEN", client_token)
+            .env("MICX_HOST_TOKEN", host_token)
+            .env("MICX_APPROVAL_MODE", "auto")
             .port(host_port, 8787)
             .volume("/workspace", |v| {
                 v.bind(workspace_dir.to_string_lossy().as_ref())

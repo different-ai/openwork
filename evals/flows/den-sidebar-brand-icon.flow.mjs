@@ -1,10 +1,10 @@
 import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
 
 const vo = await loadVoiceoverParagraphs("den-sidebar-brand-icon");
-const DEN_API_URL = (process.env.OPENWORK_EVAL_DEN_API_URL ?? "").trim().replace(/\/+$/, "");
-const DEN_WEB_URL = (process.env.OPENWORK_EVAL_DEN_WEB_URL ?? "").trim().replace(/\/+$/, "");
-const ADMIN_EMAIL = process.env.OPENWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
-const ADMIN_PASSWORD = process.env.OPENWORK_EVAL_DEMO_PASSWORD?.trim() || "OpenWorkDemo123!";
+const DEN_API_URL = (process.env.MICX_EVAL_DEN_API_URL ?? "").trim().replace(/\/+$/, "");
+const DEN_WEB_URL = (process.env.MICX_EVAL_DEN_WEB_URL ?? "").trim().replace(/\/+$/, "");
+const ADMIN_EMAIL = process.env.MICX_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
+const ADMIN_PASSWORD = process.env.MICX_EVAL_DEMO_PASSWORD?.trim() || "MicxDemo123!";
 const state = { token: null, iconUrl: null };
 
 async function apiRequest(path, options = {}) {
@@ -120,7 +120,7 @@ export default {
   id: "den-sidebar-brand-icon",
   title: "Den uses the managed organization square icon in its sidebar without flashes or broken images",
   kind: "user-facing",
-  requiredEnv: ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_WEB_URL"],
+  requiredEnv: ["MICX_EVAL_DEN_API_URL", "MICX_EVAL_DEN_WEB_URL"],
   steps: [
     {
       name: "Setup",
@@ -168,7 +168,7 @@ export default {
     {
       name: "Frame 2",
       run: async (ctx) => {
-        await ctx.prove("The sidebar replaces the generic OpenWork mark with the managed organization icon", {
+        await ctx.prove("The sidebar replaces the generic Micx mark with the managed organization icon", {
           voiceover: vo[1],
           action: async () => {
             await ctx.client.send("Network.emulateNetworkConditions", {
@@ -188,7 +188,7 @@ export default {
           },
           screenshot: {
             name: "sidebar-managed-brand-icon",
-            claim: "The Den sidebar visibly shows the organization's managed square icon instead of the OpenWork SVG.",
+            claim: "The Den sidebar visibly shows the organization's managed square icon instead of the Micx SVG.",
             requireText: ["Dashboard"],
             rejectText: ["Something went wrong"],
           },
@@ -198,7 +198,7 @@ export default {
     {
       name: "Frame 3",
       run: async (ctx) => {
-        await ctx.prove("An organization without a managed icon gets the intact OpenWork fallback", {
+        await ctx.prove("An organization without a managed icon gets the intact Micx fallback", {
           voiceover: vo[2],
           action: async () => {
             await clearManagedIcon(ctx);
@@ -211,7 +211,7 @@ export default {
           },
           screenshot: {
             name: "sidebar-brand-icon-fallback",
-            claim: "Without a custom square icon, Den shows the intact OpenWork fallback and no broken image.",
+            claim: "Without a custom square icon, Den shows the intact Micx fallback and no broken image.",
             requireText: ["Dashboard"],
             rejectText: ["Something went wrong"],
           },

@@ -5,7 +5,7 @@ the PR 2 baseline for Daytona/CDP automation and recordings.
 
 ## Flow 1: Disable built-in extensions for a member
 
-**Goal:** An admin disables built-in OpenWork extensions and the assigned member
+**Goal:** An admin disables built-in Micx extensions and the assigned member
 desktop stops showing or offering those extensions in normal UI.
 
 ### Admin setup
@@ -21,7 +21,7 @@ desktop stops showing or offering those extensions in normal UI.
 
 1. Sign in to the desktop app as the assigned member.
 2. Open Settings -> Extensions -> My Extensions.
-3. Confirm built-in extension cards such as `OpenWork Browser`, `Chrome`,
+3. Confirm built-in extension cards such as `Micx Browser`, `Chrome`,
    `OpenAI Image Gen`, and `Ollama` are absent from the normal catalog.
 4. Click `Show hidden`.
 5. Confirm the same built-in extensions appear with `Disabled by organization`.

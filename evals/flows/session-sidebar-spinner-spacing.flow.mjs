@@ -4,9 +4,9 @@ import { resolve } from "node:path";
 import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
 
 const vo = await loadVoiceoverParagraphs("session-sidebar-spinner-spacing");
-const LONG_TITLE = "OpenWork diagnostics authorization with a deliberately long session title";
+const LONG_TITLE = "Micx diagnostics authorization with a deliberately long session title";
 const FIXTURE_WORKSPACE = resolve(
-  process.env.OPENWORK_EVAL_ARTIFACTS_DIR ?? "evals/results",
+  process.env.MICX_EVAL_ARTIFACTS_DIR ?? "evals/results",
   "..",
   "session-sidebar-spinner-workspace",
 );
@@ -46,7 +46,7 @@ export default {
       name: "Long active session title remains readable without spinner overlap",
       run: async (ctx) => {
         await ctx.eval("location.reload()");
-        await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 60_000, label: "control API" });
+        await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 60_000, label: "control API" });
         const choosingModel = await ctx.hasText("Skip and use the free model");
         if (choosingModel) {
           await ctx.clickText("Skip and use the free model", { selector: "button", timeoutMs: 10_000 });
@@ -56,10 +56,10 @@ export default {
         if (surveySkip) await ctx.clickText("Skip", { selector: "button", timeoutMs: 10_000 });
         if (choosingModel || surveySkip) {
           await ctx.waitFor("location.hash.includes('/workspace/')", { timeoutMs: 60_000, label: "workspace after onboarding" });
-          await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 60_000, label: "control API after onboarding" });
+          await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 60_000, label: "control API after onboarding" });
         }
         const canCreateTask = await ctx.eval(
-          "window.__openworkControl.listActions().some((action) => action.id === 'session.create_task' && !action.disabled)",
+          "window.__micxControl.listActions().some((action) => action.id === 'session.create_task' && !action.disabled)",
         );
         if (!canCreateTask) {
           await mkdir(FIXTURE_WORKSPACE, { recursive: true });
@@ -76,24 +76,24 @@ export default {
             });
           } else {
             await ctx.waitFor(
-              "window.__openworkControl.listActions().some((action) => action.id === 'workspace.create' && !action.disabled)",
+              "window.__micxControl.listActions().some((action) => action.id === 'workspace.create' && !action.disabled)",
               { timeoutMs: 30_000, label: "workspace creation control" },
             );
             await ctx.control("workspace.create", { path: FIXTURE_WORKSPACE });
           }
         }
         await ctx.waitFor(
-          "window.__openworkControl.listActions().some((action) => action.id === 'session.create_task' && !action.disabled)",
+          "window.__micxControl.listActions().some((action) => action.id === 'session.create_task' && !action.disabled)",
           { timeoutMs: 60_000, label: "enabled task creation" },
         );
 
         await ctx.control("session.create_task");
         const sessionId = await ctx.waitFor(`(() => {
-          const match = /session\\/([^/?#]+)/.exec(window.__openworkControl.snapshot().route);
+          const match = /session\\/([^/?#]+)/.exec(window.__micxControl.snapshot().route);
           return match ? decodeURIComponent(match[1]) : null;
         })()`, { timeoutMs: 30_000, label: "created session" });
         await ctx.waitFor(
-          "window.__openworkControl.listActions().some((action) => action.id === 'session.rename' && !action.disabled)",
+          "window.__micxControl.listActions().some((action) => action.id === 'session.rename' && !action.disabled)",
           { timeoutMs: 30_000, label: "enabled session rename" },
         );
         await ctx.control("session.rename", { sessionId, title: LONG_TITLE });
@@ -118,7 +118,7 @@ export default {
           },
           screenshot: {
             name: "session-title-truncates-beside-left-spinner",
-            requireText: ["OpenWork diagnostics authorization"],
+            requireText: ["Micx diagnostics authorization"],
           },
         });
       },

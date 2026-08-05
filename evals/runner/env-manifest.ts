@@ -143,10 +143,10 @@ function setIfMissing(env: NodeJS.ProcessEnv, key: string, value: string | undef
 
 export function applyManifestToEnv(manifest: EnvManifest, env: NodeJS.ProcessEnv): void {
   if (manifest.den) {
-    setIfMissing(env, "OPENWORK_EVAL_DEN_API_URL", manifest.den.apiUrl);
-    setIfMissing(env, "OPENWORK_EVAL_DEN_WEB_URL", manifest.den.webUrl);
-    setIfMissing(env, "OPENWORK_EVAL_DEN_TOKEN", manifest.den.token);
-    if (manifest.den.orgMode === "multi_org") setIfMissing(env, "OPENWORK_EVAL_DEN_MULTI_ORG", "1");
+    setIfMissing(env, "MICX_EVAL_DEN_API_URL", manifest.den.apiUrl);
+    setIfMissing(env, "MICX_EVAL_DEN_WEB_URL", manifest.den.webUrl);
+    setIfMissing(env, "MICX_EVAL_DEN_TOKEN", manifest.den.token);
+    if (manifest.den.orgMode === "multi_org") setIfMissing(env, "MICX_EVAL_DEN_MULTI_ORG", "1");
   }
   for (const [key, value] of Object.entries(manifest.env ?? {})) {
     setIfMissing(env, key, value);

@@ -1,7 +1,7 @@
 import { ensureSessionWorkspace } from "./lib/session-workspace.mjs";
 
 const LONG_TITLE =
-  "Review the OpenWork desktop sidebar title reveal across a deliberately overflowing conversation name";
+  "Review the Micx desktop sidebar title reveal across a deliberately overflowing conversation name";
 
 const READ_TITLE = `(() => {
   const title = [...document.querySelectorAll('[data-session-title-overflowing="true"] > [data-session-title-text]')]
@@ -44,7 +44,7 @@ export default {
         await ensureSessionWorkspace(ctx, "sidebar-title-hover-marquee");
         await ctx.control("session.create_task");
         const sessionId = await ctx.waitFor(`(() => {
-          const route = window.__openworkControl.snapshot().route || "";
+          const route = window.__micxControl.snapshot().route || "";
           const match = route.match(/session\\/([^/?#]+)/);
           return match ? decodeURIComponent(match[1]) : null;
         })()`, { timeoutMs: 30_000, label: "created session" });
@@ -94,7 +94,7 @@ export default {
           },
           screenshot: {
             name: "overflowing-title-mid-animation",
-            requireText: ["Review the OpenWork desktop sidebar"],
+            requireText: ["Review the Micx desktop sidebar"],
           },
         });
       },

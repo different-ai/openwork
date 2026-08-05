@@ -13,7 +13,7 @@ export function runningInsideSandbox(env: NodeJS.ProcessEnv = process.env): bool
 }
 
 export async function resolveHost(env: NodeJS.ProcessEnv = process.env): Promise<Host & AsyncDisposable> {
-  const sandboxId = env.OPENWORK_EVAL_DAYTONA_SANDBOX?.trim();
+  const sandboxId = env.MICX_EVAL_DAYTONA_SANDBOX?.trim();
   // The Daytona host drives the `daytona` CLI from OUTSIDE a sandbox. When the
   // caller is already inside one, that indirection cannot work — spawn locally,
   // which is the same machine the sandbox host would have targeted anyway.

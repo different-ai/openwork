@@ -1,5 +1,5 @@
-import { describeAppState, dumpScreenState, evaluateOnSurface, isInteractive, probeAppState } from "@openwork/cdp";
-import type { AppStateProbe, EvaluateOptions, Surface } from "@openwork/cdp";
+import { describeAppState, dumpScreenState, evaluateOnSurface, isInteractive, probeAppState } from "@micx/cdp";
+import type { AppStateProbe, EvaluateOptions, Surface } from "@micx/cdp";
 
 export interface SessionToolCall {
   capability: string;
@@ -27,7 +27,7 @@ function jsValue(value: unknown): string {
 }
 
 export async function evalIn(app: Surface, expression: string, opts: EvaluateOptions = {}): Promise<unknown> {
-  // Target healing lives in @openwork/cdp; behaviours just evaluate.
+  // Target healing lives in @micx/cdp; behaviours just evaluate.
   return evaluateOnSurface(app, expression, {
     ...opts,
     timeoutMs: opts.timeoutMs ?? DEFAULT_DOM_PROBE_TIMEOUT_MS,
@@ -295,7 +295,7 @@ export async function waitForConnectionCard(app: Surface, name: string, workspac
       await new Promise((resolve) => setTimeout(resolve, 1_500));
       continue;
     }
-    await evalIn(app, "window.__openworkControl.execute('extensions.refresh-marketplace', null)", { awaitPromise: true, timeoutMs: 15_000 })
+    await evalIn(app, "window.__micxControl.execute('extensions.refresh-marketplace', null)", { awaitPromise: true, timeoutMs: 15_000 })
       .catch(() => undefined);
     await evalIn(app, `(() => {
       const button = [...document.querySelectorAll('button')]
@@ -388,7 +388,7 @@ export async function enabledButtons(app: Surface): Promise<string[]> {
   return labels;
 }
 
-/** Invoke a registered `window.__openworkControl` action, the product's own automation seam. */
+/** Invoke a registered `window.__micxControl` action, the product's own automation seam. */
 export async function control(
   app: Surface,
   action: string,
@@ -397,7 +397,7 @@ export async function control(
 ): Promise<unknown> {
   const result = await evalIn(
     app,
-    `window.__openworkControl.execute(${JSON.stringify(action)}, ${JSON.stringify(args ?? null)})`,
+    `window.__micxControl.execute(${JSON.stringify(action)}, ${JSON.stringify(args ?? null)})`,
     { ...opts, awaitPromise: true },
   );
   if (!isRecord(result) || result.ok !== true) {

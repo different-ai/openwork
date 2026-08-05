@@ -41,18 +41,18 @@ async function setAutomaticDownloads(ctx, checked) {
 
 async function configureSelfHealEval(ctx) {
   await ctx.eval(`(() => {
-    const stale = window.__openworkApplyDesktopConfig;
-    const fresh = window.__openworkSetDesktopConfigRefreshResult;
+    const stale = window.__micxApplyDesktopConfig;
+    const fresh = window.__micxSetDesktopConfigRefreshResult;
     if (typeof stale !== 'function' || typeof fresh !== 'function') throw new Error('Desktop policy eval bridge unavailable');
     window.__selfHealEval = { currentVersion: '0.17.0', calls: [], installAttempts: 0 };
     stale({});
     fresh({});
-    window.__openworkReadDesktopVersionMetadataEval = async () => ({
+    window.__micxReadDesktopVersionMetadataEval = async () => ({
       minAppVersion: '0.17.0',
       latestAppVersion: '0.17.1',
       publishedDesktopVersions: ['0.17.0', '0.17.1'],
     });
-    window.__openworkUpdaterEvalBridge = {
+    window.__micxUpdaterEvalBridge = {
       getChannel: async () => ({ channel: 'stable', feedUrl: 'eval://stable', currentVersion: window.__selfHealEval.currentVersion }),
       check: async (channel, targetVersion) => {
         window.__selfHealEval.calls.push('check:' + (targetVersion ?? 'latest'));
@@ -82,14 +82,14 @@ async function configureSelfHealEval(ctx) {
 }
 
 async function openDesktopUpdates(ctx) {
-  await ctx.waitFor("Boolean(window.__openworkControl && window.__openworkApplyDesktopConfig && window.__openworkSetDesktopConfigRefreshResult)", {
+  await ctx.waitFor("Boolean(window.__micxControl && window.__micxApplyDesktopConfig && window.__micxSetDesktopConfigRefreshResult)", {
     timeoutMs: 45_000,
     label: "desktop eval bridges",
   });
   await configureSelfHealEval(ctx);
   await ctx.eval(`(() => {
-    localStorage.setItem('openwork.react.settings.update-auto-check', '0');
-    localStorage.setItem('openwork.react.settings.update-auto-download', '0');
+    localStorage.setItem('micx.react.settings.update-auto-check', '0');
+    localStorage.setItem('micx.react.settings.update-auto-download', '0');
   })()`);
   await ctx.navigateHash("/settings/updates");
   await ctx.waitForText("Check now", { timeoutMs: 30_000 });

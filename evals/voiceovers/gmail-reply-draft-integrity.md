@@ -2,9 +2,9 @@
 
 Exercised against a connected Google account; the agent stages the draft, the user always sends from Gmail.
 
-1. I'm in OpenWork, and Sarah's thread about the Q3 launch has been going back and forth for days. I ask OpenWork to reply to her latest email and confirm that Thursday works.
+1. I'm in Micx, and Sarah's thread about the Q3 launch has been going back and forth for days. I ask Micx to reply to her latest email and confirm that Thursday works.
 
-2. OpenWork reads the thread through my connected Google account first, so the reply is written in context — it knows who said what and where the conversation left off.
+2. Micx reads the thread through my connected Google account first, so the reply is written in context — it knows who said what and where the conversation left off.
 
 3. It stages my reply as a draft on the same thread — same "Re: Q3 launch" subject, threaded onto the conversation, not a new orphaned email.
 
@@ -12,4 +12,4 @@ Exercised against a connected Google account; the agent stages the draft, the us
 
 5. The text reads like an email a person wrote: real paragraphs, no weird mid-sentence line breaks, no stray markdown symbols.
 
-6. And OpenWork finishes by handing me the link — one click opens the ready-to-send draft in Gmail, and I hit send myself.
+6. And Micx finishes by handing me the link — one click opens the ready-to-send draft in Gmail, and I hit send myself.

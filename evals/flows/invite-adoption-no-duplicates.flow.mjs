@@ -5,10 +5,10 @@
  *
  * Local runbook:
  *   1. pnpm evals --stack-down
- *   2. OPENWORK_EVAL_DEN_WEB_URL=http://127.0.0.1:3005 OPENWORK_EVAL_WEB_CDP_ADMIN=http://127.0.0.1:9855 pnpm fraimz --flow invite-adoption-no-duplicates --stack den
- *      (the stack exports OPENWORK_EVAL_DEN_API_URL and OPENWORK_EVAL_DEN_TOKEN)
+ *   2. MICX_EVAL_DEN_WEB_URL=http://127.0.0.1:3005 MICX_EVAL_WEB_CDP_ADMIN=http://127.0.0.1:9855 pnpm fraimz --flow invite-adoption-no-duplicates --stack den
+ *      (the stack exports MICX_EVAL_DEN_API_URL and MICX_EVAL_DEN_TOKEN)
  *   3. In another shell, run den-web against the stack API:
- *      DEN_WEB_PORT=3005 DEN_API_BASE=http://127.0.0.1:8790 DEN_AUTH_ORIGIN=http://127.0.0.1:3005 DEN_AUTH_FALLBACK_BASE=http://127.0.0.1:8790 pnpm --filter @openwork-ee/den-web dev:local
+ *      DEN_WEB_PORT=3005 DEN_API_BASE=http://127.0.0.1:8790 DEN_AUTH_ORIGIN=http://127.0.0.1:3005 DEN_AUTH_FALLBACK_BASE=http://127.0.0.1:8790 pnpm --filter @micx-ee/den-web dev:local
  *   4. In another shell, run Chrome for screenshots:
  *      "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless=new --remote-debugging-port=9855 --user-data-dir="$(mktemp -d)" --window-size=1440,1100 about:blank
  */
@@ -21,14 +21,14 @@ import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
 const FLOW_ID = "invite-adoption-no-duplicates";
 const vo = await loadVoiceoverParagraphs(FLOW_ID);
 
-const DEN_API_URL = (process.env.OPENWORK_EVAL_DEN_API_URL ?? "").trim().replace(/\/+$/, "");
+const DEN_API_URL = (process.env.MICX_EVAL_DEN_API_URL ?? "").trim().replace(/\/+$/, "");
 const DEN_WEB_URL = denWebUrl();
-const ADMIN_CDP_URL = (process.env.OPENWORK_EVAL_WEB_CDP_ADMIN ?? "").trim().replace(/\/+$/, "");
-const MYSQL_CONTAINER = "openwork-web-local-mysql";
-const MYSQL_ARGS = ["exec", MYSQL_CONTAINER, "mysql", "-uroot", "-ppassword", "openwork_den", "-N", "-e"];
-const ADMIN_TOKEN = (process.env.OPENWORK_EVAL_DEN_TOKEN ?? "").trim();
-const ADMIN_EMAIL = process.env.OPENWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
-const ADMIN_PASSWORD = process.env.OPENWORK_EVAL_DEMO_PASSWORD?.trim() || "OpenWorkDemo123!";
+const ADMIN_CDP_URL = (process.env.MICX_EVAL_WEB_CDP_ADMIN ?? "").trim().replace(/\/+$/, "");
+const MYSQL_CONTAINER = "micx-web-local-mysql";
+const MYSQL_ARGS = ["exec", MYSQL_CONTAINER, "mysql", "-uroot", "-ppassword", "micx_den", "-N", "-e"];
+const ADMIN_TOKEN = (process.env.MICX_EVAL_DEN_TOKEN ?? "").trim();
+const ADMIN_EMAIL = process.env.MICX_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
+const ADMIN_PASSWORD = process.env.MICX_EVAL_DEMO_PASSWORD?.trim() || "MicxDemo123!";
 const TYPE_ID_ALPHABET = "0123456789abcdefghjkmnpqrstvwxyz";
 const TYPE_ID_PREFIXES = {
   member: "om",
@@ -37,7 +37,7 @@ const TYPE_ID_PREFIXES = {
 const RUN_TAG = `${Date.now().toString(36)}-${randomBytes(2).toString("hex")}`;
 const RILEY_EMAIL = `riley+${RUN_TAG}@acme.test`;
 const RILEY_JIT_EMAIL = `riley+jit-${RUN_TAG}@acme.test`;
-const RILEY_PASSWORD = `OpenWork-${RUN_TAG}!`;
+const RILEY_PASSWORD = `Micx-${RUN_TAG}!`;
 
 const state = {
   organization: null,
@@ -191,7 +191,7 @@ async function signInAdminBrowser(ctx) {
   await ctx.eval(`(() => {
     document.cookie = 'better-auth.session_token=; Max-Age=0; Path=/';
     document.cookie = ${JSON.stringify(`${session.cookie}; Path=/; SameSite=Lax`)};
-    localStorage.setItem('openwork:web:auth-token', ${JSON.stringify(session.token)});
+    localStorage.setItem('micx:web:auth-token', ${JSON.stringify(session.token)});
     sessionStorage.clear();
     return true;
   })()`);
@@ -533,7 +533,7 @@ export default {
   title: "Pending invitations are adopted without duplicate organization members",
   kind: "internal",
   requiresApp: false,
-  requiredEnv: ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_TOKEN", "OPENWORK_EVAL_DEN_WEB_URL", "OPENWORK_EVAL_WEB_CDP_ADMIN"],
+  requiredEnv: ["MICX_EVAL_DEN_API_URL", "MICX_EVAL_DEN_TOKEN", "MICX_EVAL_DEN_WEB_URL", "MICX_EVAL_WEB_CDP_ADMIN"],
   steps: [
     {
       name: "Frame 1 — The admin invites Riley as an admin",

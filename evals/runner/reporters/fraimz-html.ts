@@ -41,7 +41,7 @@ export function renderFrameIndex(report: EvalReport): string {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>fraimz · OpenWork Eval Run ${escapeHtml(report.runId)}</title>
+  <title>fraimz · Micx Eval Run ${escapeHtml(report.runId)}</title>
   <style>
     body { margin: 0; background: #f7f7f8; color: #171717; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
     main { max-width: 1180px; margin: 0 auto; padding: 32px; }

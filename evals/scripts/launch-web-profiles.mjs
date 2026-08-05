@@ -29,7 +29,7 @@ function alive(pid) {
 }
 
 async function killPidfile(userDataDir) {
-  const pidPath = join(userDataDir, "openwork-eval-chrome.pid");
+  const pidPath = join(userDataDir, "micx-eval-chrome.pid");
   let pid = 0;
   try {
     pid = Number((await readFile(pidPath, "utf8")).trim());
@@ -52,7 +52,7 @@ async function waitForPort(port) {
 }
 
 async function ensureProfile(port) {
-  const userDataDir = `/tmp/openwork-evals-web-${port}`;
+  const userDataDir = `/tmp/micx-evals-web-${port}`;
   await mkdir(userDataDir, { recursive: true });
   if (await isListening(port)) return;
   await killPidfile(userDataDir);
@@ -69,7 +69,7 @@ async function ensureProfile(port) {
     stdio: "ignore",
   });
   child.unref();
-  await writeFile(join(userDataDir, "openwork-eval-chrome.pid"), `${child.pid}\n`);
+  await writeFile(join(userDataDir, "micx-eval-chrome.pid"), `${child.pid}\n`);
   await waitForPort(port);
 }
 
@@ -78,5 +78,5 @@ for (const [, port] of PROFILES) {
 }
 
 for (const [name, port] of PROFILES) {
-  console.log(`export OPENWORK_EVAL_WEB_CDP_${name}=http://127.0.0.1:${port}`);
+  console.log(`export MICX_EVAL_WEB_CDP_${name}=http://127.0.0.1:${port}`);
 }

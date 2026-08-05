@@ -87,9 +87,9 @@ export default {
           code: "Escape",
           windowsVirtualKeyCode: 27,
         });
-        await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 60_000, label: "control API" });
+        await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 60_000, label: "control API" });
         await ctx.waitFor(
-          "window.__openworkControl.listActions().some((action) => action.id === 'session.create_task' && !action.disabled)",
+          "window.__micxControl.listActions().some((action) => action.id === 'session.create_task' && !action.disabled)",
           { timeoutMs: 60_000, label: "enabled task creation" },
         );
 
@@ -101,7 +101,7 @@ export default {
 
         await ctx.control("session.create_task");
         const sessionId = await ctx.waitFor(`(() => {
-          const match = new RegExp('session/([^/?#]+)').exec(window.__openworkControl.snapshot().route);
+          const match = new RegExp('session/([^/?#]+)').exec(window.__micxControl.snapshot().route);
           return match ? decodeURIComponent(match[1]) : null;
         })()`, { timeoutMs: 30_000, label: "created session" });
         await ctx.control("session.group.move", { sessionId, groupId: primaryGroupId });

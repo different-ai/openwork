@@ -39,15 +39,15 @@ export default {
           "right-panel-action-empty-state",
         );
         const workspaceId = await ctx.eval(
-          "(location.hash.match(/\\/workspace\\/([^/]+)/) ?? [])[1] ?? localStorage.getItem('openwork.react.activeWorkspace') ?? ''",
+          "(location.hash.match(/\\/workspace\\/([^/]+)/) ?? [])[1] ?? localStorage.getItem('micx.react.activeWorkspace') ?? ''",
         );
         ctx.assert(workspaceId, "Expected an active workspace before opening the session-free browser.");
         await ctx.navigateHash(`/workspace/${workspaceId}/session`);
         await ctx.waitFor(
-          "!window.__openwork?.slice?.('route')?.selectedSessionId",
+          "!window.__micx?.slice?.('route')?.selectedSessionId",
           { timeoutMs: 20_000, label: "workspace route without a selected session" },
         );
-        await ctx.eval("window.__OPENWORK_ELECTRON__.browser.closeAllTabs?.()", { awaitPromise: true });
+        await ctx.eval("window.__MICX_ELECTRON__.browser.closeAllTabs?.()", { awaitPromise: true });
         await ctx.eval(`(() => {
           const button = document.querySelector('button[aria-label="Close side panel"]');
           if (button instanceof HTMLElement) button.click();
@@ -98,11 +98,11 @@ export default {
             );
             ctx.assert(chooserBefore.width >= 300, `Expected a usable panel width, got ${chooserBefore.width}px.`);
             const selectedSessionId = await ctx.eval(
-              "window.__openwork?.slice?.('route')?.selectedSessionId ?? null",
+              "window.__micx?.slice?.('route')?.selectedSessionId ?? null",
             );
             ctx.assert(selectedSessionId === null, `Expected no selected session, got ${selectedSessionId}.`);
             const browserState = await ctx.eval(
-              "window.__OPENWORK_ELECTRON__.browser.getState()",
+              "window.__MICX_ELECTRON__.browser.getState()",
               { awaitPromise: true },
             );
             ctx.assert(browserState?.tabs?.length >= 1, "Expected a native browser tab after activating Browser.");

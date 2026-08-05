@@ -7,17 +7,17 @@ import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
 const FLOW_ID = "appimage-desktop-integration";
 const vo = await loadVoiceoverParagraphs(FLOW_ID);
 
-const APPIMAGE = process.env.OPENWORK_EVAL_APPIMAGE_PATH;
-const MOVED_APPIMAGE = process.env.OPENWORK_EVAL_MOVED_APPIMAGE_PATH;
-const DATA_HOME = process.env.OPENWORK_EVAL_XDG_DATA_HOME;
-const CONFIG_HOME = process.env.OPENWORK_EVAL_XDG_CONFIG_HOME;
-const CACHE_HOME = process.env.OPENWORK_EVAL_XDG_CACHE_HOME;
-const USER_DATA = process.env.OPENWORK_EVAL_ELECTRON_USERDATA;
-const CDP_URL = process.env.OPENWORK_EVAL_CDP_URL ?? "http://127.0.0.1:9223";
+const APPIMAGE = process.env.MICX_EVAL_APPIMAGE_PATH;
+const MOVED_APPIMAGE = process.env.MICX_EVAL_MOVED_APPIMAGE_PATH;
+const DATA_HOME = process.env.MICX_EVAL_XDG_DATA_HOME;
+const CONFIG_HOME = process.env.MICX_EVAL_XDG_CONFIG_HOME;
+const CACHE_HOME = process.env.MICX_EVAL_XDG_CACHE_HOME;
+const USER_DATA = process.env.MICX_EVAL_ELECTRON_USERDATA;
+const CDP_URL = process.env.MICX_EVAL_CDP_URL ?? "http://127.0.0.1:9223";
 const CDP_PORT = new URL(CDP_URL).port;
-const DESKTOP_ID = "com.differentai.openwork.desktop";
-const MANAGER_ID = "gearlever-openwork.desktop";
-const MIME = "x-scheme-handler/openwork";
+const DESKTOP_ID = "com.differentai.micx.desktop";
+const MANAGER_ID = "gearlever-micx.desktop";
+const MIME = "x-scheme-handler/micx";
 
 function xdgEnvironment() {
   return {
@@ -48,7 +48,7 @@ function run(command, args) {
 
 async function desktopStatus(ctx) {
   return ctx.eval(
-    `window.__OPENWORK_ELECTRON__.invokeDesktop("desktopIntegrationStatus")`,
+    `window.__MICX_ELECTRON__.invokeDesktop("desktopIntegrationStatus")`,
     { awaitPromise: true },
   );
 }
@@ -84,7 +84,7 @@ async function closeApp(ctx) {
     }
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
-  throw new Error("OpenWork did not close before the AppImage relaunch.");
+  throw new Error("Micx did not close before the AppImage relaunch.");
 }
 
 function launchAppImage(appImagePath) {
@@ -93,15 +93,15 @@ function launchAppImage(appImagePath) {
     stdio: "ignore",
     env: {
       ...xdgEnvironment(),
-      OPENWORK_ELECTRON_USERDATA: USER_DATA,
-      OPENWORK_ELECTRON_REMOTE_DEBUG_PORT: CDP_PORT,
+      MICX_ELECTRON_USERDATA: USER_DATA,
+      MICX_ELECTRON_REMOTE_DEBUG_PORT: CDP_PORT,
     },
   });
   child.unref();
 }
 
 async function dismissPromptFor(appImagePath) {
-  const statePath = path.join(CONFIG_HOME, "openwork", "desktop-integration.json");
+  const statePath = path.join(CONFIG_HOME, "micx", "desktop-integration.json");
   const raw = await readFile(statePath, "utf8");
   const state = JSON.parse(raw);
   if (!state.dismissedAppImages.includes(appImagePath)) {
@@ -115,13 +115,13 @@ export default {
   title: "A raw AppImage integrates, repairs after a move, and defers to external managers",
   kind: "user-facing",
   requiredEnv: [
-    "OPENWORK_EVAL_APPIMAGE_PATH",
-    "OPENWORK_EVAL_MOVED_APPIMAGE_PATH",
-    "OPENWORK_EVAL_XDG_DATA_HOME",
-    "OPENWORK_EVAL_XDG_CONFIG_HOME",
-    "OPENWORK_EVAL_XDG_CACHE_HOME",
-    "OPENWORK_EVAL_ELECTRON_USERDATA",
-    "OPENWORK_EVAL_CDP_URL",
+    "MICX_EVAL_APPIMAGE_PATH",
+    "MICX_EVAL_MOVED_APPIMAGE_PATH",
+    "MICX_EVAL_XDG_DATA_HOME",
+    "MICX_EVAL_XDG_CONFIG_HOME",
+    "MICX_EVAL_XDG_CACHE_HOME",
+    "MICX_EVAL_ELECTRON_USERDATA",
+    "MICX_EVAL_CDP_URL",
   ],
   steps: [
     {
@@ -130,7 +130,7 @@ export default {
         await ctx.prove("The packaged AppImage shows an opt-in desktop integration control", {
           voiceover: vo[0],
           action: async () => {
-            await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 45_000 });
+            await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 45_000 });
             await ctx.navigateHash("/settings/preferences");
             await ctx.expectText("AppImage desktop integration", { timeoutMs: 30_000 });
             await scrollIntegrationIntoView(ctx);
@@ -153,7 +153,7 @@ export default {
     {
       name: "Integration creates a working GNOME launcher and callback",
       run: async (ctx) => {
-        await ctx.prove("Integrate installs the launcher, icon, and openwork:// handler", {
+        await ctx.prove("Integrate installs the launcher, icon, and micx:// handler", {
           voiceover: vo[1],
           action: async () => {
             await ctx.clickText("Integrate", { selector: "button" });
@@ -172,13 +172,13 @@ export default {
             record(ctx, validation.status === 0, "The installed launcher passes the freedesktop validator", validation.stderr.trim());
 
             const handler = run("xdg-mime", ["query", "default", MIME]);
-            record(ctx, handler.status === 0 && handler.stdout.trim() === DESKTOP_ID, "The OpenWork launcher is the selected openwork:// handler", handler.stdout.trim());
+            record(ctx, handler.status === 0 && handler.stdout.trim() === DESKTOP_ID, "The Micx launcher is the selected micx:// handler", handler.stdout.trim());
 
-            const iconPath = path.join(DATA_HOME, "icons", "hicolor", "512x512", "apps", "com.differentai.openwork.png");
+            const iconPath = path.join(DATA_HOME, "icons", "hicolor", "512x512", "apps", "com.differentai.micx.png");
             const icon = run("file", [iconPath]);
             record(ctx, icon.status === 0 && icon.stdout.includes("512 x 512"), "The installed launcher has a 512×512 PNG icon", icon.stdout.trim());
 
-            const launch = run("gtk-launch", ["com.differentai.openwork"]);
+            const launch = run("gtk-launch", ["com.differentai.micx"]);
             record(ctx, launch.status === 0, "GNOME can launch the installed desktop entry", launch.stderr.trim());
             ctx.output("Installed desktop entry", desktopEntry.trim());
           },
@@ -202,8 +202,8 @@ export default {
             await dismissPromptFor(MOVED_APPIMAGE);
             launchAppImage(MOVED_APPIMAGE);
             await ctx.reconnect({ timeoutMs: 90_000 });
-            await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 45_000 });
-            // The launcher is stale after the move. OpenWork repairs the entry it
+            await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 45_000 });
+            // The launcher is stale after the move. Micx repairs the entry it
             // already owns without asking again.
             await waitForIntegrationState(ctx, "integrated");
             const repaired = await readFile(path.join(DATA_HOME, "applications", DESKTOP_ID), "utf8");
@@ -222,10 +222,10 @@ export default {
             const managerPath = path.join(DATA_HOME, "applications", MANAGER_ID);
             const managerEntry = `[Desktop Entry]
 Type=Application
-Name=OpenWork
+Name=Micx
 Exec="${MOVED_APPIMAGE}" %U
 TryExec=${MOVED_APPIMAGE}
-Icon=com.differentai.openwork
+Icon=com.differentai.micx
 Terminal=false
 MimeType=${MIME};
 `;
@@ -235,17 +235,17 @@ MimeType=${MIME};
 
             launchAppImage(MOVED_APPIMAGE);
             await ctx.reconnect({ timeoutMs: 90_000 });
-            await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 45_000 });
+            await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 45_000 });
             await ctx.navigateHash("/settings/preferences");
             await ctx.waitForText("Managed by another app", { timeoutMs: 30_000 });
             await scrollIntegrationIntoView(ctx);
           },
           assert: async () => {
             const status = await desktopStatus(ctx);
-            record(ctx, status.state === "managed_externally", "OpenWork recognizes the manager-owned launcher", status.state);
+            record(ctx, status.state === "managed_externally", "Micx recognizes the manager-owned launcher", status.state);
             record(ctx, status.desktopEntryPath.endsWith(MANAGER_ID), "Status identifies the manager launcher", status.desktopEntryPath);
             const ownEntryExists = await access(path.join(DATA_HOME, "applications", DESKTOP_ID)).then(() => true, () => false);
-            record(ctx, !ownEntryExists, "OpenWork does not create a duplicate launcher");
+            record(ctx, !ownEntryExists, "Micx does not create a duplicate launcher");
             const managerEntry = await readFile(path.join(DATA_HOME, "applications", MANAGER_ID), "utf8");
             record(ctx, managerEntry.includes(`Exec="${MOVED_APPIMAGE}" %U`), "The manager-owned launcher remains unchanged");
           },

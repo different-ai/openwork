@@ -3,12 +3,12 @@ import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
 
 const FLOW_ID = "den-ui-consistency";
 const vo = await loadVoiceoverParagraphs(FLOW_ID);
-const DEN_API_URL = (process.env.OPENWORK_EVAL_DEN_API_URL ?? "").trim().replace(/\/+$/, "");
-const DEN_WEB_URL = (process.env.OPENWORK_EVAL_DEN_WEB_URL ?? "").trim().replace(/\/+$/, "");
-const ADMIN_EMAIL = process.env.OPENWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
-const ADMIN_PASSWORD = process.env.OPENWORK_EVAL_DEMO_PASSWORD?.trim() || "OpenWorkDemo123!";
+const DEN_API_URL = (process.env.MICX_EVAL_DEN_API_URL ?? "").trim().replace(/\/+$/, "");
+const DEN_WEB_URL = (process.env.MICX_EVAL_DEN_WEB_URL ?? "").trim().replace(/\/+$/, "");
+const ADMIN_EMAIL = process.env.MICX_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
+const ADMIN_PASSWORD = process.env.MICX_EVAL_DEMO_PASSWORD?.trim() || "MicxDemo123!";
 const MEMBER_EMAIL = "riley.ui-consistency@acme.test";
-const MEMBER_PASSWORD = "OpenWorkDemo123!";
+const MEMBER_PASSWORD = "MicxDemo123!";
 const CATALOG_PREFIX = "UI Catalog";
 const CATALOG_SIZE = 24;
 const REAUTH_PLUGIN_NAME = `Security proof ${Date.now()}`;
@@ -179,7 +179,7 @@ async function ensureLargeCatalog(ctx) {
 }
 
 function mysqlContainer() {
-  return process.env.OPENWORK_EVAL_DEN_MYSQL_CONTAINER?.trim() || "openwork-web-local-mysql";
+  return process.env.MICX_EVAL_DEN_MYSQL_CONTAINER?.trim() || "micx-web-local-mysql";
 }
 
 function runMysql(sql) {
@@ -189,7 +189,7 @@ function runMysql(sql) {
     "mysql",
     "-uroot",
     "-ppassword",
-    "openwork_den",
+    "micx_den",
     "-e",
     sql,
   ], { stdio: "ignore" });
@@ -279,8 +279,8 @@ export default {
   kind: "user-facing",
   preserveTheme: true,
   requiredEnv: [
-    "OPENWORK_EVAL_DEN_API_URL",
-    "OPENWORK_EVAL_DEN_WEB_URL",
+    "MICX_EVAL_DEN_API_URL",
+    "MICX_EVAL_DEN_WEB_URL",
   ],
   steps: [
     {
@@ -309,7 +309,7 @@ export default {
           },
           screenshot: {
             name: "focused-dashboard",
-            requireText: ["Dashboard", "Download OpenWork", "Download for this workspace"],
+            requireText: ["Dashboard", "Download Micx", "Download for this workspace"],
             rejectText: ["Download the app to unlock extensions"],
             hashIncludes: "/dashboard",
           },
@@ -390,7 +390,7 @@ export default {
           },
           screenshot: {
             name: "compact-member-dashboard",
-            requireText: ["Your workspace", "OpenWork Models", "Marketplaces", "Plugins"],
+            requireText: ["Your workspace", "Micx Models", "Marketplaces", "Plugins"],
             rejectText: ["Available resources", "Create plugin", "Something went wrong"],
             hashIncludes: "/dashboard",
           },
@@ -573,14 +573,14 @@ export default {
               stripeScreen: Boolean(document.querySelector('[data-testid="stripe-billing-screen"]')),
               refreshActions: [...document.querySelectorAll('button')].filter((entry) => entry.textContent?.trim() === 'Refresh').length,
               hasSeatCounts: ['Included users', 'Active users', 'Billable users'].every((label) => document.body.innerText.includes(label)),
-              hasModels: document.body.innerText.includes('OpenWork Models'),
+              hasModels: document.body.innerText.includes('Micx Models'),
             }))()`);
             witness(ctx, actual.path === "/dashboard/billing" && actual.stripeScreen, "The Settings destination visibly presents Stripe", actual);
             witness(ctx, actual.refreshActions === 1 && actual.hasSeatCounts && actual.hasModels, "Stripe has one refresh action and clear seat/model state", actual);
           },
           screenshot: {
             name: "stripe-billing-dashboard",
-            requireText: ["Stripe", "Included users", "Active users", "Billable users", "OpenWork Models", "Refresh"],
+            requireText: ["Stripe", "Included users", "Active users", "Billable users", "Micx Models", "Refresh"],
             rejectText: ["Billing response was incomplete", "Something went wrong"],
             hashIncludes: "/dashboard/billing",
           },

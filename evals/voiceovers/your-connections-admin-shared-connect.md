@@ -1,6 +1,6 @@
 # your-connections-admin-shared-connect — Connect a shared tool right where you found it
 
-Cast is Alex, the Acme Robotics admin, in OpenWork Cloud on the web. His org
+Cast is Alex, the Acme Robotics admin, in Micx Cloud on the web. His org
 published Notion-style tooling as a shared-account connection, but nobody ever
 finished authorizing it — so until now the member-facing Your Connections page
 showed a dead-end "Not connected yet" badge with nothing to click, and the only

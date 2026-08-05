@@ -13,7 +13,7 @@ cd /workspace
 # the only log destination visible to other sessions (and over HTTP :8090).
 # Default to the workspace so logs are readable from any exec session and over
 # the results HTTP server; the artifacts volume restricts cross-session reads.
-LOG_DIR="${OPENWORK_REAL_RUN_LOG_DIR:-/workspace/evals/results/real-run}"
+LOG_DIR="${MICX_REAL_RUN_LOG_DIR:-/workspace/evals/results/real-run}"
 mkdir -p "$LOG_DIR"
 exec > >(tee "$LOG_DIR/real-run.log") 2>&1
 
@@ -46,14 +46,14 @@ set -euo pipefail
 email="${1:?email is required}"
 escaped_email="${email//\'/\'\'}"
 {
-  printf "SET @openwork_eval_email = '%s';\n" "$escaped_email"
+  printf "SET @micx_eval_email = '%s';\n" "$escaped_email"
   cat <<'SQL'
-UPDATE `user` SET email_verified = 1 WHERE email = @openwork_eval_email;
+UPDATE `user` SET email_verified = 1 WHERE email = @micx_eval_email;
 SQL
-} | "$HOME/mariadb/bin/mariadb" --protocol=tcp -h 127.0.0.1 -P 3306 -uroot openwork_den
+} | "$HOME/mariadb/bin/mariadb" --protocol=tcp -h 127.0.0.1 -P 3306 -uroot micx_den
 SH
 chmod +x "$H/mark-verified.sh"
-export OPENWORK_EVAL_MARK_VERIFIED_CMD="bash $H/mark-verified.sh {email}"
+export MICX_EVAL_MARK_VERIFIED_CMD="bash $H/mark-verified.sh {email}"
 
 # Provider keys for vision validation live on the secrets volume when mounted.
 if compgen -G "/daytona-secrets/*.env" > /dev/null; then
@@ -63,8 +63,8 @@ if compgen -G "/daytona-secrets/*.env" > /dev/null; then
   echo "==> Sourced provider secrets from /daytona-secrets"
 fi
 
-if [ "${OPENWORK_REAL_RUN_SKIP_LEGACY:-0}" = "1" ]; then
-  echo "==> Skipping legacy baseline (OPENWORK_REAL_RUN_SKIP_LEGACY=1)"
+if [ "${MICX_REAL_RUN_SKIP_LEGACY:-0}" = "1" ]; then
+  echo "==> Skipping legacy baseline (MICX_REAL_RUN_SKIP_LEGACY=1)"
 else
 echo "==> Legacy baseline: org-connection-lifecycle-desktop through the den stack"
 # Known caveat when the legacy flow runs INSIDE the sandbox: Frame 4 requests a
@@ -78,10 +78,10 @@ fi
 fi
 
 echo "==> New spec lane against the same live stack"
-export OPENWORK_EVAL_DEN_API_URL="http://127.0.0.1:8790"
-export OPENWORK_EVAL_DEN_WEB_URL="http://localhost:3005"
-export OPENWORK_EVAL_CDP_URL="http://127.0.0.1:9825"
-export OPENWORK_EVAL_APP_SPECS="1"
+export MICX_EVAL_DEN_API_URL="http://127.0.0.1:8790"
+export MICX_EVAL_DEN_WEB_URL="http://localhost:3005"
+export MICX_EVAL_CDP_URL="http://127.0.0.1:9825"
+export MICX_EVAL_APP_SPECS="1"
 pnpm --dir evals run spec:nightly 2>&1 | tee "$LOG_DIR/specs-real.log"
 
 echo "==> DONE"

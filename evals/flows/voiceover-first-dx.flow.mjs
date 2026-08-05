@@ -120,7 +120,7 @@ export default {
             assert: async () => {
               const scaffold = spawnSync(process.execPath, [RUNNER, "scaffold", scaffoldId], {
                 encoding: "utf8",
-                env: { ...process.env, OPENWORK_EVAL_FLOWS_DIR: flowsDir },
+                env: { ...process.env, MICX_EVAL_FLOWS_DIR: flowsDir },
               });
               witness(ctx, scaffold.status === 0, "pnpm fraimz scaffold <id> exits 0", scaffold.stderr?.trim() || String(scaffold.status));
               ctx.output("$ pnpm fraimz scaffold _scaffold-demo", scaffold.stdout.trim());
@@ -143,7 +143,7 @@ export default {
 `);
               const drifted = spawnSync(process.execPath, [RUNNER, "--flow", scaffoldId, "--out", flowsDir], {
                 encoding: "utf8",
-                env: { ...process.env, OPENWORK_EVAL_FLOWS_DIR: flowsDir },
+                env: { ...process.env, MICX_EVAL_FLOWS_DIR: flowsDir },
                 timeout: 60_000,
               });
               witness(ctx, drifted.status === 1, "A flow whose narration drifts from the approved script fails the run", String(drifted.status));
@@ -226,7 +226,7 @@ export default {
             assert: async () => {
               const run = spawnSync(process.execPath, [RUNNER, "--flow", "_red-demo", "--out", outDir], {
                 encoding: "utf8",
-                env: { ...process.env, OPENWORK_EVAL_FLOWS_DIR: flowsDir },
+                env: { ...process.env, MICX_EVAL_FLOWS_DIR: flowsDir },
                 timeout: 60_000,
               });
               witness(ctx, run.status === 1, "A failing frame makes the run exit 1 (the signal a required check consumes)", String(run.status));

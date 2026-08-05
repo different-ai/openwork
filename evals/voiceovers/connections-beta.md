@@ -1,6 +1,6 @@
 # connections-beta — Connections is alpha, black, and last
 
-Cast is Alex, the Acme Robotics admin, in OpenWork Cloud. This demo shows the new Connections treatment: alpha means untested, the page uses black instead of purple, and the feature sits last so admins land on the safer Sources path first.
+Cast is Alex, the Acme Robotics admin, in Micx Cloud. This demo shows the new Connections treatment: alpha means untested, the page uses black instead of purple, and the feature sits last so admins land on the safer Sources path first.
 
 1. Alex signs in and has not clicked anything yet. The sidebar already tells the truth: Your Connections carries an Alpha tag, Dashboard is still the default, and Extensions is present without pushing the alpha feature into his path.
 

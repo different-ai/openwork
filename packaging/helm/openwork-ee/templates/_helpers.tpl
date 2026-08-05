@@ -88,7 +88,7 @@ app.kubernetes.io/component: {{ .component }}
 {{- end -}}
 
 {{- define "openwork-ee.customCa.mountPath" -}}
-/etc/openwork/custom-ca
+/etc/micx/custom-ca
 {{- end -}}
 
 {{- define "openwork-ee.customCa.filePath" -}}

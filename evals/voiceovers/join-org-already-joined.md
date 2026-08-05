@@ -6,7 +6,7 @@ Invited teammates — especially on SSO or single-org deployments where sign-in 
 
 2. The teammate sets a password and joins; the workspace welcomes them in.
 
-3. The teammate clicks the same emailed invite link again — instead of the old "This invite has already been used." dead-end, OpenWork recognizes the membership and opens the team workspace.
+3. The teammate clicks the same emailed invite link again — instead of the old "This invite has already been used." dead-end, Micx recognizes the membership and opens the team workspace.
 
 4. In a fresh browser session, the same link now says they’ve already joined and asks them to sign in — not an error.
 

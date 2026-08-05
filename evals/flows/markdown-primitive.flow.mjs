@@ -37,7 +37,7 @@ async function closeTransientUi(ctx) {
 }
 
 async function waitForControl(ctx) {
-  await ctx.waitFor("Boolean(window.__openworkControl)", {
+  await ctx.waitFor("Boolean(window.__micxControl)", {
     timeoutMs: 60_000,
     label: "control API",
   });
@@ -45,7 +45,7 @@ async function waitForControl(ctx) {
 
 async function activeSessionFromRoute(ctx) {
   return ctx.eval(`(() => {
-    const route = String(window.__openworkControl.snapshot().route || window.location.hash || "");
+    const route = String(window.__micxControl.snapshot().route || window.location.hash || "");
     const match = route.match(/ses_[A-Za-z0-9]+/);
     return match ? match[0] : "";
   })()`);
@@ -66,7 +66,7 @@ async function ensureSession(ctx) {
   if (firstSession?.sessionId) {
     await ctx.control("session.open", { sessionId: firstSession.sessionId });
     await ctx.waitFor(
-      `String(window.__openworkControl.snapshot().route || "").includes(${JSON.stringify(firstSession.sessionId)})`,
+      `String(window.__micxControl.snapshot().route || "").includes(${JSON.stringify(firstSession.sessionId)})`,
       { timeoutMs: 30_000, label: "existing session route" },
     );
     activeSessionId = firstSession.sessionId;
@@ -76,7 +76,7 @@ async function ensureSession(ctx) {
   await ctx.control("session.create_task");
   const createdSession = await ctx.waitFor(
     `(() => {
-      const route = String(window.__openworkControl.snapshot().route || "");
+      const route = String(window.__micxControl.snapshot().route || "");
       const match = route.match(/ses_[A-Za-z0-9]+/);
       return match ? match[0] : null;
     })()`,
@@ -88,14 +88,14 @@ async function ensureSession(ctx) {
 
 async function ensureActionEnabled(ctx, actionId) {
   await ctx.waitFor(
-    `window.__openworkControl.listActions().some((action) => action.id === ${JSON.stringify(actionId)} && !action.disabled)`,
+    `window.__micxControl.listActions().some((action) => action.id === ${JSON.stringify(actionId)} && !action.disabled)`,
     { timeoutMs: 30_000, label: `${actionId} enabled` },
   );
 }
 
 async function mountArtifactPanel(ctx) {
   const ready = await ctx.eval(
-    `window.__openworkControl.listActions().some((action) => action.id === ${JSON.stringify(ARTIFACT_SEED_ACTION)} && !action.disabled)`,
+    `window.__micxControl.listActions().some((action) => action.id === ${JSON.stringify(ARTIFACT_SEED_ACTION)} && !action.disabled)`,
   );
   if (ready) return;
 
@@ -116,7 +116,7 @@ export default {
     await waitForControl(ctx);
     const state = await ctx.waitFor(
       `(() => {
-        const control = window.__openworkControl;
+        const control = window.__micxControl;
         const route = String(control.snapshot().route || "");
         if (route.startsWith("/welcome") || route.startsWith("/signin")) return "blocked";
         if (route.includes("/session/")) return "ready";
@@ -134,7 +134,7 @@ export default {
     {
       name: "Conversation opens normally",
       run: async (ctx) => {
-        await ctx.prove("OpenWork displays a normal session before the Markdown proof starts", {
+        await ctx.prove("Micx displays a normal session before the Markdown proof starts", {
           voiceover: vo[0],
           action: async () => {
             await ensureSession(ctx);
@@ -182,9 +182,9 @@ export default {
                 hasHeading: Boolean(root.querySelector("h1")),
                 hasStrong: Boolean(root.querySelector("strong")),
                 hasInlineCode: Boolean(root.querySelector("p code")),
-                hasCodeBlock: Boolean(root.querySelector("[data-openwork-code-block] code")),
-                hasLink: Boolean(root.querySelector('a[href="https://openworklabs.com"]')),
-                hasCopyButton: Boolean(root.querySelector("[data-openwork-code-copy]")),
+                hasCodeBlock: Boolean(root.querySelector("[data-micx-code-block] code")),
+                hasLink: Boolean(root.querySelector('a[href="https://micxlabs.com"]')),
+                hasCopyButton: Boolean(root.querySelector("[data-micx-code-copy]")),
                 text: root.innerText,
               };
             })()`);
@@ -199,7 +199,7 @@ export default {
           },
           screenshot: {
             name: "chat-markdown-rendered",
-            requireText: ["Markdown proof heading", "bold proof text", "OpenWork link"],
+            requireText: ["Markdown proof heading", "bold proof text", "Micx link"],
             rejectText: ["Something went wrong"],
           },
         });
@@ -275,13 +275,13 @@ export default {
             await ctx.waitForText("Artifact Markdown Proof", { timeoutMs: 30_000 });
             await ctx.waitForText("outside-chat Markdown", { timeoutMs: 30_000 });
             await ctx.waitFor(
-              `Boolean(document.querySelector('[data-openwork-markdown-preview]'))`,
+              `Boolean(document.querySelector('[data-micx-markdown-preview]'))`,
               { timeoutMs: 30_000, label: "markdown preview root" },
             );
           },
           assert: async () => {
             const rendered = await ctx.eval(`(() => {
-              const preview = document.querySelector('[data-openwork-markdown-preview]');
+              const preview = document.querySelector('[data-micx-markdown-preview]');
               if (!preview) return { ok: false, reason: "markdown preview root missing" };
               const artifactTab = Array.from(document.querySelectorAll("button"))
                 .find((button) => (button.getAttribute("aria-label") || "").includes("markdown-primitive-proof.md"));
@@ -290,8 +290,8 @@ export default {
               const strong = Array.from(preview.querySelectorAll("strong"))
                 .find((node) => (node.textContent || "").includes("outside-chat Markdown"));
               const externalAnchor = Array.from(preview.querySelectorAll("a"))
-                .find((node) => node.getAttribute("href") === "https://openworklabs.com");
-              const shikiCode = Array.from(preview.querySelectorAll('[data-openwork-shiki] code'))
+                .find((node) => node.getAttribute("href") === "https://micxlabs.com");
+              const shikiCode = Array.from(preview.querySelectorAll('[data-micx-shiki] code'))
                 .find((node) => (node.textContent || "").includes("shared markdown primitive"));
               const fallbackCode = Array.from(preview.querySelectorAll("pre code"))
                 .find((node) => {
@@ -305,7 +305,7 @@ export default {
                 hasRenderedStrong: Boolean(strong),
                 hasExternalAnchor: Boolean(externalAnchor),
                 hasSurfaceCodeBlock: Boolean(shikiCode || fallbackCode),
-                hasChatCopyButton: Boolean(preview.querySelector("[data-openwork-code-copy]")),
+                hasChatCopyButton: Boolean(preview.querySelector("[data-micx-code-copy]")),
               };
             })()`);
             ctx.assert(rendered.ok, rendered.reason || "Markdown preview root was not available.");

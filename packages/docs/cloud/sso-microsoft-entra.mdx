@@ -1,9 +1,9 @@
 ---
 title: "Microsoft Entra SAML SSO"
-description: "Connect Microsoft Entra ID to OpenWork Cloud with SAML"
+description: "Connect Microsoft Entra ID to Micx Cloud with SAML"
 ---
 
-Use this guide when an organization wants members to sign in to OpenWork with
+Use this guide when an organization wants members to sign in to Micx with
 Microsoft Entra ID.
 
 After SAML sign-in works, use
@@ -14,15 +14,15 @@ members and groups automatically.
 
 You need:
 
-- An OpenWork organization with the Enterprise SSO entitlement.
-- Owner or admin access in that OpenWork organization.
+- An Micx organization with the Enterprise SSO entitlement.
+- Owner or admin access in that Micx organization.
 - Admin access to a Microsoft Entra enterprise application.
-- The final OpenWork auth origin, for example `https://app.openworklabs.com`.
+- The final Micx auth origin, for example `https://app.openworklabs.com`.
 
 ## 1. Create the Entra enterprise app
 
 In the Microsoft Azure portal, open **Microsoft Entra ID** and create a new
-enterprise application for OpenWork. Choose **SAML** as the single sign-on
+enterprise application for Micx. Choose **SAML** as the single sign-on
 method.
 
 ## 2. Configure Basic SAML Configuration
@@ -33,16 +33,16 @@ Set:
 
 | Entra field | Value |
 | --- | --- |
-| Identifier (Entity ID) | The OpenWork auth origin, for example `https://app.openworklabs.com` |
-| Reply URL (Assertion Consumer Service URL) | The ACS URL OpenWork shows after saving SAML, for example `https://app.openworklabs.com/api/auth/sso/saml2/sp/acs/openwork-sso-<org-id>` |
-| Sign on URL | The org-specific OpenWork **Sign-in URL** shown after saving SAML, for example `https://app.openworklabs.com/sso/<org-slug>` |
+| Identifier (Entity ID) | The Micx auth origin, for example `https://app.openworklabs.com` |
+| Reply URL (Assertion Consumer Service URL) | The ACS URL Micx shows after saving SAML, for example `https://app.openworklabs.com/api/auth/sso/saml2/sp/acs/micx-sso-<org-id>` |
+| Sign on URL | The org-specific Micx **Sign-in URL** shown after saving SAML, for example `https://app.openworklabs.com/sso/<org-slug>` |
 | Relay State | Leave blank |
 
-The Entity ID must be the OpenWork auth origin. Do not use the Entra tenant
+The Entity ID must be the Micx auth origin. Do not use the Entra tenant
 identifier, `https://sts.windows.net/<tenant-id>/`, as the Entity ID.
 
-OpenWork SAML connections are organization-scoped. If a user belongs to
-multiple OpenWork organizations, the Entra app, ACS URL, and Sign-in URL select
+Micx SAML connections are organization-scoped. If a user belongs to
+multiple Micx organizations, the Entra app, ACS URL, and Sign-in URL select
 which organization they are entering.
 
 ## 3. Configure SAML signing
@@ -54,29 +54,29 @@ Set:
 - **Signing Option**: `Sign SAML assertion`
 - **Signing Algorithm**: `SHA-256`
 
-OpenWork requires signed SAML assertions. If Entra signs only the response, the
+Micx requires signed SAML assertions. If Entra signs only the response, the
 callback fails with `saml_error` and `Invalid SAML response`.
 
 After any certificate change, copy the active certificate again. Entra can
 create or activate a new signing certificate while you are editing SAML
-settings, and OpenWork must store the certificate that is currently active.
+settings, and Micx must store the certificate that is currently active.
 
-## 4. Copy Entra values into OpenWork
+## 4. Copy Entra values into Micx
 
-In OpenWork, open the organization dashboard, then **SSO**. Choose **SAML** and
+In Micx, open the organization dashboard, then **SSO**. Choose **SAML** and
 enter:
 
-| OpenWork field | Entra value |
+| Micx field | Entra value |
 | --- | --- |
 | IdP Issuer URL | **Microsoft Entra Identifier**, for example `https://sts.windows.net/<tenant-id>/` |
 | Domain | The Entra-managed email domain, for example `example.onmicrosoft.com` |
 | SAML Entry Point | **Login URL**, for example `https://login.microsoftonline.com/<tenant-id>/saml2` |
-| Audience URL | Leave blank so OpenWork uses the auth origin, unless support gives you a different audience |
+| Audience URL | Leave blank so Micx uses the auth origin, unless support gives you a different audience |
 | IdP Certificate | The active **Certificate (Base64)** from Entra |
 
-Save the SSO connection. OpenWork then shows the generated ACS URL. Copy that
+Save the SSO connection. Micx then shows the generated ACS URL. Copy that
 ACS URL back into Entra's **Reply URL** if it was not available before the first
-save. Copy the OpenWork **Sign-in URL** into Entra's **Sign on URL** so the
+save. Copy the Micx **Sign-in URL** into Entra's **Sign on URL** so the
 Entra tile can launch the same organization-scoped flow.
 
 ## 5. Assign test users
@@ -91,8 +91,8 @@ original external email address.
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
-| `AADSTS700016: Application with identifier 'https://app.openworklabs.com' was not found` | Entra's Entity ID does not match OpenWork's SAML issuer | Set **Identifier (Entity ID)** to the OpenWork auth origin |
-| `/?error=saml_error&error_description=Invalid%20SAML%20response` | Entra is signing with a different certificate than the one saved in OpenWork, or assertions are not signed | Confirm **Signing Option** is `Sign SAML assertion`, then paste Entra's active **Certificate (Base64)** into OpenWork and save |
-| `/?error=unsolicited_response&error_description=IdP-initiated+SSO+not+allowed` | The deployment is running an older OpenWork version that rejects IdP-initiated SAML | Upgrade OpenWork, or launch from the org-specific OpenWork **Sign-in URL** |
+| `AADSTS700016: Application with identifier 'https://app.openworklabs.com' was not found` | Entra's Entity ID does not match Micx's SAML issuer | Set **Identifier (Entity ID)** to the Micx auth origin |
+| `/?error=saml_error&error_description=Invalid%20SAML%20response` | Entra is signing with a different certificate than the one saved in Micx, or assertions are not signed | Confirm **Signing Option** is `Sign SAML assertion`, then paste Entra's active **Certificate (Base64)** into Micx and save |
+| `/?error=unsolicited_response&error_description=IdP-initiated+SSO+not+allowed` | The deployment is running an older Micx version that rejects IdP-initiated SAML | Upgrade Micx, or launch from the org-specific Micx **Sign-in URL** |
 | User reaches Microsoft but cannot continue | The user is not assigned to the enterprise application | Add the user under **Users and groups** |
-| Reply URL mismatch | Entra's Reply URL does not match the OpenWork ACS URL exactly | Copy the ACS URL from OpenWork and paste it into Entra |
+| Reply URL mismatch | Entra's Reply URL does not match the Micx ACS URL exactly | Copy the ACS URL from Micx and paste it into Entra |

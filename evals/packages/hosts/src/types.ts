@@ -1,6 +1,6 @@
-import type { SurfaceHandle, SurfaceKind } from "@openwork/cdp";
+import type { SurfaceHandle, SurfaceKind } from "@micx/cdp";
 
-export type { SurfaceHandle, SurfaceKind } from "@openwork/cdp";
+export type { SurfaceHandle, SurfaceKind } from "@micx/cdp";
 
 export interface ElectronSurfaceOptions {
   profile?: "fresh" | "shared";

@@ -9,7 +9,7 @@ These are the PR 1 recording baseline.
 and appears as an active runtime extension.
 
 Steps:
-1. Sign in to OpenWork Cloud with an org that has at least one marketplace package.
+1. Sign in to Micx Cloud with an org that has at least one marketplace package.
 2. Create or open a local workspace.
 3. Open Settings -> Extensions.
 4. Click `Marketplace`.
@@ -64,7 +64,7 @@ of treating every extension as connected.
 
 Steps:
 1. Open Settings -> Extensions -> My Extensions.
-2. Inspect built-in enabled extensions such as `OpenWork Browser`.
+2. Inspect built-in enabled extensions such as `Micx Browser`.
 3. Inspect setup-required extensions such as `OpenAI Image Gen` or `Ollama`.
 4. Open Settings -> Extensions -> Marketplace.
 5. Inspect available, installed, and update-available packages if present.

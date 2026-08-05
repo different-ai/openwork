@@ -132,7 +132,7 @@ export default {
   title: "Landing PostHog loads in production only",
   kind: "user-facing",
   preserveTheme: true,
-  requiredEnv: ["OPENWORK_EVAL_LANDING_URL", "OPENWORK_EVAL_LANDING_PROD_URL"],
+  requiredEnv: ["MICX_EVAL_LANDING_URL", "MICX_EVAL_LANDING_PROD_URL"],
   steps: [
     {
       name: "Dev server ships no PostHog, and the hero prompt still works",
@@ -145,8 +145,8 @@ export default {
           voiceover: vo[0],
           action: async () => {
             await applyDesktopViewport(ctx);
-            htmlScan = await scanHomeHtml(ctx.env.OPENWORK_EVAL_LANDING_URL);
-            await ctx.eval(`location.href = ${JSON.stringify(pageUrl(ctx.env.OPENWORK_EVAL_LANDING_URL))}; true`);
+            htmlScan = await scanHomeHtml(ctx.env.MICX_EVAL_LANDING_URL);
+            await ctx.eval(`location.href = ${JSON.stringify(pageUrl(ctx.env.MICX_EVAL_LANDING_URL))}; true`);
             await ctx.waitFor(
               `Boolean(document.querySelector(${JSON.stringify(COPY_BUTTON_SELECTOR)}))`,
               { timeoutMs: 30_000, label: "hero prompt copy button on dev landing" },
@@ -155,7 +155,7 @@ export default {
               posthogUndefined: window.posthog === undefined,
               posthogScriptAbsent: document.getElementById("posthog") === null,
             }))()`);
-            await grantClipboardPermissions(ctx, ctx.env.OPENWORK_EVAL_LANDING_URL);
+            await grantClipboardPermissions(ctx, ctx.env.MICX_EVAL_LANDING_URL);
             await clickCopyButton(ctx);
             await ctx.waitFor(
               `Boolean(document.querySelector('[data-feedback="true"]')) && window.posthog === undefined`,
@@ -209,9 +209,9 @@ export default {
           voiceover: vo[1],
           action: async () => {
             await applyDesktopViewport(ctx);
-            htmlScan = await scanHomeHtml(ctx.env.OPENWORK_EVAL_LANDING_PROD_URL);
+            htmlScan = await scanHomeHtml(ctx.env.MICX_EVAL_LANDING_PROD_URL);
             await setPosthogNetworkBlocked(ctx, true);
-            await ctx.eval(`location.href = ${JSON.stringify(pageUrl(ctx.env.OPENWORK_EVAL_LANDING_PROD_URL))}; true`);
+            await ctx.eval(`location.href = ${JSON.stringify(pageUrl(ctx.env.MICX_EVAL_LANDING_PROD_URL))}; true`);
             await ctx.waitFor(
               `Boolean(document.querySelector(${JSON.stringify(COPY_BUTTON_SELECTOR)}))`,
               { timeoutMs: 30_000, label: "hero prompt copy button on production landing" },

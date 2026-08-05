@@ -3,7 +3,7 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/../.." && pwd)"
-project_default="openwork-otel-hono-live-$$"
+project_default="micx-otel-hono-live-$$"
 project="${OTEL_HONO_PROJECT:-$project_default}"
 den_compose_file="${OTEL_HONO_DEN_COMPOSE_FILE:-$repo_root/packaging/docker/docker-compose.den-dev.yml}"
 otel_compose_file="${OTEL_HONO_LGTM_COMPOSE_FILE:-$repo_root/packaging/docker/docker-compose.otel-lgtm.yml}"

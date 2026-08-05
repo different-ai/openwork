@@ -1,22 +1,22 @@
 import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
 
 const FLOW_ID = "landing-connect-mcp";
-const MCP_SERVER_URL = "https://api.openworklabs.com/mcp/agent";
-const DOCS_URL = "https://openworklabs.com/docs/cloud/run-in-the-cloud/cloud-mcp#connect-mcp-install-opencode";
+const MCP_SERVER_URL = "https://api.micxlabs.com/mcp/agent";
+const DOCS_URL = "https://micxlabs.com/docs/cloud/run-in-the-cloud/cloud-mcp#connect-mcp-install-opencode";
 const SECTION_SELECTOR = "#connect-mcp";
 const BRING_SELECTOR = '[data-testid="connect-mcp-bring"]';
 const EXAMPLE_SELECTOR = '[data-testid="connect-mcp-example"]';
 const INSTALL_SELECTOR = '[data-testid="connect-mcp-install"]';
-const CODEX_COMMAND = `codex mcp add openwork --url ${MCP_SERVER_URL}`;
-const CODEX_LOGIN_COMMAND = "codex mcp login openwork";
-const CODEX_RECONNECT_COMMAND = `codex mcp logout openwork
-codex mcp login openwork`;
+const CODEX_COMMAND = `codex mcp add micx --url ${MCP_SERVER_URL}`;
+const CODEX_LOGIN_COMMAND = "codex mcp login micx";
+const CODEX_RECONNECT_COMMAND = `codex mcp logout micx
+codex mcp login micx`;
 const CODEX_CONNECTIONS_DEEPLINK = "codex://settings/connections";
 const CHATGPT_SETTINGS_URL = "https://chatgpt.com/#settings/Connectors";
-const OPENCODE_AUTH_COMMAND = "opencode mcp auth openwork";
-const OPENCODE_RECONNECT_COMMAND = `opencode mcp logout openwork
-opencode mcp auth openwork`;
-const INSTALL_COPY_BUTTON_SELECTOR = `${SECTION_SELECTOR} [role="tabpanel"]:not([hidden]) button[aria-label="Copy the OpenWork MCP install command"]`;
+const OPENCODE_AUTH_COMMAND = "opencode mcp auth micx";
+const OPENCODE_RECONNECT_COMMAND = `opencode mcp logout micx
+opencode mcp auth micx`;
+const INSTALL_COPY_BUTTON_SELECTOR = `${SECTION_SELECTOR} [role="tabpanel"]:not([hidden]) button[aria-label="Copy the Micx MCP install command"]`;
 const CLIENT_STATUS_EXPECTATIONS = [
   { label: "Cursor", status: "Setup only", explanationNeedles: ["cursor://anysphere.cursor-mcp/oauth/callback", "PKCE S256"] },
   { label: "Codex", status: "Setup only", explanationNeedles: ["Native proof must be rerun on this exact branch"] },
@@ -34,7 +34,7 @@ const vo = await loadVoiceoverParagraphs(FLOW_ID);
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function routeUrl(ctx, path) {
-  return new URL(path, ctx.env.OPENWORK_EVAL_LANDING_URL).toString();
+  return new URL(path, ctx.env.MICX_EVAL_LANDING_URL).toString();
 }
 
 function recordAssertion(ctx, assertion, passed, actual) {
@@ -53,7 +53,7 @@ async function grantClipboardPermissions(ctx) {
     return;
   }
 
-  const origin = new URL(ctx.env.OPENWORK_EVAL_LANDING_URL).origin;
+  const origin = new URL(ctx.env.MICX_EVAL_LANDING_URL).origin;
   await ctx.client.send("Browser.grantPermissions", {
     origin,
     permissions: ["clipboardReadWrite", "clipboardSanitizedWrite"],
@@ -108,7 +108,7 @@ async function ensureConnectSection(ctx, { forceReload = false } = {}) {
       const text = section ? section.innerText : "";
       return Boolean(section)
         && text.includes("Already doing it in your agent?")
-        && text.includes("Add it to OpenWork")
+        && text.includes("Add it to Micx")
         && text.includes(${JSON.stringify(MCP_SERVER_URL)});
     })()`,
     { timeoutMs: 30_000, label: "Connect section with new sharing headline" },
@@ -179,16 +179,16 @@ async function scrollExampleTextIntoView(ctx, text) {
 
 export default {
   id: FLOW_ID,
-  title: "Add existing agent work to OpenWork and share it with your team",
+  title: "Add existing agent work to Micx and share it with your team",
   kind: "user-facing",
   spec: "evals/README.md",
   preserveTheme: true,
-  requiredEnv: ["OPENWORK_EVAL_LANDING_URL"],
+  requiredEnv: ["MICX_EVAL_LANDING_URL"],
   steps: [
     {
       name: "Frame 1",
       run: async (ctx) => {
-        await ctx.prove("The landing page leads with adding existing agent work to OpenWork and sharing it with the team.", {
+        await ctx.prove("The landing page leads with adding existing agent work to Micx and sharing it with the team.", {
           voiceover: vo[0],
           action: async () => {
             await ensureConnectSection(ctx, { forceReload: true });
@@ -200,14 +200,14 @@ export default {
               return {
                 sectionExists: Boolean(section),
                 hasAlreadyDoingHeading: text.includes("Already doing it in your agent?"),
-                hasAddItHeading: text.includes("Add it to OpenWork"),
+                hasAddItHeading: text.includes("Add it to Micx"),
                 hasServerUrl: text.includes(${JSON.stringify(MCP_SERVER_URL)}),
                 hasProtocolJargon: text.includes("search_capabilities"),
               };
             })()`);
             recordAssertion(
               ctx,
-              "The Connect section includes the new heading and OpenWork MCP server URL without tool-name jargon",
+              "The Connect section includes the new heading and Micx MCP server URL without tool-name jargon",
               actual.sectionExists === true
                 && actual.hasAlreadyDoingHeading === true
                 && actual.hasAddItHeading === true
@@ -216,14 +216,14 @@ export default {
               actual,
             );
           },
-          screenshot: { name: "frame-1", requireText: ["Add it to OpenWork"] },
+          screenshot: { name: "frame-1", requireText: ["Add it to Micx"] },
         });
       },
     },
     {
       name: "Frame 2",
       run: async (ctx) => {
-        await ctx.prove("The agent terminal shows existing skills, MCPs, and commands shared to OpenWork in one link.", {
+        await ctx.prove("The agent terminal shows existing skills, MCPs, and commands shared to Micx in one link.", {
           voiceover: vo[1],
           action: async () => {
             await ensureConnectSection(ctx);
@@ -233,7 +233,7 @@ export default {
                 const card = document.querySelector(${JSON.stringify(BRING_SELECTOR)});
                 const text = card ? card.innerText : "";
                 return text.includes("agent — terminal")
-                  && text.includes("share my skills and MCPs with my OpenWork org")
+                  && text.includes("share my skills and MCPs with my Micx org")
                   && text.includes("granola")
                   && text.includes("meeting-brief")
                   && text.includes("review-pr")
@@ -250,7 +250,7 @@ export default {
               return {
                 exists: Boolean(card),
                 hasTerminalTitle: text.includes("agent — terminal"),
-                hasSharePrompt: text.includes("share my skills and MCPs with my OpenWork org"),
+                hasSharePrompt: text.includes("share my skills and MCPs with my Micx org"),
                 hasGranola: text.includes("granola"),
                 hasMeetingBrief: text.includes("meeting-brief"),
                 hasReviewPr: text.includes("review-pr"),
@@ -279,7 +279,7 @@ export default {
     {
       name: "Frame 3",
       run: async (ctx) => {
-        await ctx.prove("The mini OpenWork app shows a teammate using the shared Granola connection and meeting-brief skill.", {
+        await ctx.prove("The mini Micx app shows a teammate using the shared Granola connection and meeting-brief skill.", {
           voiceover: vo[2],
           action: async () => {
             await ensureConnectSection(ctx);
@@ -296,7 +296,7 @@ export default {
                   && text.includes("Queried the shared Granola MCP")
                   && text.includes("Your teammate's view");
               })()`,
-              { timeoutMs: 10_000, label: "mini OpenWork teammate view" },
+              { timeoutMs: 10_000, label: "mini Micx teammate view" },
             );
           },
           assert: async () => {
@@ -312,7 +312,7 @@ export default {
             })()`);
             recordAssertion(
               ctx,
-              "The mini OpenWork UI shows a teammate prompt and shared Granola execution",
+              "The mini Micx UI shows a teammate prompt and shared Granola execution",
               actual.exists === true
                 && actual.hasPrompt === true
                 && actual.hasGranolaExecution === true
@@ -340,7 +340,7 @@ export default {
                   && text.includes("3 talking points")
                   && text.includes("Run Task");
               })()`,
-              { timeoutMs: 10_000, label: "mini OpenWork run result" },
+              { timeoutMs: 10_000, label: "mini Micx run result" },
             );
           },
           assert: async () => {
@@ -356,7 +356,7 @@ export default {
             })()`);
             recordAssertion(
               ctx,
-              "The mini OpenWork UI shows the shared meeting-brief run, talking points, and Run Task input",
+              "The mini Micx UI shows the shared meeting-brief run, talking points, and Run Task input",
               actual.exists === true
                 && actual.hasMeetingBriefRun === true
                 && actual.hasTalkingPoints === true
@@ -454,7 +454,7 @@ export default {
             await realMouseClick(
               ctx,
               `document.querySelector(${JSON.stringify(INSTALL_COPY_BUTTON_SELECTOR)})`,
-              "visible OpenWork MCP install copy button",
+              "visible Micx MCP install copy button",
             );
             await ctx.waitFor(
               `(() => {
@@ -548,8 +548,8 @@ export default {
               opencodePanelText.includes(MCP_SERVER_URL)
                 && opencodePanelText.includes('"oauth": {}')
                 && opencodePanelText.includes(OPENCODE_AUTH_COMMAND)
-                && opencodePanelText.indexOf("opencode mcp logout openwork") >= 0
-                && opencodePanelText.indexOf(OPENCODE_AUTH_COMMAND, opencodePanelText.indexOf("opencode mcp logout openwork")) > opencodePanelText.indexOf("opencode mcp logout openwork"),
+                && opencodePanelText.indexOf("opencode mcp logout micx") >= 0
+                && opencodePanelText.indexOf(OPENCODE_AUTH_COMMAND, opencodePanelText.indexOf("opencode mcp logout micx")) > opencodePanelText.indexOf("opencode mcp logout micx"),
               opencodePanelText,
             );
             recordAssertion(
@@ -557,8 +557,8 @@ export default {
               "Codex shows the add command, login command, and logout-then-login reconnect sequence",
               codexPanelText.includes(CODEX_COMMAND)
                 && codexPanelText.includes(CODEX_LOGIN_COMMAND)
-                && codexPanelText.indexOf("codex mcp logout openwork") >= 0
-                && codexPanelText.indexOf(CODEX_LOGIN_COMMAND, codexPanelText.indexOf("codex mcp logout openwork")) > codexPanelText.indexOf("codex mcp logout openwork"),
+                && codexPanelText.indexOf("codex mcp logout micx") >= 0
+                && codexPanelText.indexOf(CODEX_LOGIN_COMMAND, codexPanelText.indexOf("codex mcp logout micx")) > codexPanelText.indexOf("codex mcp logout micx"),
               codexPanelText,
             );
             recordAssertion(
@@ -620,7 +620,7 @@ export default {
             })()`);
             recordAssertion(
               ctx,
-              "Read the docs points exactly to the OpenWork Cloud MCP guide",
+              "Read the docs points exactly to the Micx Cloud MCP guide",
               actual.exists === true && actual.href === DOCS_URL,
               actual,
             );

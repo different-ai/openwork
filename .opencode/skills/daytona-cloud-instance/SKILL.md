@@ -1,11 +1,11 @@
 ---
 name: daytona-cloud-instance
-description: Daytona cloud instance, Den server, OpenWork Cloud, Marketplace onboarding, desktop plus cloud e2e, frame proof. Use when launching, validating, or recording Daytona cloud/Den flows.
+description: Daytona cloud instance, Den server, Micx Cloud, Marketplace onboarding, desktop plus cloud e2e, frame proof. Use when launching, validating, or recording Daytona cloud/Den flows.
 ---
 
 # Daytona Cloud Instance
 
-Use this skill to launch or validate an OpenWork Cloud/Den Daytona server sandbox and collect useful URLs for desktop sign-in and Marketplace onboarding demos.
+Use this skill to launch or validate an Micx Cloud/Den Daytona server sandbox and collect useful URLs for desktop sign-in and Marketplace onboarding demos.
 
 ## Goal
 
@@ -53,7 +53,7 @@ daytona preview-url "$SERVER_SANDBOX" -p 8090
 For local and Daytona cloud testing, run Den API with:
 
 ```bash
-OPENWORK_DEV_MODE=1
+MICX_DEV_MODE=1
 ```
 
 In dev mode, email verification is disabled by default so seeded/demo users can sign in without a real inbox. Override explicitly when needed:
@@ -70,7 +70,7 @@ Validate the escape hatch against Den API directly before recording UI:
 ```bash
 curl -fsS -X POST "$DEN_API_URL/api/auth/sign-in/email" \
   -H 'Content-Type: application/json' \
-  --data '{"email":"alex@acme.test","password":"OpenWorkDemo123!"}'
+  --data '{"email":"alex@acme.test","password":"MicxDemo123!"}'
 ```
 
 If this returns `403` asking for verification, Den API is not running the branch
@@ -90,7 +90,7 @@ Validate seeded auth if present:
 ```bash
 curl -fsS -X POST "$DEN_WEB_URL/api/auth/sign-in/email" \
   -H 'Content-Type: application/json' \
-  --data '{"email":"alex@acme.test","password":"OpenWorkDemo123!"}'
+  --data '{"email":"alex@acme.test","password":"MicxDemo123!"}'
 ```
 
 If the Den Web proxy returns `503` but the direct Den API request succeeds,
@@ -106,9 +106,9 @@ origin/HMR problems.
 Build and run production Den Web in the server sandbox:
 
 ```bash
-daytona exec "$SERVER_SANDBOX" -- 'bash -lc '\''cd /workspace && pnpm --filter @openwork-ee/den-web build'\'''
+daytona exec "$SERVER_SANDBOX" -- 'bash -lc '\''cd /workspace && pnpm --filter @micx-ee/den-web build'\'''
 daytona exec "$SERVER_SANDBOX" -- 'bash -lc '\''pkill -f "next dev --hostname 0.0.0.0 --port 3005" || true; pkill -f "next-server" || true'\'''
-daytona exec "$SERVER_SANDBOX" -- 'bash -lc '\''cd /workspace && nohup pnpm --filter @openwork-ee/den-web exec next start --hostname 0.0.0.0 --port 3005 > /tmp/den-web-prod.log 2>&1 &'\'''
+daytona exec "$SERVER_SANDBOX" -- 'bash -lc '\''cd /workspace && nohup pnpm --filter @micx-ee/den-web exec next start --hostname 0.0.0.0 --port 3005 > /tmp/den-web-prod.log 2>&1 &'\'''
 ```
 
 Then verify:
@@ -132,14 +132,14 @@ For a desktop Marketplace proof, inject the validated Den session into the
 Electron renderer with the exact storage keys the app reads:
 
 ```js
-localStorage.setItem('openwork.den.baseUrl', DEN_WEB_URL)
-localStorage.setItem('openwork.den.apiBaseUrl', DEN_API_URL)
-localStorage.setItem('openwork.den.authToken', TOKEN)
-localStorage.setItem('openwork.den.activeOrgId', ORG_ID)
-localStorage.setItem('openwork.den.activeOrgSlug', ORG_SLUG)
-localStorage.setItem('openwork.den.activeOrgName', ORG_NAME)
-window.dispatchEvent(new CustomEvent('openwork-den-settings-changed'))
-window.dispatchEvent(new CustomEvent('openwork-den-session-updated', { detail: { token: TOKEN } }))
+localStorage.setItem('micx.den.baseUrl', DEN_WEB_URL)
+localStorage.setItem('micx.den.apiBaseUrl', DEN_API_URL)
+localStorage.setItem('micx.den.authToken', TOKEN)
+localStorage.setItem('micx.den.activeOrgId', ORG_ID)
+localStorage.setItem('micx.den.activeOrgSlug', ORG_SLUG)
+localStorage.setItem('micx.den.activeOrgName', ORG_NAME)
+window.dispatchEvent(new CustomEvent('micx-den-settings-changed'))
+window.dispatchEvent(new CustomEvent('micx-den-session-updated', { detail: { token: TOKEN } }))
 ```
 
 Use this only as a Daytona workaround. The final report must distinguish:
@@ -156,9 +156,9 @@ For founder/designer proof, record the actual journey:
 2. User signs in on Den.
 3. Den dashboard explains Marketplaces contain plugins and assigned marketplaces sync to desktop.
 4. Pretend download/open desktop handoff.
-5. Desktop signed-out Marketplace nudge says OpenWork works without an account.
-6. Desktop signs in to OpenWork Cloud.
-7. Marketplace refresh shows `OpenWork Marketplace` and org marketplaces.
+5. Desktop signed-out Marketplace nudge says Micx works without an account.
+6. Desktop signs in to Micx Cloud.
+7. Marketplace refresh shows `Micx Marketplace` and org marketplaces.
 8. Built-ins show `Built-in`, with no install/remove actions.
 9. A live org plugin installs and appears in My Extensions as `Connected`.
 10. Workspace files materialize under `.opencode`.

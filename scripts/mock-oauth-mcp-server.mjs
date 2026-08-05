@@ -305,10 +305,10 @@ function authorize(req, res, url) {
   <head><title>Mock MCP OAuth</title></head>
   <body style="font-family: system-ui, sans-serif; max-width: 560px; margin: 48px auto;">
     <h1>Mock MCP OAuth</h1>
-    <p>This fake OAuth provider is for OpenWork MCP end-to-end tests.</p>
+    <p>This fake OAuth provider is for Micx MCP end-to-end tests.</p>
     ${requestedScopesHtml}
     <form method="post" action="${approveUrl.pathname}${approveUrl.search}">
-      <button style="font: inherit; padding: 10px 14px;">Approve OpenWork</button>
+      <button style="font: inherit; padding: 10px 14px;">Approve Micx</button>
     </form>
   </body>
 </html>`);
@@ -322,7 +322,7 @@ async function registerClient(req, res, entry) {
   const body = await readJson(req).catch(() => ({}));
   if (entry) {
     // Keep conformance evidence useful without recording credentials. These
-    // are the public RFC 7591 fields OpenWork is expected to send.
+    // are the public RFC 7591 fields Micx is expected to send.
     entry.registration = {
       application_type: body.application_type ?? null,
       redirect_uris: Array.isArray(body.redirect_uris) ? body.redirect_uris : [],

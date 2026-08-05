@@ -10,7 +10,7 @@ const FLOW_ID = "db-migrations-readiness";
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEN_DB = join(ROOT, "ee", "packages", "den-db");
 const FORBIDDEN_DEPLOY_TOOLS = ["pnpm", "tsx", "tsup", "drizzle-kit"];
-const DEFAULT_DATABASE_URL = "mysql://root:password@127.0.0.1:3306/openwork_den";
+const DEFAULT_DATABASE_URL = "mysql://root:password@127.0.0.1:3306/micx_den";
 const FULLTEXT_INDEX = "memory_content_fulltext";
 const BOOTSTRAP_PATH = join(DEN_DB, "dist", "scripts", "bootstrap.js");
 const DIST_JOURNAL_PATH = join(DEN_DB, "dist", "drizzle", "meta", "_journal.json");
@@ -23,7 +23,7 @@ const vo = await loadVoiceoverParagraphs(FLOW_ID);
 const exists = (path) => access(path).then(() => true, () => false);
 
 function readDatabaseUrl() {
-  return process.env.OPENWORK_EVAL_DATABASE_URL?.trim() || process.env.DATABASE_URL?.trim() || DEFAULT_DATABASE_URL;
+  return process.env.MICX_EVAL_DATABASE_URL?.trim() || process.env.DATABASE_URL?.trim() || DEFAULT_DATABASE_URL;
 }
 
 function readSslSettings(parsed) {
@@ -68,7 +68,7 @@ function quoteIdentifier(identifier) {
 }
 
 function temporaryDatabaseName() {
-  return `openwork_eval_db_migrations_${Date.now()}_${randomUUID().replaceAll("-", "").slice(0, 8)}`;
+  return `micx_eval_db_migrations_${Date.now()}_${randomUUID().replaceAll("-", "").slice(0, 8)}`;
 }
 
 function countFromRows(rows, key) {
@@ -179,7 +179,7 @@ export default {
             witness(ctx, packageJson.includes("node scripts/build-assets.mjs"), "den-db build runs the asset emitter");
             witness(ctx, buildAssets.includes("drizzle-kit") && buildAssets.includes("export"), "build-time export creates the current-schema SQL snapshot");
             witness(ctx, buildAssets.includes("cpSync(migrationsDir, distMigrationsDir"), "committed migrations are copied into dist/drizzle");
-            witness(ctx, denApiPackage.includes('"build:den-db": "pnpm --filter @openwork-ee/den-db build"'), "hosted Den API build exposes the den-db build step");
+            witness(ctx, denApiPackage.includes('"build:den-db": "pnpm --filter @micx-ee/den-db build"'), "hosted Den API build exposes the den-db build step");
             witness(ctx, denApiBuild.includes('run(pnpmCommand, ["run", "build:den-db"])'), "hosted Den API build calls build:den-db before tsc");
             witness(ctx, denDbBuildIndex !== -1 && denDbBuildIndex < denApiBuildIndex, "Dockerfile.den builds den-db before den-api");
             witness(ctx, await exists(BOOTSTRAP_PATH), "dist/scripts/bootstrap.js exists after the build");
@@ -201,7 +201,7 @@ export default {
         await ctx.prove("The production Helm migration path invokes node dist only, with no deploy-time TypeScript toolchain", {
           voiceover: vo[1],
           assert: async () => {
-            const values = await readFile(join(ROOT, "packaging", "helm", "openwork-ee", "values.yaml"), "utf8");
+            const values = await readFile(join(ROOT, "packaging", "helm", "micx-ee", "values.yaml"), "utf8");
             const migrationBlock = sliceBetween(values, "migrations:\n", "\ningress:");
             const bootstrap = await readFile(join(DEN_DB, "scripts", "bootstrap.ts"), "utf8");
             const publishWorkflow = await readFile(join(ROOT, ".github", "workflows", "publish-ee-images.yml"), "utf8");
@@ -311,9 +311,9 @@ export default {
             witness(ctx, startLine.includes('"start": "node dist/main.js"'), "hosted Den API start runs the server only");
             witness(ctx, !startLine.includes("db:migrate") && !startLine.includes("db:bootstrap") && !startLine.includes("bootstrap.js"), "hosted Den API start does not silently migrate");
             witness(ctx, migrateWorkflow.includes('paths:\n      - "ee/packages/den-db/drizzle/**"'), "Den DB Migrate owns hosted committed-migration pushes");
-            witness(ctx, migrateWorkflow.includes("run_with_ddl_retry pnpm --filter @openwork-ee/den-db db:migrate"), "Den DB Migrate explicitly invokes db:migrate");
+            witness(ctx, migrateWorkflow.includes("run_with_ddl_retry pnpm --filter @micx-ee/den-db db:migrate"), "Den DB Migrate explicitly invokes db:migrate");
             witness(ctx, tests.includes("schema snapshot contains SQL only"), "focused tests cover build artifact wiring without a live DB");
-            rejectForbiddenDeployTools(ctx, sliceBetween(await readFile(join(ROOT, "packaging", "helm", "openwork-ee", "values.yaml"), "utf8"), "migrations:\n", "\ningress:"), "Final Helm migration path");
+            rejectForbiddenDeployTools(ctx, sliceBetween(await readFile(join(ROOT, "packaging", "helm", "micx-ee", "values.yaml"), "utf8"), "migrations:\n", "\ningress:"), "Final Helm migration path");
             ctx.output("FULLTEXT finish", bootstrap.split("\n").filter((line) => line.includes("runCommittedMigrations") || line.includes("ensureFulltextIndexes")).join("\n"));
           },
         });

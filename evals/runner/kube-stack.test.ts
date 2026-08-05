@@ -40,8 +40,8 @@ function createExec(handler: (call: ExecCall) => KubeExecResult): { exec: KubeEx
 function imagePlan(mode: "published" | "local"): KubeImagePlan {
   return {
     mode,
-    denApiRepository: mode === "local" ? "openwork-den-api" : "ghcr.io/different-ai/openwork-den-api",
-    denWebRepository: mode === "local" ? "openwork-den-web" : "ghcr.io/different-ai/openwork-den-web",
+    denApiRepository: mode === "local" ? "micx-den-api" : "ghcr.io/different-ai/micx-den-api",
+    denWebRepository: mode === "local" ? "micx-den-web" : "ghcr.io/different-ai/micx-den-web",
     tag: mode === "local" ? "kube-lab" : "latest",
     pullPolicy: "IfNotPresent",
     reason: "test",
@@ -53,11 +53,11 @@ function manifestFor(architecture: string): unknown {
 }
 
 function withCleanImageEnv<T>(fn: () => Promise<T>): Promise<T> {
-  const previous = process.env.OPENWORK_EVAL_KUBE_IMAGES;
-  delete process.env.OPENWORK_EVAL_KUBE_IMAGES;
+  const previous = process.env.MICX_EVAL_KUBE_IMAGES;
+  delete process.env.MICX_EVAL_KUBE_IMAGES;
   return fn().finally(() => {
-    if (previous === undefined) delete process.env.OPENWORK_EVAL_KUBE_IMAGES;
-    else process.env.OPENWORK_EVAL_KUBE_IMAGES = previous;
+    if (previous === undefined) delete process.env.MICX_EVAL_KUBE_IMAGES;
+    else process.env.MICX_EVAL_KUBE_IMAGES = previous;
   });
 }
 
@@ -80,34 +80,34 @@ test("helm upgrade argv includes release, chart, profile, context, and local ima
   assert.deepEqual(args.slice(0, 7), [
     "upgrade",
     "--install",
-    "openwork-ee",
-    "packaging/helm/openwork-ee",
+    "micx-ee",
+    "packaging/helm/micx-ee",
     "-f",
     "evals/fixtures/kube/values/multi-org.yaml",
     "--set",
   ]);
   assert(args.includes("image.tag=kube-lab"));
   assert(args.includes("image.pullPolicy=IfNotPresent"));
-  assert(args.includes("denApi.image.repository=openwork-den-api"));
-  assert(args.includes("denWeb.image.repository=openwork-den-web"));
+  assert(args.includes("denApi.image.repository=micx-den-api"));
+  assert(args.includes("denWeb.image.repository=micx-den-web"));
   assert(args.includes("--kube-context"));
-  assert(args.includes("kind-openwork-kube-lab"));
+  assert(args.includes("kind-micx-kube-lab"));
 });
 
 test("kubectl rollout and port-forward argv use the kind context", () => {
-  assert.deepEqual(rolloutStatusArgs("openwork-ee-den-api", "300s"), [
+  assert.deepEqual(rolloutStatusArgs("micx-ee-den-api", "300s"), [
     "--context",
-    "kind-openwork-kube-lab",
+    "kind-micx-kube-lab",
     "rollout",
     "status",
-    "deployment/openwork-ee-den-api",
+    "deployment/micx-ee-den-api",
     "--timeout=300s",
   ]);
-  assert.deepEqual(portForwardArgs("openwork-ee-den-web", 3005, 3005), [
+  assert.deepEqual(portForwardArgs("micx-ee-den-web", 3005, 3005), [
     "--context",
-    "kind-openwork-kube-lab",
+    "kind-micx-kube-lab",
     "port-forward",
-    "service/openwork-ee-den-web",
+    "service/micx-ee-den-web",
     "3005:3005",
   ]);
 });
@@ -151,7 +151,7 @@ test("explicit published image mode fails when manifests do not support this pla
 });
 
 test("kubeStackDown stops port-forwards before uninstalling the release", async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), "openwork-kube-stack-test-"));
+  const stateDir = await mkdtemp(join(tmpdir(), "micx-kube-stack-test-"));
   const order: string[] = [];
   const { exec } = createExec((call) => {
     order.push(`${call.command}:${call.args[0] ?? ""}`);
@@ -184,8 +184,8 @@ test("rollout failure surfaces pod status and recent logs", async () => {
   const { exec } = createExec((call) => {
     const text = `${call.command} ${call.args.join(" ")}`;
     if (text.includes("helm upgrade")) return success("release upgraded");
-    if (text.includes("rollout status deployment/openwork-ee-den-api")) return { stdout: "", stderr: "rollout failed", code: 1 };
-    if (text.includes("get pods")) return success("pod/openwork-ee-den-api pending");
+    if (text.includes("rollout status deployment/micx-ee-den-api")) return { stdout: "", stderr: "rollout failed", code: 1 };
+    if (text.includes("get pods")) return success("pod/micx-ee-den-api pending");
     if (text.includes("describe pods")) return success("Events: image pull backoff");
     if (text.includes("logs")) return success("pod log line: config missing");
     return success();

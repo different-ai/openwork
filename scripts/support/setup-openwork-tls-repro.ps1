@@ -1,15 +1,15 @@
 param(
-    [string]$Hostname = "poc.openwork.test",
+    [string]$Hostname = "poc.micx.test",
     [int]$HealthyPort = 8443,
     [int]$BrokenPort = 9443,
     [switch]$Cleanup
 )
 
 $ErrorActionPreference = "Stop"
-$Marker = "OpenWork TLS Repro"
+$Marker = "Micx TLS Repro"
 $ReproDir = Join-Path (Get-Location).Path "tls-repro"
 $StatePath = Join-Path $ReproDir "state.txt"
-$HostsMarker = "# OpenWork TLS repro"
+$HostsMarker = "# Micx TLS repro"
 $SslAppId = "{1f6c8f8b-6b57-4a0b-8a1c-8d7e3d8f0d31}"
 
 function Write-Step {
@@ -86,7 +86,7 @@ function Add-SslBinding {
 
 function Stop-ReproJobs {
     try {
-        $jobs = Get-Job -Name "OpenWorkTlsRepro-*" -ErrorAction SilentlyContinue
+        $jobs = Get-Job -Name "MicxTlsRepro-*" -ErrorAction SilentlyContinue
         foreach ($job in $jobs) {
             Write-Step ("Stopping PowerShell job {0} (Id {1})." -f $job.Name, $job.Id)
             Stop-Job -Job $job -ErrorAction SilentlyContinue
@@ -207,7 +207,7 @@ function Invoke-Cleanup {
     param([switch]$Quiet)
 
     if (-not $Quiet) {
-        Write-Step "Cleaning OpenWork TLS repro artifacts..."
+        Write-Step "Cleaning Micx TLS repro artifacts..."
     }
 
     $state = Read-State
@@ -245,7 +245,7 @@ function Start-ReproListenerJob {
         [string]$Label
     )
 
-    $jobName = "OpenWorkTlsRepro-{0}" -f $Port
+    $jobName = "MicxTlsRepro-{0}" -f $Port
     $existing = Get-Job -Name $jobName -ErrorAction SilentlyContinue
     foreach ($job in $existing) {
         Stop-Job -Job $job -ErrorAction SilentlyContinue
@@ -269,7 +269,7 @@ function Start-ReproListenerJob {
                 $bytes = [System.Text.Encoding]::UTF8.GetBytes($payload)
                 $context.Response.StatusCode = 200
                 $context.Response.ContentType = "application/json"
-                $context.Response.Headers.Add("X-OpenWork-TLS-Repro", $Label)
+                $context.Response.Headers.Add("X-Micx-TLS-Repro", $Label)
                 $context.Response.ContentLength64 = $bytes.Length
                 $context.Response.OutputStream.Write($bytes, 0, $bytes.Length)
                 $context.Response.OutputStream.Close()
@@ -298,7 +298,7 @@ if ($Cleanup) {
     exit 0
 }
 
-Write-Step "OpenWork TLS repro setup"
+Write-Step "Micx TLS repro setup"
 Write-Step "Strategy: HTTP.sys/HttpListener with netsh sslcert bindings. Healthy uses root + installed intermediate; broken uses a different intermediate that is removed before serving."
 Write-Step "Risk: Windows chain caching can occasionally make the broken case validate until cache/session state is cleared; rerun -Cleanup or use a fresh VM if that happens."
 Write-Step ""
@@ -307,9 +307,9 @@ Invoke-Cleanup -Quiet
 New-Item -ItemType Directory -Path $ReproDir -Force | Out-Null
 
 $notAfter = (Get-Date).AddYears(1)
-$rootSubject = "CN=OpenWork TLS Repro Root CA, O=$Marker"
-$healthyIntermediateSubject = "CN=OpenWork TLS Repro Healthy Intermediate CA, O=$Marker"
-$brokenIntermediateSubject = "CN=OpenWork TLS Repro Broken Intermediate CA, O=$Marker"
+$rootSubject = "CN=Micx TLS Repro Root CA, O=$Marker"
+$healthyIntermediateSubject = "CN=Micx TLS Repro Healthy Intermediate CA, O=$Marker"
+$brokenIntermediateSubject = "CN=Micx TLS Repro Broken Intermediate CA, O=$Marker"
 $healthyLeafSubject = "CN=$Hostname, O=$Marker"
 $brokenLeafSubject = "CN=$Hostname, O=$Marker"
 $leafExtensions = @(
@@ -370,7 +370,7 @@ Write-Step ("   curl.exe -v {0}" -f $healthyUrl)
 Write-Step "2. curl broken (expect certificate/chain failure on a fresh VM; if it succeeds, Windows found a cached intermediate):"
 Write-Step ("   curl.exe -v {0}" -f $brokenUrl)
 Write-Step "3. Doctor against both local endpoints:"
-Write-Step ("   powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\support\openwork-doctor.ps1 -WebUrl {0} -ApiUrl {1} -ExpectedIssuerMatch `"OpenWork TLS Repro`"" -f $healthyUrl, $brokenUrl)
+Write-Step ("   powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\support\micx-doctor.ps1 -WebUrl {0} -ApiUrl {1} -ExpectedIssuerMatch `"Micx TLS Repro`"" -f $healthyUrl, $brokenUrl)
 
 $nodeCommand = Get-Command node -ErrorAction SilentlyContinue
 if ($nodeCommand -ne $null) {
@@ -391,4 +391,4 @@ else {
 
 Write-Step ""
 Write-Step "Cleanup when finished:"
-Write-Step "   powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\support\setup-openwork-tls-repro.ps1 -Cleanup"
+Write-Step "   powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\support\setup-micx-tls-repro.ps1 -Cleanup"

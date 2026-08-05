@@ -2,12 +2,12 @@ export default {
   id: "signin-browser-open-fallback",
   title: "Cloud sign-in keeps the exact URL visible as a fallback",
   kind: "user-facing",
-  requiredEnv: ["OPENWORK_SIMULATE_OPEN_EXTERNAL_FAILURE"],
+  requiredEnv: ["MICX_SIMULATE_OPEN_EXTERNAL_FAILURE"],
   steps: [
     {
       name: "App booted",
       run: async (ctx) => {
-        await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 30_000 });
+        await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 30_000 });
       },
     },
     {
@@ -16,7 +16,7 @@ export default {
         // Navigate within the current workspace: the bare /settings/cloud-account
         // route redirect crashes the renderer on dev (pre-existing hooks-order
         // bug unrelated to this change).
-        const route = await ctx.eval("window.__openworkControl.snapshot().route");
+        const route = await ctx.eval("window.__micxControl.snapshot().route");
         const workspace = typeof route === "string" ? /^\/workspace\/[^/]+/.exec(route) : null;
         await ctx.navigateHash(`${workspace ? workspace[0] : ""}/settings/cloud-account`);
         await ctx.expectHashIncludes("/settings/cloud-account");
@@ -33,7 +33,7 @@ export default {
           await ctx.expectText("Sign in", { timeoutMs: 15_000 });
         }
         await ctx.waitFor(
-          "window.__openworkControl.execute('auth.status').then((result) => result.result?.status === 'signed_out').catch(() => false)",
+          "window.__micxControl.execute('auth.status').then((result) => result.result?.status === 'signed_out').catch(() => false)",
           { timeoutMs: 15_000, label: "stable signed-out state" },
         );
       },
@@ -59,13 +59,13 @@ export default {
           return link?.href ?? "";
         })()`);
         ctx.assert(
-          typeof signInUrl === "string" && signInUrl.includes("desktopScheme=openwork"),
+          typeof signInUrl === "string" && signInUrl.includes("desktopScheme=micx"),
           "The complete desktop sign-in URL should be visible as a clickable link.",
         );
         await ctx.screenshot("browser-open-fallback", {
           claim: "After Sign in is clicked, the exact Cloud URL stays visible and clickable even when the automatic browser launch fails.",
           voiceover:
-            "I click Sign in, and OpenWork keeps the exact Cloud URL directly below the button. Even when this machine cannot launch a browser, I can open or copy the link and finish signing in.",
+            "I click Sign in, and Micx keeps the exact Cloud URL directly below the button. Even when this machine cannot launch a browser, I can open or copy the link and finish signing in.",
           requireText: [
             "Copy the sign-in link and open it in any browser",
             "desktopAuth=1",
@@ -102,7 +102,7 @@ export default {
         }
 
         await ctx.screenshot("signin-link-copied", {
-          claim: "The fallback copy action gives the user a usable OpenWork Cloud sign-in link.",
+          claim: "The fallback copy action gives the user a usable Micx Cloud sign-in link.",
           voiceover:
             "One click copies the real sign-in link, so I can open it in any browser I like, sign in there, and paste the code back here to finish.",
           requireText: [

@@ -27,7 +27,7 @@ BRANCH="chore/aur-${VERSION}"
 git switch -c "$BRANCH" 2>/dev/null || git switch "$BRANCH"
 
 git add packaging/aur/PKGBUILD packaging/aur/.SRCINFO
-git -c user.name="OpenWork Release Bot" \
+git -c user.name="Micx Release Bot" \
     -c user.email="release-bot@users.noreply.github.com" \
     commit -m "chore(aur): update PKGBUILD for ${VERSION}"
 

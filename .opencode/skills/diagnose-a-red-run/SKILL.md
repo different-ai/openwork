@@ -1,6 +1,6 @@
 ---
 name: diagnose-a-red-run
-description: Test is red, flaky, timed out, was this already broken. Use to classify and diagnose a failing @openwork/testkit spec before changing code.
+description: Test is red, flaky, timed out, was this already broken. Use to classify and diagnose a failing @micx/testkit spec before changing code.
 ---
 
 # Skill: Diagnose a Red Run

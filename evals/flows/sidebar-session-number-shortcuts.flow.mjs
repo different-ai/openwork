@@ -48,7 +48,7 @@ async function dispatchKey(ctx, payload) {
 
 async function activateDifferentVisibleSession(ctx, modifier) {
   const currentSessionId = await ctx.eval(
-    "window.__openwork?.slice?.('route')?.selectedSessionId || ''",
+    "window.__micx?.slice?.('route')?.selectedSessionId || ''",
   );
   await dispatchKey(ctx, {
     type: "keyDown",
@@ -81,7 +81,7 @@ async function activateDifferentVisibleSession(ctx, modifier) {
       nativeVirtualKeyCode: 48 + target.digit,
     });
     await ctx.waitFor(
-      `window.__openwork?.slice?.('route')?.selectedSessionId === ${JSON.stringify(target.sessionId)}`,
+      `window.__micx?.slice?.('route')?.selectedSessionId === ${JSON.stringify(target.sessionId)}`,
       { timeoutMs: 20_000, label: `session ${target.digit} to open` },
     );
     return target;
@@ -176,7 +176,7 @@ export default {
           },
           assert: async () => {
             const selectedSessionId = await ctx.eval(
-              "window.__openwork?.slice?.('route')?.selectedSessionId || ''",
+              "window.__micx?.slice?.('route')?.selectedSessionId || ''",
             );
             ctx.assert(
               selectedSessionId === composerTarget?.sessionId,
@@ -211,7 +211,7 @@ export default {
           },
           assert: async () => {
             const selectedSessionId = await ctx.eval(
-              "window.__openwork?.slice?.('route')?.selectedSessionId || ''",
+              "window.__micx?.slice?.('route')?.selectedSessionId || ''",
             );
             ctx.assert(
               selectedSessionId === selectTarget?.sessionId,

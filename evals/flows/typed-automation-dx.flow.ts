@@ -31,8 +31,8 @@ function envWith(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
 
 function envWithoutEvalOverrides(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   const env = envWith(overrides);
-  delete env.OPENWORK_EVAL_FLOWS_DIR;
-  delete env.OPENWORK_EVAL_VOICEOVERS_DIR;
+  delete env.MICX_EVAL_FLOWS_DIR;
+  delete env.MICX_EVAL_VOICEOVERS_DIR;
   return env;
 }
 
@@ -121,7 +121,7 @@ export default defineFlow({
 
               const run = spawnNode(
                 [RUNNER, "--mode", "automation", "--flow", "_plain-automation", "--out", outDir],
-                envWith({ OPENWORK_EVAL_FLOWS_DIR: flowsDir, OPENWORK_EVAL_VOICEOVERS_DIR: voiceoversDir }),
+                envWith({ MICX_EVAL_FLOWS_DIR: flowsDir, MICX_EVAL_VOICEOVERS_DIR: voiceoversDir }),
                 RUN_TIMEOUT_MS,
               );
               const fraimzOutputLine = lineStartingWith(run.stdout, "fraimz: ");
@@ -170,7 +170,7 @@ export default defineFlow({
 `);
             },
             assert: async () => {
-              const fixtureEnv = envWith({ OPENWORK_EVAL_FLOWS_DIR: flowsDir, OPENWORK_EVAL_VOICEOVERS_DIR: voiceoversDir });
+              const fixtureEnv = envWith({ MICX_EVAL_FLOWS_DIR: flowsDir, MICX_EVAL_VOICEOVERS_DIR: voiceoversDir });
               const demoRun = spawnNode([RUNNER, "--mode", "demo", "--flow", "_drift-fixture", "--out", demoOutDir], fixtureEnv, RUN_TIMEOUT_MS);
               witness(ctx, demoRun.status === 1, "Drifted fixture exits 1 in demo mode", commandOutput(demoRun));
               witness(ctx, demoRun.stdout.includes("Voice-over script coverage"), "Demo output includes the voice-over coverage step", tail(demoRun.stdout, 10));
@@ -199,7 +199,7 @@ export default defineFlow({
           await ctx.prove("Automation scaffold writes a typed stub, while demo scaffold requires an approved script", {
             voiceover: vo[2],
             assert: async () => {
-              const fixtureEnv = envWith({ OPENWORK_EVAL_FLOWS_DIR: flowsDir, OPENWORK_EVAL_VOICEOVERS_DIR: voiceoversDir });
+              const fixtureEnv = envWith({ MICX_EVAL_FLOWS_DIR: flowsDir, MICX_EVAL_VOICEOVERS_DIR: voiceoversDir });
               const automationScaffold = spawnNode([RUNNER, "--mode", "automation", "scaffold", "_plain-demo"], fixtureEnv, RUN_TIMEOUT_MS);
               const stubPath = join(flowsDir, "_plain-demo.flow.ts");
               const stubExists = await exists(stubPath);

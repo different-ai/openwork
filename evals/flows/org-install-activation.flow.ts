@@ -5,7 +5,7 @@ import { loadVoiceoverParagraphs } from "../runner/voiceover.ts";
 import { denApiFetch, denApiUrl, denWebUrl } from "./lib/den-web.mjs";
 
 const FLOW_ID = "org-install-activation";
-const INVITE_PASSWORD = "OpenWorkDemo!123";
+const INVITE_PASSWORD = "MicxDemo!123";
 const BROWSER_TIMEOUT_MS = 20_000;
 const vo = await loadVoiceoverParagraphs(FLOW_ID);
 
@@ -49,17 +49,17 @@ function wait(ms: number): Promise<void> {
 
 function getDenStackUrls(): { apiBaseUrl: string; webBaseUrl: string } {
   return {
-    apiBaseUrl: requiredString(denApiUrl(), "OPENWORK_EVAL_DEN_API_URL"),
-    webBaseUrl: requiredString(denWebUrl(), "OPENWORK_EVAL_DEN_WEB_URL"),
+    apiBaseUrl: requiredString(denApiUrl(), "MICX_EVAL_DEN_API_URL"),
+    webBaseUrl: requiredString(denWebUrl(), "MICX_EVAL_DEN_WEB_URL"),
   };
 }
 
 function evalToken(ctx: FlowContext): string {
-  return requiredString(ctx.env.OPENWORK_EVAL_DEN_TOKEN, "OPENWORK_EVAL_DEN_TOKEN");
+  return requiredString(ctx.env.MICX_EVAL_DEN_TOKEN, "MICX_EVAL_DEN_TOKEN");
 }
 
 function randomInviteeEmail(ctx: FlowContext): string {
-  const domain = requiredString(ctx.env.OPENWORK_EVAL_ORG_DOMAIN, "OPENWORK_EVAL_ORG_DOMAIN");
+  const domain = requiredString(ctx.env.MICX_EVAL_ORG_DOMAIN, "MICX_EVAL_ORG_DOMAIN");
   return `maya-activation-${Date.now().toString(36)}@${domain}`;
 }
 
@@ -140,7 +140,7 @@ async function firstPageTarget(cdpBaseUrl: string): Promise<CdpTarget> {
 }
 
 async function withWeb(ctx: FlowContext, run: () => Promise<void>): Promise<void> {
-  const webCdpBaseUrl = requiredString(ctx.env.OPENWORK_EVAL_WEB_CDP_INVITEE, "OPENWORK_EVAL_WEB_CDP_INVITEE");
+  const webCdpBaseUrl = requiredString(ctx.env.MICX_EVAL_WEB_CDP_INVITEE, "MICX_EVAL_WEB_CDP_INVITEE");
   const previousClient = ctx.client;
   const target = await firstPageTarget(webCdpBaseUrl);
   const webClient = await connect(requiredString(target.webSocketDebuggerUrl, "web CDP debugger URL"));
@@ -160,12 +160,12 @@ async function navigate(ctx: FlowContext, url: string): Promise<void> {
 }
 
 async function invokeDesktop(ctx: FlowContext, command: string, input?: unknown): Promise<unknown> {
-  await ctx.waitFor("Boolean(window.__OPENWORK_ELECTRON__?.invokeDesktop)", {
+  await ctx.waitFor("Boolean(window.__MICX_ELECTRON__?.invokeDesktop)", {
     timeoutMs: 60_000,
     label: "desktop bridge",
   });
   return ctx.eval(
-    `window.__OPENWORK_ELECTRON__.invokeDesktop(${JSON.stringify(command)}, ${JSON.stringify(input)})`,
+    `window.__MICX_ELECTRON__.invokeDesktop(${JSON.stringify(command)}, ${JSON.stringify(input)})`,
     { awaitPromise: true },
   );
 }
@@ -188,8 +188,8 @@ async function restoreDesktopBootstrap(ctx: FlowContext): Promise<void> {
 
 function markInviteeVerified(ctx: FlowContext, email: string): void {
   const commandTemplate = requiredString(
-    ctx.env.OPENWORK_EVAL_MARK_VERIFIED_CMD,
-    "OPENWORK_EVAL_MARK_VERIFIED_CMD",
+    ctx.env.MICX_EVAL_MARK_VERIFIED_CMD,
+    "MICX_EVAL_MARK_VERIFIED_CMD",
   );
   execSync(commandTemplate.replaceAll("{email}", email), {
     cwd: new URL("../../", import.meta.url),
@@ -249,7 +249,7 @@ async function acceptInvitationAndOpenWelcome(ctx: FlowContext): Promise<void> {
     label: "invite password field",
   });
   await ctx.fill('input[type="password"]', INVITE_PASSWORD);
-  const joinLabel = `Join ${requiredString(ctx.env.OPENWORK_EVAL_ORG_NAME, "OPENWORK_EVAL_ORG_NAME")}`;
+  const joinLabel = `Join ${requiredString(ctx.env.MICX_EVAL_ORG_NAME, "MICX_EVAL_ORG_NAME")}`;
   await clickExactText(ctx, joinLabel);
   await ctx.waitFor(
     `document.body.innerText.includes("You're one click away from the team workspace.")
@@ -269,7 +269,7 @@ async function acceptInvitationAndOpenWelcome(ctx: FlowContext): Promise<void> {
 
 async function openInstallGuide(ctx: FlowContext): Promise<void> {
   await ctx.trustedClick("[data-testid=join-org-get-app]");
-  await ctx.waitForText("Download the OpenWork installer", { timeoutMs: BROWSER_TIMEOUT_MS });
+  await ctx.waitForText("Download the Micx installer", { timeoutMs: BROWSER_TIMEOUT_MS });
   const href = await ctx.eval(`window.location.href`);
   state.installLink = requiredString(href, "install link");
 }
@@ -286,7 +286,7 @@ async function loadActivationHandoff(ctx: FlowContext): Promise<void> {
   ctx.assert(config.response.ok && isRecord(config.body), `install config failed (${config.response.status})`);
   if (!isRecord(config.body)) return;
   state.activationUrl = requiredString(config.body.activationUrl, "activation URL");
-  state.connectUrl = requiredString(config.body.connectUrl, "OpenWork connect URL");
+  state.connectUrl = requiredString(config.body.connectUrl, "Micx connect URL");
 }
 
 async function startDownloadWithoutFetchingAsset(ctx: FlowContext): Promise<void> {
@@ -339,18 +339,18 @@ async function useDesktop(ctx: FlowContext): Promise<void> {
 }
 
 async function resetDesktopSession(ctx: FlowContext): Promise<void> {
-  await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 60_000, label: "desktop ready" });
+  await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 60_000, label: "desktop ready" });
   await captureOriginalDesktopBootstrap(ctx);
   await ctx.eval(`(() => {
     document.querySelector('[data-testid=connect-confirm-cancel]')?.click();
     document.querySelector('[data-testid=connect-error-dismiss]')?.click();
     for (const key of [
-      "openwork.den.authToken",
-      "openwork.den.activeOrgId",
-      "openwork.den.activeOrgSlug",
-      "openwork.den.activeOrgName",
+      "micx.den.authToken",
+      "micx.den.activeOrgId",
+      "micx.den.activeOrgSlug",
+      "micx.den.activeOrgName",
     ]) localStorage.removeItem(key);
-    window.dispatchEvent(new CustomEvent("openwork-den-session-updated", { detail: { status: "signed_out" } }));
+    window.dispatchEvent(new CustomEvent("micx-den-session-updated", { detail: { status: "signed_out" } }));
     return true;
   })()`);
 }
@@ -365,7 +365,7 @@ async function deliverConnectLinkToDesktop(ctx: FlowContext): Promise<void> {
 
 async function acceptDesktopConnection(ctx: FlowContext): Promise<void> {
   await ctx.trustedClick("[data-testid=connect-confirm-accept]");
-  await ctx.waitForText("Welcome to OpenWork", { timeoutMs: 45_000 });
+  await ctx.waitForText("Welcome to Micx", { timeoutMs: 45_000 });
 }
 
 async function signInInvitee(ctx: FlowContext): Promise<void> {
@@ -379,26 +379,26 @@ async function signInInvitee(ctx: FlowContext): Promise<void> {
   const handoff = await denApiFetch("/v1/auth/desktop-handoff", {
     method: "POST",
     headers: { Authorization: `Bearer ${state.memberBearer}` },
-    body: JSON.stringify({ desktopScheme: "openwork" }),
+    body: JSON.stringify({ desktopScheme: "micx" }),
   });
   ctx.assert(handoff.response.ok && isRecord(handoff.body), `desktop handoff failed (${handoff.response.status})`);
   if (!isRecord(handoff.body)) return;
-  const openworkUrl = requiredString(handoff.body.openworkUrl, "desktop handoff URL");
-  await deliverDeepLinkToDesktop(ctx, openworkUrl);
-  await ctx.waitFor("Boolean((localStorage.getItem('openwork.den.authToken') ?? '').trim())", {
+  const micxUrl = requiredString(handoff.body.micxUrl, "desktop handoff URL");
+  await deliverDeepLinkToDesktop(ctx, micxUrl);
+  await ctx.waitFor("Boolean((localStorage.getItem('micx.den.authToken') ?? '').trim())", {
     timeoutMs: 60_000,
     label: "persisted Den auth token",
   });
   await completeDesktopSignedInJourney(ctx);
 }
 
-async function deliverDeepLinkToDesktop(ctx: FlowContext, openworkUrl: string): Promise<void> {
+async function deliverDeepLinkToDesktop(ctx: FlowContext, micxUrl: string): Promise<void> {
   await ctx.eval(`(() => {
-    const url = ${JSON.stringify(openworkUrl)};
-    window.__OPENWORK__ = window.__OPENWORK__ || {};
-    const pending = window.__OPENWORK__.deepLinks || [];
-    window.__OPENWORK__.deepLinks = [...pending, url];
-    window.dispatchEvent(new CustomEvent("openwork:deep-link", { detail: { urls: [url] } }));
+    const url = ${JSON.stringify(micxUrl)};
+    window.__MICX__ = window.__MICX__ || {};
+    const pending = window.__MICX__.deepLinks || [];
+    window.__MICX__.deepLinks = [...pending, url];
+    window.dispatchEvent(new CustomEvent("micx:deep-link", { detail: { urls: [url] } }));
     return true;
   })()`);
 }
@@ -410,7 +410,7 @@ async function completeDesktopSignedInJourney(ctx: FlowContext): Promise<void> {
       || document.body.innerText.includes("No resources have been configured for this organization yet.")
       || location.hash.includes("/session")
       || location.hash.includes("/workspace/")
-      || document.body.innerText.includes("OpenWork Cloud")`,
+      || document.body.innerText.includes("Micx Cloud")`,
     { timeoutMs: 60_000, label: "post-sign-in desktop surface" },
   );
 
@@ -432,7 +432,7 @@ async function completeDesktopSignedInJourney(ctx: FlowContext): Promise<void> {
     label: "workspace route",
   });
   await ctx.navigateHash("/settings/cloud-account");
-  await ctx.waitForText("OpenWork Cloud", { timeoutMs: 45_000 });
+  await ctx.waitForText("Micx Cloud", { timeoutMs: 45_000 });
   await ctx.waitForText("Sign out", { timeoutMs: 45_000 });
 }
 
@@ -442,12 +442,12 @@ async function cleanupDesktopSession(ctx: FlowContext): Promise<void> {
       document.querySelector('[data-testid=connect-confirm-cancel]')?.click();
       document.querySelector('[data-testid=connect-error-dismiss]')?.click();
       for (const key of [
-        "openwork.den.authToken",
-        "openwork.den.activeOrgId",
-        "openwork.den.activeOrgSlug",
-        "openwork.den.activeOrgName",
+        "micx.den.authToken",
+        "micx.den.activeOrgId",
+        "micx.den.activeOrgSlug",
+        "micx.den.activeOrgName",
       ]) localStorage.removeItem(key);
-      window.dispatchEvent(new CustomEvent("openwork-den-session-updated", { detail: { status: "signed_out" } }));
+      window.dispatchEvent(new CustomEvent("micx-den-session-updated", { detail: { status: "signed_out" } }));
       return true;
     })()`);
   } catch {
@@ -463,13 +463,13 @@ async function prepareFlow(ctx: FlowContext): Promise<void> {
 
 async function assertBrandedWelcome(ctx: FlowContext): Promise<void> {
   await ctx.expectText("You're in, welcome to");
-  await ctx.expectText(requiredString(ctx.env.OPENWORK_EVAL_ORG_NAME, "OPENWORK_EVAL_ORG_NAME"));
+  await ctx.expectText(requiredString(ctx.env.MICX_EVAL_ORG_NAME, "MICX_EVAL_ORG_NAME"));
   await ctx.expectText("Get the desktop app");
   await ctx.expectText("Continue in the browser");
 }
 
 async function assertInstallRecommendation(ctx: FlowContext): Promise<void> {
-  await ctx.expectText("Download the OpenWork installer");
+  await ctx.expectText("Download the Micx installer");
   await ctx.expectText("For your device");
   await ctx.expectText("Continue on your computer");
 }
@@ -483,24 +483,24 @@ async function assertAlreadyInstalledContinuation(ctx: FlowContext): Promise<voi
 
 async function assertDesktopConfirmation(ctx: FlowContext): Promise<void> {
   await ctx.expectText("Nothing has been changed yet.");
-  await ctx.expectText(requiredString(ctx.env.OPENWORK_EVAL_ORG_NAME, "OPENWORK_EVAL_ORG_NAME"));
+  await ctx.expectText(requiredString(ctx.env.MICX_EVAL_ORG_NAME, "MICX_EVAL_ORG_NAME"));
   await ctx.expectText(new URL(getDenStackUrls().webBaseUrl).host);
   await ctx.expectText("Connect");
 }
 
 async function assertBrowserConnected(ctx: FlowContext): Promise<void> {
-  const orgName = requiredString(ctx.env.OPENWORK_EVAL_ORG_NAME, "OPENWORK_EVAL_ORG_NAME");
+  const orgName = requiredString(ctx.env.MICX_EVAL_ORG_NAME, "MICX_EVAL_ORG_NAME");
   await ctx.expectText(`Connected to ${orgName}`);
   await ctx.expectText(`${orgName}'s setup and branding are ready`);
-  await ctx.expectText("Return to OpenWork");
-  await ctx.expectText("Copy this OpenWork link");
+  await ctx.expectText("Return to Micx");
+  await ctx.expectText("Copy this Micx link");
 }
 
 async function assertSignedInDesktop(ctx: FlowContext): Promise<void> {
   await ctx.expectText(state.inviteeEmail);
-  const orgName = requiredString(ctx.env.OPENWORK_EVAL_ORG_NAME, "OPENWORK_EVAL_ORG_NAME");
+  const orgName = requiredString(ctx.env.MICX_EVAL_ORG_NAME, "MICX_EVAL_ORG_NAME");
   await ctx.expectText(orgName);
-  const activeOrgName = await ctx.eval("localStorage.getItem('openwork.den.activeOrgName') ?? ''");
+  const activeOrgName = await ctx.eval("localStorage.getItem('micx.den.activeOrgName') ?? ''");
   ctx.assert(activeOrgName === orgName, "desktop must retain the active organization name");
   const bootstrap = await invokeDesktop(ctx, "getDesktopBootstrapConfig");
   ctx.assert(
@@ -515,13 +515,13 @@ const flow = defineFlow({
   kind: "user-facing",
   spec: "evals/voiceovers/org-install-activation.md",
   requiredEnv: [
-    "OPENWORK_EVAL_DEN_API_URL",
-    "OPENWORK_EVAL_DEN_WEB_URL",
-    "OPENWORK_EVAL_DEN_TOKEN",
-    "OPENWORK_EVAL_MARK_VERIFIED_CMD",
-    "OPENWORK_EVAL_WEB_CDP_INVITEE",
-    "OPENWORK_EVAL_ORG_NAME",
-    "OPENWORK_EVAL_ORG_DOMAIN",
+    "MICX_EVAL_DEN_API_URL",
+    "MICX_EVAL_DEN_WEB_URL",
+    "MICX_EVAL_DEN_TOKEN",
+    "MICX_EVAL_MARK_VERIFIED_CMD",
+    "MICX_EVAL_WEB_CDP_INVITEE",
+    "MICX_EVAL_ORG_NAME",
+    "MICX_EVAL_ORG_DOMAIN",
   ],
   steps: [
     {
@@ -554,7 +554,7 @@ const flow = defineFlow({
             assert: async () => assertInstallRecommendation(ctx),
             screenshot: {
               name: "platform-aware-install-recommendation",
-              requireText: ["Download the OpenWork installer", "For your device", "Continue on your computer"],
+              requireText: ["Download the Micx installer", "For your device", "Continue on your computer"],
             },
           });
         });
@@ -585,8 +585,8 @@ const flow = defineFlow({
             await withWeb(ctx, async () => {
               await loadActivationHandoff(ctx);
               await navigate(ctx, state.activationUrl);
-              await ctx.waitForText("Open OpenWork", { timeoutMs: BROWSER_TIMEOUT_MS });
-              await ctx.expectText(requiredString(ctx.env.OPENWORK_EVAL_ORG_NAME, "OPENWORK_EVAL_ORG_NAME"));
+              await ctx.waitForText("Open Micx", { timeoutMs: BROWSER_TIMEOUT_MS });
+              await ctx.expectText(requiredString(ctx.env.MICX_EVAL_ORG_NAME, "MICX_EVAL_ORG_NAME"));
             });
             await useDesktop(ctx);
             await resetDesktopSession(ctx);
@@ -612,14 +612,14 @@ const flow = defineFlow({
               await acceptDesktopConnection(ctx);
               ctx.client = webClient;
               await ctx.waitForText(
-                `Connected to ${requiredString(ctx.env.OPENWORK_EVAL_ORG_NAME, "OPENWORK_EVAL_ORG_NAME")}`,
+                `Connected to ${requiredString(ctx.env.MICX_EVAL_ORG_NAME, "MICX_EVAL_ORG_NAME")}`,
                 { timeoutMs: BROWSER_TIMEOUT_MS },
               );
             },
             assert: async () => assertBrowserConnected(ctx),
             screenshot: {
               name: "connected-browser-status",
-              requireText: ["Connected to", "Return to OpenWork", "Copy this OpenWork link"],
+              requireText: ["Connected to", "Return to Micx", "Copy this Micx link"],
             },
           });
         });
@@ -636,7 +636,7 @@ const flow = defineFlow({
             assert: async () => assertSignedInDesktop(ctx),
             screenshot: {
               name: "signed-in-branded-desktop",
-              requireText: ["OpenWork Cloud", state.inviteeEmail, "Sign out"],
+              requireText: ["Micx Cloud", state.inviteeEmail, "Sign out"],
             },
           });
         } finally {

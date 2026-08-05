@@ -21,9 +21,9 @@ async function prepareDebugSettings(ctx) {
     label: "rendered desktop app",
   });
   await ctx.eval(`(() => {
-    localStorage.setItem('openwork.developerMode', '1');
-    localStorage.setItem('openwork.preferences', JSON.stringify({ hasCompletedOnboarding: true }));
-    localStorage.setItem('openwork.react.settings.theme-mode', 'light');
+    localStorage.setItem('micx.developerMode', '1');
+    localStorage.setItem('micx.preferences', JSON.stringify({ hasCompletedOnboarding: true }));
+    localStorage.setItem('micx.react.settings.theme-mode', 'light');
     return true;
   })()`);
   await ctx.navigateHash("/settings/debug");

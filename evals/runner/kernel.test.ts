@@ -59,7 +59,7 @@ async function startCdpStub(targetId: string): Promise<{ url: string; close(): P
         {
           id: targetId,
           type: "page",
-          title: "OpenWork",
+          title: "Micx",
           url: "http://127.0.0.1/app",
           webSocketDebuggerUrl: `ws://127.0.0.1/devtools/page/${targetId}`,
         },
@@ -138,17 +138,17 @@ test("env manifests round-trip and apply without overwriting explicit env", asyn
     await writeEnvManifest(manifest);
     assert.deepEqual(await readEnvManifest(name), manifest);
 
-    const env: NodeJS.ProcessEnv = { OPENWORK_EVAL_DEN_API_URL: "preset-api" };
+    const env: NodeJS.ProcessEnv = { MICX_EVAL_DEN_API_URL: "preset-api" };
     applyManifestToEnv(manifest, env);
-    assert.equal(env.OPENWORK_EVAL_DEN_API_URL, "preset-api");
-    assert.equal(env.OPENWORK_EVAL_DEN_WEB_URL, "http://den-web.test");
-    assert.equal(env.OPENWORK_EVAL_DEN_TOKEN, "manifest-token");
-    assert.equal(env.OPENWORK_EVAL_DEN_MULTI_ORG, "1");
+    assert.equal(env.MICX_EVAL_DEN_API_URL, "preset-api");
+    assert.equal(env.MICX_EVAL_DEN_WEB_URL, "http://den-web.test");
+    assert.equal(env.MICX_EVAL_DEN_TOKEN, "manifest-token");
+    assert.equal(env.MICX_EVAL_DEN_MULTI_ORG, "1");
     assert.equal(env.EXTRA_VALUE, "from-manifest");
 
     const singleOrgEnv: NodeJS.ProcessEnv = {};
     applyManifestToEnv({ ...manifest, den: { webUrl: "http://web", apiUrl: "http://api", orgMode: "single_org", hostKind: "local" } }, singleOrgEnv);
-    assert.equal(singleOrgEnv.OPENWORK_EVAL_DEN_MULTI_ORG, undefined);
+    assert.equal(singleOrgEnv.MICX_EVAL_DEN_MULTI_ORG, undefined);
   } finally {
     await rm(manifestPath(name), { force: true });
   }
@@ -175,11 +175,11 @@ test("defineScenario returns a flow, preserves steps, gates Den env, and passes 
 
   assert(isFlowDefinition(flow));
   assert.deepEqual(flow.steps.map((step) => step.name), ["first", "second"]);
-  const ctx = new EvalContext({ client: null, outDir: tmpdir(), flowId: flow.id, env: { OPENWORK_EVAL_RUNSTAMP: "abc123" } });
+  const ctx = new EvalContext({ client: null, outDir: tmpdir(), flowId: flow.id, env: { MICX_EVAL_RUNSTAMP: "abc123" } });
   assert.equal(await flow.precondition?.(ctx), "Scenario needs a Den stack: run `pnpm owt up` or `pnpm evals --stack den` first");
   await flow.steps[0].run(ctx);
   assert.equal(ctx.state.ownerEmail, "alex@acme.test");
-  assert.equal(ctx.state.freshEmail, "teammate-abc123@eval.openwork.test");
+  assert.equal(ctx.state.freshEmail, "teammate-abc123@eval.micx.test");
 });
 
 test("org-invite-two-desktops scenario loads with Den env gates and one step per narrated frame", async () => {
@@ -200,8 +200,8 @@ test("org-invite-two-desktops scenario loads with Den env gates and one step per
     "Jamie desktop spawns fresh",
     "Jamie connects and runs her task",
   ]);
-  assert(flow.requiredEnv?.includes("OPENWORK_EVAL_DEN_API_URL"));
-  assert(flow.requiredEnv?.includes("OPENWORK_EVAL_DEN_WEB_URL"));
+  assert(flow.requiredEnv?.includes("MICX_EVAL_DEN_API_URL"));
+  assert(flow.requiredEnv?.includes("MICX_EVAL_DEN_WEB_URL"));
 });
 
 test("host placement defaults to Daytona when the manifest adopts a Daytona surface", () => {
@@ -255,7 +255,7 @@ test("runFlowRepeated threads iteration runstamps and keeps first plus failing i
         name: "record iteration",
         run: (ctx) => {
           attempt += 1;
-          runstamps.push(ctx.env.OPENWORK_EVAL_RUNSTAMP ?? "");
+          runstamps.push(ctx.env.MICX_EVAL_RUNSTAMP ?? "");
           ctx.recordEvidence({
             type: "frame",
             status: "passed",
@@ -304,8 +304,8 @@ test("core reliability scenarios are web-only, Den-staged, and narrated frame-fo
     assert(paragraphs);
     assert.equal(flow.requiresApp, false);
     assert.equal(flow.steps.length, paragraphs.length);
-    assert(flow.requiredEnv?.includes("OPENWORK_EVAL_DEN_API_URL"));
-    assert(flow.requiredEnv?.includes("OPENWORK_EVAL_DEN_WEB_URL"));
+    assert(flow.requiredEnv?.includes("MICX_EVAL_DEN_API_URL"));
+    assert(flow.requiredEnv?.includes("MICX_EVAL_DEN_WEB_URL"));
   }
 });
 
@@ -395,7 +395,7 @@ test("SurfaceRegistry is idempotent, adopts manifest surfaces, and disposes only
 });
 
 test("EvalContext.on swaps clients, restores through nesting, and labels frames", async () => {
-  const outDir = await mkdtemp(join(tmpdir(), "openwork-kernel-context-"));
+  const outDir = await mkdtemp(join(tmpdir(), "micx-kernel-context-"));
   const primary = stubClient("primary");
   const one: Surface = { handle: { name: "one", kind: "chrome", hostKind: "fake", cdpUrl: "http://one" }, client: stubClient("one") };
   const two: Surface = { handle: { name: "two", kind: "chrome", hostKind: "fake", cdpUrl: "http://two" }, client: stubClient("two") };

@@ -21,7 +21,7 @@ export default {
               const surface = document.querySelector('[data-demo-claim="true"]');
               const card = surface?.querySelector('.den-frame');
               const primary = [...document.querySelectorAll('button')].find((button) => button.textContent?.includes('Copy sign-in code'));
-              const open = [...document.querySelectorAll('button')].find((button) => button.textContent?.includes('Open OpenWork'));
+              const open = [...document.querySelectorAll('button')].find((button) => button.textContent?.includes('Open Micx'));
               const browser = [...document.querySelectorAll('button')].find((button) => button.textContent?.includes('Continue in browser instead'));
               if (!surface || !card || !primary || !open || !browser) return null;
               const cardRect = card.getBoundingClientRect();
@@ -50,7 +50,7 @@ export default {
           },
           screenshot: {
             name: "workspace-claim-centered-hierarchy",
-            requireText: ["DEMO WORKSPACE READY", "Copy sign-in code", "Open OpenWork", "Continue in browser instead"],
+            requireText: ["DEMO WORKSPACE READY", "Copy sign-in code", "Open Micx", "Continue in browser instead"],
             rejectText: ["isolated development app", "Something went wrong"],
           },
         });

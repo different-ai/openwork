@@ -264,13 +264,13 @@ function chooserPage(state: MockGoogleState, pending: PendingAuthorization): str
     chooseUrl.searchParams.set("email", account.email);
     return `<li><a data-account-email="${escapeHtml(account.email)}" href="${escapeHtml(`${chooseUrl.pathname}${chooseUrl.search}`)}">${escapeHtml(account.name)} <span>${escapeHtml(account.email)}</span></a></li>`;
   }).join("");
-  return `<!doctype html><html><head><title>Choose an account</title></head><body><main style="font-family: system-ui, sans-serif; max-width: 560px; margin: 48px auto;"><h1>Choose an account</h1><p>Continue to OpenWork</p><ul>${accounts}</ul></main></body></html>`;
+  return `<!doctype html><html><head><title>Choose an account</title></head><body><main style="font-family: system-ui, sans-serif; max-width: 560px; margin: 48px auto;"><h1>Choose an account</h1><p>Continue to Micx</p><ul>${accounts}</ul></main></body></html>`;
 }
 
 function consentPage(pending: PendingAuthorization): string {
   const approveUrl = new URL("/approve", "http://mock.invalid");
   approveUrl.searchParams.set("request_id", pending.id);
-  return `<!doctype html><html><head><title>Mock Google OAuth</title></head><body><main style="font-family: system-ui, sans-serif; max-width: 560px; margin: 48px auto;"><h1>Mock Google OAuth</h1><p>This fake Google provider is for OpenWork end-to-end tests.</p><form method="post" action="${escapeHtml(`${approveUrl.pathname}${approveUrl.search}`)}"><button>Approve OpenWork</button></form></main></body></html>`;
+  return `<!doctype html><html><head><title>Mock Google OAuth</title></head><body><main style="font-family: system-ui, sans-serif; max-width: 560px; margin: 48px auto;"><h1>Mock Google OAuth</h1><p>This fake Google provider is for Micx end-to-end tests.</p><form method="post" action="${escapeHtml(`${approveUrl.pathname}${approveUrl.search}`)}"><button>Approve Micx</button></form></main></body></html>`;
 }
 
 function authorize(state: MockGoogleState, url: URL, response: ServerResponse): void {

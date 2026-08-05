@@ -21,14 +21,14 @@
  *      for the per-member connection (he never connected his account).
  *
  * Prerequisites (same as mcp-connections-cloud-oauth, plus a member user):
- * - den-api at OPENWORK_EVAL_DEN_API_URL, den-web at OPENWORK_EVAL_DEN_WEB_URL.
+ * - den-api at MICX_EVAL_DEN_API_URL, den-web at MICX_EVAL_DEN_WEB_URL.
  * - Mock OAuth+MCP server reachable at MOCK_OAUTH_MCP_URL from den-api.
- * - Admin: OPENWORK_EVAL_DEMO_EMAIL/PASSWORD (default seeded alex@acme.test).
- * - Member: OPENWORK_EVAL_MEMBER_EMAIL/PASSWORD (default
- *   jordan.demo@acme.test / OpenWorkDemo123!). If the member can't sign in,
+ * - Admin: MICX_EVAL_DEMO_EMAIL/PASSWORD (default seeded alex@acme.test).
+ * - Member: MICX_EVAL_MEMBER_EMAIL/PASSWORD (default
+ *   jordan.demo@acme.test / MicxDemo123!). If the member can't sign in,
  *   the flow bootstraps them for real (admin invitation -> sign-up ->
  *   accept); the one non-API step is email verification, which requires
- *   OPENWORK_EVAL_MARK_VERIFIED_CMD — a shell template with {email}, e.g.
+ *   MICX_EVAL_MARK_VERIFIED_CMD — a shell template with {email}, e.g.
  *   docker exec ... mysql ... "UPDATE user SET email_verified=1 WHERE email='{email}'"
  *   (a seed affordance: invitation accept legitimately requires a verified
  *   email, and evals have no inbox).
@@ -38,11 +38,11 @@
 import { execSync } from "node:child_process";
 import { denApiFetch, mcpAgentCall, mintMcpToken, openAdminConnections, openYourConnections, signInApi, signInViaBrowser } from "./lib/den-web.mjs";
 
-const ADMIN_EMAIL = process.env.OPENWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
-const ADMIN_PASSWORD = process.env.OPENWORK_EVAL_DEMO_PASSWORD?.trim() || "OpenWorkDemo123!";
-const MEMBER_EMAIL = process.env.OPENWORK_EVAL_MEMBER_EMAIL?.trim() || "jordan.demo@acme.test";
-const MEMBER_PASSWORD = process.env.OPENWORK_EVAL_MEMBER_PASSWORD?.trim() || "OpenWorkDemo123!";
-const MARK_VERIFIED_CMD = process.env.OPENWORK_EVAL_MARK_VERIFIED_CMD?.trim() || "";
+const ADMIN_EMAIL = process.env.MICX_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
+const ADMIN_PASSWORD = process.env.MICX_EVAL_DEMO_PASSWORD?.trim() || "MicxDemo123!";
+const MEMBER_EMAIL = process.env.MICX_EVAL_MEMBER_EMAIL?.trim() || "jordan.demo@acme.test";
+const MEMBER_PASSWORD = process.env.MICX_EVAL_MEMBER_PASSWORD?.trim() || "MicxDemo123!";
+const MARK_VERIFIED_CMD = process.env.MICX_EVAL_MARK_VERIFIED_CMD?.trim() || "";
 const MOCK_SERVER_URL = (process.env.MOCK_OAUTH_MCP_URL ?? "http://127.0.0.1:3978").trim().replace(/\/+$/, "");
 const RUN_TAG = Date.now();
 const CONNECTION_NAME = `team-tool-${RUN_TAG}`;
@@ -62,7 +62,7 @@ export default {
   title: "Per-member MCP connections: admin publishes, employee connects their own account, agent acts as them, grants enforced",
   spec: "evals/cloud-mcp-agent-flows.md",
   preserveTheme: true,
-  requiredEnv: ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_WEB_URL"],
+  requiredEnv: ["MICX_EVAL_DEN_API_URL", "MICX_EVAL_DEN_WEB_URL"],
   steps: [
     {
       name: "Stack reachable; admin and member accounts sign in (member bootstrapped for real if missing)",
@@ -89,7 +89,7 @@ export default {
           ctx.assert(signUp.response.ok, `Member sign-up failed: ${signUp.response.status}`);
           ctx.assert(
             MARK_VERIFIED_CMD.length > 0,
-            "Member email must be verified to accept the invitation; set OPENWORK_EVAL_MARK_VERIFIED_CMD (shell template with {email}).",
+            "Member email must be verified to accept the invitation; set MICX_EVAL_MARK_VERIFIED_CMD (shell template with {email}).",
           );
           execSync(MARK_VERIFIED_CMD.replaceAll("{email}", MEMBER_EMAIL), { stdio: "ignore" });
           state.memberSession = await signInApi(MEMBER_EMAIL, MEMBER_PASSWORD);

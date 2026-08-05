@@ -74,10 +74,10 @@ async function closeStaleDialogs(ctx) {
   }
 }
 
-async function dismissOpenWorkModelsDialog(ctx) {
+async function dismissMicxModelsDialog(ctx) {
   const clicked = await ctx.eval(`(() => {
     const button = [...document.querySelectorAll('button')]
-      .find((candidate) => (candidate.textContent ?? '').trim() === 'Continue without OpenWork Models');
+      .find((candidate) => (candidate.textContent ?? '').trim() === 'Continue without Micx Models');
     button?.click();
     return Boolean(button);
   })()`);
@@ -96,7 +96,7 @@ async function clickExactButtonIfPresent(ctx, label) {
 }
 
 async function ensureDeveloperMode(ctx) {
-  const current = await ctx.eval("window.localStorage.getItem('openwork.developerMode')");
+  const current = await ctx.eval("window.localStorage.getItem('micx.developerMode')");
   if (state.originalDeveloperMode === null) state.originalDeveloperMode = current;
   if (current === "1") return;
 
@@ -110,7 +110,7 @@ async function ensureDeveloperMode(ctx) {
     switchButton.click();
     return true;
   })()`);
-  await ctx.waitFor("window.localStorage.getItem('openwork.developerMode') === '1'", {
+  await ctx.waitFor("window.localStorage.getItem('micx.developerMode') === '1'", {
     timeoutMs: 10_000,
     label: "developer mode enabled",
   });
@@ -140,7 +140,7 @@ async function restoreDeveloperMode(ctx) {
     switchButton.click();
     return true;
   })()`);
-  await ctx.waitFor("window.localStorage.getItem('openwork.developerMode') !== '1'", {
+  await ctx.waitFor("window.localStorage.getItem('micx.developerMode') !== '1'", {
     timeoutMs: 10_000,
     label: "developer mode restored",
   });
@@ -151,7 +151,7 @@ async function openCloudAccount(ctx) {
   await ctx.waitFor(
     `(() => {
       const text = document.body?.innerText ?? '';
-      return text.includes('OpenWork Cloud') && (
+      return text.includes('Micx Cloud') && (
         text.includes('Sign in') ||
         text.includes('Sign out') ||
         text.includes('Connected') ||
@@ -169,8 +169,8 @@ async function returnToApp(ctx) {
   if (inSettings) {
     await ctx.clickText("Back to app", { selector: "button", timeoutMs: 10_000 });
   }
-  await dismissOpenWorkModelsDialog(ctx);
-  await ctx.waitFor("(() => { const text = document.body?.innerText ?? ''; return text.includes('Add workspace') || text.includes('Welcome to OpenWork'); })()", {
+  await dismissMicxModelsDialog(ctx);
+  await ctx.waitFor("(() => { const text = document.body?.innerText ?? ''; return text.includes('Add workspace') || text.includes('Welcome to Micx'); })()", {
     timeoutMs: 30_000,
     label: "workspace shell or welcome screen",
   });
@@ -179,11 +179,11 @@ async function returnToApp(ctx) {
 async function ensureWorkspaceShellForRemote(ctx) {
   await rememberPreviousWorkspace(ctx);
   await returnToApp(ctx);
-  const onWelcome = await ctx.eval("location.hash.includes('/welcome') || (document.body?.innerText ?? '').includes('Welcome to OpenWork')");
+  const onWelcome = await ctx.eval("location.hash.includes('/welcome') || (document.body?.innerText ?? '').includes('Welcome to Micx')");
   if (onWelcome) {
     state.startedFromWelcome = true;
     if (state.originalPreferences === null) {
-      state.originalPreferences = await ctx.eval("localStorage.getItem('openwork.preferences')");
+      state.originalPreferences = await ctx.eval("localStorage.getItem('micx.preferences')");
     }
     await createStarterWorkspaceFromWelcome(ctx);
   }
@@ -196,7 +196,7 @@ async function ensureWorkspaceShellForRemote(ctx) {
 async function openConnectRemoteDialog(ctx) {
   await ensureWorkspaceShellForRemote(ctx);
   await closeStaleDialogs(ctx);
-  await dismissOpenWorkModelsDialog(ctx);
+  await dismissMicxModelsDialog(ctx);
   await ctx.clickText("Add workspace", { selector: "button", timeoutMs: 30_000 });
   await ctx.waitForText("Create Workspace", { timeoutMs: 30_000 });
   await ctx.clickText("Connect custom remote", { selector: "button", timeoutMs: 30_000 });
@@ -208,7 +208,7 @@ async function openConnectRemoteDialog(ctx) {
 }
 
 async function createStarterWorkspaceFromWelcome(ctx) {
-  const starterDir = await mkdtemp(join(tmpdir(), "openwork-fraimz-starter-"));
+  const starterDir = await mkdtemp(join(tmpdir(), "micx-fraimz-starter-"));
   state.starterWorkspaceDir = starterDir;
 
   await ctx.waitFor(`Boolean(document.querySelector(${JSON.stringify(WELCOME_FOLDER_INPUT)}))`, {
@@ -237,17 +237,17 @@ async function createStarterWorkspaceFromWelcome(ctx) {
   for (let attempt = 0; attempt < 12; attempt += 1) {
     const ready = await ctx.eval("(document.body?.innerText ?? '').includes('Add workspace')");
     if (ready) return;
-    await dismissOpenWorkModelsDialog(ctx);
+    await dismissMicxModelsDialog(ctx);
     await clickExactButtonIfPresent(ctx, "Skip and use the free model");
     await clickExactButtonIfPresent(ctx, "Skip");
     await sleep(500);
   }
 }
 
-async function startSelfSignedOpenworkServer() {
+async function startSelfSignedMicxServer() {
   if (state.selfSignedServerUrl) return state.selfSignedServerUrl;
 
-  const dir = await mkdtemp(join(tmpdir(), "openwork-self-signed-"));
+  const dir = await mkdtemp(join(tmpdir(), "micx-self-signed-"));
   const keyPath = join(dir, "key.pem");
   const certPath = join(dir, "cert.pem");
   await execFileAsync("openssl", [
@@ -270,7 +270,7 @@ async function startSelfSignedOpenworkServer() {
 
   const key = await readFile(keyPath);
   const cert = await readFile(certPath);
-  const server = createHttpsServer({ key, cert }, openworkDiscoveryHandler("ws_self_signed", "Self-signed remote", "/srv/self-signed"));
+  const server = createHttpsServer({ key, cert }, micxDiscoveryHandler("ws_self_signed", "Self-signed remote", "/srv/self-signed"));
   await listen(server);
   state.selfSignedServer = server;
   state.selfSignedServerDir = dir;
@@ -278,7 +278,7 @@ async function startSelfSignedOpenworkServer() {
   return state.selfSignedServerUrl;
 }
 
-async function stopSelfSignedOpenworkServer() {
+async function stopSelfSignedMicxServer() {
   const server = state.selfSignedServer;
   state.selfSignedServer = null;
   state.selfSignedServerUrl = null;
@@ -289,24 +289,24 @@ async function stopSelfSignedOpenworkServer() {
   }
 }
 
-async function startHttpOpenworkServer() {
+async function startHttpMicxServer() {
   if (state.httpServerUrl) return state.httpServerUrl;
 
-  const server = createHttpServer(openworkDiscoveryHandler(HTTP_REMOTE_WORKSPACE_ID, HTTP_REMOTE_WORKSPACE_NAME, "/srv/fraimz-remote"));
+  const server = createHttpServer(micxDiscoveryHandler(HTTP_REMOTE_WORKSPACE_ID, HTTP_REMOTE_WORKSPACE_NAME, "/srv/fraimz-remote"));
   await listen(server);
   state.httpServer = server;
   state.httpServerUrl = `http://127.0.0.1:${server.address().port}`;
   return state.httpServerUrl;
 }
 
-async function stopHttpOpenworkServer() {
+async function stopHttpMicxServer() {
   const server = state.httpServer;
   state.httpServer = null;
   state.httpServerUrl = null;
   if (server) await closeServer(server);
 }
 
-function openworkDiscoveryHandler(id, name, path) {
+function micxDiscoveryHandler(id, name, path) {
   return (request, response) => {
     if (request.url?.startsWith("/workspaces")) {
       response.writeHead(200, { "content-type": "application/json" });
@@ -334,30 +334,30 @@ async function closeServer(server) {
 }
 
 async function desktopWorkspaceList(ctx) {
-  await ctx.waitFor("Boolean(window.__OPENWORK_ELECTRON__?.invokeDesktop)", {
+  await ctx.waitFor("Boolean(window.__MICX_ELECTRON__?.invokeDesktop)", {
     timeoutMs: 30_000,
     label: "desktop bridge",
   });
-  return ctx.eval("window.__OPENWORK_ELECTRON__.invokeDesktop('workspaceBootstrap')", { awaitPromise: true });
+  return ctx.eval("window.__MICX_ELECTRON__.invokeDesktop('workspaceBootstrap')", { awaitPromise: true });
 }
 
 async function forgetDesktopWorkspace(ctx, workspaceId) {
-  await ctx.eval(`window.__OPENWORK_ELECTRON__.invokeDesktop('workspaceForget', ${JSON.stringify(workspaceId)})`, {
+  await ctx.eval(`window.__MICX_ELECTRON__.invokeDesktop('workspaceForget', ${JSON.stringify(workspaceId)})`, {
     awaitPromise: true,
   });
 }
 
-async function deleteOpenworkServerWorkspace(ctx, workspaceId) {
+async function deleteMicxServerWorkspace(ctx, workspaceId) {
   if (!workspaceId) return;
   await ctx.eval(`(async () => {
-    const baseUrl = localStorage.getItem('openwork.server.urlOverride') || localStorage.getItem('openwork.server.active');
-    if (!baseUrl || !window.__OPENWORK_ELECTRON__?.invokeDesktop) return null;
-    const token = localStorage.getItem('openwork.server.token') || '';
-    const hostToken = localStorage.getItem('openwork.server.hostToken') || '';
+    const baseUrl = localStorage.getItem('micx.server.urlOverride') || localStorage.getItem('micx.server.active');
+    if (!baseUrl || !window.__MICX_ELECTRON__?.invokeDesktop) return null;
+    const token = localStorage.getItem('micx.server.token') || '';
+    const hostToken = localStorage.getItem('micx.server.hostToken') || '';
     const headers = {};
     if (token) headers.authorization = 'Bearer ' + token;
-    if (hostToken) headers['x-openwork-host-token'] = hostToken;
-    return window.__OPENWORK_ELECTRON__.invokeDesktop('__fetch', baseUrl.replace(/\/+$/, '') + '/workspaces/' + encodeURIComponent(${JSON.stringify(workspaceId)}), {
+    if (hostToken) headers['x-micx-host-token'] = hostToken;
+    return window.__MICX_ELECTRON__.invokeDesktop('__fetch', baseUrl.replace(/\/+$/, '') + '/workspaces/' + encodeURIComponent(${JSON.stringify(workspaceId)}), {
       method: 'DELETE',
       headers,
       timeoutMs: 8_000,
@@ -365,21 +365,21 @@ async function deleteOpenworkServerWorkspace(ctx, workspaceId) {
   })()`, { awaitPromise: true }).catch(() => null);
 }
 
-async function restartOpenworkServer(ctx) {
-  await ctx.eval("window.__OPENWORK_ELECTRON__.invokeDesktop('openworkServerRestart', {})", { awaitPromise: true }).catch(() => null);
+async function restartMicxServer(ctx) {
+  await ctx.eval("window.__MICX_ELECTRON__.invokeDesktop('micxServerRestart', {})", { awaitPromise: true }).catch(() => null);
 }
 
 function isEvalStarterWorkspace(workspace) {
   const workspacePath = String(workspace?.path ?? "");
-  return workspacePath.includes("/openwork-fraimz-starter-") || workspacePath.includes("\\openwork-fraimz-starter-");
+  return workspacePath.includes("/micx-fraimz-starter-") || workspacePath.includes("\\micx-fraimz-starter-");
 }
 
 function isEvalStarterPath(value) {
-  return String(value ?? "").includes("openwork-fraimz-starter-");
+  return String(value ?? "").includes("micx-fraimz-starter-");
 }
 
 function desktopUserDataDir() {
-  const appId = "com.differentai.openwork.dev";
+  const appId = "com.differentai.micx.dev";
   if (process.platform === "darwin") return join(homedir(), "Library", "Application Support", appId);
   if (process.platform === "win32") return join(process.env.APPDATA || join(homedir(), "AppData", "Roaming"), appId);
   return join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), appId);
@@ -399,7 +399,7 @@ async function writeJson(path, value) {
 
 async function pruneEvalStarterRecoveryStores() {
   const userDataDir = desktopUserDataDir();
-  const workspaceStatePath = join(userDataDir, "openwork-workspaces.json");
+  const workspaceStatePath = join(userDataDir, "micx-workspaces.json");
   const workspaceState = await readJson(workspaceStatePath, null);
   if (workspaceState && Array.isArray(workspaceState.workspaces)) {
     const workspaces = workspaceState.workspaces.filter((workspace) => !isEvalStarterPath(workspace?.path));
@@ -417,7 +417,7 @@ async function pruneEvalStarterRecoveryStores() {
     }
   }
 
-  const tokenStorePath = join(userDataDir, "openwork-server-tokens.json");
+  const tokenStorePath = join(userDataDir, "micx-server-tokens.json");
   const tokenStore = await readJson(tokenStorePath, null);
   if (tokenStore?.workspaces && typeof tokenStore.workspaces === "object") {
     const workspaces = Object.fromEntries(Object.entries(tokenStore.workspaces).filter(([workspacePath]) => !isEvalStarterPath(workspacePath)));
@@ -426,7 +426,7 @@ async function pruneEvalStarterRecoveryStores() {
     }
   }
 
-  const serverStatePath = join(userDataDir, "openwork-server-state.json");
+  const serverStatePath = join(userDataDir, "micx-server-state.json");
   const serverState = await readJson(serverStatePath, null);
   if (serverState?.workspacePorts && typeof serverState.workspacePorts === "object") {
     const workspacePorts = Object.fromEntries(Object.entries(serverState.workspacePorts).filter(([workspacePath]) => !isEvalStarterPath(workspacePath)));
@@ -436,8 +436,8 @@ async function pruneEvalStarterRecoveryStores() {
   }
 
   for (const serverConfigPath of [
-    join(userDataDir, "openwork-dev-data", "xdg", "config", "openwork", "server.json"),
-    join(userDataDir, "openwork-dev-data", "home", ".config", "openwork", "server.json"),
+    join(userDataDir, "micx-dev-data", "xdg", "config", "micx", "server.json"),
+    join(userDataDir, "micx-dev-data", "home", ".config", "micx", "server.json"),
   ]) {
     const serverConfig = await readJson(serverConfigPath, null);
     if (!serverConfig) continue;
@@ -462,7 +462,7 @@ async function cleanupEvalStarterWorkspaces(ctx) {
     });
     if (leftovers.length === 0) return removed;
     for (const workspace of leftovers) {
-      await deleteOpenworkServerWorkspace(ctx, workspace.id);
+      await deleteMicxServerWorkspace(ctx, workspace.id);
       await forgetDesktopWorkspace(ctx, workspace.id);
       if (workspace.path) await rm(workspace.path, { recursive: true, force: true });
       removed += 1;
@@ -493,7 +493,7 @@ async function rememberPreviousWorkspace(ctx) {
 
 async function cleanupCreatedWorkspace(ctx) {
   const list = await desktopWorkspaceList(ctx).catch(() => null);
-  const created = (list?.workspaces ?? []).find((workspace) => workspace?.openworkWorkspaceId === HTTP_REMOTE_WORKSPACE_ID)
+  const created = (list?.workspaces ?? []).find((workspace) => workspace?.micxWorkspaceId === HTTP_REMOTE_WORKSPACE_ID)
     ?? (state.createdWorkspaceId ? { id: state.createdWorkspaceId } : null);
   if (created?.id) {
     await forgetDesktopWorkspace(ctx, created.id);
@@ -502,7 +502,7 @@ async function cleanupCreatedWorkspace(ctx) {
     return workspace?.id === state.starterWorkspaceId || workspace?.path === state.starterWorkspaceDir;
   }) ?? (state.starterWorkspaceId ? { id: state.starterWorkspaceId } : null);
   if (starter?.id && starter.id !== state.previousWorkspaceId && starter.id !== created?.id) {
-    await deleteOpenworkServerWorkspace(ctx, starter.id);
+    await deleteMicxServerWorkspace(ctx, starter.id);
     await forgetDesktopWorkspace(ctx, starter.id);
   }
   if (state.starterWorkspaceDir) {
@@ -511,13 +511,13 @@ async function cleanupCreatedWorkspace(ctx) {
   await pruneEvalStarterRecoveryStores();
   await cleanupEvalStarterWorkspaces(ctx);
   if (state.startedFromWelcome && !state.previousWorkspaceId) {
-    await restartOpenworkServer(ctx);
+    await restartMicxServer(ctx);
   }
   if (state.previousWorkspaceId) {
-    await ctx.eval(`window.__OPENWORK_ELECTRON__.invokeDesktop('workspaceSetSelected', ${JSON.stringify(state.previousWorkspaceId)})`, {
+    await ctx.eval(`window.__MICX_ELECTRON__.invokeDesktop('workspaceSetSelected', ${JSON.stringify(state.previousWorkspaceId)})`, {
       awaitPromise: true,
     });
-    await ctx.eval(`window.__OPENWORK_ELECTRON__.invokeDesktop('workspaceSetRuntimeActive', ${JSON.stringify(state.previousWorkspaceId)})`, {
+    await ctx.eval(`window.__MICX_ELECTRON__.invokeDesktop('workspaceSetRuntimeActive', ${JSON.stringify(state.previousWorkspaceId)})`, {
       awaitPromise: true,
     });
   }
@@ -532,21 +532,21 @@ async function restoreFreshWelcome(ctx) {
   await ctx.eval(`(() => {
     const original = ${JSON.stringify(state.originalPreferences)};
     if (original === null) {
-      localStorage.setItem('openwork.preferences', JSON.stringify({ hasCompletedOnboarding: false }));
+      localStorage.setItem('micx.preferences', JSON.stringify({ hasCompletedOnboarding: false }));
     } else {
       try {
         const prefs = JSON.parse(original);
         prefs.hasCompletedOnboarding = false;
-        localStorage.setItem('openwork.preferences', JSON.stringify(prefs));
+        localStorage.setItem('micx.preferences', JSON.stringify(prefs));
       } catch {
-        localStorage.setItem('openwork.preferences', JSON.stringify({ hasCompletedOnboarding: false }));
+        localStorage.setItem('micx.preferences', JSON.stringify({ hasCompletedOnboarding: false }));
       }
     }
-    localStorage.removeItem('openwork.react.activeWorkspace');
+    localStorage.removeItem('micx.react.activeWorkspace');
     return true;
   })()`);
   await ctx.eval("(() => { window.location.hash = '/welcome'; window.location.reload(); return true; })()");
-  await ctx.waitFor("Boolean(window.__openworkControl)", {
+  await ctx.waitFor("Boolean(window.__micxControl)", {
     timeoutMs: 60_000,
     label: "control API after welcome restore reload",
   });
@@ -554,20 +554,20 @@ async function restoreFreshWelcome(ctx) {
     timeoutMs: 30_000,
     label: "welcome route restored",
   });
-  await ctx.waitFor("(document.body?.innerText ?? '').includes('Welcome to OpenWork')", {
+  await ctx.waitFor("(document.body?.innerText ?? '').includes('Welcome to Micx')", {
     timeoutMs: 30_000,
     label: "welcome screen restored",
   });
   await ctx.eval("new Promise((resolve) => setTimeout(resolve, 800))", { awaitPromise: true });
   const removedLateStarter = await cleanupEvalStarterWorkspaces(ctx);
   if (removedLateStarter > 0) {
-    await ctx.eval("(() => { localStorage.removeItem('openwork.react.activeWorkspace'); window.location.hash = '/welcome'; window.location.reload(); return true; })()");
-    await ctx.waitFor("Boolean(window.__openworkControl)", {
+    await ctx.eval("(() => { localStorage.removeItem('micx.react.activeWorkspace'); window.location.hash = '/welcome'; window.location.reload(); return true; })()");
+    await ctx.waitFor("Boolean(window.__micxControl)", {
       timeoutMs: 60_000,
       label: "control API after late starter cleanup reload",
     });
   }
-  await ctx.waitFor("location.hash.includes('/welcome') && (document.body?.innerText ?? '').includes('Welcome to OpenWork')", {
+  await ctx.waitFor("location.hash.includes('/welcome') && (document.body?.innerText ?? '').includes('Welcome to Micx')", {
     timeoutMs: 30_000,
     label: "welcome screen remained restored",
   });
@@ -595,7 +595,7 @@ async function nodeFetchFailure(url) {
 async function visibleRemoteError(ctx) {
   return ctx.eval(`(() => {
     const lines = (document.body?.innerText ?? '').split(/\\n+/).map((line) => line.trim()).filter(Boolean);
-    return lines.find((line) => /certificate|ERR_CERT|fetch failed|OpenWork server is unavailable/i.test(line)) ?? '';
+    return lines.find((line) => /certificate|ERR_CERT|fetch failed|Micx server is unavailable/i.test(line)) ?? '';
   })()`);
 }
 
@@ -608,28 +608,28 @@ export default {
     {
       name: "Cloud account opens without a generic fetch failure",
       run: async (ctx) => {
-        await ctx.waitFor("Boolean(window.__openworkControl)", {
+        await ctx.waitFor("Boolean(window.__micxControl)", {
           timeoutMs: 60_000,
-          label: "window.__openworkControl",
+          label: "window.__micxControl",
         });
         await cleanupCreatedWorkspace(ctx);
         await closeStaleDialogs(ctx);
 
         await ctx.prove("The Cloud account settings surface opens cleanly", {
-          claim: "Settings → Account renders the OpenWork Cloud account controls and does not show a generic fetch failure.",
+          claim: "Settings → Account renders the Micx Cloud account controls and does not show a generic fetch failure.",
           voiceover: vo[0],
           action: async () => {
             await ensureDeveloperMode(ctx);
             await openCloudAccount(ctx);
           },
           assert: async () => {
-            await ctx.expectText("OpenWork Cloud");
+            await ctx.expectText("Micx Cloud");
             await ctx.expectText("Cloud control plane URL");
             await ctx.expectNoText("fetch failed");
           },
           screenshot: {
             name: "cloud-account-ready",
-            requireText: ["OpenWork Cloud", "Cloud control plane URL"],
+            requireText: ["Micx Cloud", "Cloud control plane URL"],
             rejectText: ["fetch failed", "Something went wrong"],
             hashIncludes: "/settings/cloud-account",
           },
@@ -639,7 +639,7 @@ export default {
     {
       name: "Remote worker certificate failure is descriptive",
       run: async (ctx) => {
-        const serverUrl = await startSelfSignedOpenworkServer();
+        const serverUrl = await startSelfSignedMicxServer();
 
         await ctx.prove("Connecting a worker with an untrusted certificate shows the certificate cause", {
           claim: "The Connect remote dialog keeps the user in context and shows a certificate-specific HTTPS failure instead of collapsing to a bare fetch failure.",
@@ -657,7 +657,7 @@ export default {
             const errorText = await visibleRemoteError(ctx);
             ctx.assert(/certificate|ERR_CERT/i.test(errorText), `Expected a certificate-specific error, got: ${errorText}`);
             ctx.assert(!/TypeError:\s*fetch failed$/i.test(errorText), `Remote error was still a bare fetch failure: ${errorText}`);
-            ctx.assert(!errorText.includes("OpenWork server is unavailable"), `Remote error was swallowed into a generic availability message: ${errorText}`);
+            ctx.assert(!errorText.includes("Micx server is unavailable"), `Remote error was swallowed into a generic availability message: ${errorText}`);
             ctx.output("self-signed-fetch-differential.json", JSON.stringify({
               selfSignedServer: serverUrl,
               visibleDesktopError: errorText,
@@ -667,7 +667,7 @@ export default {
           screenshot: {
             name: "remote-certificate-error",
             requireText: ["Remote server details", "ERR_CERT_AUTHORITY_INVALID"],
-            rejectText: ["OpenWork server is unavailable", "TypeError: fetch failed"],
+            rejectText: ["Micx server is unavailable", "TypeError: fetch failed"],
           },
         });
       },
@@ -675,7 +675,7 @@ export default {
     {
       name: "Healthy remote worker connects through desktop IPC",
       run: async (ctx) => {
-        const serverUrl = await startHttpOpenworkServer();
+        const serverUrl = await startHttpMicxServer();
 
         await ctx.prove("A valid remote worker is discovered, created, selected, and listed", {
           claim: "Connecting a healthy remote worker through the same desktop path closes the dialog and adds Fraimz remote worker to the workspace list.",
@@ -703,22 +703,22 @@ export default {
             await ctx.expectText(HTTP_REMOTE_WORKSPACE_NAME);
             await ctx.expectNoText("Remote server details");
             const list = await desktopWorkspaceList(ctx);
-            const workspace = (list?.workspaces ?? []).find((entry) => entry?.openworkWorkspaceId === HTTP_REMOTE_WORKSPACE_ID);
+            const workspace = (list?.workspaces ?? []).find((entry) => entry?.micxWorkspaceId === HTTP_REMOTE_WORKSPACE_ID);
             ctx.assert(Boolean(workspace), `Electron workspace store did not include ${HTTP_REMOTE_WORKSPACE_ID}.`);
-            ctx.assert(workspace.remoteType === "openwork", `Expected remoteType openwork, got ${workspace.remoteType}.`);
+            ctx.assert(workspace.remoteType === "micx", `Expected remoteType micx, got ${workspace.remoteType}.`);
             state.createdWorkspaceId = workspace.id;
             ctx.output("desktop-workspace-store-created.json", JSON.stringify({
               createdWorkspaceId: workspace.id,
               remoteType: workspace.remoteType,
-              openworkWorkspaceId: workspace.openworkWorkspaceId,
-              openworkWorkspaceName: workspace.openworkWorkspaceName,
+              micxWorkspaceId: workspace.micxWorkspaceId,
+              micxWorkspaceName: workspace.micxWorkspaceName,
               selectedId: list.selectedId ?? null,
             }, null, 2));
           },
           screenshot: {
             name: "remote-worker-connected",
             requireText: [HTTP_REMOTE_WORKSPACE_NAME],
-            rejectText: ["Remote server details", "OpenWork server is unavailable", "fetch failed"],
+            rejectText: ["Remote server details", "Micx server is unavailable", "fetch failed"],
           },
         });
       },
@@ -731,8 +731,8 @@ export default {
           voiceover: vo[3],
           action: async () => {
             await cleanupCreatedWorkspace(ctx);
-            await stopHttpOpenworkServer();
-            await stopSelfSignedOpenworkServer();
+            await stopHttpMicxServer();
+            await stopSelfSignedMicxServer();
             await restoreDeveloperMode(ctx);
             if (state.startedFromWelcome && !state.previousWorkspaceId) {
               await restoreFreshWelcome(ctx);
@@ -742,7 +742,7 @@ export default {
                 timeoutMs: 30_000,
                 label: "restored cloud-account route",
               });
-              await ctx.waitFor("(document.body?.innerText ?? '').includes('OpenWork Cloud')", {
+              await ctx.waitFor("(document.body?.innerText ?? '').includes('Micx Cloud')", {
                 timeoutMs: 30_000,
                 label: "cloud account content after cleanup",
               });
@@ -752,9 +752,9 @@ export default {
           },
           assert: async () => {
             if (state.startedFromWelcome && !state.previousWorkspaceId) {
-              await ctx.expectText("Welcome to OpenWork");
+              await ctx.expectText("Welcome to Micx");
             } else {
-              await ctx.expectText("OpenWork Cloud");
+              await ctx.expectText("Micx Cloud");
             }
             await ctx.expectNoText(HTTP_REMOTE_WORKSPACE_NAME);
             await ctx.expectNoText("Remote server details");
@@ -762,7 +762,7 @@ export default {
           },
           screenshot: {
             name: state.startedFromWelcome && !state.previousWorkspaceId ? "welcome-recovered" : "cloud-account-recovered",
-            requireText: state.startedFromWelcome && !state.previousWorkspaceId ? ["Welcome to OpenWork"] : ["OpenWork Cloud"],
+            requireText: state.startedFromWelcome && !state.previousWorkspaceId ? ["Welcome to Micx"] : ["Micx Cloud"],
             rejectText: [HTTP_REMOTE_WORKSPACE_NAME, "Remote server details", "fetch failed", "Something went wrong"],
             hashIncludes: state.startedFromWelcome && !state.previousWorkspaceId ? "/welcome" : "/settings/cloud-account",
           },

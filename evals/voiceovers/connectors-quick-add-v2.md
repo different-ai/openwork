@@ -6,11 +6,11 @@ already-added connectors stay useful instead of going gray.
 
 1. The Connectors page now opens with one smart bar — searching presets and adding by URL are the same box, and the separate Add MCP button is gone.
 
-2. Every tile tells you the price of entry before you click: One-click, API key, or OAuth app required — read straight from the preset data OpenWork already ships.
+2. Every tile tells you the price of entry before you click: One-click, API key, or OAuth app required — read straight from the preset data Micx already ships.
 
 3. Sarah types "sla" and the grid narrows to Slack, its amber badge warning about the OAuth app before any dialog opens.
 
-4. She pastes an internal MCP server URL instead: OpenWork checks it right under the bar and offers to add it — no modal, one click.
+4. She pastes an internal MCP server URL instead: Micx checks it right under the bar and offers to add it — no modal, one click.
 
 5. The connection lands in Your connectors, ready for the whole team.
 

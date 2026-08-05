@@ -54,42 +54,42 @@ export const hostileGatewayFaultIds: readonly string[] = [
 export const hostileGatewayFaultCases: readonly HostileGatewayFaultCase[] = [
   {
     faultId: "redirect-uri-whitelist",
-    claim: "OpenWork's real connect path shows today's redirect-whitelist surface, including the exact generated callback but not the provider's rejected-URI message.",
+    claim: "Micx's real connect path shows today's redirect-whitelist surface, including the exact generated callback but not the provider's rejected-URI message.",
     expectedProductSnippets: ["The provider rejected the authorization request before issuing a code", "redirectUri"],
   },
   {
     faultId: "per-connector-redirect",
-    claim: "OpenWork's real callback path reaches token exchange and currently collapses a per-connector redirect failure to the generic token-exchange diagnostic.",
+    claim: "Micx's real callback path reaches token exchange and currently collapses a per-connector redirect failure to the generic token-exchange diagnostic.",
     expectedProductSnippets: ["The authorization server rejected the code or token refresh exchange", "MCP_OAUTH_INVALID_GRANT"],
   },
   {
     faultId: "dcr-required",
-    claim: "OpenWork's real connect path attempts dynamic client registration when advertised, then currently maps an authorization-time DCR-required error generically.",
+    claim: "Micx's real connect path attempts dynamic client registration when advertised, then currently maps an authorization-time DCR-required error generically.",
     expectedProductSnippets: ["performed DCR", "dynamicRegistrations", "The provider rejected the authorization request before issuing a code"],
   },
   {
     faultId: "method-405",
-    claim: "OpenWork's real connect path does not issue a GET to the MCP endpoint, so a GET-only 405 fault is latent in this user flow.",
+    claim: "Micx's real connect path does not issue a GET to the MCP endpoint, so a GET-only 405 fault is latent in this user flow.",
     expectedProductSnippets: ["GET /mcp count 0", "needs_auth"],
   },
   {
     faultId: "duplicate-amplification",
-    claim: "OpenWork sends one tools/call for one user action, but today's Den diagnostic loses the duplicate-upstream-request signal.",
+    claim: "Micx sends one tools/call for one user action, but today's Den diagnostic loses the duplicate-upstream-request signal.",
     expectedProductSnippets: ["one MCP tools/call", "provider status 409", "MCP_PROVIDER_TOOL_ERROR"],
   },
   {
     faultId: "refresh-expired",
-    claim: "OpenWork's real runtime attempts a refresh-token grant for expired credentials and currently reports a generic token/refresh exchange rejection.",
+    claim: "Micx's real runtime attempts a refresh-token grant for expired credentials and currently reports a generic token/refresh exchange rejection.",
     expectedProductSnippets: ["refresh_token", "The authorization server rejected the code or token refresh exchange"],
   },
   {
     faultId: "trailing-dot-url",
-    claim: "OpenWork's real client canonicalizes the trailing-dot authorization server before issuer discovery and still reaches authorization.",
+    claim: "Micx's real client canonicalizes the trailing-dot authorization server before issuer discovery and still reaches authorization.",
     expectedProductSnippets: ["canonicalized", "needs_auth", "trailingDotRequests"],
   },
   {
     faultId: "per-user-403",
-    claim: "OpenWork's real callback validation classifies a per-user 403 as provider authorization, but today's message does not name the subject.",
+    claim: "Micx's real callback validation classifies a per-user 403 as provider authorization, but today's message does not name the subject.",
     expectedProductSnippets: ["provider policy denied", "MCP_PROVIDER_HTTP_403", "does not name"],
   },
 ];

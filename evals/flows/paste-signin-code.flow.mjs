@@ -8,7 +8,7 @@ export default {
   id: "paste-signin-code",
   title: "A prepared development build can sign in with a copied one-time code",
   kind: "user-facing",
-  requiredEnv: ["OPENWORK_EVAL_HANDOFF_GRANT"],
+  requiredEnv: ["MICX_EVAL_HANDOFF_GRANT"],
   steps: [
     {
       name: "Reveal the paste-code path",
@@ -40,12 +40,12 @@ export default {
         await ctx.prove("The one-time code signs Demo A into the claimed workspace", {
           voiceover: vo[1],
           action: async () => {
-            await ctx.fill('input[aria-label="One-time sign-in code"]', ctx.env.OPENWORK_EVAL_HANDOFF_GRANT);
+            await ctx.fill('input[aria-label="One-time sign-in code"]', ctx.env.MICX_EVAL_HANDOFF_GRANT);
             await ctx.clickText("Sign in to this workspace");
           },
           assert: async () => {
             await ctx.waitFor(
-              "Boolean((localStorage.getItem('openwork.den.authToken') ?? '').trim())",
+              "Boolean((localStorage.getItem('micx.den.authToken') ?? '').trim())",
               { timeoutMs: 90_000, label: "persisted Den authentication token after workspace initialization" },
             );
             await ctx.expectNoText("Paste sign-in code");

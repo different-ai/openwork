@@ -16,10 +16,10 @@ const FLOW_ID = "den-reauth-popup-social";
 const vo = await loadVoiceoverParagraphs(FLOW_ID);
 const execFileAsync = promisify(execFile);
 
-const DEN_WEB_URL = cleanBaseUrl(process.env.OPENWORK_EVAL_DEN_WEB_URL);
-const MYSQL_CONTAINER = process.env.OPENWORK_EVAL_DEN_MYSQL_CONTAINER?.trim() ?? "";
+const DEN_WEB_URL = cleanBaseUrl(process.env.MICX_EVAL_DEN_WEB_URL);
+const MYSQL_CONTAINER = process.env.MICX_EVAL_DEN_MYSQL_CONTAINER?.trim() ?? "";
 const DEMO_EMAIL = "alex@acme.test";
-const DEMO_PASSWORD = "OpenWorkDemo123!";
+const DEMO_PASSWORD = "MicxDemo123!";
 const SECURITY_MESSAGE = "For security, confirm it's you before changing workspace settings.";
 const GOOGLE_ACCOUNT_ID = "acc_01kwx81tc6f208pn04555rws17";
 
@@ -47,7 +47,7 @@ export default {
   title: "Den social reauth completes in a popup and retries the queued action",
   kind: "user-facing",
   preserveTheme: true,
-  requiredEnv: ["OPENWORK_EVAL_DEN_WEB_URL", "OPENWORK_EVAL_DEN_MYSQL_CONTAINER"],
+  requiredEnv: ["MICX_EVAL_DEN_WEB_URL", "MICX_EVAL_DEN_MYSQL_CONTAINER"],
   steps: [
     {
       name: "Sign in; stage a stale session and a Google-linked account",
@@ -140,7 +140,7 @@ export default {
             await realClickExactText(ctx, "Continue with Google", "button", "Continue with Google button");
             await sleep(1000);
             const completionUrl = routeUrl(`/reauth/complete?nonce=${encodeURIComponent(nonce)}`);
-            await ctx.eval(`(() => { window.open(${JSON.stringify(completionUrl)}, 'openwork-reauth'); return true; })()`);
+            await ctx.eval(`(() => { window.open(${JSON.stringify(completionUrl)}, 'micx-reauth'); return true; })()`);
             await ctx.waitFor(
               `!document.querySelector('[role="dialog"][data-reauth-nonce]')`,
               { timeoutMs: 30_000, label: "reauth dialog closed" },
@@ -209,7 +209,7 @@ function recordAssertion(ctx, assertion, passed, actual) {
 }
 
 async function runSql(sql) {
-  return execFileAsync("docker", ["exec", MYSQL_CONTAINER, "mysql", "-uroot", "-ppassword", "openwork_den", "-e", sql], {
+  return execFileAsync("docker", ["exec", MYSQL_CONTAINER, "mysql", "-uroot", "-ppassword", "micx_den", "-e", sql], {
     maxBuffer: 2_000_000,
   });
 }

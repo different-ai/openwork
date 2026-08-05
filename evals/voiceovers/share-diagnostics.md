@@ -1,6 +1,6 @@
 # share-diagnostics — Sharing logs when things go wrong is one step from the command palette
 
-OpenWork already collects runtime diagnostics — app build, engine and server
+Micx already collects runtime diagnostics — app build, engine and server
 state, recent log tails — but getting them out was buried behind Developer
 Mode in Settings → Debug. This demo shows the streamlined path: two
 command-palette entries that produce the same sanitized bundle everywhere.

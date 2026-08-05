@@ -130,7 +130,7 @@ async function startLab(ctx) {
   const command = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
   state.child = spawn(command, [
     "--filter",
-    "@openwork-ee/enterprise-mock-lab",
+    "@micx-ee/enterprise-mock-lab",
     "dev",
   ], {
     cwd: ROOT,
@@ -366,7 +366,7 @@ export default {
             await ctx.fill("#display-name", INSTANCE_NAME);
             await selectValue(ctx, "#profile-id", PROFILE_ID);
             await ctx.fill("#port", String(state.dataPort));
-            await ctx.fill("#client-id", "synthetic-openwork-proof-client");
+            await ctx.fill("#client-id", "synthetic-micx-proof-client");
             await ctx.fill("#client-secret", CLIENT_SECRET);
             await ctx.clickText("Create stopped instance", { selector: "button" });
             await ctx.waitForText(INSTANCE_NAME, { timeoutMs: 10_000 });

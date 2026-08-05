@@ -3,7 +3,7 @@ import { defineScenario } from "../runner/scenario.mjs";
 import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
 
 const FLOW_ID = "org-invite-two-desktops";
-const REQUIRED_DEN_ENV = ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_WEB_URL"];
+const REQUIRED_DEN_ENV = ["MICX_EVAL_DEN_API_URL", "MICX_EVAL_DEN_WEB_URL"];
 const ALEX_REPLY = "alex hello script ready";
 const JAMIE_REPLY = "jamie hello script ready";
 
@@ -24,8 +24,8 @@ function requiredEnv(ctx, name) {
 
 function denBootstrap(ctx) {
   return {
-    baseUrl: requiredEnv(ctx, "OPENWORK_EVAL_DEN_WEB_URL"),
-    apiBaseUrl: requiredEnv(ctx, "OPENWORK_EVAL_DEN_API_URL"),
+    baseUrl: requiredEnv(ctx, "MICX_EVAL_DEN_WEB_URL"),
+    apiBaseUrl: requiredEnv(ctx, "MICX_EVAL_DEN_API_URL"),
     requireSignin: false,
   };
 }
@@ -79,13 +79,13 @@ async function waitForWithCdpReconnect(ctx, expression, options) {
 }
 
 function expectAgentReply(ctx) {
-  return Boolean(ctx.env.OPENWORK_EVAL_EXPECT_AGENT_REPLY?.trim());
+  return Boolean(ctx.env.MICX_EVAL_EXPECT_AGENT_REPLY?.trim());
 }
 
 function runSalt(ctx) {
   const existing = optionalStateString(ctx, "runSalt");
   if (existing) return existing;
-  const seed = ctx.env.OPENWORK_EVAL_RUNSTAMP?.trim() || new Date().toISOString();
+  const seed = ctx.env.MICX_EVAL_RUNSTAMP?.trim() || new Date().toISOString();
   const safe = `${seed}-${process.pid}`.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "run";
   const salt = `owt-${safe}`;
   ctx.state.runSalt = salt;
@@ -103,7 +103,7 @@ function jamiePrompt(ctx) {
 }
 
 function uniqueOrgDetails(ctx) {
-  const stamp = ctx.env.OPENWORK_EVAL_RUNSTAMP?.trim()
+  const stamp = ctx.env.MICX_EVAL_RUNSTAMP?.trim()
     || new Date().toISOString().slice(11, 16).replace(":", "");
   const safe = `${stamp}-${process.pid}`.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "run";
   return {
@@ -127,7 +127,7 @@ async function currentRoute(ctx) {
     const hashRoute = window.location.hash.replace(/^#/, '');
     if (hashRoute.includes('/workspace/')) return hashRoute;
     try {
-      const snapshotRoute = window.__openworkControl?.snapshot?.().route;
+      const snapshotRoute = window.__micxControl?.snapshot?.().route;
       if (typeof snapshotRoute === 'string' && snapshotRoute) return snapshotRoute;
     } catch {}
     return hashRoute || window.location.pathname;
@@ -149,11 +149,11 @@ async function returnToWorkspace(ctx, surface, key) {
     await ctx.navigateHash(route);
     const predicate = route === "/session"
       ? `(() => {
-        const current = window.__openworkControl?.snapshot?.().route || window.location.hash.replace(/^#/, '');
+        const current = window.__micxControl?.snapshot?.().route || window.location.hash.replace(/^#/, '');
         return current === '/session' || current.includes('/session');
       })()`
       : `(() => {
-        const current = window.__openworkControl?.snapshot?.().route || window.location.hash.replace(/^#/, '');
+        const current = window.__micxControl?.snapshot?.().route || window.location.hash.replace(/^#/, '');
         const hashRoute = window.location.hash.replace(/^#/, '');
         return current === ${JSON.stringify(route)} || hashRoute === ${JSON.stringify(route)};
       })()`;
@@ -162,7 +162,7 @@ async function returnToWorkspace(ctx, surface, key) {
 }
 
 async function navigateDenMembers(ctx) {
-  const webUrl = cleanBaseUrl(requiredEnv(ctx, "OPENWORK_EVAL_DEN_WEB_URL"));
+  const webUrl = cleanBaseUrl(requiredEnv(ctx, "MICX_EVAL_DEN_WEB_URL"));
   // Structured CDP navigation: no code construction from env-derived URLs.
   await ctx.client.send("Page.navigate", { url: new URL("/dashboard/members", `${webUrl}/`).toString() });
   await waitForWithCdpReconnect(ctx, "document.readyState === 'complete'", { timeoutMs: 45_000, label: "load Den members page" });
@@ -173,7 +173,7 @@ async function navigateDenMembers(ctx) {
 }
 
 async function showDenOrganizationList(ctx) {
-  const webUrl = cleanBaseUrl(requiredEnv(ctx, "OPENWORK_EVAL_DEN_WEB_URL"));
+  const webUrl = cleanBaseUrl(requiredEnv(ctx, "MICX_EVAL_DEN_WEB_URL"));
   const orgName = stateString(ctx, "orgName");
   // Structured CDP navigation: no code construction from env-derived URLs.
   await ctx.client.send("Page.navigate", { url: new URL("/organization", `${webUrl}/`).toString() });
@@ -205,7 +205,7 @@ async function showDenOrganizationList(ctx) {
 }
 
 async function waitForDenDashboard(ctx) {
-  const webUrl = cleanBaseUrl(requiredEnv(ctx, "OPENWORK_EVAL_DEN_WEB_URL"));
+  const webUrl = cleanBaseUrl(requiredEnv(ctx, "MICX_EVAL_DEN_WEB_URL"));
   await waitForWithCdpReconnect(ctx,
     `location.href.startsWith(${JSON.stringify(webUrl)}) && location.pathname.startsWith('/dashboard')`,
     { timeoutMs: 45_000, label: "Den dashboard route" },
@@ -304,7 +304,7 @@ export default defineScenario({
               if (connection.activeOrgName) ctx.state.alexActiveOrgName = connection.activeOrgName;
               await ctx.navigateHash("/session");
               await ctx.waitFor(`(() => {
-                const route = window.__openworkControl?.snapshot?.().route || window.location.hash.replace(/^#/, '');
+                const route = window.__micxControl?.snapshot?.().route || window.location.hash.replace(/^#/, '');
                 return route === '/session' || route.includes('/session');
               })()`, { timeoutMs: 30_000, label: "Alex session route" });
               await rememberWorkspaceRoute(ctx, alexDesktop, "alexWorkspaceRoute");
@@ -411,10 +411,10 @@ export default defineScenario({
             assert: async () => {
               const route = stateString(ctx, "jamieWorkspaceRoute");
               witness(ctx, route.includes("/workspace/") || route === "/session", "Jamie desktop reached a fresh usable route", ctx.state.jamieWorkspaceRoute);
-              await ctx.expectText("OpenWork", { timeoutMs: 30_000 });
+              await ctx.expectText("Micx", { timeoutMs: 30_000 });
               await ctx.expectNoText(ctx.actors.alex.email);
             },
-            screenshot: { name: "jamie-fresh-desktop", requireText: ["OpenWork"], rejectText: [ctx.actors.alex.email] },
+            screenshot: { name: "jamie-fresh-desktop", requireText: ["Micx"], rejectText: [ctx.actors.alex.email] },
           });
         });
       },

@@ -2,11 +2,11 @@ import { mkdirSync } from "node:fs";
 import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
 
 const FLOW_ID = "admin-desktop-skill-grants";
-const DEN_API_URL = cleanBaseUrl(process.env.OPENWORK_EVAL_DEN_API_URL);
-const DEN_WEB_URL = cleanBaseUrl(process.env.OPENWORK_EVAL_DEN_WEB_URL);
-const ADMIN_EMAIL = process.env.OPENWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
-const ADMIN_PASSWORD = process.env.OPENWORK_EVAL_DEMO_PASSWORD?.trim() || "OpenWorkDemo123!";
-const WORKSPACE_PATH = process.env.OPENWORK_EVAL_WORKSPACE_PATH?.trim() || "/tmp/openwork-admin-desktop-skill-grants";
+const DEN_API_URL = cleanBaseUrl(process.env.MICX_EVAL_DEN_API_URL);
+const DEN_WEB_URL = cleanBaseUrl(process.env.MICX_EVAL_DEN_WEB_URL);
+const ADMIN_EMAIL = process.env.MICX_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
+const ADMIN_PASSWORD = process.env.MICX_EVAL_DEMO_PASSWORD?.trim() || "MicxDemo123!";
+const WORKSPACE_PATH = process.env.MICX_EVAL_WORKSPACE_PATH?.trim() || "/tmp/micx-admin-desktop-skill-grants";
 const RUN_TAG = Date.now();
 const APPROVED_TITLE = `Admin Access Approved Skill ${RUN_TAG}`;
 const DEN_ONLY_TITLE = `Admin Access Den Only Skill ${RUN_TAG}`;
@@ -46,7 +46,7 @@ export default {
   id: FLOW_ID,
   title: "Administrators receive only explicitly granted desktop Connect capabilities",
   kind: "user-facing",
-  requiredEnv: ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_WEB_URL", "OPENWORK_EVAL_WORKSPACE_PATH"],
+  requiredEnv: ["MICX_EVAL_DEN_API_URL", "MICX_EVAL_DEN_WEB_URL", "MICX_EVAL_WORKSPACE_PATH"],
   steps: [
     {
       name: "Den administration remains complete",
@@ -69,11 +69,11 @@ export default {
               );
             }
             await ctx.expectText(ADMIN_EMAIL);
-            await ctx.expectText("OpenWork Cloud");
+            await ctx.expectText("Micx Cloud");
           },
           screenshot: {
             name: "admin-den-management-context",
-            requireText: ["OpenWork Cloud", ADMIN_EMAIL, "Connected"],
+            requireText: ["Micx Cloud", ADMIN_EMAIL, "Connected"],
             rejectText: ["Something went wrong"],
           },
         });
@@ -471,36 +471,36 @@ async function seedCapabilityMatrix(ctx) {
 
 async function signDesktopIntoDen(ctx) {
   mkdirSync(WORKSPACE_PATH, { recursive: true });
-  await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 120_000, label: "desktop control API" });
-  await ctx.waitFor("Boolean(window.__OPENWORK_ELECTRON__?.invokeDesktop)", { timeoutMs: 30_000, label: "desktop bridge" });
+  await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 120_000, label: "desktop control API" });
+  await ctx.waitFor("Boolean(window.__MICX_ELECTRON__?.invokeDesktop)", { timeoutMs: 30_000, label: "desktop bridge" });
   const bootstrap = { baseUrl: DEN_WEB_URL, apiBaseUrl: DEN_API_URL, requireSignin: false, handoff: null };
   const configured = await ctx.eval(`(async () => {
-    const bridge = window.__OPENWORK_ELECTRON__?.invokeDesktop;
+    const bridge = window.__MICX_ELECTRON__?.invokeDesktop;
     if (!bridge) return false;
     await bridge("setDesktopBootstrapConfig", ${JSON.stringify(bootstrap)});
-    localStorage.setItem("openwork.den.baseUrl", ${JSON.stringify(DEN_WEB_URL)});
-    localStorage.setItem("openwork.den.apiBaseUrl", ${JSON.stringify(DEN_API_URL)});
-    for (const key of ["openwork.den.authToken", "openwork.den.activeOrgId", "openwork.den.activeOrgSlug", "openwork.den.activeOrgName"]) {
+    localStorage.setItem("micx.den.baseUrl", ${JSON.stringify(DEN_WEB_URL)});
+    localStorage.setItem("micx.den.apiBaseUrl", ${JSON.stringify(DEN_API_URL)});
+    for (const key of ["micx.den.authToken", "micx.den.activeOrgId", "micx.den.activeOrgSlug", "micx.den.activeOrgName"]) {
       localStorage.removeItem(key);
     }
     return true;
   })()`, { awaitPromise: true });
   ctx.assert(configured === true, "Desktop bootstrap configuration failed.");
   await ctx.eval("location.reload()");
-  await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 60_000, label: "control API after reload" });
+  await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 60_000, label: "control API after reload" });
 
   const handoff = await denFetch("/v1/auth/desktop-handoff", {
     method: "POST",
     headers: { authorization: `Bearer ${state.adminToken}` },
-    body: JSON.stringify({ desktopScheme: "openwork" }),
+    body: JSON.stringify({ desktopScheme: "micx" }),
   });
   ctx.assert(handoff.response.ok && typeof handoff.body?.grant === "string", `Desktop handoff failed: ${handoff.text.slice(0, 300)}`);
   await ctx.waitFor(
-    "window.__openworkControl?.listActions().some((action) => action.id === 'auth.exchange-grant' && !action.disabled)",
+    "window.__micxControl?.listActions().some((action) => action.id === 'auth.exchange-grant' && !action.disabled)",
     { timeoutMs: 30_000, label: "auth.exchange-grant action" },
   );
   await ctx.control("auth.exchange-grant", { grant: handoff.body.grant, baseUrl: DEN_WEB_URL });
-  await ctx.waitFor("Boolean((localStorage.getItem('openwork.den.authToken') ?? '').trim())", {
+  await ctx.waitFor("Boolean((localStorage.getItem('micx.den.authToken') ?? '').trim())", {
     timeoutMs: 45_000,
     label: "desktop Den token",
   });
@@ -514,16 +514,16 @@ async function signDesktopIntoDen(ctx) {
   }
 
   const selectedWorkspace = await ctx.eval(
-    "Boolean((localStorage.getItem('openwork.react.activeWorkspace') ?? '').trim())",
+    "Boolean((localStorage.getItem('micx.react.activeWorkspace') ?? '').trim())",
   );
   if (!selectedWorkspace) {
     await ctx.waitFor(
-      "window.__openworkControl?.listActions().some((action) => action.id === 'workspace.create' && !action.disabled)",
+      "window.__micxControl?.listActions().some((action) => action.id === 'workspace.create' && !action.disabled)",
       { timeoutMs: 60_000, label: "workspace.create action" },
     );
     await ctx.control("workspace.create", { path: WORKSPACE_PATH });
     await ctx.waitFor(
-      "Boolean((localStorage.getItem('openwork.react.activeWorkspace') ?? '').trim())",
+      "Boolean((localStorage.getItem('micx.react.activeWorkspace') ?? '').trim())",
       { timeoutMs: 60_000, label: "selected eval workspace" },
     );
   }

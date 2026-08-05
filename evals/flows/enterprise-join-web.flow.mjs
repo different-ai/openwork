@@ -2,21 +2,21 @@
  * Enterprise new-member first run — Den Web invite join + installer handoff.
  *
  * Required env:
- * - OPENWORK_EVAL_DEN_API_URL: Den API base URL for the enterprise sandbox.
- * - OPENWORK_EVAL_DEN_WEB_URL: Den Web origin opened in the browser CDP target.
+ * - MICX_EVAL_DEN_API_URL: Den API base URL for the enterprise sandbox.
+ * - MICX_EVAL_DEN_WEB_URL: Den Web origin opened in the browser CDP target.
  *
  * Optional env:
- * - OPENWORK_EVAL_CDP_URL or --cdp-url: CDP endpoint for a headless Chrome page target.
- * - OPENWORK_EVAL_ENTERPRISE_ORG_NAME: organization display name (default Example Organization).
- * - OPENWORK_EVAL_ENTERPRISE_APP_NAME: branded app display name (default OpenWork).
- * - OPENWORK_EVAL_ENTERPRISE_ADMIN_EMAIL: inviter/admin email (default admin@example.com).
- * - OPENWORK_EVAL_ENTERPRISE_NEW_MEMBER_EMAIL: invited member email (default new.member@example.com).
- * - OPENWORK_EVAL_ENTERPRISE_NEW_MEMBER_DISPLAY_NAME: invited member display name (default Alex).
- * - OPENWORK_EVAL_ENTERPRISE_PASSWORD: account password (default TutorialDemo123!).
- * - OPENWORK_EVAL_ENTERPRISE_ACCOUNT_MODE: use sign-in to rerun with an existing invited account (default create).
+ * - MICX_EVAL_CDP_URL or --cdp-url: CDP endpoint for a headless Chrome page target.
+ * - MICX_EVAL_ENTERPRISE_ORG_NAME: organization display name (default Example Organization).
+ * - MICX_EVAL_ENTERPRISE_APP_NAME: branded app display name (default Micx).
+ * - MICX_EVAL_ENTERPRISE_ADMIN_EMAIL: inviter/admin email (default admin@example.com).
+ * - MICX_EVAL_ENTERPRISE_NEW_MEMBER_EMAIL: invited member email (default new.member@example.com).
+ * - MICX_EVAL_ENTERPRISE_NEW_MEMBER_DISPLAY_NAME: invited member display name (default Alex).
+ * - MICX_EVAL_ENTERPRISE_PASSWORD: account password (default TutorialDemo123!).
+ * - MICX_EVAL_ENTERPRISE_ACCOUNT_MODE: use sign-in to rerun with an existing invited account (default create).
  *
  * Runner note: evals/runner/run.mjs selects one CDP page per run. For this web
- * flow, point OPENWORK_EVAL_CDP_URL (or --cdp-url) at a clean headless Chrome
+ * flow, point MICX_EVAL_CDP_URL (or --cdp-url) at a clean headless Chrome
  * endpoint; the runner is otherwise CDP-agnostic and this flow navigates the
  * selected page to Den Web.
  */
@@ -48,7 +48,7 @@ export default {
   title: "Enterprise new member joins in Den Web and gets the desktop installer",
   kind: "user-facing",
   preserveTheme: true,
-  requiredEnv: ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_WEB_URL"],
+  requiredEnv: ["MICX_EVAL_DEN_API_URL", "MICX_EVAL_DEN_WEB_URL"],
   steps: [
     {
       name: "API invite new member to the organization",
@@ -112,7 +112,7 @@ export default {
       run: async (ctx) => {
         await ctx.prove("New member joins the organization and lands on the welcome step", {
           action: async () => {
-            if (envText(ctx, "OPENWORK_EVAL_ENTERPRISE_ACCOUNT_MODE") === "sign-in") {
+            if (envText(ctx, "MICX_EVAL_ENTERPRISE_ACCOUNT_MODE") === "sign-in") {
               await authenticateExistingInvitee(ctx);
             } else {
               await navigateAbsolute(ctx, requireState(state.inviteUrl, "invite URL"));
@@ -171,7 +171,7 @@ export default {
           screenshot: {
             name: "enterprise-installer-download",
             claim: "The desktop-app CTA yields an installer or guided-install URL for this organization.",
-            requireText: ["Download OpenWork", "Download the OpenWork installer"],
+            requireText: ["Download Micx", "Download the Micx installer"],
             rejectText: ["Something went wrong"],
           },
         });
@@ -204,23 +204,23 @@ export default {
 };
 
 function adminEmail(ctx) {
-  return envText(ctx, "OPENWORK_EVAL_ENTERPRISE_ADMIN_EMAIL") || DEFAULT_ADMIN_EMAIL;
+  return envText(ctx, "MICX_EVAL_ENTERPRISE_ADMIN_EMAIL") || DEFAULT_ADMIN_EMAIL;
 }
 
 function newMemberEmail(ctx) {
-  return envText(ctx, "OPENWORK_EVAL_ENTERPRISE_NEW_MEMBER_EMAIL") || DEFAULT_NEW_MEMBER_EMAIL;
+  return envText(ctx, "MICX_EVAL_ENTERPRISE_NEW_MEMBER_EMAIL") || DEFAULT_NEW_MEMBER_EMAIL;
 }
 
 function newMemberDisplayName(ctx) {
-  return envText(ctx, "OPENWORK_EVAL_ENTERPRISE_NEW_MEMBER_DISPLAY_NAME") || DEFAULT_NEW_MEMBER_DISPLAY_NAME;
+  return envText(ctx, "MICX_EVAL_ENTERPRISE_NEW_MEMBER_DISPLAY_NAME") || DEFAULT_NEW_MEMBER_DISPLAY_NAME;
 }
 
 function enterpriseAppName(ctx) {
-  return envText(ctx, "OPENWORK_EVAL_ENTERPRISE_APP_NAME") || "OpenWork";
+  return envText(ctx, "MICX_EVAL_ENTERPRISE_APP_NAME") || "Micx";
 }
 
 function password(ctx) {
-  return envText(ctx, "OPENWORK_EVAL_ENTERPRISE_PASSWORD") || DEFAULT_PASSWORD;
+  return envText(ctx, "MICX_EVAL_ENTERPRISE_PASSWORD") || DEFAULT_PASSWORD;
 }
 
 function joinTitle(ctx) {
@@ -243,7 +243,7 @@ async function authenticateExistingInvitee(ctx) {
     cookieName: "better-auth.session_token",
   });
   await ctx.eval(`(() => {
-    localStorage.setItem('openwork:web:auth-token', ${JSON.stringify(state.newMemberToken)});
+    localStorage.setItem('micx:web:auth-token', ${JSON.stringify(state.newMemberToken)});
     location.assign(${JSON.stringify(requireState(state.inviteUrl, "invite URL"))});
     return true;
   })()`);

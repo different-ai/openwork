@@ -7,9 +7,9 @@ import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
 // The runner fails this flow if the narration drifts from that script.
 const FLOW_ID = "helm-custom-ca";
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
-const CHART = join(ROOT, "packaging", "helm", "openwork-ee");
+const CHART = join(ROOT, "packaging", "helm", "micx-ee");
 const MYSQL_TLS_TEST = join(CHART, "tests", "custom-ca-mysql-tls.mjs");
-const CUSTOM_CA_PATH = "/etc/openwork/custom-ca/ca-bundle.pem";
+const CUSTOM_CA_PATH = "/etc/micx/custom-ca/ca-bundle.pem";
 const vo = await loadVoiceoverParagraphs(FLOW_ID);
 
 function run(command, args) {
@@ -22,7 +22,7 @@ function run(command, args) {
 }
 
 function helmTemplate(args) {
-  return run("helm", ["template", "openwork-ee", CHART, ...args]);
+  return run("helm", ["template", "micx-ee", CHART, ...args]);
 }
 
 function countOccurrences(text, needle) {
@@ -64,7 +64,7 @@ export default {
         let rendered = "";
         const valuesSnippet = `customCa:
   enabled: true
-  existingSecret: openwork-ca-secret
+  existingSecret: micx-ca-secret
   existingConfigMap: ""
   key: corp-root.pem`;
         await ctx.prove("Operators reference an existing CA Secret without embedding PEM material in Helm values", {
@@ -74,7 +74,7 @@ export default {
               "--set",
               "customCa.enabled=true",
               "--set",
-              "customCa.existingSecret=openwork-ca-secret",
+              "customCa.existingSecret=micx-ca-secret",
               "--set",
               "customCa.key=corp-root.pem",
             ]);
@@ -82,7 +82,7 @@ export default {
             rendered = result.stdout;
           },
           assert: async () => {
-            witness(ctx, rendered.includes('secretName: "openwork-ca-secret"'), "The rendered volume references the existing Secret by name");
+            witness(ctx, rendered.includes('secretName: "micx-ca-secret"'), "The rendered volume references the existing Secret by name");
             witness(ctx, rendered.includes('key: "corp-root.pem"'), "The rendered volume selects the configured Secret key");
             witness(ctx, !valuesSnippet.includes("-----BEGIN CERTIFICATE-----"), "The values snippet contains no PEM certificate material");
             ctx.output("Secret-backed values", valuesSnippet);
@@ -107,23 +107,23 @@ export default {
               "--set",
               "customCa.enabled=true",
               "--set",
-              "customCa.existingSecret=openwork-ca-secret",
+              "customCa.existingSecret=micx-ca-secret",
             ]);
             witness(ctx, result.status === 0, "helm template succeeds with inference enabled", result.stderr.trim());
             rendered = result.stdout;
           },
           assert: async () => {
-            witness(ctx, rendered.includes("name: openwork-ee-den-api"), "Den API renders");
-            witness(ctx, rendered.includes("name: openwork-ee-den-web"), "Den Web renders");
-            witness(ctx, rendered.includes("name: openwork-ee-inference"), "Inference renders when enabled");
-            witness(ctx, rendered.includes("name: openwork-ee-migrate"), "The migration Job renders");
-            witness(ctx, countOccurrences(rendered, 'mountPath: "/etc/openwork/custom-ca"') === 4, "All four workloads mount the chart-controlled CA directory");
+            witness(ctx, rendered.includes("name: micx-ee-den-api"), "Den API renders");
+            witness(ctx, rendered.includes("name: micx-ee-den-web"), "Den Web renders");
+            witness(ctx, rendered.includes("name: micx-ee-inference"), "Inference renders when enabled");
+            witness(ctx, rendered.includes("name: micx-ee-migrate"), "The migration Job renders");
+            witness(ctx, countOccurrences(rendered, 'mountPath: "/etc/micx/custom-ca"') === 4, "All four workloads mount the chart-controlled CA directory");
             witness(ctx, countOccurrences(rendered, "readOnly: true") >= 4, "The custom CA mount is read-only in every workload");
             witness(ctx, countOccurrences(rendered, "path: ca-bundle.pem") === 4, "Only the selected key is projected to ca-bundle.pem");
             witness(ctx, !rendered.includes("subPath:"), "The custom CA mount does not use subPath");
             ctx.output(
               "Rendered read-only mounts",
-              selectedLines(rendered, ["openwork-ee-den-api", "openwork-ee-den-web", "openwork-ee-inference", "openwork-ee-migrate", "custom-ca", "mountPath", "readOnly", "ca-bundle.pem", "subPath"]),
+              selectedLines(rendered, ["micx-ee-den-api", "micx-ee-den-web", "micx-ee-inference", "micx-ee-migrate", "custom-ca", "mountPath", "readOnly", "ca-bundle.pem", "subPath"]),
             );
           },
         });
@@ -142,7 +142,7 @@ export default {
               "--set",
               "customCa.enabled=true",
               "--set",
-              "customCa.existingConfigMap=openwork-ca-config",
+              "customCa.existingConfigMap=micx-ca-config",
             ]);
             witness(ctx, result.status === 0, "helm template succeeds with a ConfigMap-backed custom CA", result.stderr.trim());
             rendered = result.stdout;
@@ -150,10 +150,10 @@ export default {
           assert: async () => {
             witness(ctx, countOccurrences(rendered, "name: NODE_EXTRA_CA_CERTS") === 4, "All four Node workloads receive NODE_EXTRA_CA_CERTS");
             witness(ctx, countOccurrences(rendered, `value: "${CUSTOM_CA_PATH}"`) === 4, "NODE_EXTRA_CA_CERTS uses the chart-controlled file path");
-            witness(ctx, rendered.includes('name: "openwork-ca-config"'), "The ConfigMap source is rendered when selected");
+            witness(ctx, rendered.includes('name: "micx-ca-config"'), "The ConfigMap source is rendered when selected");
             ctx.output(
               "Rendered NODE_EXTRA_CA_CERTS",
-              selectedLines(rendered, ["NODE_EXTRA_CA_CERTS", CUSTOM_CA_PATH, "openwork-ca-config"]),
+              selectedLines(rendered, ["NODE_EXTRA_CA_CERTS", CUSTOM_CA_PATH, "micx-ca-config"]),
             );
           },
         });
@@ -163,7 +163,7 @@ export default {
       name: "Frame 4",
       run: async (ctx) => {
         let output = "";
-        await ctx.prove("The actual migration bootstrap and an OpenWork/mysql2 query connect to a strict-TLS MySQL endpoint signed by the private CA", {
+        await ctx.prove("The actual migration bootstrap and an Micx/mysql2 query connect to a strict-TLS MySQL endpoint signed by the private CA", {
           voiceover: vo[3],
           action: async () => {
             const result = run("node", [MYSQL_TLS_TEST]);
@@ -172,9 +172,9 @@ export default {
           },
           assert: async () => {
             witness(ctx, output.includes("Generated private CA and MySQL server certificate"), "The test generates the private CA and matching MySQL server certificate");
-            witness(ctx, output.includes("Strict OpenWork/mysql2 without custom CA: rejected"), "Strict OpenWork/mysql2 connection fails without the custom CA");
-            witness(ctx, output.includes("OpenWork migration bootstrap completed with NODE_EXTRA_CA_CERTS and strict DATABASE_URL"), "The actual OpenWork migration bootstrap completes with the mounted custom CA");
-            witness(ctx, output.includes("OpenWork/mysql2 strict query succeeded after migration"), "OpenWork/mysql2 connects successfully after migration using strict TLS");
+            witness(ctx, output.includes("Strict Micx/mysql2 without custom CA: rejected"), "Strict Micx/mysql2 connection fails without the custom CA");
+            witness(ctx, output.includes("Micx migration bootstrap completed with NODE_EXTRA_CA_CERTS and strict DATABASE_URL"), "The actual Micx migration bootstrap completes with the mounted custom CA");
+            witness(ctx, output.includes("Micx/mysql2 strict query succeeded after migration"), "Micx/mysql2 connects successfully after migration using strict TLS");
             ctx.output("MySQL TLS integration evidence", output);
           },
         });
@@ -195,27 +195,27 @@ export default {
               },
               {
                 name: "multiple sources",
-                args: ["--set", "customCa.enabled=true", "--set", "customCa.existingSecret=openwork-ca-secret", "--set", "customCa.existingConfigMap=openwork-ca-config"],
+                args: ["--set", "customCa.enabled=true", "--set", "customCa.existingSecret=micx-ca-secret", "--set", "customCa.existingConfigMap=micx-ca-config"],
                 message: "customCa.existingSecret and customCa.existingConfigMap are mutually exclusive when customCa.enabled=true",
               },
               {
                 name: "empty key",
-                args: ["--set", "customCa.enabled=true", "--set", "customCa.existingSecret=openwork-ca-secret", "--set-string", "customCa.key="],
+                args: ["--set", "customCa.enabled=true", "--set", "customCa.existingSecret=micx-ca-secret", "--set-string", "customCa.key="],
                 message: "customCa.key is required when customCa.enabled=true",
               },
               {
                 name: "Den API env conflict",
-                args: ["--set", "customCa.enabled=true", "--set", "customCa.existingSecret=openwork-ca-secret", "--set", "denApi.env.NODE_EXTRA_CA_CERTS=/tmp/ca.pem"],
+                args: ["--set", "customCa.enabled=true", "--set", "customCa.existingSecret=micx-ca-secret", "--set", "denApi.env.NODE_EXTRA_CA_CERTS=/tmp/ca.pem"],
                 message: "denApi.env.NODE_EXTRA_CA_CERTS conflicts with customCa.enabled=true; remove it and use customCa instead",
               },
               {
                 name: "Den Web env conflict",
-                args: ["--set", "customCa.enabled=true", "--set", "customCa.existingSecret=openwork-ca-secret", "--set", "denWeb.env.NODE_EXTRA_CA_CERTS=/tmp/ca.pem"],
+                args: ["--set", "customCa.enabled=true", "--set", "customCa.existingSecret=micx-ca-secret", "--set", "denWeb.env.NODE_EXTRA_CA_CERTS=/tmp/ca.pem"],
                 message: "denWeb.env.NODE_EXTRA_CA_CERTS conflicts with customCa.enabled=true; remove it and use customCa instead",
               },
               {
                 name: "inference env conflict",
-                args: ["--set", "customCa.enabled=true", "--set", "customCa.existingSecret=openwork-ca-secret", "--set", "inference.env.NODE_EXTRA_CA_CERTS=/tmp/ca.pem"],
+                args: ["--set", "customCa.enabled=true", "--set", "customCa.existingSecret=micx-ca-secret", "--set", "inference.env.NODE_EXTRA_CA_CERTS=/tmp/ca.pem"],
                 message: "inference.env.NODE_EXTRA_CA_CERTS conflicts with customCa.enabled=true; remove it and use customCa instead",
               },
             ];

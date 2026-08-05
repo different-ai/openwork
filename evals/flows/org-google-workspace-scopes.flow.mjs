@@ -6,11 +6,11 @@ import { denApiFetch, openAdminConnections, openYourConnections, signInApi, sign
 // The runner fails this flow if the narration drifts from that script.
 const vo = await loadVoiceoverParagraphs("org-google-workspace-scopes");
 
-const ADMIN_EMAIL = process.env.OPENWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
-const ADMIN_PASSWORD = process.env.OPENWORK_EVAL_DEMO_PASSWORD?.trim() || "OpenWorkDemo123!";
-const MEMBER_EMAIL = process.env.OPENWORK_EVAL_MEMBER_EMAIL?.trim() || "jordan.demo@acme.test";
-const MEMBER_PASSWORD = process.env.OPENWORK_EVAL_MEMBER_PASSWORD?.trim() || "OpenWorkDemo123!";
-const MARK_VERIFIED_CMD = process.env.OPENWORK_EVAL_MARK_VERIFIED_CMD?.trim() || "";
+const ADMIN_EMAIL = process.env.MICX_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
+const ADMIN_PASSWORD = process.env.MICX_EVAL_DEMO_PASSWORD?.trim() || "MicxDemo123!";
+const MEMBER_EMAIL = process.env.MICX_EVAL_MEMBER_EMAIL?.trim() || "jordan.demo@acme.test";
+const MEMBER_PASSWORD = process.env.MICX_EVAL_MEMBER_PASSWORD?.trim() || "MicxDemo123!";
+const MARK_VERIFIED_CMD = process.env.MICX_EVAL_MARK_VERIFIED_CMD?.trim() || "";
 const MOCK_SERVER_URL = (process.env.MOCK_OAUTH_MCP_URL ?? "http://127.0.0.1:3978").trim().replace(/\/+$/, "");
 const RUN_TAG = Date.now();
 const GOOGLE_CLIENT_ID = "google-client-id";
@@ -66,7 +66,7 @@ function assertExactStringSet(ctx, actual, expected, label) {
 function orgHeaders(session) {
   if (!session) throw new Error("Missing session for org-scoped API call.");
   if (!state.orgId) throw new Error("Missing pinned organization id for org-scoped API call.");
-  return { authorization: `Bearer ${session}`, "x-openwork-legacy-org-id": state.orgId };
+  return { authorization: `Bearer ${session}`, "x-micx-legacy-org-id": state.orgId };
 }
 
 async function selectAdminOrganization(ctx) {
@@ -95,7 +95,7 @@ async function ensureVerifiedUser(ctx, email, name, password) {
     body: JSON.stringify({ email, name, password }),
   });
   ctx.assert(signUp.response.ok, `Sign-up failed for ${email}: ${signUp.response.status}`);
-  ctx.assert(MARK_VERIFIED_CMD.length > 0, "Set OPENWORK_EVAL_MARK_VERIFIED_CMD to verify eval accounts.");
+  ctx.assert(MARK_VERIFIED_CMD.length > 0, "Set MICX_EVAL_MARK_VERIFIED_CMD to verify eval accounts.");
   execSync(MARK_VERIFIED_CMD.replaceAll("{email}", email), { stdio: "ignore" });
   token = await signInApi(email, password);
   ctx.assert(Boolean(token), `Sign-in still failing for ${email} after sign-up.`);
@@ -249,11 +249,11 @@ async function waitForSavedFeatures(ctx) {
 
 async function approveMockConsent(ctx) {
   const clicked = await ctx.eval(`(() => {
-    const button = [...document.querySelectorAll('button')].find((entry) => (entry.textContent ?? '').trim() === 'Approve OpenWork');
+    const button = [...document.querySelectorAll('button')].find((entry) => (entry.textContent ?? '').trim() === 'Approve Micx');
     button?.click();
     return Boolean(button);
   })()`);
-  ctx.assert(clicked, "Mock OAuth consent page did not show an Approve OpenWork button.");
+  ctx.assert(clicked, "Mock OAuth consent page did not show an Approve Micx button.");
   await ctx.waitForText("Connected", { timeoutMs: 30_000 });
 }
 
@@ -298,7 +298,7 @@ export default {
   title: "Org Google Workspace asks for desktop-parity scopes and admin-selected extras",
   kind: "user-facing",
   spec: "evals/voiceovers/org-google-workspace-scopes.md",
-  requiredEnv: ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_WEB_URL"],
+  requiredEnv: ["MICX_EVAL_DEN_API_URL", "MICX_EVAL_DEN_WEB_URL"],
   steps: [
     {
       name: "Setup: admin and member sessions are ready and Google Workspace starts clean",
@@ -428,7 +428,7 @@ export default {
           },
           assert: async () => {
             assertExactStringSet(ctx, state.authorizeScopes, EXPECTED_MEMBER_SCOPES, "Authorize URL scopes");
-            await ctx.waitFor("document.body.innerText.includes('Mock MCP OAuth') && document.body.innerText.includes('Approve OpenWork')", {
+            await ctx.waitFor("document.body.innerText.includes('Mock MCP OAuth') && document.body.innerText.includes('Approve Micx')", {
               timeoutMs: 30_000,
               label: "mock Google consent page",
             });
@@ -436,7 +436,7 @@ export default {
           screenshot: {
             name: "org-google-workspace-scope-consent",
             claim: "The member reaches the mock Google consent step after Den generated the exact selected scope set.",
-            requireText: ["Mock MCP OAuth", "Approve OpenWork"],
+            requireText: ["Mock MCP OAuth", "Approve Micx"],
             rejectText: ["Connection failed"],
           },
         });

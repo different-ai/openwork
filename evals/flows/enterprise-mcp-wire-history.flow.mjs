@@ -56,7 +56,7 @@ async function startDiagnostics(ctx) {
   const port = await freeLoopbackPort();
   state.origin = `http://127.0.0.1:${port}`;
   const command = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
-  state.child = spawn(command, ["--filter", "@openwork-ee/diagnostics", "dev"], {
+  state.child = spawn(command, ["--filter", "@micx-ee/diagnostics", "dev"], {
     cwd: ROOT,
     detached: process.platform !== "win32",
     env: {
@@ -119,11 +119,11 @@ async function navigate(ctx, runId = null) {
 
 async function diagnosticRequest(pathname, runId, step, init = {}) {
   const headers = new Headers(init.headers);
-  headers.set("x-openwork-diagnostic-run-id", runId);
-  headers.set("x-openwork-diagnostic-step", step);
+  headers.set("x-micx-diagnostic-run-id", runId);
+  headers.set("x-micx-diagnostic-step", step);
   headers.set(
-    "x-openwork-diagnostic-signature",
-    createHmac("sha256", BEARER_TOKEN).update(`openwork-diagnostics-v1\n${runId}\n${step}`).digest("hex"),
+    "x-micx-diagnostic-signature",
+    createHmac("sha256", BEARER_TOKEN).update(`micx-diagnostics-v1\n${runId}\n${step}`).digest("hex"),
   );
   return fetch(`${state.origin}${pathname}`, { ...init, headers });
 }
@@ -135,7 +135,7 @@ async function runControlledDiagnostic() {
   statuses.push((await diagnosticRequest("/diagnostics/egress", runId, "http-head", { method: "HEAD" })).status);
   statuses.push((await diagnosticRequest("/diagnostics/egress", runId, "http-options", { method: "OPTIONS" })).status);
   statuses.push((await diagnosticRequest("/diagnostics/egress", runId, "http-post", {
-    body: JSON.stringify({ probe: "openwork-egress-diagnostic" }),
+    body: JSON.stringify({ probe: "micx-egress-diagnostic" }),
     headers: { authorization: `Bearer ${BEARER_TOKEN}`, "content-type": "application/json" },
     method: "POST",
   })).status);
@@ -148,7 +148,7 @@ async function runControlledDiagnostic() {
   const tokenResponse = await diagnosticRequest("/oauth/token", runId, "oauth-token", {
     body: new URLSearchParams({ grant_type: "client_credentials", resource: `${state.origin}/mcp`, scope: "diagnostics:connectivity" }),
     headers: {
-      authorization: `Basic ${Buffer.from(`openwork-diagnostics:${BEARER_TOKEN}`).toString("base64")}`,
+      authorization: `Basic ${Buffer.from(`micx-diagnostics:${BEARER_TOKEN}`).toString("base64")}`,
       "content-type": "application/x-www-form-urlencoded",
     },
     method: "POST",
@@ -162,10 +162,10 @@ async function runControlledDiagnostic() {
     accept: "application/json, text/event-stream",
     authorization: `Bearer ${accessToken}`,
     "content-type": "application/json",
-    "x-openwork-diagnostic-run-id": runId,
-    "x-openwork-diagnostic-step": "mcp-initialize",
-    "x-openwork-diagnostic-signature": createHmac("sha256", BEARER_TOKEN)
-      .update(`openwork-diagnostics-v1\n${runId}\nmcp-initialize`)
+    "x-micx-diagnostic-run-id": runId,
+    "x-micx-diagnostic-step": "mcp-initialize",
+    "x-micx-diagnostic-signature": createHmac("sha256", BEARER_TOKEN)
+      .update(`micx-diagnostics-v1\n${runId}\nmcp-initialize`)
       .digest("hex"),
   };
   const initialize = await fetch(endpoint, {
@@ -195,9 +195,9 @@ async function runControlledDiagnostic() {
       body: JSON.stringify(body),
       headers: {
         ...headers,
-        "x-openwork-diagnostic-step": step,
-        "x-openwork-diagnostic-signature": createHmac("sha256", BEARER_TOKEN)
-          .update(`openwork-diagnostics-v1\n${runId}\n${step}`)
+        "x-micx-diagnostic-step": step,
+        "x-micx-diagnostic-signature": createHmac("sha256", BEARER_TOKEN)
+          .update(`micx-diagnostics-v1\n${runId}\n${step}`)
           .digest("hex"),
       },
       method: "POST",
@@ -332,7 +332,7 @@ export default {
             action: async () => {
               ctx.failureRunId = randomUUID();
               const response = await diagnosticRequest("/diagnostics/egress", ctx.failureRunId, "http-post", {
-                body: JSON.stringify({ probe: "openwork-egress-diagnostic" }),
+                body: JSON.stringify({ probe: "micx-egress-diagnostic" }),
                 headers: { "content-type": "application/json" },
                 method: "POST",
               });

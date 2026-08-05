@@ -5,25 +5,25 @@ import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
 const vo = await loadVoiceoverParagraphs("fix-codeblock-styling");
 
 const EDITOR_SELECTOR = '[contenteditable="true"][data-lexical-editor="true"], [contenteditable="true"]';
-const CODE_BLOCK_SELECTOR = '[data-message-role="assistant"] [data-openwork-code-block]';
-const COPY_BUTTON_SELECTOR = `${CODE_BLOCK_SELECTOR} [data-openwork-code-copy]`;
+const CODE_BLOCK_SELECTOR = '[data-message-role="assistant"] [data-micx-code-block]';
+const COPY_BUTTON_SELECTOR = `${CODE_BLOCK_SELECTOR} [data-micx-code-copy]`;
 const SAMPLE_CODE = [
   "function greet(name) {",
   "  return `Hello, ${name}!`;",
   "}",
   "",
-  'console.log(greet("OpenWork"));',
+  'console.log(greet("Micx"));',
 ].join("\n");
 const PROMPT = `Reply with only this fenced JavaScript code block and preserve every space and newline:\n\n\`\`\`js\n${SAMPLE_CODE}\n\`\`\``;
 
 async function waitForReadySession(ctx) {
-  await ctx.waitFor("Boolean(window.__openworkControl)", {
+  await ctx.waitFor("Boolean(window.__micxControl)", {
     timeoutMs: 60_000,
     label: "control API",
   });
   return ctx.waitFor(
     `(() => {
-      const control = window.__openworkControl;
+      const control = window.__micxControl;
       const route = control.snapshot().route;
       if (route.startsWith("/welcome") || route.startsWith("/signin")) return "blocked";
       const action = control.listActions().find((item) => item.id === "session.create_task");
@@ -38,7 +38,7 @@ async function setTheme(ctx, theme) {
   await ctx.eval(
     `(() => {
       const theme = ${JSON.stringify(theme)};
-      localStorage.setItem("openwork.react.settings.theme-mode", theme);
+      localStorage.setItem("micx.react.settings.theme-mode", theme);
       document.documentElement.dataset.theme = theme;
       document.documentElement.classList.toggle("dark", theme === "dark");
       return document.documentElement.dataset.theme;
@@ -95,11 +95,11 @@ async function submitComposer(ctx) {
 async function waitForHighlightedCodeBlock(ctx) {
   await ctx.waitFor(
     `(() => Array.from(document.querySelectorAll(${JSON.stringify(CODE_BLOCK_SELECTOR)}))
-      .some((block) => block.matches("[data-openwork-shiki]")
+      .some((block) => block.matches("[data-micx-shiki]")
         && block.textContent.includes("function greet")
-        && block.textContent.includes("OpenWork")
-        && block.querySelector('[data-openwork-code-copy][aria-label="Copy code block"] [data-openwork-code-copy-icon]:not([hidden])')
-        && block.querySelector("[data-openwork-code-copy] [data-openwork-code-copy-check-icon][hidden]")))()`,
+        && block.textContent.includes("Micx")
+        && block.querySelector('[data-micx-code-copy][aria-label="Copy code block"] [data-micx-code-copy-icon]:not([hidden])')
+        && block.querySelector("[data-micx-code-copy] [data-micx-code-copy-check-icon][hidden]")))()`,
     { timeoutMs: 120_000, label: "highlighted assistant code block with copy button" },
   );
 }
@@ -107,12 +107,12 @@ async function waitForHighlightedCodeBlock(ctx) {
 function codeBlockInfoExpression() {
   return `(() => {
     const block = Array.from(document.querySelectorAll(${JSON.stringify(CODE_BLOCK_SELECTOR)}))
-      .find((candidate) => candidate.textContent.includes("function greet") && candidate.textContent.includes("OpenWork"));
+      .find((candidate) => candidate.textContent.includes("function greet") && candidate.textContent.includes("Micx"));
     if (!block) return { ok: false, reason: "code block not found" };
-    const button = block.querySelector("[data-openwork-code-copy]");
-    const copyIcon = button?.querySelector("[data-openwork-code-copy-icon]");
-    const checkIcon = button?.querySelector("[data-openwork-code-copy-check-icon]");
-    const copyLabel = button?.querySelector("[data-openwork-code-copy-label]");
+    const button = block.querySelector("[data-micx-code-copy]");
+    const copyIcon = button?.querySelector("[data-micx-code-copy-icon]");
+    const checkIcon = button?.querySelector("[data-micx-code-copy-check-icon]");
+    const copyLabel = button?.querySelector("[data-micx-code-copy-label]");
     const code = block.querySelector("code");
     const token = block.querySelector(".shiki span");
     const paddedElement = code
@@ -304,8 +304,8 @@ export default {
                 const button = document.querySelector(${JSON.stringify(COPY_BUTTON_SELECTOR)});
                 return Boolean(button
                   && button.getAttribute("aria-label") === "Code block copied"
-                  && button.querySelector("[data-openwork-code-copy-icon][hidden]")
-                  && button.querySelector("[data-openwork-code-copy-check-icon]:not([hidden])"));
+                  && button.querySelector("[data-micx-code-copy-icon][hidden]")
+                  && button.querySelector("[data-micx-code-copy-check-icon]:not([hidden])"));
               })()`,
               { timeoutMs: 5_000, label: "copied feedback" },
             );

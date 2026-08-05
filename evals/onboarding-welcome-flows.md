@@ -18,10 +18,10 @@ Before running any eval:
 1. Reset onboarding state so the welcome screen appears:
    - Open DevTools console and run:
      ```js
-     const raw = localStorage.getItem("openwork.preferences");
+     const raw = localStorage.getItem("micx.preferences");
      const prefs = raw ? JSON.parse(raw) : {};
      prefs.hasCompletedOnboarding = false;
-     localStorage.setItem("openwork.preferences", JSON.stringify(prefs));
+     localStorage.setItem("micx.preferences", JSON.stringify(prefs));
      location.reload();
      ```
    - Alternatively: use the "Reset onboarding" button in Settings > Recovery
@@ -52,7 +52,7 @@ For each recorded onboarding scenario, capture:
 Recommended first task prompt for value validation:
 
 ```text
-Create a short welcome checklist for this OpenWork workspace. Use exactly three bullets and mention one thing I can do next.
+Create a short welcome checklist for this Micx workspace. Use exactly three bullets and mention one thing I can do next.
 ```
 
 Pass criteria for every value-flow recording:
@@ -68,7 +68,7 @@ Pass criteria for every value-flow recording:
 
 ## Flow 20 — Welcome screen renders on first launch
 
-**Why**: When a user opens OpenWork for the first time with zero
+**Why**: When a user opens Micx for the first time with zero
 workspaces and `hasCompletedOnboarding === false`, they must see the
 full-screen welcome page — not the session empty state.
 
@@ -78,7 +78,7 @@ Steps:
 2. Navigate to `/` or `/session`.
 3. Expect: URL redirects to `/welcome`.
 4. Expect: full-screen page renders with:
-   - "Welcome to OpenWork" heading.
+   - "Welcome to Micx" heading.
    - "Your computer, but it works for you." subtitle.
    - Six capability cards: spreadsheets, browser, files, automate,
      content, APIs.
@@ -92,7 +92,7 @@ chrome-devtools_take_snapshot
 
 Pass criteria:
 - URL is `/welcome`.
-- Heading "Welcome to OpenWork" is visible.
+- Heading "Welcome to Micx" is visible.
 - All six capability cards are present.
 - "Pick a folder to get started" button is visible and clickable on desktop.
 - No sidebar or session layout is rendered.
@@ -152,7 +152,7 @@ Steps:
 2. Click "Local workspace".
 3. Expect: the local panel shows:
    - "Pick a folder" heading.
-   - Explanation text: "This folder becomes your workspace. OpenWork
+   - Explanation text: "This folder becomes your workspace. Micx
      will be able to:"
    - Three bullet points with check icons (read, write, anything).
    - "Drop files in anytime..." hint.
@@ -190,7 +190,7 @@ Pass criteria:
 - "Select or create a session to get started." is not visible.
 - Navigating to `/welcome` redirects away (onboarding flagged done).
 - `localStorage` contains `hasCompletedOnboarding: true` in
-  `openwork.preferences`.
+  `micx.preferences`.
 
 Known regressions this catches:
 - `hasCompletedOnboarding` not persisted after local workspace creation.
@@ -228,13 +228,13 @@ Known regressions this catches:
 
 ## Flow 24 — Remote workspace creation from welcome flow
 
-**Why**: Users connecting to a remote OpenWork server from the welcome
+**Why**: Users connecting to a remote Micx server from the welcome
 flow should also have onboarding marked complete.
 
 Steps:
 1. From `/welcome`, click "Get started".
 2. Click "Connect custom remote".
-3. Enter a valid OpenWork server URL.
+3. Enter a valid Micx server URL.
 4. Click "Connect remote".
 5. Expect: workspace connects; URL changes away from `/welcome`.
 6. Navigate to `/welcome`.
@@ -264,10 +264,10 @@ Tool recipe:
 ```
 chrome-devtools_evaluate_script {
   function: "() => {
-    const raw = localStorage.getItem('openwork.preferences');
+    const raw = localStorage.getItem('micx.preferences');
     const prefs = raw ? JSON.parse(raw) : {};
     prefs.hasCompletedOnboarding = false;
-    localStorage.setItem('openwork.preferences', JSON.stringify(prefs));
+    localStorage.setItem('micx.preferences', JSON.stringify(prefs));
     return 'done';
   }"
 }
@@ -329,16 +329,16 @@ Founder/designer pass criteria:
 
 ---
 
-## Flow 28 — OpenWork Models path explains payment before value
+## Flow 28 — Micx Models path explains payment before value
 
-**Why**: OpenWork Models is the preferred business path, but it must make the tradeoff clear: pay/sign in through OpenWork Cloud to skip API keys, then return to task execution.
+**Why**: Micx Models is the preferred business path, but it must make the tradeoff clear: pay/sign in through Micx Cloud to skip API keys, then return to task execution.
 
 Steps:
 1. Start from a clean first-run app at `/welcome` with no workspaces.
 2. Create a local workspace through the welcome CTA.
-3. On “Power your first task,” choose “Use OpenWork Models.”
-4. Expect: the user sees the OpenWork Models value proposition and sign-in/payment CTA.
-5. If a paid/signed-in test account is available, complete sign-in, select an OpenWork model, and run the recommended first task prompt.
+3. On “Power your first task,” choose “Use Micx Models.”
+4. Expect: the user sees the Micx Models value proposition and sign-in/payment CTA.
+5. If a paid/signed-in test account is available, complete sign-in, select an Micx model, and run the recommended first task prompt.
 6. If no paid/signed-in test account is available, record the exact stop point and mark the run as “funnel blocked before task value.”
 
 Founder/designer pass criteria:

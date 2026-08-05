@@ -2,11 +2,11 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
 const landingConfig = await readFile(
-  new URL("../ee/apps/landing/components/openwork-connect-installer-config.ts", import.meta.url),
+  new URL("../ee/apps/landing/components/micx-connect-installer-config.ts", import.meta.url),
   "utf8",
 );
 const docsInstaller = await readFile(
-  new URL("../packages/docs/snippets/openwork-connect-installer.jsx", import.meta.url),
+  new URL("../packages/docs/snippets/micx-connect-installer.jsx", import.meta.url),
   "utf8",
 );
 const cloudDocs = await readFile(
@@ -21,7 +21,7 @@ const onboardingScreen = await readFile(
 const serverUrlMatch = landingConfig.match(/export const MCP_SERVER_URL = "([^"]+)";/);
 assert.ok(serverUrlMatch, "Landing installer is missing MCP_SERVER_URL");
 const serverUrl = serverUrlMatch[1];
-assert.equal(serverUrl, "https://api.openworklabs.com/mcp/agent", "OpenWork Connect must use the public /mcp/agent endpoint");
+assert.equal(serverUrl, "https://api.micxlabs.com/mcp/agent", "Micx Connect must use the public /mcp/agent endpoint");
 const codexDeepLinkMatch = landingConfig.match(/export const CODEX_CONNECTIONS_DEEPLINK = "([^"]+)";/);
 assert.ok(codexDeepLinkMatch, "Landing installer is missing CODEX_CONNECTIONS_DEEPLINK");
 const chatGptSettingsMatch = landingConfig.match(/export const CHATGPT_SETTINGS_URL = "([^"]+)";/);
@@ -107,11 +107,11 @@ for (const name of sharedValueNames) {
 }
 
 const exactCommands = [
-  { docsInstallerNeedle: "opencode mcp auth openwork", cloudDocsNeedle: "opencode mcp auth openwork" },
-  { docsInstallerNeedle: "opencode mcp logout openwork\nopencode mcp auth openwork", cloudDocsNeedle: "opencode mcp logout openwork\nopencode mcp auth openwork" },
-  { docsInstallerNeedle: "codex mcp add openwork --url ${MCP_SERVER_URL}", cloudDocsNeedle: `codex mcp add openwork --url ${serverUrl}` },
-  { docsInstallerNeedle: "codex mcp login openwork", cloudDocsNeedle: "codex mcp login openwork" },
-  { docsInstallerNeedle: "codex mcp logout openwork\ncodex mcp login openwork", cloudDocsNeedle: "codex mcp logout openwork\ncodex mcp login openwork" },
+  { docsInstallerNeedle: "opencode mcp auth micx", cloudDocsNeedle: "opencode mcp auth micx" },
+  { docsInstallerNeedle: "opencode mcp logout micx\nopencode mcp auth micx", cloudDocsNeedle: "opencode mcp logout micx\nopencode mcp auth micx" },
+  { docsInstallerNeedle: "codex mcp add micx --url ${MCP_SERVER_URL}", cloudDocsNeedle: `codex mcp add micx --url ${serverUrl}` },
+  { docsInstallerNeedle: "codex mcp login micx", cloudDocsNeedle: "codex mcp login micx" },
+  { docsInstallerNeedle: "codex mcp logout micx\ncodex mcp login micx", cloudDocsNeedle: "codex mcp logout micx\ncodex mcp login micx" },
 ];
 
 for (const command of exactCommands) {
@@ -121,10 +121,10 @@ for (const command of exactCommands) {
 
 assert.ok(cloudDocs.includes(serverUrl), "Cloud MCP docs are missing the public endpoint");
 assert.ok(
-  cloudDocs.includes("`app.openworklabs.com/api/den` is an internal same-origin desktop proxy"),
-  "Cloud MCP docs must describe app.openworklabs.com/api/den as an internal same-origin desktop proxy",
+  cloudDocs.includes("`app.micxlabs.com/api/den` is an internal same-origin desktop proxy"),
+  "Cloud MCP docs must describe app.micxlabs.com/api/den as an internal same-origin desktop proxy",
 );
-assert.ok(cloudDocs.includes("https://app.openworklabs.com/api/auth"), "Cloud MCP docs are missing the auth server origin");
+assert.ok(cloudDocs.includes("https://app.micxlabs.com/api/auth"), "Cloud MCP docs are missing the auth server origin");
 assert.ok(cloudDocs.includes("RFC9728"), "Cloud MCP docs are missing RFC9728 discovery guidance");
 assert.ok(cloudDocs.includes("PKCE") && cloudDocs.includes("S256"), "Cloud MCP docs are missing PKCE S256 guidance");
 assert.ok(cloudDocs.includes("OAuth authorize and token requests must include exactly one"), "Cloud MCP docs are missing exact resource guidance");
@@ -134,19 +134,19 @@ assert.ok(cloudDocs.includes("invalid_grant"), "Cloud MCP docs are missing inval
 assert.ok(cloudDocs.includes("Retry-After"), "Cloud MCP docs are missing 429 Retry-After guidance");
 assert.ok(cloudDocs.includes("X-Request-Id") && cloudDocs.includes("referenceId") && cloudDocs.includes("reference_id"), "Cloud MCP docs are missing support reference guidance");
 assert.ok(cloudDocs.includes("search_capabilities") && cloudDocs.includes("execute_capability"), "Cloud MCP docs are missing /mcp/agent tool guidance");
-assert.ok(!cloudDocs.includes("openwork-ui-mcp"), "Cloud MCP docs must not reference the local UI MCP package");
+assert.ok(!cloudDocs.includes("micx-ui-mcp"), "Cloud MCP docs must not reference the local UI MCP package");
 assert.ok(!cloudDocs.includes("opaque bearer tokens") && !cloudDocs.includes("Access tokens are opaque"), "Cloud MCP docs must not claim opaque public access tokens");
 assert.ok(!cloudDocs.includes("JWKS"), "Cloud MCP docs must not expose JWKS implementation details");
 
 assert.ok(onboardingScreen.includes(serverUrl), "Cloud onboarding must copy the public /mcp/agent endpoint");
-assert.ok(!onboardingScreen.includes("openwork-ui-mcp"), "Cloud onboarding must not copy the local UI MCP package");
+assert.ok(!onboardingScreen.includes("micx-ui-mcp"), "Cloud onboarding must not copy the local UI MCP package");
 assert.ok(
-  onboardingScreen.includes("https://openworklabs.com/docs/cloud/run-in-the-cloud/cloud-mcp"),
+  onboardingScreen.includes("https://micxlabs.com/docs/cloud/run-in-the-cloud/cloud-mcp"),
   "Cloud onboarding must link to the Cloud MCP docs",
 );
 assert.ok(onboardingScreen.includes("OpenCode is verified"), "Cloud onboarding must state verified clients");
 assert.ok(onboardingScreen.includes("setup guides"), "Cloud onboarding must state setup-only client coverage");
 assert.ok(onboardingScreen.includes("break-all") && onboardingScreen.includes("whitespace-normal"), "Cloud onboarding endpoint text must wrap on narrow screens");
-assert.ok(onboardingScreen.includes("aria-live=\"polite\"") && onboardingScreen.includes("Copy OpenWork MCP endpoint"), "Cloud onboarding must expose accessible copy feedback");
+assert.ok(onboardingScreen.includes("aria-live=\"polite\"") && onboardingScreen.includes("Copy Micx MCP endpoint"), "Cloud onboarding must expose accessible copy feedback");
 
-console.log("OpenWork Connect landing and docs installers are in parity.");
+console.log("Micx Connect landing and docs installers are in parity.");

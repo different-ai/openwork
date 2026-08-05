@@ -39,7 +39,7 @@ function witness(ctx, condition, assertion, actual) {
 function denApiTest(files, env = {}) {
   return spawnSync(
     "pnpm",
-    ["--filter", "@openwork-ee/den-api", "exec", "bun", "test", "--conditions", "development", ...files],
+    ["--filter", "@micx-ee/den-api", "exec", "bun", "test", "--conditions", "development", ...files],
     { cwd: ROOT, encoding: "utf8", env: { ...process.env, ...env } },
   );
 }

@@ -156,7 +156,7 @@ async function ensureOrganization(denApiUrl, sessionToken) {
 }
 async function bootstrapDen(denApiUrl) {
   const email = `engine-mcp-evidence-${runTag}@acme.test`;
-  const password = `OpenWork-${runTag}-Evidence!`;
+  const password = `Micx-${runTag}-Evidence!`;
   log(`Signing up Den admin ${email}`);
   const signUp = await denAuthFetch(denApiUrl, "/api/auth/sign-up/email", {
     method: "POST",
@@ -260,7 +260,7 @@ function startDelayProxy(targetBase, port) {
 async function waitForServerListening(child, logStream) {
   let stdout = "";
   return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error("Timed out waiting for OpenWork server listening log")), 90_000);
+    const timeout = setTimeout(() => reject(new Error("Timed out waiting for Micx server listening log")), 90_000);
     const finish = (value) => {
       clearTimeout(timeout);
       resolve(value);
@@ -273,31 +273,31 @@ async function waitForServerListening(child, logStream) {
       const text = chunk.toString();
       stdout += text;
       writeLog(logStream, text);
-      if (stdout.includes("OpenWork server listening")) finish();
+      if (stdout.includes("Micx server listening")) finish();
     });
     child.stderr.on("data", (chunk) => writeLog(logStream, chunk));
     child.once("error", fail);
-    child.once("exit", (code, signal) => fail(new Error(`OpenWork server exited before listening (code ${code}, signal ${signal})`)));
+    child.once("exit", (code, signal) => fail(new Error(`Micx server exited before listening (code ${code}, signal ${signal})`)));
   });
 }
 
-async function startOpenworkServer(paths, serverPort, opencodeBin) {
+async function startMicxServer(paths, serverPort, opencodeBin) {
   await mkdir(paths.workspaceRoot, { recursive: true });
-  await mkdir(paths.xdgOpenwork, { recursive: true });
+  await mkdir(paths.xdgMicx, { recursive: true });
   await mkdir(paths.home, { recursive: true });
   await mkdir(paths.logs, { recursive: true });
   const serverLog = join(paths.logs, "server.log");
   const logStream = createWriteStream(serverLog, { flags: "a" });
   logStreams.add(logStream);
   const args = ["apps/server/src/cli.ts", "--host", "127.0.0.1", "--port", String(serverPort), "--token", SERVER_TOKEN, "--workspace", paths.workspaceRoot];
-  log(`Starting OpenWork server on 127.0.0.1:${serverPort}`);
+  log(`Starting Micx server on 127.0.0.1:${serverPort}`);
   const child = spawn("bun", args, {
     cwd: REPO_ROOT,
     env: {
       ...process.env,
-      OPENWORK_MANAGE_OPENCODE: "1",
-      OPENWORK_OPENCODE_BIN: opencodeBin,
-      OPENWORK_SERVER_CONFIG: join(paths.xdgOpenwork, "server.json"),
+      MICX_MANAGE_OPENCODE: "1",
+      MICX_OPENCODE_BIN: opencodeBin,
+      MICX_SERVER_CONFIG: join(paths.xdgMicx, "server.json"),
       XDG_CONFIG_HOME: paths.xdg,
       HOME: paths.home,
     },
@@ -311,7 +311,7 @@ async function startOpenworkServer(paths, serverPort, opencodeBin) {
     logStream.end();
     throw error;
   }
-  log(`OpenWork server log: ${serverLog}`);
+  log(`Micx server log: ${serverLog}`);
   return { baseUrl: `http://127.0.0.1:${serverPort}` };
 }
 
@@ -356,7 +356,7 @@ async function pollHealedHealth(baseUrl, workspaceId) {
   const started = Date.now();
   let last = null;
   while (Date.now() - started < 30_000) {
-    last = await serverJson(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/mcp/openwork-cloud/health`);
+    last = await serverJson(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/mcp/micx-cloud/health`);
     if (isHealthConnected(last)) return last;
     await sleep(1000);
   }
@@ -420,26 +420,26 @@ async function writeFinalJson(value) {
 }
 
 async function main() {
-  for (const name of ["DEN_API_LOCAL", "OPENWORK_OPENCODE_BIN", "REPRO_DIR"]) envString(name);
+  for (const name of ["DEN_API_LOCAL", "MICX_OPENCODE_BIN", "REPRO_DIR"]) envString(name);
   const denApiUrl = stripTrailingSlashes(envString("DEN_API_LOCAL"));
-  const opencodeBin = envString("OPENWORK_OPENCODE_BIN");
+  const opencodeBin = envString("MICX_OPENCODE_BIN");
   const reproDir = envString("REPRO_DIR");
   const delayMs = envDelayMs();
   const activeWindowMs = windowMs();
   const serverPort = envPort("SERVER_PORT", 8790);
   const proxyPort = envPort("PROXY_PORT", 8791);
-  const paths = { workspaceRoot: join(reproDir, "ws"), xdg: join(reproDir, "xdg"), xdgOpenwork: join(reproDir, "xdg", "openwork"), home: join(reproDir, "home"), logs: join(reproDir, "logs") };
+  const paths = { workspaceRoot: join(reproDir, "ws"), xdg: join(reproDir, "xdg"), xdgMicx: join(reproDir, "xdg", "micx"), home: join(reproDir, "home"), logs: join(reproDir, "logs") };
 
   const den = await bootstrapDen(denApiUrl);
   const proxy = await startDelayProxy(denApiUrl, proxyPort);
-  const openwork = await startOpenworkServer(paths, serverPort, opencodeBin);
-  const workspaces = await serverJson(openwork.baseUrl, "/workspaces");
+  const micx = await startMicxServer(paths, serverPort, opencodeBin);
+  const workspaces = await serverJson(micx.baseUrl, "/workspaces");
   const workspaceId = firstWorkspaceId(workspaces);
   log(`Using workspace ${workspaceId}`);
 
   const reconcilePayload = {
     workspaceId,
-    name: "openwork-cloud",
+    name: "micx-cloud",
     config: {
       type: "remote",
       url: `http://127.0.0.1:${proxyPort}/mcp/agent`,
@@ -457,35 +457,35 @@ async function main() {
     trigger: "repro-engine-mcp-evidence",
   };
 
-  log("PHASE 1: seeding delayed openwork-cloud reconcile");
+  log("PHASE 1: seeding delayed micx-cloud reconcile");
   const armed = await armProxy(proxyPort, delayMs, activeWindowMs);
   const armedUntilMs = Number(own(armed, "armedUntilMs"));
   if (!Number.isFinite(armedUntilMs)) throw new Error(`Proxy arm response did not include armedUntilMs: ${JSON.stringify(armed)}`);
-  const seedReconcile = await serverJson(openwork.baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/mcp/openwork-cloud/reconcile`, {
+  const seedReconcile = await serverJson(micx.baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/mcp/micx-cloud/reconcile`, {
     method: "POST",
     body: JSON.stringify(reconcilePayload),
   });
-  const seedMcp = await serverJson(openwork.baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/mcp`);
-  const seedHealth = await serverJson(openwork.baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/mcp/openwork-cloud/health`);
+  const seedMcp = await serverJson(micx.baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/mcp`);
+  const seedHealth = await serverJson(micx.baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/mcp/micx-cloud/health`);
 
   log("PHASE 2: waiting for delayed Den MCP handshake to heal live engine state");
   await sleep(armedUntilMs + 8000 - Date.now());
-  const healedHealth = await pollHealedHealth(openwork.baseUrl, workspaceId);
-  const healedMcp = await serverJson(openwork.baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/mcp`);
+  const healedHealth = await pollHealedHealth(micx.baseUrl, workspaceId);
+  const healedMcp = await serverJson(micx.baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/mcp`);
 
   log("PHASE 3: collecting agent-context diagnostics");
   const diagnosticsRequest = {
     organizationConnectionsProbe: { status: "observed", code: null, totalCount: 0, truncated: false },
     organizationConnections: [],
   };
-  const diagnosticsReport = await serverJson(openwork.baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/diagnostics/agent-context`, {
+  const diagnosticsReport = await serverJson(micx.baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/diagnostics/agent-context`, {
     method: "POST",
     body: JSON.stringify(diagnosticsRequest),
   });
   const checks = Array.isArray(own(diagnosticsReport, "checks")) ? own(diagnosticsReport, "checks") : [];
   const engineMcpSyncCheck = checks.find((check) => own(check, "id") === "engine-mcp-sync") ?? null;
   const mcps = Array.isArray(own(diagnosticsReport, "mcps")) ? own(diagnosticsReport, "mcps") : [];
-  const openworkCloudSyncStatuses = mcps.filter((mcp) => own(mcp, "name") === "openwork-cloud").map((mcp) => ({
+  const micxCloudSyncStatuses = mcps.filter((mcp) => own(mcp, "name") === "micx-cloud").map((mcp) => ({
     name: own(mcp, "name"), source: own(mcp, "source"), type: own(mcp, "type"), enabled: own(mcp, "enabled"),
     syncStatus: own(mcp, "syncStatus"), liveEngineStatus: own(mcp, "liveEngineStatus"),
   }));
@@ -498,7 +498,7 @@ async function main() {
     phases: {
       seed: { reconcile: seedReconcile, mcp: seedMcp, health: seedHealth },
       healed: { mcp: healedMcp, health: healedHealth },
-      diagnostics: { engineMcpSyncCheck, openworkCloudSyncStatuses, firstFailedCheck: own(diagnosticsReport, "firstFailedCheck") ?? null, overall: own(diagnosticsReport, "overall") ?? null },
+      diagnostics: { engineMcpSyncCheck, micxCloudSyncStatuses, firstFailedCheck: own(diagnosticsReport, "firstFailedCheck") ?? null, overall: own(diagnosticsReport, "overall") ?? null },
     },
     proxyHolds: proxy.holds,
     contradictionReproduced,

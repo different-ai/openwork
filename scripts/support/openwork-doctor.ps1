@@ -572,8 +572,8 @@ function Invoke-UrlProbe {
 
 $timestamp = (Get-Date).ToString("yyyy-MM-ddTHH:mm:ssK")
 $emdash = [char]0x2014
-Write-Report ("OpenWork Network Doctor v1 {0} {1}" -f $emdash, $timestamp)
-Write-Report "This entire output is safe to copy/paste back to OpenWork support."
+Write-Report ("Micx Network Doctor v1 {0} {1}" -f $emdash, $timestamp)
+Write-Report "This entire output is safe to copy/paste back to Micx support."
 Write-Report ("Expected issuer match: {0}" -f $ExpectedIssuerMatch)
 if ([string]::IsNullOrWhiteSpace($WebUrl)) {
     Write-Report "WebUrl: (empty; skipped)"
@@ -597,7 +597,7 @@ if (-not [string]::IsNullOrWhiteSpace($ApiUrl)) {
 
 Write-Report "===== VERDICT HINTS ====="
 if ($script:VerdictHints.Count -eq 0) {
-    Write-Report "- No likely root cause was detected by this script. If the app still fails, send this full report to OpenWork support."
+    Write-Report "- No likely root cause was detected by this script. If the app still fails, send this full report to Micx support."
 }
 else {
     foreach ($hint in $script:VerdictHints) {

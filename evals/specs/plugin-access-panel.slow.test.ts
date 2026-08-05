@@ -1,16 +1,16 @@
 import { expect, onTestFinished, test } from "vitest";
-import { denFetch, ensureMemberSession, evalIn, fill, signIn, waitFor } from "@openwork/behaviors";
-import type { DenSession } from "@openwork/behaviors";
-import { navigate } from "@openwork/cdp";
-import { photoRoll, screenshot, validate } from "@openwork/fraimz";
-import { chrome } from "@openwork/hosts";
+import { denFetch, ensureMemberSession, evalIn, fill, signIn, waitFor } from "@micx/behaviors";
+import type { DenSession } from "@micx/behaviors";
+import { navigate } from "@micx/cdp";
+import { photoRoll, screenshot, validate } from "@micx/fraimz";
+import { chrome } from "@micx/hosts";
 
-const apiUrl = process.env.OPENWORK_EVAL_DEN_API_URL?.trim().replace(/\/+$/, "") ?? "";
-const webUrl = process.env.OPENWORK_EVAL_DEN_WEB_URL?.trim().replace(/\/+$/, "") ?? "";
+const apiUrl = process.env.MICX_EVAL_DEN_API_URL?.trim().replace(/\/+$/, "") ?? "";
+const webUrl = process.env.MICX_EVAL_DEN_WEB_URL?.trim().replace(/\/+$/, "") ?? "";
 const title = !apiUrl
-  ? "plugin access panel skipped: set OPENWORK_EVAL_DEN_API_URL to a running Den API"
+  ? "plugin access panel skipped: set MICX_EVAL_DEN_API_URL to a running Den API"
   : !webUrl
-    ? "plugin access panel skipped: set OPENWORK_EVAL_DEN_WEB_URL to a running Den Web"
+    ? "plugin access panel skipped: set MICX_EVAL_DEN_WEB_URL to a running Den Web"
     : "plugin creators can inspect person and team access grants in Den Web";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -49,7 +49,7 @@ async function organizationMemberIdByEmail(session: DenSession, orgId: string, e
   const result = await denFetch(session, "/v1/org", {
     headers: {
       authorization: `Bearer ${session.token}`,
-      "x-openwork-org-id": orgId,
+      "x-micx-org-id": orgId,
     },
   });
   const members = isRecord(result.body) && Array.isArray(result.body.members)
@@ -69,9 +69,9 @@ function accessItems(body: unknown): Record<string, unknown>[] {
 
 test.skipIf(!apiUrl || !webUrl)(title, async () => {
   const den = { apiUrl, webUrl };
-  const password = process.env.OPENWORK_EVAL_DEMO_PASSWORD?.trim() || "OpenWorkDemo123!";
+  const password = process.env.MICX_EVAL_DEMO_PASSWORD?.trim() || "MicxDemo123!";
   const admin = await signIn(den, {
-    email: process.env.OPENWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test",
+    email: process.env.MICX_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test",
     password,
   });
   const orgId = await organizationId(admin);
@@ -89,7 +89,7 @@ test.skipIf(!apiUrl || !webUrl)(title, async () => {
         method: "POST",
         headers: {
           authorization: `Bearer ${creator.token}`,
-          "x-openwork-org-id": orgId,
+          "x-micx-org-id": orgId,
         },
       }).catch(() => undefined);
     }
@@ -98,28 +98,28 @@ test.skipIf(!apiUrl || !webUrl)(title, async () => {
         method: "DELETE",
         headers: {
           authorization: `Bearer ${admin.token}`,
-          "x-openwork-org-id": orgId,
+          "x-micx-org-id": orgId,
         },
       }).catch(() => undefined);
     }
   });
 
-  const caseyEmail = process.env.OPENWORK_EVAL_CREATOR_EMAIL?.trim() || "casey.spec@acme.test";
+  const caseyEmail = process.env.MICX_EVAL_CREATOR_EMAIL?.trim() || "casey.spec@acme.test";
   caseySession = await ensureMemberSession(den, admin, {
     email: caseyEmail,
-    password: process.env.OPENWORK_EVAL_MEMBER_PASSWORD?.trim() || password,
+    password: process.env.MICX_EVAL_MEMBER_PASSWORD?.trim() || password,
     name: "Casey Spec",
-    markVerifiedCmd: process.env.OPENWORK_EVAL_MARK_VERIFIED_CMD?.trim(),
+    markVerifiedCmd: process.env.MICX_EVAL_MARK_VERIFIED_CMD?.trim(),
   });
   const casey = caseySession;
   await selectOrganization(casey, orgId);
 
-  const novaEmail = process.env.OPENWORK_EVAL_MEMBER_EMAIL?.trim() || "nova.spec@acme.test";
+  const novaEmail = process.env.MICX_EVAL_MEMBER_EMAIL?.trim() || "nova.spec@acme.test";
   const nova = await ensureMemberSession(den, admin, {
     email: novaEmail,
-    password: process.env.OPENWORK_EVAL_MEMBER_PASSWORD?.trim() || password,
+    password: process.env.MICX_EVAL_MEMBER_PASSWORD?.trim() || password,
     name: "Nova Spec",
-    markVerifiedCmd: process.env.OPENWORK_EVAL_MARK_VERIFIED_CMD?.trim(),
+    markVerifiedCmd: process.env.MICX_EVAL_MARK_VERIFIED_CMD?.trim(),
   });
   await selectOrganization(nova, orgId);
 
@@ -130,7 +130,7 @@ test.skipIf(!apiUrl || !webUrl)(title, async () => {
     method: "POST",
     headers: {
       authorization: `Bearer ${casey.token}`,
-      "x-openwork-org-id": orgId,
+      "x-micx-org-id": orgId,
     },
     body: JSON.stringify({
       name: pluginName,
@@ -149,7 +149,7 @@ test.skipIf(!apiUrl || !webUrl)(title, async () => {
     method: "POST",
     headers: {
       authorization: `Bearer ${casey.token}`,
-      "x-openwork-org-id": orgId,
+      "x-micx-org-id": orgId,
     },
     body: JSON.stringify({ orgMembershipId: novaMemberId, role: "viewer" }),
   });
@@ -162,7 +162,7 @@ test.skipIf(!apiUrl || !webUrl)(title, async () => {
     method: "POST",
     headers: {
       authorization: `Bearer ${admin.token}`,
-      "x-openwork-org-id": orgId,
+      "x-micx-org-id": orgId,
     },
     body: JSON.stringify({ name: teamName }),
   });
@@ -176,7 +176,7 @@ test.skipIf(!apiUrl || !webUrl)(title, async () => {
     method: "POST",
     headers: {
       authorization: `Bearer ${casey.token}`,
-      "x-openwork-org-id": orgId,
+      "x-micx-org-id": orgId,
     },
     body: JSON.stringify({ teamId, role: "viewer" }),
   });
@@ -187,7 +187,7 @@ test.skipIf(!apiUrl || !webUrl)(title, async () => {
   const listedAccess = await denFetch(casey, `/v1/plugins/${encodeURIComponent(pluginId)}/access`, {
     headers: {
       authorization: `Bearer ${casey.token}`,
-      "x-openwork-org-id": orgId,
+      "x-micx-org-id": orgId,
     },
   });
   expect(listedAccess.response.status).toBe(200);
@@ -205,8 +205,8 @@ test.skipIf(!apiUrl || !webUrl)(title, async () => {
     label: "Den Web origin before auth token handoff",
   });
   const tokenStored = await evalIn(browser, `(() => {
-    localStorage.setItem("openwork:web:auth-token", ${JSON.stringify(admin.token)});
-    return localStorage.getItem("openwork:web:auth-token") === ${JSON.stringify(admin.token)};
+    localStorage.setItem("micx:web:auth-token", ${JSON.stringify(admin.token)});
+    return localStorage.getItem("micx:web:auth-token") === ${JSON.stringify(admin.token)};
   })()`);
   expect(tokenStored).toBe(true);
 

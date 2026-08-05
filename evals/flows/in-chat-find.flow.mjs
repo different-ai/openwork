@@ -44,7 +44,7 @@ async function submitComposer(ctx) {
 
 async function currentRouteSessionId(ctx) {
   return ctx.eval(`(() => {
-    const route = window.__openworkControl.snapshot().route || "";
+    const route = window.__micxControl.snapshot().route || "";
     const match = route.match(/ses_[A-Za-z0-9]+/);
     return match ? match[0] : null;
   })()`);
@@ -55,7 +55,7 @@ async function currentRouteSessionId(ctx) {
 async function waitForNewRouteSessionId(ctx, previousId, label) {
   return ctx.waitFor(
     `(() => {
-      const route = window.__openworkControl.snapshot().route || "";
+      const route = window.__micxControl.snapshot().route || "";
       const match = route.match(/ses_[A-Za-z0-9]+/);
       if (!match) return null;
       return match[0] === ${JSON.stringify(previousId)} ? null : match[0];
@@ -122,13 +122,13 @@ export default {
   title: "Find in conversation: ⌘F highlights, navigates, and receives cross-session handoff",
   kind: "user-facing",
   precondition: async (ctx) => {
-    await ctx.waitFor("Boolean(window.__openworkControl)", {
+    await ctx.waitFor("Boolean(window.__micxControl)", {
       timeoutMs: 60_000,
       label: "control API",
     });
     const state = await ctx.waitFor(
       `(() => {
-        const control = window.__openworkControl;
+        const control = window.__micxControl;
         const route = control.snapshot().route;
         if (route.startsWith("/welcome") || route.startsWith("/signin")) return "blocked";
         const action = control.listActions().find((a) => a.id === "session.create_task");
@@ -381,7 +381,7 @@ export default {
             // not "land in this run's session specifically".
             const landedSessionId = await ctx.waitFor(
               `(() => {
-                const route = window.__openworkControl.snapshot().route || "";
+                const route = window.__micxControl.snapshot().route || "";
                 const match = route.match(/ses_[A-Za-z0-9]+/);
                 return match && match[0] !== ${JSON.stringify(emptySessionId)} ? match[0] : null;
               })()`,

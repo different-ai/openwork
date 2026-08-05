@@ -1,6 +1,6 @@
 /**
- * Regression proof: disabling the auto-configured OpenWork Cloud Control MCP
- * ("openwork-cloud") sticks.
+ * Regression proof: disabling the auto-configured Micx Cloud Control MCP
+ * ("micx-cloud") sticks.
  *
  * Previously the background reconciler (syncCloudControlMcp) rewrote the
  * entry with `enabled: true` on every sync tick — settings mount, sign-in,
@@ -10,12 +10,12 @@
  * it was written. Users could not turn the MCP off.
  *
  * The fix persists the user's intent (localStorage
- * `openwork.den.mcp.cloudControlUserState`), makes the reconciler respect it
+ * `micx.den.mcp.cloudControlUserState`), makes the reconciler respect it
  * (plus an enabled:false guard), and fixes the marker margin. This flow
  * drives the real app:
- *   1. Sign in to OpenWork Cloud via desktop handoff.
+ *   1. Sign in to Micx Cloud via desktop handoff.
  *   2. Reveal hidden extensions and wait for the reconciler to auto-configure
- *      openwork-cloud.
+ *      micx-cloud.
  *   3. Disable it via the Settings toggle.
  *   4. Remount settings (the exact trigger that used to resurrect it) and
  *      reveal hidden again, then assert it is still Paused and the intent
@@ -23,12 +23,12 @@
  *   5. Re-enable it and assert the intent record clears.
  *
  * Required env:
- * - OPENWORK_EVAL_DEN_API_URL  Den API base
- * - OPENWORK_EVAL_DEN_TOKEN    Bearer session token for a seeded user
+ * - MICX_EVAL_DEN_API_URL  Den API base
+ * - MICX_EVAL_DEN_TOKEN    Bearer session token for a seeded user
  */
 
-const CLOUD_TITLE = "OpenWork Cloud Control";
-const USER_STATE_KEY = "openwork.den.mcp.cloudControlUserState";
+const CLOUD_TITLE = "Micx Cloud Control";
+const USER_STATE_KEY = "micx.den.mcp.cloudControlUserState";
 const CLICK_ANY = "button, [role=button], a, div, article, li, label";
 
 const revealHidden = async (ctx) => {
@@ -86,47 +86,47 @@ const scrollCloudRowExpr = `(() => {
 
 export default {
   id: "cloud-mcp-disable-sticks",
-  title: "Disabling the OpenWork Cloud Control MCP sticks across sync",
+  title: "Disabling the Micx Cloud Control MCP sticks across sync",
   spec: "evals/cloud-mcp-agent-flows.md",
-  requiredEnv: ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_TOKEN"],
+  requiredEnv: ["MICX_EVAL_DEN_API_URL", "MICX_EVAL_DEN_TOKEN"],
   steps: [
     {
       name: "App booted",
       run: async (ctx) => {
-        await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 60_000 });
+        await ctx.waitFor("Boolean(window.__micxControl)", { timeoutMs: 60_000 });
       },
     },
     {
-      name: "Sign in to OpenWork Cloud via desktop handoff",
+      name: "Sign in to Micx Cloud via desktop handoff",
       run: async (ctx) => {
         const signedIn = await ctx.eval(
-          "Boolean((localStorage.getItem('openwork.den.authToken') ?? '').trim())",
+          "Boolean((localStorage.getItem('micx.den.authToken') ?? '').trim())",
         );
         if (signedIn) {
           ctx.log("Already signed in; reusing session.");
           return;
         }
-        const apiBase = ctx.env.OPENWORK_EVAL_DEN_API_URL.trim().replace(/\/+$/, "");
+        const apiBase = ctx.env.MICX_EVAL_DEN_API_URL.trim().replace(/\/+$/, "");
         const response = await fetch(`${apiBase}/v1/auth/desktop-handoff`, {
           method: "POST",
           headers: {
-            authorization: `Bearer ${ctx.env.OPENWORK_EVAL_DEN_TOKEN.trim()}`,
+            authorization: `Bearer ${ctx.env.MICX_EVAL_DEN_TOKEN.trim()}`,
             "content-type": "application/json",
           },
-          body: JSON.stringify({ desktopScheme: "openwork" }),
+          body: JSON.stringify({ desktopScheme: "micx" }),
         });
         const body = await response.text();
         ctx.assert(response.ok, `Handoff create failed: ${response.status} ${body.slice(0, 200)}`);
         const payload = JSON.parse(body);
-        ctx.assert(typeof payload.openworkUrl === "string" && payload.openworkUrl.length > 0, "No openworkUrl in handoff response.");
+        ctx.assert(typeof payload.micxUrl === "string" && payload.micxUrl.length > 0, "No micxUrl in handoff response.");
 
         await ctx.navigateHash("/settings/cloud-account");
         await ctx.expectHashIncludes("/settings/cloud-account");
         await ctx.clickText("Paste sign-in code", { timeoutMs: 30_000 });
-        await ctx.fill("#den-signin-link", payload.openworkUrl);
+        await ctx.fill("#den-signin-link", payload.micxUrl);
         await ctx.clickText("Finish sign-in");
         await ctx.waitFor(
-          "Boolean((localStorage.getItem('openwork.den.authToken') ?? '').trim())",
+          "Boolean((localStorage.getItem('micx.den.authToken') ?? '').trim())",
           { timeoutMs: 45_000, label: "persisted den auth token" },
         );
         // Post-sign-in org onboarding may appear; drive through it best-effort.
@@ -140,14 +140,14 @@ export default {
       run: async (ctx) => {
         // Start from a clean slate for idempotent re-runs: clear any prior
         // user-intent record so the reconciler is allowed to configure it.
-        await ctx.eval(`(() => { localStorage.removeItem(${JSON.stringify(USER_STATE_KEY)}); localStorage.removeItem("openwork.den.mcp.sync"); return true; })()`);
+        await ctx.eval(`(() => { localStorage.removeItem(${JSON.stringify(USER_STATE_KEY)}); localStorage.removeItem("micx.den.mcp.sync"); return true; })()`);
         await ctx.navigateHash("/settings/extensions/mcp");
         await ctx.waitFor("window.location.hash.includes('/settings/extensions/mcp')", { timeoutMs: 30_000 });
         await ctx.waitForText("Add Custom App", { timeoutMs: 30_000 });
         await revealHidden(ctx);
         await ctx.waitFor(cloudRowExpr(CONFIGURED_STATUSES), {
           timeoutMs: 90_000,
-          label: "openwork-cloud configured row",
+          label: "micx-cloud configured row",
         });
         // Idempotent re-runs: a previous run may have left the entry Paused.
         // Restore the enabled baseline before proving the disable behavior.
@@ -163,17 +163,17 @@ export default {
             label: "entry no longer Paused",
           });
         }
-        await ctx.prove("Signing in auto-configures the openwork-cloud MCP", {
+        await ctx.prove("Signing in auto-configures the micx-cloud MCP", {
           assert: async () => {
             await ctx.waitFor(cloudRowExpr(CONFIGURED_STATUSES.filter((status) => status !== "Paused")), {
               timeoutMs: 90_000,
-              label: "openwork-cloud configured row (enabled)",
+              label: "micx-cloud configured row (enabled)",
             });
             await ctx.eval(scrollCloudRowExpr);
           },
           screenshot: {
             name: "cloud-mcp-configured",
-            claim: "OpenWork Cloud Control appears as a configured MCP after cloud sign-in.",
+            claim: "Micx Cloud Control appears as a configured MCP after cloud sign-in.",
             requireText: [CLOUD_TITLE],
             rejectText: ["Something went wrong"],
             hashIncludes: "/settings/extensions/mcp",
@@ -188,13 +188,13 @@ export default {
           action: async () => {
             await ctx.waitFor(expandAndClickDetailExpr(CONFIGURED_STATUSES, "Disable"), {
               timeoutMs: 30_000,
-              label: "expand openwork-cloud row and click Disable",
+              label: "expand micx-cloud row and click Disable",
             });
           },
           assert: async () => {
             await ctx.waitFor(cloudRowExpr(["Paused"]), {
               timeoutMs: 30_000,
-              label: "openwork-cloud row shows Paused",
+              label: "micx-cloud row shows Paused",
             });
             const intent = await ctx.eval(`localStorage.getItem(${JSON.stringify(USER_STATE_KEY)})`);
             ctx.assert(intent === "disabled", `Expected persisted intent "disabled", got ${JSON.stringify(intent)}`);
@@ -202,7 +202,7 @@ export default {
           },
           screenshot: {
             name: "cloud-mcp-disabled",
-            claim: "OpenWork Cloud Control is Paused after the user disables it.",
+            claim: "Micx Cloud Control is Paused after the user disables it.",
             requireText: [CLOUD_TITLE, "Paused"],
             rejectText: ["Something went wrong"],
             hashIncludes: "/settings/extensions/mcp",
@@ -230,7 +230,7 @@ export default {
           assert: async () => {
             await ctx.waitFor(cloudRowExpr(["Paused"]), {
               timeoutMs: 30_000,
-              label: "openwork-cloud row still Paused after remount",
+              label: "micx-cloud row still Paused after remount",
             });
             const intent = await ctx.eval(`localStorage.getItem(${JSON.stringify(USER_STATE_KEY)})`);
             ctx.assert(intent === "disabled", `Persisted intent lost after sync tick: ${JSON.stringify(intent)}`);
@@ -249,7 +249,7 @@ export default {
           },
           screenshot: {
             name: "cloud-mcp-still-disabled",
-            claim: "OpenWork Cloud Control stays Paused after the settings remount sync tick.",
+            claim: "Micx Cloud Control stays Paused after the settings remount sync tick.",
             requireText: [CLOUD_TITLE, "Paused"],
             rejectText: ["Something went wrong"],
             hashIncludes: "/settings/extensions/mcp",
@@ -264,7 +264,7 @@ export default {
           action: async () => {
             await ctx.waitFor(expandAndClickDetailExpr(["Paused"], "Enable"), {
               timeoutMs: 30_000,
-              label: "expand paused openwork-cloud row and click Enable",
+              label: "expand paused micx-cloud row and click Enable",
             });
           },
           assert: async () => {
@@ -274,7 +274,7 @@ export default {
             );
             await ctx.waitFor(cloudRowExpr(CONFIGURED_STATUSES.filter((status) => status !== "Paused")), {
               timeoutMs: 60_000,
-              label: "openwork-cloud row no longer Paused",
+              label: "micx-cloud row no longer Paused",
             });
             // Bring the row into the viewport so the frame is visually
             // distinct from the previous capture (defeats the dedup guard).
@@ -282,7 +282,7 @@ export default {
           },
           screenshot: {
             name: "cloud-mcp-reenabled",
-            claim: "OpenWork Cloud Control leaves Paused after re-enable and the intent record is cleared.",
+            claim: "Micx Cloud Control leaves Paused after re-enable and the intent record is cleared.",
             requireText: [CLOUD_TITLE],
             rejectText: ["Something went wrong"],
             hashIncludes: "/settings/extensions/mcp",

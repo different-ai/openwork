@@ -2,14 +2,14 @@ import { evaluate } from "./cdp.ts";
 import type { CdpClient, EvaluateOptions } from "./cdp.ts";
 
 /**
- * Readiness of the OpenWork desktop is defined by the UI being *interactive*,
+ * Readiness of the Micx desktop is defined by the UI being *interactive*,
  * not by the route matching an allowlist: a fresh profile with no workspace
  * legitimately sits on `/session` offering "Create or connect a workspace",
  * and a workspace can be selected while the panel still renders placeholders.
  *
  * This module is the single implementation of that predicate so the lifecycle
- * layer (@openwork/hosts) and the behaviours specs call (@openwork/behaviors)
- * cannot drift apart. It lives in @openwork/cdp because both already depend on
+ * layer (@micx/hosts) and the behaviours specs call (@micx/behaviors)
+ * cannot drift apart. It lives in @micx/cdp because both already depend on
  * it, which keeps the dependency graph acyclic.
  */
 
@@ -91,10 +91,10 @@ const PROBE_EXPRESSION = `(() => {
   const buttonLabels = [...document.querySelectorAll("button")].map((button) => (button.textContent ?? "").trim());
   const taskUi = text.includes("What do you need done?") || buttonLabels.includes("Run task");
   const needsWorkspace = text.includes("Create or connect a workspace");
-  const welcome = text.includes("Welcome to OpenWork");
+  const welcome = text.includes("Welcome to Micx");
   // The product's own active-workspace state; the route is only a fallback
   // because a selected workspace does not always appear in the hash.
-  const stored = localStorage.getItem("openwork.react.activeWorkspace");
+  const stored = localStorage.getItem("micx.react.activeWorkspace");
   const routeMatch = (route.match(/\\/workspace\\/([^/?#]+)/) ?? [])[1] ?? null;
   const workspaceId = (stored && stored.length > 0 ? stored : null) ?? routeMatch;
   // Any settings/extensions surface inside a workspace is interactive too.
@@ -108,7 +108,7 @@ const PROBE_EXPRESSION = `(() => {
         ? "no-workspace"
         : null;
   return {
-    controlReady: Boolean(window.__openworkControl),
+    controlReady: Boolean(window.__micxControl),
     transitional,
     surface,
     // Report the id whenever the app knows one, even while the welcome surface

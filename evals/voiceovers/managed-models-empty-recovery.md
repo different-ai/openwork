@@ -2,7 +2,7 @@
 
 This demo proves organization-published models are imported before restriction enforcement, and that a genuinely empty managed-model state is honest and recoverable.
 
-1. In OpenWork Cloud, the administrator has published OpenRouter with one model, GLM-5.2, and the dashboard says the reporting member sees exactly GLM-5.2.
+1. In Micx Cloud, the administrator has published OpenRouter with one model, GLM-5.2, and the dashboard says the reporting member sees exactly GLM-5.2.
 
 2. The member opens the desktop app after sign-in. The model control settles on GLM-5.2 by itself, with no model-unavailable picker and no manual click.
 

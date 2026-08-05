@@ -17,7 +17,7 @@ function witness(ctx, condition, assertion, actual = "") {
 
 async function fetchDenied(lab) {
   const url = new URL("/fetch", lab.url);
-  url.searchParams.set("url", "https://github.com/different-ai/openwork/releases/latest");
+  url.searchParams.set("url", "https://github.com/different-ai/micx/releases/latest");
   const response = await fetch(url);
   const text = await response.text();
   let json = null;
@@ -42,7 +42,7 @@ export default {
         let lab;
         let denied;
         let manifest;
-        await ctx.prove("github.com is blocked by policy, the lab error names the host, and OpenWork product diagnostics classify the HTTP 451 allowlist deny", {
+        await ctx.prove("github.com is blocked by policy, the lab error names the host, and Micx product diagnostics classify the HTTP 451 allowlist deny", {
           voiceover: vo[0],
           action: async () => {
             lab = await startEgressLab({ profile: "deny", denyHosts: ["github.com", "127.0.0.1"] });

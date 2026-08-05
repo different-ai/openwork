@@ -1,10 +1,10 @@
 import { generateKeyPairSync } from "node:crypto";
 import { expect } from "vitest";
-import { denFetch } from "@openwork/behaviors";
-import type { DenSession } from "@openwork/behaviors";
-import { startMockGithub } from "@openwork/labs";
-import type { MockGithubRepository } from "@openwork/labs";
-import { localMysqlIsRunning, needs, server, test } from "@openwork/testkit";
+import { denFetch } from "@micx/behaviors";
+import type { DenSession } from "@micx/behaviors";
+import { startMockGithub } from "@micx/labs";
+import type { MockGithubRepository } from "@micx/labs";
+import { localMysqlIsRunning, needs, server, test } from "@micx/testkit";
 
 /**
  * CLAIMS:
@@ -25,11 +25,11 @@ import { localMysqlIsRunning, needs, server, test } from "@openwork/testkit";
  *    duplicate version, and does not fetch the skill file again.
  */
 
-const localPlacement = process.env.OPENWORK_EVAL_DAYTONA !== "1"
-  && !process.env.OPENWORK_EVAL_DEN_API_URL?.trim();
+const localPlacement = process.env.MICX_EVAL_DAYTONA !== "1"
+  && !process.env.MICX_EVAL_DEN_API_URL?.trim();
 const mysqlOpen = await localMysqlIsRunning();
 const title = !localPlacement
-  ? "github connector import skipped — needs: local placement without OPENWORK_EVAL_DEN_API_URL"
+  ? "github connector import skipped — needs: local placement without MICX_EVAL_DEN_API_URL"
   : !mysqlOpen
     ? "github connector import skipped — needs: MySQL on 127.0.0.1:3306"
     : "the GitHub connector lists every installation repository and imports marketplace skills end-to-end";
@@ -106,7 +106,7 @@ async function apiRequest(
   const headers: Record<string, string> = {
     authorization: `Bearer ${session.token}`,
   };
-  if (input.orgId) headers["x-openwork-org-id"] = input.orgId;
+  if (input.orgId) headers["x-micx-org-id"] = input.orgId;
   if (input.body) headers["content-type"] = "application/json";
   const result = await denFetch(session, path, {
     method: input.method ?? "GET",

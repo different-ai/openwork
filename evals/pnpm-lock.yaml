@@ -8,28 +8,28 @@ importers:
 
   .:
     dependencies:
-      '@openwork/behaviors':
+      '@micx/behaviors':
         specifier: workspace:*
         version: link:packages/behaviors
-      '@openwork/cdp':
+      '@micx/cdp':
         specifier: workspace:*
         version: link:packages/cdp
-      '@openwork/evidence':
+      '@micx/evidence':
         specifier: workspace:*
         version: link:packages/evidence
-      '@openwork/fraimz':
+      '@micx/fraimz':
         specifier: workspace:*
         version: link:packages/fraimz
-      '@openwork/hosts':
+      '@micx/hosts':
         specifier: workspace:*
         version: link:packages/hosts
-      '@openwork/labs':
+      '@micx/labs':
         specifier: workspace:*
         version: link:packages/labs
-      '@openwork/matchers':
+      '@micx/matchers':
         specifier: workspace:*
         version: link:packages/matchers
-      '@openwork/testkit':
+      '@micx/testkit':
         specifier: workspace:*
         version: link:packages/testkit
     devDependencies:
@@ -39,16 +39,16 @@ importers:
 
   packages/behaviors:
     dependencies:
-      '@openwork/cdp':
+      '@micx/cdp':
         specifier: workspace:*
         version: link:../cdp
-      '@openwork/labs':
+      '@micx/labs':
         specifier: workspace:*
         version: link:../labs
-      '@openwork/matchers':
+      '@micx/matchers':
         specifier: workspace:*
         version: link:../matchers
-      '@openwork/timeline':
+      '@micx/timeline':
         specifier: workspace:*
         version: link:../timeline
 
@@ -58,19 +58,19 @@ importers:
 
   packages/fraimz:
     dependencies:
-      '@openwork/cdp':
+      '@micx/cdp':
         specifier: workspace:*
         version: link:../cdp
-      '@openwork/timeline':
+      '@micx/timeline':
         specifier: workspace:*
         version: link:../timeline
 
   packages/hosts:
     dependencies:
-      '@openwork/cdp':
+      '@micx/cdp':
         specifier: workspace:*
         version: link:../cdp
-      '@openwork/timeline':
+      '@micx/timeline':
         specifier: workspace:*
         version: link:../timeline
 
@@ -80,19 +80,19 @@ importers:
 
   packages/testkit:
     dependencies:
-      '@openwork/behaviors':
+      '@micx/behaviors':
         specifier: workspace:*
         version: link:../behaviors
-      '@openwork/cdp':
+      '@micx/cdp':
         specifier: workspace:*
         version: link:../cdp
-      '@openwork/fraimz':
+      '@micx/fraimz':
         specifier: workspace:*
         version: link:../fraimz
-      '@openwork/hosts':
+      '@micx/hosts':
         specifier: workspace:*
         version: link:../hosts
-      '@openwork/labs':
+      '@micx/labs':
         specifier: workspace:*
         version: link:../labs
       mysql2:

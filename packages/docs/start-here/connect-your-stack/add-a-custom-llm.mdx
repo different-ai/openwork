@@ -1,9 +1,9 @@
 ---
 title: "Add a custom LLM"
-description: "How to connect a custom provider with OpenWork"
+description: "How to connect a custom provider with Micx"
 ---
 
-Because `OpenWork` is built on `OpenCode` primitives, we support everything that you could modify in `.opencode.json`, like adding a [model](https://opencode.ai/docs/models/). However, our recommendation is to add it to `/path-to-your-workspace/.config/opencode/opencode.json` instead of modifying `~/.config/opencode/opencode.json`.
+Because `Micx` is built on `OpenCode` primitives, we support everything that you could modify in `.opencode.json`, like adding a [model](https://opencode.ai/docs/models/). However, our recommendation is to add it to `/path-to-your-workspace/.config/opencode/opencode.json` instead of modifying `~/.config/opencode/opencode.json`.
 
 Inside `/path-to-your-workspace/.config/opencode/opencode.json`:
 ```
@@ -52,4 +52,4 @@ Pull the model first with `ollama pull qwen3:8b`, then make sure the Ollama serv
 
 Open your desktop, change the provider name and voila! You have an fully local LLM running in your machine.
 
-For teams, you can manage the provider in OpenWork Cloud under [LLM Providers](/cloud/share-with-your-team/managed-llm-provider), then import it into each workspace from `Settings -> Cloud`.
+For teams, you can manage the provider in Micx Cloud under [LLM Providers](/cloud/share-with-your-team/managed-llm-provider), then import it into each workspace from `Settings -> Cloud`.

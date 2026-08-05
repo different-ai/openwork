@@ -16,18 +16,18 @@ try {
   // .env.dev is optional; the inline fallbacks below still apply.
 }
 const composeFile = path.join(rootDir, "packaging", "docker", "docker-compose.web-local.yml")
-const composeProject = "openwork-den-local"
+const composeProject = "micx-den-local"
 
 const apiPort = process.env.DEN_API_PORT?.trim() || process.env.DEN_CONTROLLER_PORT?.trim() || "8788"
 const workerProxyPort = process.env.DEN_WORKER_PROXY_PORT?.trim() || "8789"
 const inferencePort = process.env.INFERENCE_PORT?.trim() || "8791"
 const webPort = process.env.DEN_WEB_PORT?.trim() || "3005"
-const appPort = process.env.OPENWORK_APP_PORT?.trim() || process.env.PORT?.trim() || "5173"
-const extraAppPorts = (process.env.OPENWORK_EXTRA_APP_PORTS?.trim() || "5174")
+const appPort = process.env.MICX_APP_PORT?.trim() || process.env.PORT?.trim() || "5173"
+const extraAppPorts = (process.env.MICX_EXTRA_APP_PORTS?.trim() || "5174")
   .split(",")
   .map((value) => value.trim())
   .filter(Boolean)
-const databaseUrl = process.env.DATABASE_URL?.trim() || "mysql://root:password@127.0.0.1:3306/openwork_den"
+const databaseUrl = process.env.DATABASE_URL?.trim() || "mysql://root:password@127.0.0.1:3306/micx_den"
 const dbEncryptionKey =
   process.env.DEN_DB_ENCRYPTION_KEY?.trim() ||
   "local-dev-db-encryption-key-please-change-1234567890"
@@ -190,7 +190,7 @@ async function main() {
   }
 
   console.log("[den] Syncing Den schema...")
-  await run("bash", ["-c", "pnpm --filter @openwork-ee/den-db build && pnpm --filter @openwork-ee/den-db exec node --import tsx ./node_modules/drizzle-kit/bin.cjs push --config drizzle.config.ts --force"], {
+  await run("bash", ["-c", "pnpm --filter @micx-ee/den-db build && pnpm --filter @micx-ee/den-db exec node --import tsx ./node_modules/drizzle-kit/bin.cjs push --config drizzle.config.ts --force"], {
     env: {
       ...process.env,
       DATABASE_URL: databaseUrl,
@@ -208,10 +208,10 @@ async function main() {
       "run",
       "dev:local",
       "--output-logs=full",
-        "--filter=@openwork-ee/den-api",
-        "--filter=@openwork-ee/inference",
-        "--filter=@openwork-ee/den-worker-proxy",
-        "--filter=@openwork-ee/den-web",
+        "--filter=@micx-ee/den-api",
+        "--filter=@micx-ee/inference",
+        "--filter=@micx-ee/den-worker-proxy",
+        "--filter=@micx-ee/den-web",
     ],
     {
       cwd: rootDir,

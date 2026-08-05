@@ -6,7 +6,7 @@ import { EvalContext, EvalError } from "./context.ts";
 function createContext(send: (method: string, params?: Record<string, unknown>) => Promise<unknown>): EvalContext {
   return new EvalContext({
     client: { send, close: () => undefined },
-    outDir: "/tmp/openwork-eval-context-test",
+    outDir: "/tmp/micx-eval-context-test",
     flowId: "context-test",
     env: {},
   });
@@ -32,10 +32,10 @@ test("waitForRoute prefers the canonical control route immediately", async () =>
     calls += 1;
     assert.equal(method, "Runtime.evaluate");
     const expression = expressionFromParams(params);
-    assert.match(expression, /__openworkControl/);
+    assert.match(expression, /__micxControl/);
     assert.match(expression, /location\.hash/);
     return evaluated(evaluateInPage(expression, {
-      __openworkControl: { snapshot: () => ({ route: "/settings/general" }) },
+      __micxControl: { snapshot: () => ({ route: "/settings/general" }) },
       location: { hash: "#/settings/advanced", pathname: "/" },
     }));
   });

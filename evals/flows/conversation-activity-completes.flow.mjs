@@ -12,7 +12,7 @@ const state = {
 
 function currentSessionIdExpression(previousSessionId = "") {
   return `(() => {
-    const route = window.__openworkControl?.snapshot?.().route ?? window.location.hash ?? "";
+    const route = window.__micxControl?.snapshot?.().route ?? window.location.hash ?? "";
     const match = /(?:^|\\/)session\\/([^/?#]+)/.exec(route);
     const sessionId = match ? decodeURIComponent(match[1]) : null;
     return sessionId && sessionId !== ${JSON.stringify(previousSessionId)} ? sessionId : null;
@@ -41,13 +41,13 @@ export default {
   kind: "user-facing",
   spec: "evals/voiceovers/conversation-activity-completes.md",
   precondition: async (ctx) => {
-    await ctx.waitFor("Boolean(window.__openworkControl)", {
+    await ctx.waitFor("Boolean(window.__micxControl)", {
       timeoutMs: 60_000,
       label: "control API",
     });
     const readiness = await ctx.waitFor(
       `(() => {
-        const control = window.__openworkControl;
+        const control = window.__micxControl;
         const route = control.snapshot().route;
         if (route.startsWith("/welcome") || route.startsWith("/signin")) return "blocked";
         const create = control.listActions().find((action) => action.id === "session.create_task");
@@ -75,12 +75,12 @@ export default {
               label: "new conversation route",
             });
             await ctx.waitFor(
-              "window.__openworkControl.listActions().some((action) => action.id === 'composer.set_text' && !action.disabled)",
+              "window.__micxControl.listActions().some((action) => action.id === 'composer.set_text' && !action.disabled)",
               { timeoutMs: 30_000, label: "composer text action" },
             );
             await ctx.control("composer.set_text", { text: PROMPT });
             await ctx.waitFor(
-              "window.__openworkControl.listActions().some((action) => action.id === 'composer.send' && !action.disabled)",
+              "window.__micxControl.listActions().some((action) => action.id === 'composer.send' && !action.disabled)",
               { timeoutMs: 30_000, label: "composer send action" },
             );
             await ctx.control("composer.send");
@@ -124,12 +124,12 @@ export default {
               label: "different conversation route",
             });
             await ctx.waitFor(
-              "window.__openworkControl.listActions().some((action) => action.id === 'session.open' && !action.disabled)",
+              "window.__micxControl.listActions().some((action) => action.id === 'session.open' && !action.disabled)",
               { timeoutMs: 30_000, label: "open conversation action" },
             );
             await ctx.control("session.open", { sessionId: state.sessionId });
             await ctx.waitFor(
-              `window.__openworkControl.snapshot().route.includes(${JSON.stringify(`/session/${state.sessionId}`)})`,
+              `window.__micxControl.snapshot().route.includes(${JSON.stringify(`/session/${state.sessionId}`)})`,
               { timeoutMs: 30_000, label: "completed conversation reopened" },
             );
           },
